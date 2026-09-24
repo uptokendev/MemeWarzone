@@ -65,11 +65,11 @@ test("malformed or fake deployment address is never imported as canonical", () =
   assert.deepEqual(rows, []);
 });
 
-test("merged Agent-1 Robinhood candidate set is exact-address bound and contains 33 stock tokens", () => {
+test("merged Agent-1 Robinhood candidate set is exact-address bound and contains 41 stock tokens (33 from Agent-1 + the 8 routed deep-pool stocks added 2026-09-24)", () => {
   const candidates = APPROVED_QUOTE_CATALOG.assets.filter((asset) =>
     String(asset.chainId) === "4663" && asset.provider === "robinhood-stock-token"
   );
-  assert.equal(candidates.length, 33);
+  assert.equal(candidates.length, 41);
   for (const asset of candidates) {
     assert.equal(isExactRobinhoodReleaseCandidate({ chainId: 4663, contractAddress: asset.address }), true, asset.symbol);
     assert.equal(findExactRobinhoodManifestCandidate({ chainId: 4663, contractAddress: asset.address })?.providerAssetId, asset.providerAssetId);
