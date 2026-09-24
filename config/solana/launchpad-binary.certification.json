@@ -18,7 +18,7 @@
   },
   "deployed": {
     "devnet": "2026-09-22, byte-verified",
-    "mainnet": "2026-09-24, Squads upgrade executed (sig 5KsJbc247DJNHLoqkR1b8MZW9kdt54yLxjjZxMAdbLUA49mDE5ZrtFafoU32Uj4LFcVDFpTNKwTA5Ps8qpVHNhbp), slot 449849762, ProgramData byte-verified: candidate + zero padding"
+    "mainnet": "2026-09-24, Squads upgrade #15 executed (sig 5KsJbc247DJNHLoqkR1b8MZW9kdt54yLxjjZxMAdbLUA49mDE5ZrtFafoU32Uj4LFcVDFpTNKwTA5Ps8qpVHNhbp, slot 449849762); overwritten by the mis-targeted treasury proposal #16 (slot 449859880); RESTORED by proposal #17 created from the terminal (sig 5xeTMQ8KNzFNqkrXeSqR8ThyLN3hRyaCToW4vkENP6BWxfnyc1sj2ajhf7esDqiqVNNM39kwtivfYqyaLrwqdYw, slot 449877289), ProgramData byte-verified: candidate + zero padding"
   },
   "consumers": {
     "SOLANA_LAUNCHPAD_PROGRAM_SHA256": "API deployment evidence (audit trail on every create authorization) and the canary",

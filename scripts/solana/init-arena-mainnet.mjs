@@ -137,7 +137,10 @@ async function main() {
     const line = (label, value) => console.log(`    ${label.padEnd(26)} ${value}`);
     console.log("[init-arena] mainnet state");
     line("rewards_config", `${rewardsConfig.toBase58()} authority=${config.authority.toBase58()}`);
-    line("route_state.overflow", route.overflowTreasury.toBase58());
+    // Fetched fresh: `route` above is the pre-run read, and the closing report
+    // after --execute once printed the old overflow because of it.
+    const routeNow = await program.account.routeState.fetch(routeState);
+    line("route_state.overflow", routeNow.overflowTreasury.toBase58());
     line("arena_config", arena ? `${arenaConfig.toBase58()} resolver=${arena.resolver.toBase58()}` : "MISSING");
     if (arena) {
       line("  protocol receiver", arena.protocolReceiver.toBase58());

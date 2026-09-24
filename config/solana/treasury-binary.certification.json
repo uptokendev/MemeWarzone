@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "purpose": "The one place the certified rewards-treasury binary is named. Sibling of launchpad-binary.certification.json. propose-squads-upgrade.mjs refuses a buffer whose bytes are not the binary certified for the program it is asked to upgrade: on 2026-09-24 a proposal put treasury bytes into the launchpad program, and no tool in the path knew that the two did not belong together.",
+  "program": {
+    "id": "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX",
+    "label": "MemeWarzone rewards treasury"
+  },
+  "certifiedBy": {
+    "gate": "scripts/solana/run-local-sbf-gate.sh (treasury gate, 14 tests, 47/47 instructions executed) and cargo test -p mwz_rewards_treasury --lib (22)",
+    "date": "2026-09-22"
+  },
+  "artifact": {
+    "sha256": "1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95",
+    "bytes": 1306640,
+    "localPath": "target/deploy/mwz_rewards_treasury.so"
+  },
+  "deployed": {
+    "devnet": "not upgraded to this candidate (devnet runs 5638c992\u2026)",
+    "mainnet": "2026-09-24, Squads proposal #18 created from the terminal (propose-squads-upgrade.mjs), executed sig 3tpjQoiCdaNEfsnxQySULCcR1RpArTBgxgag1NZ8boxJs2RUJFxD8PPXmzTQWe6E6CCY9buCQvCAHgbfnRCjaKnf, slot 449990075; ProgramData byte-verified == candidate (allocation equals the binary, no padding); previous binary 7e159b69\u2026 (slot 449850861)"
+  },
+  "consumers": {
+    "note": "The API and indexer read no treasury program hash. Do not put this value into SOLANA_LAUNCHPAD_PROGRAM_SHA256."
+  }
+}
