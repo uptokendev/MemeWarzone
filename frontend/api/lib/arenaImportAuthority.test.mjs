@@ -63,7 +63,8 @@ test("4 hard structural failure is non-overridable and admin approval blocks it"
   assert.equal(classifyFinding("not_a_mint").authority, FINDING_AUTHORITY.NON_OVERRIDABLE);
   assert.equal(classifyFinding("honeypot_sell_failed").authority, FINDING_AUTHORITY.NON_OVERRIDABLE);
   assert.equal(classifyFinding("non_transferable").authority, FINDING_AUTHORITY.NON_OVERRIDABLE);
-  assert.match(adminSource, /decision === "approve" && hasNonOverridableFinding\(row\)/);
+  // Blocks on the stored evidence AND on the fresh scan approval now takes (2026-09-24).
+  assert.match(adminSource, /decision === "approve" && \(hasNonOverridableFinding\(row\) \|\| hasNonOverridableFinding\(\{ scan_json: freshScan\?\.scan \|\| \{\} \}\)\)/);
   assert.match(adminSource, /IMPORT_NON_OVERRIDABLE_FINDING/);
 });
 

@@ -68,6 +68,24 @@ async function resolveCreator(chainId, campaignAddress) {
   } catch {
     // fall through
   }
+  // Imported tokens: the listing key is the token address, and only an owner whose
+  // ownership was verified on the import may list it (pending claims may not).
+  try {
+    const { rows } = await pool.query(
+      `select lower(project_owner_wallet) as creator
+         from public.arena_token_imports
+        where chain_id = $1
+          and lower(token_address) = lower($2)
+          and ownership_status = 'ownership_verified'
+          and project_owner_wallet is not null
+        order by ownership_verified_at desc nulls last
+        limit 1`,
+      [chainId, campaignAddress],
+    );
+    if (rows[0]?.creator) return String(rows[0].creator);
+  } catch {
+    // fall through
+  }
   return null;
 }
 

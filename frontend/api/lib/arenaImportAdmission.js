@@ -58,11 +58,45 @@ export async function loadTrustedImportProfile(query, chainId, token) {
   }
 }
 
+const SCAN_STATUSES = new Set(["passed", "needs_review", "declined"]);
+
+export function isFailedAdmissionScan(scan) {
+  const reasons = Array.isArray(scan?.scan?.reasons) ? scan.scan.reasons : [];
+  return reasons.includes("scan_failed") || Boolean(scan?.scan?.error);
+}
+
+/** An admin decision is a reviewed row: the admin decision route is the only writer of reviewed_at. */
+export function hasAdminDecision(row) {
+  return Boolean(row?.reviewed_at) && (String(row?.status) === "passed" || String(row?.status) === "declined");
+}
+
+/**
+ * What a (re)scan may do to a row's status.
+ *
+ * - First scan (status `scanning`): the scan decides; a failed scan is needs_review.
+ * - An admin decision sticks. A manually approved import stays `passed` on every
+ *   scheduled rescan -- only a hard failure (`declined`: a non-overridable finding
+ *   such as a honeypot) can take it out, because no reviewer may override one.
+ *   A manual decline stays declined.
+ * - A failed scan (RPC down) never overwrites an already decided row: returns null,
+ *   meaning "write nothing", so the row keeps its status and goes stale honestly
+ *   instead of flapping out of battles on a transient error.
+ */
+export function decideAdmissionStatus(row, scan) {
+  const current = String(row?.status || "scanning");
+  const scanned = SCAN_STATUSES.has(String(scan?.status || "")) ? String(scan.status) : "needs_review";
+  if (isFailedAdmissionScan(scan)) return current === "scanning" ? "needs_review" : null;
+  if (hasAdminDecision(row)) {
+    if (current === "declined") return "declined";
+    return scanned === "declined" ? "declined" : "passed";
+  }
+  return scanned;
+}
+
 export async function applyAdmissionScan(query, project, scan, trusted = null) {
   if (!project?.id) return project;
-  const status = ["passed", "needs_review", "declined"].includes(String(scan?.status || ""))
-    ? String(scan.status)
-    : "needs_review";
+  const status = decideAdmissionStatus(project, scan);
+  if (status === null) return project;
   const result = await query(
     `update public.arena_token_imports
         set status = $2,

@@ -114,6 +114,21 @@ async function mutateDecision({ id, body, admin, desiredStatus, decision }) {
   }
   if (!reason) return { http: 400, body: { ok: false, error: "reason is required", code: "IMPORT_REASON_REQUIRED" } };
 
+  // Approval makes the import battle-eligible, and eligibility needs a fresh scan
+  // (arenaImportEligibility importScanFreshness). Approving on an old scan used to
+  // leave the coin out of battles until some later rescan. Scan first, outside the
+  // row lock; the fresh evidence is what the decision is taken on.
+  let freshScan = null;
+  if (decision === "approve") {
+    const before = await pool.query(`select chain_id, token_address from public.arena_token_imports where id = $1::uuid limit 1`, [id]);
+    if (!before.rows[0]) return { http: 404, body: { ok: false, error: "Import not found", code: "IMPORT_NOT_FOUND" } };
+    try {
+      freshScan = await scanToken(Number(before.rows[0].chain_id), String(before.rows[0].token_address));
+    } catch (error) {
+      return { http: 503, body: { ok: false, error: `Could not rescan before approving (${String(error?.message || error).slice(0, 120)}). Try again.`, code: "IMPORT_APPROVAL_RESCAN_FAILED" } };
+    }
+  }
+
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -127,7 +142,7 @@ async function mutateDecision({ id, body, admin, desiredStatus, decision }) {
       await client.query("rollback");
       return { http: 403, body: { ok: false, error: "Importer cannot adjudicate their own import.", code: "IMPORT_SELF_REVIEW_FORBIDDEN" } };
     }
-    if (decision === "approve" && hasNonOverridableFinding(row)) {
+    if (decision === "approve" && (hasNonOverridableFinding(row) || hasNonOverridableFinding({ scan_json: freshScan?.scan || {} }))) {
       await client.query("rollback");
       return { http: 422, body: { ok: false, error: "Non-overridable scanner finding blocks approval.", code: "IMPORT_NON_OVERRIDABLE_FINDING", actionPolicy: actionPolicy(row, admin) } };
     }
@@ -153,18 +168,35 @@ async function mutateDecision({ id, body, admin, desiredStatus, decision }) {
     }
 
     const reviewer = reviewerIdentity(admin);
-    const updated = await client.query(
-      `update public.arena_token_imports
-          set status = $2,
-              review_reason = $3,
-              reviewer = $4,
-              reviewed_at = now(),
-              state_version = state_version + 1,
-              updated_at = now()
-        where id = $1::uuid and state_version = $5
-        returning *`,
-      [id, desiredStatus, reason, reviewer, expectedVersion],
-    );
+    const updated = freshScan
+      ? await client.query(
+          `update public.arena_token_imports
+              set status = $2,
+                  review_reason = $3,
+                  reviewer = $4,
+                  reviewed_at = now(),
+                  scan_json = $6::jsonb,
+                  scan_version = $7,
+                  scanned_at = $8::timestamptz,
+                  evidence_version = $9,
+                  state_version = state_version + 1,
+                  updated_at = now()
+            where id = $1::uuid and state_version = $5
+            returning *`,
+          [id, desiredStatus, reason, reviewer, expectedVersion, JSON.stringify(freshScan.scan || {}), freshScan.scanVersion, freshScan.scannedAt, evidenceVersion(freshScan.scan)],
+        )
+      : await client.query(
+          `update public.arena_token_imports
+              set status = $2,
+                  review_reason = $3,
+                  reviewer = $4,
+                  reviewed_at = now(),
+                  state_version = state_version + 1,
+                  updated_at = now()
+            where id = $1::uuid and state_version = $5
+            returning *`,
+          [id, desiredStatus, reason, reviewer, expectedVersion],
+        );
     if (!updated.rows[0]) {
       await client.query("rollback");
       return { http: 409, body: { ok: false, error: "Import state changed before this decision.", code: "IMPORT_STATE_CONFLICT" } };
