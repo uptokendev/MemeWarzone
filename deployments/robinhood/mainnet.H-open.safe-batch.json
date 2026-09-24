@@ -1,0 +1,61 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1790260071248,
+  "meta": {
+    "name": "MWZ Robinhood mainnet H: open the doors",
+    "description": "Factory 0x35E93D0b: enableLive (irreversible) + setCreatePaused(false); war pool 0xD3E00E47: setDepositsPaused(false). Execute only after the env (D), the canary (G) and the go. Import in Safe Transaction Builder on Robinhood Chain (Safe 0x1edcEdf5).",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA",
+      "value": "0",
+      "data": "0x7815b4b4",
+      "contractMethod": {
+        "inputs": [],
+        "name": "enableLive",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    },
+    {
+      "to": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA",
+      "value": "0",
+      "data": "0x83bcec850000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setCreatePaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "false"
+      }
+    },
+    {
+      "to": "0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C",
+      "value": "0",
+      "data": "0x1c481e2d0000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setDepositsPaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "false"
+      }
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1790260064348,
+  "meta": {
+    "name": "MWZ BNB mainnet H: open the doors",
+    "description": "Factory 0x632061cA: enableLive (irreversible) + setCreatePaused(false); war pool 0xe69a6a41: setDepositsPaused(false). Execute only after the env (D), the canary (G) and the go. Import in Safe Transaction Builder on BNB (Safe 0x1edcEdf5).",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+      "value": "0",
+      "data": "0x7815b4b4",
+      "contractMethod": {
+        "inputs": [],
+        "name": "enableLive",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    },
+    {
+      "to": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+      "value": "0",
+      "data": "0x83bcec850000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setCreatePaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "false"
+      }
+    },
+    {
+      "to": "0xe69a6a41363a48179beaB9b1E6122885bbFe8C65",
+      "value": "0",
+      "data": "0x1c481e2d0000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setDepositsPaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "false"
+      }
+    }
+  ]
+}

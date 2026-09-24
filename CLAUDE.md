@@ -1115,6 +1115,20 @@ reads the body the same way, so this covers Solana create authorization too.
 Draft content is not cached in the browser (only an owner-session key), so a
 user with an unsaved draft must keep the tab open until the fix is deployed.
 
+### Explorer verification and vault caps — done 2026-09-24
+
+All mainnet contracts are source-verified: **BscScan 12/12**
+(`scripts/verify-mainnet-contracts.ts`, Etherscan v2 API) and **Sourcify 22/22**
+for Robinhood (`scripts/sourcify-verify.mjs`; Blockscout blocks scripts with a
+Cloudflare challenge and reads Sourcify; hardhat-verify 2.1.3 still targets
+Sourcify's retired v1). Arguments live in
+`config/verification/mainnet-contracts.json` — add every future deployment
+there. Both `ProtocolRevenueVault`s are armed (operator `0x4CB68C7e…`, overflow
+the Safe, lifetime $10k); BNB UP votes now enter the vault; Robinhood has its
+own `UPVoteTreasury` `0x8C8141B8…`; the sponsorship rail
+(`EventPrizeVaultV1` + `WarzoneSponsorshipRouterV1`) is deployed Safe-owned on
+both chains with the boost signer as quote signer, no event enabled yet.
+
 ### Binding tokens on EVM — facts read 2026-09-24 (launch requirement)
 
 - **Robinhood stock adapter `0xa48723e3…` had no campaign factory bound**

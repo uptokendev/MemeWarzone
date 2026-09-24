@@ -78,7 +78,12 @@ export function verifyBatchFile(file: string, expectedChainId: number, expectedT
     if (expectedTo && tx.to.toLowerCase() !== expectedTo.toLowerCase()) throw new Error(`tx to ${tx.to} != ${expectedTo}`);
     if (tx.value !== "0") throw new Error(`tx ${tx.contractMethod.name} carries value ${tx.value}`);
     const sig = `function ${tx.contractMethod.name}(${tx.contractMethod.inputs.map((i: any) => `${i.type} ${i.name}`).join(",")})`;
-    const args = tx.contractMethod.inputs.map((i: any) => tx.contractInputsValues[i.name]);
+    // The Builder stores every value as a string; a bool must be read back as one
+    // or "false" re-encodes as true and the check fails on a correct batch.
+    const args = tx.contractMethod.inputs.map((i: any) => {
+      const v = tx.contractInputsValues[i.name];
+      return i.type === "bool" ? v === true || String(v).toLowerCase() === "true" : v;
+    });
     const data = new ethers.Interface([sig]).encodeFunctionData(tx.contractMethod.name, args);
     if (data.toLowerCase() !== tx.data.toLowerCase()) throw new Error(`data mismatch on ${tx.contractMethod.name}`);
   }
