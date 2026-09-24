@@ -1100,6 +1100,20 @@ possible without anyone's browser wallet key.
   through `tests/solana/package.json`, so they run from the repo root.
 - The Squads v4 program itself is immutable (ProgramData has no authority).
 
+### Live bug 2026-09-24: Solana draft save refused ("require canonical chain 101…")
+
+User report with screenshot. `frontend/api/dev-fix/drafts.js` resolves the
+Solana identity from the **request body first** (`body.cluster` before
+`SOLANA_CLUSTER`), and `Create.tsx` sends `cluster: VITE_SOLANA_CLUSTER`, which
+`.env.example` and `chainRegistry.ts` spell `solana-mainnet-beta`; the shared
+resolver `frontend/shared/solanaCurrentAuthority.mjs` accepted only
+`mainnet-beta`. Present on live since before 2026-09-22 (commit `46750e0f`),
+not caused by today's push. Fixed at the resolver: the registry-key spellings
+map to the bare cluster, everything else still fails closed; `draft-deploy.js`
+reads the body the same way, so this covers Solana create authorization too.
+Draft content is not cached in the browser (only an owner-session key), so a
+user with an unsaved draft must keep the tab open until the fix is deployed.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and

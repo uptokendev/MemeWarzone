@@ -33,6 +33,23 @@ test("101 + production + mainnet-beta is canonical production authority", () => 
   assert.equal(isCurrentSolanaProductionAuthority({ chainId: 101, environment: "production", cluster: "mainnet-beta" }), true);
 });
 
+test("the app's registry-key cluster names resolve to the same authority (the 2026-09-24 draft-save failure)", () => {
+  // Create.tsx sends cluster: VITE_SOLANA_CLUSTER, which .env.example ships as "solana-mainnet-beta".
+  assert.deepEqual(
+    resolveCurrentSolanaAuthority({ chainId: 101, environment: "production", cluster: "solana-mainnet-beta" }),
+    { chainId: 101, environment: "production", cluster: "mainnet-beta" },
+  );
+  assert.deepEqual(
+    resolveCurrentSolanaAuthority({ chainId: 101, environment: "staging", cluster: "solana-devnet" }),
+    { chainId: 101, environment: "staging", cluster: "devnet" },
+  );
+  // Crossed pairs and other spellings still fail closed.
+  assert.equal(resolveCurrentSolanaAuthority({ chainId: 101, environment: "production", cluster: "solana-devnet" }), null);
+  assert.equal(resolveCurrentSolanaAuthority({ chainId: 101, environment: "staging", cluster: "solana-mainnet-beta" }), null);
+  assert.equal(resolveCurrentSolanaAuthority({ chainId: 101, environment: "production", cluster: "mainnet" }), null);
+  assert.equal(resolveCurrentSolanaAuthority({ chainId: 101, environment: "production", cluster: "solana-mainnet" }), null);
+});
+
 test("environment-sensitive Solana authority fails closed when identity is missing, invalid, or crossed", () => {
   const invalid = [
     { chainId: 101, cluster: "devnet" },

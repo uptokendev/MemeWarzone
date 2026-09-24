@@ -15,8 +15,15 @@ export function normalizeSolanaEnvironment(value) {
 
 export function normalizeSolanaCluster(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized === SOLANA_DEVNET_CLUSTER) return SOLANA_DEVNET_CLUSTER;
-  if (normalized === SOLANA_MAINNET_CLUSTER) return SOLANA_MAINNET_CLUSTER;
+  // The app names clusters by chain-registry key -- "solana-devnet" /
+  // "solana-mainnet-beta" (chainRegistry.ts, .env.example, Create.tsx's draft
+  // body) -- while this resolver knew only the bare names. drafts.js and
+  // draft-deploy.js read the body's cluster before the API env, so every Solana
+  // draft save from a production build failed with "Solana drafts require
+  // canonical chain 101 ..." (user report 2026-09-24). Both spellings are the
+  // same cluster; anything else still fails closed.
+  if (normalized === SOLANA_DEVNET_CLUSTER || normalized === `solana-${SOLANA_DEVNET_CLUSTER}`) return SOLANA_DEVNET_CLUSTER;
+  if (normalized === SOLANA_MAINNET_CLUSTER || normalized === `solana-${SOLANA_MAINNET_CLUSTER}`) return SOLANA_MAINNET_CLUSTER;
   return "";
 }
 
