@@ -1179,6 +1179,21 @@ cannot offer creators a binding that cannot complete. The stock create path
 also needs `ROBINHOOD_STOCK_GRADUATION=true` **and** `ROBINHOOD_STOCK_MARKETS=true`
 on the API; both were missing from the go-live env until 2026-09-24.
 
+### Two create-path bugs found by the founder's first mainnet tests (2026-09-24)
+
+- **Robinhood create died on the last step: "chain 4663 requires 4/2".** The API's
+  generation gate had moved to per-chain factory/campaign pairs (RH 4/3), but
+  `frontend/src/lib/scheduledLaunchClientV2.ts` kept its own copy of the old rule.
+  The copy is now the same pair table with numeric keys, and
+  `route-authorization-signer.test.mjs` parses it and fails on drift. **When the
+  API rule changes, the client mirror changes in the same commit.**
+- **Solana direct-create answered 500 "Server error [TICKER_UNAVAILABLE]" for a
+  taken ticker.** `solanaDirectCreateV4` did `return handleX(body, res)` inside
+  its try; a returned promise's rejection skips the catch, so the route's own
+  409 mapping never ran and the server's last-resort handler sent 500. Now
+  `return await`, pinned by `solana-direct-create-dispatch.test.mjs`. Grep any
+  new route for the same shape before trusting its catch.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and

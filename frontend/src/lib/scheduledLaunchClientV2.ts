@@ -44,32 +44,42 @@ const ROBINHOOD_MAINNET_CHAIN_ID = 4663;
 const LOCAL_HARDHAT_CHAIN_ID = 31337;
 const ROBINHOOD_CHAIN_IDS = new Set([ROBINHOOD_MAINNET_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID]);
 
-/** Mirror of frontend/api/dev-fix/routeAuthorizationSigner.js expectedCampaignGeneration(). */
-function expectedCampaignGeneration(chainId: number): number {
-  const id = Number(chainId);
-  if (id === ROBINHOOD_TESTNET_CHAIN_ID || id === LOCAL_HARDHAT_CHAIN_ID) return 3;
-  return 2;
+/**
+ * Mirror of ALLOWED_GENERATION_PAIRS in frontend/api/dev-fix/routeAuthorizationSigner.js:
+ * the factory/campaign generation pairs a chain accepts. The API is the authority;
+ * this copy only lets the client refuse early with the same words. Numeric keys on
+ * purpose: routeAuthorizationSigner.test.mjs parses this table and fails when the
+ * two drift (on 2026-09-24 this copy still demanded 4/2 on Robinhood while the API
+ * and the mainnet factory were 4/3, and every Robinhood create died on the last step).
+ */
+const ALLOWED_GENERATION_PAIRS: Record<number, ReadonlyArray<readonly [number, number]>> = {
+  56: [[3, 2], [4, 2], [4, 3]],
+  97: [[3, 2], [4, 2], [4, 3]],
+  4663: [[4, 3]],
+  46630: [[4, 3]],
+  31337: [[4, 3]],
+};
+
+function supportedGenerationPairs(chainId: number): ReadonlyArray<readonly [number, number]> {
+  return ALLOWED_GENERATION_PAIRS[Number(chainId)] ?? [];
 }
 
-function isSupportedFactoryGeneration(chainId: number, generation: number): boolean {
-  if (ROBINHOOD_CHAIN_IDS.has(Number(chainId))) return generation === 4;
-  // Existing BNB factories are generation 3. Generation 4 remains acceptable for
-  // a future BNB factory built from the liquidity-kind-aware source.
-  return generation === 3 || generation === 4;
+function isSupportedGenerationPair(chainId: number, factoryGeneration: number, campaignGeneration: number): boolean {
+  const factory = Number(factoryGeneration);
+  const campaign = Number(campaignGeneration);
+  return supportedGenerationPairs(chainId).some(([f, c]) => f === factory && c === campaign);
 }
 
 function generationRule(chainId: number): string {
-  const id = Number(chainId);
-  if (id === ROBINHOOD_TESTNET_CHAIN_ID || id === LOCAL_HARDHAT_CHAIN_ID) return "4/3";
-  if (ROBINHOOD_CHAIN_IDS.has(id)) return "4/2";
-  return "3-or-4/2";
+  const pairs = supportedGenerationPairs(chainId);
+  return pairs.length ? pairs.map(([f, c]) => `${f}/${c}`).join("-or-") : "unsupported chain";
 }
 
 function assertSupportedGeneration(chainId: number, factoryGeneration: number, campaignGeneration: number) {
-  if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== expectedCampaignGeneration(chainId)) {
+  if (!isSupportedGenerationPair(chainId, factoryGeneration, campaignGeneration)) {
     throw new Error(
       `The configured factory is generation ${factoryGeneration}/${campaignGeneration}; ` +
-        `chain ${chainId} requires ${generationRule(chainId)}.`,
+        `chain ${chainId} allows ${generationRule(chainId)}.`,
     );
   }
 }

@@ -1310,10 +1310,13 @@ export async function solanaDirectCreateV4(req, res) {
   try {
     const body = await readJson(req);
     const operation = String(body.operation || "").trim().toLowerCase();
-    if (operation === "preflight") return handlePreflight(body, res);
-    if (operation === "begin") return handleBegin(body, res);
-    if (operation === "authorize") return handleAuthorize(body, res);
-    if (operation === "finalize") return handleFinalize(body, res);
+    // `return await`, not `return`: a returned promise's rejection skips this
+    // try/catch, so a 409 TickerReservationError reached the server's last-resort
+    // handler and went out as a 500 "Server error [TICKER_UNAVAILABLE]" (2026-09-24).
+    if (operation === "preflight") return await handlePreflight(body, res);
+    if (operation === "begin") return await handleBegin(body, res);
+    if (operation === "authorize") return await handleAuthorize(body, res);
+    if (operation === "finalize") return await handleFinalize(body, res);
     throw new SolanaDirectCreateError("Unknown Solana Direct operation.", {
       code: "SOLANA_DIRECT_OPERATION_INVALID",
       httpStatus: 400,

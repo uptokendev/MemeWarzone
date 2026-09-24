@@ -241,3 +241,24 @@ test("BNB and Robinhood production sign for the deployed 4/3 generation; legacy 
     /Robinhood scheduled authorization requires factory generation 4/,
   );
 });
+
+test("the client mirror in scheduledLaunchClientV2.ts carries exactly the API's generation pairs", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { supportedGenerationPairs } = await import("./routeAuthorizationSigner.js");
+  const source = fs.readFileSync(path.resolve(process.cwd(), "src/lib/scheduledLaunchClientV2.ts"), "utf8");
+  const table = source.match(/const ALLOWED_GENERATION_PAIRS[^=]*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(table, "client table not found");
+  const mirrored = new Map();
+  for (const line of table[1].split("\n")) {
+    const row = line.match(/^\s*(\d+):\s*\[(.*)\],?\s*$/);
+    if (!row) continue;
+    mirrored.set(Number(row[1]), [...row[2].matchAll(/\[(\d+),\s*(\d+)\]/g)].map((m) => [Number(m[1]), Number(m[2])]));
+  }
+  assert.deepEqual([...mirrored.keys()].sort((a, b) => a - b), [56, 97, 4663, 31337, 46630].sort((a, b) => a - b), "same chains on both sides");
+  for (const [chainId, pairs] of mirrored) {
+    assert.deepEqual(pairs, supportedGenerationPairs(chainId), `chain ${chainId}: client pairs must equal the API's`);
+  }
+  // the words a creator sees: "allows 4/3", never the stale "requires 4/2"
+  assert.match(source, /chain \$\{chainId\} allows \$\{generationRule\(chainId\)\}/);
+});
