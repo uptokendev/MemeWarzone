@@ -298,3 +298,23 @@ certified binary. Four things it will refuse:
   `HbmmrEjPJL7hvrk7DJrvwFSqqFoNz9yiyzoFxAmEzZZv`, holding 7.55857772 SOL on the
   devnet deployer's authority. It predates this work. Reclaim with
   `solana program close` if it is not wanted.
+
+## Decode the proposal before anyone signs — mandatory since 2026-09-24
+
+A proposal that kept the previous Program field deployed the treasury buffer
+over the launchpad. The loader's `Upgrade` does not check that a buffer belongs
+to a program, and the Squads UI review did not catch it. Before any signature,
+read the pending VaultTransaction back from chain:
+
+```
+cd tests/solana && SOLANA_RPC_URL=<rpc> node ../../scripts/solana/decode-squads-proposal.mjs \
+  --latest C43Ddmgt3iC9PTeHLyiQvtUtFAXC7U2v3d7KyzdF5YzY \
+  --program <program id> --buffer <buffer> \
+  --spill 9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H \
+  --authority fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv
+```
+
+It parses the raw Squads v4 layout (no SDK) and prints the `Upgrade` by role.
+Sign only on `PROPOSAL MATCHES — safe to sign`. `C43Ddmgt…` is the multisig
+PDA; `fk5YYWb…` is its vault and the upgrade authority. To check an executed
+one, `--sig <signature>` instead of `--latest`.
