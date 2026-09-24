@@ -34,7 +34,7 @@ export function MatchQualityPreview({
 
   if (preview.previewKind === "not_previewed" || preview.ranked == null) {
     return (
-      <div className="mwz-hud-frame space-y-3 p-3" data-match-quality="not-previewed">
+      <div className="space-y-2 rounded-xl border border-border/50 bg-background/30 p-3" data-match-quality="not-previewed">
         <TacticalTag label={NOT_PREVIEWED_LABEL} tone="default" />
         <p className="text-sm text-muted-foreground">{preview.explanation || NOT_PREVIEWED_EXPLANATION}</p>
         {onContinueWithChallenge ? (
@@ -48,7 +48,7 @@ export function MatchQualityPreview({
 
   if (preview.previewKind === "open_war" || preview.ranked === false) {
     return (
-      <div className="mwz-hud-frame space-y-3 p-3" data-match-quality="open-war">
+      <div className="space-y-2 rounded-xl border border-border/50 bg-background/30 p-3" data-match-quality="open-war">
         <TacticalTag label={OPEN_WAR_LABEL} tone="hot" />
         <p className="text-sm text-muted-foreground">{preview.explanation || OPEN_WAR_EXPLANATION}</p>
         {onChallengeAnyway ? (
@@ -61,7 +61,7 @@ export function MatchQualityPreview({
   }
 
   return (
-    <div className="mwz-hud-frame space-y-2 p-3" data-match-quality="ranked">
+    <div className="space-y-2 rounded-xl border border-border/50 bg-background/30 p-3" data-match-quality="ranked">
       <div className="flex flex-wrap items-center gap-2">
         <TacticalTag label={preview.classificationLabel || "Match"} tone="success" />
         <TacticalTag label="Ranked" tone="sponsored" />

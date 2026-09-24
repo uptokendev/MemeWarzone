@@ -214,6 +214,9 @@ test("Battle Wall header opens Command Center Challenge a coin", () => {
   assert.match(command, /location\.hash !== "#command-center-challenge"/);
   assert.match(modal, /challengePostGradBattle/);
   assert.match(modal, /They must accept before the fight goes live/);
+  assert.match(modal, /CreateSplitPane/);
+  assert.match(modal, /CreateWizardShell/);
+  assert.doesNotMatch(modal, /mwz-hud-frame/);
 });
 
 test("Battle Wall Phase 1-3, AUTO DEPLOY, and Find Match remain untouched", () => {
