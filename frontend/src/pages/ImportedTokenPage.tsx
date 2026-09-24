@@ -10,6 +10,7 @@ import { TokenComments } from "@/components/token/TokenComments";
 import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { UnifiedMarketChart } from "@/components/token/UnifiedMarketChart";
 import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
+import { CrypticPumpBadge, CrypticPumpListButton, fetchCrypticPumpListing, type CrypticPumpListingData } from "@/components/token/CrypticPumpListing";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -141,6 +142,7 @@ export default function ImportedTokenPage({
   const [ownerProfile, setOwnerProfile] = useState<UserProfile | null>(null);
   const [following, setFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
+  const [crypticPumpListing, setCrypticPumpListing] = useState<CrypticPumpListingData | null>(null);
   const [activityTab, setActivityTab] = useState<"chart" | "trades" | "comments">("chart");
   const [challengeOpen, setChallengeOpen] = useState(false);
   const { price: nativeUsd } = useNativeUsdPrice(item.chainId);
@@ -181,6 +183,19 @@ export default function ImportedTokenPage({
     void isFollowingCampaign(follower, item.tokenAddress, item.chainId).then(setFollowing).catch(() => setFollowing(false));
   }, [item.chainId, item.tokenAddress, solana, solanaWallet.solanaAccount, wallet.account]);
   const connectedWallet = solana ? solanaWallet.solanaAccount : wallet.account;
+  // CrypticPump listing (public badge). Imports list under their token address; the API only
+  // lets the verified project owner create the listing (crypticpump-listings.js resolveCreator).
+  useEffect(() => {
+    let cancelled = false;
+    setCrypticPumpListing(null);
+    void fetchCrypticPumpListing(item.chainId, item.tokenAddress).then((listing) => {
+      if (!cancelled) setCrypticPumpListing(listing);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [item.chainId, item.tokenAddress]);
+
   const ownerVerified = item.ownershipStatus === "ownership_verified";
   const ownerConnected = sameWallet(connectedWallet, item.projectOwnerWallet, solana);
   const canEdit = ownerVerified && ownerConnected;
@@ -482,6 +497,22 @@ export default function ImportedTokenPage({
           {postGradFlags.arena ? (
             <Card className="bg-card/30 rounded-2xl border border-border p-4">
               <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" />
+              {crypticPumpListing?.listingUrl ? (
+                <CrypticPumpBadge listingUrl={crypticPumpListing.listingUrl} className="mt-3" />
+              ) : canEdit ? (
+                <CrypticPumpListButton
+                  className="mt-3"
+                  chainId={item.chainId}
+                  campaignAddress={item.tokenAddress}
+                  tokenAddress={item.tokenAddress}
+                  name={item.name || null}
+                  ticker={item.symbol || null}
+                  website={item.website || null}
+                  creatorWallet={String(connectedWallet || "")}
+                  listing={crypticPumpListing}
+                  onListed={setCrypticPumpListing}
+                />
+              ) : null}
             </Card>
           ) : null}
           {warRoomOpen ? (

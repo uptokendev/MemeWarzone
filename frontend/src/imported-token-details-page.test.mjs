@@ -181,3 +181,11 @@ test("claim image backfill updates the rendered imported project immediately", (
   assert.match(claimDialog, /if\(resolved\.imageUrl\) onResolvedImage\?\.\(resolved\.imageUrl\)/);
   assert.match(entry, /onResolvedImage=\{\(imageUrl\) => setProject/);
 });
+
+test("imported page: CrypticPump badge for everyone once listed, list button only for the connected verified owner", () => {
+  assert.match(page, /fetchCrypticPumpListing\(item\.chainId, item\.tokenAddress\)/);
+  assert.match(page, /crypticPumpListing\?\.listingUrl \? \(\s*<CrypticPumpBadge/);
+  assert.match(page, /\) : canEdit \? \(\s*<CrypticPumpListButton/);
+  assert.match(page, /campaignAddress=\{item\.tokenAddress\}/);
+});
+
