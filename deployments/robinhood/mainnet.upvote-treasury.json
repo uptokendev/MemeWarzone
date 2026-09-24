@@ -1,0 +1,28 @@
+{
+  "network": "robinhoodMainnet",
+  "chainId": 4663,
+  "deployedAt": "2026-09-24T11:39:43.180Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "contracts": {
+    "UPVoteTreasury": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa"
+  },
+  "owner": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "feeReceiver": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+  "nativeVoting": {
+    "enabled": true,
+    "minAmount": "0"
+  },
+  "env": {
+    "app": {
+      "VITE_VOTE_TREASURY_ADDRESS_4663": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa"
+    },
+    "api": {
+      "VOTE_TREASURY_ADDRESS_4663": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+      "VITE_VOTE_TREASURY_ADDRESS_4663": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa"
+    },
+    "indexer": {
+      "VOTE_TREASURY_ADDRESS_4663": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+      "VOTE_TREASURY_START_BLOCK_4663": "71340669"
+    }
+  }
+}

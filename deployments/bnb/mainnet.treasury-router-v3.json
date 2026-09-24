@@ -1,0 +1,18 @@
+{
+  "network": "bscMainnet",
+  "chainId": 56,
+  "deployedAt": "2026-09-23T20:03:58.483Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "admin": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "adminIsDeployer": false,
+  "wired": false,
+  "contracts": {
+    "TreasuryRouterV3": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+    "CommunityRewardsVault": "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e",
+    "CreatorRewardsVault": "0x72A963682B261195EB43F8f75e0515ab279EbD14",
+    "weeklyLeagueVault": "0xC9286EE3390A4dC642340bd703396E6B7b2521d5",
+    "monthlyLeagueTreasury": "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8",
+    "recruiterRewardsVault": "0x40ac5cD71bdB42cCF542b7f96C2083cDABa41e78",
+    "protocolRevenueVault": "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c"
+  }
+}

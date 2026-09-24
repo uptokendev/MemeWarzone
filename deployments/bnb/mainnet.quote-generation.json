@@ -1,0 +1,63 @@
+{
+  "network": "bscMainnet",
+  "chainId": 56,
+  "deployedAt": "2026-09-23T20:30:03.756Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "owner": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "status": "deployed-paused",
+  "inputs": {
+    "topazRouter": "0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a",
+    "topazQuoteRouter": "0x1E98c8226e7d452e1888e3d3d2F929346321c6c3",
+    "treasuryRouter": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+    "graduationOracle": "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B",
+    "creatorRegistry": "0x8194FB3745d027102ce7Da562c7045f28B2f42fD",
+    "riskRegistry": "0x92b1494CF7b80dA379EB96F59EeE4Ae7F8970597",
+    "routeAuthority": "0xb989A99823eA96552c3E3198A40CdBF682EDf1aA",
+    "nativeUsdFeed": "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE"
+  },
+  "contracts": {
+    "BnbBasicLaunchFactory": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+    "PermanentLpLocker": "0xdd41E0d13c637657A28b60F860205048221F325A",
+    "LaunchCampaignImplementation": "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
+    "BnbQuoteLaunchCampaign": "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7",
+    "BnbQuoteGraduationAdapter": "0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee",
+    "PostGradLeagueTreasuryV2": "0xD9E381408A4e361C66D8b1e657583bdE6c52402d",
+    "ArenaWarPoolTreasuryV2": "0xe69a6a41363a48179beaB9b1E6122885bbFe8C65"
+  },
+  "config": {
+    "totalSupply": "1000000000000000000000000000",
+    "curveBps": "8400",
+    "liquidityTokenBps": "1400",
+    "basePrice": "1000000000",
+    "priceSlope": "850",
+    "graduationTarget": "30000000000000000000000",
+    "liquidityBps": "3300"
+  },
+  "protocolFeeBps": "200",
+  "launchRecorderWired": false,
+  "lpLockerAuthorized": false,
+  "pendingOwnerActions": [
+    {
+      "to": "0x8194FB3745d027102ce7Da562c7045f28B2f42fD",
+      "data": "0x422b76f5000000000000000000000000632061ca786f7b585bbd46a792fda92b02f706710000000000000000000000000000000000000000000000000000000000000001",
+      "why": "setLaunchRecorder(factory, true); CREATE reverts NotLaunchRecorder without it"
+    },
+    {
+      "to": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+      "data": "0xacb9fef6000000000000000000000000dd41e0d13c637657a28b60f860205048221f325a0000000000000000000000000000000000000000000000000000000000000001",
+      "why": "first locker on this router, so one call is enough"
+    },
+    {
+      "to": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+      "data": "0x86afb2f6000000000000000000000000dd41e0d13c637657a28b60f860205048221f325a",
+      "why": "point the router's primary locker at this generation"
+    }
+  ],
+  "next": [
+    "creatorRegistry.setLaunchRecorder(factory, true) from the registry owner -- CREATE is dead until this lands",
+    "treasuryRouter.setAuthorizedLpLocker(locker, true) -- the protocol's 20% of every LP harvest strands until this lands",
+    "configureQuoteRoute on the adapter for each approved quote token",
+    "transfer factory, locker, league and war pool ownership to the Safe",
+    "run the canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false) from the Safe"
+  ]
+}

@@ -928,6 +928,7 @@ needs propose → 3600 s → accept.
 | PostGradLeagueTreasuryV2 | `0x5D5CC19B5BE86BA28b8164f85883F17843B69810` |
 | ArenaWarPoolTreasuryV2 (runtime `0xa902d91e…`) | `0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C` |
 | CreatorRegistry / RiskRegistry | `0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B` / `0xe10e9c26D7CA80390831884CA17919E22fF44938` |
+| UPVoteTreasury (2026-09-24; owner Safe, receiver = ProtocolRevenueVault) | `0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa` (start block 71340669) |
 
 Reused: Uniswap V3 factory `0x1f7d7550…`, position manager `0x73991a25…`,
 SwapRouter02 `0xCaf681a6…`, WETH9 `0x0Bd7D308…`, Chainlink ETH/USD
