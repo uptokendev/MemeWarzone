@@ -152,7 +152,8 @@ test("17 Solana mainnet and devnet scans use the requested chain identity", () =
   assert.match(scannerSource, /if \(id === 102\)[\s\S]*api\.devnet\.solana\.com/);
   assert.match(scannerSource, /export async function scanSolana\(chainId, token\)/);
   assert.match(scannerSource, /new Connection\(rpcUrl\(chainId\), "confirmed"\)/);
-  assert.match(publicImportSource, /scanSolana\(chainId, token\)/);
+  // Since 8269f868 the public create path scans through arenaImportAdmission.js (Project Import is the only entry).
+  assert.match(fs.readFileSync(path.resolve(here, "./arenaImportAdmission.js"), "utf8"), /scanSolana\(chainId, token\)/);
   assert.match(adminSource, /scanSolana\(chainId, token\)/);
 });
 
