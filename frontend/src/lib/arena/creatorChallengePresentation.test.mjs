@@ -262,3 +262,12 @@ test("server Match Quality is copied and never calculated", () => {
   assert.doesNotMatch(source, /calculateMatchQuality|marketCapWeight/);
   assert.equal(initialChallengeDraft(challenge({ durationHours: 72 })).counterDurationHours, 72);
 });
+
+test("Challenge popup: chain is a step-1 choice on the Battle Wall (defaults to the active wallet chain) and fixed from a token page; wallet follows the chosen chain", () => {
+  const modal = readSrc("../../components/arena/ChallengeCoinModal.tsx");
+  assert.match(modal, /const chainLocked = Boolean\(initialTargetId\);/);
+  assert.match(modal, /const chainId = chainLocked \? Number\(chainIdProp \|\| 0\) : chainChoice;/);
+  assert.match(modal, /data-challenge-chain-switch="true"/);
+  assert.match(modal, /fetchRecentArenaImports\(Number\(chainId\), 12\)/);
+  assert.match(modal, /const walletAddress = isSolanaChainId\(chainId\)/);
+});

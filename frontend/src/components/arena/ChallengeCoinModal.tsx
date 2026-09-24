@@ -18,7 +18,10 @@ import {
   type BattleMode,
 } from "@/lib/arena/battleDuration";
 import { presentManualOpponentPreview, presentMatchCandidates } from "@/lib/arena/findMatchPresentation.mjs";
-import { getNativeSymbol } from "@/lib/chainConfig";
+import { getAllowedChainIds, getChainLabel, getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
+import { isEvmAddress, isSolanaAddress } from "@/lib/address";
+import { useWallet } from "@/contexts/WalletContext";
+import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { cn } from "@/lib/utils";
 import type { TokenSearchResult } from "@/types/search";
 
@@ -33,8 +36,8 @@ function tokenKey(status: CreatorBattleStatus) {
 export function ChallengeCoinModal({
   open,
   onOpenChange,
-  walletAddress,
-  chainId,
+  walletAddress: walletAddressProp,
+  chainId: chainIdProp,
   initialTokenId = "",
   initialTargetId = "",
   onSent,
@@ -48,6 +51,26 @@ export function ChallengeCoinModal({
   onSent?: () => void;
 }) {
   const { signAuth } = useArenaWalletAction();
+  const evm = useWallet();
+  const { solanaAccount, isSolanaConnected } = useSolanaWallet();
+  // A challenge is same-chain, so the chain is part of the choice. Opened from a token page
+  // (target given) it is that token's chain and fixed. Opened from the Battle Wall it starts
+  // on the active wallet's chain and can be switched: with MetaMask active that was always
+  // BNB, which has no imports, so the recent-imports row stayed empty (2026-09-25).
+  const chainLocked = Boolean(initialTargetId);
+  const [chainChoice, setChainChoice] = useState<number>(Number(chainIdProp || 0));
+  const chainId = chainLocked ? Number(chainIdProp || 0) : chainChoice;
+  const chainOptions = useMemo(
+    () => getAllowedChainIds().filter((id) => id === 56 || id === 101 || id === 4663 || id === 97 || id === 46630),
+    [],
+  );
+  const walletAddress = isSolanaChainId(chainId)
+    ? isSolanaConnected && isSolanaAddress(solanaAccount)
+      ? String(solanaAccount)
+      : isSolanaAddress(walletAddressProp) ? String(walletAddressProp) : null
+    : evm.isConnected && isEvmAddress(evm.account)
+      ? String(evm.account)
+      : isEvmAddress(walletAddressProp) ? String(walletAddressProp) : null;
   const [step, setStep] = useState(1);
   const [eligible, setEligible] = useState<CreatorBattleStatus[]>([]);
   const [selectedToken, setSelectedToken] = useState(initialTokenId);
@@ -70,6 +93,7 @@ export function ChallengeCoinModal({
   useEffect(() => {
     if (!open) return;
     setStep(1);
+    setChainChoice(Number(chainIdProp || 0));
     setSelectedToken(initialTokenId);
     setTargetTokenId(initialTargetId);
     setTargetLabel("");
@@ -77,7 +101,18 @@ export function ChallengeCoinModal({
     setDurationHours(24);
     setBattleMode("normal");
     setRecentImports([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialTargetId, initialTokenId]);
+
+  function switchChain(next: number) {
+    if (chainLocked || next === chainChoice) return;
+    setChainChoice(next);
+    setEligible([]);
+    setSelectedToken("");
+    setCandidates([]);
+    setTargetTokenId("");
+    setTargetLabel("");
+  }
 
   useEffect(() => {
     if (!open || !chainId) return;
@@ -89,7 +124,11 @@ export function ChallengeCoinModal({
   }, [open, chainId]);
 
   useEffect(() => {
-    if (!open || !walletAddress) return;
+    if (!open) return;
+    if (!walletAddress) {
+      setEligible([]);
+      return;
+    }
     const controller = new AbortController();
     void fetchPostGradCreatorBattleStatuses(walletAddress, chainId, controller.signal).then((json) => {
       const items = Array.isArray(json?.items) ? json.items.filter((item: CreatorBattleStatus) => item?.eligibility) : [];
@@ -195,8 +234,26 @@ export function ChallengeCoinModal({
               }
               right={
                 <div className="flex h-full min-h-0 flex-col gap-3">
-                  {!eligible.length ? (
-                    <p className="text-sm text-muted-foreground">No eligible coins yet. Graduate a MemeWarzone coin or import a passed token first.</p>
+                  {chainLocked ? (
+                    <p className="text-xs text-muted-foreground" data-challenge-chain="locked">Chain: <span className="text-foreground">{getChainLabel(chainId)}</span></p>
+                  ) : chainOptions.length > 1 ? (
+                    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${chainOptions.length}, minmax(0, 1fr))` }} data-challenge-chain-switch="true">
+                      {chainOptions.map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => switchChain(id)}
+                          className={cn("rounded-xl border px-3 py-2 font-retro text-xs uppercase tracking-[0.12em] transition", id === chainId ? selectedClass : idleClass)}
+                        >
+                          {getChainLabel(id)}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {!walletAddress ? (
+                    <p className="text-sm text-muted-foreground">Connect your {isSolanaChainId(chainId) ? "Solana" : "EVM"} wallet to challenge on {getChainLabel(chainId)}.</p>
+                  ) : !eligible.length ? (
+                    <p className="text-sm text-muted-foreground">No eligible coins on {getChainLabel(chainId)} yet. Graduate a MemeWarzone coin or import a passed token first.</p>
                   ) : (
                     <div className="space-y-2">
                       {eligible.map((item) => {
