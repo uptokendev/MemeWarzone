@@ -1,0 +1,62 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1790289862673,
+  "meta": {
+    "name": "Open sponsorship event 2eb786a0",
+    "description": "Enable sponsorship event 2eb786a0-4f14-4260-86c7-ef150cf64b5c (eventId 0x65746a3471fad7d6c3cbf566ae2304a40ef688fe6ee87cdbceb55475d621e673); its 70% event share is claimable by 0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0xe10e9c26D7CA80390831884CA17919E22fF44938",
+      "value": "0",
+      "data": "0x66d8bc8a65746a3471fad7d6c3cbf566ae2304a40ef688fe6ee87cdbceb55475d621e6730000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "eventId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bool",
+            "name": "enabled",
+            "type": "bool"
+          }
+        ],
+        "name": "setEventEnabled",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "eventId": "0x65746a3471fad7d6c3cbf566ae2304a40ef688fe6ee87cdbceb55475d621e673",
+        "enabled": "true"
+      }
+    },
+    {
+      "to": "0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B",
+      "value": "0",
+      "data": "0x6952b7fd65746a3471fad7d6c3cbf566ae2304a40ef688fe6ee87cdbceb55475d621e6730000000000000000000000001edcedf5e5d9c2fad5f9f6b964077dd74020a7a7",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "eventId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "receiver",
+            "type": "address"
+          }
+        ],
+        "name": "setEventReceiver",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "eventId": "0x65746a3471fad7d6c3cbf566ae2304a40ef688fe6ee87cdbceb55475d621e673",
+        "receiver": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+      }
+    }
+  ]
+}
