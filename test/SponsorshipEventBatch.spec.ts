@@ -32,5 +32,7 @@ describe("Sponsorship event Safe batch", function () {
   it("refuses a non-uuid event id and a zero receiver", function () {
     expect(() => sponsorshipEventId("tournament-42")).to.throw(/must be a uuid/);
     expect(() => sponsorshipEventBatch({ chainId: 56, router: ethers.ZeroAddress, vault: ethers.ZeroAddress, eventUuid: "3f1c2b8e-9a41-4d7e-8f0a-2c5b6d7e8f90", receiver: ethers.ZeroAddress })).to.throw(/receiver/);
+    const treasury = "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238";
+    expect(() => sponsorshipEventBatch({ chainId: 4663, router: ethers.ZeroAddress, vault: ethers.ZeroAddress, eventUuid: "3f1c2b8e-9a41-4d7e-8f0a-2c5b6d7e8f90", receiver: treasury, forbiddenReceivers: [treasury] })).to.throw(/could never call claimEventPrize/);
   });
 });

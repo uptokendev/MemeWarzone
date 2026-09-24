@@ -8,9 +8,11 @@
  * sponsorship_events row may be inserted before or after the Safe executes: an enabled eventId
  * without a row takes nothing, because the API never quotes an event it cannot load.
  *
- * The receiver is who may pull the event's 70% share (EventPrizeVaultV1.claimEventPrize is
- * receiver-only). For a league season that is naturally the chain's MonthlyLeagueTreasury
- * (it has receive()); for a tournament, the wallet that pays its prizes. Founder's choice.
+ * The receiver is who may pull the event's 70% share. EventPrizeVaultV1.claimEventPrize requires
+ * msg.sender == receiver, so the receiver must be able to START a call: the Safe (it can execute the
+ * claim) or a wallet you control. A contract such as a league treasury can receive value but can
+ * never call claimEventPrize -- the share would be locked forever. The generator refuses every
+ * contract address in our deployment records for that chain (the Safe excepted).
  *
  *   npx ts-node scripts/make-sponsorship-event-batch.ts <sponsorship_events.id uuid> <56|4663> <receiver>
  *
@@ -36,10 +38,13 @@ export function sponsorshipEventId(eventUuid: string): string {
   return ethers.id(`${EVENT_ID_PREFIX}${value}`);
 }
 
-export function sponsorshipEventBatch(input: { chainId: number; router: string; vault: string; eventUuid: string; receiver: string }) {
+export function sponsorshipEventBatch(input: { chainId: number; router: string; vault: string; eventUuid: string; receiver: string; forbiddenReceivers?: string[] }) {
   const eventId = sponsorshipEventId(input.eventUuid);
   if (!ethers.isAddress(input.receiver) || input.receiver === ethers.ZeroAddress) throw new Error("receiver must be a non-zero address");
   const receiver = ethers.getAddress(input.receiver);
+  if ((input.forbiddenReceivers || []).some((a) => ethers.getAddress(a) === receiver)) {
+    throw new Error(`receiver ${receiver} is one of our deployed contracts; it could never call claimEventPrize and the event share would be locked. Use the Safe or a wallet.`);
+  }
   const batch = buildBatch(
     input.chainId,
     `Open sponsorship event ${input.eventUuid.slice(0, 8)}`,
@@ -61,7 +66,19 @@ if (require.main === module) {
     process.exit(2);
   }
   const record = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "deployments", rec.dir, rec.file), "utf8"));
-  const { eventId, batch } = sponsorshipEventBatch({ chainId, router: record.router, vault: record.vault, eventUuid, receiver });
+  // Every contract we deployed on this chain (the records' addresses), minus accounts that can sign.
+  const signerKeys = /^(safe|owner|finalOwner|deployer|quoteSigner|signer|resolver|routeAuthority|boostSigner|operator)$/i;
+  const forbidden = new Set<string>();
+  const walk = (value: unknown, key = ""): void => {
+    if (typeof value === "string" && ethers.isAddress(value) && !signerKeys.test(key)) forbidden.add(ethers.getAddress(value));
+    else if (value && typeof value === "object") for (const [k, v] of Object.entries(value as Record<string, unknown>)) walk(v, k);
+  };
+  const dir = path.resolve(__dirname, "..", "deployments", rec.dir);
+  for (const f of fs.readdirSync(dir).filter((n) => n.startsWith("mainnet") && n.endsWith(".json") && !n.includes("safe-batch"))) {
+    try { walk(JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"))); } catch { /* not a record */ }
+  }
+  forbidden.delete(ethers.getAddress(String(record.owner)));
+  const { eventId, batch } = sponsorshipEventBatch({ chainId, router: record.router, vault: record.vault, eventUuid, receiver, forbiddenReceivers: [...forbidden] });
   const out = path.resolve(__dirname, "..", "deployments", rec.dir, `mainnet.sponsorship-event-${eventUuid.slice(0, 8)}.safe-batch.json`);
   fs.writeFileSync(out, `${JSON.stringify(batch, null, 2)}\n`);
   console.log(`eventId  ${eventId}`);
