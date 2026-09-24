@@ -120,6 +120,8 @@ test("public imported project uses the official token layout with trading and ar
   assert.match(importedPage, /Project verification is separate from financial and competition eligibility/);
   assert.match(coinsPage, /ProjectImportPanel/);
   assert.doesNotMatch(coinsPage, /title="Imported coins"/);
+  assert.match(coinsPage, /ChallengeCoinModal/);
+  assert.match(coinsPage, /fetchPostGradCreatorBattleStatuses/);
 });
 
 test("Solana display metadata stays separate from authenticated project-wallet evidence", () => {

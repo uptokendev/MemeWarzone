@@ -35,6 +35,7 @@ interface CoinRowItem {
 interface CommandCenterCoinRowProps {
   item: CoinRowItem;
   onOpenForBattle?: (campaignAddress: string, name: string) => void;
+  onChallenge?: (tokenId: string) => void;
   onClaimLpFees?: (campaignAddress: string) => void;
   battleBusyToken?: string | null;
   battleFeaturesEnabled?: boolean;
@@ -43,6 +44,7 @@ interface CommandCenterCoinRowProps {
 export function CommandCenterCoinRow({
   item,
   onOpenForBattle,
+  onChallenge,
   onClaimLpFees,
   battleBusyToken,
   battleFeaturesEnabled = false,
@@ -147,13 +149,26 @@ export function CommandCenterCoinRow({
               <>
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.2em] text-accent/80">Imported project</div>
-                  <div className="mt-1 text-white/80">{item.statusLabel || "IMPORTED"}</div>
+                  <div className="mt-1 text-white/80">{item.statusLabel || "IMPORTED"}{item.battleInfo ? ` · ${item.battleInfo}` : ""}</div>
                 </div>
-                {tokenRoute ? (
-                  <Button asChild size="sm" variant="outline" className="w-full justify-between">
-                    <Link to={tokenRoute}>Open imported project</Link>
-                  </Button>
-                ) : null}
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {tokenRoute ? (
+                    <Button asChild size="sm" variant="outline">
+                      <Link to={tokenRoute}>Open imported project</Link>
+                    </Button>
+                  ) : null}
+                  {item.creatorState === "eligible" && onOpenForBattle ? (
+                    <Button size="sm" disabled={item.isOpening || battleBusyToken === item.id} onClick={() => onOpenForBattle(item.raw?.tokenAddress || item.id, item.name)}>
+                      {item.isOpening || battleBusyToken === item.id ? "Opening..." : "Open for Battle"}
+                    </Button>
+                  ) : null}
+                  {onChallenge ? (
+                    <Button size="sm" onClick={() => onChallenge(String(item.raw?.tokenAddress || item.tokenRoute || item.id))}>
+                      <Swords className="mr-2 h-4 w-4" />
+                      Challenge
+                    </Button>
+                  ) : null}
+                </div>
               </>
             ) : (
               <>

@@ -78,6 +78,24 @@ async function readJson(res: Response) {
   return res.json().catch(() => ({})) as Promise<any>;
 }
 
+export type RecentArenaImport = {
+  id: string;
+  chainId: number;
+  tokenAddress: string;
+  name?: string | null;
+  symbol?: string | null;
+  imageUrl?: string | null;
+  createdAt?: string | null;
+};
+
+export async function fetchRecentArenaImports(chainId: number, limit = 12): Promise<RecentArenaImport[]> {
+  const params = new URLSearchParams({ chainId: String(chainId), limit: String(Math.max(1, Math.min(24, limit))) });
+  const res = await apiFetch(`/api/arena/imports/recent?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) return [];
+  const json = await readJson(res);
+  return Array.isArray(json?.items) ? json.items : [];
+}
+
 export async function fetchArenaImports(wallet: string, chainId?: number | null): Promise<ArenaImportItem[]> {
   const params = new URLSearchParams({ wallet });
   if (chainId) params.set("chainId", String(chainId));

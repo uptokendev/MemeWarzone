@@ -217,6 +217,11 @@ test("Battle Wall header opens Command Center Challenge a coin", () => {
   assert.match(modal, /CreateSplitPane/);
   assert.match(modal, /CreateWizardShell/);
   assert.doesNotMatch(modal, /mwz-hud-frame/);
+  assert.match(modal, /data-recent-imports="true"/);
+  assert.match(modal, /fetchRecentArenaImports/);
+  assert.match(modal, /No imported coins on this chain yet/);
+  assert.match(modal, /data-battle-mode="normal"/);
+  assert.match(modal, /data-battle-mode="vote"/);
 });
 
 test("Battle Wall Phase 1-3, AUTO DEPLOY, and Find Match remain untouched", () => {

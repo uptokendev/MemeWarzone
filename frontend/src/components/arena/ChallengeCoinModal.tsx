@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { challengePostGradBattle, fetchArenaBattleMatches, fetchPostGradCreatorBattleStatuses } from "@/features/postgrad/apiClient";
+import { fetchRecentArenaImports, type RecentArenaImport } from "@/lib/arenaImports";
 import { useArenaWalletAction } from "@/hooks/useArenaWalletAction";
 import type { CreatorBattleStatus } from "@/hooks/useArenaBattleFeed";
 import {
@@ -58,6 +59,7 @@ export function ChallengeCoinModal({
   const [battleMode, setBattleMode] = useState<BattleMode>("normal");
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<ReturnType<typeof presentMatchCandidates>>([]);
+  const [recentImports, setRecentImports] = useState<RecentArenaImport[]>([]);
 
   const native = getNativeSymbol(Number(chainId || 0));
   const selected = eligible.find((item) => tokenKey(item) === selectedToken) || eligible[0] || null;
@@ -74,7 +76,17 @@ export function ChallengeCoinModal({
     setStake("");
     setDurationHours(24);
     setBattleMode("normal");
+    setRecentImports([]);
   }, [open, initialTargetId, initialTokenId]);
+
+  useEffect(() => {
+    if (!open || !chainId) return;
+    const controller = new AbortController();
+    void fetchRecentArenaImports(Number(chainId), 12).then((items) => {
+      if (!controller.signal.aborted) setRecentImports(items);
+    });
+    return () => controller.abort();
+  }, [open, chainId]);
 
   useEffect(() => {
     if (!open || !walletAddress) return;
@@ -222,6 +234,34 @@ export function ChallengeCoinModal({
                     </div>
                     {targetLabel ? <p className="mt-1 text-xs text-orange-200">{targetLabel}</p> : null}
                   </div>
+                  <div data-recent-imports="true">
+                    <div className="mb-1 font-retro text-sm text-foreground">Recent imports</div>
+                    {recentImports.length ? (
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {recentImports
+                          .filter((row) => row.tokenAddress !== tokenKey(selected || ({} as CreatorBattleStatus)))
+                          .map((row) => {
+                            const active = row.tokenAddress === targetTokenId;
+                            return (
+                              <button
+                                key={row.id}
+                                type="button"
+                                onClick={() => {
+                                  setTargetTokenId(row.tokenAddress);
+                                  setTargetLabel(row.symbol ? `$${row.symbol}` : row.name || row.tokenAddress);
+                                }}
+                                className={cn("rounded-xl border p-3 text-left transition", active ? selectedClass : idleClass)}
+                              >
+                                <div className="font-retro text-sm text-foreground">{row.symbol ? `$${row.symbol}` : row.name || "Import"}</div>
+                                <p className="mt-1 truncate text-[10px] text-muted-foreground">{row.name || row.tokenAddress}</p>
+                              </button>
+                            );
+                          })}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No imported coins on this chain yet</p>
+                    )}
+                  </div>
                   <MatchQualityPreview
                     preview={preview}
                     onChallengeAnyway={() => toast.message("Open War can still proceed. Set terms on the next step.")}
@@ -244,11 +284,11 @@ export function ChallengeCoinModal({
               }
               right={
                 <div className="flex h-full min-h-0 flex-col gap-3">
-                  <button type="button" onClick={() => { setBattleMode("normal"); setDurationHours(parseBattleDurationHoursForMode("normal", durationHours, 24)); }} className={cn("rounded-xl border p-4 text-left transition", battleMode === "normal" ? selectedClass : idleClass)}>
-                    <div className="font-retro text-lg text-foreground">Metrics battle</div>
-                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Market cap, holders, volume, boosts.</p>
+                  <button type="button" data-battle-mode="normal" onClick={() => { setBattleMode("normal"); setDurationHours(parseBattleDurationHoursForMode("normal", durationHours, 24)); }} className={cn("rounded-xl border p-4 text-left transition", battleMode === "normal" ? selectedClass : idleClass)}>
+                    <div className="font-retro text-lg text-foreground">Battle</div>
+                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Metrics fight: market cap, holders, volume, boosts.</p>
                   </button>
-                  <button type="button" onClick={() => { setBattleMode("vote"); setDurationHours(parseBattleDurationHoursForMode("vote", durationHours, 24)); }} className={cn("rounded-xl border p-4 text-left transition", battleMode === "vote" ? selectedClass : idleClass)}>
+                  <button type="button" data-battle-mode="vote" onClick={() => { setBattleMode("vote"); setDurationHours(parseBattleDurationHoursForMode("vote", durationHours, 24)); }} className={cn("rounded-xl border p-4 text-left transition", battleMode === "vote" ? selectedClass : idleClass)}>
                     <div className="font-retro text-lg text-foreground">Vote Battle</div>
                     <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Free votes + boosts, 1 to 24 hours.</p>
                   </button>
@@ -305,7 +345,7 @@ export function ChallengeCoinModal({
                     <div className="flex justify-between gap-3"><span className="text-muted-foreground">Opponent</span><span className="truncate font-medium text-foreground">{targetLabel || targetTokenId || "—"}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-muted-foreground">Buy-in</span><span className="text-foreground">{stakeAmount} {native}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-muted-foreground">Duration</span><span className="text-foreground">{battleDurationOptions(battleMode).find((item) => item.hours === durationHours)?.label || `${durationHours}h`}</span></div>
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Mode</span><span className="text-foreground">{battleMode === "vote" ? "Vote Battle" : "Metrics battle"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Mode</span><span className="text-foreground">{battleMode === "vote" ? "Vote Battle" : "Battle"}</span></div>
                   </div>
                   <Button type="button" className="mwz-button mwz-button-orange mt-auto h-12 w-full font-retro text-base" disabled={!canNext || busy} onClick={() => void confirm()}>
                     {busy ? "Sending…" : "Confirm"}

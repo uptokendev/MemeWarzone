@@ -5,10 +5,13 @@
  *   node scripts/backfill-import-admission.mjs
  *   node scripts/backfill-import-admission.mjs --db staging
  *   node scripts/backfill-import-admission.mjs --limit 20
+ *   node scripts/backfill-import-admission.mjs --rescan-stale
  *
- * Idempotent: rows that are no longer scanning are skipped. A failed scan
- * stores needs_review and never deletes the import. Founder runs this in the
- * API container after deploy.
+ * Default: rows still at status=scanning. --rescan-stale also rescans every
+ * import whose scan is older than arenaImportEligibility's freshness window
+ * (or the wrong scan version). Idempotent. A failed scan stores needs_review
+ * and never deletes the import. Founder runs the hourly Coolify task with
+ * --rescan-stale so IMPORT_SCAN_STALE never silently drops a coin from battles.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -35,18 +38,32 @@ if (arg("--db") === "staging") {
 await import("../api/load-local-env.mjs");
 const { pool } = await import("../server/db.js");
 const { runAdmissionScanForProject } = await import("../api/lib/arenaImportAdmission.js");
+const { importScanFreshness } = await import("../api/lib/arenaImportEligibility.js");
 
 const limit = Math.max(1, Math.min(500, Number(arg("--limit", "100")) || 100));
+const rescanStale = argv.includes("--rescan-stale");
 const listed = await pool.query(
-  `select * from public.arena_token_imports
-    where status = 'scanning'
-    order by created_at asc
-    limit $1`,
+  rescanStale
+    ? `select * from public.arena_token_imports
+        where status in ('scanning', 'passed', 'needs_review')
+        order by scanned_at asc nulls first, created_at asc
+        limit $1`
+    : `select * from public.arena_token_imports
+        where status = 'scanning'
+        order by created_at asc
+        limit $1`,
   [limit],
 );
+const rows = rescanStale
+  ? listed.rows.filter((row) => importScanFreshness(row).stale)
+  : listed.rows;
 
-console.log(`scanning ${listed.rows.length} import(s) still at status=scanning`);
-for (const row of listed.rows) {
+console.log(
+  rescanStale
+    ? `rescanning ${rows.length} stale import(s) of ${listed.rows.length} considered`
+    : `scanning ${rows.length} import(s) still at status=scanning`,
+);
+for (const row of rows) {
   try {
     const next = await runAdmissionScanForProject((text, params) => pool.query(text, params), row);
     console.log(JSON.stringify({

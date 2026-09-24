@@ -42,3 +42,16 @@ test("project import create and arena imports share the admission helper; public
   assert.doesNotMatch(arena, /if \(method === "POST" && path === "\/arena\/imports"\) return handleCreate/);
   assert.doesNotMatch(arena, /async function handleCreate/);
 });
+
+test("public recent-imports route lists eligible passed rows only", () => {
+  const arena = fs.readFileSync(path.join(here, "../arenaImports.js"), "utf8");
+  const backfill = fs.readFileSync(path.join(here, "../../scripts/backfill-import-admission.mjs"), "utf8");
+  const eligibility = fs.readFileSync(path.join(here, "arenaImportEligibility.js"), "utf8");
+  assert.match(arena, /path === "\/arena\/imports\/recent"/);
+  assert.match(arena, /evaluateImportedCompetitionEligibility\(row\)\.eligible/);
+  assert.match(arena, /status = 'passed'/);
+  assert.doesNotMatch(arena.split("async function handleRecent")[1]?.split("async function handleLookup")[0] || "", /owner_wallet|review_reason|scan_json/);
+  assert.match(backfill, /--rescan-stale/);
+  assert.match(backfill, /importScanFreshness\(row\)\.stale/);
+  assert.match(eligibility, /export function importScanMaxAgeMs/);
+});

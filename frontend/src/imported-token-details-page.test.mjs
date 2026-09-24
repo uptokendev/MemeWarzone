@@ -142,6 +142,14 @@ test("imported official page mounts trading, claim banner and arena strip", () =
   assert.match(page, /data-import-arena-strip="true"/);
   assert.match(page, /Project verification is separate from financial and competition eligibility/);
   assert.match(page, /REQUEST MANUAL CHECK/);
+  assert.match(page, />Chart</);
+  assert.match(page, />Trades</);
+  assert.match(page, />Comments</);
+  assert.match(page, /TokenComments/);
+  assert.match(page, /ArenaUpvoteDialog/);
+  assert.match(page, /Challenge this coin/);
+  assert.match(page, /Trades appear here once this pool is indexed/);
+  assert.match(page, /Imported token — no bonding curve/);
 });
 
 test("imports remain independent from post-grad Arena flags", () => {

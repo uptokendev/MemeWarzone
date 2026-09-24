@@ -11,10 +11,14 @@ export const IMPORT_AUTHORITY_OUTCOME = Object.freeze({
   NOT_APPROVED: "not_approved",
 });
 
-function maxScanAgeMs() {
+export function importScanMaxAgeMs() {
   const configuredHours = Number(process.env.ARENA_IMPORT_SCAN_MAX_AGE_HOURS || 168);
   if (!Number.isFinite(configuredHours) || configuredHours <= 0) return DEFAULT_MAX_SCAN_AGE_MS;
   return configuredHours * 60 * 60 * 1000;
+}
+
+function maxScanAgeMs() {
+  return importScanMaxAgeMs();
 }
 
 function scanObject(row) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ChevronDown, Coins, FileText, Rocket } from "lucide-react";
 import { toast } from "sonner";
 import { resolveImageUri } from "@/lib/media";
@@ -18,7 +18,10 @@ import {
   listUserProjectImports,
   type ProjectImportItem,
 } from "@/lib/projectImports";
+import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ProjectImportPanel } from "@/pages/ProjectImport";
+import { fetchPostGradCreatorBattleStatuses } from "@/features/postgrad/apiClient";
+import type { CreatorBattleStatus } from "@/hooks/useArenaBattleFeed";
 import {
   fetchLpFeePools,
   harvestLpFeesWithWallet,
@@ -136,6 +139,7 @@ function importedWalletOwnership(item: ProjectImportItem, walletAddress: string)
 export default function CommandCenterCoins() {
   const { walletAddress, chainId, created } = useCommandCenterData();
   const wallet = useWallet();
+  const navigate = useNavigate();
   const activeChainId = Number(chainId || 97);
   const robinhood = isRobinhoodChainId(activeChainId);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -147,6 +151,9 @@ export default function CommandCenterCoins() {
   const [lpFeeByCampaign, setLpFeeByCampaign] = useState<Record<string, LpFeePoolRow>>({});
   const [claimingCampaign, setClaimingCampaign] = useState<string | null>(null);
   const [lpFeeError, setLpFeeError] = useState<string | null>(null);
+  const [creatorStatuses, setCreatorStatuses] = useState<CreatorBattleStatus[]>([]);
+  const [challengeOpen, setChallengeOpen] = useState(false);
+  const [challengeTokenId, setChallengeTokenId] = useState("");
   const importRequested = projectImportsEnabled && searchParams.get("import") === "1";
   const [importOpen, setImportOpen] = useState(importRequested);
 
@@ -202,6 +209,15 @@ export default function CommandCenterCoins() {
       setImportedProjects([]);
     }
   }, [walletAddress]);
+
+  useEffect(() => {
+    if (!walletAddress) { setCreatorStatuses([]); return; }
+    const controller = new AbortController();
+    void fetchPostGradCreatorBattleStatuses(walletAddress, activeChainId, controller.signal)
+      .then((json) => setCreatorStatuses(Array.isArray(json?.items) ? json.items : []))
+      .catch(() => setCreatorStatuses([]));
+    return () => controller.abort();
+  }, [walletAddress, activeChainId]);
 
   useEffect(() => {
     void refreshImportedProjects();
@@ -401,6 +417,7 @@ export default function CommandCenterCoins() {
 
     importedProjects.forEach((project) => {
       const ownership = importedWalletOwnership(project, walletAddress);
+      const status = creatorStatuses.find((row) => normalizeIdentity(row.tokenAddress || row.tokenId) === normalizeIdentity(project.tokenAddress));
       items.push({
         id: `imported:${project.id}`,
         type: "imported",
@@ -411,11 +428,15 @@ export default function CommandCenterCoins() {
         statusTone: ownership.tone,
         href: importedProjectHref(project),
         tokenRoute: importedProjectHref(project),
+        creatorState: status?.eligibility ? "eligible" : status?.currentState || "unavailable",
+        battleInfo: status?.openForBattleState === "open" ? "Open for Battle" : status?.battleId ? "In battle" : "",
+        battleRouteId: status?.battleId || null,
+        raw: project,
       });
     });
 
     return items;
-  }, [activeChainId, claimingCampaign, createdCoins, drafts, importedProjects, lpFeeByCampaign, robinhood, walletAddress]);
+  }, [activeChainId, claimingCampaign, createdCoins, creatorStatuses, drafts, importedProjects, lpFeeByCampaign, robinhood, walletAddress]);
 
   const filteredItems = useMemo(() => {
     if (activeFilter === "all") return unifiedItems;
@@ -516,8 +537,15 @@ export default function CommandCenterCoins() {
               <CommandCenterCoinRow
                 key={item.id}
                 item={item}
-                battleFeaturesEnabled={BATTLE_FEATURES_ENABLED}
+                battleFeaturesEnabled={BATTLE_FEATURES_ENABLED || item.type === "imported"}
                 onClaimLpFees={item.type === "coin" ? handleClaimLpFees : undefined}
+                onChallenge={item.type === "imported" ? (tokenId) => {
+                  setChallengeTokenId(String(item.raw?.tokenAddress || tokenId));
+                  setChallengeOpen(true);
+                } : undefined}
+                onOpenForBattle={item.type === "imported" ? () => {
+                  if (walletAddress) navigate(`/profile/${encodeURIComponent(walletAddress)}/command/battles`);
+                } : undefined}
               />
             ))}
           </div>
@@ -527,6 +555,13 @@ export default function CommandCenterCoins() {
           </div>
         )}
       </CommandCenterCard>
+      <ChallengeCoinModal
+        open={challengeOpen}
+        onOpenChange={setChallengeOpen}
+        walletAddress={walletAddress}
+        chainId={activeChainId}
+        initialTokenId={challengeTokenId}
+      />
     </div>
   );
 }

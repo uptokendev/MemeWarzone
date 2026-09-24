@@ -76,6 +76,39 @@ async function handleList(req, res) {
   return json(res, 200, { items: result.rows.map(mapImport), updatedAt: new Date().toISOString() });
 }
 
+function publicRecentImport(row) {
+  return {
+    id: String(row.id),
+    chainId: Number(row.chain_id),
+    tokenAddress: String(row.token_address),
+    name: row.name || null,
+    symbol: row.symbol || null,
+    imageUrl: row.image_url || null,
+    createdAt: row.created_at || null,
+  };
+}
+
+async function handleRecent(req, res) {
+  const query = getQuery(req);
+  const chainId = Number(query.chainId);
+  if (!Number.isFinite(chainId) || chainId <= 0) return json(res, 400, { error: "chainId is required" });
+  const limit = Math.max(1, Math.min(24, Number(query.limit || 12) || 12));
+  const result = await pool.query(
+    `select * from public.arena_token_imports
+      where chain_id = $1 and status = 'passed'
+      order by created_at desc
+      limit $2`,
+    [chainId, Math.min(100, limit * 4)],
+  );
+  const items = [];
+  for (const row of result.rows) {
+    if (!evaluateImportedCompetitionEligibility(row).eligible) continue;
+    items.push(publicRecentImport(row));
+    if (items.length >= limit) break;
+  }
+  return json(res, 200, { items, updatedAt: new Date().toISOString() });
+}
+
 async function handleLookup(req, res) {
   const query = getQuery(req);
   const requestedChain = Number(query.chainId || 0);
@@ -153,6 +186,7 @@ export default async function handler(req, res) {
   const method = String(req.method || "GET").toUpperCase();
   const path = String(req.path || new URL(req.url, "http://localhost").pathname);
   try {
+    if (method === "GET" && path === "/arena/imports/recent") return handleRecent(req, res);
     if (method === "GET" && path === "/arena/imports") return handleList(req, res);
     if (method === "GET" && path === "/arena/imports/lookup") return handleLookup(req, res);
     if (method === "GET" && path === "/arena/imports/eligibility") return handleEligibility(req, res);

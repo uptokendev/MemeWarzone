@@ -193,8 +193,13 @@ export function BattleWallCombatant({
         <div className="relative z-10 flex min-w-0 flex-col">
           <div className="flex min-w-0 flex-1 flex-col gap-1.5 p-2 md:gap-2 md:p-3">
             <div className="min-w-0">
-              <div className="truncate font-retro text-base leading-none text-foreground sm:text-xl md:text-2xl lg:text-[1.65rem]">
-                ${displaySymbol}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <div className="truncate font-retro text-base leading-none text-foreground sm:text-xl md:text-2xl lg:text-[1.65rem]">
+                  ${displaySymbol}
+                </div>
+                {String(profile?.origin || (participant as { origin?: string } | undefined)?.origin || "").toLowerCase() === "import" ? (
+                  <span className="shrink-0 rounded border border-orange-400/40 bg-orange-500/10 px-1.5 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-orange-200" data-imported-origin="true">IMPORTED</span>
+                ) : null}
               </div>
               <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-white/58 md:mt-1 md:text-[11px] md:tracking-[0.16em]">{displayName}</div>
               {description ? (

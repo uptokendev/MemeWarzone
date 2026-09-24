@@ -1,18 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Copy, Edit3, ImagePlus, Loader2, SearchCheck, Share2, ShieldCheck } from "lucide-react";
+import { Copy, Edit3, Flag, ImagePlus, Loader2, SearchCheck, Share2, ShieldCheck, Star, Swords } from "lucide-react";
 import { toast } from "sonner";
 
+import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
+import { TokenComments } from "@/components/token/TokenComments";
+import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { UnifiedMarketChart } from "@/components/token/UnifiedMarketChart";
+import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
 import { postGradFlags } from "@/features/postgrad/config";
+import { buildAbuseReportPath } from "@/lib/abuseReportLink";
 import { fetchArenaTokenProfile, requestArenaImportReview, type ArenaImportItem } from "@/lib/arenaImports";
 import {
   canRequestImportManualReview,
@@ -24,7 +32,10 @@ import {
   presentImportChart,
 } from "@/lib/arena/importChartPresentation.mjs";
 import { SOLANA_CHAIN_ID, getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
-import { fetchMarketCandles, type MarketCandle } from "@/lib/marketContinuityApi";
+import { followCampaign, isFollowingCampaign, unfollowCampaign } from "@/lib/followApi";
+import { fetchMarketCandles, fetchMarketTrades, type MarketCandle, type MarketTrade } from "@/lib/marketContinuityApi";
+import { fetchUserProfile, type UserProfile } from "@/lib/profileApi";
+import { getExplorerBase } from "@/lib/profile/profileFormatters";
 import { updateProjectImportProfile, uploadProjectImportImage, type ProjectImportItem } from "@/lib/projectImports";
 import { signSolanaMessage } from "@/lib/solanaWallet";
 import { signWalletAction } from "@/lib/walletActionAuth";
@@ -59,6 +70,26 @@ function safeExternalUrl(value: string | null | undefined) {
   } catch {
     return "";
   }
+}
+
+function formatUsd(value: number | null | undefined) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  if (Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(1)}K`;
+  return `$${n.toFixed(2)}`;
+}
+
+function tokenExplorerUrl(chainId: number, token: string) {
+  const base = getExplorerBase(chainId);
+  if (!base || !token) return "";
+  if (chainId === 101 || chainId === 102) return `${base}/address/${token}`;
+  return `${base}/token/${token}`;
+}
+
+function dexLink(chainId: number, token: string) {
+  if (chainId === 56) return `https://dexscreener.com/bsc/${token}`;
+  if (chainId === 101) return `https://dexscreener.com/solana/${token}`;
+  return tokenExplorerUrl(chainId, token);
 }
 
 function asArenaItem(item: ProjectImportItem): ArenaImportItem {
@@ -105,7 +136,13 @@ export default function ImportedTokenPage({
   const [reviewReason, setReviewReason] = useState("");
   const [requestingReview, setRequestingReview] = useState(false);
   const [candles, setCandles] = useState<MarketCandle[]>([]);
+  const [trades, setTrades] = useState<MarketTrade[]>([]);
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof fetchArenaTokenProfile>>>(null);
+  const [ownerProfile, setOwnerProfile] = useState<UserProfile | null>(null);
+  const [following, setFollowing] = useState(false);
+  const [followBusy, setFollowBusy] = useState(false);
+  const [activityTab, setActivityTab] = useState<"chart" | "trades" | "comments">("chart");
+  const [challengeOpen, setChallengeOpen] = useState(false);
   const { price: nativeUsd } = useNativeUsdPrice(item.chainId);
 
   useEffect(() => {
@@ -124,10 +161,25 @@ export default function ImportedTokenPage({
     void fetchMarketCandles(item.tokenAddress, item.chainId, "1m", { limit: 500, signal: controller.signal })
       .then((payload) => setCandles(Array.isArray(payload?.items) ? payload.items : []))
       .catch(() => setCandles([]));
+    void fetchMarketTrades(item.tokenAddress, item.chainId, { limit: 40, signal: controller.signal })
+      .then((payload) => setTrades(Array.isArray(payload?.items) ? payload.items : []))
+      .catch(() => setTrades([]));
     return () => controller.abort();
   }, [item.chainId, item.tokenAddress]);
 
+  const ownerWallet = String(item.projectOwnerWallet || item.ownerWallet || "").trim();
   const solana = item.chainId === SOLANA_CHAIN_ID;
+
+  useEffect(() => {
+    if (!ownerWallet) { setOwnerProfile(null); return; }
+    void fetchUserProfile(item.chainId, ownerWallet).then((next) => setOwnerProfile(next)).catch(() => setOwnerProfile(null));
+  }, [item.chainId, ownerWallet]);
+
+  useEffect(() => {
+    const follower = solana ? solanaWallet.solanaAccount : wallet.account;
+    if (!follower || !item.tokenAddress) { setFollowing(false); return; }
+    void isFollowingCampaign(follower, item.tokenAddress, item.chainId).then(setFollowing).catch(() => setFollowing(false));
+  }, [item.chainId, item.tokenAddress, solana, solanaWallet.solanaAccount, wallet.account]);
   const connectedWallet = solana ? solanaWallet.solanaAccount : wallet.account;
   const ownerVerified = item.ownershipStatus === "ownership_verified";
   const ownerConnected = sameWallet(connectedWallet, item.projectOwnerWallet, solana);
@@ -149,6 +201,12 @@ export default function ImportedTokenPage({
   const nativeUnit = getNativeSymbol(item.chainId);
   const liveMcapNative = profile?.marketCapUsd && nativeUsd ? profile.marketCapUsd / nativeUsd : null;
   const livePriceNative = profile?.priceUsd && nativeUsd ? profile.priceUsd / nativeUsd : null;
+  const warRoomOpen = Boolean((Number(profile?.liquidityUsd) || 0) > 0 || profile?.marketDataHealthy);
+  const explorerUrl = tokenExplorerUrl(item.chainId, item.tokenAddress);
+  const marketDexUrl = dexLink(item.chainId, item.tokenAddress);
+  const ownerDisplay = (ownerProfile?.displayName && ownerProfile.displayName.trim()) || (ownerWallet ? `${ownerWallet.slice(0, 4)}…${ownerWallet.slice(-4)}` : "");
+  const ctaTabsTriggerClass =
+    "rounded-xl border px-3 py-2 font-retro text-xs md:text-sm transition-colors bg-transparent border-orange-400/40 text-orange-300 hover:bg-orange-500 hover:text-white hover:border-orange-500 data-[state=active]:bg-orange-500 data-[state=active]:text-white data-[state=active]:border-orange-500 data-[state=active]:shadow-lg";
 
   const signAction = async (action: string, extraLines: string[] = []) => {
     if (!connectedWallet) throw new Error("Connect a wallet first.");
@@ -232,6 +290,21 @@ export default function ImportedTokenPage({
     }
   };
 
+  const toggleFollow = async () => {
+    const follower = connectedWallet;
+    if (!follower || followBusy) return;
+    setFollowBusy(true);
+    try {
+      if (following) await unfollowCampaign(follower, item.tokenAddress, item.chainId);
+      else await followCampaign(follower, item.tokenAddress, item.chainId);
+      setFollowing(!following);
+    } catch (error: any) {
+      toast.error(String(error?.message || "Could not update favourite."));
+    } finally {
+      setFollowBusy(false);
+    }
+  };
+
   const handleRequestReview = async () => {
     if (!canRequestReview || requestingReview) return;
     setRequestingReview(true);
@@ -283,9 +356,19 @@ export default function ImportedTokenPage({
               <span className="rounded-full border border-accent/50 bg-accent/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-accent" data-imported-badge="true">IMPORTED</span>
               {ownershipPill}
               <TacticalTag label={pill.label} tone={pill.tone as "success" | "default"} />
+              {ownerWallet ? (
+                <Link to={`/profile?address=${ownerWallet}`} className="inline-flex items-center gap-2 hover:opacity-90">
+                  <Avatar className="h-6 w-6">
+                    <AvatarImage src={ownerProfile?.avatarUrl || undefined} alt={ownerDisplay} />
+                    <AvatarFallback className="text-[10px]">{(ownerDisplay || "C").slice(0, 1).toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <span className="text-[11px] text-foreground/90 truncate max-w-[140px]">{ownerDisplay}</span>
+                </Link>
+              ) : null}
             </div>
             <h1 className="mt-3 break-words font-retro text-2xl text-foreground" data-project-name="true">{item.name || item.symbol || "Imported project"}</h1>
             {item.symbol ? <p className="mt-1 text-sm font-bold text-accent" data-project-ticker="true">${item.symbol}</p> : null}
+            <p className="mt-2 text-xs text-muted-foreground">Imported token — no bonding curve</p>
             <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
               <div>
                 <span className="text-muted-foreground">Chain</span>
@@ -303,7 +386,15 @@ export default function ImportedTokenPage({
           <div className="flex shrink-0 flex-wrap gap-2">
             {canClaim ? <Button type="button" size="sm" onClick={onClaimMemecoin} data-project-claim-action="true">CLAIM MEMECOIN</Button> : null}
             {canEdit ? <Button type="button" variant="outline" size="sm" onClick={() => setEditing((v) => !v)} data-owner-edit-controls="true"><Edit3 className="mr-2 h-4 w-4" />EDIT</Button> : null}
+            <Button type="button" variant="secondary" size="icon" className="h-8 w-8 rounded-xl" onClick={() => void toggleFollow()} disabled={followBusy || !connectedWallet} aria-label={following ? "Unfollow" : "Follow"}>
+              <Star className={following ? "text-accent fill-accent" : "text-muted-foreground/70"} />
+            </Button>
             <Button type="button" variant="outline" size="sm" onClick={() => void share()} data-project-share="true"><Share2 className="mr-2 h-4 w-4" />SHARE</Button>
+            <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-[11px] text-muted-foreground">
+              <Link to={buildAbuseReportPath({ entityType: "token", reportedTokenAddress: item.tokenAddress, reportedWallet: ownerWallet, reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${item.tokenAddress}` })}>
+                <Flag className="mr-1 h-3.5 w-3.5" />Report
+              </Link>
+            </Button>
           </div>
         </div>
       </section>
@@ -320,37 +411,86 @@ export default function ImportedTokenPage({
         <p className="text-sm text-muted-foreground">Add a project image from the owner tools when you are verified. The page stays public without one.</p>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.8fr)]">
-        <section className="mwz-hud-frame min-h-[320px] p-3">
-          {chart.emptyNote ? <p className="mb-2 text-xs text-muted-foreground">{chart.emptyNote}</p> : null}
-          <div className="h-[320px]">
-            <UnifiedMarketChart
-              curvePoints={[]}
-              marketCandles={chart.candles}
-              marketState={chart.marketState as any}
-              chainId={item.chainId}
-              livePriceNative={livePriceNative}
-              liveMcapNative={liveMcapNative}
-              nativeUsdPrice={nativeUsd}
-              marketKey={`${item.chainId}:${item.tokenAddress}`}
-              resolution="1m"
-              onResolutionChange={() => undefined}
-              denomination="USD"
-              historyReady
-              loading={false}
-              error={null}
-            />
-          </div>
-        </section>
-        <section className="mwz-hud-frame p-4 space-y-3" data-imported-trade-panel="true">
-          <div className="font-retro text-sm text-foreground">Trade</div>
-          {tradingBlocked ? (
-            <p className="text-sm text-muted-foreground">Trading is unavailable while the security scan reports a honeypot or blocked transfer.</p>
-          ) : (
-            <ImportedTradePanel item={arenaItem} />
-          )}
-        </section>
-      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-3 md:gap-4 items-start">
+        <div className="min-w-0 flex flex-col gap-3 md:gap-4">
+          <Card className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4">
+            <Tabs value={activityTab} onValueChange={(v) => setActivityTab(v as "chart" | "trades" | "comments")}>
+              <TabsList className="grid w-full grid-cols-3 mb-3 bg-transparent p-0 h-auto gap-2">
+                <TabsTrigger value="chart" className={ctaTabsTriggerClass}>Chart</TabsTrigger>
+                <TabsTrigger value="trades" className={ctaTabsTriggerClass}>Trades</TabsTrigger>
+                <TabsTrigger value="comments" className={ctaTabsTriggerClass}>Comments</TabsTrigger>
+              </TabsList>
+              <TabsContent value="chart" className="mt-0">
+                {chart.emptyNote ? <p className="mb-2 text-xs text-muted-foreground">{chart.emptyNote}</p> : null}
+                <div className="h-[320px] md:h-[420px]">
+                  <UnifiedMarketChart
+                    curvePoints={[]}
+                    marketCandles={chart.candles}
+                    marketState={chart.marketState as any}
+                    chainId={item.chainId}
+                    livePriceNative={livePriceNative}
+                    liveMcapNative={liveMcapNative}
+                    nativeUsdPrice={nativeUsd}
+                    marketKey={`${item.chainId}:${item.tokenAddress}`}
+                    resolution="1m"
+                    onResolutionChange={() => undefined}
+                    denomination="USD"
+                    historyReady
+                    loading={false}
+                    error={null}
+                  />
+                </div>
+              </TabsContent>
+              <TabsContent value="trades" className="mt-0 space-y-3">
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                  <div className="rounded-xl border border-border bg-muted/20 px-3 py-2"><p className="text-[10px] text-muted-foreground uppercase">Price</p><p className="mt-0.5 font-retro text-sm">{formatUsd(profile?.priceUsd)}</p></div>
+                  <div className="rounded-xl border border-border bg-muted/20 px-3 py-2"><p className="text-[10px] text-muted-foreground uppercase">Market cap</p><p className="mt-0.5 font-retro text-sm">{formatUsd(profile?.marketCapUsd)}</p></div>
+                  <div className="rounded-xl border border-border bg-muted/20 px-3 py-2"><p className="text-[10px] text-muted-foreground uppercase">Liquidity</p><p className="mt-0.5 font-retro text-sm">{formatUsd(profile?.liquidityUsd)}</p></div>
+                  <div className="rounded-xl border border-border bg-muted/20 px-3 py-2"><p className="text-[10px] text-muted-foreground uppercase">24h volume</p><p className="mt-0.5 font-retro text-sm">{formatUsd(profile?.volume24hUsd)}</p></div>
+                </div>
+                {trades.length ? (
+                  <div className="overflow-auto text-sm">
+                    <table className="w-full">
+                      <thead><tr className="text-left text-muted-foreground"><th className="py-2">Type</th><th>Amount</th><th>Time</th></tr></thead>
+                      <tbody>
+                        {trades.slice(0, 24).map((tx) => (
+                          <tr key={`${tx.txHash}-${tx.logIndex}`} className="border-t border-border/40"><td className="py-2">{tx.side}</td><td>{tx.nativeAmountRaw}</td><td>{tx.blockTime}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Trades appear here once this pool is indexed. {marketDexUrl ? <a href={marketDexUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">Open on DEX</a> : null}{explorerUrl ? <> · <a href={explorerUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">Explorer</a></> : null}</p>
+                )}
+              </TabsContent>
+              <TabsContent value="comments" className="mt-0">
+                <TokenComments chainId={item.chainId} campaignAddress={item.tokenAddress} tokenAddress={item.tokenAddress} mode="comments" />
+              </TabsContent>
+            </Tabs>
+          </Card>
+        </div>
+
+        <div className="min-w-0 flex flex-col gap-3">
+          <section className="mwz-hud-frame p-4 space-y-3" data-imported-trade-panel="true">
+            <div className="font-retro text-sm text-foreground">Trade</div>
+            {tradingBlocked ? (
+              <p className="text-sm text-muted-foreground">Trading is unavailable while the security scan reports a honeypot or blocked transfer.</p>
+            ) : (
+              <ImportedTradePanel item={arenaItem} />
+            )}
+          </section>
+          {postGradFlags.arena ? (
+            <Card className="bg-card/30 rounded-2xl border border-border p-4">
+              <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" />
+            </Card>
+          ) : null}
+          {warRoomOpen ? (
+            <Card className="bg-card/30 rounded-2xl border border-border p-4">
+              <h3 className="text-sm font-semibold">War Room</h3>
+              <p className="text-[11px] text-muted-foreground mb-3">Live campaign chat</p>
+              <TokenWarRoom chainId={item.chainId} campaignAddress={item.tokenAddress} creatorAddress={ownerWallet || null} />
+            </Card>
+          ) : null}
 
       <section className="mwz-hud-frame p-5" data-project-profile="true">
         <div className="flex items-center justify-between gap-3">
@@ -399,6 +539,9 @@ export default function ImportedTokenPage({
 
       <section className="mwz-hud-frame p-5" data-import-arena-strip="true" data-import-competition-eligibility={competition.eligible ? "eligible" : "not-eligible"}>
         <h2 className="font-retro text-sm text-foreground">Arena</h2>
+        <Button type="button" size="sm" className="mt-3 font-retro" data-challenge-this-coin="true" onClick={() => setChallengeOpen(true)}>
+          <Swords className="h-4 w-4" />Challenge this coin
+        </Button>
         {arenaItem.status === "scanning" ? (
           <p className="mt-2 text-sm text-muted-foreground">Arena check running.</p>
         ) : competition.eligible && postGradFlags.arena ? (
@@ -436,7 +579,16 @@ export default function ImportedTokenPage({
           <p className="mt-2 text-sm text-muted-foreground">{competition.label}</p>
         )}
       </section>
+        </div>
+      </div>
       <p className="text-xs text-muted-foreground">{nativeUnit} quotes use the chain native. Project verification is separate from financial and competition eligibility.</p>
+      <ChallengeCoinModal
+        open={challengeOpen}
+        onOpenChange={setChallengeOpen}
+        walletAddress={connectedWallet}
+        chainId={item.chainId}
+        initialTargetId={item.tokenAddress}
+      />
     </ContentContainer>
   );
 }
