@@ -1260,6 +1260,29 @@ stock-side pool liquidity ≥ $50k, launch-size impact ≤ 500 bps (probe
 dashboard's ENABLE is only an override among healthy ones and stays grey for a stock that
 fails certification, by design.
 
+### Battle matchmaking and league points (founder policy, 2026-09-25)
+
+Battle points are relative (% market-cap change, % holder change, turnover), so a
+size gap does not skew the score. Matching only guards the cost of pumping a tiny
+coin. `calculateMatchQuality` (`frontend/api/lib/arenaMatchQuality.js`) decides
+ranked; `battleLeagueEligibility` (`arenaBattleCompetition.js`) decides league points.
+
+- **Vote battles are always ranked**, full points, no matching.
+- **Metrics battles are ranked** when both coins are under $150k
+  (`ARENA_MATCH_MICRO_FLOOR_USD`), or within 4x market cap above that
+  (`ARENA_MATCH_V2_HARD_MCAP_RATIO`, was 8).
+- Floors: liquidity >= $2,500 and holders >= 25 on both sides
+  (`ARENA_MATCH_MIN_LIQUIDITY_USD`, `ARENA_MATCH_MIN_HOLDERS`). The old holder and
+  liquidity *ratio* gates are gone.
+- **The match score no longer gates ranked**; it only sorts recommendations.
+  `ARENA_MATCH_SCORE_GATES_RANKED=true` restores the 70 gate.
+- **Open War** (an unranked metrics challenge) earns league points at 0.5x
+  (`ARENA_OPEN_WAR_POINTS_MULTIPLIER`): win 1.5, loss 0.5. Stakes and payouts are
+  unaffected; only league points scale.
+- Metrics battles need market data. Imported tokens have no `market_stats` rows
+  yet, so the server refuses a metrics challenge involving one
+  (`METRICS_MARKET_DATA_UNAVAILABLE`); vote battles work for them.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
