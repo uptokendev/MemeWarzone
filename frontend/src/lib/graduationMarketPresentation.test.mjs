@@ -19,6 +19,10 @@ import {
   providerLabel,
   robinhoodLegacyMarketKind,
   selectedMarketSummary,
+  evmNativeLaunchQuote,
+  isEvmNativeLaunchQuote,
+  EVM_NATIVE_LAUNCH_CHAIN_IDS,
+  draftGraduationSelection,
 } from "./graduationMarketPresentation.mjs";
 import * as presentation from "./graduationMarketPresentation.mjs";
 
@@ -270,10 +274,10 @@ test("BNB launch-day native choice stays on native create/draft semantics and hi
 
   const step = readFileSync(join(here, "../components/create/GraduationMarketStep.tsx"), "utf8");
   const helper = readFileSync(join(here, "./bnbNativeLaunchQuote.ts"), "utf8");
-  assert.match(step, /bnbNativeLaunchQuote\(chainId\)/);
+  assert.match(step, /evmNativeLaunchQuote\(chainId\)/);
   assert.match(step, /catalogItems\.filter\(\(item\) => !isNativeQuote\(item\)\)/);
-  assert.match(step, /isBnbNativeLaunchQuote\(selected\) \? ""/);
-  assert.match(helper, /contractAddressOrMint \|\| ""\) === "native:56"/);
+  assert.match(step, /isEvmNativeLaunchQuote\(selected\) \? ""/);
+  assert.match(helper, /export const bnbNativeLaunchQuote = evmNativeLaunchQuote;/);
 });
 
 test("catalog categories map onto the stonk-style tabs: pre-IPO, commodities, leverage, collectibles, community", () => {
@@ -324,3 +328,32 @@ test("provider facets and search text expose provider, category and tags", () =>
   for (const needle of ["nvdax", "nvidia", "xstocks", "stocks", "stock"]) assert.ok(text.includes(needle), needle);
   assert.equal(providerLabel(nvda), "xStocks");
 });
+
+test("the native launch default exists for BNB and Robinhood alike, never for Solana, and takes the native create path", () => {
+  assert.deepEqual([...EVM_NATIVE_LAUNCH_CHAIN_IDS].sort((a, b) => a - b), [56, 97, 4663, 46630]);
+  const eth = evmNativeLaunchQuote(4663);
+  assert.equal(eth.id, "native:4663");
+  assert.equal(eth.symbol, "ETH");
+  assert.equal(eth.chainId, "4663");
+  assert.equal(eth.presentationDefault, true);
+  assert.equal(eth.newGraduationEligible, true);
+  assert.equal(evmNativeLaunchQuote(56).symbol, "BNB");
+  assert.equal(evmNativeLaunchQuote(101), null);
+  assert.equal(isEvmNativeLaunchQuote(eth), true);
+  assert.equal(isEvmNativeLaunchQuote(evmNativeLaunchQuote(56)), true);
+  assert.equal(isEvmNativeLaunchQuote({ ...eth, presentationDefault: false }), false, "a catalog WETH row is not the launch default");
+  assert.equal(isEvmNativeLaunchQuote({ id: "native:101", chainId: "101", identityKind: "NATIVE", contractAddressOrMint: "native:101", presentationDefault: true }), false);
+  assert.equal(directDeployBindPath(eth), "native");
+  assert.equal(directDeployBindPath(evmNativeLaunchQuote(56)), "native");
+  assert.notEqual(directDeployBindPath(eth), "robinhood-stock");
+});
+
+test("a draft saved with the Robinhood native default carries no quote id, like BNB", () => {
+  const eth = evmNativeLaunchQuote(4663);
+  const fields = draftGraduationSelection(eth, 4663);
+  assert.equal(fields.graduationQuoteAssetId, "");
+  assert.equal(fields.policyVersion, "chain-native-default");
+  assert.equal(fields.chainId, 4663);
+  assert.deepEqual(draftGraduationSelection(evmNativeLaunchQuote(56), 56).graduationQuoteAssetId, "");
+});
+

@@ -38,3 +38,10 @@ test("the create page offers the chain switch while no wallet is connected and r
   assert.match(create, /getActiveChainId\(wallet\.chainId \?\? feedChainId\)/);
   assert.match(create, /\{noWalletConnected \? <ChainFeedSwitch \/> : null\}/);
 });
+
+test("a connected Solana wallet only makes a Solana launch while Solana is the chosen chain", () => {
+  const create = fs.readFileSync(path.join(here, "../pages/Create.tsx"), "utf8");
+  assert.match(create, /getActiveChainId\(wallet\.chainId \?\? feedChainId\) === SOLANA_CHAIN_ID,\n  \);/);
+  assert.doesNotMatch(create, /=== SOLANA_CHAIN_ID \|\| !wallet\.isConnected\)/);
+});
+

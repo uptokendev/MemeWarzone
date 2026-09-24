@@ -4,7 +4,7 @@ import { fetchRobinhoodStockGraduationAssets } from "@/lib/robinhoodStockCreate"
 import {
   catalogQuoteAssetsOnly,
   isNativeQuote,
-  isRobinhoodStockQuote,
+  isRobinhoodStockQuote, isEvmNativeLaunchQuote
 } from "@/lib/graduationMarketPresentation.mjs";
 
 export type GraduationQuoteAsset = {
@@ -92,7 +92,7 @@ export async function assertFreshGraduationQuote(asset: GraduationQuoteAsset): P
   const id = String(asset?.id || "").trim();
   if (!id) throw new Error("Choose a catalog Graduation Market before continuing.");
   if (asset?.presentationDefault === true) {
-    if (Number(asset.chainId) === 56 && isNativeQuote(asset)) return asset;
+    if (isEvmNativeLaunchQuote(asset)) return asset;
     throw new Error("Choose a catalog Graduation Market before continuing.");
   }
   const fresh = await fetchGraduationQuoteAssetDetail(id);

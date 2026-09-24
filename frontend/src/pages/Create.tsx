@@ -168,10 +168,13 @@ const Create = () => {
   // so the chain this page builds for is never a stale read of localStorage.
   const [feedChainId] = useSelectedFeedChainId();
   const noWalletConnected = !wallet.isConnected && !solanaWallet.isSolanaConnected;
+  // A connected Solana wallet makes this a Solana launch only while Solana is the
+  // chosen chain. It used to win whenever no EVM wallet was connected, so picking
+  // Robinhood or BNB with Phantom open still showed the Solana quote list.
   const isSolanaCreator = Boolean(
     solanaWallet.isSolanaConnected &&
       solanaWallet.solanaAccount &&
-      (getActiveChainId(wallet.chainId) === SOLANA_CHAIN_ID || !wallet.isConnected),
+      getActiveChainId(wallet.chainId ?? feedChainId) === SOLANA_CHAIN_ID,
   );
   const creatorWallet = isSolanaCreator ? solanaWallet.solanaAccount : wallet.account || "";
   const chainId = isSolanaCreator ? SOLANA_CHAIN_ID : getActiveChainId(wallet.chainId ?? feedChainId);

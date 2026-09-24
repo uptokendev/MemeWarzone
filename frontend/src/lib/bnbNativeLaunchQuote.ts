@@ -1,22 +1,23 @@
 import type { GraduationQuoteAsset } from "@/lib/graduationQuoteCatalog";
-import { nativeDefaultQuoteAsset } from "@/lib/graduationMarketPresentation.mjs";
+import { evmNativeLaunchQuote as evmNativeLaunchQuoteMjs, isEvmNativeLaunchQuote as isEvmNativeLaunchQuoteMjs } from "@/lib/graduationMarketPresentation.mjs";
 
 /**
- * Launch-day BNB native market choice.
+ * Launch-day native market choice for the EVM chains (BNB 56, Robinhood 4663
+ * and their testnets). The rule lives in graduationMarketPresentation.mjs so
+ * the node tests exercise it; this file only types it for the TSX callers.
  *
- * Native BNB is deliberately not a generic Quote Asset Catalog deployment: selecting it must
- * keep the legacy/native createCampaignAuthorized path and must never inject a BNB BASIC quote id.
+ * Native BNB / native ETH is deliberately not a generic Quote Asset Catalog
+ * deployment: selecting it keeps the legacy/native createCampaignAuthorized
+ * path and never injects a quote id.
  */
-export function bnbNativeLaunchQuote(chainId: number): GraduationQuoteAsset | null {
-  if (Number(chainId) !== 56) return null;
-  return nativeDefaultQuoteAsset(56) as GraduationQuoteAsset;
+export function evmNativeLaunchQuote(chainId: number): GraduationQuoteAsset | null {
+  return evmNativeLaunchQuoteMjs(chainId) as GraduationQuoteAsset | null;
 }
 
-export function isBnbNativeLaunchQuote(asset: GraduationQuoteAsset | null | undefined): boolean {
-  return Boolean(
-    asset?.presentationDefault === true &&
-      Number(asset.chainId) === 56 &&
-      String(asset.identityKind || "").toUpperCase() === "NATIVE" &&
-      String(asset.contractAddressOrMint || "") === "native:56",
-  );
+export function isEvmNativeLaunchQuote(asset: GraduationQuoteAsset | null | undefined): boolean {
+  return isEvmNativeLaunchQuoteMjs(asset);
 }
+
+/** @deprecated chain-56-only names kept for callers that still use them; same rule. */
+export const bnbNativeLaunchQuote = evmNativeLaunchQuote;
+export const isBnbNativeLaunchQuote = isEvmNativeLaunchQuote;

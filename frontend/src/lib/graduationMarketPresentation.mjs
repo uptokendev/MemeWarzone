@@ -232,6 +232,32 @@ export function nativeProviderKey(chainId) {
   return "bnb-basic";
 }
 
+/**
+ * Launch-day native market choice for the EVM chains. Native BNB / native ETH
+ * is deliberately not a Quote Asset Catalog deployment: selecting it keeps the
+ * legacy/native createCampaignAuthorized path and never sends a quote id. Until
+ * 2026-09-24 only chain 56 got this default, so a Robinhood creator saw an empty
+ * picker (the catalog's WETH row is a wrapped duplicate the verifier does not
+ * activate) and could not pass the market step at all.
+ */
+export const EVM_NATIVE_LAUNCH_CHAIN_IDS = Object.freeze(new Set([56, 97, 4663, 46630]));
+
+export function evmNativeLaunchQuote(chainId) {
+  const n = Number(chainId);
+  if (!EVM_NATIVE_LAUNCH_CHAIN_IDS.has(n)) return null;
+  return nativeDefaultQuoteAsset(n);
+}
+
+export function isEvmNativeLaunchQuote(asset) {
+  if (!asset || asset.presentationDefault !== true) return false;
+  const n = Number(asset.chainId);
+  return (
+    EVM_NATIVE_LAUNCH_CHAIN_IDS.has(n) &&
+    String(asset.identityKind || "").toUpperCase() === "NATIVE" &&
+    String(asset.contractAddressOrMint || "") === `native:${n}`
+  );
+}
+
 export function nativeDefaultQuoteAsset(chainId) {
   const symbol = nativeSymbol(chainId);
   const chain = String(chainId);
@@ -274,7 +300,7 @@ export function catalogQuoteAssetsOnly(items) {
 export function directDeployBindPath(asset) {
   if (!asset || asset.newGraduationEligible !== true) return null;
   if (asset.presentationDefault === true) {
-    return Number(asset?.chainId) === 56 && isNativeQuote(asset) ? "native" : null;
+    return isEvmNativeLaunchQuote(asset) ? "native" : null;
   }
   if (isRobinhoodStockQuote(asset)) return "robinhood-stock";
   if (isNativeQuote(asset)) return "native";
@@ -309,7 +335,7 @@ export function selectedMarketSummary({ ticker, asset, chainId }) {
 
 export function draftGraduationSelection(asset, chainId) {
   const resolvedChainId = Number(asset?.chainId || chainId);
-  if (resolvedChainId === 56 && asset?.presentationDefault === true && isNativeQuote(asset)) {
+  if (isEvmNativeLaunchQuote(asset) || (resolvedChainId === 56 && asset?.presentationDefault === true && isNativeQuote(asset))) {
     return {
       graduationQuoteAssetId: "",
       graduationQuoteStateVersion: 0,

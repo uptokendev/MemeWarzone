@@ -1208,6 +1208,20 @@ follows it. The chain-first modal the founder remembered was `eda32af9`
 (2026-08-28), replaced on purpose by `0983464c` (2026-09-17, "switch RH
 in-place"); both are on live. Test pins the helper and the modal's call shape.
 
+### Robinhood creators had no native ETH to pick (2026-09-24)
+
+The Graduation Market step synthesises the chain's native quote client-side
+(`evmNativeLaunchQuote`, formerly BNB-only `bnbNativeLaunchQuote`); the
+catalog's WETH row is a wrapped duplicate the verifier never activates
+(`WRAPPED_NATIVE_DUPLICATE`). Chain 4663 had no default, so the Robinhood
+picker was empty and step 5 could not be passed. Now 56/97/4663/46630 all get
+the native default, which keeps the native `createCampaignAuthorized` path
+(no quote id, `directDeployBindPath` = native, draft fields
+`chain-native-default`). Registry stocks join the list once SYNC + RESCAN run
+on production. Also: with a Solana wallet connected and no EVM wallet, the
+create page used to stay a Solana launch whatever chain was chosen; it now
+follows the chosen chain.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and

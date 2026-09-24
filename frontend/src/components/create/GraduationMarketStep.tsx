@@ -26,7 +26,7 @@ import {
   bindingRiskHeadline,
   bindingRisksForAsset,
 } from "@/lib/graduationBindingRisks.mjs";
-import { bnbNativeLaunchQuote, isBnbNativeLaunchQuote } from "@/lib/bnbNativeLaunchQuote";
+import { evmNativeLaunchQuote, isEvmNativeLaunchQuote } from "@/lib/bnbNativeLaunchQuote";
 import { rememberGraduationQuoteAssetId } from "@/lib/graduationQuoteSelectionSession";
 
 export type GraduationMarketStepProps = {
@@ -248,9 +248,9 @@ export function GraduationMarketStep({
       .then((next) => {
         if (cancelled) return;
         const catalogItems = next.filter((item) => item.newGraduationEligible === true);
-        const bnbNative = bnbNativeLaunchQuote(chainId);
-        const availableItems = bnbNative
-          ? [bnbNative, ...catalogItems.filter((item) => !isNativeQuote(item))]
+        const evmNative = evmNativeLaunchQuote(chainId);
+        const availableItems = evmNative
+          ? [evmNative, ...catalogItems.filter((item) => !isNativeQuote(item))]
           : catalogItems;
         setItems(availableItems);
         const stillSelected = availableItems.some((item) => item.id === selected?.id);
@@ -279,7 +279,7 @@ export function GraduationMarketStep({
   }, [chainId]);
 
   useEffect(() => {
-    rememberGraduationQuoteAssetId(chainId, isBnbNativeLaunchQuote(selected) ? "" : selected?.id || "");
+    rememberGraduationQuoteAssetId(chainId, isEvmNativeLaunchQuote(selected) ? "" : selected?.id || "");
   }, [chainId, selected?.id, selected?.presentationDefault]);
 
   const needle = search.trim().toLowerCase();
