@@ -1,0 +1,140 @@
+{
+  "chainId": 4663,
+  "generatedAt": "2026-09-24T12:40:58.220Z",
+  "source": {
+    "assets": "https://api.robinhood.com/rhj/assets",
+    "feeds": "https://reference-data-directory.vercel.app/feeds-robinhood-mainnet.json",
+    "pools": "UniswapV3Factory 0x1f7d7550B1b028f7571E69A784071F0205FD2EfA getPool(token, WETH, fee), best fee tier by WETH depth"
+  },
+  "floorUsd": 50000,
+  "ethUsdAtScan": 2649.9676108,
+  "policy": {
+    "minimumRouteLiquidityUsd": "50000",
+    "maxSwapSlippageBps": 300,
+    "maxOracleDeviationBps": 500,
+    "maxPriceImpactBps": 500
+  },
+  "routes": [
+    {
+      "symbol": "SPY",
+      "stockToken": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+      "oracleFeed": "0x319724394D3A0e3669269846abE664Cd621f9f6A",
+      "acquisitionPool": "0xDDCBBa3666f578E3F09516f21Ff85BFee859AB5e",
+      "acquisitionFeeTier": 500,
+      "poolUsdObserved": 984691
+    },
+    {
+      "symbol": "NVDA",
+      "stockToken": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "oracleFeed": "0x379EC4f7C378F34a1B47E4F3cbeBCbAC3E8E9F15",
+      "acquisitionPool": "0x62AB521f71431f78ac374CdbadC6cda3c8916b6C",
+      "acquisitionFeeTier": 500,
+      "poolUsdObserved": 948572
+    },
+    {
+      "symbol": "MSTR",
+      "stockToken": "0xec262a75e413fAfD0dF80480274532C79D42da09",
+      "oracleFeed": "0x396118bdFB181e6240E74D243F266B061c0edc3D",
+      "acquisitionPool": "0x70504a6FafdbfB75fE971FAA4dD716e79aC5624c",
+      "acquisitionFeeTier": 10000,
+      "poolUsdObserved": 799588
+    },
+    {
+      "symbol": "META",
+      "stockToken": "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35",
+      "oracleFeed": "0x7C38C00C30BEe9378381E7B6135d7283356D71b1",
+      "acquisitionPool": "0xa4BdB396a69617eb7F70E2cc1EF526f7340b1B0d",
+      "acquisitionFeeTier": 3000,
+      "poolUsdObserved": 678110
+    },
+    {
+      "symbol": "COIN",
+      "stockToken": "0x6330D8C3178a418788dF01a47479c0ce7CCF450b",
+      "oracleFeed": "0xA3a468A452940B7D6b69991207B508c609a98Ef2",
+      "acquisitionPool": "0x6707aeAc7D0e519B083219d27BB427364363183A",
+      "acquisitionFeeTier": 3000,
+      "poolUsdObserved": 571557
+    },
+    {
+      "symbol": "SPCX",
+      "stockToken": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+      "oracleFeed": "0xB265810950ba6c5C0Ff821c9963014a56fD8Bffb",
+      "acquisitionPool": "0xC3c9F0171490Ef0F4536fe493F3b0EbB5ee0CB5e",
+      "acquisitionFeeTier": 500,
+      "poolUsdObserved": 554941
+    },
+    {
+      "symbol": "MU",
+      "stockToken": "0xfF080c8ce2E5feadaCa0Da81314Ae59D232d4afD",
+      "oracleFeed": "0x425EEFdCf05ed6526C3cE61Af99429A228a6d596",
+      "acquisitionPool": "0x301F48EC369BB3bfA0bC04d44A79037aa0EE2340",
+      "acquisitionFeeTier": 10000,
+      "poolUsdObserved": 532008
+    },
+    {
+      "symbol": "GLD",
+      "stockToken": "0xC9a981FEE1F9DEc688bb123ccDeCc63D0deBFC4e",
+      "oracleFeed": "0x470A51258068043bd43dC0a56245625C9fE86eB0",
+      "acquisitionPool": "0x98996e833EA35EC17c3645Ca7b6Dd40d188564C4",
+      "acquisitionFeeTier": 10000,
+      "poolUsdObserved": 318735
+    },
+    {
+      "symbol": "TSLA",
+      "stockToken": "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+      "oracleFeed": "0x4A1166a659A55625345e9515b32adECea5547C38",
+      "acquisitionPool": "0xA953CA88ff430e9487c60cA34d757414f4efdA07",
+      "acquisitionFeeTier": 3000,
+      "poolUsdObserved": 299564
+    },
+    {
+      "symbol": "QQQ",
+      "stockToken": "0xD5f3879160bc7c32ebb4dC785F8a4F505888de68",
+      "oracleFeed": "0x80901d846d5D7B030F26B480776EE3b29374C2ae",
+      "acquisitionPool": "0xA40D00a55d43bA2d188039DCF88bD68f4F133E78",
+      "acquisitionFeeTier": 3000,
+      "poolUsdObserved": 236339
+    },
+    {
+      "symbol": "AAPL",
+      "stockToken": "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+      "oracleFeed": "0x6B22A786bAa607d76728168703a39Ea9C99f2cD0",
+      "acquisitionPool": "0x8bb3514e2204E1cDF3Ac149EFEe7Ff04D91B719f",
+      "acquisitionFeeTier": 500,
+      "poolUsdObserved": 217910
+    },
+    {
+      "symbol": "SGOV",
+      "stockToken": "0x92FD66527192E3e61d4DDd13322Aa222DE86F9B5",
+      "oracleFeed": "0xa0DF4ee0fFf975306345875E3548Fcc519577A11",
+      "acquisitionPool": "0x7F310e3D05E575Bd449E4484eF5Da15863ea43B1",
+      "acquisitionFeeTier": 10000,
+      "poolUsdObserved": 105566
+    },
+    {
+      "symbol": "GME",
+      "stockToken": "0x1b0E319c6A659F002271B69dB8A7df2F911c153E",
+      "oracleFeed": "0x27C71df6A64fB476468EdF256CF72c038baB5B67",
+      "acquisitionPool": "0xc6BCC95043DC48C204bB2D57fb264a10Efe0a607",
+      "acquisitionFeeTier": 500,
+      "poolUsdObserved": 98522
+    },
+    {
+      "symbol": "CRCL",
+      "stockToken": "0xdF0992E440dD0be65BD8439b609d6D4366bf1CB5",
+      "oracleFeed": "0x6652eDf64bA3731C4F2D3ce821A0Fb1f1f6b482a",
+      "acquisitionPool": "0x754DdD4bF8E8635B4301a7f4Af2Ea7A82AB6cEA7",
+      "acquisitionFeeTier": 10000,
+      "poolUsdObserved": 50945
+    },
+    {
+      "symbol": "USDG",
+      "stockToken": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      "oracleFeed": "0x61B7e5650328764B076A108EFF5fa7282a1B9aD2",
+      "acquisitionPool": "0x52e65B17fB6E5BA00Ed806f37Afcd2DaA50271Ca",
+      "acquisitionFeeTier": 100,
+      "poolUsdObserved": 20227242,
+      "assetClass": "STABLECOIN"
+    }
+  ]
+}
