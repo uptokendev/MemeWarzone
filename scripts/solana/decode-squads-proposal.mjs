@@ -117,16 +117,18 @@ async function main() {
     let address = args.find((a) => !a.startsWith("--") && !Object.values({ a: opt("--program"), b: opt("--buffer"), c: opt("--spill"), d: opt("--authority"), e: opt("--latest") }).includes(a));
     const latestOf = opt("--latest");
     if (latestOf) {
-      // VaultTransaction: discriminator(8) then multisig(32). Filter on that and take the highest index.
-      const accounts = await conn.getProgramAccounts(new PublicKey(SQUADS), { commitment: "finalized", filters: [{ memcmp: { offset: 8, bytes: latestOf } }] });
-      const parsed = [];
-      for (const { pubkey, account } of accounts) {
-        try { const vt = decodeVaultTransaction(account.data); if (vt.trailing === 0) parsed.push({ pubkey: pubkey.toBase58(), index: vt.index }); } catch { /* proposals, batches, config txs: not ours */ }
-      }
-      if (!parsed.length) throw new Error(`no VaultTransaction found for multisig ${latestOf}`);
-      parsed.sort((a, b) => (a.index < b.index ? 1 : -1));
-      address = parsed[0].pubkey;
-      console.log(`newest VaultTransaction for ${latestOf}: index ${parsed[0].index} at ${address} (${parsed.length} on chain)`);
+      // No program-wide scan: the multisig account carries transaction_index
+      // (u64 at offset 78 in the v4 layout: disc 8, create_key 32,
+      // config_authority 32, threshold u16, time_lock u32), and each vault
+      // transaction lives at a PDA of ["multisig", multisig, "transaction", index].
+      const ms = await conn.getAccountInfo(new PublicKey(latestOf), "finalized");
+      if (!ms) throw new Error(`no account at ${latestOf}`);
+      if (ms.owner.toBase58() !== SQUADS) throw new Error(`${latestOf} is not a Squads v4 account`);
+      const index = ms.data.readBigUInt64LE(78);
+      const seed = Buffer.alloc(8); seed.writeBigUInt64LE(index);
+      const [pda] = PublicKey.findProgramAddressSync([Buffer.from("multisig"), new PublicKey(latestOf).toBuffer(), Buffer.from("transaction"), seed], new PublicKey(SQUADS));
+      address = pda.toBase58();
+      console.log(`newest transaction of ${latestOf}: index ${index} at ${address}`);
     }
     if (!address) throw new Error("give a VaultTransaction address, --latest <multisig>, or --sig <signature>");
     const info = await conn.getAccountInfo(new PublicKey(address), "finalized");
