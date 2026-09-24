@@ -139,6 +139,14 @@ const config: HardhatUserConfig = {
   etherscan: {
     apiKey: explorerApiKey,
   },
+  // Source verification. BSC goes through Etherscan's v2 API with the single
+  // key above. Robinhood Chain's explorer (robinhoodchain.blockscout.com) sits
+  // behind a Cloudflare challenge that blocks scripted requests, so those
+  // contracts are verified on Sourcify (chain 4663 is supported), which
+  // Blockscout reads. scripts/verify-mainnet-contracts.ts drives both.
+  sourcify: {
+    enabled: true,
+  },
 
   solidity: {
     version: "0.8.24",
