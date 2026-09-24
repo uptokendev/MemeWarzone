@@ -1,0 +1,156 @@
+{
+  "chainId": 56,
+  "generatedAt": "2026-09-24T13:06:17.164Z",
+  "floorUsd": 50000,
+  "bnbUsdAtScan": 772.091,
+  "source": {
+    "assets": "frontend/api/data/approved-quote-catalog.v1.json (chain 56)",
+    "feeds": "https://reference-data-directory.vercel.app/feeds-bsc-mainnet.json",
+    "pools": "Topaz factory 0x65E6cD0eF5D3467030103cf3d433034E570b5784 getPool(WBNB, token, false)"
+  },
+  "policy": {
+    "minimumRouteLiquidityUsd": "50000",
+    "maxSwapSlippageBps": 300,
+    "maxOracleDeviationBps": 500,
+    "maxPriceImpactBps": 500,
+    "maxGraduationPriceDeviationBps": 500
+  },
+  "routes": [],
+  "belowFloor": [
+    {
+      "symbol": "USDT",
+      "quoteToken": "0x55d398326f99059fF775485246999027B3197955",
+      "oracleFeed": "0x501e21126486424567f40D490856094D72986E41",
+      "acquisitionPool": "0xe030E94879204403dB8eAA73251667551446ae01",
+      "poolUsdObserved": 1195
+    },
+    {
+      "symbol": "USDC",
+      "quoteToken": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+      "oracleFeed": "0x8068600c8f6d2fB3d44F5B4cb7E7f4Ac47c2c742",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "FDUSD",
+      "quoteToken": "0xc5f0f7b66764F6ec8C8Dff7BA683102295E16409",
+      "oracleFeed": "0x390180e80058A8499930F0c13963AD3E0d86Bfc9",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "BTCB",
+      "quoteToken": "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c",
+      "oracleFeed": "0x264990fbd0A4796A3E3d8E37C4d5F87a3aCa5Ebf",
+      "acquisitionPool": "0x35BF6c8375776EcE4399bc17159eD97AB5Dc5172",
+      "poolUsdObserved": 1528
+    },
+    {
+      "symbol": "ETH",
+      "quoteToken": "0x2170Ed0880ac9A755fd29B2688956BD959F933F8",
+      "oracleFeed": "0x9ef1B8c0E4F7dc8bF5719Ea496883DC6401d5b2e",
+      "acquisitionPool": "0xA8b16D898d4a9f2334cCE96eb4e830F6eA23B552",
+      "poolUsdObserved": 186
+    },
+    {
+      "symbol": "CAKE",
+      "quoteToken": "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82",
+      "oracleFeed": "0x96125CCbE22291dFe02bFAF80b8f74d9f9c3E60A",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "AAPLx",
+      "quoteToken": "0x9d275685dc284c8eb1c79f6aba7a63dc75ec890a",
+      "oracleFeed": "0xb7Ed5bE7977d61E83534230f3256C021e0fae0B6",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "NVDAx",
+      "quoteToken": "0xc845b2894dbddd03858fd2d643b4ef725fe0849d",
+      "oracleFeed": "0xea5c2Cbb5cD57daC24E26180b19a929F3E9699B8",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "TSLAx",
+      "quoteToken": "0x8ad3c73f833d3f9a523ab01476625f269aeb7cf0",
+      "oracleFeed": "0xEEA2ae9c074E87596A85ABE698B2Afebc9B57893",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "AMZNx",
+      "quoteToken": "0x3557ba345b01efa20a1bddc61f573bfd87195081",
+      "oracleFeed": "0x51d08ca89d3e8c12535BA8AEd33cDf2557ab5b2a",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "MSFTx",
+      "quoteToken": "0x5621737f42dae558b81269fcb9e9e70c19aa6b35",
+      "oracleFeed": "0x5D209cE1fBABeAA8E6f9De4514A74FFB4b34560F",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "METAx",
+      "quoteToken": "0x96702be57cd9777f835117a809c7124fe4ec989a",
+      "oracleFeed": "0xfc76E9445952A3C31369dFd26edfdfb9713DF5Bb",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "GOOGLx",
+      "quoteToken": "0xe92f673ca36c5e2efd2de7628f815f84807e803f",
+      "oracleFeed": "0xeDA73F8acb669274B15A977Cb0cdA57a84F18c2a",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "QQQx",
+      "quoteToken": "0xa753a7395cae905cd615da0b82a53e0560f250af",
+      "oracleFeed": "0x9A41B56b2c24683E2f23BdE15c14BC7c4a58c3c4",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "COINx",
+      "quoteToken": "0x364f210f430ec2448fc68a49203040f6124096f0",
+      "oracleFeed": "0x2d1AB79D059e21aE519d88F978cAF39d74E31AEB",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "NFLXx",
+      "quoteToken": "0xa6a65ac27e76cd53cb790473e4345c46e5ebf961",
+      "oracleFeed": "0x1fE6c9Bd9B29e5810c2819f37dDa8559739ebeC9",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "SPYx",
+      "quoteToken": "0x90A2a4c76b5D8c0bc892A69EA28Aa775a8f2dD48",
+      "oracleFeed": "0xb24D1DeE5F9a3f761D286B56d2bC44CE1D02DF7e",
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    }
+  ],
+  "noFeed": [
+    {
+      "symbol": "PYTH",
+      "quoteToken": "0xb0188B0bb2cD4a6D2744637fC83C94a284B247Da",
+      "oracleFeed": null,
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    },
+    {
+      "symbol": "HOODx",
+      "quoteToken": "0xe1385fdd5ffb10081cd52c56584f25efa9084015",
+      "oracleFeed": null,
+      "acquisitionPool": null,
+      "poolUsdObserved": 0
+    }
+  ]
+}
