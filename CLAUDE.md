@@ -1115,6 +1115,27 @@ reads the body the same way, so this covers Solana create authorization too.
 Draft content is not cached in the browser (only an owner-session key), so a
 user with an unsaved draft must keep the tab open until the fix is deployed.
 
+### Binding tokens on EVM — facts read 2026-09-24 (launch requirement)
+
+- **Robinhood stock adapter `0xa48723e3…` had no campaign factory bound**
+  (`campaignFactory() == 0x0`); the Robinhood deploy script never called
+  `setCampaignFactoryOnce` (the BNB one did). Fixed by
+  `scripts/configure-robinhood-stock-routes.ts` step 0, which also binds the
+  routes: **14 stocks + USDG** meet feed + V3 pool ≥ $50k today
+  (`config/robinhood/mainnet-stock-routes.json`, from Robinhood's asset API ×
+  Chainlink's `feeds-robinhood-mainnet.json` × the V3 factory). Rehearsed.
+- **BNB binding is gated by Topaz liquidity, not code**: the adapter accepts
+  only the canonical Topaz volatile WBNB/token pool; on mainnet USDT ~$1.2k,
+  BTCB ~$1.5k, ETH ~$185, every other candidate has no pool. Seeding is a
+  capital decision (founder).
+- **EVM sponsorships need two undeployed contracts** (`EventPrizeVaultV1`,
+  `WarzoneSponsorshipRouterV1`), no tests, no deploy script. Not a launch
+  blocker (founder), to be fixed the same day. `ARENA_SPONSORSHIP_*` stay off.
+- Production `robinhood_stock_token_registry` is empty; it fills from
+  `POST /api/admin/robinhood/stock-graduation-registry/sync`. The production
+  quote catalog has no 56/4663 rows; `sync-quote-asset-catalog.mjs --db
+  production --apply` ports the manifest (founder runs: production write).
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
