@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1790255801901,
+  "meta": {
+    "name": "MWZ BNB mainnet V3: arm the protocol vault cap",
+    "description": "ProtocolRevenueVault 0xc2d4E6f8: operator 0x4CB68C7e is filled up to a lifetime $10,000 (BNB/USD from Chainlink at build time), overflow to the Safe 0x1edcEdf5. Today operator and overflow are unset. Import in Safe Transaction Builder on BNB.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c",
+      "value": "0",
+      "data": "0x4988b3970000000000000000000000004cb68c7e131ef7855b2ceee1b99cc163dfd478100000000000000000000000001edcedf5e5d9c2fad5f9f6b964077dd74020a7a700000000000000000000000000000000000000000000021e19e0c9bab2400000000000000000000000000000000000000000000000000029f9081143be260000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newOperator",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "newOverflowTreasury",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "newCapUsd",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "newNativeUsdPrice",
+            "type": "uint256"
+          }
+        ],
+        "name": "setOperatorFill",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newOperator": "0x4CB68C7e131Ef7855b2ceEe1B99Cc163DFD47810",
+        "newOverflowTreasury": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+        "newCapUsd": "10000000000000000000000",
+        "newNativeUsdPrice": "774261118720000000000"
+      }
+    }
+  ]
+}

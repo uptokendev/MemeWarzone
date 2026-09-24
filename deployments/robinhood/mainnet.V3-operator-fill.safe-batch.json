@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1790255807888,
+  "meta": {
+    "name": "MWZ Robinhood mainnet V3: arm the protocol vault cap",
+    "description": "ProtocolRevenueVault 0x632061cA: operator 0x4CB68C7e is filled up to a lifetime $10,000 (ETH/USD from Chainlink at build time), overflow to the Safe 0x1edcEdf5. Today operator and overflow are unset. Import in Safe Transaction Builder on Robinhood Chain.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+      "value": "0",
+      "data": "0x4988b3970000000000000000000000004cb68c7e131ef7855b2ceee1b99cc163dfd478100000000000000000000000001edcedf5e5d9c2fad5f9f6b964077dd74020a7a700000000000000000000000000000000000000000000021e19e0c9bab240000000000000000000000000000000000000000000000000008fa7b02de47898e000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newOperator",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "newOverflowTreasury",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "newCapUsd",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "newNativeUsdPrice",
+            "type": "uint256"
+          }
+        ],
+        "name": "setOperatorFill",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newOperator": "0x4CB68C7e131Ef7855b2ceEe1B99Cc163DFD47810",
+        "newOverflowTreasury": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+        "newCapUsd": "10000000000000000000000",
+        "newNativeUsdPrice": "2649967610800000000000"
+      }
+    }
+  ]
+}
