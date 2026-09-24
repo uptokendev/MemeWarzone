@@ -88,7 +88,7 @@ function fakeDb(rowState) {
     async query(sql, params = []) {
       log.push({ sql: sql.replace(/\s+/g, " ").trim(), params });
       if (/^select id, quote_asset_id, provider_id, chain_id, state_version, catalog_state from public\.quote_asset_deployments/.test(sql)) return { rows: [rowState.lock] };
-      if (/^\s*select\s+d\.id as deployment_id/.test(sql)) return { rows: [adminRow({ catalog_state: rowState.catalogState, deployment_state_version: String(rowState.version), policy_version_id: rowState.policy ? "pv1" : null })] };
+      if (/^\s*select\s+d\.id as deployment_id/.test(sql)) return { rows: [adminRow({ catalog_state: rowState.catalogState, deployment_state_version: String(rowState.version), policy_version_id: rowState.policy ? "pv1" : null, ...(rowState.row || {}) })] };
       if (/from public\.quote_asset_policy_versions where quote_asset_id = \$1::uuid and \(deployment_id/.test(sql)) return { rows: [] };
       if (/select policy_key, max\(version\)/.test(sql)) return { rows: [] };
       if (/select coalesce\(max\(version\), 0\)/.test(sql)) return { rows: [{ version: 0 }] };
@@ -130,3 +130,31 @@ test("decisions: version conflict rolls back with the current row; missing reaso
   await assert.rejects(() => decideQuoteCatalogDeployment({ id: "d1", action: "suspend", expectedVersion: 4, reason: "", actorIdentity: "admin", db }), (error) => error.code === "REASON_REQUIRED");
   await assert.rejects(() => decideQuoteCatalogDeployment({ id: "d1", action: "nuke", expectedVersion: 4, reason: "x", actorIdentity: "admin", db }), (error) => error.code === "QUOTE_CATALOG_ACTION_UNKNOWN");
 });
+
+test("approve on Robinhood Chain refuses a catalog asset that is not native: no adapter exists for it, only the stock registry", async () => {
+  const usdg = { chain_id: "4663", chain_family: "EVM", identity_kind: "EVM_ADDRESS", contract_address_or_mint: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168", identity_key: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", decimals: 6, asset_class: "STABLECOIN", symbol: "USDG", native_wrapped_status: "NONE", policy_key: "robinhood-basic-usdg-4663-v1", policy_config: {} };
+  const lock = { id: "d1", quote_asset_id: "a1", provider_id: "p1", chain_id: "4663", state_version: 3, catalog_state: "CANDIDATE" };
+  const refused = fakeDb({ lock, catalogState: "CANDIDATE", version: 3, policy: false, row: usdg });
+  await assert.rejects(
+    () => decideQuoteCatalogDeployment({ id: "d1", action: "approve", expectedVersion: 3, reason: "manual approve", actorIdentity: "admin", db: refused.db }),
+    (error) => error instanceof QuoteCatalogAdminError && error.code === "ROBINHOOD_CATALOG_ROUTE_UNAVAILABLE" && error.httpStatus === 409 && /USDG cannot be approved on Robinhood Chain/.test(error.message),
+  );
+  assert.ok(refused.log.some((entry) => entry.sql === "rollback"), "the transaction is rolled back");
+  assert.ok(!refused.log.some((entry) => entry.sql.startsWith("update public.quote_asset_deployments set catalog_state = 'ACTIVE'")), "nothing was activated");
+
+  // rejecting that same candidate is still an allowed decision
+  const rejected = fakeDb({ lock, catalogState: "CANDIDATE", version: 3, policy: false, row: usdg });
+  assert.ok(await decideQuoteCatalogDeployment({ id: "d1", action: "reject", expectedVersion: 3, reason: "no adapter on Robinhood", actorIdentity: "admin", db: rejected.db }));
+  assert.ok(rejected.log.some((entry) => entry.sql === "commit"));
+
+  // native ETH on Robinhood is the one catalog asset that can graduate there, and still approves
+  const eth = { chain_id: "4663", chain_family: "EVM", identity_kind: "NATIVE", contract_address_or_mint: "native:4663", identity_key: "native:4663", decimals: 18, asset_class: "NATIVE", symbol: "ETH", native_wrapped_status: "NATIVE", policy_key: "robinhood-basic-eth-4663-v1", policy_config: {} };
+  const approved = fakeDb({ lock, catalogState: "CANDIDATE", version: 3, policy: false, row: eth });
+  assert.ok(await decideQuoteCatalogDeployment({ id: "d1", action: "approve", expectedVersion: 3, reason: "native", actorIdentity: "admin", db: approved.db }));
+  assert.ok(approved.log.some((entry) => entry.sql.startsWith("update public.quote_asset_deployments set catalog_state = 'ACTIVE'")));
+
+  // the same non-native asset on BNB is untouched by this rule (BNB has a quote adapter)
+  const bnb = fakeDb({ lock: { ...lock, chain_id: "56" }, catalogState: "CANDIDATE", version: 3, policy: false, row: { ...usdg, chain_id: "56", policy_key: "bnb-basic-usdg-56-v1" } });
+  assert.ok(await decideQuoteCatalogDeployment({ id: "d1", action: "approve", expectedVersion: 3, reason: "bnb route verified", actorIdentity: "admin", db: bnb.db }));
+});
+

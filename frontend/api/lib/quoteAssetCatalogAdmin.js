@@ -24,6 +24,10 @@ export const QUOTE_CATALOG_CHAINS = Object.freeze([
 ]);
 
 const ROBINHOOD_CHAIN_IDS = new Set(["4663", "46630"]);
+/** Same rule as the verifier's: native by identity, wrapped-native, or the NATIVE asset class. */
+function isNativeCatalogItem(item) {
+  return item.identityKind === "NATIVE" || String(item.nativeWrappedStatus || "").toUpperCase() === "WRAPPED_NATIVE" || String(item.assetClass || "").toUpperCase() === "NATIVE";
+}
 const ASSET_CLASSES = ["NATIVE", "STABLECOIN", "PUBLIC_RWA", "PRE_IPO_RWA", "COMMODITY", "CRYPTO", "LEVERAGED_OR_YIELD", "COLLECTIBLE", "PROVIDER_RWA", "MWZ_NATIVE", "COMMUNITY", "OTHER"];
 const CATEGORIES = ["CORE", "STABLES_CURRENCIES", "STOCKS", "ETFS", "RWA_COMMODITIES", "ECOSYSTEM", "MEMEWARZONE", "COMMUNITY"];
 const PROVIDER_CLASSES = ["BASIC", "STABLECOIN", "ECOSYSTEM", "PROVIDER_RWA", "MWZ_NATIVE", "COMMUNITY"];
@@ -488,6 +492,19 @@ export async function decideQuoteCatalogDeployment({ id, action, expectedVersion
     const nextVersion = version + 1;
     let decision;
     let policyVersionId = null;
+
+    // Robinhood Chain has exactly two graduation paths, on chain and in the
+    // software: native ETH through the V3 adapter, and Robinhood Stock Token
+    // registry entries through the stock adapter. A catalog asset that is
+    // neither has no adapter to graduate through, so approving it would offer
+    // creators a binding that cannot complete. The verifier already reports
+    // this as ROBINHOOD_GENERIC_ROUTE_NOT_DEPLOYED; approve must not override it.
+    if (action === "approve" && before && ROBINHOOD_CHAIN_IDS.has(String(before.chainId)) && !isNativeCatalogItem(before)) {
+      throw new QuoteCatalogAdminError(
+        `${before.symbol || "This asset"} cannot be approved on Robinhood Chain: catalog assets have no graduation adapter there. Only native ETH and Robinhood Stock Token registry entries can graduate; a stock token is enabled from the registry, not the catalog.`,
+        { code: "ROBINHOOD_CATALOG_ROUTE_UNAVAILABLE", httpStatus: 409 },
+      );
+    }
 
     if (action === "approve") {
       const evidenceList = (Array.isArray(evidence) ? evidence : []).map(text).filter(Boolean);

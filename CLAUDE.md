@@ -1165,6 +1165,20 @@ the API. Audit note in `docs/build_plans/go-live-runbook.md` §P.
   quote catalog has no 56/4663 rows; `sync-quote-asset-catalog.mjs --db
   production --apply` ports the manifest (founder runs: production write).
 
+### Robinhood binding = native ETH + registry stocks, nothing else (2026-09-24)
+
+Robinhood Chain has two graduation paths, on chain and in the software: native
+ETH (V3 adapter) and Robinhood Stock Token **registry** entries (stock adapter;
+registry = Robinhood's canonical list, 195 stocks, the create path's sole
+eligibility authority). No generic quote adapter exists there, so a catalog
+asset like USDG has nothing to graduate through — the verifier's
+`ROBINHOOD_GENERIC_ROUTE_NOT_DEPLOYED` is the truth, not a missing env.
+`decideQuoteCatalogDeployment` now refuses `approve` for non-native catalog
+assets on 4663/46630 (`ROBINHOOD_CATALOG_ROUTE_UNAVAILABLE`) so a hand approval
+cannot offer creators a binding that cannot complete. The stock create path
+also needs `ROBINHOOD_STOCK_GRADUATION=true` **and** `ROBINHOOD_STOCK_MARKETS=true`
+on the API; both were missing from the go-live env until 2026-09-24.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
