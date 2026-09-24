@@ -1058,6 +1058,14 @@ nothing until `--open --execute`, which comes after the canary.
 `arena_config` deposits **open**, `arena_money_config_v2` sponsorship **open**, resolver
 `8rEczXrZ…` holds 0.527 SOL. BNB and Robinhood still closed at that moment (step-H batches pending).
 
+**BNB and Robinhood OPENED 2026-09-25** (step-H Safe batches, signed by Sven): BNB tx
+`0x7e2a0228…` block 123835729, Robinhood tx `0xd1c13793…` block 71722647, both status 1.
+Read back: both factories `live=true`, `createPaused=false`; both war pools `depositsPaused=false`;
+Robinhood `stockCampaignImplementation` = `0xC46D33FC…` (R5 landed first, as required).
+All three chains are open. Battle settlement runs inside the API (needs
+`ARENA_BATTLE_REALTIME_ENABLED=true`; log line `immutable Normal Battle settlement dispatcher active`).
+The Solana resolve-due worker must be built from the **repo root** (Base Directory `/`), not `frontend/`.
+
 Note: the script's closing state report printed the *old* overflow right
 after sending. Not a failed transaction and not RPC lag: `report()` printed
 the `route_state` read taken at the start of the run. Fixed (fresh fetch in
