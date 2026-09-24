@@ -1231,7 +1231,9 @@ Running the stock registry sync in the API container surfaced it: every candidat
 did both, so nothing caught it. **The setter is `whenMutable` (zero campaigns) — it must land
 before create is unpaused on Robinhood (R5 before H) or stock bindings are dead for this
 factory generation.** Script: `scripts/deploy-robinhood-stock-campaign-implementation.ts`
-(+ Safe batch, + rehearsal spec). Lesson: a deploy rehearsal that copies the spec fixture
+(+ Safe batch, + rehearsal spec). **Done 2026-09-24:** implementation
+`0xC46D33FCce7030627254278716d4AEb536Cf46FF` (block 71604111, bytecode == artifact), bound by Safe tx
+`0x7ae7abbf…` at block 71636126, read back from chain; factory still 0 campaigns, create paused. Lesson: a deploy rehearsal that copies the spec fixture
 instead of the deploy script proves the fixture, not the deployment.
 
 ## 5. One combined release (founder decision, 2026-09-23)

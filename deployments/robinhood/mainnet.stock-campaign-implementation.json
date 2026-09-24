@@ -9,12 +9,15 @@
   },
   "factory": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA",
   "safe": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
-  "bound": false,
+  "bound": true,
   "safeBatch": "mainnet.R5-stock-campaign-implementation.safe-batch.json",
   "verification": {
     "name": "RobinhoodStockLaunchCampaign",
     "address": "0xC46D33FCce7030627254278716d4AEb536Cf46FF",
     "contract": "contracts/RobinhoodStockLaunchCampaign.sol:RobinhoodStockLaunchCampaign",
     "args": []
-  }
+  },
+  "boundTx": "0x7ae7abbf59e2cfce0e5e283e97a8e3a9c76f08f7c40ec935a789dc2bf8126c9b",
+  "boundBlock": 71636126,
+  "boundAt": "2026-09-24"
 }
