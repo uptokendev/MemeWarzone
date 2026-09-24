@@ -1,0 +1,30 @@
+{
+  "network": "robinhoodMainnet",
+  "chainId": 4663,
+  "deployedAt": "2026-09-24T13:43:28.742Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "vault": "0x2DFF1259Eb7fD905D15E30234b5F6fF2Eb77A898",
+  "router": "0xcF7a0603B2C27B79D858A183330FF3bcfE34C381",
+  "owner": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "quoteSigner": "0xFCA7DF580eae01bfA7D3abc96c5075317742D421",
+  "marketingReceiver": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+  "protocolReceiver": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+  "paymentsPaused": false,
+  "env": {
+    "api": {
+      "WARZONE_SPONSORSHIP_ROUTER_V1_ADDRESS_4663": "0xcF7a0603B2C27B79D858A183330FF3bcfE34C381",
+      "ARENA_SPONSORSHIP_QUOTE_SIGNER_ADDRESS_4663": "0xFCA7DF580eae01bfA7D3abc96c5075317742D421",
+      "ARENA_SPONSORSHIP_QUOTE_SIGNER_PRIVATE_KEY": "<key of the signer>",
+      "ARENA_SPONSORSHIP_PRICING_VERSION_4663": "1",
+      "ARENA_SPONSORSHIP_NATIVE_USD_MICROS_4663": "<native price in USD micros>",
+      "ARENA_SPONSORSHIP_NATIVE_USD_UPDATED_AT_4663": "<unix seconds>",
+      "ARENA_SPONSORSHIP_PRICE_MAX_AGE_SECONDS_4663": "<seconds>",
+      "ARENA_SPONSORSHIP_V1": "true",
+      "ARENA_SPONSORSHIP_PRICING": "true"
+    },
+    "perEvent": [
+      "router.setEventEnabled(eventId, true)",
+      "vault.setEventReceiver(eventId, receiver)  -- both owner-only"
+    ]
+  }
+}

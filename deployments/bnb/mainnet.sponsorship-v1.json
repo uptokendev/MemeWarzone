@@ -1,0 +1,30 @@
+{
+  "network": "bscMainnet",
+  "chainId": 56,
+  "deployedAt": "2026-09-24T13:42:39.461Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "vault": "0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B",
+  "router": "0xe10e9c26D7CA80390831884CA17919E22fF44938",
+  "owner": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "quoteSigner": "0xFCA7DF580eae01bfA7D3abc96c5075317742D421",
+  "marketingReceiver": "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c",
+  "protocolReceiver": "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c",
+  "paymentsPaused": false,
+  "env": {
+    "api": {
+      "WARZONE_SPONSORSHIP_ROUTER_V1_ADDRESS_56": "0xe10e9c26D7CA80390831884CA17919E22fF44938",
+      "ARENA_SPONSORSHIP_QUOTE_SIGNER_ADDRESS_56": "0xFCA7DF580eae01bfA7D3abc96c5075317742D421",
+      "ARENA_SPONSORSHIP_QUOTE_SIGNER_PRIVATE_KEY": "<key of the signer>",
+      "ARENA_SPONSORSHIP_PRICING_VERSION_56": "1",
+      "ARENA_SPONSORSHIP_NATIVE_USD_MICROS_56": "<native price in USD micros>",
+      "ARENA_SPONSORSHIP_NATIVE_USD_UPDATED_AT_56": "<unix seconds>",
+      "ARENA_SPONSORSHIP_PRICE_MAX_AGE_SECONDS_56": "<seconds>",
+      "ARENA_SPONSORSHIP_V1": "true",
+      "ARENA_SPONSORSHIP_PRICING": "true"
+    },
+    "perEvent": [
+      "router.setEventEnabled(eventId, true)",
+      "vault.setEventReceiver(eventId, receiver)  -- both owner-only"
+    ]
+  }
+}
