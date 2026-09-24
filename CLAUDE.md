@@ -1054,6 +1054,10 @@ receiver `68FNN…` (monthly league vault), **deposits PAUSED**;
 $10,000 and the stored SOL price unchanged. The arena exists and takes
 nothing until `--open --execute`, which comes after the canary.
 
+**OPENED 2026-09-25** (`--open --execute`, founder's terminal): read back from chain,
+`arena_config` deposits **open**, `arena_money_config_v2` sponsorship **open**, resolver
+`8rEczXrZ…` holds 0.527 SOL. BNB and Robinhood still closed at that moment (step-H batches pending).
+
 Note: the script's closing state report printed the *old* overflow right
 after sending. Not a failed transaction and not RPC lag: `report()` printed
 the `route_state` read taken at the start of the run. Fixed (fresh fetch in
