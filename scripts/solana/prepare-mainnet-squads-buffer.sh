@@ -183,6 +183,16 @@ Propose a BPFLoaderUpgradeable::Upgrade with exactly these values:
 The buffer is the whole payload -- everything else in the proposal is fixed.
 Its bytes were verified above against $ACTUAL_SHA.
 
+BEFORE ANYONE SIGNS, decode the pending proposal back from chain and check
+every field (on 2026-09-24 a proposal with the previous Program still in it
+deployed this buffer over the wrong program; the Squads UI did not catch it):
+
+  SOLANA_RPC_URL=<rpc> node scripts/solana/decode-squads-proposal.mjs \
+    --latest <multisigPda> --program $PROGRAM_ID --buffer $BUFFER \
+    --spill $PAYER --authority $SQUADS
+  (run from tests/solana, where @solana/web3.js is installed)
+  Sign only on "PROPOSAL MATCHES -- safe to sign".
+
 REPORT
 
 # The two programs have different consumers: the API pins the launchpad's
