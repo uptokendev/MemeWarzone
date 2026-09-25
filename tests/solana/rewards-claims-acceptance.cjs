@@ -347,6 +347,80 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     );
   });
 
+  it("airdrop via reward poster: a narrow key posts one capped weekly batch; claims unchanged", async function () {
+    // The weekly airdrop runs unattended on our server with this key instead of the rewards
+    // authority (programs/mwz_rewards_treasury/src/reward_poster.rs).
+    const poster = Keypair.generate();
+    const stranger = Keypair.generate();
+    await fund(poster.publicKey, 2);
+    await fund(stranger.publicKey, 2);
+    const rewardPoster = pda("reward_poster");
+    const cap = 300_000_000n;
+
+    await expectFail(
+      program.methods.initializeRewardPoster(poster.publicKey, new BN(cap.toString()))
+        .accountsStrict({ authority: stranger.publicKey, config: pdas.config, rewardPoster, systemProgram: SystemProgram.programId })
+        .signers([stranger]).rpc({ commitment: "confirmed" }),
+      /ConstraintHasOne|has_one|custom program error|0x7d1/i,
+      "only the authority creates the poster role",
+    );
+    await program.methods.initializeRewardPoster(poster.publicKey, new BN(cap.toString()))
+      .accountsStrict({ authority, config: pdas.config, rewardPoster, systemProgram: SystemProgram.programId })
+      .rpc({ commitment: "confirmed" });
+    await program.methods.depositAirdrop(new BN(LAMPORTS_PER_SOL))
+      .accountsStrict({ payer: authority, airdropVault: pdas.airdropVault, systemProgram: SystemProgram.programId })
+      .rpc({ commitment: "confirmed" });
+
+    const epochId = 70;
+    const amounts = [120_000_000n, 80_000_000n];
+    const total = amounts.reduce((a, b) => a + b, 0n);
+    const leaves = amounts.map((amount, i) => airdropLeaf({ epochId, programCode: AIRDROP_PROGRAM_TRADER, winner: winners[i].publicKey, amount }));
+    const root = buildRoot(leaves);
+    const now = Math.floor(Date.now() / 1000);
+    const post = (id, rootBytes, amount, deadline, signer = poster) => program.methods
+      .postAirdropBatchRoot(new BN(id), arr32(rootBytes), new BN(amount.toString()), new BN(deadline))
+      .accountsStrict({
+        poster: signer.publicKey, config: pdas.config, rewardPoster, airdropVault: pdas.airdropVault,
+        airdropBatch: pda("airdrop_batch", i64le(id)), systemProgram: SystemProgram.programId,
+      })
+      .signers([signer])
+      .rpc({ commitment: "confirmed" });
+
+    await expectFail(post(epochId, root, total, now + 3600, stranger), /PosterNotAuthorized|custom program error/i, "a non-poster cannot post");
+    await expectFail(post(epochId, root, cap + 1n, now + 3600), /PosterBatchAboveCap|custom program error/i, "above the authority's cap");
+    await expectFail(post(epochId, root, total, now + 91 * 86400), /PosterBadDeadline|custom program error/i, "claim window beyond 90 days");
+    await post(epochId, root, total, now + 3600);
+
+    const batch = await program.account.airdropBatch.fetch(pda("airdrop_batch", i64le(epochId)));
+    assert.equal(BigInt(batch.totalLamports.toString()), total);
+    assert.ok((await program.account.rewardPoster.fetch(rewardPoster)).lastAirdropPostAt.toNumber() > 0, "post time recorded");
+
+    // Claims are exactly the authority path's: proof, once, from the airdrop vault.
+    const claim = (i) => program.methods
+      .claimAirdrop(new BN(epochId), AIRDROP_PROGRAM_TRADER, new BN(amounts[i].toString()), proofArg(buildProof(leaves, i)))
+      .accountsStrict({
+        winner: winners[i].publicKey, config: pdas.config, airdropVault: pdas.airdropVault,
+        airdropBatch: pda("airdrop_batch", i64le(epochId)),
+        airdropReceipt: pda("airdrop_claim", i64le(epochId), Buffer.from([AIRDROP_PROGRAM_TRADER]), winners[i].publicKey.toBuffer()),
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([winners[i]])
+      .rpc({ commitment: "confirmed" });
+    const vaultBefore = await lamports(pdas.airdropVault);
+    await claim(0);
+    await claim(1);
+    assert.equal(vaultBefore - (await lamports(pdas.airdropVault)), total, "the vault pays exactly the posted leaves");
+
+    const nextLeaves = [airdropLeaf({ epochId: 71, programCode: AIRDROP_PROGRAM_TRADER, winner: winners[2].publicKey, amount: 1_000_000n })];
+    await expectFail(post(71, buildRoot(nextLeaves), 1_000_000n, now + 3600), /PosterTooSoon|custom program error/i, "a second post within six days");
+
+    // Revoking the role stops the key at once.
+    await program.methods.setRewardPoster(PublicKey.default, new BN(cap.toString()))
+      .accountsStrict({ authority, config: pdas.config, rewardPoster })
+      .rpc({ commitment: "confirmed" });
+    await expectFail(post(72, buildRoot(nextLeaves), 1_000_000n, now + 3600), /PosterNotAuthorized|custom program error/i, "a revoked poster");
+  });
+
   for (const lane of [
     { name: "recruiter", prefix: PREFIX.recruiter, vault: "recruiterVault", batchSeed: "recruiter_batch", claimSeed: "recruiter_claim", setRoot: "setRecruiterBatchRoot", claim: "claimRecruiter", batchKey: "recruiterBatch" },
     { name: "squad", prefix: PREFIX.squad, vault: "squadVault", batchSeed: "squad_batch", claimSeed: "squad_claim", setRoot: "setSquadBatchRoot", claim: "claimSquad", batchKey: "squadBatch" },

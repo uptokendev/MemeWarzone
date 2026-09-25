@@ -27,6 +27,8 @@ pub use route::*;
 pub mod arena;
 pub use arena::*;
 pub mod arena_money_v2;
+pub mod reward_poster;
+use reward_poster::*;
 pub use arena_money_v2::*;
 
 pub const PERIOD_WEEKLY: u8 = 0;
@@ -390,6 +392,35 @@ pub mod mwz_rewards_treasury {
             deadline,
         });
         Ok(())
+    }
+
+    /// Authority: create the narrow reward poster role (see reward_poster.rs).
+    pub fn initialize_reward_poster(
+        ctx: Context<InitializeRewardPoster>,
+        poster: Pubkey,
+        max_airdrop_batch_lamports: u64,
+    ) -> Result<()> {
+        reward_poster::initialize_reward_poster_handler(ctx, poster, max_airdrop_batch_lamports)
+    }
+
+    /// Authority: change or revoke (Pubkey::default()) the reward poster and its cap.
+    pub fn set_reward_poster(
+        ctx: Context<SetRewardPoster>,
+        poster: Pubkey,
+        max_airdrop_batch_lamports: u64,
+    ) -> Result<()> {
+        reward_poster::set_reward_poster_handler(ctx, poster, max_airdrop_batch_lamports)
+    }
+
+    /// Reward poster: post one capped weekly airdrop batch root (claims unchanged).
+    pub fn post_airdrop_batch_root(
+        ctx: Context<PostAirdropBatchRoot>,
+        epoch_id: i64,
+        root: [u8; 32],
+        total_lamports: u64,
+        deadline: i64,
+    ) -> Result<()> {
+        reward_poster::post_airdrop_batch_root_handler(ctx, epoch_id, root, total_lamports, deadline)
     }
 
     pub fn claim_airdrop(
@@ -1320,6 +1351,15 @@ pub enum TreasuryError {
     DeprecatedInstruction,
     #[msg("overflow_treasury must equal route_state.overflow_treasury.")]
     InvalidOverflowTreasury,
+    // Appended: existing error codes must not shift.
+    #[msg("Signer is not the configured reward poster.")]
+    PosterNotAuthorized,
+    #[msg("Airdrop batch is above the reward poster's cap.")]
+    PosterBatchAboveCap,
+    #[msg("The reward poster already posted a batch within the last six days.")]
+    PosterTooSoon,
+    #[msg("Airdrop batch deadline must be in the future and at most 90 days away.")]
+    PosterBadDeadline,
 }
 
 pub fn league_leaf(
