@@ -1332,6 +1332,17 @@ the API image (`frontend/`) nor the indexer image (`realtime-indexer/`) contains
 - LP fees: the keeper owns every locked position; indexer harvester needs the keeper secret AND
   `SOLANA_PROTOCOL_TREASURY_ADDRESS` (unset = 20% goes to devnet deployer `HuKfoF...`).
 
+### Indexer pool starvation + no Solana trades (fixed 2026-09-25, `e2c16034`)
+
+`withFeeEscrowTransaction` (and six `rewards/*` helpers) overwrote `client.query` on a pooled client
+and released it still patched. pg-pool's `pool.query` passes a callback the patch dropped, so the next
+query on that client ran on the server but never resolved: one leaked client per Solana trade. The
+Solana trade loop froze on its first `curve_trades` write (no chain-101 trade stored 2026-09-20 ->
+09-25) and the pool hit 20/20 until the watchdog restarted the container. Signature: DB idle, no locks,
+backend `idle`/`ClientRead` holding the finished statement. **Never mutate a pooled client**; wrap it.
+Pool now has `query_timeout` (`PG_QUERY_TIMEOUT_MS`, 45 s) + keepalive; `pooledClientPatch.test.ts`
+pins both. Verified live: KAIJU88 17 trades after redeploy.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
