@@ -1343,6 +1343,24 @@ backend `idle`/`ClientRead` holding the finished statement. **Never mutate a poo
 Pool now has `query_timeout` (`PG_QUERY_TIMEOUT_MS`, 45 s) + keepalive; `pooledClientPatch.test.ts`
 pins both. Verified live: KAIJU88 17 trades after redeploy.
 
+### Protocol fees, league vaults and the weekly airdrop (2026-09-25)
+
+- **Solana protocol share (42.5% of the 2% fee = 0.85% of volume) only leaves `protocol_vault` via the
+  permissionless `flush_operator_fill`, and nothing called it** (0.559 SOL sat there). The fee-escrow
+  worker now flushes hourly (`SOLANA_PROTOCOL_FLUSH_*`). `route_state.native_usd_micros` is cap
+  bookkeeping only; update with `scripts/solana/set-route-sol-price.mjs`. EVM `ProtocolRevenueVault`s
+  forward on `receive()`, no crank.
+- League page pot for the live Solana epoch = league vault balance (carry-overs included).
+- **Two airdrop pipelines.** The website reads only the weekly runner (`frontend/scripts/weekly-airdrop`,
+  tables `reward_batches`/`reward_ledger`), not the indexer's `airdrop_draws`. It had not run since
+  2026-08-18 and `sum(bnb_amount_raw)` failed on production (text column). Rules are one USD set on
+  every chain (`usdRules.mjs`, mirrored in the indexer's `airdropThresholds.ts`).
+- **Runs on our Coolify, not GitHub** (founder): scheduled task on the API service, Mondays 00:15 UTC,
+  one per `AIRDROP_CHAIN_ID`. Solana posts roots with the narrow **reward poster** role
+  (treasury candidate `cb2e4546…`, not yet on mainnet; needs extend +53928 B), never the authority.
+  EVM funds with the vault's `airdropOperator` key, bounded by Safe-pre-authorized deterministic batch
+  ids (`scripts/make-airdrop-setup-calls.mjs`). Front-page strip behind `VITE_AIRDROP_STRIP_ENABLED`.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
