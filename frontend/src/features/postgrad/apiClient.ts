@@ -155,6 +155,25 @@ export async function fetchPostGradCreatorBattleStatuses(creatorAddress: string,
   return fetchJson(`/api/arena/battles/creator-status?${params.toString()}`, { cache: "no-store", signal });
 }
 
+export type ArenaChallengeInboxItem = {
+  event: string;
+  battleId: string;
+  offerCount: number;
+  message?: string | null;
+  battle: unknown;
+  nativeSymbol?: string;
+  escrowRequired?: boolean;
+};
+
+/** Every challenge popup this wallet is owed on this chain (GET /api/arena/battles/inbox). */
+export async function fetchArenaChallengeInbox(wallet: string, chainId: number, signal?: AbortSignal) {
+  const params = new URLSearchParams({ wallet, chainId: String(chainId) });
+  return fetchJson(`/api/arena/battles/inbox?${params.toString()}`, { cache: "no-store", signal }) as Promise<{
+    ok?: boolean;
+    items?: ArenaChallengeInboxItem[];
+  } | null>;
+}
+
 export async function fetchPostGradBattleDetails(battleId: string, signal?: AbortSignal) {
   return fetchJson(`/api/arena/battles/${encodeURIComponent(battleId)}`, { cache: "no-store", signal });
 }

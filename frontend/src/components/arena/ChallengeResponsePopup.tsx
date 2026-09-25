@@ -64,7 +64,8 @@ export function ChallengeResponsePopup({
     setDeclineMessage("");
     setWaitingCopy("");
     setFundedBattle(eventName === CHALLENGE_POPUP_EVENTS.accepted ? battle : null);
-    if (eventName === CHALLENGE_POPUP_EVENTS.accepted) setBuyInOpen(true);
+    // A matched fight goes straight to the buy-in; one that is already live only needs telling.
+    if (eventName === CHALLENGE_POPUP_EVENTS.accepted && battle.state === "matched") setBuyInOpen(true);
   }, [open, battle, eventName]);
 
   if (!battle || !view) return null;
@@ -105,7 +106,7 @@ export function ChallengeResponsePopup({
         { walletAddress, chainId: chainId ?? battle.chainId },
       );
       await counterPostGradBattle(battle.id, amount, auth, durationHours);
-      setWaitingCopy(`Waiting for ${view.leftTicker} to respond`);
+      setWaitingCopy(`Waiting for ${view.offerFromTicker} to respond`);
       onChanged?.();
       toast.success("Counter-offer sent.");
     } catch (error) {
@@ -139,8 +140,9 @@ export function ChallengeResponsePopup({
             <DialogTitle className="font-retro text-[10px] uppercase tracking-[0.22em] text-accent">{view.kicker}</DialogTitle>
             <h2 className="font-retro text-xl text-foreground">{view.headline}</h2>
             <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-              {countdown ? `COMMUNITY VS COMMUNITY · BATTLE STARTS IN ${countdown}` : view.communityLine}
+              {view.mode === "respond" && countdown ? `COMMUNITY VS COMMUNITY · ANSWER WITHIN ${countdown}` : view.communityLine}
             </p>
+            {view.counterLine ? <p className="text-sm text-accent">{view.counterLine}</p> : null}
             <p className="font-retro text-sm text-foreground">Buy-in {view.buyInLabel} · {view.durationLabel}</p>
 
             {view.mode === "declined" ? (
@@ -150,7 +152,14 @@ export function ChallengeResponsePopup({
                 <Button className="font-retro w-full" onClick={onClose}>Close</Button>
               </>
             ) : view.mode === "accepted" ? (
-              <p className="text-sm text-muted-foreground">Accepted — pay your buy-in.</p>
+              battle.state === "live" ? (
+                <>
+                  <p className="text-sm text-foreground">Your challenge was accepted. The battle is live on the Battle Wall.</p>
+                  <Button className="font-retro w-full" onClick={onClose}>Close</Button>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">Accepted — pay your buy-in.</p>
+              )
             ) : waitingCopy ? (
               <p className="text-sm text-accent">{waitingCopy}</p>
             ) : declineOpen ? (

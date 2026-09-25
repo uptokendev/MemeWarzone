@@ -14,6 +14,12 @@ import {
   isResponderTurn,
   presentChallengeResponsePopup,
   shiftChallengePopup,
+  CHALLENGE_INBOX_ONLY_EVENTS,
+  isChallengeSeen,
+  markChallengeSeen,
+  pruneChallengePopups,
+  routeChallengeEvent,
+  upsertChallengePopup,
 } from "./challengePopupPresentation.mjs";
 
 function battle(over = {}) {
@@ -94,4 +100,73 @@ test("frontend creator channel name matches the API helper", () => {
   const wallet = "0xAbCdEfAbCdEfAbCdEfAbCdEfAbCdEfAbCdEfAbCd";
   assert.equal(arenaCreatorChannelName(56, wallet), apiChannelName(56, wallet));
   assert.equal(arenaCreatorChannelName(101, "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H"), apiChannelName(101, "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H"));
+});
+
+test("one popup per battle: a counter replaces the offer it answers, an outcome replaces any offer", () => {
+  let queue = upsertChallengePopup([], { battle: battle(), event: CHALLENGE_POPUP_EVENTS.received, offerCount: 0 }, 1);
+  queue = upsertChallengePopup(queue, { battle: battle({ offerCount: 1 }), event: CHALLENGE_POPUP_EVENTS.counter, offerCount: 1 }, 2);
+  assert.equal(queue.length, 1);
+  assert.equal(queue[0].event, CHALLENGE_POPUP_EVENTS.counter);
+  assert.equal(queue[0].offerCount, 1);
+  // A late copy of the older offer (realtime rewind, or a poll that raced) never goes back in time.
+  queue = upsertChallengePopup(queue, { battle: battle(), event: CHALLENGE_POPUP_EVENTS.received, offerCount: 0 }, 3);
+  assert.equal(queue[0].offerCount, 1);
+  queue = upsertChallengePopup(queue, { battle: battle({ state: "expired" }), event: CHALLENGE_POPUP_EVENTS.declined, offerCount: 1, message: "no" }, 4);
+  assert.equal(queue.length, 1);
+  assert.equal(queue[0].event, CHALLENGE_POPUP_EVENTS.declined);
+  queue = upsertChallengePopup(queue, { battle: battle({ id: "fight-2" }), event: CHALLENGE_POPUP_EVENTS.received }, 5);
+  assert.deepEqual(queue.map((row) => row.battleId), ["fight-1", "fight-2"]);
+});
+
+test("a poll drops answer popups the server no longer lists, but never the open one or a newer arrival", () => {
+  const queue = [
+    { battleId: "on-screen", event: CHALLENGE_POPUP_EVENTS.received, chainId: 56, at: 1 },
+    { battleId: "answered-elsewhere", event: CHALLENGE_POPUP_EVENTS.received, chainId: 56, at: 1 },
+    { battleId: "still-open", event: CHALLENGE_POPUP_EVENTS.counter, chainId: 56, at: 1 },
+    { battleId: "arrived-mid-poll", event: CHALLENGE_POPUP_EVENTS.received, chainId: 56, at: 50 },
+    { battleId: "other-chain", event: CHALLENGE_POPUP_EVENTS.received, chainId: 4663, at: 1 },
+    { battleId: "declined", event: CHALLENGE_POPUP_EVENTS.declined, chainId: 56, at: 1 },
+  ];
+  const kept = pruneChallengePopups(queue, { chainId: 56, pendingBattleIds: new Set(["still-open"]), keepBattleId: "on-screen", startedAt: 10 });
+  assert.deepEqual(kept.map((row) => row.battleId), ["on-screen", "still-open", "arrived-mid-poll", "other-chain", "declined"]);
+});
+
+test("routing: accepted-and-matched and buy-in-due go to the buy-in; answers only while still challenged", () => {
+  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.accepted, battle({ state: "matched" })), "buy_in");
+  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.accepted, battle({ state: "challenged" }), { escrowRequired: true }), "buy_in");
+  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.accepted, battle({ state: "live" })), "popup");
+  assert.equal(routeChallengeEvent(CHALLENGE_INBOX_ONLY_EVENTS.buyInDue, battle({ state: "matched" })), "buy_in");
+  assert.equal(routeChallengeEvent(CHALLENGE_INBOX_ONLY_EVENTS.buyInDue, battle({ state: "live" })), "ignore");
+  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.received, battle()), "popup");
+  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.counter, battle({ offerCount: 1 })), "popup");
+  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.received, battle({ state: "expired" })), "ignore");
+  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.declined, battle({ state: "expired" })), "popup");
+  assert.equal(routeChallengeEvent("something_else", battle()), "ignore");
+  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.received, null), "ignore");
+});
+
+test("an outcome is shown once per browser; storage failures never throw", () => {
+  const store = new Map();
+  const storage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
+  assert.equal(isChallengeSeen(storage, "fight-1", CHALLENGE_POPUP_EVENTS.declined, 1), false);
+  assert.equal(markChallengeSeen(storage, "fight-1", CHALLENGE_POPUP_EVENTS.declined, 1), true);
+  assert.equal(isChallengeSeen(storage, "fight-1", CHALLENGE_POPUP_EVENTS.declined, 1), true);
+  assert.equal(isChallengeSeen(storage, "fight-1", CHALLENGE_POPUP_EVENTS.accepted, 1), false);
+  const broken = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+  assert.equal(isChallengeSeen(broken, "fight-1", CHALLENGE_POPUP_EVENTS.declined, 1), false);
+  assert.equal(markChallengeSeen(broken, "fight-1", CHALLENGE_POPUP_EVENTS.declined, 1), false);
+});
+
+test("counter copy names who countered; the countdown is the answer deadline, only while an answer is due", () => {
+  const countered = battle({ offerFromToken: "0xbbb", offerCount: 1, offeredStakeNative: 2 });
+  const view = presentChallengeResponsePopup(countered, CHALLENGE_POPUP_EVENTS.counter);
+  assert.equal(view.kicker, "COUNTER-OFFER");
+  assert.equal(view.offerFromTicker, "$BRAVO");
+  assert.equal(view.counterLine, "$BRAVO countered: buy-in 2 BNB, 24 hours");
+  assert.equal(view.mode, "respond");
+  assert.equal(presentChallengeResponsePopup(battle(), CHALLENGE_POPUP_EVENTS.received).offerFromTicker, "$ALPHA");
+  const declined = presentChallengeResponsePopup(battle({ state: "expired" }), CHALLENGE_POPUP_EVENTS.declined);
+  assert.equal(declined.kicker, "CHALLENGE DECLINED");
+  assert.doesNotMatch(declined.communityLine, /ANSWER WITHIN/);
+  assert.equal(declined.counterLine, null);
 });

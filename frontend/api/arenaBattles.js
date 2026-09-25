@@ -20,6 +20,7 @@ import {
   sanitizeDeclineMessage,
 } from "./lib/arenaChallengeOffer.js";
 import { publishArenaCreatorEvent } from "./lib/arenaCreatorAblyPublish.js";
+import { deriveChallengeInboxEvent, loadChallengeInboxRows } from "./lib/arenaChallengeInbox.js";
 import { recordFinishedBattle } from "./lib/arenaLeagueScore.js";
 import {
   battleSettlementPatch,
@@ -977,8 +978,12 @@ async function settleLive(row) {
 
 async function expireChallenge(row) {
   if (!row || row.state !== "challenged") return mapBattle(row);
+  // The answer deadline is ends_at: a challenge sets it to created + 24h and every counter-offer
+  // restarts it (handleCounter), and the popup counts down to it. Expiring on created_at + 24h
+  // killed a countered challenge while the other owner's popup still showed hours to answer.
   const created = Date.parse(row.created_at || 0);
-  if (created && Date.now() - created < CHALLENGE_HOURS * 3600 * 1000) return mapBattle(row);
+  const deadline = Date.parse(row.ends_at || 0) || (created ? created + CHALLENGE_HOURS * 3600 * 1000 : 0);
+  if (deadline && Date.now() < deadline) return mapBattle(row);
   return updateBattle(row.id, { state: "expired", finished_at: nowIso() });
 }
 
@@ -1020,6 +1025,49 @@ async function handleCreatorStatus(req, res) {
   } catch (error) {
     console.error("[api/arenaBattles] creator status failed", error);
     return json(res, 200, { items: [], updatedAt: nowIso(), warning: "Creator battle status is unavailable." });
+  }
+}
+
+/**
+ * GET /arena/battles/inbox?chainId=&wallet= -- every challenge popup this wallet is owed on this
+ * chain, derived from the battle rows (lib/arenaChallengeInbox.js). The realtime event is the
+ * fast path; this is the one that cannot be missed: the app reads it on load, on return to the
+ * tab and on a timer. Public read like creator-status; answering still needs the owner's signature.
+ */
+async function handleInbox(req, res) {
+  const query = getQuery(req);
+  const chainId = Number(query.chainId) || 56;
+  const wallet = String(query.wallet || query.creator || "");
+  if (!isWallet(wallet)) return json(res, 200, { ok: true, items: [], updatedAt: nowIso() });
+  try {
+    const coins = await creatorCoins(chainId, wallet, 100);
+    const owned = [];
+    for (const coin of coins) {
+      for (const value of [coin.token_address, coin.campaign_address]) {
+        const id = ident(value, chainId);
+        if (id) owned.push(id);
+      }
+    }
+    const rows = await loadChallengeInboxRows(pool, { chainId, ownedKeys: owned, columns: BATTLE_COLUMNS });
+    const items = [];
+    for (const row of rows) {
+      // Same lazy lifecycle as the detail route: an overdue challenge expires, a funded match goes live.
+      const battle = row.state === "challenged" || row.state === "matched" ? await hydrateLifecycle(row) : mapBattle(row);
+      if (!battle) continue;
+      const derived = deriveChallengeInboxEvent({ ...row, state: battle.state }, owned);
+      if (!derived) continue;
+      items.push({
+        ...derived,
+        battleId: battle.id,
+        battle,
+        nativeSymbol: battle.nativeSymbol,
+        escrowRequired: battle.state === "matched",
+      });
+    }
+    return json(res, 200, { ok: true, items, updatedAt: nowIso() });
+  } catch (error) {
+    console.error("[api/arenaBattles] challenge inbox failed", error);
+    return json(res, 200, { ok: false, items: [], updatedAt: nowIso(), warning: "Challenge inbox is unavailable." });
   }
 }
 
@@ -1337,7 +1385,9 @@ async function handleDecline(req, res, battleId) {
   });
   if (!verified) return;
   const message = sanitizeDeclineMessage(body?.message);
-  const expired = await updateBattle(battleId, { state: "expired", finished_at: nowIso(), decline_message: message });
+  // "" (not null) when no message was given: a non-null decline_message is how the inbox tells a
+  // decline from a timeout, so the challenger is told on their next visit either way.
+  const expired = await updateBattle(battleId, { state: "expired", finished_at: nowIso(), decline_message: message ?? "" });
   const offerer = await coinByIdentity(row.chain_id, offerFromToken(row));
   const responderPart = participant(responder);
   await notifyDeclined({
@@ -1362,6 +1412,10 @@ async function handleCounter(req, res, battleId) {
   if (!row) return json(res, 404, { ok: false, error: "Battle not found" });
   if (row.state !== "challenged" || row.source !== "challenge") {
     return json(res, 409, { ok: false, error: "Only open challenges can take a counter-offer" });
+  }
+  const current = await expireChallenge(row);
+  if (current?.state !== "challenged") {
+    return json(res, 409, { ok: false, error: "This challenge has expired.", currentState: current?.state || row.state });
   }
   if (Number(row.offer_count || 0) >= MAX_COUNTERS) {
     return json(res, 409, { ok: false, error: "Counter-offer limit reached. Accept or decline." });
@@ -1471,6 +1525,7 @@ export default async function handler(req, res) {
     if (method === "GET" && path === "/arena/battles/creator-status") return handleCreatorStatus(req, res);
     if (method === "GET" && path === "/arena/battles/matches") return handleMatches(req, res);
     if (method === "GET" && path === "/arena/battles/opponents") return handleOpponents(req, res);
+    if (method === "GET" && path === "/arena/battles/inbox") return handleInbox(req, res);
     if (method === "POST" && path === "/arena/battles/open") return handleOpen(req, res);
     if (method === "POST" && path === "/arena/battles/challenge") return handleChallenge(req, res);
 
