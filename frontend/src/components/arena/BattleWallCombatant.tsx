@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import type { Battle, BattleParticipant } from "@/features/postgrad/contracts";
 import { WarzoneDecorativeLayer } from "@/components/warzone/WarzoneDecorativeLayer";
 import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
@@ -7,6 +8,7 @@ import { formatCompactUsd } from "@/lib/arena/battlePresentation";
 import { firstFiniteBattleMetric } from "@/lib/arena/battleWallPresentation.mjs";
 import { resolveImageUri } from "@/lib/media";
 import { cn } from "@/lib/utils";
+import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 
 type Props = {
   battle: Battle;
@@ -122,6 +124,10 @@ export function BattleWallCombatant({
   const tokenIdentity = participant?.tokenAddress || participant?.tokenId || participant?.campaignAddress || "";
   const profile = useArenaTokenProfile(chainId, tokenIdentity);
   const displayName = profile?.name || participant?.tokenName || "Awaiting rival";
+  // Ticker and name open the coin's Token Details page (launchpad coins and imports alike).
+  const tokenHref = tokenIdentity
+    ? tokenDetailsPath({ tokenAddress: participant?.tokenAddress || participant?.tokenId, campaignAddress: participant?.campaignAddress, chainId })
+    : null;
   const displaySymbol = String(profile?.symbol || participant?.symbol || "TBD").replace(/^\$/, "");
   const imageUrl = profile?.imageUrl || participant?.imageUrl || participant?.logoUri || null;
   const bleedSrc = resolveImageUri(imageUrl);
@@ -200,14 +206,34 @@ export function BattleWallCombatant({
           <div className="flex min-w-0 flex-1 flex-col gap-1.5 p-2 md:gap-2 md:p-3">
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-1.5">
-                <div className="truncate font-retro text-base leading-none text-foreground sm:text-xl md:text-2xl lg:text-[1.65rem]">
-                  ${displaySymbol}
-                </div>
+                {tokenHref ? (
+                  <Link
+                    to={tokenHref}
+                    className="truncate font-retro text-base leading-none text-foreground underline-offset-4 hover:text-accent hover:underline sm:text-xl md:text-2xl lg:text-[1.65rem]"
+                    data-battle-combatant-token-link="ticker"
+                  >
+                    ${displaySymbol}
+                  </Link>
+                ) : (
+                  <div className="truncate font-retro text-base leading-none text-foreground sm:text-xl md:text-2xl lg:text-[1.65rem]">
+                    ${displaySymbol}
+                  </div>
+                )}
                 {String(profile?.origin || (participant as { origin?: string } | undefined)?.origin || "").toLowerCase() === "import" ? (
                   <span className="shrink-0 rounded border border-orange-400/40 bg-orange-500/10 px-1.5 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-orange-200" data-imported-origin="true">IMPORTED</span>
                 ) : null}
               </div>
-              <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-white/58 md:mt-1 md:text-[11px] md:tracking-[0.16em]">{displayName}</div>
+              {tokenHref ? (
+                <Link
+                  to={tokenHref}
+                  className="mt-0.5 block truncate text-[10px] uppercase tracking-[0.14em] text-white/58 underline-offset-4 hover:text-accent hover:underline md:mt-1 md:text-[11px] md:tracking-[0.16em]"
+                  data-battle-combatant-token-link="name"
+                >
+                  {displayName}
+                </Link>
+              ) : (
+                <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-white/58 md:mt-1 md:text-[11px] md:tracking-[0.16em]">{displayName}</div>
+              )}
               {description ? (
                 <p className="mt-1 hidden line-clamp-2 text-[11px] leading-4 text-white/48 md:block">{description}</p>
               ) : null}

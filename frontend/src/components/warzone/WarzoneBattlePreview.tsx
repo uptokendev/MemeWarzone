@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { BattleVsMark } from "@/components/arena/BattleWallVs";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
+import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import type { Battle } from "@/features/postgrad/contracts";
 import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { battleClockLabel } from "@/lib/arena/battlePresentation";
@@ -29,10 +30,13 @@ function SideIdentity({
   showScores: boolean;
 }) {
   const participant = battle.participants?.[index];
-  const name = String(participant?.tokenName || "").trim();
+  // The battle feed carries no images; resolve art from the token profile like the battle card.
+  const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
+  const profile = useArenaTokenProfile(chainId, participant?.tokenAddress || participant?.tokenId || participant?.campaignAddress || null);
+  const name = String(participant?.tokenName || profile?.name || "").trim();
   return (
     <div className={`flex min-w-0 items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
-      <WarzoneTokenMark imageUrl={participantArt(battle, index)} symbol={participant?.symbol} name={participant?.tokenName} size="sm" />
+      <WarzoneTokenMark imageUrl={participantArt(battle, index) || profile?.imageUrl || null} symbol={participant?.symbol} name={participant?.tokenName} size="sm" />
       <div className="min-w-0">
         <div className="truncate font-black text-sm leading-none text-foreground">{ticker}</div>
         {name ? <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.12em] text-white/55">{name}</div> : null}

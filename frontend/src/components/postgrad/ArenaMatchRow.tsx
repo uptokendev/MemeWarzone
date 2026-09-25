@@ -8,10 +8,16 @@ import { battleClockLabel } from "@/lib/arena/battlePresentation";
 import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
 import { resolveImageUri } from "@/lib/media";
 import { cn } from "@/lib/utils";
+import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 
-function participantImage(battle: Battle, index: number) {
+function participantImage(battle: Battle, index: number, profileImage?: string | null) {
   const participant = battle.participants?.[index] as { imageUrl?: string; image?: string; logoUri?: string } | undefined;
-  return resolveImageUri(participant?.imageUrl || participant?.image || participant?.logoUri) || "/placeholder.svg";
+  return resolveImageUri(participant?.imageUrl || participant?.image || participant?.logoUri || profileImage) || "/placeholder.svg";
+}
+
+function participantIdentity(battle: Battle, index: number) {
+  const participant = battle.participants?.[index];
+  return participant?.tokenAddress || participant?.tokenId || participant?.campaignAddress || null;
 }
 
 export function ArenaMatchRow({
@@ -33,6 +39,10 @@ export function ArenaMatchRow({
   const left = presented.leftTicker;
   const right = presented.rightTicker;
   const showScores = presented.leftPointsLabel != null && presented.rightPointsLabel != null;
+  // The battle feed carries no images; resolve art from the token profile like the battle card.
+  const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
+  const leftProfile = useArenaTokenProfile(chainId, participantIdentity(battle, 0));
+  const rightProfile = useArenaTokenProfile(chainId, participantIdentity(battle, 1));
 
   return (
     <Link
@@ -40,7 +50,7 @@ export function ArenaMatchRow({
       className="mwz-hud-frame group grid gap-3 p-3 transition hover:border-accent/45 hover:bg-accent/5 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:p-4"
     >
       <div className={cn("flex min-w-0 items-center gap-3", presented.leaderIndex === 0 && "text-orange-100")}>
-        <img src={participantImage(battle, 0)} alt="" className={cn("h-12 w-12 shrink-0 border object-cover", presented.leaderIndex === 0 ? "border-orange-300/55" : "border-white/10")} />
+        <img src={participantImage(battle, 0, leftProfile?.imageUrl)} alt="" className={cn("h-12 w-12 shrink-0 border object-cover", presented.leaderIndex === 0 ? "border-orange-300/55" : "border-white/10")} />
         <div className="min-w-0">
           <div className="truncate font-retro text-sm text-foreground md:text-base">{left}</div>
           {showScores ? (
@@ -95,7 +105,7 @@ export function ArenaMatchRow({
             </div>
           ) : null}
         </div>
-        <img src={participantImage(battle, 1)} alt="" className={cn("h-12 w-12 shrink-0 border object-cover", presented.leaderIndex === 1 ? "border-cyan-300/55" : "border-white/10")} />
+        <img src={participantImage(battle, 1, rightProfile?.imageUrl)} alt="" className={cn("h-12 w-12 shrink-0 border object-cover", presented.leaderIndex === 1 ? "border-cyan-300/55" : "border-white/10")} />
       </div>
     </Link>
   );
