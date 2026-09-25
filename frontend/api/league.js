@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { readSolanaLeagueVaultSpendable } from "./lib/solanaLeagueVaultBalance.js";
 import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../server/http.js";
@@ -498,7 +499,7 @@ async function computeTotalLeagueFeeRawInRange(chainId, startIso, endIso, protoc
   return String(v ?? "0");
 }
 
-async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso) {
+async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { isLive = false } = {}) {
   const eligible = prizeEligibleCategories(periodNorm);
   if (!eligible) return null;
 
@@ -506,7 +507,7 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso) {
   const key = `${chainId}:${periodNorm}:${epochStartIso ?? ""}`;
   const now = Date.now();
   const cached = prizeCache.get(key);
-  if (cached && now - cached.computedAtMs < PRIZE_TTL_MS) return cached.data;
+  if (cached && now - cached.computedAtMs < (cached.ttlMs ?? PRIZE_TTL_MS)) return cached.data;
 
   const protocolFeeBps = readBps("PROTOCOL_FEE_BPS", DEFAULT_PROTOCOL_FEE_BPS);
   const leagueFeeBps = readBps("LEAGUE_FEE_BPS", DEFAULT_LEAGUE_FEE_BPS);
@@ -523,7 +524,13 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso) {
   const weeklyBudgetBps = readBps("WEEKLY_PRIZE_BUDGET_BPS", DEFAULT_WEEKLY_PRIZE_BUDGET_BPS);
   const monthlyBudgetBps = readBps("MONTHLY_PRIZE_BUDGET_BPS", DEFAULT_MONTHLY_PRIZE_BUDGET_BPS);
   const budgetBps = periodNorm === "weekly" ? weeklyBudgetBps : periodNorm === "monthly" ? monthlyBudgetBps : 10_000;
-  const budget = (total * BigInt(budgetBps)) / 10_000n;
+  let budget = (total * BigInt(budgetBps)) / 10_000n;
+  // Solana, live epoch: the pot is what the league vault actually holds (carry-overs included, net
+  // of payouts), not this epoch's fee estimate. Past epochs keep the fee-based history.
+  const solanaChain = Number(chainId) === 101 || Number(chainId) === 102;
+  const vault = solanaChain && isLive ? await readSolanaLeagueVaultSpendable(periodNorm) : null;
+  const vaultMode = Boolean(vault);
+  if (vault) budget = vault.spendableRaw;
 
   const leagueCount = eligible.length;
   const base = leagueCount > 0 ? budget / BigInt(leagueCount) : 0n;
@@ -543,7 +550,7 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso) {
   // Rollovers are a ledger of funds carried into this epoch from:
   // - expired, unclaimed prizes (swept into next epoch)
   // - no-clear-winner outcomes (e.g., ties / Perfect Run edge cases)
-  if (epochStartIso) {
+  if (epochStartIso && !vaultMode) {
     try {
       const { rows: rrows } = await pool.query(
         `select category, coalesce(sum(amount_raw::numeric), 0)::numeric(78,0) as amount_raw
@@ -617,8 +624,17 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso) {
     }
   }
 
+  if (vaultMode) {
+    for (const cat of Object.keys(byCategory)) {
+      const potNow = BigInt(String(byCategory[cat].potRaw ?? "0"));
+      byCategory[cat] = { ...byCategory[cat], paidRaw: "0", availablePotRaw: potNow.toString(), availablePayoutsRaw: splitPotRaw(potNow) };
+    }
+  }
+
   const data = {
-    basis: "league_fee_only",
+    basis: vaultMode ? "onchain_vault_balance" : "league_fee_only",
+    vaultAddress: vault?.address || null,
+    vaultSpendableRaw: vault ? vault.spendableRaw.toString() : null,
     period: periodNorm,
     cutoff: epochStartIso,
     rangeEnd: rangeEndIso,
@@ -632,7 +648,7 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso) {
     byCategory
   };
 
-  prizeCache.set(key, { computedAtMs: now, data });
+  prizeCache.set(key, { computedAtMs: now, data, ttlMs: vaultMode ? 60_000 : PRIZE_TTL_MS });
   return data;
 }
 
@@ -964,7 +980,7 @@ export default async function handler(req, res) {
 
     // Prize meta is computed once per chain/period per warm instance (and TTL = 1h).
     // This prevents recomputing fee totals on every category request.
-    const prizeMeta = await getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso);
+    const prizeMeta = await getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { isLive: Boolean(epoch?.isLive) });
 
     // Hub stats (cached for 1h)
     const stats = await getEpochStats(chainId, periodNorm, epochStartIso, rangeEndIso);
