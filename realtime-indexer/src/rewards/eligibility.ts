@@ -192,6 +192,9 @@ async function withTransaction<T>(fn: (client: PoolClient & DbLike) => Promise<T
     }
     throw err;
   } finally {
+    // Drop the per-transaction query patch: a patched client returned to the pool drops
+    // pool.query's callback and hangs the next caller forever (2026-09-25 pool starvation).
+    delete (client as any).query;
     client.release();
   }
 }

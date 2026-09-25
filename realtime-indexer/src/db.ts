@@ -87,13 +87,25 @@ console.log(
   } poolMax=${poolMax} simple=${forceSimpleProtocol ? "on" : "off"}`
 );
 
+export const PG_QUERY_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.PG_QUERY_TIMEOUT_MS || 45_000),
+);
+
 export const pool = new Pool({
   connectionString: ENV.DATABASE_URL,
   ssl,
   max: poolMax,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
-});
+  // A pooler socket that goes silent (half-open TCP after a Supavisor hiccup) used to hold its client
+  // forever: no query timeout, no keepalive. Twenty such clients starved the pool on 2026-09-25 while
+  // the database itself was idle. A query now fails after PG_QUERY_TIMEOUT_MS and the pool destroys
+  // that client; keepalive lets the OS notice a dead socket.
+  query_timeout: PG_QUERY_TIMEOUT_MS,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
+} as any);
 
 // Force simple protocol globally for this pool (transaction pooler safe).
 if (forceSimpleProtocol) {

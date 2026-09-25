@@ -78,19 +78,24 @@ const repairSql = new AsyncLocalStorage<boolean>();
 
 async function timedRepairQuery(text: string, values?: unknown[]) {
   const client = await pool.connect();
+  let failed: Error | undefined;
   try {
     await client.query({
       text: `SET statement_timeout = ${REPAIR_PG_STATEMENT_TIMEOUT_MS}`,
       simple: true,
     } as any);
     return await client.query({ text, values, simple: true } as any);
+  } catch (error) {
+    failed = error instanceof Error ? error : new Error(String(error));
+    throw error;
   } finally {
     try {
       await client.query({ text: "RESET statement_timeout", simple: true } as any);
     } catch {
       // Connection may already be cancelled; still release.
     }
-    client.release();
+    // A failed client (query timeout, dead socket) is destroyed, never handed back to the pool.
+    client.release(failed);
   }
 }
 
@@ -1082,31 +1087,32 @@ type Queryable = {
 };
 
 async function withFeeEscrowTransaction<T>(fn: (db: Queryable) => Promise<T>): Promise<T> {
-  const client = await pool.connect() as Queryable & { query: (...args: any[]) => any; release: () => void };
-  const origQuery = client.query.bind(client);
-  client.query = (...args: any[]) => {
-    if (typeof args[0] === "string") {
-      return origQuery({ text: args[0], values: Array.isArray(args[1]) ? args[1] : undefined, simple: true });
-    }
-    if (args[0] && typeof args[0] === "object" && typeof args[0].text === "string") {
-      return origQuery({ ...args[0], simple: true });
-    }
-    return origQuery.apply(client, args);
+  const client = await pool.connect();
+  // Never patch client.query itself: the client goes back to the pool on release, and pg-pool's own
+  // pool.query calls client.query(text, values, callback). A wrapper that drops the callback made the
+  // next pool.query on that client hang forever and leaked the client -- one per Solana trade, until
+  // the pool starved (2026-09-25). This wrapper lives only for this transaction.
+  const db: Queryable = {
+    query: (text: string, values?: unknown[]) =>
+      client.query({ text, values: Array.isArray(values) ? values : undefined, simple: true } as any) as any,
   };
+  let failed: Error | undefined;
   try {
-    await client.query("begin");
-    const result = await fn(client);
-    await client.query("commit");
+    await db.query("begin");
+    const result = await fn(db);
+    await db.query("commit");
     return result;
   } catch (error) {
+    failed = error instanceof Error ? error : new Error(String(error));
     try {
-      await client.query("rollback");
+      await db.query("rollback");
     } catch {
       /* ignore rollback errors */
     }
     throw error;
   } finally {
-    client.release();
+    // A failed client (query timeout, dead socket) is destroyed, never handed back to the pool.
+    client.release(failed);
   }
 }
 
