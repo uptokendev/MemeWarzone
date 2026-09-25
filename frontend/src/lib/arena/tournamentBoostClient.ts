@@ -49,13 +49,10 @@ export async function submitTournamentBoost(input: { signer: JsonRpcSigner; quot
   const contract = new Contract(quote.domain.verifyingContract, TOURNAMENT_BOOST_ABI, input.signer); const tx = await contract.boostTournament(quote.value.poolId, quote.value.matchId, BigInt(quote.value.roundNumber), quote.value.sideToken, BigInt(quote.value.boostUnits), BigInt(quote.value.unitPriceNativeRaw), BigInt(quote.value.pricingVersion), BigInt(quote.value.oracleTimestamp), BigInt(quote.value.nonce), BigInt(quote.value.deadline), quote.signature, { value: BigInt(quote.value.grossNativeRaw) }); const receipt = await tx.wait(); if (receipt && Number(receipt.status) !== 1) throw new Error("Tournament Boost transaction did not succeed."); return { txHash: String(tx.hash || receipt?.hash || ""), receipt };
 }
 
-async function paymentAuth(wallet: string, chainId: number, action: string, extraLines: string[]) {
-  return signWalletAction({ action, walletAddress: wallet, chainId, walletType: "solana", signMessage: async (message) => (await signSolanaMessage(message, wallet)).signature, extraLines });
-}
 async function reconcileSolanaTournamentBoost(input: { tournamentId: string; matchRef: string; wallet: string; chainId: number; pending: SolanaArenaPendingPayment }): Promise<SolanaTournamentBoostPayment | null> {
   const quoteId = String(input.pending.metadata.quoteId || "").trim(); if (!quoteId) throw new Error("Durable Tournament Boost recovery is missing its authoritative quote.");
-  const auth = await paymentAuth(input.wallet, input.chainId, "arena_tournament_boost_payment", [`Quote: ${quoteId}`, `Signature: ${input.pending.signature}`]);
-  const response = await apiFetch(route(input.tournamentId, input.matchRef, "/solana-payment"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId, signature: input.pending.signature, auth }) });
+  // Bound quote + on-chain proof: no second signMessage prompt.
+  const response = await apiFetch(route(input.tournamentId, input.matchRef, "/solana-payment"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId, signature: input.pending.signature }) });
   const json = await response.json().catch(() => ({})); if (response.status === 409 && json?.code === "SOLANA_BOOST_PAYMENT_UNVERIFIED") return null; if (!response.ok || json?.ok === false) throw new Error(String(json?.error || `Tournament Boost recovery failed (${response.status})`)); const result = json as SolanaTournamentBoostPayment; if (result.confirmed !== true) throw new Error("Solana Tournament Boost receipt is not confirmed by backend authority."); if (result.signature && String(result.signature) !== input.pending.signature) throw new Error("Solana Tournament Boost receipt signature does not match the preserved payment."); return result;
 }
 
@@ -71,8 +68,8 @@ export async function submitSolanaTournamentBoost(input: { tournamentId: string;
       return { pending, newPaymentAllowed: state.newPaymentAllowed };
     },
     register: async (pending) => {
-      const auth = await paymentAuth(input.wallet, quote.chainId, "arena_tournament_boost_submission", [`Quote: ${quote.quoteId}`, `Funding: ${quote.fundingId}`]);
-      await readJson(await apiFetch(route(input.tournamentId, input.matchRef, "/solana-submission"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId: quote.quoteId, signature: pending.signature, blockhash: pending.blockhash, lastValidBlockHeight: pending.lastValidBlockHeight, auth }) }));
+      if (!pending.signedTransaction) throw new Error("Solana Tournament Boost submission is missing the signed transaction.");
+      await readJson(await apiFetch(route(input.tournamentId, input.matchRef, "/solana-submission"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId: quote.quoteId, signature: pending.signature, blockhash: pending.blockhash, lastValidBlockHeight: pending.lastValidBlockHeight, signedTransaction: pending.signedTransaction }) }));
     },
     reconcile: (pending) => reconcileSolanaTournamentBoost({ tournamentId: input.tournamentId, matchRef: input.matchRef, wallet: input.wallet, chainId: quote.chainId, pending }),
     expire: async (pending) => { await readJson(await apiFetch(route(input.tournamentId, input.matchRef, "/solana-expire"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId: pending.metadata.quoteId, signature: pending.signature }) })); },

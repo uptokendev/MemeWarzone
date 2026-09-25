@@ -45,6 +45,9 @@ export type SolanaArenaPendingPayment = {
   programId: string;
   metadata: Record<string, string>;
   createdAt: string;
+  /** Base64 of the wallet-signed transaction, handed to `register` before broadcast so the server can
+   * prove the payer from the transaction itself instead of asking for another signed message. */
+  signedTransaction?: string;
 };
 
 export type SolanaArenaPaymentResult<T> = {
@@ -77,6 +80,12 @@ function decodeBase64(value: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index]);
+  return globalThis.btoa(binary);
 }
 
 function encodeBase58(bytes: Uint8Array): string {
@@ -283,7 +292,7 @@ export async function sendSolanaArenaInstruction<T>(input: {
       createdAt: new Date().toISOString(),
     };
     await registerArenaPaymentBeforeBroadcast({
-      pending,
+      pending: { ...pending, signedTransaction: encodeBase64(signed.serialize()) },
       register: input.recovery.register,
       broadcast: () => connection.sendRawTransaction(signed.serialize(), { skipPreflight: false }),
     });

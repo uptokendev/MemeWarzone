@@ -152,7 +152,9 @@ function CombatControls({
               type="button"
               className={BOOST_CLASS}
               disabled={boost.disabled || !side.boostToken || boost.sideBlocked(side.key)}
-              onClick={() => void boost.boost(side.key, side.boostToken)}
+              // A confirmed boost adds 2 pts server-side; re-read the tally now instead of waiting
+              // for the 15 s vote poll.
+              onClick={() => void boost.boost(side.key, side.boostToken).finally(() => void vote.refresh())}
               title={`${boosts} boost${boosts === 1 ? "" : "s"} on this side`}
             >
               <Zap className="h-3.5 w-3.5 shrink-0" aria-hidden />

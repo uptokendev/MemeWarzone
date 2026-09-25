@@ -28,8 +28,10 @@ export default async function handler(req, res) {
     if (!address) return json(res, 400, { error: "Invalid address" });
     if (!pool) return json(res, 500, { error: "Server misconfigured: DATABASE_URL missing" });
 
-    await pool.query(`ALTER TABLE IF EXISTS public.auth_nonces ALTER COLUMN address TYPE text`);
-    await pool.query(`ALTER TABLE IF EXISTS public.auth_nonces DROP CONSTRAINT IF EXISTS auth_nonces_address_lowercase`);
+    // No per-request DDL here. Two ALTER TABLE statements ran before every nonce and each takes an
+    // ACCESS EXCLUSIVE lock on auth_nonces, so overlapping nonce requests (a boost fires several)
+    // could deadlock or time out -> intermittent 500 (2026-09-25). Production already has
+    // address text and no lowercase constraint (verified); chat/_lib.js keeps a one-time ensure.
 
     const nonce = makeNonce();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);

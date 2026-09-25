@@ -118,7 +118,19 @@ export function resolveAblyApiKey() {
   return raw;
 }
 
-export async function ensureAuthNonceSchema() {
+let authNonceSchemaReady = null;
+
+// Runs once per process: ALTER TABLE takes an ACCESS EXCLUSIVE lock on auth_nonces, and running it
+// on every chat join blocked concurrent /auth/nonce requests.
+export function ensureAuthNonceSchema() {
+  authNonceSchemaReady ??= applyAuthNonceSchema().catch((error) => {
+    authNonceSchemaReady = null;
+    throw error;
+  });
+  return authNonceSchemaReady;
+}
+
+async function applyAuthNonceSchema() {
   if (!pool) throw new Error("DATABASE_URL missing");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS public.auth_nonces (

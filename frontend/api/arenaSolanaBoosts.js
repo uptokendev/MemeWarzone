@@ -24,6 +24,7 @@ import {
   verifySolanaBoostPayment,
 } from "./lib/solanaArenaWarPoolRuntime.mjs";
 import { VOTE_BATTLE_BOOST_POINTS_PER_UNIT, isStandaloneVoteBattle, voteBattleRegulationOpen } from "./lib/arenaBattleMode.js";
+import { verifySignedArenaSubmission } from "./lib/solanaSignedArenaSubmission.mjs";
 
 const QUOTE_TTL_SECONDS = 300;
 const UNRESOLVED = new Set(["pending", "submitted", "confirming", "recovering", "verifying"]);
@@ -356,8 +357,16 @@ async function handleSubmission(req, res, route) {
     if (!sameQuote(quote, route)) { await client.query("rollback"); return json(res, 404, { ok: false, error: "Solana Boost quote not found for this route" }); }
     if (quote.signature_reference && quote.signature_reference !== signature) { await client.query("rollback"); return json(res, 409, { ok: false, error: "Boost quote is already bound to another signature", code: "SOLANA_BOOST_SIGNATURE_BOUND" }); }
     if (!quote.signature_reference && (quote.payment_status !== "pending" || new Date(quote.expires_at).getTime() <= Date.now())) { await client.query("rollback"); return json(res, 409, { ok: false, error: "Solana Boost quote is no longer signable", code: "SOLANA_BOOST_QUOTE_NOT_SIGNABLE" }); }
-    const auth = await requireWalletActionAuth({ res, pool: client, auth: body.auth || body, expectedWallet: quote.wallet, chainId: Number(quote.chain_id), action: route.product === "normal_battle" ? "arena_battle_boost_submission" : "arena_tournament_boost_submission", routeLabel: "arena/solana-boost-submission", extraLines: [`Quote: ${quote.id}`, `Funding: ${quote.funding_id}`] });
-    if (!auth || auth.legacy) { await client.query("rollback"); return auth?.legacy ? json(res, 401, { ok: false, error: "Signed wallet authentication is required" }) : undefined; }
+    // The signed transaction proves the payer (see solanaSignedArenaSubmission.mjs) and saves the
+    // wallet a second signMessage prompt. Clients that still send a signed action keep working.
+    if (body.signedTransaction) {
+      const expected = buildSolanaBoostInstructionRequirements({ competitionId: quote.competition_id, fundingId: quote.funding_id, wallet: quote.wallet, grossLamports: quote.gross_lamports });
+      const proof = verifySignedArenaSubmission({ transactionBase64: body.signedTransaction, signature, blockhash, wallet: quote.wallet, programId: expected.programId, dataBase64: expected.dataBase64 });
+      if (!proof.ok) { await client.query("rollback"); return json(res, 401, { ok: false, error: "Signed Boost transaction does not match this quote", code: "SOLANA_BOOST_SUBMISSION_UNPROVEN", reason: proof.reason }); }
+    } else {
+      const auth = await requireWalletActionAuth({ res, pool: client, auth: body.auth || body, expectedWallet: quote.wallet, chainId: Number(quote.chain_id), action: route.product === "normal_battle" ? "arena_battle_boost_submission" : "arena_tournament_boost_submission", routeLabel: "arena/solana-boost-submission", extraLines: [`Quote: ${quote.id}`, `Funding: ${quote.funding_id}`] });
+      if (!auth || auth.legacy) { await client.query("rollback"); return auth?.legacy ? json(res, 401, { ok: false, error: "Signed wallet authentication is required" }) : undefined; }
+    }
     const row = (await client.query(`update public.arena_solana_boost_quotes set signature_reference=$2,signature_blockhash=$3,signature_last_valid_block_height=$4,payment_status=case when payment_status='confirmed' then 'confirmed' else 'submitted' end,submitted_at=coalesce(submitted_at,now()),status_reason=null,updated_at=now() where id=$1 returning *`, [quote.id, signature, blockhash, lastValidBlockHeight])).rows[0];
     await client.query("commit");
     return json(res, 200, { ok: true, payment: publicBoostState(row) });
@@ -394,8 +403,14 @@ async function confirmPayment(req, res, route) {
       await client.query("commit");
       return json(res, 200, { ok: true, confirmed: true, idempotent: true, signature, action: existing });
     }
-    const auth = await requireWalletActionAuth({ res, pool: client, auth: body.auth || body, expectedWallet: quote.wallet, chainId: Number(quote.chain_id), action: route.product === "normal_battle" ? "arena_battle_boost_payment" : "arena_tournament_boost_payment", routeLabel: "arena/solana-boost-payment", extraLines: [`Quote: ${quote.id}`, `Signature: ${signature}`] });
-    if (!auth || auth.legacy) { await client.query("rollback"); return auth?.legacy ? json(res, 401, { ok: false, error: "Signed wallet authentication is required" }) : undefined; }
+    // Once the wallet-proven submission has bound this signature, confirming needs no further
+    // signature: verifySolanaBoostPayment proves from chain that quote.wallet paid exactly this
+    // quote, so a caller can only get a real payment recorded. An unbound quote still requires the
+    // signed action, or anyone could bind a bogus signature here and strand the payer.
+    if (quote.signature_reference !== signature) {
+      const auth = await requireWalletActionAuth({ res, pool: client, auth: body.auth || body, expectedWallet: quote.wallet, chainId: Number(quote.chain_id), action: route.product === "normal_battle" ? "arena_battle_boost_payment" : "arena_tournament_boost_payment", routeLabel: "arena/solana-boost-payment", extraLines: [`Quote: ${quote.id}`, `Signature: ${signature}`] });
+      if (!auth || auth.legacy) { await client.query("rollback"); return auth?.legacy ? json(res, 401, { ok: false, error: "Signed wallet authentication is required" }) : undefined; }
+    }
     await client.query(`update public.arena_solana_boost_quotes set signature_reference=$2,payment_status='verifying',submitted_at=coalesce(submitted_at,now()),updated_at=now() where id=$1`, [quote.id, signature]);
     let proof;
     try { proof = await verifySolanaBoostPayment({ chainId: quote.chain_id, signature, competitionId: quote.competition_id, fundingId: quote.funding_id, funder: quote.wallet, grossLamports: quote.gross_lamports, prizeLamports: quote.prize_lamports, protocolLamports: quote.protocol_lamports }); }

@@ -47,7 +47,8 @@ test("Vote Tournament Free Vote remains backend-authoritative and regulation-onl
 
 test("Vote Tournament paid Boost consumes EVM and frozen Solana runtime without client receipt authority", () => {
   assert.match(tournamentBoostClient, /arena_tournament_boost_quote/);
-  assert.match(tournamentBoostClient, /arena_tournament_boost_payment/);
+  assert.match(tournamentBoostClient, /signedTransaction: pending\.signedTransaction/);
+  assert.doesNotMatch(tournamentBoostClient, /arena_tournament_boost_payment|arena_tournament_boost_submission/);
   assert.match(tournamentBoostClient, /\/solana-quote/);
   assert.match(tournamentBoostClient, /\/solana-payment/);
   assert.match(tournamentBoostClient, /sendSolanaArenaInstruction/);

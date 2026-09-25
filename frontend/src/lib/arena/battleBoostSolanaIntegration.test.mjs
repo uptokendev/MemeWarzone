@@ -11,8 +11,10 @@ test("Normal Battle SOL Boost uses frozen server lifecycle endpoints", () => {
     assert.match(client, new RegExp(route));
   }
   assert.match(client, /arena_battle_boost_quote/);
-  assert.match(client, /arena_battle_boost_submission/);
-  assert.match(client, /arena_battle_boost_payment/);
+  // Two wallet prompts only (quote + transaction): the submission carries the signed transaction as
+  // proof and the payment is proven on chain (api/lib/solanaSignedArenaSubmission.mjs).
+  assert.match(client, /signedTransaction: pending\.signedTransaction/);
+  assert.doesNotMatch(client, /arena_battle_boost_submission|arena_battle_boost_payment/);
 });
 
 test("SOL quote is fail-closed on founder economics and V3 lock", () => {

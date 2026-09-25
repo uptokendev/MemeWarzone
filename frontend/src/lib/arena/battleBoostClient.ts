@@ -226,9 +226,6 @@ export async function submitBattleBoost(input: { signer: JsonRpcSigner; quote: B
   return { txHash: String(tx.hash || receipt?.hash || ""), receipt };
 }
 
-async function paymentAuth(wallet: string, chainId: number, action: string, extraLines: string[]) {
-  return signWalletAction({ action, walletAddress: wallet, chainId, walletType: "solana", signMessage: async (message) => (await signSolanaMessage(message, wallet)).signature, extraLines });
-}
 
 function battleRecovery(input: { battleId: string; chainId: number; wallet: string; targetToken: string; quoteId?: string; fundingId?: string; programId?: string }): SolanaArenaPaymentRecovery<SolanaBattleBoostPayment> {
   const key = `normal-battle-boost:${input.chainId}:${input.wallet}:${input.battleId}:${input.targetToken}`;
@@ -243,18 +240,19 @@ function battleRecovery(input: { battleId: string; chainId: number; wallet: stri
     },
     register: async (pending) => {
       if (!input.quoteId || !input.fundingId) throw new Error("Solana Battle Boost submission is missing its authoritative quote identity.");
-      const auth = await paymentAuth(input.wallet, input.chainId, "arena_battle_boost_submission", [`Quote: ${input.quoteId}`, `Funding: ${input.fundingId}`]);
+      // The signed transaction proves the payer server-side; no second signMessage prompt.
+      if (!pending.signedTransaction) throw new Error("Solana Battle Boost submission is missing the signed transaction.");
       await readJson(await apiFetch(solanaRoute(input.battleId, "solana-submission"), {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ quoteId: input.quoteId, signature: pending.signature, blockhash: pending.blockhash, lastValidBlockHeight: pending.lastValidBlockHeight, auth }),
+        body: JSON.stringify({ quoteId: input.quoteId, signature: pending.signature, blockhash: pending.blockhash, lastValidBlockHeight: pending.lastValidBlockHeight, signedTransaction: pending.signedTransaction }),
       }), "Solana Battle Boost submission");
     },
     reconcile: async (pending) => {
       const quoteId = String(pending.metadata.quoteId || input.quoteId || "").trim();
       if (!quoteId) throw new Error("Durable Battle Boost recovery is missing its authoritative quote.");
-      const auth = await paymentAuth(input.wallet, input.chainId, "arena_battle_boost_payment", [`Quote: ${quoteId}`, `Signature: ${pending.signature}`]);
+      // The quote is already bound to this signature and the server proves the payment on chain.
       const response = await apiFetch(solanaRoute(input.battleId, "solana-payment"), {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId, signature: pending.signature, auth }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId, signature: pending.signature }),
       });
       const json = await response.json().catch(() => ({}));
       if (response.status === 409 && json?.code === "SOLANA_BOOST_PAYMENT_UNVERIFIED") return null;

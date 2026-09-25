@@ -111,7 +111,7 @@ export function useBattleVote({ battleId, chainId }: { battleId: string; chainId
     }
   }
 
-  return { walletAddress, payload, loading, unavailable, busyToken, model, vote };
+  return { walletAddress, payload, loading, unavailable, busyToken, model, vote, refresh };
 }
 
 export function BattleVoteControls({
