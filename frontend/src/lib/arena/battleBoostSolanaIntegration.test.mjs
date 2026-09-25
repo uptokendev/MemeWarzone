@@ -30,6 +30,10 @@ test("SOL quote is fail-closed on founder economics and V3 lock", () => {
 
 test("browser recovery preserves exact signature and block-height lifecycle", () => {
   assert.match(transport, /recoverSolanaArenaPayment/);
+  // Phantom adds ComputeBudget + Lighthouse instructions when signing; the post-sign check must
+  // allow them (our instruction unchanged) or every signed arena payment is refused.
+  assert.match(transport, /assertSolanaUserV0Intent\(web3, signed, \{ payer: connected, instructions: \[instruction\], allowAdditionalInstructions: true \}\)/);
+  assert.doesNotMatch(transport, /assertSolanaUserV0Intent\(web3, signed, intent\)/);
   assert.match(transport, /lastValidBlockHeight/);
   assert.match(transport, /confirmLaunchpadSignature/);
   assert.match(transport, /registerArenaPaymentBeforeBroadcast/);

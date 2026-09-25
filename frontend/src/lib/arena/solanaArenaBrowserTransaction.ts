@@ -264,7 +264,11 @@ export async function sendSolanaArenaInstruction<T>(input: {
     const final = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
     assertSolanaUserV0Intent(web3, final.transaction, intent);
     const signed = await provider.signTransaction(final.transaction);
-    assertSolanaUserV0Intent(web3, signed, intent);
+    // What we built is checked exactly above. After signing, Phantom has added its own ComputeBudget
+    // and Lighthouse instructions (and the bytes the rewrite budget reserved for them), so the exact
+    // count and the headroom check refused every signed arena payment (2026-09-25). Require our
+    // instruction unchanged and contiguous, the payer and the single signer -- as solanaArenaV0 does.
+    assertSolanaUserV0Intent(web3, signed, { payer: connected, instructions: [instruction], allowAdditionalInstructions: true });
     const signatureBytes = signed?.signatures?.[0];
     if (!(signatureBytes instanceof Uint8Array) || signatureBytes.length !== 64) throw new Error("Wallet returned a Solana transaction without a valid payer signature.");
     const signature = encodeBase58(signatureBytes);
