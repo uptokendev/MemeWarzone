@@ -1283,6 +1283,23 @@ ranked; `battleLeagueEligibility` (`arenaBattleCompetition.js`) decides league p
   yet, so the server refuses a metrics challenge involving one
   (`METRICS_MARKET_DATA_UNAVAILABLE`); vote battles work for them.
 
+### Challenge popups: two delivery paths (2026-09-25)
+
+A challenge, counter, accept or decline reaches the other owner two ways, and either alone shows
+the popup. **Realtime:** the API publishes to `arena:creator:{chain}:{wallet}` (Ably; best-effort,
+lost if the owner is away). **Inbox:** `GET /api/arena/battles/inbox?chainId&wallet`
+(`frontend/api/lib/arenaChallengeInbox.js`) re-derives the same popups from `arena_battles`, and
+`IncomingChallengeListener` reads it on load, on tab return, on reconnect and every 20 s. An
+unanswered challenge returns on every page load; accepted/declined show once per browser.
+
+- A decline stores `decline_message = ""` when no message is given: **non-null means declined**,
+  null + expired means timed out. Do not "clean up" empty strings.
+- A challenge expires at `ends_at`, which each counter restarts (was `created_at + 24h`).
+- Every named GET route under `/arena/battles/` must be in `ARENA_BATTLE_NAMED_ROUTES`
+  (`arenaBattleChainIdentity.js`), or the runtime 404s it as an unknown battle id. `opponents` was
+  missing until 2026-09-25; a test now pins the list against the router.
+- Staging lacks `db/migrations/20260924_000001_arena_battle_decline_message.sql` (production has it).
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
