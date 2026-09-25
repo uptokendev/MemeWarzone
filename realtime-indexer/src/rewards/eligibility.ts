@@ -1,14 +1,11 @@
 import type { PoolClient, QueryResult } from "pg";
+import { LEGACY_BNB_THRESHOLDS, airdropThresholdsForChain, fetchAirdropNativeUsd, type AirdropNativeThresholds } from "./airdropThresholds.js";
 import { pool } from "../db.js";
 import { parseWalletAddressOrNull } from "../walletAddress.js";
 import { getEpochById, type RewardEpochRecord } from "./epochs.js";
 import { ELIGIBILITY_PROGRAMS, ELIGIBILITY_REASON_CODES, EXCLUSION_FLAG_SEVERITIES, isEligibilityProgram, isEligibilityReasonCode, isExclusionFlagSeverity, type EligibilityProgram, type EligibilityReasonCode, type ExclusionFlagSeverity } from "./reasonCodes.js";
 
-const BNB = 10n ** 18n;
-const TRADER_MIN_VOLUME = 25n * (10n ** 16n); // 0.25 BNB
-const TRADER_MAX_COUNTED_VOLUME = 15n * BNB;
-const CREATOR_MIN_BONDING_VOLUME = 3n * BNB;
-const CREATOR_MAX_COUNTED_VOLUME = 25n * BNB;
+// Volume thresholds are USD rules converted per chain per epoch -- see airdropThresholds.ts.
 const CREATOR_MAX_ELIGIBLE_CAMPAIGNS = 2;
 const CREATOR_MIN_UNIQUE_BUYERS = 10;
 const TRADER_MIN_TRADE_COUNT = 3;
@@ -199,6 +196,15 @@ async function withTransaction<T>(fn: (client: PoolClient & DbLike) => Promise<T
   }
 }
 
+/**
+ * Wallet key in SQL: EVM addresses compare lowercased; Solana base58 is case-sensitive, and a
+ * lowercased Solana address is a different (invalid) address -- winners could never be paid.
+ */
+function walletSqlKey(chainId: number | string): (expr: string) => string {
+  const solana = Number(chainId) === 101 || Number(chainId) === 102;
+  return (expr) => (solana ? expr : `lower(${expr})`);
+}
+
 async function getEpoch(db: DbLike, epochId: number): Promise<RewardEpochRecord> {
   const epoch = await getEpochById(epochId, db);
   if (!epoch) throw new Error(`Reward epoch ${epochId} not found`);
@@ -206,13 +212,14 @@ async function getEpoch(db: DbLike, epochId: number): Promise<RewardEpochRecord>
 }
 
 async function getCandidateWallets(db: DbLike, epoch: RewardEpochRecord): Promise<string[]> {
+  const wk = walletSqlKey(epoch.chainId);
   const r = await db.query(
     `with reward_wallets as (
        select distinct wallet_address
        from public.reward_events
        where epoch_id = $1 and wallet_address is not null
      ), creator_wallets as (
-       select distinct lower(c.creator_address) as wallet_address
+       select distinct ${wk("c.creator_address")} as wallet_address
        from public.campaigns c
        join public.curve_trades t
          on t.chain_id = c.chain_id
@@ -242,20 +249,21 @@ async function getCandidateWallets(db: DbLike, epoch: RewardEpochRecord): Promis
 }
 
 async function getTradeMetricsMap(db: DbLike, epoch: RewardEpochRecord): Promise<Map<string, WalletTradeMetrics>> {
+  const wk = walletSqlKey(epoch.chainId);
   const r = await db.query(
     `select
-       lower(t.wallet) as wallet_address,
+       ${wk("t.wallet")} as wallet_address,
        coalesce(sum(t.bnb_amount_raw::numeric), 0)::numeric(78,0) as trade_volume_raw,
        count(*)::int as trade_count,
        count(distinct date_trunc('day', t.block_time at time zone 'utc'))::int as active_days,
-       count(*) filter (where lower(t.wallet) = lower(c.creator_address))::int as own_campaign_trade_count
+       count(*) filter (where ${wk("t.wallet")} = ${wk("c.creator_address")})::int as own_campaign_trade_count
      from public.curve_trades t
      left join public.campaigns c
        on c.chain_id = t.chain_id and c.campaign_address = t.campaign_address
      where t.chain_id = $1
        and t.block_time >= $2
        and t.block_time < $3
-     group by lower(t.wallet)`,
+     group by ${wk("t.wallet")}`,
     [epoch.chainId, epoch.startAt, epoch.endAt]
   );
 
@@ -271,14 +279,15 @@ async function getTradeMetricsMap(db: DbLike, epoch: RewardEpochRecord): Promise
   return map;
 }
 
-async function getCreatorMetricsMap(db: DbLike, epoch: RewardEpochRecord): Promise<Map<string, WalletCreatorMetrics>> {
+async function getCreatorMetricsMap(db: DbLike, epoch: RewardEpochRecord, thresholds: AirdropNativeThresholds): Promise<Map<string, WalletCreatorMetrics>> {
+  const wk = walletSqlKey(epoch.chainId);
   const r = await db.query(
     `with per_campaign as (
        select
-         lower(c.creator_address) as wallet_address,
+         ${wk("c.creator_address")} as wallet_address,
          c.campaign_address,
          coalesce(sum(case when t.side = 'buy' then t.bnb_amount_raw::numeric else 0 end), 0)::numeric(78,0) as buy_volume_raw,
-         count(distinct case when t.side = 'buy' and lower(t.wallet) <> lower(c.creator_address) then lower(t.wallet) end)::int as unique_buyers_non_creator
+         count(distinct case when t.side = 'buy' and ${wk("t.wallet")} <> ${wk("c.creator_address")} then ${wk("t.wallet")} end)::int as unique_buyers_non_creator
        from public.campaigns c
        left join public.curve_trades t
          on t.chain_id = c.chain_id
@@ -287,7 +296,7 @@ async function getCreatorMetricsMap(db: DbLike, epoch: RewardEpochRecord): Promi
         and t.block_time < $3
        where c.chain_id = $1
          and c.creator_address is not null
-       group by lower(c.creator_address), c.campaign_address
+       group by ${wk("c.creator_address")}, c.campaign_address
      ), qualified as (
        select
          wallet_address,
@@ -317,10 +326,10 @@ async function getCreatorMetricsMap(db: DbLike, epoch: RewardEpochRecord): Promi
       epoch.chainId,
       epoch.startAt,
       epoch.endAt,
-      bigintString(CREATOR_MIN_BONDING_VOLUME),
+      bigintString(thresholds.creatorMinBondingVolume),
       CREATOR_MIN_UNIQUE_BUYERS,
       CREATOR_MAX_ELIGIBLE_CAMPAIGNS,
-      bigintString(CREATOR_MAX_COUNTED_VOLUME),
+      bigintString(thresholds.creatorMaxCountedVolume),
     ]
   );
 
@@ -406,6 +415,7 @@ async function getOpenExclusionFlags(db: DbLike, epochId: number): Promise<Exclu
 }
 
 async function getRecentAirdropWinnerWallets(db: DbLike, epoch: RewardEpochRecord): Promise<Set<string>> {
+  const wk = walletSqlKey(epoch.chainId);
   const r = await db.query(
     `with prior_epochs as (
        select id
@@ -417,7 +427,7 @@ async function getRecentAirdropWinnerWallets(db: DbLike, epoch: RewardEpochRecor
         order by end_at desc, id desc
         limit 2
      )
-     select distinct lower(w.wallet_address) as wallet_address
+     select distinct ${wk("w.wallet_address")} as wallet_address
        from public.airdrop_winners w
        join public.airdrop_draws d on d.id = w.draw_id
       where d.status = 'published'
@@ -428,6 +438,7 @@ async function getRecentAirdropWinnerWallets(db: DbLike, epoch: RewardEpochRecor
 }
 
 async function getActiveBattleLeagueWinnerWallets(db: DbLike, epoch: RewardEpochRecord): Promise<Set<string>> {
+  const wk = walletSqlKey(epoch.chainId);
   const epochStart = new Date(epoch.startAt);
   const epochEnd = new Date(epoch.endAt);
   if (Number.isNaN(epochStart.getTime()) || Number.isNaN(epochEnd.getTime())) return new Set();
@@ -437,7 +448,7 @@ async function getActiveBattleLeagueWinnerWallets(db: DbLike, epoch: RewardEpoch
   if (epochEnd >= nextMonthStart) return new Set();
 
   const r = await db.query(
-    `select distinct lower(recipient_address) as wallet_address
+    `select distinct ${wk("recipient_address")} as wallet_address
        from public.league_epoch_winners
       where chain_id = $1
         and epoch_end >= $2
@@ -487,7 +498,8 @@ async function insertAutomaticExclusionFlag(
   );
 }
 
-async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpochRecord): Promise<void> {
+async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpochRecord, thresholds: AirdropNativeThresholds): Promise<void> {
+  const wk = walletSqlKey(epoch.chainId);
   await clearAutomaticExclusionFlagsForEpoch(db, epoch.id);
 
   const selfTrading = await db.query(
@@ -501,8 +513,8 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
       where t.chain_id = $1
         and t.block_time >= $2
         and t.block_time < $3
-        and (t.wallet = c.creator_address or lower(t.wallet) = lower(c.creator_address))
-      group by lower(t.wallet)`,
+        and (t.wallet = c.creator_address or ${wk("t.wallet")} = ${wk("c.creator_address")})
+      group by ${wk("t.wallet")}`,
     [epoch.chainId, epoch.startAt, epoch.endAt]
   );
 
@@ -544,9 +556,9 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
         and t.block_time >= $2
         and t.block_time < $3
         and c.fee_recipient_address is not null
-        and (t.wallet = c.fee_recipient_address or lower(t.wallet) = lower(c.fee_recipient_address))
-        and lower(t.wallet) <> lower(c.creator_address)
-      group by lower(t.wallet)`,
+        and (t.wallet = c.fee_recipient_address or ${wk("t.wallet")} = ${wk("c.fee_recipient_address")})
+        and ${wk("t.wallet")} <> ${wk("c.creator_address")}
+      group by ${wk("t.wallet")}`,
     [epoch.chainId, epoch.startAt, epoch.endAt]
   );
 
@@ -572,7 +584,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
       where t.chain_id = $1
         and t.block_time >= $2
         and t.block_time < $3
-      group by lower(t.wallet), t.campaign_address
+      group by ${wk("t.wallet")}, t.campaign_address
       having count(*) filter (where t.side = 'buy') > 0
          and count(*) filter (where t.side = 'sell') > 0`,
     [epoch.chainId, epoch.startAt, epoch.endAt]
@@ -610,7 +622,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
          coalesce(sum(t.bnb_amount_raw::numeric), 0)::numeric(78,0) as trade_volume_raw
        from public.wallet_recruiter_links l
        join public.curve_trades t
-         on lower(t.wallet) = l.wallet_address
+         on ${wk("t.wallet")} = l.wallet_address
         and t.chain_id = $1
         and t.block_time >= $2
         and t.block_time < $3
@@ -630,7 +642,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
        join flagged_recruiters f on f.recruiter_id = p.recruiter_id
       where p.trade_volume_raw > 0::numeric
         and p.trade_volume_raw < $4::numeric`,
-    [epoch.chainId, epoch.startAt, epoch.endAt, bigintString(TRADER_MIN_VOLUME)]
+    [epoch.chainId, epoch.startAt, epoch.endAt, bigintString(thresholds.traderMinVolume)]
   );
 
   for (const row of walletSplitting.rows) {
@@ -653,7 +665,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
             array_agg(distinct t.campaign_address order by t.campaign_address) as campaign_addresses
        from public.recruiters r
        join public.curve_trades t
-         on (t.wallet = r.wallet_address or lower(t.wallet) = lower(r.wallet_address))
+         on (t.wallet = r.wallet_address or ${wk("t.wallet")} = ${wk("r.wallet_address")})
         and t.chain_id = $1
         and t.block_time >= $2
         and t.block_time < $3
@@ -662,7 +674,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
         and c.campaign_address = t.campaign_address
        join public.wallet_recruiter_links l
          on l.recruiter_id = r.id
-        and (lower(c.creator_address) = lower(l.wallet_address) or c.creator_address = l.wallet_address)
+        and (${wk("c.creator_address")} = ${wk("l.wallet_address")} or c.creator_address = l.wallet_address)
         and l.linked_at <= t.block_time
         and (l.detached_at is null or l.detached_at > t.block_time)
       group by r.wallet_address, r.id`,
@@ -751,7 +763,9 @@ export function evaluateTraderAirdropProgram(input: {
   flagsByWallet: Map<string, ExclusionFlagRecord[]>;
   recentAirdropWinnerWallets: Set<string>;
   activeBattleLeagueWinnerWallets: Set<string>;
+  thresholds?: AirdropNativeThresholds;
 }): { isEligible: boolean; score: bigint; reasonCodes: EligibilityReasonCode[]; metadata: Record<string, unknown> } {
+  const { traderMinVolume: TRADER_MIN_VOLUME, traderMaxCountedVolume: TRADER_MAX_COUNTED_VOLUME } = input.thresholds ?? LEGACY_BNB_THRESHOLDS;
   const flagReasons = collectFlagReasons(input.walletAddress, "airdrop_trader", input.flagsByWallet);
   const reasonCodes: EligibilityReasonCode[] = [...flagReasons.hardReasons, ...flagReasons.reviewReasons];
   const recruiter = input.recruiterByWallet.get(input.walletAddress);
@@ -793,7 +807,9 @@ export function evaluateCreatorAirdropProgram(input: {
   flagsByWallet: Map<string, ExclusionFlagRecord[]>;
   recentAirdropWinnerWallets: Set<string>;
   activeBattleLeagueWinnerWallets: Set<string>;
+  thresholds?: AirdropNativeThresholds;
 }): { isEligible: boolean; score: bigint; reasonCodes: EligibilityReasonCode[]; metadata: Record<string, unknown> } {
+  const { creatorMinBondingVolume: CREATOR_MIN_BONDING_VOLUME, creatorMaxCountedVolume: CREATOR_MAX_COUNTED_VOLUME } = input.thresholds ?? LEGACY_BNB_THRESHOLDS;
   const flagReasons = collectFlagReasons(input.walletAddress, "airdrop_creator", input.flagsByWallet);
   const reasonCodes: EligibilityReasonCode[] = [...flagReasons.hardReasons, ...flagReasons.reviewReasons];
   const recruiter = input.recruiterByWallet.get(input.walletAddress);
@@ -836,7 +852,14 @@ export function evaluateSquadProgram(input: {
   attributionSnapshot: WalletAttributionSnapshot | undefined;
   squadOverlap: SquadMembershipOverlap | undefined;
   flagsByWallet: Map<string, ExclusionFlagRecord[]>;
+  thresholds?: AirdropNativeThresholds;
 }): { isEligible: boolean; score: bigint; reasonCodes: EligibilityReasonCode[]; metadata: Record<string, unknown> } {
+  const {
+    traderMinVolume: TRADER_MIN_VOLUME,
+    traderMaxCountedVolume: TRADER_MAX_COUNTED_VOLUME,
+    creatorMinBondingVolume: CREATOR_MIN_BONDING_VOLUME,
+    creatorMaxCountedVolume: CREATOR_MAX_COUNTED_VOLUME,
+  } = input.thresholds ?? LEGACY_BNB_THRESHOLDS;
   const flagReasons = collectFlagReasons(input.walletAddress, "squad", input.flagsByWallet);
   const reasonCodes: EligibilityReasonCode[] = [...flagReasons.hardReasons, ...flagReasons.reviewReasons];
 
@@ -895,6 +918,7 @@ export function evaluateSquadProgram(input: {
 }
 
 async function getRecruiterRewardAmountMap(db: DbLike, epoch: RewardEpochRecord): Promise<Map<string, bigint>> {
+  const wk = walletSqlKey(epoch.chainId);
   const r = await db.query(
     `with event_matches as (
        select
@@ -920,7 +944,7 @@ async function getRecruiterRewardAmountMap(db: DbLike, epoch: RewardEpochRecord)
         and c.chain_id = re.chain_id
         and c.campaign_address = re.campaign_address
        join public.wallet_recruiter_links l
-         on l.wallet_address = lower(c.creator_address)
+         on l.wallet_address = ${wk("c.creator_address")}
         and l.linked_at <= re.occurred_at
         and (l.detached_at is null or l.detached_at > re.occurred_at)
        join public.recruiters rec on rec.id = l.recruiter_id
@@ -976,10 +1000,11 @@ async function upsertEligibilityResult(
 export async function processRewardEligibilityForEpoch(epochId: number): Promise<ProcessEligibilityResult> {
   return withTransaction(async (db) => {
     const epoch = await getEpoch(db, epochId);
+    const thresholds = airdropThresholdsForChain(Number(epoch.chainId), await fetchAirdropNativeUsd(Number(epoch.chainId)));
     const wallets = await getCandidateWallets(db, epoch);
     const [tradeMetricsMap, creatorMetricsMap, attributionMap, recruiterByWallet, squadMap, recruiterRewardAmountMap, recentAirdropWinnerWallets, activeBattleLeagueWinnerWallets] = await Promise.all([
       getTradeMetricsMap(db, epoch),
-      getCreatorMetricsMap(db, epoch),
+      getCreatorMetricsMap(db, epoch, thresholds),
       getAttributionSnapshotMap(db),
       getRecruiterWalletsMap(db),
       getSquadOverlapMap(db, epoch),
@@ -988,7 +1013,7 @@ export async function processRewardEligibilityForEpoch(epochId: number): Promise
       getActiveBattleLeagueWinnerWallets(db, epoch),
     ]);
 
-    await syncAutomaticExclusionFlagsForEpoch(db, epoch);
+    await syncAutomaticExclusionFlagsForEpoch(db, epoch, thresholds);
     const openFlags = await getOpenExclusionFlags(db, epoch.id);
 
     const flagsByWallet = new Map<string, ExclusionFlagRecord[]>();
@@ -1042,6 +1067,7 @@ export async function processRewardEligibilityForEpoch(epochId: number): Promise
         flagsByWallet,
         recentAirdropWinnerWallets,
         activeBattleLeagueWinnerWallets,
+        thresholds,
       });
       const airdropCreatorResult = evaluateCreatorAirdropProgram({
         walletAddress,
@@ -1050,6 +1076,7 @@ export async function processRewardEligibilityForEpoch(epochId: number): Promise
         flagsByWallet,
         recentAirdropWinnerWallets,
         activeBattleLeagueWinnerWallets,
+        thresholds,
       });
       const squadResult = evaluateSquadProgram({
         walletAddress,
@@ -1058,6 +1085,7 @@ export async function processRewardEligibilityForEpoch(epochId: number): Promise
         attributionSnapshot,
         squadOverlap,
         flagsByWallet,
+        thresholds,
       });
 
       const resultsByProgram = {
