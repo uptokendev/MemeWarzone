@@ -177,7 +177,7 @@ fund_payer
 
 echo "==> bonding lifecycle (simulate then send; includes cluster/routing/pause negatives)"
 npm --prefix tests/solana run test:lifecycle 2>&1 | tee /tmp/mwz-lifecycle.log
-if grep -qE "^\s+- Gate K: graduate closed campaign" /tmp/mwz-lifecycle.log; then
+if grep -qE "^\s+- Gate K[23]?:" /tmp/mwz-lifecycle.log; then
   echo "Gate K graduation test reported pending: Meteora was not executable on the validator." >&2
   echo "The gate must not pass while the graduation path is skipped." >&2
   exit 1

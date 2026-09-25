@@ -2525,4 +2525,111 @@ ${(simulation.value.logs || []).join("\
     assert.ok(claimSig, "the operator must be able to claim the LP fee");
     console.log(`[gate-k2] OPERATOR GRADUATED pool=${pool.toBase58()} swap=${swapSig} feeOwed=${owed.feeTokenA}/${owed.feeTokenB} claim=${claimSig}`);
   });
+
+  it("Gate K3: the live keeper process graduates a curve the moment it closes (websocket), the pool trades, the LP fee is claimable, SIGTERM stops it", async function () {
+    const meteora = await connection.getAccountInfo(METEORA_CP_AMM, "confirmed");
+    if (!meteora?.executable) this.skip();
+    // The keeper's safety-net scan reads campaigns from Postgres (staging, read-only here). The local
+    // campaign is not in that database, so the ONLY way the keeper can learn about it is the websocket:
+    // this test proves the instant trigger, not the scan.
+    const envLocal = path.join(__dirname, "../../frontend/.env.local");
+    const dbLine = fs.existsSync(envLocal) ? fs.readFileSync(envLocal, "utf8").split("\n").find((l) => l.startsWith("STAGING_DATABASE_URL=")) : null;
+    const dbUrl = String(process.env.KEEPER_TEST_DATABASE_URL || (dbLine ? dbLine.slice("STAGING_DATABASE_URL=".length) : "")).trim().replace(/^["']|["']$/g, "");
+    assert.ok(dbUrl, "Gate K3 needs a read-only Postgres (STAGING_DATABASE_URL in frontend/.env.local or KEEPER_TEST_DATABASE_URL)");
+    const { spawn } = require("node:child_process");
+    const sdk = await import("@meteora-ag/cp-amm-sdk");
+    const { CpAmm } = sdk;
+    const binding = require("../../scripts/solana/graduation-binding.cjs");
+    const adminKeypair = provider.wallet.payer;
+
+    let log = "";
+    const keeper = spawn(process.execPath, [path.join(__dirname, "../../scripts/solana/graduation-keeper.mjs"), "--watch", "--send", "--interval-ms", "600000"], {
+      env: {
+        ...process.env,
+        DATABASE_URL: dbUrl,
+        PG_SSL_ALLOW_SELF_SIGNED: "1",
+        SOLANA_RPC_URL: connection.rpcEndpoint,
+        SOLANA_LAUNCHPAD_PROGRAM_ID: program.programId.toBase58(),
+        SOLANA_TREASURY_OPERATOR_KEYPAIR: JSON.stringify(Array.from(adminKeypair.secretKey)),
+        SOLANA_ROUTE_SIGNER_KEYPAIR: JSON.stringify(Array.from(routeSigner.secretKey)),
+        SOL_USD_PRICE: "150",
+        SOL_USD_PRICE_FETCH: "0",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    keeper.stdout.on("data", (d) => { log += d; });
+    keeper.stderr.on("data", (d) => { log += d; });
+    const exited = new Promise((resolve) => keeper.on("close", (code) => resolve(code)));
+    const waitFor = async (predicate, what, ms = 60_000) => {
+      const until = Date.now() + ms;
+      while (Date.now() < until) {
+        if (await predicate()) return;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      throw new Error(`timed out waiting for ${what}\n--- keeper log ---\n${log}`);
+    };
+    try {
+      await waitFor(() => /websocket subscribed/.test(log) && /\] pass /.test(log), "the keeper to subscribe and finish its first pass");
+
+      creator = await setupWallet("creatorLiveKeeper");
+      buyer = await setupWallet("buyerLiveKeeper");
+      await sendCreate("live-keeper");
+      const closeStarted = Date.now();
+      await sendBuy(CLOSE_BUY_LAMPORTS, CLOSE_TARGET_LAMPORTS);
+
+      await waitFor(async () => {
+        const info = await connection.getAccountInfo(campaignAccounts.campaign, "confirmed");
+        return decodeCampaign(info.data).graduated;
+      }, "the keeper to graduate the closed curve", 120_000);
+      const seconds = ((Date.now() - closeStarted) / 1000).toFixed(1);
+      assert.match(log, new RegExp(`${campaignAccounts.campaign.toBase58()}: curve closed \\(websocket\\)`), `the graduation must be triggered by the websocket\n${log}`);
+      // The chain can report graduated a moment before the keeper logs its own confirmation.
+      await waitFor(() => log.includes(`GRADUATED ${campaignAccounts.campaign.toBase58()}`), "the keeper to confirm the graduation", 30_000);
+
+      const pool = binding.deriveMeteoraPool(campaignAccounts.mint);
+      const poolInfo = await connection.getAccountInfo(pool, "confirmed");
+      assert.ok(poolInfo && poolInfo.owner.equals(METEORA_CP_AMM), "the DAMM v2 pool must exist");
+
+      const cpAmm = new CpAmm(connection);
+      const poolState = await cpAmm.fetchPoolState(pool);
+      const buyerAta = getAssociatedTokenAddressSync(campaignAccounts.mint, buyer.keypair.publicKey);
+      const sellAmount = (await getAccount(connection, buyerAta, "confirmed")).amount / 10n;
+      const swapTx = await cpAmm.swap({
+        payer: buyer.keypair.publicKey, pool,
+        inputTokenMint: campaignAccounts.mint, outputTokenMint: NATIVE_MINT,
+        amountIn: new BN(sellAmount.toString()), minimumAmountOut: new BN(1),
+        tokenAMint: poolState.tokenAMint, tokenBMint: poolState.tokenBMint,
+        tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
+        tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID, referralTokenAccount: null,
+      });
+      swapTx.feePayer = buyer.keypair.publicKey;
+      const swapLatest = await connection.getLatestBlockhash("confirmed");
+      swapTx.recentBlockhash = swapLatest.blockhash;
+      swapTx.sign(buyer.keypair);
+      const swapSig = await connection.sendRawTransaction(swapTx.serialize(), { skipPreflight: false });
+      const swapConf = await connection.confirmTransaction({ signature: swapSig, ...swapLatest }, "confirmed");
+      assert.equal(swapConf.value.err, null, "a DEX swap on the graduated pool must land");
+
+      const positions = await cpAmm.getUserPositionByPool(pool, adminKeypair.publicKey);
+      assert.ok(positions.length >= 1, "the keeper key must own the locked LP position");
+      const { position, positionNftAccount, positionState } = positions[0];
+      assert.ok(BigInt(positionState.permanentLockedLiquidity.toString()) > 0n, "the LP must be permanently locked");
+      const freshPool = await cpAmm.fetchPoolState(pool);
+      const owed = sdk.getUnClaimLpFee(freshPool, positionState);
+      assert.ok(BigInt(owed.feeTokenA.toString()) + BigInt(owed.feeTokenB.toString()) > 0n, "the swap must accrue an LP fee");
+      const claimTx = await cpAmm.claimPositionFee({
+        owner: adminKeypair.publicKey, position, pool, positionNftAccount,
+        tokenAMint: freshPool.tokenAMint, tokenBMint: freshPool.tokenBMint,
+        tokenAVault: freshPool.tokenAVault, tokenBVault: freshPool.tokenBVault,
+        tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID,
+      });
+      const claimSig = await web3.sendAndConfirmTransaction(connection, claimTx, [adminKeypair], { commitment: "confirmed" });
+      console.log(`[gate-k3] LIVE KEEPER graduated ${seconds}s after the closing buy (websocket) pool=${pool.toBase58()} swap=${swapSig} fee=${owed.feeTokenA}/${owed.feeTokenB} claim=${claimSig}`);
+    } finally {
+      keeper.kill("SIGTERM");
+      const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r("timeout"), 15_000))]);
+      if (code === "timeout") keeper.kill("SIGKILL");
+      assert.equal(code, 0, `SIGTERM must stop the keeper cleanly (exit ${code})\n${log}`);
+    }
+  });
 });
