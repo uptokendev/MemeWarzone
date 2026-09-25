@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Search, Swords } from "lucide-react";
 import { toast } from "sonner";
 
@@ -10,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { challengePostGradBattle, fetchArenaBattleMatches, fetchArenaBattleOpponents, fetchPostGradCreatorBattleStatuses, type ArenaBattleOpponent } from "@/features/postgrad/apiClient";
 import { fetchRecentArenaImports, type RecentArenaImport } from "@/lib/arenaImports";
+import { projectImportsEnabled } from "@/features/projectImports/config";
 import { useArenaWalletAction } from "@/hooks/useArenaWalletAction";
 import type { CreatorBattleStatus } from "@/hooks/useArenaBattleFeed";
 import {
@@ -293,7 +295,17 @@ export function ChallengeCoinModal({
                   <p className="font-retro text-xs uppercase tracking-[0.2em] text-orange-300">// Pick opponent</p>
                   <h2 className="font-retro text-xl text-foreground sm:text-2xl">Choose who you fight</h2>
                   <p><span className="font-semibold text-orange-200">Your coin</span> is the one you send into battle. The opponent is the coin you challenge. Same chain only.</p>
-                  <p>Graduate a MemeWarzone coin or import a passed token if you do not have an eligible coin yet.</p>
+                  <p>
+                    No eligible coin yet?{" "}
+                    <Link to="/create" onClick={() => onOpenChange(false)} className="font-semibold text-orange-200 underline underline-offset-2 hover:text-orange-100">Launch your token</Link>
+                    {projectImportsEnabled ? (
+                      <>
+                        {" "}or{" "}
+                        <Link to="/import" onClick={() => onOpenChange(false)} className="font-semibold text-orange-200 underline underline-offset-2 hover:text-orange-100">import your token</Link>
+                      </>
+                    ) : null}
+                    . A launched coin can battle once it graduates; an imported token once it has passed review.
+                  </p>
                 </div>
               }
               right={
@@ -317,7 +329,17 @@ export function ChallengeCoinModal({
                   {!walletAddress ? (
                     <p className="text-sm text-muted-foreground">Connect your {isSolanaChainId(chainId) ? "Solana" : "EVM"} wallet to challenge on {getChainLabel(chainId)}.</p>
                   ) : !eligible.length ? (
-                    <p className="text-sm text-muted-foreground">No eligible coins on {getChainLabel(chainId)} yet. Graduate a MemeWarzone coin or import a passed token first.</p>
+                    <p className="text-sm text-muted-foreground">
+                      No eligible coins on {getChainLabel(chainId)} yet.{" "}
+                      <Link to="/create" onClick={() => onOpenChange(false)} className="font-semibold text-orange-200 underline underline-offset-2 hover:text-orange-100">Launch your token</Link>
+                      {projectImportsEnabled ? (
+                        <>
+                          {" "}or{" "}
+                          <Link to="/import" onClick={() => onOpenChange(false)} className="font-semibold text-orange-200 underline underline-offset-2 hover:text-orange-100">import your token</Link>
+                        </>
+                      ) : null}
+                      .
+                    </p>
                   ) : (
                     <div className="space-y-2">
                       {eligible.map((item) => {
