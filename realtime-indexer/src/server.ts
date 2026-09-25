@@ -1,4 +1,5 @@
 import express from "express";
+import { createTokenResponseCache } from "./tokenResponseCache.js";
 import cors from "cors";
 import { ENV } from "./env.js";
 import "dotenv/config";
@@ -35,6 +36,7 @@ import { parseWalletAddressOrNull, walletEqualsSql } from "./walletAddress.js";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 
 const app = express();
+const tokenResponseCache = createTokenResponseCache();
 app.use(express.json({ limit: "256kb" }));
 
 // Boot self-check: prove this process pins static networks (no detect-network retry spam).
@@ -366,6 +368,9 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// Hot token-page GETs: identical concurrent requests share one DB read, 200s reused for 2 s.
+app.use(tokenResponseCache.middleware);
 
 // Extremely lightweight health (no DB). Safe for frequent monitoring.
 app.get("/healthz", (_req, res) => {

@@ -21,7 +21,7 @@ import {
   persistDecodedAnchorEvents,
   shouldMarkPdaSignatureProcessed,
 } from "./solanaIngestResult.js";
-import { repairStateFromBackfill } from "./solanaHistoryStatus.js";
+import { headCatchUpPlan, repairStateFromBackfill } from "./solanaHistoryStatus.js";
 import { checkMilestones } from "./milestones.js";
 import { notifyCampaignCreated } from "./campaignLifecycleNotifications.js";
 import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably.js";
@@ -165,6 +165,7 @@ async function loadSolanaHistoryMeta(campaign: string): Promise<{
   scanBefore?: string | null;
   scanOldestSlot?: number | null;
   creationSlot?: number | null;
+  headSlot?: number | null;
 }> {
   const result = await sql(
     `select meta from public.campaigns where chain_id=$1 and campaign_address=$2`,
@@ -177,6 +178,7 @@ async function loadSolanaHistoryMeta(campaign: string): Promise<{
     scanBefore: stored.scanBefore ? String(stored.scanBefore) : null,
     scanOldestSlot: stored.scanOldestSlot != null ? Number(stored.scanOldestSlot) : null,
     creationSlot: stored.creationSlot != null ? Number(stored.creationSlot) : null,
+      headSlot: stored.headSlot != null ? Number(stored.headSlot) || null : null,
   };
 }
 
@@ -1815,6 +1817,63 @@ async function runWithRepairSql<T>(fn: () => Promise<T>): Promise<T> {
   return repairSql.run(true, fn);
 }
 
+/** See headCatchUpPlan: re-scan a completed campaign from the chain's newest signature down to the last covered slot. */
+async function catchUpSolanaCampaignHead(
+  campaign: string,
+  stored: { headSlot?: number | null; creationSlot?: number | null },
+  signal?: AbortSignal,
+): Promise<{ ran: boolean; reason: string; ingested: number; floorSlot?: number; headSlot?: number | null; reachedFloor?: boolean }> {
+  const newestBatch = await rpc<RpcSignature[]>("getSignaturesForAddress", [campaign, { limit: 1 }], signal);
+  const newestSlot = Array.isArray(newestBatch) && newestBatch[0] ? Number(newestBatch[0].slot || 0) : 0;
+  const plan = headCatchUpPlan({ headSlot: stored.headSlot, creationSlot: stored.creationSlot, newestSlot });
+  if (!plan.run) return { ran: false, reason: plan.reason, ingested: 0 };
+  const lease = campaignLeases.begin(campaign);
+  if (!lease) return { ran: false, reason: "lease-busy", ingested: 0 };
+  const runSignal = combineAbortSignals(signal, lease.abort.signal);
+  let status: CampaignLeaseState = "failed";
+  try {
+    const head = await getHeadSlot(runSignal);
+    const fetched = await fetchSignaturesForAccount(campaign, plan.floorSlot, head, runSignal, {
+      before: null,
+      pageCap: CAMPAIGN_SIGNATURE_PAGE_CAP,
+    });
+    const window = plan.floorSlot > 0 ? fetched.items.filter((item) => item.slot >= plan.floorSlot) : fetched.items;
+    const known = await existingCampaignTradeSignatures(campaign, window.map((item) => item.signature));
+    const unknown = window.filter((item) => !known.has(item.signature)).slice(0, CAMPAIGN_INGEST_MAX_PER_TICK);
+    let ingested = 0;
+    let failed = 0;
+    const processed: string[] = [];
+    await runWithDerivedFanoutSuppressed(async () => {
+      for (const item of unknown) {
+        throwIfAborted(runSignal);
+        const result = await ingestSignature(item, runSignal);
+        if (result.fetched) ingested += 1;
+        if (result.retryableFailure) failed += 1;
+        if (shouldMarkPdaSignatureProcessed(result)) processed.push(item.signature);
+      }
+    });
+    await markPdaSignaturesProcessed(campaign, processed);
+    if (ingested > 0) await rebuildSolanaDerivedFromTrades(campaign);
+    // Advance the head only when everything down to the floor was seen and nothing is left to retry.
+    const newest = window.reduce((max, item) => Math.max(max, Number(item.slot || 0)), 0);
+    const advance = fetched.reachedCreationSlot && failed === 0 && unknown.length === processed.length && newest > 0;
+    if (advance) {
+      await pool.query(
+        `update public.campaigns
+            set meta = jsonb_set(coalesce(meta, '{}'::jsonb), '{solanaHistory,headSlot}', to_jsonb($3::bigint), true)
+          where chain_id=$1 and campaign_address=$2`,
+        [SOLANA_CHAIN_ID, campaign, newest],
+      );
+    }
+    status = "success";
+    if (ingested > 0) console.log("[solana-indexer] head catch-up ingested missing trades", { campaign, ingested, floorSlot: plan.floorSlot, reason: plan.reason });
+    return { ran: true, reason: plan.reason, ingested, floorSlot: plan.floorSlot, headSlot: advance ? newest : stored.headSlot ?? null, reachedFloor: fetched.reachedCreationSlot };
+  } finally {
+    if (!lease.abort.signal.aborted) lease.abort.abort();
+    campaignLeases.release(campaign, lease.runId, status);
+  }
+}
+
 export async function backfillSolanaCampaign(campaignAddress: string, signal?: AbortSignal) {
   const campaign = String(campaignAddress || "").trim();
   if (!isSolanaPublicKey(campaign)) {
@@ -1824,7 +1883,13 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
   expireStaleCampaignLeases();
   const stored = await loadSolanaHistoryMeta(campaign);
   if (stored.historyComplete && stored.repairState === "complete") {
+    const catchUp = await catchUpSolanaCampaignHead(campaign, stored, signal).catch((error) => ({
+      ran: false,
+      reason: `failed: ${error instanceof Error ? error.message : String(error)}`,
+      ingested: 0,
+    }));
     return {
+      catchUp,
       campaign,
       createdSlot: Number(stored.creationSlot || 0),
       head: 0,

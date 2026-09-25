@@ -140,3 +140,46 @@ setInterval(() => {
     });
   }
 }, 15_000).unref();
+/**
+ * Self-heal watchdog. On 2026-09-25 every HTTP endpoint answered "timeout exceeded when trying to
+ * connect" for tokens and health alike: the pool was starved by its own background loops and never
+ * recovered until the container was restarted by hand. If the pool cannot serve `select 1` for
+ * ~3 minutes, log its state and exit so the container restart policy brings a fresh pool.
+ * DB_WATCHDOG_EXIT=0 keeps logging without exiting.
+ */
+const WATCHDOG_INTERVAL_MS = 30_000;
+const WATCHDOG_QUERY_TIMEOUT_MS = 20_000;
+const WATCHDOG_MAX_FAILURES = Math.max(2, Number(process.env.DB_WATCHDOG_MAX_FAILURES || 6));
+let watchdogFailures = 0;
+let watchdogRunning = false;
+setInterval(() => {
+  if (watchdogRunning) return;
+  watchdogRunning = true;
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`select 1 exceeded ${WATCHDOG_QUERY_TIMEOUT_MS}ms`)), WATCHDOG_QUERY_TIMEOUT_MS).unref(),
+  );
+  Promise.race([pool.query("select 1"), timeout])
+    .then(() => {
+      if (watchdogFailures > 0) console.warn("[db] watchdog: pool recovered", { afterFailures: watchdogFailures });
+      watchdogFailures = 0;
+    })
+    .catch((error) => {
+      watchdogFailures += 1;
+      console.error("[db] watchdog: pool cannot serve a query", {
+        failures: watchdogFailures,
+        of: WATCHDOG_MAX_FAILURES,
+        error: String((error as Error)?.message || error),
+        total: pool.totalCount,
+        idle: pool.idleCount,
+        waiting: pool.waitingCount,
+        max: poolMax,
+      });
+      if (watchdogFailures >= WATCHDOG_MAX_FAILURES && String(process.env.DB_WATCHDOG_EXIT || "1") !== "0") {
+        console.error("[db] watchdog: exiting so the container restarts with a fresh pool");
+        process.exit(1);
+      }
+    })
+    .finally(() => {
+      watchdogRunning = false;
+    });
+}, WATCHDOG_INTERVAL_MS).unref();
