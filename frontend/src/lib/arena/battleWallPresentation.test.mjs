@@ -763,7 +763,7 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(moduleSrc, /deploymentPending=\{phase === "matched"\}/);
 });
 
-test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and generation-neutral HUD", () => {
+test("Battle Wall mockup parity keeps split combatant cards, SHARE (no MORE), and generation-neutral HUD", () => {
   const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
   const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
   const vs = readSrc("../../components/arena/BattleWallVs.tsx");
@@ -801,8 +801,7 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and gen
   assert.match(moduleSrc, /BattleShareMenu/);
   assert.match(share, /Copy battle link/);
   assert.match(share, /Share on X/);
-  assert.match(moduleSrc, /data-battle-more-toggle/);
-  assert.match(moduleSrc, /moreToggle\.label/);
+  assert.doesNotMatch(moduleSrc, /data-battle-more-toggle/);
   assert.match(moreSrc, /BattleFunding/);
   assert.match(moduleSrc, /data-battle-wall-status-band/);
   assert.match(moduleSrc, /presentBattleWallFightBand/);

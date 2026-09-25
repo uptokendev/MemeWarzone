@@ -186,7 +186,8 @@ test("Phase 4A intel/terms stay generation-neutral on the collapsed wall", () =>
     assert.doesNotMatch(src, /5%\s*protocol|10%\s*Major|75%\s*->|20%\s*->/);
     assert.doesNotMatch(src, /Battle Boost|Final Salvo|Vote Tournament|sponsorship/i);
     assert.doesNotMatch(src, /45\s*\/\s*27\s*\/\s*18/);
-    assert.doesNotMatch(src, /WarPoolPanel|ArenaStakeButton|ArenaWarPoolClaimButton|ArenaSupportButton|BattleMetricBreakdown/);
+    // The winner's Claim moved onto the card when MORE was removed (founder, 2026-09-25).
+    assert.doesNotMatch(src, /WarPoolPanel|ArenaStakeButton|ArenaSupportButton|BattleMetricBreakdown/);
   }
 });
 
@@ -225,7 +226,8 @@ test("Phase 4B MORE reuses existing score, WarPool, funding, claim, and result s
   assert.match(breakdownSrc, /BattleMetricBreakdown/);
   assert.doesNotMatch(resultSrc, /Live telemetry V2/);
   assert.doesNotMatch(moreSrc, /Battle Boost|Final Salvo|Live telemetry V2/);
-  assert.doesNotMatch(moduleSrc, /WarPoolPanel|ArenaStakeButton|ArenaWarPoolClaimButton|BattleMetricBreakdown/);
+  assert.doesNotMatch(moduleSrc, /WarPoolPanel|ArenaStakeButton|BattleMetricBreakdown/);
+  assert.match(moduleSrc, /showClaim \? <ArenaWarPoolClaimButton/);
   assert.doesNotMatch(moreSrc, /useBattleWallRealtime|useArenaBattleRealtimeDetails/);
 });
 
@@ -255,26 +257,19 @@ test("Unknown WarPool generation does not expose historical 85/5/10 economics on
   assert.match(readSrc("../../App.tsx"), /path="\/battle\/:id"/);
 });
 
-test("MORE wiring is inline, accessible, and does not add a realtime or profile fetch", () => {
+test("The wall has no MORE dropdown and adds no realtime or profile fetch", () => {
   const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
   const moreSrc = readSrc("../../components/arena/BattleWallMore.tsx");
   const intelSrc = readSrc("../../components/arena/BattleIntel.tsx");
   const page = readSrc("../../pages/ArenaBattles.tsx");
   const realtime = readSrc("./battleWallRealtime.mjs");
 
-  assert.match(moduleSrc, /aria-expanded=\{moreToggle\.expanded\}/);
-  assert.match(moduleSrc, /aria-controls=\{morePanelId\}/);
-  assert.match(moduleSrc, /battleMorePanelId\(battle\.id\)/);
-  assert.match(moduleSrc, /useState\(false\)/);
-  assert.match(moduleSrc, /setMoreOpen\(false\)/);
-  assert.match(moduleSrc, /\[battle\.id\]/);
-  assert.match(moduleSrc, /moreToggle\.label/);
-  assert.match(readSrc("./battleWallMorePresentation.mjs"), /MORE ↓/);
-  assert.match(readSrc("./battleWallMorePresentation.mjs"), /LESS ↑/);
-  assert.match(moduleSrc, /hidden=\{!moreToggle\.expanded\}/);
+  // Founder, 2026-09-25: MORE removed; Vote/Boost on the card, prize pool in the status band.
+  assert.doesNotMatch(moduleSrc, /moreToggle|morePanelId|setMoreOpen|<BattleWallMore/);
+  assert.match(moduleSrc, /data-battle-prize-pool="true"/);
+  assert.match(moduleSrc, /<BattleWallCombatControls/);
   assert.match(moduleSrc, /useBattleWallRealtime\(battle\.id, realtimeActive && live\)/);
   assert.equal(moduleSrc.split("useBattleWallRealtime(").length - 1, 1);
-  assert.match(moduleSrc, /BattleWallMore/);
   assert.match(moduleSrc, /to=\{presented\.href\}/);
   assert.match(moreSrc, /BattleIntel/);
   assert.match(moreSrc, /BattleTerms/);

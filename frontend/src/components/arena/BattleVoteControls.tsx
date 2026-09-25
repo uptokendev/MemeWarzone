@@ -29,21 +29,8 @@ function tokenIdentityEqual(left?: string | null, right?: string | null) {
  * Tournament round controls: one free vote per wallet, boosts count 2 pts per
  * unit, ties go to Final Salvo.
  */
-export function BattleVoteControls({
-  battleId,
-  chainId,
-  tokenA,
-  tokenB,
-  labelA,
-  labelB,
-}: {
-  battleId: string;
-  chainId: number;
-  tokenA: string;
-  tokenB: string;
-  labelA?: string | null;
-  labelB?: string | null;
-}) {
+/** Free Vote state and action for one battle; shared by the MORE panel and the battle card. */
+export function useBattleVote({ battleId, chainId }: { battleId: string; chainId: number }) {
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
   const walletAddress = String(isSolanaChainId(chainId) ? solanaAccount || "" : wallet.account || "").trim();
@@ -123,6 +110,26 @@ export function BattleVoteControls({
       setBusyToken(null);
     }
   }
+
+  return { walletAddress, payload, loading, unavailable, busyToken, model, vote };
+}
+
+export function BattleVoteControls({
+  battleId,
+  chainId,
+  tokenA,
+  tokenB,
+  labelA,
+  labelB,
+}: {
+  battleId: string;
+  chainId: number;
+  tokenA: string;
+  tokenB: string;
+  labelA?: string | null;
+  labelB?: string | null;
+}) {
+  const { walletAddress, payload, loading, unavailable, busyToken, model, vote } = useBattleVote({ battleId, chainId });
 
   if (loading && !payload) {
     return <div role="status" aria-live="polite" className="text-[10px] uppercase tracking-[0.16em] text-white/45">Loading Vote Battle score…</div>;

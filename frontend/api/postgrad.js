@@ -32,7 +32,9 @@ import { isPostgradApiFlagEnabled } from "./lib/postgradFlags.js";
 const ROUTES = [
   { pattern: /^\/arena\/ops\/health$/, flag: "POSTGRAD_ARENA_OPS_ENABLED", handler: arenaOps },
   { pattern: /^\/arena\/battle-metrics\/[^/]+$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattleMetrics },
-  { pattern: /^\/arena\/boosts\/[^/]+\/(?:solana-quote|solana-payment)$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaSolanaBoosts },
+  // Every Solana Boost action the browser calls. solana-state/-submission/-expire used to fall through to
+  // the EVM handler and 404 ("Unknown Arena Boost route"), so no Solana Boost could start (2026-09-25).
+  { pattern: /^\/arena\/boosts\/[^/]+\/(?:solana-quote|solana-submission|solana-state|solana-expire|solana-payment)$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaSolanaBoosts },
   { pattern: /^\/arena\/boosts(?:\/.*)?$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaBoosts },
   { pattern: /^\/arena\/battles\/[^/]+\/v3-scoring-lock$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattlePointsV3Admin },
   // Standalone Vote Battle free votes (same rules as the Vote Tournament round votes).

@@ -41,12 +41,8 @@ function paymentLabel(state: SolanaBattleBoostRecoveryState | null) {
   return "Payment pending…";
 }
 
-export function BattleBoostPanel({ battleId, chainId, left, right }: {
-  battleId: string;
-  chainId: number;
-  left: Side;
-  right: Side;
-}) {
+/** Battle Boost state and action for one battle; shared by the MORE panel and the battle card. */
+export function useBattleBoost({ battleId, chainId, left, right }: { battleId: string; chainId: number; left: Side; right: Side }) {
   const wallet = useWallet();
   const solana = useSolanaWallet();
   const [summary, setSummary] = useState<BattleBoostSummary | null>(null);
@@ -168,6 +164,22 @@ export function BattleBoostPanel({ battleId, chainId, left, right }: {
 
   const sideBlocked = (side: "left" | "right") => Boolean(paymentStates[side]?.unresolved) || paymentStates[side]?.newPaymentAllowed === false;
   const disabled = Boolean(busySide) || runtimeReady !== true;
+
+  return { isSolana, nativeSymbol, summary, runtimeReady, busySide, quantity, setQuantity, paymentStates, totals, approvedRows, v3TotalAuthoritative, boost, sideBlocked, disabled };
+}
+
+export function boostPaymentLabel(state: SolanaBattleBoostRecoveryState | null) {
+  return paymentLabel(state);
+}
+
+export function BattleBoostPanel({ battleId, chainId, left, right }: {
+  battleId: string;
+  chainId: number;
+  left: Side;
+  right: Side;
+}) {
+  const { isSolana, nativeSymbol, summary, runtimeReady, quantity, setQuantity, paymentStates, totals, approvedRows, v3TotalAuthoritative, boost, sideBlocked, disabled } =
+    useBattleBoost({ battleId, chainId, left, right });
 
   return (
     <section data-battle-boost-panel="true" className="space-y-3">

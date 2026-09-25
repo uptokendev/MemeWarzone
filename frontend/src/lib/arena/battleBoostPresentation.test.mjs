@@ -59,7 +59,8 @@ test("Battle Boost never guesses missing combatant identity for either chain fam
 test("Battle Wall Boost uses signed quote paths without client-side receipt authority", () => {
   const client = fs.readFileSync(path.join(here, "./battleBoostClient.ts"), "utf8");
   const panel = fs.readFileSync(path.join(here, "../../components/arena/BattleBoostPanel.tsx"), "utf8");
-  const wall = fs.readFileSync(path.join(here, "../../components/arena/BattleWallMore.tsx"), "utf8");
+  // Vote/Boost moved from the MORE panel onto the battle card (founder, 2026-09-25).
+  const wall = fs.readFileSync(path.join(here, "../../components/arena/BattleWallCombatControls.tsx"), "utf8");
 
   assert.match(client, /arena_battle_boost_quote/);
   assert.match(client, /\/api\/arena\/boosts\/quote/);
@@ -70,7 +71,7 @@ test("Battle Wall Boost uses signed quote paths without client-side receipt auth
   assert.match(panel, /90% goes to the prize pool and 10% to protocol/);
   assert.match(panel, /backend-authoritative/);
   assert.match(wall, /battleBoostAvailability/);
-  assert.match(wall, /BattleBoostPanel/);
+  assert.match(wall, /useBattleBoost/);
 });
 
 test("Battle Boost fails closed when aggregate runtime is unavailable and polls authoritative totals after payment", () => {

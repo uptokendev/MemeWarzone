@@ -4,7 +4,6 @@ import { BattleCombatEffects } from "@/components/arena/BattleCombatEffects";
 import { BattleFightActions } from "@/components/arena/BattleFightActions";
 import { BattleShareMenu } from "@/components/arena/BattleShareMenu";
 import { BattleWallCombatant } from "@/components/arena/BattleWallCombatant";
-import { BattleWallMore } from "@/components/arena/BattleWallMore";
 import { BattleWallVs } from "@/components/arena/BattleWallVs";
 import type { Battle } from "@/features/postgrad/contracts";
 import { postGradFlags } from "@/features/postgrad/config";
@@ -12,7 +11,12 @@ import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { useBattleWallRealtime } from "@/hooks/useBattleWallRealtime";
 import { useBattleWallViewport, type BattleWallViewportReport } from "@/hooks/useBattleWallViewport";
 import { battleChainLabel, battleClockLabel, battleDurationLabel } from "@/lib/arena/battlePresentation";
-import { battleMorePanelId, battleMoreToggle } from "@/lib/arena/battleWallMorePresentation.mjs";
+import { BattleWallCombatControls, battleVoteEligibility, liveVoteScore } from "@/components/arena/BattleWallCombatControls";
+import { useBattleVote } from "@/components/arena/BattleVoteControls";
+import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
+import { formatPrizePool, useBattlePrizePool } from "@/components/arena/useBattlePrizePool";
+import { presentBattleGeneration } from "@/lib/arena/battleGenerationPresentation.mjs";
+import { presentBattleWallMore } from "@/lib/arena/battleWallMorePresentation.mjs";
 import { requestArenaBuyIn } from "@/lib/arena/challengePopupPresentation.mjs";
 import { DATA_DELAY_LABEL, battleDomId, presentBattleWallFightBand, presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
 import {
@@ -50,14 +54,7 @@ export function BattleWallModule({
   const live = isWallRealtimeEligible(battle);
   const realtime = useBattleWallRealtime(battle.id, realtimeActive && live);
   const [retained, setRetained] = useState<{ value: BattleRealtimeMetrics | null } | null>(null);
-  const [moreOpen, setMoreOpen] = useState(false);
   const report = onViewportReport || noopViewportReport;
-  const moreToggle = battleMoreToggle(moreOpen);
-  const morePanelId = battleMorePanelId(battle.id);
-
-  useEffect(() => {
-    setMoreOpen(false);
-  }, [battle.id]);
 
   useBattleWallViewport(moduleRef, {
     battleId: battle.id,
@@ -86,11 +83,28 @@ export function BattleWallModule({
       ? realtime.battle
       : battle;
   const displayMetrics = selected.metrics;
-  const presented = presentBattleWallModule(displayBattle, displayMetrics, {
+  const basePresented = presentBattleWallModule(displayBattle, displayMetrics, {
     requested: selected.requested,
     loaded: selected.loaded,
   });
   const chainId = Number((displayBattle as Battle & { chainId?: number }).chainId || 0);
+  // Standalone Vote Battles: the battle record carries no vote totals (only tournaments fill
+  // participants[].voteScore), so the card showed "VOTES —" while votes were being cast. The card and
+  // its Vote/Boost buttons share one live vote state (regulation points: Free Vote 1, Boost 2).
+  const voteEligibility = battleVoteEligibility(displayBattle);
+  const voteState = useBattleVote({ battleId: voteEligibility.showVote ? battle.id : "", chainId });
+  const presented = voteEligibility.showVote && voteState.payload
+    ? { ...basePresented, ...liveVoteScore(voteState.model.leftPoints, voteState.model.rightPoints) }
+    : basePresented;
+  // Live prize pool in the status band; the winner's claim sits on the card (the MORE panel is gone).
+  const typedBattle = displayBattle as Battle & { source?: string; state?: string; stakeNative?: number };
+  const prizePoolEnabled =
+    typedBattle.source !== "tournament" &&
+    Number(typedBattle.stakeNative || 0) > 0 &&
+    (basePresented.phase === "live" || basePresented.tab === "finished" || typedBattle.state === "live");
+  const prizePool = useBattlePrizePool(battle.id, chainId, prizePoolEnabled);
+  const claimInfo = presentBattleWallMore(displayBattle, displayMetrics, { realtimeState: realtime.realtimeState, dataSource: selected.source });
+  const showClaim = Boolean(claimInfo.showClaim) && Boolean(presentBattleGeneration(displayBattle, displayMetrics || {}).pool);
   const phase = presented.phase;
   const preLive = phase === "challenged" || phase === "matched";
   const challenged = phase === "challenged";
@@ -159,6 +173,14 @@ export function BattleWallModule({
           <>
             <span className="text-white/20" aria-hidden="true">|</span>
             <span data-battle-mode-label={presented.fightMode?.key}>{band.modeLabel}</span>
+          </>
+        ) : null}
+        {prizePool ? (
+          <>
+            <span className="text-white/20" aria-hidden="true">|</span>
+            <span data-battle-prize-pool="true" className="font-retro text-[11px] text-orange-200">
+              Prize pool {formatPrizePool(prizePool)}
+            </span>
           </>
         ) : null}
       </div>
@@ -233,6 +255,14 @@ export function BattleWallModule({
         ) : null}
       </div>
 
+      <BattleWallCombatControls
+        voteState={voteState}
+        battle={displayBattle}
+        metrics={displayMetrics}
+        realtimeState={realtime.realtimeState}
+        dataSource={selected.source}
+      />
+
       <div
         data-battle-wall-actions="true"
         className="relative z-20 mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t pt-2.5"
@@ -257,16 +287,7 @@ export function BattleWallModule({
           ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <button
-            type="button"
-            aria-expanded={moreToggle.expanded}
-            aria-controls={morePanelId}
-            data-battle-more-toggle={battle.id}
-            onClick={() => setMoreOpen((open) => !open)}
-            className="min-h-11 text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          >
-            {moreToggle.label}
-          </button>
+          {showClaim ? <ArenaWarPoolClaimButton battleId={battle.id} chainId={chainId} /> : null}
           <Link
             to={presented.href}
             className="min-h-11 inline-flex items-center text-xs uppercase tracking-[0.16em] text-white/40 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -276,24 +297,6 @@ export function BattleWallModule({
         </div>
       </div>
 
-      <div
-        id={morePanelId}
-        hidden={!moreToggle.expanded}
-        data-battle-more={battle.id}
-        data-battle-more-open={moreToggle.expanded ? "true" : "false"}
-        className="relative z-20"
-      >
-        {moreToggle.expanded ? (
-          <div className="mt-3 border-t border-white/10 pt-4">
-            <BattleWallMore
-              battle={displayBattle}
-              metrics={displayMetrics}
-              realtimeState={realtime.realtimeState}
-              dataSource={selected.source}
-            />
-          </div>
-        ) : null}
-      </div>
     </article>
   );
 }
