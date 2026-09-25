@@ -21,6 +21,13 @@ import {
   selectExpiredAuthorizations,
 } from "./solanaTradeAuthSweep.js";
 
+import {
+  DEFAULT_PROTOCOL_FLUSH_INTERVAL_MS,
+  DEFAULT_PROTOCOL_FLUSH_MIN_LAMPORTS,
+  decodeRouteState,
+  flushOperatorFillInstruction,
+  shouldFlushProtocolVault,
+} from "./solanaProtocolFlush.js";
 const SOLANA_CHAIN_ID = 101;
 const DEFAULT_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
 const DEFAULT_TREASURY = "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX";
@@ -45,6 +52,7 @@ let workerStarted = false;
 let tickRunning = false;
 let tickCount = 0;
 let lastTradeAuthSweepMs = 0;
+let lastProtocolFlushMs = 0;
 
 const INIT_DISC = createHash("sha256").update("global:initialize_fee_escrow").digest().subarray(0, 8);
 const INIT_CREATOR_VAULT_DISC = createHash("sha256")
@@ -634,6 +642,65 @@ async function processTradeAuthChainSweep(connection: Connection, payer: Keypair
   }
 }
 
+function protocolFlushMinLamports(): bigint {
+  try {
+    const raw = String(process.env.SOLANA_PROTOCOL_FLUSH_MIN_LAMPORTS || "").trim();
+    return raw ? BigInt(raw) : DEFAULT_PROTOCOL_FLUSH_MIN_LAMPORTS;
+  } catch {
+    return DEFAULT_PROTOCOL_FLUSH_MIN_LAMPORTS;
+  }
+}
+
+/** Pays the protocol_vault out to the operator (up to its cap) and the multisig. See solanaProtocolFlush.ts. */
+async function processProtocolFlush(connection: Connection, payer: Keypair) {
+  if (/^(0|false|off|no)$/i.test(String(process.env.SOLANA_PROTOCOL_FLUSH_ENABLED || "true").trim())) return;
+  const now = Date.now();
+  const intervalMs = Math.max(60_000, Number(process.env.SOLANA_PROTOCOL_FLUSH_INTERVAL_MS || DEFAULT_PROTOCOL_FLUSH_INTERVAL_MS));
+  if (now - lastProtocolFlushMs < intervalMs) return;
+  // One chain read per interval, flushed or not.
+  const previousAttemptMs = lastProtocolFlushMs;
+  lastProtocolFlushMs = now;
+  const routeState = vaultPda("route_state");
+  const protocolVault = vaultPda("protocol_vault");
+  const [routeInfo, vaultInfo] = await connection.getMultipleAccountsInfo([routeState, protocolVault], "confirmed");
+  const route = routeInfo ? decodeRouteState(Buffer.from(routeInfo.data)) : null;
+  if (!route || !vaultInfo) return;
+  const rentMinimum = BigInt(await connection.getMinimumBalanceForRentExemption(vaultInfo.data.length));
+  const due = shouldFlushProtocolVault({
+    vaultLamports: BigInt(vaultInfo.lamports),
+    rentMinimumLamports: rentMinimum,
+    minLamports: protocolFlushMinLamports(),
+    nowMs: now,
+    lastAttemptMs: previousAttemptMs,
+    intervalMs,
+  });
+  if (!due) return;
+  const spendable = BigInt(vaultInfo.lamports) - rentMinimum;
+  try {
+    const sig = await sendServerV0(
+      connection,
+      payer,
+      flushOperatorFillInstruction({
+        treasuryProgram: treasuryId(),
+        routeState,
+        protocolVault,
+        operator: new PublicKey(route.operator),
+        overflowTreasury: new PublicKey(route.overflowTreasury),
+      }),
+      "Protocol vault flush",
+    );
+    console.info("[solana-fee-escrow] protocol vault flushed", {
+      lamports: spendable.toString(),
+      operator: route.operator,
+      overflow: route.overflowTreasury,
+      filledUsdMicrosBefore: route.filledUsdMicros.toString(),
+      sig,
+    });
+  } catch (error) {
+    console.warn("[solana-fee-escrow] protocol vault flush failed", (error instanceof Error ? error.message : String(error)).slice(0, 300));
+  }
+}
+
 async function runTick(connection: Connection, payer: Keypair): Promise<void> {
   if (tickRunning) return;
   tickRunning = true;
@@ -651,6 +718,8 @@ async function runTick(connection: Connection, payer: Keypair): Promise<void> {
     await processTradeAuthCleanup(connection, payer);
     if (!(await acquireLease())) return;
     await processTradeAuthChainSweep(connection, payer);
+    if (!(await acquireLease())) return;
+    await processProtocolFlush(connection, payer);
     await acquireLease();
   } finally {
     tickRunning = false;
