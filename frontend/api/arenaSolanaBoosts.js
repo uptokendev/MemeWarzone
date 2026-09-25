@@ -240,11 +240,16 @@ async function persistVerifiedBoost(client, quote, route, proof) {
   if (!context.battle.ends_at || receiptMs >= new Date(context.battle.ends_at).getTime()) return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='outside_regulation_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
   const pointsPerUnit = route.product === "vote_tournament" || context.voteBattle ? BigInt(VOTE_BATTLE_BOOST_POINTS_PER_UNIT) : 0n;
   const points = BigInt(quote.boost_units) * pointsPerUnit;
+  // Normal and Vote Battle quotes carry round_number 0 (only tournament rounds have one), but
+  // arena_contest_actions requires round_number >= 1 and the vote tally reads round 1. Write them
+  // as round 1, exactly like the EVM boost path (arenaBoosts.js); tournament rounds keep theirs.
+  // Before this every Solana battle boost landed on chain and then failed to record (2026-09-25).
+  const roundNumber = route.product === "normal_battle" ? 1 : Number(quote.round_number);
   const inserted = (await client.query(
     `insert into public.arena_contest_actions (chain_id,tournament_id,battle_id,match_id,round_number,phase,salvo_index,side,wallet,action_type,boost_units,points,gross_native_raw,pool_native_raw,protocol_native_raw,tx_hash,log_index,signature_reference,confirmed_at)
      values ($1,$2,$3,$4,$5,'regulation',null,$6,$7,'boost',$8,$9,$10,$11,$12,$13,0,$13,to_timestamp($14))
      on conflict (chain_id,signature_reference) where signature_reference is not null do nothing returning *`,
-    [quote.chain_id, quote.tournament_id, quote.battle_id, quote.match_id, quote.round_number, quote.side, quote.wallet, quote.boost_units, points.toString(), quote.gross_lamports, quote.prize_lamports, quote.protocol_lamports, quote.signature_reference, proof.receipt.createdAt],
+    [quote.chain_id, quote.tournament_id, quote.battle_id, quote.match_id, roundNumber, quote.side, quote.wallet, quote.boost_units, points.toString(), quote.gross_lamports, quote.prize_lamports, quote.protocol_lamports, quote.signature_reference, proof.receipt.createdAt],
   )).rows[0];
   if (!inserted) {
     const existing = (await client.query(`select * from public.arena_contest_actions where chain_id=$1 and signature_reference=$2 limit 1`, [quote.chain_id, quote.signature_reference])).rows[0];

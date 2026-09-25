@@ -134,9 +134,6 @@ export function useBattleBoost({ battleId, chainId, left, right }: { battleId: s
         }
         if (state.unresolved || state.newPaymentAllowed !== true) throw new Error("A prior SOL Battle Boost payment is still unresolved. No replacement payment will be signed.");
         const quote = await createSolanaBattleBoostQuote({ battleId, chainId, wallet: solana.solanaAccount, targetToken: tokenId, boostUnits: quantity });
-        const label = side === "left" ? left.ticker || left.name || "left side" : right.ticker || right.name || "right side";
-        const confirmed = window.confirm(`Boost ${label} with ${quantity} Boost${quantity === 1 ? "" : "s"}?\n\nCost: ${formatBoostLamports(quote.grossLamports)}\n$1 = 1 Boost unit. Backend-authoritative V3 scoring only.`);
-        if (!confirmed) return;
         const payment = await submitSolanaBattleBoost({ battleId, wallet: solana.solanaAccount, quote });
         toast.success(`Battle Boost confirmed${payment.signature ? `: ${payment.signature.slice(0, 10)}…` : "."}`);
         await refreshSolanaPayments();
@@ -144,9 +141,6 @@ export function useBattleBoost({ battleId, chainId, left, right }: { battleId: s
         if (!wallet.signer || !wallet.account) return toast.error("Connect an EVM wallet to Boost this battle.");
         if (Number(wallet.chainId) !== Number(chainId)) return toast.error("Switch your wallet to the battle chain before Boosting.");
         const quoted = await createBattleBoostQuote({ battleId, chainId, wallet: wallet.account, targetToken: tokenId, boostUnits: quantity, signer: wallet.signer });
-        const label = side === "left" ? left.ticker || left.name || "left side" : right.ticker || right.name || "right side";
-        const confirmed = window.confirm(`Boost ${label} with ${quantity} Boost${quantity === 1 ? "" : "s"}?\n\nCost: ${formatBoostNative(quoted.quote.value.grossNativeRaw, nativeSymbol)}\nOnly backend-confirmed $1 Boost units count toward Battle Points V3.`);
-        if (!confirmed) return;
         const submitted = await submitBattleBoost({ signer: wallet.signer, quote: quoted.quote });
         toast.success(`Battle Boost submitted${submitted.txHash ? `: ${submitted.txHash.slice(0, 10)}…` : "."}`);
       }
