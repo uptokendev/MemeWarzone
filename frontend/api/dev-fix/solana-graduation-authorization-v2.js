@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { readSolUsdMicros } from "../lib/solUsdMicros.js";
 
 import { badMethod, json, readJson } from "../../server/http.js";
 import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
@@ -72,7 +73,6 @@ const ASSET_CLASS_PROFILE = Object.freeze({
 });
 const QUOTE_PROFILE_NAMES = Object.freeze(Object.fromEntries(Object.entries(QUOTE_PROFILE).map(([name, code]) => [code, name])));
 
-let solPriceCache = { priceUsdMicros: 0n, at: 0 };
 const quotePriceCache = new Map();
 
 class SolanaGraduationAuthorizationError extends Error {
@@ -350,13 +350,9 @@ async function fetchJson(url, options = {}) {
 async function fetchSolUsdMicros() {
   const override = String(process.env.SOLANA_GRADUATION_SOL_USD_MICROS || "").trim();
   if (override) return BigInt(override);
-  if (solPriceCache.priceUsdMicros > 0n && Date.now() - solPriceCache.at < PRICE_CACHE_MS) return solPriceCache.priceUsdMicros;
-  const body = await fetchJson("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd", { headers: { accept: "application/json" } });
-  const price = Number(body?.solana?.usd);
-  if (!Number.isFinite(price) || price <= 0) throw new Error("Invalid SOL/USD reference");
-  const value = BigInt(Math.round(price * 1_000_000));
-  solPriceCache = { priceUsdMicros: value, at: Date.now() };
-  return value;
+  // Shared multi-source reader (was CoinGecko only). Graduation pins the pool price, so a fallback to
+  // the last good price is allowed for at most 60 s here.
+  return readSolUsdMicros({ maxStaleMs: 60_000 });
 }
 
 async function fetchQuoteUsdMicros(config) {

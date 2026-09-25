@@ -14,6 +14,7 @@
  *   3. RPC decode of Campaign account → token_vault / sol_vault / campaign_id
  */
 import crypto from "node:crypto";
+import { readSolUsdMicros } from "../lib/solUsdMicros.js";
 
 import { pool } from "../../server/db.js";
 import { badMethod, json, readJson, isSolanaAddress } from "../../server/http.js";
@@ -543,23 +544,9 @@ async function fetchSolUsdMicros() {
     if (value <= 0n) throw new Error("SOLANA_GRADUATION_SOL_USD_MICROS must be > 0");
     return value;
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8_000);
-  try {
-    const response = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd",
-      { headers: { accept: "application/json" }, signal: controller.signal },
-    );
-    if (!response.ok) throw new Error(`CoinGecko HTTP ${response.status}`);
-    const body = await response.json();
-    const price = Number(body?.solana?.usd);
-    if (!Number.isFinite(price) || price <= 0) throw new Error("Invalid SOL/USD response");
-    const micros = BigInt(Math.round(price * 1_000_000));
-    if (micros <= 0n) throw new Error("Invalid SOL/USD micro price");
-    return micros;
-  } finally {
-    clearTimeout(timer);
-  }
+  // Shared multi-source reader: one uncached CoinGecko call per buy was rate-limited under launch
+  // traffic and refused every bonding buy (see api/lib/solUsdMicros.js).
+  return readSolUsdMicros();
 }
 
 async function loadCampaignCurve(rpcUrl, campaignAddress) {
