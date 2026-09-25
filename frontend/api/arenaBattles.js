@@ -1145,6 +1145,8 @@ async function handleOpponents(req, res) {
       token: participant(coin),
       imageUrl: coin.logo_uri || coin.image_url || null,
       origin: coin.origin === "import" ? "import" : "native",
+      // An import nobody has verified ownership of cannot answer a challenge.
+      hasOwner: Boolean(ident(coin.creator_address, chainId)),
       marketDataHealthy,
       metricsAllowed: marketDataHealthy,
       matchQuality: evaluation ? evaluation.matchScore : null,
@@ -1234,6 +1236,14 @@ async function handleChallenge(req, res) {
   const defenderStatus = await statusFor(defender);
   if (!challengerStatus.eligibility) return json(res, 409, { ok: false, reason: challengerStatus.unavailableReason, status: challengerStatus });
   if (!defenderStatus.eligibility) return json(res, 409, { ok: false, reason: defenderStatus.unavailableReason || "target_unavailable", status: defenderStatus });
+  // Only the owner can accept, counter or decline; a coin without one would sit unanswered until expiry.
+  if (!ident(defender.creator_address, chainId)) {
+    return json(res, 409, {
+      ok: false,
+      code: "OPPONENT_HAS_NO_OWNER",
+      error: `${defenderStatus.symbol || "This coin"} has no verified owner yet, so nobody can answer a challenge. Pick another opponent.`,
+    });
+  }
 
   // A metrics battle is scored from both coins' live market data (market cap, holders,
   // liquidity). Without it settlement never finds a winner and the pool only refunds after

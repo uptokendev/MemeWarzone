@@ -216,6 +216,7 @@ export type ArenaBattleOpponent = {
   token: { tokenId?: string; tokenAddress?: string; campaignAddress?: string; tokenName?: string; symbol?: string; marketCapUsd?: number };
   imageUrl?: string | null;
   origin: "import" | "native";
+  hasOwner?: boolean;
   marketDataHealthy: boolean;
   metricsAllowed: boolean;
   matchQuality: number | null;

@@ -183,12 +183,14 @@ export function ChallengeCoinModal({
   const targetOpponent = opponents.find((row) => opponentKey(row).toLowerCase() === targetTokenId.trim().toLowerCase()) || null;
   // A metrics Battle is scored from both coins' market data; the server refuses one without it.
   const targetBlockedForMetrics = battleMode !== "vote" && targetOpponent !== null && targetOpponent.metricsAllowed === false;
+  // Only the owner can answer; the server refuses a challenge to a coin nobody owns.
+  const targetHasNoOwner = targetOpponent !== null && targetOpponent.hasOwner === false;
 
   const canNext =
     step === 1
       ? true
       : step === 2
-        ? Boolean(selected?.eligibility && targetTokenId.trim() && !targetBlockedForMetrics)
+        ? Boolean(selected?.eligibility && targetTokenId.trim() && !targetBlockedForMetrics && !targetHasNoOwner)
         : step === 3
           ? Boolean(Number.isFinite(stakeAmount) && stakeAmount > 0)
           : !busy;
@@ -422,7 +424,7 @@ export function ChallengeCoinModal({
                         {opponents.map((row) => {
                           const key = opponentKey(row);
                           const active = key.toLowerCase() === targetTokenId.trim().toLowerCase();
-                          const tag = battleMode === "vote" ? (row.origin === "import" ? "imported" : "graduated") : row.ranked ? "ranked" : row.metricsAllowed ? "open war" : "no market data";
+                          const tag = row.hasOwner === false ? "no owner yet" : battleMode === "vote" ? (row.origin === "import" ? "imported" : "graduated") : row.ranked ? "ranked" : row.metricsAllowed ? "open war" : "no market data";
                           return (
                             <button
                               key={key}
@@ -448,6 +450,9 @@ export function ChallengeCoinModal({
                       <p className="text-sm text-muted-foreground">No other coins on this chain yet</p>
                     )}
                   </div>
+                  {targetHasNoOwner ? (
+                    <p className="text-sm text-orange-200" data-challenge-no-owner="true">This coin has no verified owner yet, so nobody can answer a challenge. Choose another opponent.</p>
+                  ) : null}
                   {targetBlockedForMetrics ? (
                     <p className="text-sm text-orange-200" data-challenge-metrics-blocked="true">This coin has no live market data yet, so a metrics Battle cannot be scored. Go back and pick Vote Battle, or choose another opponent.</p>
                   ) : null}

@@ -166,3 +166,12 @@ test("inbox SQL returns open, matched and recently-declined challenges for the o
     await client.end();
   }
 });
+
+test("import ownership: the battle owner follows the verified owner, and ownerless coins cannot be challenged", async () => {
+  const source = await readFile(new URL("../arenaBattles.js", import.meta.url), "utf8");
+  assert.match(source, /code: "OPPONENT_HAS_NO_OWNER"/);
+  assert.match(source, /hasOwner: Boolean\(ident\(coin\.creator_address, chainId\)\)/);
+  const migration = await readFile(new URL("../../../db/migrations/20260925_000001_arena_import_owner_follows_verified_owner.sql", import.meta.url), "utf8");
+  assert.match(migration, /new\.owner_wallet := new\.project_owner_wallet/);
+  assert.match(migration, /before insert or update on public\.arena_token_imports/);
+});
