@@ -110,6 +110,26 @@ export function deriveLeagueVaultPda(programId: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from("league_vault")], programId)[0];
 }
 
+/** The program's league_payout_vault: weekly -> league_vault, monthly / quarterly -> monthly_league_vault. */
+export function deriveLeaguePayoutVaultPda(programId: PublicKey, period: string | number): PublicKey {
+  const seed = periodCode(period) === 0 ? "league_vault" : "monthly_league_vault";
+  return PublicKey.findProgramAddressSync([Buffer.from(seed)], programId)[0];
+}
+
+export function deriveRewardPosterPda(programId: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("reward_poster")], programId)[0];
+}
+
+/** RewardPoster: disc 8 | poster 32 | max_airdrop u64 | max_league u64 | 4 x i64 last posts | bump. */
+export function parseRewardPosterAccount(data: Buffer): { poster: string; maxAirdropLamports: bigint; maxLeagueLamports: bigint } | null {
+  if (data.length < 8 + 32 + 8 + 8) return null;
+  return {
+    poster: new PublicKey(data.subarray(8, 40)).toBase58(),
+    maxAirdropLamports: data.readBigUInt64LE(40),
+    maxLeagueLamports: data.readBigUInt64LE(48),
+  };
+}
+
 export function deriveLeagueEpochPda(programId: PublicKey, period: string | number, epochStartSec: number | bigint): PublicKey {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("league_epoch"), Buffer.from([periodCode(period)]), i64le(epochStartSec)],

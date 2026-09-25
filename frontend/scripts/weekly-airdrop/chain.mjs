@@ -250,7 +250,14 @@ async function fundDirect({ chainId, operatorKey, vaultAddress, distributorAddre
     throw new Error(`AIRDROP_OPERATOR_PRIVATE_KEY_${chainId} is ${signer.address}, but the vault's airdropOperator is ${operator}`);
   }
   if (!auth.authorized || auth.consumed) throw new Error(`Batch ${contractBatchId} is not pre-authorized by the Safe (or already used)`);
-  if (total > BigInt(auth.maxAmount)) throw new Error(`Batch total ${total} is above the Safe's authorized max ${auth.maxAmount}`);
+  // Never shrink: above the Safe's max the batch stays materialized (full amounts) and funding waits
+  // for a higher authorizeBatch; the runner resumes it unchanged.
+  if (total > BigInt(auth.maxAmount)) {
+    throw new Error(`Batch total ${total} is above the Safe's authorized max ${auth.maxAmount}. Nothing was shrunk: re-authorize this batch id with a higher max from the Safe, then re-run.`);
+  }
+  if (total * 10n >= BigInt(auth.maxAmount) * 7n) {
+    console.warn(`[weekly-airdrop] batch ${contractBatchId} uses ${Number((total * 100n) / BigInt(auth.maxAmount))}% of its Safe max -- raise future authorizations`);
+  }
   const now = Math.floor(Date.now() / 1000);
   if (now < Number(auth.publishAfter) || now > Number(auth.publishDeadline)) throw new Error(`Batch ${contractBatchId} is outside its authorized publish window`);
   if (total > BigInt(tracked)) throw new Error(`Vault airdrop balance ${tracked} is below the batch total ${total}`);

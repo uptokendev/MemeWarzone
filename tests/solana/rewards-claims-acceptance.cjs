@@ -358,13 +358,13 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     const cap = 300_000_000n;
 
     await expectFail(
-      program.methods.initializeRewardPoster(poster.publicKey, new BN(cap.toString()))
+      program.methods.initializeRewardPoster(poster.publicKey, new BN(cap.toString()), new BN(cap.toString()))
         .accountsStrict({ authority: stranger.publicKey, config: pdas.config, rewardPoster, systemProgram: SystemProgram.programId })
         .signers([stranger]).rpc({ commitment: "confirmed" }),
       /ConstraintHasOne|has_one|custom program error|0x7d1/i,
       "only the authority creates the poster role",
     );
-    await program.methods.initializeRewardPoster(poster.publicKey, new BN(cap.toString()))
+    await program.methods.initializeRewardPoster(poster.publicKey, new BN(cap.toString()), new BN(cap.toString()))
       .accountsStrict({ authority, config: pdas.config, rewardPoster, systemProgram: SystemProgram.programId })
       .rpc({ commitment: "confirmed" });
     await program.methods.depositAirdrop(new BN(LAMPORTS_PER_SOL))
@@ -415,7 +415,7 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     await expectFail(post(71, buildRoot(nextLeaves), 1_000_000n, now + 3600), /PosterTooSoon|custom program error/i, "a second post within six days");
 
     // Revoking the role stops the key at once.
-    await program.methods.setRewardPoster(PublicKey.default, new BN(cap.toString()))
+    await program.methods.setRewardPoster(PublicKey.default, new BN(cap.toString()), new BN(cap.toString()))
       .accountsStrict({ authority, config: pdas.config, rewardPoster })
       .rpc({ commitment: "confirmed" });
     await expectFail(post(72, buildRoot(nextLeaves), 1_000_000n, now + 3600), /PosterNotAuthorized|custom program error/i, "a revoked poster");
@@ -507,37 +507,102 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     assert.equal((await lamports(authority)) - operatorBefore, -BigInt(tx.meta.fee), "the capped operator received nothing more");
   });
 
-  it("league: quarterly finals use the same root and claim rail with period 2", async function () {
+  it("league: monthly and quarterly prizes pay from the monthly league vault, weekly from the weekly vault", async function () {
+    // Monthly prizes and the Major War League accrue in monthly_league_vault (70% of the launchpad
+    // league share, the arena's 20% MWL share). Until 2026-09-25 every period paid from league_vault,
+    // so that money could never leave and monthly claims drained the weekly pot.
     const PERIOD_QUARTERLY = 2;
     const epochStart = Math.floor(Date.now() / 1000) - 90 * 24 * 3600;
     const categoryHash = keccak(Buffer.from("quarterly_finals", "utf8"));
     const prize = 100_000_000n;
     const leaves = [leagueLeaf({ epochStart, period: PERIOD_QUARTERLY, categoryHash, rank: 1, winner: winners[1].publicKey, amount: prize })];
     const root = buildRoot(leaves);
-    await program.methods.depositLeague(new BN(prize.toString()))
-      .accountsStrict({ payer: authority, leagueVault: pdas.leagueVault, systemProgram: SystemProgram.programId })
-      .rpc({ commitment: "confirmed" });
+    await transferTo(pdas.monthlyLeagueVault, prize);
     const leagueEpoch = pda("league_epoch", Buffer.from([PERIOD_QUARTERLY]), i64le(epochStart));
+
+    await expectFail(
+      program.methods.setLeagueEpochRoot(PERIOD_QUARTERLY, new BN(epochStart), arr32(root), new BN(prize.toString()))
+        .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.leagueVault, leagueEpoch, systemProgram: SystemProgram.programId })
+        .rpc({ commitment: "confirmed" }),
+      /WrongLeagueVault|custom program error/i, "a quarterly root checked against the weekly vault",
+    );
     await program.methods.setLeagueEpochRoot(PERIOD_QUARTERLY, new BN(epochStart), arr32(root), new BN(prize.toString()))
-      .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.leagueVault, leagueEpoch, systemProgram: SystemProgram.programId })
+      .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.monthlyLeagueVault, leagueEpoch, systemProgram: SystemProgram.programId })
       .rpc({ commitment: "confirmed" });
-    const vaultBefore = await lamports(pdas.leagueVault);
-    await program.methods
+
+    const claim = (vault) => program.methods
       .claimLeague(PERIOD_QUARTERLY, new BN(epochStart), arr32(categoryHash), 1, new BN(prize.toString()), proofArg(buildProof(leaves, 0)))
       .accountsStrict({
-        winner: winners[1].publicKey, config: pdas.config, leagueVault: pdas.leagueVault, leagueEpoch,
+        winner: winners[1].publicKey, config: pdas.config, leagueVault: vault, leagueEpoch,
         claimReceipt: pda("league_claim", Buffer.from([PERIOD_QUARTERLY]), i64le(epochStart), categoryHash, Buffer.from([1])),
         systemProgram: SystemProgram.programId,
       })
       .signers([winners[1]])
       .rpc({ commitment: "confirmed" });
-    assert.equal(vaultBefore - (await lamports(pdas.leagueVault)), prize, "the quarterly prize is paid from the league vault");
+    await expectFail(claim(pdas.leagueVault), /WrongLeagueVault|custom program error/i, "a quarterly claim paid from the weekly vault");
+
+    const weeklyBefore = await lamports(pdas.leagueVault);
+    const monthlyBefore = await lamports(pdas.monthlyLeagueVault);
+    await claim(pdas.monthlyLeagueVault);
+    assert.equal(monthlyBefore - (await lamports(pdas.monthlyLeagueVault)), prize, "the quarterly prize is paid from the monthly league vault");
+    assert.equal(await lamports(pdas.leagueVault), weeklyBefore, "the weekly vault is untouched");
+
     await expectFail(
       program.methods.setLeagueEpochRoot(3, new BN(epochStart), arr32(root), new BN(prize.toString()))
-        .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.leagueVault, leagueEpoch: pda("league_epoch", Buffer.from([3]), i64le(epochStart)), systemProgram: SystemProgram.programId })
+        .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.monthlyLeagueVault, leagueEpoch: pda("league_epoch", Buffer.from([3]), i64le(epochStart)), systemProgram: SystemProgram.programId })
         .rpc({ commitment: "confirmed" }),
       /InvalidPeriod|custom program error/i, "period 3",
     );
+  });
+
+  it("league via reward poster: capped roots per period, right vault, never overwriting", async function () {
+    const poster = Keypair.generate();
+    await fund(poster.publicKey, 2);
+    const rewardPoster = pda("reward_poster");
+    // The airdrop test created the role and then revoked it; re-arm it for this poster.
+    await program.methods.setRewardPoster(poster.publicKey, new BN(300_000_000), new BN(200_000_000))
+      .accountsStrict({ authority, config: pdas.config, rewardPoster })
+      .rpc({ commitment: "confirmed" });
+    const PERIOD_MONTHLY = 1;
+    const now = Math.floor(Date.now() / 1000);
+    const monthStart = now - 35 * 24 * 3600;
+    const categoryHash = keccak(Buffer.from("monthly_top", "utf8"));
+    const prize = 60_000_000n;
+    const leaves = [leagueLeaf({ epochStart: monthStart, period: PERIOD_MONTHLY, categoryHash, rank: 1, winner: winners[2].publicKey, amount: prize })];
+    const root = buildRoot(leaves);
+    await transferTo(pdas.monthlyLeagueVault, prize);
+    const epochFor = (period, start) => pda("league_epoch", Buffer.from([period]), i64le(start));
+    const post = (period, start, rootBytes, amount, vault) => program.methods
+      .postLeagueEpochRoot(period, new BN(start), arr32(rootBytes), new BN(amount.toString()))
+      .accountsStrict({ poster: poster.publicKey, config: pdas.config, rewardPoster, leagueVault: vault, leagueEpoch: epochFor(period, start), systemProgram: SystemProgram.programId })
+      .signers([poster])
+      .rpc({ commitment: "confirmed" });
+
+    await expectFail(post(PERIOD_MONTHLY, monthStart, root, prize, pdas.leagueVault), /WrongLeagueVault|custom program error/i, "monthly root on the weekly vault");
+    await expectFail(post(PERIOD_MONTHLY, monthStart, root, 200_000_001n, pdas.monthlyLeagueVault), /PosterBatchAboveCap|custom program error/i, "above the league cap");
+    await expectFail(post(PERIOD_MONTHLY, now + 3600, root, prize, pdas.monthlyLeagueVault), /PosterBadEpochStart|custom program error/i, "an epoch that has not started");
+    await post(PERIOD_MONTHLY, monthStart, root, prize, pdas.monthlyLeagueVault);
+    await expectFail(post(PERIOD_MONTHLY, monthStart - 86400, root, prize, pdas.monthlyLeagueVault), /PosterTooSoon|custom program error/i, "a second monthly root within 25 days");
+
+    // A weekly root has its own rhythm and its own vault.
+    const weekStart = now - 7 * 24 * 3600;
+    const weekLeaves = [leagueLeaf({ epochStart: weekStart, period: PERIOD_WEEKLY, categoryHash, rank: 1, winner: winners[0].publicKey, amount: 1_000_000n })];
+    await program.methods.depositLeague(new BN(1_000_000))
+      .accountsStrict({ payer: authority, leagueVault: pdas.leagueVault, systemProgram: SystemProgram.programId })
+      .rpc({ commitment: "confirmed" });
+    await post(PERIOD_WEEKLY, weekStart, buildRoot(weekLeaves), 1_000_000n, pdas.leagueVault);
+
+    const monthlyBefore = await lamports(pdas.monthlyLeagueVault);
+    await program.methods
+      .claimLeague(PERIOD_MONTHLY, new BN(monthStart), arr32(categoryHash), 1, new BN(prize.toString()), proofArg(buildProof(leaves, 0)))
+      .accountsStrict({
+        winner: winners[2].publicKey, config: pdas.config, leagueVault: pdas.monthlyLeagueVault, leagueEpoch: epochFor(PERIOD_MONTHLY, monthStart),
+        claimReceipt: pda("league_claim", Buffer.from([PERIOD_MONTHLY]), i64le(monthStart), categoryHash, Buffer.from([1])),
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([winners[2]])
+      .rpc({ commitment: "confirmed" });
+    assert.equal(monthlyBefore - (await lamports(pdas.monthlyLeagueVault)), prize, "the poster-posted monthly prize pays from the monthly vault");
   });
 
   it("sponsorship: a paid event splits 70/20/10 and each of the three buckets is claimed by exactly the right wallet", async function () {

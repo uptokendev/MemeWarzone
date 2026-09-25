@@ -124,10 +124,20 @@ export function buildMerkleProof(leaves, leafIndex) {
   return proof;
 }
 
+/**
+ * The vault a league period pays from -- must match the program's league_payout_vault: weekly from
+ * league_vault, monthly and quarterly (Major War League) from monthly_league_vault.
+ */
+export function leagueVaultForPeriod(period, programId = REWARDS_TREASURY_PROGRAM_ID) {
+  const seed = periodCode(period) === PERIOD_WEEKLY ? "league_vault" : "monthly_league_vault";
+  return findProgramAddressSync([Buffer.from(seed)], programId).publicKey;
+}
+
 export function deriveRewardsVaults(programId = REWARDS_TREASURY_PROGRAM_ID) {
   return {
     programId,
     leagueVault: findProgramAddressSync([Buffer.from("league_vault")], programId).publicKey,
+    monthlyLeagueVault: findProgramAddressSync([Buffer.from("monthly_league_vault")], programId).publicKey,
     airdropVault: findProgramAddressSync([Buffer.from("airdrop_vault")], programId).publicKey,
     config: findProgramAddressSync([Buffer.from("rewards_config")], programId).publicKey,
   };

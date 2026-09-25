@@ -37,6 +37,16 @@ pub const PERIOD_MONTHLY: u8 = 1;
 /// same root/claim rail; only the period code differs.
 pub const PERIOD_QUARTERLY: u8 = 2;
 
+/// The vault a league period pays from. Weekly prizes accrue in league_vault; monthly prizes and
+/// the Major War League (monthly + quarterly finals) accrue in monthly_league_vault -- the launchpad
+/// routes 70% of the league share there and the arena pays its 20% MWL share there. Until
+/// 2026-09-25 every period paid from league_vault, so monthly money could never leave its vault and
+/// monthly claims would have drained the weekly pot. Enforced on root posting and on claims.
+pub fn league_payout_vault(period: u8) -> Pubkey {
+    let seed = if period == PERIOD_WEEKLY { LEAGUE_VAULT_SEED } else { MONTHLY_LEAGUE_VAULT_SEED };
+    Pubkey::find_program_address(&[seed], &crate::ID).0
+}
+
 pub const LEAGUE_LEAF_PREFIX: &[u8] = b"MWZ_LEAGUE_LEAF";
 pub const AIRDROP_LEAF_PREFIX: &[u8] = b"MWZ_AIRDROP_LEAF";
 pub const RECRUITER_LEAF_PREFIX: &[u8] = b"MWZ_RECRUITER_LEAF";
@@ -399,17 +409,30 @@ pub mod mwz_rewards_treasury {
         ctx: Context<InitializeRewardPoster>,
         poster: Pubkey,
         max_airdrop_batch_lamports: u64,
+        max_league_root_lamports: u64,
     ) -> Result<()> {
-        reward_poster::initialize_reward_poster_handler(ctx, poster, max_airdrop_batch_lamports)
+        reward_poster::initialize_reward_poster_handler(ctx, poster, max_airdrop_batch_lamports, max_league_root_lamports)
     }
 
-    /// Authority: change or revoke (Pubkey::default()) the reward poster and its cap.
+    /// Authority: change or revoke (Pubkey::default()) the reward poster and its caps.
     pub fn set_reward_poster(
         ctx: Context<SetRewardPoster>,
         poster: Pubkey,
         max_airdrop_batch_lamports: u64,
+        max_league_root_lamports: u64,
     ) -> Result<()> {
-        reward_poster::set_reward_poster_handler(ctx, poster, max_airdrop_batch_lamports)
+        reward_poster::set_reward_poster_handler(ctx, poster, max_airdrop_batch_lamports, max_league_root_lamports)
+    }
+
+    /// Reward poster: post one league epoch root (weekly / monthly / quarterly), capped, never overwriting.
+    pub fn post_league_epoch_root(
+        ctx: Context<PostLeagueEpochRoot>,
+        period: u8,
+        epoch_start: i64,
+        root: [u8; 32],
+        total_lamports: u64,
+    ) -> Result<()> {
+        reward_poster::post_league_epoch_root_handler(ctx, period, epoch_start, root, total_lamports)
     }
 
     /// Reward poster: post one capped weekly airdrop batch root (claims unchanged).
@@ -941,7 +964,7 @@ pub struct SetLeagueEpochRoot<'info> {
         has_one = authority
     )]
     pub config: Account<'info, RewardsConfig>,
-    #[account(seeds = [LEAGUE_VAULT_SEED], bump = config.league_vault_bump)]
+    #[account(constraint = league_vault.key() == league_payout_vault(period) @ TreasuryError::WrongLeagueVault)]
     pub league_vault: Account<'info, VaultState>,
     #[account(
         init_if_needed,
@@ -961,7 +984,7 @@ pub struct ClaimLeague<'info> {
     pub winner: Signer<'info>,
     #[account(seeds = [REWARDS_CONFIG_SEED], bump = config.bump)]
     pub config: Account<'info, RewardsConfig>,
-    #[account(mut, seeds = [LEAGUE_VAULT_SEED], bump = config.league_vault_bump)]
+    #[account(mut, constraint = league_vault.key() == league_payout_vault(period) @ TreasuryError::WrongLeagueVault)]
     pub league_vault: Account<'info, VaultState>,
     #[account(
         mut,
@@ -1360,6 +1383,10 @@ pub enum TreasuryError {
     PosterTooSoon,
     #[msg("Airdrop batch deadline must be in the future and at most 90 days away.")]
     PosterBadDeadline,
+    #[msg("League vault does not match the period (weekly: league_vault, monthly/quarterly: monthly_league_vault).")]
+    WrongLeagueVault,
+    #[msg("League epoch start must be in the past and at most 120 days ago.")]
+    PosterBadEpochStart,
 }
 
 pub fn league_leaf(

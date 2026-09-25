@@ -12,9 +12,13 @@ try {
  * Until this runs, claim_league fails with EpochNotSealed for the epoch and
  * the API keeps the prize as "root pending". Requires
  * SOLANA_REWARDS_TREASURY_PROGRAM_ID, SOLANA_RPC_URL (or
- * SOLANA_REWARDS_RPC_URL) and SOLANA_REWARDS_AUTHORITY_SECRET_KEY (the
- * rewards_config authority). Never overwrites a sealed epoch: a different root
- * on-chain is reported and left alone.
+ * SOLANA_REWARDS_RPC_URL) and SOLANA_REWARD_POSTER_SECRET: the narrow reward
+ * poster key (post_league_epoch_root), never the rewards authority, which can
+ * also redirect the protocol route and the arena (founder, 2026-09-25).
+ * Never overwrites a sealed epoch. Never publishes less than the winners are
+ * owed: an epoch above the poster cap or above its vault is blocked and
+ * reported, never shrunk. Weekly epochs pay from league_vault, monthly and
+ * quarterly from monthly_league_vault.
  */
 import {
   Connection,
@@ -30,8 +34,10 @@ import { pool } from "../db.js";
 import {
   buildMerkleRoot,
   deriveLeagueEpochPda,
-  deriveLeagueVaultPda,
+  deriveLeaguePayoutVaultPda,
+  deriveRewardPosterPda,
   deriveRewardsConfigPda,
+  parseRewardPosterAccount,
   leagueLeaf,
   parseLeagueEpochAccount,
   periodCode,
@@ -51,15 +57,18 @@ function discriminator(name: string): Buffer {
   return createHash("sha256").update(`global:${name}`).digest().subarray(0, 8);
 }
 
-function authorityKeypair(): Keypair {
-  const raw = env("SOLANA_REWARDS_AUTHORITY_SECRET_KEY");
-  if (!raw) throw new Error("SOLANA_REWARDS_AUTHORITY_SECRET_KEY is required to publish a league epoch root");
+function posterKeypair(): Keypair {
+  if (env("SOLANA_REWARDS_AUTHORITY_SECRET_KEY")) {
+    console.warn("[publishLeagueEpochRoot] SOLANA_REWARDS_AUTHORITY_SECRET_KEY is set on this server and is IGNORED; remove it -- league roots use the reward poster");
+  }
+  const raw = env("SOLANA_REWARD_POSTER_SECRET");
+  if (!raw) throw new Error("SOLANA_REWARD_POSTER_SECRET (the reward poster key) is required to publish a league epoch root");
   let bytes: Uint8Array;
   if (raw.startsWith("[")) bytes = Uint8Array.from(JSON.parse(raw).map(Number));
   else bytes = Uint8Array.from(Buffer.from(raw, "base64"));
   if (bytes.length === 64) return Keypair.fromSecretKey(bytes);
   if (bytes.length === 32) return Keypair.fromSeed(bytes);
-  throw new Error(`Solana rewards authority must decode to 32 or 64 bytes, got ${bytes.length}`);
+  throw new Error(`Solana reward poster key must decode to 32 or 64 bytes, got ${bytes.length}`);
 }
 
 function rpcUrl(chainId: number): string {
@@ -189,10 +198,17 @@ async function main() {
   if (!url) throw new Error(`Solana RPC is not configured for chain ${MAINNET_CHAIN_ID}`);
   const connection = new Connection(url, { commitment: "confirmed", confirmTransactionInitialTimeout: 60_000 });
   const pid = programId();
-  const signer = authorityKeypair();
+  const signer = posterKeypair();
   const configAddress = deriveRewardsConfigPda(pid);
-  const vaultAddress = deriveLeagueVaultPda(pid);
+  const posterAddress = deriveRewardPosterPda(pid);
+  const posterInfo = await connection.getAccountInfo(posterAddress, "confirmed");
+  const posterState = posterInfo ? parseRewardPosterAccount(Buffer.from(posterInfo.data)) : null;
+  if (!posterState) throw new Error(`reward poster ${posterAddress.toBase58()} is not initialized (scripts/solana/set-reward-poster.mjs)`);
+  if (posterState.poster !== signer.publicKey.toBase58()) {
+    throw new Error(`SOLANA_REWARD_POSTER_SECRET is ${signer.publicKey.toBase58()}, but the on-chain reward poster is ${posterState.poster}`);
+  }
   const reports: Record<string, unknown>[] = [];
+  const postedThisRun = new Set<string>();
 
   for (const candidate of candidates) {
     const period = String(candidate.period);
@@ -226,11 +242,35 @@ async function main() {
       continue;
     }
 
-    const vaultLamports = BigInt(await connection.getBalance(vaultAddress, "confirmed"));
-    if (vaultLamports < total) {
+    // Never publish less than the winners are owed: block and report instead of shrinking.
+    if (total > posterState.maxLeagueLamports) {
+      reports.push({
+        period, epochStart: epochStartIso, status: "blocked", reason: "above-poster-cap",
+        total: total.toString(), cap: posterState.maxLeagueLamports.toString(),
+        action: "raise the league cap: node scripts/solana/set-reward-poster.mjs --league-cap-sol <n> --execute, then re-run",
+      });
+      continue;
+    }
+    // The poster may only post epochs that started within 120 days (program rule); older backlog is
+    // reported for the authority to post by hand, never dropped.
+    if (epochStartSec < Math.floor(Date.now() / 1000) - 120 * 86_400) {
+      reports.push({ period, epochStart: epochStartIso, status: "blocked", reason: "older-than-120-days-needs-authority", total: total.toString() });
+      continue;
+    }
+    // One root per period per run: the program enforces the rhythm (weekly 6d, monthly 25d, quarterly 80d).
+    if (postedThisRun.has(period)) {
+      reports.push({ period, epochStart: epochStartIso, status: "waiting", reason: "one-root-per-period-per-run" });
+      continue;
+    }
+    const vaultAddress = deriveLeaguePayoutVaultPda(pid, period);
+    const vaultInfo = await connection.getAccountInfo(vaultAddress, "confirmed");
+    const rent = BigInt(await connection.getMinimumBalanceForRentExemption(vaultInfo?.data.length ?? 9));
+    const vaultLamports = BigInt(vaultInfo?.lamports ?? 0);
+    const spendable = vaultLamports > rent ? vaultLamports - rent : 0n;
+    if (spendable < total) {
       reports.push({
         period, epochStart: epochStartIso, status: "blocked", reason: "league-vault-underfunded",
-        vaultLamports: vaultLamports.toString(), total: total.toString(),
+        vault: vaultAddress.toBase58(), spendable: spendable.toString(), total: total.toString(),
       });
       continue;
     }
@@ -240,12 +280,13 @@ async function main() {
       keys: [
         { pubkey: signer.publicKey, isSigner: true, isWritable: true },
         { pubkey: configAddress, isSigner: false, isWritable: false },
+        { pubkey: posterAddress, isSigner: false, isWritable: true },
         { pubkey: vaultAddress, isSigner: false, isWritable: false },
         { pubkey: epochAddress, isSigner: false, isWritable: true },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
       data: Buffer.concat([
-        discriminator("set_league_epoch_root"),
+        discriminator("post_league_epoch_root"),
         Buffer.from([periodCode(period)]),
         i64le(epochStartSec),
         rootBytes(root),
@@ -261,6 +302,7 @@ async function main() {
       chainId: MAINNET_CHAIN_ID, period, epochStart: epochStartIso, root, total, winners: winners.length,
       epochAddress: epochAddress.toBase58(), txHash, metadata: { publishedAt: new Date().toISOString(), txHash },
     });
+    postedThisRun.add(period);
     reports.push({ period, epochStart: epochStartIso, status: "published", root, total: total.toString(), winners: winners.length, txHash });
   }
 

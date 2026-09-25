@@ -68,10 +68,11 @@ export function solanaConnection() {
 }
 
 export function loadPosterKeypair() {
-  const inline = String(process.env.SOLANA_AIRDROP_POSTER_SECRET || "").trim();
+  // One reward-poster key for league roots and airdrop batches (the indexer's league job reads the same name).
+  const inline = String(process.env.SOLANA_REWARD_POSTER_SECRET || process.env.SOLANA_AIRDROP_POSTER_SECRET || "").trim();
   const file = String(process.env.SOLANA_AIRDROP_POSTER_KEYPAIR || "").trim();
   const raw = inline || (file ? fs.readFileSync(file, "utf8") : "");
-  if (!raw) throw new Error("SOLANA_AIRDROP_POSTER_SECRET (inline JSON) or SOLANA_AIRDROP_POSTER_KEYPAIR is required");
+  if (!raw) throw new Error("SOLANA_REWARD_POSTER_SECRET (inline JSON of the reward-poster key) is required");
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)));
 }
 
@@ -120,6 +121,21 @@ function bs58Encode(bytes) {
   while (n > 0n) { out = alphabet[Number(n % 58n)] + out; n /= 58n; }
   for (const byte of bytes) { if (byte === 0) out = `1${out}`; else break; }
   return out;
+}
+
+/** RewardPoster caps: disc 8 | poster 32 | max_airdrop u64 | max_league u64 | ... */
+export async function readRewardPoster(connection = solanaConnection()) {
+  const programId = treasuryProgramId();
+  const address = pda(programId, Buffer.from("reward_poster"));
+  const info = await connection.getAccountInfo(address, "confirmed");
+  if (!info || info.data.length < 56) return null;
+  const data = Buffer.from(info.data);
+  return {
+    address: address.toBase58(),
+    poster: new PublicKey(data.subarray(8, 40)).toBase58(),
+    maxAirdropLamports: data.readBigUInt64LE(40),
+    maxLeagueLamports: data.readBigUInt64LE(48),
+  };
 }
 
 export async function readAirdropBatch(connection, epochId) {

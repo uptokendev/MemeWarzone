@@ -11,7 +11,7 @@ import {
   categoryHashBytes,
   deriveLeagueClaimPda,
   deriveLeagueEpochPda,
-  deriveRewardsVaults,
+  deriveRewardsVaults, leagueVaultForPeriod,
   leagueLeaf,
   periodCode as solanaPeriodCode,
 } from "./solanaLeagueMerkle.js";
@@ -703,7 +703,7 @@ export default async function handler(req, res) {
         const vaultAddress = getTreasuryVaultV2Address(chainId);
         if (!isAddress(vaultAddress)) return json(res, 500, { error: "Server misconfigured: bad TreasuryVaultV2 address" });
       }
-      const vaultAddress = solanaClaim ? deriveRewardsVaults().leagueVault : getTreasuryVaultV2Address(chainId);
+      const vaultAddress = solanaClaim ? leagueVaultForPeriod(period) : getTreasuryVaultV2Address(chainId);
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -858,7 +858,8 @@ export default async function handler(req, res) {
               ok: true,
               mode: "solana_treasury",
               programId: vaults.programId,
-              vaultAddress: vaults.leagueVault,
+              // Monthly / quarterly prizes pay from the monthly league vault (program rule).
+              vaultAddress: leagueVaultForPeriod(period),
               configAddress: vaults.config,
               epochAddress: deriveLeagueEpochPda(period, epochStartSec),
               claimReceiptAddress: deriveLeagueClaimPda(period, epochStartSec, category, rank),

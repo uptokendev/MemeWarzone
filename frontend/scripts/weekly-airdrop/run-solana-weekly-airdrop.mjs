@@ -43,6 +43,7 @@ import {
   loadPosterKeypair,
   merkleTree,
   postSolanaAirdropRoot,
+  readRewardPoster,
   readSolanaAirdropPool,
   solanaConnection,
   verifyProof,
@@ -144,11 +145,42 @@ async function materializeSolanaWeek(client, { chainId, epochId, solanaEpochId, 
   }
 }
 
+/**
+ * Founder rule: never pay out less than users are owed. A week above the poster cap is not shrunk;
+ * it stays materialized (full list, full amounts) and this run stops with a critical alert. Raising
+ * the cap and re-running posts exactly the stored list. At 70% of the cap we warn ahead of time.
+ */
+async function assertWithinPosterCap(client, { connection, poster, chainId, epochId, weekTotal }) {
+  const state = await readRewardPoster(connection);
+  if (!state) throw new Error("reward poster is not initialized on chain (scripts/solana/set-reward-poster.mjs)");
+  if (state.poster !== poster.publicKey.toBase58()) {
+    throw new Error(`SOLANA_REWARD_POSTER_SECRET is ${poster.publicKey.toBase58()}, but the on-chain reward poster is ${state.poster}`);
+  }
+  const cap = state.maxAirdropLamports;
+  if (weekTotal > cap) {
+    throw new Error(
+      `Week ${epochId} owes ${weekTotal} lamports, above the poster cap ${cap}. Nothing was shrunk or skipped: ` +
+      "raise the cap (node scripts/solana/set-reward-poster.mjs --airdrop-cap-sol <n> --execute) and re-run; the stored list is posted unchanged.",
+    );
+  }
+  if (weekTotal * 10n >= cap * 7n) {
+    await writeRewardAlert(client, {
+      severity: "warning",
+      title: "Solana airdrop is near the poster cap",
+      message: `Week ${epochId} is ${weekTotal} lamports, ${Number((weekTotal * 100n) / cap)}% of the ${cap} cap. Raise the cap before it blocks a week.`,
+      metadata: { chainId, epochId, weekTotal: weekTotal.toString(), cap: cap.toString() },
+    });
+  }
+}
+
 async function postAndOpen(client, { chainId, epochId, solanaEpochId, batches, root, weekTotal, claimDeadline, dryRun }) {
   if (dryRun) return console.log(`[weekly-airdrop:solana] dry run: would post root ${hex(root)} total ${weekTotal} for epoch ${solanaEpochId}`);
+  const connection = solanaConnection();
+  const poster = loadPosterKeypair();
+  await assertWithinPosterCap(client, { connection, poster, chainId, epochId, weekTotal });
   const posted = await postSolanaAirdropRoot({
-    connection: solanaConnection(),
-    poster: loadPosterKeypair(),
+    connection,
+    poster,
     epochId: solanaEpochId,
     root,
     totalLamports: weekTotal,
