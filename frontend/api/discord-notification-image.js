@@ -238,7 +238,7 @@ async function getBaseSvg(content, options = {}) {
   <rect x="0" y="521" width="1002" height="10" fill="#070707"/>
   ${Array.from({ length: 44 }).map((_, i) => `<path d="M${i * 24} 521H${i * 24 + 12}L${i * 24 + 2} 531H${i * 24 - 10}L${i * 24} 521Z" fill="#7b421c" fill-opacity="0.52"/>`).join("")}
   
-  ${smallLogo ? `<image x="40" y="40" width="80" height="80" href="${smallLogo}" />` : ""}
+  ${smallLogo ? `<image x="40" y="40" width="80" height="80" href="${smallLogo}" style="mix-blend-mode:screen" />` : ""}
 
   <g filter="url(#textGlow)">
     ${content}
@@ -387,6 +387,83 @@ async function buildDailyRecap(payload) {
 }
 
 // ---------------------------------------------------------------------------
+// Battles
+// ---------------------------------------------------------------------------
+
+const BATTLE_TITLES = {
+  "battle.created": { text: "NEW BATTLE", color: "#10f58a" },
+  "battle.started": { text: "BATTLE LIVE", color: "#ff4400" },
+  "battle.final_hours": { text: "FINAL HOURS", color: "#f39b3d" },
+  "battle.winner_confirmed": { text: "BATTLE WON", color: "#f0b90b" },
+};
+
+const BATTLE_SIDE_COLORS = { left: "#10f58a", right: "#ff4400" };
+
+function competitorTicker(side) {
+  return clampText(side?.ticker || side?.name || "???", 10).toUpperCase();
+}
+
+async function renderBattleCompetitor(side, x, options = {}) {
+  const { ringColor, dimmed = false, isWinner = false } = options;
+  const size = 170;
+  const cy = 260;
+  const img = await fetchImageBase64(side?.imageUrl || side?.tokenUrl);
+  const ticker = competitorTicker(side);
+  const name = clampText(side?.name || "", 14);
+  const showName = name && name.toUpperCase() !== ticker;
+
+  const avatar = img
+    ? `<image x="${x - size / 2}" y="${cy - size / 2}" width="${size}" height="${size}" href="${img}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice" />`
+    : `<circle cx="${x}" cy="${cy}" r="${size / 2}" fill="#0b1a12"/>
+       ${pixelText(ticker.slice(0, 2), x, cy - 21, { scale: 6, color: ringColor, anchor: "middle" })}`;
+
+  return `
+    <g opacity="${dimmed ? 0.35 : 1}">
+      <circle cx="${x}" cy="${cy}" r="${size / 2 + 10}" fill="none" stroke="${ringColor}" stroke-opacity="0.25" stroke-width="10"/>
+      ${avatar}
+      <circle cx="${x}" cy="${cy}" r="${size / 2 + 2}" fill="none" stroke="${ringColor}" stroke-width="4"/>
+      ${isWinner ? pixelText("WINNER", x, cy - size / 2 - 50, { scale: 4, color: ringColor, anchor: "middle" }) : ""}
+      ${pixelText(`$${ticker}`, x, cy + size / 2 + 35, { scale: 5, color: "#ffffff", anchor: "middle" })}
+      ${showName ? pixelText(name, x, cy + size / 2 + 80, { scale: 3, color: "#aaaaaa", anchor: "middle" }) : ""}
+    </g>
+  `;
+}
+
+async function buildBattle(payload, type) {
+  const { left = {}, right = {}, score, winner } = payload;
+  const title = BATTLE_TITLES[type];
+  const winnerSide = type === "battle.winner_confirmed" ? winner?.side : null;
+
+  const sideOptions = (side) => ({
+    ringColor: winnerSide === side ? "#f0b90b" : BATTLE_SIDE_COLORS[side],
+    dimmed: Boolean(winnerSide) && winnerSide !== side,
+    isWinner: winnerSide === side,
+  });
+
+  const [leftSvg, rightSvg] = await Promise.all([
+    renderBattleCompetitor(left, 250, sideOptions("left")),
+    renderBattleCompetitor(right, 752, sideOptions("right")),
+  ]);
+
+  const hasScore = score && (score.left != null || score.right != null)
+    && (type === "battle.final_hours" || type === "battle.winner_confirmed");
+  // Battles are always single-chain, so one pill in the centre column covers both sides.
+  const center = hasScore
+    ? `${pixelText("VS", 501, 185, { scale: 7, color: "#ffffff", anchor: "middle" })}
+       ${pixelText(`${score.left ?? 0} - ${score.right ?? 0}`, 501, 260, { scale: 6, color: title.color, anchor: "middle" })}
+       ${renderChainPill(left.chain || right.chain, 501, 335, 3)}`
+    : `${pixelText("VS", 501, 210, { scale: 10, color: "#ffffff", anchor: "middle" })}
+       ${renderChainPill(left.chain || right.chain, 501, 320, 3)}`;
+
+  return await getBaseSvg(`
+    ${pixelText(title.text, 501, 45, { scale: 7, color: title.color, anchor: "middle" })}
+    ${leftSvg}
+    ${rightSvg}
+    ${center}
+  `, { backdropImage: "none", primaryGlow: title.color, secondaryGlow: title.color });
+}
+
+// ---------------------------------------------------------------------------
 // Render & Handler
 // ---------------------------------------------------------------------------
 
@@ -436,6 +513,12 @@ export default async function handler(req, res) {
         break;
       case "user.joined":
         svg = await buildUserJoined(payload);
+        break;
+      case "battle.created":
+      case "battle.started":
+      case "battle.final_hours":
+      case "battle.winner_confirmed":
+        svg = await buildBattle(payload, type);
         break;
       default:
         svg = await getBaseSvg(pixelText("NOTIFICATION", 501, 250, { scale: 7, color: "#ffffff", anchor: "middle" }));
