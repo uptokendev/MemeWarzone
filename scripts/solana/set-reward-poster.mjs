@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Creates (or changes / revokes) the treasury's reward poster: the narrow key our Coolify weekly
- * airdrop job signs with. Needs the reward-poster treasury upgrade (d40ae1c8...) on chain first.
+ * airdrop job signs with. Needs the reward-poster treasury upgrade (e996ba88...) on chain first.
  *
  *   SOLANA_RPC_URL=<mainnet rpc> REWARD_POSTER_PUBKEY=<poster pubkey> \
  *     node scripts/solana/set-reward-poster.mjs --airdrop-cap-sol 400 --league-cap-sol 400   # dry run
@@ -55,7 +55,7 @@ async function main() {
   }
   const provider = new anchor.AnchorProvider(connection, new anchor.Wallet(authority), { commitment: "confirmed" });
   const program = new anchor.Program(JSON.parse(fs.readFileSync(path.join(root, "target/idl/mwz_rewards_treasury.json"), "utf8")), provider);
-  if (!program.methods.initializeRewardPoster) throw new Error("target/idl lacks the reward-poster instructions; build the d40ae1c8 candidate first");
+  if (!program.methods.initializeRewardPoster) throw new Error("target/idl lacks the reward-poster instructions; build the e996ba88 candidate first");
 
   const config = pda("rewards_config");
   const rewardPoster = pda("reward_poster");

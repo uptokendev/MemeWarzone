@@ -15,16 +15,19 @@ export const LEAGUE_LEAF_PREFIX = Buffer.from("MWZ_LEAGUE_LEAF", "utf8");
 export const PERIOD_WEEKLY = 0;
 export const PERIOD_MONTHLY = 1;
 export const PERIOD_QUARTERLY = 2;
+/** Major War League monthly round (post-grad); pays from mwl_vault like the quarterly finals. */
+export const PERIOD_MWL_MONTHLY = 3;
 export const LEAGUE_EPOCH_ACCOUNT_SIZE = 8 + 1 + 8 + 32 + 8 + 8 + 1 + 1 + 1;
 
 export type LeaguePeriod = "weekly" | "monthly" | "quarterly";
 
 export function periodCode(period: string | number): number {
-  if (period === PERIOD_WEEKLY || period === PERIOD_MONTHLY || period === PERIOD_QUARTERLY) return period;
+  if (period === PERIOD_WEEKLY || period === PERIOD_MONTHLY || period === PERIOD_QUARTERLY || period === PERIOD_MWL_MONTHLY) return period;
   const key = String(period ?? "").trim().toLowerCase();
   if (key === "weekly" || key === "0") return PERIOD_WEEKLY;
   if (key === "monthly" || key === "1") return PERIOD_MONTHLY;
   if (key === "quarterly" || key === "2") return PERIOD_QUARTERLY;
+  if (key === "mwl_monthly" || key === "3") return PERIOD_MWL_MONTHLY;
   throw new Error(`Unknown league period: ${String(period)}`);
 }
 
@@ -110,9 +113,13 @@ export function deriveLeagueVaultPda(programId: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from("league_vault")], programId)[0];
 }
 
-/** The program's league_payout_vault: weekly -> league_vault, monthly / quarterly -> monthly_league_vault. */
+/**
+ * The program's league_payout_vault. Two competitions: pre-grad weekly (0) -> league_vault, pre-grad
+ * monthly (1) -> monthly_league_vault; Major War League quarterly (2) / monthly (3) -> mwl_vault.
+ */
 export function deriveLeaguePayoutVaultPda(programId: PublicKey, period: string | number): PublicKey {
-  const seed = periodCode(period) === 0 ? "league_vault" : "monthly_league_vault";
+  const code = periodCode(period);
+  const seed = code === PERIOD_WEEKLY ? "league_vault" : code === PERIOD_MONTHLY ? "monthly_league_vault" : "mwl_vault";
   return PublicKey.findProgramAddressSync([Buffer.from(seed)], programId)[0];
 }
 
@@ -120,7 +127,7 @@ export function deriveRewardPosterPda(programId: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from("reward_poster")], programId)[0];
 }
 
-/** RewardPoster: disc 8 | poster 32 | max_airdrop u64 | max_league u64 | 4 x i64 last posts | bump. */
+/** RewardPoster: disc 8 | poster 32 | max_airdrop u64 | max_league u64 | 5 x i64 last posts | bump. */
 export function parseRewardPosterAccount(data: Buffer): { poster: string; maxAirdropLamports: bigint; maxLeagueLamports: bigint } | null {
   if (data.length < 8 + 32 + 8 + 8) return null;
   return {

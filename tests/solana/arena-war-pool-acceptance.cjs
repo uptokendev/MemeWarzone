@@ -556,6 +556,61 @@ describe("arena war pool local-validator acceptance (battles, tournaments, place
     assert.equal(BigInt(state.buyInTotal.toString()), 0n, "entry fees are fully unwound");
   });
 
+  it("mainnet receivers: protocol and MWL shares claim into program-owned vaults", async function () {
+    // On mainnet both receivers are treasury PDAs (protocol_vault, and since 2026-09-26 mwl_vault),
+    // not system wallets. claim_protocol / claim_mwl demanded SystemAccount and so could never be
+    // collected there; the other tests used plain keypairs and never noticed.
+    const mwlVault = pda("mwl_vault");
+    if (!(await connection.getAccountInfo(mwlVault, "confirmed"))) {
+      await program.methods.initializeMwlVault()
+        .accountsStrict({ authority, config: pda("rewards_config"), mwlVault, systemProgram: SystemProgram.programId })
+        .rpc({ commitment: "confirmed" });
+    }
+    const programOwnedProtocol = pda("league_vault"); // any treasury PDA stands in for protocol_vault here
+    await program.methods.setArenaReceivers(programOwnedProtocol, mwlVault)
+      .accountsStrict({ authority, rewardsConfig: pda("rewards_config"), arenaConfig }).rpc({ commitment: "confirmed" });
+    try {
+      const ownerA = Keypair.generate();
+      const ownerB = Keypair.generate();
+      for (const k of [ownerA, ownerB]) await fund(k.publicKey);
+      const assetA = Keypair.generate().publicKey;
+      const assetB = Keypair.generate().publicKey;
+      const poolId = hash32(`vault-receivers:${Date.now()}`);
+      const pool = pda("arena_pool", poolId);
+      const vault = pda("arena_vault", poolId);
+      const stake = 500_000_000n;
+      const now = Math.floor(Date.now() / 1000);
+      await program.methods.openBattlePoolV2(
+        Array.from(poolId), assetA, assetB, ownerA.publicKey, ownerB.publicKey,
+        new BN(stake.toString()), new BN(stake.toString()), new BN(now + 3600), new BN(now + 3600), new BN(now + 7200),
+      ).accountsStrict({ opener: ownerA.publicKey, arenaConfig, pool, vault, systemProgram: SystemProgram.programId })
+        .signers([ownerA]).rpc({ commitment: "confirmed" });
+      await program.methods.depositStakeV2(Array.from(poolId))
+        .accountsStrict({ staker: ownerB.publicKey, arenaConfig, pool, vault, systemProgram: SystemProgram.programId })
+        .signers([ownerB]).rpc({ commitment: "confirmed" });
+      const built = operator.buildArenaResolveInstructions({
+        resolver: resolverKeypair, poolId, kind: "battle", version: 2,
+        assetA, assetB, ownerA: ownerA.publicKey, ownerB: ownerB.publicKey,
+        stakeA: stake, stakeB: stake, supportTotal: 0n, prizeBoostTotal: 0n, buyInTotal: 0n,
+        winnerSide: 2, winnerAsset: assetB, winnerWallet: ownerB.publicKey, resultType: 1,
+        outcomeHash: hash32("vault-receivers-outcome"), deadline: now + 3600, nonce: 0n,
+      });
+      await sendResolver([built.verifyIx, built.resolveIx], "resolve_pool_v2");
+      const base = stake * 2n;
+      for (const [bucket, receiver, expected] of [[1, programOwnedProtocol, bpsOf(base, 500)], [2, mwlVault, bpsOf(base, 2_000)]]) {
+        const owner = (await connection.getAccountInfo(receiver, "confirmed")).owner.toBase58();
+        assert.equal(owner, program.programId.toBase58(), "the receiver is a program-owned vault, as on mainnet");
+        const before = await lamports(receiver);
+        const { instruction } = operator.buildArenaOperatorClaimInstruction({ caller: authority, poolId, bucket, receiver });
+        await sendResolver([instruction], `claim bucket ${bucket} into a vault`);
+        assert.equal((await lamports(receiver)) - before, expected, `bucket ${bucket} lands in the vault exactly`);
+      }
+    } finally {
+      await program.methods.setArenaReceivers(protocolReceiver.publicKey, mwlReceiver.publicKey)
+        .accountsStrict({ authority, rewardsConfig: pda("rewards_config"), arenaConfig }).rpc({ commitment: "confirmed" });
+    }
+  });
+
   it("unmatched battle: expires after the deposit deadline and refunds the opener's stake", async function () {
     const ownerA = Keypair.generate();
     const ownerB = Keypair.generate();

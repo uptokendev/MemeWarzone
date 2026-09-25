@@ -13,6 +13,9 @@ pub const LEAGUE_CLAIM_SEED: &[u8] = b"league_claim";
 pub const AIRDROP_BATCH_SEED: &[u8] = b"airdrop_batch";
 pub const AIRDROP_CLAIM_SEED: &[u8] = b"airdrop_claim";
 pub const MONTHLY_LEAGUE_VAULT_SEED: &[u8] = b"monthly_league_vault";
+/// Major War League (post-grad): monthly MWL + quarterly finals, funded by the arena's 20% share.
+/// Kept apart from the pre-grad monthly league vault (founder, 2026-09-26).
+pub const MWL_VAULT_SEED: &[u8] = b"mwl_vault";
 pub const RECRUITER_VAULT_SEED: &[u8] = b"recruiter_vault";
 pub const SQUAD_VAULT_SEED: &[u8] = b"squad_vault";
 pub const PROTOCOL_VAULT_SEED: &[u8] = b"protocol_vault";
@@ -33,17 +36,29 @@ pub use arena_money_v2::*;
 
 pub const PERIOD_WEEKLY: u8 = 0;
 pub const PERIOD_MONTHLY: u8 = 1;
-/// Quarterly Finals of the Major War League pay from the same vault with the
-/// same root/claim rail; only the period code differs.
+/// Quarterly Finals of the Major War League use the same root/claim rail; they pay
+/// from mwl_vault (league_payout_vault), not the pre-grad league vaults.
 pub const PERIOD_QUARTERLY: u8 = 2;
 
-/// The vault a league period pays from. Weekly prizes accrue in league_vault; monthly prizes and
-/// the Major War League (monthly + quarterly finals) accrue in monthly_league_vault -- the launchpad
-/// routes 70% of the league share there and the arena pays its 20% MWL share there. Until
-/// 2026-09-25 every period paid from league_vault, so monthly money could never leave its vault and
-/// monthly claims would have drained the weekly pot. Enforced on root posting and on claims.
+/// Major War League monthly round (post-grad). Quarterly finals (PERIOD_QUARTERLY) are MWL too.
+pub const PERIOD_MWL_MONTHLY: u8 = 3;
+
+pub fn is_league_period(period: u8) -> bool {
+    period == PERIOD_WEEKLY || period == PERIOD_MONTHLY || period == PERIOD_QUARTERLY || period == PERIOD_MWL_MONTHLY
+}
+
+/// The vault each league round pays from -- two separate competitions (founder, 2026-09-26):
+///   pre-grad weekly  (0) -> league_vault          (30% of the launchpad league share)
+///   pre-grad monthly (1) -> monthly_league_vault  (70% of the launchpad league share)
+///   MWL quarterly    (2) -> mwl_vault             (arena 20% share)
+///   MWL monthly      (3) -> mwl_vault
+/// Until 2026-09-25 every round paid from league_vault; enforced on root posting and on claims.
 pub fn league_payout_vault(period: u8) -> Pubkey {
-    let seed = if period == PERIOD_WEEKLY { LEAGUE_VAULT_SEED } else { MONTHLY_LEAGUE_VAULT_SEED };
+    let seed = match period {
+        PERIOD_WEEKLY => LEAGUE_VAULT_SEED,
+        PERIOD_MONTHLY => MONTHLY_LEAGUE_VAULT_SEED,
+        _ => MWL_VAULT_SEED,
+    };
     Pubkey::find_program_address(&[seed], &crate::ID).0
 }
 
@@ -268,10 +283,7 @@ pub mod mwz_rewards_treasury {
         root: [u8; 32],
         total_lamports: u64,
     ) -> Result<()> {
-        require!(
-            period == PERIOD_WEEKLY || period == PERIOD_MONTHLY || period == PERIOD_QUARTERLY,
-            TreasuryError::InvalidPeriod
-        );
+        require!(is_league_period(period), TreasuryError::InvalidPeriod);
         require!(root != [0u8; 32], TreasuryError::InvalidRoot);
         require!(total_lamports > 0, TreasuryError::InvalidAmount);
         require!(
@@ -311,10 +323,7 @@ pub mod mwz_rewards_treasury {
         proof: Vec<[u8; 32]>,
     ) -> Result<()> {
         require!(ctx.accounts.config.claims_enabled, TreasuryError::ClaimsDisabled);
-        require!(
-            period == PERIOD_WEEKLY || period == PERIOD_MONTHLY || period == PERIOD_QUARTERLY,
-            TreasuryError::InvalidPeriod
-        );
+        require!(is_league_period(period), TreasuryError::InvalidPeriod);
         require!(rank >= 1 && rank <= 5, TreasuryError::InvalidRank);
         require!(amount_lamports > 0, TreasuryError::InvalidAmount);
 
@@ -401,6 +410,12 @@ pub mod mwz_rewards_treasury {
             total_lamports,
             deadline,
         });
+        Ok(())
+    }
+
+    /// Authority: create the Major War League vault. Then point the arena's MWL receiver at it
+    /// (set_arena_receivers) so post-grad money no longer lands in the pre-grad monthly vault.
+    pub fn initialize_mwl_vault(_ctx: Context<InitializeMwlVault>) -> Result<()> {
         Ok(())
     }
 
@@ -920,6 +935,17 @@ pub struct Initialize<'info> {
         bump
     )]
     pub airdrop_vault: Account<'info, VaultState>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct InitializeMwlVault<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(seeds = [REWARDS_CONFIG_SEED], bump = config.bump, has_one = authority)]
+    pub config: Account<'info, RewardsConfig>,
+    #[account(init, payer = authority, space = 8 + VaultState::SIZE, seeds = [MWL_VAULT_SEED], bump)]
+    pub mwl_vault: Account<'info, VaultState>,
     pub system_program: Program<'info, System>,
 }
 

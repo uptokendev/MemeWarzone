@@ -897,7 +897,10 @@ pub struct ClaimArenaProtocol<'info> {
     #[account(seeds = [ARENA_CONFIG_SEED], bump = arena_config.bump)] pub arena_config: Account<'info, ArenaConfig>,
     #[account(mut, seeds = [ARENA_POOL_SEED, pool_id.as_ref()], bump = pool.bump)] pub pool: Account<'info, ArenaPool>,
     #[account(mut, seeds = [ARENA_VAULT_SEED, pool_id.as_ref()], bump = pool.vault_bump)] pub vault: Account<'info, ArenaVault>,
-    #[account(mut, address = arena_config.protocol_receiver)] pub receiver: SystemAccount<'info>,
+    /// CHECK: exactly the configured receiver. On mainnet it is a program vault (protocol_vault /
+    /// mwl_vault), not a system wallet: `SystemAccount` refused it, so claims could never be collected
+    /// (2026-09-26). Only lamports are credited; crediting any writable account is allowed.
+    #[account(mut, address = arena_config.protocol_receiver)] pub receiver: UncheckedAccount<'info>,
     #[account(init, payer = caller, space = 8 + ArenaClaimReceipt::SIZE, seeds = [ARENA_CLAIM_SEED, pool_id.as_ref(), &[ARENA_CLAIM_PROTOCOL]], bump)] pub claim_receipt: Account<'info, ArenaClaimReceipt>,
     pub system_program: Program<'info, System>,
 }
@@ -908,7 +911,10 @@ pub struct ClaimArenaMwl<'info> {
     #[account(seeds = [ARENA_CONFIG_SEED], bump = arena_config.bump)] pub arena_config: Account<'info, ArenaConfig>,
     #[account(mut, seeds = [ARENA_POOL_SEED, pool_id.as_ref()], bump = pool.bump)] pub pool: Account<'info, ArenaPool>,
     #[account(mut, seeds = [ARENA_VAULT_SEED, pool_id.as_ref()], bump = pool.vault_bump)] pub vault: Account<'info, ArenaVault>,
-    #[account(mut, address = arena_config.mwl_receiver)] pub receiver: SystemAccount<'info>,
+    /// CHECK: exactly the configured receiver. On mainnet it is a program vault (protocol_vault /
+    /// mwl_vault), not a system wallet: `SystemAccount` refused it, so claims could never be collected
+    /// (2026-09-26). Only lamports are credited; crediting any writable account is allowed.
+    #[account(mut, address = arena_config.mwl_receiver)] pub receiver: UncheckedAccount<'info>,
     #[account(init, payer = caller, space = 8 + ArenaClaimReceipt::SIZE, seeds = [ARENA_CLAIM_SEED, pool_id.as_ref(), &[ARENA_CLAIM_MWL]], bump)] pub claim_receipt: Account<'info, ArenaClaimReceipt>,
     pub system_program: Program<'info, System>,
 }

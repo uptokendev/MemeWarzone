@@ -9,6 +9,8 @@ export const PERIOD_WEEKLY = 0;
 export const PERIOD_MONTHLY = 1;
 /** Quarterly finals share the league root + claim rail (program PERIOD_QUARTERLY). */
 export const PERIOD_QUARTERLY = 2;
+/** Major War League monthly round (post-grad); pays from mwl_vault like the quarterly finals. */
+export const PERIOD_MWL_MONTHLY = 3;
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
@@ -18,11 +20,12 @@ const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvw
  * derive receipts for the wrong epoch).
  */
 export function periodCode(period) {
-  if (period === PERIOD_WEEKLY || period === PERIOD_MONTHLY || period === PERIOD_QUARTERLY) return period;
+  if (period === PERIOD_WEEKLY || period === PERIOD_MONTHLY || period === PERIOD_QUARTERLY || period === PERIOD_MWL_MONTHLY) return period;
   const key = String(period ?? "").trim().toLowerCase();
   if (key === "weekly" || key === "0") return PERIOD_WEEKLY;
   if (key === "monthly" || key === "1") return PERIOD_MONTHLY;
   if (key === "quarterly" || key === "2") return PERIOD_QUARTERLY;
+  if (key === "mwl_monthly" || key === "3") return PERIOD_MWL_MONTHLY;
   throw new Error(`Unknown league period: ${String(period)}`);
 }
 
@@ -129,7 +132,9 @@ export function buildMerkleProof(leaves, leafIndex) {
  * league_vault, monthly and quarterly (Major War League) from monthly_league_vault.
  */
 export function leagueVaultForPeriod(period, programId = REWARDS_TREASURY_PROGRAM_ID) {
-  const seed = periodCode(period) === PERIOD_WEEKLY ? "league_vault" : "monthly_league_vault";
+  // Two competitions: pre-grad weekly (0) / monthly (1); Major War League quarterly (2) / monthly (3).
+  const code = periodCode(period);
+  const seed = code === PERIOD_WEEKLY ? "league_vault" : code === PERIOD_MONTHLY ? "monthly_league_vault" : "mwl_vault";
   return findProgramAddressSync([Buffer.from(seed)], programId).publicKey;
 }
 

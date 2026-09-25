@@ -24,7 +24,7 @@
 use anchor_lang::prelude::*;
 
 use crate::{league_payout_vault, AirdropBatch, AirdropBatchRootSet, LeagueEpoch, LeagueEpochRootSet, RewardsConfig, TreasuryError, VaultState};
-use crate::{AIRDROP_BATCH_SEED, AIRDROP_VAULT_SEED, LEAGUE_EPOCH_SEED, PERIOD_MONTHLY, PERIOD_QUARTERLY, PERIOD_WEEKLY, REWARDS_CONFIG_SEED};
+use crate::{AIRDROP_BATCH_SEED, AIRDROP_VAULT_SEED, LEAGUE_EPOCH_SEED, PERIOD_MONTHLY, PERIOD_MWL_MONTHLY, PERIOD_QUARTERLY, PERIOD_WEEKLY, REWARDS_CONFIG_SEED};
 
 pub const REWARD_POSTER_SEED: &[u8] = b"reward_poster";
 /// One weekly post; six days leaves room for a late run without allowing two in one week.
@@ -46,11 +46,12 @@ pub struct RewardPoster {
     pub last_weekly_league_post_at: i64,
     pub last_monthly_league_post_at: i64,
     pub last_quarterly_league_post_at: i64,
+    pub last_mwl_monthly_post_at: i64,
     pub bump: u8,
 }
 
 impl RewardPoster {
-    pub const SIZE: usize = 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1;
+    pub const SIZE: usize = 32 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 1;
 }
 
 #[event]
@@ -173,6 +174,7 @@ pub fn validate_poster_league_root(
         PERIOD_WEEKLY => LEAGUE_WEEKLY_MIN_INTERVAL_SECONDS,
         PERIOD_MONTHLY => LEAGUE_MONTHLY_MIN_INTERVAL_SECONDS,
         PERIOD_QUARTERLY => LEAGUE_QUARTERLY_MIN_INTERVAL_SECONDS,
+        PERIOD_MWL_MONTHLY => LEAGUE_MONTHLY_MIN_INTERVAL_SECONDS,
         _ => return err!(TreasuryError::InvalidPeriod),
     };
     require!(*root != [0u8; 32], TreasuryError::InvalidRoot);
@@ -232,6 +234,7 @@ pub fn initialize_reward_poster_handler(
     state.last_weekly_league_post_at = 0;
     state.last_monthly_league_post_at = 0;
     state.last_quarterly_league_post_at = 0;
+    state.last_mwl_monthly_post_at = 0;
     state.bump = ctx.bumps.reward_poster;
     emit!(RewardPosterSet { poster, max_airdrop_batch_lamports, max_league_root_lamports });
     Ok(())
@@ -266,6 +269,7 @@ pub fn post_league_epoch_root_handler(
     let last = match period {
         PERIOD_WEEKLY => poster_state.last_weekly_league_post_at,
         PERIOD_MONTHLY => poster_state.last_monthly_league_post_at,
+        PERIOD_MWL_MONTHLY => poster_state.last_mwl_monthly_post_at,
         _ => poster_state.last_quarterly_league_post_at,
     };
     validate_poster_league_root(
@@ -293,6 +297,7 @@ pub fn post_league_epoch_root_handler(
     match period {
         PERIOD_WEEKLY => state.last_weekly_league_post_at = now,
         PERIOD_MONTHLY => state.last_monthly_league_post_at = now,
+        PERIOD_MWL_MONTHLY => state.last_mwl_monthly_post_at = now,
         _ => state.last_quarterly_league_post_at = now,
     }
     emit!(LeagueEpochRootSet { period, epoch_start, root, total_lamports });
@@ -382,7 +387,9 @@ mod tests {
         assert!(league(PERIOD_QUARTERLY, NOW - 91 * DAY, 500, NOW - 79 * DAY, 1_000).is_err());
         assert!(league(PERIOD_WEEKLY, NOW - 7 * DAY, 1_000_000_001, 0, u64::MAX).is_err());
         assert!(league(PERIOD_WEEKLY, NOW - 7 * DAY, 1_001, 0, 1_000).is_err());
-        assert!(league(3, NOW - 7 * DAY, 500, 0, 1_000).is_err());
+        assert!(league(PERIOD_MWL_MONTHLY, NOW - 31 * DAY, 500, NOW - 25 * DAY, 1_000).is_ok());
+        assert!(league(PERIOD_MWL_MONTHLY, NOW - 31 * DAY, 500, NOW - 24 * DAY, 1_000).is_err());
+        assert!(league(4, NOW - 7 * DAY, 500, 0, 1_000).is_err());
     }
 
     #[test]

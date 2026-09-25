@@ -157,6 +157,7 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
       leagueVault: pda("league_vault"),
       airdropVault: pda("airdrop_vault"),
       monthlyLeagueVault: pda("monthly_league_vault"),
+      mwlVault: pda("mwl_vault"),
       recruiterVault: pda("recruiter_vault"),
       squadVault: pda("squad_vault"),
       protocolVault: pda("protocol_vault"),
@@ -507,51 +508,63 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     assert.equal((await lamports(authority)) - operatorBefore, -BigInt(tx.meta.fee), "the capped operator received nothing more");
   });
 
-  it("league: monthly and quarterly prizes pay from the monthly league vault, weekly from the weekly vault", async function () {
-    // Monthly prizes and the Major War League accrue in monthly_league_vault (70% of the launchpad
-    // league share, the arena's 20% MWL share). Until 2026-09-25 every period paid from league_vault,
-    // so that money could never leave and monthly claims drained the weekly pot.
+  it("league: pre-grad weekly/monthly and the Major War League pay from three separate vaults", async function () {
+    // Two competitions (founder, 2026-09-26): pre-grad weekly (0) from league_vault, pre-grad monthly
+    // (1) from monthly_league_vault; Major War League quarterly finals (2) and MWL monthly (3) from
+    // mwl_vault, fed by the arena's 20% share. Until 2026-09-25 every round paid from league_vault.
     const PERIOD_QUARTERLY = 2;
+    const PERIOD_MWL_MONTHLY = 3;
+    if (!(await connection.getAccountInfo(pdas.mwlVault, "confirmed"))) {
+      await program.methods.initializeMwlVault()
+        .accountsStrict({ authority, config: pdas.config, mwlVault: pdas.mwlVault, systemProgram: SystemProgram.programId })
+        .rpc({ commitment: "confirmed" });
+    }
     const epochStart = Math.floor(Date.now() / 1000) - 90 * 24 * 3600;
     const categoryHash = keccak(Buffer.from("quarterly_finals", "utf8"));
     const prize = 100_000_000n;
-    const leaves = [leagueLeaf({ epochStart, period: PERIOD_QUARTERLY, categoryHash, rank: 1, winner: winners[1].publicKey, amount: prize })];
-    const root = buildRoot(leaves);
-    await transferTo(pdas.monthlyLeagueVault, prize);
-    const leagueEpoch = pda("league_epoch", Buffer.from([PERIOD_QUARTERLY]), i64le(epochStart));
+    await transferTo(pdas.mwlVault, prize * 2n);
 
+    for (const period of [PERIOD_QUARTERLY, PERIOD_MWL_MONTHLY]) {
+      const winner = period === PERIOD_QUARTERLY ? winners[1] : winners[0];
+      const leaves = [leagueLeaf({ epochStart, period, categoryHash, rank: 1, winner: winner.publicKey, amount: prize })];
+      const root = buildRoot(leaves);
+      const leagueEpoch = pda("league_epoch", Buffer.from([period]), i64le(epochStart));
+      for (const wrong of [pdas.leagueVault, pdas.monthlyLeagueVault]) {
+        await expectFail(
+          program.methods.setLeagueEpochRoot(period, new BN(epochStart), arr32(root), new BN(prize.toString()))
+            .accountsStrict({ authority, config: pdas.config, leagueVault: wrong, leagueEpoch, systemProgram: SystemProgram.programId })
+            .rpc({ commitment: "confirmed" }),
+          /WrongLeagueVault|custom program error/i, `MWL round ${period} against a pre-grad vault`,
+        );
+      }
+      await program.methods.setLeagueEpochRoot(period, new BN(epochStart), arr32(root), new BN(prize.toString()))
+        .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.mwlVault, leagueEpoch, systemProgram: SystemProgram.programId })
+        .rpc({ commitment: "confirmed" });
+      const claim = (vault) => program.methods
+        .claimLeague(period, new BN(epochStart), arr32(categoryHash), 1, new BN(prize.toString()), proofArg(buildProof(leaves, 0)))
+        .accountsStrict({
+          winner: winner.publicKey, config: pdas.config, leagueVault: vault, leagueEpoch,
+          claimReceipt: pda("league_claim", Buffer.from([period]), i64le(epochStart), categoryHash, Buffer.from([1])),
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([winner])
+        .rpc({ commitment: "confirmed" });
+      await expectFail(claim(pdas.monthlyLeagueVault), /WrongLeagueVault|custom program error/i, `MWL round ${period} paid from the pre-grad monthly vault`);
+      const weeklyBefore = await lamports(pdas.leagueVault);
+      const monthlyBefore = await lamports(pdas.monthlyLeagueVault);
+      const mwlBefore = await lamports(pdas.mwlVault);
+      await claim(pdas.mwlVault);
+      assert.equal(mwlBefore - (await lamports(pdas.mwlVault)), prize, `MWL round ${period} is paid from the MWL vault`);
+      assert.equal(await lamports(pdas.leagueVault), weeklyBefore, "the pre-grad weekly vault is untouched");
+      assert.equal(await lamports(pdas.monthlyLeagueVault), monthlyBefore, "the pre-grad monthly vault is untouched");
+    }
+
+    const root = buildRoot([leagueLeaf({ epochStart, period: 4, categoryHash, rank: 1, winners: winners[0].publicKey, winner: winners[0].publicKey, amount: prize })]);
     await expectFail(
-      program.methods.setLeagueEpochRoot(PERIOD_QUARTERLY, new BN(epochStart), arr32(root), new BN(prize.toString()))
-        .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.leagueVault, leagueEpoch, systemProgram: SystemProgram.programId })
+      program.methods.setLeagueEpochRoot(4, new BN(epochStart), arr32(root), new BN(prize.toString()))
+        .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.mwlVault, leagueEpoch: pda("league_epoch", Buffer.from([4]), i64le(epochStart)), systemProgram: SystemProgram.programId })
         .rpc({ commitment: "confirmed" }),
-      /WrongLeagueVault|custom program error/i, "a quarterly root checked against the weekly vault",
-    );
-    await program.methods.setLeagueEpochRoot(PERIOD_QUARTERLY, new BN(epochStart), arr32(root), new BN(prize.toString()))
-      .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.monthlyLeagueVault, leagueEpoch, systemProgram: SystemProgram.programId })
-      .rpc({ commitment: "confirmed" });
-
-    const claim = (vault) => program.methods
-      .claimLeague(PERIOD_QUARTERLY, new BN(epochStart), arr32(categoryHash), 1, new BN(prize.toString()), proofArg(buildProof(leaves, 0)))
-      .accountsStrict({
-        winner: winners[1].publicKey, config: pdas.config, leagueVault: vault, leagueEpoch,
-        claimReceipt: pda("league_claim", Buffer.from([PERIOD_QUARTERLY]), i64le(epochStart), categoryHash, Buffer.from([1])),
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([winners[1]])
-      .rpc({ commitment: "confirmed" });
-    await expectFail(claim(pdas.leagueVault), /WrongLeagueVault|custom program error/i, "a quarterly claim paid from the weekly vault");
-
-    const weeklyBefore = await lamports(pdas.leagueVault);
-    const monthlyBefore = await lamports(pdas.monthlyLeagueVault);
-    await claim(pdas.monthlyLeagueVault);
-    assert.equal(monthlyBefore - (await lamports(pdas.monthlyLeagueVault)), prize, "the quarterly prize is paid from the monthly league vault");
-    assert.equal(await lamports(pdas.leagueVault), weeklyBefore, "the weekly vault is untouched");
-
-    await expectFail(
-      program.methods.setLeagueEpochRoot(3, new BN(epochStart), arr32(root), new BN(prize.toString()))
-        .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.monthlyLeagueVault, leagueEpoch: pda("league_epoch", Buffer.from([3]), i64le(epochStart)), systemProgram: SystemProgram.programId })
-        .rpc({ commitment: "confirmed" }),
-      /InvalidPeriod|custom program error/i, "period 3",
+      /InvalidPeriod|custom program error/i, "period 4",
     );
   });
 

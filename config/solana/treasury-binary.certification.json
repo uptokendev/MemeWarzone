@@ -6,17 +6,17 @@
     "label": "MemeWarzone rewards treasury"
   },
   "certifiedBy": {
-    "gate": "scripts/solana/run-local-treasury-gate.sh (16 tests incl. reward-poster airdrop + league, per-period league vaults) and cargo test -p mwz_rewards_treasury --lib (28)",
+    "gate": "scripts/solana/run-local-treasury-gate.sh (17 tests: reward poster airdrop + league, three separate league vaults, program-owned arena receivers) and cargo test -p mwz_rewards_treasury --lib (28)",
     "date": "2026-09-26"
   },
   "artifact": {
-    "sha256": "d40ae1c885ca7d7238f19667b4f63420ecba26bafa28e755208cc1d1298afce0",
-    "bytes": 1384296,
+    "sha256": "e996ba885136908804291ed7042ec594d3f55037ee9e806f131892a46ad3f0ac",
+    "bytes": 1394056,
     "localPath": "target/deploy/mwz_rewards_treasury.so"
   },
   "deployed": {
     "devnet": "not upgraded to this candidate",
-    "mainnet": "NOT upgraded to this candidate. Mainnet runs 1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95 (1306640 bytes, Squads #18). Candidate needs solana program extend +77656 bytes first."
+    "mainnet": "NOT upgraded to this candidate. Mainnet runs 1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95 (1306640 bytes, Squads #18). Candidate needs solana program extend +87416 bytes first."
   },
   "consumers": {
     "note": "The API and indexer read no treasury program hash. Do not put this value into SOLANA_LAUNCHPAD_PROGRAM_SHA256."

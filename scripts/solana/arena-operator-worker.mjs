@@ -125,6 +125,7 @@ async function runTournamentJob({
   }
 
   const bucket = command === "claim-mwl" ? ARENA_CLAIM_MWL : ARENA_CLAIM_PROTOCOL;
+  if (bucket === ARENA_CLAIM_MWL && mwlReceiverIsPregradVault(config)) return fail("mwl-receiver-is-pregrad-monthly-vault");
   const plan = planOperatorClaim({ pool, config, bucket });
   if (!plan.ok) return plan;
   if (plan.action === "skip") return { ...plan, sent: false };
@@ -194,6 +195,7 @@ export async function runOperatorJob({
   const config = await loadConfig();
   if (!config) return fail("config-unreadable");
   const bucket = command === "claim-mwl" ? ARENA_CLAIM_MWL : ARENA_CLAIM_PROTOCOL;
+  if (bucket === ARENA_CLAIM_MWL && mwlReceiverIsPregradVault(config)) return fail("mwl-receiver-is-pregrad-monthly-vault");
   const plan = planOperatorClaim({ pool, config, bucket });
   if (!plan.ok) return plan;
   if (plan.action === "skip") return { ...plan, sent: false };
@@ -205,6 +207,16 @@ export async function runOperatorJob({
   if (!after.ok) return { ok: false, action: "block", reason: "post-send-inconsistent", signature, after };
   if (after.action !== "skip") return { ok: false, action: "block", reason: "post-send-not-claimed", signature, after };
   return { ok: true, action: "sent", reason: "claimed", signature, after };
+}
+
+/**
+ * Major War League money must not land in the pre-grad monthly league vault (founder, 2026-09-26:
+ * two separate competitions). Until the mwl_vault exists and the arena's MWL receiver points at it,
+ * claim-mwl refuses; the MWL share waits safely in each battle's pool (it never expires).
+ */
+export function mwlReceiverIsPregradVault(config, programId = process.env.SOLANA_REWARDS_TREASURY_PROGRAM_ID || "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX") {
+  const pregradMonthly = PublicKey.findProgramAddressSync([Buffer.from("monthly_league_vault")], new PublicKey(programId))[0].toBase58();
+  return String(config?.mwlReceiver || "") === pregradMonthly;
 }
 
 export function poolAccountToPlanner(account, PublicKeyCtor = PublicKey) {

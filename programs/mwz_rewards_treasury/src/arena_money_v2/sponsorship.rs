@@ -157,8 +157,10 @@ pub struct ClaimSponsorshipMarketingV1<'info> {
     pub caller: Signer<'info>,
     #[account(seeds = [ARENA_MONEY_CONFIG_SEED_V2], bump = config.bump)]
     pub config: Account<'info, ArenaMoneyConfigV2>,
+    /// CHECK: exactly the configured receiver; on mainnet the protocol vault (program-owned), which
+    /// `SystemAccount` refused. Only lamports are credited.
     #[account(mut, address = config.marketing_receiver)]
-    pub receiver: SystemAccount<'info>,
+    pub receiver: UncheckedAccount<'info>,
     #[account(mut, seeds = [EVENT_PRIZE_VAULT_SEED_V1, event_id.as_ref()], bump = vault.bump)]
     pub vault: Account<'info, EventPrizeVaultV1>,
 }
@@ -169,8 +171,10 @@ pub struct ClaimSponsorshipProtocolV1<'info> {
     pub caller: Signer<'info>,
     #[account(seeds = [ARENA_MONEY_CONFIG_SEED_V2], bump = config.bump)]
     pub config: Account<'info, ArenaMoneyConfigV2>,
+    /// CHECK: exactly the configured receiver; on mainnet the protocol vault (program-owned), which
+    /// `SystemAccount` refused. Only lamports are credited.
     #[account(mut, address = config.protocol_receiver)]
-    pub receiver: SystemAccount<'info>,
+    pub receiver: UncheckedAccount<'info>,
     #[account(mut, seeds = [EVENT_PRIZE_VAULT_SEED_V1, event_id.as_ref()], bump = vault.bump)]
     pub vault: Account<'info, EventPrizeVaultV1>,
 }
