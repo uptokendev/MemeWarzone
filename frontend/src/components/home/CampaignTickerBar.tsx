@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { Contract } from "ethers";
 import { cn } from "@/lib/utils";
 import { getFactoryAddress, isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
@@ -241,7 +242,7 @@ export function CampaignTickerBar({ className }: { className?: string }) {
         {loopItems.map((item, index) => (
           <Link
             key={`${item.campaignAddress}-${index}`}
-            to={`/token/${encodeURIComponent(item.tokenAddress || item.campaignAddress)}${Number(chainId) === 101 || Number(chainId) === 102 ? `?chainId=${chainId}` : ""}`}
+            to={tokenDetailsPath({ tokenAddress: item.tokenAddress, campaignAddress: item.campaignAddress, chainId: Number(chainId) })}
             className="inline-flex min-w-[10.5rem] shrink-0 items-center gap-2 border border-success/25 bg-black/45 px-3 py-1.5 text-[11px] uppercase tracking-[0.08em] text-success/80 transition hover:border-orange-400/60 hover:text-orange-300 sm:text-xs sm:tracking-[0.12em]"
           >
             <span className="font-retro text-success">${item.symbol}</span>

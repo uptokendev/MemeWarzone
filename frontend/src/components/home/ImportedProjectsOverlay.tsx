@@ -3,11 +3,13 @@ import { Link } from "react-router-dom";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { projectImportsEnabled } from "@/features/projectImports/config";
 import { listRecentProjectImports, type ProjectImportItem } from "@/lib/projectImports";
+import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 
 const MAX_ITEMS = 24;
 
 function projectUrl(item: ProjectImportItem) {
-  return `/token/${encodeURIComponent(item.tokenAddress)}?chainId=${item.chainId}`;
+  // Same query-less URL as launched coins; the token page resolves the chain from the address.
+  return tokenDetailsPath({ tokenAddress: item.tokenAddress, chainId: item.chainId });
 }
 
 function chainLabel(chainId: number) {

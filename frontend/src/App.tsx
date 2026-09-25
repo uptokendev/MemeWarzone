@@ -30,6 +30,7 @@ import ProjectImport from "./pages/ProjectImport";
 import SponsorshipApplication from "./pages/SponsorshipApplication";
 import ProfilePage from "./pages/ProfilePage";
 import TokenDetailsEntry from "./pages/TokenDetailsEntry";
+import { RouteErrorBoundary } from "@/components/app/RouteErrorBoundary";
 import Playbook from "@/pages/Playbook";
 import Prepare from "./pages/Prepare";
 import Live from "./pages/Live";
@@ -186,6 +187,7 @@ function AppShellLayout({
             : "scroll-pt-[var(--mwz-topbar-offset)] pt-[var(--mwz-topbar-offset)] [&>:first-child]:!pt-0",
         ].join(" ")}
       >
+        <RouteErrorBoundary routeKey={location.pathname}>
         <Routes>
           <Route path="/" element={<Showcase />} />
           {postGradEnabled && postGradFlags.arena ? <Route path="/warzone" element={<Arena />} /> : null}
@@ -264,6 +266,7 @@ function AppShellLayout({
           <Route path="/status" element={<Status />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </RouteErrorBoundary>
       </main>
       <Footer />
       <ScreenFrame />

@@ -412,7 +412,7 @@ router.all("/vote_counts", wrap(voteCounts));
 router.all("/robinhood/stock-tokens", wrap(robinhoodStockTokens));
 router.all("/graduation/quote-assets", wrap(graduationQuoteAssets));
 router.all("/graduation/quote-assets/:id", wrap(graduationQuoteAssets));
-router.all(/^\/(?:arena\/ops\/health|arena\/battles(?:\/.*)?|arena\/boosts(?:\/.*)?|arena\/sponsorships(?:\/.*)?|arena\/imports(?:\/.*)?|arena\/tournaments(?:\/.*)?|arena\/events(?:\/.*)?|arena\/league(?:\/.*)?|arena\/notifications(?:\/.*)?|arena\/votes(?:\/.*)?|arena\/war-pools(?:\/.*)?|sponsored|sponsorship-applications|sponsorship-packages|sponsorship-settings|war-room(?:\/.*)?)$/, wrap(postgrad));
+router.all(/^\/(?:arena\/ops\/health|arena\/battles(?:\/.*)?|arena\/battle-metrics(?:\/.*)?|arena\/boosts(?:\/.*)?|arena\/sponsorships(?:\/.*)?|arena\/imports(?:\/.*)?|arena\/tournaments(?:\/.*)?|arena\/events(?:\/.*)?|arena\/league(?:\/.*)?|arena\/notifications(?:\/.*)?|arena\/votes(?:\/.*)?|arena\/war-pools(?:\/.*)?|sponsored|sponsorship-applications|sponsorship-packages|sponsorship-settings|war-room(?:\/.*)?)$/, wrap(postgrad));
 router.all(/^\/admin\/arena\/imports(?:\/.*)?$/, wrap(adminArenaImports));
 router.all(/^\/admin\/arena\/tournaments(?:\/.*)?$/, wrap(arenaTournaments));
 router.all("/admin/quote-catalog/chains", wrap(quoteAssetCatalogAdmin));

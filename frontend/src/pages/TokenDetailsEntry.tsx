@@ -29,12 +29,17 @@ export default function TokenDetailsEntry() {
     if (!projectImportsEnabled || !routeId) { setProject(null); setResolved(true); return; }
     let cancelled = false;
     setProject(null); setResolved(false);
+    // Import links are query-less like every token link. A 0x address is BNB unless the query says
+    // otherwise; with Robinhood imports on, an unmatched 0x address is also tried on Robinhood.
+    const explicit = Number(searchParams.get("chainId") || "") > 0;
+    const fallbackRobinhood = !explicit && importChainId === BNB_CHAIN_ID && projectImportRobinhoodEnabled;
     void lookupProjectImport(routeId, importChainId)
+      .then((item) => (item || !fallbackRobinhood ? item : lookupProjectImport(routeId, 4663)))
       .then((item) => { if (!cancelled) setProject(item); })
       .catch(() => { if (!cancelled) setProject(null); })
       .finally(() => { if (!cancelled) setResolved(true); });
     return () => { cancelled = true; };
-  }, [importChainId, routeId]);
+  }, [importChainId, routeId, searchParams]);
 
   useEffect(() => {
     if (!projectImportsEnabled || !routeId || !project) return;

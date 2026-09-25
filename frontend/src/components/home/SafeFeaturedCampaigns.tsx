@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { Contract } from "ethers";
 import { useNavigate } from "react-router-dom";
 import { ThumbsUp } from "lucide-react";
@@ -784,7 +785,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
                 tokenAddress: item.tokenAddress,
                 campaignAddress: item.campaignAddress,
                 chainId: item.chainId,
-              }) || `/token/${item.tokenAddress || item.campaignAddress}?chainId=${item.chainId}`;
+              }) || tokenDetailsPath({ tokenAddress: item.tokenAddress, campaignAddress: item.campaignAddress, chainId: item.chainId });
               return (
                 <FeaturedCampaignCard
                   key={item.campaignAddress}
