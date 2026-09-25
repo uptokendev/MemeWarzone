@@ -10,7 +10,7 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { acceptPostGradBattle, counterPostGradBattle, declinePostGradBattle } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
 import { useArenaBattleFeed, type CreatorBattleStatus } from "@/hooks/useArenaBattleFeed";
-import { BATTLE_DURATIONS, battleDurationLabel, parseBattleDurationHours } from "@/lib/arena/battleDuration";
+import { battleDurationLabel, battleDurationOptions, parseBattleDurationHoursForMode, parseBattleMode } from "@/lib/arena/battleDuration";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import { getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
 import type { Battle } from "@/features/postgrad/contracts";
@@ -92,7 +92,7 @@ export function ChallengeInboxDialog() {
   useEffect(() => {
     setOpen(Boolean(postGradFlags.arena && current));
     setCounterStake("");
-    setCounterDurationHours(parseBattleDurationHours(current?.offeredDurationHours || current?.durationHours, 24));
+    setCounterDurationHours(parseBattleDurationHoursForMode((current as { battleMode?: string } | undefined)?.battleMode, current?.offeredDurationHours || current?.durationHours, 24));
   }, [current]);
 
   function dismiss(battle: OfferBattle) {
@@ -141,7 +141,7 @@ export function ChallengeInboxDialog() {
     }
     setBusy(true);
     try {
-      const hours = parseBattleDurationHours(counterDurationHours, 24);
+      const hours = parseBattleDurationHoursForMode((current as { battleMode?: string } | undefined)?.battleMode, counterDurationHours, 24);
       const auth = await sign("arena_counter_battle", [`Battle: ${current.id}`, `Stake: ${amount}`, `Duration: ${hours}`]);
       await counterPostGradBattle(current.id, amount, auth, hours);
       await feed.refreshFeed();
@@ -180,9 +180,9 @@ export function ChallengeInboxDialog() {
           <select
             className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
             value={counterDurationHours}
-            onChange={(event) => setCounterDurationHours(parseBattleDurationHours(event.target.value, 24))}
+            onChange={(event) => setCounterDurationHours(parseBattleDurationHoursForMode((current as { battleMode?: string }).battleMode, event.target.value, 24))}
           >
-            {BATTLE_DURATIONS.map((item) => (
+            {battleDurationOptions(parseBattleMode((current as { battleMode?: string }).battleMode)).map((item) => (
               <option key={item.hours} value={item.hours}>{item.label}</option>
             ))}
           </select>

@@ -38,8 +38,9 @@ export function battleDurationOptions(mode: BattleMode): ReadonlyArray<{ hours: 
   return mode === "vote" ? VOTE_BATTLE_DURATIONS : BATTLE_DURATIONS;
 }
 
-export function parseBattleDurationHoursForMode(mode: BattleMode, value: unknown, fallback = 24): number {
-  return mode === "vote"
+/** The duration a battle of this mode accepts: vote 1/6/12/24 h, metrics 24 h / 3 d / 7 d. */
+export function parseBattleDurationHoursForMode(mode: BattleMode | string | undefined | null, value: unknown, fallback = 24): number {
+  return parseBattleMode(mode) === "vote"
     ? parseVoteBattleDurationHours(value, parseVoteBattleDurationHours(fallback, 24))
     : parseBattleDurationHours(value, fallback);
 }

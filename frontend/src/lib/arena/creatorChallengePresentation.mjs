@@ -39,6 +39,9 @@ export function challengeDurationLabel(hours) {
   const value = Number(hours);
   if (value === 72) return "3 days";
   if (value === 168) return "7 days";
+  // Vote battles run 1, 6, 12 or 24 hours.
+  if (value === 1) return "1 hour";
+  if (value === 6 || value === 12) return `${value} hours`;
   return "24 hours";
 }
 

@@ -190,6 +190,24 @@ async function readMarketStats(query, chainId, campaignAddress, tokenAddress) {
   return null;
 }
 
+/** Imported tokens: the row the import market feed keeps (lib/arenaImportMarketFeed.js). */
+async function readImportMarketStats(query, chainId, tokenAddress) {
+  if (!tokenAddress) return null;
+  try {
+    const result = await query(
+      `select market_cap_usd, liquidity_usd, volume_24h_usd, holders, updated_at
+         from public.arena_import_market_stats
+        where chain_id = $1 and ${identityEquals(chainId, "token_address", "$2")}
+        limit 1`,
+      [chainId, tokenAddress],
+    );
+    const row = result.rows[0];
+    return row ? { ...row, quote_asset_type: null, quote_token_address: null, data_lag_seconds: null } : null;
+  } catch {
+    return null; // table not migrated yet: behave as before (no import market data)
+  }
+}
+
 async function readTokenStats(query, chainId, campaignAddress) {
   if (!campaignAddress) return null;
   const result = await query(
@@ -259,12 +277,14 @@ export async function getArenaMarketSnapshot(chainId, tokenIdentity, deps = {}) 
     return emptySnapshot(idNum, ident(tokenIdentity), "market_identity_missing", identity);
   }
 
-  const stats = await readMarketStats(query, idNum, identity.campaignAddress, identity.origin === "native" ? identity.tokenAddress : null);
+  let stats = await readMarketStats(query, idNum, identity.campaignAddress, identity.origin === "native" ? identity.tokenAddress : null);
+  let importFeed = false;
   if (!stats && identity.origin === "import") {
-    // Import scanning proves token identity/safety metadata only; it is not an
-    // authoritative market-data oracle. External/import market adapters can feed
-    // normalized stats later without a second scoring implementation.
-    return emptySnapshot(idNum, identity.tokenAddress, "import_market_data_missing", identity);
+    // Import scanning proves token identity/safety metadata only; market data for imports comes
+    // from the import market feed, normalized into the same contract -- one scoring implementation.
+    stats = await readImportMarketStats(query, idNum, identity.tokenAddress);
+    if (!stats) return emptySnapshot(idNum, identity.tokenAddress, "import_market_data_missing", identity);
+    importFeed = true;
   }
 
   const quoteAssetType = String(stats?.quote_asset_type || "WRAPPED_NATIVE").toUpperCase();
@@ -304,7 +324,11 @@ export async function getArenaMarketSnapshot(chainId, tokenIdentity, deps = {}) 
     }
   }
 
-  if (holders === null) {
+  if (importFeed && dataSource !== "none") dataSource = "import_market_feed";
+
+  // An import's holders come only from the feed: token_holder_balances indexes MemeWarzone tokens,
+  // so counting there would report 0 holders for an import, which reads as real data.
+  if (holders === null && !importFeed) {
     const counted = await readHolderCount(query, idNum, identity.tokenAddress, identity.campaignAddress);
     if (counted !== null) {
       holders = counted;

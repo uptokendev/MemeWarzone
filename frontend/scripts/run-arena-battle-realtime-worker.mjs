@@ -5,8 +5,11 @@ import { publishBattleFinished, startArenaBattleRealtimeWorker, stopArenaBattleR
 import { settleDueNormalBattles } from "../api/lib/arenaBattleSettlementRuntime.js";
 import { advanceDueFinalSalvo, finalizeDueVoteTournamentBattle, voteTournamentRuntimeEnabled } from "../api/lib/arenaVoteTournamentFinalizationService.js";
 import { advanceTournamentFromBattle } from "../api/arenaTournaments.js";
+import { IMPORT_FEED_INTERVAL_MS, refreshImportMarketStats } from "../api/lib/arenaImportMarketFeed.js";
 
-const voteRuntimeEnabled = voteTournamentRuntimeEnabled();
+// Vote Battles (challenge, queue and tournament) settle only through this runtime, so it defaults
+// on: with ARENA_VOTE_TOURNAMENT_RUNTIME unset no Vote Battle ever finished. Set it to false to stop it.
+const voteRuntimeEnabled = voteTournamentRuntimeEnabled({ ARENA_VOTE_TOURNAMENT_RUNTIME: process.env.ARENA_VOTE_TOURNAMENT_RUNTIME ?? "true" });
 const started = startArenaBattleRealtimeWorker();
 if (!started.started && !voteRuntimeEnabled) {
   console.log(`[arena-battle-realtime-worker] realtime polling disabled: ${started.reason || "unknown"}; authoritative Normal Battle settlement worker remains active`);
@@ -117,11 +120,26 @@ async function publishRecentlyFinishedBattles() {
 const finishedTimer = setInterval(() => void publishRecentlyFinishedBattles(), finishedScanMs); finishedTimer.unref?.(); void publishRecentlyFinishedBattles();
 const settlementTimer = setInterval(() => void settleDueBattlePoints(), settlementScanMs); settlementTimer.unref?.(); void settleDueBattlePoints();
 const voteTimer = setInterval(() => void processVoteTournamentRuntime(), voteScanMs); voteTimer.unref?.(); void processVoteTournamentRuntime();
+// Market data for imported tokens (metrics Battles need it). On unless explicitly disabled; a failed
+// pass only logs -- it cannot touch settlement, which runs on its own timer.
+const importFeedEnabled = !/^(0|false|no|off)$/i.test(String(process.env.ARENA_IMPORT_MARKET_FEED_ENABLED ?? "").trim());
+let importFeedRunning = false;
+async function refreshImportMarkets() {
+  if (!importFeedEnabled || importFeedRunning) return;
+  importFeedRunning = true;
+  try {
+    const summary = await refreshImportMarketStats({ pool });
+    if (summary.errors.length) console.warn("[arena-battle-realtime-worker] import market feed partial", summary.errors.join("; "));
+  } catch (error) { console.warn("[arena-battle-realtime-worker] import market feed failed", error?.message || error); }
+  finally { importFeedRunning = false; }
+}
+if (importFeedEnabled) console.log(`[arena-battle-realtime-worker] import market feed active intervalMs=${IMPORT_FEED_INTERVAL_MS}`);
+const importFeedTimer = setInterval(() => void refreshImportMarkets(), IMPORT_FEED_INTERVAL_MS); importFeedTimer.unref?.(); void refreshImportMarkets();
 const keepAlive = setInterval(() => {}, 60_000);
 
 async function shutdown(signal) {
   console.log(`[arena-battle-realtime-worker] shutting down on ${signal}`);
-  clearInterval(keepAlive); clearInterval(finishedTimer); clearInterval(settlementTimer); clearInterval(voteTimer);
+  clearInterval(keepAlive); clearInterval(finishedTimer); clearInterval(settlementTimer); clearInterval(voteTimer); clearInterval(importFeedTimer);
   stopArenaBattleRealtimeWorker();
   try { await pool.end(); } catch {}
   process.exit(0);

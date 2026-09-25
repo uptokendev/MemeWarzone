@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Button } from "@/components/ui/button";
 import type { Battle } from "@/features/postgrad/contracts";
-import { BATTLE_DURATIONS, parseBattleDurationHours } from "@/lib/arena/battleDuration";
+import { battleDurationOptions, parseBattleDurationHoursForMode, parseBattleMode } from "@/lib/arena/battleDuration";
 import {
   beginChallengePending,
   endChallengePending,
@@ -62,7 +62,8 @@ export function CreatorChallengeCarousel({
   const presented = presentCreatorChallenge(battle);
   const draft = drafts[battle.id] || {
     counterStake: "",
-    counterDurationHours: parseBattleDurationHours(
+    counterDurationHours: parseBattleDurationHoursForMode(
+      (battle as Battle & { battleMode?: string }).battleMode,
       (battle as Battle & { offeredDurationHours?: number; durationHours?: number }).offeredDurationHours ||
         (battle as Battle & { durationHours?: number }).durationHours,
       24,
@@ -183,9 +184,9 @@ export function CreatorChallengeCarousel({
             <select
               className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               value={draft.counterDurationHours}
-              onChange={(event) => patch(battle.id, { counterDurationHours: parseBattleDurationHours(event.target.value, 24) })}
+              onChange={(event) => patch(battle.id, { counterDurationHours: parseBattleDurationHoursForMode((battle as Battle & { battleMode?: string }).battleMode, event.target.value, 24) })}
             >
-              {BATTLE_DURATIONS.map((item) => (
+              {battleDurationOptions(parseBattleMode((battle as Battle & { battleMode?: string }).battleMode)).map((item) => (
                 <option key={item.hours} value={item.hours}>
                   {item.label}
                 </option>
