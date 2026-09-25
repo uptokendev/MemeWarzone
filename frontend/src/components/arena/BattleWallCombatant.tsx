@@ -139,7 +139,13 @@ export function BattleWallCombatant({
     participant?.holderCount,
     participant?.holders,
   );
-  const battleVolume = firstFiniteBattleMetric(metricsSide?.eligibleBattleVolumeUsd, participant?.battleVolumeUsd);
+  // Metrics battles show the battle-window volume they are scored on. Vote Battles are scored on votes
+  // only, and their coins are often imports whose trades we do not index, so that figure was a
+  // permanent $0; they show DexScreener 24h volume instead (founder, 2026-09-25).
+  const voteBattle = (battle as Battle & { battleMode?: string }).battleMode === "vote";
+  const battleVolume = voteBattle
+    ? firstFiniteBattleMetric(profile?.volume24hUsd)
+    : firstFiniteBattleMetric(metricsSide?.eligibleBattleVolumeUsd, participant?.battleVolumeUsd);
   const pointsReady = Boolean(pointsLabel);
   const caption = String(scoreCaption || "").toLowerCase();
   const pointsBoxLabel = caption.includes("vote") ? "VOTES" : caption.includes("score") ? "SCORE" : "POINTS";
@@ -221,7 +227,7 @@ export function BattleWallCombatant({
                 accent={accent}
               />
               <MetricBox
-                label="VOL"
+                label={voteBattle ? "VOL 24H" : "VOL"}
                 value={battleVolume === null ? "—" : formatCompactUsd(battleVolume)}
                 ready={battleVolume !== null}
                 accent={accent}
