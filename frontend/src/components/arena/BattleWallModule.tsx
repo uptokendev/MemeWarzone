@@ -282,6 +282,7 @@ export function BattleWallModule({
             metrics={displayMetrics}
             metricsRequested={selected.requested}
             metricsLoaded={selected.loaded}
+            votes={voteEligibility.showVote && voteState.payload ? { leftPoints: voteState.model.leftPoints, rightPoints: voteState.model.rightPoints } : null}
           />
           {showBuyIn ? (
             <button

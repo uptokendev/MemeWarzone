@@ -51,7 +51,8 @@ test("Live battle produces canonical /warzone/battles/:id share path and X inten
   assert.equal(share.canonicalPath, "/warzone/battles/wall-share-1");
   assert.equal(share.canonicalUrl, "https://app.example.test/warzone/battles/wall-share-1");
   assert.equal(share.state, "live");
-  assert.match(share.shareText, /\$ALPHA vs \$BRAVO is live in MemeWarzone/);
+  assert.match(share.shareText, /\$ALPHA vs \$BRAVO is LIVE on @memewarzone!/);
+  assert.match(share.shareText, /\$ALPHA leads 58\.4–51\.2 Battle Points/);
   assert.match(share.shareText, /Battle Points/);
   assert.doesNotMatch(share.canonicalPath, /\/battle\//);
   assert.match(share.xIntentUrl, /twitter\.com\/intent\/tweet/);
@@ -62,7 +63,7 @@ test("Upcoming produces deployment-safe share copy", () => {
   const share = presentBattleShare(battle({ id: "up-1", state: "matched" }), null, { origin: "https://app.example.test" });
   assert.equal(share.state, "upcoming");
   assert.equal(share.canonicalPath, "/warzone/battles/up-1");
-  assert.match(share.shareText, /is deploying in MemeWarzone/);
+  assert.match(share.shareText, /is deploying on @memewarzone/);
   assert.doesNotMatch(share.shareText, /Battle Points|leads|defeated/i);
 });
 
@@ -72,10 +73,10 @@ test("Finished uses authoritative winner only", () => {
     metrics({ finalBattlePoints: { left: 61, right: 44.5 } }),
     { requested: true, loaded: true },
   );
-  assert.match(withWinner.shareText, /\$ALPHA defeated \$BRAVO/);
+  assert.match(withWinner.shareText, /\$ALPHA crushed \$BRAVO on @memewarzone/);
   const withoutWinner = presentBattleShare(battle({ id: "fin-2", state: "finished", leaderSide: "left" }), null);
-  assert.match(withoutWinner.shareText, /\$ALPHA vs \$BRAVO is finished/);
-  assert.doesNotMatch(withoutWinner.shareText, /defeated/);
+  assert.match(withoutWinner.shareText, /\$ALPHA vs \$BRAVO is over on @memewarzone/);
+  assert.doesNotMatch(withoutWinner.shareText, /crushed/);
   assert.equal(withoutWinner.winnerLabel, null);
 });
 
@@ -155,10 +156,24 @@ test("Share helpers stay generation-neutral and do not invent money or formulas"
   assert.match(menu, /Copy battle link/);
   assert.match(menu, /Share on X/);
   assert.match(menu, /Download share image/);
-  assert.match(menu, /\/api\/battle-share-card/);
+  // The card is fetched by the share modal (same flow as the token page).
+  assert.match(menu, /<BattleShareCardModal/);
+  assert.match(readSrc("../../components/arena/BattleShareCardModal.tsx"), /\/api\/battle-share-card/);
   assert.match(moduleSrc, /BattleShareMenu/);
   assert.match(moduleSrc, /data-battle-wall-actions-reserved/);
   assert.match(moreSrc, /BattleFunding/);
   assert.match(carousel, /beginChallengePending/);
   assert.match(app, /path="\/battle\/:id"/);
+});
+
+test("Vote Battle share quotes the live vote tally", () => {
+  const leading = presentBattleShare(battle({ battleMode: "vote", source: "challenge" }), null, { votes: { leftPoints: 3, rightPoints: 7 } });
+  assert.equal(leading.scoreKind, "vote");
+  assert.match(leading.shareText, /\$BRAVO leads 7–3 in votes/);
+  assert.match(leading.shareText, /vote free and boost/);
+  const level = presentBattleShare(battle({ battleMode: "vote", source: "challenge" }), null, { votes: { leftPoints: 4, rightPoints: 4 } });
+  assert.match(level.shareText, /Dead even at 4–4 in votes/);
+  // A metrics battle ignores a stray tally.
+  const metricsBattle = presentBattleShare(battle(), metrics(), { requested: true, loaded: true, votes: { leftPoints: 1, rightPoints: 9 } });
+  assert.doesNotMatch(metricsBattle.shareText, /in votes/);
 });

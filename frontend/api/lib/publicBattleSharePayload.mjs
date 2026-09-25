@@ -1,6 +1,9 @@
 import { pool } from "../../server/db.js";
 import { getArenaTokenProfile } from "./arenaTokenProfile.js";
 import { readPublicBattleMetricsSnapshot } from "./arenaBattleRealtime.js";
+import { isStandaloneVoteBattle } from "./arenaBattleMode.js";
+import { listVoteBattleVotes, loadVoteBattle, voteBattleMatch, voteBattleScore } from "./arenaBattleVoteRuntime.js";
+import { tournamentVoteSummary } from "./arenaTournamentVoteRuntime.mjs";
 
 function text(value) {
   const raw = String(value || "").trim();
@@ -44,6 +47,7 @@ export function toPublicShareBattle(row, participants) {
     chainId: Number(row.chain_id || 0),
     state: String(row.state || ""),
     source: String(row.source || "queue"),
+    battleMode: row.battle_mode ? String(row.battle_mode) : null,
     tournamentId: row.tournament_id || null,
     settlementVersion: row.settlement_version || null,
     scoreBasis: row.score_basis || (Number(row.settlement_version) === 1 ? "mcap_pct_change" : null),
@@ -58,7 +62,7 @@ export async function loadPublicBattleSharePayload(battleId) {
   const id = String(battleId || "").trim();
   if (!id || !pool) return null;
   const result = await pool.query(
-    `select id, chain_id, state, source, tournament_id, settlement_version, settlement_scoring_version,
+    `select id, chain_id, state, source, battle_mode, tournament_id, settlement_version, settlement_scoring_version,
             winner_token, money_winner_token, started_at, ends_at, created_at, participants,
             challenger_token, defender_token
        from public.arena_battles
@@ -90,5 +94,27 @@ export async function loadPublicBattleSharePayload(battleId) {
     console.warn("[publicBattleSharePayload] metrics read failed", id, error?.message || error);
   }
 
-  return { battle, metrics };
+  // Vote Battles score on confirmed regulation points (Free Vote 1, Boost 2) -- the same query the
+  // battle card's VOTES box reads through /arena/battles/:id/votes.
+  let votes = null;
+  if (isStandaloneVoteBattle(row)) {
+    try {
+      const query = (text, values) => pool.query(text, values);
+      const voteRow = await loadVoteBattle(query, id);
+      if (voteRow) {
+        const [score, rows] = await Promise.all([voteBattleScore(query, voteRow), listVoteBattleVotes(query, voteRow)]);
+        const summary = tournamentVoteSummary(rows, voteBattleMatch(voteRow));
+        votes = {
+          leftPoints: Number(score.leftPoints || 0),
+          rightPoints: Number(score.rightPoints || 0),
+          leftVotes: Number(summary?.leftVotes || 0),
+          rightVotes: Number(summary?.rightVotes || 0),
+        };
+      }
+    } catch (error) {
+      console.warn("[publicBattleSharePayload] vote score read failed", id, error?.message || error);
+    }
+  }
+
+  return { battle, metrics, votes };
 }

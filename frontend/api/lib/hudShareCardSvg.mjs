@@ -479,3 +479,83 @@ export async function respondHudShareCard(req, res, { svg, ticker, format = "png
   }
   return sendHudShareCardPng(req, res, svg, ticker, download === true);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Battle share card (founder design, 2026-09-25): same HUD chrome and pixel font as the token
+// card. Title, both coins in rings (green = more points, red = fewer, amber when level or unscored),
+// VS with the chain pill, tickers, names and each side's score.
+
+const BATTLE_RING = { lead: "#19e68c", trail: "#ff4a12", even: "#f39b3d" };
+const BATTLE_CHAIN_PILL = {
+  SOL: { from: "#9945ff", to: "#14f195", text: "#08110c" },
+  BNB: { from: "#f3ba2f", to: "#f7d56b", text: "#1a1203" },
+  ROBINHOOD: { from: "#00c805", to: "#b4ff5a", text: "#06130a" },
+};
+
+function battleSide(x, side, ringKey, clipId) {
+  const ring = BATTLE_RING[ringKey] || BATTLE_RING.even;
+  const ticker = `$${String(side?.ticker || "TOKEN").replace(/^\$+/, "").toUpperCase()}`.slice(0, 10);
+  const name = String(side?.name || "").trim().toUpperCase();
+  const showName = name && name.replace(/\s+/g, "") !== ticker.slice(1);
+  const cy = 250;
+  const portrait = side?.image
+    ? `<image href="${esc(side.image)}" x="${x - 80}" y="${cy - 80}" width="160" height="160" clip-path="url(#${clipId})" preserveAspectRatio="xMidYMid slice"/>`
+    : `<circle cx="${x}" cy="${cy}" r="80" fill="#0b0f0d"/>${pixelText(ticker.slice(1, 4), x, cy - 14, { scale: 6, color: "#ffffff", anchor: "middle" })}`;
+  return `
+  <circle cx="${x}" cy="${cy}" r="104" fill="${ring}" opacity="0.10"/>
+  <circle cx="${x}" cy="${cy}" r="92" fill="none" stroke="${ring}" stroke-opacity="0.45" stroke-width="10"/>
+  <defs><clipPath id="${clipId}"><circle cx="${x}" cy="${cy}" r="80"/></clipPath></defs>
+  ${portrait}
+  <circle cx="${x}" cy="${cy}" r="84" fill="none" stroke="${ring}" stroke-width="6"/>
+  <g filter="url(#battleTextGlow)">
+    ${pixelText(ticker, x, 368, { scale: 6, color: "#ffffff", anchor: "middle", maxChars: 10 })}
+    ${showName ? pixelText(name, x, 420, { scale: 3, color: "#9a9a9a", anchor: "middle", maxChars: 18 }) : ""}
+    ${side?.scoreLabel ? pixelText(side.scoreLabel, x, 456, { scale: 4, color: ring, anchor: "middle", maxChars: 14 }) : ""}
+  </g>`;
+}
+
+export function battleHudShareCardSvg(card = {}) {
+  const title = String(card.title || "BATTLE LIVE").toUpperCase();
+  const chain = String(card.chainLabel || "").toUpperCase();
+  const pill = BATTLE_CHAIN_PILL[chain] || { from: "#f06a1a", to: "#f39b3d", text: "#140802" };
+  const pillWidth = chain ? chain.length * 19.2 + 34 : 0;
+  const leader = card.leaderIndex === 0 || card.leaderIndex === 1 ? card.leaderIndex : null;
+  const ringFor = (index) => (leader === null ? "even" : leader === index ? "lead" : "trail");
+  const brand = card.brandLogo
+    ? `<image href="${esc(card.brandLogo)}" x="30" y="32" width="96" height="96" preserveAspectRatio="xMidYMid meet"/>`
+    : "";
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1002" height="531" viewBox="0 0 1002 531" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1002" y2="531" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#06170d"/><stop offset="0.5" stop-color="#030907"/><stop offset="1" stop-color="#1a0a04"/>
+    </linearGradient>
+    <radialGradient id="centerGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(501 280) rotate(90) scale(300 420)">
+      <stop stop-color="#ff5a14" stop-opacity="0.16"/><stop offset="1" stop-color="#ff5a14" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="chainPill" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="${pill.from}"/><stop offset="1" stop-color="${pill.to}"/>
+    </linearGradient>
+    <pattern id="grid" width="33" height="33" patternUnits="userSpaceOnUse"><path d="M33 0H0V33" stroke="#13ff82" stroke-opacity="0.055"/></pattern>
+    <filter id="titleGlow" x="0" y="0" width="1002" height="140" filterUnits="userSpaceOnUse"><feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#ff3d0a" flood-opacity="0.7"/></filter>
+    <filter id="battleTextGlow" x="0" y="0" width="1002" height="531" filterUnits="userSpaceOnUse"><feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#000000" flood-opacity="0.9"/></filter>
+  </defs>
+
+  <rect width="1002" height="531" fill="url(#bg)"/><rect width="1002" height="531" fill="url(#grid)"/><rect width="1002" height="531" fill="url(#centerGlow)"/>
+  <rect x="0" y="0" width="1002" height="10" fill="#070707"/>
+  ${Array.from({ length: 44 }).map((_, i) => `<path d="M${i * 24} 0H${i * 24 + 12}L${i * 24 + 2} 10H${i * 24 - 10}L${i * 24} 0Z" fill="#7b421c" fill-opacity="0.52"/>`).join("")}
+  <rect x="0" y="521" width="1002" height="10" fill="#070707"/>
+  ${Array.from({ length: 44 }).map((_, i) => `<path d="M${i * 24} 521H${i * 24 + 12}L${i * 24 + 2} 531H${i * 24 - 10}L${i * 24} 521Z" fill="#7b421c" fill-opacity="0.52"/>`).join("")}
+
+  ${brand}
+  <g filter="url(#titleGlow)">${pixelText(title, 501, 40, { scale: 9, color: "#ff4a12", anchor: "middle", maxChars: 16 })}</g>
+
+  ${battleSide(250, card.left, ringFor(0), "battleLeftClip")}
+  ${battleSide(752, card.right, ringFor(1), "battleRightClip")}
+
+  <g filter="url(#battleTextGlow)">${pixelText("VS", 501, 196, { scale: 13, color: "#ffffff", anchor: "middle" })}</g>
+  ${chain ? `<rect x="${501 - pillWidth / 2}" y="312" width="${pillWidth}" height="40" rx="12" fill="url(#chainPill)"/>
+  ${pixelText(chain, 501, 321, { scale: 3.2, color: pill.text, anchor: "middle" })}` : ""}
+</svg>`;
+}

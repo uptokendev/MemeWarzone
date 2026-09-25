@@ -1,6 +1,8 @@
 import { tickerFor } from "./arenaMatchRowPresentation.mjs";
 import { DATA_DELAY_LABEL, presentBattleWallModule, battleWallHref } from "./battleWallPresentation.mjs";
 
+const X_HANDLE = "@memewarzone";
+
 function identityKey(value, chainId) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -49,22 +51,53 @@ export function presentBattleShare(battle, metrics, options = {}) {
   const scoreKind = delayed ? "delay" : presented.scoreKind || "none";
   const winnerLabel = tab === "finished" ? authoritativeWinnerTicker(battle) : null;
   const tournament = presented.type === "tournament";
-  const venue = tournament ? "a MemeWarzone tournament" : "MemeWarzone";
+  const where = tournament ? `in a ${X_HANDLE} tournament` : `on ${X_HANDLE}`;
 
-  let shareText = `${leftTicker} vs ${rightTicker} is live in ${venue}.`;
-  if (tab === "upcoming") shareText = `${leftTicker} vs ${rightTicker} is deploying in ${venue}.`;
-  if (tab === "finished") {
-    const loserLabel =
-      winnerLabel && winnerLabel === leftTicker ? rightTicker : winnerLabel && winnerLabel === rightTicker ? leftTicker : null;
-    shareText =
-      winnerLabel && loserLabel
-        ? `${winnerLabel} defeated ${loserLabel} in ${venue}.`
-        : `${leftTicker} vs ${rightTicker} is finished in ${venue}.`;
+  // Vote Battles score on confirmed votes (Free Vote 1, Boost 2): the caller passes the same tally the
+  // card's VOTES box shows. Metrics battles keep their Battle Points.
+  const voteBattle = String(battle?.battleMode || battle?.battle_mode || "").toLowerCase() === "vote" && !tournament;
+  const votes = voteBattle && options.votes ? options.votes : null;
+  let leftPointsLabel = delayed ? null : presented.leftPointsLabel || null;
+  let rightPointsLabel = delayed ? null : presented.rightPointsLabel || null;
+  let scoreCaption = delayed ? null : presented.scoreCaption || null;
+  let effectiveScoreKind = scoreKind;
+  if (votes && !delayed && tab !== "upcoming") {
+    leftPointsLabel = String(Math.max(0, Number(votes.leftPoints) || 0));
+    rightPointsLabel = String(Math.max(0, Number(votes.rightPoints) || 0));
+    scoreCaption = "Votes";
+    effectiveScoreKind = "vote";
   }
-  if (delayed) {
-    shareText = `${shareText.replace(/\.\s*$/, "")}. ${DATA_DELAY_LABEL}.`;
-  } else if (scoreKind === "battle_points" && presented.leftPointsLabel && presented.rightPointsLabel) {
-    shareText = `${shareText.replace(/\.\s*$/, "")}. ${presented.leftPointsLabel}–${presented.rightPointsLabel} Battle Points.`;
+  const scored = !delayed && (effectiveScoreKind === "battle_points" || effectiveScoreKind === "vote") && leftPointsLabel && rightPointsLabel;
+  const leftScore = scored ? Number(leftPointsLabel) : NaN;
+  const rightScore = scored ? Number(rightPointsLabel) : NaN;
+  let leaderIndex = null;
+  if (winnerLabel && winnerLabel === leftTicker) leaderIndex = 0;
+  else if (winnerLabel && winnerLabel === rightTicker) leaderIndex = 1;
+  else if (tab !== "finished" && Number.isFinite(leftScore) && Number.isFinite(rightScore) && leftScore !== rightScore) {
+    leaderIndex = leftScore > rightScore ? 0 : 1;
+  }
+  const unit = effectiveScoreKind === "vote" ? "in votes" : "Battle Points";
+  const high = leaderIndex === 1 ? rightPointsLabel : leftPointsLabel;
+  const low = leaderIndex === 1 ? leftPointsLabel : rightPointsLabel;
+  const leaderTicker = leaderIndex === 0 ? leftTicker : leaderIndex === 1 ? rightTicker : null;
+  const trailerTicker = leaderIndex === 0 ? rightTicker : leaderIndex === 1 ? leftTicker : null;
+
+  let shareText;
+  if (tab === "upcoming") {
+    shareText = `🚨 ${leftTicker} vs ${rightTicker} is deploying ${where}. Rally your army, the war starts soon ⚔️`;
+  } else if (tab === "finished") {
+    shareText = winnerLabel && trailerTicker
+      ? `🏆 ${winnerLabel} crushed ${trailerTicker} ${where}!${scored ? ` Final: ${high}–${low} ${unit}.` : ""} Who's next? ⚔️`
+      : `⚔️ ${leftTicker} vs ${rightTicker} is over ${where}. See how the war ended.`;
+  } else {
+    const head = `⚔️ ${leftTicker} vs ${rightTicker} is LIVE ${where}!`;
+    const cta = effectiveScoreKind === "vote"
+      ? "Pick your side: vote free and boost your army before the clock runs out 🔥"
+      : "Pick your side and push your coin to victory 🔥";
+    if (delayed) shareText = `${head} ${DATA_DELAY_LABEL}. ${cta}`;
+    else if (scored && leaderTicker) shareText = `${head} ${leaderTicker} leads ${high}–${low} ${unit}. ${cta}`;
+    else if (scored) shareText = `${head} Dead even at ${leftPointsLabel}–${rightPointsLabel} ${unit}. ${cta}`;
+    else shareText = `${head} ${cta}`;
   }
 
   const shareTitle = `${leftTicker} vs ${rightTicker} — MemeWarzone`;
@@ -77,10 +110,11 @@ export function presentBattleShare(battle, metrics, options = {}) {
     leftTicker,
     rightTicker,
     winnerLabel,
-    scoreKind,
-    scoreCaption: delayed ? null : presented.scoreCaption || null,
-    leftPointsLabel: delayed ? null : presented.leftPointsLabel || null,
-    rightPointsLabel: delayed ? null : presented.rightPointsLabel || null,
+    scoreKind: effectiveScoreKind,
+    scoreCaption,
+    leftPointsLabel,
+    rightPointsLabel,
+    leaderIndex,
     dataDelayed: delayed,
     tournament,
     shareTitle,

@@ -9,9 +9,9 @@ import {
   BATTLE_SHARE_CARD_HEIGHT,
   BATTLE_SHARE_CARD_WIDTH,
   battleShareCardImagePath,
-  battleShareCardSvg,
   presentBattleShareCard,
 } from "./battleShareCardPresentation.mjs";
+import { battleHudShareCardSvg } from "../../../api/lib/hudShareCardSvg.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,25 +48,43 @@ function metrics(overrides = {}) {
   };
 }
 
-test("Battle share PNG presenter is 1200x630 with canonical focused Battle URL", () => {
+test("Battle share card is the 1002x531 HUD canvas with canonical focused Battle URL", () => {
   const card = presentBattleShareCard(battle(), metrics(), {
     requested: true,
     loaded: true,
     origin: "https://app.example.test",
   });
-  assert.equal(card.width, 1200);
-  assert.equal(card.height, 630);
-  assert.equal(BATTLE_SHARE_CARD_WIDTH, 1200);
-  assert.equal(BATTLE_SHARE_CARD_HEIGHT, 630);
+  assert.equal(card.width, 1002);
+  assert.equal(card.height, 531);
+  assert.equal(BATTLE_SHARE_CARD_WIDTH, 1002);
+  assert.equal(BATTLE_SHARE_CARD_HEIGHT, 531);
   assert.equal(card.canonicalPath, "/warzone/battles/wall-share-1");
   assert.equal(card.canonicalUrl, "https://app.example.test/warzone/battles/wall-share-1");
   assert.match(String(card.scoreCaption || ""), /Battle points/i);
   assert.equal(card.leftPointsLabel, "58.4");
-  assert.match(battleShareCardSvg(card), /width="1200"/);
-  assert.match(battleShareCardSvg(card), /height="630"/);
-  assert.match(battleShareCardSvg(card), />V</);
-  assert.match(battleShareCardSvg(card), />S</);
+  assert.equal(card.title, "BATTLE LIVE");
+  assert.equal(card.leaderIndex, 0);
+  assert.equal(card.left.scoreLabel, "58.4 PTS");
   assert.equal(battleShareCardImagePath("wall-share-1"), "/api/battle-share-card?battleId=wall-share-1");
+});
+
+test("Vote Battle card shows the live tally; green ring goes to the side with more votes", () => {
+  const card = presentBattleShareCard(
+    battle({ chainId: 101, battleMode: "vote", source: "challenge" }),
+    null,
+    { requested: true, loaded: true, votes: { leftPoints: 2, rightPoints: 5 } },
+  );
+  assert.equal(card.chainLabel, "SOL");
+  assert.equal(card.leaderIndex, 1);
+  assert.equal(card.left.scoreLabel, "2 VOTES");
+  assert.equal(card.right.scoreLabel, "5 VOTES");
+  const level = presentBattleShareCard(
+    battle({ chainId: 56, battleMode: "vote", source: "challenge" }),
+    null,
+    { requested: true, loaded: true, votes: { leftPoints: 3, rightPoints: 3 } },
+  );
+  assert.equal(level.leaderIndex, null);
+  assert.equal(level.chainLabel, "BNB");
 });
 
 test("DATA DELAY share PNG suppresses stale scores and does not infer a winner", () => {
@@ -80,9 +98,11 @@ test("DATA DELAY share PNG suppresses stale scores and does not infer a winner",
   assert.equal(card.rightPointsLabel, null);
   assert.equal(card.winnerLabel, null);
   assert.equal(card.stateLabel, DATA_DELAY_LABEL);
-  const svg = battleShareCardSvg(card);
-  assert.match(svg, new RegExp(DATA_DELAY_LABEL));
-  assert.doesNotMatch(svg, /58\.4|51\.2/);
+  // No score on the card while data is delayed, and no leader colour.
+  assert.equal(card.left.scoreLabel, null);
+  assert.equal(card.right.scoreLabel, null);
+  assert.equal(card.leaderIndex, null);
+  assert.equal(typeof battleHudShareCardSvg(card), "string");
 });
 
 test("V1 share PNG labels SCORE instead of Battle Points", () => {
@@ -108,10 +128,12 @@ test("Battle OG reuses Prepare-mode crawler/human split on the canonical Battle 
   assert.match(server, /\/battle-og\/:battleId/);
   assert.match(server, /\/battle-share-card/);
   assert.match(og, /x-mwz-og", "battle"/);
-  assert.match(og, /og:image:width" content="1200"/);
-  assert.match(og, /og:image:height" content="630"/);
+  assert.match(og, /og:image:width" content="1002"/);
+  assert.match(og, /og:image:height" content="531"/);
   assert.match(og, /\/warzone\/battles\/:battleId/);
-  assert.match(png, /fitTo: \{ mode: "width", value: 1200 \}/);
+  assert.match(png, /battleHudShareCardSvg/);
+  assert.match(png, /renderHudShareCardPng/);
+  assert.match(png, /votes: payload\.votes/);
   assert.match(edge, /BOT_RE/);
   assert.match(edge, /x-mwz-edge-og["']:\s*["']bot["']/);
   assert.match(edge, /x-mwz-edge-og", "inject"/);

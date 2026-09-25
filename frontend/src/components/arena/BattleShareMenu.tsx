@@ -9,6 +9,7 @@ import {
 import type { Battle } from "@/features/postgrad/contracts";
 import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { presentBattleShare } from "@/lib/arena/battleSharePresentation.mjs";
+import { BattleShareCardModal } from "@/components/arena/BattleShareCardModal";
 
 function browserOrigin() {
   if (typeof window === "undefined") return "";
@@ -20,17 +21,22 @@ export function BattleShareMenu({
   metrics,
   metricsRequested = false,
   metricsLoaded = false,
+  votes = null,
 }: {
   battle: Battle;
   metrics?: BattleRealtimeMetrics | null;
   metricsRequested?: boolean;
   metricsLoaded?: boolean;
+  /** Live Vote Battle tally (the card's VOTES box), so the post text quotes the same score. */
+  votes?: { leftPoints: number; rightPoints: number } | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [cardOpen, setCardOpen] = useState(false);
   const share = presentBattleShare(battle, metrics, {
     origin: browserOrigin(),
     requested: metricsRequested,
     loaded: metricsLoaded,
+    votes,
   });
 
   async function copyLink() {
@@ -44,15 +50,11 @@ export function BattleShareMenu({
     setOpen(false);
   }
 
-  function shareOnX() {
-    window.open(share.xIntentUrl, "_blank", "noopener,noreferrer");
-    setOpen(false);
-  }
-
-  function downloadShareImage() {
+  // Share on X and the image download both open the share card, like the token page.
+  function openShareCard() {
     if (!share.battleId) return;
-    window.open(`/api/battle-share-card?battleId=${encodeURIComponent(share.battleId)}`, "_blank", "noopener,noreferrer");
     setOpen(false);
+    setCardOpen(true);
   }
 
   return (
@@ -72,13 +74,22 @@ export function BattleShareMenu({
         <DropdownMenuItem className="min-h-11 cursor-pointer font-retro text-xs uppercase tracking-[0.14em]" onSelect={() => void copyLink()}>
           Copy battle link
         </DropdownMenuItem>
-        <DropdownMenuItem className="min-h-11 cursor-pointer font-retro text-xs uppercase tracking-[0.14em]" onSelect={() => shareOnX()}>
+        <DropdownMenuItem className="min-h-11 cursor-pointer font-retro text-xs uppercase tracking-[0.14em]" onSelect={() => openShareCard()}>
           Share on X
         </DropdownMenuItem>
-        <DropdownMenuItem className="min-h-11 cursor-pointer font-retro text-xs uppercase tracking-[0.14em]" onSelect={() => downloadShareImage()}>
+        <DropdownMenuItem className="min-h-11 cursor-pointer font-retro text-xs uppercase tracking-[0.14em]" onSelect={() => openShareCard()}>
           Download share image
         </DropdownMenuItem>
       </DropdownMenuContent>
+      <BattleShareCardModal
+        open={cardOpen}
+        onClose={() => setCardOpen(false)}
+        battleId={share.battleId}
+        leftTicker={share.leftTicker}
+        rightTicker={share.rightTicker}
+        shareText={share.shareText}
+        pageUrl={share.canonicalUrl || share.canonicalPath}
+      />
     </DropdownMenu>
   );
 }
