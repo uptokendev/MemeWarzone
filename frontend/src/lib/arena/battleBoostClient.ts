@@ -69,7 +69,9 @@ export type SolanaBattleBoostQuote = {
   side: "left" | "right";
   targetToken: string;
   boostUnits: string;
-  pointsPerBoost: 1;
+  // 1 on a metrics battle (V3 curve scores it); 2 on a Vote Battle (Free Vote 1, Boost 2).
+  pointsPerBoost: 1 | 2;
+  voteBattle?: boolean;
   usdPerBoostMicros: "1000000" | string;
   grossLamports: string;
   prizeLamports: string;
@@ -123,9 +125,16 @@ function parseQuote(value: unknown): BattleBoostQuote {
 function parseSolanaQuote(value: unknown): SolanaBattleBoostQuote {
   const quote = value as SolanaBattleBoostQuote | null;
   if (!quote?.quoteId || quote.product !== "normal_battle" || !quote.transaction?.programId || !quote.transaction.dataBase64 || !Array.isArray(quote.transaction.accounts)) throw new Error("Solana Battle Boost quote is incomplete.");
-  if (Number(quote.pointsPerBoost) !== 1 || String(quote.usdPerBoostMicros) !== "1000000") throw new Error("Solana Battle Boost quote has unexpected unit economics.");
+  // A Vote Battle boost is worth VOTE_BATTLE_BOOST_POINTS_PER_UNIT (2) regulation points and is not
+  // scored by the V3 curve; the API quotes it that way (arenaSolanaBoosts.js). Only the metrics
+  // battle shape was accepted here, so every Vote Battle boost was refused (2026-09-25).
+  const voteBattle = quote.voteBattle === true;
+  const expectedPoints = voteBattle ? 2 : 1;
+  if (Number(quote.pointsPerBoost) !== expectedPoints || String(quote.usdPerBoostMicros) !== "1000000") throw new Error("Solana Battle Boost quote has unexpected unit economics.");
   if (Number(quote.split?.prizeBps) !== 9000 || Number(quote.split?.protocolBps) !== 1000 || Number(quote.split?.leagueBps) !== 0) throw new Error("Solana Battle Boost quote has unexpected split economics.");
-  if (quote.battlePointsV3?.scoringActive !== true || String(quote.battlePointsV3?.boostCurveVersion || "") !== APPROVED_V3_CURVE) throw new Error("Solana Battle Boost quote is not authorized by the active V3 scoring lock.");
+  if (voteBattle) {
+    if (quote.battlePointsV3?.scoringActive !== false || String(quote.battlePointsV3?.scoringVersion || "") !== "vote_tournament_v1") throw new Error("Solana Vote Battle Boost quote has unexpected scoring.");
+  } else if (quote.battlePointsV3?.scoringActive !== true || String(quote.battlePointsV3?.boostCurveVersion || "") !== APPROVED_V3_CURVE) throw new Error("Solana Battle Boost quote is not authorized by the active V3 scoring lock.");
   for (const field of ["boostUnits", "grossLamports", "prizeLamports", "protocolLamports"] as const) {
     try { BigInt(String(quote[field])); } catch { throw new Error(`Solana Battle Boost ${field} is invalid.`); }
   }

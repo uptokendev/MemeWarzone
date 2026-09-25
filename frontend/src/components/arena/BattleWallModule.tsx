@@ -194,74 +194,82 @@ export function BattleWallModule({
         </h2>
       ) : null}
 
-      <div className="relative isolate overflow-hidden" data-battle-wall-combat-stage="true">
-        <div className="relative z-10 grid min-w-0 grid-cols-1 items-center gap-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-2">
-          <BattleWallCombatant
-            battle={displayBattle}
-            participant={left}
-            metricsSide={displayMetrics?.sides?.left}
-            pointsLabel={preLive ? null : presented.leftPointsLabel}
-            scoreCaption={preLive ? null : presented.scoreCaption}
-            isLeader={leaderReady && presented.leaderIndex === 0}
-            isTrailer={leaderReady && presented.leaderIndex === 1}
-            finished={presented.tab === "finished"}
-            accent="ember"
-            combatSide="left"
-            actions={
-              presented.showFightActions ? (
-                <BattleFightActions mode={fightMode} mocksEnabled={postGradFlags.mocks} />
-              ) : null
-            }
-          />
-          <BattleWallVs
-            leftLabel={presented.leftTicker}
-            rightLabel={presented.rightTicker}
-            leftPoints={preLive ? null : presented.leftPointsLabel}
-            rightPoints={preLive ? null : presented.rightPointsLabel}
-            leaderIndex={preLive ? null : presented.leaderIndex}
-            gapLabel={preLive ? null : presented.gapLabel}
-            clockLabel={preLive ? null : battleClockLabel(displayBattle)}
-            remaining={presented.tab === "live"}
-            statusLabel={preLive ? null : presented.statusLabel}
-            scoreKind={preLive ? null : presented.scoreKind}
-            deploymentPending={phase === "matched"}
-            stakeLabel={
-              phase === "matched"
-                ? `${presented.stakeNative} ${presented.nativeSymbol || getNativeSymbol(chainId)}`.trim()
-                : null
-            }
-            durationLabel={phase === "matched" ? battleDurationLabel(presented.durationHours) : null}
-          />
-          <BattleWallCombatant
-            battle={displayBattle}
-            participant={right}
-            metricsSide={displayMetrics?.sides?.right}
-            pointsLabel={preLive ? null : presented.rightPointsLabel}
-            scoreCaption={preLive ? null : presented.scoreCaption}
-            isLeader={leaderReady && presented.leaderIndex === 1}
-            isTrailer={leaderReady && presented.leaderIndex === 0}
-            finished={presented.tab === "finished"}
-            accent="cyan"
-            combatSide="right"
-            actions={
-              presented.showFightActions ? (
-                <BattleFightActions mode={fightMode} mocksEnabled={postGradFlags.mocks} />
-              ) : null
-            }
-          />
-        </div>
-        {mountEffects ? (
-          <BattleCombatEffects metrics={displayMetrics} rootRef={moduleRef} battleId={battle.id} />
-        ) : null}
-      </div>
-
       <BattleWallCombatControls
         voteState={voteState}
         battle={displayBattle}
         metrics={displayMetrics}
         realtimeState={realtime.realtimeState}
         dataSource={selected.source}
-      />
+      >
+        {(combat) => (
+          <>
+            <div className="relative isolate overflow-hidden" data-battle-wall-combat-stage="true">
+              <div className="relative z-10 grid min-w-0 grid-cols-1 items-center gap-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-2">
+                <BattleWallCombatant
+                  battle={displayBattle}
+                  participant={left}
+                  metricsSide={displayMetrics?.sides?.left}
+                  pointsLabel={preLive ? null : presented.leftPointsLabel}
+                  scoreCaption={preLive ? null : presented.scoreCaption}
+                  isLeader={leaderReady && presented.leaderIndex === 0}
+                  isTrailer={leaderReady && presented.leaderIndex === 1}
+                  finished={presented.tab === "finished"}
+                  accent="ember"
+                  combatSide="left"
+                  actions={
+                    combat.left ??
+                    (presented.showFightActions ? (
+                      <BattleFightActions mode={fightMode} mocksEnabled={postGradFlags.mocks} />
+                    ) : null)
+                  }
+                />
+                <BattleWallVs
+                  leftLabel={presented.leftTicker}
+                  rightLabel={presented.rightTicker}
+                  leftPoints={preLive ? null : presented.leftPointsLabel}
+                  rightPoints={preLive ? null : presented.rightPointsLabel}
+                  leaderIndex={preLive ? null : presented.leaderIndex}
+                  gapLabel={preLive ? null : presented.gapLabel}
+                  clockLabel={preLive ? null : battleClockLabel(displayBattle)}
+                  remaining={presented.tab === "live"}
+                  statusLabel={preLive ? null : presented.statusLabel}
+                  scoreKind={preLive ? null : presented.scoreKind}
+                  deploymentPending={phase === "matched"}
+                  stakeLabel={
+                    phase === "matched"
+                      ? `${presented.stakeNative} ${presented.nativeSymbol || getNativeSymbol(chainId)}`.trim()
+                      : null
+                  }
+                  durationLabel={phase === "matched" ? battleDurationLabel(presented.durationHours) : null}
+                />
+                <BattleWallCombatant
+                  battle={displayBattle}
+                  participant={right}
+                  metricsSide={displayMetrics?.sides?.right}
+                  pointsLabel={preLive ? null : presented.rightPointsLabel}
+                  scoreCaption={preLive ? null : presented.scoreCaption}
+                  isLeader={leaderReady && presented.leaderIndex === 1}
+                  isTrailer={leaderReady && presented.leaderIndex === 0}
+                  finished={presented.tab === "finished"}
+                  accent="cyan"
+                  combatSide="right"
+                  actions={
+                    combat.right ??
+                    (presented.showFightActions ? (
+                      <BattleFightActions mode={fightMode} mocksEnabled={postGradFlags.mocks} />
+                    ) : null)
+                  }
+                />
+              </div>
+              {mountEffects ? (
+                <BattleCombatEffects metrics={displayMetrics} rootRef={moduleRef} battleId={battle.id} />
+              ) : null}
+            </div>
+            {combat.note}
+          </>
+        )}
+      </BattleWallCombatControls>
+
 
       <div
         data-battle-wall-actions="true"

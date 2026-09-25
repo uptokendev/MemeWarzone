@@ -72,6 +72,10 @@ test("Battle Wall Boost uses signed quote paths without client-side receipt auth
   assert.match(panel, /backend-authoritative/);
   assert.match(wall, /battleBoostAvailability/);
   assert.match(wall, /useBattleBoost/);
+  // Vote Battle boosts are quoted at 2 pts with V3 scoring off (arenaSolanaBoosts.js); the client
+  // must accept that shape or every Vote Battle boost is refused before payment.
+  assert.match(client, /const expectedPoints = voteBattle \? 2 : 1;/);
+  assert.match(client, /scoringVersion \|\| ""\) !== "vote_tournament_v1"/);
 });
 
 test("Battle Boost fails closed when aggregate runtime is unavailable and polls authoritative totals after payment", () => {

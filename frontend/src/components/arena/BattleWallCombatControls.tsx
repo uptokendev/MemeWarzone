@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { ThumbsUp, Zap } from "lucide-react";
 
 import { boostPaymentLabel, useBattleBoost } from "@/components/arena/BattleBoostPanel";
@@ -9,6 +10,11 @@ import { presentBattleWallMore } from "@/lib/arena/battleWallMorePresentation.mj
 
 type VoteState = ReturnType<typeof useBattleVote>;
 
+type SideKey = "left" | "right";
+
+/** What the battle card places into each combatant's action strip, plus one shared hint line. */
+export type BattleCombatSlots = { left: ReactNode; right: ReactNode; note: ReactNode };
+
 type Props = {
   battle: Battle;
   /** Owned by the battle card so its VOTES box and these buttons read one live vote state. */
@@ -16,14 +22,16 @@ type Props = {
   metrics?: BattleRealtimeMetrics | null;
   realtimeState?: string | null;
   dataSource?: string | null;
+  children: (slots: BattleCombatSlots) => ReactNode;
 };
 
-type SideKey = "left" | "right";
+const EMPTY_SLOTS: BattleCombatSlots = { left: null, right: null, note: null };
 
-const VOTE_CLASS =
-  "flex min-h-12 w-full items-center justify-center gap-2 border border-orange-400/70 bg-gradient-to-b from-orange-500 to-orange-700 px-4 font-retro text-sm uppercase tracking-[0.18em] text-white shadow-[0_0_18px_rgba(249,115,22,0.35)] transition hover:from-orange-400 hover:to-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 disabled:cursor-not-allowed disabled:opacity-45";
-const BOOST_CLASS =
-  "flex min-h-12 w-full items-center justify-center gap-2 border border-amber-300/60 bg-gradient-to-b from-amber-500 to-amber-800 px-4 font-retro text-sm uppercase tracking-[0.18em] text-black shadow-[0_0_18px_rgba(245,158,11,0.3)] transition hover:from-amber-400 hover:to-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 disabled:cursor-not-allowed disabled:opacity-45";
+// Compact, side by side in the strip under MCAP / HOLDERS / VOL / VOTES (founder design, 2026-09-25).
+const BUTTON_BASE =
+  "flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 border px-2 font-retro text-xs uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-45";
+const VOTE_CLASS = `${BUTTON_BASE} border-orange-400/70 bg-gradient-to-b from-orange-500 to-orange-700 text-white shadow-[0_0_12px_rgba(249,115,22,0.3)] hover:from-orange-400 hover:to-orange-600 focus-visible:ring-orange-300`;
+const BOOST_CLASS = `${BUTTON_BASE} border-amber-300/60 bg-gradient-to-b from-amber-400 to-amber-600 text-black shadow-[0_0_12px_rgba(245,158,11,0.3)] hover:from-amber-300 hover:to-amber-500 focus-visible:ring-amber-200`;
 
 /**
  * Vote and Boost buttons under each combatant on the battle card. They used to sit in the collapsed
@@ -65,11 +73,12 @@ export function liveVoteScore(leftPoints: number, rightPoints: number) {
   };
 }
 
-export function BattleWallCombatControls({ battle, voteState, metrics, realtimeState, dataSource }: Props) {
+export function BattleWallCombatControls({ battle, voteState, metrics, realtimeState, dataSource, children }: Props) {
   const more = presentBattleWallMore(battle, metrics, { realtimeState, dataSource });
   const boostAvailable = battleBoostAvailability(battle).available;
   const { showVote, voteTokens, chainId } = battleVoteEligibility(battle);
-  if (!showVote && !boostAvailable) return null;
+  // Only battles that can take a vote or a boost mount the boost hook (and its reads).
+  if (!showVote && !boostAvailable) return <>{children(EMPTY_SLOTS)}</>;
   return (
     <CombatControls
       vote={voteState}
@@ -80,7 +89,9 @@ export function BattleWallCombatControls({ battle, voteState, metrics, realtimeS
       voteTokens={voteTokens}
       left={more.left}
       right={more.right}
-    />
+    >
+      {children}
+    </CombatControls>
   );
 }
 
@@ -93,6 +104,7 @@ function CombatControls({
   voteTokens,
   left,
   right,
+  children,
 }: {
   vote: VoteState;
   battleId: string;
@@ -102,12 +114,13 @@ function CombatControls({
   voteTokens: string[];
   left: { tokenId?: string | null; ticker?: string | null; name?: string | null };
   right: { tokenId?: string | null; ticker?: string | null; name?: string | null };
+  children: (slots: BattleCombatSlots) => ReactNode;
 }) {
   const boost = useBattleBoost({ battleId, chainId, left, right });
 
-  const sides: Array<{ key: SideKey; voteToken: string; boostToken?: string | null; points: number; votes: number }> = [
-    { key: "left", voteToken: voteTokens[0], boostToken: left.tokenId, points: vote.model.leftPoints, votes: vote.model.leftVotes },
-    { key: "right", voteToken: voteTokens[1], boostToken: right.tokenId, points: vote.model.rightPoints, votes: vote.model.rightVotes },
+  const sides: Array<{ key: SideKey; voteToken: string; boostToken?: string | null }> = [
+    { key: "left", voteToken: voteTokens[0], boostToken: left.tokenId },
+    { key: "right", voteToken: voteTokens[1], boostToken: right.tokenId },
   ];
   const voteDisabled = !vote.payload || !vote.model.votingLive || Boolean(vote.model.walletVote) || Boolean(vote.busyToken);
 
@@ -121,42 +134,44 @@ function CombatControls({
     else note = "One Free Vote per wallet (1 pt). Each Boost costs $1 and adds 2 pts.";
   }
 
-  return (
-    <div data-battle-combat-controls="true" className="relative z-20 mt-3 space-y-2">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-10 lg:gap-24">
-        {sides.map((side) => {
-          const votedHere = Boolean(vote.model.walletVote) && vote.model.walletVote === side.voteToken;
-          const payment = boost.isSolana ? boostPaymentLabel(boost.paymentStates[side.key]) : null;
-          return (
-            <div key={side.key} className="space-y-2" data-battle-combat-side={side.key}>
-              {showVote ? (
-                <button type="button" className={VOTE_CLASS} disabled={voteDisabled} onClick={() => void vote.vote(side.voteToken)}>
-                  <ThumbsUp className="h-4 w-4" aria-hidden />
-                  {vote.busyToken === side.voteToken ? "Confirming…" : votedHere ? "Voted" : "Vote"}
-                </button>
-              ) : null}
-              {showBoost ? (
-                <button
-                  type="button"
-                  className={BOOST_CLASS}
-                  disabled={boost.disabled || !side.boostToken || boost.sideBlocked(side.key)}
-                  onClick={() => void boost.boost(side.key, side.boostToken)}
-                >
-                  <Zap className="h-4 w-4" aria-hidden />
-                  {boost.busySide === side.key ? "Boosting…" : "Boost"}
-                </button>
-              ) : null}
-              <div className="text-center text-[10px] uppercase tracking-[0.16em] text-white/50">
-                {showVote ? `${side.points} pts · ${side.votes} vote${side.votes === 1 ? "" : "s"}` : null}
-                {showVote && showBoost ? " · " : null}
-                {showBoost ? `${boost.totals[side.key]} boost${boost.totals[side.key] === 1 ? "" : "s"}` : null}
-              </div>
-              {payment ? <div className="text-center text-[10px] uppercase tracking-[0.12em] text-white/42">{payment}</div> : null}
-            </div>
-          );
-        })}
+  const renderSide = (side: (typeof sides)[number]) => {
+    const votedHere = Boolean(vote.model.walletVote) && vote.model.walletVote === side.voteToken;
+    const payment = boost.isSolana ? boostPaymentLabel(boost.paymentStates[side.key]) : null;
+    const boosts = boost.totals[side.key];
+    return (
+      <div data-battle-combat-buttons={side.key} className="py-1.5">
+        <div className="flex min-w-0 gap-2">
+          {showVote ? (
+            <button type="button" className={VOTE_CLASS} disabled={voteDisabled} onClick={() => void vote.vote(side.voteToken)}>
+              <ThumbsUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="truncate">{vote.busyToken === side.voteToken ? "Confirming…" : votedHere ? "Voted" : "Vote"}</span>
+            </button>
+          ) : null}
+          {showBoost ? (
+            <button
+              type="button"
+              className={BOOST_CLASS}
+              disabled={boost.disabled || !side.boostToken || boost.sideBlocked(side.key)}
+              onClick={() => void boost.boost(side.key, side.boostToken)}
+              title={`${boosts} boost${boosts === 1 ? "" : "s"} on this side`}
+            >
+              <Zap className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="truncate">{boost.busySide === side.key ? "Boosting…" : boosts > 0 ? `Boost · ${boosts}` : "Boost"}</span>
+            </button>
+          ) : null}
+        </div>
+        {payment ? <div className="mt-1 text-center text-[10px] uppercase tracking-[0.12em] text-white/42">{payment}</div> : null}
       </div>
-      {note ? <p className="text-center text-xs text-white/48">{note}</p> : null}
-    </div>
+    );
+  };
+
+  return (
+    <>
+      {children({
+        left: renderSide(sides[0]),
+        right: renderSide(sides[1]),
+        note: note ? <p data-battle-combat-note="true" className="relative z-20 mt-2 text-center text-xs text-white/48">{note}</p> : null,
+      })}
+    </>
   );
 }
