@@ -45,7 +45,7 @@ function randomBetween(min: number, max: number) {
   return min + Math.random() * (max - min);
 }
 
-function recoilTarget(
+export function recoilTarget(
   side: CombatSide,
   severity: Severity,
   reducedMotion: boolean,
@@ -68,7 +68,7 @@ function recoilTarget(
   );
 }
 
-function useMediaFlag(query: string) {
+export function useMediaFlag(query: string) {
   const [matches, setMatches] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BattleCombatEffects } from "@/components/arena/BattleCombatEffects";
+import { BattleVoteImpacts } from "@/components/arena/BattleVoteImpacts";
 import { BattleFightActions } from "@/components/arena/BattleFightActions";
 import { BattleShareMenu } from "@/components/arena/BattleShareMenu";
 import { BattleWallCombatant } from "@/components/arena/BattleWallCombatant";
@@ -264,6 +265,12 @@ export function BattleWallModule({
               {mountEffects ? (
                 <BattleCombatEffects metrics={displayMetrics} rootRef={moduleRef} battleId={battle.id} />
               ) : null}
+              <BattleVoteImpacts
+                active={voteEligibility.showVote && Boolean(voteState.payload)}
+                leftPoints={voteState.payload ? voteState.model.leftPoints : null}
+                rightPoints={voteState.payload ? voteState.model.rightPoints : null}
+                rootRef={moduleRef}
+              />
             </div>
             {combat.note}
           </>
