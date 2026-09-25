@@ -52,11 +52,19 @@ export function filterBattleFeedByChain(payload, chainId) {
   };
 }
 
+/**
+ * Named routes under /arena/battles/ that are not battle ids. Every GET route added to
+ * arenaBattles.js belongs here: the runtime looks any other segment up as a battle id on the
+ * requested chain and answers 404 BATTLE_CHAIN_MISMATCH before the route runs. `opponents`
+ * was missing, so the challenge popup's opponent list 404'd on every chain-scoped call.
+ */
+export const ARENA_BATTLE_NAMED_ROUTES = Object.freeze(["creator-status", "matches", "opponents", "inbox", "open", "challenge"]);
+
 export function battleIdFromPath(path) {
   const value = String(path || "");
   const match = value.match(/^\/arena\/battles\/([^/]+)(?:\/(?:accept|counter|decline|cancel-open|transition))?$/);
   if (!match) return "";
   const decoded = decodeURIComponent(match[1]);
-  if (["creator-status", "matches", "open", "challenge"].includes(decoded)) return "";
+  if (ARENA_BATTLE_NAMED_ROUTES.includes(decoded)) return "";
   return decoded;
 }

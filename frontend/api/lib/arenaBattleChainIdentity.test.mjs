@@ -58,6 +58,8 @@ test("ACCEPT COUNTER DECLINE cancel and LIVE transition all resolve the same gua
   }
   assert.equal(battleIdFromPath("/arena/battles/challenge"), "");
   assert.equal(battleIdFromPath("/arena/battles/open"), "");
+  assert.equal(battleIdFromPath("/arena/battles/opponents"), "");
+  assert.equal(battleIdFromPath("/arena/battles/inbox"), "");
 });
 
 test("Battle list/feed is chain isolated while aggregate payload can remain chain-aware", () => {
@@ -115,4 +117,16 @@ test("historical V2 scoring remains 50/30/20 and has no Boost allocation", () =>
   assert.equal(BATTLE_POINTS_CONFIG.holders.weight, 30);
   assert.equal(BATTLE_POINTS_CONFIG.volume.weight, 20);
   assert.equal("boost" in BATTLE_POINTS_CONFIG, false);
+});
+
+test("every named GET route in arenaBattles.js is exempt from the battle-id lookup", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { ARENA_BATTLE_NAMED_ROUTES } = await import("./arenaBattleChainIdentity.js");
+  const source = await readFile(new URL("../arenaBattles.js", import.meta.url), "utf8");
+  const named = [...source.matchAll(/path === "\/arena\/battles\/([a-z-]+)"/g)].map((m) => m[1]);
+  assert.ok(named.length >= 5, `expected the named routes, found ${named.join(",")}`);
+  for (const name of named) {
+    assert.ok(ARENA_BATTLE_NAMED_ROUTES.includes(name), `${name} is routed by arenaBattles.js but would be looked up as a battle id`);
+    assert.equal(battleIdFromPath(`/arena/battles/${name}`), "");
+  }
 });
