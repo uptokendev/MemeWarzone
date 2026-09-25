@@ -4647,7 +4647,6 @@ const toSeconds = (ts: number): number => {
               <div className="rounded-xl border border-border bg-muted/20 px-3 py-2 col-span-2 md:col-span-1">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Holders</p>
                 <p className="mt-0.5 text-sm md:text-[15px] font-retro text-foreground">{tokenData.holders}</p>
-                <p className="mt-0.5 text-[10px] md:text-[11px] text-muted-foreground">Buyers {flywheel.buyers}</p>
               </div>
             </div>
           </div>
