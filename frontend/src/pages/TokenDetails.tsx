@@ -5200,20 +5200,7 @@ const toSeconds = (ts: number): number => {
                     This token has graduated. Bonding is closed. Trading continues on the same page
                     {isSolanaPage ? " via Meteora" : isRobinhoodPage ? " via Uniswap" : " via Topaz"}.
                   </p>
-                ) : (
-                  <p className="text-[10px] text-muted-foreground leading-snug mb-2">
-                    Graduates when <span className="text-foreground/80">tokens sold</span> hit the curve
-                    supply <span className="text-foreground/80">or</span> {nativeUnit} raised hits the target
-                    (testnet ${isSolanaPage ? "6" : "target"} can be tiny, so {nativeUnit} % can look large).
-                    {isSolanaPage && solanaCurve ? (
-                      <>
-                        {" "}Curve: {formatTokenFromWei(solanaCurve.soldTokens)} /{" "}
-                        {formatTokenFromWei(solanaCurve.curveTokenSupply)} sold ·{" "}
-                        {formatBnbFromWei(solanaCurve.netRaisedLamports)} net raised.
-                      </>
-                    ) : null}
-                  </p>
-                )}
+                ) : null}
 
                 <div className="mt-3 h-2 w-full rounded-full bg-muted/30 border border-border/40 overflow-hidden">
                   <div
