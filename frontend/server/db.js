@@ -77,9 +77,16 @@ if (!_pool) {
           ? { rejectUnauthorized: false, servername: host }
           : { rejectUnauthorized: true, servername: host },
 
-    max: 2,
+    // One long-lived server on Coolify serves every request plus the in-process battle worker.
+    // max: 2 was a serverless leftover; under launch traffic every request queued behind two
+    // connections, timed out after 10 s and the proxy answered 502/503 (2026-09-25).
+    max: Math.max(2, Math.min(40, Number(process.env.PG_POOL_MAX || 15))),
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
+    // A query the pooler never answers fails instead of holding its connection forever.
+    query_timeout: Math.max(5_000, Number(process.env.PG_QUERY_TIMEOUT_MS || 30_000)),
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
   });
 
   globalThis.__memewarzone_pool = _pool;

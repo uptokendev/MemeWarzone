@@ -177,6 +177,7 @@ function campaignAddrsMatch(itemAddr: string, patchAddr: string, itemChainId: nu
 function applyVotePatch(
   items: FeaturedItem[],
   patch: { chainId?: number; campaignAddress: string; votes24h?: number; votesAllTime?: number; delta?: number },
+  opts?: { admit?: boolean },
 ): FeaturedItem[] {
   const addr = liveCampaignKey(Number(patch.chainId || 0), String(patch.campaignAddress || ""));
   if (!isAddress(addr)) return items;
@@ -190,6 +191,10 @@ function applyVotePatch(
   });
 
   if (idx < 0) {
+    // Only the local upvote may admit a card. A realtime patch for a campaign the board does not
+    // hold (hidden test coin, another board) used to create a nameless "Unknown" card that no
+    // API filter could remove; admission goes through /api/featured, which applies publicHidden.
+    if (opts?.admit === false) return items;
     if (!delta && patch.votes24h == null && patch.votesAllTime == null) return items;
     const seedVotes = Math.max(1, Number(patch.votes24h ?? delta ?? 1));
     const seed: FeaturedItem = {
@@ -556,12 +561,16 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
       for (const addr of keys) {
         const p = patchByCampaign[addr];
         if (!p) continue;
-        next = applyVotePatch(next, {
-          chainId,
-          campaignAddress: p.campaignAddress || addr,
-          votes24h: p.votes24h != null ? Number(p.votes24h) : undefined,
-          votesAllTime: p.votesAllTime != null ? Number(p.votesAllTime) : undefined,
-        });
+        next = applyVotePatch(
+          next,
+          {
+            chainId,
+            campaignAddress: p.campaignAddress || addr,
+            votes24h: p.votes24h != null ? Number(p.votes24h) : undefined,
+            votesAllTime: p.votesAllTime != null ? Number(p.votesAllTime) : undefined,
+          },
+          { admit: false },
+        );
         const liveMcap = pickLiveNumeric(p.marketcapBnb, NaN);
         if (liveMcap > 0) {
           next = applyLiveMcap(next, {
