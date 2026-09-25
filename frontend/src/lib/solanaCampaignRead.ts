@@ -33,6 +33,24 @@ export function solanaMarginalSpotLamports(
   );
 }
 
+/**
+ * Net lamports the curve takes in to sell `supplyRaw` tokens from zero: the integral of the linear
+ * price. The curve closes at the smaller of this and the native graduation target, so progress is
+ * measured against that amount -- not against tokens sold, which runs far ahead of SOL raised on a
+ * linear curve (KAIJU88: 23.8% of tokens sold was 14.4% of the way to graduation).
+ */
+export function solanaCurveCostLamports(curve: SolanaCurvePricingState, supplyRaw: bigint): bigint {
+  const decimals = Math.max(0, Number(curve.tokenDecimals || 0));
+  const tokenScale = 10n ** BigInt(decimals);
+  const slopeDenominator =
+    Number(curve.economicsVersion || 0) >= 3 ? tokenScale * 1_000_000_000n : tokenScale;
+  if (tokenScale <= 0n || slopeDenominator <= 0n || supplyRaw <= 0n) return 0n;
+  return (
+    (curve.basePriceLamports * supplyRaw) / tokenScale +
+    (curve.priceSlopeLamports * supplyRaw * supplyRaw) / (2n * slopeDenominator * tokenScale)
+  );
+}
+
 export function solanaMarginalSpotSol(
   curve: SolanaCurvePricingState,
   soldTokensRaw: bigint,

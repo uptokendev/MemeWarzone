@@ -126,8 +126,9 @@ export async function fetchDexScreenerPairs(slug, addresses, fetchImpl = fetch) 
 }
 
 /** Owners holding a positive balance of a Solana mint (SPL or Token-2022), via Helius DAS. */
-export async function countSolanaHolders(rpcUrl, mint, fetchImpl = fetch) {
+export async function countSolanaHolders(rpcUrl, mint, fetchImpl = fetch, { excludeOwners = [] } = {}) {
   if (!rpcUrl) return null;
+  const excluded = new Set(excludeOwners.map((owner) => String(owner || "").trim()).filter(Boolean));
   const owners = new Set();
   for (let page = 1; page <= MAX_HOLDER_PAGES; page++) {
     const res = await fetchImpl(rpcUrl, {
@@ -142,7 +143,7 @@ export async function countSolanaHolders(rpcUrl, mint, fetchImpl = fetch) {
     const accounts = json?.result?.token_accounts || [];
     for (const account of accounts) {
       try {
-        if (BigInt(String(account?.amount ?? 0)) > 0n && account?.owner) owners.add(String(account.owner));
+        if (BigInt(String(account?.amount ?? 0)) > 0n && account?.owner && !excluded.has(String(account.owner))) owners.add(String(account.owner));
       } catch {
         // ignore malformed amounts
       }

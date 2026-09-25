@@ -56,6 +56,7 @@ import {
   stashPendingSolanaDexTrade,
 } from "@/lib/solanaGraduationHandoff";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
+import { MobileTradeDock, MobileTradeSheet, useXlUp } from "@/components/token/MobileTradeSheet";
 import { TokenComments } from "@/components/token/TokenComments";
 import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { AthBar } from "@/components/token/AthBar";
@@ -86,7 +87,7 @@ import {
 } from "@/components/token/CrypticPumpListing";
 import { RadarLoader } from "@/components/ui/RadarLoader";
 import { fetchOnChainCampaignPage } from "@/lib/onChainCampaignFeed";
-import { solanaMarginalSpotSol } from "@/lib/solanaCampaignRead";
+import { solanaCurveCostLamports, solanaMarginalSpotSol } from "@/lib/solanaCampaignRead";
 import { fetchPublicCampaignLifecycleDrafts } from "@/lib/scheduledLaunchApi";
 import {
   appendLocalTopazTrade,
@@ -780,7 +781,9 @@ const TokenDetails = () => {
   const [confirmedCurvePoints, setConfirmedCurvePoints] = useState<CurveTradePoint[]>([]);
   const [activityTab, setActivityTab] = useState<"overview" | "comments" | "trades">(() => readStoredString("mwz:token:workspace-tab", "overview"));
   const [shareCardOpen, setShareCardOpen] = useState(false);
+  const [mobileTradeOpen, setMobileTradeOpen] = useState(false);
   const tokenArtRef = useRef<HTMLImageElement | null>(null);
+  const isXlUp = useXlUp();
   // The description a creator writes at deploy lives in token_metadata_registry
   // and is served by /api/token-metadata for every chain. It left the feed
   // cards on purpose; the Overview tab is where it belongs.
@@ -887,6 +890,35 @@ const TokenDetails = () => {
     poolAddress: rtStats?.dexPool ?? null,
     enabled: isSolanaPage && Boolean(solanaCurve?.graduated),
   });
+  // Exact Solana holder count from the chain (server-side token-account scan, 60 s cache).
+  const [solanaHolderCount, setSolanaHolderCount] = useState<number | null>(null);
+  const solanaHolderMint = isSolanaPage ? String(solanaCurve?.mint || campaign?.token || "").trim() : "";
+  const solanaHolderCampaign = isSolanaPage ? String(solanaCurve?.campaignAddress || "").trim() : "";
+  useEffect(() => {
+    if (!solanaHolderMint) {
+      setSolanaHolderCount(null);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const params = new URLSearchParams({ mint: solanaHolderMint });
+        if (solanaHolderCampaign) params.set("campaign", solanaHolderCampaign);
+        const response = await apiFetch(`/api/solana/holders?${params.toString()}`, { cache: "no-store" });
+        const body = await response.json().catch(() => null);
+        const count = Number(body?.holders);
+        if (!cancelled && body?.ok && Number.isFinite(count) && count >= 0) setSolanaHolderCount(count);
+      } catch {
+        // keep the previous value; the page falls back to its own estimates
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [solanaHolderMint, solanaHolderCampaign]);
   const transferHolders = useTokenTransferHolders({
     tokenAddress: campaign?.token,
     chainId: chainIdForStorage,
@@ -2214,7 +2246,9 @@ const toSeconds = (ts: number): number => {
                 : "—",
       volume: window24h && window24h !== "—" ? window24h : stats?.volume ?? "—",
       holders:
-        onChainHolderCount != null && onChainHolderCount > 0
+        isSolanaPage && solanaHolderCount != null && solanaHolderCount > 0
+          ? String(solanaHolderCount)
+          : onChainHolderCount != null && onChainHolderCount > 0
           ? String(onChainHolderCount)
           : useTransferHolders
             ? String(transferHolderCount)
@@ -2253,7 +2287,7 @@ const toSeconds = (ts: number): number => {
       // Timeframe analytics (native volume + price change)
       metrics: timeframeTiles,
     };
-  }, [campaign, contractGraduatedEarly, curveReserveWei, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
+  }, [campaign, contractGraduatedEarly, curveReserveWei, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
   // Native/USD reference for TokenDetails conversions: BNB on BNB Chain, SOL on
   // Solana, ETH on Robinhood. Treating every non-Solana chain as BNB priced a
   // Robinhood page in BNB/USD, so the header read about six times lower than the
@@ -2271,6 +2305,11 @@ const toSeconds = (ts: number): number => {
     if (!isSolanaPage && n > 100_000) return n / 1e18;
     return n;
   }, [isSolanaPage, nativeUsdPrice]);
+
+  const applyMobileEngine = useCallback((next: { denom: "BNB" | "TOKEN"; amount: string }) => {
+    setTradeInputDenom(next.denom);
+    setTradeAmount(next.amount && next.amount !== "" ? next.amount : "0");
+  }, []);
 
   const liveMarketCapNative = useMemo(() => {
     if (
@@ -3003,10 +3042,20 @@ const toSeconds = (ts: number): number => {
     }
 
     // Show whichever progress is “more complete”, because graduation triggers on either.
-    const pct = Math.max(
+    let pct = Math.max(
       0,
       Math.min(100, Math.max(soldPct, raisedPct))
     );
+    // Solana: the curve closes when net SOL raised reaches the smaller of the native target and the
+    // cost of the whole curve. On a linear curve tokens-sold % runs far ahead of that, so measure the
+    // raised SOL against the amount that actually closes the curve.
+    if (isSolanaPage && solanaCurve && curveSupply > 0n) {
+      const fullCurveLamports = solanaCurveCostLamports(solanaCurve, curveSupply);
+      const closesAt = targetWei > 0n && targetWei < fullCurveLamports ? targetWei : fullCurveLamports;
+      if (closesAt > 0n) {
+        pct = Math.max(0, Math.min(100, Number((reserveWei * 1_000_000n) / closesAt) / 10_000));
+      }
+    }
 
     return {
       pct,
@@ -3029,6 +3078,7 @@ const toSeconds = (ts: number): number => {
     metrics?.graduationNativeTarget,
     curveReserveWei,
     latestSoldFromTrades,
+    solanaCurve,
   ]);
 
     const remainingCurveWei = useMemo(() => {
@@ -3165,6 +3215,42 @@ const toSeconds = (ts: number): number => {
         : isDexStage
           ? "Graduating"
           : "Bonding";
+
+  const nativeBalanceNum = (() => {
+    if (bnbBalanceWei == null) return 0;
+    try {
+      return Number(ethers.formatUnits(bnbBalanceWei, isSolanaPage ? Number(solanaQuote.decimals || 9) : 18));
+    } catch {
+      return 0;
+    }
+  })();
+  const tokenBalanceNum = (() => {
+    if (tokenBalanceWei == null) return 0;
+    try {
+      return Number(ethers.formatUnits(tokenBalanceWei, tokenDecimals));
+    } catch {
+      return 0;
+    }
+  })();
+  const rhGraduatedTrade = isRobinhoodPage && (contractGraduated || isUniswapTradingActive);
+  const mobileTradeDisabled =
+    tradePending ||
+    approvePending ||
+    quoteLoading ||
+    (isSolanaPage
+      ? tradeTab === "buy"
+        ? effectiveBnbWei <= 0n && !solanaCurveClosed && !contractGraduated
+        : effectiveTokenWei <= 0n && !solanaCurveClosed && !contractGraduated
+      : (isDexStage && !isTopazTradingActive) ||
+        (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n : parseTokenAmountWei(tradeAmount) <= 0n));
+  const mobileQuoteLine =
+    tradeTab === "buy"
+      ? effectiveTokenWei > 0n
+        ? `Receive ~${formatTokenFromWei(effectiveTokenWei)} ${tokenData.ticker}`
+        : null
+      : quoteWei != null
+        ? `Receive ~${formatBnbFromWei(quoteWei)}`
+        : null;
 
   // Quote (buy: BNB cost; sell: BNB payout) for the entered token amount
   useEffect(() => {
@@ -4326,7 +4412,7 @@ const toSeconds = (ts: number): number => {
   }
 
   return (
-    <div className="w-full flex flex-col px-3 md:px-6 gap-3 md:gap-4">
+    <div className="w-full flex flex-col px-3 md:px-6 gap-3 md:gap-4 pb-24 xl:pb-0">
       <div className="lg:hidden sticky top-[4.5rem] z-20 -mx-3 px-3 py-2 bg-background/95 backdrop-blur border-b border-border/40 flex items-center gap-2 shrink-0">
         <img
           src={tokenData.image}
@@ -5195,8 +5281,9 @@ const toSeconds = (ts: number): number => {
               </div>
 
               {isRobinhoodPage && (contractGraduated || isUniswapTradingActive) ? (
-                <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} />
+                isXlUp ? <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} /> : null
               ) : (
+              <div className="hidden xl:block">
               <Tabs value={tradeTab} onValueChange={handleTradeTabChange}>
                 <TabsList className={ctaTabsListClass}>
                   <TabsTrigger value="buy" className={ctaTabsTriggerClass}>Buy</TabsTrigger>
@@ -5466,6 +5553,7 @@ const toSeconds = (ts: number): number => {
                   </Button>
                 </TabsContent>
               </Tabs>
+              </div>
               )}
             </div>
           </Card>
@@ -5490,6 +5578,50 @@ const toSeconds = (ts: number): number => {
           </Card>
         </div>
       </div>
+      <MobileTradeDock
+        connected={walletMatchesCampaign}
+        connectLabel={connectTradeWalletLabel}
+        onConnect={openWalletModal}
+        onOpenBuy={() => {
+          handleTradeTabChange("buy");
+          setMobileTradeOpen(true);
+        }}
+      />
+      {rhGraduatedTrade && mobileTradeOpen && !isXlUp ? (
+        <div className="fixed inset-0 z-50 xl:hidden" data-mobile-trade-sheet="rh">
+          <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close trade sheet" onClick={() => setMobileTradeOpen(false)} />
+          <div
+            className="absolute inset-x-0 bottom-0 max-h-[92dvh] overflow-y-auto rounded-t-2xl border border-border/70 bg-background p-4"
+            style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+          >
+            <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} />
+          </div>
+        </div>
+      ) : (
+        <MobileTradeSheet
+          open={mobileTradeOpen && !rhGraduatedTrade}
+          onClose={() => setMobileTradeOpen(false)}
+          connected={walletMatchesCampaign}
+          connectLabel={connectTradeWalletLabel}
+          onConnect={openWalletModal}
+          nativeUnit={nativeUnit}
+          ticker={tokenData.ticker}
+          nativeUsd={nativeUsd}
+          priceNative={pageLivePriceNative}
+          nativeBalance={Number.isFinite(nativeBalanceNum) ? nativeBalanceNum : 0}
+          tokenBalance={Number.isFinite(tokenBalanceNum) ? tokenBalanceNum : 0}
+          nativeBalanceLabel={formatBnbFromWei(bnbBalanceWei)}
+          tokenBalanceLabel={`${formatTokenFromWei(tokenBalanceWei)} ${tokenData.ticker}`}
+          side={tradeTab}
+          onSideChange={(next) => handleTradeTabChange(next)}
+          onEngineChange={applyMobileEngine}
+          onSubmit={handlePlaceTrade}
+          pending={tradePending || approvePending}
+          quoteLine={mobileQuoteLine}
+          error={quoteError}
+          disabled={mobileTradeDisabled}
+        />
+      )}
       <TokenShareCardModal
         open={shareCardOpen}
         onClose={() => setShareCardOpen(false)}
