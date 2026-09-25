@@ -6,19 +6,25 @@
     "label": "MemeWarzone rewards treasury"
   },
   "certifiedBy": {
-    "gate": "scripts/solana/run-local-sbf-gate.sh (treasury gate, 14 tests, 47/47 instructions executed) and cargo test -p mwz_rewards_treasury --lib (22)",
-    "date": "2026-09-22"
+    "gate": "scripts/solana/run-local-treasury-gate.sh (15 tests incl. reward-poster acceptance) and cargo test -p mwz_rewards_treasury --lib (26)",
+    "date": "2026-09-25",
+    "sourceCommit": "2bbed406"
   },
   "artifact": {
-    "sha256": "1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95",
-    "bytes": 1306640,
+    "sha256": "cb2e4546e4aa26ffcdce667216a479e0c58644eb0788af42bf32dec083303b21",
+    "bytes": 1360568,
     "localPath": "target/deploy/mwz_rewards_treasury.so"
   },
   "deployed": {
-    "devnet": "not upgraded to this candidate (devnet runs 5638c992\u2026)",
-    "mainnet": "2026-09-24, Squads proposal #18 created from the terminal (propose-squads-upgrade.mjs), executed sig 3tpjQoiCdaNEfsnxQySULCcR1RpArTBgxgag1NZ8boxJs2RUJFxD8PPXmzTQWe6E6CCY9buCQvCAHgbfnRCjaKnf, slot 449990075; ProgramData byte-verified == candidate (allocation equals the binary, no padding); previous binary 7e159b69\u2026 (slot 449850861)"
+    "devnet": "not upgraded to this candidate",
+    "mainnet": "NOT upgraded to this candidate. Mainnet runs 1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95 (1306640 bytes, Squads #18, sig 3tpjQoiC..., slot 449990075). Candidate needs solana program extend +53928 bytes first."
   },
   "consumers": {
     "note": "The API and indexer read no treasury program hash. Do not put this value into SOLANA_LAUNCHPAD_PROGRAM_SHA256."
+  },
+  "previous": {
+    "sha256": "1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95",
+    "bytes": 1306640,
+    "mainnetSince": "2026-09-24"
   }
 }

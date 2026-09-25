@@ -38,14 +38,14 @@ case "$TARGET" in
     BUFFER_KEYPAIR="${MWZ_BUFFER_KEYPAIR:-$HOME/.config/memewarzone/mwz-launchpad-mainnet-buffer-e6ed7df3.json}"
     ;;
   treasury)
-    # Unlike the launchpad, this one cannot be staged as-is: the allocation is
-    # 660016 bytes against a 1306640-byte binary, so it needs `solana program
-    # extend` first, and that top-up is permanent rent the upgrade never
-    # refunds. Both facts are enforced below rather than left to memory.
+    # The reward-poster candidate (2026-09-25) is 1360568 bytes; mainnet's
+    # allocation is 1306640 (the 1028f6f8 upgrade left no padding), so it
+    # needs `solana program extend 2NzthKEZ... 53928` first -- permanent rent the
+    # upgrade never refunds. The allocation check below enforces it.
     PROGRAM_ID="2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX"
     CANDIDATE="$ROOT/target/deploy/mwz_rewards_treasury.so"
-    EXPECT_SHA="1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95"
-    BUFFER_KEYPAIR="${MWZ_BUFFER_KEYPAIR:-$HOME/.config/memewarzone/mwz-treasury-mainnet-buffer-1028f6f8.json}"
+    EXPECT_SHA="cb2e4546e4aa26ffcdce667216a479e0c58644eb0788af42bf32dec083303b21"
+    BUFFER_KEYPAIR="${MWZ_BUFFER_KEYPAIR:-$HOME/.config/memewarzone/mwz-treasury-mainnet-buffer-cb2e4546.json}"
     if [[ "${MWZ_TREASURY_RELEASE:-}" != "1" ]]; then
       echo "The treasury upgrade is held: \"No go, we need to fix everything first.\"" >&2
       echo "Release it with MWZ_TREASURY_RELEASE=1 once that is no longer true." >&2
