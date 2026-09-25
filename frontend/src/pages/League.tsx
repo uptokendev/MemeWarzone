@@ -4,6 +4,7 @@ import { ethers } from "ethers";
 import { AlertTriangle, TrendingUp, Trophy, Users, Zap } from "lucide-react";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { RadarLoader } from "@/components/ui/RadarLoader";
 import {
@@ -162,31 +163,47 @@ function metricToneClass(def: LeagueDef, row: any, native = { decimals: 18, symb
   return "text-muted-foreground";
 }
 
+function formatLeagueMoment(value: unknown) {
+  const date = value ? new Date(String(value)) : null;
+  if (!date || !Number.isFinite(date.getTime())) return null;
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Launch → graduation, for the boards that rank a graduation. */
+function rowTimeline(def: LeagueDef, row: any) {
+  if (def.key !== "fastest_finish" && def.key !== "perfect_run") return null;
+  const launched = formatLeagueMoment(row?.created_at_chain ?? row?.createdAtChain);
+  const graduated = formatLeagueMoment(row?.graduated_at_chain ?? row?.graduatedAtChain);
+  if (!launched || !graduated) return null;
+  return `Launched ${launched} → Graduated ${graduated}`;
+}
+
+// A missing value renders as "—": the metric's label is a column name, not a value.
 function rowMetric(def: LeagueDef, row: any, native = { decimals: 18, symbol: "BNB" }) {
   if (def.key === "perfect_run") {
     return row?.duration_seconds != null
       ? `${formatDurationSeconds(row.duration_seconds)} · ${Number(row?.sells_count ?? 0)} sells`
-      : def.metricLabel;
+      : "—";
   }
   if (def.key === "fastest_finish") {
-    return row?.duration_seconds != null ? formatDurationSeconds(row.duration_seconds) : def.metricLabel;
+    return row?.duration_seconds != null ? `Graduated in ${formatDurationSeconds(row.duration_seconds)}` : "—";
   }
   if (def.key === "biggest_hit") {
     const buy = row?.bnb_amount_raw ? formatNative(rawToNative(row.bnb_amount_raw, native.decimals), native.symbol) : null;
     const buyer = row?.buyer_address ? shortAddr(row.buyer_address) : null;
     if (buy && buyer) return `${buy} · ${buyer}`;
-    return buy || def.metricLabel;
+    return buy || "—";
   }
   if (def.key === "top_earner") {
-    if (row?.profit_raw == null || String(row.profit_raw).trim() === "") return def.metricLabel;
+    if (row?.profit_raw == null || String(row.profit_raw).trim() === "") return "—";
     const trades = row?.trades_count != null ? ` · ${Number(row.trades_count)} trades` : "";
     const pnl = rawToNative(row.profit_raw, native.decimals);
     const signed = `${pnl > 0 ? "+" : ""}${formatNative(pnl, native.symbol)}`;
     return `${signed}${trades}`;
   }
-  if (def.key === "crowd_favorite") return row?.votes_count != null ? `${row.votes_count} votes` : def.metricLabel;
-  if (def.key === "recruiter_league") return row?.weightedScore ? `${Number(row.weightedScore).toLocaleString()} score` : def.metricLabel;
-  return def.metricLabel;
+  if (def.key === "crowd_favorite") return row?.votes_count != null ? `${row.votes_count} votes` : "—";
+  if (def.key === "recruiter_league") return row?.weightedScore ? `${Number(row.weightedScore).toLocaleString()} score` : "—";
+  return "—";
 }
 
 function tokenHref(row: any) {
@@ -399,17 +416,26 @@ function StandingsTable({
         const body = (
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex min-w-0 items-center gap-3">
                 <span className="font-retro text-sm text-foreground">#{rank}</span>
-                <span className="truncate font-semibold text-foreground">{rowLabel(league, row)}</span>
-                {row?.symbol && league.rowType === "token" ? (
-                  <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{row.symbol}</span>
-                ) : null}
-              </div>
-              <div className="mt-1 truncate text-xs text-muted-foreground">
-                {league.rowType === "wallet"
-                  ? row?.wallet || "Trader wallet"
-                  : row?.campaign_address || row?.campaignAddress || "Campaign"}
+                <Avatar className="h-10 w-10 shrink-0 border border-border/60">
+                  {league.rowType === "token" && row?.logo_uri ? <AvatarImage src={row.logo_uri} alt="" className="object-cover" /> : null}
+                  <AvatarFallback className="font-retro text-xs">{String(rowLabel(league, row) || "?").slice(0, 2).toUpperCase()}</AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate font-semibold text-foreground">{rowLabel(league, row)}</span>
+                    {row?.symbol && league.rowType === "token" ? (
+                      <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{row.symbol}</span>
+                    ) : null}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-muted-foreground">
+                    {rowTimeline(league, row) ||
+                      (league.rowType === "wallet"
+                        ? row?.wallet || "Trader wallet"
+                        : row?.campaign_address || row?.campaignAddress || "Campaign")}
+                  </div>
+                </div>
               </div>
             </div>
             <div className={`text-sm font-semibold ${metricToneClass(league, row, native)}`}>{rowMetric(league, row, native)}</div>

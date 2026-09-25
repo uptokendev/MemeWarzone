@@ -60,7 +60,7 @@ export const LEAGUES: LeagueDef[] = [
     rowType: "token",
     supports: ["weekly", "monthly"],
     supportedPeriods: ["weekly", "monthly"],
-    metricLabel: "Time to graduate",
+    metricLabel: "Launch → graduation",
     ruleSummary: "Fastest graduation time. Creator buys are excluded from scoring.",
     emptyStateCopy: "Fastest Finish standings will appear once qualified graduations are indexed.",
     weeklyLimit: 50,

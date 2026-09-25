@@ -1,6 +1,7 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json } from "../server/http.js";
 import { reconcileScheduledDraftLifecycle } from "./dev-fix/scheduled-lifecycle.js";
+import { publicHiddenWhere } from "./lib/publicHiddenCampaigns.js";
 
 const SORT_MAP = {
   activity: "last_activity_at",
@@ -146,6 +147,8 @@ ${LIFECYCLE_JOIN}
        AND c.campaign_address IS NOT NULL
        AND c.graduated_at_chain IS NULL
        AND COALESCE(c.is_active, true) = true
+       -- Hidden test campaigns stay out of Featured like every other public listing.
+       AND NOT ${publicHiddenWhere("c")}
        AND (dl.scheduled_launch_at IS NULL OR dl.scheduled_launch_at <= now())
      ORDER BY ${orderByExpr} DESC NULLS LAST,
        COALESCE(va.votes_24h, 0) DESC,
@@ -199,6 +202,8 @@ ${LIFECYCLE_JOIN}
        AND c.campaign_address IS NOT NULL
        AND c.graduated_at_chain IS NULL
        AND COALESCE(c.is_active, true) = true
+       -- Hidden test campaigns stay out of Featured like every other public listing.
+       AND NOT ${publicHiddenWhere("c")}
        AND (dl.scheduled_launch_at IS NULL OR dl.scheduled_launch_at <= now())
      ORDER BY
        COALESCE(cc.mcap_c, ts.marketcap_bnb, 0) DESC,

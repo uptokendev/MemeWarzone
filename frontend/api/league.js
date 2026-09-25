@@ -1073,59 +1073,6 @@ export default async function handler(req, res) {
       });
     };
 
-    const potentialTokenRows = async () => {
-      const { rows } = await pool.query(
-        `select
-            c.chain_id,
-            c.campaign_address,
-            c.token_address,
-            c.name,
-            c.symbol,
-            c.logo_uri,
-            c.creator_address,
-            c.created_at_chain,
-            c.graduated_at_chain,
-            case
-              when c.created_at_chain is not null and c.graduated_at_chain is not null
-                then extract(epoch from (c.graduated_at_chain - c.created_at_chain))::bigint
-              else null
-            end as duration_seconds,
-            0::bigint as votes_count,
-            0::bigint as unique_buyers,
-            0::numeric as bnb_amount_raw
-           from public.campaigns c
-          where c.chain_id = $1
-            and c.campaign_address is not null
-            and not ${publicHiddenWhere("c")}
-            and (
-              $2::timestamptz is null
-              or c.created_at_chain >= $2::timestamptz
-              or c.created_at >= $2::timestamptz
-            )
-            and (
-              $3::timestamptz is null
-              or c.created_at_chain < $3::timestamptz
-              or c.created_at < $3::timestamptz
-            )
-          order by c.created_at_chain desc nulls last, c.created_at desc
-          limit $4`,
-        [chainId, epochStartIso, rangeEndIso, limit],
-      );
-      return rows;
-    };
-
-    const finishStandingsOrPotential = async (items, extra = {}) => {
-      if (Array.isArray(items) && items.length) return finishStandings(items, extra);
-      const potential = await potentialTokenRows().catch(() => []);
-      if (!potential.length) return finishStandings(items, extra);
-      return finishStandings(potential, {
-        ...extra,
-        warning:
-          extra.warning ||
-          "Potential standings from live campaigns this epoch. Qualifying trades, votes, or graduations have not been indexed yet.",
-      });
-    };
-
     // -------------------------------------------------
     // Fastest Finish
     // -------------------------------------------------
@@ -1181,7 +1128,7 @@ export default async function handler(req, res) {
         [...params, minUniqueBuyers]
       );
 
-      return finishStandingsOrPotential(rows);
+      return finishStandings(rows);
     }
 
     // -------------------------------------------------
@@ -1255,7 +1202,7 @@ export default async function handler(req, res) {
         params
       );
 
-      return finishStandingsOrPotential(rows, {
+      return finishStandings(rows, {
         warning: rows.length ? undefined : "No Perfect Run qualifiers found for this monthly epoch.",
       });
     }
@@ -1326,7 +1273,7 @@ export default async function handler(req, res) {
         params
       );
 
-      return finishStandingsOrPotential(rows);
+      return finishStandings(rows);
     }
 
     // -------------------------------------------------
@@ -1384,7 +1331,7 @@ export default async function handler(req, res) {
         params
       );
 
-      return finishStandingsOrPotential(rows);
+      return finishStandings(rows);
     }
 
     // -------------------------------------------------
