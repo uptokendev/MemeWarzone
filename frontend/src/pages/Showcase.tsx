@@ -4,6 +4,7 @@ import { CampaignGrid, HomeQuery } from "@/components/home/CampaignGrid";
 import { DiscoveryControls } from "@/components/home/DiscoveryControls";
 import { DraftCampaignGrid } from "@/components/home/DraftCampaignGrid";
 import { SafeFeaturedCampaigns } from "@/components/home/SafeFeaturedCampaigns";
+import { AirdropStrip } from "@/components/home/AirdropStrip";
 import { HeaderBand } from "@/components/home/HeaderBand";
 import { CampaignTickerBar } from "@/components/home/CampaignTickerBar";
 import { ImportedProjectsOverlay } from "@/components/home/ImportedProjectsOverlay";
@@ -43,6 +44,8 @@ const Showcase = () => {
         <div className="relative z-20 -mt-1 mb-2 md:-mt-2 md:mb-3">
           <SafeFeaturedCampaigns />
         </div>
+
+        <AirdropStrip />
 
         <div className="mwz-live-heading flex flex-col gap-3 pt-2 md:flex-row md:items-end md:justify-between">
           <div className="min-w-0">
