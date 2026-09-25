@@ -2440,4 +2440,89 @@ ${(simulation.value.logs || []).join("\
     );
     console.log(`[gate-b] BOUND GRADUATED ${signature} pool=${pool.toBase58()} quote=${quoteMint.publicKey.toBase58()}`);
   });
+
+  it("Gate K2: the production operator (graduate-campaign.mjs, as the keeper runs it) graduates, the pool trades, the LP fee is claimable", async function () {
+    const meteora = await connection.getAccountInfo(METEORA_CP_AMM, "confirmed");
+    if (!meteora?.executable) this.skip();
+    const { spawnSync } = require("node:child_process");
+    const sdk = await import("@meteora-ag/cp-amm-sdk");
+    const { CpAmm } = sdk;
+    const binding = require("../../scripts/solana/graduation-binding.cjs");
+    const adminKeypair = provider.wallet.payer;
+
+    creator = await setupWallet("creatorKeeper");
+    buyer = await setupWallet("buyerKeeper");
+    await sendCreate("keeper-native");
+    await sendBuy(CLOSE_BUY_LAMPORTS, CLOSE_TARGET_LAMPORTS);
+    const closed = decodeCampaign((await connection.getAccountInfo(campaignAccounts.campaign, "confirmed")).data);
+    assert.equal(closed.curveClosed, true, "the curve must be closed");
+    assert.equal(closed.graduated, false);
+
+    // Exactly what the keeper spawns: inline JSON keys, a per-graduation lookup table, SEND.
+    const run = spawnSync(process.execPath, [path.join(__dirname, "../../scripts/solana/graduate-campaign.mjs"), campaignAccounts.campaign.toBase58()], {
+      env: {
+        ...process.env,
+        SOLANA_RPC_URL: connection.rpcEndpoint,
+        SOLANA_LAUNCHPAD_PROGRAM_ID: program.programId.toBase58(),
+        SOLANA_LAUNCHPAD_IDL: path.join(__dirname, "../../scripts/solana/idl/memewarzone_solana.json"),
+        SOLANA_TREASURY_OPERATOR_KEYPAIR: JSON.stringify(Array.from(adminKeypair.secretKey)),
+        SOLANA_ROUTE_SIGNER_KEYPAIR: JSON.stringify(Array.from(routeSigner.secretKey)),
+        SOLANA_GRADUATION_ORACLE_PRICE_USD_MICROS: "150000000",
+        SOLANA_GRADUATION_ALT_MODE: "per-graduation",
+        SOLANA_GRADUATION_QUOTE_PROFILE: "native",
+        SOLANA_GRADUATION_SEND: "true",
+      },
+      encoding: "utf8",
+      timeout: 180_000,
+    });
+    const out = `${run.stdout || ""}${run.stderr || ""}`;
+    assert.equal(run.status, 0, `operator failed:\n${out}`);
+    assert.match(out, /"status":\s*"graduated"/, out);
+
+    const graduated = decodeCampaign((await connection.getAccountInfo(campaignAccounts.campaign, "confirmed")).data);
+    assert.equal(graduated.graduated, true, "the operator must graduate the campaign");
+    const pool = binding.deriveMeteoraPool(campaignAccounts.mint);
+    const poolInfo = await connection.getAccountInfo(pool, "confirmed");
+    assert.ok(poolInfo && poolInfo.owner.equals(METEORA_CP_AMM), "the DAMM v2 pool must exist");
+
+    // Trading on the DEX: the buyer sells part of their bag into the new pool.
+    const cpAmm = new CpAmm(connection);
+    const poolState = await cpAmm.fetchPoolState(pool);
+    const buyerAta = getAssociatedTokenAddressSync(campaignAccounts.mint, buyer.keypair.publicKey);
+    const sellAmount = (await getAccount(connection, buyerAta, "confirmed")).amount / 10n;
+    const swapTx = await cpAmm.swap({
+      payer: buyer.keypair.publicKey, pool,
+      inputTokenMint: campaignAccounts.mint, outputTokenMint: NATIVE_MINT,
+      amountIn: new BN(sellAmount.toString()), minimumAmountOut: new BN(1),
+      tokenAMint: poolState.tokenAMint, tokenBMint: poolState.tokenBMint,
+      tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
+      tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID, referralTokenAccount: null,
+    });
+    swapTx.feePayer = buyer.keypair.publicKey;
+    const swapLatest = await connection.getLatestBlockhash("confirmed");
+    swapTx.recentBlockhash = swapLatest.blockhash;
+    swapTx.sign(buyer.keypair);
+    const swapSig = await connection.sendRawTransaction(swapTx.serialize(), { skipPreflight: false });
+    const swapConf = await connection.confirmTransaction({ signature: swapSig, ...swapLatest }, "confirmed");
+    assert.equal(swapConf.value.err, null, "a DEX swap on the graduated pool must land");
+
+    // LP fee: the operator owns the locked position; the swap accrued a fee it can claim in full.
+    const positions = await cpAmm.getUserPositionByPool(pool, adminKeypair.publicKey);
+    assert.ok(positions.length >= 1, "the operator must own the locked LP position");
+    const { position, positionNftAccount, positionState } = positions[0];
+    assert.ok(BigInt(positionState.permanentLockedLiquidity.toString()) > 0n, "the LP must be permanently locked");
+    const freshPool = await cpAmm.fetchPoolState(pool);
+    const owed = sdk.getUnClaimLpFee(freshPool, positionState);
+    const owedTotal = BigInt(owed.feeTokenA.toString()) + BigInt(owed.feeTokenB.toString());
+    assert.ok(owedTotal > 0n, "the swap must accrue an LP fee");
+    const claimTx = await cpAmm.claimPositionFee({
+      owner: adminKeypair.publicKey, position, pool, positionNftAccount,
+      tokenAMint: freshPool.tokenAMint, tokenBMint: freshPool.tokenBMint,
+      tokenAVault: freshPool.tokenAVault, tokenBVault: freshPool.tokenBVault,
+      tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID,
+    });
+    const claimSig = await web3.sendAndConfirmTransaction(connection, claimTx, [adminKeypair], { commitment: "confirmed" });
+    assert.ok(claimSig, "the operator must be able to claim the LP fee");
+    console.log(`[gate-k2] OPERATOR GRADUATED pool=${pool.toBase58()} swap=${swapSig} feeOwed=${owed.feeTokenA}/${owed.feeTokenB} claim=${claimSig}`);
+  });
 });

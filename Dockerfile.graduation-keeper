@@ -1,0 +1,23 @@
+# Solana auto-graduation keeper (Coolify resource "solana-graduation-keeper", Build Pack: Dockerfile,
+# Base Directory: /, Dockerfile Location: /Dockerfile.graduation-keeper). One replica only.
+#
+# Graduates every closed Solana bonding curve the moment it closes (websocket on campaign writes +
+# an 8 s safety-net scan): begin_graduation -> Meteora DAMM v2 pool with locked LP -> confirm, via
+# scripts/solana/graduate-campaign.mjs. Built from the repo root because the operator lives in
+# scripts/solana and neither the API image (frontend/) nor the indexer image (realtime-indexer/)
+# contains it -- which is why no curve ever graduated on its own.
+#
+# Env: DATABASE_URL, SOLANA_RPC_URL (paid, websocket-capable), PG_SSL_ALLOW_SELF_SIGNED=1,
+#      SOLANA_TREASURY_OPERATOR_KEYPAIR (keeper key, JSON array; must equal GlobalConfig.treasury_operator),
+#      SOLANA_ROUTE_SIGNER_KEYPAIR (route signer, JSON array; must equal GlobalConfig.route_signer).
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY scripts/solana ./scripts/solana
+COPY tests/solana/decode-campaign.cjs ./tests/solana/decode-campaign.cjs
+COPY frontend/api/lib ./frontend/api/lib
+# frontend/package.json declares "type": "module" for the ESM files above.
+COPY frontend/package.json ./frontend/package.json
+CMD ["node", "scripts/solana/graduation-keeper.mjs", "--watch", "--send"]

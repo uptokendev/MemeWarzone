@@ -1,0 +1,4874 @@
+{
+  "address": "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt",
+  "metadata": {
+    "name": "memewarzone_solana",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "MemeWarzone Solana launchpad program"
+  },
+  "instructions": [
+    {
+      "name": "begin_graduation",
+      "docs": [
+        "Starts an atomic graduation transaction and stages only the bounded DAMM v2 liquidity."
+      ],
+      "discriminator": [
+        163,
+        100,
+        1,
+        172,
+        152,
+        106,
+        241,
+        18
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "generation_config"
+        },
+        {
+          "name": "campaign",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "sol_vault",
+          "writable": true
+        },
+        {
+          "name": "fee_escrow",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority_token_account",
+          "writable": true
+        },
+        {
+          "name": "meteora_pool"
+        },
+        {
+          "name": "meteora_position"
+        },
+        {
+          "name": "position_nft_mint",
+          "signer": true
+        },
+        {
+          "name": "graduation_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  114,
+                  97,
+                  100,
+                  117,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "BeginGraduationArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "buy_tokens",
+      "docs": [
+        "Exact SOL in (gross) → tokens out from vault. Fee taken from gross; net buys on curve."
+      ],
+      "discriminator": [
+        189,
+        21,
+        230,
+        133,
+        247,
+        2,
+        110,
+        42
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "campaign",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "sol_vault",
+          "writable": true
+        },
+        {
+          "name": "trader_token_account",
+          "writable": true
+        },
+        {
+          "name": "risk_profile",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "trader"
+              }
+            ]
+          }
+        },
+        {
+          "name": "cluster_profile"
+        },
+        {
+          "name": "trade_authorization",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  100,
+                  101,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "trader"
+              },
+              {
+                "kind": "arg",
+                "path": "args.nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program"
+        },
+        {
+          "name": "fee_escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "BuyTokensArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "claim_creator_fees",
+      "docs": [
+        "Creator-only claim from the isolated per-campaign creator fee vault PDA."
+      ],
+      "discriminator": [
+        0,
+        23,
+        125,
+        234,
+        156,
+        118,
+        134,
+        89
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "campaign"
+        },
+        {
+          "name": "creator_fee_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  45,
+                  102,
+                  101,
+                  101,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_escrow",
+          "docs": [
+            "",
+            "Trades stopped moving the creator's slice into the vault because paying",
+            "two fee destinations inside the trader's transaction is what made wallets",
+            "flag every buy. The vault keeps the counter; the lamports are paid out",
+            "from here on claim."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_expired_trade_authorization",
+      "docs": [
+        "Permissionless close of an expired TradeAuthorization PDA. Rent always returns to trader."
+      ],
+      "discriminator": [
+        149,
+        241,
+        125,
+        148,
+        124,
+        98,
+        29,
+        174
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone may pay the cleanup fee. Rent is always refunded to `trader`."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "trader",
+          "writable": true
+        },
+        {
+          "name": "trade_authorization",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  100,
+                  101,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "trader"
+              },
+              {
+                "kind": "arg",
+                "path": "args.nonce"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "CloseExpiredTradeAuthorizationArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "confirm_graduation",
+      "docs": [
+        "Verifies the deterministic DAMM v2 pool + permanently locked position, then finalizes Campaign."
+      ],
+      "discriminator": [
+        120,
+        161,
+        252,
+        202,
+        242,
+        187,
+        14,
+        199
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "graduation_state"
+          ]
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "campaign",
+          "writable": true,
+          "relations": [
+            "graduation_state"
+          ]
+        },
+        {
+          "name": "mint",
+          "writable": true,
+          "relations": [
+            "graduation_state"
+          ]
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "sol_vault",
+          "writable": true
+        },
+        {
+          "name": "authority_token_account",
+          "writable": true
+        },
+        {
+          "name": "creator",
+          "writable": true
+        },
+        {
+          "name": "creator_token_account",
+          "writable": true
+        },
+        {
+          "name": "creator_profile",
+          "writable": true
+        },
+        {
+          "name": "graduation_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  114,
+                  97,
+                  100,
+                  117,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        },
+        {
+          "name": "meteora_pool"
+        },
+        {
+          "name": "meteora_position"
+        },
+        {
+          "name": "meteora_token_vault"
+        },
+        {
+          "name": "meteora_native_vault"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_campaign",
+      "discriminator": [
+        111,
+        131,
+        187,
+        98,
+        160,
+        193,
+        114,
+        244
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "docs": [
+            "",
+            "Read-only. The handler borrows it immutably, deserializes it, and reads",
+            "`route_signer`; it has never written a byte. Marking it `mut` cost",
+            "nothing in key bytes -- it lives in the launch lookup table -- but it",
+            "made Phantom insert a Lighthouse assertion over a 314-byte account, and",
+            "that assertion was the single most expensive thing in the transaction at",
+            "41 bytes. Measured on GCSY and ABGAGID on mainnet."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "generation_config"
+        },
+        {
+          "name": "creator_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "risk_profile",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "cluster_profile"
+        },
+        {
+          "name": "campaign",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  97,
+                  109,
+                  112,
+                  97,
+                  105,
+                  103,
+                  110
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "args.campaign_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "and corrupted account mapping — GlobalConfig was observed as Instructions sysvar)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  97,
+                  109,
+                  112,
+                  97,
+                  105,
+                  103,
+                  110,
+                  45,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "args.campaign_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "args.campaign_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sol_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  111,
+                  108,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "args.campaign_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_metadata",
+          "docs": [
+            "token_metadata::create_campaign_metadata."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_metadata_program"
+        },
+        {
+          "name": "fee_escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_fee_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  45,
+                  102,
+                  101,
+                  101,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "CreateCampaignArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "flush_campaign_fees",
+      "docs": [
+        "Permissionless flush of accrued fee slices to canonical rewards vaults."
+      ],
+      "discriminator": [
+        247,
+        172,
+        169,
+        39,
+        252,
+        17,
+        60,
+        22
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "signer": true
+        },
+        {
+          "name": "campaign"
+        },
+        {
+          "name": "fee_escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        },
+        {
+          "name": "weekly_league_vault",
+          "writable": true
+        },
+        {
+          "name": "airdrop_vault",
+          "writable": true
+        },
+        {
+          "name": "monthly_league_vault",
+          "writable": true
+        },
+        {
+          "name": "recruiter_vault",
+          "writable": true
+        },
+        {
+          "name": "squad_vault",
+          "writable": true
+        },
+        {
+          "name": "protocol_vault",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_creator_fee_vault",
+      "docs": [
+        "Permissionless rent-payer init of the per-campaign creator fee vault PDA."
+      ],
+      "discriminator": [
+        196,
+        61,
+        224,
+        87,
+        62,
+        72,
+        169,
+        176
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "campaign"
+        },
+        {
+          "name": "creator_fee_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  45,
+                  102,
+                  101,
+                  101,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_fee_escrow",
+      "docs": [
+        "Permissionless rent-payer init of the per-campaign fee escrow PDA."
+      ],
+      "discriminator": [
+        193,
+        216,
+        132,
+        50,
+        201,
+        206,
+        86,
+        50
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "campaign"
+        },
+        {
+          "name": "fee_escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_generation_config",
+      "discriminator": [
+        85,
+        114,
+        53,
+        147,
+        141,
+        133,
+        29,
+        83
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "generation_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  101,
+                  110,
+                  101,
+                  114,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "settings.generation_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "settings",
+          "type": {
+            "defined": {
+              "name": "GenerationSettings"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize_global_config",
+      "discriminator": [
+        113,
+        216,
+        122,
+        131,
+        225,
+        209,
+        22,
+        55
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "authorities",
+          "type": {
+            "defined": {
+              "name": "GlobalAuthorities"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "lock_security_defaults",
+      "discriminator": [
+        23,
+        141,
+        99,
+        53,
+        162,
+        11,
+        224,
+        130
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "sell_tokens",
+      "docs": [
+        "Exact tokens in → SOL out from sol vault. Gross refund from curve; fee retained in vault."
+      ],
+      "discriminator": [
+        114,
+        242,
+        25,
+        12,
+        62,
+        126,
+        92,
+        2
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "campaign",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "sol_vault",
+          "writable": true
+        },
+        {
+          "name": "trader_token_account",
+          "writable": true
+        },
+        {
+          "name": "risk_profile",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "trader"
+              }
+            ]
+          }
+        },
+        {
+          "name": "cluster_profile"
+        },
+        {
+          "name": "trade_authorization",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  100,
+                  101,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "trader"
+              },
+              {
+                "kind": "arg",
+                "path": "args.nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program"
+        },
+        {
+          "name": "fee_escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  45,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "campaign"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "SellTokensArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "set_campaign_pause",
+      "discriminator": [
+        26,
+        70,
+        135,
+        219,
+        116,
+        125,
+        168,
+        153
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "campaign",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "paused",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_generation_support",
+      "discriminator": [
+        161,
+        135,
+        164,
+        174,
+        80,
+        143,
+        126,
+        20
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "generation_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  101,
+                  110,
+                  101,
+                  114,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "generation_config.generation_id",
+                "account": "GenerationConfig"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "support_enabled",
+          "type": "bool"
+        },
+        {
+          "name": "active_creation",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_pause_flags",
+      "discriminator": [
+        205,
+        167,
+        85,
+        237,
+        144,
+        202,
+        248,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "flags",
+          "type": {
+            "defined": {
+              "name": "PauseFlags"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync_cluster_profile",
+      "discriminator": [
+        152,
+        210,
+        117,
+        196,
+        59,
+        115,
+        45,
+        130
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "cluster_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  108,
+                  117,
+                  115,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "update.cluster_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "update",
+          "type": {
+            "defined": {
+              "name": "ClusterProfileUpdate"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync_creator_profile",
+      "discriminator": [
+        14,
+        126,
+        25,
+        19,
+        23,
+        184,
+        3,
+        131
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "update.wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "update",
+          "type": {
+            "defined": {
+              "name": "CreatorProfileUpdate"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync_risk_profile",
+      "discriminator": [
+        160,
+        171,
+        223,
+        139,
+        150,
+        57,
+        133,
+        232
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "risk_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "update.wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "update",
+          "type": {
+            "defined": {
+              "name": "RiskProfileUpdate"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_global_authorities",
+      "discriminator": [
+        62,
+        119,
+        189,
+        253,
+        39,
+        244,
+        35,
+        149
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "authorities",
+          "type": {
+            "defined": {
+              "name": "GlobalAuthorities"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "ClusterProfile",
+      "discriminator": [
+        148,
+        190,
+        202,
+        13,
+        58,
+        79,
+        250,
+        129
+      ]
+    },
+    {
+      "name": "CreatorFeeVault",
+      "discriminator": [
+        21,
+        14,
+        215,
+        247,
+        197,
+        137,
+        200,
+        121
+      ]
+    },
+    {
+      "name": "CreatorProfile",
+      "discriminator": [
+        251,
+        250,
+        184,
+        111,
+        214,
+        178,
+        32,
+        221
+      ]
+    },
+    {
+      "name": "FeeEscrow",
+      "discriminator": [
+        244,
+        221,
+        184,
+        35,
+        66,
+        174,
+        39,
+        186
+      ]
+    },
+    {
+      "name": "GenerationConfig",
+      "discriminator": [
+        41,
+        58,
+        198,
+        8,
+        247,
+        16,
+        13,
+        162
+      ]
+    },
+    {
+      "name": "GlobalConfig",
+      "discriminator": [
+        149,
+        8,
+        156,
+        202,
+        160,
+        252,
+        176,
+        217
+      ]
+    },
+    {
+      "name": "GraduationState",
+      "discriminator": [
+        119,
+        170,
+        8,
+        36,
+        154,
+        222,
+        219,
+        252
+      ]
+    },
+    {
+      "name": "RiskProfile",
+      "discriminator": [
+        27,
+        39,
+        66,
+        97,
+        148,
+        136,
+        98,
+        121
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "CampaignCreated",
+      "discriminator": [
+        9,
+        98,
+        69,
+        61,
+        53,
+        131,
+        64,
+        152
+      ]
+    },
+    {
+      "name": "CampaignGraduated",
+      "discriminator": [
+        147,
+        150,
+        67,
+        169,
+        69,
+        93,
+        87,
+        32
+      ]
+    },
+    {
+      "name": "CampaignPauseUpdated",
+      "discriminator": [
+        4,
+        28,
+        250,
+        133,
+        179,
+        89,
+        152,
+        66
+      ]
+    },
+    {
+      "name": "ClusterProfileSynced",
+      "discriminator": [
+        134,
+        27,
+        3,
+        65,
+        24,
+        33,
+        216,
+        255
+      ]
+    },
+    {
+      "name": "CreatorFeeAccrued",
+      "discriminator": [
+        5,
+        196,
+        108,
+        44,
+        75,
+        239,
+        153,
+        150
+      ]
+    },
+    {
+      "name": "CreatorFeeClaimed",
+      "discriminator": [
+        54,
+        120,
+        193,
+        26,
+        161,
+        47,
+        187,
+        207
+      ]
+    },
+    {
+      "name": "CreatorFeeVaultInitialized",
+      "discriminator": [
+        38,
+        218,
+        213,
+        156,
+        167,
+        163,
+        122,
+        45
+      ]
+    },
+    {
+      "name": "CreatorProfileSynced",
+      "discriminator": [
+        103,
+        190,
+        38,
+        200,
+        245,
+        11,
+        216,
+        158
+      ]
+    },
+    {
+      "name": "FeeEscrowFlushed",
+      "discriminator": [
+        145,
+        197,
+        134,
+        26,
+        123,
+        25,
+        183,
+        144
+      ]
+    },
+    {
+      "name": "FeeEscrowInitialized",
+      "discriminator": [
+        206,
+        75,
+        244,
+        19,
+        213,
+        79,
+        119,
+        116
+      ]
+    },
+    {
+      "name": "FeeSlicesAccrued",
+      "discriminator": [
+        160,
+        82,
+        239,
+        193,
+        33,
+        109,
+        159,
+        172
+      ]
+    },
+    {
+      "name": "FeeSlicesRouted",
+      "discriminator": [
+        132,
+        67,
+        120,
+        176,
+        186,
+        207,
+        127,
+        210
+      ]
+    },
+    {
+      "name": "GenerationConfigInitialized",
+      "discriminator": [
+        251,
+        102,
+        246,
+        154,
+        209,
+        3,
+        202,
+        10
+      ]
+    },
+    {
+      "name": "GenerationSupportUpdated",
+      "discriminator": [
+        208,
+        218,
+        184,
+        234,
+        145,
+        125,
+        156,
+        43
+      ]
+    },
+    {
+      "name": "GlobalAuthoritiesUpdated",
+      "discriminator": [
+        230,
+        224,
+        50,
+        252,
+        121,
+        184,
+        91,
+        27
+      ]
+    },
+    {
+      "name": "GlobalConfigInitialized",
+      "discriminator": [
+        5,
+        221,
+        172,
+        158,
+        77,
+        87,
+        157,
+        113
+      ]
+    },
+    {
+      "name": "GraduationStarted",
+      "discriminator": [
+        205,
+        171,
+        94,
+        153,
+        51,
+        32,
+        171,
+        72
+      ]
+    },
+    {
+      "name": "PauseFlagsUpdated",
+      "discriminator": [
+        27,
+        241,
+        6,
+        218,
+        123,
+        5,
+        234,
+        94
+      ]
+    },
+    {
+      "name": "RiskProfileSynced",
+      "discriminator": [
+        126,
+        236,
+        126,
+        154,
+        156,
+        192,
+        3,
+        2
+      ]
+    },
+    {
+      "name": "SecurityDefaultsLocked",
+      "discriminator": [
+        116,
+        111,
+        189,
+        88,
+        68,
+        144,
+        171,
+        18
+      ]
+    },
+    {
+      "name": "TokensBought",
+      "discriminator": [
+        151,
+        148,
+        173,
+        226,
+        128,
+        30,
+        249,
+        190
+      ]
+    },
+    {
+      "name": "TokensSold",
+      "discriminator": [
+        217,
+        83,
+        68,
+        137,
+        134,
+        225,
+        94,
+        45
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "The signer is not authorized for this Solana launchpad action."
+    },
+    {
+      "code": 6001,
+      "name": "InvalidAuthority",
+      "msg": "Authority addresses must be set before initializing the launchpad."
+    },
+    {
+      "code": 6002,
+      "name": "SecurityDefaultsAlreadyLocked",
+      "msg": "Security defaults have already been locked and cannot be weakened."
+    },
+    {
+      "code": 6003,
+      "name": "SecurityDefaultsCannotBeWeakened",
+      "msg": "Security defaults cannot be weakened for Solana launchpad generations."
+    },
+    {
+      "code": 6004,
+      "name": "InvalidGeneration",
+      "msg": "Generation ID, seed, or configuration is invalid."
+    },
+    {
+      "code": 6005,
+      "name": "InvalidGenerationProgram",
+      "msg": "Generation program ID must match this deployed program."
+    },
+    {
+      "code": 6006,
+      "name": "InvalidGenerationManifest",
+      "msg": "Generation manifest hash is missing or invalid."
+    },
+    {
+      "code": 6007,
+      "name": "InvalidGenerationCluster",
+      "msg": "Generation cluster kind must be devnet or mainnet-beta."
+    },
+    {
+      "code": 6008,
+      "name": "InvalidGraduationTierMask",
+      "msg": "Generation graduation-tier allowlist is invalid for its cluster."
+    },
+    {
+      "code": 6009,
+      "name": "InvalidGenerationEconomics",
+      "msg": "Generation curve, supply, or fee economics are invalid."
+    },
+    {
+      "code": 6010,
+      "name": "InvalidGenerationProfile",
+      "msg": "Generation route, treasury, DEX, or oracle profile is invalid."
+    },
+    {
+      "code": 6011,
+      "name": "ActiveCreationGenerationExists",
+      "msg": "Exactly one Solana generation can be active for creation."
+    },
+    {
+      "code": 6012,
+      "name": "ActiveGenerationMustBeSupported",
+      "msg": "An active creation generation must remain support-enabled."
+    },
+    {
+      "code": 6013,
+      "name": "InvalidDexAdapter",
+      "msg": "Unsupported Solana DEX adapter mode."
+    },
+    {
+      "code": 6014,
+      "name": "InvalidCreatorTier",
+      "msg": "Creator tier must be 1, 2, or 3."
+    },
+    {
+      "code": 6015,
+      "name": "InvalidCreatorProfile",
+      "msg": "Creator profile data is invalid."
+    },
+    {
+      "code": 6016,
+      "name": "CreatorLiveBondingLimitExceeded",
+      "msg": "Creator live bonding count exceeds the configured tier limit."
+    },
+    {
+      "code": 6017,
+      "name": "CreatorBuyCapTooHigh",
+      "msg": "Creator buy cap exceeds the maximum basis-point value."
+    },
+    {
+      "code": 6018,
+      "name": "InvalidRiskProfile",
+      "msg": "Wallet risk profile data is invalid."
+    },
+    {
+      "code": 6019,
+      "name": "InvalidRiskLevel",
+      "msg": "Risk level is outside the supported range."
+    },
+    {
+      "code": 6020,
+      "name": "InvalidCluster",
+      "msg": "Cluster profile data is invalid."
+    },
+    {
+      "code": 6021,
+      "name": "LaunchpadPaused",
+      "msg": "The Solana launchpad is paused."
+    },
+    {
+      "code": 6022,
+      "name": "CreatePaused",
+      "msg": "Solana campaign creation is paused."
+    },
+    {
+      "code": 6023,
+      "name": "InvalidCreateAuthorization",
+      "msg": "Create authorization is missing, expired, replayed, or malformed."
+    },
+    {
+      "code": 6024,
+      "name": "CreateAuthorizationExpired",
+      "msg": "Create authorization deadline has expired."
+    },
+    {
+      "code": 6025,
+      "name": "InvalidCampaign",
+      "msg": "Campaign data is invalid."
+    },
+    {
+      "code": 6026,
+      "name": "InvalidMetadata",
+      "msg": "Campaign metadata hash is invalid."
+    },
+    {
+      "code": 6027,
+      "name": "GraduationTargetNotAllowed",
+      "msg": "The selected graduation target is not allowed by this generation."
+    },
+    {
+      "code": 6028,
+      "name": "InvalidRouteProfile",
+      "msg": "Route profile hash is invalid."
+    },
+    {
+      "code": 6029,
+      "name": "InvalidNonce",
+      "msg": "Create authorization nonce is invalid."
+    },
+    {
+      "code": 6030,
+      "name": "CampaignGenerationInactive",
+      "msg": "The selected generation is not active for campaign creation."
+    },
+    {
+      "code": 6031,
+      "name": "CreatorLaunchLimitExceeded",
+      "msg": "Creator has reached the live bonding launch limit."
+    },
+    {
+      "code": 6032,
+      "name": "CreatorCooldownActive",
+      "msg": "Creator launch cooldown is still active."
+    },
+    {
+      "code": 6033,
+      "name": "CreatorRestricted",
+      "msg": "Creator is restricted from launching campaigns."
+    },
+    {
+      "code": 6034,
+      "name": "CreatorManualReviewRequired",
+      "msg": "Creator requires manual review before launching campaigns."
+    },
+    {
+      "code": 6035,
+      "name": "WalletRestricted",
+      "msg": "Wallet is restricted from launching campaigns."
+    },
+    {
+      "code": 6036,
+      "name": "ClusterRestricted",
+      "msg": "Wallet cluster is restricted from launching campaigns."
+    },
+    {
+      "code": 6037,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow while updating Solana launchpad state."
+    },
+    {
+      "code": 6038,
+      "name": "BuysPaused",
+      "msg": "Solana bonding buys are paused."
+    },
+    {
+      "code": 6039,
+      "name": "SellsPaused",
+      "msg": "Solana bonding sells are paused."
+    },
+    {
+      "code": 6040,
+      "name": "TradingNotOpen",
+      "msg": "Campaign trading has not opened yet (launch_at)."
+    },
+    {
+      "code": 6041,
+      "name": "AlreadyGraduated",
+      "msg": "Campaign has already graduated."
+    },
+    {
+      "code": 6042,
+      "name": "InvalidTradeAmount",
+      "msg": "Trade amount is invalid."
+    },
+    {
+      "code": 6043,
+      "name": "CurveSupplyExhausted",
+      "msg": "Curve supply is exhausted for further buys."
+    },
+    {
+      "code": 6044,
+      "name": "InsufficientSoldTokens",
+      "msg": "Not enough sold tokens to support this sell."
+    },
+    {
+      "code": 6045,
+      "name": "SlippageExceeded",
+      "msg": "Slippage limit exceeded for this trade."
+    },
+    {
+      "code": 6046,
+      "name": "InsufficientVaultBalance",
+      "msg": "Insufficient net raised / vault balance for this sell."
+    },
+    {
+      "code": 6047,
+      "name": "CreatorBuyLocked",
+      "msg": "Creator buy lock is still active."
+    },
+    {
+      "code": 6048,
+      "name": "CreatorBuyCap",
+      "msg": "Creator buy cap would be exceeded."
+    },
+    {
+      "code": 6049,
+      "name": "InvalidTradeAuthorization",
+      "msg": "Trade authorization is missing, expired, replayed, or malformed."
+    },
+    {
+      "code": 6050,
+      "name": "TradeAuthorizationExpired",
+      "msg": "Trade authorization deadline has expired."
+    },
+    {
+      "code": 6051,
+      "name": "TradeAuthorizationNotExpired",
+      "msg": "Trade authorization deadline has not expired yet."
+    },
+    {
+      "code": 6052,
+      "name": "GraduationPaused",
+      "msg": "Solana campaign graduation is paused."
+    },
+    {
+      "code": 6053,
+      "name": "InvalidGraduationAuthorization",
+      "msg": "Signed graduation authorization is missing, malformed, or does not match this transaction."
+    },
+    {
+      "code": 6054,
+      "name": "GraduationAuthorizationExpired",
+      "msg": "Signed graduation authorization has expired."
+    },
+    {
+      "code": 6055,
+      "name": "InvalidGraduationTarget",
+      "msg": "Signed native graduation target is invalid."
+    },
+    {
+      "code": 6056,
+      "name": "GraduationThresholdNotMet",
+      "msg": "Campaign has not reached the signed native graduation target or exhausted the bonding curve."
+    },
+    {
+      "code": 6057,
+      "name": "GraduationAtomicityRequired",
+      "msg": "Graduation must create/lock Meteora DAMM v2 and confirm in the same Solana transaction."
+    },
+    {
+      "code": 6058,
+      "name": "InvalidMeteoraPool",
+      "msg": "The deterministic Meteora DAMM v2 customizable pool is invalid."
+    },
+    {
+      "code": 6059,
+      "name": "InvalidMeteoraPosition",
+      "msg": "The deterministic Meteora DAMM v2 position is invalid."
+    },
+    {
+      "code": 6060,
+      "name": "MeteoraPoolAlreadyExists",
+      "msg": "The Meteora DAMM v2 pool already exists before graduation begins."
+    },
+    {
+      "code": 6061,
+      "name": "MeteoraPositionAlreadyExists",
+      "msg": "The Meteora DAMM v2 position already exists before graduation begins."
+    },
+    {
+      "code": 6062,
+      "name": "MeteoraLiquidityNotLocked",
+      "msg": "Meteora graduation liquidity was not permanently locked."
+    },
+    {
+      "code": 6063,
+      "name": "GraduationStagingNotEmpty",
+      "msg": "Graduation staging token account must be empty before liquidity is released."
+    },
+    {
+      "code": 6064,
+      "name": "GraduationLiquidityZero",
+      "msg": "Graduation liquidity amount resolved to zero."
+    },
+    {
+      "code": 6065,
+      "name": "GraduationAssetMismatch",
+      "msg": "Graduation assets did not reconcile with the deterministic Meteora pool."
+    },
+    {
+      "code": 6066,
+      "name": "GraduationPriceDrift",
+      "msg": "Meteora initial pool price drifted beyond the allowed bonding-curve tolerance."
+    },
+    {
+      "code": 6067,
+      "name": "CurveClosed",
+      "msg": "Bonding curve is closed after the graduation threshold. Awaiting Meteora."
+    },
+    {
+      "code": 6068,
+      "name": "InvalidRewardsVault",
+      "msg": "League or airdrop vault PDA is missing or does not match the rewards treasury."
+    },
+    {
+      "code": 6069,
+      "name": "CampaignPaused",
+      "msg": "This campaign is paused."
+    },
+    {
+      "code": 6070,
+      "name": "FeeEscrowNotInitialized",
+      "msg": "Campaign fee escrow is missing or not initialized."
+    },
+    {
+      "code": 6071,
+      "name": "InvalidFeeEscrow",
+      "msg": "Campaign fee escrow PDA or campaign binding is invalid."
+    },
+    {
+      "code": 6072,
+      "name": "FeeEscrowPendingNonzero",
+      "msg": "Campaign fee escrow still has unflushed pending fees."
+    },
+    {
+      "code": 6073,
+      "name": "FeeEscrowBalanceMismatch",
+      "msg": "Campaign fee escrow cannot cover its pending liabilities."
+    }
+  ],
+  "types": [
+    {
+      "name": "BeginGraduationArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "native_target_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "oracle_price_usd_micros",
+            "type": "u64"
+          },
+          {
+            "name": "deadline",
+            "type": "i64"
+          },
+          {
+            "name": "nonce",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "position_nft_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "finalize_route_profile",
+            "type": "u8"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_config_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "quote_policy_version",
+            "type": "u16"
+          },
+          {
+            "name": "quote_profile",
+            "type": "u8"
+          },
+          {
+            "name": "quote_provider_class",
+            "type": "u8"
+          },
+          {
+            "name": "acquisition_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_reference_usd_micros",
+            "type": "u64"
+          },
+          {
+            "name": "quote_decimals",
+            "type": "u8"
+          },
+          {
+            "name": "expected_quote_amount",
+            "type": "u64"
+          },
+          {
+            "name": "min_quote_amount",
+            "type": "u64"
+          },
+          {
+            "name": "max_slippage_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_impact_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_deviation_bps",
+            "type": "u16"
+          },
+          {
+            "name": "quote_recovery_account",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BuyTokensArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "lamports_in",
+            "docs": [
+              "Gross SOL the trader pays (includes fee)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_tokens_out",
+            "docs": [
+              "Minimum tokens out after fee-aware quote (slippage)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "deadline",
+            "type": "i64"
+          },
+          {
+            "name": "nonce",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "native_target_lamports",
+            "docs": [
+              "Route-signed native graduation target. 0 = sold-out close only."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "route_profile",
+            "docs": [
+              "Linked / unlinked / OG split. Bound into the trade digest."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CampaignCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "campaign_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "generation_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "generation_config",
+            "type": "pubkey"
+          },
+          {
+            "name": "generation_manifest_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "sol_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_total_supply",
+            "type": "u64"
+          },
+          {
+            "name": "curve_token_supply",
+            "type": "u64"
+          },
+          {
+            "name": "liquidity_token_supply",
+            "type": "u64"
+          },
+          {
+            "name": "reserve_token_supply",
+            "type": "u64"
+          },
+          {
+            "name": "mint_authority_revoked",
+            "type": "bool"
+          },
+          {
+            "name": "ticker_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "reservation_id_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "reservation_version",
+            "type": "u64"
+          },
+          {
+            "name": "launch_at",
+            "type": "i64"
+          },
+          {
+            "name": "graduation_target_usd_micros",
+            "type": "u64"
+          },
+          {
+            "name": "cluster_kind",
+            "type": "u8"
+          },
+          {
+            "name": "economics_version",
+            "type": "u16"
+          },
+          {
+            "name": "dex_adapter",
+            "type": "u8"
+          },
+          {
+            "name": "route_signer",
+            "type": "pubkey"
+          },
+          {
+            "name": "authorization_schema_version",
+            "type": "u16"
+          },
+          {
+            "name": "authorization_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CampaignGraduated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "meteora_pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "meteora_position",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_config_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "liquidity_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "liquidity_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "liquidity_quote_raw",
+            "type": "u64"
+          },
+          {
+            "name": "finalize_fee_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "creator_payout_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "burned_unsold_curve_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "burned_unused_liquidity_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "creator_reserve_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "final_spot_nano_lamports",
+            "type": "u128"
+          },
+          {
+            "name": "graduated_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CampaignPauseUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CloseExpiredTradeAuthorizationArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClusterProfile",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "cluster_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "size",
+            "type": "u32"
+          },
+          {
+            "name": "risk_level",
+            "type": "u8"
+          },
+          {
+            "name": "restricted",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClusterProfileSynced",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "cluster_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "size",
+            "type": "u32"
+          },
+          {
+            "name": "risk_level",
+            "type": "u8"
+          },
+          {
+            "name": "restricted",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClusterProfileUpdate",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "cluster_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "size",
+            "type": "u32"
+          },
+          {
+            "name": "risk_level",
+            "type": "u8"
+          },
+          {
+            "name": "restricted",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreateCampaignArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "metadata_hash",
+            "docs": [
+              "Commitment to the off-chain metadata JSON (draft id, description, URLs).",
+              "The only one of the original five hashes that is worth its 32 bytes."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "name",
+            "docs": [
+              "Metaplex on-chain name, written by this instruction. Capped at",
+              "MAX_NAME_LENGTH."
+            ],
+            "type": "string"
+          },
+          {
+            "name": "symbol",
+            "docs": [
+              "Metaplex on-chain symbol, written by this instruction. Capped at",
+              "MAX_SYMBOL_LENGTH. `Campaign.ticker_hash` is derived from it."
+            ],
+            "type": "string"
+          },
+          {
+            "name": "launch_at",
+            "docs": [
+              "Zero means immediate launch. A non-zero value is an immutable scheduled launch time."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "graduation_target_usd_micros",
+            "type": "u64"
+          },
+          {
+            "name": "deadline",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreatorFeeAccrued",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator_fee_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "trader",
+            "type": "pubkey"
+          },
+          {
+            "name": "side",
+            "type": "u8"
+          },
+          {
+            "name": "route_profile",
+            "type": "u8"
+          },
+          {
+            "name": "amount_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "pending_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "total_received",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreatorFeeClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator_fee_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "total_claimed",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreatorFeeVault",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "total_received",
+            "type": "u64"
+          },
+          {
+            "name": "total_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreatorFeeVaultInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator_fee_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "payer",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreatorProfile",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "tier",
+            "type": "u8"
+          },
+          {
+            "name": "trust_score",
+            "type": "u16"
+          },
+          {
+            "name": "live_bonding_count",
+            "type": "u16"
+          },
+          {
+            "name": "last_launch_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "total_launches",
+            "type": "u64"
+          },
+          {
+            "name": "successful_graduations",
+            "type": "u64"
+          },
+          {
+            "name": "restricted",
+            "type": "bool"
+          },
+          {
+            "name": "manual_review_required",
+            "type": "bool"
+          },
+          {
+            "name": "creator_buy_cap_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_live_bonding_count",
+            "type": "u16"
+          },
+          {
+            "name": "cooldown_seconds",
+            "type": "u32"
+          },
+          {
+            "name": "creator_buy_lock_seconds",
+            "type": "u32"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreatorProfileSynced",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "tier",
+            "type": "u8"
+          },
+          {
+            "name": "live_bonding_count",
+            "type": "u16"
+          },
+          {
+            "name": "restricted",
+            "type": "bool"
+          },
+          {
+            "name": "manual_review_required",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreatorProfileUpdate",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "tier",
+            "type": "u8"
+          },
+          {
+            "name": "trust_score",
+            "type": "u16"
+          },
+          {
+            "name": "live_bonding_count",
+            "type": "u16"
+          },
+          {
+            "name": "last_launch_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "total_launches",
+            "type": "u64"
+          },
+          {
+            "name": "successful_graduations",
+            "type": "u64"
+          },
+          {
+            "name": "restricted",
+            "type": "bool"
+          },
+          {
+            "name": "manual_review_required",
+            "type": "bool"
+          },
+          {
+            "name": "creator_buy_cap_bps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeEscrow",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "weekly_pending",
+            "type": "u64"
+          },
+          {
+            "name": "monthly_pending",
+            "type": "u64"
+          },
+          {
+            "name": "recruiter_pending",
+            "type": "u64"
+          },
+          {
+            "name": "airdrop_pending",
+            "type": "u64"
+          },
+          {
+            "name": "squad_pending",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_pending",
+            "type": "u64"
+          },
+          {
+            "name": "total_received",
+            "type": "u64"
+          },
+          {
+            "name": "total_flushed",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeEscrowFlushed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "weekly_league_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "monthly_league_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "recruiter_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "airdrop_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "squad_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "total_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "caller",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeEscrowInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "payer",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeSlicesAccrued",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "trader",
+            "type": "pubkey"
+          },
+          {
+            "name": "side",
+            "type": "u8"
+          },
+          {
+            "name": "route_profile",
+            "type": "u8"
+          },
+          {
+            "name": "fee_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "weekly_league_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "monthly_league_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "creator_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "recruiter_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "airdrop_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "squad_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_lamports",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeSlicesRouted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "trader",
+            "type": "pubkey"
+          },
+          {
+            "name": "side",
+            "type": "u8"
+          },
+          {
+            "name": "route_profile",
+            "type": "u8"
+          },
+          {
+            "name": "gross_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "fee_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "weekly_league_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "monthly_league_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "creator_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "recruiter_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "airdrop_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "squad_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_lamports",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GenerationConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "generation_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "program_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "config_pda",
+            "type": "pubkey"
+          },
+          {
+            "name": "start_slot",
+            "type": "u64"
+          },
+          {
+            "name": "cluster_kind",
+            "type": "u8"
+          },
+          {
+            "name": "allowed_graduation_tier_mask",
+            "type": "u8"
+          },
+          {
+            "name": "economics_version",
+            "type": "u16"
+          },
+          {
+            "name": "curve_kind",
+            "type": "u8"
+          },
+          {
+            "name": "token_total_supply",
+            "type": "u64"
+          },
+          {
+            "name": "token_decimals",
+            "type": "u8"
+          },
+          {
+            "name": "curve_supply_bps",
+            "type": "u16"
+          },
+          {
+            "name": "liquidity_token_bps",
+            "type": "u16"
+          },
+          {
+            "name": "base_price_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "price_slope_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "buy_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "finalize_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "creator_post_finalize_bps",
+            "type": "u16"
+          },
+          {
+            "name": "liquidity_post_finalize_bps",
+            "type": "u16"
+          },
+          {
+            "name": "dex_adapter",
+            "type": "u8"
+          },
+          {
+            "name": "trade_route_profile",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "finalize_route_profile",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "treasury_profile",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "dex_profile",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "oracle_profile",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "active_creation",
+            "type": "bool"
+          },
+          {
+            "name": "support_enabled",
+            "type": "bool"
+          },
+          {
+            "name": "manifest_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "route_authorization_required",
+            "type": "bool"
+          },
+          {
+            "name": "authorized_trading_required",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GenerationConfigInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "generation_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "program_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "config_pda",
+            "type": "pubkey"
+          },
+          {
+            "name": "start_slot",
+            "type": "u64"
+          },
+          {
+            "name": "cluster_kind",
+            "type": "u8"
+          },
+          {
+            "name": "allowed_graduation_tier_mask",
+            "type": "u8"
+          },
+          {
+            "name": "economics_version",
+            "type": "u16"
+          },
+          {
+            "name": "curve_kind",
+            "type": "u8"
+          },
+          {
+            "name": "dex_adapter",
+            "type": "u8"
+          },
+          {
+            "name": "manifest_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "active_creation",
+            "type": "bool"
+          },
+          {
+            "name": "support_enabled",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GenerationSettings",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "generation_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "cluster_kind",
+            "type": "u8"
+          },
+          {
+            "name": "allowed_graduation_tier_mask",
+            "type": "u8"
+          },
+          {
+            "name": "economics_version",
+            "type": "u16"
+          },
+          {
+            "name": "curve_kind",
+            "type": "u8"
+          },
+          {
+            "name": "token_total_supply",
+            "type": "u64"
+          },
+          {
+            "name": "token_decimals",
+            "type": "u8"
+          },
+          {
+            "name": "curve_supply_bps",
+            "type": "u16"
+          },
+          {
+            "name": "liquidity_token_bps",
+            "type": "u16"
+          },
+          {
+            "name": "base_price_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "price_slope_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "buy_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "finalize_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "creator_post_finalize_bps",
+            "type": "u16"
+          },
+          {
+            "name": "liquidity_post_finalize_bps",
+            "type": "u16"
+          },
+          {
+            "name": "dex_adapter",
+            "type": "u8"
+          },
+          {
+            "name": "trade_route_profile",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "finalize_route_profile",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "treasury_profile",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "dex_profile",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "oracle_profile",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "active_creation",
+            "type": "bool"
+          },
+          {
+            "name": "support_enabled",
+            "type": "bool"
+          },
+          {
+            "name": "manifest_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "route_authorization_required",
+            "type": "bool"
+          },
+          {
+            "name": "authorized_trading_required",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GenerationSupportUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "generation_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "support_enabled",
+            "type": "bool"
+          },
+          {
+            "name": "active_creation",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GlobalAuthorities",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "pauser",
+            "type": "pubkey"
+          },
+          {
+            "name": "tier_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "risk_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "route_signer",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury_operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "generation_operator",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GlobalAuthoritiesUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "pauser",
+            "type": "pubkey"
+          },
+          {
+            "name": "tier_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "risk_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "route_signer",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury_operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "generation_operator",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GlobalConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "pauser",
+            "type": "pubkey"
+          },
+          {
+            "name": "tier_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "risk_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "route_signer",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury_operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "generation_operator",
+            "type": "pubkey"
+          },
+          {
+            "name": "active_generation_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "generation_count",
+            "type": "u64"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "create_paused",
+            "type": "bool"
+          },
+          {
+            "name": "buy_paused",
+            "type": "bool"
+          },
+          {
+            "name": "sell_paused",
+            "type": "bool"
+          },
+          {
+            "name": "graduation_paused",
+            "type": "bool"
+          },
+          {
+            "name": "claims_paused",
+            "type": "bool"
+          },
+          {
+            "name": "route_authorization_required",
+            "type": "bool"
+          },
+          {
+            "name": "authorized_trading_required",
+            "type": "bool"
+          },
+          {
+            "name": "security_defaults_locked",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GlobalConfigInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "pauser",
+            "type": "pubkey"
+          },
+          {
+            "name": "route_signer",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GraduationStarted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "meteora_pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "meteora_position",
+            "type": "pubkey"
+          },
+          {
+            "name": "position_nft_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "native_target_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "oracle_price_usd_micros",
+            "type": "u64"
+          },
+          {
+            "name": "max_liquidity_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "max_liquidity_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "finalize_fee_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "creator_payout_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "final_spot_nano_lamports",
+            "type": "u128"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_config_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "quote_policy_version",
+            "type": "u16"
+          },
+          {
+            "name": "quote_profile",
+            "type": "u8"
+          },
+          {
+            "name": "quote_provider_class",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GraduationState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "meteora_pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "meteora_position",
+            "type": "pubkey"
+          },
+          {
+            "name": "position_nft_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "native_target_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "oracle_price_usd_micros",
+            "type": "u64"
+          },
+          {
+            "name": "finalize_route_profile",
+            "type": "u8"
+          },
+          {
+            "name": "max_liquidity_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "max_liquidity_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "finalize_fee_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "creator_payout_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "final_spot_nano_lamports",
+            "type": "u128"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_config_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "quote_policy_version",
+            "type": "u16"
+          },
+          {
+            "name": "quote_profile",
+            "type": "u8"
+          },
+          {
+            "name": "quote_provider_class",
+            "type": "u8"
+          },
+          {
+            "name": "acquisition_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_reference_usd_micros",
+            "type": "u64"
+          },
+          {
+            "name": "quote_decimals",
+            "type": "u8"
+          },
+          {
+            "name": "expected_quote_amount",
+            "type": "u64"
+          },
+          {
+            "name": "min_quote_amount",
+            "type": "u64"
+          },
+          {
+            "name": "max_slippage_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_impact_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_deviation_bps",
+            "type": "u16"
+          },
+          {
+            "name": "quote_recovery_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "authorization_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "started_at",
+            "type": "i64"
+          },
+          {
+            "name": "finalized_at",
+            "type": "i64"
+          },
+          {
+            "name": "finalized",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PauseFlags",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "create_paused",
+            "type": "bool"
+          },
+          {
+            "name": "buy_paused",
+            "type": "bool"
+          },
+          {
+            "name": "sell_paused",
+            "type": "bool"
+          },
+          {
+            "name": "graduation_paused",
+            "type": "bool"
+          },
+          {
+            "name": "claims_paused",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PauseFlagsUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "create_paused",
+            "type": "bool"
+          },
+          {
+            "name": "buy_paused",
+            "type": "bool"
+          },
+          {
+            "name": "sell_paused",
+            "type": "bool"
+          },
+          {
+            "name": "graduation_paused",
+            "type": "bool"
+          },
+          {
+            "name": "claims_paused",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RiskProfile",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "risk_level",
+            "type": "u8"
+          },
+          {
+            "name": "restricted",
+            "type": "bool"
+          },
+          {
+            "name": "cluster_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "manual_review_required",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RiskProfileSynced",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "risk_level",
+            "type": "u8"
+          },
+          {
+            "name": "restricted",
+            "type": "bool"
+          },
+          {
+            "name": "cluster_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "manual_review_required",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RiskProfileUpdate",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "risk_level",
+            "type": "u8"
+          },
+          {
+            "name": "restricted",
+            "type": "bool"
+          },
+          {
+            "name": "cluster_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "manual_review_required",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SecurityDefaultsLocked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "route_authorization_required",
+            "type": "bool"
+          },
+          {
+            "name": "authorized_trading_required",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SellTokensArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "tokens_in",
+            "docs": [
+              "Exact tokens the trader sells."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_lamports_out",
+            "docs": [
+              "Minimum SOL returned after fee (slippage)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "deadline",
+            "type": "i64"
+          },
+          {
+            "name": "nonce",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "route_profile",
+            "docs": [
+              "Linked / unlinked / OG split. Bound into the trade digest."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TokensBought",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "trader",
+            "type": "pubkey"
+          },
+          {
+            "name": "lamports_in",
+            "type": "u64"
+          },
+          {
+            "name": "fee_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "net_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "tokens_out",
+            "type": "u64"
+          },
+          {
+            "name": "sold_tokens_after",
+            "type": "u64"
+          },
+          {
+            "name": "net_raised_after",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TokensSold",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "campaign",
+            "type": "pubkey"
+          },
+          {
+            "name": "trader",
+            "type": "pubkey"
+          },
+          {
+            "name": "tokens_in",
+            "type": "u64"
+          },
+          {
+            "name": "gross_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "fee_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "lamports_out",
+            "type": "u64"
+          },
+          {
+            "name": "sold_tokens_after",
+            "type": "u64"
+          },
+          {
+            "name": "net_raised_after",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}

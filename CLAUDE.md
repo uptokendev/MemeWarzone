@@ -1315,6 +1315,23 @@ Import market data: DexScreener (solana/bsc/robinhood) + GeckoTerminal fallback 
 (free tier ~30/min; per-pass budget; `COINGECKO_API_KEY` for the paid API). Imports need a fresh
 scan (7 days): `scripts/backfill-import-admission.mjs --rescan-stale` must run hourly on Coolify.
 
+### Solana auto-graduation (2026-09-25)
+
+No curve could graduate on its own: begin_graduation must be signed by GlobalConfig.treasury_operator,
+which on mainnet was the Squads vault, and the operator script lives in `scripts/solana/`, which neither
+the API image (`frontend/`) nor the indexer image (`realtime-indexer/`) contains.
+- Keeper: `scripts/solana/graduation-keeper.mjs` (`Dockerfile.graduation-keeper`, repo root, one replica).
+  Websocket on every Campaign account write (discriminator `3228310b9ddce5c0`) = instant on the closing
+  buy; 8 s DB+chain scan as safety net; live SOL price; SOL-bound campaigns only (quote-bound are logged).
+- Operator: `SOLANA_GRADUATION_ALT_MODE=per-graduation` builds a fresh keeper-owned lookup table per
+  graduation. Never extend the shared launchpad ALT (256 cap; CREATE/BUY compile against it).
+  Keys may be inline JSON. IDL tracked at `scripts/solana/idl/memewarzone_solana.json` (sha `6ad69298`).
+- Gate K2 runs that operator exactly as the keeper does: graduate -> DEX swap -> LP fee claimed.
+- Role change: `scripts/solana/propose-squads-treasury-operator.mjs` (reads all 8 roles, changes only
+  treasury_operator, refuses vault/deployer/empty, decodes the proposal back before anyone signs).
+- LP fees: the keeper owns every locked position; indexer harvester needs the keeper secret AND
+  `SOLANA_PROTOCOL_TREASURY_ADDRESS` (unset = 20% goes to devnet deployer `HuKfoF...`).
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and

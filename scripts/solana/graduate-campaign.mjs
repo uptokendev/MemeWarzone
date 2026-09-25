@@ -75,7 +75,9 @@ function requiredEnv(name) {
 }
 
 function loadKeypair(path, label) {
-  const raw = JSON.parse(fs.readFileSync(path, "utf8"));
+  // A path, or the key itself as a JSON byte array (a container env var holds no files).
+  const value = String(path || "").trim();
+  const raw = JSON.parse(value.startsWith("[") ? value : fs.readFileSync(value, "utf8"));
   return Keypair.fromSecretKey(Uint8Array.from(raw));
 }
 
@@ -442,9 +444,59 @@ async function main() {
     confirmIx,
   ];
 
-  const altAddress = String(process.env.SOLANA_LAUNCHPAD_ALT_ADDRESS || "").trim();
+  const altMode = String(process.env.SOLANA_GRADUATION_ALT_MODE || "").trim().toLowerCase();
+  const altAddress = altMode === "per-graduation" ? "" : String(process.env.SOLANA_LAUNCHPAD_ALT_ADDRESS || "").trim();
   const lookupTables = [];
-  if (altAddress) {
+  if (altMode === "per-graduation") {
+    // A fresh table per graduation, owned and paid by the operator. The shared launchpad table is
+    // never touched: it caps at 256 addresses (every graduation would add ~30 campaign-specific
+    // ones) and CREATE/BUY compile against it, whose shape is frozen.
+    const keys = [];
+    for (const ix of instructions) {
+      for (const meta of [{ pubkey: ix.programId, isSigner: false }, ...(ix.keys || [])]) {
+        if (meta.isSigner) continue;
+        if (!keys.some((k) => k.equals(meta.pubkey))) keys.push(meta.pubkey);
+      }
+    }
+    const recentSlot = await connection.getSlot("finalized");
+    const [createIx, tableKey] = AddressLookupTableProgram.createLookupTable({
+      authority: operator.publicKey,
+      payer: operator.publicKey,
+      recentSlot,
+    });
+    const chunks = [];
+    for (let i = 0; i < keys.length; i += 20) chunks.push(keys.slice(i, i + 20));
+    for (let i = 0; i < chunks.length; i += 1) {
+      const extendIx = AddressLookupTableProgram.extendLookupTable({
+        payer: operator.publicKey,
+        authority: operator.publicKey,
+        lookupTable: tableKey,
+        addresses: chunks[i],
+      });
+      const blockhash = await connection.getLatestBlockhash("confirmed");
+      const msg = new TransactionMessage({
+        payerKey: operator.publicKey,
+        recentBlockhash: blockhash.blockhash,
+        instructions: i === 0 ? [createIx, extendIx] : [extendIx],
+      }).compileToV0Message();
+      const tx = new VersionedTransaction(msg);
+      tx.sign([operator]);
+      const sig = await connection.sendTransaction(tx, { maxRetries: 3 });
+      await connection.confirmTransaction({ signature: sig, ...blockhash }, "confirmed");
+    }
+    console.log(`graduation lookup table ${tableKey.toBase58()} (${keys.length} addresses)`);
+    // Extended addresses are usable from the next slot.
+    let table = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      table = (await connection.getAddressLookupTable(tableKey, { commitment: "confirmed" })).value;
+      const slot = await connection.getSlot("confirmed");
+      if (table && table.state.addresses.length === keys.length && slot > Number(table.state.lastExtendedSlot)) break;
+      table = null;
+    }
+    if (!table) throw new Error(`graduation lookup table ${tableKey.toBase58()} did not become usable`);
+    lookupTables.push(table);
+  } else if (altAddress) {
     const altKey = new PublicKey(altAddress);
     let table = (await connection.getAddressLookupTable(altKey)).value;
     if (!table) throw new Error(`lookup table ${altAddress} not found`);
