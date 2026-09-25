@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Copy, ExternalLink, Flag, Globe, Star } from "lucide-react";
+import { Copy, ExternalLink, Flag, Globe, Share2, Star } from "lucide-react";
 import { buildAbuseReportPath } from "@/lib/abuseReportLink";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,7 @@ import {
   requestSolanaGraduationHandoff,
   stashPendingSolanaDexTrade,
 } from "@/lib/solanaGraduationHandoff";
+import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
 import { TokenComments } from "@/components/token/TokenComments";
 import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { AthBar } from "@/components/token/AthBar";
@@ -778,6 +779,8 @@ const TokenDetails = () => {
   const [activity, setActivity] = useState<CampaignActivity | null>(null);
   const [confirmedCurvePoints, setConfirmedCurvePoints] = useState<CurveTradePoint[]>([]);
   const [activityTab, setActivityTab] = useState<"overview" | "comments" | "trades">(() => readStoredString("mwz:token:workspace-tab", "overview"));
+  const [shareCardOpen, setShareCardOpen] = useState(false);
+  const tokenArtRef = useRef<HTMLImageElement | null>(null);
   // The description a creator writes at deploy lives in token_metadata_registry
   // and is served by /api/token-metadata for every chain. It left the feed
   // cards on purpose; the Overview tab is where it belongs.
@@ -4357,6 +4360,7 @@ const toSeconds = (ts: number): number => {
         <div className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)] items-stretch xl:min-h-[220px]">
           <div className="relative min-h-[180px] bg-muted/20 xl:min-h-[220px] overflow-hidden shrink-0">
             <img
+              ref={tokenArtRef}
               src={tokenData.image}
               alt={tokenData.ticker}
               onError={(event) => {
@@ -4560,6 +4564,17 @@ const toSeconds = (ts: number): number => {
                         className="h-8 px-3 text-xs flex-shrink-0"
                       />
                     )}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-8 px-3 text-xs flex-shrink-0 font-retro"
+                      onClick={() => setShareCardOpen(true)}
+                      data-token-share-card-cta="true"
+                    >
+                      <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                      Share card
+                    </Button>
                     <Button
                       asChild
                       variant="ghost"
@@ -5475,6 +5490,20 @@ const toSeconds = (ts: number): number => {
           </Card>
         </div>
       </div>
+      <TokenShareCardModal
+        open={shareCardOpen}
+        onClose={() => setShareCardOpen(false)}
+        name={tokenData.name}
+        ticker={tokenData.ticker}
+        chainId={chainIdForStorage}
+        status={stagePill}
+        mcap={marketCapDisplay}
+        holders={String(tokenData.holders || "—")}
+        volume={volumeDisplay}
+        image={tokenData.image}
+        imageEl={tokenArtRef.current}
+        pageUrl={typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}` : ""}
+      />
     </div>
   );
 };
