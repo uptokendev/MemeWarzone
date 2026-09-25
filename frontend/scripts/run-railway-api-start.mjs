@@ -48,7 +48,9 @@ async function runCloseoutBestEffort() {
   });
 }
 
-await runCloseoutBestEffort();
+// The closeout is best-effort and must never block listen: it used to run first, so every restart
+// answered 503 for up to 45 s before the API even started. It now runs alongside the server.
+void runCloseoutBestEffort();
 
 const server = spawn(
   process.execPath,

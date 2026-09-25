@@ -1,5 +1,15 @@
 import express from "express";
 
+// One stray promise rejection in any request or background task used to end the whole process
+// (Node 20 default), and every restart took the API down for ~45 s (2026-09-25). Log it loudly with
+// the stack so the cause can be fixed, and keep serving.
+process.on("unhandledRejection", (reason) => {
+  console.error("[api] unhandledRejection (kept alive)", reason instanceof Error ? reason.stack : reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[api] uncaughtException (kept alive)", error?.stack || error);
+});
+
 import { pool } from "../server/db.js";
 import { createRailwayProxyMiddleware } from "../server/railwayProxy.js";
 
