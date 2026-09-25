@@ -1,5 +1,6 @@
 import Ably from "ably";
 import { ENV } from "./env.js";
+import { createCandleCoalescer } from "./candlePublishCoalescer.js";
 
 const disabledChannel = {
   publish: async () => undefined,
@@ -42,9 +43,30 @@ export async function publishTrade(chainId: number, campaign: string, msg: any) 
   await ch.publish("trade", msg);
 }
 
+const candleCoalescer = createCandleCoalescer({
+  flushMs: Number(process.env.CANDLE_PUBLISH_COALESCE_MS || 1_000),
+  publish: async (channel, messages) => {
+    await ablyRest.channels.get(channel).publish(messages);
+  },
+  onError: (channel, error) => {
+    console.warn("[ably] candle publish failed", channel, error instanceof Error ? error.message : String(error));
+  },
+});
+
+/** Queue a candle message; see candlePublishCoalescer.ts for why candles are coalesced. */
+export function queueCandleMessage(
+  chainId: number,
+  campaign: string,
+  event: string,
+  timeframe: string,
+  bucketMs: number,
+  data: unknown,
+): void {
+  candleCoalescer.queue({ channel: tokenChannel(chainId, campaign), event, timeframe, bucketMs, data });
+}
+
 export async function publishCandle(chainId: number, campaign: string, msg: any) {
-  const ch = ablyRest.channels.get(tokenChannel(chainId, campaign));
-  await ch.publish("candle_upsert", msg);
+  queueCandleMessage(chainId, campaign, "candle_upsert", String(msg?.tf ?? ""), Number(msg?.bucket ?? 0) * 1000, msg);
 }
 
 export async function publishStats(chainId: number, campaign: string, msg: any) {

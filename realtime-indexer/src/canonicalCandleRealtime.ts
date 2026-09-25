@@ -1,4 +1,4 @@
-import { ablyRest, tokenChannel } from "./ably.js";
+import { queueCandleMessage } from "./ably.js";
 import { pool } from "./db.js";
 
 const LOOP_SYMBOL = Symbol.for("memewarzone.canonicalCandleRealtimeStarted");
@@ -98,8 +98,7 @@ async function publishRow(row: any) {
   const resolution = String(row.timeframe || "");
   const bucketStart = new Date(row.bucket_start).toISOString();
 
-  const channel = ablyRest.channels.get(tokenChannel(chainId, campaignAddress));
-  await channel.publish("market_candle_upsert", {
+  queueCandleMessage(chainId, campaignAddress, "market_candle_upsert", resolution, new Date(bucketStart).getTime(), {
     type: "market_candle_upsert",
     chainId,
     campaignAddress,

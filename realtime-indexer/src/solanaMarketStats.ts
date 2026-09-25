@@ -21,6 +21,7 @@
  * Scoring code never sees a Solana branch; it reads the same columns.
  */
 import { pool } from "./db.js";
+import { notPublicHiddenSql } from "./publicHidden.js";
 import { ENV } from "./env.js";
 
 const SOLANA_CHAIN_ID = 101;
@@ -447,6 +448,7 @@ export async function refreshAllSolanaMarketStats(deps: { db?: Queryable; limit?
     `select c.campaign_address
        from public.campaigns c
       where c.chain_id = $1 and c.campaign_address is not null
+        and ${notPublicHiddenSql("c")}
         and (c.graduated_at_chain is not null
              or c.meta #>> '{solanaGraduation,pool}' is not null
              or exists (select 1 from public.curve_trades t where t.chain_id = c.chain_id and t.campaign_address = c.campaign_address and t.block_time >= now() - interval '7 days'))
