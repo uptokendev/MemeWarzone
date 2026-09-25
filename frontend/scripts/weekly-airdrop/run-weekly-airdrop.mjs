@@ -12,6 +12,7 @@ import {
   markFundingCheck, resolvePoolWei,
 } from "./chain.mjs";
 import { materializeAirdropBatch } from "./materialize.mjs";
+import { nativeUsdFor, thresholdsFor } from "./usdRules.mjs";
 
 async function audit(client, { batchId, action, oldValue = null, newValue = null, reason, txHash = null, metadata = {} }) {
   await client.query(
@@ -76,9 +77,9 @@ async function batchWallets(client, batch) {
 async function main() {
   const chainId = envInt("AIRDROP_CHAIN_ID", 56, { min: 1, max: 1_000_000 });
   if (chainId === 101 || chainId === 102) {
-    throw new Error(
-      "Solana weekly airdrop is not on the BNB merkle/vault runner. Use the Solana payout rails (airdrop_trader / airdrop_creator) instead of AIRDROP_CHAIN_ID=101.",
-    );
+    // Solana: one weekly Merkle tree over both programs, posted by the narrow reward-poster key.
+    const { runSolanaWeeklyAirdrop } = await import("./run-solana-weekly-airdrop.mjs");
+    return runSolanaWeeklyAirdrop({ chainId });
   }
   const drawSecret = requireEnv("AIRDROP_DRAW_SEED_SECRET");
   const distributorAddress = requireEnv(`REWARD_DISTRIBUTOR_ADDRESS_${chainId}`);
@@ -135,12 +136,14 @@ async function main() {
       : (pool.availableWei * BigInt(distributionBps)) / 10000n;
     if (totalPoolWei <= 0n) throw new Error("Calculated weekly airdrop pool is zero");
 
+    // One USD rule set for every chain, converted at this run's spot price (usdRules.mjs).
+    const thresholds = thresholdsFor(chainId, await nativeUsdFor(chainId));
     const traderPoolWei = totalPoolWei / 2n;
     const creatorPoolWei = totalPoolWei - traderPoolWei;
     const exclusions = await exclusionSets(client, { chainId, start, end });
     const [traders, creators] = await Promise.all([
-      batchComplete(traderBatch) ? [] : traderCandidates(client, { chainId, start, end, exclusions }),
-      batchComplete(creatorBatch) ? [] : creatorCandidates(client, { chainId, start, end, exclusions }),
+      batchComplete(traderBatch) ? [] : traderCandidates(client, { chainId, start, end, exclusions, thresholds }),
+      batchComplete(creatorBatch) ? [] : creatorCandidates(client, { chainId, start, end, exclusions, thresholds }),
     ]);
     const programs = [
       { program: "airdrop_trader", poolWei: traderPoolWei, candidates: traders, existing: batchComplete(traderBatch), batch: traderBatch },
@@ -164,7 +167,7 @@ async function main() {
       if (!eligibleCandidates.length) {
         throw new Error(`No eligible candidates remain for ${item.program}; refusing to publish either program`);
       }
-      const count = winnerCount(item.poolWei, eligibleCandidates.length, item.program);
+      const count = winnerCount(item.poolWei, eligibleCandidates.length, item.program, thresholds.targetPayoutRaw);
       const winners = weightedSample(eligibleCandidates, count, drawSecret, `${chainId}:${epochId}:${item.program}`);
       const payouts = splitPool(item.poolWei, winners.length);
       if (!winners.length || payouts.some((value) => value <= 0n)) {
@@ -237,6 +240,7 @@ async function main() {
           programPoolWei: item.poolWei.toString(),
           poolSource: pool.source,
           distributionBps,
+          nativeUsdAtDraw: thresholds.nativeUsd,
           drawSeedCommitment: commitment,
           securityExclusionCount: exclusions.totalCount,
           allowCrossProgramWinners,

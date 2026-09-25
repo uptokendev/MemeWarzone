@@ -2,6 +2,14 @@ import { AbiCoder, concat, getAddress, keccak256, toUtf8Bytes } from "ethers";
 
 const coder = AbiCoder.defaultAbiCoder();
 
+export function weeklyContractBatchId(chainId, epochId, program) {
+  return keccak256(toUtf8Bytes(`mwz-weekly-airdrop:${chainId}:${epochId}:${program}`));
+}
+
+function nativeSymbol(chainId) {
+  return Number(chainId) === 4663 || Number(chainId) === 46630 ? "ETH" : "BNB";
+}
+
 function leafFor(walletAddress, amount) {
   const inner = keccak256(coder.encode(["address", "uint256"], [getAddress(walletAddress), BigInt(amount)]));
   return keccak256(inner);
@@ -69,12 +77,14 @@ export async function materializeAirdropBatch(client, {
     const { rows: batchRows } = await client.query(
       `insert into public.reward_batches
         (reward_type,chain,token_symbol,status,total_amount,recipient_count,claimable_count,claimed_count,failed_count,source,metadata)
-       values ('airdrop',$1,'BNB','funding_check',$2::numeric,$3,0,0,0,'weekly_airdrop_scheduler',$4::jsonb)
+       values ('airdrop',$1,$5,'funding_check',$2::numeric,$3,0,0,0,'weekly_airdrop_scheduler',$4::jsonb)
        returning *`,
-      [String(chainId), totalAmount, entries.length, JSON.stringify({ ...metadata, epochId, program, automated: true })],
+      [String(chainId), totalAmount, entries.length, JSON.stringify({ ...metadata, epochId, program, automated: true }), nativeSymbol(chainId)],
     );
     let batch = batchRows[0];
-    const contractBatchId = keccak256(toUtf8Bytes(`mwz-reward-batch:${batch.id}`));
+    // Deterministic per chain / week / program, so the Safe can pre-authorize future weeks on the
+    // RewardDistributor (authorizeBatch) and the Coolify operator key can only fund those.
+    const contractBatchId = weeklyContractBatchId(chainId, epochId, program);
     const { root, leaves, proofs } = merklePlan(entries);
     const claimMetadata = {
       claimMode: "reward_distributor_merkle",
@@ -120,9 +130,9 @@ export async function materializeAirdropBatch(client, {
       const { rows } = await client.query(
         `insert into public.reward_ledger
           (reward_type,source_id,source_label,wallet_address,chain,token_symbol,amount,status,metadata)
-         values ('airdrop',$1,'weekly_airdrop_scheduler',$2,$3,'BNB',$4::numeric,'approved',$5::jsonb)
+         values ('airdrop',$1,'weekly_airdrop_scheduler',$2,$3,$6,$4::numeric,'approved',$5::jsonb)
          returning *`,
-        [`${epochId}:${program}:${entry.winner.winnerRank}`, entry.walletAddress.toLowerCase(), String(chainId), entry.amount, JSON.stringify(winnerMetadata)],
+        [`${epochId}:${program}:${entry.winner.winnerRank}`, entry.walletAddress.toLowerCase(), String(chainId), entry.amount, JSON.stringify(winnerMetadata), nativeSymbol(chainId)],
       );
       const ledger = rows[0];
       await client.query(

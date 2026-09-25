@@ -1,4 +1,5 @@
-import { asBigInt, envInt, envText } from "./config.mjs";
+import { asBigInt, envInt } from "./config.mjs";
+import { scoreUnits } from "./usdRules.mjs";
 
 function isSolanaAirdropChain(chainId) {
   return Number(chainId) === 101 || Number(chainId) === 102;
@@ -59,9 +60,6 @@ export function batchComplete(batch) {
   return Boolean(batch && ["claim_open", "closed"].includes(String(batch.status)));
 }
 
-function nativeUnits(raw, chainId) {
-  return Number(raw) / (isSolanaAirdropChain(chainId) ? 1e9 : 1e18);
-}
 
 function addWalletKeys(set, value, solana) {
   const raw = String(value || "").trim();
@@ -122,20 +120,17 @@ export async function exclusionSets(client, { chainId, start, end }) {
   return { all, securityCount: risk.rows.length, totalCount: all.size };
 }
 
-export async function traderCandidates(client, { chainId, start, end, exclusions }) {
-  const solana = isSolanaAirdropChain(chainId);
-  const minVolume = asBigInt(envText(
-    "AIRDROP_TRADER_MIN_VOLUME_WEI",
-    solana ? "250000000" : "250000000000000000",
-  ));
-  const cap = asBigInt(envText(
-    "AIRDROP_TRADER_VOLUME_CAP_WEI",
-    solana ? "15000000000" : "15000000000000000000",
-  ));
+// Volume thresholds come from one USD rule set for every chain (usdRules.mjs), converted at this
+// run's spot price -- no per-chain wei defaults.
+export async function traderCandidates(client, { chainId, start, end, exclusions, thresholds }) {
+  if (!thresholds) throw new Error("traderCandidates requires USD-derived thresholds");
+  const minVolume = thresholds.traderMinRaw;
+  const cap = thresholds.traderCapRaw;
+  const capScore = thresholds.traderCapScore;
   const minTrades = envInt("AIRDROP_TRADER_MIN_TRADES", 3, { min: 1, max: 1000 });
   const minDays = envInt("AIRDROP_TRADER_MIN_ACTIVE_DAYS", 2, { min: 1, max: 7 });
   const { rows } = await client.query(
-    `select ${walletExpr("t.wallet", chainId)} wallet_address,sum(t.bnb_amount_raw)::text total_volume_raw,
+    `select ${walletExpr("t.wallet", chainId)} wallet_address,sum(t.bnb_amount_raw::numeric)::text total_volume_raw,
             count(*)::int trade_count,count(distinct (t.block_time at time zone 'utc')::date)::int active_days,
             count(distinct t.campaign_address)::int campaign_count
        from public.curve_trades t join public.campaigns c
@@ -148,18 +143,18 @@ export async function traderCandidates(client, { chainId, start, end, exclusions
         and not coalesce(bw.restricted,false)
         and not (bw.cluster_id is not null and cw.cluster_id is not null and bw.cluster_id=cw.cluster_id)
       group by ${walletExpr("t.wallet", chainId)}
-     having sum(t.bnb_amount_raw) >= $4::numeric and count(*) >= $5
+     having sum(t.bnb_amount_raw::numeric) >= $4::numeric and count(*) >= $5
         and count(distinct (t.block_time at time zone 'utc')::date) >= $6`,
     [chainId, start, end, minVolume.toString(), minTrades, minDays],
   );
   return rows.filter((row) => !isWalletExcluded(exclusions, row.wallet_address)).map((row) => {
     const total = asBigInt(row.total_volume_raw);
     const counted = total > cap ? cap : total;
-    const countedBnb = nativeUnits(counted, chainId);
-    const rawBnb = nativeUnits(total, chainId);
+    const countedBnb = scoreUnits(counted, chainId, thresholds.nativeUsd);
+    const rawBnb = scoreUnits(total, chainId, thresholds.nativeUsd);
     const activityScore = countedBnb + Math.min(Number(row.trade_count), 20) * 0.1 + Math.min(Number(row.active_days), 7) * 0.5;
-    const smallWalletBonus = Math.max(0, 1 - countedBnb / 15) * 0.5;
-    const whalePenalty = Math.max(0, rawBnb - 15) / 15;
+    const smallWalletBonus = Math.max(0, 1 - countedBnb / capScore) * 0.5;
+    const whalePenalty = Math.max(0, rawBnb - capScore) / capScore;
     return {
       walletAddress: row.wallet_address, totalVolumeRaw: total.toString(), countedVolumeRaw: counted.toString(),
       tradeCount: Number(row.trade_count), activeDays: Number(row.active_days), campaignCount: Number(row.campaign_count),
@@ -170,21 +165,16 @@ export async function traderCandidates(client, { chainId, start, end, exclusions
   });
 }
 
-export async function creatorCandidates(client, { chainId, start, end, exclusions }) {
-  const solana = isSolanaAirdropChain(chainId);
-  const minVolume = asBigInt(envText(
-    "AIRDROP_CREATOR_MIN_VOLUME_WEI",
-    solana ? "3000000000" : "3000000000000000000",
-  ));
-  const cap = asBigInt(envText(
-    "AIRDROP_CREATOR_VOLUME_CAP_WEI",
-    solana ? "25000000000" : "25000000000000000000",
-  ));
-  const minBuyers = envInt("AIRDROP_CREATOR_MIN_UNIQUE_BUYERS", solana ? 3 : 10, { min: 1, max: 100000 });
+export async function creatorCandidates(client, { chainId, start, end, exclusions, thresholds }) {
+  if (!thresholds) throw new Error("creatorCandidates requires USD-derived thresholds");
+  const minVolume = thresholds.creatorMinRaw;
+  const cap = thresholds.creatorCapRaw;
+  const capScore = thresholds.creatorCapScore;
+  const minBuyers = thresholds.creatorMinUniqueBuyers;
   const maxCampaigns = envInt("AIRDROP_CREATOR_MAX_CAMPAIGNS", 2, { min: 1, max: 20 });
   const { rows } = await client.query(
     `select ${walletExpr("c.creator_address", chainId)} wallet_address,t.campaign_address,
-            sum(t.bnb_amount_raw)::text qualified_buy_volume_raw,count(distinct ${walletExpr("t.wallet", chainId)})::int unique_buyers
+            sum(t.bnb_amount_raw::numeric)::text qualified_buy_volume_raw,count(distinct ${walletExpr("t.wallet", chainId)})::int unique_buyers
        from public.curve_trades t join public.campaigns c
          on c.chain_id=t.chain_id and c.campaign_address=t.campaign_address
        left join public.campaign_security_states s on s.campaign_address=t.campaign_address
@@ -195,7 +185,7 @@ export async function creatorCandidates(client, { chainId, start, end, exclusion
         and not coalesce(bw.restricted,false)
         and not (bw.cluster_id is not null and cw.cluster_id is not null and bw.cluster_id=cw.cluster_id)
       group by ${walletExpr("c.creator_address", chainId)},t.campaign_address
-     having sum(t.bnb_amount_raw) >= $4::numeric and count(distinct ${walletExpr("t.wallet", chainId)}) >= $5`,
+     having sum(t.bnb_amount_raw::numeric) >= $4::numeric and count(distinct ${walletExpr("t.wallet", chainId)}) >= $5`,
     [chainId, start, end, minVolume.toString(), minBuyers],
   );
   const grouped = new Map();
@@ -209,11 +199,11 @@ export async function creatorCandidates(client, { chainId, start, end, exclusion
     const total = top.reduce((sum, row) => sum + asBigInt(row.qualified_buy_volume_raw), 0n);
     const counted = total > cap ? cap : total;
     const uniqueBuyers = top.reduce((sum, row) => sum + Number(row.unique_buyers), 0);
-    const countedBnb = nativeUnits(counted, chainId);
-    const rawBnb = nativeUnits(total, chainId);
+    const countedBnb = scoreUnits(counted, chainId, thresholds.nativeUsd);
+    const rawBnb = scoreUnits(total, chainId, thresholds.nativeUsd);
     const activityScore = countedBnb + Math.min(uniqueBuyers, 50) * 0.1 + top.length;
-    const smallWalletBonus = Math.max(0, 1 - countedBnb / 25) * 0.5;
-    const whalePenalty = Math.max(0, rawBnb - 25) / 25;
+    const smallWalletBonus = Math.max(0, 1 - countedBnb / capScore) * 0.5;
+    const whalePenalty = Math.max(0, rawBnb - capScore) / capScore;
     return {
       walletAddress, totalVolumeRaw: total.toString(), countedVolumeRaw: counted.toString(), uniqueBuyers,
       eligibleCampaignCount: top.length,
@@ -225,7 +215,7 @@ export async function creatorCandidates(client, { chainId, start, end, exclusion
   });
 }
 
-export async function stageWinners(client, { chainId, epochId, program, winners, payouts, start, end, poolWei, seedCommitment }) {
+export async function stageWinners(client, { chainId, epochId, program, winners, payouts, start, end, poolWei, seedCommitment, tokenSymbol = "BNB" }) {
   await client.query(`delete from public.reward_calculation_inputs where reward_type='airdrop' and program=$1 and epoch_id=$2 and chain=$3`, [program, epochId, String(chainId)]);
   for (let i = 0; i < winners.length; i += 1) {
     const winner = winners[i];
@@ -243,8 +233,8 @@ export async function stageWinners(client, { chainId, epochId, program, winners,
     await client.query(
       `insert into public.reward_calculation_inputs
         (reward_type,program,epoch_id,chain,token_symbol,wallet_address,amount,score,activity_score,source_id,source_label,status,metadata)
-       values ('airdrop',$1,$2,$3,'BNB',$4,$5::numeric,$6::numeric,$7::numeric,$8,'weekly_airdrop_scheduler','approved',$9::jsonb)`,
-      [program, epochId, String(chainId), winner.walletAddress, payouts[i].toString(), String(winner.finalWeight), String(winner.activityScore), `${epochId}:${program}:${winner.winnerRank}`, JSON.stringify(metadata)],
+       values ('airdrop',$1,$2,$3,$10,$4,$5::numeric,$6::numeric,$7::numeric,$8,'weekly_airdrop_scheduler','approved',$9::jsonb)`,
+      [program, epochId, String(chainId), winner.walletAddress, payouts[i].toString(), String(winner.finalWeight), String(winner.activityScore), `${epochId}:${program}:${winner.winnerRank}`, JSON.stringify(metadata), tokenSymbol],
     );
   }
 }

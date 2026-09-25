@@ -70,12 +70,13 @@ export function splitPool(poolWei, count) {
   });
 }
 
-export function winnerCount(poolWei, candidateCount, program) {
+/** targetRaw: the target payout per winner in the chain's native raw units (USD-derived per run). */
+export function winnerCount(poolWei, candidateCount, program, targetRaw = null) {
   if (!candidateCount || poolWei <= 0n) return 0;
   const explicitName = program === "airdrop_trader" ? "AIRDROP_TRADER_WINNERS" : "AIRDROP_CREATOR_WINNERS";
   const explicit = envInt(explicitName, 0, { min: 0, max: 1000 });
   if (explicit) return Math.min(candidateCount, explicit);
-  const target = asBigInt(envText("AIRDROP_TARGET_PAYOUT_WEI", "50000000000000000"));
+  const target = targetRaw ?? asBigInt(envText("AIRDROP_TARGET_PAYOUT_WEI", "50000000000000000"));
   const maximum = envInt("AIRDROP_MAX_WINNERS_PER_PROGRAM", 50, { min: 1, max: 1000 });
   return Math.min(candidateCount, maximum, Math.max(1, target > 0n ? Number(poolWei / target) : 1));
 }

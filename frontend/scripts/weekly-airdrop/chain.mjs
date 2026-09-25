@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider, Network, getAddress } from "ethers";
+import { Contract, JsonRpcProvider, Network, Wallet, getAddress } from "ethers";
 import { asBigInt, envText, requireEnv } from "./config.mjs";
 
 function rpcUrl(chainId) {
@@ -188,7 +188,13 @@ export async function ensureOnChainBatch({ batchId, chainId, distributorAddress,
     };
   }
 
-  const execution = await requestFundingExecution({
+  // Own-server mode (founder, 2026-09-25): the Coolify job funds with the vault's airdropOperator
+  // key. Its reach is what the Safe pre-authorized on the RewardDistributor (batch id + max amount +
+  // publish window), checked here before sending so a refusal is explained, not just reverted.
+  const operatorKey = envText(`AIRDROP_OPERATOR_PRIVATE_KEY_${chainId}`);
+  const execution = operatorKey
+    ? await fundDirect({ chainId, operatorKey, vaultAddress, distributorAddress, contractBatchId, merkleRoot, deadline, total })
+    : await requestFundingExecution({
     action: "fund_airdrop_batch",
     idempotencyKey: `mwz-airdrop:${chainId}:${contractBatchId}`,
     batchId,
@@ -221,4 +227,35 @@ export async function ensureOnChainBatch({ batchId, chainId, distributorAddress,
     txHash: execution.txHash || execution.vaultFundingTxHash || null,
     blockNumber: execution.blockNumber || null,
   };
+}
+
+
+async function fundDirect({ chainId, operatorKey, vaultAddress, distributorAddress, contractBatchId, merkleRoot, deadline, total }) {
+  const provider = providerFor(chainId);
+  const signer = new Wallet(operatorKey, provider);
+  const distributor = new Contract(distributorAddress, [
+    "function batchAuthorization(bytes32) view returns (uint256 maxAmount,uint64 publishAfter,uint64 publishDeadline,bool authorized,bool consumed)",
+  ], provider);
+  const vault = new Contract(vaultAddress, [
+    "function airdropOperator() view returns (address)",
+    "function warzoneAirdropBalance() view returns (uint256)",
+    "function fundAirdropBatch(bytes32 batchId,bytes32 merkleRoot,uint64 claimDeadline,uint256 amount)",
+  ], signer);
+  const [auth, operator, tracked] = await Promise.all([
+    distributor.batchAuthorization(contractBatchId),
+    vault.airdropOperator(),
+    vault.warzoneAirdropBalance(),
+  ]);
+  if (getAddress(operator) !== getAddress(signer.address)) {
+    throw new Error(`AIRDROP_OPERATOR_PRIVATE_KEY_${chainId} is ${signer.address}, but the vault's airdropOperator is ${operator}`);
+  }
+  if (!auth.authorized || auth.consumed) throw new Error(`Batch ${contractBatchId} is not pre-authorized by the Safe (or already used)`);
+  if (total > BigInt(auth.maxAmount)) throw new Error(`Batch total ${total} is above the Safe's authorized max ${auth.maxAmount}`);
+  const now = Math.floor(Date.now() / 1000);
+  if (now < Number(auth.publishAfter) || now > Number(auth.publishDeadline)) throw new Error(`Batch ${contractBatchId} is outside its authorized publish window`);
+  if (total > BigInt(tracked)) throw new Error(`Vault airdrop balance ${tracked} is below the batch total ${total}`);
+  const tx = await vault.fundAirdropBatch(contractBatchId, merkleRoot, deadline, total);
+  const receipt = await tx.wait();
+  if (!receipt || Number(receipt.status) !== 1) throw new Error(`fundAirdropBatch reverted: ${tx.hash}`);
+  return { txHash: tx.hash, blockNumber: receipt.blockNumber, requestId: null };
 }
