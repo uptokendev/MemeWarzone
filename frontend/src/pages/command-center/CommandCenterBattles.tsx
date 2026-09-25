@@ -36,6 +36,7 @@ import {
 } from "@/lib/arena/battleDuration";
 import { presentAutoDeployStatus } from "@/lib/arena/autoDeployPresentation.mjs";
 import { collectIncomingCreatorChallenges } from "@/lib/arena/creatorChallengePresentation.mjs";
+import { requestArenaBuyIn, shouldOpenBuyInAfterAccept } from "@/lib/arena/challengePopupPresentation.mjs";
 import { presentMatchCandidates } from "@/lib/arena/findMatchPresentation.mjs";
 
 function nativeLabel(chainId?: number, fallback?: string) {
@@ -178,11 +179,12 @@ export default function CommandCenterBattles() {
       if (accept) {
         const result = await acceptPostGradBattle(battleId, auth);
         await feed.refreshFeed();
-        toast.success(
-          result?.battle?.state === "matched" || result?.escrowRequired
-            ? "Accepted. Pay your on-chain stake to start the 12-hour fight."
-            : "Challenge accepted. Fight is live.",
-        );
+        if (shouldOpenBuyInAfterAccept(result, result?.battle) && result?.battle) {
+          requestArenaBuyIn(result.battle);
+          toast.success("Accepted. Pay your buy-in.");
+        } else {
+          toast.success("Challenge accepted. Fight is live.");
+        }
       } else {
         await declinePostGradBattle(battleId, auth);
         await feed.refreshFeed();

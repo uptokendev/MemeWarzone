@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { arenaCreatorChannelName as apiChannelName } from "../../../api/lib/arenaChallengeOffer.js";
 import { isStrictlyHigherStake } from "../../../api/lib/arenaChallengeOffer.js";
@@ -20,7 +23,15 @@ import {
   pruneChallengePopups,
   routeChallengeEvent,
   upsertChallengePopup,
+  dropBattleFromChallengeQueue,
+  shouldOpenBuyInAfterAccept,
+  shouldRememberChallengeOutcome,
 } from "./challengePopupPresentation.mjs";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+function readSrc(...parts) {
+  return fs.readFileSync(path.join(here, ...parts), "utf8");
+}
 
 function battle(over = {}) {
   return {
@@ -131,9 +142,9 @@ test("a poll drops answer popups the server no longer lists, but never the open 
   assert.deepEqual(kept.map((row) => row.battleId), ["on-screen", "still-open", "arrived-mid-poll", "other-chain", "declined"]);
 });
 
-test("routing: accepted-and-matched and buy-in-due go to the buy-in; answers only while still challenged", () => {
-  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.accepted, battle({ state: "matched" })), "buy_in");
-  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.accepted, battle({ state: "challenged" }), { escrowRequired: true }), "buy_in");
+test("routing: accepted shows the challenger the accepted popup; buy-in-due pays immediately; answers only while still challenged", () => {
+  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.accepted, battle({ state: "matched" })), "popup");
+  assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.accepted, battle({ state: "challenged" }), { escrowRequired: true }), "popup");
   assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.accepted, battle({ state: "live" })), "popup");
   assert.equal(routeChallengeEvent(CHALLENGE_INBOX_ONLY_EVENTS.buyInDue, battle({ state: "matched" })), "buy_in");
   assert.equal(routeChallengeEvent(CHALLENGE_INBOX_ONLY_EVENTS.buyInDue, battle({ state: "live" })), "ignore");
@@ -143,6 +154,28 @@ test("routing: accepted-and-matched and buy-in-due go to the buy-in; answers onl
   assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.declined, battle({ state: "expired" })), "popup");
   assert.equal(routeChallengeEvent("something_else", battle()), "ignore");
   assert.equal(routeChallengeEvent(CHALLENGE_POPUP_EVENTS.received, null), "ignore");
+});
+
+test("accepting a matched fight opens buy-in and drops a leftover received popup for that battle", () => {
+  assert.equal(shouldOpenBuyInAfterAccept({ escrowRequired: true, battle: battle({ state: "matched" }) }), true);
+  assert.equal(shouldOpenBuyInAfterAccept({ battle: battle({ state: "matched" }) }), true);
+  assert.equal(shouldOpenBuyInAfterAccept({ battle: battle({ state: "live" }) }), false);
+  const queue = [
+    { battleId: "fight-1", event: CHALLENGE_POPUP_EVENTS.received },
+    { battleId: "fight-2", event: CHALLENGE_POPUP_EVENTS.received },
+  ];
+  assert.deepEqual(dropBattleFromChallengeQueue(queue, "fight-1").map((row) => row.battleId), ["fight-2"]);
+
+  const listener = readSrc("../../components/arena/IncomingChallengeListener.tsx");
+  const popup = readSrc("../../components/arena/ChallengeResponsePopup.tsx");
+  const wall = readSrc("../../pages/ArenaBattles.tsx");
+  assert.match(listener, /ARENA_BUY_IN_EVENT/);
+  assert.match(listener, /dropBattleFromChallengeQueue/);
+  assert.match(listener, /open=\{Boolean\(buyInBattle\)\}/);
+  assert.match(listener, /onBuyInStarted/);
+  assert.match(popup, /onBuyInStartedRef\.current/);
+  assert.match(popup, /Accepted\. Pay your buy-in/);
+  assert.match(wall, /requestArenaBuyIn\(result\.battle\)/);
 });
 
 test("an outcome is shown once per browser; storage failures never throw", () => {
@@ -169,4 +202,16 @@ test("counter copy names who countered; the countdown is the answer deadline, on
   assert.equal(declined.kicker, "CHALLENGE DECLINED");
   assert.doesNotMatch(declined.communityLine, /ANSWER WITHIN/);
   assert.equal(declined.counterLine, null);
+});
+
+test("an accepted fight still waiting for buy-ins keeps reminding the challenger; outcomes that need no action are shown once", () => {
+  assert.equal(shouldRememberChallengeOutcome(CHALLENGE_POPUP_EVENTS.accepted, battle({ state: "matched" })), false);
+  assert.equal(shouldRememberChallengeOutcome(CHALLENGE_POPUP_EVENTS.accepted, battle({ state: "live" })), true);
+  assert.equal(shouldRememberChallengeOutcome(CHALLENGE_POPUP_EVENTS.declined, battle({ state: "expired" })), true);
+  assert.equal(shouldRememberChallengeOutcome(CHALLENGE_POPUP_EVENTS.received, battle()), false);
+  const listener = readSrc("../../components/arena/IncomingChallengeListener.tsx");
+  assert.match(listener, /shouldRememberChallengeOutcome\(event, currentBattle\)/);
+  // Pay buy-in is an explicit request: it must open even after the buy-in popup was closed once.
+  assert.match(listener, /buyInClosedRef\.current\.delete\(battle\.id\)/);
+  assert.doesNotMatch(listener.slice(listener.indexOf("const onBuyIn")), /^\s*if \(buyInClosedRef\.current\.has\(battle\.id\)\) return;\s*$/m);
 });

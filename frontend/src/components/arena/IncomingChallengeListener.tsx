@@ -8,12 +8,15 @@ import { fetchArenaChallengeInbox } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
 import { useAblyCreatorChannel } from "@/hooks/useAblyCreatorChannel";
 import {
+  ARENA_BUY_IN_EVENT,
   CHALLENGE_POPUP_EVENTS,
   challengePopupKey,
+  dropBattleFromChallengeQueue,
   isActionableChallengeEvent,
   isChallengeSeen,
   isInformationalChallengeEvent,
   markChallengeSeen,
+  shouldRememberChallengeOutcome,
   pruneChallengePopups,
   routeChallengeEvent,
   shiftChallengePopup,
@@ -128,6 +131,7 @@ export function IncomingChallengeListener() {
     if (route === "ignore") return;
     if (route === "buy_in") {
       if (buyInClosedRef.current.has(battle.id)) return;
+      setQueue((current) => dropBattleFromChallengeQueue(current, battle.id));
       setBuyInBattle((current) => (current && current.id !== battle.id ? current : battle));
       return;
     }
@@ -225,6 +229,19 @@ export function IncomingChallengeListener() {
     };
   }, [poll]);
 
+  useEffect(() => {
+    const onBuyIn = (event: Event) => {
+      const battle = asBattle((event as CustomEvent).detail?.battle);
+      if (!battle) return;
+      // An explicit request (Pay buy-in, or accepting) always opens it, even if it was closed before.
+      buyInClosedRef.current.delete(battle.id);
+      setQueue((current) => dropBattleFromChallengeQueue(current, battle.id));
+      setBuyInBattle(battle);
+    };
+    window.addEventListener(ARENA_BUY_IN_EVENT, onBuyIn);
+    return () => window.removeEventListener(ARENA_BUY_IN_EVENT, onBuyIn);
+  }, []);
+
   const current = queue[0] || null;
   const currentBattle = asBattle(current?.battle);
   currentIdRef.current = currentBattle?.id || "";
@@ -234,7 +251,9 @@ export function IncomingChallengeListener() {
       const event = String(current.event || "");
       const offerCount = Number(current.offerCount || 0);
       closedRef.current.add(challengePopupKey(currentBattle.id, event, offerCount));
-      if (isInformationalChallengeEvent(event)) markChallengeSeen(localStore(), currentBattle.id, event, offerCount);
+      if (isInformationalChallengeEvent(event) && shouldRememberChallengeOutcome(event, currentBattle)) {
+        markChallengeSeen(localStore(), currentBattle.id, event, offerCount);
+      }
       // An accept inside the popup already showed this battle's buy-in; do not open it twice.
       buyInClosedRef.current.add(currentBattle.id);
       setBuyInBattle((open) => (open?.id === currentBattle.id ? null : open));
@@ -255,7 +274,7 @@ export function IncomingChallengeListener() {
         />
       ))}
       <ChallengeResponsePopup
-        open={Boolean(currentBattle)}
+        open={Boolean(currentBattle) && !buyInBattle}
         eventName={String(current?.event || CHALLENGE_POPUP_EVENTS.received)}
         battle={currentBattle}
         message={typeof current?.message === "string" ? current.message : null}
@@ -264,9 +283,12 @@ export function IncomingChallengeListener() {
         chainId={currentBattle?.chainId}
         onClose={dismissCurrent}
         onChanged={() => void poll()}
+        onBuyInStarted={(battleId) => {
+          buyInClosedRef.current.add(battleId);
+        }}
       />
       <BuyInPopup
-        open={Boolean(buyInBattle) && !currentBattle}
+        open={Boolean(buyInBattle)}
         battle={buyInBattle}
         walletAddress={isSolanaChainId(buyInBattle?.chainId) ? solanaWallet : evmWallet || solanaWallet}
         onOpenChange={(next) => {

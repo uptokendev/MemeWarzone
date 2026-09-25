@@ -183,12 +183,45 @@ export function routeChallengeEvent(event, battle, { escrowRequired = false } = 
   const state = String(battle.state || "").toLowerCase();
   if (event === CHALLENGE_INBOX_ONLY_EVENTS.buyInDue) return state === "matched" ? "buy_in" : "ignore";
   if (event === CHALLENGE_POPUP_EVENTS.accepted) {
-    if (state === "matched" || escrowRequired === true) return "buy_in";
-    return state === "live" ? "popup" : "ignore";
+    // Challenger sees "accepted" then pays. The acceptor gets buy_in_due instead.
+    if (state === "matched" || escrowRequired === true || state === "live") return "popup";
+    return "ignore";
   }
   if (event === CHALLENGE_POPUP_EVENTS.declined) return "popup";
   if (isActionableChallengeEvent(event)) return state === "challenged" ? "popup" : "ignore";
   return "ignore";
+}
+
+export const ARENA_BUY_IN_EVENT = "mwz-arena-buy-in";
+
+/**
+ * Whether closing an outcome popup should hide it for good in this browser. A decline, or an accept
+ * whose fight is already live, only needs telling once. An accept whose fight still waits for buy-ins
+ * must come back on every visit until it is paid (or the fight moves on), or the challenger misses
+ * their deposit window.
+ */
+export function shouldRememberChallengeOutcome(event, battle) {
+  if (event === CHALLENGE_POPUP_EVENTS.declined) return true;
+  if (event === CHALLENGE_POPUP_EVENTS.accepted) return String(battle?.state || "").toLowerCase() !== "matched";
+  return false;
+}
+
+export function shouldOpenBuyInAfterAccept(result, battle) {
+  const next = result?.battle || battle;
+  const state = String(next?.state || battle?.state || "").toLowerCase();
+  return result?.escrowRequired === true || state === "matched";
+}
+
+export function requestArenaBuyIn(battle) {
+  if (typeof window === "undefined" || !battle?.id) return false;
+  window.dispatchEvent(new CustomEvent(ARENA_BUY_IN_EVENT, { detail: { battle } }));
+  return true;
+}
+
+export function dropBattleFromChallengeQueue(queue, battleId) {
+  const id = String(battleId || "").trim();
+  if (!id) return Array.isArray(queue) ? [...queue] : [];
+  return (Array.isArray(queue) ? queue : []).filter((row) => String(row?.battleId || "") !== id);
 }
 
 export function challengePopupKey(battleId, event, offerCount = 0) {

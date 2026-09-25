@@ -11,6 +11,7 @@ import { acceptPostGradBattle, counterPostGradBattle, declinePostGradBattle } fr
 import { postGradFlags } from "@/features/postgrad/config";
 import { useArenaBattleFeed, type CreatorBattleStatus } from "@/hooks/useArenaBattleFeed";
 import { battleDurationLabel, battleDurationOptions, parseBattleDurationHoursForMode, parseBattleMode } from "@/lib/arena/battleDuration";
+import { requestArenaBuyIn, shouldOpenBuyInAfterAccept } from "@/lib/arena/challengePopupPresentation.mjs";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import { getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
 import type { Battle } from "@/features/postgrad/contracts";
@@ -120,11 +121,22 @@ export function ChallengeInboxDialog() {
     try {
       const action = accept ? "arena_accept_battle" : "arena_decline_battle";
       const auth = await sign(action, [`Battle: ${current.id}`]);
-      if (accept) await acceptPostGradBattle(current.id, auth);
-      else await declinePostGradBattle(current.id, auth);
-      await feed.refreshFeed();
-      dismiss(current);
-      toast.success(accept ? "Offer accepted. Pay the on-chain stake if escrow is live, then the 12-hour fight starts." : "Offer declined.");
+      if (accept) {
+        const result = await acceptPostGradBattle(current.id, auth);
+        await feed.refreshFeed();
+        dismiss(current);
+        if (shouldOpenBuyInAfterAccept(result, result?.battle) && result?.battle) {
+          requestArenaBuyIn(result.battle);
+          toast.success("Accepted. Pay your buy-in.");
+        } else {
+          toast.success("Offer accepted.");
+        }
+      } else {
+        await declinePostGradBattle(current.id, auth);
+        await feed.refreshFeed();
+        dismiss(current);
+        toast.success("Offer declined.");
+      }
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not update challenge."));
     } finally {

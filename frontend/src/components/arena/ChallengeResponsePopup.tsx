@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { BuyInPopup } from "@/components/arena/BuyInPopup";
@@ -25,6 +25,7 @@ export function ChallengeResponsePopup({
   chainId,
   onClose,
   onChanged,
+  onBuyInStarted,
 }: {
   open: boolean;
   eventName: string;
@@ -35,6 +36,7 @@ export function ChallengeResponsePopup({
   chainId?: number | null;
   onClose: () => void;
   onChanged?: () => void;
+  onBuyInStarted?: (battleId: string) => void;
 }) {
   const { signAuth } = useArenaWalletAction();
   const [now, setNow] = useState(() => Date.now());
@@ -45,6 +47,8 @@ export function ChallengeResponsePopup({
   const [buyInOpen, setBuyInOpen] = useState(false);
   const [fundedBattle, setFundedBattle] = useState<Battle | null>(null);
   const [waitingCopy, setWaitingCopy] = useState("");
+  const onBuyInStartedRef = useRef(onBuyInStarted);
+  onBuyInStartedRef.current = onBuyInStarted;
 
   const view = battle ? presentChallengeResponsePopup(battle, eventName, { message, escrowRequired, endsAt: (battle as { endsAt?: string }).endsAt }) : null;
   const offered = Number((battle as { offeredStakeNative?: number; stakeNative?: number } | null)?.offeredStakeNative ?? battle?.stakeNative ?? 0);
@@ -64,9 +68,14 @@ export function ChallengeResponsePopup({
     setDeclineMessage("");
     setWaitingCopy("");
     setFundedBattle(eventName === CHALLENGE_POPUP_EVENTS.accepted ? battle : null);
-    // A matched fight goes straight to the buy-in; one that is already live only needs telling.
-    if (eventName === CHALLENGE_POPUP_EVENTS.accepted && battle.state === "matched") setBuyInOpen(true);
-  }, [open, battle, eventName]);
+    // Accepted + matched (or escrow still due) goes straight to the buy-in; live only needs telling.
+    const needsBuyIn =
+      eventName === CHALLENGE_POPUP_EVENTS.accepted && (battle.state === "matched" || escrowRequired === true);
+    if (needsBuyIn) {
+      setBuyInOpen(true);
+      onBuyInStartedRef.current?.(battle.id);
+    }
+  }, [open, battle, eventName, escrowRequired]);
 
   if (!battle || !view) return null;
 
@@ -80,6 +89,7 @@ export function ChallengeResponsePopup({
       if (result?.escrowRequired || nextBattle.state === "matched") {
         setFundedBattle(nextBattle);
         setBuyInOpen(true);
+        onBuyInStarted?.(nextBattle.id);
         toast.success("Accepted. Pay your buy-in.");
       } else {
         toast.success("Challenge accepted.");

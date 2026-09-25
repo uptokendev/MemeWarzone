@@ -10,12 +10,14 @@ import {
   battleDomId,
   battleWallHref,
   battleWallType,
+  collectMyWallBattles,
   collectWallBattles,
   commitFocusedFetch,
   filterWallBattles,
   findBattleInFeed,
   focusedRouteStatus,
   focusedWallFilterReset,
+  isMyOutstandingBattle,
   isPublicWallBattle,
   mergeFocusedBattleForRoute,
   mergeFocusedBattleIntoRows,
@@ -30,6 +32,7 @@ import {
   sortWallBattles,
   validBattlePointGap,
   wallEmptyCopy,
+  wallPhaseForBattle,
   wallTabForBattle,
 } from "./battleWallPresentation.mjs";
 
@@ -146,10 +149,10 @@ test("Upcoming wall modules keep card-vs-card combatants and a deployment HUD", 
   assert.equal(upcoming.gapLabel, null);
   assert.equal((moduleSrc.match(/<BattleWallCombatant/g) || []).length, 2);
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /deploymentPending=\{upcoming\}/);
-  assert.match(moduleSrc, /pointsLabel=\{upcoming \? null : presented\.leftPointsLabel\}/);
-  assert.match(moduleSrc, /leaderIndex=\{upcoming \? null : presented\.leaderIndex\}/);
-  assert.match(moduleSrc, /clockLabel=\{upcoming \? null : battleClockLabel\(displayBattle\)\}/);
+  assert.match(moduleSrc, /deploymentPending=\{phase === "matched"\}/);
+  assert.match(moduleSrc, /pointsLabel=\{preLive \? null : presented\.leftPointsLabel\}/);
+  assert.match(moduleSrc, /leaderIndex=\{preLive \? null : presented\.leaderIndex\}/);
+  assert.match(moduleSrc, /clockLabel=\{preLive \? null : battleClockLabel\(displayBattle\)\}/);
   assert.match(moduleSrc, /shouldMountWallCombatEffects/);
   assert.match(moduleSrc, /mountEffects \?/);
   assert.doesNotMatch(moduleSrc, /space-y-4 py-6 text-center/);
@@ -184,13 +187,100 @@ test("Missing combat metrics render em dash and explicit zeros stay zero", () =>
   assert.doesNotMatch(combatant, /\?\? 0/);
 });
 
-test("unresolved challenged proposals are not public wall battles", () => {
-  assert.equal(wallTabForBattle(battle({ state: "challenged", source: "challenge" })), null);
+test("challenged proposals land on Upcoming with a Challenged card title and no fight actions", () => {
+  const challenged = battle({ id: "ch-1", state: "challenged", source: "challenge" });
+  assert.equal(wallPhaseForBattle(challenged), "challenged");
+  assert.equal(wallTabForBattle(challenged), "upcoming");
+  assert.equal(isPublicWallBattle(challenged), true);
   const collected = collectWallBattles(
-    { liveBattles: [], openForBattleQueue: [battle({ state: "challenged", source: "challenge" })], archivedBattles: [] },
+    { liveBattles: [], openForBattleQueue: [challenged], archivedBattles: [] },
     "upcoming",
   );
-  assert.equal(collected.length, 0);
+  assert.equal(collected.length, 1);
+  assert.equal(collected[0].id, "ch-1");
+
+  const presented = presentBattleWallModule(challenged, null, { requested: false, loaded: false });
+  assert.equal(presented.tab, "upcoming");
+  assert.equal(presented.phase, "challenged");
+  assert.equal(presented.cardTitle, "Challenged");
+  assert.equal(presented.showFightActions, false);
+  assert.equal(presented.leftPointsLabel, null);
+  assert.equal(presented.leaderIndex, null);
+
+  const band = presentBattleWallFightBand(presented, { clockLabel: "ignored" });
+  assert.equal(band.stateLabel, "CHALLENGED");
+  assert.equal(band.clockLabel, null);
+
+  const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
+  const page = readSrc("../../pages/ArenaBattles.tsx");
+  assert.match(moduleSrc, /data-battle-wall-card-title=\{phase\}/);
+  assert.match(moduleSrc, /presented\.showFightActions/);
+  assert.match(moduleSrc, /data-battle-phase=\{phase \|\| ""\}/);
+  assert.match(page, /key: "mine", label: "My Battles"/);
+});
+
+test("My Battles lists outstanding challenged fights owned by the connected wallet", () => {
+  const mine = battle({
+    id: "mine-1",
+    state: "challenged",
+    source: "challenge",
+    participants: [
+      { tokenId: "0xaaa", tokenName: "Derpy", symbol: "DERPY", campaignAddress: "0xca" },
+      { tokenId: "0xbbb", tokenName: "Ask", symbol: "ASK" },
+    ],
+  });
+  const other = battle({
+    id: "other-1",
+    state: "challenged",
+    source: "challenge",
+    participants: [
+      { tokenId: "0xccc", tokenName: "Other", symbol: "OTHR" },
+      { tokenId: "0xddd", tokenName: "Else", symbol: "ELSE" },
+    ],
+  });
+  const live = battle({ id: "live-1", state: "live" });
+  const matched = battle({
+    id: "matched-1",
+    state: "matched",
+    source: "challenge",
+    participants: [
+      { tokenId: "0xaaa", tokenName: "Derpy", symbol: "DERPY", campaignAddress: "0xca" },
+      { tokenId: "0xbbb", tokenName: "Ask", symbol: "ASK" },
+    ],
+  });
+  const feed = { liveBattles: [live], openForBattleQueue: [mine, other, matched], archivedBattles: [] };
+  const statuses = [{ tokenId: "0xaaa", campaignAddress: "0xca", tokenAddress: "0xaaa", currentState: "challenged", battleId: "mine-1" }];
+
+  assert.equal(isMyOutstandingBattle(mine, { ownedKeys: new Set(["0xaaa"]) }), true);
+  assert.equal(isMyOutstandingBattle(matched, { ownedKeys: new Set(["0xaaa"]) }), true);
+  assert.equal(isMyOutstandingBattle(other, { ownedKeys: new Set(["0xaaa"]) }), false);
+  assert.equal(isMyOutstandingBattle(live, { ownedKeys: new Set(["0xaaa"]) }), false);
+  assert.equal(collectMyWallBattles(feed, { walletAddress: "" }).length, 0);
+
+  const rows = collectWallBattles(feed, "mine", { walletAddress: "0xcreator", creatorStatuses: statuses });
+  assert.equal(rows.map((row) => row.id).sort().join(","), "matched-1,mine-1");
+
+  const byWallet = collectMyWallBattles(
+    { liveBattles: [], openForBattleQueue: [battle({ id: "owned", state: "challenged", participants: [
+      { tokenId: "0xeee", tokenName: "Mine", symbol: "MINE", ownerWallet: "0xCreator" },
+      { tokenId: "0xfff", tokenName: "Rival", symbol: "RIVL" },
+    ] })], archivedBattles: [] },
+    { walletAddress: "0xcreator" },
+  );
+  assert.equal(byWallet.length, 1);
+  assert.equal(byWallet[0].id, "owned");
+
+  assert.equal(wallEmptyCopy({ tab: "mine", walletConnected: false }).kind, "empty-mine-wallet");
+  assert.equal(wallEmptyCopy({ tab: "mine", walletConnected: true }).title, "No outstanding battles.");
+  assert.match(wallEmptyCopy({ tab: "mine", walletConnected: true }).body, /buy-in/);
+  assert.equal(wallEmptyCopy({ tab: "upcoming" }).title, "No upcoming battles.");
+
+  const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
+  const page = readSrc("../../pages/ArenaBattles.tsx");
+  assert.match(moduleSrc, /data-battle-pay-buy-in/);
+  assert.match(moduleSrc, /Pay buy-in/);
+  assert.match(moduleSrc, /requestArenaBuyIn/);
+  assert.match(page, /showBuyIn=\{tab === "mine" && wallPhaseForBattle\(battle\) === "matched"\}/);
 });
 
 test("Finished V2 shows final Battle Points", () => {
@@ -363,9 +453,10 @@ function simulateFocusedRoute() {
 test("focused routing helpers select public wall tabs and reject private proposals", () => {
   assert.equal(wallTabForBattle(battle({ state: "live" })), "live");
   assert.equal(wallTabForBattle(battle({ state: "matched" })), "upcoming");
+  assert.equal(wallTabForBattle(battle({ state: "challenged" })), "upcoming");
   assert.equal(wallTabForBattle(battle({ state: "finished" })), "finished");
-  assert.equal(isPublicWallBattle(battle({ state: "challenged", source: "challenge" })), false);
-  assert.equal(publicWallRejectReason(battle({ state: "challenged" })), "challenged");
+  assert.equal(isPublicWallBattle(battle({ state: "challenged", source: "challenge" })), true);
+  assert.equal(publicWallRejectReason(battle({ state: "challenged" })), null);
   assert.equal(publicWallRejectReason(battle({ state: "waiting" })), "waiting");
   assert.equal(focusedWallFilterReset(battle({ state: "matched" })).tab, "upcoming");
   assert.equal(focusedWallFilterReset(battle({ state: "live" })).chain, "all");
@@ -483,16 +574,18 @@ test("stale fetched battle is never injected under a mismatched route ID", () =>
   assert.equal(resolvedThenMerged.length, 0);
 });
 
-test("challenged and waiting fetched battles remain rejected for focused routing", () => {
+test("waiting fetched battles remain rejected for focused routing; challenged opens Upcoming", () => {
   const challenged = commitFocusedFetch("ch", battle({ id: "ch", state: "challenged", source: "challenge" }));
   const waiting = commitFocusedFetch("wait", battle({ id: "wait", state: "waiting", source: "queue" }));
-  assert.equal(resolveFocusedWallBattle("ch", null, challenged), null);
-  assert.equal(focusedRouteStatus("ch", null, challenged), "unavailable");
+  assert.equal(resolveFocusedWallBattle("ch", null, challenged)?.id, "ch");
+  assert.equal(focusedRouteStatus("ch", null, challenged), "ready");
+  assert.equal(focusedWallFilterReset(challenged.battle).tab, "upcoming");
   assert.equal(resolveFocusedWallBattle("wait", null, waiting), null);
   assert.equal(focusedRouteStatus("wait", null, waiting), "unavailable");
   assert.equal(mergeFocusedBattleForRoute([], challenged.battle, "live", "ch").length, 0);
+  assert.equal(mergeFocusedBattleForRoute([], challenged.battle, "upcoming", "ch").length, 1);
   assert.equal(mergeFocusedBattleForRoute([], waiting.battle, "upcoming", "wait").length, 0);
-  assert.equal(shouldApplyFocusedWallReset("", "ch", challenged.battle), false);
+  assert.equal(shouldApplyFocusedWallReset("", "ch", challenged.battle), true);
 });
 
 test("route-keyed merge still avoids duplicating an in-feed focused battle", () => {
@@ -667,7 +760,7 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.doesNotMatch(page, /Battle Boost|Final Salvo|Vote Tournament/);
   assert.doesNotMatch(combatant, /BOOST|Vote Tournament|Final Salvo|sponsorship/i);
   assert.match(moduleSrc, /<BattleWallCombatant/);
-  assert.match(moduleSrc, /deploymentPending=\{upcoming\}/);
+  assert.match(moduleSrc, /deploymentPending=\{phase === "matched"\}/);
 });
 
 test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and generation-neutral HUD", () => {
@@ -714,7 +807,7 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and gen
   assert.match(moduleSrc, /data-battle-wall-status-band/);
   assert.match(moduleSrc, /presentBattleWallFightBand/);
   assert.match(moduleSrc, /leaderReady && presented\.leaderIndex === 0/);
-  assert.match(moduleSrc, /pointsLabel=\{upcoming \? null : presented\.leftPointsLabel\}/);
+  assert.match(moduleSrc, /pointsLabel=\{preLive \? null : presented\.leftPointsLabel\}/);
   assert.match(moduleSrc, /shouldMountWallCombatEffects/);
   assert.match(effects, /data-battle-combat-side/);
   assert.match(effects, /data-battle-effects-for/);
@@ -741,6 +834,13 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and gen
   );
   assert.equal(upcomingBand.stateLabel, "DEPLOYMENT");
   assert.equal(upcomingBand.clockLabel, null);
+
+  const challengedBand = presentBattleWallFightBand(
+    presentBattleWallModule(battle({ id: "ch-1", state: "challenged", source: "challenge" }), null),
+    { chainLabel: "BNB Chain", clockLabel: "ignored" },
+  );
+  assert.equal(challengedBand.stateLabel, "CHALLENGED");
+  assert.equal(challengedBand.clockLabel, null);
 
   const delayed = presentBattleWallModule(
     battle(),

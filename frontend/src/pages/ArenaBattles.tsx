@@ -23,7 +23,8 @@ import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { useBattleWallFocus } from "@/hooks/useBattleWallFocus";
 import type { BattleWallViewportReport } from "@/hooks/useBattleWallViewport";
 import { parseBattleDurationHours } from "@/lib/arena/battleDuration";
-import { collectIncomingCreatorChallenges } from "@/lib/arena/creatorChallengePresentation.mjs";
+import { collectIncomingCreatorChallenges, creatorOwnedIdentityKeys } from "@/lib/arena/creatorChallengePresentation.mjs";
+import { requestArenaBuyIn, shouldOpenBuyInAfterAccept } from "@/lib/arena/challengePopupPresentation.mjs";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import {
   collectWallBattles,
@@ -38,6 +39,7 @@ import {
   shouldApplyFocusedWallReset,
   sortWallBattles,
   wallEmptyCopy,
+  wallPhaseForBattle,
   wallTabForBattle,
 } from "@/lib/arena/battleWallPresentation.mjs";
 import {
@@ -50,6 +52,7 @@ import { getAllowedChainIds, isRobinhoodChainId } from "@/lib/chainConfig";
 const TABS = [
   { key: "live", label: "Live" },
   { key: "upcoming", label: "Upcoming" },
+  { key: "mine", label: "My Battles" },
   { key: "finished", label: "Finished" },
 ] as const;
 
@@ -147,10 +150,18 @@ export default function ArenaBattles() {
     setSearch(reset.search);
   }, [focusedId, focusedBattle]);
 
+  const ownedKeys = useMemo(
+    () => creatorOwnedIdentityKeys(feed.creatorStatuses),
+    [feed.creatorStatuses],
+  );
   const tabRows = useMemo(() => {
-    const collected = collectWallBattles(feed, tab);
+    const collected = collectWallBattles(feed, tab, {
+      ownedKeys,
+      walletAddress: feedWallet.address,
+      creatorStatuses: feed.creatorStatuses,
+    });
     return mergeFocusedBattleForRoute(collected, focusedBattle, tab, focusedId);
-  }, [feed, tab, focusedBattle, focusedId]);
+  }, [feed, tab, focusedBattle, focusedId, ownedKeys, feedWallet.address]);
   const filtered = useMemo(
     () => filterWallBattles(tabRows, { chain, type, search }),
     [tabRows, chain, type, search],
@@ -190,11 +201,12 @@ export default function ArenaBattles() {
     const auth = await signChallenge("arena_accept_battle", [`Battle: ${battleId}`]);
     const result = await acceptPostGradBattle(battleId, auth);
     await feed.refreshFeed();
-    toast.success(
-      result?.battle?.state === "matched" || result?.escrowRequired
-        ? "Accepted. Pay your on-chain stake to start the fight."
-        : "Challenge accepted.",
-    );
+    if (shouldOpenBuyInAfterAccept(result, result?.battle) && result?.battle) {
+      requestArenaBuyIn(result.battle);
+      toast.success("Accepted. Pay your buy-in.");
+    } else {
+      toast.success("Challenge accepted.");
+    }
   }
 
   async function handleDeclineChallenge(battleId: string) {
@@ -230,6 +242,7 @@ export default function ArenaBattles() {
     focusedLoading: Boolean(focusedId && focusStatus === "loading"),
     tabCount: tabRows.length,
     filteredCount: rows.length,
+    walletConnected: Boolean(feedWallet.address),
   });
   const controlClass =
     "mt-1 w-full min-w-0 rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
@@ -348,6 +361,7 @@ export default function ArenaBattles() {
               realtimeActive={activeRealtimeIds.includes(battle.id)}
               viewportIndex={index}
               onViewportReport={reportViewport}
+              showBuyIn={tab === "mine" && wallPhaseForBattle(battle) === "matched"}
             />
           ))
         ) : empty.kind === "loading" || empty.kind === "loading-focus" ? (

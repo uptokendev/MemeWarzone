@@ -13,6 +13,7 @@ import { useBattleWallRealtime } from "@/hooks/useBattleWallRealtime";
 import { useBattleWallViewport, type BattleWallViewportReport } from "@/hooks/useBattleWallViewport";
 import { battleChainLabel, battleClockLabel, battleDurationLabel } from "@/lib/arena/battlePresentation";
 import { battleMorePanelId, battleMoreToggle } from "@/lib/arena/battleWallMorePresentation.mjs";
+import { requestArenaBuyIn } from "@/lib/arena/challengePopupPresentation.mjs";
 import { DATA_DELAY_LABEL, battleDomId, presentBattleWallFightBand, presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
 import {
   isWallRealtimeEligible,
@@ -32,6 +33,7 @@ type Props = {
   realtimeActive?: boolean;
   viewportIndex?: number;
   onViewportReport?: (report: BattleWallViewportReport) => void;
+  showBuyIn?: boolean;
 };
 
 export function BattleWallModule({
@@ -42,6 +44,7 @@ export function BattleWallModule({
   realtimeActive = false,
   viewportIndex = 0,
   onViewportReport,
+  showBuyIn = false,
 }: Props) {
   const moduleRef = useRef<HTMLElement | null>(null);
   const live = isWallRealtimeEligible(battle);
@@ -88,7 +91,9 @@ export function BattleWallModule({
     loaded: selected.loaded,
   });
   const chainId = Number((displayBattle as Battle & { chainId?: number }).chainId || 0);
-  const upcoming = presented.tab === "upcoming";
+  const phase = presented.phase;
+  const preLive = phase === "challenged" || phase === "matched";
+  const challenged = phase === "challenged";
   const left = displayBattle.participants?.[0];
   const right = displayBattle.participants?.[1];
   const mountEffects = shouldMountWallCombatEffects({
@@ -98,10 +103,10 @@ export function BattleWallModule({
   });
 
   const delay = presented.scoreKind === "delay" || presented.statusLabel === DATA_DELAY_LABEL;
-  const leaderReady = !upcoming && !delay && (presented.leaderIndex === 0 || presented.leaderIndex === 1);
+  const leaderReady = !preLive && !delay && (presented.leaderIndex === 0 || presented.leaderIndex === 1);
   const band = presentBattleWallFightBand(presented, {
     chainLabel: battleChainLabel(chainId),
-    clockLabel: upcoming ? null : battleClockLabel(displayBattle),
+    clockLabel: preLive ? null : battleClockLabel(displayBattle),
     battle: displayBattle,
   });
   const stateLabel = band.stateLabel;
@@ -113,6 +118,7 @@ export function BattleWallModule({
       id={battleDomId(battle.id)}
       data-battle-id={battle.id}
       data-battle-wall-module={presented.tab}
+      data-battle-phase={phase || ""}
       data-battle-realtime={realtimeActive && live ? selected.source : "off"}
       data-battle-wall-open="true"
       tabIndex={0}
@@ -124,7 +130,7 @@ export function BattleWallModule({
         className="relative z-20 mb-3 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b pb-2.5 text-[10px] uppercase tracking-[0.16em] text-white/55"
         style={{ borderColor: "var(--mwz-flat-card-border)" }}
       >
-        <span className={presented.tab === "live" ? "font-retro text-xs text-orange-200" : "font-retro text-xs text-white/80"}>
+        <span className={presented.tab === "live" || challenged ? "font-retro text-xs text-orange-200" : "font-retro text-xs text-white/80"}>
           {band.stateLabel}
         </span>
         <span className="text-white/20" aria-hidden="true">|</span>
@@ -157,61 +163,68 @@ export function BattleWallModule({
         ) : null}
       </div>
 
+      {presented.cardTitle ? (
+        <h2
+          data-battle-wall-card-title={phase}
+          className="relative z-20 mb-2 font-retro text-sm uppercase tracking-[0.18em] text-orange-200"
+        >
+          {presented.cardTitle}
+        </h2>
+      ) : null}
+
       <div className="relative isolate overflow-hidden" data-battle-wall-combat-stage="true">
         <div className="relative z-10 grid min-w-0 grid-cols-1 items-center gap-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-2">
           <BattleWallCombatant
             battle={displayBattle}
             participant={left}
             metricsSide={displayMetrics?.sides?.left}
-            pointsLabel={upcoming ? null : presented.leftPointsLabel}
-            scoreCaption={upcoming ? null : presented.scoreCaption}
+            pointsLabel={preLive ? null : presented.leftPointsLabel}
+            scoreCaption={preLive ? null : presented.scoreCaption}
             isLeader={leaderReady && presented.leaderIndex === 0}
             isTrailer={leaderReady && presented.leaderIndex === 1}
             finished={presented.tab === "finished"}
             accent="ember"
             combatSide="left"
             actions={
-              <BattleFightActions
-                mode={fightMode}
-                mocksEnabled={postGradFlags.mocks}
-              />
+              presented.showFightActions ? (
+                <BattleFightActions mode={fightMode} mocksEnabled={postGradFlags.mocks} />
+              ) : null
             }
           />
           <BattleWallVs
             leftLabel={presented.leftTicker}
             rightLabel={presented.rightTicker}
-            leftPoints={upcoming ? null : presented.leftPointsLabel}
-            rightPoints={upcoming ? null : presented.rightPointsLabel}
-            leaderIndex={upcoming ? null : presented.leaderIndex}
-            gapLabel={upcoming ? null : presented.gapLabel}
-            clockLabel={upcoming ? null : battleClockLabel(displayBattle)}
+            leftPoints={preLive ? null : presented.leftPointsLabel}
+            rightPoints={preLive ? null : presented.rightPointsLabel}
+            leaderIndex={preLive ? null : presented.leaderIndex}
+            gapLabel={preLive ? null : presented.gapLabel}
+            clockLabel={preLive ? null : battleClockLabel(displayBattle)}
             remaining={presented.tab === "live"}
-            statusLabel={upcoming ? null : presented.statusLabel}
-            scoreKind={upcoming ? null : presented.scoreKind}
-            deploymentPending={upcoming}
+            statusLabel={preLive ? null : presented.statusLabel}
+            scoreKind={preLive ? null : presented.scoreKind}
+            deploymentPending={phase === "matched"}
             stakeLabel={
-              upcoming
+              phase === "matched"
                 ? `${presented.stakeNative} ${presented.nativeSymbol || getNativeSymbol(chainId)}`.trim()
                 : null
             }
-            durationLabel={upcoming ? battleDurationLabel(presented.durationHours) : null}
+            durationLabel={phase === "matched" ? battleDurationLabel(presented.durationHours) : null}
           />
           <BattleWallCombatant
             battle={displayBattle}
             participant={right}
             metricsSide={displayMetrics?.sides?.right}
-            pointsLabel={upcoming ? null : presented.rightPointsLabel}
-            scoreCaption={upcoming ? null : presented.scoreCaption}
+            pointsLabel={preLive ? null : presented.rightPointsLabel}
+            scoreCaption={preLive ? null : presented.scoreCaption}
             isLeader={leaderReady && presented.leaderIndex === 1}
             isTrailer={leaderReady && presented.leaderIndex === 0}
             finished={presented.tab === "finished"}
             accent="cyan"
             combatSide="right"
             actions={
-              <BattleFightActions
-                mode={fightMode}
-                mocksEnabled={postGradFlags.mocks}
-              />
+              presented.showFightActions ? (
+                <BattleFightActions mode={fightMode} mocksEnabled={postGradFlags.mocks} />
+              ) : null
             }
           />
         </div>
@@ -232,6 +245,16 @@ export function BattleWallModule({
             metricsRequested={selected.requested}
             metricsLoaded={selected.loaded}
           />
+          {showBuyIn ? (
+            <button
+              type="button"
+              data-battle-pay-buy-in={battle.id}
+              className="mwz-button mwz-button-orange min-h-11 px-3 text-xs uppercase tracking-[0.16em]"
+              onClick={() => requestArenaBuyIn(displayBattle)}
+            >
+              Pay buy-in
+            </button>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
           <button

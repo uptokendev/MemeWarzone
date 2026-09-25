@@ -6,6 +6,7 @@ import {
   presentArenaMatchRow,
   tickerFor,
 } from "./arenaMatchRowPresentation.mjs";
+import { creatorOwnedIdentityKeys, participantIdentityKey } from "./creatorChallengePresentation.mjs";
 import { presentTournamentFightMode, presentVoteTournamentFight } from "./tournamentFightPresentation.mjs";
 
 export const POINTS_PENDING_LABEL = "BATTLE POINTS PENDING";
@@ -25,11 +26,20 @@ export function firstFiniteBattleMetric(...values) {
   return null;
 }
 
-export function wallTabForBattle(battle) {
+export function wallPhaseForBattle(battle) {
   const state = String(battle?.state || "").toLowerCase();
   if (state === "live") return "live";
-  if (state === "matched") return "upcoming";
+  if (state === "challenged") return "challenged";
+  if (state === "matched") return "matched";
   if (state === "finished" || state === "completed" || state === "settled") return "finished";
+  return null;
+}
+
+export function wallTabForBattle(battle) {
+  const phase = wallPhaseForBattle(battle);
+  if (phase === "live") return "live";
+  if (phase === "challenged" || phase === "matched") return "upcoming";
+  if (phase === "finished") return "finished";
   return null;
 }
 
@@ -39,10 +49,68 @@ export function isPublicWallBattle(battle) {
 
 export function publicWallRejectReason(battle) {
   const state = String(battle?.state || "").toLowerCase();
-  if (state === "challenged") return "challenged";
   if (state === "waiting") return "waiting";
   if (!battle) return "missing";
+  if (isPublicWallBattle(battle)) return null;
   return "not_public";
+}
+
+export function feedBattleList(feed) {
+  const live = Array.isArray(feed?.liveBattles) ? feed.liveBattles : [];
+  const queue = Array.isArray(feed?.openForBattleQueue) ? feed.openForBattleQueue : [];
+  const archived = Array.isArray(feed?.archivedBattles)
+    ? feed.archivedBattles.map((entry) => entry?.battle).filter(Boolean)
+    : [];
+  return [...live, ...queue, ...archived];
+}
+
+export function battleOwnedByCreator(battle, ownedKeys) {
+  const keys = ownedKeys instanceof Set ? ownedKeys : new Set();
+  if (!keys.size || !battle) return false;
+  for (const participant of battle.participants || []) {
+    const key = participantIdentityKey(participant);
+    if (key && keys.has(key)) return true;
+  }
+  return false;
+}
+
+export function battleOwnedByWallet(battle, walletAddress) {
+  const wallet = String(walletAddress || "").trim().toLowerCase();
+  if (!wallet || !battle) return false;
+  for (const participant of battle.participants || []) {
+    if (String(participant?.ownerWallet || "").trim().toLowerCase() === wallet) return true;
+  }
+  return false;
+}
+
+export function isMyOutstandingBattle(battle, options = {}) {
+  const phase = wallPhaseForBattle(battle);
+  if (phase !== "challenged" && phase !== "matched") return false;
+  const statusIds = options.statusBattleIds instanceof Set ? options.statusBattleIds : new Set();
+  if (battle?.id && statusIds.has(String(battle.id))) return true;
+  if (battleOwnedByCreator(battle, options.ownedKeys)) return true;
+  return battleOwnedByWallet(battle, options.walletAddress);
+}
+
+function outstandingStatusBattleIds(statuses) {
+  const ids = new Set();
+  for (const status of Array.isArray(statuses) ? statuses : []) {
+    const state = String(status?.currentState || status?.battleState || "").toLowerCase();
+    if ((state === "challenged" || state === "matched") && status?.battleId) ids.add(String(status.battleId));
+  }
+  return ids;
+}
+
+export function collectMyWallBattles(feed, options = {}) {
+  const walletAddress = String(options.walletAddress || "").trim();
+  if (!walletAddress) return [];
+  const creatorStatuses = options.creatorStatuses ?? feed?.creatorStatuses;
+  const ownedKeys =
+    options.ownedKeys instanceof Set ? options.ownedKeys : creatorOwnedIdentityKeys(creatorStatuses);
+  const statusBattleIds = outstandingStatusBattleIds(creatorStatuses);
+  return feedBattleList(feed).filter((battle) =>
+    isMyOutstandingBattle(battle, { ownedKeys, walletAddress, statusBattleIds }),
+  );
 }
 
 export function battleWallHref(battleId) {
@@ -56,12 +124,7 @@ export function battleDomId(battleId) {
 }
 
 export function collectAllPublicWallBattles(feed) {
-  const live = Array.isArray(feed?.liveBattles) ? feed.liveBattles : [];
-  const queue = Array.isArray(feed?.openForBattleQueue) ? feed.openForBattleQueue : [];
-  const archived = Array.isArray(feed?.archivedBattles)
-    ? feed.archivedBattles.map((entry) => entry?.battle).filter(Boolean)
-    : [];
-  return [...live, ...queue, ...archived].filter((battle) => isPublicWallBattle(battle));
+  return feedBattleList(feed).filter((battle) => isPublicWallBattle(battle));
 }
 
 export function findBattleInFeed(feed, battleId) {
@@ -129,13 +192,9 @@ export function focusedWallFilterReset(battle) {
   };
 }
 
-export function collectWallBattles(feed, tab) {
-  const live = Array.isArray(feed?.liveBattles) ? feed.liveBattles : [];
-  const queue = Array.isArray(feed?.openForBattleQueue) ? feed.openForBattleQueue : [];
-  const archived = Array.isArray(feed?.archivedBattles)
-    ? feed.archivedBattles.map((entry) => entry?.battle).filter(Boolean)
-    : [];
-  return [...live, ...queue, ...archived].filter((battle) => wallTabForBattle(battle) === tab);
+export function collectWallBattles(feed, tab, options = {}) {
+  if (String(tab) === "mine") return collectMyWallBattles(feed, options);
+  return feedBattleList(feed).filter((battle) => wallTabForBattle(battle) === tab);
 }
 
 export function battleWallType(battle) {
@@ -152,7 +211,17 @@ export function battleWallTypeLabel(type) {
 
 export function presentBattleWallFightBand(presented, options = {}) {
   const tab = String(presented?.tab || "");
-  const stateLabel = tab === "live" ? "LIVE BATTLE" : tab === "upcoming" ? "DEPLOYMENT" : tab === "finished" ? "FINISHED" : "BATTLE";
+  const phase = String(presented?.phase || wallPhaseForBattle(options.battle) || "");
+  const stateLabel =
+    phase === "challenged"
+      ? "CHALLENGED"
+      : phase === "live" || tab === "live"
+        ? "LIVE BATTLE"
+        : phase === "matched" || tab === "upcoming"
+          ? "DEPLOYMENT"
+          : phase === "finished" || tab === "finished"
+            ? "FINISHED"
+            : "BATTLE";
   const typeLabel =
     presented?.type === "tournament" ? "TOURNAMENT" : presented?.type === "manual" ? "MANUAL" : "AUTO DEPLOY";
   const fightMode = presented?.fightMode || presentTournamentFightMode(options.battle || presented);
@@ -163,7 +232,7 @@ export function presentBattleWallFightBand(presented, options = {}) {
     modeLabel: fightMode?.bandLabel || null,
     classification: presented?.classification || null,
     chainLabel: options.chainLabel ? String(options.chainLabel) : null,
-    clockLabel: tab === "upcoming" ? null : options.clockLabel ? String(options.clockLabel) : null,
+    clockLabel: tab === "upcoming" || phase === "challenged" ? null : options.clockLabel ? String(options.clockLabel) : null,
   };
 }
 
@@ -224,6 +293,7 @@ function wallSafeLivePresentation(battle, metrics, presented, options = {}) {
 }
 
 export function presentBattleWallModule(battle, metrics, options = {}) {
+  const phase = wallPhaseForBattle(battle);
   const tab = wallTabForBattle(battle);
   const fightMode = presentTournamentFightMode(battle);
   const row = presentArenaMatchRow(battle, metrics, options);
@@ -235,6 +305,9 @@ export function presentBattleWallModule(battle, metrics, options = {}) {
   return {
     ...scored,
     tab,
+    phase,
+    cardTitle: phase === "challenged" ? "Challenged" : null,
+    showFightActions: phase === "live",
     type,
     typeLabel: battleWallTypeLabel(type),
     fightMode,
@@ -278,6 +351,7 @@ export function wallEmptyCopy({
   focusedLoading = false,
   tabCount = 0,
   filteredCount = 0,
+  walletConnected = false,
 } = {}) {
   if (source === "empty") {
     return {
@@ -310,8 +384,22 @@ export function wallEmptyCopy({
   if (tab === "upcoming") {
     return {
       kind: "empty-upcoming",
-      title: "No upcoming deployments.",
-      body: "Matched fights waiting to go live will appear here.",
+      title: "No upcoming battles.",
+      body: "Challenged and matched fights waiting to go live appear here.",
+    };
+  }
+  if (tab === "mine") {
+    if (!walletConnected) {
+      return {
+        kind: "empty-mine-wallet",
+        title: "Connect a wallet to see your battles.",
+        body: "Outstanding challenges for coins you own appear here.",
+      };
+    }
+    return {
+      kind: "empty-mine",
+      title: "No outstanding battles.",
+      body: "Challenges waiting for an answer, and accepted fights waiting for buy-in, appear here.",
     };
   }
   if (tab === "finished") {
