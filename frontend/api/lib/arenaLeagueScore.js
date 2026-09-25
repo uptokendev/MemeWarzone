@@ -25,7 +25,10 @@ function ident(value) {
 export async function ensureActiveSeason(chainId, db = pool) {
   const idNum = Number(chainId) || 56;
   const existing = await db.query(
-    `select * from public.arena_league_seasons where chain_id = $1 and active = true limit 1`,
+    // Only a monthly MWL row can take points (the point-event trigger raises MWL_MONTHLY_SEASON_REQUIRED
+    // otherwise, which rolled back settlement). A legacy active row without a month is skipped.
+    `select * from public.arena_league_seasons where chain_id = $1 and active = true and month is not null
+      order by year desc, month desc limit 1`,
     [idNum],
   );
   if (existing.rows[0]) return existing.rows[0];

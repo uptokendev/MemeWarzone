@@ -146,7 +146,9 @@ async function persistFinalSide(client, battleId, metricsRow, snapshot, volume, 
     [
       String(battleId), String(metricsRow.side), finite(snapshot?.marketCapUsd),
       finite(snapshot?.holders ?? snapshot?.holderCount), finite(snapshot?.liquidityUsd),
-      snapshot?.updatedAt || null, finite(snapshot?.dataLagSeconds), snapshot?.dataSource || metricsRow.data_source || null,
+      // data_lag_seconds is an integer column; the close-time lag is fractional seconds, which made
+      // every metrics settlement fail with "invalid input syntax for type integer".
+      snapshot?.updatedAt || null, finite(snapshot?.dataLagSeconds) === null ? null : Math.max(0, Math.round(finite(snapshot.dataLagSeconds))), snapshot?.dataSource || metricsRow.data_source || null,
       scored.dataHealth?.healthy === true, volume.eligibleUsd, volume.rawUsd, volume.excludedUsd, volume.cappedUsd,
       scored.mcap?.points ?? null, scored.holders?.points ?? null, scored.volume?.points ?? null, scored.totalPoints,
     ],

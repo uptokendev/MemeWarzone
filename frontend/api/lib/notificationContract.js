@@ -178,19 +178,34 @@ export function buildNotificationEnvelope(input) {
 export async function enqueueNotification(db, input) {
   const envelope = buildNotificationEnvelope(input);
 
+  // notification_markers.outbox_id is NOT NULL (FK to the outbox), so the marker is written after the
+  // outbox row it points to. Writing the marker first with no outbox_id failed on every marker-keyed
+  // notification (e.g. a battle's final hours) and the callers swallow the error -- none was ever sent.
   if (input.markerKey) {
+    const seen = await db.query(`SELECT 1 FROM public.notification_markers WHERE marker_key = $1 LIMIT 1`, [input.markerKey]);
+    if (seen.rows?.length) return false;
+  }
+
+  const inserted = await db.query(
+    `INSERT INTO public.notification_outbox (event_type, chain, dedup_key, payload)
+     VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT DO NOTHING
+     RETURNING id`,
+    [envelope.eventType, envelope.chain, envelope.dedupKey, JSON.stringify(envelope)],
+  );
+
+  if (input.markerKey) {
+    let outboxId = inserted.rows?.[0]?.id ?? null;
+    if (outboxId == null) {
+      const existing = await db.query(`SELECT id FROM public.notification_outbox WHERE dedup_key = $1 LIMIT 1`, [envelope.dedupKey]);
+      outboxId = existing.rows?.[0]?.id ?? null;
+    }
+    if (outboxId == null) return false;
     const { rowCount } = await db.query(
-      `INSERT INTO public.notification_markers (marker_key)
-       VALUES ($1) ON CONFLICT DO NOTHING`,
-      [input.markerKey],
+      `INSERT INTO public.notification_markers (marker_key, outbox_id)
+       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [input.markerKey, outboxId],
     );
     if (rowCount === 0) return false;
   }
-
-  await db.query(
-    `INSERT INTO public.notification_outbox (event_type, chain, dedup_key, payload)
-     VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT DO NOTHING`,
-    [envelope.eventType, envelope.chain, envelope.dedupKey, JSON.stringify(envelope)],
-  );
   return true;
 }

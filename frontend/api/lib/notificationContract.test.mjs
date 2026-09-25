@@ -95,7 +95,7 @@ test("enqueueNotification inserts wrapped envelope and honors marker skip", asyn
 test("enqueueNotification skips when marker already exists", async () => {
   const db = {
     query: async (sql) => {
-      if (sql.includes("notification_markers")) return { rowCount: 0 };
+      if (/SELECT 1 FROM public\.notification_markers/.test(sql)) return { rows: [{ "?column?": 1 }], rowCount: 1 };
       throw new Error("should not insert outbox");
     },
   };
@@ -107,4 +107,28 @@ test("enqueueNotification skips when marker already exists", async () => {
     payload: { campaign: "c", threshold: 95 },
   });
   assert.equal(ok, false);
+});
+
+test("a marker-keyed notification writes the outbox row first, then the marker pointing at it", async () => {
+  const calls = [];
+  const db = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/SELECT 1 FROM public\.notification_markers/.test(sql)) return { rows: [], rowCount: 0 };
+      if (/INSERT INTO public\.notification_outbox/.test(sql)) return { rows: [{ id: 42 }], rowCount: 1 };
+      if (/INSERT INTO public\.notification_markers/.test(sql)) return { rows: [], rowCount: 1 };
+      throw new Error(`unexpected ${sql}`);
+    },
+  };
+  const ok = await enqueueNotification(db, {
+    eventType: "battle.final_hours",
+    chain: "bnb",
+    dedupKey: "battle-final:b1:1h",
+    markerKey: "battle-final:b1:1h",
+    payload: { battleId: "b1" },
+  });
+  assert.equal(ok, true);
+  const markerInsert = calls.find((c) => /INSERT INTO public\.notification_markers/.test(c.sql));
+  assert.deepEqual(markerInsert.params, ["battle-final:b1:1h", 42], "outbox_id is NOT NULL: the marker must carry it");
+  assert.ok(calls.findIndex((c) => /notification_outbox/.test(c.sql)) < calls.indexOf(markerInsert));
 });

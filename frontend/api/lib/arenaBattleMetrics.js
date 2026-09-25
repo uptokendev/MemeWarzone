@@ -66,6 +66,12 @@ function numOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+/** data_lag_seconds is an integer column; the snapshot measures lag in fractional seconds. */
+function lagSecondsOrNull(value) {
+  const n = numOrNull(value);
+  return n === null ? null : Math.max(0, Math.round(n));
+}
+
 function snapshotHolders(snapshot) {
   return snapshot?.holders ?? snapshot?.holderCount ?? snapshot?.currentHolders ?? null;
 }
@@ -96,7 +102,7 @@ function baselineParams({ battleId, tokenId, side, snapshot, baselineTimestamp }
     intOrNull(holders),
     numOrNull(snapshot?.liquidityUsd),
     updatedAt,
-    numOrNull(snapshot?.dataLagSeconds),
+    lagSecondsOrNull(snapshot?.dataLagSeconds),
     snapshot?.dataSource || "none",
     snapshot?.healthy === true,
   ];
@@ -224,7 +230,7 @@ export async function updateBattleMetricScores(battleId, side, patch, deps = {})
       patch.currentHolders,
       patch.currentLiquidityUsd,
       patch.marketDataUpdatedAt,
-      patch.dataLagSeconds,
+      lagSecondsOrNull(patch.dataLagSeconds),
       patch.dataSource,
       patch.dataHealthy,
       patch.eligibleUsd,

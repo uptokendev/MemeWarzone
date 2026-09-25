@@ -1300,6 +1300,21 @@ unanswered challenge returns on every page load; accepted/declined show once per
   missing until 2026-09-25; a test now pins the list against the router.
 - Staging lacks `db/migrations/20260924_000001_arena_battle_decline_message.sql` (production has it).
 
+### Battle flow e2e (2026-09-25) -- run before any battle change ships
+
+`E2E_DATABASE_URL=<staging> PG_SSL_ALLOW_SELF_SIGNED=1 node frontend/scripts/e2e-arena-battle-flow.mjs`
+drives the real handlers on staging with generated, really-signing wallets: ownership, refusals,
+challenge -> inbox -> counter -> inbox -> accept -> votes / market move -> realtime tick -> clock out
+-> settlement -> winner -> league points (vote 3/1, ranked 3/1, Open War 1.5/0.5), decline with and
+without message, timeout. 31 checks; refuses the production URL; retires its coins (import history
+is append-only). First run found four live blockers: `data_lag_seconds` (integer) got fractional
+seconds at accept and at V3 settlement (every metrics settlement failed), a legacy active season
+without a month blocked league writes, and notification markers were written without their
+required `outbox_id` (no marker-keyed notification was ever sent; 0 rows on production).
+Import market data: DexScreener (solana/bsc/robinhood) + GeckoTerminal fallback and EVM holders
+(free tier ~30/min; per-pass budget; `COINGECKO_API_KEY` for the paid API). Imports need a fresh
+scan (7 days): `scripts/backfill-import-admission.mjs --rescan-stale` must run hourly on Coolify.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
