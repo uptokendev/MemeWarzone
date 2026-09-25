@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "async_hooks";
+import { notPublicHiddenSql } from "./publicHidden.js";
 import { PublicKey } from "@solana/web3.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
@@ -15,6 +16,7 @@ import {
 } from "./solanaAnchorEvents.js";
 import { createCampaignLeaseRegistry, type CampaignLeaseState } from "./solanaCampaignLease.js";
 import { createIndexerSql } from "./solanaRepairSql.js";
+import { createSignatureMemory } from "./signatureMemory.js";
 import { isDerivedFanoutSuppressed, runWithDerivedFanoutSuppressed } from "./derivedFanout.js";
 import {
   campaignHistoryComplete,
@@ -1635,6 +1637,7 @@ async function listBondingSolanaCampaigns(limit = 40): Promise<string[]> {
       where chain_id=$1
         and is_active=true
         and graduated_at_chain is null
+        and ${notPublicHiddenSql()}
       order by updated_at desc nulls last
       limit $2`,
     [SOLANA_CHAIN_ID, Math.max(1, Math.min(80, Number(limit || 40)))],
@@ -2097,6 +2100,7 @@ export async function repairKnownSolanaCampaignHistory() {
       `select campaign_address, meta
          from public.campaigns
         where chain_id=$1
+          and ${notPublicHiddenSql()}
         order by created_block asc nulls last, campaign_address asc`,
       [SOLANA_CHAIN_ID],
     );
@@ -2164,12 +2168,24 @@ let lastLiveIngestMs = 0;
 let lastBackfillMs = 0;
 let lastTipSlot = 0;
 
+// Signatures the program lanes already ingested; see signatureMemory.ts.
+const ingestedProgramSignatures = createSignatureMemory(
+  Number(process.env.SOLANA_INGESTED_SIGNATURE_MEMORY || 20_000),
+);
+
+async function ingestProgramSignatureOnce(item: IndexedSignature): Promise<boolean> {
+  if (ingestedProgramSignatures.has(item.signature)) return true;
+  const result = await ingestSignature(item);
+  const ok = result.fetched && !result.retryableFailure;
+  if (ok) ingestedProgramSignatures.add(item.signature);
+  return ok;
+}
+
 async function runTipLane(head: number): Promise<void> {
   const signatures = await fetchTipSignatures();
   let maxOk = 0;
   for (const item of signatures) {
-    const result = await ingestSignature(item);
-    if (result.fetched && !result.retryableFailure) maxOk = Math.max(maxOk, item.slot);
+    if (await ingestProgramSignatureOnce(item)) maxOk = Math.max(maxOk, item.slot);
   }
   await runCampaignPdaTipLane();
   if (maxOk > 0) {
@@ -2233,8 +2249,7 @@ async function runBackfillLane(head: number): Promise<void> {
   const maxTxPerTick = Math.max(20, Math.min(200, Number(process.env.SOLANA_INDEXER_MAX_TX_PER_TICK || 80)));
   const processed: ProcessedSignature[] = [];
   for (const item of fetched.items.slice(0, maxTxPerTick)) {
-    const result = await ingestSignature(item);
-    const ok = result.fetched && !result.retryableFailure;
+    const ok = await ingestProgramSignatureOnce(item);
     processed.push({ ...item, ok });
     if (!ok) break;
   }

@@ -39,7 +39,7 @@
     "job:backfill-solana-trade-state": "node --enable-source-maps dist/jobs/backfillSolanaTradeCurveState.js",
     "job:backfill-solana-campaign": "node --enable-source-maps dist/jobs/backfillSolanaCampaign.js",
     "job:backfill-solana-campaign:dev": "tsx src/jobs/backfillSolanaCampaign.ts",
-    "test:solana-history": "tsx --test src/tests/solanaCampaignHistory.test.ts src/tests/solanaCampaignLease.test.ts src/tests/solanaRepairSql.test.ts src/tests/solanaHistoryStatus.test.ts src/tests/solanaIndexerCheckpoint.test.ts src/tests/solanaCampaignTip.test.ts src/tests/pooledClientPatch.test.ts",
+    "test:solana-history": "tsx --test src/tests/solanaCampaignHistory.test.ts src/tests/solanaCampaignLease.test.ts src/tests/solanaRepairSql.test.ts src/tests/solanaHistoryStatus.test.ts src/tests/solanaIndexerCheckpoint.test.ts src/tests/solanaCampaignTip.test.ts src/tests/pooledClientPatch.test.ts src/tests/loadHardening.test.ts",
     "test:recruiter-settlement": "tsx --test src/rewards/publishRecruiterSettlement.test.ts",
     "test:solana-fee-escrow": "tsx --test src/tests/solanaTradeAuthSweep.test.ts",
     "cron:generate-launch-digest": "node --enable-source-maps dist/jobs/generateLaunchDigest.js",

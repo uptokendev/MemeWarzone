@@ -1,4 +1,5 @@
 import { BorshCoder, EventParser, type Idl } from "@coral-xyz/anchor";
+import { notPublicHiddenSql } from "./publicHidden.js";
 import { CpAmmIdl } from "@meteora-ag/cp-amm-sdk";
 import { PublicKey } from "@solana/web3.js";
 
@@ -174,6 +175,7 @@ async function loadGraduatedMarkets(): Promise<GraduatedMarket[]> {
        and meta #>> '{solanaGraduation,dex}' = 'meteora-damm-v2'
        and coalesce(meta #>> '{solanaGraduation,pool}','') <> ''
        and coalesce(token_address,'') <> ''
+       and ${notPublicHiddenSql()}
      order by updated_at desc
      limit $2`,
     [SOLANA_CHAIN_ID, limit],
