@@ -1380,6 +1380,35 @@ production = founder), the claim API and the Solana claim client. **Solana `clai
 Safe by construction: the indexer posts roots only via `post_league_epoch_root`, which ships in the same
 upgrade, so no poker root can reach a program that caps ranks at 5. Never post one with the authority key.
 
+### Recruiter, recruiter league and creator payouts -- wired 2026-09-26 (they were not)
+
+Nothing ever credited a recruiter: chains routed each linked trade's 12.5% (OG 15%) slice into the
+recruiter vault and `recruiter_reward_ledger` held only test rows. Fixed end to end:
+- **Per-trade source = `reward_events` on all chains.** Solana: the FeeSlices decoder skipped
+  `creator_lamports` (added by the 2026-09-24 launchpad), shifting every slice one column; both layouts
+  now decode by length, graduation (`FeeSlicesRouted`) is its own kind. EVM: the router scan read
+  `factory.router()` (the DEX router) and only the V2 event; it now scans the treasury routers (V3
+  `0xe635AA43` / RH `0xda0a9Ed9` + old V2 `0xe157a6FD`, `TREASURY_ROUTERS_<id>` override) with a cursor
+  per router. Mainnet Solana: 110 events reconcile to the lamport with the recruiter vault (671407).
+- **`cron:credit-recruiter-earnings`** (hourly): exact slices -> `recruiter_reward_ledger`, attributed
+  like the signing decision (EVM `route_authorization_log`, Solana wallet link, graduation = creator's
+  recruiter). Unattributable slices are recorded and retried, never dropped.
+  `cron:backfill-solana-reward-events` once after deploy. Migration `20260926_000002` (Robinhood).
+- **Claims:** Solana weekly batch via the reward poster (`post_recruiter_batch_root`, no expiry; the
+  exporter refuses a batch the vault cannot fully pay). BNB/Robinhood pay at claim time from
+  `RecruiterRewardsVault.payout` with `RECRUITER_PAYOUT_OPERATOR_PK`; the Safe must set operator, caps
+  and unpause (BNB vault read 2026-09-26: operator 0, paused, caps 0). Testnet rows hidden on mainnet.
+- **Recruiter League is a prize league** (league fee, poker, last category so dust positions hold).
+  Score basis is now identical in job and board: traded volume on every chain (the board had used the
+  routed FEE as EVM volume, ~50x skew vs Solana), earnings = chain slices, USD frozen at settlement,
+  paid place needs referred trading in the epoch, prize to a wallet valid on that chain.
+- **Creator fees:** Solana works (claim simulated OK on mainnet). BNB/Robinhood accrued in
+  `CreatorRewardsVault` with no app path -- now `/api/evm/creator-fees` + Claims panel. Pre-2026-09-20
+  Solana coins lacked a creator fee vault; the escrow worker now backfills it hourly.
+- **Still open:** squad earnings have no attribution rule (slices accrue in the squad vaults); LP-fee
+  harvest after graduation is manual on all chains (no mainnet graduation yet); past epochs' recruiter
+  prizes were never set aside (the league pot was split without them).
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
