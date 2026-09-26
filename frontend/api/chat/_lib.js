@@ -155,6 +155,19 @@ async function applyAuthNonceSchema() {
 
 export async function ensureChatSchema() {
   if (!pool) throw new Error("DATABASE_URL missing");
+  try {
+    await applyChatSchema();
+  } catch (error) {
+    // Production API roles cannot ALTER. The tables already exist; skip DDL.
+    if (String(error?.code || "") === "42501") {
+      console.warn("[api/chat] schema ensure skipped (no DDL privilege)");
+      return;
+    }
+    throw error;
+  }
+}
+
+async function applyChatSchema() {
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS public.chat_sessions (

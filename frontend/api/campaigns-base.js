@@ -1,5 +1,7 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, defaultPublicChainId} from "../server/http.js";
+import { nativeGraduationTarget } from "../src/lib/feedGraduationTarget.mjs";
+import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
 
 // LaunchFactory default graduation target is 50 BNB (see contracts/LaunchFactory.sol).
 // Campaigns can override this, but until we persist per-campaign targets in DB,
@@ -303,7 +305,13 @@ export default async function handler(req, res) {
   const progressMinPct = Number.isFinite(Number(q.progressMinPct)) ? toFloat(q.progressMinPct, NaN) : null;
   const progressMaxPct = Number.isFinite(Number(q.progressMaxPct)) ? toFloat(q.progressMaxPct, NaN) : null;
 
-  const gradTargetBnb = clamp(toFloat(q.gradTargetBnb, DEFAULT_GRAD_TARGET_BNB), 0.0001, 10_000);
+  let gradTargetBnb = clamp(toFloat(q.gradTargetBnb, DEFAULT_GRAD_TARGET_BNB), 0.0001, 10_000);
+  if (SOLANA_CHAIN_IDS.has(chainId) && q.gradTargetBnb == null) {
+    // No price must never fail the list: progress is then shown as unknown, not 500.
+    const sol = await resolveSolUsdPrice().catch(() => null);
+    const native = nativeGraduationTarget({ chainId, nativeUsd: sol?.price, suppliedTarget: 50 });
+    gradTargetBnb = Number.isFinite(native) && native > 0 ? native : null;
+  }
 
   try {
     // Deterministic ordering per tab/sort.
@@ -490,7 +498,7 @@ export default async function handler(req, res) {
             b.marketcap_bnb
           ) as ath_marketcap_bnb,
           case
-            when $2::numeric <= 0 then null
+            when $2::numeric is null or $2::numeric <= 0 then null
             else least(100, greatest(0, (rt.raised_total_bnb / $2::numeric) * 100))
           end as progress_pct,
           case

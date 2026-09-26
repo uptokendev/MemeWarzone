@@ -14,6 +14,7 @@ import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { getBnbCampaignFeedChainIds } from "@/lib/feedChainConfig";
 import { liveCampaignKey, mergeFeedWithCreated, pickLiveNumeric } from "@/lib/liveMarketMerge";
 import { compareLiveCampaigns, maxVoteCount, rankIdentity, type LiveRankRow } from "@/lib/liveCampaignRank";
+import { bondingProgressPct, leakedBnbGraduationDefault } from "@/lib/feedGraduationTarget.mjs";
 import { useLiveListMotion } from "@/hooks/useLiveListMotion";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
@@ -520,18 +521,20 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
               tokenAddress: it.tokenAddress,
             });
             if (!stats) continue;
-            const target = Number(it.gradTargetBnb ?? 50) || 50;
             const raised = Number(stats.raisedTotalBnb ?? NaN);
             const mcap = Number(stats.marketCapBnb ?? NaN);
             const graduated = Boolean(stats.isDexTrading || stats.status === "graduated" || it.isDexTrading || it.graduatedAtChain);
+            const progressPct = bondingProgressPct({
+              chainId: Number(it.chainId || activeChainId),
+              raisedNative: raised,
+              nativeUsd,
+              suppliedTarget: it.gradTargetBnb,
+              isDex: graduated,
+            });
             patches[addr] = {
               ...(Number.isFinite(mcap) && mcap > 0 ? { marketcapBnb: String(mcap) } : {}),
               ...(Number.isFinite(raised) && raised > 0 ? { raisedTotalBnb: String(raised) } : {}),
-              progressPct: graduated
-                ? 100
-                : Number.isFinite(raised) && raised > 0
-                  ? Math.max(0, Math.min(100, (raised / target) * 100))
-                  : undefined,
+              progressPct: progressPct ?? undefined,
               isDexTrading: graduated || undefined,
             };
           } catch {
@@ -547,7 +550,7 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
     return () => {
       cancelled = true;
     };
-  }, [items, activeChainId, query.tab]);
+  }, [items, activeChainId, query.tab, nativeUsd]);
 
   const loadMore = async () => {
     if (query.tab === "drafts" || loadingMore || loading || nextCursor == null) return;
@@ -619,17 +622,28 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
         (patch?.raisedTotalBnb ?? onChain?.raisedTotalBnb ?? it.raisedTotalBnb) ?? NaN,
       );
 
+      const itemChainId = Number(it.chainId || activeChainId);
+      const leakedTarget = leakedBnbGraduationDefault(itemChainId, it.gradTargetBnb ?? gradTarget);
+      const recomputed = bondingProgressPct({
+        chainId: itemChainId,
+        raisedNative: raised,
+        nativeUsd,
+        suppliedTarget: it.gradTargetBnb ?? gradTarget,
+        isDex,
+      });
       let progressPct: number | null = null;
-      if (patch?.progressPct != null && Number.isFinite(Number(patch.progressPct))) {
+      if (leakedTarget && recomputed != null && Number.isFinite(recomputed)) {
+        progressPct = recomputed;
+      } else if (patch?.progressPct != null && Number.isFinite(Number(patch.progressPct)) && !leakedTarget) {
         progressPct = Math.max(0, Math.min(100, Number(patch.progressPct)));
       } else if (isDex) {
         progressPct = 100;
-      } else if (it.progressPct != null && Number.isFinite(Number(it.progressPct))) {
+      } else if (recomputed != null && Number.isFinite(recomputed)) {
+        progressPct = recomputed;
+      } else if (it.progressPct != null && Number.isFinite(Number(it.progressPct)) && !leakedTarget) {
         progressPct = Math.max(0, Math.min(100, Number(it.progressPct)));
-      } else if (onChain?.progressPct != null && Number.isFinite(onChain.progressPct)) {
+      } else if (onChain?.progressPct != null && Number.isFinite(Number(onChain.progressPct)) && !leakedTarget) {
         progressPct = Math.max(0, Math.min(100, Number(onChain.progressPct)));
-      } else if (Number.isFinite(raised) && raised > 0 && gradTarget > 0) {
-        progressPct = Math.max(0, Math.min(100, (raised / gradTarget) * 100));
       }
 
       const activitySec = (patch?.lastActivityAt != null ? Number(patch.lastActivityAt) : safeUnixSeconds((it as any).lastActivityAt ?? null)) ?? 0;

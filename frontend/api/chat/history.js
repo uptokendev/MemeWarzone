@@ -1,11 +1,10 @@
 import { badMethod, getQuery, json } from "../../server/http.js";
-import { ensureChatSchema, mapMessageRow, normalizeAddress } from "./_lib.js";
+import { mapMessageRow, normalizeAddress } from "./_lib.js";
 import { pool } from "../../server/db.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return badMethod(res);
   try {
-    await ensureChatSchema();
     const q = getQuery(req);
     const chainId = Number(q.chainId);
     const campaignAddress = normalizeAddress(q.campaignAddress);
@@ -33,6 +32,10 @@ export default async function handler(req, res) {
       nextBeforeId: rows.length ? Number(rows[rows.length - 1].id) : null,
     });
   } catch (e) {
+    const code = String(e?.code || "");
+    // History is a public read. If the table is not there yet, show an empty room
+    // instead of 500ing the TokenDetails War Room. Schema DDL belongs on join/send.
+    if (code === "42P01") return json(res, 200, { items: [], nextBeforeId: null });
     const msg = String(e?.message ?? "");
     console.error("[api/chat/history]", e);
     return json(res, 500, { error: "Server error", details: process.env.NODE_ENV !== "production" ? msg : undefined });
