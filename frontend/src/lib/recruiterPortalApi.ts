@@ -214,7 +214,7 @@ export async function verifyRecruiterPayoutWallet(chain: "bnb" | "solana", walle
   return parseJson(res);
 }
 
-export async function createRecruiterNativeClaim(chain: "bnb" | "solana", sessionWalletAddress?: string | null): Promise<RecruiterNativeClaimIntent> {
+export async function createRecruiterNativeClaim(chain: "bnb" | "solana" | "robinhood", sessionWalletAddress?: string | null): Promise<RecruiterNativeClaimIntent> {
   const res = await apiFetch("/api/recruiters/me/claims", { method: "POST", credentials: PORTAL_CREDENTIALS, headers: portalHeaders(sessionWalletAddress, { "Content-Type": "application/json" }), body: JSON.stringify({ chain }) });
   return parseJson(res) as Promise<RecruiterNativeClaimIntent>;
 }

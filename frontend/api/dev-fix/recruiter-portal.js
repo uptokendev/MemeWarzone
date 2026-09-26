@@ -590,39 +590,10 @@ export async function recruiterPortal(req, res) {
     }
 
     if (action === "createClaim") {
-      const account = await ensureRecruiterAccount(recruiter);
-      const chain = normalizeChain(body.chain);
-      if (!chain) return json(res, 400, { error: "Invalid chain. Use bnb or solana." });
-      const token = CHAINS[chain].token;
-      const client = await pool.connect();
-      try {
-        await client.query("begin");
-        const walletResult = await client.query(`select wallet_address from public.recruiter_payout_wallets where recruiter_id = $1 and chain = $2 and verified_at is not null order by verified_at desc limit 1`, [account.recruiter_id, chain]);
-        const payoutWallet = walletResult.rows[0]?.wallet_address || "";
-        if (!payoutWallet) {
-          await client.query("rollback");
-          return json(res, 400, { error: `Verify a ${token} payout wallet before claiming ${token} rewards.`, code: "MISSING_PAYOUT_WALLET" });
-        }
-        const ledgerResult = await client.query(
-          `select id, amount_raw::text as amount_raw from public.recruiter_reward_ledger where recruiter_id = $1 and chain = $2 and token = $3 and status = 'claimable' and claim_id is null for update`,
-          [account.recruiter_id, chain, token],
-        );
-        const amountRaw = ledgerResult.rows.reduce((sum, row) => sum + BigInt(rawAmount(row.amount_raw)), 0n).toString();
-        if (BigInt(amountRaw || "0") <= 0n) {
-          await client.query("rollback");
-          return json(res, 400, { error: `No claimable ${token} rewards yet.`, code: "NO_CLAIMABLE_REWARDS" });
-        }
-        const claimResult = await client.query(`insert into public.recruiter_reward_claims (recruiter_id, chain, token, amount_raw, payout_wallet, status) values ($1, $2, $3, $4::numeric(78,0), $5, 'created') returning id, created_at`, [account.recruiter_id, chain, token, amountRaw, payoutWallet]);
-        const claim = claimResult.rows[0];
-        await client.query(`update public.recruiter_reward_ledger set status = 'created', claim_id = $4, updated_at = now() where recruiter_id = $1 and chain = $2 and token = $3 and status = 'claimable' and claim_id is null`, [account.recruiter_id, chain, token, claim.id]);
-        await client.query("commit");
-        return json(res, 200, { ok: true, claim: { id: String(claim.id), chain, token, amountRaw, payoutWallet, status: "created", txHash: null, createdAt: claim.created_at }, message: `${token} claim created. On-chain payout submission is pending vault integration.` });
-      } catch (error) {
-        await client.query("rollback").catch(() => {});
-        throw error;
-      } finally {
-        client.release();
-      }
+      // Retired 2026-09-26: this created a DB-only claim that nothing paid, and on Solana it parked
+      // ledger rows where the weekly batch exporter never sees them. Claims go through
+      // POST /api/recruiters/me/claims (Solana batch claim, EVM vault payout).
+      return json(res, 410, { error: "Use /api/recruiters/me/claims to claim recruiter rewards.", code: "RECRUITER_CLAIM_MOVED" });
     }
 
     return json(res, 400, { error: "Unsupported action." });

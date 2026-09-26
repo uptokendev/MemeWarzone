@@ -175,10 +175,12 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
         AND re.occurred_at >= $1::timestamptz
         AND re.occurred_at < $2::timestamptz
     ),
+    -- Solana: referred volume from the curve trades; earnings are the chain's own recruiter slices
+    -- (reward_events, FeeSlicesAccrued/Routed -- 12.5% / 15% of the fee), no longer a 20 bps guess.
     sol_matches AS (
       SELECT w.recruiter_id,
         t.bnb_amount_raw::numeric AS raw_amount,
-        floor((t.bnb_amount_raw::numeric * 20) / 10000) AS recruiter_amount,
+        0::numeric AS recruiter_amount,
         t.block_time AS occurred_at
       FROM public.curve_trades t
       JOIN volume_wallets w
@@ -186,6 +188,31 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
       WHERE t.chain_id = 101
         AND t.block_time >= $1::timestamptz
         AND t.block_time < $2::timestamptz
+      UNION ALL
+      SELECT w.recruiter_id,
+        0::numeric AS raw_amount,
+        re.recruiter_amount,
+        re.occurred_at
+      FROM public.reward_events re
+      JOIN volume_wallets w
+        ON re.route_kind = 'trade'
+       AND re.wallet_address IS NOT NULL
+       AND w.wallet_address = re.wallet_address
+      WHERE re.chain_id = 101
+        AND re.occurred_at >= $1::timestamptz
+        AND re.occurred_at < $2::timestamptz
+      UNION ALL
+      SELECT w.recruiter_id, 0::numeric, re.recruiter_amount, re.occurred_at
+      FROM public.reward_events re
+      JOIN public.campaigns c
+        ON re.route_kind = 'finalize'
+       AND c.chain_id = re.chain_id
+       AND c.campaign_address = re.campaign_address
+      JOIN volume_wallets w
+        ON w.wallet_address = c.creator_address
+      WHERE re.chain_id = 101
+        AND re.occurred_at >= $1::timestamptz
+        AND re.occurred_at < $2::timestamptz
     ),
     bnb_totals AS (
       SELECT recruiter_id,

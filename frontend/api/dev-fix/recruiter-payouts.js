@@ -3,9 +3,16 @@ import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { badMethod, json, readJson, isAddress, isSolanaAddress } from "../../server/http.js";
 import { solanaLaneAddresses, verifySolanaRewardLaneClaim } from "../lib/solanaRewardLane.js";
+import { preflightRecruiterPayout, recruiterEvmChainId, sendRecruiterPayout } from "../lib/recruiterEvmPayout.js";
 
 const COOKIE_NAME = "mwz_recruiter_session";
-const CHAINS = { bnb: { token: "BNB" }, solana: { token: "SOL" } };
+const CHAINS = { bnb: { token: "BNB" }, solana: { token: "SOL" }, robinhood: { token: "ETH" } };
+const EVM_CHAINS = new Set(["bnb", "robinhood"]);
+
+// Testnet/devnet ledger rows (certification runs) never count on a mainnet API.
+function mainnetRuntime() {
+  return String(process.env.SOLANA_CLUSTER || "").trim().toLowerCase() === "mainnet-beta";
+}
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
@@ -63,12 +70,12 @@ function readBearerToken(req) {
 
 function normalizeChain(value) {
   const chain = String(value || "").trim().toLowerCase();
-  return chain === "bnb" || chain === "solana" ? chain : "";
+  return chain === "bnb" || chain === "solana" || chain === "robinhood" ? chain : "";
 }
 
 function normalizeWallet(chain, value) {
   const raw = String(value || "").trim();
-  if (chain === "bnb") {
+  if (EVM_CHAINS.has(chain)) {
     const lower = raw.toLowerCase();
     return isAddress(lower) ? lower : "";
   }
@@ -199,6 +206,7 @@ async function getBalances(recruiterId) {
               ), 0)::numeric(78,0) as pending_raw
          from public.recruiter_reward_ledger
         where recruiter_id = $1
+          and (not $2::boolean or coalesce(chain_id, 0) not in (97, 102, 46630))
         group by chain, token
      ), batched as (
        select c.chain, c.token,
@@ -232,7 +240,7 @@ async function getBalances(recruiterId) {
        union select chain from wallets
      )
      select c.chain,
-            coalesce(l.token,b.token,case when c.chain='solana' then 'SOL' else 'BNB' end) as token,
+            coalesce(l.token,b.token,case when c.chain='solana' then 'SOL' when c.chain='robinhood' then 'ETH' else 'BNB' end) as token,
             (coalesce(l.claimable_raw,0)+coalesce(b.claimable_raw,0))::text as claimable_raw,
             (coalesce(l.pending_raw,0)+coalesce(b.pending_raw,0))::text as pending_raw,
             w.payout_wallet
@@ -240,7 +248,7 @@ async function getBalances(recruiterId) {
        left join ledger l on l.chain = c.chain
        left join batched b on b.chain = c.chain
        left join wallets w on w.chain = c.chain`,
-    [recruiterId],
+    [recruiterId, mainnetRuntime()],
   );
   const byChain = new Map();
   for (const row of rows) {
@@ -259,6 +267,13 @@ async function getBalances(recruiterId) {
     });
   }
   for (const chain of Object.keys(CHAINS)) if (!byChain.has(chain)) byChain.set(chain, emptyBalance(chain));
+  // One EVM address is valid on both EVM chains: Robinhood pays the verified BNB/EVM wallet unless a
+  // Robinhood-specific one is verified.
+  const robinhood = byChain.get("robinhood");
+  const bnbWallet = byChain.get("bnb")?.payoutWallet || null;
+  if (robinhood && !robinhood.payoutWallet && bnbWallet) {
+    byChain.set("robinhood", { ...robinhood, payoutWallet: bnbWallet, status: balanceStatus({ chain: "robinhood", claimableRaw: robinhood.claimableRaw, pendingRaw: robinhood.pendingRaw, payoutWallet: bnbWallet }) });
+  }
   return Array.from(byChain.values());
 }
 
@@ -299,7 +314,7 @@ export async function recruiterMeWalletLink(req, res) {
     const walletAddress = normalizeWallet(chain, body.walletAddress);
     const signature = String(body.signature || "").trim();
     const nonce = String(body.nonce || crypto.randomBytes(12).toString("hex")).trim();
-    if (!chain) return json(res, 400, { error: "Invalid chain. Use bnb or solana." });
+    if (!chain) return json(res, 400, { error: "Invalid chain. Use bnb, robinhood or solana." });
     if (!walletAddress) return json(res, 400, { error: `Invalid ${chain} payout wallet.` });
     const message = buildPayoutWalletMessage({ recruiterId: String(account.recruiter_id), chain, walletAddress, nonce });
     if (!signature) return json(res, 400, { error: "Missing signature", message, nonce });
@@ -434,9 +449,14 @@ export async function recruiterMeClaims(req, res) {
     const account = await ensureRecruiterAccount(recruiter);
     const body = await readJson(req);
     const chain = normalizeChain(body.chain);
-    if (!chain) return json(res, 400, { error: "Invalid chain. Use bnb or solana." });
+    if (!chain) return json(res, 400, { error: "Invalid chain. Use bnb, robinhood or solana." });
     const token = CHAINS[chain].token;
-    const walletResult = await client.query(`select wallet_address from public.recruiter_payout_wallets where recruiter_id = $1 and chain = $2 and verified_at is not null order by verified_at desc limit 1`, [account.recruiter_id, chain]);
+    const walletResult = await client.query(
+      `select wallet_address from public.recruiter_payout_wallets
+        where recruiter_id = $1 and chain = any($2::text[]) and verified_at is not null
+        order by (chain = $3) desc, verified_at desc limit 1`,
+      [account.recruiter_id, chain === "robinhood" ? ["robinhood", "bnb"] : [chain], chain],
+    );
     const payoutWallet = walletResult.rows[0]?.wallet_address || "";
     if (!payoutWallet) return json(res, 400, { error: `Verify a ${token} payout wallet before claiming ${token} rewards.`, code: "MISSING_PAYOUT_WALLET" });
 
@@ -479,24 +499,67 @@ export async function recruiterMeClaims(req, res) {
       });
     }
 
-    await client.query("begin");
-    const ledgerResult = await client.query(
-      `select id, amount_raw::text as amount_raw
+    // EVM (BNB / Robinhood): paid at once from RecruiterRewardsVault by its operator key.
+    // Order: lock rows -> preflight every revert reason (no DB change if it fails) -> claim 'created'
+    // -> broadcast -> 'submitted' + tx hash -> receipt -> 'confirmed'/'claimed'. A failure before
+    // broadcast returns the rows to claimable; a sent tx is never reversed in the DB.
+    const lockedRows = `select id, amount_raw::text as amount_raw
          from public.recruiter_reward_ledger
         where recruiter_id = $1 and chain = $2 and token = $3 and status = 'claimable' and claim_id is null
-        for update`,
-      [account.recruiter_id, chain, token],
-    );
+          and (not $4::boolean or coalesce(chain_id, 0) not in (97, 102, 46630))
+        for update`;
+    await client.query("begin");
+    const ledgerResult = await client.query(lockedRows, [account.recruiter_id, chain, token, mainnetRuntime()]);
+    const ledgerIds = ledgerResult.rows.map((row) => row.id);
     const amountRaw = ledgerResult.rows.reduce((sum, row) => sum + BigInt(rawAmount(row.amount_raw)), 0n).toString();
     if (BigInt(amountRaw || "0") <= 0n) {
       await client.query("rollback");
       return json(res, 400, { error: `No claimable ${token} rewards yet.`, code: "NO_CLAIMABLE_REWARDS" });
     }
+    try {
+      await preflightRecruiterPayout(chain, amountRaw);
+    } catch (error) {
+      await client.query("rollback");
+      return json(res, 409, { error: error?.message || "Recruiter payout is not available right now.", code: error?.code || "RECRUITER_PAYOUT_UNAVAILABLE" });
+    }
     const claimResult = await client.query(`insert into public.recruiter_reward_claims (recruiter_id, chain, token, amount_raw, payout_wallet, status) values ($1, $2, $3, $4::numeric(78,0), $5, 'created') returning id, created_at`, [account.recruiter_id, chain, token, amountRaw, payoutWallet]);
     const claim = claimResult.rows[0];
-    await client.query(`update public.recruiter_reward_ledger set status = 'created', claim_id = $4, updated_at = now() where recruiter_id = $1 and chain = $2 and token = $3 and status = 'claimable' and claim_id is null`, [account.recruiter_id, chain, token, claim.id]);
+    await client.query(`update public.recruiter_reward_ledger set status = 'created', claim_id = $2, updated_at = now() where id = any($1::uuid[])`, [ledgerIds, claim.id]);
     await client.query("commit");
-    return json(res, 200, { ok: true, claim: { id: String(claim.id), chain, token, amountRaw, payoutWallet, status: "created", txHash: null, createdAt: claim.created_at }, message: `${token} claim created.` });
+
+    let sent;
+    try {
+      sent = await sendRecruiterPayout(chain, payoutWallet, amountRaw);
+    } catch (error) {
+      await pool.query(`update public.recruiter_reward_claims set status = 'failed', updated_at = now() where id = $1`, [claim.id]);
+      await pool.query(`update public.recruiter_reward_ledger set status = 'claimable', claim_id = null, updated_at = now() where claim_id = $1`, [claim.id]);
+      console.error("[recruiter claim] payout not sent", error);
+      return json(res, 409, { error: "The payout could not be sent; your rewards stay claimable. Try again shortly.", code: "RECRUITER_PAYOUT_NOT_SENT" });
+    }
+    const txHash = sent.tx.hash;
+    await pool.query(`update public.recruiter_reward_claims set status = 'submitted', tx_hash = $2, updated_at = now() where id = $1`, [claim.id, txHash]);
+    await pool.query(`update public.recruiter_reward_ledger set status = 'submitted', updated_at = now() where claim_id = $1`, [claim.id]);
+    let finalStatus = "submitted";
+    try {
+      const receipt = await sent.tx.wait(1, 90_000);
+      if (receipt?.status === 1) {
+        finalStatus = "confirmed";
+        await pool.query(`update public.recruiter_reward_claims set status = 'confirmed', updated_at = now() where id = $1`, [claim.id]);
+        await pool.query(`update public.recruiter_reward_ledger set status = 'claimed', updated_at = now() where claim_id = $1`, [claim.id]);
+      } else {
+        finalStatus = "failed";
+        await pool.query(`update public.recruiter_reward_claims set status = 'failed', updated_at = now() where id = $1`, [claim.id]);
+        await pool.query(`update public.recruiter_reward_ledger set status = 'claimable', claim_id = null, updated_at = now() where claim_id = $1`, [claim.id]);
+      }
+    } catch (error) {
+      // Sent but not confirmed in time: it stays 'submitted' with its tx hash for reconciliation.
+      console.warn("[recruiter claim] payout sent, confirmation pending", { claimId: claim.id, txHash, error: error?.message });
+    }
+    return json(res, finalStatus === "failed" ? 409 : 200, {
+      ok: finalStatus !== "failed",
+      claim: { id: String(claim.id), chain, token, amountRaw, payoutWallet, status: finalStatus, txHash, chainId: sent.chainId, createdAt: claim.created_at },
+      message: finalStatus === "confirmed" ? `${token} recruiter reward paid.` : finalStatus === "failed" ? "The payout reverted; your rewards stay claimable." : `${token} payout sent; confirmation pending.`,
+    });
   } catch (error) {
     await client.query("rollback").catch(() => {});
     if (schemaMissing(error)) return json(res, 503, { error: "Recruiter payout schema has not been applied yet.", code: "PAYOUT_SCHEMA_MISSING" });

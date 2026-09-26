@@ -255,10 +255,6 @@ export function RecruiterNativePayoutsPanel() {
 
   const createClaim = async (chain: NativeChain) => {
     if (!activeRecruiterWallet) return;
-    if (chain === "robinhood") {
-      toast.message("Robinhood recruiter claims stay off until the ETH distributor is funded.");
-      return;
-    }
     setPendingAction(`claim-${chain}`); setError(null);
     try {
       const result = await createRecruiterNativeClaim(chain, activeRecruiterWallet.address);
@@ -271,7 +267,7 @@ export function RecruiterNativePayoutsPanel() {
         await recordRecruiterSolanaClaim(result.claim.id, txHash, activeRecruiterWallet.address);
         toast.success("SOL recruiter reward claimed on-chain");
       } else {
-        toast.success(String(result?.message || "BNB recruiter claim created"));
+        toast.success(String(result?.message || `${chain === "robinhood" ? "ETH" : "BNB"} recruiter reward paid`));
       }
       await load();
     } catch (err: any) {
