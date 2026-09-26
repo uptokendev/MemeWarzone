@@ -1409,6 +1409,20 @@ recruiter vault and `recruiter_reward_ledger` held only test rows. Fixed end to 
   harvest after graduation is manual on all chains (no mainnet graduation yet); past epochs' recruiter
   prizes were never set aside (the league pot was split without them).
 
+### Treasury upgrade rehearsed on cloned mainnet state (2026-09-26)
+
+`bash scripts/solana/rehearse-mainnet-treasury-upgrade.sh` -- PASS. The live treasury (ProgramData +
+all 20 accounts) cloned read-only into a local validator, authority re-homed to a fresh 2-of-3
+Squads vault, extend +130104, candidate `1840a9e7…` staged, `propose-squads-upgrade.mjs` -> decoder
+MATCHES, launchpad bytes into the treasury refused, 2 approvals, execute, deployed == candidate.
+Then the post-upgrade runbook on the upgraded program: 20/20 existing accounts decode;
+`initialize_mwl_vault`; `set_arena_receivers` (MWL -> mwl_vault, protocol unchanged);
+`initialize_reward_poster` (3 caps); poster roots in league_vault / monthly_league_vault / mwl_vault
+with poker places, first and last rank claimed from the right vault; poster recruiter batch of the
+vault's real 671407 lamports claimed; `flush_operator_fill`. Launchpad has **no** change since the
+certified `e6ed7df3…`: only the treasury is upgraded. Epochs the old authority job already sealed
+(3 on mainnet, all unclaimed) are never overwritten by the poster.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
