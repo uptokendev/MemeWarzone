@@ -97,7 +97,8 @@ export async function submitSolanaCreatorFeeClaim(item: Pick<CreatorFeeItem, "ca
 
   const final = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
   const signed = await provider.signTransaction(final.transaction);
-  assertSolanaUserV0Intent(web3, signed, intent);
+  // Wallets may prepend compute-budget / safety instructions; the claim itself must be unchanged.
+  assertSolanaUserV0Intent(web3, signed, { ...intent, allowAdditionalInstructions: true });
 
   const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
   // web3's Connection satisfies the confirm helper at runtime; its generic

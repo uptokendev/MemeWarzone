@@ -85,7 +85,9 @@ export async function submitSolanaUpvoteV0(input: {
   // Recompile after simulation so the wallet receives a fresh blockhash.
   const final = await compileSolanaUserV0WithLatestBlockhash(input.web3, input.connection, intent);
   const signed = await provider.signTransaction(final.transaction);
-  assertSolanaUserV0Intent(input.web3, signed, intent);
+  // Phantom prepends its own compute-budget / safety instructions when signing; our memo + transfer
+  // must still be there, contiguous and unchanged, with the same payer and a single signer.
+  assertSolanaUserV0Intent(input.web3, signed, { ...intent, allowAdditionalInstructions: true });
 
   const signature = await input.connection.sendRawTransaction(signed.serialize(), {
     skipPreflight: false,

@@ -172,7 +172,8 @@ export async function submitSolanaRewardV0Claim(input: {
   // Rebuild after simulation so the wallet always receives a fresh blockhash.
   const final = await compileSolanaUserV0WithLatestBlockhash(input.web3, connection, intent);
   const signed = await provider.signTransaction(final.transaction);
-  assertSolanaUserV0Intent(input.web3, signed, intent);
+  // Wallets may prepend compute-budget / safety instructions; the claim itself must be unchanged.
+  assertSolanaUserV0Intent(input.web3, signed, { ...intent, allowAdditionalInstructions: true });
 
   const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
   const confirmation = await confirmLaunchpadSignature(connection, {
