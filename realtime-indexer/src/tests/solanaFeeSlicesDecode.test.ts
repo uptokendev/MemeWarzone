@@ -76,3 +76,16 @@ test("FeeSlicesAccrued from the launchpad before the 2026-09-24 upgrade (no crea
   assert.equal(event.squad, 500n);
   assert.equal(event.protocol, 9_500n);
 });
+
+test("FeeSlicesRouted for a buy/sell (pre-escrow launchpad) is a trade credited to the trader, not a graduation", async () => {
+  const { solanaRewardEventRow } = await import("../rewards/solanaRewardEventRow.js");
+  const [campaign, trader] = [Keypair.generate().publicKey, Keypair.generate().publicKey];
+  const base = { campaign: campaign.toBase58(), trader: trader.toBase58(), routeProfile: 0, grossLamports: 9_803_922n, feeLamports: 196_078n,
+    weekly: 0n, monthly: 0n, creator: 0n, recruiter: 24_509n, airdrop: 0n, squad: 4_902n, protocol: 0n };
+  const buy = solanaRewardEventRow({ kind: "FeeSlicesRouted", side: 1, ...base } as any);
+  assert.equal(buy.routeKind, "trade");
+  assert.equal(buy.walletAddress, trader.toBase58());
+  const graduation = solanaRewardEventRow({ kind: "FeeSlicesRouted", side: 3, ...base } as any);
+  assert.equal(graduation.routeKind, "finalize");
+  assert.equal(graduation.walletAddress, null);
+});

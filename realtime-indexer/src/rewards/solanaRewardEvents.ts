@@ -11,47 +11,17 @@
  */
 import type { FeeSlicesAccruedEvent, FeeSlicesRoutedEvent } from "../solanaAnchorEvents.js";
 import { ensureWeeklyEpoch } from "./epochs.js";
-import type { RewardRouteProfile } from "./ingest.js";
 
 type Queryable = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
 
-export const SOLANA_REWARD_CHAIN_ID = 101;
+export { SOLANA_REWARD_CHAIN_ID, TRADE_SIDE_FINALIZE, solanaRouteProfileName, solanaRewardEventRow } from "./solanaRewardEventRow.js";
+import { SOLANA_REWARD_CHAIN_ID, solanaRewardEventRow } from "./solanaRewardEventRow.js";
 
-/** Program route profile ids (programs/memewarzone_solana/src/lib.rs): 0 linked, 1 unlinked, 2 OG. */
-export function solanaRouteProfileName(id: number): RewardRouteProfile {
-  if (id === 0) return "standard_linked";
-  if (id === 2) return "og_linked";
-  if (id === 1) return "standard_unlinked";
-  throw new Error(`Unknown Solana route profile ${id}`);
-}
-
-export function solanaRewardEventRow(event: FeeSlicesAccruedEvent | FeeSlicesRoutedEvent) {
-  const finalize = event.kind === "FeeSlicesRouted";
-  return {
-    routeKind: finalize ? ("finalize" as const) : ("trade" as const),
-    routeProfile: solanaRouteProfileName(event.routeProfile),
-    walletAddress: finalize ? null : event.trader,
-    campaignAddress: event.campaign,
-    leagueAmount: (event.weekly + event.monthly).toString(),
-    recruiterAmount: event.recruiter.toString(),
-    airdropAmount: event.airdrop.toString(),
-    squadAmount: event.squad.toString(),
-    protocolAmount: event.protocol.toString(),
-    rawAmount: event.feeLamports.toString(),
-    sourceEvent: event.kind,
-    metadata: {
-      side: event.side,
-      routeProfileId: event.routeProfile,
-      creatorLamports: event.creator.toString(),
-      weeklyLeagueLamports: event.weekly.toString(),
-      monthlyLeagueLamports: event.monthly.toString(),
-      eventTrader: event.trader,
-      ...(finalize ? { grossLamports: (event as FeeSlicesRoutedEvent).grossLamports.toString() } : {}),
-    },
-  };
-}
-
-/** Idempotent on (chain_id, tx_hash, log_index); the signature keeps its exact base58 case. */
+/**
+ * Idempotent on (chain_id, tx_hash, log_index); the signature keeps its exact base58 case. A re-read
+ * rewrites the row from the chain's own event (deterministic), so a row recorded by an older decoder
+ * is corrected by the backfill.
+ */
 export async function recordSolanaRewardEvent(
   db: Queryable,
   event: FeeSlicesAccruedEvent | FeeSlicesRoutedEvent,
@@ -66,7 +36,21 @@ export async function recordSolanaRewardEvent(
        league_amount, recruiter_amount, airdrop_amount, squad_amount, protocol_amount, raw_amount,
        source_contract, source_event, matched_activity_source, metadata, created_at, updated_at
      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'solana_fee_slices',$19::jsonb,now(),now())
-     on conflict (chain_id, tx_hash, log_index) do nothing`,
+     on conflict (chain_id, tx_hash, log_index) do update set
+       wallet_address = excluded.wallet_address,
+       campaign_address = excluded.campaign_address,
+       route_kind = excluded.route_kind,
+       route_profile = excluded.route_profile,
+       league_amount = excluded.league_amount,
+       recruiter_amount = excluded.recruiter_amount,
+       airdrop_amount = excluded.airdrop_amount,
+       squad_amount = excluded.squad_amount,
+       protocol_amount = excluded.protocol_amount,
+       raw_amount = excluded.raw_amount,
+       source_event = excluded.source_event,
+       metadata = excluded.metadata,
+       updated_at = now()
+     where public.reward_events.matched_activity_source = 'solana_fee_slices'`,
     [
       SOLANA_REWARD_CHAIN_ID,
       input.signature,
