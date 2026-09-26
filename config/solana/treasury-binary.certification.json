@@ -16,7 +16,7 @@
   },
   "deployed": {
     "devnet": "not upgraded to this candidate",
-    "mainnet": "NOT upgraded to this candidate. Mainnet runs 1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95 (1306640 bytes, Squads #18). Candidate needs solana program extend +130104 bytes first."
+    "mainnet": "UPGRADED 2026-09-26 via Squads #22 (sig 3gLMzAzS...), slot 450767715; ProgramData == candidate + zero padding, authority fk5YYWb..., buffer 9fVe2xXs... closed. Extended +130104 first."
   },
   "consumers": {
     "note": "The API and indexer read no treasury program hash. Do not put this value into SOLANA_LAUNCHPAD_PROGRAM_SHA256."
@@ -24,7 +24,8 @@
   "previous": {
     "sha256": "1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95",
     "bytes": 1306640,
-    "mainnetSince": "2026-09-24"
+    "mainnetSince": "2026-09-24",
+    "replaced": "2026-09-26"
   },
   "supersededUnstaged": [
     {

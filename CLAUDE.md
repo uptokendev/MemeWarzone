@@ -1423,6 +1423,20 @@ vault's real 671407 lamports claimed; `flush_operator_fill`. Launchpad has **no*
 certified `e6ed7df3…`: only the treasury is upgraded. Epochs the old authority job already sealed
 (3 on mainnet, all unclaimed) are never overwritten by the poster.
 
+### Solana treasury `1840a9e7` -- UPGRADED ON MAINNET (2026-09-26)
+
+Extend +130104 (0.661 SOL), buffer `9fVe2xXs…` staged and byte-verified independently, Squads #22
+created from the terminal (decoded twice: MATCHES), executed `3gLMzAzS…` in slot 450767715.
+Verified: ProgramData == `1840a9e7` + zeros, authority `fk5YYWb…`, buffer closed, rent back
+(deployer 8.05 SOL), launchpad untouched (slot 449877289). Pending but harmless: Squads #21 is a
+SetRentCollector config change (-> vault), 1 rejection.
+Post-upgrade, read back from chain: `mwl_vault` `PCDQmFBr…` created and the arena MWL receiver moved
+there from `68FNN…` (protocol receiver `BvQHb…` unchanged); reward poster `5PKtjVSf…` (key
+`~/.config/memewarzone/mwz-reward-poster.json`, funded 0.1 SOL) with caps airdrop 50 / league 50 /
+recruiter+squad 20 SOL. Servers still to do: `SOLANA_REWARD_POSTER_SECRET` on indexer + API, remove
+`SOLANA_REWARDS_AUTHORITY_SECRET_KEY` from the indexer, Monday Coolify tasks
+`cron:export-recruiter-settlement-batch` (00:30) then `cron:publish-recruiter-settlement-root` (00:45).
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
