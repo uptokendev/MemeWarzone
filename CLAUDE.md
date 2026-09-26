@@ -1435,6 +1435,19 @@ prices every payout bound on both chains in dollars and fails outside $1..$1M --
 deploy or Safe batch that sets a cap. After M2: the new addresses go into `league.js`,
 `evmLeagueClaimVerification.js` and `publish-evm-league-roots.mjs`.
 
+### Airdrop: 60-day claim window, unclaimed rolls back into the pot (founder, 2026-09-27)
+
+`AIRDROP_CLAIM_WINDOW_DAYS=60`, `AIRDROP_WEEKLY_DISTRIBUTION_BPS=10000` + `AIRDROP_ALLOW_FULL_VAULT_DISTRIBUTION=true`
+(pay everything weekly). Solana needs nothing more: posting never moves lamports, the pot is the vault
+minus still-open batches, so an expired week's remainder is next week's pot. EVM moves each week into
+`RewardDistributor`; after the deadline only the Safe can `recoverUnclaimed`, and the community vault
+refuses plain transfers (`receive()` reverts, `depositAirdrop` is onlyRouter). So
+`scripts/make-airdrop-recovery-batch.ts` writes ONE atomic Safe batch: recoverUnclaimed -> Safe,
+vault.setRouter(Safe), depositAirdrop{value}, setRouter(router). Rehearsed in
+`test/AirdropRecoveryBatch.spec.ts` (incl. the naive direct recovery failing, and replay reverting).
+First weeks expire late November 2026; run the script monthly from then. `buildBatch` now takes an
+optional `value` for payable calls only.
+
 ### Treasury upgrade rehearsed on cloned mainnet state (2026-09-26)
 
 `bash scripts/solana/rehearse-mainnet-treasury-upgrade.sh` -- PASS. The live treasury (ProgramData +

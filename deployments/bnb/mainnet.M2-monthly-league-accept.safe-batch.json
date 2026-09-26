@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1790464829358,
+  "meta": {
+    "name": "M2 BNB monthly league: accept new vault",
+    "description": "Router accepts MonthlyLeagueTreasury 0x42D254A7451808Bb01df879d71BcAfDC5D605A38. Sign no earlier than 3600 s after M1 executed.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+      "value": "0",
+      "data": "0x4cd53c42",
+      "contractMethod": {
+        "inputs": [],
+        "name": "acceptMonthlyLeagueTreasury",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    }
+  ]
+}

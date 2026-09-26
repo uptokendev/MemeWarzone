@@ -1,0 +1,12 @@
+{
+  "chainId": 56,
+  "address": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+  "replaces": "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8",
+  "multisig": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "rootPoster": "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50",
+  "oracle": "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B",
+  "charityTreasury": "0xd6602E3aA3F8FBe202ac84776d47ee0FfAd188df",
+  "monthlyCapUsd": "30000000000000000000000",
+  "deployTx": "0x11f079caf1e1993fcdcee7385515909cfc8d0da46babf41e81a99b914c8f499f",
+  "deployedAt": "2026-09-26T23:20:25.536Z"
+}

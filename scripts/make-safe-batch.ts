@@ -17,7 +17,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { ethers } from "ethers";
 
-type Call = { contract: string; to: string; fn: string; args: unknown[] };
+/** `value` (wei) only for a payable function; every existing batch carries none. */
+type Call = { contract: string; to: string; fn: string; args: unknown[]; value?: bigint | string };
 
 function artifactAbi(contract: string): any[] {
   const dir = path.join(__dirname, "..", "artifacts", "contracts");
@@ -46,11 +47,14 @@ export function buildBatch(chainId: number, name: string, description: string, c
     const sig = `function ${call.fn}(${fragment.inputs.map((i: any) => `${i.type} ${i.name}`).join(",")})`;
     const check = new ethers.Interface([sig]).encodeFunctionData(call.fn, call.args as any[]);
     if (check.toLowerCase() !== data.toLowerCase()) throw new Error(`encoding disagreement for ${call.fn}`);
+    const value = BigInt(call.value ?? 0);
+    if (value < 0n) throw new Error(`${call.fn} value is negative`);
+    if (value > 0n && fragment.stateMutability !== "payable") throw new Error(`${call.contract}.${call.fn} is not payable but carries ${value} wei`);
     const contractInputsValues: Record<string, string> = {};
     fragment.inputs.forEach((input: any, i: number) => { contractInputsValues[input.name] = String(call.args[i]); });
     return {
       to: ethers.getAddress(call.to),
-      value: "0",
+      value: value.toString(),
       data,
       contractMethod: {
         inputs: fragment.inputs.map((i: any) => ({ internalType: i.internalType, name: i.name, type: i.type })),
@@ -70,13 +74,13 @@ export function buildBatch(chainId: number, name: string, description: string, c
 }
 
 /** Re-derive every data field from the decoded method and values; used after writing. */
-export function verifyBatchFile(file: string, expectedChainId: number, expectedTo?: string) {
+export function verifyBatchFile(file: string, expectedChainId: number, expectedTo?: string, allowValue = false) {
   const batch = JSON.parse(fs.readFileSync(file, "utf8"));
   if (batch.chainId !== String(expectedChainId)) throw new Error(`chainId ${batch.chainId} != ${expectedChainId}`);
   if (batch.meta?.checksum) throw new Error("unexpected checksum field; the Builder computes its own");
   for (const tx of batch.transactions) {
     if (expectedTo && tx.to.toLowerCase() !== expectedTo.toLowerCase()) throw new Error(`tx to ${tx.to} != ${expectedTo}`);
-    if (tx.value !== "0") throw new Error(`tx ${tx.contractMethod.name} carries value ${tx.value}`);
+    if (tx.value !== "0" && !(allowValue && tx.contractMethod.payable)) throw new Error(`tx ${tx.contractMethod.name} carries value ${tx.value}`);
     const sig = `function ${tx.contractMethod.name}(${tx.contractMethod.inputs.map((i: any) => `${i.type} ${i.name}`).join(",")})`;
     // The Builder stores every value as a string; a bool must be read back as one
     // or "false" re-encodes as true and the check fails on a correct batch.

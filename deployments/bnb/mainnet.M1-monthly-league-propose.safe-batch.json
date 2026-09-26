@@ -1,0 +1,572 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1790464829143,
+  "meta": {
+    "name": "M1 BNB monthly league: propose new vault",
+    "description": "Router proposes MonthlyLeagueTreasury 0x42D254A7451808Bb01df879d71BcAfDC5D605A38 ($30000 cap in 18-decimal USD; the old 0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8 capped every month at a few wei). 12 months authorized (max 40.0 BNB). Old vault dust moved in.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+      "value": "0",
+      "data": "0x6f4b95df00000000000000000000000042d254a7451808bb01df879d71bcafdc5d605a38",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newTreasury",
+            "type": "address"
+          }
+        ],
+        "name": "proposeMonthlyLeagueTreasury",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newTreasury": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317710000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006abda280000000000000000000000000000000000000000000000000000000006ae52f800000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202609",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1790812800",
+        "sealDeadline": "1793404800",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317720000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006ae68100000000000000000000000000000000000000000000000000000000006b0e0e000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202610",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1793491200",
+        "sealDeadline": "1796083200",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317730000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006b0e0e00000000000000000000000000000000000000000000000000000000006b359b000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202611",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1796083200",
+        "sealDeadline": "1798675200",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317740000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006b36ec80000000000000000000000000000000000000000000000000000000006b5e79800000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202612",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1798761600",
+        "sealDeadline": "1801353600",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317cd0000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006b5fcb00000000000000000000000000000000000000000000000000000000006b8758000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202701",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1801440000",
+        "sealDeadline": "1804032000",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317ce0000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006b84b500000000000000000000000000000000000000000000000000000000006bac42000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202702",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1803859200",
+        "sealDeadline": "1806451200",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317cf0000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006bad9380000000000000000000000000000000000000000000000000000000006bd520800000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202703",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1806537600",
+        "sealDeadline": "1809129600",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317d00000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006bd52080000000000000000000000000000000000000000000000000000000006bfcad800000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202704",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1809129600",
+        "sealDeadline": "1811721600",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317d10000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006bfdff00000000000000000000000000000000000000000000000000000000006c258c000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202705",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1811808000",
+        "sealDeadline": "1814400000",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317d20000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006c258c00000000000000000000000000000000000000000000000000000000006c4d19000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202706",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1814400000",
+        "sealDeadline": "1816992000",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317d30000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006c4e6a80000000000000000000000000000000000000000000000000000000006c75f7800000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202707",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1817078400",
+        "sealDeadline": "1819670400",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+      "value": "0",
+      "data": "0xed675a0800000000000000000000000000000000000000000000000000000000000317d40000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000006c774900000000000000000000000000000000000000000000000000000000006c9ed6000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "monthId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxWinnerPool",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sealDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exceptional",
+            "type": "bool"
+          }
+        ],
+        "name": "authorizeMonth",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthId": "202708",
+        "maxWinnerPool": "40000000000000000000",
+        "sealAfter": "1819756800",
+        "sealDeadline": "1822348800",
+        "exceptional": "true"
+      }
+    },
+    {
+      "to": "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8",
+      "value": "0",
+      "data": "0x07b18bde00000000000000000000000042d254a7451808bb01df879d71bcafdc5d605a38000000000000000000000000000000000000000000000000000020f5aa463b01",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address payable",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "withdrawNative",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "to": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+        "amount": "36239495805697"
+      }
+    }
+  ]
+}
