@@ -199,9 +199,7 @@ export function BattleWallCombatant({
       >
         <div
           data-battle-combatant-art="true"
-          // Square art sized by the card's height -- capped so a taller card (an upcoming battle's
-          // accept / counter / decline controls) cannot grow it into the stats half; object-cover crops.
-          className="relative aspect-square h-0 min-h-full w-auto shrink-0 self-stretch overflow-hidden max-w-[36%] md:max-w-[40%]"
+          className="relative aspect-square h-0 min-h-full w-auto shrink-0 self-stretch overflow-hidden"
         >
           <CombatantArtwork imageUrl={imageUrl} ticker={displaySymbol} name={displayName} accent={accent} />
           <div className="absolute left-1 top-1 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">
