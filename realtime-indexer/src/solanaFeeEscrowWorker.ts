@@ -345,7 +345,38 @@ async function flushOne(
   return sendServerV0(connection, payer, ix, `FeeEscrow flush ${campaign.toBase58()}`);
 }
 
+// Coins created before the 2026-09-20 launchpad got their fee escrow but no creator fee vault, so the
+// creator's 5% accrues where claim_creator_fees cannot reach it (FeeEscrowNotInitialized). Hourly,
+// re-queue initialized coins whose creator vault is missing; initializeOne then creates only the vault.
+let lastCreatorVaultSweepAt = 0;
+async function requeueMissingCreatorVaults(connection: Connection) {
+  if (Date.now() - lastCreatorVaultSweepAt < 60 * 60_000) return;
+  lastCreatorVaultSweepAt = Date.now();
+  const rows = await pool.query(
+    `select campaign_address from public.solana_fee_escrow_accruals
+      where chain_id=$1 and init_status='initialized'
+      order by updated_at asc limit 500`,
+    [SOLANA_CHAIN_ID],
+  );
+  const campaigns = rows.rows.map((row) => new PublicKey(String(row.campaign_address)));
+  for (let i = 0; i < campaigns.length; i += 100) {
+    const batch = campaigns.slice(i, i + 100);
+    const infos = await connection.getMultipleAccountsInfo(batch.map((campaign) => creatorFeeVaultPda(campaign)), "confirmed");
+    const missing = batch.filter((_, index) => !(infos[index] && infos[index]!.owner.equals(programId()) && infos[index]!.data.length >= 8));
+    if (!missing.length) continue;
+    await pool.query(
+      `update public.solana_fee_escrow_accruals set init_status='pending', next_init_attempt_at=null, updated_at=now()
+        where chain_id=$1 and campaign_address = any($2::text[]) and init_status='initialized'`,
+      [SOLANA_CHAIN_ID, missing.map((campaign) => campaign.toBase58())],
+    );
+    console.info(`[solana-fee-escrow] creator fee vault missing on ${missing.length} coin(s); queued for init`);
+  }
+}
+
 async function processInits(connection: Connection, payer: Keypair) {
+  await requeueMissingCreatorVaults(connection).catch((error) =>
+    console.warn("[solana-fee-escrow] creator vault sweep failed", error instanceof Error ? error.message : String(error)),
+  );
   const rows = await pool.query(
     `select campaign_address, escrow_address
        from public.solana_fee_escrow_accruals

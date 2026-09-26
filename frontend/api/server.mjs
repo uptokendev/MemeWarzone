@@ -70,6 +70,7 @@ import { solanaDirectCreateV4 } from "./dev-fix/solana-direct-create.js";
 import solanaCampaignAccount from "./solanaCampaignAccount.js";
 import solanaHolders from "./solanaHolders.js";
 import solanaCreatorFees from "./solanaCreatorFees.js";
+import evmCreatorFees from "./evmCreatorFees.js";
 import { solanaTradeAuthorizationV1, solanaTradeStatus } from "./dev-fix/solana-trade-authorization-v1.js";
 import { solanaGraduationAuthorizationV1 } from "./dev-fix/solana-graduation-authorization-v1.js";
 import { solanaGraduationHandoff } from "./dev-fix/solana-graduation-handoff.js";
@@ -464,6 +465,7 @@ router.all("/solana/graduation-authorize", wrap(solanaGraduationAuthorizationV1)
 router.all("/solana/graduation-handoff", wrap(solanaGraduationHandoff));
 router.all("/solana/trade-status", wrap(solanaTradeStatus));
 router.all("/solana/creator-fees", wrap(solanaCreatorFees));
+router.all("/evm/creator-fees", wrap(evmCreatorFees));
 router.all("/solana/vote-ingest", wrap(solanaVoteIngest));
 router.all("/drafts/:draftId/follow", wrap(signedDraftFollow));
 router.all("/drafts/:draftId/notifications", wrap(signedDraftNotificationSubscription));
