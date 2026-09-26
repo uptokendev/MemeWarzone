@@ -1423,6 +1423,18 @@ league vaults have no authorization step. **The operator starts with 0 gas on bo
   harvest after graduation is manual on all chains (no mainnet graduation yet); past epochs' recruiter
   prizes were never set aside (the league pot was split without them).
 
+### Monthly league vaults capped at a few wei (found 2026-09-27)
+
+Both `MonthlyLeagueTreasury` vaults (BNB `0xF62A09de…`, RH `0xE72A281b…`) hold `monthlyCapUsd = 30000`
+raw; the unit is 18-decimal USD, so every month is capped at 39 / 12 wei and `sealMonth` reverts
+`WinnerTotalAboveCap`. Immutable. No money was at stake (first launch 2026-09-27). Replacement:
+`scripts/replace-monthly-league-treasury.ts` (deploy, then Safe batches M1 propose + authorizeMonth x12
++ dust, M2 accept after the router's 3600 s), rehearsed by `test/MonthlyLeagueTreasuryReplacement.spec.ts`
+with a realistic price and prize. **Check values, not presence:** `node scripts/check-evm-payout-bounds.mjs`
+prices every payout bound on both chains in dollars and fails outside $1..$1M -- run it after any
+deploy or Safe batch that sets a cap. After M2: the new addresses go into `league.js`,
+`evmLeagueClaimVerification.js` and `publish-evm-league-roots.mjs`.
+
 ### Treasury upgrade rehearsed on cloned mainnet state (2026-09-26)
 
 `bash scripts/solana/rehearse-mainnet-treasury-upgrade.sh` -- PASS. The live treasury (ProgramData +
