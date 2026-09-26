@@ -433,7 +433,7 @@ async function creatorCoins(chainId, creatorAddress, limit) {
   ];
 }
 
-async function statusFor(coin) {
+async function statusFor(coin, { allowActive = false } = {}) {
   const chainId = Number(coin.chain_id);
   const token = ident(coin.token_address || coin.campaign_address, chainId);
   const base = {
@@ -445,7 +445,9 @@ async function statusFor(coin) {
     origin: coin.origin || "native",
     imageUrl: coin.logo_uri || coin.image_url || null,
   };
-  const battle = await activeBattleForToken(chainId, token);
+  // The open matchmaking queue keeps one entry per coin; direct challenges (allowActive) let a coin
+  // fight several opponents at once.
+  const battle = allowActive ? null : await activeBattleForToken(chainId, token);
   if (battle) {
     const waiting = battle.state === "waiting" || battle.state === "challenged";
     return {
@@ -731,24 +733,29 @@ export async function promoteMatchedIfFunded(row) {
   return mapBattle(row);
 }
 
-async function activeBattleTokenSet(chainId) {
-  const tokens = new Set();
+/**
+ * Coins already in an active battle WITH `token` (founder, 2026-09-26: a coin may fight several
+ * opponents at once; only the same pairing twice at the same time is refused).
+ */
+async function activeOpponentsOf(chainId, token) {
+  const own = ident(token, chainId);
+  const opponents = new Set();
+  if (!own) return opponents;
   const result = await pool.query(
     `select challenger_token, defender_token, participants
        from public.arena_battles
-      where chain_id = $1 and state = any($2)`,
-    [chainId, ACTIVE_STATES],
+      where chain_id = $1 and state = any($2)
+        and (lower(coalesce(challenger_token, '')) = lower($3) or lower(coalesce(defender_token, '')) = lower($3) or participants::text ilike $4)`,
+    [chainId, ACTIVE_STATES, own, `%${own}%`],
   );
   for (const row of result.rows) {
-    if (row.challenger_token) tokens.add(ident(row.challenger_token, chainId));
-    if (row.defender_token) tokens.add(ident(row.defender_token, chainId));
-    const participants = Array.isArray(row.participants) ? row.participants : [];
-    for (const entry of participants) {
-      const tokenId = ident(entry?.tokenId || entry?.tokenAddress || entry?.campaignAddress, chainId);
-      if (tokenId) tokens.add(tokenId);
-    }
+    const tokens = [row.challenger_token, row.defender_token, ...(Array.isArray(row.participants) ? row.participants.map((entry) => entry?.tokenId || entry?.tokenAddress || entry?.campaignAddress) : [])]
+      .map((value) => ident(value, chainId))
+      .filter(Boolean);
+    if (!tokens.includes(own)) continue;
+    for (const tokenId of tokens) if (tokenId !== own) opponents.add(tokenId);
   }
-  return tokens;
+  return opponents;
 }
 
 async function eligibleRecommendationCoins(chainId, limit = 120) {
@@ -1021,7 +1028,13 @@ async function handleCreatorStatus(req, res) {
   if (!isWallet(creator)) return json(res, 200, { items: [], updatedAt: nowIso() });
   try {
     const rows = await creatorCoins(chainId, creator, limit);
-    return json(res, 200, { items: await Promise.all(rows.map(statusFor)), updatedAt: nowIso() });
+    // eligibility keeps its meaning (free of any battle: queue, tournaments, the Coins page);
+    // canChallenge says whether the coin can start one more direct challenge while it battles.
+    const items = await Promise.all(rows.map(async (coin) => {
+      const [status, challenge] = await Promise.all([statusFor(coin), statusFor(coin, { allowActive: true })]);
+      return { ...status, canChallenge: Boolean(challenge.eligibility) };
+    }));
+    return json(res, 200, { items, updatedAt: nowIso() });
   } catch (error) {
     console.error("[api/arenaBattles] creator status failed", error);
     return json(res, 200, { items: [], updatedAt: nowIso(), warning: "Creator battle status is unavailable." });
@@ -1080,12 +1093,11 @@ async function handleMatches(req, res) {
 
   const coin = await coinByIdentity(chainId, identity);
   if (!coin) return json(res, 404, { ok: false, error: "Coin not found", reason: "coin_not_found" });
-  const creatorStatus = await statusFor(coin);
+  const creatorStatus = await statusFor(coin, { allowActive: true });
   if (!creatorStatus.eligibility) return json(res, 409, { ok: false, reason: creatorStatus.unavailableReason || "unavailable", status: creatorStatus });
   const hydratedCoin = await hydrateMatchCoin(coin);
 
-  const activeTokens = await activeBattleTokenSet(chainId);
-  activeTokens.delete(creatorStatus.tokenId);
+  const activeTokens = await activeOpponentsOf(chainId, creatorStatus.tokenId);
   const candidates = (await eligibleRecommendationCoins(chainId, Math.max(60, limit * 20))).filter((candidate) => {
     const tokenId = ident(candidate.token_address || candidate.campaign_address, chainId);
     return Boolean(tokenId) && tokenId !== creatorStatus.tokenId && !activeTokens.has(tokenId);
@@ -1123,7 +1135,7 @@ async function handleOpponents(req, res) {
   const mode = parseBattleMode(query.mode ?? query.battleMode);
   const limit = Math.max(1, Math.min(60, Number(query.limit) || 40));
   const own = identity ? ident(identity, chainId) : "";
-  const activeTokens = await activeBattleTokenSet(chainId);
+  const activeTokens = own ? await activeOpponentsOf(chainId, own) : new Set();
   const rows = (await eligibleRecommendationCoins(chainId, Math.max(60, limit * 2))).filter((candidate) => {
     const tokenId = ident(candidate.token_address || candidate.campaign_address, chainId);
     return Boolean(tokenId) && tokenId !== own && !activeTokens.has(tokenId);
@@ -1232,10 +1244,17 @@ async function handleChallenge(req, res) {
   const challenger = await coinByIdentity(chainId, tokenId);
   const defender = await coinByIdentity(chainId, targetTokenId);
   if (!challenger || !defender) return json(res, 404, { ok: false, error: "Coin not found" });
-  const challengerStatus = await statusFor(challenger);
-  const defenderStatus = await statusFor(defender);
+  const challengerStatus = await statusFor(challenger, { allowActive: true });
+  const defenderStatus = await statusFor(defender, { allowActive: true });
   if (!challengerStatus.eligibility) return json(res, 409, { ok: false, reason: challengerStatus.unavailableReason, status: challengerStatus });
   if (!defenderStatus.eligibility) return json(res, 409, { ok: false, reason: defenderStatus.unavailableReason || "target_unavailable", status: defenderStatus });
+  if ((await activeOpponentsOf(chainId, challengerStatus.tokenId)).has(defenderStatus.tokenId)) {
+    return json(res, 409, {
+      ok: false,
+      code: "PAIR_ALREADY_BATTLING",
+      error: `${challengerStatus.symbol || "Your coin"} already has an open challenge or battle with ${defenderStatus.symbol || "this coin"}. Finish that one first.`,
+    });
+  }
   // Only the owner can accept, counter or decline; a coin without one would sit unanswered until expiry.
   if (!ident(defender.creator_address, chainId)) {
     return json(res, 409, {

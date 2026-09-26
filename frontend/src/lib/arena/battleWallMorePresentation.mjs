@@ -179,6 +179,18 @@ function identityKey(value, chainId) {
   return Number(chainId) === 101 || Number(chainId) === 102 ? raw : raw.toLowerCase();
 }
 
+/** Side of the settled winner (0 left, 1 right) or null -- the official result, never a live leader. */
+export function battleWinnerIndex(battle) {
+  const chainId = Number(battle?.chainId ?? battle?.chain_id ?? 0);
+  const winnerKey = identityKey(String(battle?.winnerToken || battle?.moneyWinnerToken || "").trim(), chainId);
+  if (!winnerKey) return null;
+  const participants = Array.isArray(battle?.participants) ? battle.participants.slice(0, 2) : [];
+  const index = participants.findIndex((participant) =>
+    [participant?.tokenId, participant?.tokenAddress, participant?.campaignAddress].some((value) => identityKey(value, chainId) === winnerKey),
+  );
+  return index === 0 || index === 1 ? index : null;
+}
+
 export function presentBattleResult(battle, metrics) {
   const state = String(battle?.state || "").toLowerCase();
   const chainId = Number(battle?.chainId ?? battle?.chain_id ?? 0);

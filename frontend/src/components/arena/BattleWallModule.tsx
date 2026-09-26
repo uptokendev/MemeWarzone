@@ -17,7 +17,7 @@ import { useBattleVote } from "@/components/arena/BattleVoteControls";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
 import { formatPrizePool, useBattlePrizePool } from "@/components/arena/useBattlePrizePool";
 import { presentBattleGeneration } from "@/lib/arena/battleGenerationPresentation.mjs";
-import { presentBattleWallMore } from "@/lib/arena/battleWallMorePresentation.mjs";
+import { battleWinnerIndex, presentBattleWallMore } from "@/lib/arena/battleWallMorePresentation.mjs";
 import { requestArenaBuyIn } from "@/lib/arena/challengePopupPresentation.mjs";
 import { DATA_DELAY_LABEL, battleDomId, presentBattleWallFightBand, presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
 import {
@@ -93,8 +93,8 @@ export function BattleWallModule({
   // participants[].voteScore), so the card showed "VOTES —" while votes were being cast. The card and
   // its Vote/Boost buttons share one live vote state (regulation points: Free Vote 1, Boost 2).
   const voteEligibility = battleVoteEligibility(displayBattle);
-  const voteState = useBattleVote({ battleId: voteEligibility.showVote ? battle.id : "", chainId });
-  const presented = voteEligibility.showVote && voteState.payload
+  const voteState = useBattleVote({ battleId: voteEligibility.showScore ? battle.id : "", chainId });
+  const presented = voteEligibility.showScore && voteState.payload
     ? { ...basePresented, ...liveVoteScore(voteState.model.leftPoints, voteState.model.rightPoints) }
     : basePresented;
   // Live prize pool in the status band; the winner's claim sits on the card (the MORE panel is gone).
@@ -119,6 +119,8 @@ export function BattleWallModule({
 
   const delay = presented.scoreKind === "delay" || presented.statusLabel === DATA_DELAY_LABEL;
   const leaderReady = !preLive && !delay && (presented.leaderIndex === 0 || presented.leaderIndex === 1);
+  // Finished: the settled winner's card gets the green border (founder, 2026-09-26).
+  const winnerIndex = presented.tab === "finished" ? battleWinnerIndex(displayBattle) : null;
   const band = presentBattleWallFightBand(presented, {
     chainLabel: battleChainLabel(chainId),
     clockLabel: preLive ? null : battleClockLabel(displayBattle),
@@ -215,6 +217,7 @@ export function BattleWallModule({
                   isLeader={leaderReady && presented.leaderIndex === 0}
                   isTrailer={leaderReady && presented.leaderIndex === 1}
                   finished={presented.tab === "finished"}
+                  isWinner={winnerIndex === 0}
                   accent="ember"
                   combatSide="left"
                   actions={
@@ -252,6 +255,7 @@ export function BattleWallModule({
                   isLeader={leaderReady && presented.leaderIndex === 1}
                   isTrailer={leaderReady && presented.leaderIndex === 0}
                   finished={presented.tab === "finished"}
+                  isWinner={winnerIndex === 1}
                   accent="cyan"
                   combatSide="right"
                   actions={
@@ -289,7 +293,7 @@ export function BattleWallModule({
             metrics={displayMetrics}
             metricsRequested={selected.requested}
             metricsLoaded={selected.loaded}
-            votes={voteEligibility.showVote && voteState.payload ? { leftPoints: voteState.model.leftPoints, rightPoints: voteState.model.rightPoints } : null}
+            votes={voteEligibility.showScore && voteState.payload ? { leftPoints: voteState.model.leftPoints, rightPoints: voteState.model.rightPoints } : null}
           />
           {showBuyIn ? (
             <button

@@ -47,14 +47,18 @@ export function battleVoteEligibility(battle: Battle) {
   const voteTokens = (battle.participants || []).slice(0, 2).map((participant) =>
     String(participant?.tokenAddress || participant?.tokenId || participant?.campaignAddress || "").trim(),
   );
-  const showVote =
+  // The score is read for every Vote Battle with both sides set -- live AND finished (a finished
+  // battle kept its votes on the server, but the card stopped asking and showed "—"). Casting a
+  // vote or boost stays live-only.
+  const showScore =
     typed.battleMode === "vote" &&
     typed.source !== "tournament" &&
     chainId > 0 &&
-    typed.state === "live" &&
     voteTokens.length === 2 &&
-    voteTokens.every(Boolean);
-  return { showVote, voteTokens, chainId };
+    voteTokens.every(Boolean) &&
+    !["challenged", "pending", "declined", "expired", "cancelled"].includes(String(typed.state || ""));
+  const showVote = showScore && typed.state === "live";
+  return { showVote, showScore, voteTokens, chainId };
 }
 
 /** Card score fields from live regulation points (same shape presentVoteTournamentFight returns). */

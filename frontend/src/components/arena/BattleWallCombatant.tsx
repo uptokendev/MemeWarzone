@@ -19,6 +19,8 @@ type Props = {
   isLeader?: boolean;
   isTrailer?: boolean;
   finished?: boolean;
+  /** Settled winner of a finished battle: thick green border. */
+  isWinner?: boolean;
   accent?: "ember" | "cyan";
   compact?: boolean;
   combatSide?: "left" | "right";
@@ -115,6 +117,7 @@ export function BattleWallCombatant({
   isLeader = false,
   isTrailer = false,
   finished = false,
+  isWinner = false,
   accent = "ember",
   compact = false,
   combatSide,
@@ -166,9 +169,11 @@ export function BattleWallCombatant({
       data-battle-combatant-layout="split"
       data-battle-combatant-bounded="true"
       data-battle-leader={isLeader ? "true" : undefined}
+      data-battle-winner={isWinner ? "true" : undefined}
       className={cn(
         "mwz-flat-card relative flex h-auto max-h-[22rem] min-w-0 overflow-hidden",
-        isLeader && "border-orange-400/45",
+        isLeader && !isWinner && "border-orange-400/45",
+        isWinner && "!border-[3px] !border-emerald-400 shadow-[0_0_22px_rgba(52,211,153,0.35)]",
         trailerLive && "opacity-95",
         trailerDone && "opacity-90 saturate-[0.85]",
       )}
@@ -194,7 +199,9 @@ export function BattleWallCombatant({
       >
         <div
           data-battle-combatant-art="true"
-          className="relative aspect-square h-0 min-h-full w-auto shrink-0 self-stretch overflow-hidden"
+          // Square art sized by the card's height -- capped so a taller card (an upcoming battle's
+          // accept / counter / decline controls) cannot grow it into the stats half; object-cover crops.
+          className="relative aspect-square h-0 min-h-full w-auto shrink-0 self-stretch overflow-hidden max-w-[36%] md:max-w-[40%]"
         >
           <CombatantArtwork imageUrl={imageUrl} ticker={displaySymbol} name={displayName} accent={accent} />
           <div className="absolute left-1 top-1 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">

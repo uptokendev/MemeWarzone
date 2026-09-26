@@ -145,7 +145,8 @@ export function ChallengeCoinModal({
     }
     const controller = new AbortController();
     void fetchPostGradCreatorBattleStatuses(walletAddress, chainId, controller.signal).then((json) => {
-      const items = Array.isArray(json?.items) ? json.items.filter((item: CreatorBattleStatus) => item?.eligibility) : [];
+      // A coin already in a battle can still challenge others (canChallenge); only the same pair twice is refused.
+      const items = Array.isArray(json?.items) ? json.items.filter((item: CreatorBattleStatus & { canChallenge?: boolean }) => item?.canChallenge ?? item?.eligibility) : [];
       setEligible(items);
       if (!selectedToken && items[0]) setSelectedToken(tokenKey(items[0]));
     });
@@ -190,7 +191,7 @@ export function ChallengeCoinModal({
     step === 1
       ? true
       : step === 2
-        ? Boolean(selected?.eligibility && targetTokenId.trim() && !targetBlockedForMetrics && !targetHasNoOwner)
+        ? Boolean(((selected as (CreatorBattleStatus & { canChallenge?: boolean }) | undefined)?.canChallenge ?? selected?.eligibility) && targetTokenId.trim() && !targetBlockedForMetrics && !targetHasNoOwner)
         : step === 3
           ? Boolean(Number.isFinite(stakeAmount) && stakeAmount > 0)
           : !busy;
