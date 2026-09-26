@@ -11,9 +11,11 @@ import {
   type FeeEscrowFlushedEvent,
   type FeeEscrowInitializedEvent,
   type FeeSlicesAccruedEvent,
+  type FeeSlicesRoutedEvent,
   type TokensBoughtEvent,
   type TokensSoldEvent,
 } from "./solanaAnchorEvents.js";
+import { recordSolanaRewardEvent } from "./rewards/solanaRewardEvents.js";
 import { createCampaignLeaseRegistry, type CampaignLeaseState } from "./solanaCampaignLease.js";
 import { createIndexerSql } from "./solanaRepairSql.js";
 import { createSignatureMemory } from "./signatureMemory.js";
@@ -1177,6 +1179,7 @@ async function persistFeeAccrual(
   event: FeeSlicesAccruedEvent,
   signature: string,
   logIndex: number,
+  slot: number,
   blockTime: Date,
 ) {
   const escrow = deriveFeeEscrowAddress(event.campaign);
@@ -1196,6 +1199,7 @@ async function persistFeeAccrual(
       total: event.feeLamports.toString(),
     });
     if (!isNew) return;
+    await recordSolanaRewardEvent(db, event, { signature, logIndex, slot, blockTime, sourceContract: programId() });
     await db.query(
       `insert into public.solana_fee_escrow_accruals(
          chain_id, campaign_address, escrow_address, init_status,
@@ -1228,6 +1232,10 @@ async function persistFeeAccrual(
       ],
     );
   });
+}
+
+async function persistFeeSlicesRouted(event: FeeSlicesRoutedEvent, signature: string, logIndex: number, slot: number, blockTime: Date) {
+  await withFeeEscrowTransaction((db) => recordSolanaRewardEvent(db, event, { signature, logIndex, slot, blockTime, sourceContract: programId() }));
 }
 
 async function persistFeeEscrowInitialized(event: FeeEscrowInitializedEvent, signature: string, logIndex: number) {
@@ -1329,7 +1337,13 @@ async function handleEvent(event: AnchorEvent, signature: string, logIndex: numb
     return;
   }
   if (event.kind === "FeeSlicesAccrued") {
-    await persistFeeAccrual(event, signature, logIndex, blockTime);
+    await persistFeeAccrual(event, signature, logIndex, slot, blockTime);
+    return;
+  }
+  if (event.kind === "FeeSlicesRouted") {
+    // Graduation's finalize fee is routed straight to the vaults: record it for crediting, never
+    // as an escrow accrual (the escrow never held it).
+    await persistFeeSlicesRouted(event, signature, logIndex, slot, blockTime);
     return;
   }
   if (event.kind === "FeeEscrowFlushed") {

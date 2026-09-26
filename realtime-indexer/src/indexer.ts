@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
-import { LAUNCH_FACTORY_ABI, LAUNCH_CAMPAIGN_ABI, TREASURY_ROUTER_ABI, UP_VOTE_TREASURY_ABI } from "./abis.js";
+import { LAUNCH_FACTORY_ABI, LAUNCH_CAMPAIGN_ABI, TREASURY_ROUTER_ABI, TREASURY_ROUTER_V3_ABI, UP_VOTE_TREASURY_ABI } from "./abis.js";
 import { TIMEFRAMES, bucketStart, TF } from "./timeframes.js";
 import { publishTrade, publishCandle, publishStats, publishLeague } from "./ably.js";
 import { candleUpsertPayload } from "./candlePublish.js";
@@ -1163,35 +1163,59 @@ async function scanVoteTreasuryRange(
 // on-chain campaign registry (campaignsCount/getCampaign) and upsert any missing
 // rows into public.campaigns.
 //
-async function resolveTreasuryRouterAddress(
+// Treasury routers whose RouteExecuted logs carry the per-trade recruiter / squad slices.
+// Until 2026-09-26 this read factory.router() -- the DEX router -- and decoded only the V2 event, so no
+// BNB or Robinhood fee slice was ever recorded and no recruiter credited. Known routers are listed
+// with the first block that matters; TREASURY_ROUTERS_<chainId>="0xaddr@block,..." overrides them.
+const KNOWN_TREASURY_ROUTERS: Record<number, Array<{ address: string; startBlock: number }>> = {
+  56: [
+    { address: "0xe635aa43fe5707561c8c3c655225da5c3e4c2239", startBlock: 123629203 }, // V3, quote generation
+    { address: "0xe157a6fdf19cab61f2eca048966f137a3240a921", startBlock: 116800000 }, // V2, first BNB generation
+  ],
+  4663: [{ address: "0xda0a9ed9e68d2b468257abd66465fdd94f4338bb", startBlock: 70863388 }], // V3
+};
+
+export function configuredTreasuryRouters(chainId: number): Array<{ address: string; startBlock: number }> {
+  const raw = String(process.env[`TREASURY_ROUTERS_${chainId}`] || "").trim();
+  if (!raw) return KNOWN_TREASURY_ROUTERS[chainId] ?? [];
+  return raw.split(",").map((entry) => {
+    const [address, block] = entry.trim().split("@");
+    return { address: String(address || "").toLowerCase(), startBlock: Number(block || 0) };
+  }).filter((r) => /^0x[a-f0-9]{40}$/.test(r.address));
+}
+
+async function resolveTreasuryRouters(
   provider: ethers.JsonRpcProvider,
   chain: ChainCfg
-): Promise<string | null> {
-  if (!chain.factoryAddress) return null;
-
-  try {
-    const factory = new ethers.Contract(chain.factoryAddress, LAUNCH_FACTORY_ABI, provider);
-    const router = String(await factory.router());
-    return /^0x[a-fA-F0-9]{40}$/.test(router) ? router.toLowerCase() : null;
-  } catch (e) {
-    console.warn("resolveTreasuryRouterAddress failed", { chainId: chain.chainId }, e);
-    return null;
+): Promise<Array<{ address: string; startBlock: number }>> {
+  const routers = [...configuredTreasuryRouters(chain.chainId)];
+  if (chain.factoryAddress) {
+    try {
+      const factory = new ethers.Contract(chain.factoryAddress, LAUNCH_FACTORY_ABI, provider);
+      const feeRecipient = String(await factory.feeRecipient()).toLowerCase();
+      if (/^0x[a-f0-9]{40}$/.test(feeRecipient) && !routers.some((r) => r.address === feeRecipient)) {
+        routers.push({ address: feeRecipient, startBlock: Number(chain.factoryStartBlock || 0) });
+      }
+    } catch (e) {
+      console.warn("resolveTreasuryRouters: factory.feeRecipient() failed", { chainId: chain.chainId }, e);
+    }
   }
+  return routers;
 }
+
+const ROUTE_EVENT_V2 = new ethers.Interface(TREASURY_ROUTER_ABI);
+const ROUTE_EVENT_V3 = new ethers.Interface(TREASURY_ROUTER_V3_ABI);
+const ROUTE_TOPIC_V2 = ROUTE_EVENT_V2.getEvent("RouteExecuted")!.topicHash;
+const ROUTE_TOPIC_V3 = ROUTE_EVENT_V3.getEvent("RouteExecuted")!.topicHash;
 
 async function scanRouterRange(
   provider: ethers.JsonRpcProvider,
   chain: ChainCfg,
   routerAddress: string,
   fromBlock: number,
-  toBlock: number
+  toBlock: number,
+  cursor: string
 ) {
-  const iface = new ethers.Interface(TREASURY_ROUTER_ABI);
-  const routeFrag = iface.getEvent("RouteExecuted");
-  if (!routeFrag) throw new Error("Event RouteExecuted not found in TREASURY_ROUTER_ABI");
-  const routeTopic = routeFrag.topicHash;
-
-  const cursor = "rewards-router";
   const step = ENV.LOG_CHUNK_SIZE;
 
   for (let start = fromBlock; start <= toBlock; start += step) {
@@ -1201,7 +1225,7 @@ async function scanRouterRange(
       address: routerAddress,
       fromBlock: start,
       toBlock: end,
-      topics: [routeTopic]
+      topics: [[ROUTE_TOPIC_V2, ROUTE_TOPIC_V3]]
     });
 
     if (logs.length) {
@@ -1215,17 +1239,12 @@ async function scanRouterRange(
       logs.sort((a, b) => a.blockNumber - b.blockNumber || ((a.index ?? 0) - (b.index ?? 0)));
 
       for (const log of logs) {
-        const parsed = iface.parseLog(log);
+        const v3 = log.topics[0] === ROUTE_TOPIC_V3;
+        const parsed = (v3 ? ROUTE_EVENT_V3 : ROUTE_EVENT_V2).parseLog(log);
         if (!parsed) continue;
-
-        const kind = Number((parsed.args as any).kind);
-        const profile = Number((parsed.args as any).profile);
-        const amountIn = (parsed.args as any).amountIn as bigint;
-        const leagueAmount = (parsed.args as any).leagueAmount as bigint;
-        const recruiterAmount = (parsed.args as any).recruiterAmount as bigint;
-        const airdropAmount = (parsed.args as any).airdropAmount as bigint;
-        const squadAmount = (parsed.args as any).squadAmount as bigint;
-        const protocolAmount = (parsed.args as any).protocolAmount as bigint;
+        const args = parsed.args as any;
+        const kind = Number(args.kind);
+        const profile = Number(args.profile);
 
         await upsertRewardEvent({
           chainId: chain.chainId,
@@ -1235,14 +1254,14 @@ async function scanRouterRange(
           occurredAt: blockTimes.get(log.blockNumber) || new Date(0),
           routeKind: kind === 1 ? "finalize" : "trade",
           routeProfile: profile === 2 ? "og_linked" : profile === 1 ? "standard_unlinked" : "standard_linked",
-          leagueAmount,
-          recruiterAmount,
-          airdropAmount,
-          squadAmount,
-          protocolAmount,
-          rawAmount: amountIn,
+          leagueAmount: args.leagueAmount as bigint,
+          recruiterAmount: args.recruiterAmount as bigint,
+          airdropAmount: args.airdropAmount as bigint,
+          squadAmount: args.squadAmount as bigint,
+          protocolAmount: args.protocolAmount as bigint,
+          rawAmount: args.amountIn as bigint,
           sourceContract: routerAddress,
-          sourceEvent: "RouteExecuted",
+          sourceEvent: v3 ? "RouteExecutedV3" : "RouteExecuted",
         });
       }
     }
@@ -2384,17 +2403,23 @@ async function runIndexerCore(opts: {
     // ---------------- Reward routing scan ----------------
     if (opts.scope === "full") {
       try {
-        const routerAddress = await withProviderRetry((p) => resolveTreasuryRouterAddress(p, chain));
-        if (routerAddress) {
-          const cursor = "rewards-router";
+        const routers = await withProviderRetry((p) => resolveTreasuryRouters(p, chain));
+        for (const router of routers) {
+          // One cursor per router: a fresh one starts at the router's first relevant block, so the
+          // history since that generation opened is recorded once, then it follows the tip.
+          const cursor = `rewards-router:${router.address}`;
           const state = await getState(chain.chainId, cursor);
-          const baselineStart = computeStartBlock(chain, target, state);
           const windowStart = Math.max(0, target - opts.lookbackBlocks);
-          const from = opts.mode === "repair"
-            ? Math.max(windowStart, Math.max(0, state - opts.rewindBlocks))
-            : Math.max(baselineStart, windowStart);
-
-          await withProviderRetry((p) => scanRouterRange(p, chain, routerAddress, from, target));
+          const from = state <= 0
+            ? Math.max(0, router.startBlock || windowStart)
+            : opts.mode === "repair"
+              ? Math.max(windowStart, Math.max(0, state - opts.rewindBlocks))
+              : Math.max(state, windowStart);
+          if (from > target) continue;
+          // Bounded per pass so a fresh cursor's history never stalls this chain's loop.
+          const maxBlocks = Math.max(1_000, Number(process.env.ROUTER_SCAN_MAX_BLOCKS_PER_PASS || 200_000));
+          const to = Math.min(target, from + maxBlocks - 1);
+          await withProviderRetry((p) => scanRouterRange(p, chain, router.address, from, to, cursor));
         }
       } catch (e) {
         console.error("scanRewardRoutes error (all RPCs failed)", { chainId: chain.chainId }, e);

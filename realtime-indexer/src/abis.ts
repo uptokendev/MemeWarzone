@@ -15,7 +15,9 @@ export const LAUNCH_FACTORY_ABI = [
   // social/link fields, so createdAt is tuple index 10 rather than index 9.
   "function campaignsCount() view returns (uint256)",
   "function getCampaign(uint256 id) view returns (tuple(address campaign,address token,address creator,string name,string symbol,string logoURI,string metadataURI,string xAccount,string website,string extraLink,uint64 createdAt))",
-  "function router() view returns (address)"
+  "function router() view returns (address)",
+  // The treasury router (fee recipient). router() is the DEX router, not this.
+  "function feeRecipient() view returns (address)"
 ];
 
 export const LEGACY_LAUNCH_FACTORY_ABI = [
@@ -67,8 +69,15 @@ export const TOPAZ_POOL_ABI = [
   "function swapFee() view returns (uint256)",
 ];
 
+// TreasuryRouterV2 (old BNB router 0xe157a6FD...).
 export const TREASURY_ROUTER_ABI = [
   "event RouteExecuted(uint8 indexed kind,uint8 indexed profile,uint256 amountIn,uint256 leagueAmount,uint256 recruiterAmount,uint256 airdropAmount,uint256 squadAmount,uint256 protocolAmount)",
+];
+
+// TreasuryRouterV3 (BNB 0xe635AA43..., Robinhood 0xda0a9Ed9...): adds the campaign and the creator slice,
+// so its topic0 differs and a V2-only filter matches none of its logs.
+export const TREASURY_ROUTER_V3_ABI = [
+  "event RouteExecuted(uint8 indexed kind,uint8 indexed profile,address indexed campaign,uint256 amountIn,uint256 leagueAmount,uint256 creatorAmount,uint256 recruiterAmount,uint256 airdropAmount,uint256 squadAmount,uint256 protocolAmount)",
 ];
 
 // UPVoteTreasury (paid upvote events)

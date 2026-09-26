@@ -1,4 +1,4 @@
-import { PublicKey } from "@solana/web3.js";
+import { Connection, PublicKey } from "@solana/web3.js";
 import { pool } from "../db.js";
 import { listRecruiterClaimableSettlements } from "./recruiterAdmin.js";
 import { buildRecruiterMerkle, i64leBytes, mergeRecruiterEntitlements } from "./recruiterMerkle.js";
@@ -61,6 +61,43 @@ function laneAddresses(epochId: string | number, walletAddress?: string | null) 
     batchAddress: batchAddress.toBase58(),
     claimReceiptAddress: claimReceiptAddress?.toBase58() || null,
   };
+}
+
+/**
+ * The batch must be payable in full: the recruiter vault's rent-free balance, minus what open batches
+ * can still claim, must cover it. Otherwise the export stops and reports -- it never shrinks a batch.
+ * (Credited amounts are the chain's own slices, so a shortfall means unflushed escrow: flush first.)
+ */
+async function assertVaultCovers(total: bigint, diag: Record<string, unknown>) {
+  const url = String(process.env.SOLANA_REWARDS_RPC_URL || process.env.SOLANA_RPC_URL || process.env.SOLANA_RPC_HTTP || "").split(",")[0].trim();
+  if (!url) throw new Error("SOLANA_RPC_URL is required to check the recruiter vault before exporting a batch");
+  const connection = new Connection(url, "confirmed");
+  const vault = new PublicKey(laneAddresses(0).vaultAddress);
+  const info = await connection.getAccountInfo(vault, "confirmed");
+  if (!info) throw new Error(`Recruiter vault ${vault.toBase58()} not found`);
+  const rent = BigInt(await connection.getMinimumBalanceForRentExemption(info.data.length));
+  const spendable = BigInt(info.lamports) > rent ? BigInt(info.lamports) - rent : 0n;
+  const open = await pool.query(
+    `select batch_address from public.solana_reward_lane_batches
+      where lane='recruiter' and chain_id=$1 and status='claim_open' and batch_address is not null`,
+    [CHAIN_ID],
+  );
+  let outstanding = 0n;
+  for (const row of open.rows) {
+    const batch = await connection.getAccountInfo(new PublicKey(String(row.batch_address)), "confirmed");
+    if (!batch || batch.data.length < 74) continue;
+    const data = Buffer.from(batch.data);
+    const batchTotal = data.readBigUInt64LE(48);
+    const claimed = data.readBigUInt64LE(56);
+    if (batchTotal > claimed) outstanding += batchTotal - claimed;
+  }
+  const available = spendable > outstanding ? spendable - outstanding : 0n;
+  if (total > available) {
+    throw new Error(
+      `BLOCKED: recruiter batch ${total} lamports exceeds what the vault can pay (${available} = spendable ${spendable} - open ${outstanding}). ` +
+        `Nothing shrunk: flush the fee escrows and re-run. ${JSON.stringify(diag)}`,
+    );
+  }
 }
 
 function previousWeeklyWindow(now = new Date()) {
@@ -127,6 +164,7 @@ async function loadPortalPayouts(existingBatchId: string | null): Promise<{
         and w.chain = 'solana'
         and w.verified_at is not null
       where l.chain = 'solana'
+        and coalesce(l.chain_id, $2::int) = $2::int
         and l.status in ('claimable','retriable')
         and (
           l.claim_id is null
@@ -143,7 +181,7 @@ async function loadPortalPayouts(existingBatchId: string | null): Promise<{
         )
       group by l.recruiter_id, w.wallet_address
      having coalesce(sum(l.amount_raw), 0) > 0`,
-    [existingBatchId],
+    [existingBatchId, CHAIN_ID],
   );
 
   const payouts: PortalPayout[] = [];
@@ -262,12 +300,17 @@ export async function publishRecruiterSettlementBatchesV2(): Promise<{
 
   const existingBatchId = preRow ? String(preRow.id) : null;
   const { payouts: portal, excluded } = await loadPortalPayouts(existingBatchId);
+  // Since 2026-09-26 every recruiter earning is credited per trade into recruiter_reward_ledger
+  // (rewards/creditRecruiterEarnings.ts). The phase-2 view is a second ledger that is never closed
+  // out by these batches, so merging it could list the same money every week. Opt-in only.
   let phase2: Awaited<ReturnType<typeof listRecruiterClaimableSettlements>> = [];
-  try {
-    phase2 = await listRecruiterClaimableSettlements({ chainId: CHAIN_ID, limit: 1000 });
-  } catch (error: any) {
-    if (String(error?.code) !== "42P01") throw error;
-    console.warn(`[exportRecruiterSettlementBatch] phase2 view missing: ${error?.message || error}`);
+  if (/^(1|true|yes)$/i.test(String(process.env.EXPORT_RECRUITER_INCLUDE_PHASE2 || ""))) {
+    try {
+      phase2 = await listRecruiterClaimableSettlements({ chainId: CHAIN_ID, limit: 1000 });
+    } catch (error: any) {
+      if (String(error?.code) !== "42P01") throw error;
+      console.warn(`[exportRecruiterSettlementBatch] phase2 view missing: ${error?.message || error}`);
+    }
   }
 
   const portalByWallet = new Map(portal.map((row) => [row.payoutWallet, row]));
@@ -309,6 +352,8 @@ export async function publishRecruiterSettlementBatchesV2(): Promise<{
   if (!recipients.length || mergedTotal <= 0n) {
     throw new Error(`No valid recruiter settlement recipients. ${JSON.stringify(diag)}`);
   }
+
+  await assertVaultCovers(mergedTotal, diag);
 
   const merkle = buildRecruiterMerkle(epoch.id, recipients);
   const addresses = laneAddresses(epoch.id);

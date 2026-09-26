@@ -9,8 +9,10 @@ try {
  *   npm run cron:publish-recruiter-settlement-root
  *
  * Requires SOLANA_REWARDS_TREASURY_PROGRAM_ID, SOLANA_RPC_URL (or SOLANA_REWARDS_RPC_URL),
- * and SOLANA_REWARDS_AUTHORITY_SECRET_KEY. Does not mark claim_open unless the
- * on-chain batch root matches the DB merkle_root.
+ * and SOLANA_REWARD_POSTER_SECRET: the narrow reward poster key (post_recruiter_batch_root, treasury
+ * candidate 1840a9e7+), never the rewards authority (2026-09-26). Does not mark claim_open unless the
+ * on-chain batch root matches the DB merkle_root. Poster batches never expire (deadline 0): a batch
+ * above the poster's lane cap is blocked and reported, never shrunk.
  */
 import {
   Connection,
@@ -23,6 +25,7 @@ import {
 } from "@solana/web3.js";
 import { createHash } from "node:crypto";
 import { pool } from "../db.js";
+import { deriveRewardPosterPda, parseRewardPosterAccount } from "../rewards/solanaLeagueMerkle.js";
 
 const BATCH_SEED = Buffer.from("recruiter_batch");
 const BATCH_SIZE = 8 + 8 + 32 + 8 + 8 + 8 + 1 + 1;
@@ -63,15 +66,18 @@ function rootBytes(root: string): Buffer {
   return Buffer.from(raw, "hex");
 }
 
-function authorityKeypair(): Keypair {
-  const raw = env("SOLANA_REWARDS_AUTHORITY_SECRET_KEY");
-  if (!raw) throw new Error("SOLANA_REWARDS_AUTHORITY_SECRET_KEY is required to publish the recruiter Merkle root");
+function posterKeypair(): Keypair {
+  if (env("SOLANA_REWARDS_AUTHORITY_SECRET_KEY")) {
+    console.warn("[publishRecruiterSettlementRoot] SOLANA_REWARDS_AUTHORITY_SECRET_KEY is set on this server and is IGNORED; remove it -- recruiter roots use the reward poster");
+  }
+  const raw = env("SOLANA_REWARD_POSTER_SECRET");
+  if (!raw) throw new Error("SOLANA_REWARD_POSTER_SECRET (the reward poster key) is required to publish the recruiter Merkle root");
   let bytes: Uint8Array;
   if (raw.startsWith("[")) bytes = Uint8Array.from(JSON.parse(raw).map(Number));
   else bytes = Uint8Array.from(Buffer.from(raw, "base64"));
   if (bytes.length === 64) return Keypair.fromSecretKey(bytes);
   if (bytes.length === 32) return Keypair.fromSeed(bytes);
-  throw new Error(`Solana rewards authority must decode to 32 or 64 bytes, got ${bytes.length}`);
+  throw new Error(`Solana reward poster key must decode to 32 or 64 bytes, got ${bytes.length}`);
 }
 
 function rpcUrl(chainId: number): string {
@@ -104,13 +110,8 @@ async function readOnChainBatch(connection: Connection, batchAddress: string) {
   };
 }
 
-function deadlineUnix(row: { claim_deadline?: unknown; deadline?: unknown }): bigint {
-  const claimDeadline = Number(row.claim_deadline);
-  if (Number.isFinite(claimDeadline) && claimDeadline > 0) return BigInt(Math.trunc(claimDeadline));
-  const fallback = Number(row.deadline);
-  if (Number.isFinite(fallback) && fallback > 0) return BigInt(Math.trunc(fallback));
-  throw new Error("Prepared recruiter batch is missing claim_deadline/deadline");
-}
+/** Poster-posted recruiter batches never expire: the program writes deadline 0. */
+const POSTER_BATCH_DEADLINE = 0n;
 
 async function sendServerV0(
   connection: Connection,
@@ -175,7 +176,7 @@ async function main() {
     return;
   }
 
-  const signer = authorityKeypair();
+  const signer = posterKeypair();
   const pid = new PublicKey(programId());
   const reports = [];
 
@@ -192,7 +193,7 @@ async function main() {
     const [batchAddress] = PublicKey.findProgramAddressSync([BATCH_SEED, i64le(epochId)], pid);
     const storedRoot = String(row.merkle_root);
     const totalLamports = BigInt(String(row.total_lamports));
-    const deadline = deadlineUnix(row);
+    const deadline = POSTER_BATCH_DEADLINE;
 
     const claimRows = await pool.query(
       `select count(*)::int as n,
@@ -205,6 +206,13 @@ async function main() {
     const preparedTotal = String(claimRows.rows[0]?.total || "0");
     if (preparedCount <= 0 || preparedTotal !== totalLamports.toString()) {
       throw new Error(`Prepared recruiter batch ${row.id} is not internally reconciled: claims=${preparedCount} total=${preparedTotal} batch=${totalLamports}`);
+    }
+
+    const posterAddress = deriveRewardPosterPda(pid);
+    const posterInfo = await connection.getAccountInfo(posterAddress, "confirmed");
+    const poster = posterInfo ? parseRewardPosterAccount(Buffer.from(posterInfo.data)) : null;
+    if (!poster || poster.poster !== signer.publicKey.toBase58()) {
+      throw new Error(`Reward poster ${posterAddress.toBase58()} is not ${signer.publicKey.toBase58()} (run scripts/solana/set-reward-poster.mjs)`);
     }
 
     const existing = await readOnChainBatch(connection, batchAddress.toBase58());
@@ -220,21 +228,29 @@ async function main() {
         throw new Error(`On-chain recruiter batch for epoch ${epochId} does not match prepared DB batch`);
       }
     } else {
+      if (totalLamports > poster.maxLaneLamports) {
+        console.error(
+          `[publishRecruiterSettlementRoot] BLOCKED epoch ${epochId}: ${totalLamports} lamports owed is above the poster's recruiter/squad cap ` +
+            `${poster.maxLaneLamports}. Nothing is shrunk: raise the cap (set-reward-poster.mjs --lane-cap-sol) and re-run.`,
+        );
+        reports.push({ batchId: row.id, chainId, epochId, totalLamports: totalLamports.toString(), status: "blocked_above_poster_cap" });
+        continue;
+      }
       const ix = new TransactionInstruction({
         programId: pid,
         keys: [
           { pubkey: signer.publicKey, isSigner: true, isWritable: true },
           { pubkey: configAddress, isSigner: false, isWritable: false },
+          { pubkey: posterAddress, isSigner: false, isWritable: true },
           { pubkey: vaultAddress, isSigner: false, isWritable: false },
           { pubkey: batchAddress, isSigner: false, isWritable: true },
           { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
         data: Buffer.concat([
-          discriminator("set_recruiter_batch_root"),
+          discriminator("post_recruiter_batch_root"),
           i64le(epochId),
           rootBytes(storedRoot),
           u64le(totalLamports),
-          i64le(deadline),
         ]),
       });
       txHash = await sendServerV0(connection, signer, ix, `Recruiter epoch ${epochId} root publication`);

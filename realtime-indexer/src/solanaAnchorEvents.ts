@@ -53,10 +53,17 @@ export type FeeSlicesAccruedEvent = {
   feeLamports: bigint;
   weekly: bigint;
   monthly: bigint;
+  creator: bigint;
   recruiter: bigint;
   airdrop: bigint;
   squad: bigint;
   protocol: bigint;
+};
+
+/** Graduation's finalize fee, routed straight to the vaults (never through the fee escrow). */
+export type FeeSlicesRoutedEvent = Omit<FeeSlicesAccruedEvent, "kind"> & {
+  kind: "FeeSlicesRouted";
+  grossLamports: bigint;
 };
 
 export type FeeEscrowInitializedEvent = {
@@ -107,6 +114,7 @@ export type AnchorEvent =
   | TokensSoldEvent
   | CampaignGraduatedEvent
   | FeeSlicesAccruedEvent
+  | FeeSlicesRoutedEvent
   | FeeEscrowInitializedEvent
   | FeeEscrowFlushedEvent;
 export type Decoder = (reader: EventReader) => AnchorEvent;
@@ -114,6 +122,11 @@ export type Decoder = (reader: EventReader) => AnchorEvent;
 export class EventReader {
   private offset = 8;
   constructor(private readonly data: Buffer) {}
+
+  /** Payload length including the 8-byte discriminator (selects between program layouts). */
+  get length(): number {
+    return this.data.length;
+  }
 
   skip(bytes: number) {
     const end = this.offset + bytes;
@@ -234,35 +247,42 @@ const EVENT_DECODERS = new Map<string, Decoder>([
     finalSpotNanoLamports: r.u128(),
     graduatedAt: r.i64(),
   })],
-  [eventDiscriminator("FeeSlicesAccrued"), (r) => ({
-    kind: "FeeSlicesAccrued",
-    campaign: r.pubkey(),
-    trader: r.pubkey(),
-    side: r.u8(),
-    routeProfile: r.u8(),
-    feeLamports: r.u64(),
-    weekly: r.u64(),
-    monthly: r.u64(),
-    recruiter: r.u64(),
-    airdrop: r.u64(),
-    squad: r.u64(),
-    protocol: r.u64(),
-  })],
-  [eventDiscriminator("FeeSlicesRouted"), (r) => {
-    const campaign = r.pubkey();
-    const trader = r.pubkey();
-    const side = r.u8();
-    const routeProfile = r.u8();
-    r.u64();
+  // Field order is the program's FeeSlicesAccrued (scripts/solana/idl). The launchpad upgraded on
+  // mainnet 2026-09-24 added creator_lamports between monthly and recruiter (138-byte payload); the
+  // program before it emitted 130 bytes without it. Both are read by length, so neither layout
+  // lands a slice in the wrong field.
+  [eventDiscriminator("FeeSlicesAccrued"), (r) => {
+    const withCreator = r.length >= FEE_SLICES_ACCRUED_BYTES;
     return {
       kind: "FeeSlicesAccrued" as const,
-      campaign,
-      trader,
-      side,
-      routeProfile,
+      campaign: r.pubkey(),
+      trader: r.pubkey(),
+      side: r.u8(),
+      routeProfile: r.u8(),
       feeLamports: r.u64(),
       weekly: r.u64(),
       monthly: r.u64(),
+      creator: withCreator ? r.u64() : 0n,
+      recruiter: r.u64(),
+      airdrop: r.u64(),
+      squad: r.u64(),
+      protocol: r.u64(),
+    };
+  }],
+  // Graduation: routed directly, so it is its own kind and never counts as an escrow accrual.
+  [eventDiscriminator("FeeSlicesRouted"), (r) => {
+    const withCreator = r.length >= FEE_SLICES_ROUTED_BYTES;
+    return {
+      kind: "FeeSlicesRouted" as const,
+      campaign: r.pubkey(),
+      trader: r.pubkey(),
+      side: r.u8(),
+      routeProfile: r.u8(),
+      grossLamports: r.u64(),
+      feeLamports: r.u64(),
+      weekly: r.u64(),
+      monthly: r.u64(),
+      creator: withCreator ? r.u64() : 0n,
       recruiter: r.u64(),
       airdrop: r.u64(),
       squad: r.u64(),
@@ -311,6 +331,11 @@ export function base58Encode(bytes: Uint8Array): string {
   for (let i = digits.length - 1; i >= 0; i -= 1) encoded += BASE58_ALPHABET[digits[i]];
   return encoded;
 }
+
+/** discriminator + campaign + trader + side + profile + 8 slices (with creator). */
+export const FEE_SLICES_ACCRUED_BYTES = 8 + 32 + 32 + 1 + 1 + 8 * 8;
+/** ...plus gross_lamports. */
+export const FEE_SLICES_ROUTED_BYTES = FEE_SLICES_ACCRUED_BYTES + 8;
 
 export function decodeEvents(logMessages: string[] | null | undefined): AnchorEvent[] {
   const events: AnchorEvent[] = [];

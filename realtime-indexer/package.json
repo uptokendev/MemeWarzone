@@ -45,7 +45,9 @@
     "cron:generate-launch-digest": "node --enable-source-maps dist/jobs/generateLaunchDigest.js",
     "cron:generate-trending-digest": "node --enable-source-maps dist/jobs/generateTrendingDigest.js",
     "cron:generate-league-standings": "node --enable-source-maps dist/jobs/generateLeagueStandings.js",
-    "cron:generate-platform-briefs": "node --enable-source-maps dist/jobs/generatePlatformBriefs.js"
+    "cron:generate-platform-briefs": "node --enable-source-maps dist/jobs/generatePlatformBriefs.js",
+    "cron:backfill-solana-reward-events": "node --enable-source-maps dist/jobs/backfillSolanaRewardEvents.js",
+    "cron:credit-recruiter-earnings": "node --enable-source-maps dist/jobs/creditRecruiterEarnings.js"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",

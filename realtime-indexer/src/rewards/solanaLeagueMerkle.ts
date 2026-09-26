@@ -128,12 +128,17 @@ export function deriveRewardPosterPda(programId: PublicKey): PublicKey {
 }
 
 /** RewardPoster: disc 8 | poster 32 | max_airdrop u64 | max_league u64 | 5 x i64 last posts | bump. */
-export function parseRewardPosterAccount(data: Buffer): { poster: string; maxAirdropLamports: bigint; maxLeagueLamports: bigint } | null {
+/**
+ * RewardPoster: disc 8 | poster 32 | max_airdrop u64 @40 | max_league u64 @48 | 5 x last_* i64 @56..96
+ * | bump u8 @96 | max_lane u64 @97 | last_recruiter i64 @105 | last_squad i64 @113.
+ */
+export function parseRewardPosterAccount(data: Buffer): { poster: string; maxAirdropLamports: bigint; maxLeagueLamports: bigint; maxLaneLamports: bigint } | null {
   if (data.length < 8 + 32 + 8 + 8) return null;
   return {
     poster: new PublicKey(data.subarray(8, 40)).toBase58(),
     maxAirdropLamports: data.readBigUInt64LE(40),
     maxLeagueLamports: data.readBigUInt64LE(48),
+    maxLaneLamports: data.length >= 105 ? data.readBigUInt64LE(97) : 0n,
   };
 }
 
