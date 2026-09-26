@@ -60,8 +60,11 @@ export async function submitSolanaUpvoteV0(input: {
   const subject = new input.web3.PublicKey(input.campaignAddress);
   void subject; // Constructor validation proves the memo subject is a canonical Solana address.
 
+  // The voter is also the fee payer, which every V0 message compiles as writable. Declared read-only
+  // here, the pre-sign intent check compared "read-only" against the compiled "writable" and refused
+  // every Solana UP Vote ("instruction 0 changed") before the wallet was even asked. Same bytes on chain.
   const memoIx = new input.web3.TransactionInstruction({
-    keys: [{ pubkey: from, isSigner: true, isWritable: false }],
+    keys: [{ pubkey: from, isSigner: true, isWritable: true }],
     programId: new input.web3.PublicKey(MEMO_PROGRAM_ID),
     data: new TextEncoder().encode(memoForLane(lane, input.campaignAddress)),
   });

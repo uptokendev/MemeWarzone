@@ -258,3 +258,25 @@ test("the wallet rewrite budget is the same on both sides", async () => {
     "solanaV0Transaction.ts and solanaUserV0Transaction.ts disagree on the wallet budget",
   );
 });
+
+test("UP Vote shape (memo signed by the fee payer + transfer) passes the pre-sign check", () => {
+  // Regression 2026-09-26: the memo declared the voter read-only while the fee payer always compiles
+  // writable, so every Solana UP Vote failed with "instruction 0 changed" before the wallet opened.
+  const { payer, instruction: transfer } = transferFixture();
+  const memo = (isWritable) => new TransactionInstruction({
+    keys: [{ pubkey: payer, isSigner: true, isWritable }],
+    programId: new web3.PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+    data: Buffer.from("mwz-upvote:campaign", "utf8"),
+  });
+  const build = (instructions) => buildSolanaUserV0Transaction(web3, { payer, recentBlockhash: BLOCKHASH, instructions });
+  const fixed = [memo(true), transfer];
+  assert.doesNotThrow(() => assertSolanaUserV0Intent(web3, build(fixed), { payer, instructions: fixed }));
+  const broken = [memo(false), transfer];
+  assert.throws(() => assertSolanaUserV0Intent(web3, build(broken), { payer, instructions: broken }), /instruction 0 changed/);
+});
+
+test("the live UP Vote builder declares its memo signer writable", async () => {
+  const fs = await import("node:fs");
+  const source = fs.readFileSync(new URL("./solanaUpvoteV0.ts", import.meta.url), "utf8");
+  assert.match(source, /keys: \[\{ pubkey: from, isSigner: true, isWritable: true \}\]/);
+});
