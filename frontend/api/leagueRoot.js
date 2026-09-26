@@ -171,7 +171,7 @@ function rpcForChain(chainId) {
   return chainScopedEnv("BSC_RPC_HTTP", chainId);
 }
 
-function monthIdFromDate(date) {
+export function monthIdFromDate(date) {
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth() + 1;
   return BigInt(year * 100 + month);
@@ -181,18 +181,18 @@ function periodCode(period) {
   return period === "weekly" ? 1 : 2;
 }
 
-function computeEpochId(chainId, period, epochStartSec) {
+export function computeEpochId(chainId, period, epochStartSec) {
   const coder = ethers.AbiCoder.defaultAbiCoder();
   const enc = coder.encode(["uint32", "uint8", "uint64"], [chainId, periodCode(period), BigInt(epochStartSec)]);
   const h = ethers.keccak256(enc);
   return BigInt(h);
 }
 
-function categoryHashFromString(category) {
+export function categoryHashFromString(category) {
   return ethers.keccak256(ethers.toUtf8Bytes(String(category)));
 }
 
-function leafHash({ claimId, categoryHash, rank, recipient, amountRaw }) {
+export function leafHash({ claimId, categoryHash, rank, recipient, amountRaw }) {
   const coder = ethers.AbiCoder.defaultAbiCoder();
   const enc = coder.encode(
     ["uint256", "bytes32", "uint8", "address", "uint256"],
@@ -208,7 +208,7 @@ function hashPair(a, b) {
   return ethers.keccak256(ethers.concat([x, y]));
 }
 
-function buildMerkleRoot(leaves) {
+export function buildMerkleRoot(leaves) {
   if (!Array.isArray(leaves) || leaves.length === 0) return ethers.ZeroHash;
   let layer = leaves.slice();
   while (layer.length > 1) {

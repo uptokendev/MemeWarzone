@@ -16,6 +16,8 @@ export const EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS = 5_000;
 const EVM_LEAGUE_INTERFACE = new Interface([
   "function claim(uint256 epochId, bytes32 category, uint8 rank, address recipient, uint256 amount, bytes32[] proof)",
   "function epochLeafClaimed(uint256 epochId, bytes32 leaf) view returns (bool)",
+  // MonthlyLeagueTreasury: same claim() and Claimed shapes, keyed by monthId (YYYYMM).
+  "function monthLeafClaimed(uint256 monthId, bytes32 leaf) view returns (bool)",
   "event Claimed(uint256 indexed epochId, address indexed recipient, uint256 amount, bytes32 indexed leaf)",
 ]);
 
@@ -56,6 +58,23 @@ function vaultAddress(chainId) {
     if (fallback) return getAddress(fallback);
   }
   throw new EvmLeagueClaimVerificationError("LEAGUE_VAULT_UNAVAILABLE", `Missing chain-specific TreasuryVaultV2 address for chain ${chain}.`, 503);
+}
+
+// Monthly league prizes live in MonthlyLeagueTreasury, sealed per monthId -- not in TreasuryVaultV2.
+const MAINNET_MONTHLY_LEAGUE = {
+  56: "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8",
+  4663: "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
+};
+
+function monthlyVaultAddress(chainId) {
+  const chain = Number(chainId);
+  const configured = String(process.env[`MONTHLY_LEAGUE_TREASURY_ADDRESS_${chain}`] || MAINNET_MONTHLY_LEAGUE[chain] || "").trim();
+  if (configured) return getAddress(configured);
+  throw new EvmLeagueClaimVerificationError("LEAGUE_VAULT_UNAVAILABLE", `Missing chain-specific MonthlyLeagueTreasury address for chain ${chain}.`, 503);
+}
+
+export function monthIdForEpochStart(epoch) {
+  return BigInt(epoch.getUTCFullYear() * 100 + epoch.getUTCMonth() + 1);
 }
 
 function providerForChain(chainId) {
@@ -155,15 +174,19 @@ export function buildExpectedEvmLeagueClaim({ chainId, period, epochStart, categ
   const normalizedRecipient = getAddress(recipient);
   const normalizedRank = Number(rank);
   const amount = BigInt(String(amountRaw || "0"));
-  if (!Number.isInteger(normalizedRank) || normalizedRank < 1 || normalizedRank > 5) throw new EvmLeagueClaimVerificationError("LEAGUE_RANK_INVALID", "Invalid League winner rank.", 400);
+  // Poker payout: up to 255 paid places (the vaults' uint8 rank).
+  if (!Number.isInteger(normalizedRank) || normalizedRank < 1 || normalizedRank > 255) throw new EvmLeagueClaimVerificationError("LEAGUE_RANK_INVALID", "Invalid League winner rank.", 400);
   if (amount <= 0n) throw new EvmLeagueClaimVerificationError("LEAGUE_AMOUNT_INVALID", "Invalid League payout amount.", 409);
   const epochStartSec = Math.floor(epoch.getTime() / 1000);
   const coder = AbiCoder.defaultAbiCoder();
-  const epochIdHash = keccak256(coder.encode(["uint32", "uint8", "uint64"], [chain, periodCode(period), BigInt(epochStartSec)]));
-  const epochId = BigInt(epochIdHash);
+  const monthly = period === "monthly";
+  periodCode(period);
+  const epochId = monthly
+    ? monthIdForEpochStart(epoch)
+    : BigInt(keccak256(coder.encode(["uint32", "uint8", "uint64"], [chain, periodCode(period), BigInt(epochStartSec)])));
   const categoryHash = keccak256(toUtf8Bytes(String(category || "").toLowerCase().trim()));
   const leaf = keccak256(coder.encode(["uint256", "bytes32", "uint8", "address", "uint256"], [epochId, categoryHash, normalizedRank, normalizedRecipient, amount]));
-  return { chainId: chain, vaultAddress: vaultAddress(chain), epochId, epochIdHex: zeroPadValue(toBeHex(epochId), 32), epochStartSec, categoryHash, rank: normalizedRank, recipient: normalizedRecipient, amountRaw: amount.toString(), leaf };
+  return { chainId: chain, vaultAddress: monthly ? monthlyVaultAddress(chain) : vaultAddress(chain), claimedGetter: monthly ? "monthLeafClaimed" : "epochLeafClaimed", epochId, epochIdHex: zeroPadValue(toBeHex(epochId), 32), epochStartSec, categoryHash, rank: normalizedRank, recipient: normalizedRecipient, amountRaw: amount.toString(), leaf };
 }
 
 export function evmLeagueClaimEventTopics(expected) {
@@ -223,7 +246,7 @@ export async function verifyEvmLeagueClaimTransaction({ chainId, period, epochSt
 export async function discoverEvmLeagueClaimTransaction({ chainId, period, epochStart, category, rank, recipient, amountRaw, minConfirmations = 1, lookbackBlocks = positiveIntEnv("EVM_CLAIM_RECONCILE_LOOKBACK_BLOCKS", 2_000_000), chunkBlocks = positiveIntEnv("EVM_CLAIM_RECONCILE_CHUNK_BLOCKS", EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS) }) {
   const expected = buildExpectedEvmLeagueClaim({ chainId, period, epochStart, category, rank, recipient, amountRaw });
   const provider = providerForChain(expected.chainId);
-  const callData = EVM_LEAGUE_INTERFACE.encodeFunctionData("epochLeafClaimed", [expected.epochId, expected.leaf]);
+  const callData = EVM_LEAGUE_INTERFACE.encodeFunctionData(expected.claimedGetter, [expected.epochId, expected.leaf]);
   let rawClaimed;
   try {
     rawClaimed = await withRpcRetry(() => provider.call({ to: expected.vaultAddress, data: callData }));
@@ -234,7 +257,7 @@ export async function discoverEvmLeagueClaimTransaction({ chainId, period, epoch
       503,
     );
   }
-  const [claimed] = EVM_LEAGUE_INTERFACE.decodeFunctionResult("epochLeafClaimed", rawClaimed);
+  const [claimed] = EVM_LEAGUE_INTERFACE.decodeFunctionResult(expected.claimedGetter, rawClaimed);
   if (!claimed) return null;
   const logs = await scanEvmLeagueClaimLogsBackwards(provider, {
     address: expected.vaultAddress,

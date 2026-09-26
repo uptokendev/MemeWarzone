@@ -4,6 +4,7 @@ import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../server/http.js";
 import { persistFinalizedCategory, readFinalizedCategory } from "./lib/finalizeLeagueEpoch.js";
+import { monthIdForEpochStart } from "./lib/evmLeagueClaimVerification.js";
 import { pokerPaidPlaces, pokerSplitRaw } from "./lib/pokerPayout.mjs";
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import {
@@ -307,6 +308,11 @@ function getRpcUrl(chainId) {
   if (fallback && (id === 56 || id === 97)) return fallback;
   throw new Error(`Missing RPC env (BSC_RPC_HTTP_${id} or ROBINHOOD_RPC_HTTP_${id})`);
 }
+
+const MAINNET_MONTHLY_LEAGUE_TREASURY = {
+  56: "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8",
+  4663: "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
+};
 
 function getTreasuryVaultV2Address(chainId) {
   const id = Number(chainId);
@@ -735,7 +741,15 @@ export default async function handler(req, res) {
         const vaultAddress = getTreasuryVaultV2Address(chainId);
         if (!isAddress(vaultAddress)) return json(res, 500, { error: "Server misconfigured: bad TreasuryVaultV2 address" });
       }
-      const vaultAddress = solanaClaim ? leagueVaultForPeriod(period) : getTreasuryVaultV2Address(chainId);
+      // EVM monthly prizes are sealed in MonthlyLeagueTreasury under monthId (YYYYMM) -- the same
+      // claim() shape as TreasuryVaultV2, so the client call is unchanged; only vault and id differ.
+      const evmMonthly = !solanaClaim && period === "monthly";
+      const vaultAddress = solanaClaim
+        ? leagueVaultForPeriod(period)
+        : evmMonthly
+          ? String(process.env[`MONTHLY_LEAGUE_TREASURY_ADDRESS_${chainId}`] || MAINNET_MONTHLY_LEAGUE_TREASURY[chainId] || "").trim().toLowerCase()
+          : getTreasuryVaultV2Address(chainId);
+      if (evmMonthly && !isAddress(vaultAddress)) return json(res, 500, { error: "Server misconfigured: bad MonthlyLeagueTreasury address" });
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -811,7 +825,7 @@ export default async function handler(req, res) {
         // - action=record -> after tx is mined, record the txHash so rewards are suppressed
         if (action === "claim") {
           const epochStartSec = Math.floor(new Date(epochStart).getTime() / 1000);
-          const eid = computeEpochId(chainId, period, epochStartSec);
+          const eid = evmMonthly ? monthIdForEpochStart(new Date(epochStart)) : computeEpochId(chainId, period, epochStartSec);
           const catHash = categoryHashFromString(category);
 
           // Build the merkle set from all winners for this epoch.
