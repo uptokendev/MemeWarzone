@@ -7,6 +7,7 @@ const CATEGORY_SET = new Set([
   "biggest_hit",
   "top_earner",
   "crowd_favorite",
+  "recruiter_league",
 ]);
 
 function isAddress(s) {

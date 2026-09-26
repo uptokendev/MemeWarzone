@@ -118,7 +118,7 @@ export const LEAGUES: LeagueDef[] = [
     supportedPeriods: ["weekly", "monthly"],
     metricLabel: "Epoch referral score",
     ruleSummary:
-      "Universal All-Chains board. Active recruiter network counts now; BNB, SOL and Robinhood referred volume this epoch are converted to USD per chain then combined.",
+      "Prize league on every chain, paid from the league fee like the others. One all-chains ranking: your network plus the BNB, SOL and Robinhood volume it traded this epoch. Referred trading this epoch is needed for a paid place; prizes go to your wallet on each chain.",
     emptyStateCopy:
       "No active recruiters yet. Existing linked wallets still count this week; only trades and earnings are limited to the current epoch.",
     weeklyLimit: 50,

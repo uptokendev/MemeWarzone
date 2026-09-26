@@ -202,8 +202,10 @@ function readBps(name, def) {
 }
 
 function prizeEligibleCategories(periodNorm) {
-  if (periodNorm === "weekly") return ["fastest_finish", "biggest_hit", "top_earner", "crowd_favorite"]; // 4
-  if (periodNorm === "monthly") return ["perfect_run", "fastest_finish", "biggest_hit", "top_earner", "crowd_favorite"]; // 5
+  // Same categories, same order, as the settlement job (realtime-indexer finalizeEpochWinners.ts);
+  // recruiter_league is last so the dust split of the others is unchanged.
+  if (periodNorm === "weekly") return ["fastest_finish", "biggest_hit", "top_earner", "crowd_favorite", "recruiter_league"]; // 5
+  if (periodNorm === "monthly") return ["perfect_run", "fastest_finish", "biggest_hit", "top_earner", "crowd_favorite", "recruiter_league"]; // 6
   return null;
 }
 
@@ -661,6 +663,25 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
 
   prizeCache.set(key, { computedAtMs: now, data, ttlMs: vaultMode ? 60_000 : PRIZE_TTL_MS });
   return data;
+}
+
+/**
+ * Recruiter League prize for one chain: the same pot getPrizeMeta gives every category, split by
+ * poker over `fieldSize` (qualified recruiters payable on that chain). Used by leagueRecruiter.js.
+ */
+export async function recruiterLeaguePrize(chainId, periodNorm, epochOffset, fieldSize) {
+  const offset = periodNorm === "weekly" ? Math.min(2, Math.max(0, epochOffset)) : Math.min(1, Math.max(0, epochOffset));
+  const epoch = getEpoch(periodNorm, offset);
+  const startIso = epoch?.epochStart ? epoch.epochStart.toISOString() : null;
+  const rangeEndIso = epoch?.rangeEnd ? epoch.rangeEnd.toISOString() : null;
+  const meta = await getPrizeMeta(chainId, periodNorm, startIso, rangeEndIso, { isLive: Boolean(epoch?.isLive) });
+  const category = meta?.byCategory?.recruiter_league;
+  if (!category) return null;
+  return pokerPrizeForField(
+    { basis: meta.basis, period: meta.period, cutoff: meta.cutoff, rangeEnd: meta.rangeEnd, computedAt: meta.computedAt, totalLeagueFeeRaw: meta.totalLeagueFeeRaw, leagueCount: meta.leagueCount, ...category },
+    pokerPaidPlaces(fieldSize, periodNorm),
+    fieldSize,
+  );
 }
 
 export default async function handler(req, res) {

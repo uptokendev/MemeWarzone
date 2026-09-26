@@ -19,10 +19,14 @@ import { normalizeChain } from "../notificationContract.js";
 // This job is designed to be safe to run repeatedly.
 
 import { pokerPaidPlaces, pokerSplitRaw } from "../rewards/pokerPayout.js";
+import { recruiterLeagueStandings, recruiterPrizeRecipient, type NativeUsd, type RecruiterStanding } from "../rewards/recruiterLeague.js";
+import { fetchAirdropNativeUsd } from "../rewards/airdropThresholds.js";
 const DEFAULT_PROTOCOL_FEE_BPS = 200; // 2%
 const DEFAULT_LEAGUE_FEE_BPS = 75; // 0.75% slice of gross (carved out of the 2% protocol fee)
 
-const WEEKLY_CATEGORIES = ["fastest_finish", "biggest_hit", "top_earner", "crowd_favorite"] as const;
+// recruiter_league is last so the existing categories keep their dust positions; the API's
+// prizeEligibleCategories (frontend/api/league.js) lists the same categories in the same order.
+const WEEKLY_CATEGORIES = ["fastest_finish", "biggest_hit", "top_earner", "crowd_favorite", "recruiter_league"] as const;
 const MONTHLY_CATEGORIES = ["perfect_run", ...WEEKLY_CATEGORIES] as const;
 
 // Qualified entrants read per category to size the poker payout (15% of the field is paid).
@@ -182,6 +186,50 @@ async function clearRecoveredNoWinnerRollover(
   if ((result.rowCount ?? 0) > 0) {
     console.log(`[finalizeEpochWinners] recovered stale rollover chain=${chainId} period=${period} category=${category} next=${nextEpochStartIso}`);
   }
+}
+
+// Recruiter League: one all-chains ranking per epoch, with USD prices captured once (settlement is
+// then reproducible and never re-ranks with the market). Cached across the chain loop.
+const recruiterStandingsCache = new Map<string, Promise<{ standings: RecruiterStanding[]; prices: NativeUsd }>>();
+
+function recruiterStandingsFor(epochStartIso: string, epochEndIso: string) {
+  const key = `${epochStartIso}|${epochEndIso}`;
+  if (!recruiterStandingsCache.has(key)) {
+    recruiterStandingsCache.set(key, (async () => {
+      const [bnbUsd, solUsd, ethUsd] = await Promise.all([fetchAirdropNativeUsd(56), fetchAirdropNativeUsd(101), fetchAirdropNativeUsd(4663)]);
+      const prices = { bnbUsd, solUsd, ethUsd };
+      return { standings: await recruiterLeagueStandings(pool, epochStartIso, epochEndIso, prices), prices };
+    })());
+  }
+  return recruiterStandingsCache.get(key)!;
+}
+
+async function recruiterLeaderboard(chainId: number, epochStartIso: string, epochEndIso: string, limit: number) {
+  const { standings, prices } = await recruiterStandingsFor(epochStartIso, epochEndIso);
+  const rows: Array<{ recipient: string; score: bigint; meta: any }> = [];
+  for (const standing of standings) {
+    const recipient = await recruiterPrizeRecipient(pool, standing, chainId);
+    if (!recipient) continue; // no wallet valid on this chain: not in this chain's field
+    rows.push({
+      recipient,
+      score: BigInt(Math.round(standing.weightedScore * 1_000_000)),
+      meta: {
+        wallet: recipient,
+        recruiterId: standing.recruiterId,
+        recruiterCode: standing.code,
+        displayName: standing.displayName,
+        weightedScore: standing.weightedScore,
+        referredVolumeUsd: standing.referredVolumeUsd,
+        epochEarnedUsd: standing.epochEarnedUsd,
+        linkedWalletCount: standing.linkedWalletCount,
+        linkedCreatorsCount: standing.linkedCreatorsCount,
+        linkedTradersCount: standing.linkedTradersCount,
+        prices,
+      },
+    });
+    if (rows.length >= limit) break;
+  }
+  return rows;
 }
 
 // Returns top N rows with a numeric score and the winner recipient.
@@ -478,7 +526,16 @@ async function finalizeEpochFor(
     // Poker payout (founder, 2026-09-26): the whole qualified field is read, 15% of it is paid
     // (min 3 weekly / 5 monthly) on the 1/rank^0.72 curve the league page shows. Was: weekly paid
     // 1 winner, monthly a fixed top 5 -- and with fewer than 5 entrants the unused shares stranded.
-    const top = await leaderboard(chainId, period, epochStartIso, epochEndIso, category, POKER_FIELD_SCAN_LIMIT);
+    let top: Array<{ recipient: string; score: bigint; meta: any }>;
+    try {
+      top = category === "recruiter_league"
+        ? await recruiterLeaderboard(chainId, epochStartIso, epochEndIso, POKER_FIELD_SCAN_LIMIT)
+        : await leaderboard(chainId, period, epochStartIso, epochEndIso, category, POKER_FIELD_SCAN_LIMIT);
+    } catch (error) {
+      // Never roll a pot over because a price or read failed: leave it unfinalized and retry next run.
+      console.error(`[finalizeEpochWinners] BLOCKED chain=${chainId} period=${period} category=${category}: ${(error as Error)?.message || error}`);
+      continue;
+    }
     const wantRanks = pokerPaidPlaces(top.length, period);
 
     if (isNoWinner(top)) {

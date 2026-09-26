@@ -254,13 +254,19 @@ function rankRows(rows, prize, policy, chainId) {
     nativeDecimals(chainId),
   );
   const curve = calculatePayoutCurve(safeRows.length, generatedUsd, policy);
+  const exact = Array.isArray(prize?.availablePayoutsRaw) ? prize.availablePayoutsRaw : Array.isArray(prize?.payoutsRaw) ? prize.payoutsRaw : null;
 
-  return safeRows.map((row, index) => ({
-    ...row,
-    rank: Number(row?.rank || index + 1),
-    estimatedPayoutUsd: curve[index]?.payoutUsd || 0,
-    payoutPercentage: curve[index]?.percentage || 0,
-  }));
+  // Exact settlement amounts when the API has them: the row's own payout (recruiter league, frozen
+  // winners) or the poker split for its rank. The policy curve is only a fallback estimate.
+  return safeRows.map((row, index) => {
+    const raw = row?.payoutRaw != null ? String(row.payoutRaw) : exact ? String(exact[index] ?? '0') : null;
+    return {
+      ...row,
+      rank: Number(row?.rank || index + 1),
+      estimatedPayoutUsd: raw != null ? rawToUsd(raw, readNativeUsd(), nativeDecimals(chainId)) : curve[index]?.payoutUsd || 0,
+      payoutPercentage: curve[index]?.percentage || 0,
+    };
+  });
 }
 
 function normalizeLeagueResult(meta, result, policy, chainId) {
