@@ -72,8 +72,14 @@ const PROFILES: Record<string, Profile> = {
 };
 
 export const MEME_POOL_FEE_TIER = 3000;
-/** BNB mainnet's MonthlyLeagueTreasury reports 30000; Robinhood mirrors it. */
-export const DEFAULT_MONTHLY_CAP_USD = 30_000n;
+/**
+ * $30,000 in the contract's unit: USD with 18 decimals (sealMonth divides it by an 18-decimal
+ * oracle price). The raw 30000 that BNB mainnet's vault reports, and that this default once
+ * mirrored, is $0.00000000000003 -- a cap no month can seal under (2026-09-27).
+ */
+export const DEFAULT_MONTHLY_CAP_USD = 30_000n * 10n ** 18n;
+/** Anything under $1 in 18-decimal USD is the raw-dollars mistake, never a real cap. */
+export const MIN_MONTHLY_CAP_USD = 10n ** 18n;
 
 function pick(envName: string, fallback: string): string {
   const raw = String(process.env[envName] || "").trim() || fallback;
@@ -202,6 +208,9 @@ async function main() {
     maxOracleAgeSeconds: maxOracleAgeFor(net.chainId),
     monthlyCapUsd: BigInt(String(process.env.RH_MONTHLY_CAP_USD || "").trim() || DEFAULT_MONTHLY_CAP_USD.toString()),
   };
+  if (inputs.monthlyCapUsd < MIN_MONTHLY_CAP_USD) {
+    throw new Error(`RH_MONTHLY_CAP_USD=${inputs.monthlyCapUsd} is below $1 in 18-decimal USD; the cap is immutable and a raw dollar figure makes every sealMonth revert WinnerTotalAboveCap`);
+  }
 
   console.log(`[rh-prereq] network=${network.name} chainId=${net.chainId}`);
   console.log(`[rh-prereq] deployer=${deployerAddress} balance=${ethers.formatEther(await ethers.provider.getBalance(deployerAddress))}`);

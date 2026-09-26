@@ -46,6 +46,8 @@ describe("Robinhood prerequisites deployment", function () {
     expect(await (monthly as any).multisig()).to.equal(S);
     expect(await (monthly as any).rootPoster()).to.equal(ethers.ZeroAddress);
     expect(await (monthly as any).monthlyCapUsd()).to.equal(DEFAULT_MONTHLY_CAP_USD);
+    // $30k in the contract unit (18-decimal USD); the raw 30000 capped every month at a few wei.
+    expect(DEFAULT_MONTHLY_CAP_USD).to.equal(ethers.parseUnits("30000", 18));
 
     const weekly = await ethers.getContractAt("TreasuryVaultV2", c.WeeklyLeagueVault);
     expect(await (weekly as any).multisig()).to.equal(S);
