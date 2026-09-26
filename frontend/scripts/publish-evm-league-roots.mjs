@@ -21,6 +21,8 @@
  * TREASURY_VAULT_V2_ADDRESS_<id>, MONTHLY_LEAGUE_TREASURY_ADDRESS_<id> (mainnet defaults below),
  * BSC_RPC_HTTP_<id> / ROBINHOOD_RPC_HTTP_<id> (public RPC defaults).
  */
+// First: the same env setup the API server boots with (Supabase pooler TLS), before server/db.js reads it.
+import "../api/load-local-env.mjs";
 import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { buildMerkleRoot, categoryHashFromString, computeEpochId, leafHash, monthIdFromDate } from "../api/leagueRoot.js";

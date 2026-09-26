@@ -12,6 +12,7 @@
  * Idempotent per week: a materialized-but-unposted week resumes from its stored root; a posted one
  * is only marked claim-open. A program with no eligible wallets keeps its half in the vault.
  */
+import "../../api/load-local-env.mjs";
 import { pool } from "../../server/db.js";
 import {
   DAY_MS,

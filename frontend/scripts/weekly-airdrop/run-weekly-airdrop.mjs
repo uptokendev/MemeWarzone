@@ -1,3 +1,5 @@
+// First: the same env setup the API server boots with (Supabase pooler TLS), before server/db.js reads it.
+import "../../api/load-local-env.mjs";
 import { pool } from "../../server/db.js";
 import {
   DAY_MS, asBigInt, envBool, envInt, envText, epochWindow, requireEnv,
