@@ -5,6 +5,7 @@ import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { WarzoneLeagueHowItWorks } from "@/components/warzone/WarzoneLeagueHowItWorks";
 import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
+import { ChainFeedSwitch } from "@/components/common/ChainFeedSwitch";
 import { WarzoneRankCard } from "@/components/warzone/WarzoneRankCard";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 import { fetchPostGradTournamentDetails } from "@/features/postgrad/apiClient";
@@ -46,6 +47,7 @@ function TokenLink({
 function StandingRow({
   entry,
   yours = false,
+  chainId,
 }: {
   entry: {
     tokenId: string;
@@ -60,6 +62,7 @@ function StandingRow({
     movement?: string;
   };
   yours?: boolean;
+  chainId?: number | null;
 }) {
   const status = presentWarzoneLeagueStatus(entry);
   const ticker = String(entry.symbol || "").replace(/^\$/, "");
@@ -73,7 +76,7 @@ function StandingRow({
       >
         <span className="font-retro text-white/60">#{entry.rank}</span>
         <span className="flex min-w-0 items-center gap-2">
-          <WarzoneTokenMark imageUrl={entry.imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" />
+          <WarzoneTokenMark imageUrl={entry.imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" chainId={chainId} tokenAddress={entry.tokenId} />
           <span className="min-w-0 truncate">
             <span className="font-retro text-foreground">${ticker}</span>
             <span className="ml-2 text-xs text-white/45">{entry.tokenName}</span>
@@ -91,7 +94,7 @@ function StandingRow({
         style={{ borderColor: "var(--mwz-flat-card-border)" }}
       >
         <div className="flex min-w-0 items-center gap-2">
-          <WarzoneTokenMark imageUrl={entry.imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" />
+          <WarzoneTokenMark imageUrl={entry.imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" chainId={chainId} tokenAddress={entry.tokenId} />
           <div className="min-w-0">
             <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">#{entry.rank}{yours ? " · Your token" : ""}</div>
             <div className="truncate font-retro text-foreground">${ticker}</div>
@@ -110,7 +113,7 @@ function StandingRow({
 }
 
 const PostGradLeague = () => {
-  const { season, source, ownedTokenIds } = useArenaLeagueFeed();
+  const { season, source, ownedTokenIds, chainId: leagueChainId } = useArenaLeagueFeed();
   const [tab, setTab] = useState<LeagueTab>("regular");
   const [bracketOpen, setBracketOpen] = useState(false);
   const [bracketRounds, setBracketRounds] = useState<unknown[]>([]);
@@ -151,6 +154,7 @@ const PostGradLeague = () => {
         <TacticalTag label={`Week ${season.week || 1}`} tone="default" />
         <TacticalTag label={phase.label} tone={phase.live ? "success" : "default"} />
         <WarzoneLeagueHowItWorks />
+        <ChainFeedSwitch />
       </WarzonePageHeader>
 
       <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]">
@@ -195,7 +199,7 @@ const PostGradLeague = () => {
                       data-mwl-qf-seed={entry.rank}
                       data-mwl-your-token={yoursToken ? "true" : undefined}
                     >
-                      <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} />
+                      <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} chainId={leagueChainId} tokenAddress={entry.tokenId} />
                       <div className="min-w-0">
                         <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">#{entry.rank}</div>
                         <div className="truncate font-black text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
@@ -216,7 +220,7 @@ const PostGradLeague = () => {
               <TokenLink tokenId={quarterFinals.cut.inside.tokenId}>
                 <div className="flex items-center justify-between gap-3 py-2">
                   <div className="flex min-w-0 items-center gap-2">
-                    <WarzoneTokenMark imageUrl={(quarterFinals.cut.inside as { imageUrl?: string }).imageUrl} symbol={quarterFinals.cut.inside.symbol} name={quarterFinals.cut.inside.tokenName} size="sm" />
+                    <WarzoneTokenMark imageUrl={(quarterFinals.cut.inside as { imageUrl?: string }).imageUrl} symbol={quarterFinals.cut.inside.symbol} name={quarterFinals.cut.inside.tokenName} chainId={leagueChainId} tokenAddress={quarterFinals.cut.inside.tokenId} size="sm" />
                     <div className="min-w-0">
                       <div className="font-retro text-foreground">#{quarterFinals.cut.inside.rank} ${String(quarterFinals.cut.inside.symbol || "").replace(/^\$/, "")}</div>
                     </div>
@@ -228,7 +232,7 @@ const PostGradLeague = () => {
               <TokenLink tokenId={quarterFinals.cut.outside.tokenId}>
                 <div className="flex items-center justify-between gap-3 py-2">
                   <div className="flex min-w-0 items-center gap-2">
-                    <WarzoneTokenMark imageUrl={(quarterFinals.cut.outside as { imageUrl?: string }).imageUrl} symbol={quarterFinals.cut.outside.symbol} name={quarterFinals.cut.outside.tokenName} size="sm" />
+                    <WarzoneTokenMark imageUrl={(quarterFinals.cut.outside as { imageUrl?: string }).imageUrl} symbol={quarterFinals.cut.outside.symbol} name={quarterFinals.cut.outside.tokenName} chainId={leagueChainId} tokenAddress={quarterFinals.cut.outside.tokenId} size="sm" />
                     <div className="min-w-0">
                       <div className="font-retro text-foreground">#{quarterFinals.cut.outside.rank} ${String(quarterFinals.cut.outside.symbol || "").replace(/^\$/, "")}</div>
                     </div>
@@ -277,6 +281,8 @@ const PostGradLeague = () => {
                   <WarzoneRankCard
                     rank={1}
                     imageUrl={(first as { imageUrl?: string }).imageUrl}
+                    chainId={leagueChainId}
+                    tokenAddress={first.tokenId}
                     symbol={first.symbol}
                     name={first.tokenName}
                     points={first.points}
@@ -290,6 +296,8 @@ const PostGradLeague = () => {
                   <WarzoneRankCard
                     rank={2}
                     imageUrl={(second as { imageUrl?: string }).imageUrl}
+                    chainId={leagueChainId}
+                    tokenAddress={second.tokenId}
                     symbol={second.symbol}
                     name={second.tokenName}
                     points={second.points}
@@ -303,6 +311,8 @@ const PostGradLeague = () => {
                   <WarzoneRankCard
                     rank={3}
                     imageUrl={(third as { imageUrl?: string }).imageUrl}
+                    chainId={leagueChainId}
+                    tokenAddress={third.tokenId}
                     symbol={third.symbol}
                     name={third.tokenName}
                     points={third.points}
@@ -331,7 +341,7 @@ const PostGradLeague = () => {
               </div>
               {board.table.map((entry) => (
                 <TokenLink key={entry.tokenId} tokenId={entry.tokenId}>
-                  <StandingRow entry={entry} yours={ownedKeys.has(tokenIdentityKey(entry.tokenId))} />
+                  <StandingRow entry={entry} yours={ownedKeys.has(tokenIdentityKey(entry.tokenId))} chainId={leagueChainId} />
                 </TokenLink>
               ))}
             </section>
@@ -349,7 +359,7 @@ const PostGradLeague = () => {
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="w-10 shrink-0 font-retro text-white/60">#{entry.rank}</div>
-                      <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} />
+                      <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} chainId={leagueChainId} tokenAddress={entry.tokenId} />
                       <div className="min-w-0">
                         <div className="truncate font-black text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
                         <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>

@@ -145,7 +145,7 @@ export function TournamentEventCard({
 
       {finished && champion ? (
         <div className="mt-3 flex items-center gap-3" data-tournament-champion="true">
-          <WarzoneTokenMark imageUrl={champion.imageUrl} symbol={champion.symbol} name={champion.tokenName} />
+          <WarzoneTokenMark imageUrl={champion.imageUrl} symbol={champion.symbol} name={champion.tokenName} chainId={card.chain?.chainId} tokenAddress={champion.tokenAddress} />
           <div className="min-w-0">
             <div className="text-[10px] uppercase tracking-[0.16em] text-orange-200">Champion</div>
             <div className="font-black text-foreground">{champion.symbol ? `$${champion.symbol}` : "TOKEN"}</div>
@@ -162,6 +162,8 @@ export function TournamentEventCard({
                 <div className="mx-auto">
                   <WarzoneTokenMark
                     imageUrl={entrant.imageUrl || entrant.logoUri}
+                    chainId={card.chain?.chainId}
+                    tokenAddress={entrant.tokenAddress}
                     symbol={entrant.symbol}
                     name={entrant.tokenName}
                     size="sm"

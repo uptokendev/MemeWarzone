@@ -195,7 +195,10 @@ export function useArenaLeagueFeed() {
   const [apiPayload, setApiPayload] = useState<ArenaLeagueFeedPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const walletAddress = String(wallet.address || "").trim();
-  const chainId = Number(wallet.chainId || 0) || null;
+  // The selected chain, like the front page and Leagues: it follows the connected wallet (the switch
+  // latches to it) and a visitor without a wallet picks one. Reading the wallet's chain alone sent every
+  // walletless visitor to the BNB league, so Solana standings vanished on disconnect (2026-09-27).
+  const chainId = Number(wallet.feedChainId || 0) || null;
 
   const refreshFeed = async () => {
     const payload = await loadLeagueFeed(undefined, { wallet: walletAddress || null, chainId }).catch(() => null);
@@ -268,6 +271,7 @@ export function useArenaLeagueFeed() {
   return {
     source,
     loading,
+    chainId,
     season: apiPayload?.season ?? (allowMockFallback ? runtime.season : EMPTY_SEASON),
     championship: apiPayload?.championship ?? null,
     history: apiPayload?.history ?? (allowMockFallback ? runtime.history : []),

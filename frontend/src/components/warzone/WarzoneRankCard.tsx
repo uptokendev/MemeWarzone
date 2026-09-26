@@ -10,6 +10,8 @@ export function WarzoneRankCard({
   points,
   wins,
   losses,
+  chainId,
+  tokenAddress,
 }: {
   rank: number;
   imageUrl?: string | null;
@@ -18,6 +20,8 @@ export function WarzoneRankCard({
   points?: number | null;
   wins?: number | null;
   losses?: number | null;
+  chainId?: number | null;
+  tokenAddress?: string | null;
 }) {
   const champion = rank === 1;
   const ticker = String(symbol || "").replace(/^\$/, "") || "----";
@@ -42,7 +46,7 @@ export function WarzoneRankCard({
         </div>
       </div>
       <div className="flex min-w-0 items-start gap-3">
-        <WarzoneTokenMark imageUrl={imageUrl} symbol={symbol} name={name} size="lg" />
+        <WarzoneTokenMark imageUrl={imageUrl} symbol={symbol} name={name} size="lg" chainId={chainId} tokenAddress={tokenAddress} />
         <div className="min-w-0 flex-1">
           <div className={cn("truncate font-black leading-none text-foreground", champion ? "text-lg" : "text-base")}>
             ${ticker}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import { warzoneTokenInitials } from "@/lib/arena/warzoneChrome.mjs";
 import { resolveImageUri } from "@/lib/media";
 import { cn } from "@/lib/utils";
@@ -8,13 +9,19 @@ export function WarzoneTokenMark({
   symbol,
   name,
   size = "md",
+  chainId,
+  tokenAddress,
 }: {
   imageUrl?: string | null;
   symbol?: string | null;
   name?: string | null;
   size?: "sm" | "md" | "lg";
+  /** With a token and its chain, art the feed did not carry is looked up (league and featured feeds carry none). */
+  chainId?: number | null;
+  tokenAddress?: string | null;
 }) {
-  const resolved = resolveImageUri(imageUrl) || "";
+  const profile = useArenaTokenProfile(imageUrl ? null : chainId, imageUrl ? null : tokenAddress);
+  const resolved = resolveImageUri(imageUrl || profile?.imageUrl) || "";
   const usable = Boolean(resolved) && resolved !== "/placeholder.svg";
   const [failed, setFailed] = useState(!usable);
 

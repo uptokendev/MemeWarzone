@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ComponentProps } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
 import { FeaturedCampaignCard } from "@/components/home/FeaturedCampaignCard";
@@ -6,6 +6,7 @@ import { TournamentEventCard } from "@/components/arena/TournamentEventCard";
 import { WarzoneBattlePreview } from "@/components/warzone/WarzoneBattlePreview";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
+import { ChainFeedSwitch } from "@/components/common/ChainFeedSwitch";
 import { WarzoneRankCard } from "@/components/warzone/WarzoneRankCard";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
@@ -13,11 +14,23 @@ import { useArenaEventFeed } from "@/hooks/useArenaEventFeed";
 import { useArenaFeaturedVotes } from "@/hooks/useArenaFeaturedVotes";
 import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
+import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import { presentWarzoneLeagueBoard } from "@/lib/arena/warzoneChrome.mjs";
 import { resolveImageUri } from "@/lib/media";
 
 function isTournament(event: { type?: string; status?: string }) {
   return event.type === "tournament" || event.type === "seasonal_league";
+}
+
+/** The featured-votes feed carries no art; resolve it the way the battle cards do. */
+function FeaturedArenaCoinCard({
+  imageUrl,
+  chainId,
+  tokenAddress,
+  ...props
+}: Omit<ComponentProps<typeof FeaturedCampaignCard>, "imageUrl"> & { imageUrl?: string | null; chainId: number; tokenAddress: string }) {
+  const profile = useArenaTokenProfile(imageUrl ? null : chainId, imageUrl ? null : tokenAddress);
+  return <FeaturedCampaignCard {...props} imageUrl={resolveImageUri(imageUrl || profile?.imageUrl) || null} />;
 }
 
 const Arena = () => {
@@ -26,7 +39,7 @@ const Arena = () => {
   const livePreview = useMemo(() => liveBattles.slice(0, 2), [liveBattles]);
   const feedMetrics = useArenaFeedBattleMetrics(livePreview);
   const { events, source: eventSource } = useArenaEventFeed();
-  const { season, source: leagueSource } = useArenaLeagueFeed();
+  const { season, source: leagueSource, chainId: leagueChainId } = useArenaLeagueFeed();
   const featured = useArenaFeaturedVotes();
   const liveTournaments = events.filter((event) => event.status === "live" && isTournament(event));
   const upcomingTournaments = events.filter((event) => isTournament(event) && (event.status === "scheduled" || event.status === "deploying"));
@@ -36,7 +49,9 @@ const Arena = () => {
 
   return (
     <WarzoneContent className="space-y-8">
-      <WarzonePageHeader title="Warzone" copy="The post-grad battlefield" />
+      <WarzonePageHeader title="Warzone" copy="The post-grad battlefield">
+        <ChainFeedSwitch />
+      </WarzonePageHeader>
 
       <section data-warzone-featured="true">
         <h2 className="font-black text-lg uppercase tracking-[0.08em] text-foreground">Featured memecoins</h2>
@@ -44,15 +59,16 @@ const Arena = () => {
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {featured.items.slice(0, 8).map((item, index) => {
               const route = getArenaTokenRoute(item.tokenAddress, item.chainId);
-              const image = resolveImageUri(item.imageUrl) || null;
               return (
-                <FeaturedCampaignCard
+                <FeaturedArenaCoinCard
                   key={`${item.chainId}-${item.tokenAddress}`}
                   liveId={`${item.chainId}:${item.tokenAddress}`}
                   rank={index + 1}
                   name={item.tokenName}
                   symbol={item.symbol}
-                  imageUrl={image}
+                  imageUrl={item.imageUrl}
+                  chainId={item.chainId}
+                  tokenAddress={item.tokenAddress}
                   votes24h={item.votes24h}
                   mcapUsdLabel={null}
                   athUsdLabel="—"
@@ -138,6 +154,8 @@ const Arena = () => {
                   key={entry.tokenId}
                   rank={index + 1}
                   imageUrl={(entry as { imageUrl?: string }).imageUrl}
+                  chainId={leagueChainId}
+                  tokenAddress={entry.tokenId}
                   symbol={entry.symbol}
                   name={entry.tokenName}
                   points={entry.points}
