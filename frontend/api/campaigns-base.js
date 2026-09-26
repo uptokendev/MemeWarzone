@@ -1,7 +1,8 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, defaultPublicChainId} from "../server/http.js";
-import { nativeGraduationTarget } from "../src/lib/feedGraduationTarget.mjs";
 import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
+import { withSolanaBondingProgress } from "./lib/solanaCampaignProgress.js";
+import { withEvmBondingProgress } from "./lib/evmCampaignProgress.js";
 
 // LaunchFactory default graduation target is 50 BNB (see contracts/LaunchFactory.sol).
 // Campaigns can override this, but until we persist per-campaign targets in DB,
@@ -306,12 +307,14 @@ export default async function handler(req, res) {
   const progressMaxPct = Number.isFinite(Number(q.progressMaxPct)) ? toFloat(q.progressMaxPct, NaN) : null;
 
   let gradTargetBnb = clamp(toFloat(q.gradTargetBnb, DEFAULT_GRAD_TARGET_BNB), 0.0001, 10_000);
-  if (SOLANA_CHAIN_IDS.has(chainId) && q.gradTargetBnb == null) {
-    // No price must never fail the list: progress is then shown as unknown, not 500.
-    const sol = await resolveSolUsdPrice().catch(() => null);
-    const native = nativeGraduationTarget({ chainId, nativeUsd: sol?.price, suppliedTarget: 50 });
-    gradTargetBnb = Number.isFinite(native) && native > 0 ? native : null;
-  }
+  // Solana: every campaign closes at its own amount (its chosen USD target, or the whole curve if
+  // cheaper). No single default is right, so the SQL leaves progress null and
+  // withSolanaBondingProgress fills it from each campaign's on-chain account.
+  // The SQL's raised/gradTargetBnb is a fallback only; the page's progress is recomputed per
+  // campaign below. Solana has no native default at all, so it stays null there.
+  let solUsd = null;
+  if (SOLANA_CHAIN_IDS.has(chainId)) gradTargetBnb = null;
+  solUsd = (await resolveSolUsdPrice().catch(() => null))?.price ?? null;
 
   try {
     // Deterministic ordering per tab/sort.
@@ -561,7 +564,12 @@ export default async function handler(req, res) {
       limit,
     ]);
 
-    return json(res, 200, campaignPayload(r.rows, { limit, cursor, gradTargetBnb }));
+    const payload = campaignPayload(r.rows, { limit, cursor, gradTargetBnb });
+    // Each campaign's own graduation target (the creator's $15k / $30k / $50k choice), read from
+    // chain the way Token Details reads it -- never a single default.
+    await withSolanaBondingProgress(payload.items, solUsd);
+    await withEvmBondingProgress(payload.items);
+    return json(res, 200, payload);
   } catch (e) {
     console.error("[api/campaigns] rich campaign query failed; trying basic fallback", e);
 

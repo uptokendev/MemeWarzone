@@ -14,7 +14,6 @@ import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { getBnbCampaignFeedChainIds } from "@/lib/feedChainConfig";
 import { liveCampaignKey, mergeFeedWithCreated, pickLiveNumeric } from "@/lib/liveMarketMerge";
 import { compareLiveCampaigns, maxVoteCount, rankIdentity, type LiveRankRow } from "@/lib/liveCampaignRank";
-import { bondingProgressPct, leakedBnbGraduationDefault } from "@/lib/feedGraduationTarget.mjs";
 import { useLiveListMotion } from "@/hooks/useLiveListMotion";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
@@ -524,17 +523,11 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
             const raised = Number(stats.raisedTotalBnb ?? NaN);
             const mcap = Number(stats.marketCapBnb ?? NaN);
             const graduated = Boolean(stats.isDexTrading || stats.status === "graduated" || it.isDexTrading || it.graduatedAtChain);
-            const progressPct = bondingProgressPct({
-              chainId: Number(it.chainId || activeChainId),
-              raisedNative: raised,
-              nativeUsd,
-              suppliedTarget: it.gradTargetBnb,
-              isDex: graduated,
-            });
+            // Bonding % is not derived here: it needs the campaign's own graduation target, which
+            // the campaigns API reads from chain (see progressPct below).
             patches[addr] = {
               ...(Number.isFinite(mcap) && mcap > 0 ? { marketcapBnb: String(mcap) } : {}),
               ...(Number.isFinite(raised) && raised > 0 ? { raisedTotalBnb: String(raised) } : {}),
-              progressPct: progressPct ?? undefined,
               isDexTrading: graduated || undefined,
             };
           } catch {
@@ -550,7 +543,7 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
     return () => {
       cancelled = true;
     };
-  }, [items, activeChainId, query.tab, nativeUsd]);
+  }, [items, activeChainId, query.tab]);
 
   const loadMore = async () => {
     if (query.tab === "drafts" || loadingMore || loading || nextCursor == null) return;
@@ -580,7 +573,6 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
   }, [sentinelRef.current, nextCursor, loading, loadingMore, baseParams, query.tab]);
 
   const vms: CampaignCardVM[] = useMemo(() => {
-    const DEFAULT_GRAD_TARGET_BNB = 50;
     const sort = String(baseParams.sort || "default");
     const tab = String(baseParams.tab || "trending");
     const mcapMinUsd = baseParams.mcapMinUsd != null ? Number(baseParams.mcapMinUsd) : NaN;
@@ -600,7 +592,6 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
       const lookupKey = liveCampaignKey(Number(it.chainId || activeChainId), rawAddr);
       const patch = patchByCampaign[lookupKey] || patchByCampaign[addr] || patchByCampaign[rawAddr.toLowerCase()];
       const onChain = onChainByCampaign[lookupKey] || onChainByCampaign[addr] || onChainByCampaign[rawAddr.toLowerCase()];
-      const gradTarget = Number(it.gradTargetBnb ?? DEFAULT_GRAD_TARGET_BNB) || DEFAULT_GRAD_TARGET_BNB;
       const isDex = Boolean(patch?.isDexTrading || it.isDexTrading || it.graduatedAtChain || onChain?.isDexTrading);
 
       // Live Ably mcap wins when finite > 0; otherwise keep on-chain hydrate / REST.
@@ -618,32 +609,17 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
         : marketCapUsdLabel;
 
       const rawLogo = it.logoUri || logoCache[lookupKey] || logoCache[addr] || logoCache[rawAddr.toLowerCase()] || null;
-      const raised = Number(
-        (patch?.raisedTotalBnb ?? onChain?.raisedTotalBnb ?? it.raisedTotalBnb) ?? NaN,
-      );
 
-      const itemChainId = Number(it.chainId || activeChainId);
-      const leakedTarget = leakedBnbGraduationDefault(itemChainId, it.gradTargetBnb ?? gradTarget);
-      const recomputed = bondingProgressPct({
-        chainId: itemChainId,
-        raisedNative: raised,
-        nativeUsd,
-        suppliedTarget: it.gradTargetBnb ?? gradTarget,
-        isDex,
-      });
+      // Bonding %: exactly Token Details' number. The campaigns API computes it per campaign from its
+      // own on-chain graduation target (the creator's $15k / $30k / $50k choice) and curve, and the
+      // soft refresh keeps it current. A live recompute here would need that target and the curve's
+      // net raised, which the live feed does not carry -- dividing by a default is what showed
+      // KAIJU88 at 55% (50 BNB) and then 11% ($30k) instead of 21.47%.
       let progressPct: number | null = null;
-      if (leakedTarget && recomputed != null && Number.isFinite(recomputed)) {
-        progressPct = recomputed;
-      } else if (patch?.progressPct != null && Number.isFinite(Number(patch.progressPct)) && !leakedTarget) {
-        progressPct = Math.max(0, Math.min(100, Number(patch.progressPct)));
-      } else if (isDex) {
+      if (isDex) {
         progressPct = 100;
-      } else if (recomputed != null && Number.isFinite(recomputed)) {
-        progressPct = recomputed;
-      } else if (it.progressPct != null && Number.isFinite(Number(it.progressPct)) && !leakedTarget) {
+      } else if (it.progressPct != null && Number.isFinite(Number(it.progressPct))) {
         progressPct = Math.max(0, Math.min(100, Number(it.progressPct)));
-      } else if (onChain?.progressPct != null && Number.isFinite(Number(onChain.progressPct)) && !leakedTarget) {
-        progressPct = Math.max(0, Math.min(100, Number(onChain.progressPct)));
       }
 
       const activitySec = (patch?.lastActivityAt != null ? Number(patch.lastActivityAt) : safeUnixSeconds((it as any).lastActivityAt ?? null)) ?? 0;
