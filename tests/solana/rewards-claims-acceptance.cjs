@@ -407,13 +407,13 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     const cap = 300_000_000n;
 
     await expectFail(
-      program.methods.initializeRewardPoster(poster.publicKey, new BN(cap.toString()), new BN(cap.toString()))
+      program.methods.initializeRewardPoster(poster.publicKey, new BN(cap.toString()), new BN(cap.toString()), new BN(cap.toString()))
         .accountsStrict({ authority: stranger.publicKey, config: pdas.config, rewardPoster, systemProgram: SystemProgram.programId })
         .signers([stranger]).rpc({ commitment: "confirmed" }),
       /ConstraintHasOne|has_one|custom program error|0x7d1/i,
       "only the authority creates the poster role",
     );
-    await program.methods.initializeRewardPoster(poster.publicKey, new BN(cap.toString()), new BN(cap.toString()))
+    await program.methods.initializeRewardPoster(poster.publicKey, new BN(cap.toString()), new BN(cap.toString()), new BN(cap.toString()))
       .accountsStrict({ authority, config: pdas.config, rewardPoster, systemProgram: SystemProgram.programId })
       .rpc({ commitment: "confirmed" });
     await program.methods.depositAirdrop(new BN(LAMPORTS_PER_SOL))
@@ -464,7 +464,7 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     await expectFail(post(71, buildRoot(nextLeaves), 1_000_000n, now + 3600), /PosterTooSoon|custom program error/i, "a second post within six days");
 
     // Revoking the role stops the key at once.
-    await program.methods.setRewardPoster(PublicKey.default, new BN(cap.toString()), new BN(cap.toString()))
+    await program.methods.setRewardPoster(PublicKey.default, new BN(cap.toString()), new BN(cap.toString()), new BN(cap.toString()))
       .accountsStrict({ authority, config: pdas.config, rewardPoster })
       .rpc({ commitment: "confirmed" });
     await expectFail(post(72, buildRoot(nextLeaves), 1_000_000n, now + 3600), /PosterNotAuthorized|custom program error/i, "a revoked poster");
@@ -616,12 +616,69 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     );
   });
 
+  it("recruiter + squad earnings via reward poster: capped weekly batches, no expiry, claims unchanged", async function () {
+    const poster = Keypair.generate();
+    const stranger = Keypair.generate();
+    await fund(poster.publicKey, 2);
+    await fund(stranger.publicKey, 1);
+    const rewardPoster = pda("reward_poster");
+    const laneCap = 150_000_000n;
+    await program.methods.setRewardPoster(poster.publicKey, new BN(300_000_000), new BN(200_000_000), new BN(laneCap.toString()))
+      .accountsStrict({ authority, config: pdas.config, rewardPoster })
+      .rpc({ commitment: "confirmed" });
+    assert.equal(BigInt((await program.account.rewardPoster.fetch(rewardPoster)).maxLaneBatchLamports.toString()), laneCap);
+
+    const lanes = [
+      { name: "recruiter", prefix: PREFIX.recruiter, vault: pdas.recruiterVault, batchSeed: "recruiter_batch", claimSeed: "recruiter_claim",
+        post: "postRecruiterBatchRoot", claim: "claimRecruiter", vaultKey: "recruiterVault", batchKey: "recruiterBatch", last: "lastRecruiterPostAt" },
+      { name: "squad", prefix: PREFIX.squad, vault: pdas.squadVault, batchSeed: "squad_batch", claimSeed: "squad_claim",
+        post: "postSquadBatchRoot", claim: "claimSquad", vaultKey: "squadVault", batchKey: "squadBatch", last: "lastSquadPostAt" },
+    ];
+    for (const [index, lane] of lanes.entries()) {
+      const epochId = 900 + index * 10;
+      const amounts = [70_000_000n, 30_000_000n];
+      const total = amounts.reduce((a, b) => a + b, 0n);
+      const leaves = amounts.map((amount, i) => laneLeaf(lane.prefix, { epochId, winner: winners[i].publicKey, amount }));
+      const root = buildRoot(leaves);
+      const batch = (id) => pda(lane.batchSeed, i64le(id));
+      const post = (id, rootBytes, amount, signer = poster) => program.methods[lane.post](new BN(id), arr32(rootBytes), new BN(amount.toString()))
+        .accountsStrict({ poster: signer.publicKey, config: pdas.config, rewardPoster, [lane.vaultKey]: lane.vault, [lane.batchKey]: batch(id), systemProgram: SystemProgram.programId })
+        .signers([signer])
+        .rpc({ commitment: "confirmed" });
+
+      // "Never more than the vault" is pinned by validate_poster_lane_batch's unit test; an earlier
+      // test may leave lamports in this vault, so fund it rather than assert an empty one here.
+      await transferTo(lane.vault, 2n * total);
+      await expectFail(post(epochId, root, total, stranger), /PosterNotAuthorized|custom program error/i, `${lane.name}: a non-poster`);
+      await expectFail(post(epochId, root, laneCap + 1n), /PosterBatchAboveCap|custom program error/i, `${lane.name}: above the lane cap`);
+      await post(epochId, root, total);
+      const posted = await program.account.rewardLaneBatch.fetch(batch(epochId));
+      assert.equal(BigInt(posted.totalLamports.toString()), total);
+      assert.equal(posted.deadline.toNumber(), 0, `${lane.name}: earnings never expire`);
+      assert.ok((await program.account.rewardPoster.fetch(rewardPoster))[lane.last].toNumber() > 0);
+      await expectFail(post(epochId + 1, root, total), /PosterTooSoon|custom program error/i, `${lane.name}: twice in one week`);
+
+      const claim = (i) => program.methods[lane.claim](new BN(epochId), new BN(amounts[i].toString()), proofArg(buildProof(leaves, i)))
+        .accountsStrict({
+          winner: winners[i].publicKey, config: pdas.config, [lane.vaultKey]: lane.vault, [lane.batchKey]: batch(epochId),
+          claimReceipt: pda(lane.claimSeed, i64le(epochId), winners[i].publicKey.toBuffer()), systemProgram: SystemProgram.programId,
+        })
+        .signers([winners[i]])
+        .rpc({ commitment: "confirmed" });
+      const before = await lamports(lane.vault);
+      await claim(0);
+      await claim(1);
+      assert.equal(before - (await lamports(lane.vault)), total, `${lane.name}: the vault pays exactly the posted leaves`);
+      await expectFail(claim(0), /already in use|custom program error|0x0\b/i, `${lane.name}: double claim`);
+    }
+  });
+
   it("league via reward poster: capped roots per period, right vault, never overwriting", async function () {
     const poster = Keypair.generate();
     await fund(poster.publicKey, 2);
     const rewardPoster = pda("reward_poster");
     // The airdrop test created the role and then revoked it; re-arm it for this poster.
-    await program.methods.setRewardPoster(poster.publicKey, new BN(300_000_000), new BN(200_000_000))
+    await program.methods.setRewardPoster(poster.publicKey, new BN(300_000_000), new BN(200_000_000), new BN(200_000_000))
       .accountsStrict({ authority, config: pdas.config, rewardPoster })
       .rpc({ commitment: "confirmed" });
     const PERIOD_MONTHLY = 1;

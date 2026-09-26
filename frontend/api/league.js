@@ -690,7 +690,7 @@ export default async function handler(req, res) {
       }
       if (!(period === "weekly" || period === "monthly")) return json(res, 400, { error: "Invalid period" });
       if (!CATEGORY_SET.has(category)) return json(res, 400, { error: "Invalid category" });
-      if (!Number.isFinite(rank) || rank < 1 || rank > 5) return json(res, 400, { error: "Invalid rank" });
+      if (!Number.isFinite(rank) || rank < 1 || rank > 255) return json(res, 400, { error: "Invalid rank" }); // poker payout: up to 255 paid places
       if (!epochStart) return json(res, 400, { error: "epochStart missing" });
       if (!nonce) return json(res, 400, { error: "Nonce missing" });
       if (!signature) return json(res, 400, { error: "Signature missing" });

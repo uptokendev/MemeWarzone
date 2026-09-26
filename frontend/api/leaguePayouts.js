@@ -51,7 +51,7 @@ export default async function handler(req, res) {
       const amountRaw = String(p.amountRaw ?? "0").trim();
 
       if (!CATEGORY_SET.has(category)) continue;
-      if (!Number.isFinite(rank) || rank < 1 || rank > 5) continue;
+      if (!Number.isFinite(rank) || rank < 1 || rank > 255) continue; // poker payout: up to 255 paid places
       if (!isAddress(recipient)) continue;
 
       const client = await pool.connect();

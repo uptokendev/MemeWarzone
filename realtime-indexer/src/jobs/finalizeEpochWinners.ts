@@ -532,74 +532,90 @@ async function finalizeEpochFor(
       console.warn(`[finalizeEpochWinners] league_epoch_meta skipped chain=${chainId} period=${period}`, error);
     }
 
-    let insertedAny = false;
-    for (let rank = 1; rank <= wantRanks; rank++) {
-      const row = top[rank - 1];
-      if (!row) break;
+    // All paid places of a category land in one transaction: alreadyFinalized() treats any row as
+    // "done", so a partial write (e.g. a constraint failing at rank 6) would strand every rank after it.
+    const inserted: Array<{ rank: number; recipient: string; amount: bigint }> = [];
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (let rank = 1; rank <= wantRanks; rank++) {
+        const row = top[rank - 1];
+        if (!row) break;
 
-      const amount = payouts[rank - 1] ?? 0n;
-      const payload = {
-        score: row.score.toString(),
-        amount_raw: amount.toString(),
-        rank,
-        ...row.meta,
-        wallet: row.meta?.wallet || row.recipient,
-        recipient_address: row.recipient,
-      };
-      const res = await pool.query(
-        `
-        insert into public.league_epoch_winners (
-          chain_id, period, epoch_start, epoch_end, category, rank,
-          recipient_address, amount_raw, expires_at, meta, payload
-        ) values (
-          $1, $2, $3::timestamptz, $4::timestamptz, $5, $6,
-          $7, $8::numeric, $9::timestamptz, $10::jsonb, $10::jsonb
-        )
-        on conflict (chain_id, period, epoch_start, category, rank)
-        do nothing
-        returning *
-        `,
-        [
-          chainId,
-          period,
-          epochStartIso,
-          epochEndIso,
-          category,
+        const amount = payouts[rank - 1] ?? 0n;
+        const payload = {
+          score: row.score.toString(),
+          amount_raw: amount.toString(),
           rank,
-          row.recipient,
-          amount.toString(),
-          expiresAt,
-          JSON.stringify(payload),
-        ]
-      );
-
-      if ((res.rowCount ?? 0) > 0) {
-        insertedAny = true;
-        const chain = normalizeChain(chainId);
-        if (!chain) continue;
-        const leagueEvent =
-          period === "weekly" || period === "monthly"
-            ? `league.${period}_winners_confirmed`
-            : period === "mwl"
-              ? "league.mwl_winners_confirmed"
-              : period === "quarterly" || period === "quarterly_championship"
-                ? "league.quarterly_winners_confirmed"
-                : `league.${period}_winners_confirmed`;
-        await emitNotification(pool, {
-          eventType: leagueEvent,
-          chain,
-          chainId,
-          dedupKey: `winner:${chain}:${period}:${epochStartIso}:${category}:${rank}`,
-          payload: {
-            leagueType: period,
-            epoch: epochStartIso,
+          ...row.meta,
+          wallet: row.meta?.wallet || row.recipient,
+          recipient_address: row.recipient,
+        };
+        const res = await client.query(
+          `
+          insert into public.league_epoch_winners (
+            chain_id, period, epoch_start, epoch_end, category, rank,
+            recipient_address, amount_raw, expires_at, meta, payload
+          ) values (
+            $1, $2, $3::timestamptz, $4::timestamptz, $5, $6,
+            $7, $8::numeric, $9::timestamptz, $10::jsonb, $10::jsonb
+          )
+          on conflict (chain_id, period, epoch_start, category, rank)
+          do nothing
+          returning *
+          `,
+          [
+            chainId,
+            period,
+            epochStartIso,
+            epochEndIso,
             category,
             rank,
-            recipient: row.recipient,
-            amountRaw: amount.toString(),
-          }
-        });
+            row.recipient,
+            amount.toString(),
+            expiresAt,
+            JSON.stringify(payload),
+          ]
+        );
+        if ((res.rowCount ?? 0) > 0) inserted.push({ rank, recipient: row.recipient, amount });
       }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      console.error(
+        `[finalizeEpochWinners] BLOCKED chain=${chainId} period=${period} epoch=${epochStartIso} category=${category}: ` +
+          `${wantRanks} paid places not written, nothing partial kept -- ${(error as Error)?.message || error}`
+      );
+      continue;
+    } finally {
+      client.release();
+    }
+
+    const insertedAny = inserted.length > 0;
+    const chain = normalizeChain(chainId);
+    for (const winner of chain ? inserted : []) {
+      const leagueEvent =
+        period === "weekly" || period === "monthly"
+          ? `league.${period}_winners_confirmed`
+          : period === "mwl"
+            ? "league.mwl_winners_confirmed"
+            : period === "quarterly" || period === "quarterly_championship"
+              ? "league.quarterly_winners_confirmed"
+              : `league.${period}_winners_confirmed`;
+      await emitNotification(pool, {
+        eventType: leagueEvent,
+        chain: chain!,
+        chainId,
+        dedupKey: `winner:${chain}:${period}:${epochStartIso}:${category}:${winner.rank}`,
+        payload: {
+          leagueType: period,
+          epoch: epochStartIso,
+          category,
+          rank: winner.rank,
+          recipient: winner.recipient,
+          amountRaw: winner.amount.toString(),
+        }
+      });
     }
 
     if (insertedAny) {

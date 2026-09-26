@@ -82,7 +82,7 @@ export function assertCanonicalSolanaRewardClaim(
     const period = Number(canonical.periodCode);
     const rank = Number(canonical.rank);
     if (period !== 0 && period !== 1) throw new Error("Invalid Solana league period code");
-    if (rank < 1 || rank > 5) throw new Error("Invalid Solana league rank");
+    if (rank < 1 || rank > 255) throw new Error("Invalid Solana league rank"); // u8 claim rank, poker payout
     if (canonical.categoryHash.length !== 32) throw new Error("Invalid Solana league category hash");
     const epoch = i64le(canonical.epochStartSec);
     assertAddress("league vault PDA", addresses.vaultAddress, derive(web3, [utf8("league_vault")]));

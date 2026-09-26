@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 /**
  * Creates (or changes / revokes) the treasury's reward poster: the narrow key our Coolify weekly
- * airdrop job signs with. Needs the reward-poster treasury upgrade (b09d2b1a...) on chain first.
+ * airdrop job signs with. Needs the reward-poster treasury upgrade (1840a9e7...) on chain first.
  *
  *   SOLANA_RPC_URL=<mainnet rpc> REWARD_POSTER_PUBKEY=<poster pubkey> \
- *     node scripts/solana/set-reward-poster.mjs --airdrop-cap-sol 400 --league-cap-sol 400   # dry run
+ *     node scripts/solana/set-reward-poster.mjs --airdrop-cap-sol 400 --league-cap-sol 400 --lane-cap-sol 400   # dry run
  *   ... --airdrop-cap-sol 800 --execute     # raise one cap later; the other keeps its on-chain value
  *   ... SOLANA_TREASURY_AUTHORITY_KEYPAIR=<deployer.json> ... --execute      # sends
  *   ... --revoke --execute                                                   # sets the poster to the default pubkey
  *
- * Caps: the most one weekly airdrop batch / one league epoch root may pay. They never shrink a payout:
+ * Caps: the most one weekly airdrop batch / one league epoch root / one weekly recruiter or squad
+ * earnings batch (--lane-cap-sol) may pay. They never shrink a payout:
  * the jobs block and alert instead, and a raised cap lets them post the stored list unchanged. A
  * leaked poster key can misdirect at most one capped root per period rhythm until revoked.
  * The signer must be rewards_config.authority. Mainnet-beta only.
@@ -34,6 +35,7 @@ const revoke = argv.includes("--revoke");
 const flagNumber = (name) => { const i = argv.indexOf(name); return i >= 0 ? Number(argv[i + 1]) : null; };
 const airdropCapSol = flagNumber("--airdrop-cap-sol");
 const leagueCapSol = flagNumber("--league-cap-sol");
+const laneCapSol = flagNumber("--lane-cap-sol");
 const pda = (seed) => PublicKey.findProgramAddressSync([Buffer.from(seed, "utf8")], PROGRAM_ID)[0];
 const expand = (p) => (p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p);
 
@@ -55,7 +57,7 @@ async function main() {
   }
   const provider = new anchor.AnchorProvider(connection, new anchor.Wallet(authority), { commitment: "confirmed" });
   const program = new anchor.Program(JSON.parse(fs.readFileSync(path.join(root, "target/idl/mwz_rewards_treasury.json"), "utf8")), provider);
-  if (!program.methods.initializeRewardPoster) throw new Error("target/idl lacks the reward-poster instructions; build the b09d2b1a candidate first");
+  if (!program.methods.initializeRewardPoster) throw new Error("target/idl lacks the reward-poster instructions; build the 1840a9e7 candidate first");
 
   const config = pda("rewards_config");
   const rewardPoster = pda("reward_poster");
@@ -68,20 +70,22 @@ async function main() {
   const lamportsOr = (sol, fallback) => (sol != null ? BigInt(Math.round(sol * 1e9)) : BigInt(fallback?.toString() || "0"));
   const airdropCap = lamportsOr(airdropCapSol, current?.maxAirdropBatchLamports);
   const leagueCap = lamportsOr(leagueCapSol, current?.maxLeagueRootLamports);
+  const laneCap = lamportsOr(laneCapSol, current?.maxLaneBatchLamports);
   if (!revoke && poster.equals(PublicKey.default)) throw new Error("REWARD_POSTER_PUBKEY is required");
-  if (!revoke && (airdropCap <= 0n || leagueCap <= 0n)) throw new Error("--airdrop-cap-sol and --league-cap-sol are required on first setup");
+  if (!revoke && (airdropCap <= 0n || leagueCap <= 0n || laneCap <= 0n)) throw new Error("--airdrop-cap-sol, --league-cap-sol and --lane-cap-sol are required on first setup");
   if (!revoke && poster.equals(cfg.authority)) throw new Error("the poster must not be the rewards authority -- that is the point of the role");
 
   console.log(`[reward-poster] cluster ${genesis === SOLANA_GENESIS["mainnet-beta"] ? "mainnet-beta" : "local rehearsal"}`);
-  console.log(`[reward-poster] current: ${current ? `${current.poster.toBase58()} airdrop cap ${Number(current.maxAirdropBatchLamports) / 1e9} SOL, league cap ${Number(current.maxLeagueRootLamports) / 1e9} SOL` : "not initialized"}`);
-  console.log(`[reward-poster] target:  ${revoke ? "REVOKED (default pubkey)" : poster.toBase58()} airdrop cap ${Number(airdropCap) / 1e9} SOL, league cap ${Number(leagueCap) / 1e9} SOL`);
+  console.log(`[reward-poster] current: ${current ? `${current.poster.toBase58()} airdrop cap ${Number(current.maxAirdropBatchLamports) / 1e9} SOL, league cap ${Number(current.maxLeagueRootLamports) / 1e9} SOL, recruiter/squad cap ${Number(current.maxLaneBatchLamports) / 1e9} SOL` : "not initialized"}`);
+  console.log(`[reward-poster] target:  ${revoke ? "REVOKED (default pubkey)" : poster.toBase58()} airdrop cap ${Number(airdropCap) / 1e9} SOL, league cap ${Number(leagueCap) / 1e9} SOL, recruiter/squad cap ${Number(laneCap) / 1e9} SOL`);
 
   const signer = execute ? authority.publicKey : cfg.authority;
   const airdrop = new anchor.BN(airdropCap.toString());
   const league = new anchor.BN(leagueCap.toString());
+  const lane = new anchor.BN(laneCap.toString());
   const method = existing
-    ? program.methods.setRewardPoster(poster, airdrop, league).accountsStrict({ authority: signer, config, rewardPoster })
-    : program.methods.initializeRewardPoster(poster, airdrop, league).accountsStrict({ authority: signer, config, rewardPoster, systemProgram: SystemProgram.programId });
+    ? program.methods.setRewardPoster(poster, airdrop, league, lane).accountsStrict({ authority: signer, config, rewardPoster })
+    : program.methods.initializeRewardPoster(poster, airdrop, league, lane).accountsStrict({ authority: signer, config, rewardPoster, systemProgram: SystemProgram.programId });
 
   if (!execute) {
     const ix = await method.instruction();
@@ -95,7 +99,7 @@ async function main() {
   const signature = await method.rpc();
   const after = await program.account.rewardPoster.fetch(rewardPoster);
   console.log(`[reward-poster] sent ${signature}`);
-  console.log(`[reward-poster] read back: poster ${after.poster.toBase58()}, airdrop cap ${Number(after.maxAirdropBatchLamports) / 1e9} SOL, league cap ${Number(after.maxLeagueRootLamports) / 1e9} SOL`);
+  console.log(`[reward-poster] read back: poster ${after.poster.toBase58()}, airdrop cap ${Number(after.maxAirdropBatchLamports) / 1e9} SOL, league cap ${Number(after.maxLeagueRootLamports) / 1e9} SOL, recruiter/squad cap ${Number(after.maxLaneBatchLamports) / 1e9} SOL`);
 }
 
 main().catch((error) => {

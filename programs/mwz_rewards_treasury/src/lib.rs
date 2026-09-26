@@ -427,8 +427,9 @@ pub mod mwz_rewards_treasury {
         poster: Pubkey,
         max_airdrop_batch_lamports: u64,
         max_league_root_lamports: u64,
+        max_lane_batch_lamports: u64,
     ) -> Result<()> {
-        reward_poster::initialize_reward_poster_handler(ctx, poster, max_airdrop_batch_lamports, max_league_root_lamports)
+        reward_poster::initialize_reward_poster_handler(ctx, poster, max_airdrop_batch_lamports, max_league_root_lamports, max_lane_batch_lamports)
     }
 
     /// Authority: change or revoke (Pubkey::default()) the reward poster and its caps.
@@ -437,8 +438,19 @@ pub mod mwz_rewards_treasury {
         poster: Pubkey,
         max_airdrop_batch_lamports: u64,
         max_league_root_lamports: u64,
+        max_lane_batch_lamports: u64,
     ) -> Result<()> {
-        reward_poster::set_reward_poster_handler(ctx, poster, max_airdrop_batch_lamports, max_league_root_lamports)
+        reward_poster::set_reward_poster_handler(ctx, poster, max_airdrop_batch_lamports, max_league_root_lamports, max_lane_batch_lamports)
+    }
+
+    /// Reward poster: post one capped weekly recruiter earnings batch root (claims unchanged, never expires).
+    pub fn post_recruiter_batch_root(ctx: Context<PostRecruiterBatchRoot>, epoch_id: i64, root: [u8; 32], total_lamports: u64) -> Result<()> {
+        reward_poster::post_recruiter_batch_root_handler(ctx, epoch_id, root, total_lamports)
+    }
+
+    /// Reward poster: post one capped weekly squad earnings batch root (claims unchanged, never expires).
+    pub fn post_squad_batch_root(ctx: Context<PostSquadBatchRoot>, epoch_id: i64, root: [u8; 32], total_lamports: u64) -> Result<()> {
+        reward_poster::post_squad_batch_root_handler(ctx, epoch_id, root, total_lamports)
     }
 
     /// Reward poster: post one league epoch root (weekly / monthly / quarterly), capped, never overwriting.

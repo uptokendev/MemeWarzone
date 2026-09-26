@@ -1370,8 +1370,13 @@ paid places = min(field, 255, max(3 weekly / 5 otherwise, floor(15% of field))),
 (settlement, `finalizeEpochWinners.ts`) mirrored in `frontend/shared/pokerPayout.mjs` (league page,
 on-chain fallback); a parity test pins them. The page counts the whole field with
 `COUNT(*) OVER ()`, not the loaded rows. `LEAGUE_PAGE_WRITE_WINNERS` page-writes are disabled: only the
-job writes winners. **Solana `claim_league` took ranks 1..=5 only** -- raised to 1..=255 in treasury
-candidate `b09d2b1a…` (1394040 B, extend +87400, gate 18/18), which supersedes the unstaged `e996ba88…`.
+job writes winners, one transaction per category (a partial write would strand every rank after the
+failure). **Rank was capped at 5 in three more places**: the DB CHECKs on `league_epoch_winners/claims/
+payouts` (migration `db/migrations/20260926_000001_league_ranks_poker_255.sql`, staging applied,
+production = founder), the claim API and the Solana claim client. **Solana `claim_league` took ranks
+1..=5 only** -- raised to 1..=255 in treasury candidate `1840a9e7…` (1436744 B, extend +130104, gate
+19/19), which also lets the reward poster post recruiter/squad earnings batches (capped by
+`max_lane_batch_lamports`, weekly, no expiry). Supersedes the unstaged `e996ba88…` and `b09d2b1a…`.
 Safe by construction: the indexer posts roots only via `post_league_epoch_root`, which ships in the same
 upgrade, so no poker root can reach a program that caps ranks at 5. Never post one with the authority key.
 

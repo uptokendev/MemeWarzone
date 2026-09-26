@@ -6,17 +6,17 @@
     "label": "MemeWarzone rewards treasury"
   },
   "certifiedBy": {
-    "gate": "scripts/solana/run-local-treasury-gate.sh (18 tests: reward poster airdrop + league, three separate league vaults, program-owned arena receivers, poker ranks up to 255) and cargo test -p mwz_rewards_treasury --lib (28)",
+    "gate": "scripts/solana/run-local-treasury-gate.sh (19 tests: reward poster airdrop + league + recruiter/squad earnings batches, three separate league vaults, program-owned arena receivers, poker ranks up to 255) and cargo test -p mwz_rewards_treasury --lib (29)",
     "date": "2026-09-26"
   },
   "artifact": {
-    "sha256": "b09d2b1a949d9b6cd77e8b78a043fddf19c158f45edd6df7689273d256d0b7a8",
-    "bytes": 1394040,
+    "sha256": "1840a9e7cbe7121dc3de814e1405c5cd1affdaee9ee715314ce3f36652f7d3c3",
+    "bytes": 1436744,
     "localPath": "target/deploy/mwz_rewards_treasury.so"
   },
   "deployed": {
     "devnet": "not upgraded to this candidate",
-    "mainnet": "NOT upgraded to this candidate. Mainnet runs 1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95 (1306640 bytes, Squads #18). Candidate needs solana program extend +87400 bytes first."
+    "mainnet": "NOT upgraded to this candidate. Mainnet runs 1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95 (1306640 bytes, Squads #18). Candidate needs solana program extend +130104 bytes first."
   },
   "consumers": {
     "note": "The API and indexer read no treasury program hash. Do not put this value into SOLANA_LAUNCHPAD_PROGRAM_SHA256."
@@ -26,8 +26,14 @@
     "bytes": 1306640,
     "mainnetSince": "2026-09-24"
   },
-  "supersededUnstaged": {
-    "sha256": "e996ba885136908804291ed7042ec594d3f55037ee9e806f131892a46ad3f0ac",
-    "why": "claim_league allowed ranks 1..=5 only; poker payouts pay up to 255 places. Never staged."
-  }
+  "supersededUnstaged": [
+    {
+      "sha256": "e996ba885136908804291ed7042ec594d3f55037ee9e806f131892a46ad3f0ac",
+      "why": "claim_league ranks 1..=5 only. Never staged."
+    },
+    {
+      "sha256": "b09d2b1a949d9b6cd77e8b78a043fddf19c158f45edd6df7689273d256d0b7a8",
+      "why": "no poster path for recruiter/squad earnings batches (authority-only). Never staged."
+    }
+  ]
 }
