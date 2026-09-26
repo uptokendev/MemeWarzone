@@ -18,16 +18,18 @@ import { normalizeChain } from "../notificationContract.js";
 //
 // This job is designed to be safe to run repeatedly.
 
+import { pokerPaidPlaces, pokerSplitRaw } from "../rewards/pokerPayout.js";
 const DEFAULT_PROTOCOL_FEE_BPS = 200; // 2%
 const DEFAULT_LEAGUE_FEE_BPS = 75; // 0.75% slice of gross (carved out of the 2% protocol fee)
 
 const WEEKLY_CATEGORIES = ["fastest_finish", "biggest_hit", "top_earner", "crowd_favorite"] as const;
 const MONTHLY_CATEGORIES = ["perfect_run", ...WEEKLY_CATEGORIES] as const;
 
-const PRIZE_SPLIT_BPS = [4000, 2500, 1500, 1200, 800]; // 40/25/15/12/8
+// Qualified entrants read per category to size the poker payout (15% of the field is paid).
+const POKER_FIELD_SCAN_LIMIT = 5_000;
 
 // Split the League fee stream between weekly and monthly prize budgets.
-// Weekly budget is paid to 4 categories (1 winner each). Monthly budget is paid to 5 categories (top 5 each).
+// Weekly budget is split over 4 categories, monthly over 5; each category pays poker-style.
 const DEFAULT_WEEKLY_PRIZE_BUDGET_BPS = 3000; // 30%
 const DEFAULT_MONTHLY_PRIZE_BUDGET_BPS = 7000; // 70%
 
@@ -65,12 +67,6 @@ function startOfUtcMonth(d: Date) {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
 }
 
-function splitPotRaw(pot: bigint): bigint[] {
-  const payouts = PRIZE_SPLIT_BPS.map((bps) => (pot * BigInt(bps)) / 10000n);
-  const sum = payouts.reduce((a, b) => a + b, 0n);
-  payouts[0] = payouts[0] + (pot - sum);
-  return payouts;
-}
 
 async function computeTotalLeagueFeeRawInRange(
   chainId: number,
@@ -479,8 +475,11 @@ async function finalizeEpochFor(
     let pot = base + (BigInt(i) < rem ? 1n : 0n);
     pot += await getRolloverRaw(chainId, period, epochStartIso, category);
 
-    const wantRanks = period === "weekly" ? 1 : 5;
-    const top = await leaderboard(chainId, period, epochStartIso, epochEndIso, category, Math.max(2, wantRanks));
+    // Poker payout (founder, 2026-09-26): the whole qualified field is read, 15% of it is paid
+    // (min 3 weekly / 5 monthly) on the 1/rank^0.72 curve the league page shows. Was: weekly paid
+    // 1 winner, monthly a fixed top 5 -- and with fewer than 5 entrants the unused shares stranded.
+    const top = await leaderboard(chainId, period, epochStartIso, epochEndIso, category, POKER_FIELD_SCAN_LIMIT);
+    const wantRanks = pokerPaidPlaces(top.length, period);
 
     if (isNoWinner(top)) {
       await pool.query(`select public.league_rollover_no_winner($1,$2,$3::timestamptz,$4,$5::numeric)`, [
@@ -493,7 +492,8 @@ async function finalizeEpochFor(
       continue;
     }
 
-    const payouts = period === "weekly" ? [pot] : splitPotRaw(pot);
+    const payouts = pokerSplitRaw(pot, wantRanks);
+    const splitBps = payouts.map((amount) => (pot > 0n ? Number((amount * 10_000n) / pot) : 0));
     const expiresAt = new Date(epochEnd.getTime() + 90 * 86400_000).toISOString();
 
     try {
@@ -525,7 +525,7 @@ async function finalizeEpochFor(
           totalLeagueFeeRaw.toString(),
           leagueCount,
           wantRanks,
-          PRIZE_SPLIT_BPS,
+          splitBps,
         ]
       );
     } catch (error) {
@@ -617,9 +617,10 @@ async function main() {
   const sha = process.env.SOURCE_COMMIT || process.env.COOLIFY_GIT_COMMIT_SHA || process.env.GIT_SHA || "unset";
   console.log(`[finalizeEpochWinners] BUILD_SHA=${sha}`);
 
-  // Production defaults: BNB mainnet + Solana mainnet.
+  // Production defaults: BNB, Solana and Robinhood mainnet.
   // BNB testnet remains opt-in. Legacy Solana chain identity is not current League authority.
-  const chains = String(process.env.LEAGUE_CHAINS || "56,101")
+  // Every live chain settles the same leagues (Robinhood was missing from the default).
+  const chains = String(process.env.LEAGUE_CHAINS || "56,101,4663")
     .split(",")
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n) && n !== 102);

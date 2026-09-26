@@ -4,6 +4,7 @@ import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../server/http.js";
 import { persistFinalizedCategory, readFinalizedCategory } from "./lib/finalizeLeagueEpoch.js";
+import { pokerPaidPlaces, pokerSplitRaw } from "./lib/pokerPayout.mjs";
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import {
   buildMerkleProof as buildSolanaMerkleProof,
@@ -187,7 +188,6 @@ function getEpoch(periodNorm, epochOffset) {
 const DEFAULT_PROTOCOL_FEE_BPS = 200; // 2%
 const DEFAULT_LEAGUE_FEE_BPS = 75; // 0.75% slice of gross (carved out of the 2% protocol fee)
 const PRIZE_TTL_MS = 60 * 60 * 1000;
-const PRIZE_SPLIT_BPS = [4000, 2500, 1500, 1200, 800]; // 40/25/15/12/8
 
 // Split the League fee stream between weekly and monthly prize budgets.
 // Weekly budget is paid to 4 categories (1 winner each). Monthly budget is paid to 5 categories (top 5 each).
@@ -422,13 +422,24 @@ async function sendOnchainPayout({ chainId, vaultAddress, recipient, amountRaw }
   return { txHash: tx.hash };
 }
 
-function splitPotRaw(potRawBigInt) {
-  const pot = BigInt(potRawBigInt);
-  const payouts = PRIZE_SPLIT_BPS.map((bps) => (pot * BigInt(bps)) / 10000n);
-  const sum = payouts.reduce((a, b) => a + b, 0n);
-  // Push rounding dust to #1 so totals reconcile.
-  payouts[0] = payouts[0] + (pot - sum);
-  return payouts.map((x) => x.toString());
+// Poker payout (api/lib/pokerPayout.mjs, the winners job's exact rule). Pots are cached per
+// chain/period; the paid places depend on each category's field, so the split is applied per response.
+function splitPotRaw(potRawBigInt, places = 0) {
+  return pokerSplitRaw(BigInt(potRawBigInt), places).map((x) => x.toString());
+}
+
+function pokerPrizeForField(prize, places, fieldSize) {
+  if (!prize) return prize;
+  const payoutsRaw = splitPotRaw(prize.potRaw ?? "0", places);
+  const pot = BigInt(String(prize.potRaw ?? "0"));
+  return {
+    ...prize,
+    fieldSize,
+    winners: places,
+    splitBps: pot > 0n ? payoutsRaw.map((x) => Number((BigInt(x) * 10_000n) / pot)) : [],
+    payoutsRaw,
+    ...(typeof prize.availablePotRaw !== "undefined" ? { availablePayoutsRaw: splitPotRaw(prize.availablePotRaw, places) } : {}),
+  };
 }
 
 async function computeTotalLeagueFeeRawInRange(chainId, startIso, endIso, protocolFeeBps, leagueFeeBps) {
@@ -643,8 +654,8 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
     leagueFeeBps,
     totalLeagueFeeRaw: total.toString(),
     leagueCount,
-    winners: 5,
-    splitBps: PRIZE_SPLIT_BPS,
+    winners: null, // per category: poker places for its field (pokerPrizeForField)
+    splitBps: [],
     byCategory
   };
 
@@ -1027,7 +1038,7 @@ export default async function handler(req, res) {
       if (frozen?.items?.length) {
         return json(res, 200, {
           items: frozen.items,
-          prize: prizeForCategory,
+          prize: pokerPrizeForField(prizeForCategory, frozen.items.length, null),
           epoch: { ...epochMeta, status: "finalized", source: frozen.source },
           stats,
           finalized: true,
@@ -1038,11 +1049,17 @@ export default async function handler(req, res) {
     const finishStandings = async (items, extra = {}) => {
       // Every campaign league passes through here, so this is where hidden
       // campaigns leave the standings -- before they are frozen as winners.
+      const loaded = items.length;
+      const fieldCount = Number(items[0]?.field_count ?? loaded) || 0;
       items = withoutPublicHidden(items, chainId, await loadPublicHiddenCampaignKeys(chainId));
+      // Whole qualified field (COUNT(*) OVER ()), less hidden campaigns on this page.
+      const fieldSize = Math.max(items.length, fieldCount - (loaded - items.length));
+      items = items.map(({ field_count: _fieldCount, ...row }) => row);
+      const prize = pokerPrizeForField(prizeForCategory, pokerPaidPlaces(fieldSize, periodNorm), fieldSize);
       const allowPageWrite = String(process.env.LEAGUE_PAGE_WRITE_WINNERS || "").trim() === "1";
       if (!epoch.isLive && epochStartIso && allowPageWrite) {
         const persistPrize = {
-          ...(prizeForCategory || {}),
+          ...(prize || {}),
           protocolFeeBps: prizeMeta?.protocolFeeBps,
           leagueFeeBps: prizeMeta?.leagueFeeBps,
           totalLeagueFeeRaw: prizeMeta?.totalLeagueFeeRaw,
@@ -1066,7 +1083,7 @@ export default async function handler(req, res) {
         if (frozen?.items?.length) {
           return json(res, 200, {
             items: frozen.items,
-            prize: prizeForCategory,
+            prize,
             epoch: { ...epochMeta, status: "finalized", source: frozen.source },
             stats,
             finalized: true,
@@ -1076,7 +1093,7 @@ export default async function handler(req, res) {
       }
       return json(res, 200, {
         items,
-        prize: prizeForCategory,
+        prize,
         epoch: epoch.isLive ? epochMeta : { ...epochMeta, status: "pending_finalization", source: "live_estimate" },
         stats,
         finalized: false,
@@ -1136,7 +1153,7 @@ export default async function handler(req, res) {
             AND ($2::timestamptz IS NULL OR c.graduated_at_chain >= $2::timestamptz)
             AND ($3::timestamptz IS NULL OR c.graduated_at_chain < $3::timestamptz)
         )
-        SELECT *
+        SELECT *, COUNT(*) OVER () AS field_count
         FROM grads
         WHERE unique_buyers >= $5::int
         ORDER BY duration_seconds ASC NULLS LAST, graduated_at_chain ASC
@@ -1154,7 +1171,7 @@ export default async function handler(req, res) {
     if (category === "perfect_run") {
       // Locked rule: monthly only. If caller asks weekly/all-time, respond empty.
       if (periodNorm !== "monthly") {
-        return json(res, 200, { items: [], warning: "perfect_run is monthly only", prize: prizeForCategory, epoch: epochMeta, stats });
+        return json(res, 200, { items: [], warning: "perfect_run is monthly only", prize: pokerPrizeForField(prizeForCategory, 0, 0), epoch: epochMeta, stats });
       }
 
       const params = [chainId, epochStartIso, rangeEndIso, limit];
@@ -1211,7 +1228,7 @@ export default async function handler(req, res) {
                 AND (c.graduated_block IS NULL OR t.block_number <= c.graduated_block)
             )
         )
-        SELECT *
+        SELECT *, COUNT(*) OVER () AS field_count
         FROM qualified
         ORDER BY buy_total_raw DESC, unique_buyers DESC, duration_seconds ASC
         LIMIT $4
@@ -1268,6 +1285,7 @@ export default async function handler(req, res) {
             AND (c.graduated_block IS NULL OR c.graduated_block = 0 OR t.block_number <= c.graduated_block)
         )
         SELECT
+          COUNT(*) OVER () AS field_count,
           chain_id,
           campaign_address,
           name,
@@ -1321,6 +1339,7 @@ export default async function handler(req, res) {
           GROUP BY v.chain_id, v.campaign_address
         )
         SELECT
+          COUNT(*) OVER () AS field_count,
           a.chain_id,
           a.campaign_address,
           c.name,
@@ -1363,7 +1382,7 @@ export default async function handler(req, res) {
         return json(res, 200, {
           items: [],
           warning: "top_earner is paid weekly/monthly only",
-          prize: prizeForCategory,
+          prize: pokerPrizeForField(prizeForCategory, 0, 0),
           epoch: epochMeta,
           stats,
         });
@@ -1413,7 +1432,7 @@ export default async function handler(req, res) {
             sell_trades
           FROM agg
         )
-        SELECT wallet, profit_raw, sells_raw, buys_raw, trades_count
+        SELECT wallet, profit_raw, sells_raw, buys_raw, trades_count, COUNT(*) OVER () AS field_count
         FROM calc
         WHERE sell_trades > 0 OR profit_raw > 0
         ORDER BY profit_raw DESC, sells_raw DESC, trades_count DESC, wallet ASC
@@ -1429,7 +1448,7 @@ export default async function handler(req, res) {
       });
     }
 
-    return json(res, 200, { items: [], prize: prizeForCategory, epoch: epochMeta, stats });
+    return json(res, 200, { items: [], prize: pokerPrizeForField(prizeForCategory, 0, 0), epoch: epochMeta, stats });
   } catch (e) {
     // If the DB schema hasn't been migrated yet, avoid breaking the UI with 500s.
     const code = e?.code;

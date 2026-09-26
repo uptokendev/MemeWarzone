@@ -324,7 +324,9 @@ pub mod mwz_rewards_treasury {
     ) -> Result<()> {
         require!(ctx.accounts.config.claims_enabled, TreasuryError::ClaimsDisabled);
         require!(is_league_period(period), TreasuryError::InvalidPeriod);
-        require!(rank >= 1 && rank <= 5, TreasuryError::InvalidRank);
+        // Poker payout: up to 15% of the field is paid, so any u8 rank 1..=255 (the type is the cap).
+        // One receipt PDA per rank keeps each place single-use; the epoch budget bounds the total.
+        require!(rank >= 1, TreasuryError::InvalidRank);
         require!(amount_lamports > 0, TreasuryError::InvalidAmount);
 
         let epoch = &ctx.accounts.league_epoch;

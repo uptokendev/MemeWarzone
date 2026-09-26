@@ -93,6 +93,12 @@ export async function persistFinalizedCategory(pool, {
   prize,
 }) {
   if (!pool || !epochStartIso || !Array.isArray(rows) || !rows.length) return 0;
+  // Poker payouts (2026-09-26) are sized from the WHOLE qualified field, which only the settlement
+  // job (realtime-indexer finalizeEpochWinners) reads; the page sees 10-50 rows, and its old fixed
+  // split paid a weekly winner 40% of the pot. The page never freezes winners any more.
+  console.warn("[league] page-write of winners is disabled; finalizeEpochWinners settles poker payouts", { chainId, period, category });
+  return 0;
+  // eslint-disable-next-line no-unreachable
   const ranks = wantRanks(period);
   const pot = prize?.availablePotRaw || prize?.potRaw || "0";
   const payouts = Array.isArray(prize?.availablePayoutsRaw) && prize.availablePayoutsRaw.length

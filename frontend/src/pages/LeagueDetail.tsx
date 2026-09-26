@@ -53,7 +53,7 @@ type PrizeMeta = {
   winners: number;
   splitBps: number[];
   potRaw: string;
-  payoutsRaw: [string, string, string, string, string];
+  payoutsRaw: string[];
 };
 
 type EpochMeta = {
@@ -527,14 +527,21 @@ useEffect(() => {
                     <div className="text-[11px] text-muted-foreground">{periodLabel(effectivePeriod)}</div>
                   </div>
 
-                  <div className={"mt-2 grid gap-x-4 gap-y-1 text-[11px] " + (effectivePeriod === "weekly" ? "grid-cols-1" : "grid-cols-2 sm:grid-cols-5")}>
-                    {Array.from({ length: effectivePeriod === "weekly" ? 1 : 5 }).map((_, i) => (
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-5">
+                    {(prize?.payoutsRaw ?? []).slice(0, 5).map((amount, i) => (
                       <div key={i}>
                         <span className="text-muted-foreground">#{i + 1}</span>{" "}
-                        <span className="font-semibold">{formatBnbFromRaw(prize?.payoutsRaw?.[i] ?? "0")}</span>
+                        <span className="font-semibold">{formatBnbFromRaw(amount ?? "0")}</span>
                       </div>
                     ))}
                   </div>
+                  {(prize?.payoutsRaw?.length ?? 0) > 5 ? (
+                    <div className="mt-1 text-[10px] text-muted-foreground">
+                      +{(prize?.payoutsRaw?.length ?? 0) - 5} more paid places · {prize?.payoutsRaw?.length} paid in total
+                    </div>
+                  ) : !(prize?.payoutsRaw?.length) ? (
+                    <div className="mt-1 text-[10px] text-muted-foreground">Paid places open up as entrants qualify.</div>
+                  ) : null}
 
                   <div className="mt-2 text-[10px] text-muted-foreground">
                     {epochInfo ? formatEpochRangeUtc(epochInfo) : ""}

@@ -293,6 +293,54 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     assert.equal(BigInt((await program.account.leagueEpoch.fetch(leagueEpoch)).claimedLamports.toString()), total, "the epoch is fully claimed");
   });
 
+  it("league poker payout: a 1000-entrant field pays 150 places, and the last place claims on chain", async function () {
+    const poker = await import("../../frontend/shared/pokerPayout.mjs");
+    const pot = 1_000_000_000n;
+    const payouts = poker.pokerPayoutForField(pot, 1000, "weekly");
+    assert.equal(payouts.length, 150, "15% of 1000 entrants are paid");
+    assert.equal(payouts.reduce((a, b) => a + b, 0n), pot, "the whole pot is split, to the lamport");
+    assert.equal(poker.pokerPayoutForField(pot, 5000, "monthly").length, 255, "capped at the u8 rank");
+
+    const epochStart = Math.floor(Date.now() / 1000) - 21 * 24 * 3600;
+    const categoryHash = keccak(Buffer.from("top_earner", "utf8"));
+    const lastRank = payouts.length;
+    const first = Keypair.generate();
+    const last = Keypair.generate();
+    await fund(first.publicKey, 1);
+    await fund(last.publicKey, 1);
+    const recipients = payouts.map((_, i) => (i === 0 ? first.publicKey : i === lastRank - 1 ? last.publicKey : Keypair.generate().publicKey));
+    const leaves = payouts.map((amount, i) =>
+      leagueLeaf({ epochStart, period: PERIOD_WEEKLY, categoryHash, rank: i + 1, winner: recipients[i], amount }),
+    );
+    const root = buildRoot(leaves);
+
+    await program.methods.depositLeague(new BN((2n * pot).toString()))
+      .accountsStrict({ payer: authority, leagueVault: pdas.leagueVault, systemProgram: SystemProgram.programId })
+      .rpc({ commitment: "confirmed" });
+    const leagueEpoch = pda("league_epoch", Buffer.from([PERIOD_WEEKLY]), i64le(epochStart));
+    await program.methods.setLeagueEpochRoot(PERIOD_WEEKLY, new BN(epochStart), arr32(root), new BN(pot.toString()))
+      .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.leagueVault, leagueEpoch, systemProgram: SystemProgram.programId })
+      .rpc({ commitment: "confirmed" });
+
+    const claim = (index, signer, rank = index + 1) =>
+      program.methods
+        .claimLeague(PERIOD_WEEKLY, new BN(epochStart), arr32(categoryHash), rank, new BN(payouts[index].toString()), proofArg(buildProof(leaves, index)))
+        .accountsStrict({
+          winner: signer.publicKey, config: pdas.config, leagueVault: pdas.leagueVault, leagueEpoch,
+          claimReceipt: pda("league_claim", Buffer.from([PERIOD_WEEKLY]), i64le(epochStart), categoryHash, Buffer.from([rank])),
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([signer])
+        .rpc({ commitment: "confirmed" });
+
+    await expectFail(claim(lastRank - 1, last, 0), /InvalidRank|custom program error/i, "rank 0");
+    const vaultBefore = await lamports(pdas.leagueVault);
+    await claim(lastRank - 1, last);
+    await claim(0, first);
+    assert.equal(vaultBefore - (await lamports(pdas.leagueVault)), payouts[0] + payouts[lastRank - 1], "rank 1 and rank 150 paid exactly their leaves");
+    await expectFail(claim(lastRank - 1, last), /already in use|custom program error|0x0\b/i, "rank 150 twice");
+  });
+
   it("airdrop: pays proven winners once and refuses a batch past its deadline", async function () {
     const epochId = 64;
     const amounts = [150_000_000n, 250_000_000n];

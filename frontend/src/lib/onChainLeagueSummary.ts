@@ -5,12 +5,12 @@ import { type SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import type { LeaguePeriod } from "@/lib/leagues";
 import type { LeaguePrizeMeta, LeagueSummaryCard } from "@/lib/leagueApi";
+import { pokerPaidPlaces, pokerSplitRaw } from "../../shared/pokerPayout.mjs";
 
 const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
 const MAX_CAMPAIGNS = 100;
 const LOOKBACK_BLOCKS = 50_000;
 const LOG_CHUNK_SIZE = 700;
-const MONTHLY_SPLIT_BPS = [4000n, 2500n, 1500n, 1200n, 800n] as const;
 
 type CampaignMeta = {
   campaign: string;
@@ -46,9 +46,10 @@ function toRaw(value: bigint) {
   return value > 0n ? value.toString() : "0";
 }
 
-function splitPayouts(period: LeaguePeriod, potRaw: bigint): string[] {
-  if (period === "weekly") return [toRaw(potRaw), "0", "0", "0", "0"];
-  return MONTHLY_SPLIT_BPS.map((bps) => toRaw((potRaw * bps) / 10_000n));
+// Poker payout, the settlement job's rule (shared/pokerPayout.mjs). The fallback has no per-category
+// field, so the campaigns that traded this epoch stand in for it.
+function splitPayouts(potRaw: bigint, places: number): string[] {
+  return pokerSplitRaw(potRaw, places).map((x: bigint) => toRaw(x));
 }
 
 function addWei(map: Map<string, bigint>, key: string, delta: bigint) {
@@ -163,17 +164,19 @@ export async function fetchOnChainLeagueSummary(chainId: SupportedChainId, perio
 
   const nowIso = new Date().toISOString();
   const potRaw = totalLeagueFeeRaw;
+  const paidPlaces = pokerPaidPlaces(activeCampaigns, period);
+  const payoutsRaw = splitPayouts(potRaw, paidPlaces);
   const prize: LeaguePrizeMeta = {
     basis: "onchain_live_campaign_counters",
     period,
     computedAt: nowIso,
     totalLeagueFeeRaw: toRaw(totalLeagueFeeRaw),
     leagueCount: activeCampaigns,
-    winners: period === "weekly" ? 1 : 5,
-    splitBps: period === "weekly" ? [10_000] : [4000, 2500, 1500, 1200, 800],
+    winners: paidPlaces,
+    splitBps: payoutsRaw.map((x) => (potRaw > 0n ? Number((BigInt(x) * 10_000n) / potRaw) : 0)),
     potRaw: toRaw(potRaw),
     availablePotRaw: toRaw(potRaw),
-    payoutsRaw: splitPayouts(period, potRaw),
+    payoutsRaw,
     warning: "Live on-chain fallback until the league indexer catches up.",
   };
 

@@ -1361,6 +1361,20 @@ pins both. Verified live: KAIJU88 17 trades after redeploy.
   EVM funds with the vault's `airdropOperator` key, bounded by Safe-pre-authorized deterministic batch
   ids (`scripts/make-airdrop-setup-calls.mjs`). Front-page strip behind `VITE_AIRDROP_STRIP_ENABLED`.
 
+### League payouts are poker-style everywhere (2026-09-26)
+
+Founder: "if 100 participants are in and only 1 gets paid we have got a problem." One rule for
+pre-grad weekly/monthly, MWL monthly and the quarterly finals, all chains:
+paid places = min(field, 255, max(3 weekly / 5 otherwise, floor(15% of field))), weights
+1/rank^0.72, exact integer split, remainder to rank 1. Source: `realtime-indexer/src/rewards/pokerPayout.ts`
+(settlement, `finalizeEpochWinners.ts`) mirrored in `frontend/shared/pokerPayout.mjs` (league page,
+on-chain fallback); a parity test pins them. The page counts the whole field with
+`COUNT(*) OVER ()`, not the loaded rows. `LEAGUE_PAGE_WRITE_WINNERS` page-writes are disabled: only the
+job writes winners. **Solana `claim_league` took ranks 1..=5 only** -- raised to 1..=255 in treasury
+candidate `b09d2b1a…` (1394040 B, extend +87400, gate 18/18), which supersedes the unstaged `e996ba88…`.
+Safe by construction: the indexer posts roots only via `post_league_epoch_root`, which ships in the same
+upgrade, so no poker root can reach a program that caps ranks at 5. Never post one with the authority key.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and

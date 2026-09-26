@@ -150,7 +150,7 @@ export function calculatePaidPlaces(qualifiedEntrants: number, policy: LeaguePay
   if (entrants <= 0) return 0;
   // Never invent more paid places than actual entrants (was forcing Rank #2–#5 with 1 entrant).
   const target = Math.max(policy.minWinners, Math.floor(entrants * policy.paidFieldPct));
-  return Math.min(entrants, target);
+  return Math.min(entrants, 255, target); // 255: the claim rails' u8 rank
 }
 
 export function calculatePayoutCurve(qualifiedEntrants: number, prizePoolUsd: number, policy: LeaguePayoutPolicy) {

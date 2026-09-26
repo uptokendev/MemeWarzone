@@ -16,7 +16,8 @@ export function getPayoutPolicy(period = "weekly", paidFieldPct = DEFAULT_PAID_F
 export function calculatePaidPlaces(qualifiedEntrants, policy) {
   const entrants = Math.max(0, Math.floor(Number(qualifiedEntrants) || 0));
   if (entrants <= 0) return 0;
-  return Math.max(policy.minWinners, Math.floor(entrants * policy.paidFieldPct));
+  // Poker rule (shared/pokerPayout.mjs): never more places than entrants, at most 255 (u8 claim rank).
+  return Math.min(entrants, 255, Math.max(policy.minWinners, Math.floor(entrants * policy.paidFieldPct)));
 }
 
 export function calculatePayoutCurve(qualifiedEntrants, prizePoolUsd, policy) {
