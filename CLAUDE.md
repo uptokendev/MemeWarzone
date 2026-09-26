@@ -1398,6 +1398,20 @@ recruiter vault and `recruiter_reward_ledger` held only test rows. Fixed end to 
   exporter refuses a batch the vault cannot fully pay). BNB/Robinhood pay at claim time from
   `RecruiterRewardsVault.payout` with `RECRUITER_PAYOUT_OPERATOR_PK`; the Safe must set operator, caps
   and unpause (BNB vault read 2026-09-26: operator 0, paused, caps 0). Testnet rows hidden on mainnet.
+
+### BNB / Robinhood payouts switched on (P1 Safe batches, 2026-09-26)
+
+Executed by the Safe: BNB `0xea53dd71…` (block 124206760), Robinhood `0xde938316…` (block 73377091).
+One operator EOA `0xdcf07EB07e6D6722c246161e7530dc905F9eaA50` (key
+`~/.config/memewarzone/mwz-evm-payout-operator.json`) holds three narrow roles on both chains:
+recruiter vault operator (unpaused; caps 2/10 BNB, 0.5/3 ETH), weekly + monthly league `rootPoster`
+(weekly claim caps 5/10 BNB, 1.5/3 ETH), and `airdropOperator` on the new `RewardDistributor`
+(BNB `0xF170a2C9…`, RH `0x2ABd8970…`, owner Safe, batchOperator = community vault). Read back from
+chain. Robinhood's vaults need Safe pre-authorization per epoch/month/batch: 12 weeks from 2026-09-21
+(max 3 ETH each, publish from the following Monday), month 202609 (max 12 ETH, from 2026-10-01), and
+airdrop batches (`batchAuthorization(bytes32)`, max 1.5 ETH) — all verified. BNB's first-generation
+league vaults have no authorization step. **The operator starts with 0 gas on both chains** — fund it
+(~0.01 BNB, ~0.003 ETH) before the first root post or payout.
 - **Recruiter League is a prize league** (league fee, poker, last category so dust positions hold).
   Score basis is now identical in job and board: traded volume on every chain (the board had used the
   routed FEE as EVM volume, ~50x skew vs Solana), earnings = chain slices, USD frozen at settlement,
