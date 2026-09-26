@@ -1,0 +1,9 @@
+{
+  "chainId": 4663,
+  "address": "0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D",
+  "owner": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "deployTx": "0x9a66864ad83b9836333e170b146912e0ba9dd4bcae60a080c05d74179e2f4dd9",
+  "deployedAt": "2026-09-26T20:25:02.704Z",
+  "runtimeBytes": 4289,
+  "artifactBytecodeBytes": 4508
+}
