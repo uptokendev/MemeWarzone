@@ -736,26 +736,29 @@ const TokenDetails = () => {
     [chainIdForStorage, isSolanaPage],
   );
 
+  // Follow with the wallet of this coin's chain: Phantom on Solana pages, the EVM wallet elsewhere.
+  // Using the EVM account alone sent a connected Phantom user to the connect modal (2026-09-28).
+  const followWallet = isSolanaPage ? (isSolanaConnected ? String(solanaAccount || "") : "") : String(wallet.account || "");
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        if (!wallet.account || !campaignAddr) {
+        if (!followWallet || !campaignAddr) {
           if (alive) setIsFollowing(false);
           return;
         }
-        const v = await isFollowingCampaign(wallet.account, campaignAddr, chainIdForStorage);
+        const v = await isFollowingCampaign(followWallet, campaignAddr, chainIdForStorage);
         if (alive) setIsFollowing(!!v);
       } catch {
         if (alive) setIsFollowing(false);
       }
     })();
     return () => { alive = false; };
-  }, [wallet.account, campaignAddr, chainIdForStorage]);
+  }, [followWallet, campaignAddr, chainIdForStorage]);
 
   const toggleFollow = async () => {
     if (!campaignAddr) return;
-    if (!wallet.account) {
+    if (!followWallet) {
       toast({ title: "Connect wallet", description: "Connect your wallet to follow campaigns." });
       try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch {}
       return;
@@ -766,8 +769,8 @@ const TokenDetails = () => {
     setIsFollowing(next);
     try {
       const signOpts = { signer: wallet.signer };
-      if (next) await followCampaign(wallet.account, campaignAddr, chainIdForStorage, signOpts);
-      else await unfollowCampaign(wallet.account, campaignAddr, chainIdForStorage, signOpts);
+      if (next) await followCampaign(followWallet, campaignAddr, chainIdForStorage, signOpts);
+      else await unfollowCampaign(followWallet, campaignAddr, chainIdForStorage, signOpts);
     } catch (e: any) {
       setIsFollowing(!next);
       toast({ title: "Follow failed", description: String(e?.message ?? e ?? "Unknown error") });

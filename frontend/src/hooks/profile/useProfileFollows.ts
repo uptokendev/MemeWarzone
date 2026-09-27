@@ -18,6 +18,7 @@ import {
 } from "@/lib/draftApi";
 import { formatTimeAgo } from "@/lib/profile/profileFormatters";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
+import { fetchArenaTokenProfile } from "@/lib/arenaImports";
 import { getActiveChainId } from "@/lib/chainConfig";
 
 type FetchCampaigns = () => Promise<any[]>;
@@ -187,6 +188,28 @@ useEffect(() => {
           };
         });
 
+      // Followed imported coins are not launched campaigns, so the campaign list above never matches
+      // them; resolve them as imports (original address case: Solana mints are case-sensitive).
+      const matched = new Set(wanted.map((c) => String((c as any).campaignAddress ?? (c as any).campaign ?? "").toLowerCase()));
+      const unmatched = (followedCampaigns || []).map((a) => String(a || "").trim()).filter((a) => a && !matched.has(a.toLowerCase()));
+      const importProfiles = await Promise.allSettled(unmatched.map((a) => fetchArenaTokenProfile(a, resolvedChainId)));
+      if (cancelled) return;
+      const importCards = importProfiles
+        .map((r, i) => (r.status === "fulfilled" && r.value && r.value.origin === "import" ? { profile: r.value, address: unmatched[i] } : null))
+        .filter((x): x is { profile: NonNullable<Awaited<ReturnType<typeof fetchArenaTokenProfile>>>; address: string } => Boolean(x))
+        .map(({ profile, address }, idx) => ({
+          kind: "campaign",
+          id: `import-${idx}-${address}`,
+          image: profile.imageUrl || "/placeholder.svg",
+          name: profile.name || address,
+          ticker: profile.symbol || "",
+          campaignAddress: address,
+          href: `/token/${address}?chainId=${resolvedChainId}`,
+          marketCap: profile.marketCapUsd != null ? `$${Number(profile.marketCapUsd).toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "—",
+          timeAgo: "Imported",
+          chainId: resolvedChainId,
+        }));
+
       const draftCards = (followedDrafts || []).map((draft) => ({
         kind: "draft",
         id: `draft-${draft.id}`,
@@ -205,7 +228,7 @@ useEffect(() => {
           : "",
       }));
 
-      setFollowedCards([...draftCards, ...liveCards]);
+      setFollowedCards([...draftCards, ...liveCards, ...importCards]);
     } catch (e) {
       console.error("[Profile] Failed to load followed campaigns", e);
       if (!cancelled) setFollowedCards([]);
