@@ -1435,6 +1435,15 @@ prices every payout bound on both chains in dollars and fails outside $1..$1M --
 deploy or Safe batch that sets a cap. After M2: the new addresses go into `league.js`,
 `evmLeagueClaimVerification.js` and `publish-evm-league-roots.mjs`.
 
+### Solana battle resolver never resolved anything (fixed 2026-09-27, `e61d7d40`)
+
+`arena-operator-worker.mjs` validated `arena_config` without an environment/cluster, so every mainnet
+resolve returned `config-unreadable` -- the API probe's 2026-09-22 bug, in the worker. The worker now
+**requires `SOLANA_CLUSTER=mainnet-beta`** (on the resolve-due service too). First battle
+`arena-mugwhj11-9b1973` (ASK won; resolve deadline 2026-09-28 12:29 UTC, after which only
+`settle_expired_pool` refunds are possible). Stale test: `arena-operator-resolve.test.mjs` imports the
+removed `buildArenaCancelInstructions`.
+
 ### Airdrop: 60-day claim window, unclaimed rolls back into the pot (founder, 2026-09-27)
 
 `AIRDROP_CLAIM_WINDOW_DAYS=60`, `AIRDROP_WEEKLY_DISTRIBUTION_BPS=10000` + `AIRDROP_ALLOW_FULL_VAULT_DISTRIBUTION=true`
