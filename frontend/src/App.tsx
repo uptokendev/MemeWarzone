@@ -30,6 +30,7 @@ import ProjectImport from "./pages/ProjectImport";
 import SponsorshipApplication from "./pages/SponsorshipApplication";
 import ProfilePage from "./pages/ProfilePage";
 import TokenDetailsEntry from "./pages/TokenDetailsEntry";
+import StoryPage from "./pages/StoryPage";
 import { RouteErrorBoundary } from "@/components/app/RouteErrorBoundary";
 import Playbook from "@/pages/Playbook";
 import Prepare from "./pages/Prepare";
@@ -261,6 +262,7 @@ function AppShellLayout({
           <Route path="/squad-dashboard" element={<LegacyCommandCenterRedirect section="squad" />} />
           <Route path="/r/:code" element={<RecruiterReferral />} />
           <Route path="/token/:campaignAddress" element={<ScheduledTokenAccessRoute><TokenDetailsEntry /><TokenSafetyRouteOverlay /></ScheduledTokenAccessRoute>} />
+          <Route path="/story/:chainId/:token" element={<StoryPage />} />
           <Route path="/playbook" element={<Playbook />} />
           <Route path="/docs" element={<Playbook />} />
           <Route path="/status" element={<Status />} />

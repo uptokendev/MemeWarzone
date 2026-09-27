@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Copy, Edit3, Flag, ImagePlus, Loader2, SearchCheck, Share2, ShieldCheck, Star, Swords } from "lucide-react";
 import { toast } from "sonner";
 
+import { StoryEnterButton } from "@/components/story/StoryEnterButton";
 import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { ImportedTradesTable } from "@/components/arena/ImportedTradesTable";
@@ -44,6 +45,7 @@ import { updateProjectImportProfile, uploadProjectImportImage, type ProjectImpor
 import { signSolanaMessage } from "@/lib/solanaWallet";
 import { signWalletAction } from "@/lib/walletActionAuth";
 import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
+import { useStory } from "@/lib/story/storyApi";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
@@ -151,6 +153,7 @@ export default function ImportedTokenPage({
   const [activityTab, setActivityTab] = useState<"chart" | "trades" | "comments">("chart");
   const [challengeOpen, setChallengeOpen] = useState(false);
   const { price: nativeUsd } = useNativeUsdPrice(item.chainId);
+  const { story } = useStory(item.chainId, item.tokenAddress);
 
   useEffect(() => {
     setItem(initialItem);
@@ -431,6 +434,7 @@ export default function ImportedTokenPage({
             <Button type="button" variant="secondary" size="icon" className="h-8 w-8 rounded-xl" onClick={() => void toggleFollow()} disabled={followBusy || !connectedWallet} aria-label={following ? "Unfollow" : "Follow"}>
               <Star className={following ? "text-accent fill-accent" : "text-muted-foreground/70"} />
             </Button>
+            {story ? <StoryEnterButton story={story} /> : null}
             <Button type="button" variant="outline" size="sm" onClick={() => void share()} data-project-share="true"><Share2 className="mr-2 h-4 w-4" />SHARE</Button>
             <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-[11px] text-muted-foreground">
               <Link to={buildAbuseReportPath({ entityType: "token", reportedTokenAddress: item.tokenAddress, reportedWallet: ownerWallet, reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${item.tokenAddress}` })}>
