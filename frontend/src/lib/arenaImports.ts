@@ -120,6 +120,24 @@ export async function fetchArenaTokenProfile(tokenAddress: string, chainId: numb
   return json?.profile || null;
 }
 
+export type ArenaImportCandleResponse = {
+  items: Array<{ bucket_start: string; o: string; h: string; l: string; c: string; mcap_o: string | null; mcap_h: string | null; mcap_l: string | null; mcap_c: string | null; volume_usd: string; trades_count: number }>;
+  resolution: string;
+  unit: "usd";
+  pairAddress: string | null;
+  reason?: string;
+  stale?: boolean;
+  rateLimited?: boolean;
+};
+
+/** USD candles from the import's own DEX pool (GeckoTerminal via our API; cached and rate-capped there). */
+export async function fetchArenaImportCandles(tokenAddress: string, chainId: number, resolution: string, signal?: AbortSignal): Promise<ArenaImportCandleResponse | null> {
+  const params = new URLSearchParams({ token: tokenAddress, chainId: String(chainId), resolution });
+  const res = await apiFetch(`/api/arena/imports/candles?${params.toString()}`, { cache: "no-store", signal });
+  if (!res.ok) return null;
+  return (await readJson(res)) as ArenaImportCandleResponse;
+}
+
 export async function uploadArenaImportImage(input: {
   item: ArenaImportItem;
   file: File;

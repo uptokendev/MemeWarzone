@@ -12,6 +12,8 @@ import {
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { evaluateImportedCompetitionEligibility, loadImportedCompetitionEligibility } from "./lib/arenaImportEligibility.js";
 import { getArenaTokenProfile } from "./lib/arenaTokenProfile.js";
+import { IMPORT_CANDLE_TIMEFRAMES, createCandleSource, impliedSupply, toCandleRows } from "./lib/arenaImportCandles.js";
+import { dexScreenerChainSlug, fetchDexScreenerPairs, geckoTerminalNetwork, pickDeepestPair } from "./lib/arenaImportMarketFeed.js";
 
 function ident(value, chainId) {
   const raw = String(value || "").trim();
@@ -153,6 +155,61 @@ async function handleProfile(req, res) {
     : json(res, 404, { error: "Arena token profile not found" });
 }
 
+const candleSource = createCandleSource();
+const PAIR_LOOKUP_TTL_MS = 10 * 60_000;
+const pairLookups = new Map();
+
+/** The import's deepest pool: the feed's stored pair, else one cached DexScreener lookup. Imports only. */
+async function importPool(chainId, token) {
+  const { rows } = await pool.query(
+    `select i.token_address, s.pair_address, s.market_cap_usd, s.price_usd
+       from public.arena_token_imports i
+       left join public.arena_import_market_stats s on s.chain_id = i.chain_id and s.token_address = i.token_address
+      where i.chain_id = $1 and ${isSolanaChain(chainId) ? "i.token_address = $2" : "lower(i.token_address) = lower($2)"}
+      limit 1`,
+    [chainId, token],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const tokenAddress = String(row.token_address);
+  if (row.pair_address) {
+    return { tokenAddress, pairAddress: String(row.pair_address), marketCapUsd: row.market_cap_usd, priceUsd: row.price_usd };
+  }
+  const key = `${chainId}:${tokenAddress}`;
+  const hit = pairLookups.get(key);
+  if (hit && Date.now() - hit.at < PAIR_LOOKUP_TTL_MS) return hit.value;
+  const slug = dexScreenerChainSlug(chainId);
+  const market = slug ? pickDeepestPair(chainId, tokenAddress, await fetchDexScreenerPairs(slug, [tokenAddress]).catch(() => [])) : null;
+  const value = market?.pairAddress ? { tokenAddress, pairAddress: market.pairAddress, marketCapUsd: market.marketCapUsd, priceUsd: market.priceUsd } : { tokenAddress, pairAddress: null };
+  pairLookups.set(key, { at: Date.now(), value });
+  return value;
+}
+
+/** GET /arena/imports/candles?chainId&token&resolution -- USD candles from the import's own DEX pool. */
+async function handleCandles(req, res) {
+  const query = getQuery(req);
+  const chainId = Number(query.chainId || 0);
+  const token = ident(query.token || query.tokenAddress, chainId);
+  const resolution = String(query.resolution || query.tf || "1h");
+  if (!token || !chainId) return json(res, 400, { error: "chainId and token are required", code: "IMPORT_IDENTITY_REQUIRED" });
+  if (!IMPORT_CANDLE_TIMEFRAMES[resolution]) {
+    return json(res, 400, { error: `resolution must be one of ${Object.keys(IMPORT_CANDLE_TIMEFRAMES).join(", ")}`, code: "IMPORT_CANDLE_RESOLUTION" });
+  }
+  const network = geckoTerminalNetwork(chainId);
+  if (!network) return json(res, 400, { error: "No chart source for this chain", code: "IMPORT_CANDLE_CHAIN" });
+  const found = await importPool(chainId, token);
+  if (!found) return json(res, 404, { error: "Import not found", code: "IMPORT_NOT_FOUND" });
+  const base = { resolution, unit: "usd", source: "geckoterminal", pairAddress: found.pairAddress };
+  if (!found.pairAddress) return json(res, 200, { ...base, items: [], reason: "NO_POOL" });
+  try {
+    const result = await candleSource.bars({ network, pairAddress: found.pairAddress, tokenAddress: found.tokenAddress, resolution });
+    const items = toCandleRows(result.bars, impliedSupply(found.marketCapUsd, found.priceUsd, result.bars));
+    return json(res, 200, { ...base, items, stale: result.stale, rateLimited: result.rateLimited });
+  } catch (error) {
+    return json(res, 502, { ...base, items: [], error: "Chart source unavailable", detail: String(error?.message || error) });
+  }
+}
+
 async function handleRequestReview(req, res, id) {
   const body = await readJson(req);
   const row = await findById(id);
@@ -191,6 +248,7 @@ export default async function handler(req, res) {
     if (method === "GET" && path === "/arena/imports/lookup") return handleLookup(req, res);
     if (method === "GET" && path === "/arena/imports/eligibility") return handleEligibility(req, res);
     if (method === "GET" && path === "/arena/imports/profile") return handleProfile(req, res);
+    if (method === "GET" && path === "/arena/imports/candles") return handleCandles(req, res);
     const review = path.match(/^\/arena\/imports\/([^/]+)\/request-review$/);
     if (review) return method === "POST" ? handleRequestReview(req, res, decodeURIComponent(review[1])) : badMethod(res);
     return json(res, 404, { error: `Unknown arena imports route: ${path}` });

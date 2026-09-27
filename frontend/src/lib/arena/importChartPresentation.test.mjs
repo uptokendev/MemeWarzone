@@ -30,3 +30,26 @@ test("admission pill maps scan status for the token header", () => {
   assert.equal(admissionPill("declined").label, "Arena: declined");
   assert.equal(admissionPill("scanning").label, "Arena: scanning");
 });
+
+test("import candles (USD) become native rows the chart multiplies back to exactly the same USD", async () => {
+  const { importUsdCandlesToChart, clampImportResolution } = await import("./importChartPresentation.mjs");
+  const usd = [
+    { bucket_start: "2026-09-27T00:00:00.000Z", o: "0.00006", h: "0.00007", l: "0.00005", c: "0.000064", mcap_o: "57600", mcap_h: "67200", mcap_l: "48000", mcap_c: "61440", volume_usd: "24" },
+    { bucket_start: "2026-09-28T00:00:00.000Z", o: "0", h: "1", l: "1", c: "1", mcap_o: null, mcap_h: null, mcap_l: null, mcap_c: null, volume_usd: "1" },
+  ];
+  const rows = importUsdCandlesToChart(usd, 200);
+  assert.equal(rows.length, 1, "a bar with a zero price is dropped, never drawn");
+  assert.ok(Math.abs(Number(rows[0].c) * 200 - 0.000064) < 1e-15);
+  assert.ok(Math.abs(Number(rows[0].mcap_c) * 200 - 61440) < 1e-9);
+  assert.equal(rows[0].trades_count, 1);
+  assert.equal(rows[0].price_c, rows[0].c);
+  assert.deepEqual(importUsdCandlesToChart(usd, 0), [], "no native/USD rate: nothing to draw");
+  assert.equal(clampImportResolution("1s"), "1m");
+  assert.equal(clampImportResolution("4h"), "4h");
+  assert.equal(clampImportResolution("bogus"), "1h");
+});
+
+test("empty chart note distinguishes loading, no pool and not yet indexed", () => {
+  assert.equal(presentImportChart({}, [], 101, "M", { loading: true }).emptyNote, null);
+  assert.equal(presentImportChart({}, [], 101, "M", { reason: "NO_POOL" }).emptyNote, "No DEX pool found for this token yet");
+});

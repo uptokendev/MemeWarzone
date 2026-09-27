@@ -8,7 +8,7 @@ import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { TokenComments } from "@/components/token/TokenComments";
 import { TokenWarRoom } from "@/components/token/TokenWarRoom";
-import { UnifiedMarketChart } from "@/components/token/UnifiedMarketChart";
+import { UnifiedMarketChart, type UnifiedChartResolution } from "@/components/token/UnifiedMarketChart";
 import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
 import { CrypticPumpBadge, CrypticPumpListButton, fetchCrypticPumpListing, type CrypticPumpListingData } from "@/components/token/CrypticPumpListing";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -22,19 +22,22 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
 import { postGradFlags } from "@/features/postgrad/config";
 import { buildAbuseReportPath } from "@/lib/abuseReportLink";
-import { fetchArenaTokenProfile, requestArenaImportReview, type ArenaImportItem } from "@/lib/arenaImports";
+import { fetchArenaImportCandles, fetchArenaTokenProfile, requestArenaImportReview, type ArenaImportCandleResponse, type ArenaImportItem } from "@/lib/arenaImports";
 import {
   canRequestImportManualReview,
   presentImportCompetitionEligibility,
 } from "@/lib/arena/importAuditPresentation.mjs";
 import {
+  IMPORT_CHART_DEFAULT_RESOLUTION,
   admissionPill,
+  clampImportResolution,
   importTradingBlocked,
+  importUsdCandlesToChart,
   presentImportChart,
 } from "@/lib/arena/importChartPresentation.mjs";
 import { SOLANA_CHAIN_ID, getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
 import { followCampaign, isFollowingCampaign, unfollowCampaign } from "@/lib/followApi";
-import { fetchMarketCandles, fetchMarketTrades, type MarketCandle, type MarketTrade } from "@/lib/marketContinuityApi";
+import { fetchMarketTrades, type MarketTrade } from "@/lib/marketContinuityApi";
 import { fetchUserProfile, type UserProfile } from "@/lib/profileApi";
 import { getExplorerBase } from "@/lib/profile/profileFormatters";
 import { updateProjectImportProfile, uploadProjectImportImage, type ProjectImportItem } from "@/lib/projectImports";
@@ -136,7 +139,10 @@ export default function ImportedTokenPage({
   const [telegramUrl, setTelegramUrl] = useState(item.telegramUrl || "");
   const [reviewReason, setReviewReason] = useState("");
   const [requestingReview, setRequestingReview] = useState(false);
-  const [candles, setCandles] = useState<MarketCandle[]>([]);
+  // The import's own DEX pool history (GeckoTerminal via /api/arena/imports/candles), in USD.
+  const [chartResolution, setChartResolution] = useState<UnifiedChartResolution>(IMPORT_CHART_DEFAULT_RESOLUTION as UnifiedChartResolution);
+  const [usdCandles, setUsdCandles] = useState<ArenaImportCandleResponse["items"]>([]);
+  const [candleState, setCandleState] = useState<{ loading: boolean; reason?: string }>({ loading: true });
   const [trades, setTrades] = useState<MarketTrade[]>([]);
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof fetchArenaTokenProfile>>>(null);
   const [ownerProfile, setOwnerProfile] = useState<UserProfile | null>(null);
@@ -160,14 +166,38 @@ export default function ImportedTokenPage({
     void fetchArenaTokenProfile(item.tokenAddress, item.chainId, controller.signal).then((next) => {
       if (next) setProfile(next);
     });
-    void fetchMarketCandles(item.tokenAddress, item.chainId, "1m", { limit: 500, signal: controller.signal })
-      .then((payload) => setCandles(Array.isArray(payload?.items) ? payload.items : []))
-      .catch(() => setCandles([]));
     void fetchMarketTrades(item.tokenAddress, item.chainId, { limit: 40, signal: controller.signal })
       .then((payload) => setTrades(Array.isArray(payload?.items) ? payload.items : []))
       .catch(() => setTrades([]));
     return () => controller.abort();
   }, [item.chainId, item.tokenAddress]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: number | undefined;
+    setUsdCandles([]);
+    setCandleState({ loading: true });
+    const load = () => {
+      void fetchArenaImportCandles(item.tokenAddress, item.chainId, chartResolution, controller.signal)
+        .then((payload) => {
+          if (controller.signal.aborted) return;
+          if (payload?.items?.length) setUsdCandles(payload.items);
+          setCandleState({ loading: Boolean(payload?.rateLimited && !payload.items?.length), reason: payload?.reason });
+          // Rate-capped upstream with nothing cached yet: try again shortly; otherwise refresh each minute.
+          timer = window.setTimeout(load, payload?.rateLimited ? 20_000 : 60_000);
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          setCandleState({ loading: false });
+          timer = window.setTimeout(load, 60_000);
+        });
+    };
+    load();
+    return () => {
+      controller.abort();
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [chartResolution, item.chainId, item.tokenAddress]);
 
   const ownerWallet = String(item.projectOwnerWallet || item.ownerWallet || "").trim();
   const solana = item.chainId === SOLANA_CHAIN_ID;
@@ -208,7 +238,8 @@ export default function ImportedTokenPage({
   const arenaItem = asArenaItem(item);
   const competition = presentImportCompetitionEligibility(arenaItem);
   const pill = admissionPill(item.arenaStatus);
-  const chart = presentImportChart(profile, candles, item.chainId, item.tokenAddress);
+  const candles = useMemo(() => importUsdCandlesToChart(usdCandles, nativeUsd), [nativeUsd, usdCandles]);
+  const chart = presentImportChart(profile, candles, item.chainId, item.tokenAddress, candleState);
   const tradingBlocked = importTradingBlocked(item.scan, null);
   const connectedImportWallet = isSolanaChainId(item.chainId) ? solanaWallet.solanaAccount : wallet.account;
   const canRequestReview = canRequestImportManualReview(arenaItem, connectedImportWallet, solana);
@@ -447,8 +478,8 @@ export default function ImportedTokenPage({
                     liveMcapNative={liveMcapNative}
                     nativeUsdPrice={nativeUsd}
                     marketKey={`${item.chainId}:${item.tokenAddress}`}
-                    resolution="1m"
-                    onResolutionChange={() => undefined}
+                    resolution={chartResolution}
+                    onResolutionChange={(next) => setChartResolution(clampImportResolution(next) as UnifiedChartResolution)}
                     denomination="USD"
                     historyReady
                     loading={false}
