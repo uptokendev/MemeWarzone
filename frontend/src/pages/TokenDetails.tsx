@@ -55,7 +55,9 @@ import {
   requestSolanaGraduationHandoff,
   stashPendingSolanaDexTrade,
 } from "@/lib/solanaGraduationHandoff";
+import { StoryEnterButton } from "@/components/story/StoryEnterButton";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
+import { useStory } from "@/lib/story/storyApi";
 import { MobileTradeDock, MobileTradeSheet, useXlUp } from "@/components/token/MobileTradeSheet";
 import { TokenComments } from "@/components/token/TokenComments";
 import { TokenWarRoom } from "@/components/token/TokenWarRoom";
@@ -652,6 +654,7 @@ const TokenDetails = () => {
     navigate({ pathname: location.pathname, search: next ? `?${next}` : "" }, { replace: true });
   }, [location.pathname, location.search, navigate]);
   const chainIdForStorage = pageChainId;
+  const { story } = useStory(chainIdForStorage, String(campaign?.token || campaignAddress || "").trim());
 
   useEffect(() => {
     const next = resolveTokenPageChainId({
@@ -4653,6 +4656,7 @@ const toSeconds = (ts: number): number => {
                         className="h-8 px-3 text-xs flex-shrink-0"
                       />
                     )}
+                    {story ? <StoryEnterButton story={story} /> : null}
                     <Button
                       type="button"
                       variant="secondary"
