@@ -36,6 +36,23 @@ export const STORY_CHAPTER_KINDS = Object.freeze([
 export const STORY_TEXT_STYLES = Object.freeze(["words", "sonar", "candle", "plain"]);
 
 /**
+ * What a creator may edit (founder, 2026-09-28). Chronicle chapters are the same rules for every coin
+ * and are never editable. Creators get:
+ *   - `shortStory`: one short chapter (imported coins; launched coins tell theirs on the promotion page);
+ *   - the full story: fixed boxes WE define below. They fill in the text only; headings and order are ours.
+ * The full story opens from the last chapter ("Read the full story") as a scrollable page in the player.
+ */
+export const STORY_SHORT_MAX = 280;
+export const STORY_FULL_SECTIONS = Object.freeze([
+  { key: "origin", heading: "Where it started", prompt: "How did this coin begin? Who made it and why?", max: 900 },
+  { key: "character", heading: "Who it is", prompt: "The character, the meme, the joke behind it.", max: 700 },
+  { key: "community", heading: "The community", prompt: "Who holds it and where they hang out.", max: 700 },
+  { key: "moments", heading: "Moments so far", prompt: "Things that happened that holders still talk about.", max: 900 },
+  { key: "next", heading: "What's next", prompt: "What you are working on now. No price promises.", max: 700 },
+  { key: "message", heading: "To new holders", prompt: "What you want someone to know before they join.", max: 500 },
+]);
+
+/**
  * @typedef {{ name: string, ticker: string, chainId: number, chainLabel: string,
  *   origin: "launched" | "imported", logoUrl: string, logoAnimated: boolean,
  *   accent: string, accent2: string, tokenPath: string }} StoryCoin
@@ -43,7 +60,9 @@ export const STORY_TEXT_STYLES = Object.freeze(["words", "sonar", "candle", "pla
  * @typedef {{ url: string, text: string, imageUrl: string }} StoryShare
  *   url: the public share link (served by the API with Open Graph tags, then redirects to the story),
  *   text: the post text for X / Telegram (plain, no URL in it), imageUrl: the 1200x630 preview card.
- * @typedef {{ version: 1, chainId: number, token: string, generatedAt: string, coin: StoryCoin, share: StoryShare, chapters: Array<ChapterBase & Record<string, unknown>> }} StoryResponse
+ * @typedef {{ updatedAt: string, sections: Array<{ key: string, heading: string, body: string }> }} StoryFull
+ *   Only filled sections, in STORY_FULL_SECTIONS order; null when the creator filled none.
+ * @typedef {{ version: 1, chainId: number, token: string, generatedAt: string, coin: StoryCoin, share: StoryShare, fullStory: StoryFull | null, chapters: Array<ChapterBase & Record<string, unknown>> }} StoryResponse
  */
 
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -68,6 +87,21 @@ export function validateStory(story) {
   const share = story?.share || {};
   need(/^https:\/\//.test(share.url || "") && /^https:\/\//.test(share.imageUrl || ""), "share.url and share.imageUrl must be https");
   need(isText(share.text) && share.text.length > 0 && share.text.length <= 240 && !/https?:\/\//.test(share.text), "share.text: plain, <= 240 chars, no URL");
+  const full = story?.fullStory;
+  need(full === null || (typeof full === "object" && Array.isArray(full.sections)), "fullStory must be null or { sections }");
+  if (full && Array.isArray(full.sections)) {
+    need(full.sections.length >= 1, "fullStory without sections must be null");
+    let last = -1;
+    full.sections.forEach((sec, i) => {
+      const def = STORY_FULL_SECTIONS.find((d) => d.key === sec?.key);
+      const pos = STORY_FULL_SECTIONS.indexOf(def);
+      need(Boolean(def), `fullStory.sections[${i}]: unknown key`);
+      need(def && sec.heading === def.heading, `fullStory.sections[${i}]: heading is ours, not the creator's`);
+      need(isText(sec?.body) && sec.body.trim().length > 0 && sec.body.length <= (def?.max || 0), `fullStory.sections[${i}]: body plain text within max`);
+      need(pos > last, "fullStory sections in our order");
+      last = pos;
+    });
+  }
   const chapters = Array.isArray(story?.chapters) ? story.chapters : [];
   need(chapters.length >= 2, "at least a cover and a call");
   need(chapters.length <= (STORY_MAX_CHAPTERS[coin.origin] || 0), `at most ${STORY_MAX_CHAPTERS[coin.origin]} chapters for ${coin.origin}`);

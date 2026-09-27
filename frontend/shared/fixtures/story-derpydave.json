@@ -20,6 +20,7 @@
   "text": "Derpy Dave went 5.2x in 13 days this spring. Now he's in the Warzone. Watch the story.",
   "imageUrl": "https://api.memewar.zone/api/story/card/101/2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS.png"
  },
+ "fullStory": null,
  "chapters": [
   {
    "id": "cover",

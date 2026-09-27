@@ -175,6 +175,7 @@ import dashboardLpFees from "./dashboard/lp-fees.js";
 import analyticsIngest from "./analytics/ingest.js";
 import analyticsAdmin from "./analytics/admin.js";
 import prepareOg from "./prepare-og.js";
+import story, { handleSharePage as storySharePage } from "./story.js";
 import battleOg from "./battle-og.js";
 import adminAbuseMe from "./admin/abuse/me.js";
 import adminAbuseReports from "./admin/abuse/reports.js";
@@ -474,6 +475,7 @@ router.all("/drafts/:draftId/comments", wrap(signedDraftComments));
 router.all("/drafts/:draftId", wrap(signedDraftById));
 router.all("/prepare/:slug", wrap(signedPrepareBySlug));
 router.get("/prepare-og/:slug", wrap(prepareOg));
+router.all(/^\/story(?:\/.*)?$/, wrap(story));
 router.get("/prepare-share-card", wrap(prepareShareCard));
 router.all("/token-share-card", wrap(tokenShareCard));
 router.get("/battle-og/:battleId", wrap(battleOg));
@@ -579,6 +581,8 @@ router.all("/internal/rewards/ops/admin-actions", wrap(withInternalAuth(internal
 router.all("/internal/rewards/airdrops/draws", wrap(withInternalAuth(internalAirdropDraws, "internal/rewards/airdrops/draws")));
 router.all("/internal/rewards/airdrops/epochs/:epochId/draws/run", wrap(withInternalAuth(internalAirdropDrawRun, "internal/rewards/airdrops/epochs/:epochId/draws/run")));
 
+// Story share links live outside /api so the URL people post stays short.
+app.get("/s/:chainId/:token", wrap(storySharePage));
 app.use("/api", router);
 app.use((req, res) => res.status(404).json({ error: `Unknown route: ${req.path}` }));
 app.use((err, _req, res, _next) => {

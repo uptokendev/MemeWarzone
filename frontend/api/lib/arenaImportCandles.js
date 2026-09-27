@@ -236,5 +236,36 @@ export function createCandleSource({ env = process.env, fetchImpl = fetch, now =
     return request;
   }
 
-  return { bars, trades };
+  /** Pool metadata (creation time); rarely changes, cached a day, same budget. */
+  async function poolInfo({ network, pairAddress }) {
+    const cacheKey = `pool:${network}:${pairAddress}`;
+    const hit = cache.get(cacheKey);
+    if (hit && now() - hit.at < 24 * 60 * 60_000) return hit.bars;
+    if (inflight.has(cacheKey)) return inflight.get(cacheKey);
+    if (!takeCall()) return hit?.bars || null;
+    const request = fetchImpl(`${base}/networks/${encodeURIComponent(network)}/pools/${encodeURIComponent(pairAddress)}`, {
+      headers: { accept: "application/json", ...(key ? { "x-cg-pro-api-key": key } : {}) },
+      signal: AbortSignal.timeout(15_000),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`GeckoTerminal ${res.status}`);
+        const a = (await res.json())?.data?.attributes || {};
+        const info = { createdAt: a.pool_created_at || null, name: a.name || null };
+        cache.set(cacheKey, { at: now(), bars: info });
+        return info;
+      })
+      .catch(() => hit?.bars || null)
+      .finally(() => inflight.delete(cacheKey));
+    inflight.set(cacheKey, request);
+    return request;
+  }
+
+  return { bars, trades, poolInfo };
+}
+
+let shared = null;
+/** One source per process: the chart, the trades tab and Story Mode share one budget and one cache. */
+export function sharedCandleSource() {
+  if (!shared) shared = createCandleSource();
+  return shared;
 }

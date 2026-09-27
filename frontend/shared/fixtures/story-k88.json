@@ -20,6 +20,26 @@
   "text": "KAIJU88 was the first coin ever launched on MemeWarzone. 41 wallets in, 21.5% to graduation. Watch the story.",
   "imageUrl": "https://api.memewar.zone/api/story/card/101/4VPtpo5qQmmbva9JHYU2eiH9UY6Xf32nCbKKB5ZeYb77.png"
  },
+ "fullStory": {
+  "updatedAt": "2026-09-25T13:56:40.000Z",
+  "sections": [
+   {
+    "key": "origin",
+    "heading": "Where it started",
+    "body": "From the deepest trenches of the blockchain, a colossal titan has awakened. $K88 didn't just step into the arena, he shattered the tyranny of the Ronin Master, rewriting the food chain on Solana for good."
+   },
+   {
+    "key": "character",
+    "heading": "Who it is",
+    "body": "Forged from pure cryptonite and infused with the unstoppable, blinding power of the infinite green candle, this apex predator cannot be contained. Not even Godzilla can match his sheer scale, and even Superman's strength crumbles in his wake."
+   },
+   {
+    "key": "next",
+    "heading": "What's next",
+    "body": "$K88 is the first ever coin and first Solana coin launched on MemeWarzone. We aim to be the first ever coin to fully bond on MemeWarzone. With regular $K88 coin burns."
+   }
+  ]
+ },
  "chapters": [
   {
    "id": "cover",

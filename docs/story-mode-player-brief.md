@@ -159,7 +159,27 @@ text, plain, no URL) and `imageUrl` (the 1200x630 card). The API builds all thre
 - Links open in a new tab (`target="_blank" rel="noreferrer"`). Never build share URLs from anything
   but `story.share`.
 
-### F. Tests: `components/story/story-player.test.mjs` (node:test, source-level like the repo's others)
+### F. The full story (founder, 2026-09-28)
+
+Chronicle chapters are generated and the same for every coin; creators never edit them. What a
+creator writes lives in two places, both delivered by the API:
+- a short `text` chapter with stamp "Written by the owner" (imported coins) - just another chapter;
+- `story.fullStory`: `null`, or `{ updatedAt, sections: [{ key, heading, body }] }` built from **our**
+  fixed boxes (`STORY_FULL_SECTIONS` in the contract: headings and order are ours, the body is theirs).
+
+Build:
+- On the `call` chapter, when `story.fullStory` is not null, a **Read the full story** button (full
+  width, outlined, under the CTAs and above "Share this story").
+- It opens, **inside the same frame**, a scrollable page (`components/story/FullStoryPage.tsx`):
+  story paused, progress bars hidden, a **Back** button top left that returns to the `call` chapter.
+  Content top to bottom: the coin logo (96px) and name, then each section as its `heading` (display
+  font, accent colour) and `body` (body font, 19px, line-height 1.5, `white-space: pre-line`, rendered
+  through `emphasisParts`), then the same CTAs as the `call` chapter at the bottom.
+- Tap zones, swipe and arrow keys are off while this page is open; the page scrolls normally
+  (touch and wheel). Esc goes back to the `call` chapter (a second Esc closes the player).
+- The K88 fixture has a full story (3 sections); Derpy Dave's has none, so no button there.
+
+### G. Tests: `components/story/story-player.test.mjs` (node:test, source-level like the repo's others)
 
 - Every kind in `STORY_CHAPTER_KINDS` has an entry in `sceneRegistry.ts`.
 - No file under `components/story/` contains `dangerouslySetInnerHTML` or `innerHTML`.
@@ -168,6 +188,8 @@ text, plain, no URL) and `imageUrl` (the 1200x630 card). The API builds all thre
   `scrollHeight`/`clientHeight`).
 - `App.tsx` registers `/story/:chainId/:token`.
 - No em dash (U+2014) in any file under `components/story/`.
+- `FullStoryPage.tsx` exists, renders `section.heading` / `section.body` through `emphasisParts`, and the
+  call chapter only shows "Read the full story" when `story.fullStory` is not null.
 - The share sheet builds its X and Telegram links from `share.url` / `share.text` only
   (`x.com/intent/post` and `t.me/share/url` appear, and no other share host).
 
@@ -176,8 +198,9 @@ text, plain, no URL) and `imageUrl` (the 1200x630 card). The API builds all thre
 ## Not in scope (do not start, do not stub)
 
 The story API and chronicle rules (Claude), the share link page and the preview card image
-(Claude), the creator **editor** (a later brief), sound, video export, analytics, any change to how
-token pages look beyond the one button.
+(Claude), the creator **editor** for the short story and the full-story boxes (a later brief; the API
+`POST /api/story/profile` already exists), sound, video export, analytics, any change to how token pages
+look beyond the one button.
 
 ## Done when
 
@@ -186,4 +209,6 @@ token pages look beyond the one button.
   looking and moving like the prototypes, with **no text outside the frame** at the three phone sizes.
 - Tap, hold, swipe, keys and Esc work; the last chapter's buttons work.
 - Share on X / Telegram / Copy link produce exactly `share.url` and `share.text` from the fixture.
+- K88: "Read the full story" opens the 3-section page in the frame, it scrolls, Back returns to the
+  last chapter. Derpy Dave: no such button.
 - The checks in rule 7 pass.

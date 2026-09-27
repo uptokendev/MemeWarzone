@@ -12,7 +12,7 @@ import {
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { evaluateImportedCompetitionEligibility, loadImportedCompetitionEligibility } from "./lib/arenaImportEligibility.js";
 import { getArenaTokenProfile } from "./lib/arenaTokenProfile.js";
-import { IMPORT_CANDLE_TIMEFRAMES, createCandleSource, impliedSupply, toCandleRows } from "./lib/arenaImportCandles.js";
+import { IMPORT_CANDLE_TIMEFRAMES, impliedSupply, sharedCandleSource, toCandleRows } from "./lib/arenaImportCandles.js";
 import { dexScreenerChainSlug, fetchDexScreenerPairs, geckoTerminalNetwork, pickDeepestPair } from "./lib/arenaImportMarketFeed.js";
 
 function ident(value, chainId) {
@@ -155,12 +155,12 @@ async function handleProfile(req, res) {
     : json(res, 404, { error: "Arena token profile not found" });
 }
 
-const candleSource = createCandleSource();
+const candleSource = sharedCandleSource();
 const PAIR_LOOKUP_TTL_MS = 10 * 60_000;
 const pairLookups = new Map();
 
 /** The import's deepest pool: the feed's stored pair, else one cached DexScreener lookup. Imports only. */
-async function importPool(chainId, token) {
+export async function importPool(chainId, token) {
   const { rows } = await pool.query(
     `select i.token_address, s.pair_address, s.market_cap_usd, s.price_usd
        from public.arena_token_imports i

@@ -41,6 +41,17 @@ test("every story carries a share link, a preview card and plain post text", () 
   assert.ok(validateStory(story).some((p) => /share.text/.test(p)));
 });
 
+test("the full story uses our boxes: our headings, our order, the creator's text only", () => {
+  assert.equal(fixture("story-derpydave.json").fullStory, null);
+  const story = fixture("story-k88.json");
+  assert.deepEqual(story.fullStory.sections.map((s) => s.key), ["origin", "character", "next"]);
+  story.fullStory.sections[0].heading = "My own heading";
+  assert.ok(validateStory(story).some((p) => /heading is ours/.test(p)));
+  const reordered = fixture("story-k88.json");
+  reordered.fullStory.sections.reverse();
+  assert.ok(validateStory(reordered).some((p) => /our order/.test(p)));
+});
+
 test("emphasis becomes text parts, never HTML", () => {
   assert.deepEqual(emphasisParts("Today *$61.4K*, down."), [{ em: false, text: "Today " }, { em: true, text: "$61.4K" }, { em: false, text: ", down." }]);
   assert.deepEqual(emphasisParts("<b>x</b>"), [{ em: false, text: "<b>x</b>" }]);
