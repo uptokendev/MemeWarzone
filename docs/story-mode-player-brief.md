@@ -3,7 +3,13 @@
 Owner: founder. Date: 2026-09-28. Branch: `build/robinhood-full-expansion`; push every commit to both
 `build/robinhood-full-expansion` **and** `build/cross-chain-stabilization-rh-base` (live, auto-deploys).
 
-**Start after `docs/warzone-cards-token-page-brief.md` Parts B and C are merged.** Pull first.
+**Start now** (founder, 2026-09-28: Parts B and C of the cards brief are parked; Story Mode goes first).
+
+**Before you start, sync:** your working copy has uncommitted copies of files that are already on
+GitHub (the import trades work: `api/arenaImports.js`, `api/lib/arenaImportCandles.js`,
+`components/arena/ImportedTradesTable.tsx`, a brief edit). They are not yours to commit. Run
+`git stash push -u -m "stale local copies"` then `git pull` on `build/robinhood-full-expansion`
+(head must be `c0f65860` or later), and leave the stash alone.
 
 Do exactly what is written. If something here does not fit the code, **stop and report it — do not
 work around it and do not improve anything else.**
@@ -137,7 +143,9 @@ the dot). An unknown `kind` is skipped, never crashes.
 - **Button "Enter the story"** on both token pages, shown only when `useStory` returns a story:
   - `TokenDetails.tsx`: in the identity strip, directly before the Share control. One element, no
     other change.
-  - `ImportedTokenPage.tsx`: in the hero actions, directly before SHARE. One element, no other change.
+  - `ImportedTokenPage.tsx`: in the hero actions column, directly before the SHARE button
+    (`data-project-share`). One element, no other change. (Part C of the cards brief, which will
+    rebuild this hero later, is parked; it will keep your button.)
   - Opens the player in place (no navigation); closing returns to the page.
   - Style: accent-outlined pill with a ▶ glyph, `h-7`, the same height as the strip's other controls.
 

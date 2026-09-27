@@ -102,6 +102,8 @@ card on `frontend/src/pages/Arena.tsx` (podium, top 3) and the "Top command" pod
 `frontend/src/pages/PostGradLeague.tsx` (`first`, `second`, `third`). Both already pass `chainId`
 and `tokenAddress`.
 
+**Status 2026-09-28: parked** (the founder moved Story Mode first). Resume from here later.
+
 **Build (only these files):**
 - `frontend/src/components/warzone/WarzoneRankCard.tsx` — rewrite the component's markup in the
   battle card's language above. **Keep its props exactly** (`rank, imageUrl, symbol, name, points,
@@ -122,6 +124,14 @@ and `tokenAddress`.
     import from or export out of `BattleWallCombatant.tsx`** (rule 2).
   - Keep the attribute `data-warzone-rank-card={rank}` on the outer element and add
     `data-warzone-rank-card-layout="split"`.
+- `frontend/src/lib/arena/warzoneVisualCorrection.test.mjs` (decision 2026-09-28, after Grok correctly
+  stopped on it): the test "MWL top 3 share WarzoneRankCard and #1 is not a giant bleed card" forbids
+  `blur-[12px]` on `WarzoneRankCard.tsx`. The founder's rule is consistency with the battle cards, so the
+  bleed stays. Replace **only** the assertion
+  `assert.doesNotMatch(rankCard, /blur-\[12px\]|object-cover opacity-\[0\.14\]/);` with one that keeps
+  the test's intent, a bounded card rather than a giant one:
+  `assert.match(rankCard, /max-h-\[22rem\]/);` and `assert.doesNotMatch(rankCard, /object-cover opacity-\[0\.14\]/);`.
+  Every other assertion in that file stays as it is.
 - `frontend/src/lib/arena/warzoneLeagueChainAndArt.test.mjs` — this test pins
   `chainId={chainId} tokenAddress={tokenAddress}` on `WarzoneTokenMark` inside `WarzoneRankCard`.
   Your rewrite no longer uses `WarzoneTokenMark` there, so replace **only that one assertion** with
@@ -141,6 +151,8 @@ MCAP and HOLDERS from the profile. The Battle Wall itself is byte-for-byte uncha
 ---
 
 ## Part C — The imported token page uses the same layout as our own token page
+
+**Status 2026-09-28: parked** (Story Mode first). Before resuming, pull: the Trades tab now mounts `<ImportedTradesTable … />` and the story button sits in the hero actions.
 
 **Founder:** "the tokendetails page is inconsistent with the page for our own tokens. I want the same
 layout."
