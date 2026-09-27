@@ -34,6 +34,13 @@ test("copy in the reference stories has no em dashes", () => {
   for (const name of ["story-k88.json", "story-derpydave.json"]) assert.ok(!fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8").includes("—"), name);
 });
 
+test("every story carries a share link, a preview card and plain post text", () => {
+  const story = fixture("story-k88.json");
+  assert.match(story.share.url, /^https:\/\/api\.memewar\.zone\/s\/101\//);
+  story.share.text = "Buy now https://scam.example";
+  assert.ok(validateStory(story).some((p) => /share.text/.test(p)));
+});
+
 test("emphasis becomes text parts, never HTML", () => {
   assert.deepEqual(emphasisParts("Today *$61.4K*, down."), [{ em: false, text: "Today " }, { em: true, text: "$61.4K" }, { em: false, text: ", down." }]);
   assert.deepEqual(emphasisParts("<b>x</b>"), [{ em: false, text: "<b>x</b>" }]);

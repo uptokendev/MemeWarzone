@@ -40,7 +40,10 @@ export const STORY_TEXT_STYLES = Object.freeze(["words", "sonar", "candle", "pla
  *   origin: "launched" | "imported", logoUrl: string, logoAnimated: boolean,
  *   accent: string, accent2: string, tokenPath: string }} StoryCoin
  * @typedef {{ id: string, kind: string, voice: "creator" | "chronicle", stamp: string, durationMs: number }} ChapterBase
- * @typedef {{ version: 1, chainId: number, token: string, generatedAt: string, coin: StoryCoin, chapters: Array<ChapterBase & Record<string, unknown>> }} StoryResponse
+ * @typedef {{ url: string, text: string, imageUrl: string }} StoryShare
+ *   url: the public share link (served by the API with Open Graph tags, then redirects to the story),
+ *   text: the post text for X / Telegram (plain, no URL in it), imageUrl: the 1200x630 preview card.
+ * @typedef {{ version: 1, chainId: number, token: string, generatedAt: string, coin: StoryCoin, share: StoryShare, chapters: Array<ChapterBase & Record<string, unknown>> }} StoryResponse
  */
 
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -62,6 +65,9 @@ export function validateStory(story) {
   need(HEX.test(coin.accent || "") && HEX.test(coin.accent2 || ""), "coin.accent/accent2 must be #rrggbb");
   need(typeof coin.logoUrl === "string" && /^https:\/\//.test(coin.logoUrl), "coin.logoUrl must be https");
   need(typeof coin.tokenPath === "string" && coin.tokenPath.startsWith("/token/"), "coin.tokenPath");
+  const share = story?.share || {};
+  need(/^https:\/\//.test(share.url || "") && /^https:\/\//.test(share.imageUrl || ""), "share.url and share.imageUrl must be https");
+  need(isText(share.text) && share.text.length > 0 && share.text.length <= 240 && !/https?:\/\//.test(share.text), "share.text: plain, <= 240 chars, no URL");
   const chapters = Array.isArray(story?.chapters) ? story.chapters : [];
   need(chapters.length >= 2, "at least a cover and a call");
   need(chapters.length <= (STORY_MAX_CHAPTERS[coin.origin] || 0), `at most ${STORY_MAX_CHAPTERS[coin.origin]} chapters for ${coin.origin}`);

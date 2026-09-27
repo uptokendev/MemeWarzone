@@ -15,6 +15,11 @@
   "accent2": "#1f6b3a",
   "tokenPath": "/token/4VPtpo5qQmmbva9JHYU2eiH9UY6Xf32nCbKKB5ZeYb77"
  },
+ "share": {
+  "url": "https://api.memewar.zone/s/101/4VPtpo5qQmmbva9JHYU2eiH9UY6Xf32nCbKKB5ZeYb77",
+  "text": "KAIJU88 was the first coin ever launched on MemeWarzone. 41 wallets in, 21.5% to graduation. Watch the story.",
+  "imageUrl": "https://api.memewar.zone/api/story/card/101/4VPtpo5qQmmbva9JHYU2eiH9UY6Xf32nCbKKB5ZeYb77.png"
+ },
  "chapters": [
   {
    "id": "cover",

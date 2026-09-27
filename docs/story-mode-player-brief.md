@@ -141,7 +141,25 @@ the dot). An unknown `kind` is skipped, never crashes.
   - Opens the player in place (no navigation); closing returns to the page.
   - Style: accent-outlined pill with a ▶ glyph, `h-7`, the same height as the strip's other controls.
 
-### E. Tests: `components/story/story-player.test.mjs` (node:test, source-level like the repo's others)
+### E. Sharing (founder: "shareable so people can share it on social media, use it as promo")
+
+Every story carries `story.share`: `url` (the public share link, which the API serves with Open Graph
+tags so X / Telegram / Discord show a big preview card, then forwards to the story), `text` (the post
+text, plain, no URL) and `imageUrl` (the 1200x630 card). The API builds all three; you only use them.
+
+- **Share button** in the player header, left of Close (44x44, share glyph). It opens a small sheet
+  inside the player (pauses the story while open) with:
+  - **Share on X**: `https://x.com/intent/post?text=<encodeURIComponent(share.text)>&url=<encodeURIComponent(share.url)>`
+  - **Telegram**: `https://t.me/share/url?url=<encodeURIComponent(share.url)>&text=<encodeURIComponent(share.text)>`
+  - **Copy link**: `navigator.clipboard.writeText(share.url)` inside the click handler; on rejection,
+    show the URL in a selectable read-only field. Toast "Link copied".
+  - **More…**: only when `navigator.share` exists: `navigator.share({ title: coin.name, text: share.text, url: share.url })`.
+  - A small preview of `share.imageUrl` at the top of the sheet, so the sharer sees what the post will look like.
+- **The `call` chapter** also gets a **Share this story** button under its CTAs, opening the same sheet.
+- Links open in a new tab (`target="_blank" rel="noreferrer"`). Never build share URLs from anything
+  but `story.share`.
+
+### F. Tests: `components/story/story-player.test.mjs` (node:test, source-level like the repo's others)
 
 - Every kind in `STORY_CHAPTER_KINDS` has an entry in `sceneRegistry.ts`.
 - No file under `components/story/` contains `dangerouslySetInnerHTML` or `innerHTML`.
@@ -150,13 +168,16 @@ the dot). An unknown `kind` is skipped, never crashes.
   `scrollHeight`/`clientHeight`).
 - `App.tsx` registers `/story/:chainId/:token`.
 - No em dash (U+2014) in any file under `components/story/`.
+- The share sheet builds its X and Telegram links from `share.url` / `share.text` only
+  (`x.com/intent/post` and `t.me/share/url` appear, and no other share host).
 
 ---
 
 ## Not in scope (do not start, do not stub)
 
-The story API and chronicle rules (Claude), the creator **editor** (a later brief), sound, sharing
-cards / OG images, analytics, any change to how token pages look beyond the one button.
+The story API and chronicle rules (Claude), the share link page and the preview card image
+(Claude), the creator **editor** (a later brief), sound, video export, analytics, any change to how
+token pages look beyond the one button.
 
 ## Done when
 
@@ -164,4 +185,5 @@ cards / OG images, analytics, any change to how token pages look beyond the one 
   and `…/2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS?storyFixture=derpydave` all 8 Derpy Dave chapters,
   looking and moving like the prototypes, with **no text outside the frame** at the three phone sizes.
 - Tap, hold, swipe, keys and Esc work; the last chapter's buttons work.
+- Share on X / Telegram / Copy link produce exactly `share.url` and `share.text` from the fixture.
 - The checks in rule 7 pass.
