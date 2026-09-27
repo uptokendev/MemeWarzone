@@ -15,11 +15,17 @@ import { useArenaFeaturedVotes } from "@/hooks/useArenaFeaturedVotes";
 import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
 import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
+import { formatCompactUsd } from "@/lib/arena/battlePresentation";
 import { presentWarzoneLeagueBoard } from "@/lib/arena/warzoneChrome.mjs";
 import { resolveImageUri } from "@/lib/media";
 
 function isTournament(event: { type?: string; status?: string }) {
   return event.type === "tournament" || event.type === "seasonal_league";
+}
+
+/** The profile carries no ATH yet. */
+function athLabel(marketCapUsd?: number | null) {
+  return marketCapUsd != null ? formatCompactUsd(marketCapUsd) : "—";
 }
 
 /** The featured-votes feed carries no art; resolve it the way the battle cards do. */
@@ -29,8 +35,16 @@ function FeaturedArenaCoinCard({
   tokenAddress,
   ...props
 }: Omit<ComponentProps<typeof FeaturedCampaignCard>, "imageUrl"> & { imageUrl?: string | null; chainId: number; tokenAddress: string }) {
-  const profile = useArenaTokenProfile(imageUrl ? null : chainId, imageUrl ? null : tokenAddress);
-  return <FeaturedCampaignCard {...props} imageUrl={resolveImageUri(imageUrl || profile?.imageUrl) || null} />;
+  const profile = useArenaTokenProfile(chainId, tokenAddress);
+  const mcapUsdLabel = profile?.marketCapUsd != null ? formatCompactUsd(profile.marketCapUsd) : null;
+  return (
+    <FeaturedCampaignCard
+      {...props}
+      imageUrl={resolveImageUri(imageUrl || profile?.imageUrl) || null}
+      mcapUsdLabel={mcapUsdLabel}
+      athUsdLabel={athLabel(profile?.marketCapUsd)}
+    />
+  );
 }
 
 const Arena = () => {
@@ -70,8 +84,6 @@ const Arena = () => {
                   chainId={item.chainId}
                   tokenAddress={item.tokenAddress}
                   votes24h={item.votes24h}
-                  mcapUsdLabel={null}
-                  athUsdLabel="—"
                   onOpen={route ? () => navigate(route) : undefined}
                   actions={
                     <ArenaUpvoteDialog
