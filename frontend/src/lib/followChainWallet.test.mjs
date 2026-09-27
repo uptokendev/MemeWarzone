@@ -20,5 +20,11 @@ test("followed imported coins get a card in Following", () => {
   const hook = read("hooks/profile/useProfileFollows.ts");
   assert.match(hook, /fetchArenaTokenProfile\(a, resolvedChainId\)/);
   assert.match(hook, /r\.value\.origin === "import"/);
-  assert.match(hook, /setFollowedCards\(\[\.\.\.draftCards, \.\.\.liveCards, \.\.\.importCards\]\)/);
+  assert.match(hook, /setFollowedCards\(\[\.\.\.draftCards, \.\.\.wantedSolanaCards, \.\.\.liveCards, \.\.\.importCards\]\)/);
+});
+
+test("followed Solana launches use the API (name, logo, USD market cap), not the placeholder adapter", () => {
+  const hook = read("hooks/profile/useProfileFollows.ts");
+  assert.match(hook, /api\/token-metadata\/\$\{resolvedChainId\}/);
+  assert.match(hook, /const results = isSolanaChainId\(resolvedChainId\) \? \[\] : await Promise\.allSettled/);
 });

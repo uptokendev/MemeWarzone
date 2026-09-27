@@ -19,7 +19,8 @@ import {
 import { formatTimeAgo } from "@/lib/profile/profileFormatters";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { fetchArenaTokenProfile } from "@/lib/arenaImports";
-import { getActiveChainId } from "@/lib/chainConfig";
+import { getActiveChainId, isSolanaChainId } from "@/lib/chainConfig";
+import { apiFetch } from "@/lib/apiBase";
 
 type FetchCampaigns = () => Promise<any[]>;
 type FetchCampaignSummary = (campaign: any) => Promise<CampaignSummary>;
@@ -147,6 +148,7 @@ useEffect(() => {
         return;
       }
 
+      let wantedSolanaCards: any[] = [];
       const addrs = (followedCampaigns || [])
         .map((a) => String(a || "").toLowerCase())
         .filter(Boolean);
@@ -159,7 +161,36 @@ useEffect(() => {
         )
       );
 
-      const results = await Promise.allSettled(
+      // Solana campaigns: the on-chain adapter has no name, logo or USD market cap (it maps every
+      // campaign to a "Solana Launch / $SOL" placeholder and prints lamports as BNB), so their cards
+      // come from the API like the homepage cards. EVM chains keep fetchCampaignSummary.
+      if (isSolanaChainId(resolvedChainId)) {
+        const solanaCards = await Promise.allSettled(wanted.map(async (c, idx) => {
+          const campaign = String((c as any).campaign ?? (c as any).campaignAddress ?? "");
+          const token = String((c as any).token ?? (c as any).tokenAddress ?? campaign);
+          const [metaRes, profile] = await Promise.all([
+            apiFetch(`/api/token-metadata/${resolvedChainId}/${encodeURIComponent(token)}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+            fetchArenaTokenProfile(token, resolvedChainId).catch(() => null),
+          ]);
+          const meta = metaRes?.metadata || metaRes || {};
+          return {
+            kind: "campaign",
+            id: typeof (c as any).id === "number" ? (c as any).id : idx + 1,
+            image: meta.image || profile?.imageUrl || "/placeholder.svg",
+            name: meta.name || profile?.name || token,
+            ticker: meta.symbol || profile?.symbol || "",
+            campaignAddress: campaign,
+            href: tokenDetailsPath({ tokenAddress: token, campaignAddress: campaign, chainId: resolvedChainId }, { chainId: resolvedChainId }),
+            marketCap: profile?.marketCapUsd != null ? `$${Number(profile.marketCapUsd).toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "—",
+            timeAgo: formatTimeAgo((c as any).createdAt),
+            chainId: resolvedChainId,
+          };
+        }));
+        if (cancelled) return;
+        wantedSolanaCards = solanaCards.filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled").map((r) => r.value);
+      }
+
+      const results = isSolanaChainId(resolvedChainId) ? [] : await Promise.allSettled(
         wanted.map((c) => fetchCampaignSummary(c))
       );
 
@@ -228,7 +259,7 @@ useEffect(() => {
           : "",
       }));
 
-      setFollowedCards([...draftCards, ...liveCards, ...importCards]);
+      setFollowedCards([...draftCards, ...wantedSolanaCards, ...liveCards, ...importCards]);
     } catch (e) {
       console.error("[Profile] Failed to load followed campaigns", e);
       if (!cancelled) setFollowedCards([]);
