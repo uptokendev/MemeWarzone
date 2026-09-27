@@ -138,6 +138,25 @@ export async function fetchArenaImportCandles(tokenAddress: string, chainId: num
   return (await readJson(res)) as ArenaImportCandleResponse;
 }
 
+export type ArenaImportTrade = {
+  txHash: string;
+  side: "buy" | "sell";
+  maker: string | null;
+  tokenAmount: number;
+  nativeAmount: number | null;
+  volumeUsd: number | null;
+  blockTime: number;
+  blockNumber: number | null;
+};
+
+/** The import's recent trades (24h) on its own DEX pool (GeckoTerminal via our API). */
+export async function fetchArenaImportTrades(tokenAddress: string, chainId: number, signal?: AbortSignal): Promise<{ items: ArenaImportTrade[]; reason?: string; rateLimited?: boolean } | null> {
+  const params = new URLSearchParams({ token: tokenAddress, chainId: String(chainId) });
+  const res = await apiFetch(`/api/arena/imports/trades?${params.toString()}`, { cache: "no-store", signal });
+  if (!res.ok) return null;
+  return (await readJson(res)) as { items: ArenaImportTrade[]; reason?: string; rateLimited?: boolean };
+}
+
 export async function uploadArenaImportImage(input: {
   item: ArenaImportItem;
   file: File;

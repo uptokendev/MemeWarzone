@@ -101,6 +101,59 @@ export function toCandleRows(bars, supply) {
   }));
 }
 
+/** Wrapped native per chain: a trade quoted in it has a native amount; anything else shows USD only. */
+export const WRAPPED_NATIVE = {
+  101: "So11111111111111111111111111111111111111112",
+  56: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+  4663: "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+};
+export const IMPORT_TRADES_TTL_MS = 30_000;
+
+function sameAddress(chainId, a, b) {
+  const x = String(a || "").trim();
+  const y = String(b || "").trim();
+  if (!x || !y) return false;
+  return Number(chainId) === 101 ? x === y : x.toLowerCase() === y.toLowerCase();
+}
+
+/**
+ * GeckoTerminal pool trades (last 24h, newest first) -> rows in the import's own terms. `kind` is
+ * already relative to the `token` query parameter; it is re-derived from the token legs so a response
+ * that ignored the parameter cannot flip buys and sells. Rows not involving the import are dropped.
+ */
+export function parseGeckoTrades(json, chainId, tokenAddress) {
+  const list = json?.data;
+  if (!Array.isArray(list)) return [];
+  const native = WRAPPED_NATIVE[Number(chainId)] || "";
+  const out = [];
+  for (const entry of list) {
+    const a = entry?.attributes;
+    if (!a?.tx_hash) continue;
+    const sold = sameAddress(chainId, a.from_token_address, tokenAddress);
+    const bought = sameAddress(chainId, a.to_token_address, tokenAddress);
+    if (sold === bought) continue;
+    const side = bought ? "buy" : "sell";
+    const tokenAmount = Number(bought ? a.to_token_amount : a.from_token_amount);
+    const quoteAddress = bought ? a.from_token_address : a.to_token_address;
+    const quoteAmount = Number(bought ? a.from_token_amount : a.to_token_amount);
+    const time = Date.parse(String(a.block_timestamp || ""));
+    if (!Number.isFinite(tokenAmount) || tokenAmount <= 0 || !Number.isFinite(time)) continue;
+    const volumeUsd = Number(a.volume_in_usd);
+    out.push({
+      txHash: String(a.tx_hash),
+      side,
+      maker: String(a.tx_from_address || "") || null,
+      tokenAmount,
+      nativeAmount: sameAddress(chainId, quoteAddress, native) && Number.isFinite(quoteAmount) && quoteAmount > 0 ? quoteAmount : null,
+      volumeUsd: Number.isFinite(volumeUsd) && volumeUsd >= 0 ? volumeUsd : null,
+      blockTime: Math.floor(time / 1000),
+      blockNumber: Number(a.block_number) || null,
+    });
+  }
+  out.sort((x, y) => y.blockTime - x.blockTime);
+  return out;
+}
+
 export function createCandleSource({ env = process.env, fetchImpl = fetch, now = () => Date.now() } = {}) {
   const key = String(env.COINGECKO_API_KEY || "").trim();
   const base = key ? "https://pro-api.coingecko.com/api/v3/onchain" : "https://api.geckoterminal.com/api/v2";
@@ -156,5 +209,32 @@ export function createCandleSource({ env = process.env, fetchImpl = fetch, now =
     return request;
   }
 
-  return { bars };
+  /** Recent pool trades; same budget, cache and coalescing as the candles. */
+  async function trades({ network, pairAddress, tokenAddress, chainId }) {
+    const cacheKey = `trades:${network}:${pairAddress}:${tokenAddress}`;
+    const hit = cache.get(cacheKey);
+    if (hit && now() - hit.at < IMPORT_TRADES_TTL_MS) return { trades: hit.bars, stale: false, rateLimited: false };
+    if (inflight.has(cacheKey)) return inflight.get(cacheKey);
+    if (!takeCall()) return { trades: hit?.bars || [], stale: Boolean(hit), rateLimited: !hit };
+    const url = `${base}/networks/${encodeURIComponent(network)}/pools/${encodeURIComponent(pairAddress)}/trades?token=${encodeURIComponent(tokenAddress)}`;
+    const request = fetchImpl(url, {
+      headers: { accept: "application/json", ...(key ? { "x-cg-pro-api-key": key } : {}) },
+      signal: AbortSignal.timeout(15_000),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`GeckoTerminal ${res.status}`);
+        const fresh = parseGeckoTrades(await res.json(), chainId, tokenAddress);
+        cache.set(cacheKey, { at: now(), bars: fresh });
+        return { trades: fresh, stale: false, rateLimited: false };
+      })
+      .catch((error) => {
+        if (hit) return { trades: hit.bars, stale: true, rateLimited: false };
+        throw error;
+      })
+      .finally(() => inflight.delete(cacheKey));
+    inflight.set(cacheKey, request);
+    return request;
+  }
+
+  return { bars, trades };
 }

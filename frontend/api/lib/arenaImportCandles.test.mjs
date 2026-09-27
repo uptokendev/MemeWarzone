@@ -112,3 +112,43 @@ test("an upstream failure falls back to the last good bars, and only throws with
   assert.equal(stale.stale, true);
   await assert.rejects(source.bars({ ...args, resolution: "4h" }), /GeckoTerminal 429/);
 });
+
+// As GeckoTerminal returned it for Derpy Dave (2026-09-27): a sell into wrapped SOL.
+const TRADES = {
+  data: [
+    { attributes: { block_number: 450952545, block_timestamp: "2026-09-27T09:10:44Z", tx_hash: "35bk", tx_from_address: "C55z", kind: "sell",
+      from_token_address: "2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS", to_token_address: "So11111111111111111111111111111111111111112",
+      from_token_amount: "50000.0", to_token_amount: "0.025404286", volume_in_usd: "3.1978" } },
+    { attributes: { block_number: 450952600, block_timestamp: "2026-09-27T09:20:00Z", tx_hash: "buyUsdc", tx_from_address: "Abc", kind: "buy",
+      from_token_address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", to_token_address: "2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS",
+      from_token_amount: "5", to_token_amount: "78000", volume_in_usd: "5" } },
+    { attributes: { tx_hash: "other", block_timestamp: "2026-09-27T09:00:00Z", from_token_address: "X", to_token_address: "Y", from_token_amount: "1", to_token_amount: "1" } },
+  ],
+};
+
+test("pool trades are read in the import's own terms, newest first", async () => {
+  const { parseGeckoTrades } = await import("./arenaImportCandles.js");
+  const rows = parseGeckoTrades(TRADES, 101, "2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS");
+  assert.equal(rows.length, 2, "a trade that does not involve the import is dropped");
+  assert.equal(rows[0].txHash, "buyUsdc");
+  assert.equal(rows[0].side, "buy");
+  assert.equal(rows[0].tokenAmount, 78000);
+  assert.equal(rows[0].nativeAmount, null, "quoted in USDC: no native amount, the USD value carries it");
+  assert.equal(rows[0].volumeUsd, 5);
+  assert.equal(rows[1].side, "sell");
+  assert.equal(rows[1].nativeAmount, 0.025404286);
+  assert.equal(rows[1].maker, "C55z");
+  assert.equal(rows[1].blockTime, Date.parse("2026-09-27T09:10:44Z") / 1000);
+});
+
+test("trades share the candle budget and cache", async () => {
+  const calls = [];
+  const source = createCandleSource({ env: { ARENA_IMPORT_CANDLES_GECKO_PER_MIN: "1" }, fetchImpl: async (url) => { calls.push(url); return { ok: true, json: async () => TRADES }; }, now: () => 1 });
+  const args = { network: "solana", pairAddress: "P", tokenAddress: "2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS", chainId: 101 };
+  const first = await source.trades(args);
+  assert.equal(first.trades.length, 2);
+  assert.match(calls[0], /\/pools\/P\/trades\?token=2wT8/);
+  assert.equal((await source.trades(args)).trades.length, 2, "cached");
+  assert.equal((await source.bars({ ...args, resolution: "1m" })).rateLimited, true, "one budget for both");
+  assert.equal(calls.length, 1);
+});

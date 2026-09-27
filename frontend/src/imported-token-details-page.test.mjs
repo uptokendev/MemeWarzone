@@ -189,3 +189,12 @@ test("imported page: CrypticPump badge for everyone once listed, list button onl
   assert.match(page, /campaignAddress=\{item\.tokenAddress\}/);
 });
 
+
+test("imported trades come from the import's own pool, in our own token page's table", async () => {
+  const table = await read("./components/arena/ImportedTradesTable.tsx");
+  assert.match(page, /<ImportedTradesTable/);
+  assert.doesNotMatch(page, /fetchMarketTrades/, "the indexer never follows import pools");
+  assert.match(table, /fetchArenaImportTrades\(tokenAddress, chainId/);
+  for (const head of ["Account", "Type", "Token", "Time", "Txn"]) assert.match(table, new RegExp(`>${head}</th>`));
+  assert.match(table, /data-imported-trades-table="true"/);
+});

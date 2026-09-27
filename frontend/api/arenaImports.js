@@ -210,6 +210,26 @@ async function handleCandles(req, res) {
   }
 }
 
+/** GET /arena/imports/trades?chainId&token -- the import's recent trades on its own DEX pool (24h). */
+async function handleTrades(req, res) {
+  const query = getQuery(req);
+  const chainId = Number(query.chainId || 0);
+  const token = ident(query.token || query.tokenAddress, chainId);
+  if (!token || !chainId) return json(res, 400, { error: "chainId and token are required", code: "IMPORT_IDENTITY_REQUIRED" });
+  const network = geckoTerminalNetwork(chainId);
+  if (!network) return json(res, 400, { error: "No trade source for this chain", code: "IMPORT_TRADES_CHAIN" });
+  const found = await importPool(chainId, token);
+  if (!found) return json(res, 404, { error: "Import not found", code: "IMPORT_NOT_FOUND" });
+  const base = { source: "geckoterminal", window: "24h", pairAddress: found.pairAddress };
+  if (!found.pairAddress) return json(res, 200, { ...base, items: [], reason: "NO_POOL" });
+  try {
+    const result = await candleSource.trades({ network, pairAddress: found.pairAddress, tokenAddress: found.tokenAddress, chainId });
+    return json(res, 200, { ...base, items: result.trades, stale: result.stale, rateLimited: result.rateLimited });
+  } catch (error) {
+    return json(res, 502, { ...base, items: [], error: "Trade source unavailable", detail: String(error?.message || error) });
+  }
+}
+
 async function handleRequestReview(req, res, id) {
   const body = await readJson(req);
   const row = await findById(id);
@@ -249,6 +269,7 @@ export default async function handler(req, res) {
     if (method === "GET" && path === "/arena/imports/eligibility") return handleEligibility(req, res);
     if (method === "GET" && path === "/arena/imports/profile") return handleProfile(req, res);
     if (method === "GET" && path === "/arena/imports/candles") return handleCandles(req, res);
+    if (method === "GET" && path === "/arena/imports/trades") return handleTrades(req, res);
     const review = path.match(/^\/arena\/imports\/([^/]+)\/request-review$/);
     if (review) return method === "POST" ? handleRequestReview(req, res, decodeURIComponent(review[1])) : badMethod(res);
     return json(res, 404, { error: `Unknown arena imports route: ${path}` });

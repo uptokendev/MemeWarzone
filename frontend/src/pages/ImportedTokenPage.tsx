@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
+import { ImportedTradesTable } from "@/components/arena/ImportedTradesTable";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { TokenComments } from "@/components/token/TokenComments";
 import { TokenWarRoom } from "@/components/token/TokenWarRoom";
@@ -37,7 +38,6 @@ import {
 } from "@/lib/arena/importChartPresentation.mjs";
 import { SOLANA_CHAIN_ID, getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
 import { followCampaign, isFollowingCampaign, unfollowCampaign } from "@/lib/followApi";
-import { fetchMarketTrades, type MarketTrade } from "@/lib/marketContinuityApi";
 import { fetchUserProfile, type UserProfile } from "@/lib/profileApi";
 import { getExplorerBase } from "@/lib/profile/profileFormatters";
 import { updateProjectImportProfile, uploadProjectImportImage, type ProjectImportItem } from "@/lib/projectImports";
@@ -143,7 +143,6 @@ export default function ImportedTokenPage({
   const [chartResolution, setChartResolution] = useState<UnifiedChartResolution>(IMPORT_CHART_DEFAULT_RESOLUTION as UnifiedChartResolution);
   const [usdCandles, setUsdCandles] = useState<ArenaImportCandleResponse["items"]>([]);
   const [candleState, setCandleState] = useState<{ loading: boolean; reason?: string }>({ loading: true });
-  const [trades, setTrades] = useState<MarketTrade[]>([]);
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof fetchArenaTokenProfile>>>(null);
   const [ownerProfile, setOwnerProfile] = useState<UserProfile | null>(null);
   const [following, setFollowing] = useState(false);
@@ -166,9 +165,6 @@ export default function ImportedTokenPage({
     void fetchArenaTokenProfile(item.tokenAddress, item.chainId, controller.signal).then((next) => {
       if (next) setProfile(next);
     });
-    void fetchMarketTrades(item.tokenAddress, item.chainId, { limit: 40, signal: controller.signal })
-      .then((payload) => setTrades(Array.isArray(payload?.items) ? payload.items : []))
-      .catch(() => setTrades([]));
     return () => controller.abort();
   }, [item.chainId, item.tokenAddress]);
 
@@ -494,20 +490,11 @@ export default function ImportedTokenPage({
                   <div className="rounded-xl border border-border bg-muted/20 px-3 py-2"><p className="text-[10px] text-muted-foreground uppercase">Liquidity</p><p className="mt-0.5 font-retro text-sm">{formatUsd(profile?.liquidityUsd)}</p></div>
                   <div className="rounded-xl border border-border bg-muted/20 px-3 py-2"><p className="text-[10px] text-muted-foreground uppercase">24h volume</p><p className="mt-0.5 font-retro text-sm">{formatUsd(profile?.volume24hUsd)}</p></div>
                 </div>
-                {trades.length ? (
-                  <div className="overflow-auto text-sm">
-                    <table className="w-full">
-                      <thead><tr className="text-left text-muted-foreground"><th className="py-2">Type</th><th>Amount</th><th>Time</th></tr></thead>
-                      <tbody>
-                        {trades.slice(0, 24).map((tx) => (
-                          <tr key={`${tx.txHash}-${tx.logIndex}`} className="border-t border-border/40"><td className="py-2">{tx.side}</td><td>{tx.nativeAmountRaw}</td><td>{tx.blockTime}</td></tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Trades appear here once this pool is indexed. {marketDexUrl ? <a href={marketDexUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">Open on DEX</a> : null}{explorerUrl ? <> · <a href={explorerUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">Explorer</a></> : null}</p>
-                )}
+                <ImportedTradesTable
+                  chainId={item.chainId}
+                  tokenAddress={item.tokenAddress}
+                  emptyState={<p className="text-sm text-muted-foreground">Trades appear here once this pool is indexed. {marketDexUrl ? <a href={marketDexUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">Open on DEX</a> : null}{explorerUrl ? <> · <a href={explorerUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">Explorer</a></> : null}</p>}
+                />
               </TabsContent>
               <TabsContent value="comments" className="mt-0">
                 <TokenComments chainId={item.chainId} campaignAddress={item.tokenAddress} tokenAddress={item.tokenAddress} mode="comments" />

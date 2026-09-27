@@ -3,7 +3,7 @@
 Owner: founder. Date: 2026-09-27. Branch: `build/robinhood-full-expansion` (push the same commits to
 `build/cross-chain-stabilization-rh-base`, which auto-deploys the live app).
 
-Three parts, **A → B → C, one commit each, in that order.** Pull first: the chart work for Part C (`4d4397cf`) is already on the branch. Do exactly what is written. If something
+Three parts, **A → B → C, one commit each, in that order.** Pull first: the chart and trades work for Part C is already on the branch. Do exactly what is written. If something
 here is impossible or wrong, **stop and report it — do not work around it, do not improve anything
 else.**
 
@@ -217,8 +217,10 @@ says; do not change those names, the effect, or the props.
      - **Overview**: the description box in the reference's style
        `rounded-2xl border border-border bg-muted/10 px-4 py-4` (keep `data-project-description`).
        No Campaign Intel / Flywheel / Holder accordion (launchpad data an import does not have).
-     - **Trades**: today's trades content minus the four stat tiles (they moved to the hero). Keep the
-       empty text `Trades appear here once this pool is indexed` and its DEX / explorer links.
+     - **Trades**: only `<ImportedTradesTable … />` with its `emptyState` prop exactly as it is today
+       (the four stat tiles above it move to the hero). The table component
+       (`components/arena/ImportedTradesTable.tsx`, same markup as our own page's trades table, data
+       from the import's own DEX pool) is **not** yours to edit.
      - **Community**: `TokenComments chainId campaignAddress={item.tokenAddress} tokenAddress={item.tokenAddress} mode="comments"`,
        exactly as today.
    **Right column** `div className="xl:sticky xl:top-[80px] xl:-mt-px self-start"` (was not sticky):
@@ -250,7 +252,7 @@ Add assertions for: the hero grid string `xl:grid-cols-[220px_minmax(0,1fr)]`, t
 string `xl:grid-cols-5`, the sticky right column `xl:sticky xl:top-[80px]`, and `>Overview<`.
 **All other assertions stay byte-for-byte** (the data attributes, ownership pill strings, `canClaim`,
 `canEdit`, CrypticPump conditions, claim banner, arena strip, trade panel, `Imported token — no bonding curve`,
-`Trades appear here once this pool is indexed`, and everything about `TokenDetailsEntry`).
+`Trades appear here once this pool is indexed`, the `ImportedTradesTable` test, and everything about `TokenDetailsEntry`).
 
 **Done when:** `/token/2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS?chainId=101` (Derpy Dave) and any
 own launchpad token page, side by side at 1440px, have the same hero shape (art left 220px, identity
