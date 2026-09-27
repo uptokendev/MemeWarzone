@@ -26,6 +26,7 @@ import {
   sendPlannedResolve,
 } from "./arena-operator-resolve.mjs";
 import { buildTournamentPlaces } from "../../frontend/api/lib/arenaTournamentPlaces.js";
+import { arenaEnvironmentIdentity } from "../../frontend/api/lib/arenaChainEnvironment.js";
 import {
   DEFAULT_INTERVAL_MS,
   buildDueResolveQuery,
@@ -235,12 +236,29 @@ export function poolAccountToPlanner(account, PublicKeyCtor = PublicKey) {
   };
 }
 
-export function configAccountToPlanner(account, genesisHash, chainId, PublicKeyCtor = PublicKey) {
+/**
+ * The cluster this worker is meant for, from SOLANA_CLUSTER (mainnet-beta | devnet), mapped through the
+ * same arenaEnvironmentIdentity the API uses. validateCanonicalArenaConfig can only confirm the RPC's
+ * genesis hash against a known environment+cluster pair; without one it refused every config, so on
+ * mainnet no battle was ever resolved (2026-09-27, the same gap the API probe had on 2026-09-22).
+ */
+export function arenaClusterIdentity(chainId, cluster = process.env.SOLANA_CLUSTER) {
+  const value = String(cluster || "").trim();
+  if (!value) throw new Error("SOLANA_CLUSTER is required (mainnet-beta or devnet)");
+  const identity = arenaEnvironmentIdentity(chainId, { solanaCluster: value });
+  if (!identity.environment || !identity.solanaCluster) throw new Error(`SOLANA_CLUSTER=${value} is not a Solana arena cluster`);
+  return identity;
+}
+
+export function configAccountToPlanner(account, genesisHash, chainId, PublicKeyCtor = PublicKey, cluster = process.env.SOLANA_CLUSTER) {
+  const identity = arenaClusterIdentity(chainId, cluster);
   const validated = validateCanonicalArenaConfig({
     account,
     owner: account?.owner?.toBase58?.() || "",
     genesisHash,
     chainId,
+    environment: identity.environment,
+    cluster: identity.solanaCluster,
     PublicKey: PublicKeyCtor,
   });
   if (!validated.live || !validated.config) return null;
