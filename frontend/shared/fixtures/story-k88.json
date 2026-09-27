@@ -1,0 +1,201 @@
+{
+ "version": 1,
+ "chainId": 101,
+ "token": "4VPtpo5qQmmbva9JHYU2eiH9UY6Xf32nCbKKB5ZeYb77",
+ "generatedAt": "2026-09-27T21:30:00.000Z",
+ "coin": {
+  "name": "KAIJU88",
+  "ticker": "K88",
+  "chainId": 101,
+  "chainLabel": "Solana",
+  "origin": "launched",
+  "logoUrl": "https://ellkfgoxnzykxqybajtn.supabase.co/storage/v1/object/public/MEMEBATTLES/logos/101/708bad94-c935-4131-90c6-4c698e8ac561.webp",
+  "logoAnimated": true,
+  "accent": "#a3ff3c",
+  "accent2": "#1f6b3a",
+  "tokenPath": "/token/4VPtpo5qQmmbva9JHYU2eiH9UY6Xf32nCbKKB5ZeYb77"
+ },
+ "chapters": [
+  {
+   "id": "cover",
+   "kind": "cover",
+   "voice": "creator",
+   "stamp": "Written by the creator",
+   "durationMs": 6500,
+   "kicker": "First coin of the Warzone",
+   "quote": "Kaiju88 gonna flip Godzilla not even superman can stop us!!"
+  },
+  {
+   "id": "creator-1",
+   "kind": "text",
+   "voice": "creator",
+   "stamp": "Written by the creator",
+   "durationMs": 8000,
+   "style": "sonar",
+   "heading": "From the deepest trenches of the blockchain, a colossal titan has awakened.",
+   "body": "$K88 didn't just step into the arena. He *shattered the tyranny of the Ronin Master*, rewriting the food chain on Solana for good."
+  },
+  {
+   "id": "creator-2",
+   "kind": "text",
+   "voice": "creator",
+   "stamp": "Written by the creator",
+   "durationMs": 8000,
+   "style": "candle",
+   "heading": null,
+   "body": "Forged from pure *cryptonite*. Infused with the unstoppable, blinding power of the *infinite green candle*. Standing shoulder to shoulder with the clan, $K88 is here to crush the noise and conquer the warzone."
+  },
+  {
+   "id": "creator-warcry",
+   "kind": "warcry",
+   "voice": "creator",
+   "stamp": "Written by the creator",
+   "durationMs": 6500,
+   "lines": [
+    "GODZILLA COULDN'T STOP $K88.",
+    "SUPERMAN IS POWERLESS.",
+    "THE $CLAN REIGNS SUPREME."
+   ]
+  },
+  {
+   "id": "promotion",
+   "kind": "counts",
+   "voice": "chronicle",
+   "stamp": "Chronicle · MemeWarzone",
+   "durationMs": 7000,
+   "date": "24 SEP 2026 · 14:04 UTC",
+   "title": "The call went out.",
+   "sub": "Before a single token existed.",
+   "rows": [
+    {
+     "value": 122,
+     "decimals": 0,
+     "prefix": "",
+     "suffix": "",
+     "label": "people watched",
+     "tone": "plain"
+    },
+    {
+     "value": 4,
+     "decimals": 0,
+     "prefix": "",
+     "suffix": "",
+     "label": "followed before launch",
+     "tone": "ember"
+    }
+   ],
+   "lede": "The first follower showed up 27 minutes after the page went live."
+  },
+  {
+   "id": "launch",
+   "kind": "moment",
+   "voice": "chronicle",
+   "stamp": "Chronicle · on chain",
+   "durationMs": 7000,
+   "date": "25 SEP 2026",
+   "time": "13:57:27 UTC",
+   "title": "KAIJU88 launched.",
+   "sub": "The first coin ever launched on MemeWarzone, and the first on Solana.",
+   "seal": [
+    "FIRST",
+    "COIN",
+    "EVER"
+   ],
+   "lede": "His goal that day: be the *first coin to fully bond* on MemeWarzone."
+  },
+  {
+   "id": "first-trades",
+   "kind": "trades",
+   "voice": "chronicle",
+   "stamp": "Chronicle · on chain",
+   "durationMs": 8000,
+   "items": [
+    {
+     "offsetLabel": "86 SECONDS IN",
+     "amount": 0.8,
+     "decimals": 1,
+     "unit": "SOL",
+     "wallet": "8WWq…RcK",
+     "note": "The first buy.",
+     "txUrl": "https://solscan.io/tx/4Cj7TbY4bMxm2j67uQiaYQ2zeZ31CxvZpaC5n2PH2AhSzykGR5utoVLfcbUTeapRUtotRaBchJnenZRjVrQcnTt1",
+     "tone": "plain"
+    },
+    {
+     "offsetLabel": "52 SECONDS LATER",
+     "amount": 7.9,
+     "decimals": 1,
+     "unit": "SOL",
+     "wallet": "tYDR…DWP",
+     "note": "Still the biggest single buy.",
+     "txUrl": null,
+     "tone": "accent"
+    }
+   ]
+  },
+  {
+   "id": "clan",
+   "kind": "clan",
+   "voice": "chronicle",
+   "stamp": "Chronicle · today",
+   "durationMs": 7500,
+   "title": "The clan.",
+   "sub": "One dot per wallet that traded.",
+   "holding": 35,
+   "exited": 6,
+   "lede": "*41 wallets* have traded $K88, *85 trades* so far."
+  },
+  {
+   "id": "road",
+   "kind": "progress",
+   "voice": "chronicle",
+   "stamp": "Chronicle · the mission",
+   "durationMs": 8000,
+   "title": "Road to graduation",
+   "percent": 21.5,
+   "fromLabel": "LAUNCH",
+   "toLabel": "$15K TARGET",
+   "rival": null,
+   "lede": "No coin has challenged KAIJU88 yet. *Who's first?*"
+  },
+  {
+   "id": "call",
+   "kind": "call",
+   "voice": "chronicle",
+   "stamp": "Your turn",
+   "durationMs": 12000,
+   "title": "Join the clan.",
+   "ctas": [
+    {
+     "label": "BUY $K88",
+     "href": "/token/4VPtpo5qQmmbva9JHYU2eiH9UY6Xf32nCbKKB5ZeYb77",
+     "primary": true
+    },
+    {
+     "label": "WAR ROOM",
+     "href": "/token/4VPtpo5qQmmbva9JHYU2eiH9UY6Xf32nCbKKB5ZeYb77",
+     "primary": false
+    },
+    {
+     "label": "CHALLENGE $K88",
+     "href": "/warzone/battles",
+     "primary": false
+    },
+    {
+     "label": "X",
+     "href": "https://x.com/kaijuclancoin",
+     "primary": false
+    },
+    {
+     "label": "TELEGRAM",
+     "href": "https://t.me/clanupwithkaiju",
+     "primary": false
+    },
+    {
+     "label": "WEBSITE",
+     "href": "https://kaijuclancoin.com/",
+     "primary": false
+    }
+   ]
+  }
+ ]
+}

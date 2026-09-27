@@ -1,0 +1,249 @@
+{
+ "version": 1,
+ "chainId": 101,
+ "token": "2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS",
+ "generatedAt": "2026-09-27T21:50:00.000Z",
+ "coin": {
+  "name": "Derpy Dave",
+  "ticker": "DERPYDAVE",
+  "chainId": 101,
+  "chainLabel": "Solana",
+  "origin": "imported",
+  "logoUrl": "https://ellkfgoxnzykxqybajtn.supabase.co/storage/v1/object/public/MEMEBATTLES/project-imports/101/2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS/ffcdf324-2adb-4834-8fb9-55568a5c540d.jpg",
+  "logoAnimated": false,
+  "accent": "#fcf144",
+  "accent2": "#c955f7",
+  "tokenPath": "/token/2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS?chainId=101"
+ },
+ "chapters": [
+  {
+   "id": "cover",
+   "kind": "cover",
+   "voice": "chronicle",
+   "stamp": "A MemeWarzone story",
+   "durationMs": 6000,
+   "kicker": "Imported · Solana",
+   "quote": null
+  },
+  {
+   "id": "born",
+   "kind": "moment",
+   "voice": "chronicle",
+   "stamp": "Chronicle · on chain",
+   "durationMs": 6500,
+   "date": "20 MAR 2026",
+   "time": "12:48:01 UTC",
+   "title": "Derpy Dave was born.",
+   "sub": "First pool on Solana. A Friday afternoon.",
+   "seal": null,
+   "lede": null
+  },
+  {
+   "id": "history",
+   "kind": "chart",
+   "voice": "chronicle",
+   "stamp": "Chronicle · market history",
+   "durationMs": 9000,
+   "title": "5.2× in 13 days.",
+   "sub": "$26.8K on 1 May. $140.3K on 14 May.",
+   "points": [
+    62339.88,
+    44919.39,
+    32548.67,
+    35531.36,
+    30553.22,
+    31714.32,
+    36480.19,
+    33808.82,
+    37471.28,
+    32413.49,
+    36309.19,
+    38350.46,
+    29186.51,
+    27294.06,
+    32376.12,
+    105685.03,
+    76116.15,
+    105110.17,
+    101238.37,
+    89170.22,
+    82845.48,
+    78591.96,
+    106926.42,
+    91196.61,
+    73572.42,
+    64068.23,
+    49777.55,
+    62136.66,
+    62311.44,
+    61528.81,
+    56049.69,
+    61919.33,
+    66445.39,
+    94607.51,
+    87446.02,
+    82778.86,
+    81258.53,
+    85993.15,
+    84453.64,
+    81299.22,
+    80203.32,
+    78301.21,
+    77526.99,
+    73853.47,
+    76694.65,
+    68696.65,
+    68234.22,
+    67482.67,
+    57059.26,
+    76759.32,
+    74472.32,
+    83283.99,
+    76560.64,
+    79158.12,
+    73760.76,
+    68660.8,
+    67075.01,
+    63788.51,
+    61853.13,
+    69212.55,
+    60484.97,
+    61396.99
+   ],
+   "low": {
+    "index": 13,
+    "label": "$26.8K",
+    "date": "01 May"
+   },
+   "high": {
+    "index": 17,
+    "label": "$140.3K",
+    "date": "14 May"
+   },
+   "fromLabel": "MAR 2026",
+   "toLabel": "TODAY",
+   "lede": "Today it sits at *$61.4K*, 56% under that top."
+  },
+  {
+   "id": "today",
+   "kind": "counts",
+   "voice": "chronicle",
+   "stamp": "Chronicle · today",
+   "durationMs": 7000,
+   "date": null,
+   "title": "The army today.",
+   "sub": "Counted on 27 Sep.",
+   "rows": [
+    {
+     "value": 160,
+     "decimals": 0,
+     "prefix": "",
+     "suffix": "",
+     "label": "holders",
+     "tone": "accent"
+    },
+    {
+     "value": 61.5,
+     "decimals": 1,
+     "prefix": "$",
+     "suffix": "K",
+     "label": "market cap",
+     "tone": "plain"
+    },
+    {
+     "value": 21.4,
+     "decimals": 1,
+     "prefix": "$",
+     "suffix": "K",
+     "label": "liquidity",
+     "tone": "plain"
+    }
+   ],
+   "lede": null
+  },
+  {
+   "id": "joined",
+   "kind": "moment",
+   "voice": "chronicle",
+   "stamp": "Chronicle · MemeWarzone",
+   "durationMs": 6500,
+   "date": "08 SEP 2026",
+   "time": "18:40 UTC",
+   "title": "Derpy Dave joined the Warzone.",
+   "sub": "Brought in by the owner and cleared to fight.",
+   "seal": [
+    "OWNER",
+    "VERIFIED"
+   ],
+   "lede": null
+  },
+  {
+   "id": "battle-arena-mugwhj11-9b1973",
+   "kind": "battle",
+   "voice": "chronicle",
+   "stamp": "Chronicle · the arena",
+   "durationMs": 8000,
+   "date": "25 SEP 2026",
+   "title": "Lost to $ASK.",
+   "sub": "Vote battle, 11 to 15 votes.",
+   "left": {
+    "ticker": "DERPYDAVE",
+    "imageUrl": "https://ellkfgoxnzykxqybajtn.supabase.co/storage/v1/object/public/MEMEBATTLES/project-imports/101/2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS/ffcdf324-2adb-4834-8fb9-55568a5c540d.jpg",
+    "won": false
+   },
+   "right": {
+    "ticker": "ASK",
+    "imageUrl": "https://cdn.dexscreener.com/cms/images/AcVGdQwC13InxMHb?width=800&height=800&quality=95&format=auto",
+    "won": true
+   },
+   "resultLabel": "$ASK WON",
+   "lede": "Derpy Dave can call a rematch from the Battle Wall."
+  },
+  {
+   "id": "standing",
+   "kind": "standing",
+   "voice": "chronicle",
+   "stamp": "Chronicle · standing",
+   "durationMs": 7000,
+   "title": "Where it stands.",
+   "sub": "Rankings on 27 Sep.",
+   "rows": [
+    {
+     "position": "#2",
+     "label": "Major War League 2026-09",
+     "detail": "1 pts · 0W / 1L"
+    },
+    {
+     "position": "#1",
+     "label": "Featured memecoins",
+     "detail": "1 UP votes in 24h"
+    }
+   ]
+  },
+  {
+   "id": "call",
+   "kind": "call",
+   "voice": "chronicle",
+   "stamp": "Your turn",
+   "durationMs": 12000,
+   "title": "Get in on $DERPYDAVE.",
+   "ctas": [
+    {
+     "label": "BUY $DERPYDAVE",
+     "href": "/token/2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS?chainId=101",
+     "primary": true
+    },
+    {
+     "label": "CHALLENGE $DERPYDAVE",
+     "href": "/warzone/battles",
+     "primary": false
+    },
+    {
+     "label": "UPVOTE",
+     "href": "/token/2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS?chainId=101",
+     "primary": false
+    }
+   ]
+  }
+ ]
+}
