@@ -156,7 +156,7 @@ against the rule "unlinked slices go to the airdrop".
 |---|---|---|---|
 | 1 | Config ladder (server): economics module, parity tests, SOL-price steps, config creation + chain readback, API to fetch a launch config | Grok, brief `docs/dbc/grok-step-1-config-ladder.md` | **DONE 2026-09-28**: merged (PR #471 + review fixes), devnet ALL CHECKS PASS |
 | 2 | Create flow: creator signs createPool only (2 signers) + create screen + drafts and scheduled launches (D18) | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | **DONE 2026-09-28**: merged (PR #472 + review fixes), devnet ALL CHECKS PASS |
-| 3 | Trading on our site: DBC buy/sell, referral account, creator locked buys (D12), post-graduation trading | Grok, brief `docs/dbc/grok-step-3-trading.md` | brief written 2026-09-28 |
+| 3 | Trading on our site: DBC buy/sell, referral account, creator locked buys (D12), post-graduation trading | Grok, brief `docs/dbc/grok-step-3-trading.md` | **DONE 2026-09-28**: merged (PR #473 + review fixes), devnet ALL CHECKS PASS |
 | 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | brief written 2026-09-28 (parallel with step 3) |
 | 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | brief written 2026-09-28; starts after step 4 is merged |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails), buyback & burn (random, <= 0.5% impact), split | Grok | brief after step 5 |
@@ -373,3 +373,23 @@ less exactly 2%; over-cap first buy refused (`DBC_FIRST_BUY_CAP`); finalize refu
 Creator cost of a launch with a 0.02 SOL first buy: 0.042 SOL total, so ~0.022 SOL is rent + fees.
 Claude's fix found by running it: `dbcCreateIntent.mjs` (the browser path) simulated a legacy
 Transaction with a config object, which web3.js 1.x rejects: every launch would have failed.
+
+### Step 3, review 1 (2026-09-28): PR #473 @ `b4f124fd` + Claude's `b6bcdcd1`: MERGED
+
+Grok did not run the proof. Claude ran it (funder = devnet deployer) and fixed what it found:
+- `dbcTrade.mjs`: `swapQuote2` reads `virtualPool.poolState.*` (SDK 1.5.13), so every quote threw.
+- `api/dbc/locks.js`: the response carried BigInt fields and `JSON.stringify` threw after the row was
+  written; handlers inside `try` were returned without `await`, so their errors skipped the catch (the
+  same shape as the live TICKER_UNAVAILABLE 500).
+- `TokenDetails.tsx`: the 5 s launchpad curve poll and the graduation-handoff effect still ran on DBC
+  pages; the launchpad decoder only checks length, so a 424-byte DBC pool read as a campaign. Both now
+  skip `isDbcPage`; the quote and trade paths already returned before the launchpad code.
+- `create.test.mjs` test 15 pinned the removed `DbcTokenPage`; it now pins the DBC guards.
+- The proof compared the referral to a fixed 2% fee. It now decodes `EvtSwap2` and checks the referral
+  delta equals the event's referral fee, referral = 20% of Meteora's cut, cut = 20% of the fee, and the
+  fee charged is above 2% and never above the quote.
+
+Devnet proof: **ALL CHECKS PASS**. Buy 739 B / 1 signer, quoted 49.20%, charged 48.40% (the fee falls
+while the transaction lands), referral 387200 = event; sell 707 B; creator locked buy 1044 B, 2 signers,
+creator wallet delta 0, escrow holds the amount, lock-record route accepts it. Tests 15 + 27 pass.
+Launchpad create/buy/sell files untouched; `loadVerifiedMarket`'s DBC relaxation is behind a flag.
