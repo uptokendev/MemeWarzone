@@ -71,7 +71,15 @@ export async function heldCreatorPoolSum(db: Queryable): Promise<bigint> {
        from public.dbc_fee_accruals
       where status in ('claimed', 'routing', 'routed')`,
   );
-  return BigInt(String(held.rows[0]?.held || "0"));
+  // Step 5b pays the creator pot out (holders deposit, split transfer, buyback). A payout that is
+  // sending or landed has left, or is leaving, the collector, so it is no longer held.
+  const paid = await db.query(
+    `select coalesce(sum(lamports), 0)::text as paid
+       from public.dbc_creator_pool_payouts
+      where status in ('sending', 'landed')`,
+  );
+  const value = BigInt(String(held.rows[0]?.held || "0")) - BigInt(String(paid.rows[0]?.paid || "0"));
+  return value > 0n ? value : 0n;
 }
 
 export function buildRouteTransfers(input: {

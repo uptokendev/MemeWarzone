@@ -133,7 +133,7 @@ export async function resolvePendingGraduation(input: {
   );
   let resolved = 0;
   let waiting = 0;
-  const client = input.client || new DynamicBondingCurveClient(input.connection, "confirmed");
+  const client = input.client || new DynamicBondingCurveClient(input.connection as any, "confirmed");
   for (const row of pending.rows) {
     const signature = String(row.signature || "");
     const lastValid = Number(row.last_valid_block_height || 0);
@@ -210,7 +210,7 @@ async function applyLandedJob(input: {
     const wrap = await input.client.state.getPool(poolPk);
     const pool = readPoolSnapshot(unwrapPool(wrap));
     const dammPool = deriveDammV2PoolAddress(dammConfigPk(), new PublicKey(pool!.baseMint), NATIVE_MINT).toBase58();
-    const cpAmm = new CpAmm(input.connection);
+    const cpAmm = new CpAmm(input.connection as any);
     let first: string | null = null;
     let second: string | null = null;
     try {
@@ -473,7 +473,7 @@ async function loadJob(db: Queryable, pool: string) {
 }
 
 async function dammVaultAmounts(connection: Connection, dammPool: string) {
-  const cpAmm = new CpAmm(connection);
+  const cpAmm = new CpAmm(connection as any);
   const state = await cpAmm.fetchPoolState(new PublicKey(dammPool));
   const tokenA = BigInt((await connection.getTokenAccountBalance(state.tokenAVault)).value.amount);
   const tokenB = BigInt((await connection.getTokenAccountBalance(state.tokenBVault)).value.amount);
@@ -603,7 +603,7 @@ export async function advanceGraduationJob(input: {
   send: boolean;
   client?: DynamicBondingCurveClient;
 }): Promise<{ pool: string; step: GraduationStep | string; signature: string | null; skipped: string | null }> {
-  const client = input.client || new DynamicBondingCurveClient(input.connection, "confirmed");
+  const client = input.client || new DynamicBondingCurveClient(input.connection as any, "confirmed");
   const poolPk = new PublicKey(input.pool);
   const wrap = await client.state.getPool(poolPk);
   const poolState = unwrapPool(wrap);
@@ -663,7 +663,7 @@ export async function advanceGraduationJob(input: {
 
   if (step === "locker") {
     const tx = await client.migration.createLocker({ payer: input.collector.publicKey, pool: poolPk });
-    const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx });
+    const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx: tx as any });
     return { pool: input.pool, step, signature: sent.signature, skipped: sent.skipped };
   }
 
@@ -678,15 +678,15 @@ export async function advanceGraduationJob(input: {
       connection: input.connection,
       collector: input.collector,
       jobId: job.id,
-      tx: res.transaction,
-      extraSigners: [res.firstPositionNftKeypair, res.secondPositionNftKeypair],
+      tx: res.transaction as any,
+      extraSigners: [res.firstPositionNftKeypair as any, res.secondPositionNftKeypair as any],
     });
     return { pool: input.pool, step, signature: sent.signature, skipped: sent.skipped };
   }
 
   if (step === "withdraw") {
     const tx = await client.partner.partnerWithdrawMigrationFee({ pool: poolPk, sender: input.collector.publicKey });
-    const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx });
+    const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx: tx as any });
     return { pool: input.pool, step, signature: sent.signature, skipped: sent.skipped };
   }
 
@@ -753,7 +753,7 @@ export async function advanceGraduationJob(input: {
       spend: applied.paid,
     });
     if (blocked) return { pool: input.pool, step, signature: null, skipped: "collector-short" };
-    const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx });
+    const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx: tx as any });
     return { pool: input.pool, step, signature: sent.signature, skipped: sent.skipped };
   }
 
@@ -789,7 +789,7 @@ export async function advanceGraduationJob(input: {
       spend: totals.routed,
     });
     if (blocked) return { pool: input.pool, step, signature: null, skipped: "collector-short" };
-    const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx });
+    const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx: tx as any });
     return { pool: input.pool, step, signature: sent.signature, skipped: sent.skipped };
   }
 
@@ -966,7 +966,7 @@ async function applyLandedLpClaim(input: {
   const dammPool = String(input.row.damm_pool || "");
   if (dammPool) {
     try {
-      const cpAmm = new CpAmm(input.connection);
+      const cpAmm = new CpAmm(input.connection as any);
       const dpool = await cpAmm.fetchPoolState(new PublicKey(dammPool));
       const quoteVault = dpool.tokenBMint.equals(NATIVE_MINT) ? dpool.tokenBVault : dpool.tokenAVault;
       claimed = quoteVaultOutflow(input.confirmed, quoteVault.toBase58());
@@ -1141,7 +1141,7 @@ export async function runDbcLpClaimsOnce(input: {
       advanced.push({ pool: String(job.pool), skipped: "no-damm-pool", signature: null });
       continue;
     }
-    const cpAmm = new CpAmm(input.connection);
+    const cpAmm = new CpAmm(input.connection as any);
     const positions = await cpAmm.getUserPositionByPool(new PublicKey(dammPool), input.collector.publicKey);
     if (!positions.length) {
       advanced.push({ pool: String(job.pool), skipped: "no-partner-position", signature: null });
@@ -1152,7 +1152,7 @@ export async function runDbcLpClaimsOnce(input: {
     let owed = 0n;
     try {
       const unclaimed = getUnClaimLpFee(dpool, pos.positionState);
-      owed = BigInt(String(unclaimed?.feeTokenB || unclaimed?.feeQuote || 0));
+      owed = BigInt(String(unclaimed?.feeTokenB || (unclaimed as any)?.feeQuote || 0));
       if (dpool.tokenAMint.equals(NATIVE_MINT)) owed = BigInt(String(unclaimed?.feeTokenA || 0));
     } catch {
       owed = 0n;
@@ -1165,7 +1165,7 @@ export async function runDbcLpClaimsOnce(input: {
       advanced.push({ pool: String(job.pool), skipped: "dry-run", signature: null, owed: owed.toString() });
       continue;
     }
-    const claimTx: Transaction = await cpAmm.claimPositionFee({
+    const claimTx: Transaction = (await cpAmm.claimPositionFee({
       owner: input.collector.publicKey,
       position: pos.position,
       pool: new PublicKey(dammPool),
@@ -1177,7 +1177,7 @@ export async function runDbcLpClaimsOnce(input: {
       tokenAProgram: TOKEN_PROGRAM_ID,
       tokenBProgram: TOKEN_PROGRAM_ID,
       feePayer: input.collector.publicKey,
-    });
+    })) as any;
     const protocol = rewardVaults().protocol;
     const platform = isPlatformFeeChoice(await campaignFeeChoice(input.db, String(job.pool)));
     const protocolLamports = platform ? splitPlatformLpFees(owed).protocol : owed;

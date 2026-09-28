@@ -13,7 +13,23 @@ test("keep is creator mode; holders split buyback are platform", () => {
 
 test("fee choice line for the creator panel", () => {
   assert.equal(feeChoiceLine({ feeChoice: "keep" }), null);
-  assert.equal(feeChoiceLine({ feeChoice: "holders" }), "Holders: LP fees go to holders each week");
-  assert.equal(feeChoiceLine({ feeChoice: "buyback" }), "Buyback: LP fees are bought back and burned");
+  // Trading fees on the curve and LP fees after graduation both follow the choice (D5, D19).
+  assert.equal(feeChoiceLine({ feeChoice: "holders" }), "Holders: creator fees go to holders each week");
+  assert.equal(feeChoiceLine({ feeChoice: "buyback" }), "Buyback: creator fees buy the coin back and burn it");
   assert.equal(feeChoiceLine({ feeChoice: "split", creatorSharePct: 60 }), "Split: 60% to the creator, 40% to holders");
+});
+
+test("fee choice line with what step 5b has paid", () => {
+  assert.equal(
+    feeChoiceLine({ feeChoice: "holders", totals: { holdersLamports: "840000000" } }),
+    "Holders: 0.84 SOL paid to holders so far, next payout Monday.",
+  );
+  assert.equal(
+    feeChoiceLine({ feeChoice: "buyback", totals: { buybackLamports: "1200000000", tokensBurned: "3400000000000" } }),
+    "Buyback: 1.20 SOL bought and 3,400,000 tokens burned so far.",
+  );
+  assert.equal(
+    feeChoiceLine({ feeChoice: "split", creatorSharePct: 60, totals: { creatorLamports: "5000000", holdersLamports: "3000000" } }),
+    "Split: 60% to the creator, 40% to holders. Paid so far: 0.005 SOL to the creator, 0.003 SOL to holders.",
+  );
 });
