@@ -157,8 +157,8 @@ against the rule "unlinked slices go to the airdrop".
 | 1 | Config ladder (server): economics module, parity tests, SOL-price steps, config creation + chain readback, API to fetch a launch config | Grok, brief `docs/dbc/grok-step-1-config-ladder.md` | **DONE 2026-09-28**: merged (PR #471 + review fixes), devnet ALL CHECKS PASS |
 | 2 | Create flow: creator signs createPool only (2 signers) + create screen + drafts and scheduled launches (D18) | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | **DONE 2026-09-28**: merged (PR #472 + review fixes), devnet ALL CHECKS PASS |
 | 3 | Trading on our site: DBC buy/sell, referral account, creator locked buys (D12), post-graduation trading | Grok, brief `docs/dbc/grok-step-3-trading.md` | **DONE 2026-09-28**: merged (PR #473 + review fixes), devnet ALL CHECKS PASS |
-| 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | brief written 2026-09-28 (parallel with step 3) |
-| 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | brief written 2026-09-28; starts after step 4 is merged |
+| 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | **DONE 2026-09-28**: merged (PR #474 + review fixes), devnet ALL CHECKS PASS; migration `20260929_000005` still to apply |
+| 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | sent to Grok 2026-09-28 |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails), buyback & burn (random, <= 0.5% impact), split | Grok | brief after step 5 |
 | 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | brief written 2026-09-28; starts after step 5 is merged |
 | 7 | Binding tokens via Meteora TokenBadges + liquidity filter | Grok | not started |
@@ -393,3 +393,21 @@ Devnet proof: **ALL CHECKS PASS**. Buy 739 B / 1 signer, quoted 49.20%, charged 
 while the transaction lands), referral 387200 = event; sell 707 B; creator locked buy 1044 B, 2 signers,
 creator wallet delta 0, escrow holds the amount, lock-record route accepts it. Tests 15 + 27 pass.
 Launchpad create/buy/sell files untouched; `loadVerifiedMarket`'s DBC relaxation is behind a flag.
+
+### Step 4, review 1 (2026-09-28): PR #474 @ `acc81a0a` + Claude's `9adafb2b`: MERGED
+
+Built in parallel with step 3; merged staging in (one package.json script conflict). Fixes:
+- A transaction the RPC could not return yet was skipped and the cursor moved past its slot: the trade
+  was lost for good. The pass now stops there and the cursor rests on the last slot fully read.
+- `getSignatures` stopped after 5 pages; a backlog over 2500 signatures lost its oldest ones while the
+  cursor jumped past them. It now pages back to the cursor.
+- `dbcPriceFromSqrt` kept 9 decimals (1-2 digits for a memecoin price); now 18.
+- The proof's SOL check was `indexed > 0 && spent > 0`, true for anything, and the sell was not checked.
+  Every row is now checked against the pool's quote and base vaults and the trader's token account.
+
+Devnet proof: **ALL CHECKS PASS**, 25 checks, every row equal to the chain to the lamport (buy SOL incl.
+fee = quote vault in; sell SOL after fee = quote vault out; tokens = base vault and trader deltas;
+wallet = trader). Tests: indexer 7, holders 2, market stats 5. The proof's trader is also the fee payer,
+so "trader differs from fee payer" is covered by the account layout (payer = index 9 of swap/swap2),
+not by a run. Needs `db/migrations/20260929_000005_curve_trades_venue.sql` on staging and production
+before the indexer ships (founder applies).
