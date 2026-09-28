@@ -18,6 +18,37 @@ function rpcUrl() {
   return String(process.env.SOLANA_RPC_URL || process.env.SOLANA_MAINNET_RPC_URL || process.env.SOLANA_RPC_HTTP || "").trim();
 }
 
+export async function resolveExcludeOwners(mint, campaign, deps = {}) {
+  if (!campaign) return [];
+  try {
+    const database = deps.db || (await import("../server/db.js")).pool;
+    const found = await database.query(
+      `select coalesce(launch_type, 'launchpad') as launch_type, campaign_address
+         from public.campaigns
+        where chain_id = 101
+          and (campaign_address = $1 or token_address = $2)
+        limit 1`,
+      [campaign, mint],
+    );
+    const row = found.rows?.[0];
+    if (row && String(row.launch_type) === "dbc") {
+      const url = rpcUrl();
+      if (!url) return [];
+      const { Connection, PublicKey } = await import("@solana/web3.js");
+      const { DynamicBondingCurveClient } = await import("@meteora-ag/dynamic-bonding-curve-sdk");
+      const client = new DynamicBondingCurveClient(new Connection(url, "confirmed"), "confirmed");
+      const pool = await client.state.getPool(new PublicKey(row.campaign_address));
+      const state = pool?.poolState ?? pool;
+      const vault = state?.baseVault || state?.base_vault;
+      const vaultStr = vault?.toBase58?.() || String(vault || "");
+      return vaultStr ? [vaultStr] : [];
+    }
+  } catch (error) {
+    console.warn("[api/solana/holders] DBC vault lookup failed", error?.message || error);
+  }
+  return [campaign];
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") return badMethod(res);
   const q = getQuery(req);
@@ -33,7 +64,9 @@ export default async function handler(req, res) {
   try {
     let request = inflight.get(key);
     if (!request) {
-      request = countSolanaHolders(rpcUrl(), mint, fetch, { excludeOwners: campaign ? [campaign] : [] }).finally(() => inflight.delete(key));
+      request = resolveExcludeOwners(mint, campaign).then((excludeOwners) =>
+        countSolanaHolders(rpcUrl(), mint, fetch, { excludeOwners }),
+      ).finally(() => inflight.delete(key));
       inflight.set(key, request);
     }
     const holders = await request;
