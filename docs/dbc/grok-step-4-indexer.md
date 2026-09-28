@@ -19,6 +19,25 @@ first buy signature).
 DBC trades land in the same tables as launchpad trades, so the token page (trades list, chart,
 stats, holders), the feeds and the leagues work for DBC coins without special cases downstream.
 
+## Facts read from a real devnet swap (2026-09-28, added after the brief went out)
+
+- **DBC emits its events through an inner instruction (Anchor `emit_cpi`), not in the log lines.**
+  Log-based parsing (`EventParser.parseLogs`) finds nothing. Read `meta.innerInstructions` entries whose
+  program is the DBC program, base58-decode the data, check the first 8 bytes are the event tag
+  `e445a52e51cb9a1d`, and decode the rest with `new BorshCoder(DynamicBondingCurveIdl).events.decode`.
+- A swap emits both `EvtSwap` and `EvtSwap2`; use `EvtSwap2` only (one row per swap).
+- `EvtSwap2` fields: `pool`, `config`, `trade_direction` (1 = SOL in, a buy; 0 = a sell),
+  `has_referral`, `swap_parameters {amount_0, amount_1, swap_mode}`, `swap_result
+  {included_fee_input_amount, excluded_fee_input_amount, amount_left, output_amount, next_sqrt_price,
+  trading_fee, protocol_fee, referral_fee}`, `quote_reserve_amount`, `migration_threshold`,
+  `current_timestamp`. Example buy of 20000000 lamports: excluded 19600000, trading_fee 320000,
+  protocol_fee 80000, referral 0 (fee 2% = 400000).
+- **There is no trader in the event.** Take the trader from the swap instruction's accounts (the
+  owner/payer account of the DBC swap instruction in that transaction), not from the fee payer.
+- Buy: `bnb_amount_raw` = `included_fee_input_amount`; sell: SOL out after the fee (`output_amount`
+  when the fee is collected in SOL, as in our configs). Store `trading_fee`, `protocol_fee`,
+  `referral_fee` in `activity_events.meta`: step 5 splits our share per trade from them.
+
 ## 1. Ingest
 
 - New `realtime-indexer/src/dbcIndexer.ts`, started like the meteora swap indexer:
@@ -26,8 +45,7 @@ stats, holders), the feeds and the leagues work for DBC coins without special ca
     **no silent cutoff** (the same rule as the meteora indexer fix: a bound that is reported);
   - `getSignaturesForAddress(pool)` with a cursor per pool (`indexer_state` key `solana:dbc:<pool>`),
     oldest first on backfill;
-  - decode the DBC swap events with the SDK's IDL (`DynamicBondingCurveIdl`, event `EvtSwap2`; read
-    the IDL for the exact fields: direction, amounts in/out, trading fee, protocol fee, referral fee).
+  - decode `EvtSwap2` as described in "Facts" above.
 - Write each swap to **`curve_trades`**, launchpad conventions:
   - `chain_id 101`, `campaign_address` = pool, `tx_hash`, `log_index` = event index in the transaction
     (**below 20000**: DBC bonding trades pay the league through our collector, so they count in the
