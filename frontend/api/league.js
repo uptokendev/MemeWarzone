@@ -5,7 +5,7 @@ import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../server/http.js";
 import { persistFinalizedCategory, readFinalizedCategory } from "./lib/finalizeLeagueEpoch.js";
 import { monthIdForEpochStart } from "./lib/evmLeagueClaimVerification.js";
-import { pokerPaidPlaces, pokerSplitRaw } from "./lib/pokerPayout.mjs";
+import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "./lib/pokerPayout.mjs";
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import {
   buildMerkleProof as buildSolanaMerkleProof,
@@ -436,10 +436,12 @@ function splitPotRaw(potRawBigInt, places = 0) {
   return pokerSplitRaw(BigInt(potRawBigInt), places).map((x) => x.toString());
 }
 
-function pokerPrizeForField(prize, places, fieldSize) {
+function pokerPrizeForField(prize, pokerPlaces, fieldSize, chainId = null) {
   if (!prize) return prize;
-  const payoutsRaw = splitPotRaw(prize.potRaw ?? "0", places);
   const pot = BigInt(String(prize.potRaw ?? "0"));
+  // Solana: the settlement pays no place below the minimum payout (finalizeEpochWinners); show the same.
+  const places = Number(chainId) === 101 ? pokerPlacesAboveMinimum(pot, pokerPlaces, solanaMinPayoutLamports()) : pokerPlaces;
+  const payoutsRaw = splitPotRaw(prize.potRaw ?? "0", places);
   return {
     ...prize,
     fieldSize,
@@ -467,6 +469,9 @@ async function computeTotalLeagueFeeRawInRange(chainId, startIso, endIso, protoc
       WHERE t.chain_id = $1
         AND ($2::timestamptz IS NULL OR t.block_time >= $2::timestamptz)
         AND ($3::timestamptz IS NULL OR t.block_time < $3::timestamptz)
+        -- Same rule as the settlement job: Solana swaps on a graduated coin's pool (log_index
+        -- 20000+) pay no league fee.
+        AND NOT (t.chain_id = 101 AND t.log_index >= 20000)
     ),
     base AS (
       SELECT
@@ -687,6 +692,7 @@ export async function recruiterLeaguePrize(chainId, periodNorm, epochOffset, fie
     { basis: meta.basis, period: meta.period, cutoff: meta.cutoff, rangeEnd: meta.rangeEnd, computedAt: meta.computedAt, totalLeagueFeeRaw: meta.totalLeagueFeeRaw, leagueCount: meta.leagueCount, ...category },
     pokerPaidPlaces(fieldSize, periodNorm),
     fieldSize,
+    chainId,
   );
 }
 
@@ -1105,7 +1111,7 @@ export default async function handler(req, res) {
       // Whole qualified field (COUNT(*) OVER ()), less hidden campaigns on this page.
       const fieldSize = Math.max(items.length, fieldCount - (loaded - items.length));
       items = items.map(({ field_count: _fieldCount, ...row }) => row);
-      const prize = pokerPrizeForField(prizeForCategory, pokerPaidPlaces(fieldSize, periodNorm), fieldSize);
+      const prize = pokerPrizeForField(prizeForCategory, pokerPaidPlaces(fieldSize, periodNorm), fieldSize, chainId);
       const allowPageWrite = String(process.env.LEAGUE_PAGE_WRITE_WINNERS || "").trim() === "1";
       if (!epoch.isLive && epochStartIso && allowPageWrite) {
         const persistPrize = {

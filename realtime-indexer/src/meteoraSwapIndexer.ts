@@ -160,7 +160,9 @@ function decodeSwapEvents(logs: string[] | null | undefined): MeteoraSwap[] {
 }
 
 async function loadGraduatedMarkets(): Promise<GraduatedMarket[]> {
-  const limit = Math.max(1, Math.min(250, Number(process.env.SOLANA_METEORA_POOL_LIMIT || 50)));
+  // Every graduated pool is indexed. The old default (50 most recently updated) silently stopped
+  // indexing older pools. The limit is now a safety bound that is reported when it is reached.
+  const limit = Math.max(1, Math.min(10_000, Number(process.env.SOLANA_METEORA_POOL_LIMIT || 2_000)));
   const result = await pool.query(
     `select
        campaign_address,
@@ -180,6 +182,9 @@ async function loadGraduatedMarkets(): Promise<GraduatedMarket[]> {
      limit $2`,
     [SOLANA_CHAIN_ID, limit],
   );
+  if (result.rows.length >= limit) {
+    console.warn(`[meteoraSwapIndexer] graduated pool limit ${limit} reached; raise SOLANA_METEORA_POOL_LIMIT so no pool is skipped`);
+  }
   return result.rows.map((row) => {
     const reference = Number(row.quote_reference_usd);
     return {

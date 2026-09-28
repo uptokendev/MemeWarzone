@@ -18,7 +18,7 @@ import { normalizeChain } from "../notificationContract.js";
 //
 // This job is designed to be safe to run repeatedly.
 
-import { pokerPaidPlaces, pokerSplitRaw } from "../rewards/pokerPayout.js";
+import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "../rewards/pokerPayout.js";
 import { recruiterLeagueStandings, recruiterPrizeRecipient, type NativeUsd, type RecruiterStanding } from "../rewards/recruiterLeague.js";
 import { fetchAirdropNativeUsd } from "../rewards/airdropThresholds.js";
 const DEFAULT_PROTOCOL_FEE_BPS = 200; // 2%
@@ -89,6 +89,9 @@ async function computeTotalLeagueFeeRawInRange(
       WHERE t.chain_id = $1
         AND t.block_time >= $2::timestamptz
         AND t.block_time <  $3::timestamptz
+        -- Solana: swaps on a graduated coin's Meteora pool (meteoraSwapIndexer, log_index 20000+)
+        -- pay no league fee; counting them made the pot larger than the league vault.
+        AND NOT (t.chain_id = 101 AND t.log_index >= 20000)
     ),
     base AS (
       SELECT
@@ -475,9 +478,17 @@ async function leaderboard(
           ${sqlWallet("t.wallet", chainId)} as wallet,
           sum(case when t.side='sell' then (t.bnb_amount_raw::numeric) else -(t.bnb_amount_raw::numeric) end)::numeric(78,0) as pnl_raw
         FROM public.curve_trades t
+        JOIN public.campaigns c
+          ON c.chain_id = t.chain_id
+         AND c.campaign_address = t.campaign_address
         WHERE t.chain_id=$1
           AND t.block_time >= $2::timestamptz
           AND t.block_time <  $3::timestamptz
+          -- Same exclusions as the live board (league.js) and biggest_hit: a creator does not
+          -- earn a prize from trading their own coin.
+          AND t.wallet IS DISTINCT FROM c.campaign_address
+          AND (c.creator_address IS NULL OR t.wallet IS DISTINCT FROM c.creator_address)
+          AND (c.fee_recipient_address IS NULL OR t.wallet IS DISTINCT FROM c.fee_recipient_address)
         GROUP BY ${sqlWallet("t.wallet", chainId)}
       )
       SELECT wallet as recipient, pnl_raw
@@ -557,7 +568,21 @@ async function finalizeEpochFor(
       console.error(`[finalizeEpochWinners] BLOCKED chain=${chainId} period=${period} category=${category}: ${(error as Error)?.message || error}`);
       continue;
     }
-    const wantRanks = pokerPaidPlaces(top.length, period);
+    // Solana: no place below the minimum payout (a claim's receipt rent would exceed it). Fewer
+    // places, the whole pot still paid; a pot too small for one place rolls over like "no winner".
+    const pokerRanks = pokerPaidPlaces(top.length, period);
+    const wantRanks = chainId === 101 ? pokerPlacesAboveMinimum(pot, pokerRanks, solanaMinPayoutLamports()) : pokerRanks;
+    if (pokerRanks > 0 && wantRanks === 0) {
+      console.log(`[finalizeEpochWinners] chain=${chainId} period=${period} category=${category}: pot ${pot} is below the Solana minimum payout; rolled over`);
+      await pool.query(`select public.league_rollover_no_winner($1,$2,$3::timestamptz,$4,$5::numeric)`, [
+        chainId,
+        period,
+        epochStartIso,
+        category,
+        pot.toString(),
+      ]);
+      continue;
+    }
 
     if (isNoWinner(top)) {
       await pool.query(`select public.league_rollover_no_winner($1,$2,$3::timestamptz,$4,$5::numeric)`, [
