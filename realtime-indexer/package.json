@@ -30,6 +30,7 @@
     "test:solana-graduation-decode": "tsx --test src/tests/solanaGraduationEventDecode.test.ts",
     "test:solana-graduation-binding": "tsx --test src/tests/solanaGraduationQuoteBinding.test.ts src/tests/solanaQuoteAssetMeta.test.ts",
     "test:solana-market-stats": "tsx --test src/tests/solanaMarketStats.test.ts",
+    "test:dbc-indexer": "tsx --test src/tests/dbcIndexer.test.ts",
     "job:refresh-solana-market-stats": "node --enable-source-maps dist/jobs/refreshSolanaMarketStats.js",
     "job:refresh-solana-market-stats:dev": "tsx src/jobs/refreshSolanaMarketStats.ts",
     "job:reconcile-graduations-once": "node --enable-source-maps dist/jobs/reconcileGraduationsOnce.js",

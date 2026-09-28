@@ -319,6 +319,7 @@ export async function refreshSolanaMarketStats(campaign: string, deps: { db?: Qu
   const nowMs = deps.nowMs ?? Date.now();
   const campaignRow = (await db.query(
     `select campaign_address, token_address, is_active, graduated_at_chain,
+            coalesce(launch_type, 'launchpad') as launch_type,
             meta #>> '{solanaGraduation,pool}' as pool_address,
             meta #>> '{solanaGraduation,quoteMint}' as quote_mint,
             meta #>> '{solanaGraduation,quoteDecimals}' as quote_decimals,
@@ -329,6 +330,7 @@ export async function refreshSolanaMarketStats(campaign: string, deps: { db?: Qu
   )).rows[0];
   if (!campaignRow?.token_address) return null;
 
+  const isDbc = String(campaignRow.launch_type || "launchpad") === "dbc";
   const graduated = Boolean(campaignRow.graduated_at_chain || campaignRow.pool_address);
   const cluster: "mainnet-beta" | "devnet" = String(process.env.SOLANA_CLUSTER || "").trim().toLowerCase() === "devnet" ? "devnet" : "mainnet-beta";
   const url = rpcUrl(cluster);
@@ -344,7 +346,21 @@ export async function refreshSolanaMarketStats(campaign: string, deps: { db?: Qu
     }
   }
   let bondingReserveLamports: bigint | null = null;
-  if (!graduated && campaignRow.sol_vault) {
+  let dbcSupplyWhole: number | null = null;
+  let dbcPriceQuote: number | null = null;
+  if (!graduated && isDbc) {
+    try {
+      const { dbcMarketStatsFromAccounts } = await import("./dbcIndexer.js");
+      const live = await dbcMarketStatsFromAccounts(url, String(campaignRow.campaign_address), fetchImpl);
+      if (live) {
+        bondingReserveLamports = live.quoteReserve;
+        dbcSupplyWhole = live.supplyWhole;
+        dbcPriceQuote = live.priceQuote;
+      }
+    } catch (error) {
+      console.warn("[solana-market-stats] DBC pool read failed", error instanceof Error ? error.message : String(error));
+    }
+  } else if (!graduated && campaignRow.sol_vault) {
     bondingReserveLamports = await rpc<{ value?: number }>(url, "getBalance", [String(campaignRow.sol_vault), { commitment: "confirmed" }], fetchImpl)
       .then((result) => (result && typeof result === "object" && result.value != null ? BigInt(result.value) : null))
       .catch(() => null);
@@ -361,7 +377,9 @@ export async function refreshSolanaMarketStats(campaign: string, deps: { db?: Qu
   const mintSupplyWhole = mintData && mintData.length >= 44 ? Number(mintData.readBigUInt64LE(36)) / 10 ** tokenDecimals : null;
 
   let priceQuote: number | null = null;
-  if (quoteMint === NATIVE_MINT) {
+  if (dbcPriceQuote != null && dbcPriceQuote > 0) {
+    priceQuote = dbcPriceQuote;
+  } else if (quoteMint === NATIVE_MINT) {
     priceQuote = finite(tokenStats?.last_price_bnb);
     if (!(priceQuote != null && priceQuote > 0)) priceQuote = null;
   } else {
@@ -378,6 +396,10 @@ export async function refreshSolanaMarketStats(campaign: string, deps: { db?: Qu
   // circulating supply is the mint supply outside the pool.
   let supplyWhole = Number(tokenStats?.sold_tokens || 0);
   let supplyBasis = "bonding_sold_tokens";
+  if (isDbc && dbcSupplyWhole != null && dbcSupplyWhole > 0) {
+    supplyWhole = dbcSupplyWhole;
+    supplyBasis = "dbc_post_migration_supply";
+  }
   if (!(supplyWhole > 0) && graduated && reserves && mintSupplyWhole != null) {
     supplyWhole = Math.max(0, mintSupplyWhole - Number(reserves.tokenRaw) / 10 ** tokenDecimals);
     supplyBasis = "mint_supply_minus_pool";

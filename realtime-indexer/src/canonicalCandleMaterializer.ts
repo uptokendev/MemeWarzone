@@ -31,6 +31,7 @@ type TradeRow = {
   token_amount_raw: string;
   bnb_amount: string | number | null;
   sold_tokens_after_raw: string | number | null;
+  venue?: string | null;
 };
 
 type CurveState = {
@@ -309,12 +310,17 @@ function addTradeToBuckets(
   }
 }
 
+export function skipCanonicalSpotForVenue(venue: unknown): boolean {
+  return String(venue || "") === "dbc";
+}
+
 async function campaignTrades(chainId: number, campaign: string): Promise<TradeRow[]> {
   const result = await pool.query(
     `select chain_id,campaign_address,tx_hash,log_index,block_number,block_time,side,
-            token_amount_raw,bnb_amount,sold_tokens_after_raw
+            token_amount_raw,bnb_amount,sold_tokens_after_raw,venue
        from public.curve_trades
       where chain_id=$1 and campaign_address=$2
+        and coalesce(venue,'') <> 'dbc'
         and (chain_id <> 101 or sold_tokens_after_raw is not null)
       order by block_number asc, log_index asc`,
     [chainId, campaign],
@@ -443,6 +449,7 @@ async function staleCampaigns() {
        left join public.token_candles tc
          on tc.chain_id=t.chain_id and tc.campaign_address=t.campaign_address
       where t.chain_id in (56,97,101,46630,4663)
+        and coalesce(t.venue,'') <> 'dbc'
         and (t.chain_id <> 101 or t.sold_tokens_after_raw is not null)
       group by t.chain_id,t.campaign_address
       having max(tc.canonical_updated_at) is null
