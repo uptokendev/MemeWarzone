@@ -1,0 +1,10 @@
+{
+  "name": "mwz-dbc-rehearsal",
+  "private": true,
+  "type": "module",
+  "description": "Story: Meteora DBC lifecycle rehearsal on devnet (config, launch, trade, fees, graduation, LP fees). Isolated so its Anchor 0.31 does not touch tests/solana.",
+  "dependencies": {
+    "@meteora-ag/dynamic-bonding-curve-sdk": "1.5.13",
+    "@meteora-ag/cp-amm-sdk": "1.4.10"
+  }
+}
