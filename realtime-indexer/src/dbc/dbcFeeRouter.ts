@@ -65,6 +65,15 @@ export function collectorNeed(routed: bigint, heldCreatorPool: bigint, rent: big
   return routed + heldCreatorPool + rent + fee;
 }
 
+export async function heldCreatorPoolSum(db: Queryable): Promise<bigint> {
+  const held = await db.query(
+    `select coalesce(sum(creator_pool), 0)::text as held
+       from public.dbc_fee_accruals
+      where status in ('claimed', 'routing', 'routed')`,
+  );
+  return BigInt(String(held.rows[0]?.held || "0"));
+}
+
 export function buildRouteTransfers(input: {
   collector: PublicKey;
   totals: RouteTotals;
@@ -210,12 +219,7 @@ export async function routeClaimedAccruals(input: {
   if (!ids.length || totals.routed <= 0n) {
     return { totals, ids, signature: null, destinations: [], skipped: "nothing-to-route" };
   }
-  const held = await input.db.query(
-    `select coalesce(sum(creator_pool), 0)::text as held
-       from public.dbc_fee_accruals
-      where status in ('claimed', 'routing', 'routed')`,
-  );
-  const heldCreatorPool = BigInt(String(held.rows[0]?.held || "0"));
+  const heldCreatorPool = await heldCreatorPoolSum(input.db);
   const vaults = rewardVaults(input.treasuryProgram);
   const built = buildRouteTransfers({ collector: input.collector.publicKey, totals, vaults });
   const have = BigInt(await input.connection.getBalance(input.collector.publicKey, "confirmed"));

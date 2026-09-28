@@ -95,10 +95,30 @@ export const DBC_MIGRATION_FEE_PCT = 22;
 export const DBC_CREATOR_MIGRATION_FEE_PCT = 90;
 export const DBC_POOL_AFTER_MIGRATION_PCT = 100 - DBC_MIGRATION_FEE_PCT;
 
-/** D8: graduated pool 0.25%, SOL-only fees, 80/20 permanently locked. */
+/** D8: graduated pool 0.25%, SOL-only fees, 80/20 permanently locked (`keep`). */
 export const DBC_GRADUATED_POOL_FEE_BPS = 25;
 export const DBC_CREATOR_PERM_LOCK_PCT = 80;
 export const DBC_PARTNER_PERM_LOCK_PCT = 20;
+/** D19: holders/split/buyback — 100% partner lock so the keeper can claim LP fees. */
+export const DBC_PLATFORM_CREATOR_PERM_LOCK_PCT = 0;
+export const DBC_PLATFORM_PARTNER_PERM_LOCK_PCT = 100;
+
+export function liquidityDistributionFor(creatorFeeMode) {
+  if (String(creatorFeeMode) === "platform") {
+    return {
+      partnerPermanentLockedLiquidityPercentage: DBC_PLATFORM_PARTNER_PERM_LOCK_PCT,
+      partnerLiquidityPercentage: 0,
+      creatorPermanentLockedLiquidityPercentage: DBC_PLATFORM_CREATOR_PERM_LOCK_PCT,
+      creatorLiquidityPercentage: 0,
+    };
+  }
+  return {
+    partnerPermanentLockedLiquidityPercentage: DBC_PARTNER_PERM_LOCK_PCT,
+    partnerLiquidityPercentage: 0,
+    creatorPermanentLockedLiquidityPercentage: DBC_CREATOR_PERM_LOCK_PCT,
+    creatorLiquidityPercentage: 0,
+  };
+}
 
 /** D9: dollar targets of raised SOL. Micros. */
 export const DBC_TARGET_USD_MICROS = Object.freeze({

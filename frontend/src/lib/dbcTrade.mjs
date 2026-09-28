@@ -51,12 +51,13 @@ function referencedAddresses(tx) {
   return out;
 }
 
-export function assertDbcTradeIntent(tx, { trader, pool, allowLock = false, requirePool = true }) {
+export function assertDbcTradeIntent(tx, { trader, pool, allowLock = false, requirePool = true, extraPrograms = [] }) {
   const feePayer = keyOf(tx.feePayer);
   if (!feePayer || feePayer !== String(trader)) {
     throw new Error("DBC trade fee payer is not the trader.");
   }
-  const allowed = allowLock ? DBC_LOCKED_BUY_ALLOWED_PROGRAM_IDS : DBC_TRADE_ALLOWED_PROGRAM_IDS;
+  const allowed = new Set(allowLock ? DBC_LOCKED_BUY_ALLOWED_PROGRAM_IDS : DBC_TRADE_ALLOWED_PROGRAM_IDS);
+  for (const programId of extraPrograms || []) allowed.add(String(programId));
   const instructions = tx.instructions || [];
   if (!instructions.length) throw new Error("DBC trade transaction has no instructions.");
   for (const ix of instructions) {
@@ -98,6 +99,7 @@ export async function submitPreparedDbcTrade({
   pool,
   allowLock = false,
   requirePool = true,
+  extraPrograms = [],
   extraSigners = [],
   signTransaction,
 }) {
@@ -106,6 +108,7 @@ export async function submitPreparedDbcTrade({
     pool,
     allowLock,
     requirePool,
+    extraPrograms,
   });
   for (const signer of extraSigners) prepared.tx.partialSign(signer);
   const signed = await signTransaction(prepared.tx);

@@ -45,6 +45,22 @@ test("trade allowlist is DBC, System, SPL Token, ATA, compute budget", () => {
   assert.ok(DBC_LOCKED_BUY_ALLOWED_PROGRAM_IDS.has(DBC_JUPITER_LOCK_PROGRAM_ID));
 });
 
+test("creator claim extraPrograms can allow a DAMM program that trades refuse", () => {
+  const damm = "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG";
+  assert.throws(
+    () => assertDbcTradeIntent(envelope({ extraProgram: damm }), {
+      trader: trader.publicKey.toBase58(),
+      pool: pool.publicKey.toBase58(),
+    }),
+    /Unexpected program/,
+  );
+  assert.doesNotThrow(() => assertDbcTradeIntent(envelope({ extraProgram: damm }), {
+    trader: trader.publicKey.toBase58(),
+    pool: pool.publicKey.toBase58(),
+    extraPrograms: [damm],
+  }));
+});
+
 test("intent refuses a foreign program, a wrong fee payer, and a missing pool", () => {
   assert.doesNotThrow(() => assertDbcTradeIntent(envelope(), { trader: trader.publicKey.toBase58(), pool: pool.publicKey.toBase58() }));
   assert.throws(

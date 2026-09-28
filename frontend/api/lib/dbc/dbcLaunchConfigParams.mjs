@@ -45,15 +45,14 @@ import {
   DBC_ANTI_SNIPER_START_FEE_BPS,
   DBC_BASE_PRICE_LAMPORTS,
   DBC_CREATOR_MIGRATION_FEE_PCT,
-  DBC_CREATOR_PERM_LOCK_PCT,
   DBC_CURVE_POINTS,
   DBC_ENABLE_FIRST_SWAP_WITH_MIN_FEE,
   DBC_GRADUATED_POOL_FEE_BPS,
   DBC_LOCKED_VESTING,
   DBC_MIGRATION_FEE_PCT,
   DBC_NANO_LAMPORTS_PER_LAMPORT,
-  DBC_PARTNER_PERM_LOCK_PCT,
   DBC_PRICE_SLOPE_LAMPORTS,
+  liquidityDistributionFor,
   DBC_QUOTE_DECIMALS,
   DBC_RESERVE_RAW,
   DBC_RESERVE_WHOLE,
@@ -271,6 +270,7 @@ function buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints = PRODUC
 }
 
 function feeEnvelope({ creatorFeePct }) {
+  const creatorFeeMode = Number(creatorFeePct) === 0 ? "platform" : "creator";
   return buildCurve({
     token: {
       tokenType: TokenType.SPLToken,
@@ -306,12 +306,7 @@ function feeEnvelope({ creatorFeePct }) {
         poolFeeBps: DBC_GRADUATED_POOL_FEE_BPS,
       },
     },
-    liquidityDistribution: {
-      partnerPermanentLockedLiquidityPercentage: DBC_PARTNER_PERM_LOCK_PCT,
-      partnerLiquidityPercentage: 0,
-      creatorPermanentLockedLiquidityPercentage: DBC_CREATOR_PERM_LOCK_PCT,
-      creatorLiquidityPercentage: 0,
-    },
+    liquidityDistribution: liquidityDistributionFor(creatorFeeMode),
     lockedVesting: { ...DBC_LOCKED_VESTING },
     activationType: ActivationType.Timestamp,
     percentageSupplyOnMigration: 20,
@@ -375,6 +370,7 @@ export function programSupplyMinimums({ thresholdLamports, sqrtStartPrice, curve
 }
 
 function customSqrtInput({ creatorFeePct, totalWhole, sqrtPrices, leftover = 0 }) {
+  const creatorFeeMode = Number(creatorFeePct) === 0 ? "platform" : "creator";
   return {
     token: {
       tokenType: TokenType.SPLToken,
@@ -410,12 +406,7 @@ function customSqrtInput({ creatorFeePct, totalWhole, sqrtPrices, leftover = 0 }
         poolFeeBps: DBC_GRADUATED_POOL_FEE_BPS,
       },
     },
-    liquidityDistribution: {
-      partnerPermanentLockedLiquidityPercentage: DBC_PARTNER_PERM_LOCK_PCT,
-      partnerLiquidityPercentage: 0,
-      creatorPermanentLockedLiquidityPercentage: DBC_CREATOR_PERM_LOCK_PCT,
-      creatorLiquidityPercentage: 0,
-    },
+    liquidityDistribution: liquidityDistributionFor(creatorFeeMode),
     lockedVesting: { ...DBC_LOCKED_VESTING },
     activationType: ActivationType.Timestamp,
     sqrtPrices,

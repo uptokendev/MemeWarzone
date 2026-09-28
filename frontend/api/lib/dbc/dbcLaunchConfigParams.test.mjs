@@ -262,6 +262,8 @@ test("validateConfigParameters passes for both fee modes and the $150 test targe
     const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], step, mode);
     validateConfigParameters({ ...built.configParams, leftoverReceiver: new PublicKey("11111111111111111111111111111112") });
     assert.equal(built.configParams.creatorTradingFeePercentage, mode === "creator" ? 7 : 0);
+    assert.equal(built.configParams.partnerPermanentLockedLiquidityPercentage, mode === "platform" ? 100 : 20);
+    assert.equal(built.configParams.creatorPermanentLockedLiquidityPercentage, mode === "platform" ? 0 : 80);
   }
   const testTarget = buildLaunchConfigParams(DBC_DEVNET_TEST_TARGET_USD_MICROS, step, "creator");
   validateConfigParameters({ ...testTarget.configParams, leftoverReceiver: DBC_VALIDATE_LEFTOVER_RECEIVER });
