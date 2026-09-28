@@ -92,8 +92,9 @@ function memoryDb() {
 
 async function airdrop(conn, pubkey, lamports) {
   const have = BigInt(await conn.getBalance(pubkey));
-  if (have >= lamports) return;
-  const sig = await conn.requestAirdrop(pubkey, Number(lamports - have));
+  const want = BigInt(lamports);
+  if (have >= want) return;
+  const sig = await conn.requestAirdrop(pubkey, Number(want - have));
   await conn.confirmTransaction(sig, "confirmed");
 }
 
