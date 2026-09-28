@@ -94,9 +94,16 @@ export function readConfigSnapshot(config: Record<string, unknown> | null | unde
   if (!config) return null;
   const inner = (config.poolConfig && typeof config.poolConfig === "object" ? config.poolConfig : config) as Record<string, unknown>;
   const vesting = (inner.lockedVestingConfig || inner.locked_vesting_config || {}) as Record<string, unknown>;
+  // The pool config stores the schedule, not a total: amount_per_period x number_of_period +
+  // cliff_unlock_amount (read from a devnet config 2026-09-29: 1,000,000 + 19,999,999,000,000 =
+  // the 20M-token creator reserve). Reading a total field that does not exist gave 0, so the keeper
+  // skipped createLocker and Meteora refused the migration (NotPermitToDoThisAction).
+  const lockedVestingAmount =
+    big(vesting.amountPerPeriod ?? vesting.amount_per_period) * big(vesting.numberOfPeriod ?? vesting.number_of_period)
+    + big(vesting.cliffUnlockAmount ?? vesting.cliff_unlock_amount);
   return {
     migrationQuoteThreshold: big(inner.migrationQuoteThreshold ?? inner.migration_quote_threshold),
-    lockedVestingAmount: big(vesting.totalLockedVestingAmount ?? vesting.total_locked_vesting_amount),
+    lockedVestingAmount,
     quoteMint: key(inner.quoteMint ?? inner.quote_mint),
   };
 }

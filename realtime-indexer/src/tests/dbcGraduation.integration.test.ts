@@ -78,10 +78,23 @@ function poolState(over: Record<string, unknown> = {}) {
   };
 }
 
+// What the batched account read would report for each stubbed pool (threshold as in the stub config).
+function progressFor(states: Map<string, ReturnType<typeof poolState>>) {
+  return async (_connection: unknown, pools: string[]) => {
+    const out = new Map<string, { isMigrated: number; quoteReserve: bigint; threshold: bigint | null }>();
+    for (const pool of pools) {
+      const state = states.get(pool);
+      if (!state) continue;
+      out.set(pool, { isMigrated: Number(state.isMigrated), quoteReserve: BigInt(state.quoteReserve as bigint), threshold: 1_500_000_000n });
+    }
+    return out;
+  };
+}
+
 function stubClient(state: ReturnType<typeof poolState>, captured: { calls: string[] } = { calls: [] }) {
   const cfg = {
     migrationQuoteThreshold: 1_500_000_000n,
-    lockedVestingConfig: { totalLockedVestingAmount: 20_000_000_000_000n },
+    lockedVestingConfig: { amountPerPeriod: 1_000_000n, numberOfPeriod: 1n, cliffUnlockAmount: 19_999_999_000_000n },
     quoteMint: new PublicKey("So11111111111111111111111111111111111111112"),
   };
   return {
@@ -134,7 +147,7 @@ test("tables exist on throwaway postgres", async () => {
 function stubClientForPools(states: Map<string, ReturnType<typeof poolState>>, captured: { calls: string[] } = { calls: [] }) {
   const cfg = {
     migrationQuoteThreshold: 1_500_000_000n,
-    lockedVestingConfig: { totalLockedVestingAmount: 20_000_000_000_000n },
+    lockedVestingConfig: { amountPerPeriod: 1_000_000n, numberOfPeriod: 1n, cliffUnlockAmount: 19_999_999_000_000n },
     quoteMint: new PublicKey("So11111111111111111111111111111111111111112"),
   };
   return {
@@ -194,7 +207,7 @@ test("Meteora-first: already migrated skips locker and migrate, marks, then with
   const snap = readPoolSnapshot(state)!;
   const cfg = readConfigSnapshot({
     migrationQuoteThreshold: 1_500_000_000n,
-    lockedVestingConfig: { totalLockedVestingAmount: 20_000_000_000_000n },
+    lockedVestingConfig: { amountPerPeriod: 1_000_000n, numberOfPeriod: 1n, cliffUnlockAmount: 19_999_999_000_000n },
   })!;
   const campaign = await pg.pool.query(
     `select is_active, launched, bonding_active, graduated_at_chain from public.campaigns where campaign_address = $1`,
@@ -291,6 +304,7 @@ test("a sending job on one pool does not stop the others", async () => {
     collector,
     send: false,
     client: stubClientForPools(states) as any,
+    readProgress: progressFor(states) as any,
   });
   const byPool = Object.fromEntries(result.advanced.map((row) => [row.pool, row]));
   assert.equal(byPool[a]?.skipped, "sending-in-flight");
@@ -328,6 +342,7 @@ test("two graduated pools plus a third completing: the third graduates", async (
     collector,
     send: false,
     client: stubClientForPools(states) as any,
+    readProgress: progressFor(states) as any,
   });
   assert.equal(result.advanced.length, 1);
   assert.equal(result.advanced[0].pool, live);
@@ -365,8 +380,30 @@ test("a blocked pool does not stop the others", async () => {
     collector,
     send: false,
     client: stubClientForPools(states) as any,
+    readProgress: progressFor(states) as any,
   });
   const byPool = Object.fromEntries(result.advanced.map((row) => [row.pool, row]));
   assert.equal(byPool[blocked]?.skipped, "blocked");
   assert.equal(byPool[live]?.step, "mark");
+});
+
+test("a pool whose curve is not complete is not read one by one", async () => {
+  const { runDbcGraduationOnce } = await import("../dbc/dbcGraduationKeeper.js");
+  const open = Keypair.generate().publicKey.toBase58();
+  await insertCampaign(open);
+  const states = new Map([[open, poolState({ quoteReserve: 1_000n })]]);
+  let perPoolReads = 0;
+  const client = stubClientForPools(states) as any;
+  const getPool = client.state.getPool;
+  client.state.getPool = async (pk: PublicKey) => { perPoolReads += 1; return getPool(pk); };
+  const result = await runDbcGraduationOnce({
+    db: pg.pool,
+    connection: stubConnection({}) as any,
+    collector,
+    send: false,
+    client,
+    readProgress: progressFor(states) as any,
+  });
+  assert.equal(result.advanced.length, 0);
+  assert.equal(perPoolReads, 0);
 });

@@ -60,7 +60,7 @@ function pool(over: Record<string, unknown> = {}) {
 function config(over: Record<string, unknown> = {}) {
   return readConfigSnapshot({
     migrationQuoteThreshold: threshold,
-    lockedVestingConfig: { totalLockedVestingAmount: 20_000_000_000_000n },
+    lockedVestingConfig: { amountPerPeriod: 1_000_000n, numberOfPeriod: 1n, cliffUnlockAmount: 19_999_999_000_000n },
     quoteMint: "So11111111111111111111111111111111111111112",
     ...over,
   })!;
@@ -303,4 +303,27 @@ test("snake_case pool layout still reads", () => {
   });
   assert.equal(snap?.isMigrated, 1);
   assert.equal(snap?.protocolMigrationQuoteFeeAmount, 3n);
+});
+
+test("LP claim rows: what moved is recorded, the rest of the protocol share goes to the router", async () => {
+  const { lpClaimRows } = await import("../dbc/dbcGraduationKeeper.js");
+  // keep coin: all of our position's fees are protocol; 900 sent, 100 arrived after the read
+  assert.deepEqual(lpClaimRows(1_000n, 900n, false), { creatorPool: 0n, transferred: 900n, leftover: 100n });
+  // platform coin: 80% creator pool, protocol share 20% of what was claimed
+  assert.deepEqual(lpClaimRows(10_000n, 1_800n, true), { creatorPool: 8_000n, transferred: 1_800n, leftover: 200n });
+  assert.deepEqual(lpClaimRows(9_999n, 2_000n, true), { creatorPool: 7_999n, transferred: 2_000n, leftover: 0n });
+  // sending more than the protocol share would spend someone else's money on the collector
+  assert.throws(() => lpClaimRows(1_000n, 300n, true), /exceeds the protocol share/);
+});
+
+test("the creator reserve is read from the vesting schedule, so the locker is not skipped", async () => {
+  const { readConfigSnapshot, lockerNeeded } = await import("../dbc/dbcGraduationState.js");
+  // shape of a real devnet PoolConfig (2026-09-29), snake_case as the IDL decodes it
+  const config = readConfigSnapshot({
+    migration_quote_threshold: 250_170_318n,
+    locked_vesting_config: { amount_per_period: 1_000_000n, number_of_period: 1n, cliff_unlock_amount: 19_999_999_000_000n },
+    quote_mint: "So11111111111111111111111111111111111111112",
+  } as any)!;
+  assert.equal(config.lockedVestingAmount, 20_000_000_000_000n);
+  assert.equal(lockerNeeded({ isMigrated: 0, migrationProgress: 1 } as any, config), true);
 });

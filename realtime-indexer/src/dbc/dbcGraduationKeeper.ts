@@ -21,6 +21,10 @@ import {
   deriveEscrow,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { CpAmm, getUnClaimLpFee } from "@meteora-ag/cp-amm-sdk";
+import { BorshCoder, type Idl } from "@coral-xyz/anchor";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { notifyCampaignGraduated } from "../campaignLifecycleNotifications.js";
 import { ensureWeeklyEpoch } from "../rewards/epochs.js";
@@ -308,31 +312,46 @@ async function campaignFeeChoice(db: Queryable, pool: string): Promise<string> {
   return String(rows[0]?.meta?.dbc?.feeChoice || rows[0]?.meta?.dbc?.fee_choice || "keep");
 }
 
-async function insertPlatformLpAccrual(input: {
+export function lpClaimRows(claimed: bigint, transferred: bigint, platform: boolean) {
+  const creatorPool = platform ? splitPlatformLpFees(claimed).creatorPool : 0n;
+  const protocolShare = claimed - creatorPool;
+  const leftover = protocolShare - transferred;
+  if (leftover < 0n) {
+    throw new Error(`LP protocol transfer ${transferred.toString()} exceeds the protocol share ${protocolShare.toString()}`);
+  }
+  return { creatorPool, transferred, leftover };
+}
+
+async function insertLpAccruals(input: {
   db: Queryable;
   job: any;
   claimed: bigint;
+  transferred: bigint;
+  platform: boolean;
   signature: string;
 }) {
-  const split = splitPlatformLpFees(input.claimed);
+  const rows = lpClaimRows(input.claimed, input.transferred, input.platform);
   const profile = await creatorProfile(input.db, String(input.job.creator || ""), new Date());
-  await input.db.query(
-    `insert into public.dbc_fee_accruals (
-       pool, tx_hash, log_index, trader, profile, fee_total,
-       trading_fee, protocol_fee, referral_fee, collector_amount,
-       league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool, status, route_signature
-     ) values ($1,$2,0,$3,$4,$5,$5,0,0,$5,0,0,0,0,0,$6,$7,'routed',$2)
-     on conflict (tx_hash, log_index) do nothing`,
-    [
-      String(input.job.pool),
-      input.signature,
-      String(input.job.creator || ""),
-      profile,
-      input.claimed.toString(),
-      split.protocol.toString(),
-      split.creatorPool.toString(),
-    ],
-  );
+  const insert = async (logIndex: number, protocol: bigint, creatorPool: bigint, status: string, routeSig: string | null) => {
+    const total = protocol + creatorPool;
+    if (total <= 0n) return;
+    await input.db.query(
+      `insert into public.dbc_fee_accruals (
+         pool, tx_hash, log_index, trader, profile, fee_total,
+         trading_fee, protocol_fee, referral_fee, collector_amount,
+         league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool, status, route_signature
+       ) values ($1,$2,$3,$4,$5,$6,$6,0,0,$6,0,0,0,0,0,$7,$8,$9,$10)
+       on conflict (tx_hash, log_index) do nothing`,
+      [
+        String(input.job.pool), input.signature, logIndex, String(input.job.creator || ""), profile,
+        total.toString(), protocol.toString(), creatorPool.toString(), status, routeSig,
+      ],
+    );
+  };
+  // Row 0: what this transaction routed to protocol_vault, plus the creator pool it keeps on the collector.
+  await insert(0, rows.transferred, rows.creatorPool, "routed", input.signature);
+  // Row 1: protocol share still on the collector (fees that arrived after the read); the router sends it.
+  if (rows.leftover > 0n) await insert(1, rows.leftover, 0n, "claimed", null);
 }
 
 async function blockIfCollectorShort(input: {
@@ -803,6 +822,102 @@ export async function scanCompleteDbcPools(db: Queryable): Promise<string[]> {
   return listOpenGraduationPools(db);
 }
 
+const dbcAccountCoder = new BorshCoder(
+  JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "dynamicBondingCurve.idl.json"), "utf8")) as Idl,
+);
+const ACCOUNT_BATCH = 100;
+
+async function readAccountsBatched(connection: Connection, addresses: string[]) {
+  const out = new Map<string, Buffer>();
+  for (let i = 0; i < addresses.length; i += ACCOUNT_BATCH) {
+    const chunk = addresses.slice(i, i + ACCOUNT_BATCH);
+    const infos = await connection.getMultipleAccountsInfo(chunk.map((a) => new PublicKey(a)), "confirmed");
+    infos.forEach((info, index) => {
+      if (info?.data) out.set(chunk[index], Buffer.from(info.data));
+    });
+  }
+  return out;
+}
+
+function toBig(value: unknown): bigint {
+  if (value == null) return 0n;
+  return BigInt(String((value as { toString(): string }).toString()));
+}
+
+function toKey(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  const withBase58 = value as { toBase58?: () => string };
+  return typeof withBase58.toBase58 === "function" ? withBase58.toBase58() : String(value);
+}
+
+function field(obj: any, camel: string, snake: string) {
+  return obj?.[camel] ?? obj?.[snake];
+}
+
+export type PoolProgress = { isMigrated: number; quoteReserve: bigint; threshold: bigint | null };
+
+/** One batched read of every pool and its config (100 accounts per call). */
+export async function readPoolProgressBatched(connection: Connection, pools: string[]): Promise<Map<string, PoolProgress>> {
+  const poolData = await readAccountsBatched(connection, pools);
+  const decoded = new Map<string, { config: string; quoteReserve: bigint; isMigrated: number }>();
+  for (const [address, data] of poolData) {
+    try {
+      const decodedPool = dbcAccountCoder.accounts.decode("VirtualPool", data) as any;
+      // The IDL wraps the pool fields in pool_state (the SDK's getPool does the same).
+      const pool = decodedPool?.pool_state ?? decodedPool?.poolState ?? decodedPool;
+      decoded.set(address, {
+        config: toKey(field(pool, "config", "config")),
+        quoteReserve: toBig(field(pool, "quoteReserve", "quote_reserve")),
+        isMigrated: Number(field(pool, "isMigrated", "is_migrated") ?? 0),
+      });
+    } catch (error) {
+      console.warn("[dbc-grad] pool account not decodable", address, error instanceof Error ? error.message : String(error));
+    }
+  }
+  const configs = [...new Set([...decoded.values()].map((row) => row.config).filter(Boolean))];
+  const configData = await readAccountsBatched(connection, configs);
+  const thresholds = new Map<string, bigint>();
+  for (const [address, data] of configData) {
+    try {
+      const config = dbcAccountCoder.accounts.decode("PoolConfig", data) as any;
+      thresholds.set(address, toBig(field(config, "migrationQuoteThreshold", "migration_quote_threshold")));
+    } catch (error) {
+      console.warn("[dbc-grad] config account not decodable", address, error instanceof Error ? error.message : String(error));
+    }
+  }
+  const out = new Map<string, PoolProgress>();
+  for (const [address, row] of decoded) {
+    out.set(address, { isMigrated: row.isMigrated, quoteReserve: row.quoteReserve, threshold: thresholds.get(row.config) ?? null });
+  }
+  return out;
+}
+
+/**
+ * Which open pools need the step logic this pass: complete curves, migrated pools, and jobs already
+ * past the locker step. The rest are skipped without per-pool reads.
+ */
+export async function poolsNeedingWork(
+  db: Queryable,
+  connection: Connection,
+  pools: string[],
+  readProgress: (connection: Connection, pools: string[]) => Promise<Map<string, PoolProgress>> = readPoolProgressBatched,
+): Promise<string[]> {
+  if (!pools.length) return [];
+  const started = await db.query(
+    `select pool from public.dbc_graduation_jobs where step <> 'locker' and step <> 'done'`,
+  );
+  const inFlight = new Set(started.rows.map((row: { pool: string }) => String(row.pool)));
+  const progress = await readProgress(connection, pools);
+  return pools.filter((address) => {
+    if (inFlight.has(address)) return true;
+    const pool = progress.get(address);
+    if (!pool) return false;
+    if (pool.isMigrated === 1) return true;
+    return pool.threshold != null && pool.threshold > 0n && pool.quoteReserve >= pool.threshold;
+  });
+}
+
 export async function runDbcGraduationOnce(input: {
   db: Queryable;
   connection: Connection;
@@ -810,6 +925,7 @@ export async function runDbcGraduationOnce(input: {
   send: boolean;
   pool?: string;
   client?: DynamicBondingCurveClient;
+  readProgress?: (connection: Connection, pools: string[]) => Promise<Map<string, PoolProgress>>;
 }): Promise<{
   pending: { resolved: number; waiting: number };
   advanced: Array<{ pool: string; step: string; signature: string | null; skipped: string | null }>;
@@ -820,7 +936,9 @@ export async function runDbcGraduationOnce(input: {
     client: input.client,
     collector: input.collector,
   });
-  const pools = input.pool ? [input.pool] : await listOpenGraduationPools(input.db);
+  const pools = input.pool
+    ? [input.pool]
+    : await poolsNeedingWork(input.db, input.connection, await listOpenGraduationPools(input.db), input.readProgress);
   const advanced = [];
   for (const pool of pools) {
     const result = await advanceGraduationJob({
@@ -859,11 +977,21 @@ async function applyLandedLpClaim(input: {
     }
   }
   const choice = await campaignFeeChoice(input.db, String(input.row.pool));
-  if (isPlatformFeeChoice(choice) && claimed > 0n) {
-    await insertPlatformLpAccrual({
+  const platform = isPlatformFeeChoice(choice);
+  // The claim takes what the position holds when it lands; the protocol transfer in the same
+  // transaction was sized from an earlier read. Record what moved, and hand any protocol share
+  // still on the collector to the step-5 router as a 'claimed' row.
+  const transferred = (() => {
+    const delta = nativeDelta(input.confirmed, rewardVaults().protocol.toBase58());
+    return delta > 0n ? delta : 0n;
+  })();
+  if (claimed > 0n) {
+    await insertLpAccruals({
       db: input.db,
       job: input.row,
       claimed,
+      transferred,
+      platform,
       signature: input.signature,
     });
   }

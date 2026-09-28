@@ -195,8 +195,9 @@ async function completeCurve(client, conn, trader, pool) {
   const p = wrap?.poolState ?? wrap;
   const launchedAt = Number(p.activationPoint || 0);
   for (;;) {
-    const now = Number((await conn.getBlockTime(await conn.getSlot("confirmed"))) || 0);
-    if (!launchedAt || now >= launchedAt + 65) break;
+    // A node can lag storing the newest slot's block time: treat that as "not yet" and retry.
+    const now = Number((await conn.getBlockTime(await conn.getSlot("confirmed")).catch(() => 0)) || 0);
+    if (!launchedAt || (now && now >= launchedAt + 65)) break;
     await new Promise((r) => setTimeout(r, 5_000));
   }
   const cfg = await client.state.getPoolConfig(p.config);
@@ -281,11 +282,13 @@ async function main() {
     const collector = fromSaved("collector");
     const creator = fromSaved("creator");
     const creatorB = fromSaved("creatorB");
+    // Case A needs its own creator: one DBC launch per wallet per 24 hours.
+    const creatorA = fromSaved("creatorA");
     const trader = fromSaved("trader");
     fs.writeFileSync(path.join(DIR, "keys.json"), JSON.stringify({
       payer: Array.from(payer.secretKey), collector: Array.from(collector.secretKey),
       creator: Array.from(creator.secretKey), creatorB: Array.from(creatorB.secretKey),
-      trader: Array.from(trader.secretKey),
+      creatorA: Array.from(creatorA.secretKey), trader: Array.from(trader.secretKey),
     }));
     console.log(`devnet ${genesis}\nthrowaway keys in ${DIR}\npostgres ${pg.url}`);
     if (process.env.DBC_PROVE_FUNDER_KEYPAIR) {
@@ -297,7 +300,9 @@ async function main() {
     // $150 USD target at live ~$119 SOL needs ~1.26 SOL on the curve; leftover throwaway
     // SOL is ~0.8. Pin a higher step so the same $150 target still fits.
     const holdersOnly = funderBal > 0n && funderBal < 200_000_000n;
-    const solUsdMicros = holdersOnly ? 3_000_000_000n
+    // DBC_PROVE_SOL_USD_MICROS pins the price step (a smaller curve, same code path).
+    const solUsdMicros = process.env.DBC_PROVE_SOL_USD_MICROS ? BigInt(process.env.DBC_PROVE_SOL_USD_MICROS)
+      : holdersOnly ? 3_000_000_000n
       : (funderBal > 0n && funderBal < 1_500_000_000n ? 600_000_000n : await readSolUsdMicros());
     const solUsd = typeof solUsdMicros === "bigint" ? solUsdMicros : BigInt(solUsdMicros);
     console.log(`SOL/USD micros ${solUsd.toString()}  funder ${funderBal.toString()}  holdersOnly ${holdersOnly}`);
@@ -305,7 +310,8 @@ async function main() {
     const payerNeed = resumeHolders ? 5_000_000 : holdersOnly ? 8_000_000 : funderBal < 500_000_000n ? 20_000_000 : 50_000_000;
     const creatorNeed = resumeHolders ? 5_000_000 : holdersOnly ? 40_000_000 : funderBal < 500_000_000n ? 25_000_000 : 50_000_000;
     const collectorNeedAmt = resumeHolders ? 10_000_000 : holdersOnly ? 12_000_000 : funderBal < 500_000_000n ? 50_000_000 : 150_000_000;
-    const traderNeed = resumeHolders ? 15_000_000 : holdersOnly ? 78_000_000 : funderBal < 500_000_000n ? 320_000_000 : 550_000_000;
+    const traderNeed = process.env.DBC_PROVE_TRADER_LAMPORTS ? Number(process.env.DBC_PROVE_TRADER_LAMPORTS)
+      : resumeHolders ? 15_000_000 : holdersOnly ? 78_000_000 : funderBal < 500_000_000n ? 320_000_000 : 550_000_000;
     if (!resumeHolders) {
       await fund(conn, payer.publicKey, payerNeed);
       await fund(conn, creator.publicKey, creatorNeed);
@@ -528,7 +534,7 @@ async function main() {
       console.log(`  skipped (trader ${leftoverForHolders} lamports)`);
       check("holders coin skipped for SOL", true);
     } else {
-      if (!holdersOnly) await fund(conn, creatorB.publicKey, 15_000_000);
+      if (!holdersOnly) await fund(conn, creatorB.publicKey, 50_000_000);
       const holdersCreator = holdersOnly ? creator : creatorB;
       let coinH;
       const resumePool = process.env.DBC_PROVE_HOLDERS_POOL;
@@ -602,12 +608,18 @@ async function main() {
     } else if (leftover < 450_000_000n && cases.label === "BOTH") {
       console.log(`\n[case A] skipped (trader has ${leftover} lamports; need ~0.45 SOL). Re-run with --case A and a funded key.`);
     } else {
-    await fund(conn, creatorB.publicKey, 50_000_000);
+    await fund(conn, creatorA.publicKey, 50_000_000);
     console.log("\n[case A] keeper does locker + migrate");
-    const coinA = await createCoin({ handle, conn, creator: creatorB, name: "DBC Grad A" });
+    const coinA = await createCoin({ handle, conn, creator: creatorA, name: "DBC Grad A" });
     console.log(`  pool ${coinA.pool}`);
+    // The keeper's scan reads every open pool in one batched call and skips curves that are not complete.
+    const { poolsNeedingWork } = await import("../../realtime-indexer/src/dbc/dbcGraduationKeeper.ts");
+    const beforeA = await poolsNeedingWork(db, conn, [coinA.pool]);
+    check("case A batched scan skips the open curve", beforeA.length === 0, JSON.stringify(beforeA));
     const completeA = await completeCurve(client, conn, trader, coinA.pool);
     check("case A curve complete", completeA.reserve >= completeA.threshold, `${completeA.reserve} / ${completeA.threshold}`);
+    const afterScanA = await poolsNeedingWork(db, conn, [coinA.pool]);
+    check("case A batched scan picks up the complete curve", afterScanA.includes(coinA.pool), JSON.stringify(afterScanA));
     const { job: jobA } = await keeperUntil(db, conn, collector, coinA.pool, (job) => job.step === "done" && job.status === "done");
     check("case A keeper migrated", Boolean(jobA?.damm_pool), jobA?.step);
     const afterA = (await client.state.getPool(new PublicKey(coinA.pool)))?.poolState ?? await client.state.getPool(new PublicKey(coinA.pool));
