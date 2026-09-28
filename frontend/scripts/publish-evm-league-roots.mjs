@@ -105,6 +105,23 @@ async function buildRoot(chainId, period, epochStart) {
   return { claimId, root: buildMerkleRoot(leaves), total, count: rows.length };
 }
 
+/**
+ * Record a root that is on chain and equals the DB list. finalizeEpochWinners treats a recorded
+ * root as a frozen winner set, and the claim API refuses a proof that does not rebuild it. Never
+ * overwrites an existing record (the root on chain cannot change either). Not in a dry run.
+ */
+async function recordPostedRoot(item, txHash, status) {
+  if (dryRun) return;
+  await pool.query(
+    `insert into public.league_epoch_roots
+       (chain_id, period, epoch_start, root, total_lamports, winners, epoch_address, tx_hash, published_at, metadata)
+     values ($1,$2,$3::timestamptz,$4,$5::numeric,$6,$7,$8,now(),$9::jsonb)
+     on conflict (chain_id, period, epoch_start) do nothing`,
+    [item.chainId, item.period, item.epochStart, item.root, item.total, item.winners, item.vault, txHash || null,
+      JSON.stringify({ source: "publish-evm-league-roots", status, claimId: item.claimId })],
+  );
+}
+
 async function main() {
   if (!pool) throw new Error("DATABASE_URL is required");
   const pk = String(process.env.LEAGUE_ROOT_POSTER_PK || "").trim();
@@ -132,7 +149,9 @@ async function main() {
           const vault = new ethers.Contract(vaultAddress, WEEKLY_ABI, signer);
           const onChain = await vault.epochRoot(built.claimId);
           if (onChain !== ethers.ZeroHash) {
-            report.push({ ...item, status: onChain.toLowerCase() === built.root.toLowerCase() ? "already_published" : "ON_CHAIN_ROOT_DIFFERS", onChainRoot: onChain });
+            const same = onChain.toLowerCase() === built.root.toLowerCase();
+            if (same) await recordPostedRoot(item, null, "already_published");
+            report.push({ ...item, status: same ? "already_published" : "ON_CHAIN_ROOT_DIFFERS", onChainRoot: onChain });
             continue;
           }
           const balance = await provider.getBalance(vaultAddress);
@@ -142,12 +161,16 @@ async function main() {
           const tx = await vault.setEpochRoot(built.claimId, built.root, built.total);
           await tx.wait(1);
           const after = await vault.epochRoot(built.claimId);
-          report.push({ ...item, status: after.toLowerCase() === built.root.toLowerCase() ? "published" : "PUBLISHED_ROOT_MISMATCH", txHash: tx.hash });
+          const published = after.toLowerCase() === built.root.toLowerCase();
+          if (published) await recordPostedRoot(item, tx.hash, "published");
+          report.push({ ...item, status: published ? "published" : "PUBLISHED_ROOT_MISMATCH", txHash: tx.hash });
         } else {
           const treasury = new ethers.Contract(vaultAddress, MONTHLY_ABI, signer);
           const seal = await treasury.monthSeal(built.claimId);
           if (seal.isSealed) {
-            report.push({ ...item, status: seal.winnersRoot.toLowerCase() === built.root.toLowerCase() ? "already_sealed" : "ON_CHAIN_ROOT_DIFFERS", onChainRoot: seal.winnersRoot });
+            const same = seal.winnersRoot.toLowerCase() === built.root.toLowerCase();
+            if (same) await recordPostedRoot(item, null, "already_sealed");
+            report.push({ ...item, status: same ? "already_sealed" : "ON_CHAIN_ROOT_DIFFERS", onChainRoot: seal.winnersRoot });
             continue;
           }
           await treasury.sealMonth.staticCall(built.claimId, built.root, built.total);
@@ -155,7 +178,9 @@ async function main() {
           const tx = await treasury.sealMonth(built.claimId, built.root, built.total);
           await tx.wait(1);
           const after = await treasury.monthSeal(built.claimId);
-          report.push({ ...item, status: after.isSealed && after.winnersRoot.toLowerCase() === built.root.toLowerCase() ? "sealed" : "SEALED_ROOT_MISMATCH", txHash: tx.hash });
+          const sealed = after.isSealed && after.winnersRoot.toLowerCase() === built.root.toLowerCase();
+          if (sealed) await recordPostedRoot(item, tx.hash, "sealed");
+          report.push({ ...item, status: sealed ? "sealed" : "SEALED_ROOT_MISMATCH", txHash: tx.hash });
         }
       } catch (error) {
         report.push({ ...base, status: "BLOCKED", reason: reason(error) });
