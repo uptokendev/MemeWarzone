@@ -21,6 +21,7 @@ create table if not exists public.campaigns (
   graduated_block bigint,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  fee_recipient_address text,
   meta jsonb not null default '{}'::jsonb,
   primary key (chain_id, campaign_address)
 );

@@ -54,7 +54,8 @@ export async function startThrowawayPostgres() {
   apply(path.join(ROOT, "scripts/dbc/throwaway-postgres-schema.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000006_dbc_fee_accruals.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000007_dbc_graduation.sql"));
-  apply(path.join(ROOT, "db/migrations/20260929_000008_dbc_quote_binding.sql"));
+  apply(path.join(ROOT, "db/migrations/20260929_000008_dbc_creator_choice.sql"));
+  apply(path.join(ROOT, "db/migrations/20260929_000009_dbc_quote_binding.sql"));
   const pool = new Pool({ connectionString: dbUrl, ssl: false });
   async function stop() {
     await pool.end().catch(() => {});

@@ -14,6 +14,7 @@ const SOLANA_SIGNATURE_RE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
 const PROGRAM_CODES = Object.freeze({
   airdrop_trader: 0,
   airdrop_creator: 1,
+  dbc_holders: 2,
 });
 
 function i64le(value) {
