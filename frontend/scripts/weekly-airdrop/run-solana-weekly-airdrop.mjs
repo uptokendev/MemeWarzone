@@ -52,7 +52,10 @@ import {
 import { nativeUsdFor, thresholdsFor } from "./usdRules.mjs";
 import { solanaMinPayoutLamports } from "../../shared/pokerPayout.mjs";
 
-const PROGRAMS = ["airdrop_trader", "airdrop_creator"];
+const PROGRAMS = ["airdrop_trader", "airdrop_creator", "dbc_holders"];
+// Drawn programs. dbc_holders is not a draw: its leaves are the DBC holder rounds (step 5b) the
+// indexer already deposited into airdrop_vault, added to the same weekly tree as program code 2.
+const DRAW_PROGRAMS = ["airdrop_trader", "airdrop_creator"];
 const hex = (buf) => `0x${Buffer.from(buf).toString("hex")}`;
 
 async function materializeSolanaWeek(client, { chainId, epochId, solanaEpochId, selections, claimDeadline, metadata }) {
@@ -139,12 +142,60 @@ async function materializeSolanaWeek(client, { chainId, epochId, solanaEpochId, 
         [batch.id, rows[0].id, entry.walletAddress, entry.amount.toString(), JSON.stringify(winnerMetadata)],
       );
     }
+    const holderWeeks = selections.find((item) => item.program === "dbc_holders")?.holderWeeks || [];
+    if (holderWeeks.length) {
+      await client.query(
+        `update public.dbc_holder_rounds set airdrop_epoch_id = $2, updated_at = now()
+          where week_id = any($1::text[]) and status = 'landed' and airdrop_epoch_id is null`,
+        [holderWeeks, epochId],
+      );
+    }
     await client.query("commit");
     return { batches, root, weekTotal };
   } catch (error) {
     await client.query("rollback");
     throw error;
   }
+}
+
+/**
+ * DBC holder rounds (step 5b) not yet in a posted batch. Their lamports are in, or on their way to,
+ * airdrop_vault, so they are taken out of the trader/creator pot; only landed rounds become leaves.
+ * Before the migration exists (production before the DBC release) there are none.
+ */
+async function pendingHolderRounds(client) {
+  const exists = await client.query(`select to_regclass('public.dbc_holder_rounds') as t`);
+  if (!exists.rows[0]?.t) return { reserved: 0n, landed: [] };
+  const { rows } = await client.query(
+    `select week_id, status, total_lamports::text as total, leaves
+       from public.dbc_holder_rounds
+      where airdrop_epoch_id is null and status in ('sending', 'landed')
+      order by week_id`,
+  );
+  return {
+    reserved: rows.reduce((sum, row) => sum + BigInt(row.total), 0n),
+    landed: rows.filter((row) => row.status === "landed"),
+  };
+}
+
+export function holderSelection(landedRounds) {
+  const byWallet = new Map();
+  for (const round of landedRounds) {
+    for (const leaf of round.leaves?.leaves || []) {
+      byWallet.set(leaf.owner, (byWallet.get(leaf.owner) || 0n) + BigInt(leaf.amount));
+    }
+  }
+  const entries = [...byWallet.entries()].sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] > a[1] ? 1 : -1));
+  if (!entries.length) return null;
+  const poolWei = entries.reduce((sum, [, amount]) => sum + amount, 0n);
+  return {
+    program: "dbc_holders",
+    poolWei,
+    candidates: entries.map(([walletAddress]) => ({ walletAddress })),
+    winners: entries.map(([walletAddress], index) => ({ walletAddress, winnerRank: index + 1 })),
+    payouts: entries.map(([, amount]) => amount),
+    holderWeeks: landedRounds.map((round) => round.week_id),
+  };
 }
 
 /**
@@ -233,9 +284,12 @@ export async function runSolanaWeeklyAirdrop({ chainId = 101 } = {}) {
     }
 
     const vault = await readSolanaAirdropPool();
-    const totalPool = (vault.available * BigInt(distributionBps)) / 10_000n;
-    if (totalPool <= 0n) {
-      return console.log(`[weekly-airdrop:solana] nothing to distribute for ${epochId}`, { spendable: vault.spendable.toString(), outstanding: vault.outstanding.toString() });
+    const holders = await pendingHolderRounds(client);
+    const drawable = vault.available > holders.reserved ? vault.available - holders.reserved : 0n;
+    const totalPool = (drawable * BigInt(distributionBps)) / 10_000n;
+    const holderItem = holderSelection(holders.landed);
+    if (totalPool <= 0n && !holderItem) {
+      return console.log(`[weekly-airdrop:solana] nothing to distribute for ${epochId}`, { spendable: vault.spendable.toString(), outstanding: vault.outstanding.toString(), holderReserved: holders.reserved.toString() });
     }
     const thresholds = thresholdsFor(chainId, await nativeUsdFor(chainId));
     const exclusions = await exclusionSets(client, { chainId, start, end });
@@ -247,7 +301,8 @@ export async function runSolanaWeeklyAirdrop({ chainId = 101 } = {}) {
     const candidatesBy = { airdrop_trader: traders, airdrop_creator: creators };
     const reserved = new Set();
     const selections = [];
-    for (const program of PROGRAMS) {
+    for (const program of DRAW_PROGRAMS) {
+      if (totalPool <= 0n) break;
       const eligible = candidatesBy[program].filter((candidate) => !reserved.has(candidate.walletAddress));
       if (!eligible.length) {
         console.log(`[weekly-airdrop:solana] ${program}: no eligible wallets; its half stays in the vault`);
@@ -270,6 +325,10 @@ export async function runSolanaWeeklyAirdrop({ chainId = 101 } = {}) {
       selections.push({ program, poolWei, candidates: eligible, winners, payouts });
       console.log(`[weekly-airdrop:solana] ${program}: ${eligible.length} candidates -> ${winners.length} winners`);
     }
+    if (holderItem) {
+      selections.push(holderItem);
+      console.log(`[weekly-airdrop:solana] dbc_holders: ${holderItem.winners.length} holders, ${holderItem.poolWei} lamports from rounds ${holderItem.holderWeeks.join(",")}`);
+    }
     if (!selections.length) return console.log(`[weekly-airdrop:solana] no eligible wallets in either program for ${epochId}; pool stays in the vault`);
 
     if (dryRun) {
@@ -285,7 +344,7 @@ export async function runSolanaWeeklyAirdrop({ chainId = 101 } = {}) {
       return;
     }
 
-    for (const item of selections) {
+    for (const item of selections.filter((entry) => entry.program !== "dbc_holders")) {
       await client.query("begin");
       try {
         await stageWinners(client, { chainId, epochId, program: item.program, winners: item.winners, payouts: item.payouts, start, end, poolWei: item.poolWei, seedCommitment: commitment, tokenSymbol: "SOL" });
@@ -302,6 +361,7 @@ export async function runSolanaWeeklyAirdrop({ chainId = 101 } = {}) {
         nativeUsdAtDraw: thresholds.nativeUsd, drawSeedCommitment: commitment,
         vaultSpendableLamports: vault.spendable.toString(), vaultOutstandingLamports: vault.outstanding.toString(),
         totalWeeklyPoolWei: totalPool.toString(), poolSource: "solana_airdrop_vault", securityExclusionCount: exclusions.totalCount,
+        dbcHolderReservedLamports: holders.reserved.toString(),
       },
     });
     await postAndOpen(client, { chainId, epochId, solanaEpochId, ...materialized, claimDeadline, dryRun });

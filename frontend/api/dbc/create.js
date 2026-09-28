@@ -326,10 +326,11 @@ async function insertDbcCampaign(db, row) {
     `insert into public.campaigns (
         chain_id, campaign_address, token_address, creator_address,
         name, symbol, logo_uri, factory_address, launch_type,
-        created_block, is_active, launched, created_at_chain, created_at, updated_at, meta
+        created_block, is_active, launched, created_at_chain, created_at, updated_at, meta,
+        fee_recipient_address
       ) values (
         $1,$2,$3,$4,$5,$6,$7,$8,'dbc',
-        0, true, true, now(), now(), now(), $9::jsonb
+        0, true, true, now(), now(), now(), $9::jsonb, $10
       )
       on conflict (chain_id, campaign_address) do update set
         token_address = excluded.token_address,
@@ -341,11 +342,15 @@ async function insertDbcCampaign(db, row) {
         is_active = true,
         launched = true,
         meta = coalesce(campaigns.meta, '{}'::jsonb) || excluded.meta,
+        fee_recipient_address = coalesce(excluded.fee_recipient_address, campaigns.fee_recipient_address),
         updated_at = now()`,
     [
       row.chainId, row.pool, row.mint, row.creator, row.name, row.symbol, row.logoUrl,
       DBC_PROGRAM_ID,
       JSON.stringify({ dbc: row.dbcMeta }),
+      // Our collector buys back platform coins (step 5b). The league categories already skip a
+      // campaign's fee_recipient_address, so buybacks never score.
+      row.feeRecipient || null,
     ],
   );
 }
@@ -616,6 +621,7 @@ export function createDbcCreateHandler(deps = {}) {
         symbol: token.symbol,
         logoUrl: token.logoUrl,
         dbcMeta,
+        feeRecipient: String(env.DBC_FEE_COLLECTOR || "").trim() || null,
       });
       await upsertTokenMetadata(tx, {
         chainId: 101,

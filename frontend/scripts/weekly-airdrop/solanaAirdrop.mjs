@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { keccak256 } from "ethers";
 import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 
-export const SOLANA_AIRDROP_PROGRAM_CODES = Object.freeze({ airdrop_trader: 0, airdrop_creator: 1 });
+export const SOLANA_AIRDROP_PROGRAM_CODES = Object.freeze({ airdrop_trader: 0, airdrop_creator: 1, dbc_holders: 2 });
 const LEAF_PREFIX = Buffer.from("MWZ_AIRDROP_LEAF", "utf8");
 const AIRDROP_BATCH_DISC = createHash("sha256").update("account:AirdropBatch").digest().subarray(0, 8);
 const POST_ROOT_DISC = createHash("sha256").update("global:post_airdrop_batch_root").digest().subarray(0, 8);
