@@ -34,8 +34,9 @@ case "$TARGET" in
   launchpad)
     PROGRAM_ID="3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt"
     CANDIDATE="$ROOT/target/deploy/memewarzone_solana.so"
-    EXPECT_SHA="e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2"
-    BUFFER_KEYPAIR="${MWZ_BUFFER_KEYPAIR:-$HOME/.config/memewarzone/mwz-launchpad-mainnet-buffer-e6ed7df3.json}"
+    # 2026-09-28: pool takes the unsold curve tokens it needs (config/solana/launchpad-binary.certification.json).
+    EXPECT_SHA="9cce34df7bca25c66f0e53cb27ebcecb94fbc4771c5eceaebed203f83cb21abc"
+    BUFFER_KEYPAIR="${MWZ_BUFFER_KEYPAIR:-$HOME/.config/memewarzone/mwz-launchpad-mainnet-buffer-9cce34df.json}"
     ;;
   treasury)
     # The reward-poster (airdrop, league, recruiter/squad) + league-vaults + vault-receivers + poker-rank candidate (2026-09-26) is 1436744 bytes;
