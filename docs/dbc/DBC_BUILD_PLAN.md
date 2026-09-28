@@ -58,6 +58,19 @@ tokens, and at every realistic SOL price that cap binds, so the creator gets 23%
 rule 1 each config now carries its own whole-percent split computed from today's formula. Founder
 to confirm.
 
+## Proof: today's launchpad at K88's settings (local validator, 2026-09-28)
+
+`bash scripts/solana/run-proof-graduation-payout.sh` (test `tests/solana/proof-graduation-payout-mainnet-economics.cjs`),
+certified binary `e6ed7df3…`, live mainnet economics, $15K target, SOL $118.59. Measured: raised
+126.486 SOL, sold 544.37M, pool 64.92 SOL + 140M tokens (the formula wanted 213.85M; capped),
+**creator 59.037 SOL = 46.67%** (intended 19.60% = 24.79 SOL), reserve 20M delivered, 295.63M
+unsold burned, finalize fee 2.53 SOL split protocol 2.087 / recruiter 0.379 / squad 0.063.
+Price carries over at graduation either way; the pool gets ~35% less SOL than intended.
+DBC sizes the pool's tokens from its SOL at the final price with no cap (devnet: DBC final
+sqrtPrice == DAMM v2 initSqrtPrice), which is the original design intent (founder).
+Open: the graduation-fee split above paid recruiter/squad on an unlinked test route; check it
+against the rule "unlinked slices go to the airdrop".
+
 ## Steps
 
 | # | Step | Owner | Status |
