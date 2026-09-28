@@ -320,3 +320,35 @@ Claude's fixes found by running it: readback ignored the program's 20-point curv
 config was marked failed: fail-closed worked); proof simulated via VersionedTransaction, waits out the
 60 s anti-sniper window, funds the collector, fee sign, and a real supply check (was `|| true`).
 Signatures: config `5ZaMhNiU...`, first buy `4tmYXho5...`, complete `3M4aMz2E...`, migrate `24wSZycQ...`.
+
+### Step 2, review 1 (2026-09-28): PR #472 @ `d2e897eb`: CHANGES NEEDED
+
+Checked: diff (36 files), tests re-run in a clean clone (36/36 pass), guards on existing jobs (one line
+each, correct), migrations, create.js authorize/finalize, the browser submit path. Good: flow and
+structure follow the brief; scheduled lock is server-side; due-popup; drafts carry the DBC fields.
+
+Must fix before merge:
+1. **Every launch would fail: placeholder blockhash.** `serializeUnsigned` sets `recentBlockhash` to
+   `111...1` and `dbcCreateSubmit.ts` signs and sends that transaction unchanged. Set a fresh blockhash
+   in the browser before the mint key and the wallet sign, **simulate before asking the wallet**
+   (like `solanaV4CreateSubmit.ts`), and confirm with that transaction's own blockhash and
+   `lastValidBlockHeight` (today it confirms against a new one).
+2. **The browser must check what it signs.** Before signing, verify: fee payer = the creator, only
+   expected programs (DBC, System, SPL Token, Associated Token, Compute Budget, Metaplex metadata),
+   the pool, config and mint equal the authorize response. Same idea as the allowlist in
+   `solanaMeteoraTrade.ts`. A compromised API must not be able to get a wallet to sign something else.
+3. **finalize checks fail open.** `if (owner && owner !== DBC)`, `if (configOnChain && ...)`, creator
+   and mint the same way: a missing field passes. Make every check mandatory: owner must be the DBC
+   program, config / creator / base mint must be present and equal the token, else 409.
+4. **No SDK monkeypatch in production code.** `client.creator.getPoolConfigForNewPool = ...` replaces the
+   SDK's chain read with a partial local copy. In production the config is on chain; read it. Inject a
+   fake only through `deps` in tests.
+5. **`authorize` re-checks the creator limits** (a race between begin and authorize could launch a 4th
+   coin) and answers 400, not 500, for a malformed `firstBuyLamports`.
+6. **A real devnet proof.** `scripts/dbc/prove-create-devnet.mjs` only prints text. Write it like the
+   step-1 proof (optional `DBC_PROVE_FUNDER_KEYPAIR`, in-memory DB, real devnet chain, throwaway creator
+   that really signs the begin message): run the real handler operations for (a) a create without a
+   first buy, (b) with a first buy under 10% (must pay 2%), (c) a first buy over 10% (refused);
+   print the real transaction bytes and signer count; finalize writes the campaign and metadata rows;
+   finalize refuses a pool made with another config or creator; a scheduled draft is refused before
+   its time. Build and sign the transaction exactly as `dbcCreateSubmit.ts` does. Claude runs it.
