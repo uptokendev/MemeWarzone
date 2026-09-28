@@ -888,6 +888,21 @@ export default async function handler(req, res) {
           const root = solanaClaim ? buildSolanaMerkleRoot(leaves) : buildMerkleRoot(leaves);
           const proof = solanaClaim ? buildSolanaMerkleProof(leaves, leafIndex) : buildMerkleProof(leaves, leafIndex);
 
+          // The posted root is what the chain checks. If the winner rows no longer rebuild it, the
+          // proof is certain to fail on chain; say so here instead of asking for a signature.
+          const { rows: postedRoots } = await client.query(
+            `SELECT root FROM league_epoch_roots WHERE chain_id = $1 AND period = $2 AND epoch_start = $3::timestamptz LIMIT 1`,
+            [chainId, period, epochStart]
+          );
+          if (postedRoots[0] && String(postedRoots[0].root).toLowerCase() !== String(root).toLowerCase()) {
+            await client.query("ROLLBACK");
+            console.error("[league] claim refused: winner rows do not rebuild the posted root", { chainId, period, epochStart, posted: postedRoots[0].root, rebuilt: root });
+            return json(res, 409, {
+              error: "This prize can't be claimed right now: the winner list for this period changed after it was published. Nothing was sent and nothing was lost.",
+              code: "LEAGUE_ROOT_MISMATCH",
+            });
+          }
+
           // Record the claim request for UX/audit, but do NOT mark paid here.
           await client.query(
             `INSERT INTO league_epoch_claims (chain_id, period, epoch_start, category, rank, recipient_address, signature)

@@ -619,7 +619,10 @@ export default function CommandCenterClaims() {
         toast.success(count === 1 ? "League reward claimed." : `${count} league rewards claimed.`);
         loadClaims();
       } catch (err: any) {
-        setMessage(String(err?.shortMessage || err?.message || err || "League claim request failed"));
+        const reason = String(err?.shortMessage || err?.message || err || "League claim request failed");
+        setMessage(reason);
+        // The page message is easy to miss; a claim that stops must say so where the user looks.
+        toast.error(reason);
       } finally {
         setClaimingType(null);
       }

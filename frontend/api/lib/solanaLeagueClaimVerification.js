@@ -3,6 +3,7 @@ import {
   deriveLeagueClaimPda,
   deriveLeagueEpochPda,
   deriveRewardsVaults,
+  leagueVaultForPeriod,
 } from "../solanaLeagueMerkle.js";
 import { canonicalSolanaClaimIdentity } from "./solanaClaimEnvironment.js";
 import { withRpcRetry } from "./rpcResilience.js";
@@ -84,7 +85,10 @@ export function buildExpectedSolanaLeagueClaim({ chainId, environment = null, so
     recipient: String(recipient || "").trim(),
     amountRaw: String(amountRaw || "0"),
     configAddress: vaults.config,
-    vaultAddress: vaults.leagueVault,
+    // The program pays each period from its own vault (league_payout_vault): weekly league_vault,
+    // monthly monthly_league_vault, MWL mwl_vault. Expecting league_vault refused every recorded
+    // monthly claim after it had already paid out on chain (2026-09-28).
+    vaultAddress: leagueVaultForPeriod(period, programId),
     epochAddress: deriveLeagueEpochPda(period, epochStartSec, programId),
     claimReceiptAddress: deriveLeagueClaimPda(period, epochStartSec, category, rank, programId),
     epochStartSec,

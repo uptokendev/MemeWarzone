@@ -63,6 +63,12 @@ function derive(web3: SolanaWeb3Module, seedParts: Uint8Array[]): string {
   return address.toBase58();
 }
 
+export function solanaLeagueVaultSeed(period: number): string {
+  if (period === 0) return "league_vault";
+  if (period === 1) return "monthly_league_vault";
+  return "mwl_vault";
+}
+
 function assertAddress(label: string, actual: string, expected: string): void {
   if (String(actual || "").trim() !== expected) {
     throw new Error(`Solana reward ${label} mismatch: ${String(actual || "").trim()} != ${expected}`);
@@ -81,11 +87,14 @@ export function assertCanonicalSolanaRewardClaim(
   if (canonical.kind === "league") {
     const period = Number(canonical.periodCode);
     const rank = Number(canonical.rank);
-    if (period !== 0 && period !== 1) throw new Error("Invalid Solana league period code");
+    if (![0, 1, 2, 3].includes(period)) throw new Error("Invalid Solana league period code");
     if (rank < 1 || rank > 255) throw new Error("Invalid Solana league rank"); // u8 claim rank, poker payout
     if (canonical.categoryHash.length !== 32) throw new Error("Invalid Solana league category hash");
     const epoch = i64le(canonical.epochStartSec);
-    assertAddress("league vault PDA", addresses.vaultAddress, derive(web3, [utf8("league_vault")]));
+    // The program's league_payout_vault: weekly -> league_vault, monthly -> monthly_league_vault,
+    // Major War League (quarterly 2 / monthly 3) -> mwl_vault. Checking only league_vault refused
+    // every monthly claim before the wallet was asked to sign (2026-09-28).
+    assertAddress("league vault PDA", addresses.vaultAddress, derive(web3, [utf8(solanaLeagueVaultSeed(period))]));
     assertAddress("league epoch PDA", addresses.batchAddress, derive(web3, [utf8("league_epoch"), Uint8Array.from([period]), epoch]));
     assertAddress(
       "league claim receipt PDA",
@@ -130,6 +139,22 @@ async function claimReceiptExists(
   return Boolean(account);
 }
 
+/**
+ * The confirmed transaction that created a claim receipt, oldest first. A receipt is written only by
+ * its claim, so this is the payout. Used when a claim paid out but was never recorded (for example
+ * because recording failed after the wallet had sent it): the caller records this signature and the
+ * server verifies it like any other.
+ */
+async function claimSignatureForReceipt(
+  web3: SolanaWeb3Module,
+  connection: Connection,
+  address: string,
+): Promise<string | null> {
+  const signatures = await connection.getSignaturesForAddress(new web3.PublicKey(address), { limit: 20 }, "confirmed");
+  const ok = signatures.filter((entry) => !entry.err);
+  return ok.length ? ok[ok.length - 1].signature : null;
+}
+
 export async function submitSolanaRewardV0Claim(input: {
   web3: SolanaWeb3Module;
   chainId: number;
@@ -153,6 +178,10 @@ export async function submitSolanaRewardV0Claim(input: {
 
   const connection = new input.web3.Connection(getSolanaRewardRpcUrl(input.chainId), "confirmed");
   if (await claimReceiptExists(input.web3, connection, input.addresses.claimReceiptAddress)) {
+    if (input.canonical.kind === "league") {
+      const paid = await claimSignatureForReceipt(input.web3, connection, input.addresses.claimReceiptAddress);
+      if (paid) return paid;
+    }
     throw new Error("This Solana reward is already claimed on-chain. Refresh rewards before retrying.");
   }
 

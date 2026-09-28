@@ -164,6 +164,22 @@ async function alreadyFinalized(chainId: number, period: "weekly" | "monthly", e
   return (rowCount ?? 0) > 0;
 }
 
+/**
+ * A posted root freezes the epoch's winner set. The root on chain can never change, and the claim
+ * API builds each proof from these rows, so a row added after posting breaks every claim in the
+ * epoch (2026-09-27: recruiter_league was added to two sealed Solana epochs and every claim in
+ * them failed InvalidProof). EVM roots are recorded here by publish-evm-league-roots.mjs.
+ */
+async function postedRootExists(chainId: number, period: "weekly" | "monthly", epochStartIso: string) {
+  const { rowCount } = await pool.query(
+    `select 1 from public.league_epoch_roots
+      where chain_id=$1 and period=$2 and epoch_start=$3::timestamptz
+      limit 1`,
+    [chainId, period, epochStartIso]
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 async function clearRecoveredNoWinnerRollover(
   chainId: number,
   period: "weekly" | "monthly",
@@ -496,6 +512,11 @@ async function finalizeEpochFor(
 ) {
   const epochStartIso = epochStart.toISOString();
   const epochEndIso = epochEnd.toISOString();
+
+  if (await postedRootExists(chainId, period, epochStartIso)) {
+    console.log(`[finalizeEpochWinners] chain=${chainId} period=${period} epoch=${epochStartIso}: root already posted, winner set is frozen`);
+    return;
+  }
 
   const categories = (period === "weekly" ? [...WEEKLY_CATEGORIES] : [...MONTHLY_CATEGORIES]) as unknown as string[];
 
