@@ -108,6 +108,8 @@ async function loadVerifiedMarket(input: {
   poolAddress?: string | null;
   quoteMint?: string | null;
   quoteDecimals?: number | null;
+  /** DBC-migrated DAMM v2 pools are not the launchpad's deterministic customizable pool. */
+  allowDbcMigratedPool?: boolean;
 }): Promise<LoadedMarket> {
   const connection = getSolanaReadConnection();
   const cpAmm = new CpAmm(connection);
@@ -129,10 +131,16 @@ async function loadVerifiedMarket(input: {
   if (quoteMint.equals(mint)) throw new Error("Meteora quote mint cannot be the launch mint.");
 
   const expectedPool = deriveCustomizablePoolAddress(mint, quoteMint);
-  if (requestedPool && !requestedPool.equals(expectedPool)) {
-    throw new Error("Indexed Meteora pool does not match the deterministic launch-token/quote pool.");
+  if (input.allowDbcMigratedPool) {
+    if (!requestedPool) throw new Error("DBC migrated pool address is required.");
+    if (!quoteMint.equals(NATIVE_MINT)) throw new Error("DBC migrated pool must be quoted in SOL.");
+    if (!poolState) poolState = await cpAmm.fetchPoolState(requestedPool);
+  } else {
+    if (requestedPool && !requestedPool.equals(expectedPool)) {
+      throw new Error("Indexed Meteora pool does not match the deterministic launch-token/quote pool.");
+    }
+    if (!poolState) poolState = await cpAmm.fetchPoolState(expectedPool);
   }
-  if (!poolState) poolState = await cpAmm.fetchPoolState(expectedPool);
   const pairOk =
     (poolState.tokenAMint.equals(mint) && poolState.tokenBMint.equals(quoteMint)) ||
     (poolState.tokenBMint.equals(mint) && poolState.tokenAMint.equals(quoteMint));
@@ -149,7 +157,7 @@ async function loadVerifiedMarket(input: {
   return {
     connection,
     cpAmm,
-    pool: expectedPool,
+    pool: input.allowDbcMigratedPool && requestedPool ? requestedPool : expectedPool,
     mint,
     quoteMint,
     quoteDecimals,
@@ -263,6 +271,7 @@ export async function quoteSolanaMeteoraExactIn(input: {
   poolAddress?: string | null;
   quoteMint?: string | null;
   quoteDecimals?: number | null;
+  allowDbcMigratedPool?: boolean;
 }): Promise<SolanaMeteoraQuote> {
   const market = await loadVerifiedMarket(input);
   return exactInQuote(market, input.side, input.amountInRaw, input.slippagePct);
@@ -425,6 +434,7 @@ export async function executeSolanaMeteoraSwap(input: {
   tokenDecimals: number;
   walletAddress?: string | null;
   poolAddress?: string | null;
+  allowDbcMigratedPool?: boolean;
 }): Promise<{ signature: string; quote: SolanaMeteoraQuote }> {
   const market = await loadVerifiedMarket({
     mint: input.mint,
@@ -432,6 +442,7 @@ export async function executeSolanaMeteoraSwap(input: {
     poolAddress: input.poolAddress || input.quote.pool,
     quoteMint: input.quote.quoteMint,
     quoteDecimals: input.quote.quoteDecimals,
+    allowDbcMigratedPool: input.allowDbcMigratedPool,
   });
   if (market.pool.toBase58() !== input.quote.pool) throw new Error("Meteora quote pool changed.");
 
