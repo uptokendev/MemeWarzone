@@ -161,3 +161,33 @@ against the rule "unlinked slices go to the airdrop".
 ## Review log
 
 (Claude writes one entry per Grok hand-in: branch, commit, what was checked, result.)
+
+### Step 1, review 1 (2026-09-28): `grok/dbc-step-1` @ `1509992a`: CHANGES NEEDED
+
+Checked: full diff (14 files), tests re-run in a clean clone (12/12 pass), constants vs D1-D14 (all
+match), readback compares every field, advisory lock, migration SQL, route mount, dependency pin.
+Good: curve ends exactly at the SOL target, steepening finds the smallest slope that fits 1B,
+graduation 19.8 / 2.2 / 78, anti-sniper 50% -> 2% over 60 s, first buy at 2%.
+
+Must fix before merge:
+1. **Buffer tokens must be burned, not handed to us (D9).** `tokenSupply` sets pre = post. DBC burns
+   `min(leftover, pre - post)` at migration (`get_burnable_amount_post_migration`,
+   `migrate_damm_v2_initialize_pool.rs`); with pre = post nothing is burned and the unused 25% swap
+   buffer becomes leftover for `leftoverReceiver` (our collector). Set
+   `postMigrationTokenSupply = sold + pool tokens + 20M reserve` (rounded up), keep `pre` = what the
+   SDK needs (<= 1B). Add `expected.circulatingAfterGraduation` and a test that `pre - post` equals the
+   buffer and that `post` equals the circulating amount.
+2. **A failed creation must never repeat on chain.** Everything runs in one DB transaction; on a
+   readback mismatch the row is marked `failed` and the error rolls that back, while the config is
+   already on chain. Every later call creates another config (~0.006 SOL each, forever). Persist the
+   `failed` row (commit it, then report the error), refuse to create that key again until an operator
+   clears the row (503 with a clear code), and do not insert a row for errors that happen before the
+   transaction is sent. Test: two calls after a mismatch -> exactly one on-chain create.
+3. **Graduation split rounding must match the program.** DBC computes the pool's quote with
+   `Rounding::Up` (`get_migration_quote_amount`): pool = ceil(T x 78 / 100), fee = T - pool. Mirror it.
+4. **Price path:** 5-7% at the start / 3.1-3.6% after is accepted (16 constant-product segments cannot
+   follow a 1-lamport straight line to 1%). Try equal price-ratio spacing between the 16 points; keep
+   whichever has the lower worst tail error and report both.
+5. **Devnet proof:** the public faucet failed. Add an optional `DBC_PROVE_FUNDER_KEYPAIR` (path): when
+   set, the script funds its throwaway keys from it. Claude runs it with the devnet deployer.
+6. Open the pull request into `build/dbc-staging` (rule added 2026-09-28); fixes go on the same branch.
