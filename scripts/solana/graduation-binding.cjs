@@ -45,10 +45,11 @@ function graduationQuote(campaign) {
   const remaining = BigInt(campaign.netRaisedLamports) - finalizeFee;
   const targetLiquidity = bpsAmount(remaining, campaign.liquidityPostFinalizeBps);
   const desiredTokens = (targetLiquidity * scale * nano) / spot;
-  const maxTokens = desiredTokens < BigInt(campaign.liquidityTokenSupply)
-    ? desiredTokens
-    : BigInt(campaign.liquidityTokenSupply);
-  const lpSol = desiredTokens <= BigInt(campaign.liquidityTokenSupply)
+  // Same as graduation_quote in graduation.rs: the pool may take the liquidity allocation plus
+  // the unsold curve tokens.
+  const capacity = BigInt(campaign.liquidityTokenSupply) + BigInt(campaign.curveTokenSupply) - BigInt(campaign.soldTokens);
+  const maxTokens = desiredTokens < capacity ? desiredTokens : capacity;
+  const lpSol = desiredTokens <= capacity
     ? targetLiquidity
     : (maxTokens * spot) / (scale * nano);
   return {

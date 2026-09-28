@@ -747,14 +747,7 @@ pub fn confirm_graduation_handler<'info>(
             ],
         )?;
     }
-    let burned_unsold = campaign
-        .curve_token_supply
-        .checked_sub(campaign.sold_tokens)
-        .ok_or(LaunchpadError::MathOverflow)?;
-    let burned_unused_liquidity = campaign
-        .liquidity_token_supply
-        .checked_sub(pool_token.amount)
-        .ok_or(LaunchpadError::MathOverflow)?;
+    let (burned_unsold, burned_unused_liquidity) = graduation_burns(&campaign, pool_token.amount)?;
     let creator_reserve = campaign.reserve_token_supply;
     let campaign_bump = [campaign.bump];
     let campaign_seeds: &[&[u8]] = &[CAMPAIGN_SEED, campaign.campaign_id.as_ref(), &campaign_bump];
@@ -867,6 +860,40 @@ pub fn final_spot_nano_lamports(campaign: &CampaignView) -> Result<u128> {
         .ok_or_else(|| error!(LaunchpadError::MathOverflow))
 }
 
+/// Tokens the pool may take: the liquidity allocation plus the curve tokens nobody bought.
+pub fn pool_token_capacity(campaign: &CampaignView) -> Result<u64> {
+    let unsold = campaign
+        .curve_token_supply
+        .checked_sub(campaign.sold_tokens)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    campaign
+        .liquidity_token_supply
+        .checked_add(unsold)
+        .ok_or(error!(LaunchpadError::MathOverflow))
+}
+
+/// Split of what is left at confirmation: the pool's tokens come out of the liquidity allocation
+/// first, then out of the unsold curve tokens; the remainder of each is burned.
+/// Returns (burned_unsold, burned_unused_liquidity).
+pub fn graduation_burns(campaign: &CampaignView, pool_tokens: u64) -> Result<(u64, u64)> {
+    let unsold = campaign
+        .curve_token_supply
+        .checked_sub(campaign.sold_tokens)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    let from_liquidity = pool_tokens.min(campaign.liquidity_token_supply);
+    let from_unsold = pool_tokens
+        .checked_sub(from_liquidity)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    let burned_unused_liquidity = campaign
+        .liquidity_token_supply
+        .checked_sub(from_liquidity)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    let burned_unsold = unsold
+        .checked_sub(from_unsold)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    Ok((burned_unsold, burned_unused_liquidity))
+}
+
 pub fn graduation_quote(campaign: &CampaignView) -> Result<GraduationQuote> {
     let spot = final_spot_nano_lamports(campaign)?;
     require!(spot > 0, LaunchpadError::GraduationLiquidityZero);
@@ -888,11 +915,15 @@ pub fn graduation_quote(campaign: &CampaignView) -> Result<GraduationQuote> {
         .ok_or(LaunchpadError::MathOverflow)?
         .checked_div(spot)
         .ok_or(LaunchpadError::MathOverflow)?;
-    let max_tokens = desired_tokens.min(u128::from(campaign.liquidity_token_supply));
+    // The pool gets the tokens its SOL needs at the last curve price. It draws on the liquidity
+    // allocation first and then on the unsold curve tokens, which are burned otherwise; capping
+    // at the liquidity allocation alone paid the creator the SOL the pool could not take.
+    let available_tokens = u128::from(pool_token_capacity(campaign)?);
+    let max_tokens = desired_tokens.min(available_tokens);
     require!(max_tokens > 0, LaunchpadError::GraduationLiquidityZero);
     let max_tokens_u64 =
         u64::try_from(max_tokens).map_err(|_| error!(LaunchpadError::MathOverflow))?;
-    let liquidity_lamports = if desired_tokens <= u128::from(campaign.liquidity_token_supply) {
+    let liquidity_lamports = if desired_tokens <= available_tokens {
         target_liquidity
     } else {
         let denominator = scale
@@ -1996,6 +2027,65 @@ mod tests {
             q.finalize_fee_lamports + q.max_liquidity_lamports + q.creator_payout_lamports,
             v.net_raised_lamports
         )
+    }
+    /// K88 on mainnet at SOL $118.59 (measured on a local validator with the certified binary):
+    /// the pool wanted 213.85M tokens and was capped at 140M, paying the creator 46.67%.
+    fn k88_closed_campaign() -> Campaign {
+        let mut c = campaign_for_quote();
+        c.graduation_target_usd_micros = 15_000_000_000;
+        c.sold_tokens = 544_365_466_612_272;
+        c.net_raised_lamports = 126_486_213_984;
+        c.curve_closed = true;
+        c
+    }
+    #[test]
+    fn pool_takes_every_token_it_needs_from_unsold_curve_tokens() {
+        let v = campaign_view_from_campaign(&k88_closed_campaign());
+        let q = graduation_quote(&v).unwrap();
+        let fee = v.net_raised_lamports * 200 / 10_000;
+        let remaining = v.net_raised_lamports - fee;
+        let pool_sol = remaining * 8_000 / 10_000;
+        assert_eq!(q.finalize_fee_lamports, fee);
+        assert_eq!(q.max_liquidity_lamports, pool_sol, "the pool gets 80% of what is left");
+        assert_eq!(q.creator_payout_lamports, remaining - pool_sol, "the creator gets 20% of what is left");
+        assert!(q.max_liquidity_tokens > v.liquidity_token_supply, "more than the 140M liquidity allocation");
+        assert!(q.max_liquidity_tokens <= pool_token_capacity(&v).unwrap());
+        // 213.85M tokens at the last curve price
+        assert_eq!(q.max_liquidity_tokens / 1_000_000_000_000, 213);
+    }
+    #[test]
+    fn sold_out_curve_still_caps_at_the_liquidity_allocation() {
+        let mut c = k88_closed_campaign();
+        c.sold_tokens = c.curve_token_supply;
+        c.net_raised_lamports = 300_718_000_000;
+        let v = campaign_view_from_campaign(&c);
+        let q = graduation_quote(&v).unwrap();
+        assert_eq!(q.max_liquidity_tokens, v.liquidity_token_supply, "no unsold tokens: capped as before");
+        assert_eq!(
+            q.finalize_fee_lamports + q.max_liquidity_lamports + q.creator_payout_lamports,
+            v.net_raised_lamports
+        );
+    }
+    #[test]
+    fn graduation_burns_account_for_every_token() {
+        for (sold, pool) in [
+            (544_365_466_612_272u64, 213_851_444_830_000u64),
+            (544_365_466_612_272, 140_000_000_000_000),
+            (544_365_466_612_272, 90_000_000_000_000),
+            (840_000_000_000_000, 140_000_000_000_000),
+        ] {
+            let mut c = k88_closed_campaign();
+            c.sold_tokens = sold;
+            let v = campaign_view_from_campaign(&c);
+            let (unsold_burn, liq_burn) = graduation_burns(&v, pool).unwrap();
+            assert_eq!(
+                sold + pool + unsold_burn + liq_burn + v.reserve_token_supply,
+                c.token_total_supply,
+                "sold + pool + burned + reserve must be the whole supply"
+            );
+        }
+        let v = campaign_view_from_campaign(&k88_closed_campaign());
+        assert!(graduation_burns(&v, pool_token_capacity(&v).unwrap() + 1).is_err());
     }
     #[test]
     fn native_pool_derivation_regression_is_unchanged() {

@@ -310,9 +310,11 @@ function graduationLiquidityQuote(campaign) {
   const remaining = campaign.netRaisedLamports - finalizeFeeLamports;
   const targetLiquidityLamports = bpsAmount(remaining, campaign.liquidityPostFinalizeBps);
   const desiredTokens = (targetLiquidityLamports * scale * NANO_LAMPORT_SCALE) / spotNano;
-  const maxLiquidityTokens = desiredTokens < campaign.liquidityTokenSupply ? desiredTokens : campaign.liquidityTokenSupply;
+  // Same as graduation_quote in graduation.rs: liquidity allocation plus unsold curve tokens.
+  const capacity = campaign.liquidityTokenSupply + campaign.curveTokenSupply - campaign.soldTokens;
+  const maxLiquidityTokens = desiredTokens < capacity ? desiredTokens : capacity;
   if (maxLiquidityTokens <= 0n) failUnsafe("Graduation token liquidity is zero.");
-  const maxLiquidityLamports = desiredTokens <= campaign.liquidityTokenSupply
+  const maxLiquidityLamports = desiredTokens <= capacity
     ? targetLiquidityLamports
     : (maxLiquidityTokens * spotNano) / (scale * NANO_LAMPORT_SCALE);
   if (maxLiquidityLamports <= 0n) failUnsafe("Graduation native liquidity is zero.");

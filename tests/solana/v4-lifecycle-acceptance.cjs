@@ -1408,7 +1408,7 @@ ${text}`);
     });
     assert.ok(quote.maxLiquidityLamports > 0n, "LP SOL must be > 0");
     assert.ok(quote.maxLiquidityTokens > 0n, "LP tokens must be > 0");
-    assert.ok(quote.maxLiquidityTokens <= after.campaign.liquidityTokenSupply);
+    assert.ok(quote.maxLiquidityTokens <= after.campaign.liquidityTokenSupply + remainingCurve);
     assert.ok(quote.finalizeFeeLamports + quote.maxLiquidityLamports + quote.creatorPayoutLamports
       === after.campaign.netRaisedLamports);
 
@@ -1440,10 +1440,11 @@ ${text}`);
     const remaining = campaign.netRaisedLamports - finalizeFee;
     const targetLiquidity = bpsAmount(remaining, campaign.liquidityPostFinalizeBps);
     const desiredTokens = (targetLiquidity * scale * nano) / spot;
-    const maxTokens = desiredTokens < campaign.liquidityTokenSupply
+    const capacity = campaign.liquidityTokenSupply + campaign.curveTokenSupply - campaign.soldTokens;
+    const maxTokens = desiredTokens < capacity
       ? desiredTokens
-      : campaign.liquidityTokenSupply;
-    const lpSol = desiredTokens <= campaign.liquidityTokenSupply
+      : capacity;
+    const lpSol = desiredTokens <= capacity
       ? targetLiquidity
       : (maxTokens * spot) / (scale * nano);
     return {

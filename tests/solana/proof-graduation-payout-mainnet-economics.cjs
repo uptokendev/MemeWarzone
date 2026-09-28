@@ -160,7 +160,7 @@ describe("PROOF: graduation payout under live mainnet economics (local validator
   before(async function () {
     const soHash = crypto.createHash("sha256").update(fs.readFileSync(SO_PATH)).digest("hex");
     console.log(`[proof] .so sha256=${soHash}`);
-    assert.equal(soHash, CERTIFIED_SHA, "the binary on disk is not the certified mainnet launchpad");
+    assert.equal(soHash, process.env.PROOF_PROGRAM_SHA256 || CERTIFIED_SHA, "the binary on disk is not the one under test");
     assert.equal(program.programId.toBase58(), PROGRAM_ID);
     const genesis = await connection.getGenesisHash();
     assert.ok(!["5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d", "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"].includes(genesis),
@@ -436,6 +436,13 @@ describe("PROOF: graduation payout under live mainnet economics (local validator
       `unlinked graduation must pay 17.5% of the fee to the airdrop (got ${vaultDeltas.airdrop_vault} of ${fee})`);
     assert.equal(finalizeRouted, fee, "the whole graduation fee must land in the reward vaults");
     const net = BigInt(closed.netRaisedLamports);
+    // The program paid what its own quote says (the app and operator use the same math); Meteora
+    // may leave a few lamports of SOL unused, which the program returns to the creator.
+    const dust = creatorSolDelta - programQuote.creatorPayoutLamports;
+    assert.ok(dust >= 0n && dust < 10_000n, `creator paid ${creatorSolDelta}, quote ${programQuote.creatorPayoutLamports}`);
+    assert.equal(poolTokens, programQuote.maxLiquidityTokens, "pool tokens must equal the quote");
+    assert.equal(BigInt(closed.soldTokens) + poolTokens + burned + creatorTokensDelta, mintSupplyBefore,
+      "sold + pool + burned + creator reserve must be the whole supply");
     const remaining = net - programQuote.finalizeFeeLamports;
     const intendedCreator = (remaining * 2_000n) / 10_000n;
     const pct = (x) => `${((Number(x) / Number(net)) * 100).toFixed(2)}%`;

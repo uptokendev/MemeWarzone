@@ -7,22 +7,27 @@
   },
   "certifiedBy": {
     "gate": "scripts/solana/run-local-sbf-gate.sh",
-    "covers": "create, bonding lifecycle, native graduation into pinned Meteora DAMM v2, a bound Token-2022 graduation, Token-2022 quote acceptance",
-    "date": "2026-09-22"
+    "covers": "create, bonding lifecycle, native graduation into pinned Meteora DAMM v2, a bound Token-2022 graduation, Token-2022 quote acceptance; pool takes the unsold curve tokens it needs (no 140M ceiling), proven at K88's mainnet economics by tests/solana/proof-graduation-payout-mainnet-economics.cjs",
+    "date": "2026-09-28"
   },
   "artifact": {
-    "sha256": "e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2",
-    "bytes": 1218568,
+    "sha256": "9cce34df7bca25c66f0e53cb27ebcecb94fbc4771c5eceaebed203f83cb21abc",
+    "bytes": 1221160,
     "idlSha256": "6ad692989c7445ff079aecf185b23ebf54ceb2bfe21f3e9df06802c6b40b8a16",
     "localPath": "target/deploy/memewarzone_solana.so"
   },
   "deployed": {
-    "devnet": "2026-09-22, byte-verified",
-    "mainnet": "2026-09-24, Squads upgrade #15 executed (sig 5KsJbc247DJNHLoqkR1b8MZW9kdt54yLxjjZxMAdbLUA49mDE5ZrtFafoU32Uj4LFcVDFpTNKwTA5Ps8qpVHNhbp, slot 449849762); overwritten by the mis-targeted treasury proposal #16 (slot 449859880); RESTORED by proposal #17 created from the terminal (sig 5xeTMQ8KNzFNqkrXeSqR8ThyLN3hRyaCToW4vkENP6BWxfnyc1sj2ajhf7esDqiqVNNM39kwtivfYqyaLrwqdYw, slot 449877289), ProgramData byte-verified: candidate + zero padding"
+    "devnet": "pending",
+    "mainnet": "pending (Squads)"
   },
   "consumers": {
     "SOLANA_LAUNCHPAD_PROGRAM_SHA256": "API deployment evidence (audit trail on every create authorization) and the canary",
     "SOLANA_LAUNCHPAD_IDL_SHA256": "same",
-    "SOLANA_LAUNCHPAD_PROGRAM_BYTES": "canary only \u2014 not read by the API"
+    "SOLANA_LAUNCHPAD_PROGRAM_BYTES": "canary only — not read by the API"
+  },
+  "previous": {
+    "sha256": "e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2",
+    "bytes": 1218568,
+    "mainnet": "2026-09-24, Squads upgrade #15 executed (sig 5KsJbc247DJNHLoqkR1b8MZW9kdt54yLxjjZxMAdbLUA49mDE5ZrtFafoU32Uj4LFcVDFpTNKwTA5Ps8qpVHNhbp, slot 449849762); overwritten by the mis-targeted treasury proposal #16 (slot 449859880); RESTORED by proposal #17 created from the terminal (sig 5xeTMQ8KNzFNqkrXeSqR8ThyLN3hRyaCToW4vkENP6BWxfnyc1sj2ajhf7esDqiqVNNM39kwtivfYqyaLrwqdYw, slot 449877289), ProgramData byte-verified: candidate + zero padding"
   }
 }

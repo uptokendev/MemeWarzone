@@ -24,11 +24,15 @@ WALLET="${ANCHOR_WALLET:?ANCHOR_WALLET must point at a throwaway keypair}"
 LEDGER="${MWZ_LOCAL_LEDGER:-/tmp/mwz-proof-ledger}"
 RPC="http://127.0.0.1:8899"
 
+# The binary under test must be named: the certified mainnet one by default, or a candidate
+# (PROOF_PROGRAM_SHA256) when proving a fix before it is certified.
+EXPECTED="${PROOF_PROGRAM_SHA256:-$CERTIFIED}"
 HASH="$(sha256sum "$SO" | awk '{print $1}')"
-if [[ "$HASH" != "$CERTIFIED" ]]; then
-  echo "refusing: $SO is $HASH, not the certified $CERTIFIED" >&2
+if [[ "$HASH" != "$EXPECTED" ]]; then
+  echo "refusing: $SO is $HASH, not the expected $EXPECTED" >&2
   exit 1
 fi
+export PROOF_PROGRAM_SHA256="$EXPECTED"
 for f in "$MPL_SO" "$METEORA_SO" "$ORCA_SO"; do
   [[ -s "$f" ]] || { echo "missing $f (run-local-sbf-gate.sh fetches it)" >&2; exit 1; }
 done
