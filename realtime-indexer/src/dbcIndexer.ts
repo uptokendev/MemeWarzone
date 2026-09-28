@@ -168,8 +168,15 @@ export function decodeEvtSwap2FromInnerIxData(base58Data: string): DecodedEvtSwa
   }
 }
 
+function accountKey(entry: any): string {
+  if (!entry) return "";
+  if (typeof entry === "string") return entry;
+  if (typeof entry.toBase58 === "function") return entry.toBase58();
+  return String(entry.pubkey || "");
+}
+
 function instructionProgramId(ix: any, keys: string[]): string {
-  if (ix?.programId) return String(ix.programId);
+  if (ix?.programId) return accountKey(ix.programId);
   if (typeof ix?.programIdIndex === "number" && keys[ix.programIdIndex]) return keys[ix.programIdIndex];
   return "";
 }
@@ -183,15 +190,35 @@ function instructionAccounts(ix: any, keys: string[]): string[] {
   if (Array.isArray(ix?.accounts)) {
     return ix.accounts.map((entry: any) => {
       if (typeof entry === "number") return keys[entry] || "";
-      return String(entry?.pubkey || entry || "");
+      return accountKey(entry);
     });
   }
   return [];
 }
 
 function messageKeys(tx: any): string[] {
-  const keys = tx?.transaction?.message?.accountKeys || [];
-  return keys.map((entry: any) => (typeof entry === "string" ? entry : String(entry?.pubkey || "")));
+  const message = tx?.transaction?.message;
+  if (!message) return [];
+  if (typeof message.getAccountKeys === "function") {
+    try {
+      const loaded = tx?.meta?.loadedAddresses;
+      const keys = loaded
+        ? message.getAccountKeys({ accountKeysFromLookups: loaded })
+        : message.getAccountKeys();
+      const list = typeof keys.keySegments === "function"
+        ? keys.keySegments().flat()
+        : [
+          ...(keys.staticAccountKeys || []),
+          ...(keys.accountKeysFromLookups?.writable || []),
+          ...(keys.accountKeysFromLookups?.readonly || []),
+        ];
+      if (list.length) return list.map((entry: any) => accountKey(entry));
+    } catch {
+      // fall through
+    }
+  }
+  const keys = message.accountKeys || message.staticAccountKeys || [];
+  return keys.map((entry: any) => accountKey(entry));
 }
 
 function outerInstructions(tx: any): any[] {
