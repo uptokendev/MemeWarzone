@@ -15,6 +15,9 @@ type Rewards = {
   dammPool: string;
   mint: string;
   migrated: boolean;
+  showLpFees?: boolean;
+  feeChoiceLine?: string | null;
+  feeChoice?: string;
 };
 
 function lamports(value: string | null | undefined): bigint {
@@ -91,7 +94,7 @@ export default function DbcCreatorRewardsPanel({
       disabled: lamports(rewards?.reserve) <= 0n || !rewards?.locker,
       run: () => submitDbcReserveClaim({ mint: rewards?.mint || mint, creator, locker: rewards!.locker }),
     },
-    {
+    ...(rewards?.showLpFees === false ? [] : [{
       key: "lp",
       title: "LP fees",
       detail: "80% permanently locked position",
@@ -99,12 +102,15 @@ export default function DbcCreatorRewardsPanel({
       unit: "SOL",
       disabled: lamports(rewards?.lpFees) <= 0n || !rewards?.dammPool,
       run: () => submitDbcCreatorLpClaim({ dammPool: rewards!.dammPool, creator }),
-    },
+    }]),
   ];
 
   return (
     <div className="mt-3 rounded-xl border border-orange-400/30 bg-background/60 p-3 space-y-2">
       <p className="font-retro text-xs text-orange-200">Creator rewards</p>
+      {rewards?.feeChoiceLine ? (
+        <p className="text-[11px] text-muted-foreground">{rewards.feeChoiceLine}</p>
+      ) : null}
       {rows.map((row) => (
         <div key={row.key} className="flex items-center justify-between gap-2">
           <div>

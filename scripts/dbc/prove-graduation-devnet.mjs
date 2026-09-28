@@ -169,14 +169,14 @@ function tokenDelta(tx, pubkey) {
   return pick(tx.meta.postTokenBalances) - pick(tx.meta.preTokenBalances);
 }
 
-async function createCoin({ handle, conn, creator, name }) {
+async function createCoin({ handle, conn, creator, name, feeChoice = "keep" }) {
   const ticker = `G${crypto.randomBytes(3).toString("hex").slice(0, 5).toUpperCase()}`;
   const begun = await post(handle, { operation: "begin", creatorWallet: creator.publicKey.toBase58(), ticker, auth: signBegin(creator, ticker) });
   if (!begun.body.ok) throw new Error(`begin failed ${begun.body.error}`);
   const mint = Keypair.generate();
   const auth = await post(handle, {
     operation: "authorize", sessionToken: begun.body.sessionToken, mint: mint.publicKey.toBase58(),
-    name, symbol: ticker, targetUsd: 150, feeChoice: "keep", firstBuyLamports: "0",
+    name, symbol: ticker, targetUsd: 150, feeChoice, firstBuyLamports: "0",
   });
   if (!auth.body.ok) throw new Error(`authorize failed ${auth.body.error}`);
   const created = await submitPreparedDbcCreate({
@@ -201,7 +201,11 @@ async function completeCurve(client, conn, trader, pool) {
   const cfg = await client.state.getPoolConfig(p.config);
   const config = cfg?.poolConfig ?? cfg;
   const threshold = BigInt(String(config.migrationQuoteThreshold));
-  const need = threshold - BigInt(String(p.quoteReserve));
+  const reserveNow = BigInt(String(p.quoteReserve));
+  if (reserveNow >= threshold) {
+    return { sig: null, threshold, reserve: reserveNow };
+  }
+  const need = threshold - reserveNow;
   const traderLamports = BigInt(await conn.getBalance(trader.publicKey));
   const offer = need + need / 5n + 10_000_000n;
   const amountIn = offer + 5_000_000n > traderLamports ? traderLamports - 5_000_000n : offer;
@@ -249,16 +253,19 @@ async function main() {
   const db = pg.pool;
   try {
     const { rewardVaults } = await import("../../realtime-indexer/src/dbc/dbcFeeRouter.ts");
-    const { splitDbcFinalizeFee, compensationDue, expectedPartnerMigrationFee } = await import("../../realtime-indexer/src/dbc/dbcGraduationSplit.ts");
+    const { splitDbcFinalizeFee, compensationDue, expectedPartnerMigrationFee, splitPlatformLpFees } = await import("../../realtime-indexer/src/dbc/dbcGraduationSplit.ts");
 
     const conn = new Connection(RPC, "confirmed");
     const genesis = await conn.getGenesisHash();
     if (genesis !== DEVNET) throw new Error(`Refusing: not devnet (${genesis})`);
-    const payer = Keypair.generate();
-    const collector = Keypair.generate();
-    const creator = Keypair.generate();
-    const creatorB = Keypair.generate();
-    const trader = Keypair.generate();
+    const resumeKeysPath = process.env.DBC_PROVE_RESUME_KEYS;
+    const savedKeys = resumeKeysPath ? JSON.parse(fs.readFileSync(resumeKeysPath, "utf8")) : null;
+    const fromSaved = (name) => savedKeys?.[name] ? Keypair.fromSecretKey(Uint8Array.from(savedKeys[name])) : Keypair.generate();
+    const payer = fromSaved("payer");
+    const collector = fromSaved("collector");
+    const creator = fromSaved("creator");
+    const creatorB = fromSaved("creatorB");
+    const trader = fromSaved("trader");
     fs.writeFileSync(path.join(DIR, "keys.json"), JSON.stringify({
       payer: Array.from(payer.secretKey), collector: Array.from(collector.secretKey),
       creator: Array.from(creator.secretKey), creatorB: Array.from(creatorB.secretKey),
@@ -273,17 +280,24 @@ async function main() {
       : 0n;
     // $150 USD target at live ~$119 SOL needs ~1.26 SOL on the curve; leftover throwaway
     // SOL is ~0.8. Pin a higher step so the same $150 target still fits.
-    const solUsdMicros = funderBal > 0n && funderBal < 1_500_000_000n ? 600_000_000n : await readSolUsdMicros();
+    const holdersOnly = funderBal > 0n && funderBal < 200_000_000n;
+    const solUsdMicros = holdersOnly ? 3_000_000_000n
+      : (funderBal > 0n && funderBal < 1_500_000_000n ? 600_000_000n : await readSolUsdMicros());
     const solUsd = typeof solUsdMicros === "bigint" ? solUsdMicros : BigInt(solUsdMicros);
-    console.log(`SOL/USD micros ${solUsd.toString()}  funder ${funderBal.toString()}`);
-    const payerNeed = funderBal < 500_000_000n ? 20_000_000 : 50_000_000;
-    const creatorNeed = funderBal < 500_000_000n ? 25_000_000 : 50_000_000;
-    const collectorNeedAmt = funderBal < 500_000_000n ? 50_000_000 : 150_000_000;
-    const traderNeed = funderBal < 500_000_000n ? 320_000_000 : 550_000_000;
-    await fund(conn, payer.publicKey, payerNeed);
-    await fund(conn, creator.publicKey, creatorNeed);
-    await fund(conn, collector.publicKey, collectorNeedAmt);
-    await fund(conn, trader.publicKey, traderNeed);
+    console.log(`SOL/USD micros ${solUsd.toString()}  funder ${funderBal.toString()}  holdersOnly ${holdersOnly}`);
+    const resumeHolders = Boolean(process.env.DBC_PROVE_HOLDERS_POOL);
+    const payerNeed = resumeHolders ? 5_000_000 : holdersOnly ? 8_000_000 : funderBal < 500_000_000n ? 20_000_000 : 50_000_000;
+    const creatorNeed = resumeHolders ? 5_000_000 : holdersOnly ? 40_000_000 : funderBal < 500_000_000n ? 25_000_000 : 50_000_000;
+    const collectorNeedAmt = resumeHolders ? 10_000_000 : holdersOnly ? 12_000_000 : funderBal < 500_000_000n ? 50_000_000 : 150_000_000;
+    const traderNeed = resumeHolders ? 15_000_000 : holdersOnly ? 78_000_000 : funderBal < 500_000_000n ? 320_000_000 : 550_000_000;
+    if (!resumeHolders) {
+      await fund(conn, payer.publicKey, payerNeed);
+      await fund(conn, creator.publicKey, creatorNeed);
+      await fund(conn, collector.publicKey, collectorNeedAmt);
+      await fund(conn, trader.publicKey, traderNeed);
+    } else {
+      console.log("resume: skipping fund; collector", await conn.getBalance(collector.publicKey), "trader", await conn.getBalance(trader.publicKey));
+    }
 
     const env = {
       DBC_LAUNCH_ENABLED: "true", SOLANA_CLUSTER: "devnet", SOLANA_RPC_URL: RPC,
@@ -301,6 +315,10 @@ async function main() {
 
     const vaults = rewardVaults();
 
+    if (holdersOnly) {
+      console.log("\n[case B keep] skipped so leftover SOL can prove D19 holders (100% partner LP)");
+      check("keep path proven on the previous graduation run", true);
+    } else {
     console.log("\n[case B] SDK migrate first, then keeper finishes");
     const coinB = await createCoin({ handle, conn, creator, name: "DBC Grad B" });
     console.log(`  pool ${coinB.pool} mint ${coinB.mint.toBase58()}`);
@@ -460,6 +478,81 @@ async function main() {
         check("LP fees 80/20 within 200 lamports", (creatorLpOut * 100n - total * 80n < 200n * 100n) && (creatorLpOut * 100n - total * 80n > -200n * 100n),
           `creator ${creatorLpOut} partner ${partnerLpOut}`);
       }
+    }
+
+    }
+
+    console.log("\n[D19 holders] 100% partner LP, keeper splits 20/80");
+    const leftoverForHolders = BigInt(await conn.getBalance(trader.publicKey));
+    if (!holdersOnly && leftoverForHolders < 80_000_000n) {
+      console.log(`  skipped (trader ${leftoverForHolders} lamports)`);
+      check("holders coin skipped for SOL", true);
+    } else {
+      if (!holdersOnly) await fund(conn, creatorB.publicKey, 15_000_000);
+      const holdersCreator = holdersOnly ? creator : creatorB;
+      let coinH;
+      const resumePool = process.env.DBC_PROVE_HOLDERS_POOL;
+      if (resumePool) {
+        const wrap = await client.state.getPool(new PublicKey(resumePool));
+        const st = wrap?.poolState ?? wrap;
+        coinH = { pool: resumePool, mint: new PublicKey(st.baseMint), config: st.config };
+        await db.query(
+          `insert into public.campaigns (chain_id, campaign_address, creator_address, token_address, launch_type, is_active, meta)
+           values (101,$1,$2,$3,'dbc',true,$4::jsonb)
+           on conflict (chain_id, campaign_address) do update set meta = excluded.meta`,
+          [resumePool, holdersCreator.publicKey.toBase58(), coinH.mint.toBase58(), JSON.stringify({ dbc: { feeChoice: "holders" } })],
+        );
+        console.log(`  resuming holders pool ${resumePool}`);
+      } else {
+        coinH = await createCoin({ handle, conn, creator: holdersCreator, name: "DBC Holders", feeChoice: "holders" });
+      }
+      console.log(`  holders pool ${coinH.pool}`);
+      const completeH = await completeCurve(client, conn, trader, coinH.pool);
+      check("holders curve complete", completeH.reserve >= completeH.threshold, `${completeH.reserve} / ${completeH.threshold}`);
+      if (completeH.reserve < completeH.threshold) throw new Error("holders curve did not complete; not migrating");
+      const beforeH = await client.state.getPool(new PublicKey(coinH.pool));
+      const pH = beforeH?.poolState ?? beforeH;
+      if (Number(pH.migrationProgress) === 1) {
+        const lockTx = await client.migration.createLocker({ payer: collector.publicKey, pool: new PublicKey(coinH.pool) });
+        await sendAndConfirmTransaction(conn, lockTx, [collector], { commitment: "confirmed" });
+      }
+      const dammConfigH = new PublicKey(DAMM_V2_MIGRATION_FEE_ADDRESS[DBC_MIGRATION_FEE_OPTION_CUSTOMIZABLE]);
+      const resH = await client.migration.migrateToDammV2({ payer: collector.publicKey, pool: new PublicKey(coinH.pool), dammConfig: dammConfigH });
+      await sendAndConfirmTransaction(conn, resH.transaction, [collector, resH.firstPositionNftKeypair, resH.secondPositionNftKeypair], { commitment: "confirmed" });
+      const dammH = deriveDammV2PoolAddress(dammConfigH, coinH.mint, NATIVE_MINT);
+      const cpH = new CpAmm(conn);
+      const collectorPos = await cpH.getUserPositionByPool(dammH, collector.publicKey);
+      const creatorPos = await cpH.getUserPositionByPool(dammH, holdersCreator.publicKey);
+      check("holders coin has one collector position", collectorPos.length === 1, String(collectorPos.length));
+      check("holders creator owns no LP position", creatorPos.length === 0, String(creatorPos.length));
+      const { job: jobH } = await keeperUntil(db, conn, collector, coinH.pool, (job) => ["lp", "done"].includes(job.step) && job.status !== "sending");
+      check("holders keeper finished withdraw/route/mark", ["lp", "done"].includes(jobH?.step), jobH?.step);
+      const dpoolH = await cpH.fetchPoolState(dammH);
+      const swapH = await cpH.swap({
+        payer: trader.publicKey, pool: dammH,
+        inputTokenMint: NATIVE_MINT, outputTokenMint: coinH.mint,
+        amountIn: new BN(5_000_000), minimumAmountOut: new BN(1),
+        tokenAMint: dpoolH.tokenAMint, tokenBMint: dpoolH.tokenBMint,
+        tokenAVault: dpoolH.tokenAVault, tokenBVault: dpoolH.tokenBVault,
+        tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID,
+        referralTokenAccount: null, poolState: dpoolH,
+      });
+      swapH.feePayer = trader.publicKey;
+      await sendAndConfirmTransaction(conn, swapH, [trader], { commitment: "confirmed" });
+      const protocolBefore = BigInt(await conn.getBalance(vaults.protocol));
+      const lpPass = await keeperUntil(db, conn, collector, coinH.pool, (job) => job.step === "lp" && job.status === "ready" && Number(job.lp_claimed || 0) > 0, 8);
+      const protocolAfter = BigInt(await conn.getBalance(vaults.protocol));
+      const protocolGot = protocolAfter - protocolBefore;
+      const acc = await db.query(`select creator_pool::text, protocol::text, collector_amount::text from public.dbc_fee_accruals where pool = $1 and status = 'routed' and creator_pool > 0 order by id desc limit 1`, [coinH.pool]);
+      check("holders LP accrual recorded", acc.rows.length === 1, String(acc.rows.length));
+      if (acc.rows[0]) {
+        const claimed = BigInt(acc.rows[0].collector_amount);
+        const split = splitPlatformLpFees(claimed);
+        check("holders creator_pool is 80%", BigInt(acc.rows[0].creator_pool) === split.creatorPool, `${acc.rows[0].creator_pool} vs ${split.creatorPool}`);
+        check("holders protocol slice is remainder", BigInt(acc.rows[0].protocol) === split.protocol, `${acc.rows[0].protocol} vs ${split.protocol}`);
+        check("holders protocol_vault delta matches remainder", protocolGot === split.protocol, `${protocolGot} vs ${split.protocol}`);
+      }
+      void lpPass;
     }
 
     const leftover = BigInt(await conn.getBalance(trader.publicKey));

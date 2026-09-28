@@ -36,8 +36,10 @@ import {
   compensationDue,
   expectedPartnerMigrationFee,
   finalizeRouteTotals,
+  isPlatformFeeChoice,
   payCompensation,
   splitDbcFinalizeFee,
+  splitPlatformLpFees,
 } from "./dbcGraduationSplit.js";
 import {
   jobFromRow,
@@ -272,11 +274,29 @@ async function applyLandedJob(input: {
     return;
   }
   if (step === "lp") {
-    const claimed = quoteVaultOutflow(input.confirmed, "") + 0n;
-    void claimed;
-    const vaults = rewardVaults();
-    const protocolDelta = nativeDelta(input.confirmed, vaults.protocol.toBase58());
-    const got = protocolDelta > 0n ? protocolDelta : 0n;
+    let claimed = 0n;
+    const dammPool = String(input.row.damm_pool || "");
+    if (dammPool) {
+      try {
+        const cpAmm = new CpAmm(input.connection);
+        const dpool = await cpAmm.fetchPoolState(new PublicKey(dammPool));
+        const quoteVault = dpool.tokenBMint.equals(NATIVE_MINT) ? dpool.tokenBVault : dpool.tokenAVault;
+        claimed = quoteVaultOutflow(input.confirmed, quoteVault.toBase58());
+      } catch {
+        const vaults = rewardVaults();
+        const protocolDelta = nativeDelta(input.confirmed, vaults.protocol.toBase58());
+        claimed = protocolDelta > 0n ? protocolDelta : 0n;
+      }
+    }
+    const choice = await campaignFeeChoice(input.db, String(input.row.pool));
+    if (isPlatformFeeChoice(choice) && claimed > 0n) {
+      await insertPlatformLpAccrual({
+        db: input.db,
+        job: input.row,
+        claimed,
+        signature: input.signature,
+      });
+    }
     await updateJob(
       input.db,
       input.row.id,
@@ -284,9 +304,44 @@ async function applyLandedJob(input: {
           set status = 'ready', step = 'lp', lp_claimed = coalesce(lp_claimed,0) + $2,
               signature = null, last_valid_block_height = null, attempt = 0, backoff_until = null, updated_at = now()
         where id = $1`,
-      [got.toString()],
+      [claimed.toString()],
     );
   }
+}
+
+async function campaignFeeChoice(db: Queryable, pool: string): Promise<string> {
+  const { rows } = await db.query(
+    `select meta from public.campaigns where chain_id = $1 and campaign_address = $2`,
+    [SOLANA_CHAIN_ID, pool],
+  );
+  return String(rows[0]?.meta?.dbc?.feeChoice || rows[0]?.meta?.dbc?.fee_choice || "keep");
+}
+
+async function insertPlatformLpAccrual(input: {
+  db: Queryable;
+  job: any;
+  claimed: bigint;
+  signature: string;
+}) {
+  const split = splitPlatformLpFees(input.claimed);
+  const profile = await creatorProfile(input.db, String(input.job.creator || ""), new Date());
+  await input.db.query(
+    `insert into public.dbc_fee_accruals (
+       pool, tx_hash, log_index, trader, profile, fee_total,
+       trading_fee, protocol_fee, referral_fee, collector_amount,
+       league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool, status, route_signature
+     ) values ($1,$2,0,$3,$4,$5,$5,0,0,$5,0,0,0,0,0,$6,$7,'routed',$2)
+     on conflict (tx_hash, log_index) do nothing`,
+    [
+      String(input.job.pool),
+      input.signature,
+      String(input.job.creator || ""),
+      profile,
+      input.claimed.toString(),
+      split.protocol.toString(),
+      split.creatorPool.toString(),
+    ],
+  );
 }
 
 async function signStoreSend(input: {
@@ -726,11 +781,13 @@ export async function advanceGraduationJob(input: {
       feePayer: input.collector.publicKey,
     });
     const protocol = rewardVaults().protocol;
-    if (owed > 0n) {
+    const platform = isPlatformFeeChoice(await campaignFeeChoice(input.db, input.pool));
+    const protocolLamports = platform ? splitPlatformLpFees(owed).protocol : owed;
+    if (protocolLamports > 0n) {
       claimTx.add(SystemProgram.transfer({
         fromPubkey: input.collector.publicKey,
         toPubkey: protocol,
-        lamports: Number(owed),
+        lamports: Number(protocolLamports),
       }));
     }
     const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx: claimTx });

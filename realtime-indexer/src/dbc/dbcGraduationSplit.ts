@@ -118,3 +118,16 @@ export function expectedPartnerMigrationFee(threshold: bigint, feePct = 22n, cre
   const creator = (fee * creatorPct) / 100n;
   return fee - creator;
 }
+
+/** D19: platform LP fees — 80% creator_pool, remainder to protocol. Keep coins send 100% to protocol. */
+export function splitPlatformLpFees(claimed: bigint): { creatorPool: bigint; protocol: bigint } {
+  const amount = BigInt(claimed);
+  if (amount < 0n) throw new Error("LP claim is negative");
+  const creatorPool = (amount * 80n) / 100n;
+  return { creatorPool, protocol: amount - creatorPool };
+}
+
+export function isPlatformFeeChoice(feeChoice: string | null | undefined): boolean {
+  const choice = String(feeChoice || "keep").trim().toLowerCase();
+  return choice === "holders" || choice === "split" || choice === "buyback";
+}

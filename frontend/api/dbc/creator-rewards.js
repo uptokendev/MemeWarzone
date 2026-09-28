@@ -4,6 +4,7 @@
  */
 import { Connection, PublicKey } from "@solana/web3.js";
 import { json, badMethod } from "../../server/http.js";
+import { feeChoiceLine } from "../lib/dbc/dbcFeeChoice.mjs";
 import { loadCreatorRewards } from "../../src/lib/dbcGraduationClaims.mjs";
 
 export class DbcCreatorRewardsError extends Error {
@@ -24,6 +25,12 @@ export function createDbcCreatorRewardsHandler(deps = {}) {
     return new Connection(url, "confirmed");
   }
 
+  async function db() {
+    if (deps.db) return deps.db;
+    const mod = await import("../../server/db.js");
+    return mod.pool;
+  }
+
   return async function handle(req, res) {
     if (req.method !== "GET") return badMethod(res, ["GET"]);
     try {
@@ -35,8 +42,28 @@ export function createDbcCreatorRewardsHandler(deps = {}) {
       }
       new PublicKey(pool);
       new PublicKey(creator);
-      const rewards = await loadCreatorRewards(connection(), { pool, creator });
-      return json(res, 200, { ok: true, ...rewards });
+      let feeChoice = "keep";
+      let creatorSharePct = null;
+      try {
+        const found = await (await db()).query(
+          `select meta from public.campaigns where campaign_address = $1 limit 1`,
+          [pool],
+        );
+        feeChoice = String(found.rows[0]?.meta?.dbc?.feeChoice || found.rows[0]?.meta?.dbc?.fee_choice || "keep");
+        creatorSharePct = found.rows[0]?.meta?.dbc?.creatorSharePct ?? found.rows[0]?.meta?.dbc?.creator_share_pct ?? null;
+      } catch {
+        feeChoice = "keep";
+      }
+      const platform = feeChoice === "holders" || feeChoice === "split" || feeChoice === "buyback";
+      const rewards = await loadCreatorRewards(connection(), { pool, creator, includeLp: !platform });
+      return json(res, 200, {
+        ok: true,
+        ...rewards,
+        feeChoice,
+        creatorSharePct,
+        showLpFees: !platform,
+        feeChoiceLine: feeChoiceLine({ feeChoice, creatorSharePct }),
+      });
     } catch (error) {
       const status = error?.httpStatus || 500;
       return json(res, status, {

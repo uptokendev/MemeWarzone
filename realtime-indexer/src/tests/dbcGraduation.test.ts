@@ -16,8 +16,10 @@ const {
   finalizeProfileBps,
   finalizeRouteTotals,
   finalizeSlicesConserve,
+  isPlatformFeeChoice,
   payCompensation,
   splitDbcFinalizeFee,
+  splitPlatformLpFees,
 } = await import("../dbc/dbcGraduationSplit.js");
 const {
   CREATOR_WITHDRAW_BIT,
@@ -113,6 +115,17 @@ test("D7 compensation is quote cut plus base cut at migration price; shortfall i
   assert.equal(short.paid, 100n);
   assert.equal(short.shortfall, due.due - 100n);
   assert.equal(short.remaining, 0n);
+});
+
+test("platform LP fees are 80% creator_pool, remainder to protocol", () => {
+  assert.deepEqual(splitPlatformLpFees(100n), { creatorPool: 80n, protocol: 20n });
+  assert.deepEqual(splitPlatformLpFees(101n), { creatorPool: 80n, protocol: 21n });
+  assert.deepEqual(splitPlatformLpFees(1n), { creatorPool: 0n, protocol: 1n });
+  assert.deepEqual(splitPlatformLpFees(0n), { creatorPool: 0n, protocol: 0n });
+  assert.equal(isPlatformFeeChoice("holders"), true);
+  assert.equal(isPlatformFeeChoice("split"), true);
+  assert.equal(isPlatformFeeChoice("buyback"), true);
+  assert.equal(isPlatformFeeChoice("keep"), false);
 });
 
 test("partner migration fee is 10% of the 22% (2.2% of threshold)", () => {

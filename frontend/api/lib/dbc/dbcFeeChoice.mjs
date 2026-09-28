@@ -23,3 +23,15 @@ export function parseFeeChoice(choice, creatorSharePct) {
     creatorFeeMode: feeChoice === "keep" ? "creator" : "platform",
   };
 }
+
+export function feeChoiceLine({ feeChoice, creatorSharePct } = {}) {
+  const choice = String(feeChoice || "").trim().toLowerCase();
+  if (choice === "split") {
+    const creator = Number(creatorSharePct);
+    const pct = Number.isFinite(creator) ? Math.trunc(creator) : 0;
+    return `Split: ${pct}% to the creator, ${100 - pct}% to holders`;
+  }
+  if (choice === "holders") return "Holders: LP fees go to holders each week";
+  if (choice === "buyback") return "Buyback: LP fees are bought back and burned";
+  return null;
+}

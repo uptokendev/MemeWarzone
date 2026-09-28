@@ -51,7 +51,7 @@ function unwrapPool(wrap) {
   return wrap?.poolState ?? wrap;
 }
 
-export async function loadCreatorRewards(connection, { pool, creator }) {
+export async function loadCreatorRewards(connection, { pool, creator, includeLp = true }) {
   const client = new DynamicBondingCurveClient(connection, "confirmed");
   const poolPk = new PublicKey(pool);
   const wrap = await client.state.getPool(poolPk);
@@ -78,7 +78,7 @@ export async function loadCreatorRewards(connection, { pool, creator }) {
   let lpFees = 0n;
   let dammPool = "";
   let position = null;
-  if (migrated && mint) {
+  if (includeLp && migrated && mint) {
     dammPool = deriveDbcDammPool(mint).toBase58();
     const cpAmm = new CpAmm(connection);
     try {
