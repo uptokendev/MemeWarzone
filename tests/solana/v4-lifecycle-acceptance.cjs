@@ -2470,6 +2470,8 @@ ${(simulation.value.logs || []).join("\
         SOLANA_GRADUATION_ORACLE_PRICE_USD_MICROS: "150000000",
         SOLANA_GRADUATION_ALT_MODE: "per-graduation",
         SOLANA_GRADUATION_QUOTE_PROFILE: "native",
+        // The test creator has no recruiter link: unlinked (1).
+        SOLANA_GRADUATION_FINALIZE_ROUTE_PROFILE: "1",
         SOLANA_GRADUATION_SEND: "true",
       },
       encoding: "utf8",

@@ -22,6 +22,7 @@ import {
 import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
 import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";
 import { pool } from "../../server/db.js";
+import { resolveSolanaRouteProfileStrict } from "../lib/solanaRouteProfile.js";
 import {
   SolanaGraduationQuoteBindingError,
   decideSolanaGraduationQuoteConfigId,
@@ -30,7 +31,6 @@ import {
 import { quoteOrcaWhirlpoolDevnet } from "../lib/solanaOrcaGraduationQuote.js";
 import { GRADUATION_AUTH_SCHEMA_VERSION, buildGraduationDigest } from "./solana-graduation-auth-bytes.js";
 
-const ROUTE_PROFILE_UNLINKED = 1;
 const METEORA_CP_AMM_PROGRAM_ID = "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG";
 const NATIVE_MINT = "So11111111111111111111111111111111111111112";
 const ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
@@ -510,7 +510,10 @@ export async function solanaGraduationAuthorizationV2(req, res) {
     const ttlSeconds = parsePositiveInteger(process.env.SOLANA_GRADUATION_AUTH_TTL_SECONDS, DEFAULT_AUTH_TTL_SECONDS, MAX_AUTH_TTL_SECONDS);
     const deadline = BigInt(chainNow + ttlSeconds);
     const nonce = crypto.randomBytes(32);
-    const finalizeRouteProfile = ROUTE_PROFILE_UNLINKED;
+    // The graduation fee follows the creator's recruiter link, like the keeper. No fallback.
+    const finalizeRouteProfile = await resolveSolanaRouteProfileStrict(pool, campaign.creator).catch((error) => {
+      throw new SolanaGraduationAuthorizationError(`Creator route profile is unreadable: ${error?.message || error}`, { code: "SOLANA_GRADUATION_ROUTE_PROFILE_UNAVAILABLE", httpStatus: 503 });
+    });
     const quoteConfigHash = quoteConfig.bindingHash || configHash(quoteConfig.id);
     const digest = buildGraduationDigest({
       programId, campaign: campaignAddress, mint: campaign.mint, authority: authorityAddress, generationConfig: campaign.generationConfig,
