@@ -191,3 +191,27 @@ Must fix before merge:
 5. **Devnet proof:** the public faucet failed. Add an optional `DBC_PROVE_FUNDER_KEYPAIR` (path): when
    set, the script funds its throwaway keys from it. Claude runs it with the devnet deployer.
 6. Open the pull request into `build/dbc-staging` (rule added 2026-09-28); fixes go on the same branch.
+
+### Step 1, review 2 (2026-09-28): PR #471 @ `eafaf451`: CHANGES NEEDED (one blocker)
+
+Review-1 items verified fixed: buffer burned at migration (`post` = circulating), failed creates
+committed and refused afterwards (503 `DBC_CONFIG_FAILED`), pool = ceil(T x 78 / 100), equal
+price-ratio packing, funder option. 17/17 tests pass.
+
+Devnet proof (run by Claude, funder = devnet deployer, in-memory DB): **the first createConfig could
+not be encoded**, `byte array longer than desired length`. Every target at SOL ~$118 builds curve
+liquidities of **148-150 bits** in the first segments (u128 field): e.g. $15K: `149,76,150,98,...`.
+Cause: at the 1-lamport start several points land on (almost) the same price; the "+1" bump makes
+near-equal adjacent sqrt prices, and liquidity = amount / (1/sqrtLow - 1/sqrtHigh) explodes.
+
+Must fix:
+1. Choose the curve points so adjacent sqrt prices are strictly increasing by a real margin (points
+   in price space, not bumped duplicates), and fail the build if any liquidity >= 2^128 or any sqrt
+   price is outside [MIN_SQRT_PRICE, MAX_SQRT_PRICE].
+2. A test that **builds and serializes the real createConfig transaction** (SDK
+   `client.partner.createConfig` with a stub connection, or the program coder) for every case in the
+   price table (3 targets x 7 SOL prices x 2 fee modes + the devnet $150). It fails today; that is
+   the test that was missing.
+3. Report the new liquidity bit lengths and the price-path table again.
+Claude re-runs the devnet proof after the fix. Minor, not blocking: a send that times out after it
+actually landed writes no row, so a retry could create a second config (<= 0.006 SOL); acceptable.
