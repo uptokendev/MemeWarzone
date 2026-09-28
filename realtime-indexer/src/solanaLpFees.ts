@@ -76,20 +76,27 @@ function createAtaIdempotentIx(
   });
 }
 
-function transferTokenIx(
+// TransferChecked (12), not Transfer (3): Token-2022 refuses a plain Transfer from an account that
+// carries TransferHookAccount (MintRequiredForTransfer), which every xStock token account does.
+// Classic SPL accepts TransferChecked as well.
+export function transferTokenIx(
   source: PublicKey,
+  mint: PublicKey,
   dest: PublicKey,
   owner: PublicKey,
   amount: bigint,
+  decimals: number,
   tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
 ): TransactionInstruction {
-  const data = Buffer.alloc(9);
-  data[0] = 3;
+  const data = Buffer.alloc(10);
+  data[0] = 12;
   data.writeBigUInt64LE(amount, 1);
+  data[9] = decimals;
   return new TransactionInstruction({
     programId: tokenProgram,
     keys: [
       { pubkey: source, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: false },
       { pubkey: dest, isSigner: false, isWritable: true },
       { pubkey: owner, isSigner: true, isWritable: false },
     ],
@@ -225,10 +232,13 @@ function splitAmounts(total: bigint): { creator: bigint; protocol: bigint } {
   return { creator, protocol: total - creator };
 }
 
-function mintDecimals(mint: PublicKey, tokenMint: PublicKey, tokenDecimals: number): number {
+// Decimals read from the mint account (byte 44 of the base layout, same for SPL and Token-2022).
+// A bound quote is not always 6: xStocks have 8.
+async function chainMintDecimals(connection: Connection, mint: PublicKey): Promise<number> {
   if (mint.equals(NATIVE_MINT)) return 9;
-  if (mint.equals(tokenMint)) return tokenDecimals;
-  return 6;
+  const info = await connection.getAccountInfo(mint, "confirmed");
+  if (!info || info.data.length < 45) throw new Error(`mint ${mint.toBase58()} not readable for decimals`);
+  return info.data[44];
 }
 
 function operatorSecretCandidates(): string[] {
@@ -417,8 +427,8 @@ export async function listSolanaLpFees(input: {
       const mintA = poolState.tokenAMint;
       const mintB = poolState.tokenBMint;
       const tokenMint = String(row.token_address || "");
-      const decA = mintDecimals(mintA, tokenMint ? new PublicKey(tokenMint) : mintA, 6);
-      const decB = mintDecimals(mintB, tokenMint ? new PublicKey(tokenMint) : mintB, 6);
+      const decA = await chainMintDecimals(connection, mintA);
+      const decB = await chainMintDecimals(connection, mintB);
       const symA = mintA.equals(NATIVE_MINT) ? "SOL" : (row.symbol || "TOKEN");
       const symB = mintB.equals(NATIVE_MINT) ? "SOL" : (row.symbol || "TOKEN");
       const splitA = splitAmounts(tokenA);
@@ -583,8 +593,8 @@ export async function harvestSolanaLpFees(input: {
   const deltaB = afterB > beforeB ? afterB - beforeB : 0n;
   const splitA = splitAmounts(deltaA);
   const splitB = splitAmounts(deltaB);
-  const decA = mintDecimals(tokenAMint, tokenMint, 6);
-  const decB = mintDecimals(tokenBMint, tokenMint, 6);
+  const decA = await chainMintDecimals(connection, tokenAMint);
+  const decB = await chainMintDecimals(connection, tokenBMint);
 
   const splitIxs: TransactionInstruction[] = [];
   const addSplit = (
@@ -592,6 +602,7 @@ export async function harvestSolanaLpFees(input: {
     sourceAta: PublicKey,
     split: { creator: bigint; protocol: bigint },
     tokenProgram: PublicKey,
+    decimals: number,
   ) => {
     const native = splitMint.equals(NATIVE_MINT);
     if (split.creator > 0n && !creatorPk.equals(operator.publicKey)) {
@@ -599,7 +610,7 @@ export async function harvestSolanaLpFees(input: {
         splitIxs.push(SystemProgram.transfer({ fromPubkey: operator.publicKey, toPubkey: creatorPk, lamports: split.creator }));
       } else {
         splitIxs.push(createAtaIdempotentIx(operator.publicKey, creatorPk, splitMint, tokenProgram));
-        splitIxs.push(transferTokenIx(sourceAta, deriveAta(creatorPk, splitMint, tokenProgram), operator.publicKey, split.creator, tokenProgram));
+        splitIxs.push(transferTokenIx(sourceAta, splitMint, deriveAta(creatorPk, splitMint, tokenProgram), operator.publicKey, split.creator, decimals, tokenProgram));
       }
     }
     if (split.protocol > 0n && !treasury.equals(operator.publicKey)) {
@@ -607,12 +618,12 @@ export async function harvestSolanaLpFees(input: {
         splitIxs.push(SystemProgram.transfer({ fromPubkey: operator.publicKey, toPubkey: treasury, lamports: split.protocol }));
       } else {
         splitIxs.push(createAtaIdempotentIx(operator.publicKey, treasury, splitMint, tokenProgram));
-        splitIxs.push(transferTokenIx(sourceAta, deriveAta(treasury, splitMint, tokenProgram), operator.publicKey, split.protocol, tokenProgram));
+        splitIxs.push(transferTokenIx(sourceAta, splitMint, deriveAta(treasury, splitMint, tokenProgram), operator.publicKey, split.protocol, decimals, tokenProgram));
       }
     }
   };
-  addSplit(tokenAMint, operatorAtaA, splitA, tokenAProgram);
-  addSplit(tokenBMint, operatorAtaB, splitB, tokenBProgram);
+  addSplit(tokenAMint, operatorAtaA, splitA, tokenAProgram, decA);
+  addSplit(tokenBMint, operatorAtaB, splitB, tokenBProgram, decB);
 
   let splitSignature = "";
   if (splitIxs.length) {
