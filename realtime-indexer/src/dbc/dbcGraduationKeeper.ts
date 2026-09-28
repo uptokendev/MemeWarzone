@@ -25,7 +25,7 @@ import { BorshCoder, type Idl } from "@coral-xyz/anchor";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { notifyCampaignGraduated } from "../campaignLifecycleNotifications.js";
 import { ensureWeeklyEpoch } from "../rewards/epochs.js";
 import { bs58Encode, resolveSignature } from "./dbcFeePending.js";
@@ -62,6 +62,31 @@ export { VIRTUAL_POOL_DISCRIMINATOR };
 export const SOLANA_CHAIN_ID = 101;
 export const DBC_PROGRAM_ID = "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN";
 export const DBC_QUOTE_MINT = "So11111111111111111111111111111111111111112";
+
+function quoteMintPk(mint?: string | null) {
+  const raw = String(mint || "").trim();
+  return new PublicKey(raw || DBC_QUOTE_MINT);
+}
+
+async function campaignQuoteMint(db: Queryable, pool: string) {
+  const { rows } = await db.query(
+    `select meta from public.campaigns where chain_id = $1 and campaign_address = $2`,
+    [SOLANA_CHAIN_ID, pool],
+  );
+  const meta = rows[0]?.meta || {};
+  return quoteMintPk(meta?.dbc?.quoteMint || meta?.solanaGraduation?.quoteMint);
+}
+
+async function quoteMintFromPool(client: DynamicBondingCurveClient, pool: { config: string }) {
+  try {
+    const wrap = await client.state.getPoolConfig(new PublicKey(pool.config));
+    const inner = wrap?.poolConfig ?? wrap;
+    const mint = inner?.quoteMint?.toBase58?.() || inner?.quoteMint || inner?.quote_mint;
+    return quoteMintPk(mint);
+  } catch {
+    return quoteMintPk(DBC_QUOTE_MINT);
+  }
+}
 export const DBC_MIGRATION_FEE_OPTION_CUSTOMIZABLE = 6;
 const BACKOFF_SECONDS = [30, 60, 120, 300];
 const DEFAULT_LP_CLAIM_MIN_LAMPORTS = 10_000n;
@@ -209,7 +234,8 @@ async function applyLandedJob(input: {
   if (step === "migrate") {
     const wrap = await input.client.state.getPool(poolPk);
     const pool = readPoolSnapshot(unwrapPool(wrap));
-    const dammPool = deriveDammV2PoolAddress(dammConfigPk(), new PublicKey(pool!.baseMint), NATIVE_MINT).toBase58();
+    const quoteMint = await quoteMintFromPool(input.client, pool!);
+    const dammPool = deriveDammV2PoolAddress(dammConfigPk(), new PublicKey(pool!.baseMint), quoteMint).toBase58();
     const cpAmm = new CpAmm(input.connection);
     let first: string | null = null;
     let second: string | null = null;
@@ -472,12 +498,13 @@ async function loadJob(db: Queryable, pool: string) {
   return rows[0] || null;
 }
 
-async function dammVaultAmounts(connection: Connection, dammPool: string) {
+async function dammVaultAmounts(connection: Connection, dammPool: string, quoteMint = DBC_QUOTE_MINT) {
   const cpAmm = new CpAmm(connection);
   const state = await cpAmm.fetchPoolState(new PublicKey(dammPool));
   const tokenA = BigInt((await connection.getTokenAccountBalance(state.tokenAVault)).value.amount);
   const tokenB = BigInt((await connection.getTokenAccountBalance(state.tokenBVault)).value.amount);
-  const quoteIsB = state.tokenBMint.equals(NATIVE_MINT);
+  const quotePk = quoteMintPk(quoteMint);
+  const quoteIsB = state.tokenBMint.equals(quotePk);
   return {
     quote: quoteIsB ? tokenB : tokenA,
     base: quoteIsB ? tokenA : tokenB,
@@ -491,11 +518,12 @@ async function markCampaignGraduated(input: {
   connection: Connection;
   job: any;
   slot: number;
+  quoteMint?: string;
 }) {
   const meta = solanaGraduationMeta({
     dammPool: String(input.job.damm_pool || ""),
     slot: input.slot,
-    quoteMint: DBC_QUOTE_MINT,
+    quoteMint: String(input.quoteMint || DBC_QUOTE_MINT),
     locker: input.job.locker,
     firstPositionNft: input.job.first_position_nft,
     secondPositionNft: input.job.second_position_nft,
@@ -648,11 +676,11 @@ export async function advanceGraduationJob(input: {
   if (step === "mark") {
     const slot = await input.connection.getSlot("confirmed");
     if (!job.damm_pool) {
-      const dammPool = deriveDammV2PoolAddress(dammConfigPk(), new PublicKey(pool.baseMint), NATIVE_MINT).toBase58();
+      const dammPool = deriveDammV2PoolAddress(dammConfigPk(), new PublicKey(pool.baseMint), quoteMintPk(config.quoteMint)).toBase58();
       await updateJob(input.db, job.id, `update public.dbc_graduation_jobs set damm_pool = $2 where id = $1`, [dammPool]);
       job = await loadJob(input.db, input.pool);
     }
-    await markCampaignGraduated({ db: input.db, connection: input.connection, job, slot });
+    await markCampaignGraduated({ db: input.db, connection: input.connection, job, slot, quoteMint: config.quoteMint });
     return { pool: input.pool, step, signature: null, skipped: null };
   }
 
@@ -691,8 +719,8 @@ export async function advanceGraduationJob(input: {
   }
 
   if (step === "compensate") {
-    const dammPool = String(job.damm_pool || deriveDammV2PoolAddress(dammConfigPk(), new PublicKey(pool.baseMint), NATIVE_MINT).toBase58());
-    const vaults = await dammVaultAmounts(input.connection, dammPool);
+    const dammPool = String(job.damm_pool || deriveDammV2PoolAddress(dammConfigPk(), new PublicKey(pool.baseMint), quoteMintPk(config.quoteMint)).toBase58());
+    const vaults = await dammVaultAmounts(input.connection, dammPool, config.quoteMint);
     const due = compensationDue({
       protocolMigrationQuoteFeeAmount: pool.protocolMigrationQuoteFeeAmount,
       protocolMigrationBaseFeeAmount: pool.protocolMigrationBaseFeeAmount,
@@ -968,7 +996,8 @@ async function applyLandedLpClaim(input: {
     try {
       const cpAmm = new CpAmm(input.connection);
       const dpool = await cpAmm.fetchPoolState(new PublicKey(dammPool));
-      const quoteVault = dpool.tokenBMint.equals(NATIVE_MINT) ? dpool.tokenBVault : dpool.tokenAVault;
+      const quotePk = await campaignQuoteMint(input.db, String(input.row.pool));
+      const quoteVault = dpool.tokenBMint.equals(quotePk) ? dpool.tokenBVault : dpool.tokenAVault;
       claimed = quoteVaultOutflow(input.confirmed, quoteVault.toBase58());
     } catch {
       const vaults = rewardVaults();
@@ -1152,8 +1181,9 @@ export async function runDbcLpClaimsOnce(input: {
     let owed = 0n;
     try {
       const unclaimed = getUnClaimLpFee(dpool, pos.positionState);
+      const quotePk = await campaignQuoteMint(input.db, String(job.pool));
       owed = BigInt(String(unclaimed?.feeTokenB || unclaimed?.feeQuote || 0));
-      if (dpool.tokenAMint.equals(NATIVE_MINT)) owed = BigInt(String(unclaimed?.feeTokenA || 0));
+      if (dpool.tokenAMint.equals(quotePk)) owed = BigInt(String(unclaimed?.feeTokenA || 0));
     } catch {
       owed = 0n;
     }

@@ -375,3 +375,26 @@ test("createConfig serializes for every ladder case", async () => {
   console.log("\ncreateConfig serialize (every ladder case)");
   console.table(rows);
 });
+
+test("SOL params are unchanged when quote is omitted or native; USDC keeps D6/reserve/supply", async () => {
+  const { findQuote, nativeQuote, USDC_MINT_MAINNET } = await import("../../../shared/dbcQuotes.mjs");
+  const { DBC_RESERVE_RAW, migrationSplitLamports } = await import("../../../shared/dbcEconomics.mjs");
+  const target = DBC_TARGET_USD_MICROS[15000];
+  const { step } = stepForSol(118);
+  const solDefault = buildLaunchConfigParams(target, step, "creator");
+  const solNative = buildLaunchConfigParams(target, step, "creator", { quote: nativeQuote("mainnet-beta") });
+  assert.equal(solDefault.paramsHash, solNative.paramsHash);
+  assert.equal(solDefault.expected.thresholdLamports, solNative.expected.thresholdLamports);
+  assert.equal(solDefault.expected.reserveTokens, DBC_RESERVE_RAW);
+  const usdc = findQuote("mainnet-beta", USDC_MINT_MAINNET);
+  const usdcBuilt = buildLaunchConfigParams(target, 1_000_000n, "creator", { quote: usdc });
+  assert.equal(usdcBuilt.expected.thresholdLamports, 15_000n * 1_000_000n);
+  assert.equal(usdcBuilt.expected.reserveTokens, DBC_RESERVE_RAW);
+  const d6sol = migrationSplitLamports(solDefault.expected.thresholdLamports);
+  const d6usdc = migrationSplitLamports(usdcBuilt.expected.thresholdLamports);
+  assert.equal(d6sol.creatorGraduationLamports + d6sol.ourGraduationLamports, d6sol.feeLamports);
+  assert.equal(d6usdc.creatorGraduationLamports + d6usdc.ourGraduationLamports, d6usdc.feeLamports);
+  assert.equal(usdcBuilt.expected.reserveTokens, solDefault.expected.reserveTokens);
+  assert.notEqual(usdcBuilt.paramsHash, solDefault.paramsHash);
+  validateConfigParameters({ ...usdcBuilt.configParams, leftoverReceiver: DBC_VALIDATE_LEFTOVER_RECEIVER });
+});

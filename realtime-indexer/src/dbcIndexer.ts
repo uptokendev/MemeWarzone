@@ -38,6 +38,8 @@ type DbcPoolRow = {
   token: string;
   creator: string;
   migrated: boolean;
+  quoteMint: string;
+  quoteDecimals: number;
 };
 
 export type DecodedEvtSwap2 = {
@@ -71,6 +73,8 @@ export type DbcCurveTradeRow = {
   bnb_amount: number;
   price_bnb: number | null;
   venue: "dbc";
+  quote_mint?: string;
+  quote_amount_raw?: string;
 };
 
 function parseRpcList(value: string): string[] {
@@ -270,6 +274,15 @@ export function swapPayerFromTransaction(tx: any): string {
   return first || "";
 }
 
+export function quoteRawToSolLamports(quoteRaw: bigint, quoteDecimals: number, solUsdMicros: bigint): bigint {
+  const decimals = BigInt(quoteDecimals);
+  const scale = 10n ** decimals;
+  const micros = BigInt(solUsdMicros);
+  if (micros <= 0n) throw new Error("SOL/USD micros must be positive");
+  if (decimals === 9n) return BigInt(quoteRaw);
+  return (BigInt(quoteRaw) * 1_000_000n * 1_000_000_000n) / (micros * scale);
+}
+
 export function curveTradeFromSwap(input: {
   event: DecodedEvtSwap2;
   wallet: string;
@@ -278,15 +291,25 @@ export function curveTradeFromSwap(input: {
   slot: number;
   blockTime: Date;
   campaign: string;
+  quoteMint?: string;
+  quoteDecimals?: number;
+  solUsdMicros?: bigint;
+  priceSource?: string;
 }): DbcCurveTradeRow {
   const isBuy = input.event.tradeDirection === 1;
   const tokenRaw = isBuy ? input.event.outputAmount : input.event.excludedFeeInputAmount;
-  const nativeRaw = isBuy ? input.event.includedFeeInputAmount : input.event.outputAmount;
+  const quoteRaw = isBuy ? input.event.includedFeeInputAmount : input.event.outputAmount;
+  const quoteDecimals = Number(input.quoteDecimals ?? 9);
+  const quoteMint = String(input.quoteMint || "So11111111111111111111111111111111111111112");
+  const nativeRaw = quoteDecimals === 9
+    ? quoteRaw
+    : quoteRawToSolLamports(quoteRaw, quoteDecimals, input.solUsdMicros || 100_000_000n);
   const tokenAmount = Number(tokenRaw) / 10 ** TOKEN_DECIMALS;
   const nativeAmount = Number(nativeRaw) / LAMPORTS_PER_SOL;
   const priceNative = tokenAmount > 0 ? nativeAmount / tokenAmount : null;
   const logIndex = input.eventIndex;
   if (logIndex >= 20_000) throw new Error("DBC bonding log_index must stay below 20000");
+  void input.priceSource;
   return {
     chain_id: SOLANA_CHAIN_ID,
     campaign_address: input.campaign,
@@ -302,6 +325,8 @@ export function curveTradeFromSwap(input: {
     bnb_amount: nativeAmount,
     price_bnb: priceNative,
     venue: "dbc",
+    quote_mint: quoteMint,
+    quote_amount_raw: quoteRaw.toString(),
   };
 }
 
@@ -380,7 +405,9 @@ async function loadDbcPools(db: Queryable): Promise<DbcPoolRow[]> {
   const result = await db.query(
     `select campaign_address, token_address, creator_address,
             coalesce(meta #>> '{solanaGraduation,pool}','') as graduated_pool,
-            coalesce(meta #>> '{dbc,migration,pool}','') as dbc_migrated_pool
+            coalesce(meta #>> '{dbc,migration,pool}','') as dbc_migrated_pool,
+            coalesce(meta #>> '{dbc,quoteMint}','So11111111111111111111111111111111111111112') as quote_mint,
+            coalesce(meta #>> '{dbc,quoteDecimals}','9') as quote_decimals
        from public.campaigns
       where chain_id=$1
         and coalesce(launch_type,'launchpad') = 'dbc'
@@ -397,6 +424,8 @@ async function loadDbcPools(db: Queryable): Promise<DbcPoolRow[]> {
     token: String(row.token_address || ""),
     creator: String(row.creator_address || ""),
     migrated: Boolean(row.graduated_pool || row.dbc_migrated_pool),
+    quoteMint: String(row.quote_mint || "So11111111111111111111111111111111111111112"),
+    quoteDecimals: Number(row.quote_decimals || 9),
   }));
 }
 
@@ -483,6 +512,12 @@ async function insertActivity(db: Queryable, row: DbcCurveTradeRow, event: Decod
         protocol_fee: event.protocolFee.toString(),
         referral_fee: event.referralFee.toString(),
         priceSol: row.price_bnb,
+        quoteMint: row.quote_mint || null,
+        quoteAmountRaw: row.quote_amount_raw || null,
+        quoteSol: {
+          source: "sol-usd",
+          at: row.block_time,
+        },
       }),
     ],
   ).catch((error: unknown) => {
@@ -545,14 +580,17 @@ export async function insertDbcSwap(
   const inserted = await db.query(
     `insert into public.curve_trades(
        chain_id,campaign_address,tx_hash,log_index,block_number,block_time,
-       side,wallet,token_amount_raw,bnb_amount_raw,token_amount,bnb_amount,price_bnb,venue
-     ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       side,wallet,token_amount_raw,bnb_amount_raw,token_amount,bnb_amount,price_bnb,venue,
+       quote_mint,quote_amount_raw
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      on conflict (chain_id,tx_hash,log_index) do nothing
      returning tx_hash`,
     [
       row.chain_id, row.campaign_address, row.tx_hash, row.log_index, row.block_number, row.block_time,
       row.side, row.wallet, row.token_amount_raw, row.bnb_amount_raw, row.token_amount, row.bnb_amount,
       row.price_bnb, row.venue,
+      row.quote_mint || "So11111111111111111111111111111111111111112",
+      row.quote_amount_raw || row.bnb_amount_raw,
     ],
   );
   if ((inserted.rowCount ?? 0) === 0) return false;
@@ -603,6 +641,8 @@ export async function indexDbcPool(
         slot: item.slot,
         blockTime,
         campaign: row.campaign,
+        quoteMint: row.quoteMint,
+        quoteDecimals: row.quoteDecimals,
       });
       if (await insertDbcSwap(db, trade, event)) ingested += 1;
     }

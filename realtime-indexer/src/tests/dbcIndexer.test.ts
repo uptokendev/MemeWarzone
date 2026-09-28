@@ -134,6 +134,41 @@ test("curve_trades row uses buy=gross SOL, sell=net SOL, log_index < 20000, venu
   assert.equal(sell.bnb_amount_raw, "19600000");
   assert.equal(sell.token_amount_raw, "500000000");
   assert.ok(sell.log_index < 20_000);
+  assert.equal(buy.quote_mint, "So11111111111111111111111111111111111111112");
+  assert.equal(buy.quote_amount_raw, "20000000");
+});
+
+test("bound quote rows keep quote_amount_raw and convert SOL value at trade time", async () => {
+  const { curveTradeFromSwap, quoteRawToSolLamports } = await import("../dbcIndexer.js");
+  assert.equal(quoteRawToSolLamports(150_000_000n, 6, 100_000_000n), 1_500_000_000n);
+  const buy = curveTradeFromSwap({
+    event: {
+      pool: "P",
+      config: "C",
+      tradeDirection: 1,
+      hasReferral: false,
+      includedFeeInputAmount: 150_000_000n,
+      excludedFeeInputAmount: 0n,
+      outputAmount: 1_000_000n,
+      tradingFee: 0n,
+      protocolFee: 0n,
+      referralFee: 0n,
+      quoteReserveAmount: 0n,
+      migrationThreshold: 0n,
+      currentTimestamp: 0n,
+    },
+    wallet: "W",
+    signature: "S",
+    eventIndex: 0,
+    slot: 1,
+    blockTime: new Date(),
+    campaign: "P",
+    quoteMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    quoteDecimals: 6,
+    solUsdMicros: 100_000_000n,
+  });
+  assert.equal(buy.quote_amount_raw, "150000000");
+  assert.equal(buy.bnb_amount_raw, "1500000000");
 });
 
 test("market_stats DBC branch uses sqrt price, circulating supply and quote reserve", () => {

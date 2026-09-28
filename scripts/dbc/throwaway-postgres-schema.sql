@@ -48,6 +48,8 @@ create table if not exists public.curve_trades (
   bnb_amount double precision,
   price_bnb double precision,
   venue text,
+  quote_mint text,
+  quote_amount_raw numeric,
   created_at timestamptz not null default now(),
   primary key (chain_id, tx_hash, log_index)
 );

@@ -4,6 +4,7 @@
 import { Keypair, PublicKey, Connection } from "@solana/web3.js";
 import { DynamicBondingCurveClient } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { DBC_QUOTE_MINT } from "../../../shared/dbcEconomics.mjs";
+import { nativeQuote, requireEnabledQuote } from "../../../shared/dbcQuotes.mjs";
 import { SOLANA_GENESIS } from "../../../src/lib/solanaArenaLayout.mjs";
 import { buildLaunchConfigParams } from "./dbcLaunchConfigParams.mjs";
 
@@ -266,10 +267,13 @@ export function createDbcConfigLadder(deps = {}) {
     }
   }
 
-  async function ensureLaunchConfig({ targetUsdMicros, stepIndex, stepUsdMicros, creatorFeeMode }) {
-    const built = buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorFeeMode);
+  async function ensureLaunchConfig({ targetUsdMicros, stepIndex, stepUsdMicros, creatorFeeMode, quoteMint: quoteMintInput }) {
     const net = cluster();
-    const quoteMint = DBC_QUOTE_MINT;
+    const quote = quoteMintInput
+      ? requireEnabledQuote(net, quoteMintInput)
+      : nativeQuote(net);
+    const built = buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorFeeMode, { quote });
+    const quoteMint = quote.mint;
     const key = {
       cluster: net,
       quoteMint,
@@ -307,7 +311,7 @@ export function createDbcConfigLadder(deps = {}) {
         config: configKp.publicKey,
         feeClaimer: collector,
         leftoverReceiver: collector,
-        quoteMint: NATIVE_MINT,
+        quoteMint: new PublicKey(quote.mint),
         payer: pay.publicKey,
         ...built.configParams,
       });
@@ -346,7 +350,7 @@ export function createDbcConfigLadder(deps = {}) {
       const mismatches = diffOnChainConfig(onChain, built.configParams, {
         feeClaimer: collector,
         leftoverReceiver: collector,
-        quoteMint: NATIVE_MINT,
+        quoteMint: new PublicKey(quote.mint),
       });
       if (mismatches.length) {
         await q(

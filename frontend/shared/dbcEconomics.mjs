@@ -4,12 +4,13 @@
  *
  * Decision numbers (D1–D17) are in docs/dbc/DBC_BUILD_PLAN.md.
  */
+import { WSOL_MINT } from "./dbcQuotes.mjs";
 
 /** DBC program, same id on mainnet and devnet. */
 export const DBC_PROGRAM_ID = "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN";
 
-/** Native SOL quote mint (WSOL). */
-export const DBC_QUOTE_MINT = "So11111111111111111111111111111111111111112";
+/** Native SOL quote mint (WSOL). Default quote; other quotes live in dbcQuotes.mjs. */
+export const DBC_QUOTE_MINT = WSOL_MINT;
 
 /** Today's launchpad decimals. */
 export const DBC_TOKEN_DECIMALS = 6;

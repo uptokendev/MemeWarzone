@@ -9,6 +9,7 @@ import {
 import { readSolUsdMicros } from "../lib/solUsdMicros.js";
 import { solPriceStep } from "../lib/dbc/dbcPriceSteps.mjs";
 import { requiredCluster, createDbcConfigLadder } from "../lib/dbc/dbcConfigLadder.js";
+import { requireEnabledQuote, stableStep } from "../../shared/dbcQuotes.mjs";
 
 function truthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
@@ -56,11 +57,22 @@ export async function handleDbcLaunchConfig(req, res, deps = {}) {
     return json(res, 400, { ok: false, error: "the $150 target is only for devnet", code: "DBC_TEST_TARGET_REFUSED" });
   }
 
+  let quote;
+  try {
+    quote = requireEnabledQuote(cluster, String(q.quoteMint || q.quote || DBC_QUOTE_MINT).trim() || DBC_QUOTE_MINT);
+  } catch (error) {
+    return json(res, 400, { ok: false, error: error.message, code: error.code || "DBC_QUOTE_UNKNOWN" });
+  }
+
   let step;
   try {
-    const readPrice = deps.readSolUsdMicros || readSolUsdMicros;
-    const solUsdMicros = await readPrice({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
-    step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
+    if (quote.kind === "native") {
+      const readPrice = deps.readSolUsdMicros || readSolUsdMicros;
+      const solUsdMicros = await readPrice({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
+      step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
+    } else {
+      step = stableStep();
+    }
   } catch (error) {
     if (stalePriceError(error) || error?.code === "DBC_PRICE_STALE") {
       return json(res, 503, { ok: false, error: "SOL/USD price is missing or stale", code: "DBC_PRICE_STALE" });
@@ -80,6 +92,7 @@ export async function handleDbcLaunchConfig(req, res, deps = {}) {
       stepIndex: step.stepIndex,
       stepUsdMicros: step.stepUsdMicros,
       creatorFeeMode,
+      quoteMint: quote.mint,
     });
   } catch (error) {
     if (error?.code === "DBC_CONFIG_FAILED" || error?.code === "DBC_CONFIG_MISMATCH") {
@@ -102,7 +115,9 @@ export async function handleDbcLaunchConfig(req, res, deps = {}) {
     totalTokenSupply: ensured.expected.totalTokenSupply.toString(),
     paramsHash: ensured.paramsHash,
     feeClaimer: String(env.DBC_FEE_COLLECTOR || ""),
-    quoteMint: DBC_QUOTE_MINT,
+    quoteMint: quote.mint,
+    quoteSymbol: quote.symbol,
+    quoteDecimals: quote.decimals,
   });
 }
 

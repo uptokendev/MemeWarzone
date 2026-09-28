@@ -65,6 +65,7 @@ import {
   roundUpToWholeTokens,
   thresholdLamportsFor,
 } from "../../../shared/dbcEconomics.mjs";
+import { thresholdQuoteRaw } from "../../../shared/dbcQuotes.mjs";
 
 const DUMMY_LEFTOVER = new PublicKey("11111111111111111111111111111112");
 
@@ -119,9 +120,9 @@ function assertLiquidityU128(label, liquidity) {
   }
 }
 
-function sqrtPriceFromExactLamports(pLamports) {
-  const sol = pLamports / 1e9;
-  return getSqrtPriceFromPrice(sol.toExponential(18), DBC_TOKEN_DECIMALS, DBC_QUOTE_DECIMALS);
+function sqrtPriceFromExactLamports(pLamports, quoteDecimals = DBC_QUOTE_DECIMALS) {
+  const human = pLamports / (10 ** Number(quoteDecimals));
+  return getSqrtPriceFromPrice(human.toExponential(18), DBC_TOKEN_DECIMALS, Number(quoteDecimals));
 }
 
 export function linearSoldForCost(costLamports, slope = DBC_PRICE_SLOPE_LAMPORTS) {
@@ -197,15 +198,15 @@ export function soldPointsEqualPriceRatio(soldRaw, slope) {
 /** Review 1 item 4: equal price-ratio had the lower tail error (see the packing table in the test). */
 export const PRODUCTION_SOLD_POINTS = soldPointsEqualPriceRatio;
 
-function curveFromSoldPoints(soldRaw, slope, soldAt) {
+function curveFromSoldPoints(soldRaw, slope, soldAt, quoteDecimals = DBC_QUOTE_DECIMALS) {
   const pts = [];
   for (const s of soldAt) {
-    const sqrt = sqrtPriceFromExactLamports(exactMarginalLamports(s, slope));
+    const sqrt = sqrtPriceFromExactLamports(exactMarginalLamports(s, slope), quoteDecimals);
     if (pts.length && !sqrt.gt(pts[pts.length - 1].sqrt)) continue;
     pts.push({ s, sqrt });
   }
   if (!pts.length) throw curveOverflow("DBC curve has no sqrt prices");
-  const endSqrt = sqrtPriceFromExactLamports(exactMarginalLamports(soldRaw, slope));
+  const endSqrt = sqrtPriceFromExactLamports(exactMarginalLamports(soldRaw, slope), quoteDecimals);
   if (pts[pts.length - 1].s !== soldRaw) {
     if (!endSqrt.gt(pts[pts.length - 1].sqrt)) {
       throw curveOverflow("DBC end sqrt price is not strictly greater than the previous point");
@@ -241,10 +242,10 @@ function curveFromSoldPoints(soldRaw, slope, soldAt) {
   return { sqrtStartPrice: pts[0].sqrt, curve, qFull };
 }
 
-function buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints = PRODUCTION_SOLD_POINTS) {
+function buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints = PRODUCTION_SOLD_POINTS, quoteDecimals = DBC_QUOTE_DECIMALS) {
   const T = BigInt(thresholdLamports);
   const soldAt = soldPoints(soldRaw, slope);
-  const built = curveFromSoldPoints(soldRaw, slope, soldAt);
+  const built = curveFromSoldPoints(soldRaw, slope, soldAt, quoteDecimals);
   if (built.curve.length) {
     const last = built.curve[built.curve.length - 1];
     const prev = built.curve.length > 1 ? built.curve[built.curve.length - 2].sqrtPrice : built.sqrtStartPrice;
@@ -269,13 +270,13 @@ function buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints = PRODUC
   return { sqrtStartPrice: built.sqrtStartPrice, curve: built.curve, sqrtPrices: [built.sqrtStartPrice, ...built.curve.map((p) => p.sqrtPrice)] };
 }
 
-function feeEnvelope({ creatorFeePct }) {
+function feeEnvelope({ creatorFeePct, quoteDecimals = DBC_QUOTE_DECIMALS }) {
   const creatorFeeMode = Number(creatorFeePct) === 0 ? "platform" : "creator";
   return buildCurve({
     token: {
       tokenType: TokenType.SPLToken,
       tokenBaseDecimal: TokenDecimal.SIX,
-      tokenQuoteDecimal: DBC_QUOTE_DECIMALS,
+      tokenQuoteDecimal: Number(quoteDecimals),
       tokenAuthorityOption: TokenAuthorityOption.Immutable,
       totalTokenSupply: 1_000_000_000,
       leftover: 0,
@@ -369,13 +370,13 @@ export function programSupplyMinimums({ thresholdLamports, sqrtStartPrice, curve
   };
 }
 
-function customSqrtInput({ creatorFeePct, totalWhole, sqrtPrices, leftover = 0 }) {
+function customSqrtInput({ creatorFeePct, totalWhole, sqrtPrices, leftover = 0, quoteDecimals = DBC_QUOTE_DECIMALS }) {
   const creatorFeeMode = Number(creatorFeePct) === 0 ? "platform" : "creator";
   return {
     token: {
       tokenType: TokenType.SPLToken,
       tokenBaseDecimal: TokenDecimal.SIX,
-      tokenQuoteDecimal: DBC_QUOTE_DECIMALS,
+      tokenQuoteDecimal: Number(quoteDecimals),
       tokenAuthorityOption: TokenAuthorityOption.Immutable,
       totalTokenSupply: Number(totalWhole),
       leftover,
@@ -413,8 +414,8 @@ function customSqrtInput({ creatorFeePct, totalWhole, sqrtPrices, leftover = 0 }
   };
 }
 
-function assembleParams({ thresholdLamports, soldRaw, slope, creatorFeePct, poolTokens, soldPoints }) {
-  const { sqrtStartPrice, curve, sqrtPrices } = buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints);
+function assembleParams({ thresholdLamports, soldRaw, slope, creatorFeePct, poolTokens, soldPoints, quoteDecimals = DBC_QUOTE_DECIMALS }) {
+  const { sqrtStartPrice, curve, sqrtPrices } = buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints, quoteDecimals);
   const vesting = lockedVestingParams();
   const mins = programSupplyMinimums({
     thresholdLamports,
@@ -430,13 +431,14 @@ function assembleParams({ thresholdLamports, soldRaw, slope, creatorFeePct, pool
     return { configParams: null, totalRaw: preRaw, circulatingRaw, sqrtPrices, mins };
   }
   const totalWhole = (preRaw + DBC_TOKEN_SCALE - 1n) / DBC_TOKEN_SCALE;
-  let envelope = feeEnvelope({ creatorFeePct });
+  let envelope = feeEnvelope({ creatorFeePct, quoteDecimals });
   try {
     envelope = buildCurveWithCustomSqrtPrices(customSqrtInput({
       creatorFeePct,
       totalWhole: totalWhole > 0n ? totalWhole : 1n,
       sqrtPrices,
       leftover: 0,
+      quoteDecimals,
     }));
   } catch {
     // SDK allocation can refuse leftover:0 when the 25% swap buffer overruns; we keep the fee envelope.
@@ -526,13 +528,16 @@ export function paramsHashOf(payload) {
   return createHash("sha256").update(JSON.stringify(canonicalJson(payload))).digest("hex");
 }
 
-export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorFeeMode, { soldPoints = PRODUCTION_SOLD_POINTS } = {}) {
+export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorFeeMode, { soldPoints = PRODUCTION_SOLD_POINTS, quote = null } = {}) {
   if (!isCreatorFeeMode(creatorFeeMode)) {
     throw Object.assign(new Error("creatorFeeMode must be creator or platform"), { code: "DBC_BAD_FEE_MODE" });
   }
   const target = BigInt(targetUsdMicros);
   const step = BigInt(stepUsdMicros);
-  const thresholdLamports = thresholdLamportsFor(target, step);
+  const quoteDecimals = Number(quote?.decimals ?? DBC_QUOTE_DECIMALS);
+  const thresholdLamports = quote && quote.kind !== "native"
+    ? thresholdQuoteRaw(target, quote, step)
+    : thresholdLamportsFor(target, step);
   const creatorFeePct = creatorTradingFeePct(creatorFeeMode);
   let slope = DBC_PRICE_SLOPE_LAMPORTS;
   let steepened = false;
@@ -547,6 +552,7 @@ export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorF
       slope,
       creatorFeePct,
       soldPoints,
+      quoteDecimals,
     });
     if (assembled.totalRaw <= DBC_SUPPLY_CEILING_RAW) break;
     steepened = true;
@@ -563,6 +569,7 @@ export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorF
           slope: mid,
           creatorFeePct,
           soldPoints,
+          quoteDecimals,
         });
         if (built.totalRaw <= DBC_SUPPLY_CEILING_RAW) hi = mid;
         else lo = mid + 1n;

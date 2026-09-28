@@ -4,12 +4,13 @@
  */
 import BN from "bn.js";
 import { PublicKey, Transaction } from "@solana/web3.js";
-import { NATIVE_MINT } from "@solana/spl-token";
+
 import {
   DynamicBondingCurveClient,
   SwapMode,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { DBC_JUPITER_LOCK_PROGRAM_ID, DBC_PROGRAM_ID } from "../../shared/dbcEconomics.mjs";
+import { WSOL_MINT } from "../../shared/dbcQuotes.mjs";
 import { antiSniperFeeBps } from "../../shared/dbcAntiSniper.mjs";
 import { lockAmountDivisible } from "../../shared/dbcLockSchedule.mjs";
 import {
@@ -130,17 +131,32 @@ export async function submitPreparedDbcTrade({
   };
 }
 
-export function resolveReferralTokenAccount(env = typeof process !== "undefined" ? process.env : {}) {
+export function resolveReferralTokenAccount(env = typeof process !== "undefined" ? process.env : {}, quoteMint = WSOL_MINT) {
+  const mapRaw = String(
+    env.DBC_REFERRAL_TOKEN_ACCOUNTS
+      || (typeof import.meta !== "undefined" ? import.meta.env?.VITE_DBC_REFERRAL_TOKEN_ACCOUNTS : "")
+      || "",
+  ).trim();
+  if (mapRaw) {
+    try {
+      const map = JSON.parse(mapRaw);
+      const hit = map[String(quoteMint || WSOL_MINT)];
+      if (hit) return String(hit);
+    } catch {
+      // fall through to the SOL account
+    }
+  }
   const raw = String(
     env.DBC_REFERRAL_TOKEN_ACCOUNT
       || (typeof import.meta !== "undefined" ? import.meta.env?.VITE_DBC_REFERRAL_TOKEN_ACCOUNT : "")
       || "",
   ).trim();
+  if (raw && String(quoteMint || WSOL_MINT) !== WSOL_MINT) return null;
   return raw || null;
 }
 
-export async function loadReferralTokenAccount(connection, env) {
-  const address = resolveReferralTokenAccount(env);
+export async function loadReferralTokenAccount(connection, env, quoteMint = WSOL_MINT) {
+  const address = resolveReferralTokenAccount(env, quoteMint);
   if (!address) {
     console.warn("[dbc-trade] referral token account is not configured; trading without referral");
     return null;
@@ -152,8 +168,9 @@ export async function loadReferralTokenAccount(connection, env) {
       return null;
     }
     const mint = new PublicKey(info.data.slice(0, 32));
-    if (!mint.equals(NATIVE_MINT)) {
-      console.warn("[dbc-trade] referral token account is not WSOL; trading without referral");
+    const want = new PublicKey(quoteMint || WSOL_MINT);
+    if (!mint.equals(want)) {
+      console.warn("[dbc-trade] referral token account mint does not match the quote; trading without referral");
       return null;
     }
     return new PublicKey(address);
@@ -269,7 +286,8 @@ export async function buildDbcSwapTransaction({
   env,
 }) {
   const loaded = await loadDbcPool(connection, poolAddress);
-  const referral = await loadReferralTokenAccount(connection, env);
+  const quoteMint = keyOf(loaded.config?.quoteMint) || WSOL_MINT;
+  const referral = await loadReferralTokenAccount(connection, env, quoteMint);
   const quoted = quoteDbcExactIn({
     client: loaded.client,
     pool: loaded.pool,

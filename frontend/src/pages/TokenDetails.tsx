@@ -646,6 +646,9 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   );
   const dbcActivationUnix = Number(dbcLive?.poolLive?.activationPoint || 0);
   const dbcMigrated = Boolean(dbcLive?.poolLive?.isMigrated || dbcMigratedPool);
+  const dbcQuoteMint = String(dbcLive?.meta?.quoteMint || dbcLive?.meta?.dbc?.quoteMint || "So11111111111111111111111111111111111111112");
+  const dbcQuoteDecimals = Number(dbcLive?.meta?.quoteDecimals || dbcLive?.meta?.dbc?.quoteDecimals || 9);
+  const dbcQuoteSymbol = String(dbcLive?.meta?.quoteSymbol || dbcLive?.meta?.dbc?.quoteSymbol || "SOL");
   const [dbcLockSummary, setDbcLockSummary] = useState<{
     lockedAmount: string;
     fullyFreeUnix: number | null;
@@ -3995,8 +3998,9 @@ const toSeconds = (ts: number): number => {
           const mint = dbcMint || String(campaign?.token || "");
           const dec = 6;
           const parseSolLamports = (s: string): bigint => {
+            const qdec = isDbcPage ? dbcQuoteDecimals : 9;
             const parts = s.split(".");
-            return BigInt(parts[0] || "0") * 1_000_000_000n + BigInt((parts[1] || "").slice(0, 9).padEnd(9, "0") || "0");
+            return BigInt(parts[0] || "0") * (10n ** BigInt(qdec)) + BigInt((parts[1] || "").slice(0, qdec).padEnd(qdec, "0") || "0");
           };
           const parseTok = (s: string): bigint => {
             const parts = s.split(".");
@@ -4005,7 +4009,7 @@ const toSeconds = (ts: number): number => {
           let amountIn: bigint;
           if (tradeTab === "buy") {
             amountIn = tradeInputDenom === "BNB" ? parseSolLamports(String(tradeAmount || "0")) : (effectiveBnbWei > 0n ? effectiveBnbWei : 0n);
-            if (amountIn <= 0n) throw new Error("Enter a SOL amount to buy.");
+            if (amountIn <= 0n) throw new Error(`Enter a ${isDbcPage ? dbcQuoteSymbol : "SOL"} amount to buy.`);
           } else {
             amountIn = tradeInputDenom === "BNB" ? effectiveTokenWei : parseTok(String(tradeAmount || "0"));
             if (amountIn <= 0n) throw new Error("Enter a token amount to sell.");
@@ -4020,6 +4024,8 @@ const toSeconds = (ts: number): number => {
               slippagePct: SLIPPAGE_PCT,
               poolAddress: dbcMigratedPool,
               allowDbcMigratedPool: true,
+              quoteMint: dbcQuoteMint,
+              quoteDecimals: dbcQuoteDecimals,
             });
             const result = await executeSolanaMeteoraSwap({
               quote,
