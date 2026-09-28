@@ -17,6 +17,7 @@ create table if not exists public.campaigns (
   launched boolean not null default false,
   created_at_chain timestamptz,
   graduated_at_chain timestamptz,
+  graduated_block bigint,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   meta jsonb not null default '{}'::jsonb,

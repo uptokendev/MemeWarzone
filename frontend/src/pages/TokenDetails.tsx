@@ -547,6 +547,7 @@ import { creatorLockBadge, lockAmountDivisible } from "../../shared/dbcLockSched
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import { quoteDbcExactIn, loadDbcPool, loadReferralTokenAccount } from "@/lib/dbcTrade.mjs";
 import { submitDbcBondingTrade, submitDbcLockClaim } from "@/lib/dbcTradeSubmit";
+import DbcCreatorRewardsPanel from "@/components/dbc/DbcCreatorRewardsPanel";
 
 type TokenDetailsProps = { dbcLive?: Record<string, any> | null };
 
@@ -5663,6 +5664,9 @@ const toSeconds = (ts: number): number => {
                       >
                         Claim released tokens
                       </Button>
+                    ) : null}
+                    {isDbcPage && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (
+                      <DbcCreatorRewardsPanel pool={dbcPool} creator={dbcCreator} mint={dbcMint} />
                     ) : null}
                   </div>
 
