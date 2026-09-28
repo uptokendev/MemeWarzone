@@ -14,12 +14,13 @@ import {
   DBC_DEVNET_TEST_TARGET_USD_MICROS,
   DBC_MIGRATION_FEE_OPTION_CUSTOMIZABLE,
   DBC_QUOTE_MINT,
+  DBC_TARGET_USD_MICROS,
   DBC_TOKEN_SCALE,
 } from "../../frontend/shared/dbcEconomics.mjs";
 import { SOLANA_GENESIS } from "../../frontend/src/lib/solanaArenaLayout.mjs";
-import { solPriceStep } from "../../frontend/api/lib/dbc/dbcPriceSteps.mjs";
+import { solPriceStep, solPriceStepIndex, stepUsdMicrosFromIndex } from "../../frontend/api/lib/dbc/dbcPriceSteps.mjs";
 import { createDbcConfigLadder } from "../../frontend/api/lib/dbc/dbcConfigLadder.js";
-import { linearCostLamports } from "../../frontend/api/lib/dbc/dbcLaunchConfigParams.mjs";
+import { buildLaunchConfigParams, linearCostLamports } from "../../frontend/api/lib/dbc/dbcLaunchConfigParams.mjs";
 
 const requireFromFrontend = createRequire(new URL("../../frontend/package.json", import.meta.url));
 const {
@@ -173,6 +174,67 @@ async function main() {
   await fund(conn, trader.publicKey, 2_000_000_000);
   console.log(`payer balance ${sol(await conn.getBalance(payer.publicKey))} SOL`);
 
+  const client = new DynamicBondingCurveClient(conn, "confirmed");
+  console.log("\n[simulate createConfig for every ladder case]");
+  const simTargets = [15_000, 30_000, 50_000];
+  const simPrices = [50, 100, 118, 150, 200, 250, 400];
+  const simCases = [];
+  for (const targetUsd of simTargets) {
+    for (const usd of simPrices) {
+      for (const mode of ["creator", "platform"]) {
+        const micros = BigInt(Math.round(usd * 1_000_000));
+        simCases.push({
+          targetUsd,
+          usd,
+          mode,
+          target: DBC_TARGET_USD_MICROS[targetUsd],
+          step: stepUsdMicrosFromIndex(solPriceStepIndex(micros)),
+        });
+      }
+    }
+  }
+  for (const mode of ["creator", "platform"]) {
+    simCases.push({
+      targetUsd: 150,
+      usd: 118,
+      mode,
+      target: DBC_DEVNET_TEST_TARGET_USD_MICROS,
+      step: stepUsdMicrosFromIndex(solPriceStepIndex(118_000_000n)),
+    });
+  }
+  let simFail = 0;
+  for (const c of simCases) {
+    const built = buildLaunchConfigParams(c.target, c.step, c.mode);
+    const configKp = Keypair.generate();
+    const tx = await client.partner.createConfig({
+      config: configKp.publicKey,
+      feeClaimer: collector.publicKey,
+      leftoverReceiver: collector.publicKey,
+      quoteMint: NATIVE_MINT,
+      payer: payer.publicKey,
+      ...built.configParams,
+    });
+    tx.feePayer = payer.publicKey;
+    const { blockhash } = await conn.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = blockhash;
+    tx.partialSign(payer, configKp);
+    const sim = await conn.simulateTransaction(tx, {
+      sigVerify: false,
+      replaceRecentBlockhash: true,
+      commitment: "confirmed",
+    });
+    const err = sim.value?.err ?? sim.err;
+    const ok = err == null;
+    console.log(`  ${ok ? "PASS" : "FAIL"}  ${c.targetUsd} @ $${c.usd} ${c.mode}${ok ? "" : `  ${JSON.stringify(err)}`}`);
+    if (!ok) {
+      simFail += 1;
+      failures.push(`simulate ${c.targetUsd}@${c.usd} ${c.mode}`);
+      const logs = sim.value?.logs || sim.logs;
+      if (logs) console.log(logs.slice(-8).join("\n"));
+    }
+  }
+  check(`createConfig simulates for all ${simCases.length} cases`, simFail === 0, `${simCases.length - simFail}/${simCases.length}`);
+
   const solUsdMicros = 118_000_000n;
   const step = solPriceStep(solUsdMicros);
   const ladder = createDbcConfigLadder({
@@ -203,7 +265,6 @@ async function main() {
     console.log(`    threshold ${row.expected.thresholdLamports}  supply ${row.expected.totalTokenSupply}  hash ${row.paramsHash}`);
   }
 
-  const client = new DynamicBondingCurveClient(conn, "confirmed");
   const creatorCfg = new PublicKey(created.creator.configAddress);
   const mint = Keypair.generate();
   const pool = deriveDbcPoolAddress(NATIVE_MINT, mint.publicKey, creatorCfg);

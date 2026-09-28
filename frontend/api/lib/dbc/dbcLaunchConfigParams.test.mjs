@@ -3,9 +3,16 @@ import test from "node:test";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import {
   DynamicBondingCurveClient,
+  MAX_SQRT_PRICE,
+  MIN_SQRT_PRICE,
+  Rounding,
   U128_MAX,
+  getDeltaAmountBaseUnsigned256,
+  getInitialLiquidityFromDeltaQuote,
+  getTotalSupplyFromCurve,
   validateConfigParameters,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
+import BN from "bn.js";
 import {
   DBC_DEVNET_TEST_TARGET_USD_MICROS,
   DBC_PRICE_SLOPE_LAMPORTS,
@@ -28,6 +35,8 @@ import {
   liquidityBitLength,
   paramsHashOf,
   quoteAlongDbcCurve,
+  programMigrationQuoteLamports,
+  programSupplyMinimums,
   soldPointsEqualPriceRatio,
   soldPointsPackedStart,
 } from "./dbcLaunchConfigParams.mjs";
@@ -82,7 +91,10 @@ test("price path, supply, graduation and anti-sniper tables", () => {
       assert.equal(pre, expected.totalTokenSupply);
       assert.equal(pre - post, expected.bufferTokens);
       assert.ok(post >= linearCirculating, "post is at least sold + pool + 20M reserve, rounded up");
-      assert.ok(pre > post, "unused swap buffer is not in the post-migration supply");
+      assert.ok(pre >= post, "pre-migration supply covers circulating");
+      assert.ok(expected.minWithoutBuffer <= post);
+      assert.ok(expected.minWithBuffer <= pre);
+      assert.equal(expected.migrationQuote, (expected.thresholdLamports * 78n + 99n) / 100n);
       if (expected.steepened) {
         assert.ok(expected.slopeUsed > DBC_PRICE_SLOPE_LAMPORTS);
         steepened.push({
@@ -253,6 +265,49 @@ test("validateConfigParameters passes for both fee modes and the $150 test targe
   }
   const testTarget = buildLaunchConfigParams(DBC_DEVNET_TEST_TARGET_USD_MICROS, step, "creator");
   validateConfigParameters({ ...testTarget.configParams, leftoverReceiver: DBC_VALIDATE_LEFTOVER_RECEIVER });
+});
+
+test("program supply minimums use ceil quote and Rounding.Up base (the SDK total is lower)", () => {
+  const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], stepForSol(118).step, "creator");
+  const T = built.expected.thresholdLamports;
+  const quote = programMigrationQuoteLamports(T);
+  assert.equal(quote, (T * 78n + 99n) / 100n);
+  assert.equal(quote, built.expected.migrationQuote);
+  const mins = programSupplyMinimums({
+    thresholdLamports: T,
+    sqrtStartPrice: built.configParams.sqrtStartPrice,
+    curve: built.configParams.curve,
+    vesting: built.configParams.lockedVesting,
+  });
+  const liquidity = getInitialLiquidityFromDeltaQuote(
+    new BN(quote.toString()),
+    MIN_SQRT_PRICE,
+    mins.sqrtMigration,
+  );
+  const included = getDeltaAmountBaseUnsigned256(
+    mins.sqrtMigration,
+    MAX_SQRT_PRICE,
+    liquidity,
+    Rounding.Up,
+  );
+  assert.equal(BigInt(included.toString()), mins.includedBase);
+  assert.equal(mins.includedBase, built.expected.includedBase);
+  assert.equal(mins.minWithoutBuffer, built.expected.minWithoutBuffer);
+  assert.equal(mins.minWithBuffer, built.expected.minWithBuffer);
+  assert.ok(mins.minWithoutBuffer <= built.expected.circulatingAfterGraduation);
+  assert.ok(built.expected.circulatingAfterGraduation <= built.expected.totalTokenSupply);
+  assert.ok(mins.minWithBuffer <= built.expected.totalTokenSupply);
+
+  const sdkTotal = BigInt(getTotalSupplyFromCurve(
+    new BN(T.toString()),
+    built.configParams.sqrtStartPrice,
+    built.configParams.curve,
+    built.configParams.lockedVesting,
+    1,
+    new BN(0),
+    22,
+  ).toString());
+  assert.ok(sdkTotal < mins.minWithBuffer, `SDK ${sdkTotal} should be below program minWithBuffer ${mins.minWithBuffer}`);
 });
 
 test("createConfig serializes for every ladder case", async () => {

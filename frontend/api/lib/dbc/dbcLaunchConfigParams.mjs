@@ -22,6 +22,7 @@ import {
   feeNumeratorToBps,
   getBaseFeeNumerator,
   getDeltaAmountBaseUnsigned,
+  getDeltaAmountBaseUnsigned256,
   getDeltaAmountQuoteUnsigned,
   getInitialLiquidityFromDeltaBase,
   getInitialLiquidityFromDeltaQuote,
@@ -29,7 +30,7 @@ import {
   getNextSqrtPriceFromBaseAmountOutRoundingUp,
   getSqrtPriceFromPrice,
   getSwapAmountWithBuffer,
-  getTotalSupplyFromCurve,
+  getTotalVestingAmount,
   getBaseTokenForSwap,
   getMigrationThresholdPrice,
   validateConfigParameters,
@@ -329,6 +330,50 @@ function lockedVestingParams() {
   );
 }
 
+/**
+ * Program create_config supply floors (process_create_config.rs).
+ * quote = ceil(T * (100 - fee%) / 100)
+ * L = get_initial_liquidity_from_delta_quote(quote, MIN_SQRT_PRICE, migration_sqrt)
+ * includedBase = get_delta_amount_base_unsigned_256(migration_sqrt, MAX_SQRT_PRICE, L, Up)
+ * min_without_buffer = swap + includedBase + vesting
+ * min_with_buffer = swapBuffer + includedBase + vesting
+ */
+export function programMigrationQuoteLamports(thresholdLamports, feePct = DBC_MIGRATION_FEE_PCT) {
+  const T = BigInt(thresholdLamports);
+  return (T * BigInt(100 - Number(feePct)) + 99n) / 100n;
+}
+
+export function programSupplyMinimums({ thresholdLamports, sqrtStartPrice, curve, vesting }) {
+  const T = new BN(BigInt(thresholdLamports).toString());
+  const quote = programMigrationQuoteLamports(thresholdLamports, DBC_MIGRATION_FEE_PCT);
+  const sqrtMigration = getMigrationThresholdPrice(T, sqrtStartPrice, curve);
+  const liquidity = getInitialLiquidityFromDeltaQuote(
+    new BN(quote.toString()),
+    MIN_SQRT_PRICE,
+    sqrtMigration,
+  );
+  const includedBaseBn = getDeltaAmountBaseUnsigned256(
+    sqrtMigration,
+    MAX_SQRT_PRICE,
+    liquidity,
+    Rounding.Up,
+  );
+  const includedBase = BigInt(includedBaseBn.toString());
+  const swapBase = BigInt(getBaseTokenForSwap(sqrtStartPrice, sqrtMigration, curve).toString());
+  const swapBuffer = BigInt(getSwapAmountWithBuffer(new BN(swapBase.toString()), sqrtStartPrice, curve).toString());
+  const vest = BigInt(getTotalVestingAmount(vesting).toString());
+  return {
+    migrationQuote: quote,
+    includedBase,
+    swapBase,
+    swapBuffer,
+    vesting: vest,
+    sqrtMigration,
+    minWithoutBuffer: swapBase + includedBase + vest,
+    minWithBuffer: swapBuffer + includedBase + vest,
+  };
+}
+
 function customSqrtInput({ creatorFeePct, totalWhole, sqrtPrices, leftover = 0 }) {
   return {
     token: {
@@ -380,24 +425,18 @@ function customSqrtInput({ creatorFeePct, totalWhole, sqrtPrices, leftover = 0 }
 function assembleParams({ thresholdLamports, soldRaw, slope, creatorFeePct, poolTokens, soldPoints }) {
   const { sqrtStartPrice, curve, sqrtPrices } = buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints);
   const vesting = lockedVestingParams();
-  const total = getTotalSupplyFromCurve(
-    new BN(thresholdLamports.toString()),
+  const mins = programSupplyMinimums({
+    thresholdLamports,
     sqrtStartPrice,
     curve,
     vesting,
-    MigrationOption.MET_DAMM_V2,
-    new BN(0),
-    DBC_MIGRATION_FEE_PCT,
-  );
-  const preRaw = BigInt(total.toString());
-  const sqrtMigration = getMigrationThresholdPrice(new BN(thresholdLamports.toString()), sqrtStartPrice, curve);
-  const swapBase = BigInt(getBaseTokenForSwap(sqrtStartPrice, sqrtMigration, curve).toString());
-  const swapBuffer = BigInt(getSwapAmountWithBuffer(new BN(swapBase.toString()), sqrtStartPrice, curve).toString());
-  const dbcCirculating = preRaw - (swapBuffer - swapBase);
-  const linearCirculating = roundUpToWholeTokens(soldRaw + poolTokens + DBC_RESERVE_RAW);
-  const circulatingRaw = dbcCirculating > linearCirculating ? dbcCirculating : linearCirculating;
-  if (circulatingRaw > preRaw) {
-    throw Object.assign(new Error("DBC circulating supply exceeds the SDK pre-migration supply"), { code: "DBC_SUPPLY_CEILING" });
+  });
+  const poolForCirculating = mins.includedBase > poolTokens ? mins.includedBase : poolTokens;
+  const linearCirculating = roundUpToWholeTokens(soldRaw + poolForCirculating + DBC_RESERVE_RAW);
+  const circulatingRaw = linearCirculating > mins.minWithoutBuffer ? linearCirculating : mins.minWithoutBuffer;
+  const preRaw = circulatingRaw > mins.minWithBuffer ? circulatingRaw : mins.minWithBuffer;
+  if (preRaw > DBC_SUPPLY_CEILING_RAW) {
+    return { configParams: null, totalRaw: preRaw, circulatingRaw, sqrtPrices, mins };
   }
   const totalWhole = (preRaw + DBC_TOKEN_SCALE - 1n) / DBC_TOKEN_SCALE;
   let envelope = feeEnvelope({ creatorFeePct });
@@ -417,12 +456,12 @@ function assembleParams({ thresholdLamports, soldRaw, slope, creatorFeePct, pool
     curve,
     migrationQuoteThreshold: new BN(thresholdLamports.toString()),
     tokenSupply: {
-      preMigrationTokenSupply: total,
+      preMigrationTokenSupply: new BN(preRaw.toString()),
       postMigrationTokenSupply: new BN(circulatingRaw.toString()),
     },
     lockedVesting: vesting,
   };
-  return { configParams, totalRaw: preRaw, circulatingRaw, sqrtPrices };
+  return { configParams, totalRaw: preRaw, circulatingRaw, sqrtPrices, mins };
 }
 
 export function curveQuoteFull(configParams) {
@@ -546,10 +585,16 @@ export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorF
     throw Object.assign(new Error("DBC config would mint more than 1B tokens"), { code: "DBC_SUPPLY_CEILING" });
   }
 
-  const { configParams, totalRaw, circulatingRaw } = assembled;
+  const { configParams, totalRaw, circulatingRaw, mins } = assembled;
+  if (!configParams) {
+    throw Object.assign(new Error("DBC config would mint more than 1B tokens"), { code: "DBC_SUPPLY_CEILING" });
+  }
   validateConfigParameters({ ...configParams, leftoverReceiver: DUMMY_LEFTOVER });
   const postRaw = BigInt(configParams.tokenSupply.postMigrationTokenSupply.toString());
   const preRaw = BigInt(configParams.tokenSupply.preMigrationTokenSupply.toString());
+  if (mins.minWithoutBuffer > postRaw || postRaw > preRaw || mins.minWithBuffer > preRaw) {
+    throw Object.assign(new Error("DBC tokenSupply is below the program minimums"), { code: "DBC_TOKEN_SUPPLY" });
+  }
 
   const liquidityBits = configParams.curve.map((pt) => liquidityBitLength(pt.liquidity));
   assertSqrtInRange("sqrtStartPrice", configParams.sqrtStartPrice);
@@ -572,6 +617,10 @@ export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorF
     slopeUsed: slope,
     steepened,
     liquidityBits,
+    includedBase: mins.includedBase,
+    minWithoutBuffer: mins.minWithoutBuffer,
+    minWithBuffer: mins.minWithBuffer,
+    migrationQuote: mins.migrationQuote,
   };
   const paramsHash = paramsHashOf({
     targetUsdMicros: target.toString(),
