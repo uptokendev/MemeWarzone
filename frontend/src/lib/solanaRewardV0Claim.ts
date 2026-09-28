@@ -155,6 +155,53 @@ async function claimSignatureForReceipt(
   return ok.length ? ok[ok.length - 1].signature : null;
 }
 
+/** Account data size of each claim receipt (8-byte discriminator + fields in mwz_rewards_treasury). */
+const CLAIM_RECEIPT_BYTES: Record<RewardClaimCanonicalInput["kind"], number> = {
+  league: 8 + 32 + 1 + 8 + 32 + 1 + 8 + 1,
+  airdrop: 8 + 32 + 8 + 1 + 8 + 1,
+  recruiter: 8 + 32 + 8 + 8 + 1,
+  squad: 8 + 32 + 8 + 8 + 1,
+};
+
+function solText(lamports: number): string {
+  return (Math.ceil(lamports / 10_000) / 100_000).toFixed(4);
+}
+
+/**
+ * A claim creates a receipt on Solana that the claimer pays rent for, and a wallet must keep
+ * Solana's own minimum balance. When the wallet is short, the network refuses the transaction
+ * (InsufficientFundsForRent). Say that in plain words, with the real amounts.
+ */
+async function explainClaimFailure(
+  web3: SolanaWeb3Module,
+  connection: Connection,
+  payer: string,
+  kind: RewardClaimCanonicalInput["kind"],
+  error: unknown,
+): Promise<Error> {
+  const raw = String((error as Error)?.message || error || "");
+  if (!/InsufficientFundsForRent|insufficient lamports|InsufficientFunds/i.test(raw)) {
+    return error instanceof Error ? error : new Error(raw);
+  }
+  try {
+    const [balance, receiptRent, walletMinimum] = await Promise.all([
+      connection.getBalance(new web3.PublicKey(payer), "confirmed"),
+      connection.getMinimumBalanceForRentExemption(CLAIM_RECEIPT_BYTES[kind]),
+      connection.getMinimumBalanceForRentExemption(0),
+    ]);
+    const needed = receiptRent + walletMinimum + 10_000;
+    const shortBy = Math.max(needed - balance, 10_000);
+    return new Error(
+      `Your wallet needs a little more SOL to claim this reward. Claiming saves a small record on Solana `
+      + `that costs ${solText(receiptRent)} SOL, and Solana requires every wallet to keep at least `
+      + `${solText(walletMinimum)} SOL. Your wallet has ${solText(balance)} SOL. `
+      + `Add about ${solText(shortBy)} SOL and try again. Nothing was sent.`,
+    );
+  } catch {
+    return new Error("Your wallet needs a little more SOL to claim this reward: claiming saves a small record on Solana that costs about 0.0013 SOL. Add some SOL and try again. Nothing was sent.");
+  }
+}
+
 export async function submitSolanaRewardV0Claim(input: {
   web3: SolanaWeb3Module;
   chainId: number;
@@ -196,7 +243,11 @@ export async function submitSolanaRewardV0Claim(input: {
     walletRewriteBudgetBytes: SOLANA_WALLET_REWRITE_BUDGET_BYTES,
   };
   const simulated = await compileSolanaUserV0WithLatestBlockhash(input.web3, connection, intent);
-  await simulateSolanaUserV0OrThrow(connection, simulated.transaction, input.label);
+  try {
+    await simulateSolanaUserV0OrThrow(connection, simulated.transaction, input.label);
+  } catch (error) {
+    throw await explainClaimFailure(input.web3, connection, connected, input.canonical.kind, error);
+  }
 
   // Rebuild after simulation so the wallet always receives a fresh blockhash.
   const final = await compileSolanaUserV0WithLatestBlockhash(input.web3, connection, intent);
