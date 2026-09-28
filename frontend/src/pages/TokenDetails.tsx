@@ -541,7 +541,16 @@ function readStoredStringArray(key: string, fallback: string[]): string[] {
   }
 }
 
-const TokenDetails = () => {
+import { antiSniperFeeLine, shouldUseLaunchpadBondingQuote } from "../../shared/dbcAntiSniper.mjs";
+import { DBC_CREATOR_LOCK_COPY } from "../../shared/dbcEconomics.mjs";
+import { creatorLockBadge, lockAmountDivisible } from "../../shared/dbcLockSchedule.mjs";
+import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
+import { quoteDbcExactIn, loadDbcPool, loadReferralTokenAccount } from "@/lib/dbcTrade.mjs";
+import { submitDbcBondingTrade, submitDbcLockClaim } from "@/lib/dbcTradeSubmit";
+
+type TokenDetailsProps = { dbcLive?: Record<string, any> | null };
+
+const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   // URL param: /token/:campaignAddress is legacy-named, but accepts either:
   // - the ERC-20 token address (canonical public URL), or
   // - the LaunchCampaign address (legacy/backward-compatible URL).
@@ -627,6 +636,21 @@ const TokenDetails = () => {
   const [followBusy, setFollowBusy] = useState(false);
 
   const [campaign, setCampaign] = useState<CampaignInfo | null>(null);
+  const isDbcPage = Boolean(dbcLive);
+  const dbcPool = String(dbcLive?.pool || "");
+  const dbcMint = String(dbcLive?.mint || "");
+  const dbcCreator = String(dbcLive?.creator || "");
+  const dbcMigratedPool = String(
+    dbcLive?.migratedPool || dbcLive?.meta?.migration?.pool || dbcLive?.meta?.solanaGraduation?.pool || "",
+  );
+  const dbcActivationUnix = Number(dbcLive?.poolLive?.activationPoint || 0);
+  const dbcMigrated = Boolean(dbcLive?.poolLive?.isMigrated || dbcMigratedPool);
+  const [dbcLockSummary, setDbcLockSummary] = useState<{
+    lockedAmount: string;
+    fullyFreeUnix: number | null;
+    locks: Array<{ escrow: string; amount: string }>;
+  } | null>(null);
+  const [dbcClaimPending, setDbcClaimPending] = useState(false);
   // Must be declared BEFORE chainIdForStorage — using campaignAddr in a prior const
   // caused TDZ: "Cannot access 'Q' before initialization" and crashed TokenDetails.
   const campaignAddr = useMemo(() => {
@@ -1026,6 +1050,44 @@ const TokenDetails = () => {
             pinTokenDetailsChainId(SOLANA_CHAIN_ID);
             setPageChainId(SOLANA_CHAIN_ID);
           }
+          if (dbcLive) {
+            match = {
+              id: 0,
+              campaign: String(dbcLive.pool || param),
+              token: String(dbcLive.mint || param),
+              creator: String(dbcLive.creator || ""),
+              name: String(dbcLive.name || "DBC coin"),
+              symbol: String(dbcLive.symbol || ""),
+              logoURI: resolveImageUri(String(dbcLive.logoUri || "")) || "/placeholder.svg",
+              metadataURI: undefined,
+              xAccount: String(dbcLive.x || ""),
+              website: String(dbcLive.website || ""),
+              extraLink: "",
+              telegram: String(dbcLive.telegram || ""),
+              discord: String(dbcLive.discord || ""),
+            } as CampaignInfo;
+            setCampaign(match);
+            setError(null);
+            setOnChainLaunched(Boolean(dbcLive.poolLive?.isMigrated || dbcLive.migratedPool));
+            setOnChainPair(String(dbcLive.migratedPool || ""));
+            setMetrics({
+              sold: 0n,
+              curveSupply: 0n,
+              liquiditySupply: 0n,
+              creatorReserve: 0n,
+              basePrice: 0n,
+              priceSlope: 0n,
+              graduationTarget: 0n,
+              graduationNativeTarget: 0n,
+              liquidityBps: 0n,
+              protocolFeeBps: 0n,
+              currentPrice: 0n,
+              launched: Boolean(dbcLive.poolLive?.isMigrated || dbcLive.migratedPool),
+              finalizedAt: 0n,
+            } as CampaignMetrics);
+            setLoading(false);
+            return;
+          }
 
           // Paint immediately from the URL. Indexer /trades and /candles resolve mint vs PDA.
           // Waiting on the 500-row campaign feed (or a chain fallback) was a 2s+ blank chart.
@@ -1337,7 +1399,31 @@ const TokenDetails = () => {
     };
 
     load();
-  }, [campaignAddress, pageChainId, fetchCampaignLogoURI, fetchCampaigns, fetchCampaignSummary, location.search, navigate]);
+  }, [campaignAddress, pageChainId, fetchCampaignLogoURI, fetchCampaigns, fetchCampaignSummary, location.search, navigate, dbcLive]);
+
+  useEffect(() => {
+    if (!isDbcPage || !dbcMint) {
+      setDbcLockSummary(null);
+      return;
+    }
+    let cancelled = false;
+    void apiFetch(`/api/dbc/locks?mint=${encodeURIComponent(dbcMint)}`, { cache: "no-store" })
+      .then((response) => response.json().catch(() => ({})))
+      .then((payload) => {
+        if (cancelled || !payload?.ok) return;
+        setDbcLockSummary({
+          lockedAmount: String(payload.lockedAmount || "0"),
+          fullyFreeUnix: payload.fullyFreeUnix ? Number(payload.fullyFreeUnix) : null,
+          locks: Array.isArray(payload.locks) ? payload.locks : [],
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setDbcLockSummary(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDbcPage, dbcMint]);
 
   const formatPriceFromWei = (wei?: bigint | null): string => {
     if (wei == null) return "—";
@@ -3268,6 +3354,119 @@ const toSeconds = (ts: number): number => {
 
         // ── Solana bonding quotes (exact SOL-in buy / exact tokens-in sell) ──
         if (isSolanaPage) {
+          if (!shouldUseLaunchpadBondingQuote(isDbcPage ? "dbc" : "launchpad")) {
+            const solStr = String(tradeAmount || "").trim();
+            if (!solStr || solStr === "0") {
+              setEffectiveTokenWei(0n);
+              setEffectiveBnbWei(0n);
+              setQuoteWei(null);
+              setQuoteError(null);
+              setQuoteLoading(false);
+              return;
+            }
+            const parseSolLamports = (s: string): bigint => {
+              const parts = s.split(".");
+              return BigInt(parts[0] || "0") * 1_000_000_000n + BigInt((parts[1] || "").slice(0, 9).padEnd(9, "0") || "0");
+            };
+            const parseTok = (s: string, dec: number): bigint => {
+              const parts = s.split(".");
+              return BigInt(parts[0] || "0") * 10n ** BigInt(dec) + BigInt((parts[1] || "").slice(0, dec).padEnd(dec, "0") || "0");
+            };
+            const dec = 6;
+            if (dbcMigrated && dbcMigratedPool) {
+              try {
+                setQuoteLoading(true);
+                const { quoteSolanaMeteoraExactIn } = await import("@/lib/solanaMeteoraTrade");
+                const amountInRaw =
+                  tradeTab === "buy"
+                    ? tradeInputDenom === "BNB"
+                      ? parseSolLamports(solStr)
+                      : effectiveBnbWei
+                    : tradeInputDenom === "BNB"
+                      ? effectiveTokenWei
+                      : parseTok(solStr, dec);
+                if (amountInRaw <= 0n) {
+                  setQuoteWei(null);
+                  return;
+                }
+                const quote = await quoteSolanaMeteoraExactIn({
+                  side: tradeTab === "buy" ? "buy" : "sell",
+                  mint: dbcMint || String(campaign?.token || ""),
+                  tokenDecimals: dec,
+                  amountInRaw,
+                  slippagePct: SLIPPAGE_PCT,
+                  poolAddress: dbcMigratedPool,
+                  allowDbcMigratedPool: true,
+                });
+                if (cancelled) return;
+                if (tradeTab === "buy") {
+                  setEffectiveBnbWei(amountInRaw);
+                  setEffectiveTokenWei(quote.amountOutRaw);
+                  setQuoteWei(amountInRaw);
+                } else {
+                  setEffectiveTokenWei(amountInRaw);
+                  setEffectiveBnbWei(quote.amountOutRaw);
+                  setQuoteWei(quote.amountOutRaw);
+                }
+                setQuoteError(null);
+              } catch (e: any) {
+                if (!cancelled) {
+                  setQuoteWei(null);
+                  setQuoteError(e?.message || "DBC graduated quote failed");
+                }
+              } finally {
+                if (!cancelled) setQuoteLoading(false);
+              }
+              return;
+            }
+            try {
+              setQuoteLoading(true);
+              const connection = getSolanaReadConnection();
+              const loaded = await loadDbcPool(connection, dbcPool || String(campaign?.campaign || ""));
+              const referral = await loadReferralTokenAccount(connection, import.meta.env);
+              const amountIn =
+                tradeTab === "buy"
+                  ? tradeInputDenom === "BNB"
+                    ? parseSolLamports(solStr)
+                    : effectiveBnbWei
+                  : tradeInputDenom === "BNB"
+                    ? effectiveTokenWei
+                    : parseTok(solStr, dec);
+              if (amountIn <= 0n) {
+                setQuoteWei(null);
+                return;
+              }
+              const quoted = quoteDbcExactIn({
+                client: loaded.client,
+                pool: loaded.pool,
+                config: loaded.config,
+                side: tradeTab === "buy" ? "buy" : "sell",
+                amountIn,
+                hasReferral: Boolean(referral),
+                nowUnix: loaded.nowUnix,
+                activationUnix: loaded.activationUnix || dbcActivationUnix,
+              });
+              if (cancelled) return;
+              if (tradeTab === "buy") {
+                setEffectiveBnbWei(amountIn);
+                setEffectiveTokenWei(quoted.amountOut);
+                setQuoteWei(amountIn);
+              } else {
+                setEffectiveTokenWei(amountIn);
+                setEffectiveBnbWei(quoted.amountOut);
+                setQuoteWei(quoted.amountOut);
+              }
+              setQuoteError(null);
+            } catch (e: any) {
+              if (!cancelled) {
+                setQuoteWei(null);
+                setQuoteError(e?.message || "DBC quote failed");
+              }
+            } finally {
+              if (!cancelled) setQuoteLoading(false);
+            }
+            return;
+          }
           if (contractGraduated || solanaCurveClosed) {
             const solStr = String(tradeAmount || "").trim();
             if (!solStr || solStr === "0") {
@@ -3757,7 +3956,7 @@ const toSeconds = (ts: number): number => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [readProvider, campaign?.campaign, campaign?.token, chainIdForStorage, metrics?.currentPrice, tradeTab, tradeAmount, tradeInputDenom, tokenBalanceWei, isDexStage, isTopazTradingActive, onChainLaunched, topazSlippageBps, unifiedMarket.state?.lastError, unifiedMarket.summary?.last_price_bnb, isSolanaPage, solanaCurve, contractGraduated, solanaCurveClosed, effectiveBnbWei, effectiveTokenWei]);
+  }, [readProvider, campaign?.campaign, campaign?.token, chainIdForStorage, metrics?.currentPrice, tradeTab, tradeAmount, tradeInputDenom, tokenBalanceWei, isDexStage, isTopazTradingActive, onChainLaunched, topazSlippageBps, unifiedMarket.state?.lastError, unifiedMarket.summary?.last_price_bnb, isSolanaPage, solanaCurve, contractGraduated, solanaCurveClosed, effectiveBnbWei, effectiveTokenWei, isDbcPage, dbcPool, dbcMint, dbcMigrated, dbcMigratedPool, dbcActivationUnix]);
 
   const handlePlaceTrade = async () => {
     if (!campaign?.campaign) return;
@@ -3779,6 +3978,95 @@ const toSeconds = (ts: number): number => {
       try {
         setTradePending(true);
         const { getSolanaProvider } = await import("@/lib/solanaWallet");
+        if (!shouldUseLaunchpadBondingQuote(isDbcPage ? "dbc" : "launchpad")) {
+          const provider = getSolanaProvider();
+          const trader = String(provider?.publicKey?.toString?.() || "");
+          if (!trader) {
+            toast({
+              title: "Connect Solana wallet",
+              description: "Connect Phantom / Solflare to trade Solana campaigns.",
+            });
+            window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal"));
+            return;
+          }
+          const pool = dbcPool || String(campaign?.campaign || "");
+          const mint = dbcMint || String(campaign?.token || "");
+          const dec = 6;
+          const parseSolLamports = (s: string): bigint => {
+            const parts = s.split(".");
+            return BigInt(parts[0] || "0") * 1_000_000_000n + BigInt((parts[1] || "").slice(0, 9).padEnd(9, "0") || "0");
+          };
+          const parseTok = (s: string): bigint => {
+            const parts = s.split(".");
+            return BigInt(parts[0] || "0") * 10n ** BigInt(dec) + BigInt((parts[1] || "").slice(0, dec).padEnd(dec, "0") || "0");
+          };
+          let amountIn: bigint;
+          if (tradeTab === "buy") {
+            amountIn = tradeInputDenom === "BNB" ? parseSolLamports(String(tradeAmount || "0")) : (effectiveBnbWei > 0n ? effectiveBnbWei : 0n);
+            if (amountIn <= 0n) throw new Error("Enter a SOL amount to buy.");
+          } else {
+            amountIn = tradeInputDenom === "BNB" ? effectiveTokenWei : parseTok(String(tradeAmount || "0"));
+            if (amountIn <= 0n) throw new Error("Enter a token amount to sell.");
+          }
+          if (dbcMigrated && dbcMigratedPool) {
+            const { quoteSolanaMeteoraExactIn, executeSolanaMeteoraSwap } = await import("@/lib/solanaMeteoraTrade");
+            const quote = await quoteSolanaMeteoraExactIn({
+              side: tradeTab === "buy" ? "buy" : "sell",
+              mint,
+              tokenDecimals: dec,
+              amountInRaw: amountIn,
+              slippagePct: SLIPPAGE_PCT,
+              poolAddress: dbcMigratedPool,
+              allowDbcMigratedPool: true,
+            });
+            const result = await executeSolanaMeteoraSwap({
+              quote,
+              mint,
+              tokenDecimals: dec,
+              walletAddress: trader,
+              poolAddress: quote.pool,
+              allowDbcMigratedPool: true,
+            });
+            toast({ title: tradeTab === "buy" ? "Buy confirmed" : "Sell confirmed", description: `Tx: ${result.signature.slice(0, 12)}…` });
+            setTradeAmount("0");
+            setQuoteWei(null);
+            setSolanaBalanceTick((n) => n + 1);
+            return;
+          }
+          const creatorBuy = tradeTab === "buy" && dbcCreator && trader === dbcCreator;
+          const tokensOut = creatorBuy ? lockAmountDivisible(effectiveTokenWei) : 0n;
+          const result = await submitDbcBondingTrade({
+            pool,
+            trader,
+            side: tradeTab === "buy" ? "buy" : "sell",
+            amountIn,
+            lockedBuy: Boolean(creatorBuy),
+            tokenAmountOut: tokensOut,
+          });
+          if (creatorBuy && (result as { escrow?: string }).escrow) {
+            try {
+              await apiFetch("/api/dbc/locks", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  pool,
+                  mint,
+                  creator: trader,
+                  escrow: (result as { escrow: string }).escrow,
+                  tx: result.signature,
+                  amount: tokensOut.toString(),
+                }),
+              });
+            } catch {
+              // Record is best-effort; the escrow is already on chain.
+            }
+          }
+          toast({ title: tradeTab === "buy" ? "Buy confirmed" : "Sell confirmed", description: `Tx: ${result.signature.slice(0, 12)}…` });
+          setTradeAmount("0");
+          setQuoteWei(null);
+          setSolanaBalanceTick((n) => n + 1);
+          return;
+        }
         const {
           requestSolanaTradeAuthorization,
           submitSolanaTradeV1,
@@ -4472,6 +4760,16 @@ const toSeconds = (ts: number): number => {
                 <span className="text-xs md:text-sm text-muted-foreground font-mono whitespace-nowrap">
                   {tokenData.ticker}
                 </span>
+                {isDbcPage ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full border border-orange-400/40 text-orange-200 whitespace-nowrap">
+                    {creatorLockBadge({
+                      creatorHeldRaw: 0,
+                      lockedRaw: dbcLockSummary?.lockedAmount || 0,
+                      supplyRaw: 1_000_000_000_000_000n,
+                      fullyFreeUnix: dbcLockSummary?.fullyFreeUnix,
+                    })}
+                  </span>
+                ) : null}
 
                 <span
                   className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold whitespace-nowrap ${
@@ -5330,6 +5628,40 @@ const toSeconds = (ts: number): number => {
                     ) : null}
                     {quoteError ? (
                       <p className="mt-2 text-center text-xs text-destructive">{quoteError}</p>
+                    ) : null}
+                    {isDbcPage && !dbcMigrated ? (
+                      <p className="mt-2 text-center text-xs text-muted-foreground">
+                        {antiSniperFeeLine({ activationUnix: dbcActivationUnix })}
+                      </p>
+                    ) : null}
+                    {isDbcPage && !dbcMigrated && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (
+                      <p className="mt-2 text-center text-xs text-orange-200">{DBC_CREATOR_LOCK_COPY}</p>
+                    ) : null}
+                    {isDbcPage && dbcLockSummary?.locks?.length && solanaAccount && String(solanaAccount) === dbcCreator ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="w-full mt-2"
+                        disabled={dbcClaimPending}
+                        onClick={async () => {
+                          try {
+                            setDbcClaimPending(true);
+                            const first = dbcLockSummary.locks[0];
+                            const result = await submitDbcLockClaim({
+                              escrow: first.escrow,
+                              mint: dbcMint,
+                              recipient: String(solanaAccount),
+                            });
+                            toast({ title: "Claim submitted", description: `Tx: ${result.signature.slice(0, 12)}…` });
+                          } catch (error: any) {
+                            toast({ title: "Claim failed", description: String(error?.message || error), variant: "destructive" });
+                          } finally {
+                            setDbcClaimPending(false);
+                          }
+                        }}
+                      >
+                        Claim released tokens
+                      </Button>
                     ) : null}
                   </div>
 

@@ -24,7 +24,6 @@ import { analytics } from "@/lib/analytics/ProductAnalytics";
 import { setActiveWalletKind } from "@/lib/activeWalletChain";
 
 import TokenDetails from "./TokenDetails";
-import { DbcTokenPage } from "@/components/dbc/DbcTokenPage";
 import { fetchDbcToken } from "@/lib/dbcCreate";
 
 const SOLANA_ROUTE_CACHE_PREFIX = "mwz:solana-token-route:v2:";
@@ -312,11 +311,13 @@ const TokenDetailsEntry = () => {
   if (isSolanaRoute && dbcCoin === undefined) {
     return <div className="mx-auto max-w-3xl px-4 py-10 font-retro text-muted-foreground">Loading…</div>;
   }
-  if (isSolanaRoute && dbcCoin) {
-    return <DbcTokenPage token={routeId} />;
-  }
 
-  return <TokenDetails key={`${routeId || (isSolanaRoute ? "solana" : "evm")}:${isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId}`} />;
+  return (
+    <TokenDetails
+      key={`${routeId || (isSolanaRoute ? "solana" : "evm")}:${isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId}`}
+      dbcLive={isSolanaRoute && dbcCoin ? dbcCoin : null}
+    />
+  );
 };
 
 export default TokenDetailsEntry;
