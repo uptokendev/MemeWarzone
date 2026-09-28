@@ -29,6 +29,18 @@ import {
 } from "@/lib/solanaDirectCreate";
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
+import { isDbcLaunchEnabled } from "@/lib/dbcLaunchEnabled";
+import { getDbcGraduationTiers } from "@/lib/dbcGraduationTiers";
+import {
+  authorizeDbcCreate,
+  beginDbcCreate,
+  finalizeDbcCreate,
+  preflightDbcCreate,
+  quoteDbcFirstBuy,
+  type DbcFeeChoice,
+} from "@/lib/dbcCreate";
+import { submitDbcCreateTransaction } from "@/lib/dbcCreateSubmit";
+import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 import { apiFetch } from "@/lib/apiBase";
 import {
   createRobinhoodStockCampaign,
@@ -158,6 +170,11 @@ const Create = () => {
     getDefaultGraduationTargetWei(getActiveChainId()),
   );
   const [graduationQuoteAsset, setGraduationQuoteAsset] = useState<GraduationQuoteAsset | null>(null);
+  const dbcEnabled = isDbcLaunchEnabled();
+  const [dbcFeeChoice, setDbcFeeChoice] = useState<DbcFeeChoice>("keep");
+  const [dbcCreatorSharePct, setDbcCreatorSharePct] = useState("50");
+  const [dbcFirstBuySol, setDbcFirstBuySol] = useState("");
+  const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ tokensOut: string; bps: string; exceedsCap: boolean } | null>(null);
   const [creatorEligibility, setCreatorEligibility] = useState<ScheduledCreatorLaunchEligibility | null>(null);
   const [creatorEligibilityError, setCreatorEligibilityError] = useState<string | null>(null);
   const armDialogShownForWallet = useRef<string | null>(null);
@@ -178,7 +195,11 @@ const Create = () => {
   );
   const creatorWallet = isSolanaCreator ? solanaWallet.solanaAccount : wallet.account || "";
   const chainId = isSolanaCreator ? SOLANA_CHAIN_ID : getActiveChainId(wallet.chainId ?? feedChainId);
-  const graduationOptions: GraduationTier[] = useMemo(() => getGraduationTiers(chainId), [chainId]);
+  const dbcLaunch = Boolean(dbcEnabled && isSolanaCreator);
+  const graduationOptions: GraduationTier[] = useMemo(
+    () => (dbcLaunch ? getDbcGraduationTiers(String(import.meta.env.VITE_SOLANA_CLUSTER || "")) : getGraduationTiers(chainId)),
+    [chainId, dbcLaunch],
+  );
   const configuredEvmChainId = useMemo(
     () => (isEvmChainId(chainId) ? chainId : BNB_CHAIN_ID),
     [chainId],
@@ -279,6 +300,44 @@ const Create = () => {
       }
     }
   }, [graduationOptions, graduationTargetWei, chainId]);
+
+  useEffect(() => {
+    if (!dbcLaunch) {
+      setDbcFirstBuyQuote(null);
+      return;
+    }
+    const sol = Number(dbcFirstBuySol);
+    if (!Number.isFinite(sol) || sol <= 0) {
+      setDbcFirstBuyQuote(null);
+      return;
+    }
+    const lamports = Math.round(sol * 1_000_000_000);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void quoteDbcFirstBuy({
+        targetUsd: Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000,
+        feeChoice: dbcFeeChoice,
+        creatorSharePct: dbcFeeChoice === "split" ? Number(dbcCreatorSharePct) : null,
+        firstBuyLamports: lamports,
+      })
+        .then((next) => {
+          if (!cancelled) {
+            setDbcFirstBuyQuote({
+              tokensOut: String(next.tokensOut || "0"),
+              bps: String(next.bps || "0"),
+              exceedsCap: Boolean(next.exceedsCap),
+            });
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setDbcFirstBuyQuote(null);
+        });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [dbcLaunch, dbcFirstBuySol, dbcFeeChoice, dbcCreatorSharePct, graduationTargetWei]);
 
   useEffect(() => {
     if (isSolanaCreator || !wallet.account || !wallet.signer || !isEvmChainId(chainId)) {
@@ -494,6 +553,14 @@ const Create = () => {
         otherUrl: normalizeSocialUrl(formData.otherLink, "other") || null,
         graduationTargetWei: graduationTargetWei.toString(),
         visibility: "private",
+        ...(dbcLaunch
+          ? {
+              launchType: "dbc",
+              dbcFeeChoice,
+              dbcCreatorSharePct: dbcFeeChoice === "split" ? Number(dbcCreatorSharePct) : null,
+              dbcFirstBuyLamports: dbcFirstBuySol ? String(Math.round(Number(dbcFirstBuySol) * 1_000_000_000)) : null,
+            }
+          : {}),
         ...buildCreateDraftGraduationFields(graduationQuoteAsset, chainId),
         ...(isSolanaCreator
           ? { cluster: String(import.meta.env.VITE_SOLANA_CLUSTER || "solana-mainnet-beta") }
@@ -528,6 +595,90 @@ const Create = () => {
     if (!validateCoreForm()) return;
     if (!graduationMarketReady || !graduationQuoteAsset) {
       toast.error("Choose a Graduation Market first.");
+      return;
+    }
+
+    if (isSolanaCreator && dbcLaunch) {
+      if (!solanaWallet.solanaAccount) {
+        toast.error("Connect your Solana wallet first.");
+        return;
+      }
+      setIsDeploying(true);
+      analytics.track("token_create_started", { surface: "dbc", chain: "solana" });
+      try {
+        const targetUsd = Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000;
+        const firstBuyLamports = dbcFirstBuySol ? String(Math.round(Number(dbcFirstBuySol) * 1_000_000_000)) : "0";
+        if (dbcFirstBuyQuote?.exceedsCap) {
+          throw new Error("The first buy cannot be more than 10% of supply.");
+        }
+        toast.message("Checking DBC launch eligibility…");
+        const preflight = await preflightDbcCreate({ creatorWallet, targetUsd });
+        if (!preflight?.preflight?.allowed) {
+          const errorMessage = preflight?.preflight?.cooldownActive
+            ? `A DBC launch from this wallet is on a 24 hour cooldown.`
+            : `Live DBC coin limit reached (${preflight?.preflight?.creatorLiveBondingCount}/${preflight?.preflight?.creatorMaxLiveBondingCount}).`;
+          emitCreatorArmBlocked(resolveCreatorArmBlock({ mode: "now", errorMessage, errorCode: "DBC_CREATOR_LAUNCH_LIMIT" }));
+          return;
+        }
+        const { signWalletAction } = await import("@/lib/walletActionAuth");
+        const { signSolanaMessage } = await import("@/lib/solanaWallet");
+        toast.message("Sign DBC deploy in your Solana wallet…");
+        const dbcAuth = await signWalletAction({
+          action: "dbc_create",
+          walletAddress: creatorWallet,
+          chainId: SOLANA_CHAIN_ID,
+          extraLines: [`Ticker: ${normalizedTicker}`],
+          walletType: "solana",
+          signMessage: async (message) => (await signSolanaMessage(message, creatorWallet)).signature,
+        });
+        const begun = await beginDbcCreate({
+          creatorWallet,
+          ticker: normalizedTicker,
+          auth: dbcAuth,
+        });
+        if (!begun.sessionToken) throw new Error("DBC session was not returned.");
+        const logoUrl = await uploadLogo({ directSessionToken: begun.sessionToken });
+        const web3 = await loadSolanaWeb3();
+        const mint = web3.Keypair.generate();
+        toast.message("Authorizing DBC create…");
+        const authorization = await authorizeDbcCreate({
+          sessionToken: begun.sessionToken,
+          mint: mint.publicKey.toBase58(),
+          name: formData.name,
+          symbol: normalizedTicker,
+          description: formData.description || null,
+          logoUrl,
+          website: formData.website || null,
+          x: formData.twitter || null,
+          telegram: formData.telegram || null,
+          discord: formData.discord || null,
+          targetUsd,
+          feeChoice: dbcFeeChoice,
+          creatorSharePct: dbcFeeChoice === "split" ? Number(dbcCreatorSharePct) : null,
+          firstBuyLamports,
+        });
+        toast.message("Confirm the launch in your wallet…");
+        const created = await submitDbcCreateTransaction({
+          transactionBase64: authorization.transaction,
+          mintSecretKey: mint.secretKey,
+          creatorAddress: creatorWallet,
+          pool: authorization.pool,
+          mintAddress: mint.publicKey.toBase58(),
+        });
+        const finalized = await finalizeDbcCreate({
+          finalizeToken: authorization.finalizeToken,
+          signature: created.signature,
+        });
+        analytics.track("token_create_succeeded", { surface: "dbc", chain: "solana" });
+        toast.success("DBC token deployed.");
+        navigate(finalized.tokenPath || `/token/${created.mintAddress}?chainId=101`);
+      } catch (error: any) {
+        console.error(error);
+        analytics.track("token_create_failed", { surface: "dbc", chain: "solana", error_code: analyticsErrorCode(error) });
+        toast.error(String(error?.message || "DBC deploy failed"));
+      } finally {
+        setIsDeploying(false);
+      }
       return;
     }
 
@@ -1065,6 +1216,44 @@ const Create = () => {
                         );
                       })}
                     </div>
+                    {dbcLaunch ? (
+                      <div className="space-y-3 rounded-xl border border-border/50 bg-background/25 p-3">
+                        <div>
+                          <div className="font-retro text-sm text-foreground">Creator fee</div>
+                          <div className="mt-2 grid gap-1.5">
+                            {([
+                              ["keep", "Keep it", "You keep 7% of the trading fee."],
+                              ["holders", "Give it to holders", "The fee goes to a collector shared with holders."],
+                              ["split", "Split", "You keep a percent; the rest goes to the collector."],
+                              ["buyback", "Buyback and burn", "Bought back at random times each week and burned."],
+                            ] as const).map(([id, label, detail]) => (
+                              <button key={id} type="button" onClick={() => setDbcFeeChoice(id)} className={cn("rounded-lg border px-2.5 py-2 text-left", dbcFeeChoice === id ? "border-accent bg-accent/15" : "border-border bg-muted/30")}>
+                                <div className="font-retro text-sm">{label}</div>
+                                <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">{detail}</p>
+                              </button>
+                            ))}
+                          </div>
+                          {dbcFeeChoice === "split" ? (
+                            <div className="mt-2">
+                              <label className="text-xs text-muted-foreground">Your share percent</label>
+                              <Input type="number" min={1} max={99} value={dbcCreatorSharePct} onChange={(e) => setDbcCreatorSharePct(e.target.value)} className="mt-1 max-w-[8rem]" />
+                            </div>
+                          ) : null}
+                        </div>
+                        <div>
+                          <div className="font-retro text-sm text-foreground">Your first buy (optional)</div>
+                          <p className="mt-0.5 text-xs text-muted-foreground">Buys in the same transaction as the launch, at the normal 2% fee.</p>
+                          <Input type="number" min={0} step="0.01" value={dbcFirstBuySol} onChange={(e) => setDbcFirstBuySol(e.target.value)} placeholder="SOL amount" className="mt-2 max-w-[12rem]" />
+                          {dbcFirstBuyQuote ? (
+                            <p className={cn("mt-1 text-xs", dbcFirstBuyQuote.exceedsCap ? "text-orange-300" : "text-muted-foreground")}>
+                              About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
+                              {dbcFirstBuyQuote.exceedsCap ? " (over the 10% cap)" : ""}.
+                            </p>
+                          ) : null}
+                        </div>
+                        <p className="text-xs text-muted-foreground">The fee starts at 50% and falls to 2% within 60 seconds, so bots that buy at launch pay for it. Your own first buy does not.</p>
+                      </div>
+                    ) : null}
                     <Collapsible open={safetyOpen} onOpenChange={setSafetyOpen} className="rounded-xl border border-border/50 bg-background/25">
                       <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 p-3 text-left">
                         <div><div className="font-retro text-sm text-foreground">Launch Safety</div><p className="mt-0.5 text-xs text-muted-foreground">{launchpadSafetyStatus.protocolLabel ?? (launchpadSafetyStatus.protocolStatus === "ready" ? "Live" : launchpadSafetyStatus.protocolStatus)}{" · "}{launchpadSafetyStatus.chainLabel}</p></div>
@@ -1087,6 +1276,7 @@ const Create = () => {
                   onSelectedChange={setGraduationQuoteAsset}
                   onNext={goNext}
                   canNext={canGoNext(5)}
+                  nativeOnly={dbcLaunch}
                 />
               </CreateFullPane>
             ) : null}
@@ -1105,6 +1295,12 @@ const Create = () => {
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Quote Asset</span><span className="text-foreground">{graduationSummary.quoteAsset}</span></div>
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Provider</span><span className="text-foreground">{graduationSummary.provider}</span></div>
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Bonding currency</span><span className="text-foreground">{graduationSummary.bonding}</span></div>
+                      {dbcLaunch ? (
+                        <>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Creator fee</span><span className="text-foreground">{dbcFeeChoice}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">First buy</span><span className="text-foreground">{dbcFirstBuySol ? `${dbcFirstBuySol} SOL` : "None"}</span></div>
+                        </>
+                      ) : null}
                       {!creatorWallet ? <p className="pt-1 text-xs text-orange-300">Connect your wallet before launching.</p> : null}
                       {mode === "deploy" && !directDeployRouteReady ? (
                         <p className="pt-1 text-xs text-orange-300">

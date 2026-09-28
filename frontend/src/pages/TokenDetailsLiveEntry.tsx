@@ -24,6 +24,8 @@ import { analytics } from "@/lib/analytics/ProductAnalytics";
 import { setActiveWalletKind } from "@/lib/activeWalletChain";
 
 import TokenDetails from "./TokenDetails";
+import { DbcTokenPage } from "@/components/dbc/DbcTokenPage";
+import { fetchDbcToken } from "@/lib/dbcCreate";
 
 const SOLANA_ROUTE_CACHE_PREFIX = "mwz:solana-token-route:v2:";
 const SOLANA_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -118,6 +120,7 @@ const TokenDetailsEntry = () => {
   );
 
   const [campaign, setCampaign] = useState<CampaignInfo | null>(null);
+  const [dbcCoin, setDbcCoin] = useState<Record<string, unknown> | null | undefined>(undefined);
   const [campaignResolved, setCampaignResolved] = useState<boolean>(!isSolanaRoute);
   const [curve, setCurve] = useState<SolanaCampaignCurveState | null>(null);
   const [curveResolved, setCurveResolved] = useState<boolean>(!isSolanaRoute);
@@ -212,9 +215,29 @@ const TokenDetailsEntry = () => {
   );
 
   useEffect(() => {
-    if (!isSolanaRoute || !curveLookupAddress) {
-      setCurve(null);
-      setCurveResolved(true);
+    if (!isSolanaRoute || !routeId) {
+      setDbcCoin(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchDbcToken(routeId)
+      .then((next) => {
+        if (!cancelled) setDbcCoin(next);
+      })
+      .catch(() => {
+        if (!cancelled) setDbcCoin(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSolanaRoute, routeId]);
+
+  useEffect(() => {
+    if (!isSolanaRoute || !curveLookupAddress || dbcCoin) {
+      if (!isSolanaRoute || !curveLookupAddress || dbcCoin) {
+        setCurve(null);
+        setCurveResolved(true);
+      }
       return;
     }
 
@@ -247,7 +270,7 @@ const TokenDetailsEntry = () => {
       cancelled = true;
       if (timer) window.clearInterval(timer);
     };
-  }, [cachedCampaignAddress, curve?.campaignAddress, curve?.curveClosed, curve?.graduated, curveLookupAddress, isSolanaRoute]);
+  }, [cachedCampaignAddress, curve?.campaignAddress, curve?.curveClosed, curve?.graduated, curveLookupAddress, dbcCoin, isSolanaRoute]);
 
   const resolvedCampaignAddress = useMemo(
     () => String(campaign?.campaign || curve?.campaignAddress || cachedCampaignAddress || "").trim(),
@@ -285,6 +308,13 @@ const TokenDetailsEntry = () => {
       chainId,
     });
   }, [campaign, effectiveEvmChainId, forcedChainId, isSolanaRoute, resolvedCampaignAddress, routeId]);
+
+  if (isSolanaRoute && dbcCoin === undefined) {
+    return <div className="mx-auto max-w-3xl px-4 py-10 font-retro text-muted-foreground">Loading…</div>;
+  }
+  if (isSolanaRoute && dbcCoin) {
+    return <DbcTokenPage token={routeId} />;
+  }
 
   return <TokenDetails key={`${routeId || (isSolanaRoute ? "solana" : "evm")}:${isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId}`} />;
 };

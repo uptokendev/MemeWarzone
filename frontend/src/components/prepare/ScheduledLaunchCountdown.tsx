@@ -9,6 +9,7 @@ export type ScheduledLaunchCountdownProps = {
   chainId?: number | null;
   campaignAddress?: string | null;
   contractDeployed?: boolean;
+  waitingForCreatorDeploy?: boolean;
   variant?: "hero" | "compact" | "pill";
   className?: string;
 };
@@ -56,6 +57,7 @@ export function ScheduledLaunchCountdown({
   chainId,
   campaignAddress,
   contractDeployed = true,
+  waitingForCreatorDeploy = false,
   variant = "hero",
   className,
 }: ScheduledLaunchCountdownProps) {
@@ -102,7 +104,7 @@ export function ScheduledLaunchCountdown({
       >
         <span className={cn("h-1.5 w-1.5 rounded-full", launched ? "bg-green-300" : "animate-pulse bg-orange-300")} />
         <Clock3 className="h-3.5 w-3.5" />
-        <span>{launched ? "Trading is live" : reached ? "Confirming launch" : `Launch in ${countdown}`}</span>
+        <span>{launched ? "Trading is live" : reached && waitingForCreatorDeploy ? "Launching soon" : reached ? "Confirming launch" : `Launch in ${countdown}`}</span>
       </div>
     );
   }

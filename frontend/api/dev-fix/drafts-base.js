@@ -31,7 +31,9 @@ const VISIBILITIES = new Set(["public", "unlisted", "private"]);
 const ZERO = { views: 0, follows: 0, comments: 0, reactions: 0, shares: 0, signedActions: 0 };
 const DEFAULT_GRADUATION_TARGET_WEI = 30_000n * 10n ** 18n;
 const TEST_GRADUATION_TARGET_WEI = 6n * 10n ** 18n;
+const DBC_TEST_GRADUATION_TARGET_WEI = 150_000n * 10n ** 18n;
 const STANDARD_GRADUATION_TARGETS = new Set([15_000n, 30_000n, 50_000n].map((value) => value * 10n ** 18n));
+const DBC_FEE_CHOICES = new Set(["keep", "holders", "split", "buyback"]);
 
 function methodAllowed(req, res, allowed) {
   if (allowed.includes(req.method)) return true;
@@ -73,7 +75,7 @@ function cleanStringArray(value, maxItems = 12, maxLen = 600) {
   return value.map((item) => cleanText(item, maxLen)).filter(Boolean).slice(0, maxItems);
 }
 
-function normalizeDraftGraduationTarget(chainId, value) {
+function normalizeDraftGraduationTarget(chainId, value, launchType = "launchpad") {
   let target = DEFAULT_GRADUATION_TARGET_WEI;
   if (value != null && String(value).trim()) {
     try {
@@ -83,12 +85,41 @@ function normalizeDraftGraduationTarget(chainId, value) {
     }
   }
   if (STANDARD_GRADUATION_TARGETS.has(target)) return target.toString();
-  // $6 test threshold: BNB testnet (97) and Solana product chains (101/102).
   const cid = Number(chainId);
+  if (launchType === "dbc" && (cid === 101 || cid === 102) && target === DBC_TEST_GRADUATION_TARGET_WEI) {
+    return target.toString();
+  }
+  // $6 test threshold: BNB testnet (97) and Solana product chains (101/102).
   if ((cid === 97 || cid === 101 || cid === 102) && target === TEST_GRADUATION_TARGET_WEI) {
     return target.toString();
   }
   throw new TickerReservationError("Unsupported graduation target for this chain.", { code: "INVALID_GRADUATION_TARGET", httpStatus: 400 });
+}
+
+function parseDbcDraftFields(body) {
+  const launchType = String(body?.launchType || body?.launch_type || "launchpad").trim().toLowerCase();
+  if (launchType !== "dbc") {
+    return { launchType: "launchpad", dbcFeeChoice: null, dbcCreatorSharePct: null, dbcFirstBuyLamports: null };
+  }
+  const feeChoice = String(body?.dbcFeeChoice || body?.feeChoice || "").trim().toLowerCase() || null;
+  if (feeChoice && !DBC_FEE_CHOICES.has(feeChoice)) {
+    throw new TickerReservationError("creator fee choice must be keep, holders, split or buyback", { code: "DBC_BAD_FEE_CHOICE", httpStatus: 400 });
+  }
+  let share = null;
+  if (feeChoice === "split") {
+    const n = Number(body?.dbcCreatorSharePct ?? body?.creatorSharePct);
+    if (!Number.isFinite(n) || n <= 0 || n >= 100) {
+      throw new TickerReservationError("split needs a creator share percent between 1 and 99", { code: "DBC_BAD_FEE_SHARE", httpStatus: 400 });
+    }
+    share = Math.trunc(n);
+  }
+  const firstBuy = body?.dbcFirstBuyLamports ?? body?.firstBuyLamports;
+  return {
+    launchType: "dbc",
+    dbcFeeChoice: feeChoice,
+    dbcCreatorSharePct: share,
+    dbcFirstBuyLamports: firstBuy == null || firstBuy === "" ? null : String(firstBuy),
+  };
 }
 
 function slugify(value) {
@@ -228,6 +259,10 @@ function mapDraftRow(row) {
     deployedAt: row.deployed_at ?? row.deployedAt ?? null,
     graduationTargetWei: String(row.graduation_target_wei ?? row.graduationTargetWei ?? DEFAULT_GRADUATION_TARGET_WEI),
     scheduledLaunchAt: row.scheduled_launch_at ?? row.scheduledLaunchAt ?? null,
+    launchType: String(row.launch_type ?? row.launchType ?? "launchpad"),
+    dbcFeeChoice: row.dbc_fee_choice ?? row.dbcFeeChoice ?? null,
+    dbcCreatorSharePct: row.dbc_creator_share_pct ?? row.dbcCreatorSharePct ?? null,
+    dbcFirstBuyLamports: row.dbc_first_buy_lamports != null ? String(row.dbc_first_buy_lamports) : (row.dbcFirstBuyLamports != null ? String(row.dbcFirstBuyLamports) : null),
     createdAt: row.created_at ?? row.createdAt ?? new Date().toISOString(),
     updatedAt: row.updated_at ?? row.updatedAt ?? new Date().toISOString(),
   };
@@ -506,9 +541,15 @@ export async function drafts(req, res) {
   if (!ticker) return json(res, 400, { error: "Draft ticker is required." });
 
   const visibility = VISIBILITIES.has(body.visibility) ? body.visibility : "private";
+  let dbcFields;
+  try {
+    dbcFields = parseDbcDraftFields(body);
+  } catch (error) {
+    return json(res, error?.httpStatus || 400, { error: error?.message, code: error?.code });
+  }
   let graduationTargetWei;
   try {
-    graduationTargetWei = normalizeDraftGraduationTarget(chainId, body.graduationTargetWei);
+    graduationTargetWei = normalizeDraftGraduationTarget(chainId, body.graduationTargetWei, dbcFields.launchType);
   } catch (error) {
     return json(res, error?.httpStatus || 400, {
       error: error?.message || "Unsupported graduation target for this chain.",
@@ -543,7 +584,7 @@ export async function drafts(req, res) {
         }
 
         const inserted = await db.query(
-          "insert into campaign_drafts (chain_id, creator_wallet, name, ticker, description, category, logo_url, website_url, x_url, other_url, graduation_target_wei, slug, status, visibility) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'draft',$13) returning *",
+          "insert into campaign_drafts (chain_id, creator_wallet, name, ticker, description, category, logo_url, website_url, x_url, other_url, graduation_target_wei, slug, status, visibility, launch_type, dbc_fee_choice, dbc_creator_share_pct, dbc_first_buy_lamports) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'draft',$13,$14,$15,$16,$17) returning *",
           [
             chainId,
             creatorWallet,
@@ -558,6 +599,10 @@ export async function drafts(req, res) {
             graduationTargetWei,
             makeSlug(name, ticker),
             visibility,
+            dbcFields.launchType,
+            dbcFields.dbcFeeChoice,
+            dbcFields.dbcCreatorSharePct,
+            dbcFields.dbcFirstBuyLamports,
           ],
         );
 
@@ -656,6 +701,10 @@ export async function drafts(req, res) {
     deployedAt: null,
     graduationTargetWei,
     scheduledLaunchAt: null,
+    launchType: dbcFields.launchType,
+    dbcFeeChoice: dbcFields.dbcFeeChoice,
+    dbcCreatorSharePct: dbcFields.dbcCreatorSharePct,
+    dbcFirstBuyLamports: dbcFields.dbcFirstBuyLamports,
     createdAt: now,
     updatedAt: now,
   };

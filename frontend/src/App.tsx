@@ -51,6 +51,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { TopBar } from "@/components/TopBar";
 import { LeftBattleSidebar } from "@/components/LeftBattleSidebar";
 import { IncomingChallengeListener } from "@/components/arena/IncomingChallengeListener";
+import { DbcScheduledLaunchListener } from "@/components/dbc/DbcScheduledLaunchListener";
 import { RankPromotionListener } from "@/components/rank/RankPromotionListener";
 import { LiveStreamOverlay } from "@/components/live/LiveStreamOverlay";
 import { Footer } from "@/components/layout/Footer";
@@ -173,6 +174,7 @@ function AppShellLayout({
       <TopBar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} leftSidebarWidth={currentSidebarWidth} />
       <RankPromotionListener />
       <IncomingChallengeListener />
+      <DbcScheduledLaunchListener />
       <LiveStreamOverlay />
       <RewardUnlockFlight />
       <VictoryUnlockModal />

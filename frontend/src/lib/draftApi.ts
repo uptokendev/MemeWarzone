@@ -622,6 +622,10 @@ export type CampaignDraft = {
   deployedAt: string | null;
   graduationTargetWei: string;
   scheduledLaunchAt?: string | null;
+  launchType?: "launchpad" | "dbc";
+  dbcFeeChoice?: string | null;
+  dbcCreatorSharePct?: number | null;
+  dbcFirstBuyLamports?: string | null;
   createdAt: string;
   updatedAt: string;
   tickerReservation?: TickerReservation | null;
@@ -783,6 +787,10 @@ export type CreateDraftInput = {
   graduationMarketKind?: string | null;
   graduationQuoteAsset?: string | null;
   graduationMarketPolicyVersion?: string | null;
+  launchType?: "launchpad" | "dbc";
+  dbcFeeChoice?: string | null;
+  dbcCreatorSharePct?: number | null;
+  dbcFirstBuyLamports?: string | null;
 };
 
 export type SavePromotionInput = {

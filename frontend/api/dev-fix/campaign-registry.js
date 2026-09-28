@@ -263,7 +263,7 @@ export async function upsertCampaignFromDraft(db, input) {
     }
   }
 
-  if (isSolanaChain(chainId)) {
+  if (isSolanaChain(chainId) && String(input.launchType || row?.launch_type || "launchpad") !== "dbc") {
     await enqueueSolanaFeeEscrowInit(db, {
       chainId,
       campaignAddress,

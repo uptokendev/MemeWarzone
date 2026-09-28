@@ -68,6 +68,7 @@ export function augmentDraftLifecycle(draft, row = null) {
     tokenAddress: row?.token_address ?? draft.tokenAddress ?? null,
     deployTxHash: row?.deploy_tx_hash ?? draft.deployTxHash ?? null,
     scheduledLaunchAt: timestamps.scheduledLaunchAt,
+    launchType: row?.launch_type ?? draft.launchType ?? "launchpad",
     draftCreatedAt: timestamps.draftCreatedAt,
     contractDeployedAt: timestamps.contractDeployedAt,
     tradingLaunchAt: timestamps.tradingLaunchAt,
