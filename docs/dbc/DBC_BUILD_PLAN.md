@@ -159,7 +159,7 @@ against the rule "unlinked slices go to the airdrop".
 | 3 | Trading on our site: DBC buy/sell, referral account, creator locked buys (D12), post-graduation trading | Grok, brief `docs/dbc/grok-step-3-trading.md` | **DONE 2026-09-28**: merged (PR #473 + review fixes), devnet ALL CHECKS PASS |
 | 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | **DONE 2026-09-28**: merged (PR #474 + review fixes), devnet ALL CHECKS PASS; migration `20260929_000005` still to apply |
 | 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | **DONE 2026-09-28**: merged (PR #475, 2 reviews), devnet ALL CHECKS PASS; migration `20260929_000006` still to apply |
-| 5b | Creator-fee choice payouts: holders (weekly airdrop rails), buyback & burn (random, <= 0.5% impact), split | Grok | brief after step 5 |
+| 5b | Creator-fee choice payouts: holders (weekly airdrop rails, code-2 leaves), buyback & burn (random, <= 0.5% impact), split | Grok, brief `docs/dbc/grok-step-5b-creator-fee-choice.md` | brief written 2026-09-28; can run in parallel with step 6 |
 | 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | brief written 2026-09-28; starts after step 5 is merged |
 | 7 | Binding tokens via Meteora TokenBadges + liquidity filter | Grok | not started |
 
