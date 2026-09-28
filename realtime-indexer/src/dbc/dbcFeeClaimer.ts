@@ -271,18 +271,14 @@ export async function claimPoolPartnerFees(input: {
       return { pool: input.pool, ids, claimed: 0n, expected, signature, blocked: false, reason: "claim-failed-on-chain" };
     }
   } catch (error) {
-    const msg = String(error instanceof Error ? error.message : error);
-    if (/timeout|not confirmed|was not confirmed/i.test(msg)) {
+    // Once the signed transaction may have reached the network, an error here does not prove it
+    // did not land. Leave the rows pending; the resolver returns them to 'accrued' only when the
+    // signature failed or its blockhash has expired.
+    console.warn("[dbc-fee] claim send/confirm error; left pending for the resolver", {
+      signature,
+      error: String(error instanceof Error ? error.message : error),
+    });
       return { pool: input.pool, ids, claimed: 0n, expected, signature, blocked: false, reason: "claiming" };
-    }
-    await updateIds(
-      input.db,
-      ids,
-      `update public.dbc_fee_accruals
-          set status = 'accrued', claim_signature = null, last_valid_block_height = null
-        where id = any($1::bigint[])`,
-    );
-    throw error;
   }
   return { pool: input.pool, ids, claimed: 0n, expected, signature, blocked: false, reason: "claiming" };
 }

@@ -182,3 +182,15 @@ test("LINK_SQL matches the ledger trade-time filter", () => {
   assert.match(source, /order by l\.linked_at desc, l\.id desc/);
   assert.doesNotMatch(source, /order by \(l\.is_active/);
 });
+
+test("an unseen signature expires by block height, never by slot", async () => {
+  const { resolveSignature } = await import("../dbc/dbcFeePending.js");
+  const conn = (height: number) => ({
+    async getSignatureStatuses() { return { value: [null] }; },
+    async getSlot() { return 370_000_000; },
+    async getBlockHeight() { return height; },
+  }) as any;
+  // mainnet: slot ~20M ahead of block height; the blockhash is still valid
+  assert.equal(await resolveSignature(conn(348_000_000), "sig", 348_000_150), "pending");
+  assert.equal(await resolveSignature(conn(348_000_151), "sig", 348_000_150), "expired");
+});

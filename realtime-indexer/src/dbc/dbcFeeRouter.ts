@@ -274,18 +274,14 @@ export async function routeClaimedAccruals(input: {
       return { totals, ids, signature, destinations: built.destinations, skipped: "route-failed-on-chain" };
     }
   } catch (error) {
-    const msg = String(error instanceof Error ? error.message : error);
-    if (/timeout|not confirmed|was not confirmed/i.test(msg)) {
+    // Once the signed transaction may have reached the network, an error here does not prove it
+    // did not land. Leave the rows pending; the resolver returns them to 'claimed' only when the
+    // signature failed or its blockhash has expired.
+    console.warn("[dbc-fee] route send/confirm error; left pending for the resolver", {
+      signature,
+      error: String(error instanceof Error ? error.message : error),
+    });
       return { totals, ids, signature, destinations: built.destinations, skipped: "routing" };
-    }
-    await updateIds(
-      input.db,
-      ids,
-      `update public.dbc_fee_accruals
-          set status = 'claimed', route_signature = null, last_valid_block_height = null
-        where id = any($1::bigint[])`,
-    );
-    throw error;
   }
   return { totals, ids, signature, destinations: built.destinations, skipped: "routing" };
 }

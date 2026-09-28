@@ -42,7 +42,9 @@ export async function resolveSignature(
   if (status?.err) return "failed";
   const confirmation = String(status?.confirmationStatus || "");
   if (status && (confirmation === "confirmed" || confirmation === "finalized")) return "landed";
-  const slot = await connection.getSlot("confirmed");
-  if (!status && slot > lastValidBlockHeight) return "expired";
+  // lastValidBlockHeight is a block height, not a slot: skipped slots put the slot number far
+  // ahead (~20M on mainnet), so comparing a slot would call every unseen transaction expired.
+  const height = await connection.getBlockHeight("confirmed");
+  if (!status && height > lastValidBlockHeight) return "expired";
   return "pending";
 }

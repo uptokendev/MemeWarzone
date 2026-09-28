@@ -47,7 +47,7 @@ function stubConnection(state: {
     async getSignatureStatuses(sigs: string[]) {
       return { value: sigs.map((s) => state.statuses!.get(s) ?? null) };
     },
-    async getSlot() { return state.slot!; },
+    async getBlockHeight() { return state.slot!; },
     async getTransaction(sig: string) { return state.txs!.get(sig) ?? null; },
     async sendRawTransaction(raw: Buffer) {
       state.sent!.push(raw);
@@ -237,7 +237,7 @@ test("claim sent but unreadable waits; landed marks claimed; failed returns to a
   let wait = await resolvePendingClaims({ db: pg.pool, connection: conn as any, client: client as any });
   assert.equal(wait.waiting >= 1, true);
   conn.state = conn as any;
-  (conn as any).getSlot = async () => 50;
+  (conn as any).getBlockHeight = async () => 50;
   (conn as any).getSignatureStatuses = async () => ({ value: [{ confirmationStatus: "confirmed", err: null }] });
   (conn as any).getTransaction = async () => claimTx(expected);
   const landed = await resolvePendingClaims({ db: pg.pool, connection: conn as any, client: client as any });
