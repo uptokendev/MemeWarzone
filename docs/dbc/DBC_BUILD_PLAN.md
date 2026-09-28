@@ -178,7 +178,7 @@ against the rule "unlinked slices go to the airdrop".
 | 3 | Trading on our site: DBC buy/sell, referral account, creator locked buys (D12), post-graduation trading | Grok, brief `docs/dbc/grok-step-3-trading.md` | **DONE 2026-09-28**: merged (PR #473 + review fixes), devnet ALL CHECKS PASS |
 | 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | **DONE 2026-09-28**: merged (PR #474 + review fixes), devnet ALL CHECKS PASS; migration `20260929_000005` still to apply |
 | 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | **DONE 2026-09-28**: merged (PR #475, 2 reviews), devnet ALL CHECKS PASS; migration `20260929_000006` still to apply |
-| 5b | Creator-fee choice payouts: holders (weekly airdrop rails, code-2 leaves), buyback & burn (random, <= 0.5% impact), split | Grok, brief `docs/dbc/grok-step-5b-creator-fee-choice.md` | brief written 2026-09-28; can run in parallel with step 6 |
+| 5b | Creator-fee choice payouts: holders (weekly airdrop rails, code-2 leaves), buyback & burn (random, <= 0.5% impact), split | Claude (Grok was on step 7), brief `docs/dbc/grok-step-5b-creator-fee-choice.md` | **DONE 2026-09-29**: merged, devnet ALL CHECKS PASS; migration `20260929_000008` still to apply |
 | 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | **DONE 2026-09-29**: merged (PR #476, 2 reviews + Claude's fixes), devnet ALL CHECKS PASS (cases A, B, D19); migration `20260929_000007` still to apply |
 | 7 | Binding tokens (D20-D23): 7a USDC/USDT, 7b stock tokens | Grok, brief `docs/dbc/grok-step-7-binding-tokens.md` | brief written 2026-09-29 |
 
@@ -585,3 +585,28 @@ Devnet proof: **ALL CHECKS PASS**.
   batched scan skips the open curve and picks it up when complete.
 - D19 holders coin: LP 7,999 creator pool / 2,000 protocol.
 Tests: unit 18, integration 8.
+
+### Step 5b (2026-09-29): built by Claude on `claude/dbc-step-5b`, merged
+
+Grok had moved to step 7, so Claude built 5b. Design: the pot per coin is the creator_pool left on the
+collector minus payouts sending or landed; entitlements come from lifetime totals, so a holder share
+that rolls over never reaches the creator of a split coin. Holders are paid through the weekly Solana
+airdrop tree as program code 2 (no treasury change); buybacks buy and burn in one transaction.
+
+Found along the way:
+- **build/dbc-staging did not typecheck** (20 errors from the step 5/6 code), so the indexer's
+  production build (`tsc`) would have failed on deploy; the live branch builds clean. Cause: the DBC
+  and cp-amm SDKs bundle newer @solana/web3.js than the indexer. Fixed with casts at the SDK boundary
+  (`1f40c192`). Missed in the step 5/6 reviews because the review copy linked another checkout's
+  node_modules. **Rule: review with a real `npm ci` in the worktree and run `npx tsc -p tsconfig.json`.**
+- cp-amm 1.4.5 `getQuote().priceImpact` is NaN on these pools; impact is derived from the quote with
+  the pool fee netted out (counting the 0.25% fee alone reads as ~50 bps).
+- The league already skips a campaign's `fee_recipient_address` in biggest_hit and top_earner; DBC
+  campaigns now store the collector there, so buybacks never score. No league code changed.
+
+Devnet proof (funder = devnet deployer, pinned $600 step, 0.25 SOL curves): **ALL CHECKS PASS**.
+Snapshot equals the token accounts (pool vault and creator left out); split creator delta 6,000,000 =
+60%; airdrop_vault delta 44,000,000 = round total; leaves pro rata to the lamport; held sum dropped by
+exactly what was paid; curve buyback and DAMM v2 buyback: spend = quote-vault inflow (190,196 /
+487,466), supply drop = burned, impact 50.00 bps. The code-2 claim itself is the existing airdrop claim
+(the leaf only carries another program byte); it was not claimed on devnet.
