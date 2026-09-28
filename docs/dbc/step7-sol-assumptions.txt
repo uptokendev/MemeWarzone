@@ -1,0 +1,70 @@
+realtime-indexer/src/dbcIndexer.ts:25:const LAMPORTS_PER_SOL = 1_000_000_000;
+realtime-indexer/src/dbcIndexer.ts:286:  const nativeAmount = Number(nativeRaw) / LAMPORTS_PER_SOL;
+realtime-indexer/src/dbcIndexer.ts:308:export function dbcPriceFromSqrt(sqrtPrice: bigint, baseDecimals = 6, quoteDecimals = 9): number {
+realtime-indexer/src/dbcIndexer.ts:368:  const quoteReserveWhole = Number(pool.quoteReserve) / LAMPORTS_PER_SOL;
+frontend/api/dbc/create.js:9:import { NATIVE_MINT } from "@solana/spl-token";
+frontend/api/dbc/create.js:26:  DBC_SOL_USD_MAX_STALE_MS,
+frontend/api/dbc/create.js:29:import { readSolUsdMicros } from "../lib/solUsdMicros.js";
+frontend/api/dbc/create.js:210:    quoteMint: new PublicKey(DBC_QUOTE_MINT),
+frontend/api/dbc/create.js:259:  const pool = deriveDbcPoolAddress(NATIVE_MINT, baseMint, config);
+frontend/api/dbc/create.js:484:    const solUsdMicros = await (deps.readSolUsdMicros || readSolUsdMicros)({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
+frontend/api/dbc/create.js:485:    const step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
+frontend/api/dbc/create.js:683:    const solUsdMicros = await (deps.readSolUsdMicros || readSolUsdMicros)({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
+frontend/api/dbc/create.js:684:    const step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
+frontend/shared/dbcEconomics.mjs:12:export const DBC_QUOTE_MINT = "So11111111111111111111111111111111111111112";
+frontend/shared/dbcEconomics.mjs:20:export const DBC_SUPPLY_CEILING_WHOLE = 1_000_000_000n;
+frontend/shared/dbcEconomics.mjs:47:export const DBC_NANO_LAMPORTS_PER_LAMPORT = 1_000_000_000n;
+frontend/shared/dbcEconomics.mjs:134:export const DBC_LAMPORTS_PER_SOL = 1_000_000_000n;
+frontend/shared/dbcEconomics.mjs:140:export const DBC_SOL_USD_MAX_STALE_MS = 60_000;
+frontend/shared/dbcEconomics.mjs:148:export const DBC_QUOTE_DECIMALS = 9;
+frontend/shared/dbcEconomics.mjs:201:  return (target * DBC_LAMPORTS_PER_SOL + step - 1n) / step;
+frontend/api/dbc/launch-config.js:5:  DBC_SOL_USD_MAX_STALE_MS,
+frontend/api/dbc/launch-config.js:9:import { readSolUsdMicros } from "../lib/solUsdMicros.js";
+frontend/api/dbc/launch-config.js:61:    const readPrice = deps.readSolUsdMicros || readSolUsdMicros;
+frontend/api/dbc/launch-config.js:62:    const solUsdMicros = await readPrice({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
+frontend/api/dbc/launch-config.js:63:    step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
+frontend/api/dbc/launch-config.js:105:    quoteMint: DBC_QUOTE_MINT,
+frontend/src/lib/dbcTrade.mjs:7:import { NATIVE_MINT } from "@solana/spl-token";
+frontend/src/lib/dbcTrade.mjs:155:    if (!mint.equals(NATIVE_MINT)) {
+frontend/api/lib/dbc/dbcConfigLadder.js:10:const NATIVE_MINT = new PublicKey(DBC_QUOTE_MINT);
+frontend/api/lib/dbc/dbcConfigLadder.js:69:    quoteMint: pub(quoteMint || NATIVE_MINT),
+frontend/api/lib/dbc/dbcConfigLadder.js:114:    quoteMint: pub(onChain.quoteMint),
+frontend/api/lib/dbc/dbcConfigLadder.js:272:    const quoteMint = DBC_QUOTE_MINT;
+frontend/api/lib/dbc/dbcConfigLadder.js:310:        quoteMint: NATIVE_MINT,
+frontend/api/lib/dbc/dbcConfigLadder.js:349:        quoteMint: NATIVE_MINT,
+frontend/src/lib/dbcGraduationClaims.mjs:10:  NATIVE_MINT,
+frontend/src/lib/dbcGraduationClaims.mjs:47:  return deriveDammV2PoolAddress(dammConfig, new PublicKey(mint), NATIVE_MINT);
+frontend/src/lib/dbcGraduationClaims.mjs:91:          dpool.tokenBMint.equals(NATIVE_MINT) ? (unclaimed?.feeTokenB ?? unclaimed?.feeQuote ?? 0) : (unclaimed?.feeTokenA ?? 0),
+frontend/src/lib/dbcGraduationClaims.mjs:108:    quoteMint: DBC_QUOTE_MINT,
+frontend/api/lib/dbc/dbcPriceSteps.mjs:4: * index = round(ln(solUsd) / ln(1.02))
+frontend/api/lib/dbc/dbcPriceSteps.mjs:14:export function solPriceStepIndex(solUsdMicros) {
+frontend/api/lib/dbc/dbcPriceSteps.mjs:15:  const micros = BigInt(solUsdMicros);
+frontend/api/lib/dbc/dbcPriceSteps.mjs:17:  const solUsd = Number(micros) / Number(DBC_USD_MICROS);
+frontend/api/lib/dbc/dbcPriceSteps.mjs:18:  if (!Number.isFinite(solUsd) || solUsd <= 0) throw new Error("SOL/USD micros must be a finite positive price");
+frontend/api/lib/dbc/dbcPriceSteps.mjs:19:  return Math.round(Math.log(solUsd) / LN_STEP);
+frontend/api/lib/dbc/dbcPriceSteps.mjs:30:export function solPriceStep(solUsdMicros) {
+frontend/api/lib/dbc/dbcPriceSteps.mjs:31:  const stepIndex = solPriceStepIndex(solUsdMicros);
+realtime-indexer/src/dbc/dbcReferralSweep.ts:13:  NATIVE_MINT,
+realtime-indexer/src/dbc/dbcReferralSweep.ts:65:  const collectorAta = getAssociatedTokenAddressSync(NATIVE_MINT, input.collector.publicKey);
+realtime-indexer/src/dbc/dbcReferralSweep.ts:79:      NATIVE_MINT,
+frontend/src/lib/dbcLockedBuy.mjs:8:  NATIVE_MINT,
+frontend/src/lib/dbcLockedBuy.mjs:102:export { lockAmountDivisible, applySlippageMaxIn, DBC_TRADE_SLIPPAGE_PCT, NATIVE_MINT };
+frontend/api/lib/dbc/dbcLaunchConfigParams.mjs:56:  DBC_QUOTE_DECIMALS,
+frontend/api/lib/dbc/dbcLaunchConfigParams.mjs:123:  const sol = pLamports / 1e9;
+frontend/api/lib/dbc/dbcLaunchConfigParams.mjs:124:  return getSqrtPriceFromPrice(sol.toExponential(18), DBC_TOKEN_DECIMALS, DBC_QUOTE_DECIMALS);
+frontend/api/lib/dbc/dbcLaunchConfigParams.mjs:170:    let s = (soldRaw * BigInt(Math.round(f * 1e9))) / 1_000_000_000n;
+frontend/api/lib/dbc/dbcLaunchConfigParams.mjs:278:      tokenQuoteDecimal: DBC_QUOTE_DECIMALS,
+frontend/api/lib/dbc/dbcLaunchConfigParams.mjs:280:      totalTokenSupply: 1_000_000_000,
+frontend/api/lib/dbc/dbcLaunchConfigParams.mjs:378:      tokenQuoteDecimal: DBC_QUOTE_DECIMALS,
+realtime-indexer/src/dbc/dbcGraduationKeeper.ts:28:import { NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+realtime-indexer/src/dbc/dbcGraduationKeeper.ts:64:export const DBC_QUOTE_MINT = "So11111111111111111111111111111111111111112";
+realtime-indexer/src/dbc/dbcGraduationKeeper.ts:212:    const dammPool = deriveDammV2PoolAddress(dammConfigPk(), new PublicKey(pool!.baseMint), NATIVE_MINT).toBase58();
+realtime-indexer/src/dbc/dbcGraduationKeeper.ts:480:  const quoteIsB = state.tokenBMint.equals(NATIVE_MINT);
+realtime-indexer/src/dbc/dbcGraduationKeeper.ts:498:    quoteMint: DBC_QUOTE_MINT,
+realtime-indexer/src/dbc/dbcGraduationKeeper.ts:651:      const dammPool = deriveDammV2PoolAddress(dammConfigPk(), new PublicKey(pool.baseMint), NATIVE_MINT).toBase58();
+realtime-indexer/src/dbc/dbcGraduationKeeper.ts:694:    const dammPool = String(job.damm_pool || deriveDammV2PoolAddress(dammConfigPk(), new PublicKey(pool.baseMint), NATIVE_MINT).toBase58());
+realtime-indexer/src/dbc/dbcGraduationKeeper.ts:971:      const quoteVault = dpool.tokenBMint.equals(NATIVE_MINT) ? dpool.tokenBVault : dpool.tokenAVault;
+realtime-indexer/src/dbc/dbcGraduationKeeper.ts:1156:      if (dpool.tokenAMint.equals(NATIVE_MINT)) owed = BigInt(String(unclaimed?.feeTokenA || 0));
+realtime-indexer/src/dbc/dbcGraduationState.ts:36:  quoteMint: string;
+realtime-indexer/src/dbc/dbcGraduationState.ts:107:    quoteMint: key(inner.quoteMint ?? inner.quote_mint),
+realtime-indexer/src/dbc/dbcGraduationState.ts:160:      quoteMint: input.quoteMint || "So11111111111111111111111111111111111111112",

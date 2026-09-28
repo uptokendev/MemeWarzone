@@ -95,6 +95,17 @@ These win over anything else in this file or in a brief. A change needs the foun
   that position's fees: 20% is routed to `protocol_vault` like today's LP share, 80% goes into the
   coin's creator pool and is paid out by the step 5b path (holders / split / buyback). The graduation
   payout (the creator's 90% of the migration fee) and the 2% creator reserve still go to the creator.
+- **D20. Binding tokens, first release (founder, 2026-09-29): SOL (default), USDC, USDT, NVDAx, TSLAx,
+  SPYx, QQQx.** AAPLx waits for liquidity (0.8% round trip at 100 SOL). PYUSD and USDG are not possible:
+  Meteora has not badged them and only Meteora can.
+- **D21. Fees that reach us in a bound token are swapped to SOL through Jupiter** (price-impact cap)
+  before the step-5 split; the vaults, leagues and payouts stay SOL. The creator is paid by Meteora in
+  the bound token (trading fee, graduation payout, LP fees).
+- **D22. Stock tokens: the creator confirms the risks in the existing binding dialog**, plus the line
+  that the issuer can switch on a transfer hook later, which would stop trading (DBC and DAMM v2 never
+  run a quote-side hook).
+- **D23. Targets stay $15K / $30K / $50K**, converted into the bound token when the config is made:
+  stablecoins 1:1, stocks at their live price with the ScaledUiAmount multiplier.
 
 **Today's launchpad (separate from DBC)**
 - **D16. Graduation fee routing fixed** (2026-09-28, commit `3c4df96f`, on the work and live branches; gate PASS; keeper + API need a redeploy): the
@@ -169,7 +180,7 @@ against the rule "unlinked slices go to the airdrop".
 | 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | **DONE 2026-09-28**: merged (PR #475, 2 reviews), devnet ALL CHECKS PASS; migration `20260929_000006` still to apply |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails, code-2 leaves), buyback & burn (random, <= 0.5% impact), split | Grok, brief `docs/dbc/grok-step-5b-creator-fee-choice.md` | brief written 2026-09-28; can run in parallel with step 6 |
 | 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | **DONE 2026-09-29**: merged (PR #476, 2 reviews + Claude's fixes), devnet ALL CHECKS PASS (cases A, B, D19); migration `20260929_000007` still to apply |
-| 7 | Binding tokens via Meteora TokenBadges + liquidity filter | Grok | not started |
+| 7 | Binding tokens (D20-D23): 7a USDC/USDT, 7b stock tokens | Grok, brief `docs/dbc/grok-step-7-binding-tokens.md` | brief written 2026-09-29 |
 
 ## Groundwork for steps 3-6 (Claude, 2026-09-28): proven or read from the code
 
