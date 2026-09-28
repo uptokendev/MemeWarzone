@@ -154,16 +154,18 @@ export function createDbcLocksHandler(deps = {}) {
         tx || null,
       ],
     );
-    return json(res, 200, { ok: true, lock: inserted.rows[0], parsed });
+    // The escrow reader returns BigInt fields; JSON.stringify refuses them.
+    const parsedJson = Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v]));
+    return json(res, 200, { ok: true, lock: inserted.rows[0], parsed: parsedJson });
   }
 
   return async function handle(req, res) {
     const method = String(req.method || "").toUpperCase();
     try {
-      if (method === "GET") return handleGet(req, res);
+      if (method === "GET") return await handleGet(req, res);
       if (method === "POST") {
         const body = await readJson(req);
-        return handlePost(body, res);
+        return await handlePost(body, res);
       }
       return badMethod(res);
     } catch (error) {

@@ -195,8 +195,10 @@ export function quoteDbcExactIn({
 }) {
   const currentPoint = new BN(String(nowUnix));
   const swapBaseForQuote = side === "sell";
+  // SDK 1.5.13: state.getPool returns { poolState } and swapQuote2 reads virtualPool.poolState.*
+  // (other calls want the unwrapped pool). Pass the wrapped form whatever the caller holds.
   const quote = client.pool.swapQuote2({
-    virtualPool: pool,
+    virtualPool: pool?.poolState ? pool : { poolState: pool },
     config,
     swapBaseForQuote,
     hasReferral: Boolean(hasReferral),
@@ -230,8 +232,10 @@ export function quoteDbcExactOut({
   activationUnix,
 }) {
   const currentPoint = new BN(String(nowUnix));
+  // SDK 1.5.13: state.getPool returns { poolState } and swapQuote2 reads virtualPool.poolState.*
+  // (other calls want the unwrapped pool). Pass the wrapped form whatever the caller holds.
   const quote = client.pool.swapQuote2({
-    virtualPool: pool,
+    virtualPool: pool?.poolState ? pool : { poolState: pool },
     config,
     swapBaseForQuote: false,
     hasReferral: Boolean(hasReferral),

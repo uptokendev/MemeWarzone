@@ -26,7 +26,9 @@ const {
 const {
   NATIVE_MINT, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction,
 } = requireFromFrontend("@solana/spl-token");
-const { DynamicBondingCurveClient } = requireFromFrontend("@meteora-ag/dynamic-bonding-curve-sdk");
+const { DynamicBondingCurveClient, DynamicBondingCurveIdl } = requireFromFrontend("@meteora-ag/dynamic-bonding-curve-sdk");
+const { BorshCoder } = requireFromFrontend("@coral-xyz/anchor");
+const bs58 = requireFromFrontend("bs58");
 import cryptoNode from "node:crypto";
 
 const ed25519Sign = (message, secretKey) => cryptoNode.sign(null, message, cryptoNode.createPrivateKey({
@@ -217,6 +219,24 @@ function tokenDelta(tx, account) {
   return pick(tx.meta.postTokenBalances) - pick(tx.meta.preTokenBalances);
 }
 
+// DBC emits events through an emit_cpi inner instruction, not in the logs.
+const DBC_EVENT_TAG = "e445a52e51cb9a1d";
+function swapEvent(tx) {
+  const coder = new BorshCoder(DynamicBondingCurveIdl);
+  const keys = tx.transaction.message.staticAccountKeys || tx.transaction.message.accountKeys;
+  for (const group of tx.meta.innerInstructions || []) {
+    for (const ix of group.instructions) {
+      if (keys[ix.programIdIndex]?.toBase58() !== DynamicBondingCurveIdl.address) continue;
+      const data = Buffer.from((bs58.default || bs58).decode(ix.data));
+      if (data.subarray(0, 8).toString("hex") !== DBC_EVENT_TAG) continue;
+      const ev = coder.events.decode(data.subarray(8).toString("base64"));
+      if (ev?.name === "EvtSwap2" || ev?.name === "evtSwap2") return ev.data;
+    }
+  }
+  throw new Error("no EvtSwap2 in the transaction");
+}
+const big = (v) => BigInt(v.toString());
+
 async function main() {
   const conn = new Connection(RPC, "confirmed");
   const genesis = await conn.getGenesisHash();
@@ -302,12 +322,22 @@ async function main() {
   console.log(`buy ${buy.signature}  ${buy.serializedBytes} bytes  ${buy.signerCount} signers  quoted fee bps ${builtBuy.quoted.feeBps}`);
   const buyTx = await getTx(conn, buy.signature);
   const referralDelta = tokenDelta(buyTx, referralAta);
-  const expectedFee = buyLamports * BigInt(DBC_TRADE_FEE_BPS) / 10_000n;
-  const meteoraCut = expectedFee * 20n / 100n;
-  const referralCut = meteoraCut * 20n / 100n;
+  // The fee charged is the one in force when the buy lands; in the anti-sniper window it is
+  // falling, so it can only be at or below what the quote showed.
+  const ev = swapEvent(buyTx);
+  const r = ev.swap_result || ev.swapResult;
+  const tradingFee = big(r.trading_fee ?? r.tradingFee);
+  const protocolFee = big(r.protocol_fee ?? r.protocolFee);
+  const referralFee = big(r.referral_fee ?? r.referralFee);
+  const totalFee = tradingFee + protocolFee + referralFee;
+  const meteoraCut = protocolFee + referralFee;
+  const chargedBps = Number(totalFee * 10_000n / buyLamports);
   check("buy landed", Boolean(buy.signature));
-  check("referral received 20% of Meteora's cut", referralDelta === referralCut, `delta ${referralDelta} expected ${referralCut}`);
-  check("first-seconds fee bps matches the quote", builtBuy.quoted.feeBps >= 200);
+  check("referral account received the event's referral fee", referralDelta === referralFee, `delta ${referralDelta} event ${referralFee}`);
+  check("referral fee is 20% of Meteora's cut", referralFee === meteoraCut * 20n / 100n, `referral ${referralFee} meteora cut ${meteoraCut}`);
+  check("Meteora's cut is 20% of the fee", meteoraCut === totalFee * 20n / 100n, `cut ${meteoraCut} fee ${totalFee}`);
+  check("first-seconds fee is above the base fee", chargedBps > DBC_TRADE_FEE_BPS, `charged ${chargedBps} bps`);
+  check("fee charged is not above the quoted fee", chargedBps <= builtBuy.quoted.feeBps, `charged ${chargedBps} quoted ${builtBuy.quoted.feeBps}`);
 
   const traderToken = getAssociatedTokenAddressSync(mint.publicKey, trader.publicKey);
   const traderTokens = BigInt((await conn.getTokenAccountBalance(traderToken)).value.amount);

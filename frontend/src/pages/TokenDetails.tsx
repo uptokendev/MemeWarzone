@@ -2774,7 +2774,8 @@ const toSeconds = (ts: number): number => {
   // Solana: load campaign curve snapshot (5s poll while Token Details is open).
   // Metrics are derived locally so a CoinGecko tick or wallet-balance tick cannot re-hit RPC.
   useEffect(() => {
-    if (!isSolanaPage || !campaign?.campaign) {
+    // A DBC pool is not a launchpad Campaign account; the launchpad decoder would misread it.
+    if (!isSolanaPage || isDbcPage || !campaign?.campaign) {
       setSolanaCurve(null);
       return;
     }
@@ -2837,7 +2838,7 @@ const toSeconds = (ts: number): number => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [isSolanaPage, campaign?.campaign, campaign?.token]);
+  }, [isSolanaPage, isDbcPage, campaign?.campaign, campaign?.token]);
 
   useEffect(() => {
     if (!isSolanaPage || !solanaCurve) return;
@@ -3041,12 +3042,12 @@ const toSeconds = (ts: number): number => {
           (metrics?.sold ?? 0n) >= metrics.curveSupply)),
   );
   useEffect(() => {
-    if (!isSolanaPage || !solanaCurveClosed) return;
+    if (!isSolanaPage || isDbcPage || !solanaCurveClosed) return;
     const campaignPda = String(solanaCurve?.campaignAddress || campaign?.campaign || "").trim();
     if (campaignPda) void requestSolanaGraduationHandoff(campaignPda);
     const timer = window.setInterval(() => setSolanaBalanceTick((n) => n + 1), 8_000);
     return () => window.clearInterval(timer);
-  }, [campaign?.campaign, isSolanaPage, solanaCurve?.campaignAddress, solanaCurveClosed]);
+  }, [campaign?.campaign, isDbcPage, isSolanaPage, solanaCurve?.campaignAddress, solanaCurveClosed]);
   const verifiedMarketStage = isSolanaPage ? null : unifiedMarket.state?.marketStage;
   // Do NOT treat TOPAZ_PENDING alone as DEX UI — that broke bonding metrics when
   // handoff rows existed without a live pair. Require on-chain graduation or ACTIVE.
