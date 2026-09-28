@@ -581,6 +581,11 @@ test("existing-job guards skip DBC rows", () => {
   assert.match(reconciler, /coalesce\(launch_type, 'launchpad'\) <> 'dbc'/);
   assert.match(registry, /launchType \|\| row\?\.launch_type \|\| "launchpad"\) !== "dbc"/);
   assert.match(fees, /coalesce\(launch_type, 'launchpad'\) <> 'dbc'/);
-  assert.match(live, /DbcTokenPage/);
+  // A DBC coin renders the shared token page in DBC mode; that page must not run the
+  // launchpad curve read or the graduation handoff for it.
+  assert.match(live, /<TokenDetails[\s\S]*?dbcLive=\{isSolanaRoute && dbcCoin \? dbcCoin : null\}/);
+  const details = readFileSync(path.join(root, "frontend/src/pages/TokenDetails.tsx"), "utf8");
+  assert.match(details, /if \(!isSolanaPage \|\| isDbcPage \|\| !campaign\?\.campaign\) \{\n\s+setSolanaCurve\(null\)/);
+  assert.match(details, /if \(!isSolanaPage \|\| isDbcPage \|\| !solanaCurveClosed\) return;/);
   assert.match(live, /fetchDbcToken/);
 });

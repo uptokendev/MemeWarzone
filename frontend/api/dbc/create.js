@@ -865,7 +865,11 @@ export function createDbcCreateHandler(deps = {}) {
             migrationQuoteThresholdLamports: threshold.toString(),
             progressBps: threshold > 0n ? Number((quoteReserve * 10_000n) / threshold) : 0,
             sqrtPrice: String(onChain.sqrtPrice || onChain.sqrt_price || ""),
+            activationPoint: String(onChain.activationPoint || onChain.activation_point || ""),
+            isMigrated: Boolean(onChain.isMigrated || onChain.is_migrated),
+            baseVault: String(onChain.baseVault || onChain.base_vault || ""),
           };
+          payload.migratedPool = row.meta?.solanaGraduation?.pool || row.meta?.dbc?.migration?.pool || null;
         }
       } catch {
         payload.poolLive = null;

@@ -60,6 +60,18 @@ export const DBC_ANTI_SNIPER_END_FEE_BPS = DBC_TRADE_FEE_BPS;
 export const DBC_ANTI_SNIPER_DURATION_SECONDS = 60;
 export const DBC_ANTI_SNIPER_PERIODS = 60;
 
+/**
+ * D12 option A: extra creator buys through our site lock 20% at 30 days, then
+ * 20% every 7 days for 4 periods (fully free after 58 days).
+ */
+export const DBC_LOCK_CLIFF_SECONDS = 30 * 24 * 60 * 60;
+export const DBC_LOCK_FREQUENCY_SECONDS = 7 * 24 * 60 * 60;
+export const DBC_LOCK_PERIODS = 4;
+export const DBC_LOCK_STEP_BPS = 2000;
+export const DBC_JUPITER_LOCK_PROGRAM_ID = "LocpQgucEQHbqNABEYvBvwoxCPsSbG91A1QaQhQQqjn";
+export const DBC_CREATOR_LOCK_COPY =
+  "As the creator, your buys are locked: 20% is released after 30 days, then 20% every 7 days.";
+
 /** D11: creator's first swap in the launch transaction pays the 2% ending fee. */
 export const DBC_ENABLE_FIRST_SWAP_WITH_MIN_FEE = true;
 
