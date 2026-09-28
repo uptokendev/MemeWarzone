@@ -6,8 +6,8 @@ import { Connection, Keypair } from "@solana/web3.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { accrueDbcFees } from "./dbc/dbcFeeAccruals.js";
-import { claimDuePools } from "./dbc/dbcFeeClaimer.js";
-import { CollectorShortError, routeClaimedAccruals } from "./dbc/dbcFeeRouter.js";
+import { claimDuePools, resolvePendingClaims } from "./dbc/dbcFeeClaimer.js";
+import { CollectorShortError, resolvePendingRoutes, routeClaimedAccruals } from "./dbc/dbcFeeRouter.js";
 import { sweepReferralToProtocol } from "./dbc/dbcReferralSweep.js";
 
 function truthy(value: unknown): boolean {
@@ -87,10 +87,12 @@ export async function runDbcFeeRoutingOnce(opts: {
     send,
     minLamports: opts.claimMinLamports ?? claimMinLamports(),
   });
+  if (send) await resolvePendingClaims({ db, connection });
   let routed = null;
-  if (opts.route !== false && !claimed.some((row) => row.blocked)) {
+  if (opts.route !== false) {
     try {
       routed = await routeClaimedAccruals({ db, connection, collector, send });
+      if (send) await resolvePendingRoutes({ db, connection });
     } catch (error) {
       if (error instanceof CollectorShortError) {
         console.error("[dbc-fee] collector short; not routing", { have: error.have.toString(), need: error.need.toString() });

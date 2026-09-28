@@ -1,11 +1,11 @@
 /**
  * Claim partner trading fees from DBC pools into the collector.
- * Claimed lamports are the pool quote-vault outflow in that transaction.
+ * Claims exactly the accrued sum. Sign, persist claiming + signature, then send.
  */
-import { Connection, Keypair, PublicKey, sendAndConfirmTransaction } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import BN from "bn.js";
 import { DynamicBondingCurveClient } from "@meteora-ag/dynamic-bonding-curve-sdk";
-
+import { bs58Encode, resolveSignature } from "./dbcFeePending.js";
 
 export const CLAIM_RECONCILE_TOLERANCE_LAMPORTS = 0n;
 
@@ -13,8 +13,8 @@ type Queryable = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]
 
 export type ClaimResult = {
   pool: string;
+  ids: string[];
   claimed: bigint;
-  counterDrop: bigint;
   expected: bigint;
   signature: string | null;
   blocked: boolean;
@@ -43,7 +43,7 @@ function accountKeysFromTx(tx: any): any[] {
         ...(keys.accountKeysFromLookups?.readonly || []),
       ];
     } catch {
-      // fall through to the compiled lists
+      // fall through
     }
   }
   return message.staticAccountKeys || message.accountKeys || [];
@@ -68,12 +68,106 @@ export function quoteVaultOutflow(tx: any, quoteVault: string): bigint {
 }
 
 async function getTx(connection: Connection, signature: string) {
-  for (let i = 0; i < 20; i += 1) {
-    const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-    if (tx) return tx;
-    await new Promise((r) => setTimeout(r, 1_500));
+  return connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+}
+
+async function updateIds(
+  db: Queryable,
+  ids: string[],
+  sql: string,
+  params: unknown[] = [],
+) {
+  if (!ids.length) return;
+  await db.query(sql, [ids, ...params]);
+}
+
+export async function resolvePendingClaims(input: {
+  db: Queryable;
+  connection: Connection;
+  client?: DynamicBondingCurveClient;
+}): Promise<{ resolved: number; waiting: number; blocked: number }> {
+  const pending = await input.db.query(
+    `select id, pool, collector_amount, claim_signature, last_valid_block_height
+       from public.dbc_fee_accruals
+      where status = 'claiming'
+      order by pool, id`,
+  );
+  let resolved = 0;
+  let waiting = 0;
+  let blocked = 0;
+  const bySig = new Map<string, { pool: string; ids: string[]; expected: bigint; lastValid: number }>();
+  for (const row of pending.rows) {
+    const signature = String(row.claim_signature || "");
+    if (!signature) continue;
+    const group = bySig.get(signature) || {
+      pool: String(row.pool),
+      ids: [],
+      expected: 0n,
+      lastValid: Number(row.last_valid_block_height || 0),
+    };
+    group.ids.push(String(row.id));
+    group.expected += big(row.collector_amount);
+    bySig.set(signature, group);
   }
-  return null;
+  const client = input.client || new DynamicBondingCurveClient(input.connection, "confirmed");
+  for (const [signature, group] of bySig) {
+    const confirmed = await getTx(input.connection, signature);
+    const outcome = confirmed
+      ? (confirmed.meta?.err ? "failed" : "landed")
+      : await resolveSignature(input.connection, signature, group.lastValid);
+    if (outcome === "pending") {
+      waiting += group.ids.length;
+      continue;
+    }
+    if (outcome === "failed" || outcome === "expired") {
+      await updateIds(
+        input.db,
+        group.ids,
+        `update public.dbc_fee_accruals
+            set status = 'accrued', claim_signature = null, last_valid_block_height = null
+          where id = any($1::bigint[])`,
+      );
+      resolved += group.ids.length;
+      continue;
+    }
+    if (!confirmed) {
+      waiting += group.ids.length;
+      continue;
+    }
+    const wrap = await client.state.getPool(new PublicKey(group.pool));
+    const state = wrap?.poolState ?? wrap;
+    const quoteVault = String(state?.quoteVault?.toBase58?.() || state?.quote_vault || "");
+    const claimed = quoteVaultOutflow(confirmed, quoteVault);
+    const delta = claimed - group.expected;
+    const mismatch = (delta < 0n ? -delta : delta) > CLAIM_RECONCILE_TOLERANCE_LAMPORTS;
+    if (mismatch) {
+      await updateIds(
+        input.db,
+        group.ids,
+        `update public.dbc_fee_accruals
+            set status = 'blocked', blocked_reason = $2
+          where id = any($1::bigint[])`,
+        [`claim ${claimed.toString()} expected ${group.expected.toString()} ${signature}`],
+      );
+      console.error("[dbc-fee] claim reconcile mismatch; routing stopped for pool", {
+        pool: group.pool,
+        claimed: claimed.toString(),
+        expected: group.expected.toString(),
+        signature,
+      });
+      blocked += group.ids.length;
+      continue;
+    }
+    await updateIds(
+      input.db,
+      group.ids,
+      `update public.dbc_fee_accruals
+          set status = 'claimed'
+        where id = any($1::bigint[])`,
+    );
+    resolved += group.ids.length;
+  }
+  return { resolved, waiting, blocked };
 }
 
 export async function claimPoolPartnerFees(input: {
@@ -85,95 +179,112 @@ export async function claimPoolPartnerFees(input: {
   minLamports?: bigint;
   client?: DynamicBondingCurveClient;
 }): Promise<ClaimResult> {
-  const expectedRow = await input.db.query(
-    `select coalesce(sum(collector_amount), 0)::text as expected
-       from public.dbc_fee_accruals
-      where pool = $1 and status = 'accrued'`,
+  const inFlight = await input.db.query(
+    `select id from public.dbc_fee_accruals where pool = $1 and status = 'claiming' limit 1`,
     [input.pool],
   );
-  const expected = BigInt(String(expectedRow.rows[0]?.expected || "0"));
+  if ((inFlight.rowCount ?? inFlight.rows.length) > 0) {
+    return { pool: input.pool, ids: [], claimed: 0n, expected: 0n, signature: null, blocked: false, reason: "claiming-in-flight" };
+  }
+  const accrued = await input.db.query(
+    `select id, collector_amount
+       from public.dbc_fee_accruals
+      where pool = $1 and status = 'accrued'
+      order by id`,
+    [input.pool],
+  );
+  const ids = accrued.rows.map((row: { id: unknown }) => String(row.id));
+  const expected = accrued.rows.reduce((sum: bigint, row: { collector_amount: unknown }) => sum + big(row.collector_amount), 0n);
   const min = input.minLamports ?? 1n;
-  if (expected < min) {
-    return { pool: input.pool, claimed: 0n, counterDrop: 0n, expected, signature: null, blocked: false, reason: "below-threshold" };
+  if (!ids.length || expected < min) {
+    return { pool: input.pool, ids, claimed: 0n, expected, signature: null, blocked: false, reason: "below-threshold" };
   }
   const client = input.client || new DynamicBondingCurveClient(input.connection, "confirmed");
   const poolPk = new PublicKey(input.pool);
   const wrap = await client.state.getPool(poolPk);
   const state = wrap?.poolState ?? wrap;
   if (!state) {
-    return { pool: input.pool, claimed: 0n, counterDrop: 0n, expected, signature: null, blocked: true, reason: "pool-unreadable" };
+    return { pool: input.pool, ids, claimed: 0n, expected, signature: null, blocked: false, reason: "pool-unreadable" };
   }
   const owed = big(state.partnerQuoteFee ?? state.partner_quote_fee);
-  const quoteVault = String(state.quoteVault?.toBase58?.() || state.quote_vault || "");
-  if (owed <= 0n) {
-    if (expected > 0n) {
-      await input.db.query(
-        `update public.dbc_fee_accruals
-            set status = 'blocked', blocked_reason = $2
-          where pool = $1 and status = 'accrued'`,
-        [input.pool, `partner-fee-zero expected ${expected.toString()}`],
-      );
-    }
-    return { pool: input.pool, claimed: 0n, counterDrop: 0n, expected, signature: null, blocked: true, reason: "partner-fee-zero" };
+  if (owed < expected) {
+    await updateIds(
+      input.db,
+      ids,
+      `update public.dbc_fee_accruals
+          set status = 'blocked', blocked_reason = $2
+        where id = any($1::bigint[])`,
+      [`owed ${owed.toString()} expected ${expected.toString()}`],
+    );
+    return { pool: input.pool, ids, claimed: 0n, expected, signature: null, blocked: true, reason: "owed-below-expected" };
   }
   if (!input.send) {
-    return { pool: input.pool, claimed: 0n, counterDrop: 0n, expected, signature: null, blocked: false, reason: "dry-run" };
+    return { pool: input.pool, ids, claimed: 0n, expected, signature: null, blocked: false, reason: "dry-run" };
   }
-  const tx = await client.partner.claimPartnerTradingFee({
+  const tx: Transaction = await client.partner.claimPartnerTradingFee({
     feeClaimer: input.collector.publicKey,
     payer: input.collector.publicKey,
     pool: poolPk,
     maxBaseAmount: new BN(0),
-    maxQuoteAmount: new BN(owed.toString()),
+    maxQuoteAmount: new BN(expected.toString()),
   });
+  const latest = await input.connection.getLatestBlockhash("confirmed");
   tx.feePayer = input.collector.publicKey;
-  const signature = await sendAndConfirmTransaction(input.connection, tx, [input.collector], { commitment: "confirmed" });
-  const confirmed = await getTx(input.connection, signature);
-  if (!confirmed) {
-    return { pool: input.pool, claimed: 0n, counterDrop: 0n, expected, signature, blocked: true, reason: "claim-tx-unreadable" };
-  }
-  const claimed = quoteVaultOutflow(confirmed, quoteVault);
-  let owedAfter = owed;
-  for (let i = 0; i < 20; i += 1) {
-    const afterWrap = await client.state.getPool(poolPk);
-    const after = afterWrap?.poolState ?? afterWrap;
-    if (!after) {
-      await new Promise((r) => setTimeout(r, 1_500));
-      continue;
-    }
-    owedAfter = big(after?.partnerQuoteFee ?? after?.partner_quote_fee);
-    if (owedAfter !== owed || i === 19) break;
-    await new Promise((r) => setTimeout(r, 1_500));
-  }
-  const counterDrop = owed - owedAfter;
-  const deltaExpected = claimed - expected;
-  const deltaCounter = claimed - counterDrop;
-  const blocked =
-    (deltaExpected < 0n ? -deltaExpected : deltaExpected) > CLAIM_RECONCILE_TOLERANCE_LAMPORTS
-    || (deltaCounter < 0n ? -deltaCounter : deltaCounter) > CLAIM_RECONCILE_TOLERANCE_LAMPORTS;
-  if (blocked) {
-    await input.db.query(
-      `update public.dbc_fee_accruals
-          set status = 'blocked', claim_signature = $2, blocked_reason = $3
-        where pool = $1 and status = 'accrued'`,
-      [input.pool, signature, `claim ${claimed.toString()} counter ${counterDrop.toString()} expected ${expected.toString()}`],
-    );
-    console.error("[dbc-fee] claim reconcile mismatch; routing stopped for pool", {
-      pool: input.pool,
-      claimed: claimed.toString(),
-      counterDrop: counterDrop.toString(),
-      expected: expected.toString(),
-      signature,
-    });
-    return { pool: input.pool, claimed, counterDrop, expected, signature, blocked: true, reason: "reconcile-mismatch" };
-  }
-  await input.db.query(
+  tx.recentBlockhash = latest.blockhash;
+  tx.partialSign(input.collector);
+  const serialized = tx.serialize();
+  let signature = bs58Encode(serialized.subarray(1, 65));
+  await updateIds(
+    input.db,
+    ids,
     `update public.dbc_fee_accruals
-        set status = 'claimed', claim_signature = $2
-      where pool = $1 and status = 'accrued'`,
-    [input.pool, signature],
+        set status = 'claiming', claim_signature = $2, last_valid_block_height = $3
+      where id = any($1::bigint[])`,
+    [signature, latest.lastValidBlockHeight],
   );
-  return { pool: input.pool, claimed, counterDrop, expected, signature, blocked: false };
+  try {
+    const sent = await input.connection.sendRawTransaction(serialized, { skipPreflight: false, maxRetries: 8 });
+    if (sent && sent !== signature) {
+      await updateIds(
+        input.db,
+        ids,
+        `update public.dbc_fee_accruals
+            set claim_signature = $2
+          where id = any($1::bigint[])`,
+        [sent],
+      );
+      signature = sent;
+    }
+    const confirmation = await input.connection.confirmTransaction({
+      signature,
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+    }, "confirmed");
+    if (confirmation.value.err) {
+      await updateIds(
+        input.db,
+        ids,
+        `update public.dbc_fee_accruals
+            set status = 'accrued', claim_signature = null, last_valid_block_height = null
+          where id = any($1::bigint[])`,
+      );
+      return { pool: input.pool, ids, claimed: 0n, expected, signature, blocked: false, reason: "claim-failed-on-chain" };
+    }
+  } catch (error) {
+    const msg = String(error instanceof Error ? error.message : error);
+    if (/timeout|not confirmed|was not confirmed/i.test(msg)) {
+      return { pool: input.pool, ids, claimed: 0n, expected, signature, blocked: false, reason: "claiming" };
+    }
+    await updateIds(
+      input.db,
+      ids,
+      `update public.dbc_fee_accruals
+          set status = 'accrued', claim_signature = null, last_valid_block_height = null
+        where id = any($1::bigint[])`,
+    );
+    throw error;
+  }
+  return { pool: input.pool, ids, claimed: 0n, expected, signature, blocked: false, reason: "claiming" };
 }
 
 export async function claimDuePools(input: {
@@ -182,11 +293,14 @@ export async function claimDuePools(input: {
   collector: Keypair;
   send: boolean;
   minLamports?: bigint;
+  client?: DynamicBondingCurveClient;
 }): Promise<ClaimResult[]> {
+  await resolvePendingClaims({ db: input.db, connection: input.connection, client: input.client });
   const due = await input.db.query(
     `select pool, coalesce(sum(collector_amount),0)::text as expected
        from public.dbc_fee_accruals
       where status = 'accrued'
+        and pool not in (select distinct pool from public.dbc_fee_accruals where status = 'claiming')
       group by pool
      having coalesce(sum(collector_amount),0) >= $1`,
     [(input.minLamports ?? 1n).toString()],
@@ -200,9 +314,8 @@ export async function claimDuePools(input: {
       pool: String(row.pool),
       send: input.send,
       minLamports: input.minLamports,
+      client: input.client,
     }));
   }
   return results;
 }
-
-

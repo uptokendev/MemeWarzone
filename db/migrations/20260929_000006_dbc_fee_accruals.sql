@@ -1,5 +1,6 @@
 -- DBC collector fee accruals (2026-09-28) and Solana-safe reward_events addresses.
 -- The original reward_events CHECKs required lowercase; Solana base58 is mixed-case.
+-- claiming/routing + last_valid_block_height: sign, persist, then send (review 1).
 begin;
 
 alter table public.reward_events drop constraint if exists reward_events_txhash_lowercase;
@@ -29,10 +30,13 @@ create table if not exists public.dbc_fee_accruals (
   status text not null,
   claim_signature text,
   route_signature text,
+  last_valid_block_height bigint,
   blocked_reason text,
   created_at timestamptz not null default now(),
   unique (tx_hash, log_index),
-  constraint dbc_fee_accruals_status_chk check (status in ('accrued', 'claimed', 'routed', 'blocked')),
+  constraint dbc_fee_accruals_status_chk check (status in (
+    'accrued', 'claiming', 'claimed', 'routing', 'routed', 'blocked'
+  )),
   constraint dbc_fee_accruals_profile_chk check (profile in ('standard_linked', 'standard_unlinked', 'og_linked')),
   constraint dbc_fee_accruals_nonneg_chk check (
     fee_total >= 0 and trading_fee >= 0 and protocol_fee >= 0 and referral_fee >= 0

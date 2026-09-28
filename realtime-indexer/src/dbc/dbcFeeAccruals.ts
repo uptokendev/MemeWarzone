@@ -21,8 +21,9 @@ select r.is_og
   from public.wallet_recruiter_links l
   join public.recruiters r on r.id = l.recruiter_id
  where l.wallet_address = $1
- order by (l.is_active and l.linked_at <= $2 and (l.detached_at is null or l.detached_at > $2)) desc,
-          l.linked_at desc
+   and l.linked_at <= $2
+   and (l.detached_at is null or l.detached_at > $2)
+ order by l.linked_at desc, l.id desc
  limit 1`;
 
 export async function resolveTraderProfile(
@@ -84,13 +85,30 @@ function bigintMeta(meta: Record<string, unknown>, ...keys: string[]): bigint {
   return 0n;
 }
 
-export async function accrueDbcFees(db: Queryable, opts: { limit?: number } = {}): Promise<{ scanned: number; accrued: number; skipped: number }> {
+export async function accrueDbcFees(db: Queryable, opts: { limit?: number } = {}): Promise<{ scanned: number; accrued: number; skipped: number; missingActivity: number }> {
   const limit = Math.max(1, Math.min(5_000, opts.limit ?? 500));
+  const missing = await db.query(
+    `select count(*)::int as n
+       from public.curve_trades t
+       left join public.activity_events a
+         on a.chain_id = t.chain_id and a.tx_hash = t.tx_hash and a.log_index = t.log_index
+       left join public.dbc_fee_accruals f
+         on f.tx_hash = t.tx_hash and f.log_index = t.log_index
+      where t.chain_id = $1
+        and t.venue = 'dbc'
+        and f.tx_hash is null
+        and a.tx_hash is null`,
+    [SOLANA_CHAIN_ID],
+  );
+  const missingActivity = Number(missing.rows[0]?.n || 0);
+  if (missingActivity > 0) {
+    console.warn("[dbc-fee] DBC trades waiting on activity_events", { missingActivity });
+  }
   const found = await db.query(
     `select t.campaign_address, t.tx_hash, t.log_index, t.wallet, t.block_number, t.block_time,
             a.meta as activity_meta, c.meta as campaign_meta
        from public.curve_trades t
-       left join public.activity_events a
+       join public.activity_events a
          on a.chain_id = t.chain_id and a.tx_hash = t.tx_hash and a.log_index = t.log_index
        left join public.campaigns c
          on c.chain_id = t.chain_id and c.campaign_address = t.campaign_address
@@ -106,12 +124,19 @@ export async function accrueDbcFees(db: Queryable, opts: { limit?: number } = {}
   let accrued = 0;
   let skipped = 0;
   for (const row of found.rows) {
-    const meta = (row.activity_meta && typeof row.activity_meta === "object") ? row.activity_meta : {};
+    const rawMeta = row.activity_meta;
+    const meta = typeof rawMeta === "string"
+      ? JSON.parse(rawMeta)
+      : (rawMeta && typeof rawMeta === "object" ? rawMeta : {});
     const tradingFee = bigintMeta(meta, "trading_fee", "tradingFee");
     const protocolFee = bigintMeta(meta, "protocol_fee", "protocolFee");
     const referralFee = bigintMeta(meta, "referral_fee", "referralFee");
     if (tradingFee + protocolFee + referralFee <= 0n) {
       skipped += 1;
+      console.warn("[dbc-fee] activity row has no EvtSwap2 fees; not accruing", {
+        tx: String(row.tx_hash),
+        logIndex: Number(row.log_index),
+      });
       continue;
     }
     const campaignMeta = row.campaign_meta && typeof row.campaign_meta === "object" ? row.campaign_meta : {};
@@ -204,5 +229,5 @@ export async function accrueDbcFees(db: Queryable, opts: { limit?: number } = {}
     );
     accrued += 1;
   }
-  return { scanned: found.rows.length, accrued, skipped };
+  return { scanned: found.rows.length, accrued, skipped, missingActivity };
 }

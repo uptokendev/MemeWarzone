@@ -32,6 +32,7 @@
     "test:solana-market-stats": "tsx --test src/tests/solanaMarketStats.test.ts",
     "test:dbc-indexer": "tsx --test src/tests/dbcIndexer.test.ts",
     "test:dbc-fee-routing": "tsx --test src/tests/dbcFeeRouting.test.ts",
+    "test:dbc-fee-routing-integration": "tsx --test src/tests/dbcFeeRouting.integration.test.ts",
     "job:refresh-solana-market-stats": "node --enable-source-maps dist/jobs/refreshSolanaMarketStats.js",
     "job:refresh-solana-market-stats:dev": "tsx src/jobs/refreshSolanaMarketStats.ts",
     "job:reconcile-graduations-once": "node --enable-source-maps dist/jobs/reconcileGraduationsOnce.js",

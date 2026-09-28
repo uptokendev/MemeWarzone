@@ -16,13 +16,12 @@ const {
   splitDbcCollectorFee,
   routedLamports,
 } = await import("../dbc/dbcFeeSplit.js");
-const { rewardEventRow, resolveTraderProfile } = await import("../dbc/dbcFeeAccruals.js");
+const { rewardEventRow } = await import("../dbc/dbcFeeAccruals.js");
 const { CLAIM_RECONCILE_TOLERANCE_LAMPORTS, quoteVaultOutflow } = await import("../dbc/dbcFeeClaimer.js");
 const {
-  CollectorShortError,
   buildRouteTransfers,
+  collectorNeed,
   rewardVaults,
-  routeClaimedAccruals,
   sumClaimedSlices,
 } = await import("../dbc/dbcFeeRouter.js");
 const { referralSweepKeepsAccount } = await import("../dbc/dbcReferralSweep.js");
@@ -142,32 +141,8 @@ test("quote vault outflow is pre minus post token amount", () => {
   assert.equal(CLAIM_RECONCILE_TOLERANCE_LAMPORTS, 0n);
 });
 
-test("router refuses when the collector is short", async () => {
-  const collector = Keypair.generate();
-  const db = {
-    async query(sql: string) {
-      if (sql.includes("status = 'blocked'")) return { rows: [], rowCount: 0 };
-      return {
-        rows: [{
-          league_weekly: "100", league_monthly: "200", recruiter: "50", squad: "10",
-          airdrop: "0", protocol: "40", creator_pool: "0",
-        }],
-      };
-    },
-  };
-  const connection = {
-    async getBalance() { return 10; },
-    async getMinimumBalanceForRentExemption() { return 890880; },
-  };
-  await assert.rejects(
-    () => routeClaimedAccruals({
-      db: db as any,
-      connection: connection as any,
-      collector,
-      send: true,
-    }),
-    (error: unknown) => error instanceof CollectorShortError,
-  );
+test("collector need keeps creator_pool on the collector", () => {
+  assert.equal(collectorNeed(70n, 20n, 890880n, 5000n), 70n + 20n + 890880n + 5000n);
 });
 
 test("route transfers skip zero slices and never send creator pool", () => {
@@ -200,17 +175,10 @@ test("fee choice keep is creator mode; holders/split/buyback are platform", () =
   assert.equal(profileFromLink({ is_og: true }), "og_linked");
 });
 
-test("trader profile lookup prefers the link active at trade time", async () => {
-  let seen: unknown[] = [];
-  const db = {
-    async query(sql: string, params: unknown[]) {
-      seen = params;
-      assert.match(sql, /linked_at <= \$2/);
-      assert.match(sql, /is_active/);
-      return { rows: [{ is_og: false }] };
-    },
-  };
-  const profile = await resolveTraderProfile(db as any, "Trader111", new Date("2026-09-28T00:00:00Z"));
-  assert.equal(profile, "standard_linked");
-  assert.equal(seen[0], "Trader111");
+test("LINK_SQL matches the ledger trade-time filter", () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbc/dbcFeeAccruals.ts"), "utf8");
+  assert.match(source, /l\.linked_at <= \$2/);
+  assert.match(source, /l\.detached_at is null or l\.detached_at > \$2/);
+  assert.match(source, /order by l\.linked_at desc, l\.id desc/);
+  assert.doesNotMatch(source, /order by \(l\.is_active/);
 });

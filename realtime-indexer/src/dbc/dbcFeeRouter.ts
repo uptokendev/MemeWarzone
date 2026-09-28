@@ -1,6 +1,7 @@
 /**
  * Route claimed DBC collector slices to the rewards treasury vaults.
  * One System-transfer transaction per run. Creator-pool amounts stay on the collector.
+ * Sign, persist routing + signature, then send. Update by id.
  */
 import {
   Connection,
@@ -9,6 +10,7 @@ import {
   SystemProgram,
   Transaction,
 } from "@solana/web3.js";
+import { bs58Encode, resolveSignature } from "./dbcFeePending.js";
 
 export const TREASURY_PROGRAM_ID = "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX";
 
@@ -59,6 +61,10 @@ export function sumClaimedSlices(rows: Array<Record<string, unknown>>): RouteTot
   return totals;
 }
 
+export function collectorNeed(routed: bigint, heldCreatorPool: bigint, rent: bigint, fee: bigint): bigint {
+  return routed + heldCreatorPool + rent + fee;
+}
+
 export function buildRouteTransfers(input: {
   collector: PublicKey;
   totals: RouteTotals;
@@ -91,15 +97,6 @@ export class CollectorShortError extends Error {
   }
 }
 
-async function getTx(connection: Connection, signature: string) {
-  for (let i = 0; i < 20; i += 1) {
-    const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-    if (tx) return tx;
-    await new Promise((r) => setTimeout(r, 1_500));
-  }
-  return null;
-}
-
 export function nativeDelta(tx: any, pubkey: string): bigint {
   const message = tx?.transaction?.message;
   let keys: any[] = [];
@@ -118,51 +115,177 @@ export function nativeDelta(tx: any, pubkey: string): bigint {
   return BigInt(tx.meta.postBalances[index]) - BigInt(tx.meta.preBalances[index]);
 }
 
+async function updateIds(db: Queryable, ids: string[], sql: string, params: unknown[] = []) {
+  if (!ids.length) return;
+  await db.query(sql, [ids, ...params]);
+}
+
+export async function resolvePendingRoutes(input: {
+  db: Queryable;
+  connection: Connection;
+}): Promise<{ resolved: number; waiting: number }> {
+  const pending = await input.db.query(
+    `select id, route_signature, last_valid_block_height
+       from public.dbc_fee_accruals
+      where status = 'routing'
+      order by id`,
+  );
+  const bySig = new Map<string, { ids: string[]; lastValid: number }>();
+  for (const row of pending.rows) {
+    const signature = String(row.route_signature || "");
+    if (!signature) continue;
+    const group = bySig.get(signature) || { ids: [], lastValid: Number(row.last_valid_block_height || 0) };
+    group.ids.push(String(row.id));
+    bySig.set(signature, group);
+  }
+  let resolved = 0;
+  let waiting = 0;
+  for (const [signature, group] of bySig) {
+    const confirmed = await input.connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+    const outcome = confirmed
+      ? (confirmed.meta?.err ? "failed" : "landed")
+      : await resolveSignature(input.connection, signature, group.lastValid);
+    if (outcome === "pending") {
+      waiting += group.ids.length;
+      continue;
+    }
+    if (outcome === "failed" || outcome === "expired") {
+      await updateIds(
+        input.db,
+        group.ids,
+        `update public.dbc_fee_accruals
+            set status = 'claimed', route_signature = null, last_valid_block_height = null
+          where id = any($1::bigint[])`,
+      );
+      resolved += group.ids.length;
+      continue;
+    }
+    await updateIds(
+      input.db,
+      group.ids,
+      `update public.dbc_fee_accruals
+          set status = 'routed'
+        where id = any($1::bigint[])`,
+    );
+    resolved += group.ids.length;
+  }
+  return { resolved, waiting };
+}
+
 export async function routeClaimedAccruals(input: {
   db: Queryable;
   connection: Connection;
   collector: Keypair;
   send: boolean;
   treasuryProgram?: string;
-}): Promise<{ totals: RouteTotals; signature: string | null; destinations: Array<{ seed: string; lamports: bigint; to: string }>; skipped: string | null }> {
-  const blocked = await input.db.query(
-    `select 1 from public.dbc_fee_accruals where status = 'blocked' limit 1`,
+}): Promise<{
+  totals: RouteTotals;
+  ids: string[];
+  signature: string | null;
+  destinations: Array<{ seed: string; lamports: bigint; to: string }>;
+  skipped: string | null;
+}> {
+  await resolvePendingRoutes({ db: input.db, connection: input.connection });
+  const stillRouting = await input.db.query(
+    `select id from public.dbc_fee_accruals where status = 'routing' limit 1`,
   );
-  if ((blocked.rowCount ?? blocked.rows.length) > 0) {
-    return { totals: sumClaimedSlices([]), signature: null, destinations: [], skipped: "blocked-pool" };
+  if ((stillRouting.rowCount ?? stillRouting.rows.length) > 0) {
+    return { totals: sumClaimedSlices([]), ids: [], signature: null, destinations: [], skipped: "routing-in-flight" };
+  }
+  const blocked = await input.db.query(
+    `select distinct pool, blocked_reason from public.dbc_fee_accruals where status = 'blocked'`,
+  );
+  if (blocked.rows.length) {
+    console.error("[dbc-fee] blocked pools (other pools still route)", blocked.rows.map((row: { pool: string; blocked_reason: string }) => ({
+      pool: row.pool,
+      reason: row.blocked_reason,
+    })));
   }
   const rows = await input.db.query(
-    `select league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool
-       from public.dbc_fee_accruals where status = 'claimed'`,
+    `select id, league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool
+       from public.dbc_fee_accruals where status = 'claimed' order by id`,
   );
+  const ids = rows.rows.map((row: { id: unknown }) => String(row.id));
   const totals = sumClaimedSlices(rows.rows);
-  if (totals.routed <= 0n) {
-    return { totals, signature: null, destinations: [], skipped: "nothing-to-route" };
+  if (!ids.length || totals.routed <= 0n) {
+    return { totals, ids, signature: null, destinations: [], skipped: "nothing-to-route" };
   }
+  const held = await input.db.query(
+    `select coalesce(sum(creator_pool), 0)::text as held
+       from public.dbc_fee_accruals
+      where status in ('claimed', 'routing', 'routed')`,
+  );
+  const heldCreatorPool = BigInt(String(held.rows[0]?.held || "0"));
   const vaults = rewardVaults(input.treasuryProgram);
   const built = buildRouteTransfers({ collector: input.collector.publicKey, totals, vaults });
   const have = BigInt(await input.connection.getBalance(input.collector.publicKey, "confirmed"));
   const rent = BigInt(await input.connection.getMinimumBalanceForRentExemption(0));
-  if (have < totals.routed + rent) {
-    throw new CollectorShortError(have, totals.routed + rent);
-  }
-  if (!input.send) {
-    return { totals, signature: null, destinations: built.destinations, skipped: "dry-run" };
-  }
   const latest = await input.connection.getLatestBlockhash("confirmed");
   const tx = new Transaction();
   tx.feePayer = input.collector.publicKey;
   tx.recentBlockhash = latest.blockhash;
   for (const ix of built.instructions) tx.add(ix);
-  tx.sign(input.collector);
-  const signature = await input.connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
-  const confirmed = await getTx(input.connection, signature);
-  if (!confirmed) {
-    throw new Error(`DBC route transaction not readable: ${signature}`);
+  const feeMsg = await input.connection.getFeeForMessage(tx.compileMessage(), "confirmed");
+  const fee = BigInt(feeMsg?.value ?? 5_000);
+  const need = collectorNeed(totals.routed, heldCreatorPool, rent, fee);
+  if (have < need) {
+    throw new CollectorShortError(have, need);
   }
-  await input.db.query(
-    `update public.dbc_fee_accruals set status = 'routed', route_signature = $1 where status = 'claimed'`,
-    [signature],
+  if (!input.send) {
+    return { totals, ids, signature: null, destinations: built.destinations, skipped: "dry-run" };
+  }
+  tx.partialSign(input.collector);
+  const serialized = tx.serialize();
+  let signature = bs58Encode(serialized.subarray(1, 65));
+  await updateIds(
+    input.db,
+    ids,
+    `update public.dbc_fee_accruals
+        set status = 'routing', route_signature = $2, last_valid_block_height = $3
+      where id = any($1::bigint[])`,
+    [signature, latest.lastValidBlockHeight],
   );
-  return { totals, signature, destinations: built.destinations, skipped: null };
+  try {
+    const sent = await input.connection.sendRawTransaction(serialized, { skipPreflight: false, maxRetries: 8 });
+    if (sent && sent !== signature) {
+      await updateIds(
+        input.db,
+        ids,
+        `update public.dbc_fee_accruals
+            set route_signature = $2
+          where id = any($1::bigint[])`,
+        [sent],
+      );
+      signature = sent;
+    }
+    const confirmation = await input.connection.confirmTransaction({
+      signature,
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+    }, "confirmed");
+    if (confirmation.value.err) {
+      await updateIds(
+        input.db,
+        ids,
+        `update public.dbc_fee_accruals
+            set status = 'claimed', route_signature = null, last_valid_block_height = null
+          where id = any($1::bigint[])`,
+      );
+      return { totals, ids, signature, destinations: built.destinations, skipped: "route-failed-on-chain" };
+    }
+  } catch (error) {
+    const msg = String(error instanceof Error ? error.message : error);
+    if (/timeout|not confirmed|was not confirmed/i.test(msg)) {
+      return { totals, ids, signature, destinations: built.destinations, skipped: "routing" };
+    }
+    await updateIds(
+      input.db,
+      ids,
+      `update public.dbc_fee_accruals
+          set status = 'claimed', route_signature = null, last_valid_block_height = null
+        where id = any($1::bigint[])`,
+    );
+    throw error;
+  }
+  return { totals, ids, signature, destinations: built.destinations, skipped: "routing" };
 }
