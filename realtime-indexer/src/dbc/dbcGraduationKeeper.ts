@@ -78,14 +78,13 @@ async function campaignQuoteMint(db: Queryable, pool: string) {
 }
 
 async function quoteMintFromPool(client: DynamicBondingCurveClient, pool: { config: string }) {
-  try {
-    const wrap = await client.state.getPoolConfig(new PublicKey(pool.config));
-    const inner = wrap?.poolConfig ?? wrap;
-    const mint = inner?.quoteMint?.toBase58?.() || inner?.quoteMint || inner?.quote_mint;
-    return quoteMintPk(mint);
-  } catch {
-    return quoteMintPk(DBC_QUOTE_MINT);
-  }
+  // No fallback to SOL: for a USDC-bound coin that would derive the wrong DAMM pool. A failed read
+  // throws, and the resolver leaves the job pending for the next pass.
+  const wrap: any = await client.state.getPoolConfig(new PublicKey(pool.config));
+  const inner = wrap?.poolConfig ?? wrap;
+  const mint = inner?.quoteMint?.toBase58?.() || inner?.quoteMint || inner?.quote_mint;
+  if (!mint) throw new Error(`pool config ${pool.config} has no quote mint`);
+  return quoteMintPk(mint);
 }
 export const DBC_MIGRATION_FEE_OPTION_CUSTOMIZABLE = 6;
 const BACKOFF_SECONDS = [30, 60, 120, 300];
