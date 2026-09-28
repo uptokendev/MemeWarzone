@@ -215,6 +215,12 @@ function nativeDelta(tx, pubkey) {
   if (i < 0) return 0n;
   return BigInt(tx.meta.postBalances[i]) - BigInt(tx.meta.preBalances[i]);
 }
+function tokenDelta(tx, account) {
+  const keys = tx.transaction.message.staticAccountKeys || tx.transaction.message.accountKeys;
+  const i = keys.findIndex((k) => k.equals?.(account) || k.toBase58?.() === account.toBase58());
+  const pick = (list) => BigInt(list.find((b) => b.accountIndex === i)?.uiTokenAmount.amount ?? 0);
+  return pick(tx.meta.postTokenBalances) - pick(tx.meta.preTokenBalances);
+}
 
 async function swapExactIn(client, conn, owner, pool, amountIn, sell) {
   const tx = await client.pool.swap2({
@@ -296,20 +302,37 @@ async function main() {
     campaign: poolAddr, token: mint.publicKey.toBase58(), creator: creator.publicKey.toBase58(), migrated: false,
   });
   console.log("indexer pass", result);
-  const rows = db.trades.filter((t) => t.wallet === trader.publicKey.toBase58() || true);
-  console.log("rows", rows.map((r) => ({ side: r.side, sol: r.bnb_amount_raw, tokens: r.token_amount_raw, tx: r.tx_hash, venue: r.venue, log: r.log_index })));
+  const rows = db.trades;
+  console.log("rows", rows.map((r) => ({ side: r.side, sol: r.bnb_amount_raw, tokens: r.token_amount_raw, wallet: r.wallet, tx: r.tx_hash, venue: r.venue, log: r.log_index })));
 
+  // Every indexed number must equal what moved on chain in that transaction. No referral on these
+  // swaps, so the whole SOL leg (fee included) moves through the pool's quote vault.
+  const poolState = (await client.state.getPool(new PublicKey(poolAddr)))?.poolState;
+  const pState = poolState;
+  const quoteVault = pState.quoteVault;
+  const baseVault = pState.baseVault;
   for (const [label, sig, side] of [["buy1", sigBuy1, "buy"], ["buy2", sigBuy2, "buy"], ["sell", sigSell, "sell"]]) {
     const tx = await getTx(conn, sig);
     const row = rows.find((r) => r.tx_hash === sig);
     check(`${label} indexed`, Boolean(row), row?.bnb_amount_raw);
-    check(`${label} venue is dbc`, row?.venue === "dbc");
-    check(`${label} log_index < 20000`, Number(row?.log_index) < 20_000);
-    if (row && side === "buy") {
-      const spent = -nativeDelta(tx, trader.publicKey);
-      const indexed = BigInt(row.bnb_amount_raw);
-      const close = indexed === buy1 || indexed === buy2 || (indexed > 0n && spent > 0n);
-      check(`${label} SOL in matches the swap (incl. fee)`, close, `indexed ${indexed} walletDelta ${-spent}`);
+    if (!row) continue;
+    check(`${label} venue is dbc`, row.venue === "dbc");
+    check(`${label} log_index < 20000`, Number(row.log_index) < 20_000);
+    check(`${label} side`, row.side === side, row.side);
+    check(`${label} wallet is the trader`, row.wallet === trader.publicKey.toBase58(), row.wallet);
+    const sol = BigInt(row.bnb_amount_raw);
+    const tok = BigInt(row.token_amount_raw);
+    const qv = tokenDelta(tx, quoteVault);
+    const bv = tokenDelta(tx, baseVault);
+    const tt = tokenDelta(tx, traderToken);
+    if (side === "buy") {
+      check(`${label} SOL in (fee incl.) = quote vault in`, sol === qv, `indexed ${sol} vault ${qv}`);
+      check(`${label} tokens = base vault out`, tok === -bv, `indexed ${tok} vault ${bv}`);
+      check(`${label} tokens = trader received`, tok === tt, `indexed ${tok} trader ${tt}`);
+    } else {
+      check(`${label} SOL out (after fee) = quote vault out`, sol === -qv, `indexed ${sol} vault ${qv}`);
+      check(`${label} tokens = base vault in`, tok === bv, `indexed ${tok} vault ${bv}`);
+      check(`${label} tokens = trader sent`, tok === -tt, `indexed ${tok} trader ${tt}`);
     }
   }
   check("two buys and a sell were written", rows.filter((r) => r.side === "buy").length >= 2 && rows.some((r) => r.side === "sell"));

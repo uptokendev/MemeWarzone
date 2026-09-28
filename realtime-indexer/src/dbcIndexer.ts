@@ -281,9 +281,11 @@ export function curveTradeFromSwap(input: {
 export function dbcPriceFromSqrt(sqrtPrice: bigint, baseDecimals = 6, quoteDecimals = 9): number {
   const q64 = 2n ** 64n;
   if (sqrtPrice <= 0n) return 0;
-  const scaled = (sqrtPrice * sqrtPrice * (10n ** BigInt(baseDecimals)) * 1_000_000_000n)
+  // 1e18 scale: a memecoin trades far below 1e-9 SOL per token, a 1e9 scale kept one or two digits.
+  const scale = 10n ** 18n;
+  const scaled = (sqrtPrice * sqrtPrice * (10n ** BigInt(baseDecimals)) * scale)
     / (q64 * q64 * (10n ** BigInt(quoteDecimals)));
-  return Number(scaled) / 1_000_000_000;
+  return Number(scaled) / 1e18;
 }
 
 export async function dbcMarketStatsFromAccounts(
@@ -394,8 +396,9 @@ async function getSignatures(address: string, fromSlot: number, currentState: nu
   const signatures: Array<{ signature: string; slot: number; err: unknown; blockTime?: number | null }> = [];
   let before: string | undefined;
   const limit = Math.max(1, Math.min(1000, Number(ENV.SOLANA_SIGNATURE_LIMIT || 500)));
-  const maxPages = Math.max(1, Number(ENV.SOLANA_SIGNATURE_PAGE_LIMIT || 5));
-  for (let page = 0; page < maxPages; page += 1) {
+  // Page back until the cursor is reached. A page cap would leave the oldest signatures of a
+  // large backlog unfetched while the cursor moved past them: trades lost without a trace.
+  for (;;) {
     const batch = await rpc<typeof signatures>(
       "getSignaturesForAddress",
       [address, { limit, ...(before ? { before } : {}) }],
@@ -539,15 +542,27 @@ export async function insertDbcSwap(
   return true;
 }
 
-export async function indexDbcPool(db: Queryable, row: DbcPoolRow, rpcGetTransaction = getTransaction) {
+export async function indexDbcPool(
+  db: Queryable,
+  row: DbcPoolRow,
+  rpcGetTransaction = getTransaction,
+  rpcGetSignatures: typeof getSignatures = getSignatures,
+) {
   if (row.migrated) return { scanned: 0, ingested: 0, skippedMigrated: true };
   const currentState = await getState(db, row.campaign);
-  const signatures = await getSignatures(row.campaign, 0, currentState);
+  const signatures = await rpcGetSignatures(row.campaign, 0, currentState);
   let ingested = 0;
   let maxSlot = currentState;
+  let stoppedAtSlot: number | null = null;
   for (const item of signatures) {
     const tx = await rpcGetTransaction(item.signature);
-    if (!tx) continue;
+    // A lagging RPC node can return null for a confirmed signature. Stop here and keep the cursor
+    // below this slot so the next pass retries it; skipping would move the cursor past the trade.
+    if (!tx) {
+      console.warn("[dbcIndexer] transaction not readable yet; retrying next pass", { pool: row.campaign, signature: item.signature });
+      stoppedAtSlot = item.slot;
+      break;
+    }
     const events = decodeEvtSwap2FromTransaction(tx);
     const wallet = swapPayerFromTransaction(tx);
     const blockTime = new Date(Number(item.blockTime || tx.blockTime || Math.floor(Date.now() / 1000)) * 1000);
@@ -566,6 +581,7 @@ export async function indexDbcPool(db: Queryable, row: DbcPoolRow, rpcGetTransac
     }
     maxSlot = Math.max(maxSlot, item.slot);
   }
+  if (stoppedAtSlot != null) maxSlot = Math.min(maxSlot, stoppedAtSlot - 1);
   if (maxSlot > currentState) await setState(db, row.campaign, maxSlot);
   return { scanned: signatures.length, ingested, skippedMigrated: false };
 }

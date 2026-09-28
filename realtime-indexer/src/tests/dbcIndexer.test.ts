@@ -14,6 +14,8 @@ const {
   curveTradeFromSwap,
   dbcMarketStatsInputs,
   decodeEvtSwap2Data,
+  dbcPriceFromSqrt,
+  indexDbcPool,
 } = await import("../dbcIndexer.js");
 const { skipCanonicalSpotForVenue: skipSpot } = await import("../canonicalCandleMaterializer.js");
 
@@ -169,4 +171,38 @@ test("league categories exclude the DBC creator and keep other wallets", () => {
   const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../jobs/finalizeEpochWinners.ts"), "utf8");
   assert.match(source, /t\.wallet <> c\.creator_address/);
   assert.match(source, /t\.wallet IS DISTINCT FROM c\.creator_address/);
+});
+
+test("price from sqrt keeps its digits for a coin far below 1e-9 SOL per token", () => {
+  // price 2.8e-8 SOL per whole token, 6 base decimals, 9 quote decimals
+  const price = 2.8e-8;
+  const raw = price * 10 ** (9 - 6);
+  const sqrt = BigInt(Math.round(Math.sqrt(raw) * 2 ** 64));
+  const got = dbcPriceFromSqrt(sqrt, 6, 9);
+  assert.ok(Math.abs(got - price) / price < 1e-9, `got ${got}`);
+});
+
+test("an unreadable transaction keeps the cursor below its slot so the next pass retries it", async () => {
+  const cursor: number[] = [];
+  const db = {
+    async query(sql: string, params: unknown[] = []) {
+      if (/select last_indexed_block/.test(sql)) return { rows: [{ last_indexed_block: 100 }], rowCount: 1 };
+      if (/insert into public.indexer_state/.test(sql)) { cursor.push(Number(params[2])); return { rows: [], rowCount: 1 }; }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const sigs = [
+    { signature: "a", slot: 101, err: null, blockTime: 1 },
+    { signature: "b", slot: 105, err: null, blockTime: 1 },
+    { signature: "c", slot: 109, err: null, blockTime: 1 },
+  ];
+  const emptyTx = { transaction: { message: { accountKeys: [], instructions: [] } }, meta: { innerInstructions: [] } };
+  const result = await indexDbcPool(
+    db,
+    { campaign: "pool", token: "mint", creator: "c", migrated: false },
+    async (sig: string) => (sig === "b" ? null : emptyTx),
+    async () => sigs,
+  );
+  assert.equal(result.scanned, 3);
+  assert.deepEqual(cursor, [101], "cursor rests on the last slot fully read, never past the unreadable 105");
 });
