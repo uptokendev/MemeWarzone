@@ -60,6 +60,23 @@ creator can claim what is theirs.
    (their 80% position), each with the amount waiting and a claim button (same sign-time checks as
    step 3: fresh blockhash, intent allowlist, simulate the way web3.js accepts, then sign).
 
+## Added 2026-09-28: D19, LP fees follow the creator's fee choice
+
+- `frontend/api/lib/dbc/dbcLaunchConfigParams.mjs` (`liquidityDistribution`, ~310): for
+  `creatorFeeMode = platform` set partner permanent lock **100**, creator permanent lock **0**; `creator`
+  mode stays 20 / 80. Check with the SDK/program that a 0% creator share is accepted (config
+  creation simulates on devnet) and that migration then creates one position, not two. The ladder keys
+  configs by a params hash, so this makes new platform configs and leaves existing ones alone. Update
+  the step-1 parity tests.
+- LP fee claim for a platform coin: the partner position's fees are split 20% to `protocol_vault`
+  (like item 5) and 80% into the coin's creator pool, recorded like a step-5 accrual with
+  `creator_pool` (so step 5b pays it out and the router's held sum counts it). Integer split, remainder
+  to protocol, stated in a test.
+- The creator rewards panel shows no "LP fees" row for a platform coin. It shows the fee choice line
+  from step 5b instead. Graduation payout and creator reserve rows are unchanged.
+- Proof: one `keep` coin and one `holders` coin graduate. The holders coin has one position, owned by
+  the collector; a swap, a claim, and the 80/20 split land to the lamport.
+
 ## Tests
 
 - Unit: the keeper's state machine (not complete, complete, locker needed, already migrated by

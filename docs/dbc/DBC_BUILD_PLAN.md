@@ -87,6 +87,13 @@ These win over anything else in this file or in a brief. A change needs the foun
   step-2 transaction, priced at that moment. If the creator does not come, the coin is simply not
   live yet ("Ready to launch"). Rejected: a pre-signed durable-nonce transaction (3 signers, SOL
   target fixed at scheduling time).
+- **D19. After graduation the creator's LP fees follow the fee choice too (founder, 2026-09-28).**
+  `keep` coins are unchanged (creator position 80%, owned by the creator). For `holders`, `split` and
+  `buyback` the config gives 100% of the permanently locked LP to the partner (our collector) and 0%
+  to the creator, because we cannot claim fees from a position the creator owns. The keeper claims
+  that position's fees: 20% is routed to `protocol_vault` like today's LP share, 80% goes into the
+  coin's creator pool and is paid out by the step 5b path (holders / split / buyback). The graduation
+  payout (the creator's 90% of the migration fee) and the 2% creator reserve still go to the creator.
 
 **Today's launchpad (separate from DBC)**
 - **D16. Graduation fee routing fixed** (2026-09-28, commit `3c4df96f`, on the work and live branches; gate PASS; keeper + API need a redeploy): the
