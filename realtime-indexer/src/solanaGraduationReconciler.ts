@@ -142,6 +142,7 @@ export async function runSolanaGraduationReconcilerOnce() {
       where chain_id=$1
         and is_active=true
         and graduated_at_chain is null
+        and coalesce(launch_type, 'launchpad') <> 'dbc'
         and campaign_address is not null
       order by updated_at desc nulls last
       limit 25`,

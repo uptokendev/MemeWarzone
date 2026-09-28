@@ -44,7 +44,8 @@ export default function Prepare() {
     };
   }, [draft?.campaignAddress, draft?.chainId, storedScheduledLaunchAt]);
 
-  const isScheduledLifecycle = Boolean(draft?.campaignAddress && storedScheduledLaunchAt);
+  const dbcWaiting = String((draft as { launchType?: string } | null)?.launchType || "") === "dbc" && storedScheduledLaunchAt && !draft?.campaignAddress;
+  const isScheduledLifecycle = Boolean((draft?.campaignAddress && storedScheduledLaunchAt) || dbcWaiting);
   const launchAt = isScheduledLifecycle ? onChainLaunchAt || storedScheduledLaunchAt : null;
 
   return (
@@ -56,6 +57,7 @@ export default function Prepare() {
             chainId={draft?.chainId}
             campaignAddress={draft?.campaignAddress}
             contractDeployed={Boolean(draft?.campaignAddress)}
+            waitingForCreatorDeploy={Boolean(dbcWaiting)}
             variant="pill"
             className="pointer-events-auto whitespace-nowrap"
           />

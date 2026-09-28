@@ -36,6 +36,7 @@ export type GraduationMarketStepProps = {
   onSelectedChange: (asset: GraduationQuoteAsset | null) => void;
   onNext: () => void;
   canNext: boolean;
+  nativeOnly?: boolean;
 };
 
 const ALL_PROVIDERS = "__all__";
@@ -211,6 +212,7 @@ export function GraduationMarketStep({
   onSelectedChange,
   onNext,
   canNext,
+  nativeOnly = false,
 }: GraduationMarketStepProps) {
   const [items, setItems] = useState<GraduationQuoteAsset[]>([]);
   const [search, setSearch] = useState("");
@@ -249,9 +251,10 @@ export function GraduationMarketStep({
         if (cancelled) return;
         const catalogItems = next.filter((item) => item.newGraduationEligible === true);
         const evmNative = evmNativeLaunchQuote(chainId);
-        const availableItems = evmNative
+        const availableItems = (evmNative
           ? [evmNative, ...catalogItems.filter((item) => !isNativeQuote(item))]
-          : catalogItems;
+          : catalogItems
+        ).filter((item) => (nativeOnly ? isNativeQuote(item) : true));
         setItems(availableItems);
         const stillSelected = availableItems.some((item) => item.id === selected?.id);
         if (!stillSelected) {
@@ -276,7 +279,7 @@ export function GraduationMarketStep({
     };
     // Catalog is chain-scoped. Parent resets selection on chain change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chainId]);
+  }, [chainId, nativeOnly]);
 
   useEffect(() => {
     rememberGraduationQuoteAssetId(chainId, isEvmNativeLaunchQuote(selected) ? "" : selected?.id || "");

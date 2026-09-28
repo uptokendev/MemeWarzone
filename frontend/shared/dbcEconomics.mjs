@@ -63,6 +63,13 @@ export const DBC_ANTI_SNIPER_PERIODS = 60;
 /** D11: creator's first swap in the launch transaction pays the 2% ending fee. */
 export const DBC_ENABLE_FIRST_SWAP_WITH_MIN_FEE = true;
 
+/** D11: first buy in the launch transaction, at most 10% of the config supply. */
+export const DBC_FIRST_BUY_MAX_BPS = 1000;
+
+/** Creator limits for DBC (same numbers as today's CreatorProfile defaults). */
+export const DBC_MAX_LIVE_BONDING = 3;
+export const DBC_CREATOR_COOLDOWN_SECONDS = 86_400;
+
 /** D3: 7% of the post-Meteora 80% when the creator keeps the fee. */
 export const DBC_CREATOR_TRADING_FEE_PCT_KEEP = 7;
 

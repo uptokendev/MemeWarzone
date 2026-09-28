@@ -35,6 +35,17 @@ import { requestSolanaCreateAuthorizationV4 } from "@/lib/solanaCreateAuthorizat
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
 import { signSolanaDraftAction } from "@/lib/solanaWallet";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
+import { isDbcLaunchEnabled } from "@/lib/dbcLaunchEnabled";
+import {
+  authorizeDbcCreate,
+  beginDbcCreate,
+  finalizeDbcCreate,
+  preflightDbcCreate,
+  scheduleDbcDraft,
+} from "@/lib/dbcCreate";
+import { submitDbcCreateTransaction } from "@/lib/dbcCreateSubmit";
+import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
+import { isScheduleLocked } from "../../shared/dbcSchedule.mjs";
 
 const DRAFT_PUSH_LIVE_ENABLED = ["1", "true", "yes", "on"].includes(
   String(import.meta.env.VITE_DRAFT_PUSH_LIVE_ENABLED || import.meta.env.VITE_ENABLE_DRAFT_PUSH_LIVE || "")
@@ -42,7 +53,8 @@ const DRAFT_PUSH_LIVE_ENABLED = ["1", "true", "yes", "on"].includes(
     .toLowerCase(),
 );
 
-function canPushLive(status?: string) {
+function canPushLive(status?: string, opts?: { dbc?: boolean; due?: boolean }) {
+  if (opts?.dbc && (status === "scheduled" || status === "ready_to_launch" || status === "promotion_published")) return true;
   return status === "promotion_published" || status === "ready_to_launch";
 }
 
@@ -448,9 +460,108 @@ export default function PushDraftLive() {
     }
   };
 
+  const deployDbc = async () => {
+    if (!draft) return;
+    if (!solanaWallet.solanaAccount) return toast.error("Connect the draft owner Solana wallet first.");
+    if (!ownerConnected) return toast.error("Only the draft owner Solana wallet can deploy this draft.");
+    if (mode === "scheduled" && (!draft.scheduledLaunchAt || isScheduleLocked(new Date(launchAtInput).toISOString(), Date.now()))) {
+      const at = Math.floor(new Date(launchAtInput).getTime() / 1000);
+      setSubmitting(true);
+      try {
+        const { signWalletAction } = await import("@/lib/walletActionAuth");
+        const { signSolanaMessage } = await import("@/lib/solanaWallet");
+        const auth = await signWalletAction({
+          action: "dbc_schedule",
+          walletAddress: solanaWallet.solanaAccount,
+          chainId: Number(draft.chainId),
+          extraLines: [`Draft ID: ${draft.id}`],
+          walletType: "solana",
+          signMessage: async (message) => (await signSolanaMessage(message, solanaWallet.solanaAccount!)).signature,
+        });
+        await scheduleDbcDraft({
+          draftId: draft.id,
+          creatorWallet: solanaWallet.solanaAccount,
+          auth,
+          scheduledLaunchAt: at,
+          targetUsd: Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000,
+          feeChoice: (draft as any).dbcFeeChoice || "keep",
+          creatorSharePct: (draft as any).dbcCreatorSharePct,
+          firstBuyLamports: (draft as any).dbcFirstBuyLamports,
+        });
+        toast.success("Launch time saved. Nothing is created on chain until you deploy.");
+        navigate(`/prepare/${draft.slug}`);
+      } catch (error: any) {
+        toast.error(String(error?.message || "Could not save the launch time."));
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+    if (isScheduleLocked(draft.scheduledLaunchAt, Date.now())) {
+      return toast.error("Deploy is locked until the scheduled launch time.");
+    }
+    setSubmitting(true);
+    try {
+      const targetUsd = Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000;
+      const preflight = await preflightDbcCreate({ creatorWallet: solanaWallet.solanaAccount, targetUsd });
+      if (!preflight?.preflight?.allowed) {
+        throw new Error(preflight?.preflight?.cooldownActive ? "A DBC launch from this wallet is on a 24 hour cooldown." : "Live DBC coin limit reached.");
+      }
+      const { signWalletAction } = await import("@/lib/walletActionAuth");
+      const { signSolanaMessage } = await import("@/lib/solanaWallet");
+      const dbcAuth = await signWalletAction({
+        action: "dbc_create",
+        walletAddress: solanaWallet.solanaAccount,
+        chainId: Number(draft.chainId),
+        extraLines: [`Ticker: ${draft.ticker}`],
+        walletType: "solana",
+        signMessage: async (message) => (await signSolanaMessage(message, solanaWallet.solanaAccount!)).signature,
+      });
+      const begun = await beginDbcCreate({
+        creatorWallet: solanaWallet.solanaAccount,
+        ticker: draft.ticker,
+        auth: dbcAuth,
+        draftId: draft.id,
+      });
+      const web3 = await loadSolanaWeb3();
+      const mint = web3.Keypair.generate();
+      const authorization = await authorizeDbcCreate({
+        sessionToken: begun.sessionToken,
+        mint: mint.publicKey.toBase58(),
+        name: draft.name,
+        symbol: draft.ticker,
+        description: draft.description,
+        logoUrl: logoURI,
+        website: draft.websiteUrl,
+        x: draft.xUrl,
+        targetUsd,
+        feeChoice: (draft as any).dbcFeeChoice || "keep",
+        creatorSharePct: (draft as any).dbcCreatorSharePct,
+        firstBuyLamports: (draft as any).dbcFirstBuyLamports || "0",
+        draftId: draft.id,
+      });
+      const created = await submitDbcCreateTransaction({
+        transactionBase64: authorization.transaction,
+        mintSecretKey: mint.secretKey,
+        creatorAddress: solanaWallet.solanaAccount,
+        pool: authorization.pool,
+        mintAddress: mint.publicKey.toBase58(),
+        config: authorization.config,
+      });
+      const finalized = await finalizeDbcCreate({ finalizeToken: authorization.finalizeToken, signature: created.signature });
+      toast.success("DBC token deployed.");
+      navigate(finalized.tokenPath || `/token/${created.mintAddress}?chainId=101`);
+    } catch (error: any) {
+      toast.error(String(error?.message || "DBC deploy failed. Your draft remains saved."));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const deploy = async () => {
     if (!draft) return;
     if (!DRAFT_PUSH_LIVE_ENABLED) return toast.error("Launching is temporarily unavailable. Your draft remains saved. Please try again later.");
+    if (isDbcLaunchEnabled() && String((draft as any).launchType || "") === "dbc") return deployDbc();
     if (draftIsSolana) return deploySolanaV4();
     if (!wallet.account || !wallet.signer) return toast.error("Connect the draft owner wallet first.");
     if (!ownerConnected) return toast.error("Only the draft owner wallet can deploy this draft.");
@@ -608,7 +719,10 @@ export default function PushDraftLive() {
     );
   }
 
-  const blocked = submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status) || (draftIsSolana ? !ownerConnected : false);
+  const dbcDraft = isDbcLaunchEnabled() && String((draft as { launchType?: string }).launchType || "") === "dbc";
+  const dbcLocked = dbcDraft && isScheduleLocked(draft.scheduledLaunchAt, Date.now());
+  const dbcDue = dbcDraft && Boolean(draft.scheduledLaunchAt) && !dbcLocked;
+  const blocked = submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: dbcDraft, due: dbcDue }) || (draftIsSolana ? !ownerConnected : false) || (dbcDraft && mode === "now" && dbcLocked);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
@@ -618,7 +732,9 @@ export default function PushDraftLive() {
             <div className="text-[10px] uppercase tracking-[0.22em] text-orange-400">Prepare Mode</div>
             <h1 className="mwz-section-title mt-1 text-3xl text-success md:text-4xl">Deploy Draft</h1>
             <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-              Choose the graduation tier and deploy immediately, or pay gas now and arm a countdown that blocks trading until launch time.
+              {dbcDraft
+                ? "Set a launch time (nothing is created on chain yet). When the timer ends, deploy the DBC pool in one transaction."
+                : "Choose the graduation tier and deploy immediately, or pay gas now and arm a countdown that blocks trading until launch time."}
             </p>
           </div>
           <Button asChild variant="outline" className="mwz-button h-10 font-retro text-xs">
@@ -678,7 +794,7 @@ export default function PushDraftLive() {
           </button>
           <button type="button" onClick={() => setMode("scheduled")} className={`mwz-card p-4 text-left ${mode === "scheduled" ? "border-orange-400/60 bg-orange-500/10" : "border-border"}`}>
             <div className="flex items-center gap-2 font-retro text-lg text-foreground"><Clock3 className="h-4 w-4" /> Deploy with countdown</div>
-            <p className="mt-2 text-sm text-muted-foreground">Pay gas now. The campaign is created immediately, but trading remains blocked until the selected time.</p>
+            <p className="mt-2 text-sm text-muted-foreground">{dbcDraft ? "Save a launch time. The pool is created only when you deploy after that time." : "Pay gas now. The campaign is created immediately, but trading remains blocked until the selected time."}</p>
           </button>
         </div>
 
@@ -715,7 +831,15 @@ export default function PushDraftLive() {
         {!DRAFT_PUSH_LIVE_ENABLED ? <p className="mt-4 text-sm text-orange-300">Draft deployment is temporarily unavailable. Your draft remains saved.</p> : null}
 
         <Button onClick={deploy} disabled={blocked} className="mwz-button mwz-button-orange mt-5 h-12 w-full justify-center font-retro">
-          {submitting ? "Confirming Deployment..." : mode === "scheduled" ? `Deploy ${selectedTier} Countdown Campaign` : `Deploy ${selectedTier} Campaign Now`}
+          {submitting
+            ? "Confirming Deployment..."
+            : dbcDraft && mode === "scheduled"
+              ? "Set launch time"
+              : dbcDraft && dbcDue
+                ? "Deploy now"
+                : mode === "scheduled"
+                  ? `Deploy ${selectedTier} Countdown Campaign`
+                  : `Deploy ${selectedTier} Campaign Now`}
         </Button>
       </div>
     </div>

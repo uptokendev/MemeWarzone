@@ -53,6 +53,7 @@ export default async function handler(req, res) {
         where chain_id = $1
           and creator_address = $2
           and campaign_address is not null
+          and coalesce(launch_type, 'launchpad') <> 'dbc'
         order by created_at_chain desc nulls last, created_at desc
         limit 50`,
       [SOLANA_CHAIN_ID, creator],

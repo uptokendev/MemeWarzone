@@ -1651,6 +1651,7 @@ async function listBondingSolanaCampaigns(limit = 40): Promise<string[]> {
       where chain_id=$1
         and is_active=true
         and graduated_at_chain is null
+        and coalesce(launch_type, 'launchpad') <> 'dbc'
         and ${notPublicHiddenSql()}
       order by updated_at desc nulls last
       limit $2`,
