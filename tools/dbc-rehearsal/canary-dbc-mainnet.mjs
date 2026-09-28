@@ -125,6 +125,24 @@ async function main() {
   console.log(`trader    ${K.trader.publicKey.toBase58()}`);
   console.log(`config    ${config.toBase58()}\nmint      ${baseMint.toBase58()}\npool      ${pool.toBase58()}`);
 
+  // A confirmed transaction is not always readable on the next call: retry, never trust one read.
+  async function getTx(sig) {
+    for (let i = 0; i < 20; i++) {
+      const t = await conn.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+      if (t) return t;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    throw new Error(`transaction ${sig} not readable after 30 s`);
+  }
+  // Token amount that moved into (+) or out of (-) an account in one transaction, from its own meta.
+  async function tokenDelta(sig, account) {
+    const t = await getTx(sig);
+    const keys = t.transaction.message.staticAccountKeys || t.transaction.message.accountKeys;
+    const i = keys.findIndex((k) => k.equals(account));
+    const pick = (l) => BigInt(l.find((b) => b.accountIndex === i)?.uiTokenAmount.amount ?? 0);
+    return pick(t.meta.postTokenBalances) - pick(t.meta.preTokenBalances);
+  }
+
   async function shape(tx, signers) {
     tx.feePayer = tx.feePayer || signers[0].publicKey;
     tx.recentBlockhash = (await conn.getLatestBlockhash("confirmed")).blockhash;
@@ -188,10 +206,9 @@ async function main() {
   console.log(`\n[4] buy ${sol(BUY_LAMPORTS)} SOL with our referral`);
   if (!state.sigs?.buy) {
     const before = snap(await poolState());
-    const refBefore = BigInt((await conn.getTokenAccountBalance(refAta)).value.amount);
-    await run("buy", () => client.pool.swap({ owner: K.trader.publicKey, pool, amountIn: new BN(BUY_LAMPORTS.toString()), minimumAmountOut: new BN(1), swapBaseForQuote: false, referralTokenAccount: refAta }), [K.trader]);
+    const buySig = await run("buy", () => client.pool.swap({ owner: K.trader.publicKey, pool, amountIn: new BN(BUY_LAMPORTS.toString()), minimumAmountOut: new BN(1), swapBaseForQuote: false, referralTokenAccount: refAta }), [K.trader]);
     const after = snap(await poolState());
-    const referral = BigInt((await conn.getTokenAccountBalance(refAta)).value.amount) - refBefore;
+    const referral = await tokenDelta(buySig, refAta);
     const total = (after.partner - before.partner) + (after.creator - before.creator) + (after.protocol - before.protocol) + referral;
     console.log(`  fee ${total}: collector ${after.partner - before.partner}, creator ${after.creator - before.creator}, meteora ${after.protocol - before.protocol}, referral ${referral}`);
     check("fee is 2% of the buy", total === (BUY_LAMPORTS * 2n) / 100n);
@@ -228,11 +245,7 @@ async function main() {
         : await client.creator.claimCreatorTradingFee({ creator: K.creator.publicKey, payer: payer.publicKey, pool, maxBaseAmount: new BN(0), maxQuoteAmount: owed });
       tx.feePayer = payer.publicKey; return tx;
     }, [payer, who === "collector" ? K.collector : K.creator]);
-    const t = await conn.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-    const keys = t.transaction.message.staticAccountKeys || t.transaction.message.accountKeys;
-    const i = keys.findIndex((k) => k.equals(p.quoteVault));
-    const pick = (l) => BigInt(l.find((b) => b.accountIndex === i)?.uiTokenAmount.amount ?? 0);
-    const out = pick(t.meta.preTokenBalances) - pick(t.meta.postTokenBalances);
+    const out = -(await tokenDelta(sig, p.quoteVault));
     check(`${who} received exactly what the pool owed`, out === big(owed), `owed ${big(owed)}, paid ${out}`);
   }
 
