@@ -8,10 +8,15 @@ every decision and every review result goes here, so the build does not drift fr
 1. **As close as possible to what we already have.** Same fees, same rewards, same payouts, same
    graduation outcome. Where DBC forces a difference, it is written in the parity table below with
    the reason. A new difference is not allowed without the founder's decision.
-2. **Grok builds, Claude orchestrates.** Grok works only on its own branch `grok/dbc-step-<n>`
-   cut from `build/dbc-staging`, pushes only that branch, and never merges, never pushes to any
-   `build/*` branch and never opens a merge into one. Claude reviews the full diff, runs the tests,
-   and merges into `build/dbc-staging`.
+2. **Grok builds, Claude orchestrates. Grok works on its own pull request** (founder, 2026-09-28):
+   - Grok uses **its own clone** of the repository (or its own `git worktree`), never the founder's
+     working copy at `/mnt/e/network/Zakelijk/MemeWarzone`. Sharing one folder let changes from one
+     side appear in the other's uncommitted files.
+   - One branch per step, `grok/dbc-step-<n>`, cut from `build/dbc-staging`. Grok pushes only that
+     branch and opens **one pull request** from it into `build/dbc-staging`.
+   - Grok never merges, never pushes to `build/*` or `fix/*`, never force-pushes someone else's
+     branch. Fixes after review go on the same branch, so they land in the same pull request.
+   - Claude reviews the pull request (full diff, tests, the brief's hand-in items) and merges it.
 3. **Fast.** One brief per step. The founder hands Grok the brief, then hands Grok's output to
    Claude. Claude reviews. After a clear review, the next step's brief.
 4. Each step needs the founder's go before the next one starts.

@@ -6,10 +6,14 @@ hand-in report instead of choosing yourself.
 
 ## Branch rules (hard)
 
-- Start from `build/dbc-staging`:
-  `git fetch origin && git switch -c grok/dbc-step-1 origin/build/dbc-staging`.
-- Commit and push **only** `grok/dbc-step-1`. Never push to, merge into, or open a merge into any
-  `build/*` or `fix/*` branch. Claude reviews your branch and merges it.
+- Work in **your own clone** of the repository, never in `/mnt/e/network/Zakelijk/MemeWarzone`
+  (that is the founder's working copy): `git clone https://github.com/uptokendev/MemeWarzone.git`.
+- Branch from `build/dbc-staging`: `git switch -c grok/dbc-step-1 origin/build/dbc-staging`.
+- Push **only** `grok/dbc-step-1`, then open **one pull request** from it into `build/dbc-staging`
+  (`gh pr create --base build/dbc-staging --head grok/dbc-step-1`). Put the hand-in report in the
+  pull request description.
+- Never merge, never push to `build/*` or `fix/*`. Review fixes go on the same branch, so they land
+  in the same pull request. Claude reviews and merges.
 - Do not touch the existing Solana launchpad: nothing under `programs/`, nothing in
   `frontend/api/dev-fix/solana-*`, nothing in the existing CREATE / BUY / SELL client paths, no test
   pins, nothing in `scripts/solana/` except new files under `scripts/dbc/`.
@@ -150,7 +154,7 @@ All runtime code under `frontend/` (the API image is built from `frontend/` only
   target or fee mode -> 400; $150 target refused unless devnet.
 - `validateConfigParameters` from the SDK passes for every generated config.
 
-## Hand-in report (paste back to the founder)
+## Hand-in report (in the pull request description, and paste the PR link to the founder)
 
 - Branch and final commit hash; every file added or changed, one line each.
 - Full test output and the tables (price path, supply/steepened, graduation, anti-sniper fee).
