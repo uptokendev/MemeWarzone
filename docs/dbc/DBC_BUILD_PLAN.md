@@ -153,7 +153,7 @@ against the rule "unlinked slices go to the airdrop".
 | # | Step | Owner | Status |
 |---|---|---|---|
 | 1 | Config ladder (server): economics module, parity tests, SOL-price steps, config creation + chain readback, API to fetch a launch config | Grok, brief `docs/dbc/grok-step-1-config-ladder.md` | **DONE 2026-09-28**: merged (PR #471 + review fixes), devnet ALL CHECKS PASS |
-| 2 | Create flow: creator signs createPool only (2 signers) + create screen + drafts and scheduled launches (D18) | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | brief written 2026-09-28, D18 added |
+| 2 | Create flow: creator signs createPool only (2 signers) + create screen + drafts and scheduled launches (D18) | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | **DONE 2026-09-28**: merged (PR #472 + review fixes), devnet ALL CHECKS PASS |
 | 3 | Trading on our site: DBC buy/sell with our referral account | Grok | not started |
 | 4 | Indexer: DBC trades into charts, market stats, leagues, battles | Grok | not started |
 | 5 | Fee collector routing into league / recruiter / squad / airdrop vaults | Grok | not started |
@@ -352,3 +352,16 @@ Must fix before merge:
    print the real transaction bytes and signer count; finalize writes the campaign and metadata rows;
    finalize refuses a pool made with another config or creator; a scheduled draft is refused before
    its time. Build and sign the transaction exactly as `dbcCreateSubmit.ts` does. Claude runs it.
+
+### Step 2, review 2 (2026-09-28): PR #472 @ `aae1ff05` + Claude's fix: MERGED
+
+Review-1 items verified: fresh blockhash + simulate before signing; sign-time intent check (fee payer,
+program allowlist, pool/config/mint); fail-closed finalize; no SDK monkeypatch; limits re-checked in
+authorize. 40/40 tests.
+Devnet proof (Claude, funder = devnet deployer): **ALL CHECKS PASS**. No-buy launch 758 B, 2 signers,
+campaign + metadata rows written; first buy 0.02 SOL: 978 B, 2 signers, pool reserve 19600000 = buy
+less exactly 2%; over-cap first buy refused (`DBC_FIRST_BUY_CAP`); finalize refuses another config
+(`DBC_POOL_CONFIG`); scheduled draft refused before its time (`DBC_SCHEDULED_LOCKED`).
+Creator cost of a launch with a 0.02 SOL first buy: 0.042 SOL total, so ~0.022 SOL is rent + fees.
+Claude's fix found by running it: `dbcCreateIntent.mjs` (the browser path) simulated a legacy
+Transaction with a config object, which web3.js 1.x rejects: every launch would have failed.
