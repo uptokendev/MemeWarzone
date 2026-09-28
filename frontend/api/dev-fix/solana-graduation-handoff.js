@@ -10,7 +10,8 @@ import { spawn } from "node:child_process";
 
 import { pool } from "../../server/db.js";
 import { badMethod, isSolanaChain, json, readJson } from "../../server/http.js";
-import { decodeCampaignCurveFields, publicKeyString } from "./solana-v4-primitives.js";
+import { decodeCampaignAccount, decodeCampaignCurveFields, publicKeyString } from "./solana-v4-primitives.js";
+import { resolveSolanaRouteProfileStrict } from "../lib/solanaRouteProfile.js";
 import { notifyCampaignGraduated } from "../lib/campaignLifecycleNotifications.js";
 import {
   resolveSolanaCampaignGraduationQuote,
@@ -61,7 +62,7 @@ async function rpcCall(rpcUrl, method, params) {
  * native command is configured the campaign waits for the keeper rather than
  * graduating against SOL.
  */
-function kickOperator(campaignAddress, binding) {
+function kickOperator(campaignAddress, binding, routeProfile) {
   const now = Date.now();
   const last = kicked.get(campaignAddress) || 0;
   if (now - last < KICK_TTL_MS) return { kicked: false, reason: "operator kicked moments ago" };
@@ -81,6 +82,7 @@ function kickOperator(campaignAddress, binding) {
     ...selected.env,
     SOLANA_GRADUATION_SEND: "true",
     SOLANA_GRADUATION_CAMPAIGN: campaignAddress,
+    SOLANA_GRADUATION_FINALIZE_ROUTE_PROFILE: String(routeProfile),
   };
   const child = spawn(parts[0], [...parts.slice(1), campaignAddress], {
     env,
@@ -133,7 +135,12 @@ export async function solanaGraduationHandoff(req, res) {
     }
 
     const binding = await resolveSolanaCampaignGraduationQuote(pool, { chainId, campaignAddress });
-    const kick = kickOperator(campaignAddress, binding);
+    // The graduation fee follows the creator's recruiter link. If it cannot be read, do not kick:
+    // the keeper graduates on its next pass with the same strict lookup.
+    const routeProfile = await resolveSolanaRouteProfileStrict(pool, decodeCampaignAccount(Buffer.from(dataB64, "base64")).creator).catch(() => null);
+    const kick = routeProfile === null
+      ? { kicked: false, reason: "creator route profile unreadable; the keeper retries" }
+      : kickOperator(campaignAddress, binding, routeProfile);
     console.log("[solana-handoff] curve closed", {
       campaignAddress,
       kickedOperator: kick.kicked,

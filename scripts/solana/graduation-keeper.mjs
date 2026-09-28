@@ -35,6 +35,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 
 import { resolveSolanaCampaignGraduationQuote } from "../../frontend/api/lib/solanaCampaignGraduationQuote.js";
 import { resolveSolUsdPrice } from "../../frontend/api/lib/solUsdPrice.js";
+import { resolveSolanaRouteProfileStrict } from "../../frontend/api/lib/solanaRouteProfile.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require_ = createRequire(import.meta.url);
@@ -147,6 +148,18 @@ async function graduateOne(campaign, source) {
       console.warn(`[graduation-keeper] ${campaign}: bound to ${binding.symbol || binding.quoteMint || "a non-SOL quote"}; needs the quote operator, not graduating here`);
       return "blocked";
     }
+    // The graduation fee follows the CREATOR's recruiter link (linked / OG -> recruiter + squad,
+    // unlinked -> airdrop). Read the creator from the campaign itself; a lookup that fails waits
+    // for the next pass instead of guessing.
+    let routeProfile;
+    try {
+      const info = await connection.getAccountInfo(new PublicKey(campaign), "confirmed");
+      if (!info) throw new Error("campaign account missing");
+      routeProfile = await resolveSolanaRouteProfileStrict(pool, decodeCampaign(info.data).creator.toBase58());
+    } catch (error) {
+      console.warn(`[graduation-keeper] ${campaign}: creator route profile unreadable (${error?.message || error}); retrying`);
+      return "waiting";
+    }
     const price = await solPriceMicros();
     if (!price) {
       console.warn(`[graduation-keeper] ${campaign}: no live SOL price; retrying`);
@@ -159,6 +172,7 @@ async function graduateOne(campaign, source) {
       SOLANA_GRADUATION_ORACLE_PRICE_USD_MICROS: price,
       SOLANA_GRADUATION_ALT_MODE: "per-graduation",
       SOLANA_GRADUATION_QUOTE_PROFILE: "native",
+      SOLANA_GRADUATION_FINALIZE_ROUTE_PROFILE: String(routeProfile),
       SOLANA_GRADUATION_SEND: SEND ? "true" : "",
     });
     if (result.code === 0 && /"status":\s*"(graduated|already-graduated)"/.test(result.output)) {

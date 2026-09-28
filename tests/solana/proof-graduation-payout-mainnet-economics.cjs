@@ -372,6 +372,8 @@ describe("PROOF: graduation payout under live mainnet economics (local validator
         SOLANA_GRADUATION_ORACLE_PRICE_USD_MICROS: ORACLE_USD_MICROS.toString(),
         SOLANA_GRADUATION_ALT_MODE: "per-graduation",
         SOLANA_GRADUATION_QUOTE_PROFILE: "native",
+        // The test creator has no recruiter link: unlinked (1).
+        SOLANA_GRADUATION_FINALIZE_ROUTE_PROFILE: "1",
         SOLANA_GRADUATION_SEND: "true",
       },
       encoding: "utf8",
@@ -425,6 +427,14 @@ describe("PROOF: graduation payout under live mainnet economics (local validator
       for (const e of parser.parseLogs(tx.meta.logMessages || [])) if (e.name === "campaignGraduated" || e.name === "CampaignGraduated") event = e.data;
     } catch (_) { /* event decode is a cross-check only */ }
 
+    // An unlinked creator's graduation fee: 17.5% to the airdrop, nothing to recruiter or squad
+    // (preview_bnb_route, ROUTE_KIND_FINALIZE, profile 1).
+    const fee = programQuote.finalizeFeeLamports;
+    assert.equal(vaultDeltas.recruiter_vault, 0n, "unlinked graduation must not pay the recruiter vault");
+    assert.equal(vaultDeltas.squad_vault, 0n, "unlinked graduation must not pay the squad vault");
+    assert.ok(vaultDeltas.airdrop_vault > 0n && (vaultDeltas.airdrop_vault - (fee * 1_750n) / 10_000n) ** 2n <= 1n,
+      `unlinked graduation must pay 17.5% of the fee to the airdrop (got ${vaultDeltas.airdrop_vault} of ${fee})`);
+    assert.equal(finalizeRouted, fee, "the whole graduation fee must land in the reward vaults");
     const net = BigInt(closed.netRaisedLamports);
     const remaining = net - programQuote.finalizeFeeLamports;
     const intendedCreator = (remaining * 2_000n) / 10_000n;

@@ -25,6 +25,11 @@
  *   SOLANA_GRADUATION_ORACLE_PRICE_USD_MICROS=...  SOL price, default 150000000
  *   SOLANA_GRADUATION_CAMPAIGN=<pda>  or pass the campaign as argv[2]
  *   SOLANA_GRADUATION_SEND=true       actually send; otherwise simulate only
+ *   SOLANA_GRADUATION_FINALIZE_ROUTE_PROFILE=0|1|2  required: the CREATOR's route
+ *                                 profile (0 linked, 1 unlinked, 2 OG; program ids in
+ *                                 lib.rs). The keeper resolves it with
+ *                                 resolveSolanaRouteProfileStrict. Decides whether the
+ *                                 graduation fee's slices go to recruiter/squad or airdrop.
  */
 import fs from "node:fs";
 import BN from "bn.js";
@@ -49,7 +54,15 @@ const { decodeCampaign } = require_("../../tests/solana/decode-campaign.cjs");
 const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const REWARDS_TREASURY = new PublicKey("2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX");
-const ROUTE_PROFILE_UNLINKED = 0;
+
+/** The creator's route profile, from the caller. No default: a wrong guess misroutes fee slices for good. */
+function finalizeRouteProfileFromEnv() {
+  const raw = String(process.env.SOLANA_GRADUATION_FINALIZE_ROUTE_PROFILE ?? "").trim();
+  if (!["0", "1", "2"].includes(raw)) {
+    throw new Error("SOLANA_GRADUATION_FINALIZE_ROUTE_PROFILE must be the creator's route profile: 0 linked, 1 unlinked, 2 OG");
+  }
+  return Number(raw);
+}
 
 /** The six canonical reward vaults confirm_graduation pays fee slices into. */
 function rewardVaultAccounts() {
@@ -106,6 +119,7 @@ async function main() {
       + `(${process.env.SOLANA_GRADUATION_QUOTE_CONFIG_ID || "?"}); use the quote-aware operator (SOLANA_GRADUATION_QUOTE_HANDOFF_COMMAND)`,
     );
   }
+  const finalizeRouteProfile = finalizeRouteProfileFromEnv();
   const programId = new PublicKey(requiredEnv("SOLANA_LAUNCHPAD_PROGRAM_ID"));
   const campaignAddress = new PublicKey(
     process.argv[2] || requiredEnv("SOLANA_GRADUATION_CAMPAIGN"),
@@ -229,7 +243,7 @@ async function main() {
     nftMint: positionNft.publicKey,
     deadline,
     nonce,
-    finalizeRouteProfile: ROUTE_PROFILE_UNLINKED,
+    finalizeRouteProfile,
     quote: quoteBinding,
   });
 
@@ -326,7 +340,7 @@ async function main() {
       deadline,
       nonce,
       nftMint: positionNft.publicKey,
-      finalizeRouteProfile: ROUTE_PROFILE_UNLINKED,
+      finalizeRouteProfile,
     }, BN))
     .accountsStrict({
       authority: operator.publicKey,
