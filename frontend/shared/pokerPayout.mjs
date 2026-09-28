@@ -48,3 +48,25 @@ export function pokerSplitRaw(pot, places) {
 export function pokerPayoutForField(pot, entrants, period) {
   return pokerSplitRaw(pot, pokerPaidPlaces(entrants, period));
 }
+
+/**
+ * Solana minimum payout (founder, 2026-09-28, option B). Mirror of realtime-indexer/src/rewards/
+ * pokerPayout.ts: a Solana prize below this is not paid on its own (the claim receipt's rent would
+ * exceed it). Env SOLANA_MIN_PAYOUT_LAMPORTS, default 0.005 SOL. Solana (101) only.
+ */
+export const SOLANA_MIN_PAYOUT_LAMPORTS_DEFAULT = 5_000_000n;
+
+export function solanaMinPayoutLamports(env = (typeof process !== "undefined" ? process.env : {})) {
+  const raw = String(env?.SOLANA_MIN_PAYOUT_LAMPORTS ?? "").trim();
+  if (/^\d+$/.test(raw)) return BigInt(raw);
+  return SOLANA_MIN_PAYOUT_LAMPORTS_DEFAULT;
+}
+
+/** Most places (<= places) whose smallest share is at least minRaw; 0 when even one place is below it. */
+export function pokerPlacesAboveMinimum(pot, places, minRaw) {
+  for (let k = Math.max(0, places); k >= 1; k -= 1) {
+    const shares = pokerSplitRaw(pot, k);
+    if (shares[shares.length - 1] >= minRaw) return k;
+  }
+  return 0;
+}
