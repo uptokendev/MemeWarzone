@@ -168,7 +168,7 @@ against the rule "unlinked slices go to the airdrop".
 | 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | **DONE 2026-09-28**: merged (PR #474 + review fixes), devnet ALL CHECKS PASS; migration `20260929_000005` still to apply |
 | 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | **DONE 2026-09-28**: merged (PR #475, 2 reviews), devnet ALL CHECKS PASS; migration `20260929_000006` still to apply |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails, code-2 leaves), buyback & burn (random, <= 0.5% impact), split | Grok, brief `docs/dbc/grok-step-5b-creator-fee-choice.md` | brief written 2026-09-28; can run in parallel with step 6 |
-| 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | PR #476 review 1: CHANGES NEEDED |
+| 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | **DONE 2026-09-29**: merged (PR #476, 2 reviews + Claude's fixes), devnet ALL CHECKS PASS (cases A, B, D19); migration `20260929_000007` still to apply |
 | 7 | Binding tokens via Meteora TokenBadges + liquidity filter | Grok | not started |
 
 ## Groundwork for steps 3-6 (Claude, 2026-09-28): proven or read from the code
@@ -552,3 +552,25 @@ sign-store-send pattern; `return`s in the new route; claims builders. Several ma
 - a blocked pool does not stop the others;
 - mark happens before withdraw;
 - D7 from the protocol slice, including a shortfall.
+
+### Step 6, review 2 (2026-09-29): PR #476 @ `a159e59c` + Claude's `5cb3aa32`: MERGED
+
+All review-1 items verified, plus D19 (0% creator LP share accepted on devnet; platform coins get
+one collector-owned position). Claude ran the proof (funder = devnet deployer, pinned $600 SOL step,
+0.25 SOL curve) and fixed what it found:
+- **Case A could never have worked.** `readConfigSnapshot` read a `totalLockedVestingAmount` field
+  the pool config does not have. The reserve read as 0, the keeper skipped `createLocker`, and Meteora
+  refused the migration (`NotPermitToDoThisAction`). Case B hid it because the proof made the locker
+  itself. Now amount_per_period x number_of_period + cliff_unlock_amount (devnet config: exactly the
+  20M reserve). Test stubs use the real shape.
+- Scan: one batched read of every open pool and config per pass. Only complete or migrated curves,
+  and jobs past the locker, get the per-pool logic.
+- LP claims record what moved; protocol share that arrived after the read is routed by step 5.
+Devnet proof: **ALL CHECKS PASS**.
+- Case B (Meteora migrates first): mark before withdraw, partner fee 5,503,747 = 2.2%, compensation
+  780,530 to the creator, airdrop 963,155 = 17.5% of the full fee, protocol 3,760,062 = rest minus
+  compensation, reserve claim = 20,000,000,000,000 by token delta, LP 80/20.
+- Case A: the keeper runs locker, migrate, mark, withdraw, compensate, route, done by itself; the
+  batched scan skips the open curve and picks it up when complete.
+- D19 holders coin: LP 7,999 creator pool / 2,000 protocol.
+Tests: unit 18, integration 8.
