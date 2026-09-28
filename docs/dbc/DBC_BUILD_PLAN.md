@@ -71,10 +71,13 @@ These win over anything else in this file or in a brief. A change needs the foun
   filter (step 7).
 
 **Today's launchpad (separate from DBC)**
-- **D16. Graduation fee routing fixed** (2026-09-28, commit `3c4df96f` on the work branch): the
+- **D16. Graduation fee routing fixed** (2026-09-28, commit `3c4df96f`, on the work and live branches; gate PASS; keeper + API need a redeploy): the
   keeper sent "linked" for every creator; now the creator's real link decides. Proven on a local
   validator: unlinked -> airdrop 17.5% of the fee, recruiter and squad 0.
-- **D17. Token ceiling fixed for existing coins** (program upgrade): when the pool needs more than
+- **D17. Token ceiling fixed for existing coins** (program upgrade; branch
+  `fix/solana-pool-token-ceiling` `fe6312ac`, candidate `9cce34df…` 1221160 B, gate PASS, K88 proof:
+  creator 19.60%, pool 78.40% + 213.85M tokens; devnet upgrade + Squads pending; merge into live only
+  after mainnet executes): when the pool needs more than
   the 140M liquidity tokens, it takes the rest from the unsold curve tokens instead of paying the
   SOL to the creator. New coins will be DBC, so the launch setting for new old-style coins is not
   changed.
@@ -133,7 +136,7 @@ against the rule "unlinked slices go to the airdrop".
 
 | # | Step | Owner | Status |
 |---|---|---|---|
-| 1 | Config ladder (server): economics module, parity tests, SOL-price steps, config creation + chain readback, API to fetch a launch config | Grok, brief `docs/dbc/grok-step-1-config-ladder.md` | brief to be rewritten to D1-D15 (the first version predates them) |
+| 1 | Config ladder (server): economics module, parity tests, SOL-price steps, config creation + chain readback, API to fetch a launch config | Grok, brief `docs/dbc/grok-step-1-config-ladder.md` | brief v2 written 2026-09-28, follows D1-D15; ready for Grok |
 | 2 | Create flow: creator signs createPool only (2 signers) + create screen | Grok | not started |
 | 3 | Trading on our site: DBC buy/sell with our referral account | Grok | not started |
 | 4 | Indexer: DBC trades into charts, market stats, leagues, battles | Grok | not started |
