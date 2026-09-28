@@ -141,7 +141,7 @@ against the rule "unlinked slices go to the airdrop".
 
 | # | Step | Owner | Status |
 |---|---|---|---|
-| 1 | Config ladder (server): economics module, parity tests, SOL-price steps, config creation + chain readback, API to fetch a launch config | Grok, brief `docs/dbc/grok-step-1-config-ladder.md` | brief v2 written 2026-09-28, follows D1-D15; ready for Grok |
+| 1 | Config ladder (server): economics module, parity tests, SOL-price steps, config creation + chain readback, API to fetch a launch config | Grok, brief `docs/dbc/grok-step-1-config-ladder.md` | **DONE 2026-09-28**: merged (PR #471 + review fixes), devnet ALL CHECKS PASS |
 | 2 | Create flow: creator signs createPool only (2 signers) + create screen | Grok | not started |
 | 3 | Trading on our site: DBC buy/sell with our referral account | Grok | not started |
 | 4 | Indexer: DBC trades into charts, market stats, leagues, battles | Grok | not started |
@@ -242,3 +242,17 @@ Must fix:
    and prints pass/fail per case; the program is the judge. Unit test: the mirrored minimums for a
    known case equal the numbers the program logs/accepts.
 Claude re-runs the proof (simulation of 44, then the full lifecycle on one) after the fix.
+
+### Step 1, review 4 (2026-09-28): PR #471 @ `31fccefa` + Claude's `8df36659`: MERGED
+
+Program floors mirrored (SDK 1.5.13 undercounted by 2153 raw on $15K @ $118). Devnet proof run by
+Claude (funder = devnet deployer, Helius devnet RPC, in-memory DB): **ALL CHECKS PASS**.
+- 44/44 createConfig simulations accepted by the DBC program; both fee modes created + read back.
+- First buy 10% in the launch tx paid 2% (957792 on 47889564); a buy ~5 s later paid 44.4%.
+- Curve completed at exactly 1.268965644 SOL; migrated; pool quote 987813617 = 78% less the 0.2% cut.
+- Migration fee creator 251255196 / us 27917245, exact; mint supply after graduation 95036704139970 ==
+  configured circulating (buffer of 301355 raw burned).
+Claude's fixes found by running it: readback ignored the program's 20-point curve padding (a correct
+config was marked failed: fail-closed worked); proof simulated via VersionedTransaction, waits out the
+60 s anti-sniper window, funds the collector, fee sign, and a real supply check (was `|| true`).
+Signatures: config `5ZaMhNiU...`, first buy `4tmYXho5...`, complete `3M4aMz2E...`, migrate `24wSZycQ...`.
