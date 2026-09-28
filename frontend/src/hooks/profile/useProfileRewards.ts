@@ -125,7 +125,9 @@ export function useProfileRewards({
       try {
         let txHash: string | null = null;
 
-        if (reward.period === "monthly") {
+        // BNB / Robinhood monthly prizes come from MonthlyLeagueTreasury. Solana monthly prizes use
+        // the same Merkle claim as weekly ones (monthly_league_vault), handled below.
+        if (reward.period === "monthly" && !solana) {
           const monthId = monthIdFromEpochStart(reward.epochStart);
           const monthly = await fetchMonthlyClaim(chainId, monthId, account);
           const claim = monthly.rewards.find(
