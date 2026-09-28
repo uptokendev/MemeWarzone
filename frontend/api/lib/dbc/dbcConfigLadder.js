@@ -237,14 +237,27 @@ export function createDbcConfigLadder(deps = {}) {
   async function withLock(key, fn) {
     const client = db.connect ? await db.connect() : null;
     const q = client ? client.query.bind(client) : query;
+    let settled = false;
     try {
       if (client) await q("begin");
       await q("select pg_advisory_xact_lock(hashtext($1))", [key]);
-      const result = await fn({ query: q });
-      if (client) await q("commit");
+      const ctx = {
+        query: q,
+        async commit() {
+          if (client && !settled) {
+            await q("commit");
+            settled = true;
+          }
+        },
+      };
+      const result = await fn(ctx);
+      if (client && !settled) {
+        await q("commit");
+        settled = true;
+      }
       return result;
     } catch (error) {
-      if (client) await q("rollback").catch(() => {});
+      if (client && !settled) await q("rollback").catch(() => {});
       throw error;
     } finally {
       if (client) client.release();
@@ -264,16 +277,22 @@ export function createDbcConfigLadder(deps = {}) {
       paramsHash: built.paramsHash,
     };
 
-    return withLock(lockKey(key), async ({ query: q }) => {
+    return withLock(lockKey(key), async ({ query: q, commit }) => {
       const existing = await q(
         `select * from public.dbc_launch_configs
           where cluster = $1 and quote_mint = $2 and target_usd_micros = $3
             and step_index = $4 and creator_fee_mode = $5 and params_hash = $6
-            and status = 'active'
           limit 1`,
         [key.cluster, key.quoteMint, key.targetUsdMicros, key.stepIndex, key.creatorFeeMode, key.paramsHash],
       );
-      if (existing.rows[0]) return mapRow(existing.rows[0], built);
+      const row0 = existing.rows[0];
+      if (row0?.status === "active") return mapRow(row0, built);
+      if (row0?.status === "failed" || row0?.status === "pending") {
+        throw Object.assign(
+          new Error("This DBC launch config failed on-chain readback and will not be created again until an operator clears it."),
+          { code: "DBC_CONFIG_FAILED" },
+        );
+      }
 
       const conn = connection();
       await assertRpcCluster({ connection: conn, cluster: net });
@@ -282,67 +301,70 @@ export function createDbcConfigLadder(deps = {}) {
       const configKp = Keypair.generate();
       const client = givenClient || new DynamicBondingCurveClient(conn, "confirmed");
 
+      const tx = await client.partner.createConfig({
+        config: configKp.publicKey,
+        feeClaimer: collector,
+        leftoverReceiver: collector,
+        quoteMint: NATIVE_MINT,
+        payer: pay.publicKey,
+        ...built.configParams,
+      });
+      tx.feePayer = pay.publicKey;
+      const sig = await sendTransaction(conn, tx, [pay, configKp]);
       const inserted = await q(
         `insert into public.dbc_launch_configs (
             cluster, quote_mint, target_usd_micros, step_index, step_usd_micros,
             creator_fee_mode, params_hash, config_address, threshold_lamports,
-            total_token_supply, status, created_at
-          ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11)
+            total_token_supply, create_signature, status, created_at
+          ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12)
           returning *`,
         [
           key.cluster, key.quoteMint, key.targetUsdMicros, key.stepIndex, stepUsdMicros.toString(),
           key.creatorFeeMode, key.paramsHash, configKp.publicKey.toBase58(),
           built.expected.thresholdLamports.toString(), built.expected.totalTokenSupply.toString(),
-          now().toISOString(),
+          sig, now().toISOString(),
         ],
       );
       const row = inserted.rows[0];
-
       try {
-        const tx = await client.partner.createConfig({
-          config: configKp.publicKey,
-          feeClaimer: collector,
-          leftoverReceiver: collector,
-          quoteMint: NATIVE_MINT,
-          payer: pay.publicKey,
-          ...built.configParams,
-        });
-        tx.feePayer = pay.publicKey;
-        const sig = await sendTransaction(conn, tx, [pay, configKp]);
         if (confirmTransaction) await confirmTransaction(conn, sig);
         else await conn.confirmTransaction(sig, "confirmed");
-
-        const onChain = await client.state.getPoolConfig(configKp.publicKey);
-        if (!onChain) throw new Error("config missing after create");
-        const mismatches = diffOnChainConfig(onChain, built.configParams, {
-          feeClaimer: collector,
-          leftoverReceiver: collector,
-          quoteMint: NATIVE_MINT,
-        });
-        if (mismatches.length) {
-          await q(
-            `update public.dbc_launch_configs set status = 'failed', create_signature = $2 where id = $1`,
-            [row.id, sig],
-          );
-          const error = new Error("on-chain DBC config does not match expected params");
-          error.code = "DBC_CONFIG_MISMATCH";
-          error.mismatches = mismatches;
-          throw error;
-        }
-        const updated = await q(
-          `update public.dbc_launch_configs
-              set status = 'active', create_signature = $2, verified_at = $3
-            where id = $1
-            returning *`,
-          [row.id, sig, now().toISOString()],
-        );
-        return mapRow(updated.rows[0], built);
       } catch (error) {
-        if (error.code !== "DBC_CONFIG_MISMATCH") {
-          await q(`update public.dbc_launch_configs set status = 'failed' where id = $1 and status = 'pending'`, [row.id]).catch(() => {});
-        }
-        throw error;
+        await q(`update public.dbc_launch_configs set status = 'failed' where id = $1`, [row.id]);
+        await commit();
+        throw Object.assign(error, { code: error.code || "DBC_CONFIG_FAILED" });
       }
+
+      const onChain = await client.state.getPoolConfig(configKp.publicKey);
+      if (!onChain) {
+        await q(`update public.dbc_launch_configs set status = 'failed' where id = $1`, [row.id]);
+        await commit();
+        throw Object.assign(new Error("DBC config missing after create"), { code: "DBC_CONFIG_FAILED" });
+      }
+      const mismatches = diffOnChainConfig(onChain, built.configParams, {
+        feeClaimer: collector,
+        leftoverReceiver: collector,
+        quoteMint: NATIVE_MINT,
+      });
+      if (mismatches.length) {
+        await q(
+          `update public.dbc_launch_configs set status = 'failed', create_signature = $2 where id = $1`,
+          [row.id, sig],
+        );
+        await commit();
+        throw Object.assign(new Error("on-chain DBC config does not match expected params"), {
+          code: "DBC_CONFIG_MISMATCH",
+          mismatches,
+        });
+      }
+      const updated = await q(
+        `update public.dbc_launch_configs
+            set status = 'active', create_signature = $2, verified_at = $3
+          where id = $1
+          returning *`,
+        [row.id, sig, now().toISOString()],
+      );
+      return mapRow(updated.rows[0], built);
     });
   }
 

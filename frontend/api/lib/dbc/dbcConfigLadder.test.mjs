@@ -34,7 +34,7 @@ function memoryDb() {
     const sql = String(text).replace(/\s+/g, " ").trim().toLowerCase();
     if (sql.startsWith("begin") || sql.startsWith("commit") || sql.startsWith("rollback")) return { rows: [] };
     if (sql.includes("pg_advisory_xact_lock")) return { rows: [{ locked: true }] };
-    if (sql.startsWith("select") && sql.includes("status = 'active'")) {
+    if (sql.startsWith("select") && sql.includes("from public.dbc_launch_configs")) {
       const found = rows.filter((r) => (
         r.cluster === params[0]
         && r.quote_mint === params[1]
@@ -42,7 +42,6 @@ function memoryDb() {
         && Number(r.step_index) === Number(params[3])
         && r.creator_fee_mode === params[4]
         && r.params_hash === params[5]
-        && r.status === "active"
       ));
       return { rows: found };
     }
@@ -59,9 +58,9 @@ function memoryDb() {
         config_address: params[7],
         threshold_lamports: params[8],
         total_token_supply: params[9],
-        created_at: params[10],
+        create_signature: params[10],
+        created_at: params[11],
         status: "pending",
-        create_signature: null,
         verified_at: null,
       };
       rows.push(row);
@@ -206,17 +205,50 @@ test("readback mismatch marks the row failed and it is not served", async () => 
   const db = memoryDb();
   const chain = fakeChain({ mismatch: true });
   const ladder = ladderFor(db, chain);
-  await assert.rejects(
-    () => ladder.ensureLaunchConfig({
-      targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
-      stepIndex: 241,
-      stepUsdMicros: 118_000_000n,
-      creatorFeeMode: "creator",
-    }),
-    (err) => err.code === "DBC_CONFIG_MISMATCH",
-  );
+  const args = {
+    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    stepIndex: 241,
+    stepUsdMicros: 118_000_000n,
+    creatorFeeMode: "creator",
+  };
+  await assert.rejects(() => ladder.ensureLaunchConfig(args), (err) => err.code === "DBC_CONFIG_MISMATCH");
   assert.equal(db.rows[0].status, "failed");
   assert.equal(db.rows.filter((r) => r.status === "active").length, 0);
+  await assert.rejects(() => ladder.ensureLaunchConfig(args), (err) => err.code === "DBC_CONFIG_FAILED");
+  assert.equal(chain.creations.n, 1);
+});
+
+test("a confirm failure after send persists failed and does not create again", async () => {
+  const db = memoryDb();
+  const chain = fakeChain();
+  const ladder = ladderFor(db, chain, {
+    confirmTransaction: async () => { throw new Error("confirm dropped"); },
+  });
+  const args = {
+    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    stepIndex: 241,
+    stepUsdMicros: 118_000_000n,
+    creatorFeeMode: "creator",
+  };
+  await assert.rejects(() => ladder.ensureLaunchConfig(args), (err) => err.code === "DBC_CONFIG_FAILED");
+  assert.equal(db.rows[0].status, "failed");
+  await assert.rejects(() => ladder.ensureLaunchConfig(args), (err) => err.code === "DBC_CONFIG_FAILED");
+  assert.equal(chain.creations.n, 1);
+});
+
+test("an error before the transaction is sent does not insert a row", async () => {
+  const db = memoryDb();
+  const chain = fakeChain();
+  chain.client.partner.createConfig = async () => { throw new Error("build failed"); };
+  const ladder = ladderFor(db, chain);
+  await assert.rejects(() => ladder.ensureLaunchConfig({
+    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    stepIndex: 241,
+    stepUsdMicros: 118_000_000n,
+    creatorFeeMode: "creator",
+  }));
+  assert.equal(chain.creations.n, 0);
+  assert.equal(db.rows.length, 0);
 });
 
 test("two concurrent calls create the config once", async () => {
@@ -232,6 +264,29 @@ test("two concurrent calls create the config once", async () => {
   const [a, b] = await Promise.all([ladder.ensureLaunchConfig(args), ladder.ensureLaunchConfig(args)]);
   assert.equal(a.configAddress, b.configAddress);
   assert.equal(chain.creations.n, 1);
+});
+
+test("a persisted failed config is 503 on the HTTP route", async () => {
+  const db = memoryDb();
+  const chain = fakeChain({ mismatch: true });
+  const ladder = ladderFor(db, chain);
+  const args = {
+    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    stepIndex: 241,
+    stepUsdMicros: 118_000_000n,
+    creatorFeeMode: "creator",
+  };
+  await assert.rejects(() => ladder.ensureLaunchConfig(args));
+  const res = fakeRes();
+  await handleDbcLaunchConfig(fakeReq({ query: { chainId: "101", targetUsd: "15000", creatorFeeMode: "creator" } }), res, {
+    env: { DBC_LAUNCH_ENABLED: "true", SOLANA_CLUSTER: "devnet", DBC_FEE_COLLECTOR: COLLECTOR.publicKey.toBase58() },
+    cluster: "devnet",
+    ladder,
+    async readSolUsdMicros() { return 118_000_000n; },
+    solPriceStep: () => ({ stepIndex: 241, stepUsdMicros: 118_000_000n }),
+  });
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.code, "DBC_CONFIG_FAILED");
 });
 
 test("flag off returns the disabled payload; bad target/mode 400; $150 refused off devnet; stale price 503", async () => {

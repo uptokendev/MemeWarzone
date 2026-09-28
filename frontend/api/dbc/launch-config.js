@@ -73,12 +73,24 @@ export async function handleDbcLaunchConfig(req, res, deps = {}) {
     ({ pool: db } = await import("../../server/db.js"));
   }
   const ladder = deps.ladder || createDbcConfigLadder({ db, env, cluster });
-  const ensured = await ladder.ensureLaunchConfig({
-    targetUsdMicros,
-    stepIndex: step.stepIndex,
-    stepUsdMicros: step.stepUsdMicros,
-    creatorFeeMode,
-  });
+  let ensured;
+  try {
+    ensured = await ladder.ensureLaunchConfig({
+      targetUsdMicros,
+      stepIndex: step.stepIndex,
+      stepUsdMicros: step.stepUsdMicros,
+      creatorFeeMode,
+    });
+  } catch (error) {
+    if (error?.code === "DBC_CONFIG_FAILED" || error?.code === "DBC_CONFIG_MISMATCH") {
+      return json(res, 503, {
+        ok: false,
+        error: error.message,
+        code: "DBC_CONFIG_FAILED",
+      });
+    }
+    throw error;
+  }
 
   return json(res, 200, {
     config: ensured.configAddress,
@@ -103,6 +115,9 @@ export default async function dbcLaunchConfig(req, res) {
     }
     if (error?.code === "DBC_CLUSTER_MISMATCH" || error?.code === "DBC_CLUSTER_UNCONFIGURED") {
       return json(res, 503, { ok: false, error: error.message, code: error.code });
+    }
+    if (error?.code === "DBC_CONFIG_FAILED" || error?.code === "DBC_CONFIG_MISMATCH") {
+      return json(res, 503, { ok: false, error: error.message, code: error.code === "DBC_CONFIG_MISMATCH" ? "DBC_CONFIG_FAILED" : error.code });
     }
     console.error("[dbc/launch-config]", error);
     return json(res, 500, { ok: false, error: "Server error", code: error?.code || undefined });

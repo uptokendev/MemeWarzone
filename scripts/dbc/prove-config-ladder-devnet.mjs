@@ -2,6 +2,8 @@
 /**
  * Devnet proof of the DBC config ladder. Throwaway keys only (never a founder key).
  * Genesis EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG is required.
+ * Optional DBC_PROVE_FUNDER_KEYPAIR=<path to json keypair>: funds the throwaway
+ * wallets from that key instead of the public faucet.
  */
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -53,14 +55,15 @@ function memoryDb() {
   const run = async (text, params = []) => {
     const sql = String(text).replace(/\s+/g, " ").trim().toLowerCase();
     if (sql.startsWith("begin") || sql.startsWith("commit") || sql.startsWith("rollback") || sql.includes("pg_advisory")) return { rows: [] };
-    if (sql.startsWith("select") && sql.includes("status = 'active'")) {
-      return { rows: rows.filter((r) => r.cluster === params[0] && r.quote_mint === params[1] && String(r.target_usd_micros) === String(params[2]) && Number(r.step_index) === Number(params[3]) && r.creator_fee_mode === params[4] && r.params_hash === params[5] && r.status === "active") };
+    if (sql.startsWith("select") && sql.includes("from public.dbc_launch_configs")) {
+      return { rows: rows.filter((r) => r.cluster === params[0] && r.quote_mint === params[1] && String(r.target_usd_micros) === String(params[2]) && Number(r.step_index) === Number(params[3]) && r.creator_fee_mode === params[4] && r.params_hash === params[5]) };
     }
     if (sql.startsWith("insert")) {
       const row = {
         id: id++, cluster: params[0], quote_mint: params[1], target_usd_micros: params[2], step_index: params[3],
         step_usd_micros: params[4], creator_fee_mode: params[5], params_hash: params[6], config_address: params[7],
-        threshold_lamports: params[8], total_token_supply: params[9], created_at: params[10], status: "pending",
+        threshold_lamports: params[8], total_token_supply: params[9], create_signature: params[10],
+        created_at: params[11], status: "pending",
       };
       rows.push(row);
       return { rows: [row] };
@@ -90,12 +93,34 @@ function memoryDb() {
   };
 }
 
+function loadKeypairFile(file) {
+  return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(file, "utf8"))));
+}
+
 async function airdrop(conn, pubkey, lamports) {
   const have = BigInt(await conn.getBalance(pubkey));
   const want = BigInt(lamports);
   if (have >= want) return;
   const sig = await conn.requestAirdrop(pubkey, Number(want - have));
   await conn.confirmTransaction(sig, "confirmed");
+}
+
+async function fundFrom(conn, funder, dest, lamports) {
+  const have = BigInt(await conn.getBalance(dest));
+  const want = BigInt(lamports);
+  if (have >= want) return;
+  const tx = new Transaction().add(SystemProgram.transfer({
+    fromPubkey: funder.publicKey,
+    toPubkey: dest,
+    lamports: Number(want - have),
+  }));
+  await sendAndConfirmTransaction(conn, tx, [funder], { commitment: "confirmed" });
+}
+
+async function fund(conn, dest, lamports) {
+  const funderPath = process.env.DBC_PROVE_FUNDER_KEYPAIR;
+  if (funderPath) return fundFrom(conn, loadKeypairFile(funderPath), dest, lamports);
+  return airdrop(conn, dest, lamports);
 }
 
 async function getTx(conn, sig) {
@@ -137,9 +162,15 @@ async function main() {
   console.log(`creator   ${creator.publicKey.toBase58()}`);
   console.log(`trader    ${trader.publicKey.toBase58()}`);
 
-  await airdrop(conn, payer.publicKey, 2_000_000_000);
-  await airdrop(conn, creator.publicKey, 1_000_000_000);
-  await airdrop(conn, trader.publicKey, 2_000_000_000);
+  if (process.env.DBC_PROVE_FUNDER_KEYPAIR) {
+    const funder = loadKeypairFile(process.env.DBC_PROVE_FUNDER_KEYPAIR);
+    console.log(`funder    ${funder.publicKey.toBase58()}  ${sol(await conn.getBalance(funder.publicKey))} SOL`);
+  } else {
+    console.log("no DBC_PROVE_FUNDER_KEYPAIR; using the public faucet");
+  }
+  await fund(conn, payer.publicKey, 2_000_000_000);
+  await fund(conn, creator.publicKey, 1_000_000_000);
+  await fund(conn, trader.publicKey, 2_000_000_000);
   console.log(`payer balance ${sol(await conn.getBalance(payer.publicKey))} SOL`);
 
   const solUsdMicros = 118_000_000n;
@@ -266,7 +297,7 @@ async function main() {
   const cpAmm = new CpAmm(conn);
   const dpool = await cpAmm.fetchPoolState(dammPool);
   const vaultB = BigInt((await conn.getTokenAccountBalance(dpool.tokenBVault)).value.amount);
-  const poolQuote = (threshold * 78n) / 100n;
+  const poolQuote = (threshold * 78n + 99n) / 100n;
   const meteoraCut = (poolQuote * 20n) / 10_000n;
   check("pool quote is 78% less Meteora 0.2%", vaultB <= poolQuote && vaultB >= poolQuote - meteoraCut - 1n, `${vaultB} vs ${poolQuote}`);
 

@@ -28,7 +28,10 @@ import {
   getLockedVestingParams,
   getNextSqrtPriceFromBaseAmountOutRoundingUp,
   getSqrtPriceFromPrice,
+  getSwapAmountWithBuffer,
   getTotalSupplyFromCurve,
+  getBaseTokenForSwap,
+  getMigrationThresholdPrice,
   validateConfigParameters,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import {
@@ -56,6 +59,7 @@ import {
   creatorTradingFeePct,
   isCreatorFeeMode,
   migrationSplitLamports,
+  roundUpToWholeTokens,
   thresholdLamportsFor,
 } from "../../../shared/dbcEconomics.mjs";
 
@@ -106,8 +110,15 @@ function linearEconomics(thresholdLamports, slope) {
   };
 }
 
-function uniqueSoldPoints(soldRaw, slope) {
-  // Pack where dP/P is largest (the start). 16 points, seven of them in the first 8% of sold.
+function finalizeSoldPoints(soldAt, soldRaw) {
+  const out = soldAt.filter((s, i) => i === 0 || s > soldAt[i - 1]);
+  out[0] = 0n;
+  out[out.length - 1] = soldRaw;
+  return out;
+}
+
+/** Pack where dP/P is largest (the start). 16 points, seven in the first 8% of sold. */
+export function soldPointsPackedStart(soldRaw, slope) {
   const fracs = [0, 0.0002, 0.0006, 0.0015, 0.003, 0.007, 0.015, 0.03, 0.06, 0.12, 0.22, 0.35, 0.5, 0.68, 0.85, 1];
   const soldAt = [];
   for (const f of fracs) {
@@ -116,11 +127,30 @@ function uniqueSoldPoints(soldRaw, slope) {
     if (s > soldRaw) s = soldRaw;
     soldAt.push(s);
   }
-  soldAt[0] = 0n;
-  soldAt[soldAt.length - 1] = soldRaw;
   void slope;
-  return soldAt;
+  return finalizeSoldPoints(soldAt, soldRaw);
 }
+
+/** Equal price-ratio spacing: P_i = P0 * (P1/P0)^(i/(n-1)), mapped back to sold. */
+export function soldPointsEqualPriceRatio(soldRaw, slope) {
+  const n = DBC_CURVE_POINTS;
+  const p0 = Number(linearMarginalLamports(0n, slope));
+  const p1 = Number(linearMarginalLamports(soldRaw, slope));
+  const ratio = p1 / p0;
+  const soldAt = [0n];
+  for (let i = 1; i < n - 1; i += 1) {
+    const pLamports = p0 * ratio ** (i / (n - 1));
+    let s = ((BigInt(Math.max(1, Math.round(pLamports))) - DBC_BASE_PRICE_LAMPORTS) * DBC_TOKEN_SCALE * DBC_NANO_LAMPORTS_PER_LAMPORT) / BigInt(slope);
+    if (s <= soldAt[soldAt.length - 1]) s = soldAt[soldAt.length - 1] + DBC_TOKEN_SCALE;
+    if (s >= soldRaw) break;
+    soldAt.push(s);
+  }
+  soldAt.push(soldRaw);
+  return finalizeSoldPoints(soldAt, soldRaw);
+}
+
+/** Review 1 item 4: equal price-ratio had the lower tail error (see the packing table in the test). */
+export const PRODUCTION_SOLD_POINTS = soldPointsEqualPriceRatio;
 
 function curveFromSoldPoints(soldRaw, slope, soldAt, priceScale) {
   const sqrtPrices = soldAt.map((s) => {
@@ -149,9 +179,9 @@ function curveFromSoldPoints(soldRaw, slope, soldAt, priceScale) {
   return { sqrtStartPrice: sqrtPrices[0], curve, qFull };
 }
 
-function buildLinearCurve(thresholdLamports, soldRaw, slope) {
+function buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints = PRODUCTION_SOLD_POINTS) {
   const T = BigInt(thresholdLamports);
-  const soldAt = uniqueSoldPoints(soldRaw, slope);
+  const soldAt = soldPoints(soldRaw, slope);
   const built = curveFromSoldPoints(soldRaw, slope, soldAt, 1);
   if (built.curve.length) {
     const last = built.curve[built.curve.length - 1];
@@ -276,8 +306,8 @@ function customSqrtInput({ creatorFeePct, totalWhole, sqrtPrices, leftover = 0 }
   };
 }
 
-function assembleParams({ thresholdLamports, soldRaw, slope, creatorFeePct }) {
-  const { sqrtStartPrice, curve, sqrtPrices } = buildLinearCurve(thresholdLamports, soldRaw, slope);
+function assembleParams({ thresholdLamports, soldRaw, slope, creatorFeePct, poolTokens, soldPoints }) {
+  const { sqrtStartPrice, curve, sqrtPrices } = buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints);
   const vesting = lockedVestingParams();
   const total = getTotalSupplyFromCurve(
     new BN(thresholdLamports.toString()),
@@ -288,8 +318,17 @@ function assembleParams({ thresholdLamports, soldRaw, slope, creatorFeePct }) {
     new BN(0),
     DBC_MIGRATION_FEE_PCT,
   );
-  const totalRaw = BigInt(total.toString());
-  const totalWhole = (totalRaw + DBC_TOKEN_SCALE - 1n) / DBC_TOKEN_SCALE;
+  const preRaw = BigInt(total.toString());
+  const sqrtMigration = getMigrationThresholdPrice(new BN(thresholdLamports.toString()), sqrtStartPrice, curve);
+  const swapBase = BigInt(getBaseTokenForSwap(sqrtStartPrice, sqrtMigration, curve).toString());
+  const swapBuffer = BigInt(getSwapAmountWithBuffer(new BN(swapBase.toString()), sqrtStartPrice, curve).toString());
+  const dbcCirculating = preRaw - (swapBuffer - swapBase);
+  const linearCirculating = roundUpToWholeTokens(soldRaw + poolTokens + DBC_RESERVE_RAW);
+  const circulatingRaw = dbcCirculating > linearCirculating ? dbcCirculating : linearCirculating;
+  if (circulatingRaw > preRaw) {
+    throw Object.assign(new Error("DBC circulating supply exceeds the SDK pre-migration supply"), { code: "DBC_SUPPLY_CEILING" });
+  }
+  const totalWhole = (preRaw + DBC_TOKEN_SCALE - 1n) / DBC_TOKEN_SCALE;
   let envelope = feeEnvelope({ creatorFeePct });
   try {
     envelope = buildCurveWithCustomSqrtPrices(customSqrtInput({
@@ -308,11 +347,11 @@ function assembleParams({ thresholdLamports, soldRaw, slope, creatorFeePct }) {
     migrationQuoteThreshold: new BN(thresholdLamports.toString()),
     tokenSupply: {
       preMigrationTokenSupply: total,
-      postMigrationTokenSupply: total,
+      postMigrationTokenSupply: new BN(circulatingRaw.toString()),
     },
     lockedVesting: vesting,
   };
-  return { configParams, totalRaw, sqrtPrices };
+  return { configParams, totalRaw: preRaw, circulatingRaw, sqrtPrices };
 }
 
 export function curveQuoteFull(configParams) {
@@ -386,7 +425,7 @@ export function paramsHashOf(payload) {
   return createHash("sha256").update(JSON.stringify(canonicalJson(payload))).digest("hex");
 }
 
-export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorFeeMode) {
+export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorFeeMode, { soldPoints = PRODUCTION_SOLD_POINTS } = {}) {
   if (!isCreatorFeeMode(creatorFeeMode)) {
     throw Object.assign(new Error("creatorFeeMode must be creator or platform"), { code: "DBC_BAD_FEE_MODE" });
   }
@@ -403,8 +442,10 @@ export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorF
     assembled = assembleParams({
       thresholdLamports,
       soldRaw: econ.soldRaw,
+      poolTokens: econ.poolTokens,
       slope,
       creatorFeePct,
+      soldPoints,
     });
     if (assembled.totalRaw <= DBC_SUPPLY_CEILING_RAW) break;
     steepened = true;
@@ -417,8 +458,10 @@ export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorF
         const built = assembleParams({
           thresholdLamports,
           soldRaw: trial.soldRaw,
+          poolTokens: trial.poolTokens,
           slope: mid,
           creatorFeePct,
+          soldPoints,
         });
         if (built.totalRaw <= DBC_SUPPLY_CEILING_RAW) hi = mid;
         else lo = mid + 1n;
@@ -432,8 +475,10 @@ export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorF
     throw Object.assign(new Error("DBC config would mint more than 1B tokens"), { code: "DBC_SUPPLY_CEILING" });
   }
 
-  const { configParams, totalRaw } = assembled;
+  const { configParams, totalRaw, circulatingRaw } = assembled;
   validateConfigParameters({ ...configParams, leftoverReceiver: DUMMY_LEFTOVER });
+  const postRaw = BigInt(configParams.tokenSupply.postMigrationTokenSupply.toString());
+  const preRaw = BigInt(configParams.tokenSupply.preMigrationTokenSupply.toString());
 
   const expected = {
     thresholdLamports,
@@ -444,6 +489,8 @@ export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorF
     ourGraduationLamports: econ.ourGraduationLamports,
     reserveTokens: DBC_RESERVE_RAW,
     totalTokenSupply: totalRaw,
+    circulatingAfterGraduation: circulatingRaw,
+    bufferTokens: preRaw - postRaw,
     slopeUsed: slope,
     steepened,
   };

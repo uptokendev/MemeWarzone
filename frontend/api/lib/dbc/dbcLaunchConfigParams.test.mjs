@@ -5,10 +5,12 @@ import { validateConfigParameters } from "@meteora-ag/dynamic-bonding-curve-sdk"
 import {
   DBC_DEVNET_TEST_TARGET_USD_MICROS,
   DBC_PRICE_SLOPE_LAMPORTS,
+  DBC_RESERVE_RAW,
   DBC_SUPPLY_CEILING_RAW,
   DBC_TARGET_USD_MICROS,
   DBC_TOKEN_SCALE,
   migrationSplitLamports,
+  roundUpToWholeTokens,
 } from "../../../shared/dbcEconomics.mjs";
 import { stepUsdMicrosFromIndex, solPriceStepIndex } from "./dbcPriceSteps.mjs";
 import {
@@ -20,6 +22,8 @@ import {
   linearSoldForCost,
   paramsHashOf,
   quoteAlongDbcCurve,
+  soldPointsEqualPriceRatio,
+  soldPointsPackedStart,
 } from "./dbcLaunchConfigParams.mjs";
 
 const SOL_PRICES = [50, 100, 118, 150, 200, 250, 400];
@@ -65,6 +69,14 @@ test("price path, supply, graduation and anti-sniper tables", () => {
       const dT = qFull > expected.thresholdLamports ? qFull - expected.thresholdLamports : expected.thresholdLamports - qFull;
 
       assert.ok(expected.totalTokenSupply <= DBC_SUPPLY_CEILING_RAW, "supply ceiling");
+      const pre = BigInt(configParams.tokenSupply.preMigrationTokenSupply.toString());
+      const post = BigInt(configParams.tokenSupply.postMigrationTokenSupply.toString());
+      const linearCirculating = roundUpToWholeTokens(expected.soldRaw + expected.poolTokens + DBC_RESERVE_RAW);
+      assert.equal(post, expected.circulatingAfterGraduation);
+      assert.equal(pre, expected.totalTokenSupply);
+      assert.equal(pre - post, expected.bufferTokens);
+      assert.ok(post >= linearCirculating, "post is at least sold + pool + 20M reserve, rounded up");
+      assert.ok(pre > post, "unused swap buffer is not in the post-migration supply");
       if (expected.steepened) {
         assert.ok(expected.slopeUsed > DBC_PRICE_SLOPE_LAMPORTS);
         steepened.push({
@@ -142,6 +154,56 @@ test("price path, supply, graduation and anti-sniper tables", () => {
       assert.ok(tail <= 0.08, `${row.targetUsd} @ $${row.sol}: tail deviation ${row.tailPct}`);
     }
   }
+});
+
+test("pool quote is ceil(T * 78 / 100)", () => {
+  const T = 127_118_644_068n;
+  const split = migrationSplitLamports(T);
+  assert.equal(split.poolLamports, (T * 78n + 99n) / 100n);
+  assert.equal(split.feeLamports, T - split.poolLamports);
+  assert.equal(split.poolLamports + split.feeLamports, T);
+});
+
+test("equal price-ratio spacing vs packed-start: keep the lower tail error", () => {
+  const packingRows = [];
+  let packedTail = 0;
+  let ratioTail = 0;
+  for (const targetUsd of TARGETS) {
+    const target = DBC_TARGET_USD_MICROS[targetUsd];
+    for (const sol of SOL_PRICES) {
+      const { step } = stepForSol(sol);
+      const packed = buildLaunchConfigParams(target, step, "creator", { soldPoints: soldPointsPackedStart });
+      const ratio = buildLaunchConfigParams(target, step, "creator", { soldPoints: soldPointsEqualPriceRatio });
+      function tailOf(built) {
+        if (built.expected.steepened) return null;
+        let worst = 0;
+        for (let i = 10; i <= 50; i += 1) {
+          const linear = (built.expected.thresholdLamports * BigInt(i)) / 50n;
+          const s = linearSoldForCost(linear, built.expected.slopeUsed);
+          const dbc = quoteAlongDbcCurve(built.configParams, s);
+          if (linear === 0n) continue;
+          const diff = dbc > linear ? dbc - linear : linear - dbc;
+          const pct = Number(diff) / Number(linear);
+          if (pct > worst) worst = pct;
+        }
+        return worst;
+      }
+      const pTail = tailOf(packed);
+      const rTail = tailOf(ratio);
+      packingRows.push({
+        targetUsd,
+        sol,
+        packed: pTail == null ? "steepened" : `${(pTail * 100).toFixed(3)}%`,
+        equalRatio: rTail == null ? "steepened" : `${(rTail * 100).toFixed(3)}%`,
+      });
+      if (pTail != null && pTail > packedTail) packedTail = pTail;
+      if (rTail != null && rTail > ratioTail) ratioTail = rTail;
+    }
+  }
+  console.log("\npacking comparison (tail 20-100% of raise)");
+  console.table(packingRows);
+  console.log(`worst tail packed-start ${(packedTail * 100).toFixed(3)}%  equal-ratio ${(ratioTail * 100).toFixed(3)}%`);
+  assert.ok(ratioTail <= packedTail + 1e-12, "production packing is equal price-ratio only if it is not worse");
 });
 
 test("paramsHash is stable for equal input and changes when economics change", () => {

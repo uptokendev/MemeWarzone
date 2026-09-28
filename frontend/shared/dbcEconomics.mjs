@@ -136,14 +136,23 @@ export function parseTargetUsdToMicros(targetUsd) {
   return micros ?? null;
 }
 
-/** D6 integer split, matching the rehearsal: floor(22%) then 90/10. */
+/**
+ * D6 integer split, matching the program: pool = ceil(T * 78 / 100) (Rounding::Up),
+ * fee = T - pool, then creator 90% of the fee.
+ */
 export function migrationSplitLamports(thresholdLamports) {
   const T = BigInt(thresholdLamports);
-  const poolLamports = (T * BigInt(DBC_POOL_AFTER_MIGRATION_PCT)) / 100n;
+  const poolLamports = (T * BigInt(DBC_POOL_AFTER_MIGRATION_PCT) + 99n) / 100n;
   const feeLamports = T - poolLamports;
   const creatorGraduationLamports = (feeLamports * BigInt(DBC_CREATOR_MIGRATION_FEE_PCT)) / 100n;
   const ourGraduationLamports = feeLamports - creatorGraduationLamports;
   return { poolLamports, feeLamports, creatorGraduationLamports, ourGraduationLamports };
+}
+
+export function roundUpToWholeTokens(raw) {
+  const n = BigInt(raw);
+  if (n <= 0n) return 0n;
+  return ((n + DBC_TOKEN_SCALE - 1n) / DBC_TOKEN_SCALE) * DBC_TOKEN_SCALE;
 }
 
 export function thresholdLamportsFor(targetUsdMicros, stepUsdMicros) {
