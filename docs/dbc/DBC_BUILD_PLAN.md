@@ -160,6 +160,59 @@ against the rule "unlinked slices go to the airdrop".
 | 6 | Graduation keeper: migrate, withdraw fees, creator compensation, LP fee claims | Grok | not started |
 | 7 | Binding tokens via Meteora TokenBadges + liquidity filter | Grok | not started |
 
+## Groundwork for steps 3-6 (Claude, 2026-09-28): proven or read from the code
+
+**D12 creator lock: PROVEN on devnet** (`tools/dbc-rehearsal/prove-creator-lock-devnet.mjs`, ALL CHECKS
+PASS). One transaction: DBC `swap2` ExactOut (exactly X tokens) + create the escrow's token account +
+Jupiter Lock `create_vesting_escrow(X)`: 979 bytes, **2 signers** (creator + a fresh escrow `base`
+key). The creator's wallet ends that transaction with none of the tokens; the escrow holds X. Params:
+`cliff_unlock_amount` = 20% at the date, `amount_per_period` = 20% x 4 at `frequency`,
+`cancel_mode 0`, `update_recipient_mode 0`: cancel and recipient change are refused by the program
+(`NotPermitToDoThisAction` 6005); nothing released before the date; then exactly 20% per step.
+IDL (v0.4.0, read from chain): `tools/dbc-rehearsal/jup-lock-idl.json`.
+
+**Step 3 (trading), from the code map:**
+- The trade panel is inline in `TokenDetails.tsx` (quote effect ~3270, `handlePlaceTrade` ~3762).
+  A DBC branch must come **before** the launchpad branches: with no Campaign PDA the launchpad quote
+  falls back to hard-coded defaults (~3381) and would show a wrong quote instead of an error.
+- Model a DBC trade lib on `solanaMeteoraTrade.ts` (program allowlist, v0 without ALT,
+  `signTransaction` + `sendRawTransaction`); `sendWalletV0Transaction` is module-private today.
+- After graduation: `loadVerifiedMarket` (`solanaMeteoraTrade.ts:131`) only accepts the
+  deterministic customizable pool; a DBC-migrated pool comes from a config and must be accepted from
+  `meta`. `tokenA/BProgram` are hard-coded to classic SPL.
+- Slippage is a fixed 5% today.
+
+**Step 4 (indexer):**
+- Write DBC swaps to `curve_trades` (chain 101, `campaign_address` = the DBC pool, `bnb_amount_raw`
+  in the launchpad convention: buy = gross incl. fee, sell = net) so leagues, candles, stats and
+  holders work; add a venue marker (there is none today; DAMM rows use `log_index >= 20000`).
+- The first buy (D13) needs a flag: nothing marks it today, and finalize's `top_earner` does not
+  even exclude the creator (the live board does).
+- Decode DBC `EvtSwap2`; the meteora swap indexer already keys only on `meta.solanaGraduation.pool`,
+  so a migrated DBC coin is picked up if that meta is written at graduation.
+
+**Step 5 (fee routing):**
+- The vaults are plain `VaultState { kind }` PDAs: a System transfer from any wallet credits them;
+  no counter to update. Roots and batches only check the balance later.
+- Route the collector's share per D4 as raw transfers: league (weekly 30 / monthly 70 of 37.5%),
+  recruiter / squad (linked, OG) or airdrop (unlinked), **protocol into `protocol_vault`** so the
+  existing hourly `flush_operator_fill` applies the $10k cap and sends the rest to the multisig. Never
+  pay the operator directly (it would bypass the cap).
+- Per trade also write a `reward_events` row (`matched_activity_source = 'dbc_collector'`, the
+  trader's profile via the same lookup as trade signing) so recruiter / squad / airdrop credit works.
+- The collector holds user money for as long as it waits: flush promptly, never the deployer key.
+
+## Pre-existing issues found while mapping (today's launchpad, not DBC)
+
+- **The Solana league settlement pot counts post-graduation DAMM swaps.** `meteoraSwapIndexer.ts`
+  writes them to `curve_trades`; `computeTotalLeagueFeeRawInRange` does not filter them, but they pay
+  no league fee. After the first graduation the pot will exceed the vault and roots will block.
+  **Fix before K88 graduates.**
+- `meteoraSwapIndexer.ts` only indexes the 50 most recently updated graduated pools.
+- `top_earner` at settlement has no creator / campaign / fee-recipient exclusion; the live board has.
+- Trade signing's recruiter lookup (`limit 1`, no active filter) and recruiter crediting (prefers the
+  active link) can disagree for a wallet with several links.
+
 ## Rules found by running it (must hold in every step)
 
 - The SDK's partner-fee claim closes the claimer's WSOL account. The referral account must be an
