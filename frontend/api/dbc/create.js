@@ -232,9 +232,6 @@ async function buildCreatePoolTransaction({
   const creator = new PublicKey(creatorWallet);
   const baseMint = new PublicKey(mint);
   const config = new PublicKey(configAddress);
-  if (typeof client?.creator?.getPoolConfigForNewPool === "function") {
-    client.creator.getPoolConfigForNewPool = async () => poolConfigStateFromParams(configParams);
-  }
   const createPoolParam = {
     name: String(name).slice(0, 32),
     symbol: String(symbol).slice(0, 10),
@@ -264,6 +261,8 @@ async function buildCreatePoolTransaction({
 }
 
 function serializeUnsigned(tx) {
+  // Placeholder blockhash is transport-only. The browser (dbcCreateSubmit) must
+  // replace it with a fresh getLatestBlockhash before simulate + sign.
   if (typeof tx.serialize === "function") {
     try {
       if (!tx.recentBlockhash) tx.recentBlockhash = "11111111111111111111111111111111";
@@ -273,6 +272,22 @@ function serializeUnsigned(tx) {
     }
   }
   throw new DbcCreateError("createPool did not return a transaction", { code: "DBC_CREATE_TX", httpStatus: 500 });
+}
+
+function parseFirstBuyLamports(value) {
+  const raw = String(value ?? "0").trim();
+  if (!raw) return 0n;
+  if (!/^\d+$/.test(raw)) {
+    const err = new DbcCreateError("firstBuyLamports must be a non-negative integer.", { code: "DBC_BAD_FIRST_BUY", httpStatus: 400 });
+    throw err;
+  }
+  return BigInt(raw);
+}
+
+function pubkeyField(value) {
+  if (!value) return "";
+  if (typeof value.toBase58 === "function") return value.toBase58();
+  return String(value).trim();
 }
 
 async function upsertTokenMetadata(db, row) {
@@ -452,10 +467,10 @@ export function createDbcCreateHandler(deps = {}) {
     const name = String(body.name || "").trim();
     const symbol = normalizeTicker(body.symbol || ticker);
     if (!name || !symbol) return json(res, 400, { ok: false, error: "name and symbol are required", code: "DBC_BAD_NAME" });
-    const firstBuyLamports = BigInt(String(body.firstBuyLamports || "0"));
-    if (firstBuyLamports < 0n) return json(res, 400, { ok: false, error: "first buy cannot be negative", code: "DBC_BAD_FIRST_BUY" });
+    const firstBuyLamports = parseFirstBuyLamports(body.firstBuyLamports);
     const draftId = String(body.draftId || session.draftId || "").trim() || null;
     const database = await db();
+    assertDbcCreatorLimits(await (deps.loadDbcCreatorLimits || loadDbcCreatorLimits)(database, { creatorWallet, now }));
     if (draftId) {
       const draft = await loadDraftById(database, draftId);
       if (!draft || draft.creatorWallet !== creatorWallet) {
@@ -565,19 +580,19 @@ export function createDbcCreateHandler(deps = {}) {
     const owner = deps.poolOwner
       ? await deps.poolOwner(token.pool)
       : (await conn.getAccountInfo(poolPk, "confirmed"))?.owner?.toBase58?.();
-    if (owner && owner !== DBC_PROGRAM_ID) {
+    if (!owner || owner !== DBC_PROGRAM_ID) {
       return json(res, 409, { ok: false, error: "That account is not a DBC pool.", code: "DBC_POOL_OWNER" });
     }
-    const configOnChain = String(onChain.config?.toBase58?.() || onChain.config || "");
-    const creatorOnChain = String(onChain.creator?.toBase58?.() || onChain.poolCreator?.toBase58?.() || onChain.creator || "");
-    const mintOnChain = String(onChain.baseMint?.toBase58?.() || onChain.baseMint || "");
-    if (configOnChain && configOnChain !== token.config) {
+    const configOnChain = pubkeyField(onChain.config);
+    const creatorOnChain = pubkeyField(onChain.creator) || pubkeyField(onChain.poolCreator);
+    const mintOnChain = pubkeyField(onChain.baseMint);
+    if (!configOnChain || configOnChain !== token.config) {
       return json(res, 409, { ok: false, error: "The pool config does not match the authorized config.", code: "DBC_POOL_CONFIG" });
     }
-    if (creatorOnChain && creatorOnChain !== token.creatorWallet) {
+    if (!creatorOnChain || creatorOnChain !== token.creatorWallet) {
       return json(res, 409, { ok: false, error: "The pool creator does not match the wallet that authorized this launch.", code: "DBC_POOL_CREATOR" });
     }
-    if (mintOnChain && mintOnChain !== token.mint) {
+    if (!mintOnChain || mintOnChain !== token.mint) {
       return json(res, 409, { ok: false, error: "The pool mint does not match the reserved token.", code: "DBC_POOL_MINT" });
     }
 
@@ -681,8 +696,7 @@ export function createDbcCreateHandler(deps = {}) {
   async function handleQuoteFirstBuy(body, res) {
     const prepared = await ensureConfigForQuote(body);
     if (prepared.error) return json(res, 400, { ok: false, ...prepared.error, error: prepared.error.error });
-    const firstBuyLamports = BigInt(String(body.firstBuyLamports || "0"));
-    if (firstBuyLamports < 0n) return json(res, 400, { ok: false, error: "first buy cannot be negative", code: "DBC_BAD_FIRST_BUY" });
+    const firstBuyLamports = parseFirstBuyLamports(body.firstBuyLamports);
     const quoteFn = deps.quoteFirstBuyOnConfig || quoteFirstBuyOnConfig;
     const firstBuy = quoteFn(prepared.ensured.configParams, firstBuyLamports);
     const capped = firstBuyExceedsCap(firstBuy, DBC_FIRST_BUY_MAX_BPS);

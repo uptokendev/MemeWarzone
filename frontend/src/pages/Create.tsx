@@ -664,6 +664,7 @@ const Create = () => {
           creatorAddress: creatorWallet,
           pool: authorization.pool,
           mintAddress: mint.publicKey.toBase58(),
+          config: authorization.config,
         });
         const finalized = await finalizeDbcCreate({
           finalizeToken: authorization.finalizeToken,

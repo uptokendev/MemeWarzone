@@ -478,6 +478,98 @@ test("due-drafts returns only the wallet's own due DBC drafts", async () => {
   assert.equal(res.body.copy, "Your launch time has arrived. Deploy now to go live.");
 });
 
+test("malformed firstBuyLamports is 400, not 500", async () => {
+  const db = memoryDb();
+  const handle = handlerFor(db);
+  const begun = await post(handle, {
+    operation: "begin",
+    creatorWallet: SIGNER.publicKey.toBase58(),
+    ticker: "BADBUY",
+    auth: {},
+  });
+  const auth = await post(handle, {
+    operation: "authorize",
+    sessionToken: begun.body.sessionToken,
+    mint: MINT.publicKey.toBase58(),
+    name: "Bad",
+    symbol: "BADBUY",
+    targetUsd: 15000,
+    feeChoice: "keep",
+    firstBuyLamports: "1.5",
+  });
+  assert.equal(auth.statusCode, 400);
+  assert.equal(auth.body.code, "DBC_BAD_FIRST_BUY");
+});
+
+test("authorize re-checks creator limits after begin", async () => {
+  const db = memoryDb();
+  const handle = handlerFor(db);
+  const begun = await post(handle, {
+    operation: "begin",
+    creatorWallet: SIGNER.publicKey.toBase58(),
+    ticker: "RACE4",
+    auth: {},
+  });
+  assert.equal(begun.body.ok, true);
+  for (let i = 0; i < 3; i += 1) {
+    db.campaigns.push({
+      creator_address: SIGNER.publicKey.toBase58(),
+      launch_type: "dbc",
+      is_active: true,
+      created_at: new Date(),
+    });
+  }
+  const auth = await post(handle, {
+    operation: "authorize",
+    sessionToken: begun.body.sessionToken,
+    mint: MINT.publicKey.toBase58(),
+    name: "Race",
+    symbol: "RACE4",
+    targetUsd: 15000,
+    feeChoice: "keep",
+  });
+  assert.equal(auth.body.ok, false);
+  assert.equal(auth.body.code, "DBC_CREATOR_LAUNCH_LIMIT");
+});
+
+test("finalize fails closed when owner, config, creator or mint is missing", async () => {
+  async function finalizeWith(extra) {
+    const db = memoryDb();
+    const handle = handlerFor(db, extra);
+    const begun = await post(handle, {
+      operation: "begin",
+      creatorWallet: SIGNER.publicKey.toBase58(),
+      ticker: `FIN${Math.random().toString(36).slice(2, 8)}`,
+      auth: {},
+    });
+    const auth = await post(handle, {
+      operation: "authorize",
+      sessionToken: begun.body.sessionToken,
+      mint: MINT.publicKey.toBase58(),
+      name: "Fin",
+      symbol: "FIN",
+      targetUsd: 15000,
+      feeChoice: "keep",
+    });
+    return post(handle, { operation: "finalize", finalizeToken: auth.body.finalizeToken, signature: "x" });
+  }
+  const missingOwner = await finalizeWith({ poolOwner: async () => null });
+  assert.equal(missingOwner.body.code, "DBC_POOL_OWNER");
+  const missingConfig = await finalizeWith({
+    readPool: async () => ({
+      creator: SIGNER.publicKey,
+      poolCreator: SIGNER.publicKey,
+      baseMint: MINT.publicKey,
+    }),
+  });
+  assert.equal(missingConfig.body.code, "DBC_POOL_CONFIG");
+});
+
+test("production create.js does not monkeypatch the SDK config reader", () => {
+  const src = readFileSync(new URL("./create.js", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /getPoolConfigForNewPool\s*=/);
+});
+
 test("existing-job guards skip DBC rows", () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
   const indexer = readFileSync(path.join(root, "realtime-indexer/src/solanaIndexer.ts"), "utf8");

@@ -546,6 +546,7 @@ export default function PushDraftLive() {
         creatorAddress: solanaWallet.solanaAccount,
         pool: authorization.pool,
         mintAddress: mint.publicKey.toBase58(),
+        config: authorization.config,
       });
       const finalized = await finalizeDbcCreate({ finalizeToken: authorization.finalizeToken, signature: created.signature });
       toast.success("DBC token deployed.");
