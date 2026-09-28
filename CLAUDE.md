@@ -1531,6 +1531,9 @@ life of a coin and every check passed against the program's own accounting:
   ~710-760 B); ours = server-made config ladder per dollar target x SOL-price step (0.006 SOL rent
   each), creator signs createPool only. Founder decisions: creator 7%; referral = our collector on
   our own site; Meteora's 0.2% migration liquidity cut is compensated to the creator from our share.
+- **Phantom (founder, 2026-09-28):** coin searchable by address in Phantom and in Jupiter-in-Phantom;
+  buys went through with no warning, only the standard new/low-liquidity token notices. Creator
+  claim paid exactly the pool counter (33378). ALL CHECKS PASS on mainnet.
 - **The SDK partner-fee claim closes the claimer's WSOL ATA** (unwraps it). If that ATA is also the
   referral account, every later swap naming it fails. The referral account must be one no claim closes.
 
