@@ -158,7 +158,7 @@ against the rule "unlinked slices go to the airdrop".
 | 2 | Create flow: creator signs createPool only (2 signers) + create screen + drafts and scheduled launches (D18) | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | **DONE 2026-09-28**: merged (PR #472 + review fixes), devnet ALL CHECKS PASS |
 | 3 | Trading on our site: DBC buy/sell, referral account, creator locked buys (D12), post-graduation trading | Grok, brief `docs/dbc/grok-step-3-trading.md` | **DONE 2026-09-28**: merged (PR #473 + review fixes), devnet ALL CHECKS PASS |
 | 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | **DONE 2026-09-28**: merged (PR #474 + review fixes), devnet ALL CHECKS PASS; migration `20260929_000005` still to apply |
-| 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | PR #475 review 1: CHANGES NEEDED |
+| 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | **DONE 2026-09-28**: merged (PR #475, 2 reviews), devnet ALL CHECKS PASS; migration `20260929_000006` still to apply |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails), buyback & burn (random, <= 0.5% impact), split | Grok | brief after step 5 |
 | 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | brief written 2026-09-28; starts after step 5 is merged |
 | 7 | Binding tokens via Meteora TokenBadges + liquidity filter | Grok | not started |
@@ -471,3 +471,17 @@ The devnet proof must add:
   pass claims it);
 - one swap naming the referral account, then the sweep: the referral balance goes to `protocol_vault`
   to the lamport, the referral account still exists, and a later swap naming it succeeds.
+
+### Step 5, review 2 (2026-09-28): PR #475 @ `9c8a08c7` + Claude's fix: MERGED
+
+All six review-1 items verified in code. Tests run on a throwaway Postgres (unit 12, integration 8).
+Claude's fix: the pending resolver compared `getSlot()` with `lastValidBlockHeight`. On mainnet the slot
+runs about 20M ahead of block height, so every not-yet-visible claim or route counted as expired and
+could be sent twice. It now uses `getBlockHeight()`. A send error after `sendRawTransaction` no longer
+resets rows; they stay pending until the signature fails or its blockhash really expires.
+Devnet proof (Claude, funder = devnet deployer): **ALL CHECKS PASS**. Linked / OG / unlinked profiles,
+fees from EvtSwap2. A trade between accrual and claim stayed on the pool counter (6,249,600) and was
+claimed on the next pass. Every vault delta equals its slice to the lamport. The referral sweep paid
+336,000 to `protocol_vault`, the referral account stayed open, and a later swap naming it succeeded.
+Note for step 5b: `creator_pool` stays counted as held on the collector for every claimed/routed row,
+until 5b adds a paid status.
