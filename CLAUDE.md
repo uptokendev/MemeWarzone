@@ -1521,6 +1521,18 @@ life of a coin and every check passed against the program's own accounting:
 - PartialFill on the completing buy takes only what the curve needs.
 - Tx shape: create (config + pool) 1160 B / 16 accounts / 7 writable / 4 signers; buy 673 B / 15 / 6 / 1.
 - SDK 1.5.13 `state.getPool` returns `{ poolState }`; cp-amm 1.4 keeps the base fee as raw bytes.
+- **Mainnet tiny coin (2026-09-28, `tools/dbc-rehearsal/canary-dbc-mainnet.mjs`, founder's terminal):**
+  mint `4YuzaXEm…`, pool `CgAjACtB…`, config `2nmv9vHx…` (100 SOL threshold, never graduates).
+  Creator tx = createPool only: **689 B / 14 accounts / 6 writable / 2 signers** (wallet + mint);
+  config tx by our side 661 B / 2 signers. **Jupiter routes it on the curve** ("Dynamic Bonding
+  Curve") within the first poll. Buy 0.02 SOL: fee 400000 = 2%, Meteora 80000 of which referral
+  16000, creator 22400 (7% of 320000), collector 297600 -- read from the tx's own token balances.
+- Launch shape decision: 21 of 25 recent mainnet DBC launches reuse a pre-made config (2 signers,
+  ~710-760 B); ours = server-made config ladder per dollar target x SOL-price step (0.006 SOL rent
+  each), creator signs createPool only. Founder decisions: creator 7%; referral = our collector on
+  our own site; Meteora's 0.2% migration liquidity cut is compensated to the creator from our share.
+- **The SDK partner-fee claim closes the claimer's WSOL ATA** (unwraps it). If that ATA is also the
+  referral account, every later swap naming it fails. The referral account must be one no claim closes.
 
 ## 5. One combined release (founder decision, 2026-09-23)
 
