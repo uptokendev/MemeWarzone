@@ -158,8 +158,9 @@ against the rule "unlinked slices go to the airdrop".
 | 2 | Create flow: creator signs createPool only (2 signers) + create screen + drafts and scheduled launches (D18) | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | **DONE 2026-09-28**: merged (PR #472 + review fixes), devnet ALL CHECKS PASS |
 | 3 | Trading on our site: DBC buy/sell, referral account, creator locked buys (D12), post-graduation trading | Grok, brief `docs/dbc/grok-step-3-trading.md` | brief written 2026-09-28 |
 | 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | brief written 2026-09-28 (parallel with step 3) |
-| 5 | Fee collector routing into league / recruiter / squad / airdrop vaults | Grok | not started |
-| 6 | Graduation keeper: migrate, withdraw fees, creator compensation, LP fee claims | Grok | not started |
+| 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | brief written 2026-09-28; starts after step 4 is merged |
+| 5b | Creator-fee choice payouts: holders (weekly airdrop rails), buyback & burn (random, <= 0.5% impact), split | Grok | brief after step 5 |
+| 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | brief written 2026-09-28; starts after step 5 is merged |
 | 7 | Binding tokens via Meteora TokenBadges + liquidity filter | Grok | not started |
 
 ## Groundwork for steps 3-6 (Claude, 2026-09-28): proven or read from the code
@@ -203,6 +204,11 @@ IDL (v0.4.0, read from chain): `tools/dbc-rehearsal/jup-lock-idl.json`.
 - Per trade also write a `reward_events` row (`matched_activity_source = 'dbc_collector'`, the
   trader's profile via the same lookup as trade signing) so recruiter / squad / airdrop credit works.
 - The collector holds user money for as long as it waits: flush promptly, never the deployer key.
+
+**Graduation, a change from today (for the founder):** on DBC the creator's graduation payout
+(their 90% of the migration fee), their 2% reserve and their 80% LP fees each need the **creator's
+signature** to withdraw, so the creator claims them from a panel on the token page. Today's launchpad
+pays the creator inside the graduation transaction. Nothing is lost, it waits until claimed.
 
 ## Pre-existing issues found while mapping (today's launchpad, not DBC)
 
