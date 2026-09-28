@@ -66,6 +66,8 @@ These win over anything else in this file or in a brief. A change needs the foun
 - **D11. Creator first buy: up to 10% of supply, in the launch transaction, unlocked.**
 - **D12. Any further creator buy through our site is locked** in an existing, proven lock program
   (Jupiter Lock `LocpQguc…`, the same program Meteora's DBC uses for its own vesting)
+  **Timing (founder, 2026-09-28, option A): first 20% after 30 days, then 20% every 7 days; fully
+  free after 58 days.**
   (option A, released by date; no lock program of our own): released in 5 steps of 20%. The coin
   shows a badge with how much the creator holds and how much is locked. Buys made elsewhere or from
   other wallets cannot be locked, by anyone.
@@ -154,8 +156,8 @@ against the rule "unlinked slices go to the airdrop".
 |---|---|---|---|
 | 1 | Config ladder (server): economics module, parity tests, SOL-price steps, config creation + chain readback, API to fetch a launch config | Grok, brief `docs/dbc/grok-step-1-config-ladder.md` | **DONE 2026-09-28**: merged (PR #471 + review fixes), devnet ALL CHECKS PASS |
 | 2 | Create flow: creator signs createPool only (2 signers) + create screen + drafts and scheduled launches (D18) | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | **DONE 2026-09-28**: merged (PR #472 + review fixes), devnet ALL CHECKS PASS |
-| 3 | Trading on our site: DBC buy/sell with our referral account | Grok | not started |
-| 4 | Indexer: DBC trades into charts, market stats, leagues, battles | Grok | not started |
+| 3 | Trading on our site: DBC buy/sell, referral account, creator locked buys (D12), post-graduation trading | Grok, brief `docs/dbc/grok-step-3-trading.md` | brief written 2026-09-28 |
+| 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | brief written 2026-09-28 (parallel with step 3) |
 | 5 | Fee collector routing into league / recruiter / squad / airdrop vaults | Grok | not started |
 | 6 | Graduation keeper: migrate, withdraw fees, creator compensation, LP fee claims | Grok | not started |
 | 7 | Binding tokens via Meteora TokenBadges + liquidity filter | Grok | not started |
