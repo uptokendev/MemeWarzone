@@ -50,3 +50,27 @@ export function pokerSplitRaw(pot: bigint, places: number): bigint[] {
 export function pokerPayoutForField(pot: bigint, entrants: number, period: PokerPeriod | string): bigint[] {
   return pokerSplitRaw(pot, pokerPaidPlaces(entrants, period));
 }
+
+/**
+ * Solana minimum payout (founder, 2026-09-28, option B). Every Solana claim creates a receipt the
+ * winner pays ~0.0013 SOL of rent for, so a prize below this is not paid on its own: a league pays
+ * fewer places (the whole pot still goes out), a pot too small for even one place rolls over, and
+ * recruiter / airdrop amounts wait until they are worth claiming. Solana (101) only; env
+ * SOLANA_MIN_PAYOUT_LAMPORTS, default 0.005 SOL.
+ */
+export const SOLANA_MIN_PAYOUT_LAMPORTS_DEFAULT = 5_000_000n;
+
+export function solanaMinPayoutLamports(env: Record<string, string | undefined> = process.env): bigint {
+  const raw = String(env.SOLANA_MIN_PAYOUT_LAMPORTS ?? "").trim();
+  if (/^\d+$/.test(raw)) return BigInt(raw);
+  return SOLANA_MIN_PAYOUT_LAMPORTS_DEFAULT;
+}
+
+/** Most places (<= places) whose smallest share is at least minRaw; 0 when even one place is below it. */
+export function pokerPlacesAboveMinimum(pot: bigint, places: number, minRaw: bigint): number {
+  for (let k = Math.max(0, places); k >= 1; k -= 1) {
+    const shares = pokerSplitRaw(pot, k);
+    if (shares[shares.length - 1] >= minRaw) return k;
+  }
+  return 0;
+}

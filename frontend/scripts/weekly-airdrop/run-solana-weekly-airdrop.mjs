@@ -50,6 +50,7 @@ import {
   verifyProof,
 } from "./solanaAirdrop.mjs";
 import { nativeUsdFor, thresholdsFor } from "./usdRules.mjs";
+import { solanaMinPayoutLamports } from "../../shared/pokerPayout.mjs";
 
 const PROGRAMS = ["airdrop_trader", "airdrop_creator"];
 const hex = (buf) => `0x${Buffer.from(buf).toString("hex")}`;
@@ -253,7 +254,15 @@ export async function runSolanaWeeklyAirdrop({ chainId = 101 } = {}) {
         continue;
       }
       const poolWei = halves[program];
-      const count = winnerCount(poolWei, eligible.length, program, thresholds.targetPayoutRaw);
+      // Minimum payout (founder, 2026-09-28): a claim's receipt rent (~0.0013 SOL) would exceed a
+      // smaller prize, so never more winners than the pot can pay at the minimum each. A half that
+      // cannot pay one stays in the vault and joins next week's pot.
+      const payableAtMinimum = Number(poolWei / solanaMinPayoutLamports());
+      if (payableAtMinimum < 1) {
+        console.log(`[weekly-airdrop:solana] ${program}: ${poolWei} lamports is below the minimum payout; its half stays in the vault`);
+        continue;
+      }
+      const count = Math.min(winnerCount(poolWei, eligible.length, program, thresholds.targetPayoutRaw), payableAtMinimum);
       const winners = weightedSample(eligible, count, drawSecret, `${chainId}:${epochId}:${program}`);
       const payouts = splitPool(poolWei, winners.length);
       if (!winners.length || payouts.some((value) => value <= 0n)) throw new Error(`Invalid winners or payouts for ${program}`);

@@ -2,6 +2,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { pool } from "../db.js";
 import { listRecruiterClaimableSettlements } from "./recruiterAdmin.js";
 import { buildRecruiterMerkle, i64leBytes, mergeRecruiterEntitlements } from "./recruiterMerkle.js";
+import { solanaMinPayoutLamports } from "./pokerPayout.js";
 
 const CONFIG_SEED = Buffer.from("rewards_config");
 const VAULT_SEED = Buffer.from("recruiter_vault");
@@ -186,6 +187,9 @@ async function loadPortalPayouts(existingBatchId: string | null): Promise<{
 
   const payouts: PortalPayout[] = [];
   const excluded: Array<{ wallet: string; amountRaw: string }> = [];
+  // Minimum payout (founder, 2026-09-28): a claim's receipt rent would exceed a smaller amount. Its
+  // ledger rows stay claimable and are summed again next week until the total is worth claiming.
+  const minimum = solanaMinPayoutLamports();
   for (const row of rows) {
     const payout: PortalPayout = {
       accountId: String(row.account_id),
@@ -195,6 +199,10 @@ async function loadPortalPayouts(existingBatchId: string | null): Promise<{
     };
     if (!isUserSolanaPayoutWallet(payout.payoutWallet)) {
       excluded.push({ wallet: payout.payoutWallet, amountRaw: payout.amountRaw });
+      continue;
+    }
+    if (BigInt(payout.amountRaw) < minimum) {
+      console.log(`[exportRecruiterSettlementBatch] ${payout.payoutWallet}: ${payout.amountRaw} lamports is below the minimum payout ${minimum}; carried to next week`);
       continue;
     }
     payouts.push(payout);
@@ -317,6 +325,7 @@ export async function publishRecruiterSettlementBatchesV2(): Promise<{
   const recipients = mergeRecruiterEntitlements(
     phase2
       .filter((row) => Number(row.chainId) === CHAIN_ID && isUserSolanaPayoutWallet(row.walletAddress))
+      .filter((row) => BigInt(String(row.claimableAmount || "0")) >= solanaMinPayoutLamports())
       .map((row) => ({
         walletAddress: row.walletAddress,
         amountLamports: String(row.claimableAmount || "0"),
