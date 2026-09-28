@@ -33,6 +33,9 @@ import {
   getBaseTokenForSwap,
   getMigrationThresholdPrice,
   validateConfigParameters,
+  MIN_SQRT_PRICE,
+  MAX_SQRT_PRICE,
+  U128_MAX,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import {
   DBC_ANTI_SNIPER_DURATION_SECONDS,
@@ -77,6 +80,48 @@ export function linearMarginalLamports(soldRaw, slope = DBC_PRICE_SLOPE_LAMPORTS
   const s = BigInt(soldRaw);
   const slopeDenom = DBC_TOKEN_SCALE * DBC_NANO_LAMPORTS_PER_LAMPORT;
   return DBC_BASE_PRICE_LAMPORTS + (BigInt(slope) * s) / slopeDenom;
+}
+
+/** Exact (fractional) lamports per whole token; integer division here collapses early points. */
+export function exactMarginalLamports(soldRaw, slope = DBC_PRICE_SLOPE_LAMPORTS) {
+  const s = BigInt(soldRaw);
+  const slopeDenom = Number(DBC_TOKEN_SCALE * DBC_NANO_LAMPORTS_PER_LAMPORT);
+  return Number(DBC_BASE_PRICE_LAMPORTS) + Number(BigInt(slope) * s) / slopeDenom;
+}
+
+function soldRawFromExactLamports(pLamports, slope) {
+  if (!(pLamports > 1)) return 0n;
+  const slopeDenom = Number(DBC_TOKEN_SCALE * DBC_NANO_LAMPORTS_PER_LAMPORT);
+  const raw = Math.round((pLamports - 1) * slopeDenom / Number(slope));
+  if (!Number.isFinite(raw) || raw <= 0) return 0n;
+  return BigInt(raw);
+}
+
+export function liquidityBitLength(liquidity) {
+  const n = BigInt(liquidity?.toString?.() ?? liquidity ?? 0);
+  if (n <= 0n) return 0;
+  return n.toString(2).length;
+}
+
+function curveOverflow(message) {
+  return Object.assign(new Error(message), { code: "DBC_CURVE_OVERFLOW" });
+}
+
+function assertSqrtInRange(label, sqrt) {
+  if (sqrt.lt(MIN_SQRT_PRICE) || sqrt.gt(MAX_SQRT_PRICE)) {
+    throw curveOverflow(`${label} is outside [MIN_SQRT_PRICE, MAX_SQRT_PRICE]`);
+  }
+}
+
+function assertLiquidityU128(label, liquidity) {
+  if (liquidity.isNeg() || liquidity.gt(U128_MAX)) {
+    throw curveOverflow(`${label} does not fit u128 (${liquidityBitLength(liquidity)} bits)`);
+  }
+}
+
+function sqrtPriceFromExactLamports(pLamports) {
+  const sol = pLamports / 1e9;
+  return getSqrtPriceFromPrice(sol.toExponential(18), DBC_TOKEN_DECIMALS, DBC_QUOTE_DECIMALS);
 }
 
 export function linearSoldForCost(costLamports, slope = DBC_PRICE_SLOPE_LAMPORTS) {
@@ -131,16 +176,16 @@ export function soldPointsPackedStart(soldRaw, slope) {
   return finalizeSoldPoints(soldAt, soldRaw);
 }
 
-/** Equal price-ratio spacing: P_i = P0 * (P1/P0)^(i/(n-1)), mapped back to sold. */
+/** Equal price-ratio spacing in exact (fractional) lamports, then mapped back to sold. */
 export function soldPointsEqualPriceRatio(soldRaw, slope) {
   const n = DBC_CURVE_POINTS;
-  const p0 = Number(linearMarginalLamports(0n, slope));
-  const p1 = Number(linearMarginalLamports(soldRaw, slope));
+  const p0 = exactMarginalLamports(0n, slope);
+  const p1 = exactMarginalLamports(soldRaw, slope);
   const ratio = p1 / p0;
   const soldAt = [0n];
   for (let i = 1; i < n - 1; i += 1) {
     const pLamports = p0 * ratio ** (i / (n - 1));
-    let s = ((BigInt(Math.max(1, Math.round(pLamports))) - DBC_BASE_PRICE_LAMPORTS) * DBC_TOKEN_SCALE * DBC_NANO_LAMPORTS_PER_LAMPORT) / BigInt(slope);
+    let s = soldRawFromExactLamports(pLamports, slope);
     if (s <= soldAt[soldAt.length - 1]) s = soldAt[soldAt.length - 1] + DBC_TOKEN_SCALE;
     if (s >= soldRaw) break;
     soldAt.push(s);
@@ -152,37 +197,54 @@ export function soldPointsEqualPriceRatio(soldRaw, slope) {
 /** Review 1 item 4: equal price-ratio had the lower tail error (see the packing table in the test). */
 export const PRODUCTION_SOLD_POINTS = soldPointsEqualPriceRatio;
 
-function curveFromSoldPoints(soldRaw, slope, soldAt, priceScale) {
-  const sqrtPrices = soldAt.map((s) => {
-    const p = (Number(linearMarginalLamports(s, slope)) / 1e9) * priceScale;
-    return getSqrtPriceFromPrice(String(p), DBC_TOKEN_DECIMALS, DBC_QUOTE_DECIMALS);
-  });
-  for (let i = 1; i < sqrtPrices.length; i += 1) {
-    if (!sqrtPrices[i].gt(sqrtPrices[i - 1])) sqrtPrices[i] = sqrtPrices[i - 1].add(new BN(1));
+function curveFromSoldPoints(soldRaw, slope, soldAt) {
+  const pts = [];
+  for (const s of soldAt) {
+    const sqrt = sqrtPriceFromExactLamports(exactMarginalLamports(s, slope));
+    if (pts.length && !sqrt.gt(pts[pts.length - 1].sqrt)) continue;
+    pts.push({ s, sqrt });
   }
+  if (!pts.length) throw curveOverflow("DBC curve has no sqrt prices");
+  const endSqrt = sqrtPriceFromExactLamports(exactMarginalLamports(soldRaw, slope));
+  if (pts[pts.length - 1].s !== soldRaw) {
+    if (!endSqrt.gt(pts[pts.length - 1].sqrt)) {
+      throw curveOverflow("DBC end sqrt price is not strictly greater than the previous point");
+    }
+    pts.push({ s: soldRaw, sqrt: endSqrt });
+  }
+  if (pts.length < 2) throw curveOverflow("DBC curve needs at least two distinct sqrt prices");
+
+  for (const [i, pt] of pts.entries()) assertSqrtInRange(i === 0 ? "sqrtStartPrice" : `curve[${i - 1}].sqrtPrice`, pt.sqrt);
+
   const curve = [];
-  for (let i = 0; i < sqrtPrices.length - 1; i += 1) {
-    const ds = soldAt[i + 1] - soldAt[i];
-    const L = getInitialLiquidityFromDeltaBase(
-      new BN((ds > 0n ? ds : 1n).toString()),
-      sqrtPrices[i + 1],
-      sqrtPrices[i],
-    );
-    curve.push({ sqrtPrice: sqrtPrices[i + 1], liquidity: L });
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const ds = pts[i + 1].s - pts[i].s;
+    let L;
+    try {
+      L = getInitialLiquidityFromDeltaBase(
+        new BN((ds > 0n ? ds : 1n).toString()),
+        pts[i + 1].sqrt,
+        pts[i].sqrt,
+      );
+    } catch (error) {
+      throw curveOverflow(`curve[${i}].liquidity overflow: ${error.message}`);
+    }
+    assertLiquidityU128(`curve[${i}].liquidity`, L);
+    curve.push({ sqrtPrice: pts[i + 1].sqrt, liquidity: L });
   }
   let qFull = 0n;
-  let lower = sqrtPrices[0];
+  let lower = pts[0].sqrt;
   for (const pt of curve) {
     qFull += BigInt(getDeltaAmountQuoteUnsigned(lower, pt.sqrtPrice, pt.liquidity, Rounding.Down).toString());
     lower = pt.sqrtPrice;
   }
-  return { sqrtStartPrice: sqrtPrices[0], curve, qFull };
+  return { sqrtStartPrice: pts[0].sqrt, curve, qFull };
 }
 
 function buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints = PRODUCTION_SOLD_POINTS) {
   const T = BigInt(thresholdLamports);
   const soldAt = soldPoints(soldRaw, slope);
-  const built = curveFromSoldPoints(soldRaw, slope, soldAt, 1);
+  const built = curveFromSoldPoints(soldRaw, slope, soldAt);
   if (built.curve.length) {
     const last = built.curve[built.curve.length - 1];
     const prev = built.curve.length > 1 ? built.curve[built.curve.length - 2].sqrtPrice : built.sqrtStartPrice;
@@ -193,7 +255,16 @@ function buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints = PRODUC
       lower = built.curve[i].sqrtPrice;
     }
     const lastQ = new BN(T.toString()).sub(qPrev);
-    if (lastQ.gtn(0)) last.liquidity = getInitialLiquidityFromDeltaQuote(lastQ, prev, last.sqrtPrice);
+    if (lastQ.gtn(0)) {
+      let L;
+      try {
+        L = getInitialLiquidityFromDeltaQuote(lastQ, prev, last.sqrtPrice);
+      } catch (error) {
+        throw curveOverflow(`last-segment liquidity overflow: ${error.message}`);
+      }
+      assertLiquidityU128("curve[last].liquidity", L);
+      last.liquidity = L;
+    }
   }
   return { sqrtStartPrice: built.sqrtStartPrice, curve: built.curve, sqrtPrices: [built.sqrtStartPrice, ...built.curve.map((p) => p.sqrtPrice)] };
 }
@@ -480,6 +551,13 @@ export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorF
   const postRaw = BigInt(configParams.tokenSupply.postMigrationTokenSupply.toString());
   const preRaw = BigInt(configParams.tokenSupply.preMigrationTokenSupply.toString());
 
+  const liquidityBits = configParams.curve.map((pt) => liquidityBitLength(pt.liquidity));
+  assertSqrtInRange("sqrtStartPrice", configParams.sqrtStartPrice);
+  for (const [i, pt] of configParams.curve.entries()) {
+    assertSqrtInRange(`curve[${i}].sqrtPrice`, pt.sqrtPrice);
+    assertLiquidityU128(`curve[${i}].liquidity`, pt.liquidity);
+  }
+
   const expected = {
     thresholdLamports,
     soldRaw: econ.soldRaw,
@@ -493,6 +571,7 @@ export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorF
     bufferTokens: preRaw - postRaw,
     slopeUsed: slope,
     steepened,
+    liquidityBits,
   };
   const paramsHash = paramsHashOf({
     targetUsdMicros: target.toString(),

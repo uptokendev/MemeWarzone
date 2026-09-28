@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PublicKey } from "@solana/web3.js";
-import { validateConfigParameters } from "@meteora-ag/dynamic-bonding-curve-sdk";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import {
+  DynamicBondingCurveClient,
+  U128_MAX,
+  validateConfigParameters,
+} from "@meteora-ag/dynamic-bonding-curve-sdk";
 import {
   DBC_DEVNET_TEST_TARGET_USD_MICROS,
   DBC_PRICE_SLOPE_LAMPORTS,
+  DBC_QUOTE_MINT,
   DBC_RESERVE_RAW,
   DBC_SUPPLY_CEILING_RAW,
   DBC_TARGET_USD_MICROS,
@@ -20,6 +25,7 @@ import {
   feeBpsAtSeconds,
   linearCostLamports,
   linearSoldForCost,
+  liquidityBitLength,
   paramsHashOf,
   quoteAlongDbcCurve,
   soldPointsEqualPriceRatio,
@@ -98,6 +104,10 @@ test("price path, supply, graduation and anti-sniper tables", () => {
       assert.ok(Math.abs(ourPct - 2.2) < 0.05);
       assert.ok(Math.abs(poolPct - 78) < 0.05);
 
+      const maxBits = Math.max(...expected.liquidityBits);
+      assert.ok(maxBits <= 128, `${targetUsd} @ $${sol}: liquidity ${maxBits} bits`);
+      assert.ok(expected.liquidityBits.every((b) => b > 0 && b <= 128));
+
       priceRows.push({
         targetUsd,
         sol,
@@ -106,6 +116,8 @@ test("price path, supply, graduation and anti-sniper tables", () => {
         worstI,
         tailPct: expected.steepened ? "steepened" : `${(worstPctTail * 100).toFixed(3)}%`,
         dT: dT.toString(),
+        maxBits,
+        firstBits: expected.liquidityBits[0],
       });
       supplyRows.push({
         targetUsd,
@@ -139,6 +151,13 @@ test("price path, supply, graduation and anti-sniper tables", () => {
 
   console.log("\nprice path (worst deviation vs linear, 50 points)");
   console.table(priceRows);
+  console.log("\nliquidity bit lengths (must be <= 128)");
+  console.table(priceRows.map((r) => ({
+    targetUsd: r.targetUsd,
+    sol: r.sol,
+    maxBits: r.maxBits,
+    firstBits: r.firstBits,
+  })));
   console.log("\nsupply / steepened");
   console.table(supplyRows);
   console.log("\ngraduation split");
@@ -234,4 +253,68 @@ test("validateConfigParameters passes for both fee modes and the $150 test targe
   }
   const testTarget = buildLaunchConfigParams(DBC_DEVNET_TEST_TARGET_USD_MICROS, step, "creator");
   validateConfigParameters({ ...testTarget.configParams, leftoverReceiver: DBC_VALIDATE_LEFTOVER_RECEIVER });
+});
+
+test("createConfig serializes for every ladder case", async () => {
+  const connection = new Connection("http://127.0.0.1:9", "confirmed");
+  const client = new DynamicBondingCurveClient(connection, "confirmed");
+  const payer = Keypair.generate().publicKey;
+  const collector = new PublicKey("11111111111111111111111111111112");
+  const cases = [];
+  for (const targetUsd of TARGETS) {
+    const target = DBC_TARGET_USD_MICROS[targetUsd];
+    for (const sol of SOL_PRICES) {
+      for (const mode of ["creator", "platform"]) {
+        cases.push({ targetUsd, sol, mode, target, step: stepForSol(sol).step });
+      }
+    }
+  }
+  cases.push({
+    targetUsd: 150,
+    sol: 118,
+    mode: "creator",
+    target: DBC_DEVNET_TEST_TARGET_USD_MICROS,
+    step: stepForSol(118).step,
+  });
+  cases.push({
+    targetUsd: 150,
+    sol: 118,
+    mode: "platform",
+    target: DBC_DEVNET_TEST_TARGET_USD_MICROS,
+    step: stepForSol(118).step,
+  });
+
+  const rows = [];
+  for (const c of cases) {
+    const built = buildLaunchConfigParams(c.target, c.step, c.mode);
+    const maxBits = Math.max(...built.expected.liquidityBits);
+    assert.ok(maxBits <= 128, `${c.targetUsd} @ $${c.sol} ${c.mode}: ${maxBits} bits`);
+    assert.ok(built.configParams.curve.every((pt) => {
+      const bits = liquidityBitLength(pt.liquidity);
+      return bits <= 128 && pt.liquidity.lte(U128_MAX);
+    }));
+    const config = Keypair.generate().publicKey;
+    const tx = await client.partner.createConfig({
+      config,
+      feeClaimer: collector,
+      leftoverReceiver: collector,
+      quoteMint: new PublicKey(DBC_QUOTE_MINT),
+      payer,
+      ...built.configParams,
+    });
+    tx.feePayer = payer;
+    tx.recentBlockhash = "11111111111111111111111111111111";
+    const bytes = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+    assert.ok(bytes.length > 0, `${c.targetUsd} @ $${c.sol} ${c.mode}: empty tx`);
+    rows.push({
+      targetUsd: c.targetUsd,
+      sol: c.sol,
+      mode: c.mode,
+      maxBits,
+      firstBits: built.expected.liquidityBits[0],
+      bytes: bytes.length,
+    });
+  }
+  console.log("\ncreateConfig serialize (every ladder case)");
+  console.table(rows);
 });
