@@ -73,7 +73,9 @@ export async function prepareDbcCreateTransaction(connection, tx, expected) {
   tx.recentBlockhash = blockhash;
   assertDbcCreateIntent(tx, expected);
 
-  const simulation = await connection.simulateTransaction(tx, { sigVerify: false, commitment: "confirmed" });
+  // A legacy Transaction takes no config object in web3.js 1.x (it throws "Invalid arguments");
+  // called this way it simulates unsigned, against the fresh blockhash set above.
+  const simulation = await connection.simulateTransaction(tx);
   if (simulation?.value?.err) {
     throw new Error(`DBC create simulation failed: ${JSON.stringify(simulation.value.err)}`);
   }

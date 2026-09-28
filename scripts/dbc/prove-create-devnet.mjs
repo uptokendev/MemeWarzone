@@ -10,6 +10,7 @@
  */
 import { createRequire } from "node:module";
 import os from "node:os";
+import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { DBC_DEVNET_TEST_TARGET_USD_MICROS, DBC_PROGRAM_ID, DBC_TRADE_FEE_BPS } from "../../frontend/shared/dbcEconomics.mjs";
@@ -24,7 +25,12 @@ const requireFromFrontend = createRequire(new URL("../../frontend/package.json",
 const {
   Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction, LAMPORTS_PER_SOL,
 } = requireFromFrontend("@solana/web3.js");
-const nacl = requireFromFrontend("tweetnacl");
+import cryptoNode from "node:crypto";
+// Ed25519 detached signature with Node's crypto (no extra dependency): PKCS#8 wrapper around the seed.
+const ed25519Sign = (message, secretKey) => cryptoNode.sign(null, message, cryptoNode.createPrivateKey({
+  key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.from(secretKey).subarray(0, 32)]),
+  format: "der", type: "pkcs8",
+}));
 const { DynamicBondingCurveClient } = requireFromFrontend("@meteora-ag/dynamic-bonding-curve-sdk");
 
 const DEVNET = SOLANA_GENESIS.devnet;
@@ -205,7 +211,7 @@ function signBegin(creator, ticker) {
     nonce,
     extraLines: [`Ticker: ${ticker}`],
   });
-  const signature = Buffer.from(nacl.sign.detached(Buffer.from(message, "utf8"), creator.secretKey)).toString("base64");
+  const signature = Buffer.from(ed25519Sign(Buffer.from(message, "utf8"), creator.secretKey)).toString("base64");
   return { action: "dbc_create", walletAddress, chainId: 101, nonce, message, signature, walletType: "solana" };
 }
 
