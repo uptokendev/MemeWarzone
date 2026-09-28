@@ -24,7 +24,7 @@ import { buildLaunchConfigParams, linearCostLamports } from "../../frontend/api/
 
 const requireFromFrontend = createRequire(new URL("../../frontend/package.json", import.meta.url));
 const {
-  Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction, LAMPORTS_PER_SOL,
+  Connection, Keypair, PublicKey, SystemProgram, Transaction, VersionedTransaction, sendAndConfirmTransaction, LAMPORTS_PER_SOL,
 } = requireFromFrontend("@solana/web3.js");
 const {
   NATIVE_MINT, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction,
@@ -172,6 +172,8 @@ async function main() {
   await fund(conn, payer.publicKey, 2_000_000_000);
   await fund(conn, creator.publicKey, 1_000_000_000);
   await fund(conn, trader.publicKey, 2_000_000_000);
+  // The collector opens token accounts when it withdraws its migration fee.
+  await fund(conn, collector.publicKey, 50_000_000);
   console.log(`payer balance ${sol(await conn.getBalance(payer.publicKey))} SOL`);
 
   const client = new DynamicBondingCurveClient(conn, "confirmed");
@@ -218,7 +220,9 @@ async function main() {
     const { blockhash } = await conn.getLatestBlockhash("confirmed");
     tx.recentBlockhash = blockhash;
     tx.partialSign(payer, configKp);
-    const sim = await conn.simulateTransaction(tx, {
+    // Legacy Transaction does not take a config object; a VersionedTransaction built from the same
+    // legacy message does (sigVerify off, fresh blockhash).
+    const sim = await conn.simulateTransaction(new VersionedTransaction(tx.compileMessage()), {
       sigVerify: false,
       replaceRecentBlockhash: true,
       commitment: "confirmed",
@@ -323,6 +327,14 @@ async function main() {
   console.log(`  sig ${sigSecond}  fee ${secondFee} on ${secondIn}  (${Number(secondFee * 10000n / secondIn) / 100}%)`);
 
   console.log("\n[buy to completion, PartialFill]");
+  // The anti-sniper fee falls from 50% to 2% over 60 s after launch. Completing the curve before
+  // that pays the sniper fee (it did on the first run: 0.89 of 1.27 SOL reached). Wait it out.
+  const launchedAt = Number((await poolState()).activationPoint || 0);
+  for (;;) {
+    const now = Number((await conn.getBlockTime(await conn.getSlot("confirmed"))) || 0);
+    if (!launchedAt || now >= launchedAt + 65) break;
+    await new Promise((r) => setTimeout(r, 5_000));
+  }
   const cfg = await client.state.getPoolConfig(creatorCfg);
   const threshold = big(cfg.migrationQuoteThreshold);
   const need = threshold - afterSecond.reserve;
@@ -374,13 +386,19 @@ async function main() {
     tx.feePayer = payer.publicKey;
     const sig = await sendAndConfirmTransaction(conn, tx, [payer, kp], { commitment: "confirmed" });
     sigs[`migfee-${who}`] = sig;
-    const got = await tokenDelta(conn, sig, quoteVault);
+    // tokenDelta is post - pre of the vault; the fee LEAVES the vault.
+    const got = -(await tokenDelta(conn, sig, quoteVault));
     check(`${who} migration fee 19.8/2.2`, got === want, `got ${got} want ${want}`);
     console.log(`  ${who} ${sig}`);
   }
 
   const expected = created.creator.expected;
-  check("total supply matches", big(cfg.preMigrationTokenSupply ?? cfg.tokenSupply?.preMigrationTokenSupply ?? expected.totalTokenSupply) === expected.totalTokenSupply || true, expected.totalTokenSupply.toString());
+  // D9: DBC burns pre - post of the unused buffer at migration, so the mint's supply after graduation
+  // is the circulating amount the config was built for (never more than 1B).
+  const supplyAfter = BigInt((await conn.getTokenSupply(mint.publicKey, "confirmed")).value.amount);
+  const postCfg = big(cfg.postMigrationTokenSupply ?? cfg.tokenSupply?.postMigrationTokenSupply);
+  check("mint supply after graduation == configured circulating (buffer burned)", supplyAfter <= postCfg && supplyAfter <= 1_000_000_000_000_000n,
+    `supply ${supplyAfter}, post ${postCfg}, pre ${big(cfg.preMigrationTokenSupply)}, expected circulating ${expected.circulatingAfterGraduation ?? "?"}`);
 
   console.log("\nsignatures");
   console.log(JSON.stringify(sigs, null, 2));

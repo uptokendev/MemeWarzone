@@ -348,3 +348,29 @@ test("diffOnChainConfig reports a field mismatch", () => {
   const mismatches = diffOnChainConfig(onChain, built.configParams, extra);
   assert.ok(mismatches.some((m) => String(m.path).includes("creatorTradingFeePercentage")));
 });
+
+test("readback ignores the program's zero-liquidity padding of the curve (20-point fixed array)", async () => {
+  // Devnet 2026-09-28: a real config read back 20 curve points (15 built + 5 zero padding) and was
+  // marked failed. The padding is not part of the curve.
+  const { default: BN } = await import("bn.js");
+  const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], 118_000_000n, "creator");
+  const extra = { feeClaimer: COLLECTOR.publicKey, leftoverReceiver: COLLECTOR.publicKey };
+  const padding = Array.from({ length: 20 - built.configParams.curve.length }, () => ({ sqrtPrice: new BN(0), liquidity: new BN(0) }));
+  const onChain = {
+    ...built.configParams,
+    curve: [...built.configParams.curve, ...padding],
+    quoteMint: new PublicKey("So11111111111111111111111111111111111111112"),
+    feeClaimer: COLLECTOR.publicKey,
+    leftoverReceiver: COLLECTOR.publicKey,
+    migrationFeePercentage: built.configParams.migrationFee.feePercentage,
+    creatorMigrationFeePercentage: built.configParams.migrationFee.creatorFeePercentage,
+    preMigrationTokenSupply: built.configParams.tokenSupply.preMigrationTokenSupply,
+    postMigrationTokenSupply: built.configParams.tokenSupply.postMigrationTokenSupply,
+    migratedCollectFeeMode: built.configParams.migratedPoolFee.collectFeeMode,
+    migratedDynamicFee: built.configParams.migratedPoolFee.dynamicFee,
+    migratedPoolFeeBps: built.configParams.migratedPoolFee.poolFeeBps,
+    lockedVestingConfig: built.configParams.lockedVesting,
+  };
+  const mismatches = diffOnChainConfig(onChain, built.configParams, extra);
+  assert.deepEqual(mismatches.filter((m) => String(m.path).startsWith("curve")), []);
+});

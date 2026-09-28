@@ -148,7 +148,9 @@ export function readOnChainFields(onChain) {
       numberOfPeriod: bnish(vesting.numberOfPeriod),
       cliffUnlockAmount: bnish(vesting.cliffUnlockAmount),
     },
-    curve: curvePoints(onChain.curve),
+    // The program stores the curve as a fixed array (20 points), padded with zero-liquidity points
+    // after the last real one. Those are not part of the curve we built.
+    curve: curvePoints((onChain.curve || []).filter((pt) => String(pt?.liquidity ?? "0") !== "0")),
   };
 }
 
