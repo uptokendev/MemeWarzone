@@ -1,14 +1,15 @@
 /**
  * DBC graduation keeper loop. Dry-run unless DBC_GRADUATION_SEND is on.
+ * Websocket: onAccountChange per not-yet-done pool of ours (not the whole DBC program).
+ * LP claims run on their own hourly schedule.
  */
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
-import { bs58Encode } from "./dbc/dbcFeePending.js";
 import {
-  DBC_PROGRAM_ID,
+  listWatchPools,
   runDbcGraduationOnce,
-  VIRTUAL_POOL_DISCRIMINATOR,
+  runDbcLpClaimsOnce,
 } from "./dbc/dbcGraduationKeeper.js";
 import { loadInlineOrFileKeypair } from "./dbcFeeRoutingWorker.js";
 
@@ -32,6 +33,10 @@ function intervalMs(): number {
   return Math.max(3_000, Number(process.env.DBC_GRADUATION_INTERVAL_MS || 8_000));
 }
 
+function lpIntervalMs(): number {
+  return Math.max(60_000, Number(process.env.DBC_LP_CLAIM_INTERVAL_MS || 3_600_000));
+}
+
 function loadCollector(): Keypair | null {
   const raw = String(process.env.DBC_FEE_COLLECTOR_SECRET || process.env.DBC_FEE_COLLECTOR_KEYPAIR || "").trim();
   if (!raw) return null;
@@ -40,6 +45,7 @@ function loadCollector(): Keypair | null {
 
 let started = false;
 let running = false;
+let lpRunning = false;
 
 export function startDbcGraduationWorker() {
   if (started) return;
@@ -63,11 +69,49 @@ export function startDbcGraduationWorker() {
   }
   const connection = new Connection(url, "confirmed");
   const ms = intervalMs();
+  const lpMs = lpIntervalMs();
+  const watches = new Map<string, number>();
   console.log("[dbc-grad] enabled", {
     send: sendEnabled(),
     intervalMs: ms,
+    lpIntervalMs: lpMs,
     collector: collector.publicKey.toBase58(),
   });
+
+  const syncWatches = async () => {
+    let want: string[] = [];
+    try {
+      want = await listWatchPools(pool);
+    } catch (error) {
+      console.warn("[dbc-grad] watch list failed", error instanceof Error ? error.message : String(error));
+      return;
+    }
+    const wantSet = new Set(want);
+    for (const [addr, id] of watches) {
+      if (wantSet.has(addr)) continue;
+      try {
+        await connection.removeAccountChangeListener(id);
+      } catch (error) {
+        console.warn("[dbc-grad] unsubscribe failed", addr, error instanceof Error ? error.message : String(error));
+      }
+      watches.delete(addr);
+    }
+    for (const addr of wantSet) {
+      if (watches.has(addr)) continue;
+      try {
+        const id = connection.onAccountChange(
+          new PublicKey(addr),
+          () => {
+            void tick("websocket");
+          },
+          "confirmed",
+        );
+        watches.set(addr, id);
+      } catch (error) {
+        console.warn("[dbc-grad] subscribe failed", addr, error instanceof Error ? error.message : String(error));
+      }
+    }
+  };
 
   const tick = async (reason: string) => {
     if (running) return;
@@ -89,6 +133,7 @@ export function startDbcGraduationWorker() {
           signature: row.signature,
         })),
       });
+      await syncWatches();
     } catch (error) {
       console.error("[dbc-grad] loop failed", error instanceof Error ? error.message : String(error));
     } finally {
@@ -96,24 +141,39 @@ export function startDbcGraduationWorker() {
     }
   };
 
-  try {
-    connection.onProgramAccountChange(
-      new PublicKey(DBC_PROGRAM_ID),
-      () => {
-        void tick("websocket");
-      },
-      {
-        commitment: "confirmed",
-        filters: [{ memcmp: { offset: 0, bytes: bs58Encode(VIRTUAL_POOL_DISCRIMINATOR) } }],
-      } as any,
-    );
-    console.log("[dbc-grad] websocket subscribed to VirtualPool writes");
-  } catch (error) {
-    console.warn("[dbc-grad] websocket subscribe failed; scan-only", error instanceof Error ? error.message : String(error));
-  }
+  const lpTick = async (reason: string) => {
+    if (lpRunning) return;
+    lpRunning = true;
+    try {
+      const result = await runDbcLpClaimsOnce({
+        db: pool,
+        connection,
+        collector,
+        send: sendEnabled(),
+      });
+      console.log("[dbc-grad] lp pass", {
+        reason,
+        pending: result.pending,
+        advanced: result.advanced.map((row) => ({
+          pool: row.pool,
+          skipped: row.skipped,
+          signature: row.signature,
+          owed: row.owed,
+        })),
+      });
+    } catch (error) {
+      console.error("[dbc-grad] lp loop failed", error instanceof Error ? error.message : String(error));
+    } finally {
+      lpRunning = false;
+    }
+  };
 
-  const initial = setTimeout(() => void tick("start"), 8_000);
+  const initial = setTimeout(() => {
+    void syncWatches().then(() => tick("start"));
+  }, 8_000);
   initial.unref?.();
   const timer = setInterval(() => void tick("scan"), ms);
   timer.unref?.();
+  const lpTimer = setInterval(() => void lpTick("hourly"), lpMs);
+  lpTimer.unref?.();
 }

@@ -13,6 +13,7 @@ const {
   compensationDue,
   expectedMigrationFee,
   expectedPartnerMigrationFee,
+  finalizeAfterCompensation,
   finalizeProfileBps,
   finalizeRouteTotals,
   finalizeSlicesConserve,
@@ -117,6 +118,31 @@ test("D7 compensation is quote cut plus base cut at migration price; shortfall i
   assert.equal(short.remaining, 0n);
 });
 
+test("D7 is paid from the protocol slice after splitting the whole partner fee", () => {
+  const partnerFee = 2_200_000n;
+  const uncompensated = splitDbcFinalizeFee(partnerFee, "standard_linked");
+  const due = 500_000n;
+  const applied = finalizeAfterCompensation(partnerFee, "standard_linked", due);
+  assert.equal(applied.slices.recruiter, uncompensated.recruiter);
+  assert.equal(applied.slices.squad, uncompensated.squad);
+  assert.equal(applied.slices.airdrop, uncompensated.airdrop);
+  assert.equal(applied.paid, due);
+  assert.equal(applied.shortfall, 0n);
+  assert.equal(applied.slices.protocol, uncompensated.protocol - due);
+  assert.equal(applied.slices.remaining, partnerFee - due);
+  assert.equal(finalizeSlicesConserve(applied.slices), true);
+
+  const tooMuch = uncompensated.protocol + 185_000n;
+  const short = finalizeAfterCompensation(partnerFee, "standard_linked", tooMuch);
+  assert.equal(short.paid, uncompensated.protocol);
+  assert.equal(short.shortfall, 185_000n);
+  assert.equal(short.slices.protocol, 0n);
+  assert.equal(short.slices.recruiter, uncompensated.recruiter);
+  assert.equal(short.slices.squad, uncompensated.squad);
+  assert.equal(short.slices.airdrop, uncompensated.airdrop);
+  assert.equal(finalizeSlicesConserve(short.slices), true);
+});
+
 test("platform LP fees are 80% creator_pool, remainder to protocol", () => {
   assert.deepEqual(splitPlatformLpFees(100n), { creatorPool: 80n, protocol: 20n });
   assert.deepEqual(splitPlatformLpFees(101n), { creatorPool: 80n, protocol: 21n });
@@ -136,7 +162,7 @@ test("partner migration fee is 10% of the 22% (2.2% of threshold)", () => {
   assert.equal(partner, fee - (fee * 90n) / 100n);
 });
 
-test("state machine: not complete, locker, migrate, Meteora-first, partial withdraw, compensate, route, mark, lp", () => {
+test("state machine: locker, migrate, mark, withdraw, compensate, route, done", () => {
   const cfg = config();
   assert.equal(nextGraduationStep(pool({ quoteReserve: threshold - 1n }), cfg, idleJob), "not_complete");
   assert.equal(curveComplete(pool({ quoteReserve: threshold }), cfg), true);
@@ -146,7 +172,10 @@ test("state machine: not complete, locker, migrate, Meteora-first, partial withd
 
   const meteoraFirst = pool({ isMigrated: 1, migrationProgress: 3, quoteReserve: threshold });
   assert.equal(lockerNeeded(meteoraFirst, cfg), false);
-  assert.equal(nextGraduationStep(meteoraFirst, cfg, idleJob), "withdraw");
+  assert.equal(nextGraduationStep(meteoraFirst, cfg, idleJob), "mark");
+
+  const marked = { ...idleJob, marked: true };
+  assert.equal(nextGraduationStep(meteoraFirst, cfg, marked), "withdraw");
 
   const withdrawn = pool({
     isMigrated: 1,
@@ -154,21 +183,13 @@ test("state machine: not complete, locker, migrate, Meteora-first, partial withd
     migrationFeeWithdrawStatus: PARTNER_WITHDRAW_BIT,
   });
   assert.equal(partnerWithdrawn(withdrawn), true);
-  assert.equal(nextGraduationStep(withdrawn, cfg, idleJob), "compensate");
+  assert.equal(nextGraduationStep(withdrawn, cfg, marked), "compensate");
   assert.equal(
-    nextGraduationStep(withdrawn, cfg, { ...idleJob, compensationPaid: true }),
+    nextGraduationStep(withdrawn, cfg, { ...marked, compensationPaid: true }),
     "route",
   );
   assert.equal(
-    nextGraduationStep(withdrawn, cfg, { ...idleJob, compensationPaid: true, routed: true }),
-    "mark",
-  );
-  assert.equal(
-    nextGraduationStep(withdrawn, cfg, { ...idleJob, compensationPaid: true, routed: true, marked: true }),
-    "lp",
-  );
-  assert.equal(
-    nextGraduationStep(withdrawn, cfg, { ...idleJob, compensationPaid: true, routed: true, marked: true, lpDone: true }),
+    nextGraduationStep(withdrawn, cfg, { ...marked, compensationPaid: true, routed: true }),
     "done",
   );
   assert.equal(CREATOR_WITHDRAW_BIT, 0b010);
@@ -182,7 +203,7 @@ test("Meteora-first is idempotent: already migrated never asks for locker or mig
       cfg,
       idleJob,
     );
-    assert.equal(step, "withdraw", `progress ${progress}`);
+    assert.equal(step, "mark", `progress ${progress}`);
   }
 });
 
@@ -212,6 +233,13 @@ test("solanaGraduation meta is what the meteora swap indexer reads", () => {
   assert.match(indexer, /meta #>> '\{solanaGraduation,dex\}' = 'meteora-damm-v2'/);
 });
 
+test("production graduation migration does not create notification_outbox", () => {
+  const sql = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../db/migrations/20260929_000007_dbc_graduation.sql"), "utf8");
+  assert.doesNotMatch(sql, /notification_outbox/);
+  assert.match(sql, /lp_signature/);
+  assert.match(sql, /'locker', 'migrate', 'mark', 'withdraw', 'compensate', 'route', 'done'/);
+});
+
 test("VirtualPool discriminator is the IDL bytes", () => {
   assert.deepEqual([...VIRTUAL_POOL_DISCRIMINATOR], [213, 224, 5, 209, 98, 69, 119, 92]);
 });
@@ -223,6 +251,21 @@ test("finalize route transfers skip league and never send creator pool", () => {
   assert.ok(!built.destinations.some((item) => item.seed.includes("league")));
   assert.ok(built.destinations.some((item) => item.seed === "recruiter_vault"));
   assert.ok(built.instructions.every((ix) => ix.programId.equals(SystemProgram.programId)));
+});
+
+test("second position NFT is looked up under the collector", () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbc/dbcGraduationKeeper.ts"), "utf8");
+  assert.match(source, /getUserPositionByPool\(new PublicKey\(dammPool\), partnerOwner\)/);
+  assert.match(source, /input\.collector\?\.publicKey/);
+  assert.doesNotMatch(source, /partnerOwner = String\(input\.row\.creator/);
+});
+
+test("worker subscribes per pool, not the whole DBC program", () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbcGraduationWorker.ts"), "utf8");
+  assert.match(source, /onAccountChange/);
+  assert.match(source, /listWatchPools/);
+  assert.match(source, /runDbcLpClaimsOnce/);
+  assert.doesNotMatch(source, /onProgramAccountChange/);
 });
 
 test("an unseen graduation signature expires by block height, never by slot", async () => {
@@ -238,6 +281,10 @@ test("an unseen graduation signature expires by block height, never by slot", as
   assert.match(source, /status = 'sending'/);
   assert.match(source, /Never reset a send that may have landed/);
   assert.match(source, /last_valid_block_height/);
+  assert.match(source, /heldCreatorPoolSum/);
+  assert.match(source, /listOpenGraduationPools/);
+  assert.match(source, /runDbcLpClaimsOnce/);
+  assert.doesNotMatch(source, /break;/);
 });
 
 test("snake_case pool layout still reads", () => {

@@ -14,7 +14,8 @@ test.after(async () => {
 });
 
 test.afterEach(async () => {
-  await pg.pool.query(`update public.dbc_graduation_jobs set status = 'done' where status in ('ready', 'sending')`);
+  await pg.pool.query(`update public.dbc_graduation_jobs set status = 'done', step = 'done', lp_signature = null`);
+  await pg.pool.query(`update public.campaigns set graduated_at_chain = coalesce(graduated_at_chain, now()) where launch_type = 'dbc'`);
 });
 
 const { upsertGraduationJob, resolvePendingGraduation, advanceGraduationJob } = await import("../dbc/dbcGraduationKeeper.js");
@@ -130,7 +131,48 @@ test("tables exist on throwaway postgres", async () => {
   assert.equal(comps.rows[0].name, "dbc_graduation_compensations");
 });
 
-test("Meteora-first: already migrated skips locker and migrate, withdraws next", async () => {
+function stubClientForPools(states: Map<string, ReturnType<typeof poolState>>, captured: { calls: string[] } = { calls: [] }) {
+  const cfg = {
+    migrationQuoteThreshold: 1_500_000_000n,
+    lockedVestingConfig: { totalLockedVestingAmount: 20_000_000_000_000n },
+    quoteMint: new PublicKey("So11111111111111111111111111111111111111112"),
+  };
+  return {
+    state: {
+      async getPool(pk: PublicKey) {
+        const state = states.get(pk.toBase58());
+        if (!state) throw new Error(`unknown pool ${pk.toBase58()}`);
+        return { poolState: state };
+      },
+      async getPoolConfig() { return { poolConfig: cfg }; },
+    },
+    migration: {
+      async createLocker() {
+        captured.calls.push("createLocker");
+        const tx = new Transaction();
+        tx.add(SystemProgram.transfer({ fromPubkey: collector.publicKey, toPubkey: creator.publicKey, lamports: 1 }));
+        return tx;
+      },
+      async migrateToDammV2() {
+        captured.calls.push("migrate");
+        const tx = new Transaction();
+        tx.add(SystemProgram.transfer({ fromPubkey: collector.publicKey, toPubkey: creator.publicKey, lamports: 1 }));
+        return { transaction: tx, firstPositionNftKeypair: Keypair.generate(), secondPositionNftKeypair: Keypair.generate() };
+      },
+    },
+    partner: {
+      async partnerWithdrawMigrationFee() {
+        captured.calls.push("withdraw");
+        const tx = new Transaction();
+        tx.add(SystemProgram.transfer({ fromPubkey: collector.publicKey, toPubkey: creator.publicKey, lamports: 1 }));
+        return tx;
+      },
+    },
+    captured,
+  };
+}
+
+test("Meteora-first: already migrated skips locker and migrate, marks, then withdraws", async () => {
   const poolAddr = Keypair.generate().publicKey.toBase58();
   await insertCampaign(poolAddr);
   await upsertGraduationJob(pg.pool, { pool: poolAddr, creator: creator.publicKey.toBase58() });
@@ -146,15 +188,34 @@ test("Meteora-first: already migrated skips locker and migrate, withdraws next",
     send: false,
     client: client as any,
   });
-  assert.equal(result.step, "withdraw");
-  assert.equal(result.skipped, "dry-run");
+  assert.equal(result.step, "mark");
+  assert.equal(result.skipped, null);
   assert.deepEqual(captured.calls, []);
   const snap = readPoolSnapshot(state)!;
   const cfg = readConfigSnapshot({
     migrationQuoteThreshold: 1_500_000_000n,
     lockedVestingConfig: { totalLockedVestingAmount: 20_000_000_000_000n },
   })!;
-  assert.equal(nextGraduationStep(snap, cfg, { partnerFee: null, compensationPaid: false, routed: false, marked: false, lpDone: false }), "withdraw");
+  const campaign = await pg.pool.query(
+    `select is_active, launched, bonding_active, graduated_at_chain from public.campaigns where campaign_address = $1`,
+    [poolAddr],
+  );
+  assert.equal(campaign.rows[0].is_active, false);
+  assert.equal(campaign.rows[0].launched, true);
+  assert.equal(campaign.rows[0].bonding_active, false);
+  assert.ok(campaign.rows[0].graduated_at_chain);
+  const second = await advanceGraduationJob({
+    db: pg.pool,
+    connection: conn as any,
+    collector,
+    pool: poolAddr,
+    send: false,
+    client: client as any,
+  });
+  assert.equal(second.step, "withdraw");
+  assert.equal(second.skipped, "dry-run");
+  assert.deepEqual(captured.calls, []);
+  assert.equal(nextGraduationStep(snap, cfg, { partnerFee: null, compensationPaid: false, routed: false, marked: true }), "withdraw");
 });
 
 test("pending send is left pending; expired by block height returns to ready; never a second send", async () => {
@@ -208,7 +269,7 @@ test("landed withdraw records partner_fee from quote vault outflow and advances 
   assert.equal(row.rows[0].partner_fee, "330000");
 });
 
-test("a sending job on one pool does not start a send on another", async () => {
+test("a sending job on one pool does not stop the others", async () => {
   const a = Keypair.generate().publicKey.toBase58();
   const b = Keypair.generate().publicKey.toBase58();
   await insertCampaign(a);
@@ -220,14 +281,92 @@ test("a sending job on one pool does not start a send on another", async () => {
   );
   const { runDbcGraduationOnce } = await import("../dbc/dbcGraduationKeeper.js");
   const conn = stubConnection({ height: 100 });
+  const states = new Map([
+    [a, poolState({ isMigrated: 1, migrationProgress: 3 })],
+    [b, poolState({ isMigrated: 1, migrationProgress: 3 })],
+  ]);
   const result = await runDbcGraduationOnce({
     db: pg.pool,
     connection: conn as any,
     collector,
-    send: true,
-    pool: b,
-    client: stubClient(poolState({ isMigrated: 1, migrationProgress: 3 })) as any,
+    send: false,
+    client: stubClientForPools(states) as any,
   });
-  assert.equal(result.advanced[0].skipped, "sending-in-flight");
+  const byPool = Object.fromEntries(result.advanced.map((row) => [row.pool, row]));
+  assert.equal(byPool[a]?.skipped, "sending-in-flight");
+  assert.equal(byPool[b]?.step, "mark");
   assert.equal(conn.sent!.length, 0);
+});
+
+test("two graduated pools plus a third completing: the third graduates", async () => {
+  const { runDbcGraduationOnce } = await import("../dbc/dbcGraduationKeeper.js");
+  const doneA = Keypair.generate().publicKey.toBase58();
+  const doneB = Keypair.generate().publicKey.toBase58();
+  const live = Keypair.generate().publicKey.toBase58();
+  await insertCampaign(doneA);
+  await insertCampaign(doneB);
+  await insertCampaign(live);
+  await pg.pool.query(
+    `update public.campaigns set graduated_at_chain = now(), is_active = false, launched = true, bonding_active = false
+      where campaign_address = any($1::text[])`,
+    [[doneA, doneB]],
+  );
+  await pg.pool.query(
+    `insert into public.dbc_graduation_jobs (pool, step, status, damm_pool)
+     values ($1,'done','done','DammA'), ($2,'done','done','DammB')`,
+    [doneA, doneB],
+  );
+  const conn = stubConnection({});
+  const states = new Map([
+    [doneA, poolState({ isMigrated: 1, migrationProgress: 3, migrationFeeWithdrawStatus: PARTNER_WITHDRAW_BIT })],
+    [doneB, poolState({ isMigrated: 1, migrationProgress: 3, migrationFeeWithdrawStatus: PARTNER_WITHDRAW_BIT })],
+    [live, poolState({ isMigrated: 1, migrationProgress: 3 })],
+  ]);
+  const result = await runDbcGraduationOnce({
+    db: pg.pool,
+    connection: conn as any,
+    collector,
+    send: false,
+    client: stubClientForPools(states) as any,
+  });
+  assert.equal(result.advanced.length, 1);
+  assert.equal(result.advanced[0].pool, live);
+  assert.equal(result.advanced[0].step, "mark");
+  const marked = await pg.pool.query(`select graduated_at_chain, launched, bonding_active, is_active from public.campaigns where campaign_address = $1`, [live]);
+  assert.ok(marked.rows[0].graduated_at_chain);
+  assert.equal(marked.rows[0].launched, true);
+  assert.equal(marked.rows[0].bonding_active, false);
+  assert.equal(marked.rows[0].is_active, false);
+});
+
+test("a blocked pool does not stop the others", async () => {
+  const { runDbcGraduationOnce } = await import("../dbc/dbcGraduationKeeper.js");
+  const blocked = Keypair.generate().publicKey.toBase58();
+  const live = Keypair.generate().publicKey.toBase58();
+  await insertCampaign(blocked);
+  await insertCampaign(live);
+  await pg.pool.query(
+    `update public.campaigns set graduated_at_chain = now() where campaign_address = $1`,
+    [blocked],
+  );
+  await pg.pool.query(
+    `insert into public.dbc_graduation_jobs (pool, step, status, blocked_reason, partner_fee)
+     values ($1,'route','blocked','collector short', 1000)`,
+    [blocked],
+  );
+  const conn = stubConnection({});
+  const states = new Map([
+    [blocked, poolState({ isMigrated: 1, migrationProgress: 3, migrationFeeWithdrawStatus: PARTNER_WITHDRAW_BIT })],
+    [live, poolState({ isMigrated: 1, migrationProgress: 3 })],
+  ]);
+  const result = await runDbcGraduationOnce({
+    db: pg.pool,
+    connection: conn as any,
+    collector,
+    send: false,
+    client: stubClientForPools(states) as any,
+  });
+  const byPool = Object.fromEntries(result.advanced.map((row) => [row.pool, row]));
+  assert.equal(byPool[blocked]?.skipped, "blocked");
+  assert.equal(byPool[live]?.step, "mark");
 });

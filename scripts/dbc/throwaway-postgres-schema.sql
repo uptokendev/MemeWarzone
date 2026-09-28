@@ -15,6 +15,7 @@ create table if not exists public.campaigns (
   created_block bigint not null default 0,
   is_active boolean not null default true,
   launched boolean not null default false,
+  bonding_active boolean not null default true,
   created_at_chain timestamptz,
   graduated_at_chain timestamptz,
   graduated_block bigint,
@@ -252,4 +253,20 @@ create table if not exists public.dbc_launch_configs (
   verified_at timestamptz,
   created_at timestamptz not null default now(),
   unique (cluster, quote_mint, target_usd_micros, step_index, creator_fee_mode, params_hash)
+);
+
+-- Production shape (20260820_000001). Graduation tests mark campaigns and emit
+-- campaign.graduated; keep this here, not in 20260929_000007.
+create table if not exists public.notification_outbox (
+  id bigint generated always as identity primary key,
+  event_type text not null,
+  chain text not null,
+  dedup_key text not null unique,
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.notification_markers (
+  marker_key text primary key,
+  created_at timestamptz not null default now()
 );

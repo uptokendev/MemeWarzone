@@ -10,11 +10,10 @@ export type GraduationStep =
   | "not_complete"
   | "locker"
   | "migrate"
+  | "mark"
   | "withdraw"
   | "compensate"
   | "route"
-  | "mark"
-  | "lp"
   | "done";
 
 export type PoolSnapshot = {
@@ -42,7 +41,6 @@ export type JobSnapshot = {
   compensationPaid: boolean;
   routed: boolean;
   marked: boolean;
-  lpDone: boolean;
 };
 
 export function big(value: unknown): bigint {
@@ -121,6 +119,8 @@ export function lockerNeeded(pool: PoolSnapshot, config: ConfigSnapshot): boolea
 
 /**
  * Next keeper action. Meteora-first (isMigrated) never asks for locker or migrate.
+ * Mark as soon as the pool is migrated so the token page and DAMM indexer can
+ * trade; money steps (withdraw / compensate / route) follow.
  */
 export function nextGraduationStep(pool: PoolSnapshot, config: ConfigSnapshot, job: JobSnapshot): GraduationStep {
   if (!curveComplete(pool, config)) return "not_complete";
@@ -128,11 +128,10 @@ export function nextGraduationStep(pool: PoolSnapshot, config: ConfigSnapshot, j
     if (lockerNeeded(pool, config)) return "locker";
     return "migrate";
   }
+  if (!job.marked) return "mark";
   if (!partnerWithdrawn(pool)) return "withdraw";
   if (!job.compensationPaid) return "compensate";
   if (!job.routed) return "route";
-  if (!job.marked) return "mark";
-  if (!job.lpDone) return "lp";
   return "done";
 }
 
@@ -167,15 +166,14 @@ export function solanaGraduationMeta(input: {
 
 export function jobFromRow(row: Record<string, unknown> | null | undefined): JobSnapshot {
   if (!row) {
-    return { partnerFee: null, compensationPaid: false, routed: false, marked: false, lpDone: false };
+    return { partnerFee: null, compensationPaid: false, routed: false, marked: false };
   }
   const step = String(row.step || "");
   const partnerFee = row.partner_fee == null ? null : big(row.partner_fee);
   return {
     partnerFee,
-    compensationPaid: ["route", "mark", "lp", "done"].includes(step),
-    routed: ["mark", "lp", "done"].includes(step),
-    marked: ["lp", "done"].includes(step),
-    lpDone: step === "done",
+    compensationPaid: ["route", "done"].includes(step),
+    routed: step === "done",
+    marked: ["withdraw", "compensate", "route", "done"].includes(step),
   };
 }

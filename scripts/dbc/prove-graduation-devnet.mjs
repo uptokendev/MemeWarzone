@@ -3,8 +3,9 @@
  * Devnet proof of DBC graduation (step 6). Throwaway keys only.
  * Optional DBC_PROVE_FUNDER_KEYPAIR.
  *
- * Case B (required): SDK migrate first, then one keeper pass finishes the rest.
- * Case A: keeper does locker + migrate + withdraw + compensate + route + mark.
+ * --case A|B|both (default both).
+ * Case B: SDK migrate first, then one keeper pass finishes the rest.
+ * Case A: keeper does locker + migrate + mark + withdraw + compensate + route.
  * Amounts compared to that transaction's vault/token-account deltas, to the lamport.
  */
 import { createRequire } from "node:module";
@@ -36,7 +37,7 @@ const {
   Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction,
 } = requireFromFrontend("@solana/web3.js");
 const {
-  NATIVE_MINT, TOKEN_PROGRAM_ID,
+  NATIVE_MINT, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync,
 } = requireFromFrontend("@solana/spl-token");
 const {
   DynamicBondingCurveClient, SwapMode, DAMM_V2_MIGRATION_FEE_ADDRESS, deriveDammV2PoolAddress,
@@ -232,7 +233,7 @@ async function keeperUntil(db, conn, collector, pool, stop, maxPasses = 16) {
   for (let i = 0; i < maxPasses; i += 1) {
     const result = await runDbcGraduationOnce({ db, connection: conn, collector, send: true, pool });
     await resolvePendingGraduation({ db, connection: conn });
-    const job = (await db.query(`select step, status, signature, partner_fee::text as partner_fee, compensation::text as compensation, shortfall::text as shortfall, damm_pool, locker from public.dbc_graduation_jobs where pool = $1`, [pool])).rows[0];
+    const job = (await db.query(`select step, status, signature, partner_fee::text as partner_fee, compensation::text as compensation, shortfall::text as shortfall, damm_pool, locker, lp_claimed::text as lp_claimed, lp_signature from public.dbc_graduation_jobs where pool = $1`, [pool])).rows[0];
     log.push({ pass: i + 1, advanced: result.advanced, job });
     console.log(`  keeper pass ${i + 1}`, JSON.stringify({ advanced: result.advanced, step: job?.step, status: job?.status }));
     if (job && stop(job)) return { job, log };
@@ -250,10 +251,25 @@ async function main() {
   process.env.ABLY_API_KEY ||= "test:key";
   process.env.DBC_GRADUATION_ENABLED = "true";
   process.env.DBC_GRADUATION_SEND = "true";
+  process.env.DBC_LP_CLAIM_MIN_LAMPORTS ||= "1";
   const db = pg.pool;
   try {
     const { rewardVaults } = await import("../../realtime-indexer/src/dbc/dbcFeeRouter.ts");
-    const { splitDbcFinalizeFee, compensationDue, expectedPartnerMigrationFee, splitPlatformLpFees } = await import("../../realtime-indexer/src/dbc/dbcGraduationSplit.ts");
+    const { compensationDue, expectedPartnerMigrationFee, splitPlatformLpFees, finalizeAfterCompensation } = await import("../../realtime-indexer/src/dbc/dbcGraduationSplit.ts");
+    const { runDbcLpClaimsOnce, resolvePendingLpClaims } = await import("../../realtime-indexer/src/dbc/dbcGraduationKeeper.ts");
+
+    function parseCase() {
+      const eq = process.argv.find((a) => a.startsWith("--case="));
+      const idx = process.argv.indexOf("--case");
+      let value = "both";
+      if (eq) value = eq.slice("--case=".length);
+      else if (idx >= 0) value = process.argv[idx + 1] || "both";
+      const v = String(value).trim().toUpperCase();
+      if (!["A", "B", "BOTH"].includes(v)) throw new Error(`--case must be A, B, or both (got ${value})`);
+      return { runA: v === "A" || v === "BOTH", runB: v === "B" || v === "BOTH", label: v };
+    }
+    const cases = parseCase();
+    console.log(`cases ${cases.label}`);
 
     const conn = new Connection(RPC, "confirmed");
     const genesis = await conn.getGenesisHash();
@@ -315,9 +331,10 @@ async function main() {
 
     const vaults = rewardVaults();
 
-    if (holdersOnly) {
+    if (!cases.runB) {
+      console.log("\n[case B] skipped (--case A)");
+    } else if (holdersOnly && cases.label === "BOTH") {
       console.log("\n[case B keep] skipped so leftover SOL can prove D19 holders (100% partner LP)");
-      check("keep path proven on the previous graduation run", true);
     } else {
     console.log("\n[case B] SDK migrate first, then keeper finishes");
     const coinB = await createCoin({ handle, conn, creator, name: "DBC Grad B" });
@@ -341,13 +358,16 @@ async function main() {
     const migratedState = afterMig.poolState ?? afterMig;
     check("case B virtual pool migrated by SDK", Number(migratedState.isMigrated) === 1, `isMigrated ${migratedState.isMigrated}`);
 
-    const { job: jobB } = await keeperUntil(db, conn, collector, coinB.pool, (job) => ["lp", "done"].includes(job.step) && job.status !== "sending");
+    const { job: jobB } = await keeperUntil(db, conn, collector, coinB.pool, (job) => job.step === "done" && job.status === "done");
     check("case B keeper did not fail after Meteora-first migrate", jobB && jobB.status !== "blocked", jobB?.blocked_reason || jobB?.step);
     check("case B keeper skipped locker/migrate (step is past withdraw)", jobB && !["locker", "migrate"].includes(jobB.step), jobB?.step);
 
-    const campaignB = await db.query(`select graduated_at_chain, graduated_block, meta from public.campaigns where campaign_address = $1`, [coinB.pool]);
+    const campaignB = await db.query(`select graduated_at_chain, graduated_block, is_active, launched, bonding_active, meta from public.campaigns where campaign_address = $1`, [coinB.pool]);
     const metaB = campaignB.rows[0]?.meta || {};
     check("case B marked graduated", Boolean(campaignB.rows[0]?.graduated_at_chain));
+    check("case B is_active=false launched=true bonding_active=false",
+      campaignB.rows[0]?.is_active === false && campaignB.rows[0]?.launched === true && campaignB.rows[0]?.bonding_active === false,
+      JSON.stringify({ is_active: campaignB.rows[0]?.is_active, launched: campaignB.rows[0]?.launched, bonding_active: campaignB.rows[0]?.bonding_active }));
     check("case B meta.solanaGraduation.dex is meteora-damm-v2", metaB?.solanaGraduation?.dex === "meteora-damm-v2", JSON.stringify(metaB?.solanaGraduation || {}));
 
     const partnerWant = expectedPartnerMigrationFee(completeB.threshold);
@@ -372,7 +392,8 @@ async function main() {
     const routeEvent = await db.query(`select * from public.reward_events where campaign_address = $1 and route_kind = 'finalize'`, [coinB.pool]);
     check("case B reward_events route_kind=finalize", routeEvent.rows.length >= 1, String(routeEvent.rows.length));
     if (routeEvent.rows[0]) {
-      const slices = splitDbcFinalizeFee(BigInt(String(comp?.remaining_for_route || "0")), routeEvent.rows[0].route_profile);
+      const paidComp = BigInt(String(comp?.lamports || "0"));
+      const slices = finalizeAfterCompensation(partnerGot, routeEvent.rows[0].route_profile, paidComp).slices;
       const rtx = await getTx(conn, routeEvent.rows[0].tx_hash);
       const recDelta = nativeDelta(rtx, vaults.recruiter);
       const squadDelta = nativeDelta(rtx, vaults.squad);
@@ -402,6 +423,20 @@ async function main() {
     check("creator graduation payout vault outflow", creatorFeeOut === creatorShare, `got ${creatorFeeOut} want ${creatorShare}`);
 
     const locker = deriveDbcLockerEscrow(coinB.pool);
+    const creatorAta = getAssociatedTokenAddressSync(coinB.mint, creator.publicKey);
+    const lockerAta = getAssociatedTokenAddressSync(coinB.mint, locker, true);
+    let lockerBefore = 0n;
+    try {
+      lockerBefore = BigInt((await conn.getTokenAccountBalance(lockerAta)).value.amount);
+    } catch {
+      lockerBefore = 0n;
+    }
+    let creatorBefore = 0n;
+    try {
+      creatorBefore = BigInt((await conn.getTokenAccountBalance(creatorAta)).value.amount);
+    } catch {
+      creatorBefore = 0n;
+    }
     const reserveTx = await buildReserveClaimTransaction({
       connection: conn,
       mint: coinB.mint.toBase58(),
@@ -419,9 +454,14 @@ async function main() {
         extraPrograms: DBC_CREATOR_CLAIM_EXTRA_PROGRAMS,
         signTransaction: async (unsigned) => { unsigned.partialSign(creator); return unsigned; },
       });
-      check("creator reserve claim sent", Boolean(reserveSent.signature), reserveSent.signature);
+      const reserveOnchain = await getTx(conn, reserveSent.signature);
+      const creatorAfter = BigInt((await conn.getTokenAccountBalance(creatorAta)).value.amount);
+      const delta = creatorAfter - creatorBefore;
+      check("creator reserve claim token delta equals locked reserve", delta === lockerBefore && lockerBefore > 0n,
+        `delta ${delta} locked ${lockerBefore} tx ${reserveSent.signature}`);
+      void reserveOnchain;
     } catch (error) {
-      check("creator reserve claim sent", false, String(error?.message || error).slice(0, 160));
+      check("creator reserve claim token delta equals locked reserve", false, String(error?.message || error).slice(0, 160));
     }
 
     console.log("\n[DAMM v2 swap + LP claims]");
@@ -525,8 +565,8 @@ async function main() {
       const creatorPos = await cpH.getUserPositionByPool(dammH, holdersCreator.publicKey);
       check("holders coin has one collector position", collectorPos.length === 1, String(collectorPos.length));
       check("holders creator owns no LP position", creatorPos.length === 0, String(creatorPos.length));
-      const { job: jobH } = await keeperUntil(db, conn, collector, coinH.pool, (job) => ["lp", "done"].includes(job.step) && job.status !== "sending");
-      check("holders keeper finished withdraw/route/mark", ["lp", "done"].includes(jobH?.step), jobH?.step);
+      const { job: jobH } = await keeperUntil(db, conn, collector, coinH.pool, (job) => job.step === "done" && job.status === "done");
+      check("holders keeper finished withdraw/route/mark", jobH?.step === "done", jobH?.step);
       const dpoolH = await cpH.fetchPoolState(dammH);
       const swapH = await cpH.swap({
         payer: trader.publicKey, pool: dammH,
@@ -540,7 +580,8 @@ async function main() {
       swapH.feePayer = trader.publicKey;
       await sendAndConfirmTransaction(conn, swapH, [trader], { commitment: "confirmed" });
       const protocolBefore = BigInt(await conn.getBalance(vaults.protocol));
-      const lpPass = await keeperUntil(db, conn, collector, coinH.pool, (job) => job.step === "lp" && job.status === "ready" && Number(job.lp_claimed || 0) > 0, 8);
+      const lpPass = await runDbcLpClaimsOnce({ db, connection: conn, collector, send: true, pool: coinH.pool });
+      await resolvePendingLpClaims({ db, connection: conn });
       const protocolAfter = BigInt(await conn.getBalance(vaults.protocol));
       const protocolGot = protocolAfter - protocolBefore;
       const acc = await db.query(`select creator_pool::text, protocol::text, collector_amount::text from public.dbc_fee_accruals where pool = $1 and status = 'routed' and creator_pool > 0 order by id desc limit 1`, [coinH.pool]);
@@ -556,9 +597,10 @@ async function main() {
     }
 
     const leftover = BigInt(await conn.getBalance(trader.publicKey));
-    if (leftover < 450_000_000n) {
-      console.log(`\n[case A] skipped (trader has ${leftover} lamports; need ~0.45 SOL for a second fill)`);
-      check("case A skipped for SOL; case B is the required Meteora-first path", true);
+    if (!cases.runA) {
+      console.log(`\n[case A] skipped (--case B)`);
+    } else if (leftover < 450_000_000n && cases.label === "BOTH") {
+      console.log(`\n[case A] skipped (trader has ${leftover} lamports; need ~0.45 SOL). Re-run with --case A and a funded key.`);
     } else {
     await fund(conn, creatorB.publicKey, 50_000_000);
     console.log("\n[case A] keeper does locker + migrate");
@@ -566,7 +608,7 @@ async function main() {
     console.log(`  pool ${coinA.pool}`);
     const completeA = await completeCurve(client, conn, trader, coinA.pool);
     check("case A curve complete", completeA.reserve >= completeA.threshold, `${completeA.reserve} / ${completeA.threshold}`);
-    const { job: jobA } = await keeperUntil(db, conn, collector, coinA.pool, (job) => ["lp", "done"].includes(job.step) && job.status !== "sending");
+    const { job: jobA } = await keeperUntil(db, conn, collector, coinA.pool, (job) => job.step === "done" && job.status === "done");
     check("case A keeper migrated", Boolean(jobA?.damm_pool), jobA?.step);
     const afterA = (await client.state.getPool(new PublicKey(coinA.pool)))?.poolState ?? await client.state.getPool(new PublicKey(coinA.pool));
     const stA = afterA.poolState ?? afterA;

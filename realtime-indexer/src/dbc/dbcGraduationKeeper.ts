@@ -1,9 +1,10 @@
 /**
- * DBC graduation keeper: locker → migrate → partner withdraw → D7 compensate
- * → kind-1 route → mark graduated → partner LP to protocol_vault.
- * Sign, store sending + signature + lastValidBlockHeight, then send.
- * Resolve pending with getTransaction then getSignatureStatuses + getBlockHeight.
- * Never reset a send that may have landed. One pool at a time. Update by id.
+ * DBC graduation keeper: locker → migrate → mark → withdraw → D7 compensate
+ * → kind-1 route → done. LP claims are a separate hourly schedule over
+ * graduated pools. Sign, store sending + signature + lastValidBlockHeight,
+ * then send. Resolve pending with getTransaction then getSignatureStatuses
+ * + getBlockHeight. Never reset a send that may have landed. Walk every
+ * pool each pass. Update by id.
  */
 import {
   Connection,
@@ -27,6 +28,7 @@ import { bs58Encode, resolveSignature } from "./dbcFeePending.js";
 import {
   buildRouteTransfers,
   collectorNeed,
+  heldCreatorPoolSum,
   nativeDelta,
   rewardVaults,
 } from "./dbcFeeRouter.js";
@@ -35,11 +37,11 @@ import { profileFromLink, type DbcFeeProfile } from "./dbcFeeSplit.js";
 import {
   compensationDue,
   expectedPartnerMigrationFee,
+  finalizeAfterCompensation,
   finalizeRouteTotals,
   isPlatformFeeChoice,
-  payCompensation,
-  splitDbcFinalizeFee,
   splitPlatformLpFees,
+  type DbcFinalizeSlices,
 } from "./dbcGraduationSplit.js";
 import {
   jobFromRow,
@@ -58,6 +60,18 @@ export const DBC_PROGRAM_ID = "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN";
 export const DBC_QUOTE_MINT = "So11111111111111111111111111111111111111112";
 export const DBC_MIGRATION_FEE_OPTION_CUSTOMIZABLE = 6;
 const BACKOFF_SECONDS = [30, 60, 120, 300];
+const DEFAULT_LP_CLAIM_MIN_LAMPORTS = 10_000n;
+
+export function lpClaimMinLamports(): bigint {
+  const raw = String(process.env.DBC_LP_CLAIM_MIN_LAMPORTS || "").trim();
+  if (!raw) return DEFAULT_LP_CLAIM_MIN_LAMPORTS;
+  try {
+    const value = BigInt(raw);
+    return value < 0n ? DEFAULT_LP_CLAIM_MIN_LAMPORTS : value;
+  } catch {
+    return DEFAULT_LP_CLAIM_MIN_LAMPORTS;
+  }
+}
 
 type Queryable = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }> };
 
@@ -108,6 +122,7 @@ export async function resolvePendingGraduation(input: {
   db: Queryable;
   connection: Connection;
   client?: DynamicBondingCurveClient;
+  collector?: Keypair;
 }): Promise<{ resolved: number; waiting: number }> {
   const pending = await input.db.query(
     `select * from public.dbc_graduation_jobs where status = 'sending' order by id`,
@@ -148,7 +163,15 @@ export async function resolvePendingGraduation(input: {
       waiting += 1;
       continue;
     }
-    await applyLandedJob({ db: input.db, connection: input.connection, client, row, confirmed, signature });
+    await applyLandedJob({
+      db: input.db,
+      connection: input.connection,
+      client,
+      row,
+      confirmed,
+      signature,
+      collector: input.collector,
+    });
     resolved += 1;
   }
   return { resolved, waiting };
@@ -161,6 +184,7 @@ async function applyLandedJob(input: {
   row: any;
   confirmed: any;
   signature: string;
+  collector?: Keypair;
 }) {
   const step = String(input.row.step);
   const poolPk = new PublicKey(String(input.row.pool));
@@ -192,11 +216,13 @@ async function applyLandedJob(input: {
       first = null;
     }
     try {
-      const partnerOwner = String(input.row.creator || pool!.creator);
-      const partnerPos = await cpAmm.getUserPositionByPool(new PublicKey(dammPool), new PublicKey(partnerOwner));
-      second = partnerPos.find((p: { position?: { toBase58?: () => string } }) => p.position?.toBase58?.() !== first)?.position?.toBase58?.()
-        || partnerPos[0]?.position?.toBase58?.()
-        || null;
+      const partnerOwner = input.collector?.publicKey || null;
+      if (partnerOwner) {
+        const partnerPos = await cpAmm.getUserPositionByPool(new PublicKey(dammPool), partnerOwner);
+        second = partnerPos.find((p: { position?: { toBase58?: () => string } }) => p.position?.toBase58?.() !== first)?.position?.toBase58?.()
+          || partnerPos[0]?.position?.toBase58?.()
+          || null;
+      }
     } catch {
       second = null;
     }
@@ -204,7 +230,7 @@ async function applyLandedJob(input: {
       input.db,
       input.row.id,
       `update public.dbc_graduation_jobs
-          set status = 'ready', step = 'withdraw', damm_pool = $2, first_position_nft = coalesce($3, first_position_nft),
+          set status = 'ready', step = 'mark', damm_pool = $2, first_position_nft = coalesce($3, first_position_nft),
               second_position_nft = coalesce($4, second_position_nft), signature = null,
               last_valid_block_height = null, attempt = 0, backoff_until = null, updated_at = now()
         where id = $1`,
@@ -248,13 +274,12 @@ async function applyLandedJob(input: {
     return;
   }
   if (step === "route") {
-    const remainingRow = await input.db.query(
-      `select remaining_for_route from public.dbc_graduation_compensations where pool = $1`,
-      [input.row.pool],
-    );
-    const remaining = BigInt(String(remainingRow.rows[0]?.remaining_for_route || "0"));
+    const partnerFee = input.row.partner_fee != null
+      ? BigInt(String(input.row.partner_fee))
+      : 0n;
+    const paid = BigInt(String(input.row.compensation || "0"));
     const profile = await creatorProfile(input.db, String(input.row.creator || ""), new Date());
-    const slices = splitDbcFinalizeFee(remaining < 0n ? 0n : remaining, profile);
+    const slices = finalizeAfterCompensation(partnerFee < 0n ? 0n : partnerFee, profile, paid).slices;
     await insertFinalizeRewardEvent({
       db: input.db,
       job: input.row,
@@ -267,45 +292,11 @@ async function applyLandedJob(input: {
       input.db,
       input.row.id,
       `update public.dbc_graduation_jobs
-          set status = 'ready', step = 'mark', signature = null,
+          set status = 'done', step = 'done', signature = null,
               last_valid_block_height = null, attempt = 0, backoff_until = null, updated_at = now()
         where id = $1`,
     );
     return;
-  }
-  if (step === "lp") {
-    let claimed = 0n;
-    const dammPool = String(input.row.damm_pool || "");
-    if (dammPool) {
-      try {
-        const cpAmm = new CpAmm(input.connection);
-        const dpool = await cpAmm.fetchPoolState(new PublicKey(dammPool));
-        const quoteVault = dpool.tokenBMint.equals(NATIVE_MINT) ? dpool.tokenBVault : dpool.tokenAVault;
-        claimed = quoteVaultOutflow(input.confirmed, quoteVault.toBase58());
-      } catch {
-        const vaults = rewardVaults();
-        const protocolDelta = nativeDelta(input.confirmed, vaults.protocol.toBase58());
-        claimed = protocolDelta > 0n ? protocolDelta : 0n;
-      }
-    }
-    const choice = await campaignFeeChoice(input.db, String(input.row.pool));
-    if (isPlatformFeeChoice(choice) && claimed > 0n) {
-      await insertPlatformLpAccrual({
-        db: input.db,
-        job: input.row,
-        claimed,
-        signature: input.signature,
-      });
-    }
-    await updateJob(
-      input.db,
-      input.row.id,
-      `update public.dbc_graduation_jobs
-          set status = 'ready', step = 'lp', lp_claimed = coalesce(lp_claimed,0) + $2,
-              signature = null, last_valid_block_height = null, attempt = 0, backoff_until = null, updated_at = now()
-        where id = $1`,
-      [claimed.toString()],
-    );
   }
 }
 
@@ -342,6 +333,38 @@ async function insertPlatformLpAccrual(input: {
       split.creatorPool.toString(),
     ],
   );
+}
+
+async function blockIfCollectorShort(input: {
+  db: Queryable;
+  connection: Connection;
+  collector: Keypair;
+  jobId: string | number;
+  tx: Transaction;
+  spend: bigint;
+}): Promise<boolean> {
+  const have = BigInt(await input.connection.getBalance(input.collector.publicKey, "confirmed"));
+  const rent = BigInt(await input.connection.getMinimumBalanceForRentExemption(0));
+  if (!input.tx.recentBlockhash) {
+    const latest = await input.connection.getLatestBlockhash("confirmed");
+    input.tx.feePayer = input.collector.publicKey;
+    input.tx.recentBlockhash = latest.blockhash;
+  }
+  input.tx.feePayer = input.collector.publicKey;
+  const feeMsg = await input.connection.getFeeForMessage(input.tx.compileMessage(), "confirmed");
+  const fee = BigInt(feeMsg?.value ?? 5_000);
+  const held = await heldCreatorPoolSum(input.db);
+  const need = collectorNeed(input.spend, held, rent, fee);
+  if (have >= need) return false;
+  await updateJob(
+    input.db,
+    input.jobId,
+    `update public.dbc_graduation_jobs
+        set status = 'blocked', blocked_reason = $2, updated_at = now()
+      where id = $1`,
+    [`collector short have ${have.toString()} need ${need.toString()}`],
+  );
+  return true;
 }
 
 async function signStoreSend(input: {
@@ -464,6 +487,8 @@ async function markCampaignGraduated(input: {
         set graduated_at_chain = coalesce(graduated_at_chain, now()),
             graduated_block = coalesce(graduated_block, $3),
             is_active = false,
+            launched = true,
+            bonding_active = false,
             meta = coalesce(meta, '{}'::jsonb)
               || jsonb_build_object('solanaGraduation', $4::jsonb)
               || jsonb_build_object('dbc', coalesce(meta->'dbc','{}'::jsonb) || jsonb_build_object('migration', $5::jsonb)),
@@ -481,7 +506,7 @@ async function markCampaignGraduated(input: {
     input.db,
     input.job.id,
     `update public.dbc_graduation_jobs
-        set status = 'ready', step = 'lp', updated_at = now()
+        set status = 'ready', step = 'withdraw', updated_at = now()
       where id = $1`,
   );
 }
@@ -489,7 +514,7 @@ async function markCampaignGraduated(input: {
 async function insertFinalizeRewardEvent(input: {
   db: Queryable;
   job: any;
-  slices: ReturnType<typeof splitDbcFinalizeFee>;
+  slices: DbcFinalizeSlices;
   signature: string;
   slot: number;
   remaining: bigint;
@@ -595,6 +620,7 @@ export async function advanceGraduationJob(input: {
     await updateJob(input.db, job.id, `update public.dbc_graduation_jobs set status = 'done', step = 'done', updated_at = now() where id = $1`);
     return { pool: input.pool, step, signature: null, skipped: "done" };
   }
+  if (job.status === "blocked") return { pool: input.pool, step, signature: null, skipped: "blocked" };
   if (job.status === "sending") return { pool: input.pool, step, signature: job.signature, skipped: "sending-in-flight" };
   if (job.backoff_until && new Date(job.backoff_until).getTime() > Date.now()) {
     return { pool: input.pool, step, signature: null, skipped: "backoff" };
@@ -657,14 +683,15 @@ export async function advanceGraduationJob(input: {
     const partnerFee = job.partner_fee != null
       ? BigInt(String(job.partner_fee))
       : expectedPartnerMigrationFee(config.migrationQuoteThreshold);
-    const pay = payCompensation(due.due, partnerFee);
+    const profile = await creatorProfile(input.db, pool.creator, new Date());
+    const applied = finalizeAfterCompensation(partnerFee, profile, due.due);
     await updateJob(
       input.db,
       job.id,
       `update public.dbc_graduation_jobs
           set damm_pool = $2, compensation = $3, shortfall = $4, partner_fee = coalesce(partner_fee, $5), updated_at = now()
         where id = $1`,
-      [dammPool, pay.paid.toString(), pay.shortfall.toString(), partnerFee.toString()],
+      [dammPool, applied.paid.toString(), applied.shortfall.toString(), partnerFee.toString()],
     );
     await input.db.query(
       `insert into public.dbc_graduation_compensations
@@ -679,12 +706,12 @@ export async function advanceGraduationJob(input: {
          shortfall = excluded.shortfall,
          remaining_for_route = excluded.remaining_for_route`,
       [
-        input.pool, pool.creator, pay.paid.toString(), due.quoteCut.toString(), due.baseCut.toString(),
-        due.baseAsSol.toString(), due.due.toString(), pay.shortfall.toString(), pay.remaining.toString(),
+        input.pool, pool.creator, applied.paid.toString(), due.quoteCut.toString(), due.baseCut.toString(),
+        due.baseAsSol.toString(), due.due.toString(), applied.shortfall.toString(), applied.slices.remaining.toString(),
       ],
     );
     job = await loadJob(input.db, input.pool);
-    if (pay.paid <= 0n) {
+    if (applied.paid <= 0n) {
       await input.db.query(
         `update public.dbc_graduation_compensations set tx = 'none' where pool = $1 and tx is null`,
         [input.pool],
@@ -696,65 +723,301 @@ export async function advanceGraduationJob(input: {
     tx.add(SystemProgram.transfer({
       fromPubkey: input.collector.publicKey,
       toPubkey: new PublicKey(pool.creator),
-      lamports: Number(pay.paid),
+      lamports: Number(applied.paid),
     }));
+    const blocked = await blockIfCollectorShort({
+      db: input.db,
+      connection: input.connection,
+      collector: input.collector,
+      jobId: job.id,
+      tx,
+      spend: applied.paid,
+    });
+    if (blocked) return { pool: input.pool, step, signature: null, skipped: "collector-short" };
     const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx });
     return { pool: input.pool, step, signature: sent.signature, skipped: sent.skipped };
   }
 
   if (step === "route") {
-    const compensation = await input.db.query(
-      `select remaining_for_route, total_due, lamports, shortfall from public.dbc_graduation_compensations where pool = $1`,
-      [input.pool],
-    );
-    const remaining = compensation.rows[0]
-      ? BigInt(String(compensation.rows[0].remaining_for_route || "0"))
-      : expectedPartnerMigrationFee(config.migrationQuoteThreshold) - BigInt(String(job.compensation || "0"));
+    const partnerFee = job.partner_fee != null
+      ? BigInt(String(job.partner_fee))
+      : expectedPartnerMigrationFee(config.migrationQuoteThreshold);
+    const paid = BigInt(String(job.compensation || "0"));
     const profile = await creatorProfile(input.db, pool.creator, new Date());
-    const slices = splitDbcFinalizeFee(remaining < 0n ? 0n : remaining, profile);
+    const applied = finalizeAfterCompensation(partnerFee, profile, paid);
+    const slices = applied.slices;
     if (slices.remaining <= 0n) {
       await insertFinalizeRewardEvent({
         db: input.db, job, slices, signature: `dbc-grad-${input.pool}`, slot: 0, remaining: 0n,
       });
-      await updateJob(input.db, job.id, `update public.dbc_graduation_jobs set step = 'mark', status = 'ready', updated_at = now() where id = $1`);
+      await updateJob(input.db, job.id, `update public.dbc_graduation_jobs set step = 'done', status = 'done', updated_at = now() where id = $1`);
       return { pool: input.pool, step, signature: null, skipped: "nothing-to-route" };
     }
     const totals = finalizeRouteTotals(slices);
     const vaults = rewardVaults();
     const built = buildRouteTransfers({ collector: input.collector.publicKey, totals, vaults });
-    const have = BigInt(await input.connection.getBalance(input.collector.publicKey, "confirmed"));
-    const rent = BigInt(await input.connection.getMinimumBalanceForRentExemption(0));
     const latest = await input.connection.getLatestBlockhash("confirmed");
     const tx = new Transaction();
     tx.feePayer = input.collector.publicKey;
     tx.recentBlockhash = latest.blockhash;
     for (const ix of built.instructions) tx.add(ix);
-    const feeMsg = await input.connection.getFeeForMessage(tx.compileMessage(), "confirmed");
-    const fee = BigInt(feeMsg?.value ?? 5_000);
-    const need = collectorNeed(totals.routed, 0n, rent, fee);
-    if (have < need) {
-      await updateJob(
-        input.db,
-        job.id,
-        `update public.dbc_graduation_jobs
-            set status = 'blocked', blocked_reason = $2, updated_at = now()
-          where id = $1`,
-        [`collector short have ${have.toString()} need ${need.toString()}`],
-      );
-      return { pool: input.pool, step, signature: null, skipped: "collector-short" };
-    }
+    const blocked = await blockIfCollectorShort({
+      db: input.db,
+      connection: input.connection,
+      collector: input.collector,
+      jobId: job.id,
+      tx,
+      spend: totals.routed,
+    });
+    if (blocked) return { pool: input.pool, step, signature: null, skipped: "collector-short" };
     const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx });
     return { pool: input.pool, step, signature: sent.signature, skipped: sent.skipped };
   }
 
-  if (step === "lp") {
+  return { pool: input.pool, step, signature: null, skipped: "unhandled" };
+}
+
+export async function listOpenGraduationPools(db: Queryable): Promise<string[]> {
+  const { rows } = await db.query(
+    `select campaign_address as pool
+       from public.campaigns
+      where chain_id = $1
+        and coalesce(launch_type, 'launchpad') = 'dbc'
+        and campaign_address is not null
+        and graduated_at_chain is null
+      union
+      select pool
+        from public.dbc_graduation_jobs
+       where status in ('ready', 'sending', 'blocked')
+         and step <> 'done'`,
+    [SOLANA_CHAIN_ID],
+  );
+  return rows.map((row: { pool: string }) => String(row.pool));
+}
+
+export async function listWatchPools(db: Queryable): Promise<string[]> {
+  return listOpenGraduationPools(db);
+}
+
+export async function scanCompleteDbcPools(db: Queryable): Promise<string[]> {
+  return listOpenGraduationPools(db);
+}
+
+export async function runDbcGraduationOnce(input: {
+  db: Queryable;
+  connection: Connection;
+  collector: Keypair;
+  send: boolean;
+  pool?: string;
+  client?: DynamicBondingCurveClient;
+}): Promise<{
+  pending: { resolved: number; waiting: number };
+  advanced: Array<{ pool: string; step: string; signature: string | null; skipped: string | null }>;
+}> {
+  const pending = await resolvePendingGraduation({
+    db: input.db,
+    connection: input.connection,
+    client: input.client,
+    collector: input.collector,
+  });
+  const pools = input.pool ? [input.pool] : await listOpenGraduationPools(input.db);
+  const advanced = [];
+  for (const pool of pools) {
+    const result = await advanceGraduationJob({
+      db: input.db,
+      connection: input.connection,
+      collector: input.collector,
+      pool,
+      send: input.send,
+      client: input.client,
+    });
+    if (result.skipped === "not-complete") continue;
+    advanced.push(result);
+  }
+  return { pending, advanced };
+}
+
+async function applyLandedLpClaim(input: {
+  db: Queryable;
+  connection: Connection;
+  row: any;
+  confirmed: any;
+  signature: string;
+}) {
+  let claimed = 0n;
+  const dammPool = String(input.row.damm_pool || "");
+  if (dammPool) {
+    try {
+      const cpAmm = new CpAmm(input.connection);
+      const dpool = await cpAmm.fetchPoolState(new PublicKey(dammPool));
+      const quoteVault = dpool.tokenBMint.equals(NATIVE_MINT) ? dpool.tokenBVault : dpool.tokenAVault;
+      claimed = quoteVaultOutflow(input.confirmed, quoteVault.toBase58());
+    } catch {
+      const vaults = rewardVaults();
+      const protocolDelta = nativeDelta(input.confirmed, vaults.protocol.toBase58());
+      claimed = protocolDelta > 0n ? protocolDelta : 0n;
+    }
+  }
+  const choice = await campaignFeeChoice(input.db, String(input.row.pool));
+  if (isPlatformFeeChoice(choice) && claimed > 0n) {
+    await insertPlatformLpAccrual({
+      db: input.db,
+      job: input.row,
+      claimed,
+      signature: input.signature,
+    });
+  }
+  await updateJob(
+    input.db,
+    input.row.id,
+    `update public.dbc_graduation_jobs
+        set lp_claimed = coalesce(lp_claimed,0) + $2,
+            lp_signature = null, lp_last_valid_block_height = null, updated_at = now()
+      where id = $1`,
+    [claimed.toString()],
+  );
+}
+
+async function signStoreSendLp(input: {
+  db: Queryable;
+  connection: Connection;
+  collector: Keypair;
+  jobId: string | number;
+  tx: Transaction;
+}): Promise<{ signature: string; skipped: string | null }> {
+  const latest = await input.connection.getLatestBlockhash("confirmed");
+  input.tx.feePayer = input.collector.publicKey;
+  input.tx.recentBlockhash = latest.blockhash;
+  input.tx.partialSign(input.collector);
+  const serialized = input.tx.serialize();
+  let signature = bs58Encode(serialized.subarray(1, 65));
+  await updateJob(
+    input.db,
+    input.jobId,
+    `update public.dbc_graduation_jobs
+        set lp_signature = $2, lp_last_valid_block_height = $3, updated_at = now()
+      where id = $1`,
+    [signature, latest.lastValidBlockHeight],
+  );
+  try {
+    const sent = await input.connection.sendRawTransaction(serialized, { skipPreflight: false, maxRetries: 8 });
+    if (sent && sent !== signature) {
+      await updateJob(
+        input.db,
+        input.jobId,
+        `update public.dbc_graduation_jobs set lp_signature = $2, updated_at = now() where id = $1`,
+        [sent],
+      );
+      signature = sent;
+    }
+    const confirmation = await input.connection.confirmTransaction({
+      signature,
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+    }, "confirmed");
+    if (confirmation.value.err) {
+      await updateJob(
+        input.db,
+        input.jobId,
+        `update public.dbc_graduation_jobs
+            set lp_signature = null, lp_last_valid_block_height = null, updated_at = now()
+          where id = $1`,
+      );
+      return { signature, skipped: "failed-on-chain" };
+    }
+  } catch (error) {
+    console.warn("[dbc-grad] LP send/confirm error; left pending for the resolver", {
+      signature,
+      error: String(error instanceof Error ? error.message : error),
+    });
+    return { signature, skipped: "sending" };
+  }
+  return { signature, skipped: "sending" };
+}
+
+export async function resolvePendingLpClaims(input: {
+  db: Queryable;
+  connection: Connection;
+}): Promise<{ resolved: number; waiting: number }> {
+  const pending = await input.db.query(
+    `select * from public.dbc_graduation_jobs where lp_signature is not null order by id`,
+  );
+  let resolved = 0;
+  let waiting = 0;
+  for (const row of pending.rows) {
+    const signature = String(row.lp_signature || "");
+    const lastValid = Number(row.lp_last_valid_block_height || 0);
+    if (!signature) {
+      waiting += 1;
+      continue;
+    }
+    const confirmed = await getTx(input.connection, signature);
+    const outcome = confirmed
+      ? (confirmed.meta?.err ? "failed" : "landed")
+      : await resolveSignature(input.connection, signature, lastValid);
+    if (outcome === "pending") {
+      waiting += 1;
+      continue;
+    }
+    if (outcome === "failed" || outcome === "expired") {
+      await updateJob(
+        input.db,
+        row.id,
+        `update public.dbc_graduation_jobs
+            set lp_signature = null, lp_last_valid_block_height = null, updated_at = now()
+          where id = $1`,
+      );
+      resolved += 1;
+      continue;
+    }
+    if (!confirmed) {
+      waiting += 1;
+      continue;
+    }
+    await applyLandedLpClaim({ db: input.db, connection: input.connection, row, confirmed, signature });
+    resolved += 1;
+  }
+  return { resolved, waiting };
+}
+
+export async function runDbcLpClaimsOnce(input: {
+  db: Queryable;
+  connection: Connection;
+  collector: Keypair;
+  send: boolean;
+  pool?: string;
+}): Promise<{
+  pending: { resolved: number; waiting: number };
+  advanced: Array<{ pool: string; skipped: string | null; signature: string | null; owed?: string }>;
+}> {
+  const pending = await resolvePendingLpClaims({ db: input.db, connection: input.connection });
+  const min = lpClaimMinLamports();
+  const jobs = input.pool
+    ? await input.db.query(
+        `select * from public.dbc_graduation_jobs where pool = $1 and damm_pool is not null`,
+        [input.pool],
+      )
+    : await input.db.query(
+        `select * from public.dbc_graduation_jobs
+          where status = 'done' and damm_pool is not null
+          order by id`,
+      );
+  const advanced = [];
+  for (const job of jobs.rows) {
+    if (job.lp_signature) {
+      advanced.push({ pool: String(job.pool), skipped: "lp-sending", signature: String(job.lp_signature) });
+      continue;
+    }
     const dammPool = String(job.damm_pool || "");
-    if (!dammPool) return { pool: input.pool, step, signature: null, skipped: "no-damm-pool" };
+    if (!dammPool) {
+      advanced.push({ pool: String(job.pool), skipped: "no-damm-pool", signature: null });
+      continue;
+    }
     const cpAmm = new CpAmm(input.connection);
     const positions = await cpAmm.getUserPositionByPool(new PublicKey(dammPool), input.collector.publicKey);
     if (!positions.length) {
-      await updateJob(input.db, job.id, `update public.dbc_graduation_jobs set step = 'lp', status = 'ready', updated_at = now() where id = $1`);
-      return { pool: input.pool, step, signature: null, skipped: "no-partner-position" };
+      advanced.push({ pool: String(job.pool), skipped: "no-partner-position", signature: null });
+      continue;
     }
     const pos = positions[0];
     const dpool = await cpAmm.fetchPoolState(new PublicKey(dammPool));
@@ -764,9 +1027,16 @@ export async function advanceGraduationJob(input: {
       owed = BigInt(String(unclaimed?.feeTokenB || unclaimed?.feeQuote || 0));
       if (dpool.tokenAMint.equals(NATIVE_MINT)) owed = BigInt(String(unclaimed?.feeTokenA || 0));
     } catch {
-      owed = 1n;
+      owed = 0n;
     }
-    if (owed <= 0n) return { pool: input.pool, step, signature: null, skipped: "no-lp-fees" };
+    if (owed < min) {
+      advanced.push({ pool: String(job.pool), skipped: "below-threshold", signature: null, owed: owed.toString() });
+      continue;
+    }
+    if (!input.send) {
+      advanced.push({ pool: String(job.pool), skipped: "dry-run", signature: null, owed: owed.toString() });
+      continue;
+    }
     const claimTx: Transaction = await cpAmm.claimPositionFee({
       owner: input.collector.publicKey,
       position: pos.position,
@@ -781,7 +1051,7 @@ export async function advanceGraduationJob(input: {
       feePayer: input.collector.publicKey,
     });
     const protocol = rewardVaults().protocol;
-    const platform = isPlatformFeeChoice(await campaignFeeChoice(input.db, input.pool));
+    const platform = isPlatformFeeChoice(await campaignFeeChoice(input.db, String(job.pool)));
     const protocolLamports = platform ? splitPlatformLpFees(owed).protocol : owed;
     if (protocolLamports > 0n) {
       claimTx.add(SystemProgram.transfer({
@@ -790,61 +1060,14 @@ export async function advanceGraduationJob(input: {
         lamports: Number(protocolLamports),
       }));
     }
-    const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx: claimTx });
-    return { pool: input.pool, step, signature: sent.signature, skipped: sent.skipped };
-  }
-
-  return { pool: input.pool, step, signature: null, skipped: "unhandled" };
-}
-
-export async function scanCompleteDbcPools(db: Queryable): Promise<string[]> {
-  const { rows } = await db.query(
-    `select campaign_address
-       from public.campaigns
-      where chain_id = $1
-        and coalesce(launch_type, 'launchpad') = 'dbc'
-        and campaign_address is not null`,
-    [SOLANA_CHAIN_ID],
-  );
-  const jobs = await db.query(`select pool from public.dbc_graduation_jobs where status <> 'done'`);
-  const set = new Set<string>();
-  for (const row of rows) set.add(String(row.campaign_address));
-  for (const row of jobs.rows) set.add(String(row.pool));
-  return [...set];
-}
-
-export async function runDbcGraduationOnce(input: {
-  db: Queryable;
-  connection: Connection;
-  collector: Keypair;
-  send: boolean;
-  pool?: string;
-  client?: DynamicBondingCurveClient;
-}): Promise<{
-  pending: { resolved: number; waiting: number };
-  advanced: Array<{ pool: string; step: string; signature: string | null; skipped: string | null }>;
-}> {
-  const pending = await resolvePendingGraduation({ db: input.db, connection: input.connection, client: input.client });
-  const still = await input.db.query(
-    `select pool from public.dbc_graduation_jobs where status = 'sending' limit 1`,
-  );
-  if ((still.rowCount ?? still.rows.length) > 0) {
-    return { pending, advanced: [{ pool: String(still.rows[0].pool), step: "sending", signature: null, skipped: "sending-in-flight" }] };
-  }
-  const pools = input.pool ? [input.pool] : await scanCompleteDbcPools(input.db);
-  const advanced = [];
-  for (const pool of pools) {
-    const result = await advanceGraduationJob({
+    const sent = await signStoreSendLp({
       db: input.db,
       connection: input.connection,
       collector: input.collector,
-      pool,
-      send: input.send,
-      client: input.client,
+      jobId: job.id,
+      tx: claimTx,
     });
-    if (result.skipped === "not-complete") continue;
-    advanced.push(result);
-    break;
+    advanced.push({ pool: String(job.pool), skipped: sent.skipped, signature: sent.signature, owed: owed.toString() });
   }
   return { pending, advanced };
 }

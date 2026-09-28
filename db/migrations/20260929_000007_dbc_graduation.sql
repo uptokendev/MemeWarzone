@@ -1,18 +1,9 @@
--- DBC graduation keeper (2026-09-29). Jobs track locker/migrate/withdraw/compensate/route/mark/lp
--- with sign-then-send pending rows. Compensations record D7 (Meteora 0.2% cut paid back to creator).
+-- DBC graduation keeper (2026-09-29). Jobs track locker/migrate/mark/withdraw/compensate/route.
+-- LP claims are a separate hourly schedule (lp_signature holds a pending LP send).
+-- Compensations record D7 (Meteora 0.2% cut paid from the protocol slice).
 begin;
 
 alter table public.campaigns add column if not exists graduated_block bigint;
-
-create table if not exists public.notification_outbox (
-  id bigserial primary key,
-  event_type text not null,
-  chain text not null,
-  dedup_key text not null,
-  payload jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  unique (event_type, chain, dedup_key)
-);
 
 create table if not exists public.dbc_graduation_jobs (
   id bigserial primary key,
@@ -36,10 +27,12 @@ create table if not exists public.dbc_graduation_jobs (
   first_position_nft text,
   second_position_nft text,
   lp_claimed numeric,
+  lp_signature text,
+  lp_last_valid_block_height bigint,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint dbc_graduation_jobs_status_check check (status in ('ready', 'sending', 'done', 'blocked')),
-  constraint dbc_graduation_jobs_step_check check (step in ('locker', 'migrate', 'withdraw', 'compensate', 'route', 'mark', 'lp', 'done'))
+  constraint dbc_graduation_jobs_step_check check (step in ('locker', 'migrate', 'mark', 'withdraw', 'compensate', 'route', 'done'))
 );
 
 create index if not exists dbc_graduation_jobs_status_idx
@@ -62,8 +55,8 @@ create table if not exists public.dbc_graduation_compensations (
 );
 
 comment on table public.dbc_graduation_jobs is
-  'DBC curve graduation keeper. status=sending holds a signed tx until getSignatureStatuses + getBlockHeight resolve it.';
+  'DBC curve graduation keeper. status=sending holds a signed tx until getSignatureStatuses + getBlockHeight resolve it. LP claims use lp_signature after the job is done.';
 comment on table public.dbc_graduation_compensations is
-  'D7: Meteora 0.2% migration liquidity cut paid to the creator from our partner share, then the rest is kind-1 routed.';
+  'D7: Meteora 0.2% migration liquidity cut paid to the creator from the protocol slice of the kind-1 partner fee.';
 
 commit;

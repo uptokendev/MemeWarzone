@@ -100,12 +100,37 @@ export type CompensationPay = {
   remaining: bigint;
 };
 
-export function payCompensation(due: bigint, partnerFee: bigint): CompensationPay {
+export function payCompensation(due: bigint, pot: bigint): CompensationPay {
   const want = BigInt(due);
-  const have = BigInt(partnerFee);
-  if (have < 0n) throw new Error("partner fee is negative");
+  const have = BigInt(pot);
+  if (have < 0n) throw new Error("compensation pot is negative");
   const paid = want < have ? want : have;
   return { paid, shortfall: want - paid, remaining: have - paid };
+}
+
+/**
+ * D7 from the protocol slice (2026-09-28): split the whole partner fee with
+ * finalize bps first, then pay compensation from protocol. Recruiter / squad /
+ * airdrop stay as without compensation. Shortfall is recorded when protocol
+ * cannot cover the due amount.
+ */
+export function finalizeAfterCompensation(
+  partnerFee: bigint,
+  profile: DbcFeeProfile,
+  due: bigint,
+): { slices: DbcFinalizeSlices; paid: bigint; shortfall: bigint; remainingProtocol: bigint } {
+  const slices = splitDbcFinalizeFee(partnerFee, profile);
+  const pay = payCompensation(due, slices.protocol);
+  return {
+    slices: {
+      ...slices,
+      remaining: slices.remaining - pay.paid,
+      protocol: slices.protocol - pay.paid,
+    },
+    paid: pay.paid,
+    shortfall: pay.shortfall,
+    remainingProtocol: pay.remaining,
+  };
 }
 
 export function expectedMigrationFee(threshold: bigint, feePct = 22n): bigint {
