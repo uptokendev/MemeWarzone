@@ -469,6 +469,9 @@ async function computeTotalLeagueFeeRawInRange(chainId, startIso, endIso, protoc
       WHERE t.chain_id = $1
         AND ($2::timestamptz IS NULL OR t.block_time >= $2::timestamptz)
         AND ($3::timestamptz IS NULL OR t.block_time < $3::timestamptz)
+        -- Same rule as the settlement job: Solana swaps on a graduated coin's pool (log_index
+        -- 20000+) pay no league fee.
+        AND NOT (t.chain_id = 101 AND t.log_index >= 20000)
     ),
     base AS (
       SELECT

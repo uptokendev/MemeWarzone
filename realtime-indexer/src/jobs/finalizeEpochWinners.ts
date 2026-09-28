@@ -89,6 +89,9 @@ async function computeTotalLeagueFeeRawInRange(
       WHERE t.chain_id = $1
         AND t.block_time >= $2::timestamptz
         AND t.block_time <  $3::timestamptz
+        -- Solana: swaps on a graduated coin's Meteora pool (meteoraSwapIndexer, log_index 20000+)
+        -- pay no league fee; counting them made the pot larger than the league vault.
+        AND NOT (t.chain_id = 101 AND t.log_index >= 20000)
     ),
     base AS (
       SELECT
@@ -475,9 +478,17 @@ async function leaderboard(
           ${sqlWallet("t.wallet", chainId)} as wallet,
           sum(case when t.side='sell' then (t.bnb_amount_raw::numeric) else -(t.bnb_amount_raw::numeric) end)::numeric(78,0) as pnl_raw
         FROM public.curve_trades t
+        JOIN public.campaigns c
+          ON c.chain_id = t.chain_id
+         AND c.campaign_address = t.campaign_address
         WHERE t.chain_id=$1
           AND t.block_time >= $2::timestamptz
           AND t.block_time <  $3::timestamptz
+          -- Same exclusions as the live board (league.js) and biggest_hit: a creator does not
+          -- earn a prize from trading their own coin.
+          AND t.wallet IS DISTINCT FROM c.campaign_address
+          AND (c.creator_address IS NULL OR t.wallet IS DISTINCT FROM c.creator_address)
+          AND (c.fee_recipient_address IS NULL OR t.wallet IS DISTINCT FROM c.fee_recipient_address)
         GROUP BY ${sqlWallet("t.wallet", chainId)}
       )
       SELECT wallet as recipient, pnl_raw
