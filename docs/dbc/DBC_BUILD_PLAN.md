@@ -215,3 +215,30 @@ Must fix:
 3. Report the new liquidity bit lengths and the price-path table again.
 Claude re-runs the devnet proof after the fix. Minor, not blocking: a send that times out after it
 actually landed writes no row, so a retry could create a second config (<= 0.006 SOL); acceptable.
+
+### Step 1, review 3 (2026-09-28): PR #471 @ `b3868a2d`: CHANGES NEEDED (one blocker)
+
+Verified: points in price space, liquidity 94-110 bits (u128 ok), createConfig serializes for all 44
+cases, 18/18 tests pass.
+
+Devnet proof (Claude, funder = devnet deployer): the transaction now encodes, and the **DBC program
+rejects it: `InvalidTokenSupply` (6020)**. The program requires (`process_create_config.rs`, the
+`token_supply` branch):
+`min_without_buffer <= post <= pre` and `min_with_buffer <= pre`, where both minimums count the
+pool's tokens **including Meteora's 0.2% migration cut**:
+`included_base = get_included_protocol_fee_migration_amounts_1(threshold, fee_pct)` in
+`migration_handler/concentrated_liquidity.rs`: `quote = ceil(threshold x (100 - fee) / 100)`,
+`L = get_initial_liquidity_from_delta_quote(quote, MIN_SQRT_PRICE, migration_sqrt_price)`,
+`base = get_delta_amount_base_unsigned_256(migration_sqrt_price, MAX_SQRT_PRICE, L, Rounding::Up)`.
+SDK 1.5.13 `getTotalSupplyFromCurve` uses `getMigrationBaseToken` instead and comes out lower, so
+`pre` (and possibly `post`) is below the program's minimum.
+
+Must fix:
+1. Compute `pre` and `post` from the program's own minimums (mirror the formula above exactly,
+   bigint, same rounding), keeping `post` = circulating (sold + pool incl. the 0.2% cut + 20M) and
+   the 1B ceiling on `pre`.
+2. Add a devnet **simulation** step to `prove-config-ladder-devnet.mjs` that runs
+   `simulateTransaction` on createConfig for every one of the 44 ladder cases (free, sends nothing)
+   and prints pass/fail per case; the program is the judge. Unit test: the mirrored minimums for a
+   known case equal the numbers the program logs/accepts.
+Claude re-runs the proof (simulation of 44, then the full lifecycle on one) after the fix.
