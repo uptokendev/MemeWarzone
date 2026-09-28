@@ -65,6 +65,7 @@ These win over anything else in this file or in a brief. A change needs the foun
   the configs ahead of time.
 - **D11. Creator first buy: up to 10% of supply, in the launch transaction, unlocked.**
 - **D12. Any further creator buy through our site is locked** in an existing, proven lock program
+  (Jupiter Lock `LocpQguc…`, the same program Meteora's DBC uses for its own vesting)
   (option A, released by date; no lock program of our own): released in 5 steps of 20%. The coin
   shows a badge with how much the creator holds and how much is locked. Buys made elsewhere or from
   other wallets cannot be locked, by anyone.
@@ -142,7 +143,7 @@ against the rule "unlinked slices go to the airdrop".
 | # | Step | Owner | Status |
 |---|---|---|---|
 | 1 | Config ladder (server): economics module, parity tests, SOL-price steps, config creation + chain readback, API to fetch a launch config | Grok, brief `docs/dbc/grok-step-1-config-ladder.md` | **DONE 2026-09-28**: merged (PR #471 + review fixes), devnet ALL CHECKS PASS |
-| 2 | Create flow: creator signs createPool only (2 signers) + create screen | Grok | not started |
+| 2 | Create flow: creator signs createPool only (2 signers) + create screen | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | brief written 2026-09-28 |
 | 3 | Trading on our site: DBC buy/sell with our referral account | Grok | not started |
 | 4 | Indexer: DBC trades into charts, market stats, leagues, battles | Grok | not started |
 | 5 | Fee collector routing into league / recruiter / squad / airdrop vaults | Grok | not started |
