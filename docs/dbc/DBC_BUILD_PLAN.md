@@ -76,6 +76,16 @@ These win over anything else in this file or in a brief. A change needs the foun
 - **D15. Every quote token we can offer** (stocks and others) via Meteora TokenBadges + a liquidity
   filter (step 7).
 
+- **D18. Scheduled launches (founder, 2026-09-28): the creator deploys when the timer ends.** DBC
+  pools trade from the moment they are created (the program sets the activation point to "now";
+  no scheduled trading start exists). So a scheduled DBC launch is a draft with a launch time: the
+  countdown runs on the promotion page, deploy is locked until the time (the server refuses earlier),
+  and at the time the creator gets a popup on any page (wallet connected) plus our usual
+  notifications: "Your launch time has arrived. Deploy now to go live." The deploy is the normal
+  step-2 transaction, priced at that moment. If the creator does not come, the coin is simply not
+  live yet ("Ready to launch"). Rejected: a pre-signed durable-nonce transaction (3 signers, SOL
+  target fixed at scheduling time).
+
 **Today's launchpad (separate from DBC)**
 - **D16. Graduation fee routing fixed** (2026-09-28, commit `3c4df96f`, on the work and live branches; gate PASS; keeper + API need a redeploy): the
   keeper sent "linked" for every creator; now the creator's real link decides. Proven on a local
@@ -143,7 +153,7 @@ against the rule "unlinked slices go to the airdrop".
 | # | Step | Owner | Status |
 |---|---|---|---|
 | 1 | Config ladder (server): economics module, parity tests, SOL-price steps, config creation + chain readback, API to fetch a launch config | Grok, brief `docs/dbc/grok-step-1-config-ladder.md` | **DONE 2026-09-28**: merged (PR #471 + review fixes), devnet ALL CHECKS PASS |
-| 2 | Create flow: creator signs createPool only (2 signers) + create screen | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | brief written 2026-09-28 |
+| 2 | Create flow: creator signs createPool only (2 signers) + create screen + drafts and scheduled launches (D18) | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | brief written 2026-09-28, D18 added |
 | 3 | Trading on our site: DBC buy/sell with our referral account | Grok | not started |
 | 4 | Indexer: DBC trades into charts, market stats, leagues, battles | Grok | not started |
 | 5 | Fee collector routing into league / recruiter / squad / airdrop vaults | Grok | not started |

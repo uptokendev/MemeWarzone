@@ -91,15 +91,39 @@ Behind `VITE_DBC_LAUNCH_ENABLED`: when on, a new Solana launch is a DBC launch.
 - Deploy: begin -> logo upload -> authorize -> the client generates the mint keypair, signs with it,
   the wallet signs, send -> finalize -> token page. Use `signTransaction` then `sendRawTransaction`
   like `solanaV4CreateSubmit.ts` does (no signAndSend).
-- Drafts and scheduled launches: out of scope for step 2 (Direct deploy only). Say where a draft
-  would plug in.
+- Drafts and scheduled launches: **in scope (D18)**, see the next section.
 - Copy: plain sentences, no em dashes, no slogans (`memory: no-ai-tone-copy`).
+
+## Drafts and scheduled launches (D18)
+
+A DBC pool trades from the moment it is created (no scheduled trading start exists in the program),
+so a scheduled DBC launch means **the creator deploys when the timer ends**:
+- Drafts work as today (`drafts.js` / `drafts-base.js`: ticker reservation, promotion fields), plus
+  the DBC fields (target, fee choice, first buy). The creator sets a launch time (5 minutes to 30 days
+  out, today's limits); store it in `campaign_drafts.scheduled_launch_at`, status `scheduled`.
+  Nothing is created on chain at scheduling time.
+- Promotion page (`frontend/src/pages/PushDraftLive.tsx` and the draft/promotion view): the countdown
+  runs as today. **Deploy is locked until the time**, and `create.js` `authorize` refuses a scheduled
+  draft before `scheduled_launch_at` (server-side, not only the button). After the time the button
+  says "Deploy now" and runs the normal step-2 flow for that draft (same transaction, priced at that
+  moment, first buy included), then marks the draft deployed and links the campaign.
+- **Popup when the time has arrived**: a listener on every page (like `IncomingChallengeListener`)
+  asks the API for the connected wallet's due scheduled drafts (on load, on tab return, every 30 s)
+  and shows: "Your launch time has arrived. Deploy now to go live." with a button to the promotion
+  page. Shown once per draft per browser until deployed or dismissed; it comes back on the next load
+  while the draft is still due. Also send it through the existing notification channels if the
+  creator has any (find the existing notification helpers, do not build new channels).
+- If the creator does not deploy, the draft stays "Ready to launch" and can be deployed any time
+  later. The public promotion page shows "Launching soon" after the time instead of a finished
+  countdown.
 
 ## Tests
 
 - `create.js` with fake chain + fake DB: each operation; first buy above 10% refused; fee choice ->
   config mode; finalize refuses a pool with a different config, creator or mint; the campaign row and
   `token_metadata_registry` row are written with the right fields; creator limits from the DB.
+- Scheduled draft: `authorize` refused before the time, accepted after; the due-drafts endpoint
+  returns only the wallet's own due drafts; the popup copy and its once-per-draft rule.
 - The built transaction: **2 signers** (wallet + mint), measured bytes, for both with and without the
   first buy, serialized for every target.
 - Each guard in "Existing jobs": a DBC row is skipped, a launchpad row is not.
