@@ -158,7 +158,7 @@ against the rule "unlinked slices go to the airdrop".
 | 2 | Create flow: creator signs createPool only (2 signers) + create screen + drafts and scheduled launches (D18) | Grok, brief `docs/dbc/grok-step-2-create-flow.md` | **DONE 2026-09-28**: merged (PR #472 + review fixes), devnet ALL CHECKS PASS |
 | 3 | Trading on our site: DBC buy/sell, referral account, creator locked buys (D12), post-graduation trading | Grok, brief `docs/dbc/grok-step-3-trading.md` | **DONE 2026-09-28**: merged (PR #473 + review fixes), devnet ALL CHECKS PASS |
 | 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | **DONE 2026-09-28**: merged (PR #474 + review fixes), devnet ALL CHECKS PASS; migration `20260929_000005` still to apply |
-| 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | sent to Grok 2026-09-28 |
+| 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | PR #475 review 1: CHANGES NEEDED |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails), buyback & burn (random, <= 0.5% impact), split | Grok | brief after step 5 |
 | 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | brief written 2026-09-28; starts after step 5 is merged |
 | 7 | Binding tokens via Meteora TokenBadges + liquidity filter | Grok | not started |
@@ -411,3 +411,63 @@ wallet = trader). Tests: indexer 7, holders 2, market stats 5. The proof's trade
 so "trader differs from fee payer" is covered by the account layout (payer = index 9 of swap/swap2),
 not by a run. Needs `db/migrations/20260929_000005_curve_trades_venue.sql` on staging and production
 before the indexer ships (founder applies).
+
+### Step 5, review 1 (2026-09-28): PR #475 @ `2c768e8f`: CHANGES NEEDED
+
+The split maths is right: I re-added the proof's numbers by hand (collector 20,534,400, league
+3,105,000 + 7,245,000, recruiter 2,570,000, squad 468,000, airdrop 1,332,000, protocol 5,814,400) and
+every lamport is accounted for. The problems are in the claim/route bookkeeping. On a coin that trades,
+several of them fire on the first real pass.
+
+1. **The claim blocks every active pool.** `claimPoolPartnerFees` sums the accruals it has, then claims
+   **everything the pool owes** (`maxQuoteAmount = owed`). Any trade that the indexer or the accrual
+   pass has not reached yet (the indexer runs every 8 s, accrual once an hour) makes claimed > expected.
+   With tolerance 0 the pool is then marked `blocked`, for good. The proof passed only because nothing
+   traded between the accrual and the claim.
+   Fix: claim exactly what was accrued, `maxQuoteAmount = expected` (`claim_trading_fee` pays
+   min(max, owed)). If `owed < expected`, block without sending. The rest stays in the pool counter for
+   the next pass.
+2. **A blocked pool stops routing for every pool.** The router refuses while any row is `blocked`, and
+   the worker skips routing if any claim came back blocked. The brief says a mismatch stops routing
+   **for that pool**. Blocked rows are already excluded by status, so drop both global gates and log the
+   blocked pools on every pass.
+3. **The same money can be routed twice.** If the route transaction is sent but not readable within
+   30 s, the router throws and the rows stay `claimed`, so the next pass pays the vaults again. The
+   claim has the same shape. Fix, for both: sign first, then write status `claiming` / `routing` with the
+   signature and `lastValidBlockHeight` **before** sending. At the start of the next pass, resolve
+   pending rows with `getSignatureStatuses` (`searchTransactionHistory: true`):
+   - landed → `claimed` / `routed` (for a claim, measure the quote-vault outflow of that transaction);
+   - failed, or not found with block height past `lastValidBlockHeight` → back to `accrued` / `claimed`;
+   - otherwise wait.
+   Update rows **by id** (the ids you summed), never `where status = ...`. Add the two statuses and the
+   column in the migration.
+4. **Wrong trader profile.** `LINK_SQL` sorts active-at-trade-time links first but does not filter, so a
+   wallet with no link at trade time gets its latest link anyway: one made after the trade, or one
+   already detached. That trade is paid as linked instead of airdrop. Use the ledger's rule
+   (`rewards/ledger.ts:226`): `l.linked_at <= $2 and (l.detached_at is null or l.detached_at > $2)`,
+   `order by l.linked_at desc, l.id desc`.
+5. **A trade without an activity row blocks all accrual.** It is skipped and read again on every pass
+   (oldest first, `limit 500`). Once 500 of them exist, no new trade is accrued anywhere. Select only
+   trades that have their activity row, and log how many DBC trades have none.
+6. **The collector check ignores money held for creators.** Platform-mode `creator_pool` amounts stay on
+   the collector for step 5b. The router should require
+   `routed + held creator_pool (claimed / routing / routed) + rent + fee` before it sends. Otherwise
+   routing can spend creators' money.
+
+**Tests: the stand-in database has to go.** The proof and tests answer SQL from a hand-written stand-in
+that re-implements each query, including the same wrong link sort. It proves the chain amounts, not the
+SQL. Run the proof and a new integration test against a throwaway Postgres:
+`initdb` into a temp dir, `pg_ctl -o "-p 55432" start`, apply `db/migrations/*dbc*` plus the minimum
+`curve_trades` / `activity_events` / `campaigns` / `reward_events` / `epochs` / `wallet_recruiter_links` /
+`recruiters` / `indexer_state` columns, then stop and remove it. The integration test (chain stubbed) must cover:
+- a trade accrued after the claim was built;
+- claim sent but unreadable, then resolved as landed, then resolved as failed;
+- route sent but unreadable (no second route);
+- one blocked pool while another routes;
+- the link-at-time cases (none, before, after, detached).
+
+The devnet proof must add:
+- a trade between the accrual and the claim (claimed == accrued, the counter keeps the rest, the next
+  pass claims it);
+- one swap naming the referral account, then the sweep: the referral balance goes to `protocol_vault`
+  to the lamport, the referral account still exists, and a later swap naming it succeeds.
