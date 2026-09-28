@@ -109,7 +109,7 @@ export async function resolvePendingClaims(input: {
     group.expected += big(row.collector_amount);
     bySig.set(signature, group);
   }
-  const client = input.client || new DynamicBondingCurveClient(input.connection, "confirmed");
+  const client = input.client || new DynamicBondingCurveClient(input.connection as any, "confirmed");
   for (const [signature, group] of bySig) {
     const confirmed = await getTx(input.connection, signature);
     const outcome = confirmed
@@ -135,7 +135,7 @@ export async function resolvePendingClaims(input: {
       continue;
     }
     const wrap = await client.state.getPool(new PublicKey(group.pool));
-    const state = wrap?.poolState ?? wrap;
+    const state: any = (wrap as any)?.poolState ?? wrap;
     const quoteVault = String(state?.quoteVault?.toBase58?.() || state?.quote_vault || "");
     const claimed = quoteVaultOutflow(confirmed, quoteVault);
     const delta = claimed - group.expected;
@@ -199,10 +199,10 @@ export async function claimPoolPartnerFees(input: {
   if (!ids.length || expected < min) {
     return { pool: input.pool, ids, claimed: 0n, expected, signature: null, blocked: false, reason: "below-threshold" };
   }
-  const client = input.client || new DynamicBondingCurveClient(input.connection, "confirmed");
+  const client = input.client || new DynamicBondingCurveClient(input.connection as any, "confirmed");
   const poolPk = new PublicKey(input.pool);
   const wrap = await client.state.getPool(poolPk);
-  const state = wrap?.poolState ?? wrap;
+  const state: any = (wrap as any)?.poolState ?? wrap;
   if (!state) {
     return { pool: input.pool, ids, claimed: 0n, expected, signature: null, blocked: false, reason: "pool-unreadable" };
   }
@@ -221,13 +221,13 @@ export async function claimPoolPartnerFees(input: {
   if (!input.send) {
     return { pool: input.pool, ids, claimed: 0n, expected, signature: null, blocked: false, reason: "dry-run" };
   }
-  const tx: Transaction = await client.partner.claimPartnerTradingFee({
+  const tx: Transaction = (await client.partner.claimPartnerTradingFee({
     feeClaimer: input.collector.publicKey,
     payer: input.collector.publicKey,
     pool: poolPk,
     maxBaseAmount: new BN(0),
     maxQuoteAmount: new BN(expected.toString()),
-  });
+  })) as any;
   const latest = await input.connection.getLatestBlockhash("confirmed");
   tx.feePayer = input.collector.publicKey;
   tx.recentBlockhash = latest.blockhash;
