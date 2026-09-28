@@ -53,7 +53,8 @@ These win over anything else in this file or in a brief. A change needs the foun
   the other 78.4%. DBC takes whole percents: migration fee 22%, creator share 90% (creator 19.8%,
   us 2.2%, pool 78%). Our graduation share is split like today's graduation fee (D4, creator's link).
 - **D7. Meteora's 0.2% liquidity cut at graduation is paid back to the creator from our share** by
-  the graduation keeper.
+  the graduation keeper, **out of the protocol slice** (2026-09-28): the whole partner fee is split
+  first, so recruiter / squad / airdrop are not reduced; same rule as trade fees.
 - **D8. Graduated pool: 0.25% fee, SOL-only fee collection, 100% permanently locked, LP fees 80%
   creator / 20% us.**
 - **D9. Targets $15K / $30K / $50K** of raised SOL, fixed in SOL at launch from the SOL price step
@@ -167,7 +168,7 @@ against the rule "unlinked slices go to the airdrop".
 | 4 | Indexer: DBC trades into curve_trades, candles, market stats, holders, leagues | Grok, brief `docs/dbc/grok-step-4-indexer.md` | **DONE 2026-09-28**: merged (PR #474 + review fixes), devnet ALL CHECKS PASS; migration `20260929_000005` still to apply |
 | 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | **DONE 2026-09-28**: merged (PR #475, 2 reviews), devnet ALL CHECKS PASS; migration `20260929_000006` still to apply |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails, code-2 leaves), buyback & burn (random, <= 0.5% impact), split | Grok, brief `docs/dbc/grok-step-5b-creator-fee-choice.md` | brief written 2026-09-28; can run in parallel with step 6 |
-| 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | brief written 2026-09-28; starts after step 5 is merged |
+| 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | PR #476 review 1: CHANGES NEEDED |
 | 7 | Binding tokens via Meteora TokenBadges + liquidity filter | Grok | not started |
 
 ## Groundwork for steps 3-6 (Claude, 2026-09-28): proven or read from the code
@@ -492,3 +493,62 @@ claimed on the next pass. Every vault delta equals its slice to the lamport. The
 336,000 to `protocol_vault`, the referral account stayed open, and a later swap naming it succeeded.
 Note for step 5b: `creator_pool` stays counted as held on the collector for every claimed/routed row,
 until 5b adds a paid status.
+
+### Step 6, review 1 (2026-09-28): PR #476 @ `856e163b`: CHANGES NEEDED
+
+What is right: the state machine's order and the Meteora-first path; the compensation maths (checked:
+780,530 = 2 x the 390,265 quote cut, base valued at the pool ratio); the finalize bps; the
+sign-store-send pattern; `return`s in the new route; claims builders. Several mainnet-breaking problems:
+
+1. **After the first graduation no other coin can graduate.** `runDbcGraduationOnce` handles one pool
+   per pass and `break`s on the first result that is not `not-complete`. A graduated pool sits in step
+   `lp` forever (`lpDone` is never true), and every pass it answers `no-lp-fees` or `backoff`, so it is
+   always that first result. A `sending` job anywhere also stops every pool. Fix: walk every pool each
+   pass (one at a time is fine, stopping is not). Treat `done`, `blocked` and `backoff` as skip-and-continue.
+   Take LP claims out of the graduation job: they are a separate schedule (hourly, above a threshold
+   `DBC_LP_CLAIM_MIN_LAMPORTS`) over graduated pools. The job ends at `done` after the route.
+2. **Graduated is marked last, behind the money steps.** Order today: migrate -> withdraw -> compensate
+   -> route -> mark. Until `mark`, the token page has no `meta.dbc.migration.pool`, so a migrated coin
+   cannot trade on our site. The meteora swap indexer does not index the pool, and the DBC indexer
+   still scans it. A collector that is short blocks the job at `route`, and the coin is then never
+   marked. Fix: locker -> migrate -> **mark** -> withdraw -> compensate -> route. Mark as soon as the
+   pool reports migrated, whoever migrated it. Set the same fields the launchpad sets on graduation
+   (`is_active=false, launched=true, bonding_active=false`, `solanaIndexer.ts` ~1026), not only
+   `is_active`.
+3. **The websocket fires on every DBC pool on Solana.** `onProgramAccountChange(DBC program, VirtualPool
+   discriminator)` streams every swap on every DBC pool on mainnet, which is thousands of launchpads'
+   pools. Each write triggers a tick that reads 2 accounts for every DBC campaign we have. Fix:
+   `onAccountChange` per pool of ours that has not graduated (subscribe and unsubscribe as the list
+   changes), plus the interval scan. The scan selects only our not-yet-graduated pools and jobs that
+   are not done, not every DBC campaign.
+4. **D7 comes out of the protocol slice, not before the split (decision, 2026-09-28).** This matches
+   the rule already applied to trade fees ("Meteora's cut comes out of protocol"). Split the whole
+   partner migration fee with the finalize bps first, then pay the compensation from the protocol
+   slice. If protocol cannot cover it, pay what it covers and record the shortfall. Recruiter / squad /
+   airdrop slices are then the same as without compensation. Update the test and the proof's expected
+   numbers.
+5. **Route balance check ignores money held for creators.** Use `collectorNeed(routed,
+   heldCreatorPool, rent, fee)` with step 5's held sum (not `0n`). The compensation transfer needs the
+   same check before it sends.
+6. **The migration creates `notification_outbox`.** Production already has that table
+   (`20260820_000001_notification_outbox.sql`, a different shape). Remove it from
+   `20260929_000007`; keep it only in the throwaway test schema if the tests need it.
+7. **Second position NFT is looked up under the creator**, not the collector (`applyLandedJob`
+   migrate branch). Look it up under the partner (collector) key.
+8. **D19 (added to the brief, commit `dbe5f91f`).** Platform coins: config LP partner 100 / creator 0
+   (check a 0% creator share is accepted on devnet). The LP claim for such a coin splits 20% protocol
+   / 80% into that coin's `creator_pool` as a step-5 style accrual. Keep coins unchanged.
+
+**Proof:**
+- The creator reserve check says only "claim sent". Check the creator's token delta equals the
+  locked reserve (or the released part, stated).
+- Case A (the keeper migrates by itself) must run. Make the script take `--case A|B|both`. Claude will
+  run it with a funded devnet key if you cannot.
+- Add a D19 coin: one `holders` coin graduates with one position owned by the collector, then an LP
+  claim split 20/80 to the lamport.
+
+**Tests (throwaway Postgres):**
+- two graduated pools plus a third completing: the third graduates;
+- a blocked pool does not stop the others;
+- mark happens before withdraw;
+- D7 from the protocol slice, including a shortfall.
