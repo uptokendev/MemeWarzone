@@ -180,7 +180,7 @@ against the rule "unlinked slices go to the airdrop".
 | 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | **DONE 2026-09-28**: merged (PR #475, 2 reviews), devnet ALL CHECKS PASS; migration `20260929_000006` still to apply |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails, code-2 leaves), buyback & burn (random, <= 0.5% impact), split | Claude (Grok was on step 7), brief `docs/dbc/grok-step-5b-creator-fee-choice.md` | **DONE 2026-09-29**: merged, devnet ALL CHECKS PASS; migration `20260929_000008` still to apply |
 | 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | **DONE 2026-09-29**: merged (PR #476, 2 reviews + Claude's fixes), devnet ALL CHECKS PASS (cases A, B, D19); migration `20260929_000007` still to apply |
-| 7 | Binding tokens (D20-D23): 7a USDC/USDT, 7b stock tokens | Grok (7a), Claude from here (Grok out of credits), brief `docs/dbc/grok-step-7-binding-tokens.md` | **7a DONE 2026-09-29**: merged (PR #477, 3 rounds), devnet ALL CHECKS PASS; migration `20260929_000009` still to apply. 7b (stock tokens) next, by Claude |
+| 7 | Binding tokens (D20-D23): 7a USDC/USDT, 7b stock tokens | Grok (7a), Claude from here (Grok out of credits), brief `docs/dbc/grok-step-7-binding-tokens.md` | **7a DONE 2026-09-29**: merged (PR #477, 3 rounds), devnet ALL CHECKS PASS; migration `20260929_000009` still to apply. **7b DONE 2026-09-29** (Claude): NVDAx/TSLAx/SPYx/QQQx, local validator on mainnet's programs, 46 checks ALL PASS; no new migration |
 
 ## Groundwork for steps 3-6 (Claude, 2026-09-28): proven or read from the code
 
@@ -710,3 +710,45 @@ tokens; claim = pool counter (2,032,356); curve completed in the quote; keeper c
 3,300,000 = 10% of 22%, D7 paid in the quote (467,999; SOL spent only the tx fee), route airdrop
 577,500 = 17.5%, protocol 2,254,501 = rest minus D7; LP claim after a DAMM swap in the quote.
 The live Jupiter swap is proven only by the mainnet canary (devnet has no Jupiter).
+
+### Step 7b (2026-09-29): built by Claude on `claude/dbc-step-7b`, merged
+
+The four xStocks are enabled on mainnet (none exist on devnet). Read from mainnet before building: all
+four carry Meteora's DBC **and** DAMM v2 token badges; none is paused, has a hook program or a
+transfer fee; every one has its permanent delegate, freeze, pause and hook authority set. Jupiter's
+`usdPrice` is per displayed token; a raw unit is worth `usdPrice x multiplier` (Jupiter's own
+`usdPricePrescaled`, checked against a 1e8-raw swap quote).
+
+What a stock launch does:
+- **Create / launch-config** re-read the mint at authorize time: both badges present, not paused, no
+  hook, no transfer fee, decimals match the registry; refused with a plain reason otherwise. Price =
+  Jupiter x the multiplier read from the mint (refused if it disagrees with Jupiter's prescaled price
+  by more than 1%), stepped at 2% on the SOL ladder, so configs are reused within a band.
+- The config names Meteora's DBC badge; the readback now also checks `quoteTokenFlag` (1 for
+  Token-2022). Pool creation names the badge too. `meta.dbc.quoteKind` records `stock`.
+- **Buyback is SOL-only** (the worker skips `quote-not-sol`, it has no SOL -> quote -> coin route), so
+  the API refuses it for any other pairing and the create screen greys it out. Applies to USDC/USDT too.
+- Indexer: token program read from the mint for D7, referral sweep and DAMM claims (pool flags);
+  stock trades valued at the stock's price (never $1 per token) and left for the next pass without
+  one; the keeper re-checks the stock before migrate and backs off hourly with the reason.
+- UI: stocks only through a risk dialog that reads the issuer powers from the mint ("set today");
+  typed and shown amounts go through the multiplier; Token-2022 balances read by owner and mint.
+
+7a gaps found and fixed on the way (they hit USDC/USDT coins too):
+- Market stats read every **bonding** DBC coin as SOL with 9 decimals: a USDC coin's price was 1000x off.
+- A bound trade was valued at $1 per whole quote token: right for USDC, 231x low for NVDAx.
+- Creator rewards derived the graduated pool, the LP fee side and the unit as SOL; the panel said SOL.
+
+Proof (`scripts/dbc/rehearse-stock-quote-local.sh`): a local validator loaded with mainnet's DBC, DAMM
+v2, Token-2022 (byte-equal to mainnet on the validator), Metaplex and locker programs, the NVDAx mint
+(mint, freeze and pause authority re-homed to a local key, every other byte mainnet's) and both badges.
+Production code throughout; only the ladder's genesis check is answered as mainnet. **46 checks, ALL
+PASS**: threshold = $15,000 at the stepped price to the raw unit; 2.5 typed NVDAx spent exactly
+2.5/multiplier raw; buy and sell match their quotes; SOL value = NVDAx x stock price / SOL price to the
+lamport; market-stats price equals the curve's; NVDAx claim = pool counter; referral sweep emptied the
+Token-2022 account and kept it; issuer pause: API refuses, trading stops, keeper refuses migrate and
+recovers after resume; graduation into a DAMM v2 pool with a Token-2022 vault; D7, creator LP fee and
+graduation payout in NVDAx to the raw unit. Two things only the run showed: DBC's pool authority pays
+the locker escrow's rent (it holds 68 SOL on mainnet), and the keeper kept a cleared pause reason.
+Not proven here: the live Jupiter NVDAx -> SOL swap (the mainnet canary) and the risk dialog in a browser.
+
