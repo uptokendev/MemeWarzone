@@ -18,7 +18,7 @@ import {
   deriveDammV2PoolAddress,
   deriveEscrow,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
-import { CpAmm, getUnClaimLpFee } from "@meteora-ag/cp-amm-sdk";
+import { CpAmm, getTokenProgram, getUnClaimLpFee } from "@meteora-ag/cp-amm-sdk";
 import { DBC_MIGRATION_FEE_OPTION_CUSTOMIZABLE, DBC_QUOTE_MINT } from "../../shared/dbcEconomics.mjs";
 import { buildClaimVestingInstruction } from "./dbcJupiterLock.mjs";
 import { DBC_TRADE_ALLOWED_PROGRAM_IDS, DBC_LOCKED_BUY_ALLOWED_PROGRAM_IDS } from "./dbcTrade.mjs";
@@ -42,9 +42,10 @@ export function deriveDbcLockerEscrow(pool) {
   return deriveEscrow(deriveBaseKeyForLocker(new PublicKey(pool)));
 }
 
-export function deriveDbcDammPool(mint) {
+/** The DAMM v2 pool a DBC coin graduates into: its mint against the coin's quote (SOL unless bound). */
+export function deriveDbcDammPool(mint, quoteMint = NATIVE_MINT) {
   const dammConfig = new PublicKey(DAMM_V2_MIGRATION_FEE_ADDRESS[DBC_MIGRATION_FEE_OPTION_CUSTOMIZABLE]);
-  return deriveDammV2PoolAddress(dammConfig, new PublicKey(mint), NATIVE_MINT);
+  return deriveDammV2PoolAddress(dammConfig, new PublicKey(mint), new PublicKey(quoteMint));
 }
 
 function unwrapPool(wrap) {
@@ -82,7 +83,7 @@ export async function loadCreatorRewards(connection, { pool, creator, includeLp 
   let dammPool = "";
   let position = null;
   if (includeLp && migrated && mint) {
-    dammPool = deriveDbcDammPool(mint).toBase58();
+    dammPool = deriveDbcDammPool(mint, cfg?.quoteMint || NATIVE_MINT).toBase58();
     const cpAmm = new CpAmm(connection);
     try {
       const positions = await cpAmm.getUserPositionByPool(new PublicKey(dammPool), creatorPk);
@@ -176,8 +177,9 @@ export async function buildCreatorLpFeeTransaction({ connection, dammPool, creat
     tokenBMint: dpool.tokenBMint,
     tokenAVault: dpool.tokenAVault,
     tokenBVault: dpool.tokenBVault,
-    tokenAProgram: TOKEN_PROGRAM_ID,
-    tokenBProgram: TOKEN_PROGRAM_ID,
+    // A stock-bound pool holds a Token-2022 side; the pool records which program each side uses.
+    tokenAProgram: getTokenProgram(dpool.tokenAFlag),
+    tokenBProgram: getTokenProgram(dpool.tokenBFlag),
     feePayer: owner,
   });
   tx.feePayer = owner;

@@ -4,7 +4,8 @@
 import { Keypair, PublicKey, Connection } from "@solana/web3.js";
 import { DynamicBondingCurveClient } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { DBC_QUOTE_MINT } from "../../../shared/dbcEconomics.mjs";
-import { nativeQuote, requireEnabledQuote } from "../../../shared/dbcQuotes.mjs";
+import { TOKEN_2022_PROGRAM_ID, nativeQuote, requireEnabledQuote } from "../../../shared/dbcQuotes.mjs";
+import { dbcTokenBadgeAddress } from "./dbcStockQuote.mjs";
 import { SOLANA_GENESIS } from "../../../src/lib/solanaArenaLayout.mjs";
 import { buildLaunchConfigParams } from "./dbcLaunchConfigParams.mjs";
 
@@ -64,10 +65,11 @@ function curvePoints(curve) {
   }));
 }
 
-export function expectedOnChainFields(configParams, { feeClaimer, leftoverReceiver, quoteMint } = {}) {
+export function expectedOnChainFields(configParams, { feeClaimer, leftoverReceiver, quoteMint, quoteTokenProgram } = {}) {
   const fee = configParams.poolFees.baseFee;
   return {
     quoteMint: pub(quoteMint || NATIVE_MINT),
+    quoteTokenFlag: String(quoteTokenProgram || "") === TOKEN_2022_PROGRAM_ID ? 1 : 0,
     feeClaimer: pub(feeClaimer),
     leftoverReceiver: pub(leftoverReceiver),
     collectFeeMode: Number(configParams.collectFeeMode),
@@ -113,6 +115,7 @@ export function readOnChainFields(onChain) {
   const vesting = onChain.lockedVestingConfig || onChain.lockedVesting || {};
   return {
     quoteMint: pub(onChain.quoteMint),
+    quoteTokenFlag: Number(onChain.quoteTokenFlag ?? 0),
     feeClaimer: pub(onChain.feeClaimer),
     leftoverReceiver: pub(onChain.leftoverReceiver),
     collectFeeMode: Number(onChain.collectFeeMode),
@@ -313,6 +316,8 @@ export function createDbcConfigLadder(deps = {}) {
         leftoverReceiver: collector,
         quoteMint: new PublicKey(quote.mint),
         payer: pay.publicKey,
+        // A Token-2022 quote is refused by the program unless Meteora's badge for the mint is named.
+        ...(quote.kind === "stock" ? { tokenBadge: dbcTokenBadgeAddress(quote.mint) } : {}),
         ...built.configParams,
       });
       tx.feePayer = pay.publicKey;
@@ -351,6 +356,7 @@ export function createDbcConfigLadder(deps = {}) {
         feeClaimer: collector,
         leftoverReceiver: collector,
         quoteMint: new PublicKey(quote.mint),
+        quoteTokenProgram: quote.tokenProgram,
       });
       if (mismatches.length) {
         await q(

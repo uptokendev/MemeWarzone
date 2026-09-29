@@ -390,3 +390,49 @@ test("an unreadable transaction keeps the cursor below its slot so the next pass
   assert.equal(result.scanned, 3);
   assert.deepEqual(cursor, [101], "cursor rests on the last slot fully read, never past the unreadable 105");
 });
+
+test("a stock-quoted trade is valued at the stock's price per raw unit, not $1", () => {
+  // 1 NVDAx raw-whole (1e8 raw) at $231.109, SOL at $200: 1.155545 SOL
+  assert.equal(quoteRawToSolLamports(100_000_000n, 8, 200_000_000n, 231_109_000n), 1_155_545_000n);
+  const row = curveTradeFromSwap({
+    event: {
+      pool: "P", config: "C", tradeDirection: 1, hasReferral: false,
+      includedFeeInputAmount: 50_000_000n, excludedFeeInputAmount: 0n, outputAmount: 1_000_000n,
+      tradingFee: 0n, protocolFee: 0n, referralFee: 0n, quoteReserveAmount: 0n, migrationThreshold: 0n, currentTimestamp: 0n,
+    },
+    wallet: "W", signature: "S", eventIndex: 0, slot: 1, blockTime: new Date(), campaign: "P",
+    quoteMint: "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh",
+    quoteDecimals: 8,
+    solUsdMicros: 200_000_000n,
+    priceSource: "binance",
+    quoteUsdMicros: 231_109_000n,
+    quoteUsdSource: "jupiter:price-v3-prescaled",
+  });
+  assert.equal(row.bnb_amount_raw, "577772500");
+  assert.equal(row.quote_amount_raw, "50000000");
+  assert.equal(row.quote_usd_micros, "231109000");
+});
+
+test("a stock pool without a live stock price writes nothing and leaves the cursor", async () => {
+  let fetchedSigs = false;
+  const db = { async query() { return { rows: [], rowCount: 0 }; } };
+  const result = await indexDbcPool(
+    db,
+    { campaign: "PoolStock", token: "M", creator: "C", migrated: false, quoteMint: "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh", quoteDecimals: 8, quoteKind: "stock" },
+    async () => { throw new Error("should not fetch tx"); },
+    async () => { fetchedSigs = true; return []; },
+    { readSolUsd: async () => ({ micros: 200_000_000n, source: "binance" }), readQuoteUsd: async () => null },
+  );
+  assert.equal(result.skippedNoPrice, true);
+  assert.equal(fetchedSigs, false);
+});
+
+test("DBC market stats read the price and reserve in the quote's own decimals", () => {
+  const q64 = 2n ** 64n;
+  // price 1e-6 quote per token with 6-decimal token and 8-decimal quote: sqrt(p * 10^8 / 10^6)
+  const sqrtPrice = BigInt(Math.round(Math.sqrt(1e-6 * 1e8 / 1e6) * Number(q64)));
+  const row = dbcMarketStatsInputs({ sqrtPrice, quoteReserve: 250_000_000n, postMigrationTokenSupply: 1_000_000_000_000_000n, migrationQuoteThreshold: 1_000_000_000n, quoteDecimals: 8 });
+  assert.ok(Math.abs(row.priceQuote - 1e-6) / 1e-6 < 1e-6);
+  assert.equal(row.quoteReserveWhole, 2.5);
+  assert.equal(row.progress, 0.25);
+});

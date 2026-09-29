@@ -2,8 +2,9 @@
  * DBC quote registry (D20). One file per cluster: mint, symbol, decimals,
  * token program, kind, enabled. SOL is the default everywhere.
  *
- * 7a enables SOL + USDC/USDT (classic SPL). Stock tokens are listed disabled
- * until 7b.
+ * 7a enabled SOL + USDC/USDT (classic SPL). 7b enables the four xStocks
+ * (Token-2022, mainnet only); each launch re-reads the mint and Meteora's badges
+ * before it is authorized (api/lib/dbc/dbcStockQuote.mjs).
  */
 export const SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 export const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
@@ -43,10 +44,10 @@ const NATIVE = (cluster) => row({
 });
 
 const STOCKS_MAINNET = [
-  row({ mint: NVDAX_MINT, symbol: "NVDAx", decimals: 8, tokenProgram: TOKEN_2022_PROGRAM_ID, kind: "stock", enabled: false, cluster: "mainnet-beta" }),
-  row({ mint: TSLAX_MINT, symbol: "TSLAx", decimals: 8, tokenProgram: TOKEN_2022_PROGRAM_ID, kind: "stock", enabled: false, cluster: "mainnet-beta" }),
-  row({ mint: SPYX_MINT, symbol: "SPYx", decimals: 8, tokenProgram: TOKEN_2022_PROGRAM_ID, kind: "stock", enabled: false, cluster: "mainnet-beta" }),
-  row({ mint: QQQX_MINT, symbol: "QQQx", decimals: 8, tokenProgram: TOKEN_2022_PROGRAM_ID, kind: "stock", enabled: false, cluster: "mainnet-beta" }),
+  row({ mint: NVDAX_MINT, symbol: "NVDAx", decimals: 8, tokenProgram: TOKEN_2022_PROGRAM_ID, kind: "stock", enabled: true, cluster: "mainnet-beta" }),
+  row({ mint: TSLAX_MINT, symbol: "TSLAx", decimals: 8, tokenProgram: TOKEN_2022_PROGRAM_ID, kind: "stock", enabled: true, cluster: "mainnet-beta" }),
+  row({ mint: SPYX_MINT, symbol: "SPYx", decimals: 8, tokenProgram: TOKEN_2022_PROGRAM_ID, kind: "stock", enabled: true, cluster: "mainnet-beta" }),
+  row({ mint: QQQX_MINT, symbol: "QQQx", decimals: 8, tokenProgram: TOKEN_2022_PROGRAM_ID, kind: "stock", enabled: true, cluster: "mainnet-beta" }),
 ];
 
 const REGISTRY = Object.freeze({
@@ -134,7 +135,8 @@ export function quoteScale(quote) {
 
 /**
  * Threshold in the quote's smallest unit.
- * Stables are 1:1 USD (no SOL price step). SOL keeps thresholdLamportsFor.
+ * Stables are 1:1 USD (no price step). SOL and stocks divide by their 2% price
+ * step: USD micros per 10^decimals raw (for a stock, displayed price x multiplier).
  */
 export function thresholdQuoteRaw(targetUsdMicros, quote, stepUsdMicros) {
   const target = BigInt(targetUsdMicros);
@@ -147,7 +149,53 @@ export function thresholdQuoteRaw(targetUsdMicros, quote, stepUsdMicros) {
   if (quote.kind === "stable") {
     return (target * quoteScale(quote)) / 1_000_000n;
   }
-  throw Object.assign(new Error("stock quote threshold needs a live price (step 7b)"), { code: "DBC_QUOTE_STOCK" });
+  if (quote.kind === "stock") {
+    const step = BigInt(stepUsdMicros ?? 0);
+    if (step <= 0n) throw Object.assign(new Error("stock quote threshold needs a price step"), { code: "DBC_QUOTE_STOCK" });
+    return (target * quoteScale(quote) + step - 1n) / step;
+  }
+  throw Object.assign(new Error(`unknown quote kind ${quote.kind}`), { code: "DBC_QUOTE_UNKNOWN" });
+}
+
+/**
+ * ScaledUiAmount (xStocks): the multiplier in force at `nowUnix`, the new one once its effective
+ * time has passed. 1 when the mint has no such extension.
+ */
+export function effectiveMultiplier(scaled, nowUnix) {
+  if (!scaled) return 1;
+  const effectiveAt = Number(scaled.newMultiplierEffectiveTimestamp ?? 0);
+  const value = Number(nowUnix) >= effectiveAt ? Number(scaled.newMultiplier) : Number(scaled.multiplier);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+/**
+ * A displayed quote amount (what the wallet shows) to raw units. Wallets show a stock's raw amount
+ * times its multiplier, so the raw amount is the displayed one divided by it, rounded down.
+ */
+export function quoteUiToRaw(ui, decimals, multiplier = 1) {
+  const text = String(ui ?? "").trim();
+  if (!/^\d*(\.\d*)?$/.test(text) || text === "" || text === ".") return 0n;
+  const [whole, frac = ""] = text.split(".");
+  const dec = Number(decimals);
+  const unscaled = BigInt(whole || "0") * 10n ** BigInt(dec) + BigInt(frac.slice(0, dec).padEnd(dec, "0") || "0");
+  const m = Number(multiplier);
+  if (!Number.isFinite(m) || m <= 0 || m === 1) return unscaled;
+  return BigInt(Math.floor(Number(unscaled) / m));
+}
+
+/** Raw quote units to the amount a wallet displays. */
+export function quoteRawToUi(raw, decimals, multiplier = 1) {
+  const m = Number(multiplier);
+  return (Number(BigInt(raw)) / 10 ** Number(decimals)) * (Number.isFinite(m) && m > 0 ? m : 1);
+}
+
+/** A displayed stock amount: 4 decimals from 1, 6 from 0.01, else 4 significant digits. */
+export function formatScaledQuote(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n === 0) return "0";
+  if (Math.abs(n) >= 1) return n.toFixed(4);
+  if (Math.abs(n) >= 0.01) return n.toFixed(6);
+  return n.toPrecision(4);
 }
 
 export function stableStep() {

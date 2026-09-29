@@ -15,7 +15,7 @@ import { pool as defaultPool } from "./db.js";
 import { ENV } from "./env.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { notPublicHiddenSql } from "./publicHidden.js";
-import { solUsdPrice } from "./solanaMarketStats.js";
+import { jupiterRawUnitUsd, solUsdPrice } from "./solanaMarketStats.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 
 const SOLANA_CHAIN_ID = 101;
@@ -41,6 +41,8 @@ export type DbcPoolRow = {
   migrated: boolean;
   quoteMint?: string;
   quoteDecimals?: number;
+  /** "stock" for an xStock quote (7b): valued by its live USD price, not $1 per whole token. */
+  quoteKind?: string;
 };
 
 export type FreshSolUsd = { micros: bigint; source: string };
@@ -81,6 +83,8 @@ export type DbcCurveTradeRow = {
   quote_amount_raw?: string;
   sol_usd_micros?: string | null;
   sol_usd_source?: string | null;
+  quote_usd_micros?: string | null;
+  quote_usd_source?: string | null;
 };
 
 function parseRpcList(value: string): string[] {
@@ -280,13 +284,29 @@ export function swapPayerFromTransaction(tx: any): string {
   return first || "";
 }
 
-export function quoteRawToSolLamports(quoteRaw: bigint, quoteDecimals: number, solUsdMicros: bigint): bigint {
+/**
+ * Quote raw units to lamports. `quoteUsdMicros` is the USD value of 10^decimals raw units: $1 for
+ * USDC/USDT; for an xStock its prescaled price (displayed price x multiplier).
+ */
+export function quoteRawToSolLamports(quoteRaw: bigint, quoteDecimals: number, solUsdMicros: bigint, quoteUsdMicros: bigint = 1_000_000n): bigint {
   const decimals = BigInt(quoteDecimals);
   const scale = 10n ** decimals;
   const micros = BigInt(solUsdMicros);
   if (micros <= 0n) throw new Error("SOL/USD micros must be positive");
+  if (BigInt(quoteUsdMicros) <= 0n) throw new Error("quote USD micros must be positive");
   if (decimals === 9n) return BigInt(quoteRaw);
-  return (BigInt(quoteRaw) * 1_000_000n * 1_000_000_000n) / (micros * scale);
+  return (BigInt(quoteRaw) * BigInt(quoteUsdMicros) * 1_000_000_000n) / (micros * scale);
+}
+
+export type FreshQuoteUsd = { micros: bigint; source: string };
+export type FreshQuoteUsdReader = (mint: string, fetchImpl?: typeof fetch) => Promise<FreshQuoteUsd | null>;
+
+/** A stock quote's USD per 10^decimals raw, only from Jupiter's prescaled price; null when there is none. */
+export async function freshStockQuoteUsdMicros(mint: string, fetchImpl: typeof fetch = fetch): Promise<FreshQuoteUsd | null> {
+  const price = await jupiterRawUnitUsd(mint, fetchImpl);
+  if (!price?.prescaled) return null;
+  const micros = BigInt(Math.round(price.value * 1_000_000));
+  return micros > 0n ? { micros, source: "jupiter:price-v3-prescaled" } : null;
 }
 
 /** Non-native quotes (USDC/USDT are 6 decimals) convert to SOL via a live SOL/USD. */
@@ -324,6 +344,8 @@ export function curveTradeFromSwap(input: {
   quoteDecimals?: number;
   solUsdMicros?: bigint;
   priceSource?: string;
+  quoteUsdMicros?: bigint;
+  quoteUsdSource?: string;
 }): DbcCurveTradeRow {
   const isBuy = input.event.tradeDirection === 1;
   const tokenRaw = isBuy ? input.event.outputAmount : input.event.excludedFeeInputAmount;
@@ -333,6 +355,8 @@ export function curveTradeFromSwap(input: {
   let nativeRaw: bigint;
   let solUsdMicros: string | null = null;
   let solUsdSource: string | null = null;
+  let quoteUsdMicros: string | null = null;
+  let quoteUsdSource: string | null = null;
   if (!boundQuoteNeedsSolUsd(quoteDecimals)) {
     nativeRaw = quoteRaw;
   } else {
@@ -344,9 +368,13 @@ export function curveTradeFromSwap(input: {
     if (!source) {
       throw new Error("DBC bound trade needs a SOL/USD price source");
     }
-    nativeRaw = quoteRawToSolLamports(quoteRaw, quoteDecimals, micros);
+    nativeRaw = quoteRawToSolLamports(quoteRaw, quoteDecimals, micros, input.quoteUsdMicros ?? 1_000_000n);
     solUsdMicros = micros.toString();
     solUsdSource = source;
+    if (input.quoteUsdMicros != null) {
+      quoteUsdMicros = input.quoteUsdMicros.toString();
+      quoteUsdSource = String(input.quoteUsdSource || "");
+    }
   }
   const tokenAmount = Number(tokenRaw) / 10 ** TOKEN_DECIMALS;
   const nativeAmount = Number(nativeRaw) / LAMPORTS_PER_SOL;
@@ -372,6 +400,8 @@ export function curveTradeFromSwap(input: {
     quote_amount_raw: quoteRaw.toString(),
     sol_usd_micros: solUsdMicros,
     sol_usd_source: solUsdSource,
+    quote_usd_micros: quoteUsdMicros,
+    quote_usd_source: quoteUsdSource,
   };
 }
 
@@ -389,6 +419,7 @@ export async function dbcMarketStatsFromAccounts(
   rpcUrl: string,
   poolAddress: string,
   fetchImpl: typeof fetch = fetch,
+  quoteDecimals = 9,
 ) {
   const read = async (address: string) => {
     const response = await fetchImpl(rpcUrl, {
@@ -421,6 +452,7 @@ export async function dbcMarketStatsFromAccounts(
     quoteReserve,
     postMigrationTokenSupply: post,
     migrationQuoteThreshold: threshold,
+    quoteDecimals,
   });
   return { quoteReserve, ...stats, isMigrated: Boolean(state.isMigrated ?? state.is_migrated) };
 }
@@ -431,11 +463,13 @@ export function dbcMarketStatsInputs(pool: {
   postMigrationTokenSupply: bigint;
   migrationQuoteThreshold: bigint;
   tokenDecimals?: number;
+  quoteDecimals?: number;
 }) {
   const tokenDecimals = pool.tokenDecimals ?? TOKEN_DECIMALS;
-  const priceQuote = dbcPriceFromSqrt(pool.sqrtPrice, tokenDecimals, 9);
+  const quoteDecimals = pool.quoteDecimals ?? 9;
+  const priceQuote = dbcPriceFromSqrt(pool.sqrtPrice, tokenDecimals, quoteDecimals);
   const supplyWhole = Number(pool.postMigrationTokenSupply) / 10 ** tokenDecimals;
-  const quoteReserveWhole = Number(pool.quoteReserve) / LAMPORTS_PER_SOL;
+  const quoteReserveWhole = Number(pool.quoteReserve) / 10 ** quoteDecimals;
   const threshold = Number(pool.migrationQuoteThreshold);
   const progress = threshold > 0 ? Number(pool.quoteReserve) / threshold : 0;
   return { priceQuote, supplyWhole, quoteReserveWhole, progress };
@@ -452,7 +486,8 @@ export async function loadDbcPools(db: Queryable): Promise<DbcPoolRow[]> {
             coalesce(meta #>> '{solanaGraduation,pool}','') as graduated_pool,
             coalesce(meta #>> '{dbc,migration,pool}','') as dbc_migrated_pool,
             coalesce(meta #>> '{dbc,quoteMint}','So11111111111111111111111111111111111111112') as quote_mint,
-            coalesce(meta #>> '{dbc,quoteDecimals}','9') as quote_decimals
+            coalesce(meta #>> '{dbc,quoteDecimals}','9') as quote_decimals,
+            coalesce(meta #>> '{dbc,quoteKind}','') as quote_kind
        from public.campaigns
       where chain_id=$1
         and coalesce(launch_type,'launchpad') = 'dbc'
@@ -471,6 +506,7 @@ export async function loadDbcPools(db: Queryable): Promise<DbcPoolRow[]> {
     migrated: Boolean(row.graduated_pool || row.dbc_migrated_pool),
     quoteMint: String(row.quote_mint || "So11111111111111111111111111111111111111112"),
     quoteDecimals: Number(row.quote_decimals || 9),
+    quoteKind: String(row.quote_kind || ""),
   }));
 }
 
@@ -566,6 +602,9 @@ async function insertActivity(db: Queryable, row: DbcCurveTradeRow, event: Decod
               at: row.block_time,
             }
           : undefined,
+        quoteUsd: row.quote_usd_source
+          ? { micros: row.quote_usd_micros, source: row.quote_usd_source, at: row.block_time }
+          : undefined,
       }),
     ],
   ).catch((error: unknown) => {
@@ -660,7 +699,7 @@ export async function indexDbcPool(
   row: DbcPoolRow,
   rpcGetTransaction = getTransaction,
   rpcGetSignatures: typeof getSignatures = getSignatures,
-  deps: { readSolUsd?: FreshSolUsdReader } = {},
+  deps: { readSolUsd?: FreshSolUsdReader; readQuoteUsd?: FreshQuoteUsdReader } = {},
 ) {
   if (row.migrated) return { scanned: 0, ingested: 0, skippedMigrated: true, skippedNoPrice: false };
   const quoteDecimals = Number(row.quoteDecimals ?? 9);
@@ -670,6 +709,15 @@ export async function indexDbcPool(
     solUsd = await readSolUsd();
     if (!solUsd) {
       console.warn("[dbcIndexer] no fresh SOL/USD; leaving bound trades for the next pass", { pool: row.campaign });
+      return { scanned: 0, ingested: 0, skippedMigrated: false, skippedNoPrice: true };
+    }
+  }
+  let quoteUsd: FreshQuoteUsd | null = null;
+  if (row.quoteKind === "stock") {
+    // Never $1 per whole token for a stock: without a live price the trades wait for the next pass.
+    quoteUsd = await (deps.readQuoteUsd || freshStockQuoteUsdMicros)(String(row.quoteMint));
+    if (!quoteUsd) {
+      console.warn("[dbcIndexer] no stock quote price; leaving trades for the next pass", { pool: row.campaign });
       return { scanned: 0, ingested: 0, skippedMigrated: false, skippedNoPrice: true };
     }
   }
@@ -703,6 +751,7 @@ export async function indexDbcPool(
         quoteMint: row.quoteMint,
         quoteDecimals: row.quoteDecimals,
         ...(solUsd ? { solUsdMicros: solUsd.micros, priceSource: solUsd.source } : {}),
+        ...(quoteUsd ? { quoteUsdMicros: quoteUsd.micros, quoteUsdSource: quoteUsd.source } : {}),
       });
       if (await insertDbcSwap(db, trade, event)) ingested += 1;
     }

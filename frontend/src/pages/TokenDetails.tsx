@@ -547,6 +547,8 @@ import { creatorLockBadge, lockAmountDivisible } from "../../shared/dbcLockSched
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import { quoteDbcExactIn, loadDbcPool, loadReferralTokenAccount } from "@/lib/dbcTrade.mjs";
 import { submitDbcBondingTrade, submitDbcLockClaim } from "@/lib/dbcTradeSubmit";
+import { readOwnerMintBalanceRaw, readQuoteUiMultiplier } from "@/lib/dbcQuoteMultiplier.mjs";
+import { WSOL_MINT, formatScaledQuote, quoteUiToRaw } from "../../shared/dbcQuotes.mjs";
 import DbcCreatorRewardsPanel from "@/components/dbc/DbcCreatorRewardsPanel";
 import DbcFeeChoiceLine from "@/components/dbc/DbcFeeChoiceLine";
 
@@ -650,6 +652,33 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   const dbcQuoteMint = String(dbcLive?.meta?.quoteMint || dbcLive?.meta?.dbc?.quoteMint || "So11111111111111111111111111111111111111112");
   const dbcQuoteDecimals = Number(dbcLive?.meta?.quoteDecimals || dbcLive?.meta?.dbc?.quoteDecimals || 9);
   const dbcQuoteSymbol = String(dbcLive?.meta?.quoteSymbol || dbcLive?.meta?.dbc?.quoteSymbol || "SOL");
+  // xStock quotes: wallets display raw x the mint's ScaledUiAmount multiplier; 1 for every other quote.
+  const [dbcQuoteMultiplier, setDbcQuoteMultiplier] = useState(1);
+  useEffect(() => {
+    if (!isDbcPage || dbcQuoteMint === WSOL_MINT) {
+      setDbcQuoteMultiplier(1);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { loadSolanaWeb3 } = await import("@/lib/solanaWeb3");
+        const { getPublicRpcUrl } = await import("@/lib/chainConfig");
+        const web3 = await loadSolanaWeb3();
+        const connection = new web3.Connection(
+          String(import.meta.env.VITE_SOLANA_RPC || "").trim() || getPublicRpcUrl(SOLANA_CHAIN_ID),
+          { commitment: "confirmed", disableRetryOnRateLimit: true },
+        );
+        const multiplier = await readQuoteUiMultiplier(connection, dbcQuoteMint);
+        if (!cancelled) setDbcQuoteMultiplier(multiplier);
+      } catch (error) {
+        console.warn("[TokenDetails] quote multiplier unreadable", error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isDbcPage, dbcQuoteMint]);
   const [dbcLockSummary, setDbcLockSummary] = useState<{
     lockedAmount: string;
     fullyFreeUnix: number | null;
@@ -739,9 +768,13 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
    * for every campaign graduated before Graduation Markets existed.
    */
   const solanaQuote = useMemo(
-    () => solanaPoolQuoteFromStats(rtStats),
+    () => (isDbcPage && dbcQuoteMint !== WSOL_MINT
+      // A DBC coin trades against its chosen quote from the first swap; market stats only name it
+      // once a pool has traded, so read it from the launch record.
+      ? { mint: dbcQuoteMint, symbol: dbcQuoteSymbol, decimals: dbcQuoteDecimals, native: false, referenceUsd: null }
+      : solanaPoolQuoteFromStats(rtStats)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rtStats?.dexQuoteMint, rtStats?.dexQuoteSymbol, rtStats?.dexQuoteDecimals, rtStats?.dexQuoteReferenceUsd],
+    [isDbcPage, dbcQuoteMint, dbcQuoteSymbol, dbcQuoteDecimals, rtStats?.dexQuoteMint, rtStats?.dexQuoteSymbol, rtStats?.dexQuoteDecimals, rtStats?.dexQuoteReferenceUsd],
   );
   /** Native unit for quotes/UI: SOL on Solana (the pool quote once graduated), ETH on Robinhood, BNB on BNB. */
   const nativeUnit = isSolanaPage ? solanaQuote.symbol : isRobinhoodPage ? "ETH" : "BNB";
@@ -1437,6 +1470,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
       if (isSolanaPage) {
         if (wei === 0n) return `0 ${nativeUnit}`;
         const raw = ethers.formatUnits(wei, solanaQuote.decimals);
+        if (isDbcPage && dbcQuoteMultiplier !== 1) return `${formatScaledQuote(Number(raw) * dbcQuoteMultiplier)} ${nativeUnit}`;
         const n = Number(raw);
         if (!Number.isFinite(n)) return `${raw} ${nativeUnit}`;
         if (n >= 1) return `${n.toFixed(4)} ${nativeUnit}`;
@@ -1469,6 +1503,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
       if (isSolanaPage) {
         if (wei === 0n) return `0 ${nativeUnit}`;
         const raw = ethers.formatUnits(wei, solanaQuote.decimals);
+        if (isDbcPage && dbcQuoteMultiplier !== 1) return `${formatScaledQuote(Number(raw) * dbcQuoteMultiplier)} ${nativeUnit}`;
         const n = Number(raw);
         if (!Number.isFinite(n)) return `${raw} ${nativeUnit}`;
         if (n > 0 && n < 1e-9) return `<0.000000001 ${nativeUnit}`;
@@ -2915,7 +2950,10 @@ const toSeconds = (ts: number): number => {
             // Graduation Market asset (USDC etc.) once graduated.
             const spendRaw = solanaQuote.native
               ? BigInt(await connection.getBalance(new web3.PublicKey(pubkey)))
-              : await getSolanaTokenBalanceRaw({ mint: solanaQuote.mint, owner: pubkey });
+              : isDbcPage
+                // DBC quotes include Token-2022 xStocks, whose account is not the classic ATA.
+                ? await readOwnerMintBalanceRaw(connection, pubkey, solanaQuote.mint)
+                : await getSolanaTokenBalanceRaw({ mint: solanaQuote.mint, owner: pubkey });
             const mint = String(campaign?.token || campaign?.campaign || "").trim();
             let tokenRaw = 0n;
             if (mint) {
@@ -3317,7 +3355,8 @@ const toSeconds = (ts: number): number => {
   const nativeBalanceNum = (() => {
     if (bnbBalanceWei == null) return 0;
     try {
-      return Number(ethers.formatUnits(bnbBalanceWei, isSolanaPage ? Number(solanaQuote.decimals || 9) : 18));
+      const n = Number(ethers.formatUnits(bnbBalanceWei, isSolanaPage ? Number(solanaQuote.decimals || 9) : 18));
+      return isDbcPage ? n * dbcQuoteMultiplier : n;
     } catch {
       return 0;
     }
@@ -4000,6 +4039,7 @@ const toSeconds = (ts: number): number => {
           const dec = 6;
           const parseSolLamports = (s: string): bigint => {
             const qdec = isDbcPage ? dbcQuoteDecimals : 9;
+            if (isDbcPage) return quoteUiToRaw(s, qdec, dbcQuoteMultiplier);
             const parts = s.split(".");
             return BigInt(parts[0] || "0") * (10n ** BigInt(qdec)) + BigInt((parts[1] || "").slice(0, qdec).padEnd(qdec, "0") || "0");
           };

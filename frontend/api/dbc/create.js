@@ -29,6 +29,7 @@ import { solPriceStep } from "../lib/dbc/dbcPriceSteps.mjs";
 import { requiredCluster, createDbcConfigLadder } from "../lib/dbc/dbcConfigLadder.js";
 import { parseFeeChoice } from "../lib/dbc/dbcFeeChoice.mjs";
 import { requireEnabledQuote, stableStep } from "../../shared/dbcQuotes.mjs";
+import { DbcStockQuoteError, dbcTokenBadgeAddress, stockPriceStep } from "../lib/dbc/dbcStockQuote.mjs";
 import { firstBuyExceedsCap, quoteFirstBuyOnConfig } from "../lib/dbc/dbcFirstBuyQuote.mjs";
 import { assertDbcCreatorLimits, loadDbcCreatorLimits } from "../lib/dbc/dbcCreateLimits.js";
 import { isDbcLaunchEnabled, dbcLaunchDisabledPayload } from "./launch-config.js";
@@ -207,6 +208,14 @@ function resolveCreateQuote(cluster, mint) {
   return requireEnabledQuote(cluster, String(mint || "").trim() || DBC_QUOTE_MINT);
 }
 
+/** Buyback buys the coin with SOL on its SOL pool; a coin paired with another quote has none. */
+function feeChoiceQuoteRefusal(fee, quote) {
+  if (fee?.feeChoice === "buyback" && quote?.kind !== "native") {
+    return { ok: false, error: "Buyback and burn is only for coins paired with SOL.", code: "DBC_BUYBACK_NEEDS_SOL" };
+  }
+  return null;
+}
+
 function poolConfigStateFromParams(configParams, quoteMint = DBC_QUOTE_MINT) {
   return {
     tokenType: Number(configParams.tokenType ?? 0),
@@ -232,6 +241,7 @@ async function buildCreatePoolTransaction({
   firstBuyLamports,
   configParams,
   quoteMint = DBC_QUOTE_MINT,
+  tokenBadge = null,
 }) {
   const creator = new PublicKey(creatorWallet);
   const baseMint = new PublicKey(mint);
@@ -244,6 +254,7 @@ async function buildCreatePoolTransaction({
     poolCreator: creator,
     config,
     baseMint,
+    ...(tokenBadge ? { tokenBadge: new PublicKey(tokenBadge) } : {}),
   };
   let tx;
   if (firstBuyLamports > 0n) {
@@ -381,6 +392,16 @@ export function createDbcCreateHandler(deps = {}) {
     return new DynamicBondingCurveClient(conn, "confirmed");
   }
 
+  /** SOL: the 2% SOL/USD step. Stock: the mint re-checked on chain, then its 2% price step. Stable: 1:1. */
+  async function stepForQuote(quote) {
+    if (quote.kind === "native") {
+      const solUsdMicros = await (deps.readSolUsdMicros || readSolUsdMicros)({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
+      return (deps.solPriceStep || solPriceStep)(solUsdMicros);
+    }
+    if (quote.kind === "stock") return (deps.stockPriceStep || stockPriceStep)(connection(), quote);
+    return stableStep();
+  }
+
   async function handlePreflight(body, res) {
     const creatorWallet = String(body.creatorWallet || "").trim();
     if (!creatorWallet) return json(res, 400, { ok: false, error: "creatorWallet is required", code: "DBC_BAD_WALLET" });
@@ -496,13 +517,9 @@ export function createDbcCreateHandler(deps = {}) {
     } catch (error) {
       return json(res, 400, { ok: false, error: error.message, code: error.code || "DBC_QUOTE_UNKNOWN" });
     }
-    let step;
-    if (quote.kind === "native") {
-      const solUsdMicros = await (deps.readSolUsdMicros || readSolUsdMicros)({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
-      step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
-    } else {
-      step = stableStep();
-    }
+    const buybackRefusal = feeChoiceQuoteRefusal(fee, quote);
+    if (buybackRefusal) return json(res, 400, buybackRefusal);
+    const step = await stepForQuote(quote);
     const ladder = deps.ladder || createDbcConfigLadder({ db: database, env, cluster });
     const ensured = await ladder.ensureLaunchConfig({
       targetUsdMicros,
@@ -537,6 +554,7 @@ export function createDbcCreateHandler(deps = {}) {
       firstBuyLamports,
       configParams: ensured.configParams,
       quoteMint: quote.mint,
+      tokenBadge: quote.kind === "stock" ? dbcTokenBadgeAddress(quote.mint).toBase58() : null,
     });
     const serialized = serializeUnsigned(tx);
     const nowTs = Math.floor(Date.now() / 1000);
@@ -565,6 +583,7 @@ export function createDbcCreateHandler(deps = {}) {
       quoteMint: quote.mint,
       quoteDecimals: quote.decimals,
       quoteSymbol: quote.symbol,
+      quoteKind: quote.kind,
       targetUsdMicros: targetUsdMicros.toString(),
       stepIndex: step.stepIndex,
       firstBuyLamports: firstBuyLamports.toString(),
@@ -634,6 +653,7 @@ export function createDbcCreateHandler(deps = {}) {
       quoteMint: token.quoteMint || DBC_QUOTE_MINT,
       quoteDecimals: token.quoteDecimals ?? 9,
       quoteSymbol: token.quoteSymbol || "SOL",
+      quoteKind: token.quoteKind || "native",
       firstBuySignature: String(body.signature || body.deployTxHash || "") || null,
       firstBuyLamports: token.firstBuyLamports,
     };
@@ -718,13 +738,9 @@ export function createDbcCreateHandler(deps = {}) {
     } catch (error) {
       return { error: { ok: false, error: error.message, code: error.code || "DBC_QUOTE_UNKNOWN" } };
     }
-    let step;
-    if (quote.kind === "native") {
-      const solUsdMicros = await (deps.readSolUsdMicros || readSolUsdMicros)({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
-      step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
-    } else {
-      step = stableStep();
-    }
+    const buybackRefusal = feeChoiceQuoteRefusal(fee, quote);
+    if (buybackRefusal) return { error: buybackRefusal };
+    const step = await stepForQuote(quote);
     const database = await db();
     const ladder = deps.ladder || createDbcConfigLadder({ db: database, env, cluster });
     const ensured = await ladder.ensureLaunchConfig({
@@ -945,7 +961,7 @@ export function createDbcCreateHandler(deps = {}) {
       if (operation === "quote-first-buy") return await handleQuoteFirstBuy(body, res);
       return json(res, 400, { ok: false, error: "operation must be preflight, begin, authorize, finalize, schedule or quote-first-buy", code: "DBC_BAD_OPERATION" });
     } catch (error) {
-      if (error instanceof DbcCreateError || error instanceof TickerReservationError) {
+      if (error instanceof DbcCreateError || error instanceof TickerReservationError || error instanceof DbcStockQuoteError) {
         return json(res, error.httpStatus || 409, { ok: false, error: error.message, code: error.code });
       }
       if (error?.code === "DBC_PRICE_STALE") {

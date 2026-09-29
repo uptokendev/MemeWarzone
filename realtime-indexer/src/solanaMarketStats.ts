@@ -189,6 +189,33 @@ async function coinGeckoUsd(
   }
 }
 
+/**
+ * USD per 10^decimals raw units of a quote mint, from Jupiter's price API. Pool prices here are raw
+ * ratios, so an xStock needs `usdPricePrescaled` (usdPrice x its ScaledUiAmount multiplier); a mint
+ * without a multiplier has no prescaled field and its usdPrice is already per raw unit.
+ */
+const jupiterCache = new Map<string, { value: number; prescaled: boolean; at: number }>();
+
+export async function jupiterRawUnitUsd(mint: string, fetchImpl: typeof fetch = fetch): Promise<{ value: number; prescaled: boolean } | null> {
+  const cached = jupiterCache.get(mint);
+  if (cached && Date.now() - cached.at < PRICE_CACHE_MS) return cached;
+  try {
+    const response = await fetchImpl(`https://lite-api.jup.ag/price/v3?ids=${encodeURIComponent(mint)}`, { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const row = ((await response.json()) as Record<string, any>)?.[mint];
+    const scaled = Number(row?.scaledUiConfig?.usdPricePrescaled);
+    const prescaled = Number.isFinite(scaled) && scaled > 0;
+    const value = prescaled ? scaled : Number(row?.usdPrice);
+    if (!Number.isFinite(value) || value <= 0) throw new Error("no price");
+    const entry = { value, prescaled, at: Date.now() };
+    jupiterCache.set(mint, entry);
+    return entry;
+  } catch (error) {
+    console.warn("[solana-market-stats] Jupiter price unavailable", { mint, error: error instanceof Error ? error.message : String(error) });
+    return cached ?? null;
+  }
+}
+
 const SPOT_SOURCES: Array<{ name: string; url: string; read: (body: any) => number }> = [
   { name: "binance", url: "https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT", read: (b) => Number(b?.price) },
   { name: "coinbase", url: "https://api.coinbase.com/v2/prices/SOL-USD/spot", read: (b) => Number(b?.data?.amount) },
@@ -243,6 +270,10 @@ async function quoteUsdPrice(db: Queryable, quoteMint: string, quoteReferenceUsd
   const row = policy.rows[0];
   const micros = Number(row?.reference_usd_micros);
   if (Number.isFinite(micros) && micros > 0) return { price: micros / 1_000_000, source: "catalog_reference_usd" };
+  // xStocks (DBC step 7b): a raw unit is worth usdPrice x the multiplier, which only Jupiter's
+  // prescaled price gives; CoinGecko's per-token price would be off by the multiplier.
+  const jupiter = await jupiterRawUnitUsd(quoteMint, fetchImpl);
+  if (jupiter?.prescaled) return { price: jupiter.value, source: "jupiter:price-v3-prescaled" };
   const id = String(row?.coingecko_id || "").trim();
   if (id) return { price: await coinGeckoUsd(id, fetchImpl), source: `coingecko:${id}` };
   return { price: null, source: "none" };
@@ -358,6 +389,8 @@ export async function refreshSolanaMarketStats(campaign: string, deps: { db?: Qu
             meta #>> '{solanaGraduation,quoteMint}' as quote_mint,
             meta #>> '{solanaGraduation,quoteDecimals}' as quote_decimals,
             meta #>> '{solanaGraduation,quoteReferenceUsd}' as quote_reference_usd,
+            meta #>> '{dbc,quoteMint}' as dbc_quote_mint,
+            meta #>> '{dbc,quoteDecimals}' as dbc_quote_decimals,
             meta #>> '{solana,solVault}' as sol_vault
        from public.campaigns where chain_id = $1 and campaign_address = $2 limit 1`,
     [SOLANA_CHAIN_ID, campaign],
@@ -370,6 +403,11 @@ export async function refreshSolanaMarketStats(campaign: string, deps: { db?: Qu
   const url = rpcUrl(cluster);
   let quoteMint = graduated ? String(campaignRow.quote_mint || "").trim() || NATIVE_MINT : NATIVE_MINT;
   let quoteDecimals = quoteMint === NATIVE_MINT ? 9 : Number(campaignRow.quote_decimals || 6);
+  if (isDbc && !graduated && String(campaignRow.dbc_quote_mint || "").trim()) {
+    // A DBC coin trades against its chosen quote on the curve too (USDC, USDT, an xStock).
+    quoteMint = String(campaignRow.dbc_quote_mint).trim();
+    quoteDecimals = quoteMint === NATIVE_MINT ? 9 : Number(campaignRow.dbc_quote_decimals || 6);
+  }
 
   let reserves: { tokenRaw: bigint; quoteRaw: bigint; quoteMint: string } | null = null;
   if (graduated && campaignRow.pool_address) {
@@ -385,7 +423,7 @@ export async function refreshSolanaMarketStats(campaign: string, deps: { db?: Qu
   if (!graduated && isDbc) {
     try {
       const { dbcMarketStatsFromAccounts } = await import("./dbcIndexer.js");
-      const live = await dbcMarketStatsFromAccounts(url, String(campaignRow.campaign_address), fetchImpl);
+      const live = await dbcMarketStatsFromAccounts(url, String(campaignRow.campaign_address), fetchImpl, quoteDecimals);
       if (live) {
         bondingReserveLamports = live.quoteReserve;
         dbcSupplyWhole = live.supplyWhole;
@@ -454,7 +492,7 @@ export async function refreshSolanaMarketStats(campaign: string, deps: { db?: Qu
     supplyWhole,
     supplyBasis,
     tokenReserveWhole: reserves ? Number(reserves.tokenRaw) / 10 ** tokenDecimals : null,
-    quoteReserveWhole: reserves ? Number(reserves.quoteRaw) / 10 ** quoteDecimals : bondingReserveLamports != null ? Number(bondingReserveLamports) / LAMPORTS_PER_SOL : null,
+    quoteReserveWhole: reserves ? Number(reserves.quoteRaw) / 10 ** quoteDecimals : bondingReserveLamports != null ? Number(bondingReserveLamports) / 10 ** quoteDecimals : null,
     volumes: trades.windows,
     volumeUsd24h: trades.volumeUsd24h,
     holders,

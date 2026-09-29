@@ -374,3 +374,76 @@ test("readback ignores the program's zero-liquidity padding of the curve (20-poi
   const mismatches = diffOnChainConfig(onChain, built.configParams, extra);
   assert.deepEqual(mismatches.filter((m) => String(m.path).startsWith("curve")), []);
 });
+
+/** A mainnet chain that echoes back the config it was asked to create, with a chosen quote token flag. */
+function stockChain({ quoteTokenFlag }) {
+  const created = [];
+  const MAINNET = SOLANA_GENESIS["mainnet-beta"];
+  return {
+    created,
+    connection: {
+      async getGenesisHash() { return MAINNET; },
+    },
+    async sendTransaction(_conn, tx, signers) {
+      created.push({ params: tx.params, config: signers[1].publicKey.toBase58() });
+      return `sig-${created.length}`;
+    },
+    client: {
+      partner: { async createConfig(params) { return { feePayer: null, params }; } },
+      state: {
+        async getPoolConfig() {
+          const p = created.at(-1).params;
+          return {
+            ...p,
+            quoteTokenFlag,
+            migrationFeePercentage: p.migrationFee.feePercentage,
+            creatorMigrationFeePercentage: p.migrationFee.creatorFeePercentage,
+            preMigrationTokenSupply: p.tokenSupply.preMigrationTokenSupply,
+            postMigrationTokenSupply: p.tokenSupply.postMigrationTokenSupply,
+            migratedCollectFeeMode: p.migratedPoolFee.collectFeeMode,
+            migratedDynamicFee: p.migratedPoolFee.dynamicFee,
+            migratedPoolFeeBps: p.migratedPoolFee.poolFeeBps,
+            lockedVestingConfig: p.lockedVesting,
+          };
+        },
+      },
+    },
+  };
+}
+
+test("a stock quote config names Meteora's DBC badge and reads back as Token-2022", async () => {
+  const { NVDAX_MINT } = await import("../../../shared/dbcQuotes.mjs");
+  const { dbcTokenBadgeAddress } = await import("./dbcStockQuote.mjs");
+  const args = {
+    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    stepIndex: 275,
+    stepUsdMicros: 231_109_000n,
+    creatorFeeMode: "creator",
+    quoteMint: NVDAX_MINT,
+  };
+  const good = stockChain({ quoteTokenFlag: 1 });
+  const ladder = ladderFor(memoryDb(), good, { cluster: "mainnet-beta", env: { SOLANA_CLUSTER: "mainnet-beta" } });
+  const row = await ladder.ensureLaunchConfig(args);
+  assert.equal(row.status, "active");
+  const sent = good.created[0].params;
+  assert.equal(sent.tokenBadge.toBase58(), dbcTokenBadgeAddress(NVDAX_MINT).toBase58());
+  assert.equal(sent.tokenBadge.toBase58(), "mfacWnGh1Kn5ttHMMaNZhRZbCjvGrDQyDyZgqaR9vBM"); // read on mainnet 2026-09-29
+  assert.equal(sent.quoteMint.toBase58(), NVDAX_MINT);
+  assert.equal(BigInt(sent.migrationQuoteThreshold.toString()), (15_000_000_000n * 100_000_000n + 231_109_000n - 1n) / 231_109_000n);
+
+  const wrongFlag = stockChain({ quoteTokenFlag: 0 });
+  const ladder2 = ladderFor(memoryDb(), wrongFlag, { cluster: "mainnet-beta", env: { SOLANA_CLUSTER: "mainnet-beta" } });
+  await assert.rejects(() => ladder2.ensureLaunchConfig(args), (err) => err.code === "DBC_CONFIG_MISMATCH"
+    && err.mismatches.some((m) => m.path === "quoteTokenFlag"));
+});
+
+test("a SOL config names no badge", async () => {
+  const chain = fakeChain();
+  let seen;
+  const original = chain.client.partner.createConfig;
+  chain.client.partner.createConfig = async (params) => { seen = params; return original(params); };
+  await ladderFor(memoryDb(), chain).ensureLaunchConfig({
+    targetUsdMicros: DBC_TARGET_USD_MICROS[15000], stepIndex: 241, stepUsdMicros: 118_000_000n, creatorFeeMode: "creator",
+  });
+  assert.equal("tokenBadge" in seen, false);
+});

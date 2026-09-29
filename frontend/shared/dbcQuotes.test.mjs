@@ -53,16 +53,17 @@ test("registry decimals and program per quote", () => {
   assert.equal(devUsdc.decimals, 6);
   assert.equal(nvda.decimals, 8);
   assert.equal(nvda.kind, "stock");
-  assert.equal(nvda.enabled, false);
+  assert.equal(nvda.enabled, true);
   assert.equal(nvda.tokenProgram.startsWith("Tokenz"), true);
 });
 
-test("7a enabled quotes: SOL + stables; stocks stay off", () => {
+test("enabled quotes: SOL, stables and the four stocks on mainnet; no stocks on devnet", () => {
   const main = enabledQuotes("mainnet-beta").map((q) => q.symbol).sort();
-  assert.deepEqual(main, ["SOL", "USDC", "USDT"]);
+  assert.deepEqual(main, ["NVDAx", "QQQx", "SOL", "SPYx", "TSLAx", "USDC", "USDT"]);
   const dev = enabledQuotes("devnet").map((q) => q.symbol).sort();
   assert.deepEqual(dev, ["SOL", "USDC"]);
-  assert.throws(() => requireEnabledQuote("mainnet-beta", NVDAX_MINT), /not enabled/);
+  assert.equal(requireEnabledQuote("mainnet-beta", NVDAX_MINT).symbol, "NVDAx");
+  assert.throws(() => requireEnabledQuote("devnet", NVDAX_MINT), /not in the DBC registry/);
   assert.throws(() => requireEnabledQuote("devnet", USDC_MINT_MAINNET), /not in the DBC registry/);
 });
 
@@ -88,10 +89,15 @@ test("threshold conversion: USDC 6, SOL 9, same dollar target", () => {
   assert.equal(stableStep().stepIndex, 0);
 });
 
-test("8-decimal stock scale is listed for 7b (disabled)", () => {
+test("stock threshold: target over the price per 10^8 raw, rounded up; no step refuses", () => {
   const nvda = findQuote("mainnet-beta", NVDAX_MINT);
   assert.equal(quoteScale(nvda), 100_000_000n);
-  assert.throws(() => thresholdQuoteRaw(DBC_TARGET_USD_MICROS[15000], nvda), /7b/);
+  // $15,000 at $231.109 per 1e8 raw = 64.9048... NVDAx = 6,490,488,471 raw after rounding up
+  const step = 231_109_000n;
+  const raw = thresholdQuoteRaw(DBC_TARGET_USD_MICROS[15000], nvda, step);
+  assert.equal(raw, (15_000_000_000n * 100_000_000n + step - 1n) / step);
+  assert.ok(raw * step >= 15_000_000_000n * 100_000_000n);
+  assert.throws(() => thresholdQuoteRaw(DBC_TARGET_USD_MICROS[15000], nvda), /price step/);
 });
 
 test("quotesForCluster never drops SOL", () => {

@@ -30,7 +30,9 @@ import {
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { isDbcLaunchEnabled } from "@/lib/dbcLaunchEnabled";
-import { enabledQuotes, WSOL_MINT } from "../../shared/dbcQuotes.mjs";
+import { enabledQuotes, quoteUiToRaw, WSOL_MINT } from "../../shared/dbcQuotes.mjs";
+import { readQuoteUiMultiplier } from "@/lib/dbcQuoteMultiplier.mjs";
+import { DbcStockRiskDialog } from "@/components/create/DbcStockRiskDialog";
 import { getDbcGraduationTiers } from "@/lib/dbcGraduationTiers";
 import {
   authorizeDbcCreate,
@@ -187,6 +189,42 @@ const Create = () => {
     [],
   );
   const dbcQuote = dbcQuoteOptions.find((q) => q.mint === dbcQuoteMint) || dbcQuoteOptions[0];
+  // A stock quote is only chosen through the risk dialog (D22).
+  const [pendingStockMint, setPendingStockMint] = useState<string | null>(null);
+  const pendingStock = dbcQuoteOptions.find((q) => q.mint === pendingStockMint) || null;
+  // Wallets show a stock's raw amount x its multiplier, so a typed first buy is divided by it.
+  const [dbcQuoteMultiplier, setDbcQuoteMultiplier] = useState(1);
+  useEffect(() => {
+    if (dbcQuote?.kind !== "stock") {
+      setDbcQuoteMultiplier(1);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { loadSolanaWeb3 } = await import("@/lib/solanaWeb3");
+        const { getPublicRpcUrl, SOLANA_CHAIN_ID } = await import("@/lib/chainConfig");
+        const web3 = await loadSolanaWeb3();
+        const connection = new web3.Connection(
+          String(import.meta.env.VITE_SOLANA_RPC || "").trim() || getPublicRpcUrl(SOLANA_CHAIN_ID),
+          { commitment: "confirmed", disableRetryOnRateLimit: true },
+        );
+        const multiplier = await readQuoteUiMultiplier(connection, dbcQuote.mint);
+        if (!cancelled) setDbcQuoteMultiplier(multiplier);
+      } catch {
+        // stays 1: the first buy is then at most the multiplier (under 1%) above what was typed
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [dbcQuote?.kind, dbcQuote?.mint]);
+  const dbcFirstBuyRaw = (): bigint => quoteUiToRaw(dbcFirstBuySol, Number(dbcQuote?.decimals ?? 9), dbcQuoteMultiplier);
+  const chooseDbcQuote = (mint: string) => {
+    setDbcQuoteMint(mint);
+    // Buyback spends SOL on the coin's SOL pool; a coin paired with anything else has none.
+    if (mint !== WSOL_MINT && dbcFeeChoice === "buyback") setDbcFeeChoice("keep");
+  };
   const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ tokensOut: string; bps: string; exceedsCap: boolean } | null>(null);
   const [creatorEligibility, setCreatorEligibility] = useState<ScheduledCreatorLaunchEligibility | null>(null);
   const [creatorEligibilityError, setCreatorEligibilityError] = useState<string | null>(null);
@@ -324,8 +362,7 @@ const Create = () => {
       setDbcFirstBuyQuote(null);
       return;
     }
-    const scale = 10 ** Number(dbcQuote?.decimals ?? 9);
-    const lamports = Math.round(sol * scale);
+    const lamports = dbcFirstBuyRaw().toString();
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void quoteDbcFirstBuy({
@@ -352,7 +389,7 @@ const Create = () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [dbcLaunch, dbcFirstBuySol, dbcFeeChoice, dbcCreatorSharePct, graduationTargetWei, dbcQuoteMint, dbcQuote]);
+  }, [dbcLaunch, dbcFirstBuySol, dbcFeeChoice, dbcCreatorSharePct, graduationTargetWei, dbcQuoteMint, dbcQuote, dbcQuoteMultiplier]);
 
   useEffect(() => {
     if (isSolanaCreator || !wallet.account || !wallet.signer || !isEvmChainId(chainId)) {
@@ -573,7 +610,7 @@ const Create = () => {
               launchType: "dbc",
               dbcFeeChoice,
               dbcCreatorSharePct: dbcFeeChoice === "split" ? Number(dbcCreatorSharePct) : null,
-              dbcFirstBuyLamports: dbcFirstBuySol ? String(Math.round(Number(dbcFirstBuySol) * (10 ** Number(dbcQuote?.decimals ?? 9)))) : null,
+              dbcFirstBuyLamports: dbcFirstBuySol ? dbcFirstBuyRaw().toString() : null,
               dbcQuoteMint,
             }
           : {}),
@@ -628,7 +665,7 @@ const Create = () => {
       analytics.track("token_create_started", { surface: "dbc", chain: "solana" });
       try {
         const targetUsd = Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000;
-        const firstBuyLamports = dbcFirstBuySol ? String(Math.round(Number(dbcFirstBuySol) * (10 ** Number(dbcQuote?.decimals ?? 9)))) : "0";
+        const firstBuyLamports = dbcFirstBuySol ? dbcFirstBuyRaw().toString() : "0";
         if (dbcFirstBuyQuote?.exceedsCap) {
           throw new Error("The first buy cannot be more than 10% of supply.");
         }
@@ -1250,7 +1287,7 @@ const Create = () => {
                               <button
                                 key={q.mint}
                                 type="button"
-                                onClick={() => setDbcQuoteMint(q.mint)}
+                                onClick={() => (q.kind === "stock" && q.mint !== dbcQuoteMint ? setPendingStockMint(q.mint) : chooseDbcQuote(q.mint))}
                                 className={cn("rounded-lg border px-2.5 py-2 text-left", dbcQuoteMint === q.mint ? "border-accent bg-accent/15" : "border-border bg-muted/30")}
                               >
                                 <div className="font-retro text-sm">{q.symbol}</div>
@@ -1266,13 +1303,16 @@ const Create = () => {
                               ["keep", "Keep it", "Your share of every trade fee is yours to claim."],
                               ["holders", "Give it to holders", "Your share is paid out to the coin's holders every week."],
                               ["split", "Split", "You keep a percentage; holders get the rest every week."],
-                              ["buyback", "Buyback and burn", "Bought back at random times each week and burned."],
-                            ] as const).map(([id, label, detail]) => (
-                              <button key={id} type="button" onClick={() => setDbcFeeChoice(id)} className={cn("rounded-lg border px-2.5 py-2 text-left", dbcFeeChoice === id ? "border-accent bg-accent/15" : "border-border bg-muted/30")}>
-                                <div className="font-retro text-sm">{label}</div>
-                                <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">{detail}</p>
-                              </button>
-                            ))}
+                              ["buyback", "Buyback and burn", dbcQuote?.kind === "native" ? "Bought back at random times each week and burned." : "Only for coins paired with SOL."],
+                            ] as const).map(([id, label, detail]) => {
+                              const unavailable = id === "buyback" && dbcQuote?.kind !== "native";
+                              return (
+                                <button key={id} type="button" disabled={unavailable} onClick={() => setDbcFeeChoice(id)} className={cn("rounded-lg border px-2.5 py-2 text-left disabled:cursor-not-allowed disabled:opacity-50", dbcFeeChoice === id ? "border-accent bg-accent/15" : "border-border bg-muted/30")}>
+                                  <div className="font-retro text-sm">{label}</div>
+                                  <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">{detail}</p>
+                                </button>
+                              );
+                            })}
                           </div>
                           {dbcFeeChoice === "split" ? (
                             <div className="mt-2">
@@ -1293,6 +1333,18 @@ const Create = () => {
                           ) : null}
                         </div>
                         <p className="text-xs text-muted-foreground">The fee starts at 50% and falls to 2% within 60 seconds, so bots that buy at launch pay for it. Your own first buy does not.</p>
+                        {pendingStock ? (
+                          <DbcStockRiskDialog
+                            mint={pendingStock.mint}
+                            symbol={pendingStock.symbol}
+                            ticker={normalizedTicker}
+                            onConfirm={() => {
+                              chooseDbcQuote(pendingStock.mint);
+                              setPendingStockMint(null);
+                            }}
+                            onCancel={() => setPendingStockMint(null)}
+                          />
+                        ) : null}
                       </div>
                     ) : null}
                     <Collapsible open={safetyOpen} onOpenChange={setSafetyOpen} className="rounded-xl border border-border/50 bg-background/25">

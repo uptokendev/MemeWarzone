@@ -20,12 +20,12 @@ import {
   deriveDammV2PoolAddress,
   deriveEscrow,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
-import { CpAmm, getUnClaimLpFee } from "@meteora-ag/cp-amm-sdk";
+import { CpAmm, getTokenProgram, getUnClaimLpFee } from "@meteora-ag/cp-amm-sdk";
 import { BorshCoder, type Idl } from "@coral-xyz/anchor";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, getMint } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, getMint } from "@solana/spl-token";
 import { notifyCampaignGraduated } from "../campaignLifecycleNotifications.js";
 import { ensureWeeklyEpoch } from "../rewards/epochs.js";
 import { bs58Encode, resolveSignature } from "./dbcFeePending.js";
@@ -56,10 +56,11 @@ import {
   VIRTUAL_POOL_DISCRIMINATOR,
   type GraduationStep,
 } from "./dbcGraduationState.js";
-import { isNativeQuoteMint, quoteDecimalsFromMeta, quoteMintFromMeta } from "./dbcQuoteNative.js";
+import { isNativeQuoteMint, quoteDecimalsFromMeta, quoteMintFromMeta, quoteTokenProgram } from "./dbcQuoteNative.js";
 import { splitSolFromQuoteSwap, quoteRoutedTotal } from "./dbcQuoteSolSplit.js";
 import { swapClaimedQuoteIfNeeded, type SwapQuoteFn } from "./dbcQuoteToSolSwap.js";
 import { buildD7CompensationIxs } from "./dbcQuoteTransfers.js";
+import { stockQuoteRefusal } from "./dbcStockQuoteCheck.js";
 
 export { VIRTUAL_POOL_DISCRIMINATOR };
 
@@ -711,6 +712,23 @@ export async function advanceGraduationJob(input: {
   }
 
   if (step === "migrate") {
+    const refusal = await stockQuoteRefusal(
+      input.connection,
+      String(config.quoteMint),
+      await quoteTokenProgram(input.connection as any, String(config.quoteMint)),
+    );
+    if (refusal) {
+      // A pause can lift; a hook or fee needs a person. Either way retry hourly and say why.
+      await updateJob(
+        input.db,
+        job.id,
+        `update public.dbc_graduation_jobs
+            set blocked_reason = $2, backoff_until = now() + interval '1 hour', updated_at = now()
+          where id = $1`,
+        [refusal.reason],
+      );
+      return { pool: input.pool, step, signature: null, skipped: `quote-${refusal.code}` };
+    }
     const res = await client.migration.migrateToDammV2({
       payer: input.collector.publicKey,
       pool: poolPk,
@@ -783,13 +801,14 @@ export async function advanceGraduationJob(input: {
     }
     const quoteMint = String(config.quoteMint || DBC_QUOTE_MINT);
     let decimals = quoteDecimalsFromMeta(campaign.rows[0]?.meta, isNativeQuoteMint(quoteMint) ? 9 : 6);
+    const quoteProgram = await quoteTokenProgram(input.connection as any, quoteMint);
     if (!isNativeQuoteMint(quoteMint)) {
       try {
-        decimals = (await getMint(input.connection as any, quoteMintPk(quoteMint), "confirmed")).decimals;
+        decimals = (await getMint(input.connection as any, quoteMintPk(quoteMint), "confirmed", quoteProgram)).decimals;
       } catch {
         // campaign meta / 6
       }
-      const ata = getAssociatedTokenAddressSync(quoteMintPk(quoteMint), input.collector.publicKey);
+      const ata = getAssociatedTokenAddressSync(quoteMintPk(quoteMint), input.collector.publicKey, false, quoteProgram);
       const bal = await input.connection.getTokenAccountBalance(ata, "confirmed").catch(() => null);
       const haveTok = bal ? BigInt(bal.value.amount) : 0n;
       if (haveTok < applied.paid) {
@@ -811,6 +830,7 @@ export async function advanceGraduationJob(input: {
       quoteMint,
       amount: applied.paid,
       decimals,
+      tokenProgram: quoteProgram,
     })) tx.add(ix);
     const blocked = await blockIfCollectorShort({
       db: input.db,
@@ -1332,8 +1352,8 @@ export async function runDbcLpClaimsOnce(input: {
       tokenBMint: dpool.tokenBMint,
       tokenAVault: dpool.tokenAVault,
       tokenBVault: dpool.tokenBVault,
-      tokenAProgram: TOKEN_PROGRAM_ID,
-      tokenBProgram: TOKEN_PROGRAM_ID,
+      tokenAProgram: getTokenProgram(dpool.tokenAFlag),
+      tokenBProgram: getTokenProgram(dpool.tokenBFlag),
       feePayer: input.collector.publicKey,
     })) as any;
     const protocol = rewardVaults().protocol;

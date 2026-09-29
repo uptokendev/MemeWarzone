@@ -20,7 +20,7 @@ import {
   getMint,
 } from "@solana/spl-token";
 import { deriveRewardVault } from "./dbcFeeRouter.js";
-import { WSOL_MINT, isNativeQuoteMint } from "./dbcQuoteNative.js";
+import { WSOL_MINT, isNativeQuoteMint, quoteTokenProgram } from "./dbcQuoteNative.js";
 import { swapClaimedQuoteIfNeeded, type SwapQuoteFn } from "./dbcQuoteToSolSwap.js";
 
 type Queryable = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }> };
@@ -147,19 +147,21 @@ export async function sweepReferralToProtocol(input: {
   }
 
   const mint = new PublicKey(quoteMint);
+  const program = await quoteTokenProgram(input.connection as any, quoteMint);
   let decimals = 6;
   try {
-    decimals = (await getMint(input.connection as any, mint, "confirmed")).decimals;
+    decimals = (await getMint(input.connection as any, mint, "confirmed", program)).decimals;
   } catch {
     decimals = Number(info?.value?.decimals ?? 6);
   }
-  const collectorAta = getAssociatedTokenAddressSync(mint, input.collector.publicKey);
+  const collectorAta = getAssociatedTokenAddressSync(mint, input.collector.publicKey, false, program);
   tx.add(
     createAssociatedTokenAccountIdempotentInstruction(
       input.collector.publicKey,
       collectorAta,
       input.collector.publicKey,
       mint,
+      program,
     ),
     createTransferCheckedInstruction(
       referralAta,
@@ -169,7 +171,7 @@ export async function sweepReferralToProtocol(input: {
       amount,
       decimals,
       [],
-      TOKEN_PROGRAM_ID,
+      program,
     ),
   );
   tx.partialSign(input.referralOwner);

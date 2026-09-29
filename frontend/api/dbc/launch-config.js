@@ -10,6 +10,8 @@ import { readSolUsdMicros } from "../lib/solUsdMicros.js";
 import { solPriceStep } from "../lib/dbc/dbcPriceSteps.mjs";
 import { requiredCluster, createDbcConfigLadder } from "../lib/dbc/dbcConfigLadder.js";
 import { requireEnabledQuote, stableStep } from "../../shared/dbcQuotes.mjs";
+import { Connection } from "@solana/web3.js";
+import { DbcStockQuoteError, stockPriceStep } from "../lib/dbc/dbcStockQuote.mjs";
 
 function truthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
@@ -70,10 +72,19 @@ export async function handleDbcLaunchConfig(req, res, deps = {}) {
       const readPrice = deps.readSolUsdMicros || readSolUsdMicros;
       const solUsdMicros = await readPrice({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
       step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
+    } else if (quote.kind === "stock") {
+      const url = String(env.SOLANA_RPC_URL || env.SOLANA_RPC_HTTP || "").trim();
+      if (!deps.connection && !url) {
+        return json(res, 503, { ok: false, error: "SOLANA_RPC_URL is required", code: "DBC_RPC_MISSING" });
+      }
+      step = await (deps.stockPriceStep || stockPriceStep)(deps.connection || new Connection(url, "confirmed"), quote);
     } else {
       step = stableStep();
     }
   } catch (error) {
+    if (error instanceof DbcStockQuoteError) {
+      return json(res, error.httpStatus || 400, { ok: false, error: error.message, code: error.code });
+    }
     if (stalePriceError(error) || error?.code === "DBC_PRICE_STALE") {
       return json(res, 503, { ok: false, error: "SOL/USD price is missing or stale", code: "DBC_PRICE_STALE" });
     }

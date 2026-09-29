@@ -589,3 +589,77 @@ test("existing-job guards skip DBC rows", () => {
   assert.match(details, /if \(!isSolanaPage \|\| isDbcPage \|\| !solanaCurveClosed\) return;/);
   assert.match(live, /fetchDbcToken/);
 });
+
+const MAINNET_ENV = {
+  DBC_LAUNCH_ENABLED: "true",
+  SOLANA_CLUSTER: "mainnet-beta",
+  SOLANA_ROUTE_SIGNER_SECRET_KEY: SECRET,
+  SOLANA_RPC_URL: "http://127.0.0.1:8899",
+};
+const NVDAX = "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh";
+
+test("buyback is refused for a coin not paired with SOL", async () => {
+  const handle = handlerFor(memoryDb());
+  const res = await post(handle, {
+    operation: "quote-first-buy",
+    targetUsd: 15000,
+    feeChoice: "buyback",
+    firstBuyLamports: "1000000",
+    quoteMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.code, "DBC_BUYBACK_NEEDS_SOL");
+});
+
+test("a stock launch is priced by the stock step and names Meteora's DBC badge on the pool", async () => {
+  const seen = {};
+  const handle = handlerFor(memoryDb(), {
+    env: MAINNET_ENV,
+    stockPriceStep: async (_conn, quote) => {
+      seen.stockQuote = quote.symbol;
+      return { stepIndex: 275, stepUsdMicros: 231_109_000n };
+    },
+    ladder: {
+      ensureLaunchConfig: async (args) => {
+        seen.ladder = args;
+        return {
+          configAddress: CONFIG.publicKey.toBase58(),
+          creatorFeeMode: args.creatorFeeMode,
+          targetUsdMicros: args.targetUsdMicros,
+          configParams: { tokenSupply: { preMigrationTokenSupply: 1_000_000_000_000000n }, curve: [], sqrtStartPrice: 1 },
+        };
+      },
+    },
+    buildCreatePoolTransaction: async (args) => {
+      seen.pool = args;
+      return { tx: twoSignerTx(args.creatorWallet, args.mint), pool: POOL.publicKey.toBase58() };
+    },
+  });
+  const begun = await post(handle, { operation: "begin", creatorWallet: SIGNER.publicKey.toBase58(), ticker: "STOCKY", auth: {} });
+  const auth = await post(handle, {
+    operation: "authorize",
+    sessionToken: begun.body.sessionToken,
+    mint: MINT.publicKey.toBase58(),
+    name: "Stocky",
+    symbol: "STOCKY",
+    targetUsd: 15000,
+    feeChoice: "keep",
+    quoteMint: NVDAX,
+  });
+  assert.equal(auth.body.ok, true, JSON.stringify(auth.body));
+  assert.equal(seen.stockQuote, "NVDAx");
+  assert.equal(seen.ladder.stepUsdMicros, 231_109_000n);
+  assert.equal(seen.ladder.quoteMint, NVDAX);
+  assert.equal(seen.pool.tokenBadge, "mfacWnGh1Kn5ttHMMaNZhRZbCjvGrDQyDyZgqaR9vBM");
+});
+
+test("a stock the chain says cannot be used is refused with the reason", async () => {
+  const { DbcStockQuoteError } = await import("../lib/dbc/dbcStockQuote.mjs");
+  const handle = handlerFor(memoryDb(), {
+    env: MAINNET_ENV,
+    stockPriceStep: async () => { throw new DbcStockQuoteError("The issuer has paused this stock token. Pick another pairing.", "DBC_QUOTE_PAUSED"); },
+  });
+  const res = await post(handle, { operation: "quote-first-buy", targetUsd: 15000, feeChoice: "keep", firstBuyLamports: "0", quoteMint: NVDAX });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.code, "DBC_QUOTE_PAUSED");
+});
