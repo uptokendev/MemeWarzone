@@ -189,7 +189,31 @@ async function coinGeckoUsd(
   }
 }
 
-/** SOL/USD: env pin for isolated devnet runs, otherwise CoinGecko (cached). */
+const SPOT_SOURCES: Array<{ name: string; url: string; read: (body: any) => number }> = [
+  { name: "binance", url: "https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT", read: (b) => Number(b?.price) },
+  { name: "coinbase", url: "https://api.coinbase.com/v2/prices/SOL-USD/spot", read: (b) => Number(b?.data?.amount) },
+];
+
+/** Binance, then Coinbase: the order the API's reader uses (CoinGecko's free tier answers 429 under load). */
+async function spotSolUsd(fetchImpl: typeof fetch): Promise<{ price: number; source: string } | null> {
+  const cached = priceCache.get("spot:solana");
+  if (cached && Date.now() - cached.at < PRICE_CACHE_MS) return { price: cached.value, source: "spot:cached" };
+  for (const source of SPOT_SOURCES) {
+    try {
+      const response = await fetchImpl(source.url, { headers: { accept: "application/json" } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const value = source.read(await response.json());
+      if (!Number.isFinite(value) || value <= 0) throw new Error("no price");
+      priceCache.set("spot:solana", { value, at: Date.now() });
+      return { price: value, source: source.name };
+    } catch {
+      // next source
+    }
+  }
+  return null;
+}
+
+/** SOL/USD: env pin for isolated devnet runs, otherwise Binance, Coinbase, then CoinGecko (cached). */
 export async function solUsdPrice(
   fetchImpl: typeof fetch = fetch,
   opts?: { requireFresh?: boolean },
@@ -198,6 +222,8 @@ export async function solUsdPrice(
   if (Number.isFinite(micros) && micros > 0) return { price: micros / 1_000_000, source: "env:SOLANA_GRADUATION_SOL_USD_MICROS" };
   const pinned = Number(process.env.SOLANA_USD_PRICE_OVERRIDE || "");
   if (Number.isFinite(pinned) && pinned > 0) return { price: pinned, source: "env:SOLANA_USD_PRICE_OVERRIDE" };
+  const spot = await spotSolUsd(fetchImpl);
+  if (spot) return { price: spot.price, source: spot.source };
   const price = await coinGeckoUsd("solana", fetchImpl, opts);
   return { price, source: "coingecko:solana" };
 }
