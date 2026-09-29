@@ -19,7 +19,7 @@ import {
   deriveEscrow,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { CpAmm, getTokenProgram, getUnClaimLpFee } from "@meteora-ag/cp-amm-sdk";
-import { DBC_MIGRATION_FEE_OPTION_CUSTOMIZABLE, DBC_QUOTE_MINT } from "../../shared/dbcEconomics.mjs";
+import { DBC_MIGRATION_FEE_OPTION_CUSTOMIZABLE } from "../../shared/dbcEconomics.mjs";
 import { buildClaimVestingInstruction } from "./dbcJupiterLock.mjs";
 import { DBC_TRADE_ALLOWED_PROGRAM_IDS, DBC_LOCKED_BUY_ALLOWED_PROGRAM_IDS } from "./dbcTrade.mjs";
 
@@ -82,8 +82,9 @@ export async function loadCreatorRewards(connection, { pool, creator, includeLp 
   let lpFees = 0n;
   let dammPool = "";
   let position = null;
+  const quoteMint = new PublicKey(cfg?.quoteMint || NATIVE_MINT);
   if (includeLp && migrated && mint) {
-    dammPool = deriveDbcDammPool(mint, cfg?.quoteMint || NATIVE_MINT).toBase58();
+    dammPool = deriveDbcDammPool(mint, quoteMint).toBase58();
     const cpAmm = new CpAmm(connection);
     try {
       const positions = await cpAmm.getUserPositionByPool(new PublicKey(dammPool), creatorPk);
@@ -92,7 +93,7 @@ export async function loadCreatorRewards(connection, { pool, creator, includeLp 
         const dpool = await cpAmm.fetchPoolState(new PublicKey(dammPool));
         const unclaimed = getUnClaimLpFee(dpool, position.positionState);
         lpFees = BigInt(String(
-          dpool.tokenBMint.equals(NATIVE_MINT) ? (unclaimed?.feeTokenB ?? unclaimed?.feeQuote ?? 0) : (unclaimed?.feeTokenA ?? 0),
+          dpool.tokenBMint.equals(quoteMint) ? (unclaimed?.feeTokenB ?? unclaimed?.feeQuote ?? 0) : (unclaimed?.feeTokenA ?? 0),
         ));
       }
     } catch {
@@ -110,7 +111,7 @@ export async function loadCreatorRewards(connection, { pool, creator, includeLp 
     lpFees: lpFees.toString(),
     locker: locker.toBase58(),
     dammPool,
-    quoteMint: DBC_QUOTE_MINT,
+    quoteMint: quoteMint.toBase58(),
     position: position ? String(position.position) : null,
   };
 }

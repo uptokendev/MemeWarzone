@@ -29,22 +29,29 @@ function lamports(value: string | null | undefined): bigint {
   }
 }
 
-function solLabel(raw: string): string {
-  const n = Number(raw) / 1e9;
-  if (!Number.isFinite(n)) return `${raw} lamports`;
-  if (n === 0) return "0 SOL";
-  if (n < 0.000001) return `${raw} lamports`;
-  return `${n.toFixed(6)} SOL`;
+/** A payout in the coin's quote (SOL, USDC, USDT or a stock, shown through its multiplier). */
+function quoteLabel(raw: string, symbol: string, decimals: number, multiplier: number): string {
+  const n = (Number(raw) / 10 ** decimals) * multiplier;
+  if (!Number.isFinite(n)) return `${raw} raw ${symbol}`;
+  if (n === 0) return `0 ${symbol}`;
+  if (n < 0.000001) return `${raw} raw ${symbol}`;
+  return `${n.toFixed(6)} ${symbol}`;
 }
 
 export default function DbcCreatorRewardsPanel({
   pool,
   creator,
   mint,
+  quoteSymbol = "SOL",
+  quoteDecimals = 9,
+  quoteMultiplier = 1,
 }: {
   pool: string;
   creator: string;
   mint: string;
+  quoteSymbol?: string;
+  quoteDecimals?: number;
+  quoteMultiplier?: number;
 }) {
   const [rewards, setRewards] = useState<Rewards | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -84,7 +91,7 @@ export default function DbcCreatorRewardsPanel({
         ? "Your share of the graduation fee"
         : "Your share of the graduation fee, paid when the coin graduates",
       amount: rewards?.graduationPayout || "0",
-      unit: "SOL",
+      unit: "quote",
       disabled: !rewards?.graduationPayoutClaimable,
       run: () => submitDbcGraduationPayout({ pool, creator }),
     },
@@ -102,7 +109,7 @@ export default function DbcCreatorRewardsPanel({
       title: "LP fees",
       detail: "80% permanently locked position",
       amount: rewards?.lpFees || "0",
-      unit: "SOL",
+      unit: "quote",
       disabled: lamports(rewards?.lpFees) <= 0n || !rewards?.dammPool,
       run: () => submitDbcCreatorLpClaim({ dammPool: rewards!.dammPool, creator }),
     }]),
@@ -120,7 +127,7 @@ export default function DbcCreatorRewardsPanel({
             <p className="text-xs font-medium">{row.title}</p>
             <p className="text-[11px] text-muted-foreground">{row.detail}</p>
             <p className="text-[11px] font-mono">
-              {row.unit === "SOL" ? solLabel(row.amount) : `${row.amount} waiting`}
+              {row.unit === "quote" ? quoteLabel(row.amount, quoteSymbol, quoteDecimals, quoteMultiplier) : `${row.amount} waiting`}
             </p>
           </div>
           <Button

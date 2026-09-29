@@ -729,6 +729,9 @@ export async function advanceGraduationJob(input: {
       );
       return { pool: input.pool, step, signature: null, skipped: `quote-${refusal.code}` };
     }
+    if (job.blocked_reason) {
+      await updateJob(input.db, job.id, `update public.dbc_graduation_jobs set blocked_reason = null, updated_at = now() where id = $1`);
+    }
     const res = await client.migration.migrateToDammV2({
       payer: input.collector.publicKey,
       pool: poolPk,

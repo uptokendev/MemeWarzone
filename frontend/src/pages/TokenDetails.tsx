@@ -5714,7 +5714,14 @@ const toSeconds = (ts: number): number => {
                     ) : null}
                     {isDbcPage && dbcPool ? <DbcFeeChoiceLine pool={dbcPool} /> : null}
                     {isDbcPage && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (
-                      <DbcCreatorRewardsPanel pool={dbcPool} creator={dbcCreator} mint={dbcMint} />
+                      <DbcCreatorRewardsPanel
+                        pool={dbcPool}
+                        creator={dbcCreator}
+                        mint={dbcMint}
+                        quoteSymbol={dbcQuoteSymbol}
+                        quoteDecimals={dbcQuoteDecimals}
+                        quoteMultiplier={dbcQuoteMultiplier}
+                      />
                     ) : null}
                   </div>
 
