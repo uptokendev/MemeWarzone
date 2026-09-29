@@ -2669,12 +2669,11 @@ const toSeconds = (ts: number): number => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(
-          "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd",
-          { cache: "no-store" },
-        );
+        // Our API, not CoinGecko: CoinGecko refuses browser calls (CORS, 403/429), which left the
+        // $ graduation target without a SOL price (progress wrong, "remaining" empty).
+        const res = await apiFetch("/api/price/sol-usd", { cache: "no-store" });
         const json = await res.json();
-        const p = Number(json?.solana?.usd);
+        const p = Number(json?.price);
         if (!cancelled && Number.isFinite(p) && p > 0) setSolUsdPrice(p);
       } catch {
         if (!cancelled) setSolUsdPrice(null);

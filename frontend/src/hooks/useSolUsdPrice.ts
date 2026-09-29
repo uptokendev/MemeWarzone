@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { apiFetch } from "@/lib/apiBase";
 
 type SolUsdState = {
   price: number | null;
@@ -59,13 +60,11 @@ export function useSolUsdPrice(enabled: boolean = true, refreshMs: number = 60_0
           return;
         }
         if (showLoading) setLoading(true);
-        const res = await fetch(
-          "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd",
-          { headers: { Accept: "application/json" } },
-        );
+        // Our API, not CoinGecko: CoinGecko refuses browser calls (CORS, 403/429).
+        const res = await apiFetch("/api/price/sol-usd", { headers: { Accept: "application/json" } });
         if (!res.ok) throw new Error(`SOL price fetch failed (${res.status})`);
         const data = await res.json() as any;
-        const p = Number(data?.solana?.usd);
+        const p = Number(data?.price);
         if (!Number.isFinite(p) || p <= 0) throw new Error("Invalid SOL/USD price");
         writeCache(p);
         if (!cancelled) {
