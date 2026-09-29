@@ -505,7 +505,7 @@ export default function PushDraftLive() {
       const targetUsd = Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000;
       const preflight = await preflightDbcCreate({ creatorWallet: solanaWallet.solanaAccount, targetUsd });
       if (!preflight?.preflight?.allowed) {
-        throw new Error(preflight?.preflight?.cooldownActive ? "A DBC launch from this wallet is on a 24 hour cooldown." : "Live DBC coin limit reached.");
+        throw new Error(preflight?.preflight?.cooldownActive ? "This wallet launched a coin in the last 24 hours. It can launch again after that." : "This wallet already has 3 live coins, the most one wallet can have.");
       }
       const { signWalletAction } = await import("@/lib/walletActionAuth");
       const { signSolanaMessage } = await import("@/lib/solanaWallet");
@@ -549,10 +549,10 @@ export default function PushDraftLive() {
         config: authorization.config,
       });
       const finalized = await finalizeDbcCreate({ finalizeToken: authorization.finalizeToken, signature: created.signature });
-      toast.success("DBC token deployed.");
+      toast.success("Your coin is live.");
       navigate(finalized.tokenPath || `/token/${created.mintAddress}?chainId=101`);
     } catch (error: any) {
-      toast.error(String(error?.message || "DBC deploy failed. Your draft remains saved."));
+      toast.error(String(error?.message || "The launch did not go through. Your draft is still saved."));
     } finally {
       setSubmitting(false);
     }
@@ -733,7 +733,7 @@ export default function PushDraftLive() {
             <h1 className="mwz-section-title mt-1 text-3xl text-success md:text-4xl">Deploy Draft</h1>
             <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
               {dbcDraft
-                ? "Set a launch time (nothing is created on chain yet). When the timer ends, deploy the DBC pool in one transaction."
+                ? "Set a launch time (nothing is created on chain yet). When the timer ends, you launch the coin with one wallet signature."
                 : "Choose the graduation tier and deploy immediately, or pay gas now and arm a countdown that blocks trading until launch time."}
             </p>
           </div>
