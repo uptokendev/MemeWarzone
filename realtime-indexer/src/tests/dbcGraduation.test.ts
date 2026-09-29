@@ -327,3 +327,17 @@ test("the creator reserve is read from the vesting schedule, so the locker is no
   assert.equal(config.lockedVestingAmount, 20_000_000_000_000n);
   assert.equal(lockerNeeded({ isMigrated: 0, migrationProgress: 1 } as any, config), true);
 });
+
+test("bound D7 is TransferChecked; graduation route and LP claims swap first", () => {
+  const keeper = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbc/dbcGraduationKeeper.ts"), "utf8");
+  assert.match(keeper, /buildD7CompensationIxs/);
+  assert.match(keeper, /swapClaimedQuoteIfNeeded/);
+  assert.match(keeper, /leftoverAlreadySol/);
+  assert.match(keeper, /isNativeQuoteMint\(quotePk\.toBase58\(\)\)/);
+  const transfers = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbc/dbcQuoteTransfers.ts"), "utf8");
+  assert.match(transfers, /createTransferCheckedInstruction/);
+  assert.match(transfers, /SystemProgram\.transfer/);
+  const router = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbc/dbcFeeRouter.ts"), "utf8");
+  assert.match(router, /splitSolFromQuoteSwap/);
+  assert.match(router, /swapClaimedQuoteIfNeeded/);
+});

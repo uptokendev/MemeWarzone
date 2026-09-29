@@ -101,3 +101,20 @@ test("quotesForCluster never drops SOL", () => {
     assert.equal(list[0].mint, WSOL_MINT);
   }
 });
+
+test("DBC_DEVNET_USDC_MINT remaps USDC on devnet only", () => {
+  const fake = "FakeUsdcMint1111111111111111111111111111111";
+  const prev = process.env.DBC_DEVNET_USDC_MINT;
+  process.env.DBC_DEVNET_USDC_MINT = fake;
+  try {
+    assert.equal(findQuote("devnet", fake)?.mint, fake);
+    assert.equal(findQuote("devnet", USDC_MINT_DEVNET), null);
+    assert.equal(findQuote("mainnet-beta", fake), null);
+    assert.equal(findQuote("mainnet-beta", USDC_MINT_MAINNET)?.mint, USDC_MINT_MAINNET);
+    const main = quotesForCluster("mainnet-beta", { DBC_DEVNET_USDC_MINT: fake });
+    assert.equal(main.find((q) => q.symbol === "USDC")?.mint, USDC_MINT_MAINNET);
+  } finally {
+    if (prev == null) delete process.env.DBC_DEVNET_USDC_MINT;
+    else process.env.DBC_DEVNET_USDC_MINT = prev;
+  }
+});

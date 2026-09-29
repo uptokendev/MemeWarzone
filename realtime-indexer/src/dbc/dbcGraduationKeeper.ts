@@ -25,7 +25,7 @@ import { BorshCoder, type Idl } from "@coral-xyz/anchor";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, getMint } from "@solana/spl-token";
 import { notifyCampaignGraduated } from "../campaignLifecycleNotifications.js";
 import { ensureWeeklyEpoch } from "../rewards/epochs.js";
 import { bs58Encode, resolveSignature } from "./dbcFeePending.js";
@@ -56,6 +56,10 @@ import {
   VIRTUAL_POOL_DISCRIMINATOR,
   type GraduationStep,
 } from "./dbcGraduationState.js";
+import { isNativeQuoteMint, quoteDecimalsFromMeta, quoteMintFromMeta } from "./dbcQuoteNative.js";
+import { splitSolFromQuoteSwap, quoteRoutedTotal } from "./dbcQuoteSolSplit.js";
+import { swapClaimedQuoteIfNeeded, type SwapQuoteFn } from "./dbcQuoteToSolSwap.js";
+import { buildD7CompensationIxs } from "./dbcQuoteTransfers.js";
 
 export { VIRTUAL_POOL_DISCRIMINATOR };
 
@@ -74,7 +78,7 @@ async function campaignQuoteMint(db: Queryable, pool: string) {
     [SOLANA_CHAIN_ID, pool],
   );
   const meta = rows[0]?.meta || {};
-  return quoteMintPk(meta?.dbc?.quoteMint || meta?.solanaGraduation?.quoteMint);
+  return quoteMintPk(quoteMintFromMeta(meta));
 }
 
 async function quoteMintFromPool(client: DynamicBondingCurveClient, pool: { config: string }) {
@@ -354,29 +358,40 @@ async function insertLpAccruals(input: {
   transferred: bigint;
   platform: boolean;
   signature: string;
+  leftoverAlreadySol?: boolean;
 }) {
   const rows = lpClaimRows(input.claimed, input.transferred, input.platform);
   const profile = await creatorProfile(input.db, String(input.job.creator || ""), new Date());
-  const insert = async (logIndex: number, protocol: bigint, creatorPool: bigint, status: string, routeSig: string | null) => {
+  const insert = async (
+    logIndex: number,
+    protocol: bigint,
+    creatorPool: bigint,
+    status: string,
+    routeSig: string | null,
+    solReceived: bigint | null,
+  ) => {
     const total = protocol + creatorPool;
     if (total <= 0n) return;
     await input.db.query(
       `insert into public.dbc_fee_accruals (
          pool, tx_hash, log_index, trader, profile, fee_total,
          trading_fee, protocol_fee, referral_fee, collector_amount,
-         league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool, status, route_signature
-       ) values ($1,$2,$3,$4,$5,$6,$6,0,0,$6,0,0,0,0,0,$7,$8,$9,$10)
+         league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool, status, route_signature, sol_received
+       ) values ($1,$2,$3,$4,$5,$6,$6,0,0,$6,0,0,0,0,0,$7,$8,$9,$10,$11)
        on conflict (tx_hash, log_index) do nothing`,
       [
         String(input.job.pool), input.signature, logIndex, String(input.job.creator || ""), profile,
         total.toString(), protocol.toString(), creatorPool.toString(), status, routeSig,
+        solReceived != null ? solReceived.toString() : null,
       ],
     );
   };
   // Row 0: what this transaction routed to protocol_vault, plus the creator pool it keeps on the collector.
-  await insert(0, rows.transferred, rows.creatorPool, "routed", input.signature);
-  // Row 1: protocol share still on the collector (fees that arrived after the read); the router sends it.
-  if (rows.leftover > 0n) await insert(1, rows.leftover, 0n, "claimed", null);
+  await insert(0, rows.transferred, rows.creatorPool, "routed", input.signature, null);
+  // Row 1: protocol share still on the collector. After a bound-quote swap this leftover is already SOL.
+  if (rows.leftover > 0n) {
+    await insert(1, rows.leftover, 0n, "claimed", null, input.leftoverAlreadySol ? rows.leftover : null);
+  }
 }
 
 async function blockIfCollectorShort(input: {
@@ -629,6 +644,7 @@ export async function advanceGraduationJob(input: {
   pool: string;
   send: boolean;
   client?: DynamicBondingCurveClient;
+  swapQuote?: SwapQuoteFn;
 }): Promise<{ pool: string; step: GraduationStep | string; signature: string | null; skipped: string | null }> {
   const client = input.client || new DynamicBondingCurveClient(input.connection as any, "confirmed");
   const poolPk = new PublicKey(input.pool);
@@ -765,19 +781,44 @@ export async function advanceGraduationJob(input: {
       await updateJob(input.db, job.id, `update public.dbc_graduation_jobs set step = 'route', status = 'ready', updated_at = now() where id = $1`);
       return { pool: input.pool, step, signature: null, skipped: "nothing-to-compensate" };
     }
+    const quoteMint = String(config.quoteMint || DBC_QUOTE_MINT);
+    let decimals = quoteDecimalsFromMeta(campaign.rows[0]?.meta, isNativeQuoteMint(quoteMint) ? 9 : 6);
+    if (!isNativeQuoteMint(quoteMint)) {
+      try {
+        decimals = (await getMint(input.connection as any, quoteMintPk(quoteMint), "confirmed")).decimals;
+      } catch {
+        // campaign meta / 6
+      }
+      const ata = getAssociatedTokenAddressSync(quoteMintPk(quoteMint), input.collector.publicKey);
+      const bal = await input.connection.getTokenAccountBalance(ata, "confirmed").catch(() => null);
+      const haveTok = bal ? BigInt(bal.value.amount) : 0n;
+      if (haveTok < applied.paid) {
+        await updateJob(
+          input.db,
+          job.id,
+          `update public.dbc_graduation_jobs
+              set status = 'blocked', blocked_reason = $2, updated_at = now()
+            where id = $1`,
+          [`collector short of quote have ${haveTok.toString()} need ${applied.paid.toString()}`],
+        );
+        return { pool: input.pool, step, signature: null, skipped: "collector-short" };
+      }
+    }
     const tx = new Transaction();
-    tx.add(SystemProgram.transfer({
-      fromPubkey: input.collector.publicKey,
-      toPubkey: new PublicKey(pool.creator),
-      lamports: Number(applied.paid),
-    }));
+    for (const ix of buildD7CompensationIxs({
+      collector: input.collector.publicKey,
+      creator: new PublicKey(pool.creator),
+      quoteMint,
+      amount: applied.paid,
+      decimals,
+    })) tx.add(ix);
     const blocked = await blockIfCollectorShort({
       db: input.db,
       connection: input.connection,
       collector: input.collector,
       jobId: job.id,
       tx,
-      spend: applied.paid,
+      spend: isNativeQuoteMint(quoteMint) ? applied.paid : 0n,
     });
     if (blocked) return { pool: input.pool, step, signature: null, skipped: "collector-short" };
     const sent = await signStoreSend({ db: input.db, connection: input.connection, collector: input.collector, jobId: job.id, tx: tx as any });
@@ -799,7 +840,48 @@ export async function advanceGraduationJob(input: {
       await updateJob(input.db, job.id, `update public.dbc_graduation_jobs set step = 'done', status = 'done', updated_at = now() where id = $1`);
       return { pool: input.pool, step, signature: null, skipped: "nothing-to-route" };
     }
-    const totals = finalizeRouteTotals(slices);
+    const quoteMint = String(config.quoteMint || DBC_QUOTE_MINT);
+    let totals = finalizeRouteTotals(slices);
+    if (!isNativeQuoteMint(quoteMint) && slices.remaining > 0n) {
+      const swapped = await swapClaimedQuoteIfNeeded({
+        db: input.db,
+        connection: input.connection,
+        collector: input.collector,
+        quoteMint,
+        quoteIn: slices.remaining,
+        send: input.send,
+        swapQuote: input.swapQuote,
+      });
+      if (swapped.skipped === "impact-cap" || swapped.skipped === "sending" || swapped.skipped === "failed-on-chain") {
+        return { pool: input.pool, step, signature: null, skipped: swapped.skipped };
+      }
+      if (swapped.solOut <= 0n) {
+        await insertFinalizeRewardEvent({
+          db: input.db, job, slices, signature: `dbc-grad-${input.pool}`, slot: 0, remaining: 0n,
+        });
+        await updateJob(input.db, job.id, `update public.dbc_graduation_jobs set step = 'done', status = 'done', updated_at = now() where id = $1`);
+        return { pool: input.pool, step, signature: null, skipped: "nothing-to-route" };
+      }
+      const sol = splitSolFromQuoteSwap({
+        leagueWeekly: 0n,
+        leagueMonthly: 0n,
+        recruiter: slices.recruiter,
+        squad: slices.squad,
+        airdrop: slices.airdrop,
+        protocol: slices.protocol,
+        creatorPool: 0n,
+      }, swapped.solOut);
+      totals = {
+        leagueWeekly: 0n,
+        leagueMonthly: 0n,
+        recruiter: sol.recruiter,
+        squad: sol.squad,
+        airdrop: sol.airdrop,
+        protocol: sol.protocol,
+        creatorPool: 0n,
+        routed: quoteRoutedTotal(sol),
+      };
+    }
     const vaults = rewardVaults();
     const built = buildRouteTransfers({ collector: input.collector.publicKey, totals, vaults });
     const latest = await input.connection.getLatestBlockhash("confirmed");
@@ -952,6 +1034,7 @@ export async function runDbcGraduationOnce(input: {
   send: boolean;
   pool?: string;
   client?: DynamicBondingCurveClient;
+  swapQuote?: SwapQuoteFn;
   readProgress?: (connection: Connection, pools: string[]) => Promise<Map<string, PoolProgress>>;
 }): Promise<{
   pending: { resolved: number; waiting: number };
@@ -975,6 +1058,7 @@ export async function runDbcGraduationOnce(input: {
       pool,
       send: input.send,
       client: input.client,
+      swapQuote: input.swapQuote,
     });
     if (result.skipped === "not-complete") continue;
     advanced.push(result);
@@ -988,14 +1072,19 @@ async function applyLandedLpClaim(input: {
   row: any;
   confirmed: any;
   signature: string;
+  collector?: Keypair;
+  send?: boolean;
+  swapQuote?: SwapQuoteFn;
 }) {
   let claimed = 0n;
+  let quoteMint = DBC_QUOTE_MINT;
   const dammPool = String(input.row.damm_pool || "");
   if (dammPool) {
     try {
       const cpAmm = new CpAmm(input.connection as any);
       const dpool = await cpAmm.fetchPoolState(new PublicKey(dammPool));
       const quotePk = await campaignQuoteMint(input.db, String(input.row.pool));
+      quoteMint = quotePk.toBase58();
       const quoteVault = dpool.tokenBMint.equals(quotePk) ? dpool.tokenBVault : dpool.tokenAVault;
       claimed = quoteVaultOutflow(input.confirmed, quoteVault.toBase58());
     } catch {
@@ -1006,13 +1095,33 @@ async function applyLandedLpClaim(input: {
   }
   const choice = await campaignFeeChoice(input.db, String(input.row.pool));
   const platform = isPlatformFeeChoice(choice);
-  // The claim takes what the position holds when it lands; the protocol transfer in the same
-  // transaction was sized from an earlier read. Record what moved, and hand any protocol share
-  // still on the collector to the step-5 router as a 'claimed' row.
-  const transferred = (() => {
+  // Bound quote: swap the whole claim to SOL first (D19 creator_pool is then SOL).
+  // Native: the protocol share may already have been transferred in the claim tx.
+  let transferred = (() => {
     const delta = nativeDelta(input.confirmed, rewardVaults().protocol.toBase58());
     return delta > 0n ? delta : 0n;
   })();
+  let leftoverAlreadySol = false;
+  if (claimed > 0n && !isNativeQuoteMint(quoteMint) && input.collector) {
+    const swapped = await swapClaimedQuoteIfNeeded({
+      db: input.db,
+      connection: input.connection,
+      collector: input.collector,
+      quoteMint,
+      quoteIn: claimed,
+      send: input.send !== false,
+      swapQuote: input.swapQuote,
+    });
+    if (swapped.solOut > 0n && swapped.skipped !== "impact-cap" && swapped.skipped !== "failed-on-chain" && swapped.skipped !== "sending") {
+      claimed = swapped.solOut;
+      transferred = 0n;
+      leftoverAlreadySol = true;
+    } else {
+      // Quote is on the collector. Leave lp_signature set so the next pass retries the swap
+      // instead of recording quote units as SOL or as already-routed creator_pool.
+      return;
+    }
+  }
   if (claimed > 0n) {
     await insertLpAccruals({
       db: input.db,
@@ -1021,6 +1130,7 @@ async function applyLandedLpClaim(input: {
       transferred,
       platform,
       signature: input.signature,
+      leftoverAlreadySol,
     });
   }
   await updateJob(
@@ -1094,6 +1204,9 @@ async function signStoreSendLp(input: {
 export async function resolvePendingLpClaims(input: {
   db: Queryable;
   connection: Connection;
+  collector?: Keypair;
+  send?: boolean;
+  swapQuote?: SwapQuoteFn;
 }): Promise<{ resolved: number; waiting: number }> {
   const pending = await input.db.query(
     `select * from public.dbc_graduation_jobs where lp_signature is not null order by id`,
@@ -1130,7 +1243,16 @@ export async function resolvePendingLpClaims(input: {
       waiting += 1;
       continue;
     }
-    await applyLandedLpClaim({ db: input.db, connection: input.connection, row, confirmed, signature });
+    await applyLandedLpClaim({
+      db: input.db,
+      connection: input.connection,
+      row,
+      confirmed,
+      signature,
+      collector: input.collector,
+      send: input.send,
+      swapQuote: input.swapQuote,
+    });
     resolved += 1;
   }
   return { resolved, waiting };
@@ -1142,11 +1264,18 @@ export async function runDbcLpClaimsOnce(input: {
   collector: Keypair;
   send: boolean;
   pool?: string;
+  swapQuote?: SwapQuoteFn;
 }): Promise<{
   pending: { resolved: number; waiting: number };
   advanced: Array<{ pool: string; skipped: string | null; signature: string | null; owed?: string }>;
 }> {
-  const pending = await resolvePendingLpClaims({ db: input.db, connection: input.connection });
+  const pending = await resolvePendingLpClaims({
+    db: input.db,
+    connection: input.connection,
+    collector: input.collector,
+    send: input.send,
+    swapQuote: input.swapQuote,
+  });
   const min = lpClaimMinLamports();
   const jobs = input.pool
     ? await input.db.query(
@@ -1209,8 +1338,9 @@ export async function runDbcLpClaimsOnce(input: {
     })) as any;
     const protocol = rewardVaults().protocol;
     const platform = isPlatformFeeChoice(await campaignFeeChoice(input.db, String(job.pool)));
+    const quotePk = await campaignQuoteMint(input.db, String(job.pool));
     const protocolLamports = platform ? splitPlatformLpFees(owed).protocol : owed;
-    if (protocolLamports > 0n) {
+    if (protocolLamports > 0n && isNativeQuoteMint(quotePk.toBase58())) {
       claimTx.add(SystemProgram.transfer({
         fromPubkey: input.collector.publicKey,
         toPubkey: protocol,

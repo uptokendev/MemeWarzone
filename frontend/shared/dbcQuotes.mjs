@@ -69,9 +69,32 @@ export function normalizeDbcCluster(cluster) {
   return "";
 }
 
-export function quotesForCluster(cluster) {
+/**
+ * Devnet-only override of the USDC mint (proofs mint their own 6-decimal SPL).
+ * Mainnet rows never read this env.
+ */
+export function readDevnetUsdcMint(env = typeof process !== "undefined" ? process.env : {}) {
+  const fromProcess = String(env?.DBC_DEVNET_USDC_MINT || "").trim();
+  let fromVite = "";
+  try {
+    fromVite = String(import.meta.env?.VITE_DBC_DEVNET_USDC_MINT || "").trim();
+  } catch {
+    fromVite = "";
+  }
+  return fromProcess || fromVite || USDC_MINT_DEVNET;
+}
+
+export function quotesForCluster(cluster, env) {
   const key = normalizeDbcCluster(cluster) || "mainnet-beta";
-  return REGISTRY[key] || REGISTRY["mainnet-beta"];
+  const list = REGISTRY[key] || REGISTRY["mainnet-beta"];
+  if (key !== "devnet") return list;
+  const mint = readDevnetUsdcMint(env);
+  if (mint === USDC_MINT_DEVNET) return list;
+  return Object.freeze(list.map((q) => (
+    q.kind === "stable" && q.symbol === "USDC"
+      ? row({ mint, symbol: q.symbol, decimals: q.decimals, tokenProgram: q.tokenProgram, kind: q.kind, enabled: q.enabled, cluster: q.cluster })
+      : q
+  )));
 }
 
 export function nativeQuote(cluster) {

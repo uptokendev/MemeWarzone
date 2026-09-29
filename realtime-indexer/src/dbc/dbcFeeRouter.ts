@@ -11,6 +11,9 @@ import {
   Transaction,
 } from "@solana/web3.js";
 import { bs58Encode, resolveSignature } from "./dbcFeePending.js";
+import { WSOL_MINT, isNativeQuoteMint, quoteMintsForPools } from "./dbcQuoteNative.js";
+import { splitSolFromQuoteSwap, quoteRoutedTotal, type QuoteSlices } from "./dbcQuoteSolSplit.js";
+import { resolvePendingQuoteSwaps, swapClaimedQuoteIfNeeded, type SwapQuoteFn } from "./dbcQuoteToSolSwap.js";
 
 export const TREASURY_PROGRAM_ID = "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX";
 
@@ -66,10 +69,20 @@ export function collectorNeed(routed: bigint, heldCreatorPool: bigint, rent: big
 }
 
 export async function heldCreatorPoolSum(db: Queryable): Promise<bigint> {
+  // Bound-quote creator_pool is still quote tokens on the collector. Only SOL-quoted
+  // pots are reserved as lamports.
   const held = await db.query(
-    `select coalesce(sum(creator_pool), 0)::text as held
-       from public.dbc_fee_accruals
-      where status in ('claimed', 'routing', 'routed')`,
+    `select coalesce(sum(a.creator_pool), 0)::text as held
+       from public.dbc_fee_accruals a
+       left join public.campaigns c
+         on c.chain_id = 101 and c.campaign_address = a.pool
+      where a.status in ('claimed', 'routing', 'routed')
+        and coalesce(
+          nullif(c.meta #>> '{dbc,quoteMint}', ''),
+          nullif(c.meta #>> '{solanaGraduation,quoteMint}', ''),
+          $1
+        ) = $1`,
+    [WSOL_MINT],
   );
   // Step 5b pays the creator pot out (holders deposit, split transfer, buyback). A payout that is
   // sending or landed has left, or is leaving, the collector, so it is no longer held.
@@ -189,12 +202,14 @@ export async function resolvePendingRoutes(input: {
   return { resolved, waiting };
 }
 
-export async function routeClaimedAccruals(input: {
+async function sendRouteForIds(input: {
   db: Queryable;
   connection: Connection;
   collector: Keypair;
   send: boolean;
   treasuryProgram?: string;
+  ids: string[];
+  totals: RouteTotals;
 }): Promise<{
   totals: RouteTotals;
   ids: string[];
@@ -202,28 +217,7 @@ export async function routeClaimedAccruals(input: {
   destinations: Array<{ seed: string; lamports: bigint; to: string }>;
   skipped: string | null;
 }> {
-  await resolvePendingRoutes({ db: input.db, connection: input.connection });
-  const stillRouting = await input.db.query(
-    `select id from public.dbc_fee_accruals where status = 'routing' limit 1`,
-  );
-  if ((stillRouting.rowCount ?? stillRouting.rows.length) > 0) {
-    return { totals: sumClaimedSlices([]), ids: [], signature: null, destinations: [], skipped: "routing-in-flight" };
-  }
-  const blocked = await input.db.query(
-    `select distinct pool, blocked_reason from public.dbc_fee_accruals where status = 'blocked'`,
-  );
-  if (blocked.rows.length) {
-    console.error("[dbc-fee] blocked pools (other pools still route)", blocked.rows.map((row: { pool: string; blocked_reason: string }) => ({
-      pool: row.pool,
-      reason: row.blocked_reason,
-    })));
-  }
-  const rows = await input.db.query(
-    `select id, league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool
-       from public.dbc_fee_accruals where status = 'claimed' order by id`,
-  );
-  const ids = rows.rows.map((row: { id: unknown }) => String(row.id));
-  const totals = sumClaimedSlices(rows.rows);
+  const { ids, totals } = input;
   if (!ids.length || totals.routed <= 0n) {
     return { totals, ids, signature: null, destinations: [], skipped: "nothing-to-route" };
   }
@@ -293,7 +287,179 @@ export async function routeClaimedAccruals(input: {
       signature,
       error: String(error instanceof Error ? error.message : error),
     });
-      return { totals, ids, signature, destinations: built.destinations, skipped: "routing" };
+    return { totals, ids, signature, destinations: built.destinations, skipped: "routing" };
   }
   return { totals, ids, signature, destinations: built.destinations, skipped: "routing" };
+}
+
+function slicesFromTotals(totals: RouteTotals): QuoteSlices {
+  return {
+    leagueWeekly: totals.leagueWeekly,
+    leagueMonthly: totals.leagueMonthly,
+    recruiter: totals.recruiter,
+    squad: totals.squad,
+    airdrop: totals.airdrop,
+    protocol: totals.protocol,
+    creatorPool: totals.creatorPool,
+  };
+}
+
+function totalsFromSolSlices(sol: QuoteSlices): RouteTotals {
+  const routed = quoteRoutedTotal(sol);
+  return {
+    leagueWeekly: sol.leagueWeekly,
+    leagueMonthly: sol.leagueMonthly,
+    recruiter: sol.recruiter,
+    squad: sol.squad,
+    airdrop: sol.airdrop,
+    protocol: sol.protocol,
+    creatorPool: 0n,
+    routed,
+  };
+}
+
+export async function routeClaimedAccruals(input: {
+  db: Queryable;
+  connection: Connection;
+  collector: Keypair;
+  send: boolean;
+  treasuryProgram?: string;
+  swapQuote?: SwapQuoteFn;
+}): Promise<{
+  totals: RouteTotals;
+  ids: string[];
+  signature: string | null;
+  destinations: Array<{ seed: string; lamports: bigint; to: string }>;
+  skipped: string | null;
+}> {
+  await resolvePendingRoutes({ db: input.db, connection: input.connection });
+  await resolvePendingQuoteSwaps({ db: input.db, connection: input.connection });
+  const stillRouting = await input.db.query(
+    `select id from public.dbc_fee_accruals where status = 'routing' limit 1`,
+  );
+  if ((stillRouting.rowCount ?? stillRouting.rows.length) > 0) {
+    return { totals: sumClaimedSlices([]), ids: [], signature: null, destinations: [], skipped: "routing-in-flight" };
+  }
+  const blocked = await input.db.query(
+    `select distinct pool, blocked_reason from public.dbc_fee_accruals where status = 'blocked'`,
+  );
+  if (blocked.rows.length) {
+    console.error("[dbc-fee] blocked pools (other pools still route)", blocked.rows.map((row: { pool: string; blocked_reason: string }) => ({
+      pool: row.pool,
+      reason: row.blocked_reason,
+    })));
+  }
+  const rows = await input.db.query(
+    `select id, pool, league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool,
+            quote_swap_id, sol_received
+       from public.dbc_fee_accruals where status = 'claimed' order by id`,
+  );
+  if (!rows.rows.length) {
+    return { totals: sumClaimedSlices([]), ids: [], signature: null, destinations: [], skipped: "nothing-to-route" };
+  }
+  const mintByPool = await quoteMintsForPools(input.db, rows.rows.map((row: { pool: string }) => String(row.pool)));
+  const groups = new Map<string, any[]>();
+  for (const row of rows.rows) {
+    const mint = mintByPool.get(String(row.pool)) || WSOL_MINT;
+    const list = groups.get(mint) || [];
+    list.push(row);
+    groups.set(mint, list);
+  }
+  const nativeRows = groups.get(WSOL_MINT) || [];
+  const nativeTotals = sumClaimedSlices(nativeRows);
+  if (nativeRows.length && nativeTotals.routed > 0n) {
+    return sendRouteForIds({
+      db: input.db,
+      connection: input.connection,
+      collector: input.collector,
+      send: input.send,
+      treasuryProgram: input.treasuryProgram,
+      ids: nativeRows.map((row) => String(row.id)),
+      totals: nativeTotals,
+    });
+  }
+  let boundMint = "";
+  let boundRows: any[] = [];
+  for (const [mint, list] of groups) {
+    if (isNativeQuoteMint(mint)) continue;
+    const totals = sumClaimedSlices(list);
+    if (totals.routed > 0n) {
+      boundMint = mint;
+      boundRows = list;
+      break;
+    }
+  }
+  if (!boundMint.length) {
+    const ids = rows.rows.map((row: { id: unknown }) => String(row.id));
+    return { totals: sumClaimedSlices(rows.rows), ids, signature: null, destinations: [], skipped: "nothing-to-route" };
+  }
+  const alreadySol = boundRows.filter((row) => BigInt(String(row.sol_received || "0")) > 0n && !row.quote_swap_id);
+  const alreadyTotals = sumClaimedSlices(alreadySol);
+  if (alreadySol.length && alreadyTotals.routed > 0n) {
+    return sendRouteForIds({
+      db: input.db,
+      connection: input.connection,
+      collector: input.collector,
+      send: input.send,
+      treasuryProgram: input.treasuryProgram,
+      ids: alreadySol.map((row) => String(row.id)),
+      totals: alreadyTotals,
+    });
+  }
+  const quoteTotals = sumClaimedSlices(boundRows);
+  const ids = boundRows.map((row) => String(row.id));
+  const existingSwapId = boundRows.find((row) => row.quote_swap_id)?.quote_swap_id;
+  let solOut = 0n;
+  let swapId: number | undefined;
+  if (existingSwapId) {
+    const existing = await input.db.query(
+      `select sol_out, status from public.dbc_quote_swaps where id = $1`,
+      [existingSwapId],
+    );
+    const status = String(existing.rows[0]?.status || "");
+    if (status === "sending") {
+      return { totals: quoteTotals, ids, signature: null, destinations: [], skipped: "swap-in-flight" };
+    }
+    if (status === "done") {
+      solOut = BigInt(String(existing.rows[0]?.sol_out || "0"));
+      swapId = Number(existingSwapId);
+    }
+  }
+  if (!swapId) {
+    const swapped = await swapClaimedQuoteIfNeeded({
+      db: input.db,
+      connection: input.connection,
+      collector: input.collector,
+      quoteMint: boundMint,
+      quoteIn: quoteTotals.routed,
+      send: input.send,
+      swapQuote: input.swapQuote,
+    });
+    if (swapped.skipped === "impact-cap" || swapped.skipped === "sending" || swapped.skipped === "failed-on-chain") {
+      return { totals: quoteTotals, ids, signature: null, destinations: [], skipped: swapped.skipped };
+    }
+    solOut = swapped.solOut;
+    swapId = swapped.id;
+  }
+  if (solOut <= 0n) {
+    return { totals: quoteTotals, ids, signature: null, destinations: [], skipped: "nothing-to-route" };
+  }
+  const solTotals = totalsFromSolSlices(splitSolFromQuoteSwap(slicesFromTotals(quoteTotals), solOut));
+  await updateIds(
+    input.db,
+    ids,
+    `update public.dbc_fee_accruals
+        set quote_swap_id = $2, sol_received = $3
+      where id = any($1::bigint[])`,
+    [swapId ?? null, solOut.toString()],
+  );
+  return sendRouteForIds({
+    db: input.db,
+    connection: input.connection,
+    collector: input.collector,
+    send: input.send,
+    treasuryProgram: input.treasuryProgram,
+    ids,
+    totals: solTotals,
+  });
 }

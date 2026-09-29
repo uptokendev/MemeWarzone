@@ -8,7 +8,7 @@ import { ENV } from "./env.js";
 import { accrueDbcFees } from "./dbc/dbcFeeAccruals.js";
 import { claimDuePools, resolvePendingClaims } from "./dbc/dbcFeeClaimer.js";
 import { CollectorShortError, resolvePendingRoutes, routeClaimedAccruals } from "./dbc/dbcFeeRouter.js";
-import { sweepReferralToProtocol } from "./dbc/dbcReferralSweep.js";
+import { referralAccountsFromEnv, sweepReferralToProtocol } from "./dbc/dbcReferralSweep.js";
 
 function truthy(value: unknown): boolean {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -70,6 +70,7 @@ export async function runDbcFeeRoutingOnce(opts: {
   claimMinLamports?: bigint;
   route?: boolean;
   sweep?: boolean;
+  swapQuote?: import("./dbc/dbcQuoteToSolSwap.js").SwapQuoteFn;
 } = {}) {
   const db = opts.db || pool;
   const send = opts.send ?? sendEnabled();
@@ -91,7 +92,7 @@ export async function runDbcFeeRoutingOnce(opts: {
   let routed = null;
   if (opts.route !== false) {
     try {
-      routed = await routeClaimedAccruals({ db, connection, collector, send });
+      routed = await routeClaimedAccruals({ db, connection, collector, send, swapQuote: opts.swapQuote });
       if (send) await resolvePendingRoutes({ db, connection });
     } catch (error) {
       if (error instanceof CollectorShortError) {
@@ -102,18 +103,23 @@ export async function runDbcFeeRoutingOnce(opts: {
       }
     }
   }
-  let swept = null;
+  let swept: Array<{ swept: bigint; signature: string | null; referralClosed: boolean; skipped?: string }> | null = null;
   const referralOwner = opts.referralOwner === undefined ? loadReferralOwner() : opts.referralOwner;
-  const referralAta = String(process.env.DBC_REFERRAL_TOKEN_ACCOUNT || "").trim();
-  if (opts.sweep !== false && referralOwner && referralAta) {
-    swept = await sweepReferralToProtocol({
-      db,
-      connection,
-      collector,
-      referralOwner,
-      referralTokenAccount: referralAta,
-      send,
-    });
+  const accounts = referralAccountsFromEnv();
+  if (opts.sweep !== false && referralOwner && accounts.length) {
+    swept = [];
+    for (const account of accounts) {
+      swept.push(await sweepReferralToProtocol({
+        db,
+        connection,
+        collector,
+        referralOwner,
+        referralTokenAccount: account.tokenAccount,
+        quoteMint: account.mint,
+        send,
+        swapQuote: opts.swapQuote,
+      }));
+    }
   }
   return { accrued, claimed, routed, swept };
 }
@@ -157,7 +163,7 @@ export function startDbcFeeRoutingWorker() {
           signature: row.signature,
         })),
         routed: result.routed?.signature || result.routed?.skipped || null,
-        swept: result.swept?.signature || result.swept?.skipped || null,
+        swept: (result.swept || []).map((row) => row.signature || row.skipped || null),
       });
     } catch (error) {
       console.error("[dbc-fee] loop failed", error instanceof Error ? error.message : String(error));

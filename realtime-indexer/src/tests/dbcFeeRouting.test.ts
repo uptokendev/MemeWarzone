@@ -24,7 +24,9 @@ const {
   rewardVaults,
   sumClaimedSlices,
 } = await import("../dbc/dbcFeeRouter.js");
-const { referralSweepKeepsAccount } = await import("../dbc/dbcReferralSweep.js");
+const { referralSweepKeepsAccount, referralAccountsFromEnv } = await import("../dbc/dbcReferralSweep.js");
+const { buildD7CompensationIxs } = await import("../dbc/dbcQuoteTransfers.js");
+const { TOKEN_PROGRAM_ID } = await import("@solana/spl-token");
 
 const F = {
   tradingFee: 320_000n,
@@ -166,6 +168,36 @@ test("referral sweep keeps the referral account", () => {
   const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbc/dbcReferralSweep.ts"), "utf8");
   assert.match(source, /referral ATA is never closed/);
   assert.match(source, /if \(!after\) throw new Error\("DBC referral token account was closed/);
+  assert.match(source, /referralAccountsFromEnv/);
+  assert.match(source, /solana:dbc:referral-sweep:\$\{quoteMint\}/);
+});
+
+test("referralAccountsFromEnv reads the mint map plus the legacy SOL account", () => {
+  const mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+  const ata = Keypair.generate().publicKey.toBase58();
+  const solAta = Keypair.generate().publicKey.toBase58();
+  const rows = referralAccountsFromEnv({
+    DBC_REFERRAL_TOKEN_ACCOUNTS: JSON.stringify({ [mint]: ata }),
+    DBC_REFERRAL_TOKEN_ACCOUNT: solAta,
+  });
+  assert.equal(rows.some((row) => row.mint === mint && row.tokenAccount === ata), true);
+  assert.equal(rows.some((row) => row.tokenAccount === solAta), true);
+});
+
+test("D7 is a System transfer for SOL and TransferChecked for a bound quote", () => {
+  const collector = Keypair.generate().publicKey;
+  const creator = Keypair.generate().publicKey;
+  const native = buildD7CompensationIxs({
+    collector, creator, quoteMint: "So11111111111111111111111111111111111111112", amount: 100n, decimals: 9,
+  });
+  assert.equal(native.length, 1);
+  assert.equal(native[0].programId.equals(SystemProgram.programId), true);
+  const mint = Keypair.generate().publicKey;
+  const bound = buildD7CompensationIxs({
+    collector, creator, quoteMint: mint.toBase58(), amount: 1_000_000n, decimals: 6,
+  });
+  assert.equal(bound.length, 2);
+  assert.equal(bound[1].programId.equals(TOKEN_PROGRAM_ID), true);
 });
 
 test("fee choice keep is creator mode; holders/split/buyback are platform", () => {

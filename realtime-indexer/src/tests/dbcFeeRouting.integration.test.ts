@@ -24,6 +24,7 @@ test.afterEach(async () => {
 const { accrueDbcFees, resolveTraderProfile } = await import("../dbc/dbcFeeAccruals.js");
 const { claimDuePools, claimPoolPartnerFees, resolvePendingClaims, quoteVaultOutflow } = await import("../dbc/dbcFeeClaimer.js");
 const { routeClaimedAccruals, resolvePendingRoutes, CollectorShortError, collectorNeed } = await import("../dbc/dbcFeeRouter.js");
+const { defaultStubSwapQuote } = await import("../dbc/dbcQuoteToSolSwap.js");
 
 const collector = Keypair.generate();
 const vault = Keypair.generate();
@@ -307,6 +308,76 @@ test("one blocked pool does not stop another pool from routing", async () => {
 
 test("collector need includes held creator_pool", () => {
   assert.equal(collectorNeed(70n, 20n, 890880n, 5000n), 70n + 20n + 890880n + 5000n);
+});
+
+test("bound quote claim swaps to SOL then routes the SOL received", async () => {
+  const pool = Keypair.generate().publicKey.toBase58();
+  const usdc = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+  await pg.pool.query(
+    `insert into public.campaigns (chain_id, campaign_address, creator_address, launch_type, is_active, meta)
+     values (101, $1, $2, 'dbc', true, $3::jsonb)
+     on conflict (chain_id, campaign_address) do nothing`,
+    [pool, collector.publicKey.toBase58(), JSON.stringify({ dbc: { quoteMint: usdc, quoteDecimals: 6, feeChoice: "keep" } })],
+  );
+  await pg.pool.query(
+    `insert into public.dbc_fee_accruals (
+       pool, tx_hash, log_index, trader, profile, fee_total, trading_fee, protocol_fee, referral_fee, collector_amount,
+       league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool, status
+     ) values ($1,'bound-swap',0,'W','standard_unlinked',1000000,800000,200000,0,1000000,0,0,0,0,175000,825000,0,'claimed')`,
+    [pool],
+  );
+  const conn = stubConnection({});
+  const routed = await routeClaimedAccruals({
+    db: pg.pool,
+    connection: conn as any,
+    collector,
+    send: true,
+    swapQuote: defaultStubSwapQuote(10_000_000n),
+  });
+  assert.equal(routed.totals.routed, 10_000_000n);
+  assert.equal(routed.destinations.reduce((sum, item) => sum + item.lamports, 0n), 10_000_000n);
+  const row = await pg.pool.query(
+    `select sol_received::text as sol, quote_swap_id from public.dbc_fee_accruals where pool=$1`,
+    [pool],
+  );
+  assert.equal(row.rows[0].sol, "10000000");
+  assert.ok(row.rows[0].quote_swap_id);
+});
+
+test("native claimed rows route first when a bound pool is also claimed", async () => {
+  const nativePool = Keypair.generate().publicKey.toBase58();
+  const boundPool = Keypair.generate().publicKey.toBase58();
+  await insertCampaign(nativePool);
+  await pg.pool.query(
+    `insert into public.campaigns (chain_id, campaign_address, creator_address, launch_type, is_active, meta)
+     values (101, $1, $2, 'dbc', true, $3::jsonb)
+     on conflict (chain_id, campaign_address) do nothing`,
+    [boundPool, collector.publicKey.toBase58(), JSON.stringify({ dbc: { quoteMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU" } })],
+  );
+  for (const [pool, tx] of [[nativePool, "mix-n"], [boundPool, "mix-b"]] as const) {
+    await pg.pool.query(
+      `insert into public.dbc_fee_accruals (
+         pool, tx_hash, log_index, trader, profile, fee_total, trading_fee, protocol_fee, referral_fee, collector_amount,
+         league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool, status
+       ) values ($1,$2,0,'W','standard_unlinked',1000,800,200,0,1000,0,0,0,0,0,1000,0,'claimed')`,
+      [pool, tx],
+    );
+  }
+  const conn = stubConnection({});
+  const routed = await routeClaimedAccruals({
+    db: pg.pool,
+    connection: conn as any,
+    collector,
+    send: true,
+    swapQuote: defaultStubSwapQuote(99n),
+  });
+  assert.equal(routed.totals.routed, 1000n);
+  const statuses = await pg.pool.query(
+    `select pool, status from public.dbc_fee_accruals where pool in ($1,$2)`,
+    [nativePool, boundPool],
+  );
+  assert.equal(statuses.rows.find((r: { pool: string }) => r.pool === nativePool)?.status, "routing");
+  assert.equal(statuses.rows.find((r: { pool: string }) => r.pool === boundPool)?.status, "claimed");
 });
 
 test("quoteVaultOutflow still pre minus post", () => {

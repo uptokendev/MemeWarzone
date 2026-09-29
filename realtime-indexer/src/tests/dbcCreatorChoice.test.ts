@@ -83,6 +83,19 @@ test("snapshot counts wallets only: program-owned accounts and excluded wallets 
   assert.deepEqual(balances, [{ owner: wallet, amount: 12n }]);
 });
 
+test("buyback on a bound quote skips with quote-not-sol", async () => {
+  const { buybackSkipReason } = await import("../dbc/dbcCreatorPayouts.js");
+  const { readFileSync } = await import("node:fs");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  assert.equal(buybackSkipReason("So11111111111111111111111111111111111111112"), null);
+  assert.equal(buybackSkipReason(""), null);
+  assert.equal(buybackSkipReason("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"), "quote-not-sol");
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbc/dbcCreatorPayouts.ts"), "utf8");
+  assert.match(source, /buybackSkipReason/);
+  assert.match(source, /quote-not-sol/);
+});
+
 test("buyback size: the largest amount under the impact cap, never above the budget", async () => {
   // impact grows linearly: 1 bps per 1,000,000 lamports
   const quote = async (amountIn: bigint) => ({ amountIn, minOut: amountIn * 10n, impactBps: Number(amountIn) / 1_000_000 });

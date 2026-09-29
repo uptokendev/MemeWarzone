@@ -6,20 +6,17 @@
  *
  * Devnet has no Jupiter. Pass `swapQuote` to stub a fixed SOL out.
  */
-import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { Connection, Keypair, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { bs58Encode, resolveSignature } from "./dbcFeePending.js";
 import { splitSolFromQuoteSwap, swapImpactRefused, quoteSwapMaxImpactBps, type QuoteSlices } from "./dbcQuoteSolSplit.js";
-const WSOL_MINT = "So11111111111111111111111111111111111111112";
+import { WSOL_MINT, isNativeQuoteMint } from "./dbcQuoteNative.js";
 
 type Queryable = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }> };
 
 export type SwapQuoteFn = (input: {
   quoteMint: string;
   amount: bigint;
-}) => Promise<{ solOut: bigint; impactBps: bigint; transaction?: Transaction | null }>;
-
-const BACKOFF = [30, 60, 120, 300];
+}) => Promise<{ solOut: bigint; impactBps: bigint; transaction?: Transaction | VersionedTransaction | null }>;
 
 async function getTx(connection: Connection, signature: string) {
   return connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
@@ -27,6 +24,49 @@ async function getTx(connection: Connection, signature: string) {
 
 export function defaultStubSwapQuote(solOut: bigint, impactBps = 0n): SwapQuoteFn {
   return async () => ({ solOut, impactBps, transaction: null });
+}
+
+/**
+ * Quote mint → SOL through Jupiter v6. Devnet has no Jupiter; proofs pass a stub.
+ */
+export async function jupiterQuoteToSolSwap(input: {
+  quoteMint: string;
+  amount: bigint;
+  userPublicKey: string;
+  fetchImpl?: typeof fetch;
+  slippageBps?: number;
+}): Promise<{ solOut: bigint; impactBps: bigint; transaction?: Transaction | VersionedTransaction | null }> {
+  const fetchImpl = input.fetchImpl || fetch;
+  const slippageBps = input.slippageBps ?? 50;
+  const url = new URL("https://quote-api.jup.ag/v6/quote");
+  url.searchParams.set("inputMint", input.quoteMint);
+  url.searchParams.set("outputMint", WSOL_MINT);
+  url.searchParams.set("amount", input.amount.toString());
+  url.searchParams.set("slippageBps", String(slippageBps));
+  const quoted = await fetchImpl(url).then((r) => r.json() as Promise<any>);
+  const solOut = BigInt(quoted.outAmount || 0);
+  const impactBps = BigInt(Math.round(Number(quoted.priceImpactPct || 0) * 10_000));
+  const swap = await fetchImpl("https://quote-api.jup.ag/v6/swap", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      quoteResponse: quoted,
+      userPublicKey: input.userPublicKey,
+      wrapAndUnwrapSol: true,
+    }),
+  }).then((r) => r.json() as Promise<any>);
+  const buf = Buffer.from(String(swap.swapTransaction || ""), "base64");
+  let transaction: Transaction | VersionedTransaction | null = null;
+  try {
+    transaction = Transaction.from(buf);
+  } catch {
+    try {
+      transaction = VersionedTransaction.deserialize(buf);
+    } catch {
+      transaction = null;
+    }
+  }
+  return { solOut, impactBps, transaction };
 }
 
 export async function resolvePendingQuoteSwaps(input: {
@@ -87,11 +127,15 @@ export async function swapClaimedQuoteIfNeeded(input: {
   send: boolean;
   swapQuote?: SwapQuoteFn;
 }): Promise<{ skipped: string | null; solOut: bigint; id?: number }> {
-  if (!input.quoteMint || input.quoteMint === WSOL_MINT) {
+  if (isNativeQuoteMint(input.quoteMint)) {
     return { skipped: "native", solOut: input.quoteIn };
   }
   if (input.quoteIn <= 0n) return { skipped: "nothing-to-swap", solOut: 0n };
-  const quoter = input.swapQuote || defaultStubSwapQuote(0n);
+  const quoter = input.swapQuote || (async (args) => jupiterQuoteToSolSwap({
+    quoteMint: args.quoteMint,
+    amount: args.amount,
+    userPublicKey: input.collector.publicKey.toBase58(),
+  }));
   const quoted = await quoter({ quoteMint: input.quoteMint, amount: input.quoteIn });
   const max = quoteSwapMaxImpactBps();
   if (swapImpactRefused(quoted.impactBps, max)) {
@@ -112,12 +156,18 @@ export async function swapClaimedQuoteIfNeeded(input: {
     await input.db.query(`update public.dbc_quote_swaps set status = 'done' where id = $1`, [id]);
     return { skipped: quoted.transaction ? "dry-run" : "stubbed", solOut: quoted.solOut, id };
   }
-  const tx = quoted.transaction;
   const latest = await input.connection.getLatestBlockhash("confirmed");
-  tx.feePayer = input.collector.publicKey;
-  tx.recentBlockhash = latest.blockhash;
-  tx.partialSign(input.collector);
-  const serialized = tx.serialize();
+  const tx = quoted.transaction;
+  let serialized: Buffer;
+  if (tx instanceof VersionedTransaction) {
+    tx.sign([input.collector]);
+    serialized = Buffer.from(tx.serialize());
+  } else {
+    tx.feePayer = input.collector.publicKey;
+    tx.recentBlockhash = latest.blockhash;
+    tx.partialSign(input.collector);
+    serialized = tx.serialize();
+  }
   let signature = bs58Encode(serialized.subarray(1, 65));
   await input.db.query(
     `update public.dbc_quote_swaps
@@ -149,8 +199,3 @@ export async function swapClaimedQuoteIfNeeded(input: {
   await input.db.query(`update public.dbc_quote_swaps set status = 'done' where id = $1`, [id]);
   return { skipped: null, solOut: quoted.solOut, id };
 }
-
-void getAssociatedTokenAddressSync;
-void PublicKey;
-void BACKOFF;
-void Connection;

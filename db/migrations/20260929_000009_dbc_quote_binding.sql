@@ -6,7 +6,8 @@ alter table public.curve_trades
   add column if not exists quote_amount_raw numeric;
 
 alter table public.dbc_fee_accruals
-  add column if not exists quote_swap_id bigint;
+  add column if not exists quote_swap_id bigint,
+  add column if not exists sol_received numeric;
 
 create table if not exists public.dbc_quote_swaps (
   id bigserial primary key,
