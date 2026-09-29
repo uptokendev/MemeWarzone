@@ -6,8 +6,6 @@ import crypto from "node:crypto";
 import BN from "bn.js";
 import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from "@meteora-ag/dynamic-bonding-curve-sdk";
-import { NATIVE_MINT } from "@solana/spl-token";
-
 import { json, badMethod, readJson } from "../../server/http.js";
 import { requireWalletActionAuth } from "../lib/walletActionAuth.js";
 import {
@@ -30,6 +28,7 @@ import { readSolUsdMicros } from "../lib/solUsdMicros.js";
 import { solPriceStep } from "../lib/dbc/dbcPriceSteps.mjs";
 import { requiredCluster, createDbcConfigLadder } from "../lib/dbc/dbcConfigLadder.js";
 import { parseFeeChoice } from "../lib/dbc/dbcFeeChoice.mjs";
+import { requireEnabledQuote, stableStep } from "../../shared/dbcQuotes.mjs";
 import { firstBuyExceedsCap, quoteFirstBuyOnConfig } from "../lib/dbc/dbcFirstBuyQuote.mjs";
 import { assertDbcCreatorLimits, loadDbcCreatorLimits } from "../lib/dbc/dbcCreateLimits.js";
 import { isDbcLaunchEnabled, dbcLaunchDisabledPayload } from "./launch-config.js";
@@ -204,10 +203,14 @@ async function createOrLoadReservation(db, { creatorWallet, chainId, cluster, ti
   }
 }
 
-function poolConfigStateFromParams(configParams) {
+function resolveCreateQuote(cluster, mint) {
+  return requireEnabledQuote(cluster, String(mint || "").trim() || DBC_QUOTE_MINT);
+}
+
+function poolConfigStateFromParams(configParams, quoteMint = DBC_QUOTE_MINT) {
   return {
     tokenType: Number(configParams.tokenType ?? 0),
-    quoteMint: new PublicKey(DBC_QUOTE_MINT),
+    quoteMint: new PublicKey(quoteMint),
     quoteTokenFlag: 0,
     activationType: Number(configParams.activationType ?? 0),
     poolFees: configParams.poolFees,
@@ -228,6 +231,7 @@ async function buildCreatePoolTransaction({
   uri,
   firstBuyLamports,
   configParams,
+  quoteMint = DBC_QUOTE_MINT,
 }) {
   const creator = new PublicKey(creatorWallet);
   const baseMint = new PublicKey(mint);
@@ -256,7 +260,7 @@ async function buildCreatePoolTransaction({
     tx = await client.creator.createPool(createPoolParam);
   }
   tx.feePayer = creator;
-  const pool = deriveDbcPoolAddress(NATIVE_MINT, baseMint, config);
+  const pool = deriveDbcPoolAddress(new PublicKey(quoteMint), baseMint, config);
   return { tx, pool: pool.toBase58() };
 }
 
@@ -486,14 +490,26 @@ export function createDbcCreateHandler(deps = {}) {
       }
     }
 
-    const solUsdMicros = await (deps.readSolUsdMicros || readSolUsdMicros)({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
-    const step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
+    let quote;
+    try {
+      quote = resolveCreateQuote(cluster, body.quoteMint || body.quote);
+    } catch (error) {
+      return json(res, 400, { ok: false, error: error.message, code: error.code || "DBC_QUOTE_UNKNOWN" });
+    }
+    let step;
+    if (quote.kind === "native") {
+      const solUsdMicros = await (deps.readSolUsdMicros || readSolUsdMicros)({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
+      step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
+    } else {
+      step = stableStep();
+    }
     const ladder = deps.ladder || createDbcConfigLadder({ db: database, env, cluster });
     const ensured = await ladder.ensureLaunchConfig({
       targetUsdMicros,
       stepIndex: step.stepIndex,
       stepUsdMicros: step.stepUsdMicros,
       creatorFeeMode: fee.creatorFeeMode,
+      quoteMint: quote.mint,
     });
     const quoteFn = deps.quoteFirstBuyOnConfig || quoteFirstBuyOnConfig;
     const firstBuy = quoteFn(ensured.configParams, firstBuyLamports);
@@ -520,6 +536,7 @@ export function createDbcCreateHandler(deps = {}) {
       uri,
       firstBuyLamports,
       configParams: ensured.configParams,
+      quoteMint: quote.mint,
     });
     const serialized = serializeUnsigned(tx);
     const nowTs = Math.floor(Date.now() / 1000);
@@ -545,6 +562,9 @@ export function createDbcCreateHandler(deps = {}) {
       feeChoice: fee.feeChoice,
       creatorSharePct: fee.creatorSharePct,
       creatorFeeMode: fee.creatorFeeMode,
+      quoteMint: quote.mint,
+      quoteDecimals: quote.decimals,
+      quoteSymbol: quote.symbol,
       targetUsdMicros: targetUsdMicros.toString(),
       stepIndex: step.stepIndex,
       firstBuyLamports: firstBuyLamports.toString(),
@@ -566,6 +586,9 @@ export function createDbcCreateHandler(deps = {}) {
         tokensOut: firstBuy.tokensOut.toString(),
         bps: firstBuy.bps.toString(),
       },
+      quoteMint: quote.mint,
+      quoteSymbol: quote.symbol,
+      quoteDecimals: quote.decimals,
       finalizeToken,
       metadataUri: uri,
     });
@@ -608,6 +631,9 @@ export function createDbcCreateHandler(deps = {}) {
       stepIndex: token.stepIndex,
       feeChoice: token.feeChoice,
       creatorSharePct: token.creatorSharePct,
+      quoteMint: token.quoteMint || DBC_QUOTE_MINT,
+      quoteDecimals: token.quoteDecimals ?? 9,
+      quoteSymbol: token.quoteSymbol || "SOL",
       firstBuySignature: String(body.signature || body.deployTxHash || "") || null,
       firstBuyLamports: token.firstBuyLamports,
     };
@@ -686,8 +712,19 @@ export function createDbcCreateHandler(deps = {}) {
     if (targetUsdMicros === DBC_DEVNET_TEST_TARGET_USD_MICROS && cluster !== "devnet") {
       return { error: { ok: false, error: "the $150 target is only for devnet", code: "DBC_TEST_TARGET_REFUSED" } };
     }
-    const solUsdMicros = await (deps.readSolUsdMicros || readSolUsdMicros)({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
-    const step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
+    let quote;
+    try {
+      quote = resolveCreateQuote(cluster, body.quoteMint || body.quote);
+    } catch (error) {
+      return { error: { ok: false, error: error.message, code: error.code || "DBC_QUOTE_UNKNOWN" } };
+    }
+    let step;
+    if (quote.kind === "native") {
+      const solUsdMicros = await (deps.readSolUsdMicros || readSolUsdMicros)({ maxStaleMs: DBC_SOL_USD_MAX_STALE_MS });
+      step = (deps.solPriceStep || solPriceStep)(solUsdMicros);
+    } else {
+      step = stableStep();
+    }
     const database = await db();
     const ladder = deps.ladder || createDbcConfigLadder({ db: database, env, cluster });
     const ensured = await ladder.ensureLaunchConfig({
@@ -695,8 +732,9 @@ export function createDbcCreateHandler(deps = {}) {
       stepIndex: step.stepIndex,
       stepUsdMicros: step.stepUsdMicros,
       creatorFeeMode: fee.creatorFeeMode,
+      quoteMint: quote.mint,
     });
-    return { fee, targetUsdMicros, cluster, step, ensured };
+    return { fee, targetUsdMicros, cluster, step, ensured, quote };
   }
 
   async function handleQuoteFirstBuy(body, res) {

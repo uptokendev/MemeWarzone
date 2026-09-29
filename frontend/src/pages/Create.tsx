@@ -30,6 +30,7 @@ import {
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { isDbcLaunchEnabled } from "@/lib/dbcLaunchEnabled";
+import { enabledQuotes, WSOL_MINT } from "../../shared/dbcQuotes.mjs";
 import { getDbcGraduationTiers } from "@/lib/dbcGraduationTiers";
 import {
   authorizeDbcCreate,
@@ -180,6 +181,12 @@ const Create = () => {
   const [dbcFeeChoice, setDbcFeeChoice] = useState<DbcFeeChoice>("keep");
   const [dbcCreatorSharePct, setDbcCreatorSharePct] = useState("50");
   const [dbcFirstBuySol, setDbcFirstBuySol] = useState("");
+  const [dbcQuoteMint, setDbcQuoteMint] = useState(WSOL_MINT);
+  const dbcQuoteOptions = useMemo(
+    () => enabledQuotes(String(import.meta.env.VITE_SOLANA_CLUSTER || "solana-mainnet-beta")),
+    [],
+  );
+  const dbcQuote = dbcQuoteOptions.find((q) => q.mint === dbcQuoteMint) || dbcQuoteOptions[0];
   const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ tokensOut: string; bps: string; exceedsCap: boolean } | null>(null);
   const [creatorEligibility, setCreatorEligibility] = useState<ScheduledCreatorLaunchEligibility | null>(null);
   const [creatorEligibilityError, setCreatorEligibilityError] = useState<string | null>(null);
@@ -317,7 +324,8 @@ const Create = () => {
       setDbcFirstBuyQuote(null);
       return;
     }
-    const lamports = Math.round(sol * 1_000_000_000);
+    const scale = 10 ** Number(dbcQuote?.decimals ?? 9);
+    const lamports = Math.round(sol * scale);
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void quoteDbcFirstBuy({
@@ -325,6 +333,7 @@ const Create = () => {
         feeChoice: dbcFeeChoice,
         creatorSharePct: dbcFeeChoice === "split" ? Number(dbcCreatorSharePct) : null,
         firstBuyLamports: lamports,
+        quoteMint: dbcQuoteMint,
       })
         .then((next) => {
           if (!cancelled) {
@@ -343,7 +352,7 @@ const Create = () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [dbcLaunch, dbcFirstBuySol, dbcFeeChoice, dbcCreatorSharePct, graduationTargetWei]);
+  }, [dbcLaunch, dbcFirstBuySol, dbcFeeChoice, dbcCreatorSharePct, graduationTargetWei, dbcQuoteMint, dbcQuote]);
 
   useEffect(() => {
     if (isSolanaCreator || !wallet.account || !wallet.signer || !isEvmChainId(chainId)) {
@@ -564,7 +573,8 @@ const Create = () => {
               launchType: "dbc",
               dbcFeeChoice,
               dbcCreatorSharePct: dbcFeeChoice === "split" ? Number(dbcCreatorSharePct) : null,
-              dbcFirstBuyLamports: dbcFirstBuySol ? String(Math.round(Number(dbcFirstBuySol) * 1_000_000_000)) : null,
+              dbcFirstBuyLamports: dbcFirstBuySol ? String(Math.round(Number(dbcFirstBuySol) * (10 ** Number(dbcQuote?.decimals ?? 9)))) : null,
+              dbcQuoteMint,
             }
           : {}),
         ...(dbcLaunch ? {} : buildCreateDraftGraduationFields(graduationQuoteAsset, chainId)),
@@ -618,7 +628,7 @@ const Create = () => {
       analytics.track("token_create_started", { surface: "dbc", chain: "solana" });
       try {
         const targetUsd = Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000;
-        const firstBuyLamports = dbcFirstBuySol ? String(Math.round(Number(dbcFirstBuySol) * 1_000_000_000)) : "0";
+        const firstBuyLamports = dbcFirstBuySol ? String(Math.round(Number(dbcFirstBuySol) * (10 ** Number(dbcQuote?.decimals ?? 9)))) : "0";
         if (dbcFirstBuyQuote?.exceedsCap) {
           throw new Error("The first buy cannot be more than 10% of supply.");
         }
@@ -667,6 +677,7 @@ const Create = () => {
           feeChoice: dbcFeeChoice,
           creatorSharePct: dbcFeeChoice === "split" ? Number(dbcCreatorSharePct) : null,
           firstBuyLamports,
+          quoteMint: dbcQuoteMint,
         });
         toast.message("Confirm the launch in your wallet…");
         const created = await submitDbcCreateTransaction({
@@ -1232,6 +1243,23 @@ const Create = () => {
                     {dbcLaunch ? (
                       <div className="space-y-3 rounded-xl border border-border/50 bg-background/25 p-3">
                         <div>
+                          <div className="font-retro text-sm text-foreground">Quote</div>
+                          <p className="mt-0.5 text-xs text-muted-foreground">The coin is bought and sold in this token. SOL is the default.</p>
+                          <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+                            {dbcQuoteOptions.map((q) => (
+                              <button
+                                key={q.mint}
+                                type="button"
+                                onClick={() => setDbcQuoteMint(q.mint)}
+                                className={cn("rounded-lg border px-2.5 py-2 text-left", dbcQuoteMint === q.mint ? "border-accent bg-accent/15" : "border-border bg-muted/30")}
+                              >
+                                <div className="font-retro text-sm">{q.symbol}</div>
+                                <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">{q.kind === "native" ? "Chain coin" : q.kind === "stable" ? "1:1 USD" : "Stock token"}</p>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
                           <div className="font-retro text-sm text-foreground">Creator fee</div>
                           <div className="mt-2 grid gap-1.5">
                             {([
@@ -1256,7 +1284,7 @@ const Create = () => {
                         <div>
                           <div className="font-retro text-sm text-foreground">Your first buy (optional)</div>
                           <p className="mt-0.5 text-xs text-muted-foreground">Buys in the same transaction as the launch, at the normal 2% fee.</p>
-                          <Input type="number" min={0} step="0.01" value={dbcFirstBuySol} onChange={(e) => setDbcFirstBuySol(e.target.value)} placeholder="SOL amount" className="mt-2 max-w-[12rem]" />
+                          <Input type="number" min={0} step="0.01" value={dbcFirstBuySol} onChange={(e) => setDbcFirstBuySol(e.target.value)} placeholder={`${dbcQuote?.symbol || "SOL"} amount`} className="mt-2 max-w-[12rem]" />
                           {dbcFirstBuyQuote ? (
                             <p className={cn("mt-1 text-xs", dbcFirstBuyQuote.exceedsCap ? "text-orange-300" : "text-muted-foreground")}>
                               About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
@@ -1286,11 +1314,11 @@ const Create = () => {
                   <div>
                     <div className="font-retro text-lg text-foreground">Graduation</div>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      When the curve fills, your coin moves into a Meteora pool paired with SOL. The pool's liquidity is locked for good, and the coin keeps trading there and on Jupiter.
+                      When the curve fills, your coin moves into a Meteora pool paired with {dbcQuote?.symbol || "SOL"}. The pool's liquidity is locked for good, and the coin keeps trading there and on Jupiter.
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Pool</span><span className="text-foreground">{normalizedTicker || "TICKER"}/SOL on Meteora</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Pool</span><span className="text-foreground">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora</span></div>
                     <div className="flex justify-between gap-3"><span className="text-muted-foreground">Your share at graduation</span><span className="text-foreground">19.8% of what the curve raised</span></div>
                   </div>
                   <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" onClick={goNext}>Next</Button>
@@ -1323,7 +1351,7 @@ const Create = () => {
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Ticker</span><span className="font-medium text-foreground">{normalizedTicker ? `$${normalizedTicker}` : "—"}</span></div>
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation threshold</span><span className="text-foreground">{selectedGraduation?.label || "—"}</span></div>
                       {dbcLaunch ? (
-                        <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduates into</span><span className="text-right text-foreground">{normalizedTicker || "TICKER"}/SOL on Meteora</span></div>
+                        <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduates into</span><span className="text-right text-foreground">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora</span></div>
                       ) : (
                         <>
                           <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation Market</span><span className="text-right text-foreground">{graduationSummary.pair}</span></div>
@@ -1335,7 +1363,7 @@ const Create = () => {
                       {dbcLaunch ? (
                         <>
                           <div className="flex justify-between gap-3"><span className="text-muted-foreground">Creator fee</span><span className="text-foreground">{DBC_FEE_CHOICE_LABEL[dbcFeeChoice] || dbcFeeChoice}</span></div>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">First buy</span><span className="text-foreground">{dbcFirstBuySol ? `${dbcFirstBuySol} SOL` : "None"}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">First buy</span><span className="text-foreground">{dbcFirstBuySol ? `${dbcFirstBuySol} ${dbcQuote?.symbol || "SOL"}` : "None"}</span></div>
                         </>
                       ) : null}
                       {!creatorWallet ? <p className="pt-1 text-xs text-orange-300">Connect your wallet before launching.</p> : null}

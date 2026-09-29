@@ -164,7 +164,11 @@ export function computeSolanaMarketStats(input: SolanaMarketStatsInputs): Solana
 
 const priceCache = new Map<string, { value: number; at: number }>();
 
-async function coinGeckoUsd(id: string, fetchImpl: typeof fetch = fetch): Promise<number | null> {
+async function coinGeckoUsd(
+  id: string,
+  fetchImpl: typeof fetch = fetch,
+  opts?: { requireFresh?: boolean },
+): Promise<number | null> {
   const cached = priceCache.get(id);
   if (cached && Date.now() - cached.at < PRICE_CACHE_MS) return cached.value;
   try {
@@ -180,17 +184,47 @@ async function coinGeckoUsd(id: string, fetchImpl: typeof fetch = fetch): Promis
     return value;
   } catch (error) {
     console.warn("[solana-market-stats] CoinGecko price unavailable", { id, error: error instanceof Error ? error.message : String(error) });
+    if (opts?.requireFresh) return null;
     return cached?.value ?? null;
   }
 }
 
-/** SOL/USD: env pin for isolated devnet runs, otherwise CoinGecko (cached). */
-export async function solUsdPrice(fetchImpl: typeof fetch = fetch): Promise<{ price: number | null; source: string }> {
+const SPOT_SOURCES: Array<{ name: string; url: string; read: (body: any) => number }> = [
+  { name: "binance", url: "https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT", read: (b) => Number(b?.price) },
+  { name: "coinbase", url: "https://api.coinbase.com/v2/prices/SOL-USD/spot", read: (b) => Number(b?.data?.amount) },
+];
+
+/** Binance, then Coinbase: the order the API's reader uses (CoinGecko's free tier answers 429 under load). */
+async function spotSolUsd(fetchImpl: typeof fetch): Promise<{ price: number; source: string } | null> {
+  const cached = priceCache.get("spot:solana");
+  if (cached && Date.now() - cached.at < PRICE_CACHE_MS) return { price: cached.value, source: "spot:cached" };
+  for (const source of SPOT_SOURCES) {
+    try {
+      const response = await fetchImpl(source.url, { headers: { accept: "application/json" } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const value = source.read(await response.json());
+      if (!Number.isFinite(value) || value <= 0) throw new Error("no price");
+      priceCache.set("spot:solana", { value, at: Date.now() });
+      return { price: value, source: source.name };
+    } catch {
+      // next source
+    }
+  }
+  return null;
+}
+
+/** SOL/USD: env pin for isolated devnet runs, otherwise Binance, Coinbase, then CoinGecko (cached). */
+export async function solUsdPrice(
+  fetchImpl: typeof fetch = fetch,
+  opts?: { requireFresh?: boolean },
+): Promise<{ price: number | null; source: string }> {
   const micros = Number(process.env.SOLANA_GRADUATION_SOL_USD_MICROS || "");
   if (Number.isFinite(micros) && micros > 0) return { price: micros / 1_000_000, source: "env:SOLANA_GRADUATION_SOL_USD_MICROS" };
   const pinned = Number(process.env.SOLANA_USD_PRICE_OVERRIDE || "");
   if (Number.isFinite(pinned) && pinned > 0) return { price: pinned, source: "env:SOLANA_USD_PRICE_OVERRIDE" };
-  const price = await coinGeckoUsd("solana", fetchImpl);
+  const spot = await spotSolUsd(fetchImpl);
+  if (spot) return { price: spot.price, source: spot.source };
+  const price = await coinGeckoUsd("solana", fetchImpl, opts);
   return { price, source: "coingecko:solana" };
 }
 

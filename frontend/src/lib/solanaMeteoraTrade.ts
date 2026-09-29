@@ -133,7 +133,6 @@ async function loadVerifiedMarket(input: {
   const expectedPool = deriveCustomizablePoolAddress(mint, quoteMint);
   if (input.allowDbcMigratedPool) {
     if (!requestedPool) throw new Error("DBC migrated pool address is required.");
-    if (!quoteMint.equals(NATIVE_MINT)) throw new Error("DBC migrated pool must be quoted in SOL.");
     if (!poolState) poolState = await cpAmm.fetchPoolState(requestedPool);
   } else {
     if (requestedPool && !requestedPool.equals(expectedPool)) {

@@ -56,6 +56,7 @@ export async function authorizeDbcCreate(input: {
   creatorSharePct?: number | null;
   firstBuyLamports?: string | number;
   draftId?: string | null;
+  quoteMint?: string | null;
 }) {
   return postDbc({
     operation: "authorize",
@@ -73,6 +74,7 @@ export async function quoteDbcFirstBuy(input: {
   feeChoice: DbcFeeChoice;
   creatorSharePct?: number | null;
   firstBuyLamports: string | number;
+  quoteMint?: string | null;
 }) {
   return postDbc({
     operation: "quote-first-buy",

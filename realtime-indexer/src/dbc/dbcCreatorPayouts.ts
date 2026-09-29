@@ -19,6 +19,7 @@ import { NATIVE_MINT, TOKEN_PROGRAM_ID, createBurnCheckedInstruction, getAssocia
 import { solanaMinPayoutLamports } from "../rewards/pokerPayout.js";
 import { bs58Encode, resolveSignature } from "./dbcFeePending.js";
 import { rewardVaults } from "./dbcFeeRouter.js";
+import { isNativeQuoteMint, quoteMintFromMeta } from "./dbcQuoteNative.js";
 import {
   allocateToHolders,
   buybackMoments,
@@ -43,7 +44,13 @@ export type PlatformCoin = {
   choice: "holders" | "split" | "buyback";
   creatorSharePct: number;
   dammPool: string | null;
+  quoteMint: string;
 };
+
+/** Bound-quote buybacks need a SOL → quote → coin route; skip until that exists. */
+export function buybackSkipReason(quoteMint?: string | null): string | null {
+  return isNativeQuoteMint(quoteMint) ? null : "quote-not-sol";
+}
 
 export type CoinLedger = { total: bigint; paid: { holders: bigint; creator: bigint; buyback: bigint } };
 
@@ -80,6 +87,7 @@ export async function platformCoins(db: Queryable): Promise<PlatformCoin[]> {
     choice: String(row.meta?.dbc?.feeChoice) as PlatformCoin["choice"],
     creatorSharePct: Number(row.meta?.dbc?.creatorSharePct || 0),
     dammPool: String(row.meta?.dbc?.migration?.pool || row.meta?.solanaGraduation?.pool || "") || null,
+    quoteMint: quoteMintFromMeta(row.meta),
   }));
 }
 
@@ -478,6 +486,11 @@ export async function runDueBuybacks(input: {
       }
     }
     if (!dueKey) continue;
+    const skipQuote = buybackSkipReason(coin.quoteMint);
+    if (skipQuote) {
+      results.push({ pool: coin.pool, moment: dueKey, skipped: skipQuote, signature: null });
+      continue;
+    }
     const ledger = ledgers.get(coin.pool) || { total: 0n, paid: { holders: 0n, creator: 0n, buyback: 0n } };
     const budget = dues(coin, ledger).buyback;
     const built = coin.dammPool

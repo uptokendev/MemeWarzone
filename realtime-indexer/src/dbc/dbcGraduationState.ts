@@ -146,6 +146,7 @@ export function solanaGraduationMeta(input: {
   dammPool: string;
   slot: number | string;
   quoteMint?: string;
+  quoteDecimals?: number;
   locker?: string | null;
   firstPositionNft?: string | null;
   secondPositionNft?: string | null;
@@ -158,6 +159,7 @@ export function solanaGraduationMeta(input: {
       pool,
       slot,
       quoteMint: input.quoteMint || "So11111111111111111111111111111111111111112",
+      quoteDecimals: input.quoteDecimals ?? undefined,
     },
     dbcMigration: {
       pool,
