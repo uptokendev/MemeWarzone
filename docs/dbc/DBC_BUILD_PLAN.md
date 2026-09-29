@@ -180,7 +180,7 @@ against the rule "unlinked slices go to the airdrop".
 | 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | **DONE 2026-09-28**: merged (PR #475, 2 reviews), devnet ALL CHECKS PASS; migration `20260929_000006` still to apply |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails, code-2 leaves), buyback & burn (random, <= 0.5% impact), split | Claude (Grok was on step 7), brief `docs/dbc/grok-step-5b-creator-fee-choice.md` | **DONE 2026-09-29**: merged, devnet ALL CHECKS PASS; migration `20260929_000008` still to apply |
 | 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | **DONE 2026-09-29**: merged (PR #476, 2 reviews + Claude's fixes), devnet ALL CHECKS PASS (cases A, B, D19); migration `20260929_000007` still to apply |
-| 7 | Binding tokens (D20-D23): 7a USDC/USDT, 7b stock tokens | Grok, brief `docs/dbc/grok-step-7-binding-tokens.md` | 7a PR #477 review 2: CHANGES NEEDED (price at trade time, proof) |
+| 7 | Binding tokens (D20-D23): 7a USDC/USDT, 7b stock tokens | Grok (7a), Claude from here (Grok out of credits), brief `docs/dbc/grok-step-7-binding-tokens.md` | **7a DONE 2026-09-29**: merged (PR #477, 3 rounds), devnet ALL CHECKS PASS; migration `20260929_000009` still to apply. 7b (stock tokens) next, by Claude |
 
 ## Groundwork for steps 3-6 (Claude, 2026-09-28): proven or read from the code
 
@@ -696,3 +696,17 @@ Copy to fix (no AI tone, no internal words): "DBC" in toasts; "createCampaign" o
 "Image uploaded successfully!" before anything is uploaded; "collector" in the holders option; "Creator
 fee: keep" in the review; "You keep 7% of the trading fee" (7% of the post-Meteora 80%).
 Pre-existing, not DBC: `robinhoodBondingWalletSwitchPresentation.test.mjs` fails on the live work branch too.
+
+### Step 7a, review 3 (2026-09-29): PR #477 @ `e60ae416` + Claude's fixes: MERGED
+
+Grok's last round (its credits are needed for image work; Claude builds from here). Claude's fixes:
+- Indexer SOL/USD tried CoinGecko only; the bound-trade SOL value waits for a fresh price, so every
+  CoinGecko 429 would have paused indexing of bound coins. Now Binance, then Coinbase, then CoinGecko
+  (the API reader's order).
+- Merged staging (create-screen copy) into the quote-symbol review row.
+Devnet proof (own 6-decimal mint, stub swap): **ALL CHECKS PASS**. Buy 5 USDC recorded as 42,372,881
+lamports = 5 x 1e9 / 118 exactly with the price and source in activity meta; sell a quarter of the
+tokens; claim = pool counter (2,032,356); curve completed in the quote; keeper case A: partner fee
+3,300,000 = 10% of 22%, D7 paid in the quote (467,999; SOL spent only the tx fee), route airdrop
+577,500 = 17.5%, protocol 2,254,501 = rest minus D7; LP claim after a DAMM swap in the quote.
+The live Jupiter swap is proven only by the mainnet canary (devnet has no Jupiter).
