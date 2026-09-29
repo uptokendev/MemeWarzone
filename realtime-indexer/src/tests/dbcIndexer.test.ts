@@ -11,11 +11,15 @@ process.env.SOLANA_RPC_HTTP ||= "http://127.0.0.1:8899";
 
 const {
   EVENT_IX_TAG,
+  boundQuoteNeedsSolUsd,
   curveTradeFromSwap,
   dbcMarketStatsInputs,
   decodeEvtSwap2Data,
   dbcPriceFromSqrt,
+  freshSolUsdMicros,
   indexDbcPool,
+  loadDbcPools,
+  quoteRawToSolLamports,
 } = await import("../dbcIndexer.js");
 const { skipCanonicalSpotForVenue: skipSpot } = await import("../canonicalCandleMaterializer.js");
 
@@ -138,16 +142,18 @@ test("curve_trades row uses buy=gross SOL, sell=net SOL, log_index < 20000, venu
   assert.equal(buy.quote_amount_raw, "20000000");
 });
 
-test("bound quote rows keep quote_amount_raw and convert SOL value at trade time", async () => {
-  const { curveTradeFromSwap, quoteRawToSolLamports } = await import("../dbcIndexer.js");
+test("bound quote rows keep quote_amount_raw and convert SOL value at trade time", () => {
+  assert.equal(boundQuoteNeedsSolUsd(6), true);
+  assert.equal(boundQuoteNeedsSolUsd(9), false);
   assert.equal(quoteRawToSolLamports(150_000_000n, 6, 100_000_000n), 1_500_000_000n);
+  assert.equal(quoteRawToSolLamports(5_000_000n, 6, 118_000_000n), 42_372_881n);
   const buy = curveTradeFromSwap({
     event: {
       pool: "P",
       config: "C",
       tradeDirection: 1,
       hasReferral: false,
-      includedFeeInputAmount: 150_000_000n,
+      includedFeeInputAmount: 5_000_000n,
       excludedFeeInputAmount: 0n,
       outputAmount: 1_000_000n,
       tradingFee: 0n,
@@ -165,10 +171,153 @@ test("bound quote rows keep quote_amount_raw and convert SOL value at trade time
     campaign: "P",
     quoteMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     quoteDecimals: 6,
-    solUsdMicros: 100_000_000n,
+    solUsdMicros: 118_000_000n,
+    priceSource: "env:SOLANA_GRADUATION_SOL_USD_MICROS",
   });
-  assert.equal(buy.quote_amount_raw, "150000000");
-  assert.equal(buy.bnb_amount_raw, "1500000000");
+  assert.equal(buy.quote_amount_raw, "5000000");
+  assert.equal(buy.bnb_amount_raw, "42372881");
+  assert.equal(buy.bnb_amount_raw, quoteRawToSolLamports(5_000_000n, 6, 118_000_000n).toString());
+  assert.equal(buy.sol_usd_micros, "118000000");
+  assert.equal(buy.sol_usd_source, "env:SOLANA_GRADUATION_SOL_USD_MICROS");
+});
+
+test("a bound trade without a fresh SOL/USD price is refused", () => {
+  const event = {
+    pool: "P",
+    config: "C",
+    tradeDirection: 1,
+    hasReferral: false,
+    includedFeeInputAmount: 5_000_000n,
+    excludedFeeInputAmount: 0n,
+    outputAmount: 1n,
+    tradingFee: 0n,
+    protocolFee: 0n,
+    referralFee: 0n,
+    quoteReserveAmount: 0n,
+    migrationThreshold: 0n,
+    currentTimestamp: 0n,
+  };
+  const base = {
+    event,
+    wallet: "W",
+    signature: "S",
+    eventIndex: 0,
+    slot: 1,
+    blockTime: new Date(),
+    campaign: "P",
+    quoteMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    quoteDecimals: 6,
+  };
+  assert.throws(() => curveTradeFromSwap(base), /fresh SOL\/USD/);
+  assert.throws(
+    () => curveTradeFromSwap({ ...base, solUsdMicros: 118_000_000n }),
+    /price source/,
+  );
+});
+
+test("dbcIndexer never falls back to a constant SOL/USD default", () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbcIndexer.ts"), "utf8");
+  assert.equal(source.includes("100_000_000n"), false);
+  assert.match(source, /no fresh SOL\/USD; leaving bound trades for the next pass/);
+  assert.match(source, /sol_usd_source/);
+});
+
+test("binding proof indexes via loadDbcPools, values SOL from the recorded price, and completes with PartialFill", () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../scripts/dbc/prove-binding-usdc-devnet.mjs"), "utf8");
+  assert.match(source, /loadDbcPools/);
+  assert.match(source, /quoteRawToSolLamports/);
+  assert.match(source, /SwapMode\.PartialFill/);
+  assert.match(source, /sell size is a quarter of the tokens bought/);
+  assert.match(source, /SOL value equals quote × recorded price/);
+  assert.equal(/swapExactIn/.test(source), false);
+});
+
+test("loadDbcPools reads quote mint and decimals from campaign meta", async () => {
+  const db = {
+    async query(sql: string) {
+      if (/from public\.campaigns/.test(sql)) {
+        return {
+          rows: [{
+            campaign_address: "PoolBound",
+            token_address: "Mint1",
+            creator_address: "C",
+            graduated_pool: "",
+            dbc_migrated_pool: "",
+            quote_mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            quote_decimals: "6",
+          }],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const pools = await loadDbcPools(db);
+  assert.equal(pools.length, 1);
+  assert.equal(pools[0].campaign, "PoolBound");
+  assert.equal(pools[0].quoteMint, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+  assert.equal(pools[0].quoteDecimals, 6);
+  assert.equal(pools[0].migrated, false);
+});
+
+test("a bound pool without a fresh SOL/USD price writes nothing and leaves the cursor", async () => {
+  let wroteState = false;
+  let fetchedSigs = false;
+  const db = {
+    async query(sql: string) {
+      if (/insert into public.indexer_state/.test(sql)) wroteState = true;
+      if (/select last_indexed_block/.test(sql)) return { rows: [{ last_indexed_block: 40 }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const result = await indexDbcPool(
+    db,
+    {
+      campaign: "PoolBound",
+      token: "Mint1",
+      creator: "C",
+      migrated: false,
+      quoteMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      quoteDecimals: 6,
+    },
+    async () => {
+      throw new Error("should not fetch tx");
+    },
+    async () => {
+      fetchedSigs = true;
+      return [];
+    },
+    { readSolUsd: async () => null },
+  );
+  assert.equal(result.skippedNoPrice, true);
+  assert.equal(result.ingested, 0);
+  assert.equal(result.scanned, 0);
+  assert.equal(fetchedSigs, false);
+  assert.equal(wroteState, false);
+});
+
+test("freshSolUsdMicros uses the env pin and refuses a failed CoinGecko fetch", async () => {
+  const prevMicros = process.env.SOLANA_GRADUATION_SOL_USD_MICROS;
+  const prevOverride = process.env.SOLANA_USD_PRICE_OVERRIDE;
+  delete process.env.SOLANA_GRADUATION_SOL_USD_MICROS;
+  delete process.env.SOLANA_USD_PRICE_OVERRIDE;
+  try {
+    process.env.SOLANA_GRADUATION_SOL_USD_MICROS = "118000000";
+    const pinned = await freshSolUsdMicros(async () => {
+      throw new Error("network should not be used for an env pin");
+    });
+    assert.deepEqual(pinned, { micros: 118_000_000n, source: "env:SOLANA_GRADUATION_SOL_USD_MICROS" });
+    delete process.env.SOLANA_GRADUATION_SOL_USD_MICROS;
+    const missing = await freshSolUsdMicros(async () => {
+      throw new Error("coingecko down");
+    });
+    assert.equal(missing, null);
+  } finally {
+    if (prevMicros === undefined) delete process.env.SOLANA_GRADUATION_SOL_USD_MICROS;
+    else process.env.SOLANA_GRADUATION_SOL_USD_MICROS = prevMicros;
+    if (prevOverride === undefined) delete process.env.SOLANA_USD_PRICE_OVERRIDE;
+    else process.env.SOLANA_USD_PRICE_OVERRIDE = prevOverride;
+  }
 });
 
 test("market_stats DBC branch uses sqrt price, circulating supply and quote reserve", () => {

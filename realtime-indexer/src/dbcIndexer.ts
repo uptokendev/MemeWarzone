@@ -15,6 +15,7 @@ import { pool as defaultPool } from "./db.js";
 import { ENV } from "./env.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { notPublicHiddenSql } from "./publicHidden.js";
+import { solUsdPrice } from "./solanaMarketStats.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 
 const SOLANA_CHAIN_ID = 101;
@@ -33,14 +34,17 @@ const eventCoder = new BorshCoder(dbcIdl);
 
 type Queryable = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }> };
 
-type DbcPoolRow = {
+export type DbcPoolRow = {
   campaign: string;
   token: string;
   creator: string;
   migrated: boolean;
-  quoteMint: string;
-  quoteDecimals: number;
+  quoteMint?: string;
+  quoteDecimals?: number;
 };
+
+export type FreshSolUsd = { micros: bigint; source: string };
+export type FreshSolUsdReader = (fetchImpl?: typeof fetch) => Promise<FreshSolUsd | null>;
 
 export type DecodedEvtSwap2 = {
   pool: string;
@@ -75,6 +79,8 @@ export type DbcCurveTradeRow = {
   venue: "dbc";
   quote_mint?: string;
   quote_amount_raw?: string;
+  sol_usd_micros?: string | null;
+  sol_usd_source?: string | null;
 };
 
 function parseRpcList(value: string): string[] {
@@ -283,6 +289,29 @@ export function quoteRawToSolLamports(quoteRaw: bigint, quoteDecimals: number, s
   return (BigInt(quoteRaw) * 1_000_000n * 1_000_000_000n) / (micros * scale);
 }
 
+/** Non-native quotes (USDC/USDT are 6 decimals) convert to SOL via a live SOL/USD. */
+export function boundQuoteNeedsSolUsd(quoteDecimals: number | undefined | null): boolean {
+  return Number(quoteDecimals ?? 9) !== 9;
+}
+
+/**
+ * SOL/USD used to value a bound DBC trade. Env pins are the operator's price;
+ * otherwise CoinGecko, and only a fetch that succeeded (or is still inside the
+ * 5-minute cache window). A stale CoinGecko cache after a failed fetch is not
+ * a price — callers skip the trade until the next pass.
+ */
+export async function freshSolUsdMicros(fetchImpl: typeof fetch = fetch): Promise<FreshSolUsd | null> {
+  const pinnedMicros = Number(process.env.SOLANA_GRADUATION_SOL_USD_MICROS || "");
+  if (Number.isFinite(pinnedMicros) && pinnedMicros > 0) {
+    return { micros: BigInt(Math.trunc(pinnedMicros)), source: "env:SOLANA_GRADUATION_SOL_USD_MICROS" };
+  }
+  const { price, source } = await solUsdPrice(fetchImpl, { requireFresh: true });
+  if (price == null || !Number.isFinite(price) || price <= 0) return null;
+  const micros = BigInt(Math.round(price * 1_000_000));
+  if (micros <= 0n) return null;
+  return { micros, source };
+}
+
 export function curveTradeFromSwap(input: {
   event: DecodedEvtSwap2;
   wallet: string;
@@ -301,15 +330,29 @@ export function curveTradeFromSwap(input: {
   const quoteRaw = isBuy ? input.event.includedFeeInputAmount : input.event.outputAmount;
   const quoteDecimals = Number(input.quoteDecimals ?? 9);
   const quoteMint = String(input.quoteMint || "So11111111111111111111111111111111111111112");
-  const nativeRaw = quoteDecimals === 9
-    ? quoteRaw
-    : quoteRawToSolLamports(quoteRaw, quoteDecimals, input.solUsdMicros || 100_000_000n);
+  let nativeRaw: bigint;
+  let solUsdMicros: string | null = null;
+  let solUsdSource: string | null = null;
+  if (!boundQuoteNeedsSolUsd(quoteDecimals)) {
+    nativeRaw = quoteRaw;
+  } else {
+    const micros = input.solUsdMicros;
+    const source = String(input.priceSource || "").trim();
+    if (micros == null || micros <= 0n) {
+      throw new Error("DBC bound trade needs a fresh SOL/USD price");
+    }
+    if (!source) {
+      throw new Error("DBC bound trade needs a SOL/USD price source");
+    }
+    nativeRaw = quoteRawToSolLamports(quoteRaw, quoteDecimals, micros);
+    solUsdMicros = micros.toString();
+    solUsdSource = source;
+  }
   const tokenAmount = Number(tokenRaw) / 10 ** TOKEN_DECIMALS;
   const nativeAmount = Number(nativeRaw) / LAMPORTS_PER_SOL;
   const priceNative = tokenAmount > 0 ? nativeAmount / tokenAmount : null;
   const logIndex = input.eventIndex;
   if (logIndex >= 20_000) throw new Error("DBC bonding log_index must stay below 20000");
-  void input.priceSource;
   return {
     chain_id: SOLANA_CHAIN_ID,
     campaign_address: input.campaign,
@@ -327,6 +370,8 @@ export function curveTradeFromSwap(input: {
     venue: "dbc",
     quote_mint: quoteMint,
     quote_amount_raw: quoteRaw.toString(),
+    sol_usd_micros: solUsdMicros,
+    sol_usd_source: solUsdSource,
   };
 }
 
@@ -400,7 +445,7 @@ function cursorFor(poolAddress: string): string {
   return `solana:dbc:${poolAddress}`;
 }
 
-async function loadDbcPools(db: Queryable): Promise<DbcPoolRow[]> {
+export async function loadDbcPools(db: Queryable): Promise<DbcPoolRow[]> {
   const limit = Math.max(1, Math.min(10_000, Number(process.env.SOLANA_DBC_POOL_LIMIT || 2_000)));
   const result = await db.query(
     `select campaign_address, token_address, creator_address,
@@ -514,10 +559,13 @@ async function insertActivity(db: Queryable, row: DbcCurveTradeRow, event: Decod
         priceSol: row.price_bnb,
         quoteMint: row.quote_mint || null,
         quoteAmountRaw: row.quote_amount_raw || null,
-        quoteSol: {
-          source: "sol-usd",
-          at: row.block_time,
-        },
+        quoteSol: row.sol_usd_source
+          ? {
+              micros: row.sol_usd_micros,
+              source: row.sol_usd_source,
+              at: row.block_time,
+            }
+          : undefined,
       }),
     ],
   ).catch((error: unknown) => {
@@ -612,8 +660,19 @@ export async function indexDbcPool(
   row: DbcPoolRow,
   rpcGetTransaction = getTransaction,
   rpcGetSignatures: typeof getSignatures = getSignatures,
+  deps: { readSolUsd?: FreshSolUsdReader } = {},
 ) {
-  if (row.migrated) return { scanned: 0, ingested: 0, skippedMigrated: true };
+  if (row.migrated) return { scanned: 0, ingested: 0, skippedMigrated: true, skippedNoPrice: false };
+  const quoteDecimals = Number(row.quoteDecimals ?? 9);
+  let solUsd: FreshSolUsd | null = null;
+  if (boundQuoteNeedsSolUsd(quoteDecimals)) {
+    const readSolUsd = deps.readSolUsd || freshSolUsdMicros;
+    solUsd = await readSolUsd();
+    if (!solUsd) {
+      console.warn("[dbcIndexer] no fresh SOL/USD; leaving bound trades for the next pass", { pool: row.campaign });
+      return { scanned: 0, ingested: 0, skippedMigrated: false, skippedNoPrice: true };
+    }
+  }
   const currentState = await getState(db, row.campaign);
   const signatures = await rpcGetSignatures(row.campaign, 0, currentState);
   let ingested = 0;
@@ -643,6 +702,7 @@ export async function indexDbcPool(
         campaign: row.campaign,
         quoteMint: row.quoteMint,
         quoteDecimals: row.quoteDecimals,
+        ...(solUsd ? { solUsdMicros: solUsd.micros, priceSource: solUsd.source } : {}),
       });
       if (await insertDbcSwap(db, trade, event)) ingested += 1;
     }
@@ -650,7 +710,7 @@ export async function indexDbcPool(
   }
   if (stoppedAtSlot != null) maxSlot = Math.min(maxSlot, stoppedAtSlot - 1);
   if (maxSlot > currentState) await setState(db, row.campaign, maxSlot);
-  return { scanned: signatures.length, ingested, skippedMigrated: false };
+  return { scanned: signatures.length, ingested, skippedMigrated: false, skippedNoPrice: false };
 }
 
 export async function runDbcIndexerOnce(db: Queryable = defaultPool) {

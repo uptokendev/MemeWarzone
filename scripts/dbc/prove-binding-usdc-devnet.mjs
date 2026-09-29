@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * Devnet proof of DBC bound-quote money path (step 7a review 1). Throwaway keys only.
+ * Devnet proof of DBC bound-quote money path (step 7a review 2). Throwaway keys only.
  * Optional DBC_PROVE_FUNDER_KEYPAIR.
  *
  * Creates its own 6-decimal SPL mint, sets DBC_DEVNET_USDC_MINT (devnet only), then:
- * create, buy, sell, indexer quote columns + SOL value, claim = pool counter in raw
- * quote, keeper case A (D7 TransferChecked, stub swap, SOL route), LP claim.
+ * create, buy, real-size sell, indexer via loadDbcPools (quote columns + SOL value =
+ * quote × recorded SOL/USD), claim = pool counter in raw quote, complete the curve
+ * with PartialFill, keeper case A (D7 TransferChecked, stub swap, SOL route), LP claim.
  *
  * Jupiter is stubbed: devnet has none. The live swap is Claude's mainnet canary.
  */
@@ -171,13 +172,15 @@ async function ensureAta(conn, payer, mint, owner) {
   return ata;
 }
 
-async function swapExactIn(client, conn, trader, pool, amountIn, referral = null) {
+async function swap2(client, conn, trader, pool, {
+  amountIn, swapBaseForQuote = false, mode = SwapMode.ExactIn, referral = null,
+}) {
   const tx = await client.pool.swap2({
     owner: trader.publicKey,
     pool: new PublicKey(pool),
-    swapBaseForQuote: false,
+    swapBaseForQuote,
     referralTokenAccount: referral,
-    swapMode: SwapMode.ExactIn,
+    swapMode: mode,
     amountIn: new BN(amountIn.toString()),
     minimumAmountOut: new BN(1),
   });
@@ -215,9 +218,12 @@ async function main() {
   process.env.DBC_GRADUATION_SEND = "true";
   process.env.DBC_LP_CLAIM_MIN_LAMPORTS ||= "1";
   process.env.SOLANA_CLUSTER = "devnet";
+  process.env.SOLANA_GRADUATION_SOL_USD_MICROS = "118000000";
+  const SOL_USD_MICROS = 118_000_000n;
+  const SOL_USD_SOURCE = "env:SOLANA_GRADUATION_SOL_USD_MICROS";
   const db = pg.pool;
   try {
-    const { indexDbcPool } = await import("../../realtime-indexer/src/dbcIndexer.ts");
+    const { indexDbcPool, loadDbcPools, quoteRawToSolLamports } = await import("../../realtime-indexer/src/dbcIndexer.ts");
     const { accrueDbcFees } = await import("../../realtime-indexer/src/dbc/dbcFeeAccruals.ts");
     const { claimPoolPartnerFees, resolvePendingClaims } = await import("../../realtime-indexer/src/dbc/dbcFeeClaimer.ts");
     const { routeClaimedAccruals, resolvePendingRoutes, rewardVaults } = await import("../../realtime-indexer/src/dbc/dbcFeeRouter.ts");
@@ -309,40 +315,62 @@ async function main() {
 
     console.log("\n[buy and sell in quote]");
     const buyAmount = 5_000_000n; // 5 whole tokens
-    const buySig = await swapExactIn(client, conn, trader, poolAddr, buyAmount);
+    const buySig = await swap2(client, conn, trader, poolAddr, { amountIn: buyAmount, swapBaseForQuote: false });
     const buyTx = await getTx(conn, buySig);
     const buyQuoteOut = -tokenDelta(buyTx, traderAta);
-    check("buy spent quote tokens from the trader ATA", buyQuoteOut > 0n, String(buyQuoteOut));
-    const sellTxBuilt = await client.pool.swap2({
-      owner: trader.publicKey,
-      pool: new PublicKey(poolAddr),
-      swapBaseForQuote: true,
-      referralTokenAccount: null,
-      swapMode: SwapMode.ExactIn,
-      amountIn: new BN(1_000_000),
-      minimumAmountOut: new BN(1),
+    check("buy spent the ExactIn quote amount from the trader ATA", buyQuoteOut === buyAmount, `${buyQuoteOut} vs ${buyAmount}`);
+    const traderBaseAta = getAssociatedTokenAddressSync(baseMint.publicKey, trader.publicKey);
+    const baseBal = BigInt((await withRetry("baseBal", () => conn.getTokenAccountBalance(traderBaseAta))).value.amount);
+    check("buy received a real base balance", baseBal > 1_000_000n, String(baseBal));
+    const sellAmount = baseBal / 4n;
+    check("sell size is a quarter of the tokens bought", sellAmount > 1_000_000n, String(sellAmount));
+    const sellSig = await swap2(client, conn, trader, poolAddr, {
+      amountIn: sellAmount, swapBaseForQuote: true,
     });
-    sellTxBuilt.feePayer = trader.publicKey;
-    const sellSig = await sendAndConfirmTransaction(conn, sellTxBuilt, [trader], { commitment: "confirmed" });
     const sellTx = await getTx(conn, sellSig);
     const sellQuoteIn = tokenDelta(sellTx, traderAta);
-    check("sell returned quote tokens to the trader ATA", sellQuoteIn > 0n, String(sellQuoteIn));
+    check("sell returned a real quote size to the trader ATA", sellQuoteIn >= 100_000n, String(sellQuoteIn));
 
-    console.log("\n[indexer quote columns + SOL value]");
-    const indexed = await withRetry("indexDbcPool", () => indexDbcPool(db, {
-      campaign: poolAddr, token: baseMint.publicKey.toBase58(), creator: creator.publicKey.toBase58(), migrated: false,
-    }));
+    console.log("\n[indexer via loadDbcPools]");
+    const pools = await loadDbcPools(db);
+    const loaded = pools.find((p) => p.campaign === poolAddr);
+    check("loadDbcPools found the campaign", Boolean(loaded), `n=${pools.length}`);
+    if (!loaded) throw new Error(`loadDbcPools missed ${poolAddr}`);
+    check("loadDbcPools quote mint is the proof mint", loaded.quoteMint === quoteMint.toBase58(), loaded.quoteMint);
+    check("loadDbcPools quote decimals are 6", loaded.quoteDecimals === 6, String(loaded.quoteDecimals));
+    const indexed = await withRetry("indexDbcPool", () => indexDbcPool(db, loaded));
     console.log("  indexer", indexed);
+    check("indexer did not skip for missing SOL/USD", indexed.skippedNoPrice !== true, JSON.stringify(indexed));
     const trades = await db.query(
       `select side, quote_mint, quote_amount_raw::text as quote_raw, bnb_amount_raw::text as sol_raw
          from public.curve_trades where campaign_address=$1 order by block_time, log_index`,
       [poolAddr],
     );
     check("indexer wrote buy and sell", trades.rows.length >= 2, String(trades.rows.length));
-    for (const row of trades.rows) {
-      check(`${row.side} quote_mint is the proof mint`, row.quote_mint === quoteMint.toBase58(), row.quote_mint);
-      check(`${row.side} quote_amount_raw > 0`, BigInt(row.quote_raw) > 0n, row.quote_raw);
-      check(`${row.side} bnb_amount_raw (SOL value) > 0`, BigInt(row.sol_raw) > 0n, row.sol_raw);
+    const buyRow = trades.rows.find((r) => r.side === "buy");
+    const sellRow = trades.rows.find((r) => r.side === "sell");
+    check("buy row exists", Boolean(buyRow));
+    check("sell row exists", Boolean(sellRow));
+    if (buyRow) {
+      const wantSol = quoteRawToSolLamports(BigInt(buyRow.quote_raw), 6, SOL_USD_MICROS);
+      check("buy quote_mint is the proof mint", buyRow.quote_mint === quoteMint.toBase58(), buyRow.quote_mint);
+      check("buy quote_amount_raw equals the spent quote", BigInt(buyRow.quote_raw) === buyQuoteOut, `${buyRow.quote_raw} vs ${buyQuoteOut}`);
+      check("buy SOL value equals quote × recorded price", BigInt(buyRow.sol_raw) === wantSol, `${buyRow.sol_raw} vs ${wantSol}`);
+    }
+    if (sellRow) {
+      const wantSol = quoteRawToSolLamports(BigInt(sellRow.quote_raw), 6, SOL_USD_MICROS);
+      check("sell quote_mint is the proof mint", sellRow.quote_mint === quoteMint.toBase58(), sellRow.quote_mint);
+      check("sell quote_amount_raw equals the received quote", BigInt(sellRow.quote_raw) === sellQuoteIn, `${sellRow.quote_raw} vs ${sellQuoteIn}`);
+      check("sell SOL value equals quote × recorded price", BigInt(sellRow.sol_raw) === wantSol, `${sellRow.sol_raw} vs ${wantSol}`);
+    }
+    const activity = await db.query(
+      `select event_type, meta from public.activity_events where campaign_address=$1 order by block_number, log_index`,
+      [poolAddr],
+    );
+    check("activity_events wrote buy and sell", activity.rows.length >= 2, String(activity.rows.length));
+    for (const row of activity.rows) {
+      check(`${row.event_type} meta records SOL/USD source`, row.meta?.quoteSol?.source === SOL_USD_SOURCE, JSON.stringify(row.meta?.quoteSol));
+      check(`${row.event_type} meta records SOL/USD micros`, String(row.meta?.quoteSol?.micros) === String(SOL_USD_MICROS), String(row.meta?.quoteSol?.micros));
     }
 
     console.log("\n[claim equals the pool counter in raw quote]");
@@ -364,7 +392,7 @@ async function main() {
     const afterClaim = await db.query(`select status from public.dbc_fee_accruals where pool=$1`, [poolAddr]);
     check("accruals marked claimed", afterClaim.rows.every((r) => r.status === "claimed"), afterClaim.rows.map((r) => r.status).join(","));
     const collectorAfter = BigInt((await conn.getTokenAccountBalance(collectorAta)).value.amount);
-    check("collector received the claimed quote", collectorAfter >= expectedClaim, `${collectorAfter} vs ${expectedClaim}`);
+    check("collector received the claimed quote", collectorAfter === expectedClaim, `${collectorAfter} vs ${expectedClaim}`);
 
     const routed = await routeClaimedAccruals({
       db, connection: conn, collector, send: true, swapQuote: stubSwapQuote,
@@ -387,10 +415,13 @@ async function main() {
     const threshold = BigInt(String(cfg.migrationQuoteThreshold));
     const reserveNow = BigInt(String(p.quoteReserve));
     if (reserveNow < threshold) {
-      const need = threshold - reserveNow + threshold / 5n + 1_000_000n;
+      const need = threshold - reserveNow;
       const have = BigInt((await conn.getTokenAccountBalance(traderAta)).value.amount);
-      const amountIn = need > have ? have - 1n : need;
-      await swapExactIn(client, conn, trader, poolAddr, amountIn);
+      const offer = need + need / 5n + 1_000_000n;
+      const amountIn = offer > have ? have - 1n : offer;
+      await swap2(client, conn, trader, poolAddr, {
+        amountIn, swapBaseForQuote: false, mode: SwapMode.PartialFill,
+      });
     }
     const afterComplete = (await client.state.getPool(new PublicKey(poolAddr)))?.poolState
       ?? await client.state.getPool(new PublicKey(poolAddr));
