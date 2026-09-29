@@ -180,7 +180,7 @@ against the rule "unlinked slices go to the airdrop".
 | 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | **DONE 2026-09-28**: merged (PR #475, 2 reviews), devnet ALL CHECKS PASS; migration `20260929_000006` still to apply |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails, code-2 leaves), buyback & burn (random, <= 0.5% impact), split | Claude (Grok was on step 7), brief `docs/dbc/grok-step-5b-creator-fee-choice.md` | **DONE 2026-09-29**: merged, devnet ALL CHECKS PASS; migration `20260929_000008` still to apply |
 | 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | **DONE 2026-09-29**: merged (PR #476, 2 reviews + Claude's fixes), devnet ALL CHECKS PASS (cases A, B, D19); migration `20260929_000007` still to apply |
-| 7 | Binding tokens (D20-D23): 7a USDC/USDT, 7b stock tokens | Grok, brief `docs/dbc/grok-step-7-binding-tokens.md` | 7a PR #477 review 1: CHANGES NEEDED |
+| 7 | Binding tokens (D20-D23): 7a USDC/USDT, 7b stock tokens | Grok, brief `docs/dbc/grok-step-7-binding-tokens.md` | 7a PR #477 review 2: CHANGES NEEDED (price at trade time, proof) |
 
 ## Groundwork for steps 3-6 (Claude, 2026-09-28): proven or read from the code
 
@@ -652,3 +652,47 @@ the stub on devnet; the live swap is Claude's mainnet canary. Write the script; 
 
 Review rule for everyone (it bit us today): run `npm ci` in the worktree and `npx tsc -p tsconfig.json`
 for the indexer before handing in; the production build is `tsc`.
+
+### Step 7a, review 2 (2026-09-29): PR #477 @ `64f58a7f`: CHANGES NEEDED (small)
+
+The bound money path is wired and tested: claim in quote units, swap, split the SOL received, route;
+D7 as TransferChecked; graduation and LP claims swap first; referral sweep per mint; 5b skips non-SOL
+buybacks. Merged with staging: tsc 0 errors on indexer and frontend, indexer suites 73, frontend 41.
+Claude ran the proof on devnet: create, buy and sell in the 6-decimal quote, the claim equal to the
+pool counter (1,800,481), and the route on the stub's SOL all PASS.
+
+**Start from `review/dbc-step-7a` again** (force-updated). It adds on top of your commit:
+- staging merged in (the DBC create screen fixes: step 5 is a plain graduation card for DBC coins;
+  the launchpad trade-safety gate no longer blocks DBC trades);
+- the graduation card and review name the chosen quote, not always SOL;
+- **Jupiter:** `quote-api.jup.ag/v6` does not answer any more (checked today: no connection). Both
+  swap helpers now use `swap/v1` with the rule from `api/importSwap.js` (`JUPITER_SWAP_API_BASE`, else
+  `api.jup.ag/swap/v1` with `JUPITER_API_KEY`, else `lite-api.jup.ag/swap/v1`). Without it every
+  bound payout would have waited forever.
+
+Still to fix:
+1. **The SOL value of a bound trade uses a made-up price.** `curveTradeFromSwap` converts with
+   `solUsdMicros`, which `indexDbcPool` never passes, so it is always the $100 default. A 5 USDC buy is
+   stored as 0.005 SOL; leagues and the pot compare that number across every coin. Read a real SOL/USD
+   price at trade time (the indexer already has readers, e.g. `solanaMarketStats.ts`), record it and its
+   source in `activity_events.meta`, and never fall back to a constant: if no fresh price, leave the
+   trade for the next pass instead of writing a wrong number. Stocks (7b) will need their own price the
+   same way.
+2. **Proof:** run the indexer through `loadDbcPools` (not a hand-built pool row: that is why
+   `quote_mint` came out as SOL), check the SOL value equals quote x the recorded price to the lamport of
+   the formula, make the sell a real size (it returned 1 raw unit), and fix "complete the curve"
+   (`InsufficientLiquidity`: use PartialFill like the step-6 proof). Checks that only say `> 0` cannot
+   fail; compare to the chain or to the formula.
+
+### DBC screens driven in a browser on devnet (2026-09-29, Claude)
+
+Local API + a local copy of the staging schema (read-only dump), devnet, throwaway wallets, Playwright.
+Create -> token page -> buy -> sell -> creator locked buy all work from the real screens after three
+fixes (): step 5 of create was the old Graduation Market and blocked every DBC launch; the
+launchpad trade-safety gate blocked DBC buys and sells; the creator panel offered to claim the
+graduation payout before graduation. Buy received exactly the quoted tokens; the lock was verified and
+recorded; the badge reads "0.17% locked until Nov 26, 2026".
+Copy to fix (no AI tone, no internal words): "DBC" in toasts; "createCampaign" on the Direct Deploy card;
+"Image uploaded successfully!" before anything is uploaded; "collector" in the holders option; "Creator
+fee: keep" in the review; "You keep 7% of the trading fee" (7% of the post-Meteora 80%).
+Pre-existing, not DBC:  fails on the live work branch too.
