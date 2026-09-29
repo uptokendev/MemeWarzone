@@ -25,15 +25,17 @@ export default async function handler(req, res) {
     if (!Number.isFinite(chainId)) return json(res, 400, { error: "Invalid chainId" });
     if (!raw) return json(res, 200, { chainId, counts: {} });
 
+    // Solana addresses are case-sensitive base58: keep them as given (EVM stays lowercased).
+    const solana = chainId === 101;
     const addrs = raw
       .split(",")
-      .map((s) => s.trim().toLowerCase())
+      .map((s) => (solana ? s.trim() : s.trim().toLowerCase()))
       .filter(Boolean);
 
     // Safety caps to keep URL/query sane.
     const unique = Array.from(new Set(addrs)).slice(0, 60);
 
-    const valid = unique.filter((a) => isAddress(a));
+    const valid = unique.filter((a) => (solana ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a) : isAddress(a)));
     if (!valid.length) return json(res, 200, { chainId, counts: {} });
 
     const { rows } = await pool.query(
@@ -53,7 +55,7 @@ export default async function handler(req, res) {
 
     const counts = {};
     for (const r of rows ?? []) {
-      counts[String(r.campaignAddress).toLowerCase()] = {
+      counts[solana ? String(r.campaignAddress) : String(r.campaignAddress).toLowerCase()] = {
         votes1h: r.votes1h ?? 0,
         votes24h: r.votes24h ?? 0,
         votes7d: r.votes7d ?? 0,

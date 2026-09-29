@@ -2573,6 +2573,34 @@ const toSeconds = (ts: number): number => {
     };
   }, [displayDenom, nativeUnit, nativeUsd, nativeUsdLoading]);
 
+  // Upvotes replace the old Buyers tile: the on-chain buyer counter did not count distinct buyers.
+  const [upvoteCounts, setUpvoteCounts] = useState<{ allTime: number; last24h: number } | null>(null);
+  useEffect(() => {
+    const addresses = [campaign?.campaign, campaign?.token].map((a) => String(a || "").trim()).filter(Boolean);
+    if (!addresses.length || !pageChainId) {
+      setUpvoteCounts(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiFetch(`/api/vote_counts?chainId=${pageChainId}&campaigns=${encodeURIComponent([...new Set(addresses)].join(","))}`, { cache: "no-store" });
+        const body = await res.json().catch(() => null);
+        const rows = Object.values((body?.counts || {}) as Record<string, { votesAllTime?: number; votes24h?: number }>);
+        if (cancelled) return;
+        setUpvoteCounts({
+          allTime: rows.reduce((max, r) => Math.max(max, Number(r.votesAllTime || 0)), 0),
+          last24h: rows.reduce((max, r) => Math.max(max, Number(r.votes24h || 0)), 0),
+        });
+      } catch {
+        if (!cancelled) setUpvoteCounts(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [campaign?.campaign, campaign?.token, pageChainId]);
+
   const flywheel = useMemo(() => {
     if (isSolanaPage && solanaCurve) {
       const buyVol = Number(ethers.formatUnits(solanaCurve.totalBuyVolumeLamports, 9));
@@ -2795,12 +2823,11 @@ const toSeconds = (ts: number): number => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(
-          "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd",
-          { cache: "no-store" },
-        );
+        // Our API, not CoinGecko: CoinGecko refuses browser calls (CORS, 403/429), which left the
+        // $ graduation target without a SOL price (progress wrong, "remaining" empty).
+        const res = await apiFetch("/api/price/sol-usd", { cache: "no-store" });
         const json = await res.json();
-        const p = Number(json?.solana?.usd);
+        const p = Number(json?.price);
         if (!cancelled && Number.isFinite(p) && p > 0) setSolUsdPrice(p);
       } catch {
         if (!cancelled) setSolUsdPrice(null);
@@ -5317,8 +5344,9 @@ const toSeconds = (ts: number): number => {
                           <p className="text-lg font-retro text-foreground">{flywheel.feesEstimated}</p>
                         </div>
                         <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Buyers</p>
-                          <p className="text-lg font-retro text-foreground">{flywheel.buyers}</p>
+                          <p className="text-xs text-muted-foreground">Upvotes</p>
+                          <p className="text-lg font-retro text-foreground">{upvoteCounts ? upvoteCounts.allTime : "—"}</p>
+                          {upvoteCounts ? <p className="text-[11px] text-muted-foreground">{upvoteCounts.last24h} in the last 24h</p> : null}
                         </div>
                         <div className="rounded-2xl border border-border bg-muted/20 p-3">
                           <p className="text-xs text-muted-foreground">Protocol fee rate</p>
@@ -5326,7 +5354,7 @@ const toSeconds = (ts: number): number => {
                         </div>
                       </div>
                       <p className="text-xs text-muted-foreground mt-3">
-                        Volumes and buyer count come from on-chain counters when available. Fees are estimated from protocol fee basis points.
+                        Volumes come from on-chain counters when available. Fees are estimated from the protocol fee rate.
                       </p>
                     </AccordionContent>
                   </AccordionItem>
