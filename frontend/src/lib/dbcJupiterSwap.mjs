@@ -5,6 +5,9 @@
 import { PublicKey, Transaction } from "@solana/web3.js";
 import { WSOL_MINT } from "../../shared/dbcQuotes.mjs";
 
+// quote-api.jup.ag/v6 no longer answers (checked 2026-09-29). The browser uses the keyless lite API.
+const JUPITER_SWAP_BASE = String((typeof import.meta !== "undefined" && import.meta.env?.VITE_JUPITER_SWAP_API_BASE) || "https://lite-api.jup.ag/swap/v1").replace(/\/+$/, "");
+
 export async function quoteSolToBoundMint({
   quoteMint,
   solLamports,
@@ -16,7 +19,7 @@ export async function quoteSolToBoundMint({
   if (!quoteMint || quoteMint === WSOL_MINT) {
     return { inAmount: BigInt(solLamports), outAmount: BigInt(solLamports), impactBps: 0n, transaction: null };
   }
-  const url = new URL("https://quote-api.jup.ag/v6/quote");
+  const url = new URL(`${JUPITER_SWAP_BASE}/quote`);
   url.searchParams.set("inputMint", WSOL_MINT);
   url.searchParams.set("outputMint", String(quoteMint));
   url.searchParams.set("amount", String(solLamports));
@@ -38,7 +41,7 @@ export async function buildSolToBoundMintTransaction({
   stubTransaction,
 }) {
   if (stubTransaction) return stubTransaction;
-  const response = await fetchImpl("https://quote-api.jup.ag/v6/swap", {
+  const response = await fetchImpl(`${JUPITER_SWAP_BASE}/swap`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

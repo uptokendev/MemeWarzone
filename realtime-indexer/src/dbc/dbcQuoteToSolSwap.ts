@@ -22,6 +22,18 @@ async function getTx(connection: Connection, signature: string) {
   return connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
 }
 
+export function jupiterSwapApiBase(env: Record<string, string | undefined> = process.env): string {
+  const explicit = String(env.JUPITER_SWAP_API_BASE || "").trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+  return env.JUPITER_API_KEY ? "https://api.jup.ag/swap/v1" : "https://lite-api.jup.ag/swap/v1";
+}
+
+function jupiterHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (process.env.JUPITER_API_KEY) headers["x-api-key"] = String(process.env.JUPITER_API_KEY);
+  return headers;
+}
+
 export function defaultStubSwapQuote(solOut: bigint, impactBps = 0n): SwapQuoteFn {
   return async () => ({ solOut, impactBps, transaction: null });
 }
@@ -38,17 +50,19 @@ export async function jupiterQuoteToSolSwap(input: {
 }): Promise<{ solOut: bigint; impactBps: bigint; transaction?: Transaction | VersionedTransaction | null }> {
   const fetchImpl = input.fetchImpl || fetch;
   const slippageBps = input.slippageBps ?? 50;
-  const url = new URL("https://quote-api.jup.ag/v6/quote");
+  // quote-api.jup.ag/v6 no longer answers (checked 2026-09-29); same rule as api/importSwap.js.
+  const base = jupiterSwapApiBase();
+  const url = new URL(`${base}/quote`);
   url.searchParams.set("inputMint", input.quoteMint);
   url.searchParams.set("outputMint", WSOL_MINT);
   url.searchParams.set("amount", input.amount.toString());
   url.searchParams.set("slippageBps", String(slippageBps));
-  const quoted = await fetchImpl(url).then((r) => r.json() as Promise<any>);
+  const quoted = await fetchImpl(url, { headers: jupiterHeaders() }).then((r) => r.json() as Promise<any>);
   const solOut = BigInt(quoted.outAmount || 0);
   const impactBps = BigInt(Math.round(Number(quoted.priceImpactPct || 0) * 10_000));
-  const swap = await fetchImpl("https://quote-api.jup.ag/v6/swap", {
+  const swap = await fetchImpl(`${base}/swap`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: jupiterHeaders(),
     body: JSON.stringify({
       quoteResponse: quoted,
       userPublicKey: input.userPublicKey,
