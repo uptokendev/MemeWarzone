@@ -41,8 +41,6 @@ export async function startThrowawayPostgres() {
       await new Promise((r) => setTimeout(r, 200));
     }
   }
-  await admin.query("create database mwz");
-  await admin.end();
   const dbUrl = `postgres://postgres@127.0.0.1:${PORT}/mwz`;
   const psql = path.join(PG_BIN, "psql");
   const apply = (file) => {
@@ -51,6 +49,15 @@ export async function startThrowawayPostgres() {
       throw new Error(`psql ${file} failed: ${result.stderr || result.stdout}`);
     }
   };
+  // From here a failed setup must not leave the server holding the port for the next run.
+  const abort = (error) => {
+    spawnSync(path.join(PG_BIN, "pg_ctl"), ["-D", dir, "-m", "immediate", "stop"], { encoding: "utf8" });
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw error;
+  };
+  try {
+  await admin.query("create database mwz");
+  await admin.end();
   apply(path.join(ROOT, "scripts/dbc/throwaway-postgres-schema.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000006_dbc_fee_accruals.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000007_dbc_graduation.sql"));
@@ -58,6 +65,9 @@ export async function startThrowawayPostgres() {
   apply(path.join(ROOT, "db/migrations/20260929_000009_dbc_quote_binding.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000010_dbc_payout_quote.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000011_campaign_drafts_dbc_quote.sql"));
+  } catch (error) {
+    abort(error);
+  }
   const pool = new Pool({ connectionString: dbUrl, ssl: false });
   async function stop() {
     await pool.end().catch(() => {});

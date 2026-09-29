@@ -165,6 +165,8 @@ create table if not exists public.reward_events (
 
 create table if not exists public.campaign_drafts (
   id uuid primary key default gen_random_uuid(),
+  chain_id integer,
+  graduation_target_wei numeric,
   creator_wallet text,
   launch_type text,
   dbc_fee_choice text,
