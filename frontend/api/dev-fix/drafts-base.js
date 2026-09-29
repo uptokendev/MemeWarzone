@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { WSOL_MINT, normalizeDbcCluster, requireEnabledQuote } from "../../shared/dbcQuotes.mjs";
 import { badMethod, getQuery, isAddress, isSolanaChain, normalizeAddress as normalizeAddressBase, json, readJson } from "../../server/http.js";
 import { requireDraftActionAuth } from "./draft-auth.js";
 import { notifyDraftCreated } from "../lib/campaignLifecycleNotifications.js";
@@ -31,7 +32,7 @@ const VISIBILITIES = new Set(["public", "unlisted", "private"]);
 const ZERO = { views: 0, follows: 0, comments: 0, reactions: 0, shares: 0, signedActions: 0 };
 const DEFAULT_GRADUATION_TARGET_WEI = 30_000n * 10n ** 18n;
 const TEST_GRADUATION_TARGET_WEI = 6n * 10n ** 18n;
-const DBC_TEST_GRADUATION_TARGET_WEI = 150_000n * 10n ** 18n;
+const DBC_TEST_GRADUATION_TARGET_WEI = 150n * 10n ** 18n; // $150, as the create screen sends it (dbcGraduationTiers.ts)
 const STANDARD_GRADUATION_TARGETS = new Set([15_000n, 30_000n, 50_000n].map((value) => value * 10n ** 18n));
 const DBC_FEE_CHOICES = new Set(["keep", "holders", "split", "buyback"]);
 
@@ -99,7 +100,7 @@ function normalizeDraftGraduationTarget(chainId, value, launchType = "launchpad"
 function parseDbcDraftFields(body) {
   const launchType = String(body?.launchType || body?.launch_type || "launchpad").trim().toLowerCase();
   if (launchType !== "dbc") {
-    return { launchType: "launchpad", dbcFeeChoice: null, dbcCreatorSharePct: null, dbcFirstBuyLamports: null };
+    return { launchType: "launchpad", dbcFeeChoice: null, dbcCreatorSharePct: null, dbcFirstBuyLamports: null, dbcQuoteMint: null };
   }
   const feeChoice = String(body?.dbcFeeChoice || body?.feeChoice || "").trim().toLowerCase() || null;
   if (feeChoice && !DBC_FEE_CHOICES.has(feeChoice)) {
@@ -114,11 +115,22 @@ function parseDbcDraftFields(body) {
     share = Math.trunc(n);
   }
   const firstBuy = body?.dbcFirstBuyLamports ?? body?.firstBuyLamports;
+  // The quote the coin will trade in; null = SOL. Only an enabled registry quote is kept.
+  const quoteText = String(body?.dbcQuoteMint || body?.quoteMint || "").trim();
+  let quoteMint = null;
+  if (quoteText && quoteText !== WSOL_MINT) {
+    try {
+      quoteMint = requireEnabledQuote(normalizeDbcCluster(process.env.SOLANA_CLUSTER) || "mainnet-beta", quoteText).mint;
+    } catch (error) {
+      throw new TickerReservationError(String(error?.message || "That quote is not available."), { code: error?.code || "DBC_QUOTE_UNKNOWN", httpStatus: 400 });
+    }
+  }
   return {
     launchType: "dbc",
     dbcFeeChoice: feeChoice,
     dbcCreatorSharePct: share,
     dbcFirstBuyLamports: firstBuy == null || firstBuy === "" ? null : String(firstBuy),
+    dbcQuoteMint: quoteMint,
   };
 }
 
@@ -263,6 +275,7 @@ function mapDraftRow(row) {
     dbcFeeChoice: row.dbc_fee_choice ?? row.dbcFeeChoice ?? null,
     dbcCreatorSharePct: row.dbc_creator_share_pct ?? row.dbcCreatorSharePct ?? null,
     dbcFirstBuyLamports: row.dbc_first_buy_lamports != null ? String(row.dbc_first_buy_lamports) : (row.dbcFirstBuyLamports != null ? String(row.dbcFirstBuyLamports) : null),
+    dbcQuoteMint: row.dbc_quote_mint ?? row.dbcQuoteMint ?? null,
     createdAt: row.created_at ?? row.createdAt ?? new Date().toISOString(),
     updatedAt: row.updated_at ?? row.updatedAt ?? new Date().toISOString(),
   };
@@ -584,7 +597,7 @@ export async function drafts(req, res) {
         }
 
         const inserted = await db.query(
-          "insert into campaign_drafts (chain_id, creator_wallet, name, ticker, description, category, logo_url, website_url, x_url, other_url, graduation_target_wei, slug, status, visibility, launch_type, dbc_fee_choice, dbc_creator_share_pct, dbc_first_buy_lamports) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'draft',$13,$14,$15,$16,$17) returning *",
+          "insert into campaign_drafts (chain_id, creator_wallet, name, ticker, description, category, logo_url, website_url, x_url, other_url, graduation_target_wei, slug, status, visibility, launch_type, dbc_fee_choice, dbc_creator_share_pct, dbc_first_buy_lamports, dbc_quote_mint) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'draft',$13,$14,$15,$16,$17,$18) returning *",
           [
             chainId,
             creatorWallet,
@@ -603,6 +616,7 @@ export async function drafts(req, res) {
             dbcFields.dbcFeeChoice,
             dbcFields.dbcCreatorSharePct,
             dbcFields.dbcFirstBuyLamports,
+            dbcFields.dbcQuoteMint,
           ],
         );
 
@@ -705,6 +719,7 @@ export async function drafts(req, res) {
     dbcFeeChoice: dbcFields.dbcFeeChoice,
     dbcCreatorSharePct: dbcFields.dbcCreatorSharePct,
     dbcFirstBuyLamports: dbcFields.dbcFirstBuyLamports,
+    dbcQuoteMint: dbcFields.dbcQuoteMint,
     createdAt: now,
     updatedAt: now,
   };

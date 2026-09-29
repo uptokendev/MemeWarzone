@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { fetchDbcDueDrafts } from "@/lib/dbcCreate";
@@ -21,6 +21,7 @@ export function DbcScheduledLaunchListener() {
   const [queue, setQueue] = useState<DueDraft[]>([]);
   const dismissedRef = useRef(new Set<string>());
   const pollingRef = useRef(false);
+  const location = useLocation();
 
   const enabled = isDbcLaunchEnabled() && Boolean(wallet);
 
@@ -64,7 +65,12 @@ export function DbcScheduledLaunchListener() {
     };
   }, [enabled, pull, wallet]);
 
-  const current = queue[0] || null;
+  // A page change re-reads the list, so a draft launched a moment ago stops showing at once.
+  useEffect(() => {
+    if (enabled) void pull();
+  }, [enabled, pull, location.pathname]);
+
+  const current = queue.find((item) => location.pathname !== `/drafts/${item.id}/push-live`) || null;
   const href = useMemo(() => {
     if (!current) return "/";
     return `/drafts/${current.id}/push-live`;

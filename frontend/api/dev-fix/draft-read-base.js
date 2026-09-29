@@ -72,6 +72,7 @@ function mapDraftRow(row) {
     dbcFeeChoice: row.dbc_fee_choice ?? row.dbcFeeChoice ?? null,
     dbcCreatorSharePct: row.dbc_creator_share_pct ?? row.dbcCreatorSharePct ?? null,
     dbcFirstBuyLamports: row.dbc_first_buy_lamports != null ? String(row.dbc_first_buy_lamports) : (row.dbcFirstBuyLamports != null ? String(row.dbcFirstBuyLamports) : null),
+    dbcQuoteMint: row.dbc_quote_mint ?? row.dbcQuoteMint ?? null,
     createdAt: row.created_at ?? row.createdAt ?? new Date().toISOString(),
     updatedAt: row.updated_at ?? row.updatedAt ?? new Date().toISOString(),
   };

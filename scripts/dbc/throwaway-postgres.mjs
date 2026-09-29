@@ -57,6 +57,7 @@ export async function startThrowawayPostgres() {
   apply(path.join(ROOT, "db/migrations/20260929_000008_dbc_creator_choice.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000009_dbc_quote_binding.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000010_dbc_payout_quote.sql"));
+  apply(path.join(ROOT, "db/migrations/20260929_000011_campaign_drafts_dbc_quote.sql"));
   const pool = new Pool({ connectionString: dbUrl, ssl: false });
   async function stop() {
     await pool.end().catch(() => {});

@@ -36,6 +36,7 @@ import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmi
 import { signSolanaDraftAction } from "@/lib/solanaWallet";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { isDbcLaunchEnabled } from "@/lib/dbcLaunchEnabled";
+import { getDbcGraduationTiers } from "@/lib/dbcGraduationTiers";
 import {
   authorizeDbcCreate,
   beginDbcCreate,
@@ -159,9 +160,12 @@ export default function PushDraftLive() {
         setBundle(data);
         try {
           const persistedTarget = BigInt(String(data.draft.graduationTargetWei || DEFAULT_GRADUATION_TARGET_WEI));
-          if (isSupportedGraduationTarget(Number(data.draft.chainId), persistedTarget)) {
-            setGraduationTargetWei(persistedTarget);
-          }
+          const dbc = String((data.draft as { launchType?: string }).launchType || "") === "dbc";
+          // A DBC draft keeps its own target ($15K/$30K/$50K, or $150 on devnet).
+          const supported = dbc
+            ? getDbcGraduationTiers().some((tier) => tier.targetWei === persistedTarget)
+            : isSupportedGraduationTarget(Number(data.draft.chainId), persistedTarget);
+          if (supported) setGraduationTargetWei(persistedTarget);
         } catch {
           setGraduationTargetWei(DEFAULT_GRADUATION_TARGET_WEI);
         }
@@ -539,6 +543,7 @@ export default function PushDraftLive() {
         creatorSharePct: (draft as any).dbcCreatorSharePct,
         firstBuyLamports: (draft as any).dbcFirstBuyLamports || "0",
         draftId: draft.id,
+        quoteMint: (draft as any).dbcQuoteMint || undefined,
       });
       const created = await submitDbcCreateTransaction({
         transactionBase64: authorization.transaction,
@@ -755,8 +760,15 @@ export default function PushDraftLive() {
           </div>
         </div>
 
-        <GraduationTierSelector chainId={Number(draft.chainId)} value={graduationTargetWei} onChange={setGraduationTargetWei} disabled={submitting} />
+        <GraduationTierSelector
+          chainId={Number(draft.chainId)}
+          value={graduationTargetWei}
+          onChange={setGraduationTargetWei}
+          disabled={submitting}
+          tiers={dbcDraft ? getDbcGraduationTiers() : undefined}
+        />
 
+        {dbcDraft ? null : (
         <div className="mwz-card mt-5 p-4">
           <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Creator deployment eligibility</div>
           {creatorEligibility?.allowed ? (
@@ -786,11 +798,12 @@ export default function PushDraftLive() {
           ) : null}
           {creatorEligibilityError ? <p className="mt-2 text-sm text-orange-300">{creatorEligibilityError}</p> : null}
         </div>
+        )}
 
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           <button type="button" onClick={() => setMode("now")} className={`mwz-card p-4 text-left ${mode === "now" ? "border-success/60 bg-success/10" : "border-border"}`}>
             <div className="flex items-center gap-2 font-retro text-lg text-foreground"><Rocket className="h-4 w-4" /> Deploy now</div>
-            <p className="mt-2 text-sm text-muted-foreground">Pay gas, deploy the campaign, and open trading immediately.</p>
+            <p className="mt-2 text-sm text-muted-foreground">{dbcDraft ? "Sign once in your wallet and your coin goes live." : "Pay gas, deploy the campaign, and open trading immediately."}</p>
           </button>
           <button type="button" onClick={() => setMode("scheduled")} className={`mwz-card p-4 text-left ${mode === "scheduled" ? "border-orange-400/60 bg-orange-500/10" : "border-border"}`}>
             <div className="flex items-center gap-2 font-retro text-lg text-foreground"><Clock3 className="h-4 w-4" /> Deploy with countdown</div>
@@ -800,7 +813,7 @@ export default function PushDraftLive() {
 
         {mode === "scheduled" ? (
           <div className="mwz-card mt-4 p-4">
-            <label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Trading opens at ({creatorTimeZone})</label>
+            <label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{dbcDraft ? "You can launch from" : "Trading opens at"} ({creatorTimeZone})</label>
             <Input
               type="datetime-local"
               value={launchAtInput}
@@ -814,7 +827,11 @@ export default function PushDraftLive() {
               <div className="mt-3 space-y-1 text-xs text-muted-foreground">
                 <p>Creator timezone: <span className="text-foreground">{creatorTimeZone} ({timeZoneOffset(selectedLaunchDate)})</span></p>
                 <p>UTC time: <span className="text-foreground">{selectedLaunchDate.toISOString().replace("T", " ").slice(0, 16)} UTC</span></p>
-                <p className="pt-1 text-orange-200">This timestamp controls only when trading opens. It is not reserved, queued, or made exclusive to this campaign.</p>
+                <p className="pt-1 text-orange-200">
+                  {dbcDraft
+                    ? "Nothing is created until you launch. At this time you get a reminder on any page of the site while your wallet is connected."
+                    : "This timestamp controls only when trading opens. It is not reserved, queued, or made exclusive to this campaign."}
+                </p>
               </div>
             ) : null}
           </div>
@@ -826,7 +843,7 @@ export default function PushDraftLive() {
           </p>
         ) : null}
         {draftIsSolana && ownerConnected ? (
-          <p className="mt-4 text-sm text-muted-foreground">Your wallet will confirm the Solana launch transaction. Trading becomes available according to the launch time you selected.</p>
+          <p className="mt-4 text-sm text-muted-foreground">{dbcDraft ? "Your wallet confirms one Solana transaction when you launch. The coin trades from that moment." : "Your wallet will confirm the Solana launch transaction. Trading becomes available according to the launch time you selected."}</p>
         ) : null}
         {!DRAFT_PUSH_LIVE_ENABLED ? <p className="mt-4 text-sm text-orange-300">Draft deployment is temporarily unavailable. Your draft remains saved.</p> : null}
 
@@ -835,9 +852,11 @@ export default function PushDraftLive() {
             ? "Confirming Deployment..."
             : dbcDraft && mode === "scheduled"
               ? "Set launch time"
-              : dbcDraft && dbcDue
-                ? "Deploy now"
-                : mode === "scheduled"
+              : dbcDraft && dbcLocked
+                ? `Launch opens ${new Date(String(draft.scheduledLaunchAt)).toLocaleString()}`
+                : dbcDraft
+                  ? `Launch ${getDbcGraduationTiers().find((tier) => tier.targetWei === graduationTargetWei)?.label || ""} coin now`.replace("  ", " ")
+                  : mode === "scheduled"
                   ? `Deploy ${selectedTier} Countdown Campaign`
                   : `Deploy ${selectedTier} Campaign Now`}
         </Button>

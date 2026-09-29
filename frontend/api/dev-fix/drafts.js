@@ -23,6 +23,7 @@ import {
 const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 const ROBINHOOD_MARKET_POLICY_VERSION = "robinhood_market_v1";
 const TEST_GRADUATION_TARGET_WEI = (6n * 10n ** 18n).toString();
+const DBC_TEST_GRADUATION_TARGET_WEI = (150n * 10n ** 18n).toString();
 
 function requestBody(req) {
   if (req?.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) return req.body;
@@ -58,6 +59,12 @@ function normalizeCurrentSolanaDraftWrite(req, body) {
     String(body?.graduationTargetWei || "").trim() === TEST_GRADUATION_TARGET_WEI
   ) {
     return { ok: false, error: "The $6 graduation tier is staging/devnet only." };
+  }
+  if (
+    authority.environment === "production" &&
+    String(body?.graduationTargetWei || "").trim() === DBC_TEST_GRADUATION_TARGET_WEI
+  ) {
+    return { ok: false, error: "The $150 graduation tier is devnet only." };
   }
 
   const normalized = {

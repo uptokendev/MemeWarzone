@@ -1,18 +1,21 @@
 import { useMemo } from "react";
-import { getGraduationTiers } from "@/lib/graduationTiers";
+import { getGraduationTiers, type GraduationTier } from "@/lib/graduationTiers";
 
 export function GraduationTierSelector({
   chainId,
   value,
   onChange,
   disabled = false,
+  tiers: tierOverride,
 }: {
   chainId: number;
   value: bigint;
   onChange: (value: bigint) => void;
   disabled?: boolean;
+  /** A launch type with its own tiers (DBC) passes them; otherwise the chain's launchpad tiers. */
+  tiers?: GraduationTier[];
 }) {
-  const tiers = useMemo(() => getGraduationTiers(chainId), [chainId]);
+  const tiers = useMemo(() => tierOverride || getGraduationTiers(chainId), [chainId, tierOverride]);
 
   return (
     <div className="mwz-card p-4">
