@@ -773,3 +773,29 @@ Proof `MWZ_DBC_PROOF=prove-stock-choices-local.mjs bash scripts/dbc/rehearse-sto
 vault and burned exactly the supply drop in the same tx; split creator got exactly 60% in NVDAx;
 holders' 40% swapped once and the round paid exactly that SOL; a rerun moved nothing; after
 graduation the LP claim kept 80% in NVDAx and swapped only our 20%. The 7b proof still passes (45).
+
+### DBC screens driven end to end on devnet (2026-09-29, Claude)
+
+Throwaway wallets, local API + web against devnet, the real keeper. Everything below was clicked
+through the screens with a Phantom-shaped wallet; nothing is a script shortcut except the keeper run.
+- **Scheduled launch:** draft (USDC, split 60%, $150) saved, promotion published, launch time set,
+  early launch refused, at the time the reminder appeared on /leagues, "Deploy now" -> launched with
+  one signature. Campaign meta USDC / split / 60 / $150. Second run (SOL, holders) also launched; the
+  reminder no longer stays up after launching.
+- **Stock pairing dialog** (mainnet mode, read-only): NVDAx opens the risk dialog, all four issuer
+  powers read "set today" from the mint, confirm selects NVDAx with buyback kept.
+- **Graduation:** $150 SOL coin, 1.0 SOL buy, 0.5 SOL completing buy (0.36 used, rest kept), keeper
+  locker -> migrate -> mark -> withdraw -> compensate -> route -> done, buy and sell on the graduated
+  pool, creator claimed payout 0.246329 SOL, reserve 20,000,000 tokens and LP fees from the panel
+  (balances confirmed on chain).
+
+Fixed on the way: drafts lost the DBC quote (000011); the $150 tier could not be saved (API compared
+$150,000, table check lacked it); the draft launch page showed launchpad tiers, $30K and EVM copy;
+the reminder stayed after launch; a buy above what the curve needs was refused ("Insufficient
+Liquidity") instead of completing it (PartialFill); creator panel showed raw reserve units.
+**Live bug found and fixed** (`1722140e` on both live branches): every buy of a graduated Solana coin
+on the site failed the pre-sign check ("instruction 0 changed") because it compared raw instruction
+flags with the compiled message, where the fee payer is merged to signer + writable.
+
+Release env: the app needs `VITE_DRAFT_PUSH_LIVE_ENABLED=true` for draft launches; the drafts API needs
+`RUNTIME_ENVIRONMENT` (staging/production) for Solana drafts.
