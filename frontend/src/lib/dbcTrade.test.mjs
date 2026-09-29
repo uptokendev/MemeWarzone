@@ -127,3 +127,24 @@ test("referral fallback when the account is missing does not throw", async () =>
   }
   assert.ok(warns.some((line) => /referral/.test(line)));
 });
+
+test("a buy larger than what the curve needs is quoted as a partial fill, never refused", async () => {
+  const { quoteDbcExactIn } = await import("./dbcTrade.mjs");
+  const modes = [];
+  const client = {
+    pool: {
+      swapQuote2(args) {
+        modes.push(args.swapMode);
+        if (args.swapMode === 0) throw new Error("Insufficient Liquidity");
+        return { outputAmount: "900", includedFeeInputAmount: "260000000", tradingFee: "0" };
+      },
+    },
+  };
+  const q = quoteDbcExactIn({ client, pool: {}, config: {}, side: "buy", amountIn: 500_000_000n, hasReferral: false, nowUnix: 200, activationUnix: 100 });
+  assert.deepEqual(modes, [0, 1]);
+  assert.equal(q.partialFill, true);
+  assert.equal(q.amountInUsed, 260_000_000n);
+  assert.equal(q.amountOut, 900n);
+  const sell = { pool: { swapQuote2() { throw new Error("Insufficient Liquidity"); } } };
+  assert.throws(() => quoteDbcExactIn({ client: sell, pool: {}, config: {}, side: "sell", amountIn: 1n, nowUnix: 200, activationUnix: 100 }), /Insufficient/);
+});

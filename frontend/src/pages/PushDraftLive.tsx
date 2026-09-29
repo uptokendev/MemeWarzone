@@ -166,6 +166,9 @@ export default function PushDraftLive() {
             ? getDbcGraduationTiers().some((tier) => tier.targetWei === persistedTarget)
             : isSupportedGraduationTarget(Number(data.draft.chainId), persistedTarget);
           if (supported) setGraduationTargetWei(persistedTarget);
+          // A scheduled DBC draft shows the time it was saved with, not a fresh default.
+          const savedAt = dbc && data.draft.scheduledLaunchAt ? new Date(String(data.draft.scheduledLaunchAt)) : null;
+          if (savedAt && Number.isFinite(savedAt.getTime())) setLaunchAtInput(toLocalInputValue(savedAt));
         } catch {
           setGraduationTargetWei(DEFAULT_GRADUATION_TARGET_WEI);
         }

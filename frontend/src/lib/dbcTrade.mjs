@@ -217,7 +217,7 @@ export function quoteDbcExactIn({
   const swapBaseForQuote = side === "sell";
   // SDK 1.5.13: state.getPool returns { poolState } and swapQuote2 reads virtualPool.poolState.*
   // (other calls want the unwrapped pool). Pass the wrapped form whatever the caller holds.
-  const quote = client.pool.swapQuote2({
+  const quoteIn = (swapMode) => client.pool.swapQuote2({
     virtualPool: pool?.poolState ? pool : { poolState: pool },
     config,
     swapBaseForQuote,
@@ -225,15 +225,31 @@ export function quoteDbcExactIn({
     eligibleForFirstSwapWithMinFee: false,
     currentPoint,
     slippageBps: DBC_TRADE_SLIPPAGE_PCT * 100,
-    swapMode: SwapMode.ExactIn,
+    swapMode,
     amountIn: new BN(amountIn.toString()),
   });
+  let quote;
+  let partialFill = false;
+  try {
+    quote = quoteIn(SwapMode.ExactIn);
+  } catch (error) {
+    // A buy larger than what the curve still needs: PartialFill takes only what completes the
+    // curve and the rest stays with the buyer (the program refunds it in the same swap).
+    if (side !== "buy" || !/Insufficient Liquidity/i.test(String(error?.message || error))) throw error;
+    quote = quoteIn(SwapMode.PartialFill);
+    partialFill = true;
+  }
   const amountOut = BigInt(quote.outputAmount?.toString?.() || quote.amountOut?.toString?.() || "0");
+  const amountInUsed = partialFill
+    ? BigInt(quote.includedFeeInputAmount?.toString?.() || amountIn.toString())
+    : BigInt(amountIn);
   const tradingFee = BigInt(quote.tradingFee?.toString?.() || "0");
   const elapsed = Number(nowUnix) - Number(activationUnix || 0);
   return {
     side,
     amountIn: BigInt(amountIn),
+    amountInUsed,
+    partialFill,
     amountOut,
     minimumAmountOut: applySlippageMinOut(amountOut),
     tradingFee,
@@ -303,7 +319,7 @@ export async function buildDbcSwapTransaction({
     pool: loaded.poolPk,
     swapBaseForQuote: side === "sell",
     referralTokenAccount: referral,
-    swapMode: SwapMode.ExactIn,
+    swapMode: quoted.partialFill ? SwapMode.PartialFill : SwapMode.ExactIn,
     amountIn: new BN(amountIn.toString()),
     minimumAmountOut: new BN(quoted.minimumAmountOut.toString()),
   });

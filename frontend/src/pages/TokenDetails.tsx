@@ -926,6 +926,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   const [quoteWei, setQuoteWei] = useState<bigint | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  // DBC: a buy larger than what the curve still needs completes it and uses only part of the amount.
+  const [dbcCompletingBuyUsed, setDbcCompletingBuyUsed] = useState<bigint | null>(null);
   const [tradePending, setTradePending] = useState(false);
   const [approvePending, setApprovePending] = useState(false);
   const [bnbBalanceWei, setBnbBalanceWei] = useState<bigint | null>(null);
@@ -3519,10 +3521,11 @@ const toSeconds = (ts: number): number => {
                 activationUnix: loaded.activationUnix || dbcActivationUnix,
               });
               if (cancelled) return;
+              setDbcCompletingBuyUsed(quoted.partialFill ? quoted.amountInUsed : null);
               if (tradeTab === "buy") {
-                setEffectiveBnbWei(amountIn);
+                setEffectiveBnbWei(quoted.partialFill ? quoted.amountInUsed : amountIn);
                 setEffectiveTokenWei(quoted.amountOut);
-                setQuoteWei(amountIn);
+                setQuoteWei(quoted.partialFill ? quoted.amountInUsed : amountIn);
               } else {
                 setEffectiveTokenWei(amountIn);
                 setEffectiveBnbWei(quoted.amountOut);
@@ -3532,6 +3535,7 @@ const toSeconds = (ts: number): number => {
             } catch (e: any) {
               if (!cancelled) {
                 setQuoteWei(null);
+                setDbcCompletingBuyUsed(null);
                 setQuoteError(e?.message || "DBC quote failed");
               }
             } finally {
@@ -5709,6 +5713,11 @@ const toSeconds = (ts: number): number => {
                     {isDbcPage && !dbcMigrated ? (
                       <p className="mt-2 text-center text-xs text-muted-foreground">
                         {antiSniperFeeLine({ activationUnix: dbcActivationUnix })}
+                        {dbcCompletingBuyUsed != null && tradeTab === "buy" ? (
+                          <span className="block text-emerald-300">
+                            This buy completes the curve: {formatBnbFromWei(dbcCompletingBuyUsed)} is used and the rest stays in your wallet. The coin then moves to its Meteora pool.
+                          </span>
+                        ) : null}
                       </p>
                     ) : null}
                     {isDbcPage && !dbcMigrated && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (

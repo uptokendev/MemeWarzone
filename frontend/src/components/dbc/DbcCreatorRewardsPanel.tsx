@@ -38,6 +38,12 @@ function quoteLabel(raw: string, symbol: string, decimals: number, multiplier: n
   return `${n.toFixed(6)} ${symbol}`;
 }
 
+/** The creator reserve in whole tokens (DBC coins have 6 decimals). */
+function tokenLabel(raw: string): string {
+  const whole = lamports(raw) / 1_000_000n;
+  return whole > 0n ? `${whole.toLocaleString("en-US")} tokens waiting` : "Nothing waiting";
+}
+
 export default function DbcCreatorRewardsPanel({
   pool,
   creator,
@@ -89,7 +95,9 @@ export default function DbcCreatorRewardsPanel({
       title: "Graduation payout",
       detail: rewards?.graduationPayoutClaimable
         ? "Your share of the graduation fee"
-        : "Your share of the graduation fee, paid when the coin graduates",
+        : rewards?.migrated
+          ? "Your share of the graduation fee, claimed"
+          : "Your share of the graduation fee, paid when the coin graduates",
       amount: rewards?.graduationPayout || "0",
       unit: "quote",
       disabled: !rewards?.graduationPayoutClaimable,
@@ -127,7 +135,7 @@ export default function DbcCreatorRewardsPanel({
             <p className="text-xs font-medium">{row.title}</p>
             <p className="text-[11px] text-muted-foreground">{row.detail}</p>
             <p className="text-[11px] font-mono">
-              {row.unit === "quote" ? quoteLabel(row.amount, quoteSymbol, quoteDecimals, quoteMultiplier) : `${row.amount} waiting`}
+              {row.unit === "quote" ? quoteLabel(row.amount, quoteSymbol, quoteDecimals, quoteMultiplier) : tokenLabel(row.amount)}
             </p>
           </div>
           <Button
