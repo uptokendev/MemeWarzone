@@ -537,7 +537,7 @@ const Create = () => {
 
   const handleCreateDraft = async () => {
     if (!validateCoreForm()) return;
-    if (!graduationMarketReady || !graduationQuoteAsset) {
+    if (!dbcLaunch && (!graduationMarketReady || !graduationQuoteAsset)) {
       toast.error("Choose a Graduation Market first.");
       return;
     }
@@ -571,13 +571,18 @@ const Create = () => {
               dbcQuoteMint,
             }
           : {}),
-        ...buildCreateDraftGraduationFields(graduationQuoteAsset, chainId),
+        ...(dbcLaunch ? {} : buildCreateDraftGraduationFields(graduationQuoteAsset, chainId)),
         ...(isSolanaCreator
           ? { cluster: String(import.meta.env.VITE_SOLANA_CLUSTER || "solana-mainnet-beta") }
           : {}),
       } as any);
       cacheDraftLogo(draft.id, logoUrl);
 
+      if (dbcLaunch) {
+        toast.success("Solana draft signed and saved. No gas spent.");
+        navigate(`/drafts/${draft.id}/promotion`);
+        return;
+      }
       const expectedSelection = buildCreateDraftGraduationFields(graduationQuoteAsset, chainId);
       const persistedId = String((draft as any).graduationQuoteAssetId || "");
       const persistedKind = String((draft as any).graduationMarketKind || "").toUpperCase();
@@ -603,7 +608,7 @@ const Create = () => {
 
   const handleDeployNow = async () => {
     if (!validateCoreForm()) return;
-    if (!graduationMarketReady || !graduationQuoteAsset) {
+    if (!dbcLaunch && (!graduationMarketReady || !graduationQuoteAsset)) {
       toast.error("Choose a Graduation Market first.");
       return;
     }
@@ -1005,7 +1010,8 @@ const Create = () => {
     if (fromStep === 2) return identityReady;
     if (fromStep === 3) return storyReady;
     if (fromStep === 4) return true;
-    if (fromStep === 5) return graduationMarketReady;
+    // A DBC coin graduates into its own Meteora pool: no Graduation Market catalog choice.
+    if (fromStep === 5) return dbcLaunch || graduationMarketReady;
     return false;
   };
 
@@ -1296,7 +1302,25 @@ const Create = () => {
               />
             ) : null}
 
-            {step === 5 ? (
+            {step === 5 && dbcLaunch ? (
+              <CreateFullPane>
+                <div className="flex h-full flex-col gap-4 p-4">
+                  <div>
+                    <div className="font-retro text-lg text-foreground">Graduation</div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      When the curve fills, your coin moves into a Meteora pool paired with SOL. The pool's liquidity is locked for good, and the coin keeps trading there and on Jupiter.
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Pool</span><span className="text-foreground">{normalizedTicker || "TICKER"}/SOL on Meteora</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Your share at graduation</span><span className="text-foreground">19.8% of what the curve raised</span></div>
+                  </div>
+                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" onClick={goNext}>Next</Button>
+                </div>
+              </CreateFullPane>
+            ) : null}
+
+            {step === 5 && !dbcLaunch ? (
               <CreateFullPane>
                 <GraduationMarketStep
                   chainId={chainId}
@@ -1320,10 +1344,16 @@ const Create = () => {
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Name</span><span className="truncate font-medium text-foreground">{formData.name || "—"}</span></div>
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Ticker</span><span className="font-medium text-foreground">{normalizedTicker ? `$${normalizedTicker}` : "—"}</span></div>
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation threshold</span><span className="text-foreground">{selectedGraduation?.label || "—"}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation Market</span><span className="text-right text-foreground">{graduationSummary.pair}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Quote Asset</span><span className="text-foreground">{graduationSummary.quoteAsset}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Provider</span><span className="text-foreground">{graduationSummary.provider}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Bonding currency</span><span className="text-foreground">{graduationSummary.bonding}</span></div>
+                      {dbcLaunch ? (
+                        <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduates into</span><span className="text-right text-foreground">{normalizedTicker || "TICKER"}/SOL on Meteora</span></div>
+                      ) : (
+                        <>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation Market</span><span className="text-right text-foreground">{graduationSummary.pair}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Quote Asset</span><span className="text-foreground">{graduationSummary.quoteAsset}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Provider</span><span className="text-foreground">{graduationSummary.provider}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Bonding currency</span><span className="text-foreground">{graduationSummary.bonding}</span></div>
+                        </>
+                      )}
                       {dbcLaunch ? (
                         <>
                           <div className="flex justify-between gap-3"><span className="text-muted-foreground">Creator fee</span><span className="text-foreground">{dbcFeeChoice}</span></div>
@@ -1348,9 +1378,9 @@ const Create = () => {
                     </div>
 
                     {mode === "deploy" ? (
-                      <Button type="button" className="mwz-button mwz-button-orange mt-auto h-12 w-full font-retro text-base" disabled={isDeploying || isDrafting || !directDeployRouteReady || !graduationMarketReady} onClick={() => void handleDeployNow()}><Rocket className="mr-2 h-5 w-5" />{isDeploying ? "Deploying… waiting for confirmation" : "Deploy now"}</Button>
+                      <Button type="button" className="mwz-button mwz-button-orange mt-auto h-12 w-full font-retro text-base" disabled={isDeploying || isDrafting || !directDeployRouteReady || !(dbcLaunch || graduationMarketReady)} onClick={() => void handleDeployNow()}><Rocket className="mr-2 h-5 w-5" />{isDeploying ? "Deploying… waiting for confirmation" : "Deploy now"}</Button>
                     ) : (
-                      <Button type="button" className="mwz-button mt-auto h-12 w-full font-retro text-base" disabled={isDrafting || isDeploying || !graduationMarketReady} onClick={() => void handleCreateDraft()}><FileText className="mr-2 h-5 w-5" />{isDrafting ? "Signing & saving draft…" : "Save Draft"}</Button>
+                      <Button type="button" className="mwz-button mt-auto h-12 w-full font-retro text-base" disabled={isDrafting || isDeploying || !(dbcLaunch || graduationMarketReady)} onClick={() => void handleCreateDraft()}><FileText className="mr-2 h-5 w-5" />{isDrafting ? "Signing & saving draft…" : "Save Draft"}</Button>
                     )}
                     <p className="text-[11px] text-muted-foreground">{mode === "deploy" ? "Wallet signs + gas. Stay here until deploy confirms — then Token Details." : "One signature to save. No gas. Next: promotion setup / edit page."}</p>
                   </div>

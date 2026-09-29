@@ -180,7 +180,7 @@ against the rule "unlinked slices go to the airdrop".
 | 5 | Fee routing: accruals per trade, claim, route to vaults, reward_events, referral sweep | Grok, brief `docs/dbc/grok-step-5-fee-routing.md` | **DONE 2026-09-28**: merged (PR #475, 2 reviews), devnet ALL CHECKS PASS; migration `20260929_000006` still to apply |
 | 5b | Creator-fee choice payouts: holders (weekly airdrop rails, code-2 leaves), buyback & burn (random, <= 0.5% impact), split | Claude (Grok was on step 7), brief `docs/dbc/grok-step-5b-creator-fee-choice.md` | **DONE 2026-09-29**: merged, devnet ALL CHECKS PASS; migration `20260929_000008` still to apply |
 | 6 | Graduation keeper, our graduation fee routed, D7 compensation, creator rewards panel, LP fees | Grok, brief `docs/dbc/grok-step-6-graduation.md` | **DONE 2026-09-29**: merged (PR #476, 2 reviews + Claude's fixes), devnet ALL CHECKS PASS (cases A, B, D19); migration `20260929_000007` still to apply |
-| 7 | Binding tokens (D20-D23): 7a USDC/USDT, 7b stock tokens | Grok, brief `docs/dbc/grok-step-7-binding-tokens.md` | brief written 2026-09-29 |
+| 7 | Binding tokens (D20-D23): 7a USDC/USDT, 7b stock tokens | Grok, brief `docs/dbc/grok-step-7-binding-tokens.md` | 7a PR #477 review 1: CHANGES NEEDED |
 
 ## Groundwork for steps 3-6 (Claude, 2026-09-28): proven or read from the code
 
@@ -610,3 +610,45 @@ Snapshot equals the token accounts (pool vault and creator left out); split crea
 exactly what was paid; curve buyback and DAMM v2 buyback: spend = quote-vault inflow (190,196 /
 487,466), supply drop = burned, impact 50.00 bps. The code-2 claim itself is the existing airdrop claim
 (the leaf only carries another program byte); it was not claimed on devnet.
+
+### Step 7a, review 1 (2026-09-29): PR #477 @ `ca6f8912`: CHANGES NEEDED
+
+Good: the quote registry, the ladder (SOL params hashes unchanged), the create picker and refusals,
+trade accounts, the indexer's quote columns and SOL value. 29 frontend tests pass. After merging staging
+the indexer typechecks with 0 errors.
+
+**Start from `review/dbc-step-7a` (`origin`), not your branch.** It merges staging (step 5b is in), resolves
+the two conflicts, renumbers your migration to `20260929_000009_dbc_quote_binding.sql` (5b took 000008),
+and removes the `quoteMintFromPool` fallback to SOL on a failed read: for a USDC coin that derived the
+wrong DAMM pool. Reset your branch onto it, then:
+
+**The money path is not wired for a bound quote.** `dbcQuoteToSolSwap.ts` is called by nothing (only a
+test imports the split helper), and the fee claimer and router are unchanged. For a USDC coin today:
+1. **Trading fees:** the claim moves USDC to the collector; the router then does `SystemProgram.transfer`
+   of the slices, whose numbers are USDC units, as lamports. 1 USDC (1,000,000) goes out as 0.001 SOL
+   taken from whatever the collector holds (creator pots included), and the USDC stays behind unrouted.
+   Wire it: claim (quote units, reconcile as today) -> swap the claimed quote to SOL (D21,
+   sign-store-send, impact cap, retry) -> split the SOL actually received with `splitSolFromQuoteSwap`
+   -> route. The accrual rows keep quote units; add the SOL received per claim batch.
+2. **Graduation:** `withdraw` receives the migration fee in the quote; `compensate` pays the creator a
+   SystemProgram transfer of a quote-unit number (line ~769). D7 in the quote = a TransferChecked of
+   the quote token to the creator. `route` then swaps the protocol-side remainder and the slices to SOL
+   before the SOL route.
+3. **LP claims** (`runDbcLpClaimsOnce`, ~1214): the claim pays the quote; the protocol share is sent as
+   lamports. Swap first (D19 creator_pool also in SOL after the swap).
+4. **Referral sweep:** one referral account per mint (`DBC_REFERRAL_TOKEN_ACCOUNTS`) must be swept per
+   mint: swap to SOL into `protocol_vault`, account left open.
+5. **Step 5b buyback on a bound coin** buys with SOL today. For a USDC coin, skip with the reason
+   `quote-not-sol` for now (one line in `runDueBuybacks`), stated in the hand-in; the SOL -> quote -> coin
+   route is later.
+
+**Proof (you could not fund it; do not wait on devnet USDC).** A $150 USDC coin needs 150+ USDC and
+Circle's faucet gives ~20. Make the devnet USDC row overridable by `DBC_DEVNET_USDC_MINT`, read only
+when the cluster is devnet (mainnet rows never read env). The proof creates its own 6-decimal SPL mint,
+mints to its wallets, and runs: create, buy and sell in that quote, indexer rows (quote columns + SOL
+value), claim equal to the pool counter in raw quote units, keeper case A (migration fee, D7 in the
+quote, route), LP claim, every amount checked against the transaction's own token deltas. The swap is
+the stub on devnet; the live swap is Claude's mainnet canary. Write the script; Claude runs it.
+
+Review rule for everyone (it bit us today): run `npm ci` in the worktree and `npx tsc -p tsconfig.json`
+for the indexer before handing in; the production build is `tsc`.

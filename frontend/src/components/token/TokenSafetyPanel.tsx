@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createDbcLaunchpadAdapter } from "@/features/launchpad/dbcAdapter";
+import { useIsDbcCoin } from "@/features/launchpad/useIsDbcCoin";
 import { AlertTriangle, CheckCircle2, Clock, RefreshCw, Route, ShieldAlert, ShieldCheck, XCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -7,6 +9,8 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import type { LaunchpadAdapterStatus, LaunchpadTradePreflight, TradeSide } from "@/features/launchpad/adapters";
 import { useLaunchpadAdapter } from "@/features/launchpad/useLaunchpadAdapter";
 
+
+const DBC_ADAPTER = createDbcLaunchpadAdapter();
 type TokenSafetyPanelProps = {
   campaignAddress?: string | null;
   chainId?: number | string | null;
@@ -52,7 +56,10 @@ function uniq(values: string[]) {
 export function TokenSafetyPanel({ campaignAddress, chainId, compact = false }: TokenSafetyPanelProps) {
   const wallet = useWallet();
   const solanaWallet = useSolanaWallet();
-  const adapter = useLaunchpadAdapter({ chainId });
+  const launchpadAdapter = useLaunchpadAdapter({ chainId });
+  // A DBC coin trades on its Meteora pool: the launchpad's switches do not apply to it.
+  const isDbcCoin = useIsDbcCoin(String(campaignAddress || ""), chainId);
+  const adapter = useMemo(() => (isDbcCoin ? DBC_ADAPTER : launchpadAdapter), [isDbcCoin, launchpadAdapter]);
   const [status, setStatus] = useState<LaunchpadAdapterStatus | null>(null);
   const [buyPreflight, setBuyPreflight] = useState<LaunchpadTradePreflight | null>(null);
   const [sellPreflight, setSellPreflight] = useState<LaunchpadTradePreflight | null>(null);
