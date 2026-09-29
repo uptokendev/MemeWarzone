@@ -752,3 +752,24 @@ graduation payout in NVDAx to the raw unit. Two things only the run showed: DBC'
 the locker escrow's rent (it holds 68 SOL on mainnet), and the keeper kept a cleared pause reason.
 Not proven here: the live Jupiter NVDAx -> SOL swap (the mainnet canary) and the risk dialog in a browser.
 
+
+### Creator-fee choices for every pairing (2026-09-29, Claude, founder: "buyback/burn etc everywhere")
+
+Buyback, holders and split now work for coins paired with USDC, USDT or an xStock. A bound coin's
+creator pot is quote tokens on the collector (7a keeps it out of the SOL swap), so its ledger is in
+quote units: buybacks spend the quote on the coin's own curve or DAMM pool and burn in the same tx
+(minimum `DBC_BUYBACK_MIN_USD_MICROS`, default $2, at Jupiter's price); the split creator is paid in
+the quote (D21); the holders' part is swapped to SOL through Jupiter and joins the weekly SOL round.
+Migration `20260929_000010` (payout `quote_mint` / `holders_swap`, swap `purpose_key`).
+
+Found and fixed (none live): the weekly run paid every pot as SOL lamports although a bound pot is
+quote units; a bound coin's LP creator pot was swapped to SOL and added to a quote-unit pot; quote->SOL
+swaps routed the quoted SOL instead of what arrived; a pending swap was retried as a second swap of
+the same amount (graduation route, LP claim, referral sweep), which could spend another coin's quote;
+the router's SOL reservation counted quote-unit payouts as SOL.
+
+Proof `MWZ_DBC_PROOF=prove-stock-choices-local.mjs bash scripts/dbc/rehearse-stock-quote-local.sh`
+(mainnet's programs): **21 checks, ALL PASS**. Buyback spent 4,271,279 raw NVDAx into the curve's
+vault and burned exactly the supply drop in the same tx; split creator got exactly 60% in NVDAx;
+holders' 40% swapped once and the round paid exactly that SOL; a rerun moved nothing; after
+graduation the LP claim kept 80% in NVDAx and swapped only our 20%. The 7b proof still passes (45).
