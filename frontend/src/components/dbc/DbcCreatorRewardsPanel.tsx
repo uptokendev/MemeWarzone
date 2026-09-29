@@ -9,6 +9,7 @@ import {
 
 type Rewards = {
   graduationPayout: string;
+  graduationPayoutClaimable?: boolean;
   reserve: string;
   lpFees: string;
   locker: string;
@@ -79,10 +80,12 @@ export default function DbcCreatorRewardsPanel({
     {
       key: "payout",
       title: "Graduation payout",
-      detail: "90% of the 22% migration fee",
+      detail: rewards?.graduationPayoutClaimable
+        ? "Your share of the graduation fee"
+        : "Your share of the graduation fee, paid when the coin graduates",
       amount: rewards?.graduationPayout || "0",
       unit: "SOL",
-      disabled: lamports(rewards?.graduationPayout) <= 0n,
+      disabled: !rewards?.graduationPayoutClaimable,
       run: () => submitDbcGraduationPayout({ pool, creator }),
     },
     {

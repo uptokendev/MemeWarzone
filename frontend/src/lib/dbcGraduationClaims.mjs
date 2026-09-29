@@ -65,7 +65,10 @@ export async function loadCreatorRewards(connection, { pool, creator, includeLp 
   const threshold = BigInt(String(cfg?.migrationQuoteThreshold ?? cfg?.migration_quote_threshold ?? 0));
   const intoPool = (threshold * 78n + 99n) / 100n;
   const fee = threshold - intoPool;
+  // The migration fee only exists once the pool has migrated; before that this is the expected
+  // amount, shown but not claimable.
   const graduationPayout = withdrawn ? 0n : (fee * 90n) / 100n;
+  const graduationPayoutClaimable = migrated && !withdrawn && graduationPayout > 0n;
   const mint = String(state.baseMint?.toBase58?.() || state.base_mint || "");
   const locker = deriveDbcLockerEscrow(poolPk);
   let reserve = 0n;
@@ -101,6 +104,7 @@ export async function loadCreatorRewards(connection, { pool, creator, includeLp 
     creator: creatorPk.toBase58(),
     migrated,
     graduationPayout: graduationPayout.toString(),
+    graduationPayoutClaimable,
     reserve: reserve.toString(),
     lpFees: lpFees.toString(),
     locker: locker.toBase58(),
