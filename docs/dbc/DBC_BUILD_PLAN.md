@@ -688,11 +688,11 @@ Still to fix:
 
 Local API + a local copy of the staging schema (read-only dump), devnet, throwaway wallets, Playwright.
 Create -> token page -> buy -> sell -> creator locked buy all work from the real screens after three
-fixes (): step 5 of create was the old Graduation Market and blocked every DBC launch; the
+fixes (`45b0fab9`): step 5 of create was the old Graduation Market and blocked every DBC launch; the
 launchpad trade-safety gate blocked DBC buys and sells; the creator panel offered to claim the
 graduation payout before graduation. Buy received exactly the quoted tokens; the lock was verified and
 recorded; the badge reads "0.17% locked until Nov 26, 2026".
 Copy to fix (no AI tone, no internal words): "DBC" in toasts; "createCampaign" on the Direct Deploy card;
 "Image uploaded successfully!" before anything is uploaded; "collector" in the holders option; "Creator
 fee: keep" in the review; "You keep 7% of the trading fee" (7% of the post-Meteora 80%).
-Pre-existing, not DBC:  fails on the live work branch too.
+Pre-existing, not DBC: `robinhoodBondingWalletSwitchPresentation.test.mjs` fails on the live work branch too.
