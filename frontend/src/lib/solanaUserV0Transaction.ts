@@ -147,16 +147,28 @@ export function assertSolanaUserV0Intent(
   }
 
   const decompiled = web3.TransactionMessage.decompile(transaction.message);
+  // Compare with the expected instructions as a compiled message carries them. Compiling merges each
+  // account's flags across instructions: the fee payer is signer + writable everywhere, also where an
+  // instruction names it read-only (e.g. as owner of a token account it creates). Comparing with the
+  // raw instructions refused every such transaction before the wallet opened (graduated-pool buys,
+  // and the UP Vote memo on 2026-09-26). Any change to a key, flag, program or data is still refused.
+  const expected = web3.TransactionMessage.decompile(
+    new web3.TransactionMessage({
+      payerKey: payer,
+      recentBlockhash: transaction.message.recentBlockhash,
+      instructions: expectation.instructions,
+    }).compileToV0Message(),
+  ).instructions;
   if (!expectation.allowAdditionalInstructions) {
-    if (decompiled.instructions.length !== expectation.instructions.length) {
+    if (decompiled.instructions.length !== expected.length) {
       throw new Error("Solana V0 instruction count changed before signing/submission");
     }
-    for (let i = 0; i < expectation.instructions.length; i += 1) {
-      if (!instructionEqual(decompiled.instructions[i], expectation.instructions[i])) {
+    for (let i = 0; i < expected.length; i += 1) {
+      if (!instructionEqual(decompiled.instructions[i], expected[i])) {
         throw new Error(`Solana V0 instruction ${i} changed before signing/submission`);
       }
     }
-  } else if (findContiguousInstructionSequence(decompiled.instructions, expectation.instructions) < 0) {
+  } else if (findContiguousInstructionSequence(decompiled.instructions, expected) < 0) {
     throw new Error("Solana V0 expected instruction sequence changed before signing/submission");
   }
 

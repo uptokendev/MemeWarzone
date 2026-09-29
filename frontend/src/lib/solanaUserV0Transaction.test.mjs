@@ -271,8 +271,33 @@ test("UP Vote shape (memo signed by the fee payer + transfer) passes the pre-sig
   const build = (instructions) => buildSolanaUserV0Transaction(web3, { payer, recentBlockhash: BLOCKHASH, instructions });
   const fixed = [memo(true), transfer];
   assert.doesNotThrow(() => assertSolanaUserV0Intent(web3, build(fixed), { payer, instructions: fixed }));
-  const broken = [memo(false), transfer];
-  assert.throws(() => assertSolanaUserV0Intent(web3, build(broken), { payer, instructions: broken }), /instruction 0 changed/);
+  // The chain compiles the fee payer writable either way, and so does the check since 2026-09-29.
+  const readOnly = [memo(false), transfer];
+  assert.doesNotThrow(() => assertSolanaUserV0Intent(web3, build(readOnly), { payer, instructions: readOnly }));
+});
+
+test("a graduated-pool buy (fee payer also owns the token account it creates) passes the pre-sign check", () => {
+  // Regression 2026-09-29: the Meteora SDK names the wallet read-only as owner of the ATA it creates
+  // and in the swap, while the compiled message has it signer + writable, so every buy on a graduated
+  // pool failed with "instruction 0 changed" before the wallet opened.
+  const payer = Keypair.generate().publicKey;
+  const ata = Keypair.generate().publicKey;
+  const createAta = new TransactionInstruction({
+    programId: new web3.PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: ata, isSigner: false, isWritable: true },
+      { pubkey: payer, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from([1]),
+  });
+  const instructions = [createAta];
+  const tx = buildSolanaUserV0Transaction(web3, { payer, recentBlockhash: BLOCKHASH, instructions });
+  assert.doesNotThrow(() => assertSolanaUserV0Intent(web3, tx, { payer, instructions }));
+  // A different account in the same place is still refused.
+  const swapped = new TransactionInstruction({ ...createAta, keys: [createAta.keys[0], { ...createAta.keys[1], pubkey: Keypair.generate().publicKey }, createAta.keys[2]] });
+  const tampered = buildSolanaUserV0Transaction(web3, { payer, recentBlockhash: BLOCKHASH, instructions: [swapped] });
+  assert.throws(() => assertSolanaUserV0Intent(web3, tampered, { payer, instructions }), /instruction 0 changed/);
 });
 
 test("the live UP Vote builder declares its memo signer writable", async () => {
