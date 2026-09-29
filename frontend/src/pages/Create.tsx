@@ -101,6 +101,12 @@ const stepSlideVariants = {
 
 const MAX_LOGO_UPLOAD_BYTES = 5 * 1024 * 1024;
 const TOTAL_STEPS = 6;
+const DBC_FEE_CHOICE_LABEL: Record<string, string> = {
+  keep: "Keep it",
+  holders: "Give it to holders",
+  split: "Split",
+  buyback: "Buyback and burn",
+};
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
 type CreateMode = "draft" | "deploy" | null;
@@ -626,18 +632,18 @@ const Create = () => {
         if (dbcFirstBuyQuote?.exceedsCap) {
           throw new Error("The first buy cannot be more than 10% of supply.");
         }
-        toast.message("Checking DBC launch eligibility…");
+        toast.message("Checking that this wallet can launch…");
         const preflight = await preflightDbcCreate({ creatorWallet, targetUsd });
         if (!preflight?.preflight?.allowed) {
           const errorMessage = preflight?.preflight?.cooldownActive
-            ? `A DBC launch from this wallet is on a 24 hour cooldown.`
+            ? "This wallet launched a coin in the last 24 hours. It can launch again after that."
             : `Live DBC coin limit reached (${preflight?.preflight?.creatorLiveBondingCount}/${preflight?.preflight?.creatorMaxLiveBondingCount}).`;
           emitCreatorArmBlocked(resolveCreatorArmBlock({ mode: "now", errorMessage, errorCode: "DBC_CREATOR_LAUNCH_LIMIT" }));
           return;
         }
         const { signWalletAction } = await import("@/lib/walletActionAuth");
         const { signSolanaMessage } = await import("@/lib/solanaWallet");
-        toast.message("Sign DBC deploy in your Solana wallet…");
+        toast.message("Sign in your wallet to start the launch…");
         const dbcAuth = await signWalletAction({
           action: "dbc_create",
           walletAddress: creatorWallet,
@@ -651,11 +657,11 @@ const Create = () => {
           ticker: normalizedTicker,
           auth: dbcAuth,
         });
-        if (!begun.sessionToken) throw new Error("DBC session was not returned.");
+        if (!begun.sessionToken) throw new Error("The launch could not start. Try again.");
         const logoUrl = await uploadLogo({ directSessionToken: begun.sessionToken });
         const web3 = await loadSolanaWeb3();
         const mint = web3.Keypair.generate();
-        toast.message("Authorizing DBC create…");
+        toast.message("Preparing your launch…");
         const authorization = await authorizeDbcCreate({
           sessionToken: begun.sessionToken,
           mint: mint.publicKey.toBase58(),
@@ -687,12 +693,12 @@ const Create = () => {
           signature: created.signature,
         });
         analytics.track("token_create_succeeded", { surface: "dbc", chain: "solana" });
-        toast.success("DBC token deployed.");
+        toast.success("Your coin is live.");
         navigate(finalized.tokenPath || `/token/${created.mintAddress}?chainId=101`);
       } catch (error: any) {
         console.error(error);
         analytics.track("token_create_failed", { surface: "dbc", chain: "solana", error_code: analyticsErrorCode(error) });
-        toast.error(String(error?.message || "DBC deploy failed"));
+        toast.error(String(error?.message || "The launch did not go through. Try again."));
       } finally {
         setIsDeploying(false);
       }
@@ -1143,7 +1149,7 @@ const Create = () => {
                       <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
                         {directDeployRouteReady
                           ? isSolanaCreator
-                            ? "One flow: logo + wallet createCampaign → opens Token Details (no promotion page)."
+                            ? "Sign once in your wallet and go straight to your coin's page. No promotion page."
                             : `${evmChainLabel} wallet + gas. Live bonding campaign as soon as the tx confirms.`
                           : isSolanaCreator
                             ? "Connect a Solana wallet to enable Direct deploy."
@@ -1257,9 +1263,9 @@ const Create = () => {
                           <div className="font-retro text-sm text-foreground">Creator fee</div>
                           <div className="mt-2 grid gap-1.5">
                             {([
-                              ["keep", "Keep it", "You keep 7% of the trading fee."],
-                              ["holders", "Give it to holders", "The fee goes to a collector shared with holders."],
-                              ["split", "Split", "You keep a percent; the rest goes to the collector."],
+                              ["keep", "Keep it", "Your share of every trade fee is yours to claim."],
+                              ["holders", "Give it to holders", "Your share is paid out to the coin's holders every week."],
+                              ["split", "Split", "You keep a percentage; holders get the rest every week."],
                               ["buyback", "Buyback and burn", "Bought back at random times each week and burned."],
                             ] as const).map(([id, label, detail]) => (
                               <button key={id} type="button" onClick={() => setDbcFeeChoice(id)} className={cn("rounded-lg border px-2.5 py-2 text-left", dbcFeeChoice === id ? "border-accent bg-accent/15" : "border-border bg-muted/30")}>
@@ -1356,7 +1362,7 @@ const Create = () => {
                       )}
                       {dbcLaunch ? (
                         <>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Creator fee</span><span className="text-foreground">{dbcFeeChoice}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Creator fee</span><span className="text-foreground">{DBC_FEE_CHOICE_LABEL[dbcFeeChoice] || dbcFeeChoice}</span></div>
                           <div className="flex justify-between gap-3"><span className="text-muted-foreground">First buy</span><span className="text-foreground">{dbcFirstBuySol ? `${dbcFirstBuySol} ${dbcQuote?.symbol || "SOL"}` : "None"}</span></div>
                         </>
                       ) : null}

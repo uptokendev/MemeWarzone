@@ -80,20 +80,20 @@ function signOpaqueToken(payload, purpose, env) {
 function verifyOpaqueToken(token, purpose, env) {
   const raw = String(token || "").trim();
   const parts = raw.split(".");
-  if (parts.length !== 2) throw new DbcCreateError("DBC session token is invalid.", { code: "DBC_SESSION_INVALID", httpStatus: 401 });
+  if (parts.length !== 2) throw new DbcCreateError("Your signing session is not valid. Sign again.", { code: "DBC_SESSION_INVALID", httpStatus: 401 });
   const [body, signature] = parts;
   const expected = crypto.createHmac("sha256", tokenKey(env)).update(`${purpose}.${body}`, "utf8").digest();
   let provided;
   try { provided = Buffer.from(signature, "base64url"); } catch { provided = Buffer.alloc(0); }
   if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
-    throw new DbcCreateError("DBC session token signature is invalid.", { code: "DBC_SESSION_INVALID", httpStatus: 401 });
+    throw new DbcCreateError("Your signing session is not valid. Sign again.", { code: "DBC_SESSION_INVALID", httpStatus: 401 });
   }
   let payload;
   try { payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")); }
-  catch { throw new DbcCreateError("DBC session token payload is invalid.", { code: "DBC_SESSION_INVALID", httpStatus: 401 }); }
+  catch { throw new DbcCreateError("Your signing session is not valid. Sign again.", { code: "DBC_SESSION_INVALID", httpStatus: 401 }); }
   const now = Math.floor(Date.now() / 1000);
   if (!Number.isInteger(payload?.exp) || payload.exp <= now) {
-    throw new DbcCreateError("DBC session expired. Sign again.", { code: "DBC_SESSION_EXPIRED", httpStatus: 401 });
+    throw new DbcCreateError("Your signing session expired. Sign again.", { code: "DBC_SESSION_EXPIRED", httpStatus: 401 });
   }
   return payload;
 }

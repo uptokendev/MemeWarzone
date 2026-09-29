@@ -47,7 +47,7 @@ export async function loadDbcCreatorLimits(db, { creatorWallet, chainId = 101, n
 
 export function assertDbcCreatorLimits(limits) {
   if (limits.liveLimitReached) {
-    const err = new Error("You already have the maximum number of live DBC coins (3).");
+    const err = new Error("This wallet already has 3 live coins, the most one wallet can have.");
     err.code = "DBC_CREATOR_LAUNCH_LIMIT";
     err.httpStatus = 403;
     throw err;

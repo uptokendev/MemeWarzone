@@ -11,7 +11,7 @@ export const DBC_TEST_GRADUATION_TIER: GraduationTier = {
   id: "test",
   label: "$150",
   title: "Devnet rehearsal",
-  description: "Devnet only. Rehearse a DBC launch without a $15k bond.",
+  description: "Devnet only. A small test launch without a $15K target.",
   targetWei: DBC_TEST_GRADUATION_TARGET_WEI,
   testOnly: true,
 };

@@ -103,7 +103,7 @@ export const useTokenForm = () => {
         setFormData((prev) => ({ ...prev, imagePreview: reader.result as string }));
       };
       reader.readAsDataURL(file);
-      toast.success("Image uploaded successfully!");
+      toast.success("Image added.");
     }
   };
 
