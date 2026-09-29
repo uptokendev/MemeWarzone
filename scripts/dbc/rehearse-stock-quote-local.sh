@@ -7,6 +7,7 @@
 # test wallets can hold NVDAx and the proof can pause it; every other byte is mainnet's.
 #
 #   SOLANA_MAINNET_RPC_URL=<rpc> bash scripts/dbc/rehearse-stock-quote-local.sh
+#   MWZ_DBC_PROOF=prove-stock-choices-local.mjs ...   # creator-fee choices on NVDAx coins
 #
 # Falls back to SOLANA_RPC_URL in frontend/.env.local (the paid mainnet endpoint) for the dumps.
 set -euo pipefail
@@ -89,4 +90,4 @@ echo "==> Token-2022 on the validator == mainnet ($(sha256sum "$WORK/token2022.l
 DBC_LOCAL_RPC="http://127.0.0.1:$PORT" \
 NVDAX_AUTHORITY_KEYPAIR="$WORK/nvdax-authority.json" \
 MWZ_DBC_7B_WORK="$WORK" \
-  "$ROOT/realtime-indexer/node_modules/.bin/tsx" "$ROOT/scripts/dbc/prove-stock-quote-local.mjs"
+  "$ROOT/realtime-indexer/node_modules/.bin/tsx" "$ROOT/scripts/dbc/${MWZ_DBC_PROOF:-prove-stock-quote-local.mjs}"

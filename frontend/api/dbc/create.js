@@ -208,14 +208,6 @@ function resolveCreateQuote(cluster, mint) {
   return requireEnabledQuote(cluster, String(mint || "").trim() || DBC_QUOTE_MINT);
 }
 
-/** Buyback buys the coin with SOL on its SOL pool; a coin paired with another quote has none. */
-function feeChoiceQuoteRefusal(fee, quote) {
-  if (fee?.feeChoice === "buyback" && quote?.kind !== "native") {
-    return { ok: false, error: "Buyback and burn is only for coins paired with SOL.", code: "DBC_BUYBACK_NEEDS_SOL" };
-  }
-  return null;
-}
-
 function poolConfigStateFromParams(configParams, quoteMint = DBC_QUOTE_MINT) {
   return {
     tokenType: Number(configParams.tokenType ?? 0),
@@ -517,8 +509,6 @@ export function createDbcCreateHandler(deps = {}) {
     } catch (error) {
       return json(res, 400, { ok: false, error: error.message, code: error.code || "DBC_QUOTE_UNKNOWN" });
     }
-    const buybackRefusal = feeChoiceQuoteRefusal(fee, quote);
-    if (buybackRefusal) return json(res, 400, buybackRefusal);
     const step = await stepForQuote(quote);
     const ladder = deps.ladder || createDbcConfigLadder({ db: database, env, cluster });
     const ensured = await ladder.ensureLaunchConfig({
@@ -738,8 +728,6 @@ export function createDbcCreateHandler(deps = {}) {
     } catch (error) {
       return { error: { ok: false, error: error.message, code: error.code || "DBC_QUOTE_UNKNOWN" } };
     }
-    const buybackRefusal = feeChoiceQuoteRefusal(fee, quote);
-    if (buybackRefusal) return { error: buybackRefusal };
     const step = await stepForQuote(quote);
     const database = await db();
     const ladder = deps.ladder || createDbcConfigLadder({ db: database, env, cluster });

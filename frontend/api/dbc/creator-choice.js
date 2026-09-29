@@ -71,7 +71,12 @@ export function createDbcCreatorChoiceHandler(deps = {}) {
         feeChoice,
         creatorSharePct,
         totals,
-        line: feeChoiceLine({ feeChoice, creatorSharePct, totals }),
+        line: feeChoiceLine({
+          feeChoice,
+          creatorSharePct,
+          totals,
+          quote: { symbol: String(meta.quoteSymbol || "SOL"), decimals: Number(meta.quoteDecimals ?? 9) },
+        }),
       });
     } catch (error) {
       console.error("[dbc/creator-choice]", error);

@@ -85,13 +85,18 @@ export async function heldCreatorPoolSum(db: Queryable): Promise<bigint> {
     [WSOL_MINT],
   );
   // Step 5b pays the creator pot out (holders deposit, split transfer, buyback). A payout that is
-  // sending or landed has left, or is leaving, the collector, so it is no longer held.
+  // sending or landed has left, or is leaving, the collector, so it is no longer held. Only SOL rows
+  // count: holder deposits are always SOL; a bound coin's creator and buyback rows are quote units.
+  // A bound coin's holder share becomes SOL when swapped; that SOL is held until its round deposit.
   const paid = await db.query(
-    `select coalesce(sum(lamports), 0)::text as paid
+    `select coalesce(sum(lamports) filter (where kind = 'holders' or (kind in ('creator', 'buyback') and quote_mint is null)), 0)::text as paid,
+            coalesce(sum(sol_received) filter (where kind = 'holders_swap' and status = 'landed'), 0)::text as swapped_in
        from public.dbc_creator_pool_payouts
       where status in ('sending', 'landed')`,
   );
-  const value = BigInt(String(held.rows[0]?.held || "0")) - BigInt(String(paid.rows[0]?.paid || "0"));
+  const value = BigInt(String(held.rows[0]?.held || "0"))
+    + BigInt(String(paid.rows[0]?.swapped_in || "0"))
+    - BigInt(String(paid.rows[0]?.paid || "0"));
   return value > 0n ? value : 0n;
 }
 
@@ -333,7 +338,7 @@ export async function routeClaimedAccruals(input: {
   skipped: string | null;
 }> {
   await resolvePendingRoutes({ db: input.db, connection: input.connection });
-  await resolvePendingQuoteSwaps({ db: input.db, connection: input.connection });
+  await resolvePendingQuoteSwaps({ db: input.db, connection: input.connection, collector: input.collector.publicKey.toBase58() });
   const stillRouting = await input.db.query(
     `select id from public.dbc_fee_accruals where status = 'routing' limit 1`,
   );

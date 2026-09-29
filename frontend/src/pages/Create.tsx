@@ -220,11 +220,7 @@ const Create = () => {
     };
   }, [dbcQuote?.kind, dbcQuote?.mint]);
   const dbcFirstBuyRaw = (): bigint => quoteUiToRaw(dbcFirstBuySol, Number(dbcQuote?.decimals ?? 9), dbcQuoteMultiplier);
-  const chooseDbcQuote = (mint: string) => {
-    setDbcQuoteMint(mint);
-    // Buyback spends SOL on the coin's SOL pool; a coin paired with anything else has none.
-    if (mint !== WSOL_MINT && dbcFeeChoice === "buyback") setDbcFeeChoice("keep");
-  };
+  const chooseDbcQuote = (mint: string) => setDbcQuoteMint(mint);
   const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ tokensOut: string; bps: string; exceedsCap: boolean } | null>(null);
   const [creatorEligibility, setCreatorEligibility] = useState<ScheduledCreatorLaunchEligibility | null>(null);
   const [creatorEligibilityError, setCreatorEligibilityError] = useState<string | null>(null);
@@ -1303,16 +1299,13 @@ const Create = () => {
                               ["keep", "Keep it", "Your share of every trade fee is yours to claim."],
                               ["holders", "Give it to holders", "Your share is paid out to the coin's holders every week."],
                               ["split", "Split", "You keep a percentage; holders get the rest every week."],
-                              ["buyback", "Buyback and burn", dbcQuote?.kind === "native" ? "Bought back at random times each week and burned." : "Only for coins paired with SOL."],
-                            ] as const).map(([id, label, detail]) => {
-                              const unavailable = id === "buyback" && dbcQuote?.kind !== "native";
-                              return (
-                                <button key={id} type="button" disabled={unavailable} onClick={() => setDbcFeeChoice(id)} className={cn("rounded-lg border px-2.5 py-2 text-left disabled:cursor-not-allowed disabled:opacity-50", dbcFeeChoice === id ? "border-accent bg-accent/15" : "border-border bg-muted/30")}>
-                                  <div className="font-retro text-sm">{label}</div>
-                                  <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">{detail}</p>
-                                </button>
-                              );
-                            })}
+                              ["buyback", "Buyback and burn", "Bought back at random times each week and burned."],
+                            ] as const).map(([id, label, detail]) => (
+                              <button key={id} type="button" onClick={() => setDbcFeeChoice(id)} className={cn("rounded-lg border px-2.5 py-2 text-left", dbcFeeChoice === id ? "border-accent bg-accent/15" : "border-border bg-muted/30")}>
+                                <div className="font-retro text-sm">{label}</div>
+                                <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">{detail}</p>
+                              </button>
+                            ))}
                           </div>
                           {dbcFeeChoice === "split" ? (
                             <div className="mt-2">

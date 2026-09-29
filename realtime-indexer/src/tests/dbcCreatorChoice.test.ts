@@ -83,19 +83,6 @@ test("snapshot counts wallets only: program-owned accounts and excluded wallets 
   assert.deepEqual(balances, [{ owner: wallet, amount: 12n }]);
 });
 
-test("buyback on a bound quote skips with quote-not-sol", async () => {
-  const { buybackSkipReason } = await import("../dbc/dbcCreatorPayouts.js");
-  const { readFileSync } = await import("node:fs");
-  const { dirname, join } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  assert.equal(buybackSkipReason("So11111111111111111111111111111111111111112"), null);
-  assert.equal(buybackSkipReason(""), null);
-  assert.equal(buybackSkipReason("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"), "quote-not-sol");
-  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbc/dbcCreatorPayouts.ts"), "utf8");
-  assert.match(source, /buybackSkipReason/);
-  assert.match(source, /quote-not-sol/);
-});
-
 test("buyback size: the largest amount under the impact cap, never above the budget", async () => {
   // impact grows linearly: 1 bps per 1,000,000 lamports
   const quote = async (amountIn: bigint) => ({ amountIn, minOut: amountIn * 10n, impactBps: Number(amountIn) / 1_000_000 });
@@ -115,4 +102,17 @@ test("DAMM impact from the quote: constant product, exec price is the geometric 
   const dx = x - (x * y) / (y + dy);
   assert.equal(Math.round(dammImpactBps(Number(y) / Number(x), dy, dx)), 50);
   assert.equal(dammImpactBps(0.1, 1n, 0n), Number.POSITIVE_INFINITY);
+});
+
+test("a bound coin's holder share leaves its pot when swapped; the round pays the SOL that swap brought", async () => {
+  const { boundHoldersSol } = await import("../dbc/dbcCreatorPayouts.js");
+  const usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const coin = { choice: "split" as const, creatorSharePct: 60, quoteMint: usdc };
+  // pot 100 USDC raw-units; creator paid 60 (in USDC); holder share 40 swapped for 900 lamports
+  const ledger = { total: 100n, paid: { creator: 60n, holders: 300n, buyback: 0n, holdersSwap: 40n }, holdersSolIn: 900n };
+  assert.deepEqual(dues(coin, ledger), { creator: 0n, holders: 0n, buyback: 0n });
+  assert.equal(boundHoldersSol(ledger), 600n); // 900 SOL in, 300 already in rounds
+  // the same ledger read as a SOL coin counts SOL deposits, not swaps
+  assert.equal(dues({ choice: "split", creatorSharePct: 60 }, ledger).holders, 40n - 300n);
+  assert.equal(boundHoldersSol({ total: 0n, paid: { creator: 0n, holders: 5n, buyback: 0n } }), 0n);
 });

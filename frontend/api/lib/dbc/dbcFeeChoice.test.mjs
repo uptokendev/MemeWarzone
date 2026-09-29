@@ -26,10 +26,22 @@ test("fee choice line with what step 5b has paid", () => {
   );
   assert.equal(
     feeChoiceLine({ feeChoice: "buyback", totals: { buybackLamports: "1200000000", tokensBurned: "3400000000000" } }),
-    "Buyback: 1.20 SOL bought and 3,400,000 tokens burned so far.",
+    "Buyback: 1.20 SOL spent and 3,400,000 tokens burned so far.",
   );
   assert.equal(
     feeChoiceLine({ feeChoice: "split", creatorSharePct: 60, totals: { creatorLamports: "5000000", holdersLamports: "3000000" } }),
     "Split: 60% to the creator, 40% to holders. Paid so far: 0.005 SOL to the creator, 0.003 SOL to holders.",
+  );
+});
+
+test("a coin paired with NVDAx shows creator and buyback amounts in NVDAx, holders in SOL", () => {
+  const quote = { symbol: "NVDAx", decimals: 8 };
+  assert.equal(
+    feeChoiceLine({ feeChoice: "buyback", quote, totals: { buybackLamports: "4271279", tokensBurned: "143556264680" } }),
+    "Buyback: 0.0427 NVDAx spent and 143,556 tokens burned so far.",
+  );
+  assert.equal(
+    feeChoiceLine({ feeChoice: "split", creatorSharePct: 60, quote, totals: { creatorLamports: "12311040", holdersLamports: "41036800" } }),
+    "Split: 60% to the creator, 40% to holders. Paid so far: 0.1231 NVDAx to the creator, 0.041 SOL to holders.",
   );
 });

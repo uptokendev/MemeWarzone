@@ -189,6 +189,7 @@ export async function sweepReferralToProtocol(input: {
     quoteIn: amount,
     send: true,
     swapQuote: input.swapQuote,
+    key: `referral:${moveSig}`,
   });
   if (swapped.solOut > 0n && swapped.skipped !== "impact-cap" && swapped.skipped !== "sending" && swapped.skipped !== "failed-on-chain") {
     const pay = new Transaction();

@@ -360,8 +360,11 @@ async function insertLpAccruals(input: {
   platform: boolean;
   signature: string;
   leftoverAlreadySol?: boolean;
+  /** Bound quote only: the creator pot in quote units; `claimed` is then our share in SOL. */
+  creatorPoolQuote?: bigint;
 }) {
   const rows = lpClaimRows(input.claimed, input.transferred, input.platform);
+  if (input.creatorPoolQuote != null) rows.creatorPool = input.creatorPoolQuote;
   const profile = await creatorProfile(input.db, String(input.job.creator || ""), new Date());
   const insert = async (
     logIndex: number,
@@ -874,6 +877,7 @@ export async function advanceGraduationJob(input: {
         quoteIn: slices.remaining,
         send: input.send,
         swapQuote: input.swapQuote,
+        key: `grad:${input.pool}`,
       });
       if (swapped.skipped === "impact-cap" || swapped.skipped === "sending" || swapped.skipped === "failed-on-chain") {
         return { pool: input.pool, step, signature: null, skipped: swapped.skipped };
@@ -1125,25 +1129,58 @@ async function applyLandedLpClaim(input: {
     return delta > 0n ? delta : 0n;
   })();
   let leftoverAlreadySol = false;
+  let boundCreatorPool: bigint | null = null;
+  let boundClaimedQuote = 0n;
   if (claimed > 0n && !isNativeQuoteMint(quoteMint) && input.collector) {
-    const swapped = await swapClaimedQuoteIfNeeded({
-      db: input.db,
-      connection: input.connection,
-      collector: input.collector,
-      quoteMint,
-      quoteIn: claimed,
-      send: input.send !== false,
-      swapQuote: input.swapQuote,
-    });
-    if (swapped.solOut > 0n && swapped.skipped !== "impact-cap" && swapped.skipped !== "failed-on-chain" && swapped.skipped !== "sending") {
-      claimed = swapped.solOut;
-      transferred = 0n;
-      leftoverAlreadySol = true;
-    } else {
-      // Quote is on the collector. Leave lp_signature set so the next pass retries the swap
-      // instead of recording quote units as SOL or as already-routed creator_pool.
-      return;
+    // Bound quote: the coin's creator pot stays in the quote, like its trade-fee pot (both are one
+    // ledger in quote units, paid out by step 5b in the quote). Only our share becomes SOL.
+    const claimedQuote = claimed;
+    const split = platform ? splitPlatformLpFees(claimed) : { creatorPool: 0n, protocol: claimed };
+    let protocolSol = 0n;
+    if (split.protocol > 0n) {
+      const swapped = await swapClaimedQuoteIfNeeded({
+        db: input.db,
+        connection: input.connection,
+        collector: input.collector,
+        quoteMint,
+        quoteIn: split.protocol,
+        send: input.send !== false,
+        swapQuote: input.swapQuote,
+        key: `lp:${input.signature}`,
+      });
+      if (swapped.skipped === "impact-cap" || swapped.skipped === "failed-on-chain" || swapped.skipped === "sending") {
+        // Leave lp_signature set: the next pass resumes this same keyed swap.
+        return;
+      }
+      protocolSol = swapped.solOut;
     }
+    boundCreatorPool = split.creatorPool;
+    boundClaimedQuote = claimedQuote;
+    claimed = protocolSol;
+    transferred = 0n;
+    leftoverAlreadySol = true;
+  }
+  if (boundCreatorPool != null) {
+    await insertLpAccruals({
+      db: input.db,
+      job: input.row,
+      claimed,
+      transferred,
+      platform: false,
+      signature: input.signature,
+      leftoverAlreadySol,
+      creatorPoolQuote: boundCreatorPool,
+    });
+    await updateJob(
+      input.db,
+      input.row.id,
+      `update public.dbc_graduation_jobs
+          set lp_claimed = coalesce(lp_claimed,0) + $2,
+              lp_signature = null, lp_last_valid_block_height = null, updated_at = now()
+        where id = $1`,
+      [boundClaimedQuote.toString()], // lp_claimed is in the pool's quote units
+    );
+    return;
   }
   if (claimed > 0n) {
     await insertLpAccruals({

@@ -598,7 +598,7 @@ const MAINNET_ENV = {
 };
 const NVDAX = "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh";
 
-test("buyback is refused for a coin not paired with SOL", async () => {
+test("buyback is offered for a coin paired with USDC too", async () => {
   const handle = handlerFor(memoryDb());
   const res = await post(handle, {
     operation: "quote-first-buy",
@@ -607,8 +607,8 @@ test("buyback is refused for a coin not paired with SOL", async () => {
     firstBuyLamports: "1000000",
     quoteMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
   });
-  assert.equal(res.statusCode, 400);
-  assert.equal(res.body.code, "DBC_BUYBACK_NEEDS_SOL");
+  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+  assert.equal(res.body.ok, true);
 });
 
 test("a stock launch is priced by the stock step and names Meteora's DBC badge on the pool", async () => {

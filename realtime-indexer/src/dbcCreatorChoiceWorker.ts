@@ -57,7 +57,7 @@ export async function runCreatorChoiceOnce(input: {
   const db = input.db || pool;
   const now = input.now || new Date();
   await ensureWeekSecrets(db, input.masterSecret, now);
-  if (input.send) await resolvePendingPayouts(db, input.connection);
+  if (input.send) await resolvePendingPayouts(db, input.connection, input.collector.publicKey.toBase58());
   const snapshots = await takeDueSnapshots({
     db, connection: input.connection, masterSecret: input.masterSecret, excluded: excludedHolderWallets(input.collector), now,
   });

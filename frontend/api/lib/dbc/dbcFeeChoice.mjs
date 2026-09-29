@@ -29,6 +29,11 @@ function sol(lamports) {
   return value >= 1 ? value.toFixed(2) : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
 }
 
+function quoteAmount(raw, decimals) {
+  const n = Number(BigInt(String(raw || 0))) / 10 ** Number(decimals ?? 6);
+  return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+}
+
 function whole(raw, decimals = 6) {
   return Math.floor(Number(BigInt(String(raw || 0))) / 10 ** decimals).toLocaleString("en-US");
 }
@@ -37,14 +42,18 @@ function whole(raw, decimals = 6) {
  * One plain line about where this coin's creator fees go, with what has been paid so far when the
  * totals are given (step 5b). Trading fees on the curve and LP fees after graduation both count.
  */
-export function feeChoiceLine({ feeChoice, creatorSharePct, totals } = {}) {
+export function feeChoiceLine({ feeChoice, creatorSharePct, totals, quote } = {}) {
   const choice = String(feeChoice || "").trim().toLowerCase();
   const t = totals || {};
+  // A coin paired with another quote pays its creator and buys back in that quote; holders are
+  // always paid in SOL (the weekly airdrop).
+  const q = quote && quote.symbol && quote.symbol !== "SOL" ? quote : null;
+  const inQuote = (raw) => (q ? `${quoteAmount(raw, q.decimals)} ${q.symbol}` : `${sol(raw)} SOL`);
   if (choice === "split") {
     const creator = Number(creatorSharePct);
     const pct = Number.isFinite(creator) ? Math.trunc(creator) : 0;
     const base = `Split: ${pct}% to the creator, ${100 - pct}% to holders`;
-    return totals ? `${base}. Paid so far: ${sol(t.creatorLamports)} SOL to the creator, ${sol(t.holdersLamports)} SOL to holders.` : base;
+    return totals ? `${base}. Paid so far: ${inQuote(t.creatorLamports)} to the creator, ${sol(t.holdersLamports)} SOL to holders.` : base;
   }
   if (choice === "holders") {
     return totals
@@ -53,7 +62,7 @@ export function feeChoiceLine({ feeChoice, creatorSharePct, totals } = {}) {
   }
   if (choice === "buyback") {
     return totals
-      ? `Buyback: ${sol(t.buybackLamports)} SOL bought and ${whole(t.tokensBurned)} tokens burned so far.`
+      ? `Buyback: ${inQuote(t.buybackLamports)} spent and ${whole(t.tokensBurned)} tokens burned so far.`
       : "Buyback: creator fees buy the coin back and burn it";
   }
   return null;

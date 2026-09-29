@@ -243,8 +243,6 @@ async function main() {
       },
     });
 
-    const refusedBuyback = await post(handle, { operation: "quote-first-buy", targetUsd: 15000, feeChoice: "buyback", firstBuyLamports: "0", quoteMint: NVDAX_MINT });
-    check("buyback on a stock pairing is refused", refusedBuyback.body.code === "DBC_BUYBACK_NEEDS_SOL", refusedBuyback.body.code);
 
     const ticker = `NV${crypto.randomBytes(2).toString("hex").toUpperCase()}`;
     const begun = await post(handle, { operation: "begin", creatorWallet: creator.publicKey.toBase58(), ticker, auth: signBegin(creator, ticker) });

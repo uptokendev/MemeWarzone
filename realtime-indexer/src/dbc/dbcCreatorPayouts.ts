@@ -7,19 +7,26 @@
  *   split:    creator due = floor(total x pct / 100) - creator paid; holders due = rest - holders paid
  *   holders:  holders due = total - holders paid
  *   buyback:  buyback due = total - buyback spent
- * Every SOL movement: sign, store sending + signature + lastValidBlockHeight, send; the next pass
+ * A coin paired with another quote (USDC, USDT, an xStock) keeps its pot in that quote on the
+ * collector, so its ledger is in quote raw units: the split creator is paid in the quote, buybacks
+ * spend the quote on the coin's own pool, and the holders' part is swapped to SOL (Jupiter, keyed)
+ * and joins the weekly SOL round.
+ * Every movement: sign, store sending + signature + lastValidBlockHeight, send; the next pass
  * resolves it with getTransaction, then getSignatureStatuses + getBlockHeight. A send that may have
  * landed is never reset. Rows are updated by id.
  */
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import BN from "bn.js";
 import { DynamicBondingCurveClient, SwapMode } from "@meteora-ag/dynamic-bonding-curve-sdk";
-import { CpAmm } from "@meteora-ag/cp-amm-sdk";
-import { NATIVE_MINT, TOKEN_PROGRAM_ID, createBurnCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { CpAmm, getTokenProgram } from "@meteora-ag/cp-amm-sdk";
+import { NATIVE_MINT, TOKEN_PROGRAM_ID, createBurnCheckedInstruction, getAssociatedTokenAddressSync, getMint } from "@solana/spl-token";
 import { solanaMinPayoutLamports } from "../rewards/pokerPayout.js";
 import { bs58Encode, resolveSignature } from "./dbcFeePending.js";
 import { rewardVaults } from "./dbcFeeRouter.js";
-import { isNativeQuoteMint, quoteMintFromMeta } from "./dbcQuoteNative.js";
+import { isNativeQuoteMint, quoteDecimalsFromMeta, quoteMintFromMeta, quoteTokenProgram } from "./dbcQuoteNative.js";
+import { buildD7CompensationIxs } from "./dbcQuoteTransfers.js";
+import { resolvePendingQuoteSwaps, swapClaimedQuoteIfNeeded, type SwapQuoteFn } from "./dbcQuoteToSolSwap.js";
+import { jupiterRawUnitUsd } from "../solanaMarketStats.js";
 import {
   allocateToHolders,
   buybackMoments,
@@ -45,14 +52,19 @@ export type PlatformCoin = {
   creatorSharePct: number;
   dammPool: string | null;
   quoteMint: string;
+  quoteDecimals: number;
 };
 
-/** Bound-quote buybacks need a SOL → quote → coin route; skip until that exists. */
-export function buybackSkipReason(quoteMint?: string | null): string | null {
-  return isNativeQuoteMint(quoteMint) ? null : "quote-not-sol";
-}
-
-export type CoinLedger = { total: bigint; paid: { holders: bigint; creator: bigint; buyback: bigint } };
+/**
+ * total and paid are in the pot's unit (lamports, or quote raw for a bound coin). holdersSwap is the
+ * quote a bound coin swapped for its holders; holdersSolIn is the SOL that swap brought, and
+ * paid.holders (always SOL) is what went into holder rounds.
+ */
+export type CoinLedger = {
+  total: bigint;
+  paid: { holders: bigint; creator: bigint; buyback: bigint; holdersSwap?: bigint };
+  holdersSolIn?: bigint;
+};
 
 export function envBigint(name: string, fallback: bigint): bigint {
   const raw = String(process.env[name] || "").trim();
@@ -62,12 +74,20 @@ export function envBigint(name: string, fallback: bigint): bigint {
 
 // ---------------------------------------------------------------- entitlements (pure given a ledger)
 
-export function dues(coin: Pick<PlatformCoin, "choice" | "creatorSharePct">, ledger: CoinLedger) {
+export function dues(coin: Pick<PlatformCoin, "choice" | "creatorSharePct"> & { quoteMint?: string }, ledger: CoinLedger) {
   const { total, paid } = ledger;
+  // A bound coin's holder share leaves the pot when it is swapped to SOL, not when the SOL is paid.
+  const holdersPaid = isNativeQuoteMint(coin.quoteMint) ? paid.holders : (paid.holdersSwap || 0n);
   if (coin.choice === "buyback") return { creator: 0n, holders: 0n, buyback: total - paid.buyback };
-  if (coin.choice === "holders") return { creator: 0n, holders: total - paid.holders, buyback: 0n };
+  if (coin.choice === "holders") return { creator: 0n, holders: total - holdersPaid, buyback: 0n };
   const creatorShare = (total * BigInt(Math.trunc(coin.creatorSharePct))) / 100n;
-  return { creator: creatorShare - paid.creator, holders: total - creatorShare - paid.holders, buyback: 0n };
+  return { creator: creatorShare - paid.creator, holders: total - creatorShare - holdersPaid, buyback: 0n };
+}
+
+/** SOL a bound coin's holders are owed: what its swaps brought in minus what rounds already paid. */
+export function boundHoldersSol(ledger: CoinLedger): bigint {
+  const left = (ledger.holdersSolIn || 0n) - ledger.paid.holders;
+  return left > 0n ? left : 0n;
 }
 
 // ---------------------------------------------------------------- database reads
@@ -88,6 +108,7 @@ export async function platformCoins(db: Queryable): Promise<PlatformCoin[]> {
     creatorSharePct: Number(row.meta?.dbc?.creatorSharePct || 0),
     dammPool: String(row.meta?.dbc?.migration?.pool || row.meta?.solanaGraduation?.pool || "") || null,
     quoteMint: quoteMintFromMeta(row.meta),
+    quoteDecimals: quoteDecimalsFromMeta(row.meta, isNativeQuoteMint(quoteMintFromMeta(row.meta)) ? 9 : 6),
   }));
 }
 
@@ -99,7 +120,8 @@ export async function coinLedgers(db: Queryable): Promise<Map<string, CoinLedger
       group by pool`,
   );
   const paid = await db.query(
-    `select pool, kind, coalesce(sum(lamports), 0)::text as paid
+    `select pool, kind, coalesce(sum(lamports), 0)::text as paid,
+            coalesce(sum(case when status = 'landed' then sol_received else 0 end), 0)::text as sol_in
        from public.dbc_creator_pool_payouts
       where status in ('sending', 'landed')
       group by pool, kind`,
@@ -115,8 +137,14 @@ export async function coinLedgers(db: Queryable): Promise<Map<string, CoinLedger
   };
   for (const row of pot.rows) ledger(String(row.pool)).total = BigInt(String(row.total));
   for (const row of paid.rows) {
-    const kind = String(row.kind) as keyof CoinLedger["paid"];
-    ledger(String(row.pool)).paid[kind] = BigInt(String(row.paid));
+    const target = ledger(String(row.pool));
+    if (String(row.kind) === "holders_swap") {
+      target.paid.holdersSwap = BigInt(String(row.paid));
+      target.holdersSolIn = BigInt(String(row.sol_in));
+      continue;
+    }
+    const kind = String(row.kind) as "holders" | "creator" | "buyback";
+    target.paid[kind] = BigInt(String(row.paid));
   }
   return out;
 }
@@ -252,7 +280,32 @@ async function signatureOutcome(connection: Connection, signature: string, lastV
 }
 
 /** Resolve payouts and holder rounds left in 'sending' by an earlier pass. */
-export async function resolvePendingPayouts(db: Queryable, connection: Connection) {
+export async function resolvePendingPayouts(db: Queryable, connection: Connection, collector?: string) {
+  // Holder-share swaps of bound coins follow their dbc_quote_swaps row.
+  const swaps = await db.query(
+    `select p.id, s.status as swap_status, s.sol_out
+       from public.dbc_creator_pool_payouts p
+       join public.dbc_quote_swaps s on s.id = p.quote_swap_id
+      where p.kind = 'holders_swap' and p.status = 'sending'`,
+  );
+  if (swaps.rows.some((row: any) => row.swap_status === "sending")) {
+    await resolvePendingQuoteSwaps({ db, connection, collector });
+  }
+  for (const row of swaps.rows) {
+    const now = (await db.query(
+      `select s.status, s.sol_out from public.dbc_quote_swaps s join public.dbc_creator_pool_payouts p on p.quote_swap_id = s.id where p.id = $1`,
+      [row.id],
+    )).rows[0];
+    if (!now || now.status === "sending") continue;
+    if (now.status === "done") {
+      await db.query(
+        `update public.dbc_creator_pool_payouts set status = 'landed', sol_received = $2, updated_at = now() where id = $1`,
+        [row.id, String(now.sol_out || "0")],
+      );
+    } else {
+      await db.query(`update public.dbc_creator_pool_payouts set status = 'failed', updated_at = now() where id = $1`, [row.id]);
+    }
+  }
   const rounds = await db.query(`select * from public.dbc_holder_rounds where status = 'sending'`);
   for (const round of rounds.rows) {
     const outcome = await signatureOutcome(connection, String(round.signature), Number(round.last_valid_block_height || 0));
@@ -271,7 +324,7 @@ export async function resolvePendingPayouts(db: Queryable, connection: Connectio
   }
   const payouts = await db.query(
     `select id, signature, last_valid_block_height from public.dbc_creator_pool_payouts
-      where status = 'sending' and kind <> 'holders'`,
+      where status = 'sending' and kind not in ('holders', 'holders_swap')`,
   );
   for (const row of payouts.rows) {
     const outcome = await signatureOutcome(connection, String(row.signature), Number(row.last_valid_block_height || 0));
@@ -283,6 +336,71 @@ export async function resolvePendingPayouts(db: Queryable, connection: Connectio
   }
 }
 
+async function collectorQuoteBalance(connection: Connection, collector: PublicKey, mint: string, program: PublicKey): Promise<bigint> {
+  const ata = getAssociatedTokenAddressSync(new PublicKey(mint), collector, false, program);
+  const info = await connection.getTokenAccountBalance(ata, "confirmed").catch(() => null);
+  return info ? BigInt(info.value.amount) : 0n;
+}
+
+/**
+ * Swap each bound coin's holder share to SOL for this week's round. Returns "waiting" while any of
+ * this week's swaps is still sending. Only coins with a snapshot this week swap (the others roll over,
+ * as SOL coins do), so the SOL is never stranded outside a round.
+ */
+async function swapBoundHolderShares(input: {
+  db: Queryable;
+  connection: Connection;
+  collector: Keypair;
+  send: boolean;
+  week: string;
+  coins: PlatformCoin[];
+  ledgers: Map<string, CoinLedger>;
+  swapQuote?: SwapQuoteFn;
+}): Promise<"ready" | "waiting"> {
+  if (!input.send) return "ready";
+  await resolvePendingPayouts(input.db, input.connection, input.collector.publicKey.toBase58());
+  const empty: CoinLedger = { total: 0n, paid: { holders: 0n, creator: 0n, buyback: 0n } };
+  let waiting = false;
+  for (const coin of input.coins.filter((c) => (c.choice === "holders" || c.choice === "split") && !isNativeQuoteMint(c.quoteMint))) {
+    const live = (await input.db.query(
+      `select status from public.dbc_creator_pool_payouts
+        where pool = $1 and kind = 'holders_swap' and moment_key = $2 and status <> 'failed'`,
+      [coin.pool, `week:${input.week}`],
+    )).rows[0];
+    if (live?.status === "sending") { waiting = true; continue; }
+    if (live) continue;
+    const due = dues(coin, input.ledgers.get(coin.pool) || empty).holders;
+    if (due <= 0n) continue;
+    const snap = await input.db.query(`select 1 from public.dbc_holder_snapshots where week_id = $1 and mint = $2 limit 1`, [input.week, coin.mint]);
+    if (!snap.rows.length) continue;
+    const program = await quoteTokenProgram(input.connection as any, coin.quoteMint);
+    if ((await collectorQuoteBalance(input.connection, input.collector.publicKey, coin.quoteMint, program)) < due) {
+      console.error("[dbc-5b] collector holds less quote than a holder share; retry next pass", { pool: coin.pool, due: due.toString() });
+      continue;
+    }
+    const swapped = await swapClaimedQuoteIfNeeded({
+      db: input.db,
+      connection: input.connection,
+      collector: input.collector,
+      quoteMint: coin.quoteMint,
+      quoteIn: due,
+      send: true,
+      swapQuote: input.swapQuote,
+      key: `holders:${coin.pool}:${input.week}`,
+    });
+    if (swapped.skipped === "impact-cap" || swapped.skipped === "failed-on-chain" || !swapped.id) continue; // rolls over
+    const sending = swapped.skipped === "sending";
+    await input.db.query(
+      `insert into public.dbc_creator_pool_payouts
+         (pool, kind, week_id, moment_key, lamports, recipient, status, quote_mint, quote_swap_id, sol_received)
+       values ($1,'holders_swap',$2,$3,$4,'jupiter',$5,$6,$7,$8)`,
+      [coin.pool, input.week, `week:${input.week}`, due.toString(), sending ? "sending" : "landed", coin.quoteMint, swapped.id, sending ? null : swapped.solOut.toString()],
+    );
+    if (sending) waiting = true;
+  }
+  return waiting ? "waiting" : "ready";
+}
+
 // ---------------------------------------------------------------- the weekly run (split + holders)
 
 export async function runWeeklyPayouts(input: {
@@ -292,10 +410,11 @@ export async function runWeeklyPayouts(input: {
   send: boolean;
   now: Date;
   treasuryProgram?: string;
+  swapQuote?: SwapQuoteFn;
 }): Promise<{ weekId: string; creatorPayouts: number; holderRound: string }> {
   const week = previousWeek(input.now);
   const coins = await platformCoins(input.db);
-  const ledgers = await coinLedgers(input.db);
+  let ledgers = await coinLedgers(input.db);
   const empty: CoinLedger = { total: 0n, paid: { holders: 0n, creator: 0n, buyback: 0n } };
   let creatorPayouts = 0;
 
@@ -309,19 +428,36 @@ export async function runWeeklyPayouts(input: {
       [coin.pool, `week:${week.weekId}`],
     );
     if ((exists.rowCount ?? exists.rows.length) > 0) continue;
-    if (!(await collectorCanPay(input.connection, input.collector, due))) {
-      console.error("[dbc-5b] collector short for a split payout; retry next pass", { pool: coin.pool, due: due.toString() });
-      continue;
+    const bound = !isNativeQuoteMint(coin.quoteMint);
+    let tx: Transaction;
+    if (bound) {
+      // D21: the creator is paid in the coin's quote.
+      const program = await quoteTokenProgram(input.connection as any, coin.quoteMint);
+      if ((await collectorQuoteBalance(input.connection, input.collector.publicKey, coin.quoteMint, program)) < due
+        || !(await collectorCanPay(input.connection, input.collector, 0n))) {
+        console.error("[dbc-5b] collector short for a split payout; retry next pass", { pool: coin.pool, due: due.toString(), quote: coin.quoteMint });
+        continue;
+      }
+      const decimals = (await getMint(input.connection as any, new PublicKey(coin.quoteMint), "confirmed", program)).decimals;
+      tx = new Transaction();
+      for (const ix of buildD7CompensationIxs({
+        collector: input.collector.publicKey, creator: new PublicKey(coin.creator), quoteMint: coin.quoteMint, amount: due, decimals, tokenProgram: program,
+      })) tx.add(ix);
+    } else {
+      if (!(await collectorCanPay(input.connection, input.collector, due))) {
+        console.error("[dbc-5b] collector short for a split payout; retry next pass", { pool: coin.pool, due: due.toString() });
+        continue;
+      }
+      tx = new Transaction().add(SystemProgram.transfer({
+        fromPubkey: input.collector.publicKey, toPubkey: new PublicKey(coin.creator), lamports: Number(due),
+      }));
     }
-    const tx = new Transaction().add(SystemProgram.transfer({
-      fromPubkey: input.collector.publicKey, toPubkey: new PublicKey(coin.creator), lamports: Number(due),
-    }));
     const signed = await signForSend(input.connection, input.collector, tx);
     const inserted = await input.db.query(
       `insert into public.dbc_creator_pool_payouts
-         (pool, kind, week_id, moment_key, lamports, recipient, signature, last_valid_block_height, status)
-       values ($1,'creator',$2,$3,$4,$5,$6,$7,'sending') returning id`,
-      [coin.pool, week.weekId, `week:${week.weekId}`, due.toString(), coin.creator, signed.signature, signed.latest.lastValidBlockHeight],
+         (pool, kind, week_id, moment_key, lamports, recipient, signature, last_valid_block_height, status, quote_mint)
+       values ($1,'creator',$2,$3,$4,$5,$6,$7,'sending',$8) returning id`,
+      [coin.pool, week.weekId, `week:${week.weekId}`, due.toString(), coin.creator, signed.signature, signed.latest.lastValidBlockHeight, bound ? coin.quoteMint : null],
     );
     const outcome = await sendSigned(input.connection, signed.serialized, signed.signature, signed.latest);
     if (outcome !== "pending") {
@@ -333,9 +469,15 @@ export async function runWeeklyPayouts(input: {
   // 2. Holders: one round per week, leaves fixed once computed, one deposit into airdrop_vault.
   let round = (await input.db.query(`select * from public.dbc_holder_rounds where week_id = $1`, [week.weekId])).rows[0];
   if (!round) {
+    // 2a. A bound coin's holder share is quote tokens: swap it to SOL first (keyed per coin and week,
+    // so a retry resumes the same swap). The round waits until no swap is still sending.
+    const swapState = await swapBoundHolderShares({ ...input, week: week.weekId, coins, ledgers });
+    if (swapState === "waiting") return { weekId: week.weekId, creatorPayouts, holderRound: "waiting-swap" };
+    ledgers = await coinLedgers(input.db);
     const perCoin = new Map<string, Map<string, bigint>>();
     for (const coin of coins.filter((c) => c.choice === "holders" || c.choice === "split")) {
-      const pot = dues(coin, ledgers.get(coin.pool) || empty).holders;
+      const ledger = ledgers.get(coin.pool) || empty;
+      const pot = isNativeQuoteMint(coin.quoteMint) ? dues(coin, ledger).holders : boundHoldersSol(ledger);
       if (pot <= 0n) continue;
       const snap = await input.db.query(
         `select owner, amount from public.dbc_holder_snapshots where week_id = $1 and mint = $2`,
@@ -459,6 +601,7 @@ export async function runDueBuybacks(input: {
   send: boolean;
   now: Date;
   client?: DynamicBondingCurveClient;
+  fetchImpl?: typeof fetch;
 }): Promise<Array<{ pool: string; moment: string; skipped: string | null; signature: string | null }>> {
   const perDay = Math.max(1, Math.min(24, Number(process.env.DBC_BUYBACK_MAX_PER_DAY || 4)));
   const maxImpactBps = Math.max(1, Number(process.env.DBC_BUYBACK_MAX_IMPACT_BPS || 50));
@@ -486,16 +629,18 @@ export async function runDueBuybacks(input: {
       }
     }
     if (!dueKey) continue;
-    const skipQuote = buybackSkipReason(coin.quoteMint);
-    if (skipQuote) {
-      results.push({ pool: coin.pool, moment: dueKey, skipped: skipQuote, signature: null });
-      continue;
-    }
     const ledger = ledgers.get(coin.pool) || { total: 0n, paid: { holders: 0n, creator: 0n, buyback: 0n } };
     const budget = dues(coin, ledger).buyback;
+    // A bound coin buys back with its own quote (its pot), on its own curve or pool.
+    const bound = !isNativeQuoteMint(coin.quoteMint);
+    const coinMinSpend = bound ? await boundMinSpend(coin, input.fetchImpl) : minSpend;
+    if (coinMinSpend == null) {
+      results.push({ pool: coin.pool, moment: dueKey, skipped: "no-quote-price", signature: null });
+      continue;
+    }
     const built = coin.dammPool
-      ? await buildDammBuyback({ connection: input.connection, collector: input.collector, coin, budget, minSpend, maxImpactBps })
-      : await buildCurveBuyback({ connection: input.connection, client, collector: input.collector, coin, budget, minSpend, maxImpactBps, now: input.now });
+      ? await buildDammBuyback({ connection: input.connection, collector: input.collector, coin, budget, minSpend: coinMinSpend, maxImpactBps })
+      : await buildCurveBuyback({ connection: input.connection, client, collector: input.collector, coin, budget, minSpend: coinMinSpend, maxImpactBps, now: input.now });
     if ("skipped" in built) {
       results.push({ pool: coin.pool, moment: dueKey, skipped: built.skipped, signature: null });
       continue;
@@ -504,16 +649,20 @@ export async function runDueBuybacks(input: {
       results.push({ pool: coin.pool, moment: dueKey, skipped: "dry-run", signature: null });
       continue;
     }
-    if (!(await collectorCanPay(input.connection, input.collector, built.amountIn + 5_000_000n))) {
+    const canPay = bound
+      ? (await collectorQuoteBalance(input.connection, input.collector.publicKey, coin.quoteMint, await quoteTokenProgram(input.connection as any, coin.quoteMint))) >= built.amountIn
+        && (await collectorCanPay(input.connection, input.collector, 5_000_000n))
+      : await collectorCanPay(input.connection, input.collector, built.amountIn + 5_000_000n);
+    if (!canPay) {
       results.push({ pool: coin.pool, moment: dueKey, skipped: "collector-short", signature: null });
       continue;
     }
     const signed = await signForSend(input.connection, input.collector, built.tx);
     const inserted = await input.db.query(
       `insert into public.dbc_creator_pool_payouts
-         (pool, kind, week_id, moment_key, lamports, tokens_burned, recipient, signature, last_valid_block_height, status)
-       values ($1,'buyback',$2,$3,$4,$5,$6,$7,$8,'sending') returning id`,
-      [coin.pool, weekOf(input.now).weekId, dueKey, built.amountIn.toString(), built.burn.toString(), coin.mint, signed.signature, signed.latest.lastValidBlockHeight],
+         (pool, kind, week_id, moment_key, lamports, tokens_burned, recipient, signature, last_valid_block_height, status, quote_mint)
+       values ($1,'buyback',$2,$3,$4,$5,$6,$7,$8,'sending',$9) returning id`,
+      [coin.pool, weekOf(input.now).weekId, dueKey, built.amountIn.toString(), built.burn.toString(), coin.mint, signed.signature, signed.latest.lastValidBlockHeight, bound ? coin.quoteMint : null],
     );
     const outcome = await sendSigned(input.connection, signed.serialized, signed.signature, signed.latest);
     if (outcome !== "pending") {
@@ -522,6 +671,21 @@ export async function runDueBuybacks(input: {
     results.push({ pool: coin.pool, moment: dueKey, skipped: null, signature: signed.signature });
   }
   return results;
+}
+
+/**
+ * The smallest buyback worth a transaction, for a coin paired with another quote: the same dollar
+ * amount as DBC_BUYBACK_MIN_LAMPORTS at SOL's price is not known here, so it is set in dollars
+ * (DBC_BUYBACK_MIN_USD_MICROS, default $2) and converted at Jupiter's price per raw unit.
+ */
+async function boundMinSpend(coin: PlatformCoin, fetchImpl?: typeof fetch): Promise<bigint | null> {
+  const usdMicros = envBigint("DBC_BUYBACK_MIN_USD_MICROS", 2_000_000n);
+  const price = await jupiterRawUnitUsd(coin.quoteMint, fetchImpl || fetch);
+  if (!price || !(price.value > 0)) return null;
+  const perRawMicros = BigInt(Math.round(price.value * 1_000_000));
+  if (perRawMicros <= 0n) return null;
+  const scale = 10n ** BigInt(coin.quoteDecimals);
+  return (usdMicros * scale + perRawMicros - 1n) / perRawMicros;
 }
 
 type BuiltBuyback = { tx: Transaction; amountIn: bigint; burn: bigint } | { skipped: string };
@@ -619,14 +783,16 @@ async function buildDammBuyback(input: {
   const poolState = await cpAmm.fetchPoolState(poolPk);
   const slot = await input.connection.getSlot("confirmed");
   const time = Number((await input.connection.getBlockTime(slot).catch(() => null)) || Math.floor(Date.now() / 1000));
-  const solIsB = poolState.tokenBMint.equals(NATIVE_MINT);
+  // The pool's quote: SOL, or the coin's bound quote. Impact is measured in that quote.
+  const quoteMint = new PublicKey(isNativeQuoteMint(input.coin.quoteMint) ? NATIVE_MINT : input.coin.quoteMint);
+  const solIsB = poolState.tokenBMint.equals(quoteMint);
   const rawPrice = Number(BigInt(poolState.sqrtPrice.toString())) ** 2 / 2 ** 128; // token B per token A, raw units
   const spotSolPerToken = solIsB ? rawPrice : 1 / rawPrice;
   const quote = async (amountIn: bigint): Promise<BuybackQuote | null> => {
     try {
       const q = cpAmm.getQuote({
         inAmount: new BN(amountIn.toString()),
-        inputTokenMint: NATIVE_MINT,
+        inputTokenMint: quoteMint,
         slippage: 1,
         poolState,
         currentTime: time,
@@ -650,7 +816,7 @@ async function buildDammBuyback(input: {
   const tx: Transaction = (await cpAmm.swap({
     payer: input.collector.publicKey,
     pool: poolPk,
-    inputTokenMint: NATIVE_MINT,
+    inputTokenMint: quoteMint,
     outputTokenMint: mint,
     amountIn: new BN(sized.amountIn.toString()),
     minimumAmountOut: new BN(sized.minOut.toString()),
@@ -658,8 +824,8 @@ async function buildDammBuyback(input: {
     tokenBMint: poolState.tokenBMint,
     tokenAVault: poolState.tokenAVault,
     tokenBVault: poolState.tokenBVault,
-    tokenAProgram: TOKEN_PROGRAM_ID,
-    tokenBProgram: TOKEN_PROGRAM_ID,
+    tokenAProgram: getTokenProgram(poolState.tokenAFlag),
+    tokenBProgram: getTokenProgram(poolState.tokenBFlag),
     referralTokenAccount: null,
     poolState,
   } as any)) as any;

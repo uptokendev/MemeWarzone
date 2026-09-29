@@ -83,9 +83,38 @@ export async function jupiterQuoteToSolSwap(input: {
   return { solOut, impactBps, transaction };
 }
 
+/**
+ * SOL that reached the collector in a landed swap: its balance change plus the fee it paid (the
+ * collector signs and pays). The quote's outAmount is only an estimate; slippage up to the cap can
+ * make the real amount smaller, and routing the estimate would pay the difference out of other money.
+ */
+export function collectorSolReceived(tx: any, collector: string): bigint | null {
+  const message = tx?.transaction?.message;
+  const keys: any[] = message?.staticAccountKeys || message?.accountKeys || [];
+  const first = keys[0];
+  const firstKey = typeof first === "string" ? first : String(first?.pubkey?.toBase58?.() || first?.toBase58?.() || first?.pubkey || "");
+  if (firstKey !== collector) return null;
+  const pre = tx?.meta?.preBalances?.[0];
+  const post = tx?.meta?.postBalances?.[0];
+  if (pre == null || post == null) return null;
+  const received = BigInt(post) - BigInt(pre) + BigInt(tx.meta.fee || 0);
+  return received > 0n ? received : 0n;
+}
+
+async function recordReceived(db: Queryable, connection: Connection, id: number | string, signature: string, collector: string | null) {
+  if (!collector) return null;
+  const tx = await getTx(connection, signature);
+  const received = tx ? collectorSolReceived(tx, collector) : null;
+  if (received != null) {
+    await db.query(`update public.dbc_quote_swaps set sol_out = $2 where id = $1`, [id, received.toString()]);
+  }
+  return received;
+}
+
 export async function resolvePendingQuoteSwaps(input: {
   db: Queryable;
   connection: Connection;
+  collector?: string;
 }): Promise<{ resolved: number; waiting: number }> {
   const pending = await input.db.query(`select * from public.dbc_quote_swaps where status = 'sending' order by id`);
   let resolved = 0;
@@ -119,6 +148,10 @@ export async function resolvePendingQuoteSwaps(input: {
       waiting += 1;
       continue;
     }
+    if (input.collector && (await recordReceived(input.db, input.connection, row.id, signature, input.collector)) == null) {
+      waiting += 1;
+      continue;
+    }
     await input.db.query(
       `update public.dbc_quote_swaps set status = 'done', updated_at = now() where id = $1`,
       [row.id],
@@ -140,11 +173,34 @@ export async function swapClaimedQuoteIfNeeded(input: {
   quoteIn: bigint;
   send: boolean;
   swapQuote?: SwapQuoteFn;
+  /**
+   * What this swap is for (e.g. `grad:<pool>`). With a key, a swap already done returns its SOL, one
+   * still sending is waited for, and a failed or blocked one is retried in the same row: the same
+   * quote is never swapped twice.
+   */
+  key?: string;
 }): Promise<{ skipped: string | null; solOut: bigint; id?: number }> {
   if (isNativeQuoteMint(input.quoteMint)) {
     return { skipped: "native", solOut: input.quoteIn };
   }
   if (input.quoteIn <= 0n) return { skipped: "nothing-to-swap", solOut: 0n };
+  let reuseId: number | null = null;
+  if (input.key) {
+    const prior = (await input.db.query(
+      `select id, status, sol_out from public.dbc_quote_swaps where purpose_key = $1`,
+      [input.key],
+    )).rows[0];
+    if (prior) {
+      if (prior.status === "done") return { skipped: null, solOut: BigInt(String(prior.sol_out || "0")), id: Number(prior.id) };
+      if (prior.status === "sending") {
+        await resolvePendingQuoteSwaps({ db: input.db, connection: input.connection, collector: input.collector.publicKey.toBase58() });
+        const now = (await input.db.query(`select status, sol_out from public.dbc_quote_swaps where id = $1`, [prior.id])).rows[0];
+        if (now?.status === "done") return { skipped: null, solOut: BigInt(String(now.sol_out || "0")), id: Number(prior.id) };
+        if (now?.status === "sending") return { skipped: "sending", solOut: 0n, id: Number(prior.id) };
+      }
+      reuseId = Number(prior.id); // ready (failed or never sent) or blocked: try again in this row
+    }
+  }
   const quoter = input.swapQuote || (async (args) => jupiterQuoteToSolSwap({
     quoteMint: args.quoteMint,
     amount: args.amount,
@@ -153,19 +209,39 @@ export async function swapClaimedQuoteIfNeeded(input: {
   const quoted = await quoter({ quoteMint: input.quoteMint, amount: input.quoteIn });
   const max = quoteSwapMaxImpactBps();
   if (swapImpactRefused(quoted.impactBps, max)) {
+    const reason = `impact ${quoted.impactBps.toString()} bps > ${max.toString()}`;
+    if (reuseId != null) {
+      await input.db.query(
+        `update public.dbc_quote_swaps set quote_in = $2, impact_bps = $3, status = 'blocked', blocked_reason = $4, updated_at = now() where id = $1`,
+        [reuseId, input.quoteIn.toString(), quoted.impactBps.toString(), reason],
+      );
+      return { skipped: "impact-cap", solOut: 0n, id: reuseId };
+    }
     const inserted = await input.db.query(
-      `insert into public.dbc_quote_swaps (quote_mint, quote_in, impact_bps, status, blocked_reason)
-       values ($1,$2,$3,'blocked',$4) returning id`,
-      [input.quoteMint, input.quoteIn.toString(), quoted.impactBps.toString(), `impact ${quoted.impactBps.toString()} bps > ${max.toString()}`],
+      `insert into public.dbc_quote_swaps (quote_mint, quote_in, impact_bps, status, blocked_reason, purpose_key)
+       values ($1,$2,$3,'blocked',$4,$5) returning id`,
+      [input.quoteMint, input.quoteIn.toString(), quoted.impactBps.toString(), reason, input.key || null],
     );
     return { skipped: "impact-cap", solOut: 0n, id: inserted.rows[0]?.id };
   }
-  const inserted = await input.db.query(
-    `insert into public.dbc_quote_swaps (quote_mint, quote_in, sol_out, impact_bps, status)
-     values ($1,$2,$3,$4,'ready') returning id`,
-    [input.quoteMint, input.quoteIn.toString(), quoted.solOut.toString(), quoted.impactBps.toString()],
-  );
-  const id = inserted.rows[0].id;
+  let id: number;
+  if (reuseId != null) {
+    await input.db.query(
+      `update public.dbc_quote_swaps
+          set quote_in = $2, sol_out = $3, impact_bps = $4, status = 'ready', blocked_reason = null,
+              signature = null, last_valid_block_height = null, updated_at = now()
+        where id = $1`,
+      [reuseId, input.quoteIn.toString(), quoted.solOut.toString(), quoted.impactBps.toString()],
+    );
+    id = reuseId;
+  } else {
+    const inserted = await input.db.query(
+      `insert into public.dbc_quote_swaps (quote_mint, quote_in, sol_out, impact_bps, status, purpose_key)
+       values ($1,$2,$3,$4,'ready',$5) returning id`,
+      [input.quoteMint, input.quoteIn.toString(), quoted.solOut.toString(), quoted.impactBps.toString(), input.key || null],
+    );
+    id = inserted.rows[0].id;
+  }
   if (!input.send || !quoted.transaction) {
     await input.db.query(`update public.dbc_quote_swaps set status = 'done' where id = $1`, [id]);
     return { skipped: quoted.transaction ? "dry-run" : "stubbed", solOut: quoted.solOut, id };
@@ -210,6 +286,9 @@ export async function swapClaimedQuoteIfNeeded(input: {
   } catch {
     return { skipped: "sending", solOut: 0n, id };
   }
+  const received = await recordReceived(input.db, input.connection, id, signature, input.collector.publicKey.toBase58());
+  // Landed but not readable yet: stay 'sending'; the resolver records the real amount next pass.
+  if (received == null) return { skipped: "sending", solOut: 0n, id };
   await input.db.query(`update public.dbc_quote_swaps set status = 'done' where id = $1`, [id]);
-  return { skipped: null, solOut: quoted.solOut, id };
+  return { skipped: null, solOut: received, id };
 }
