@@ -1308,11 +1308,11 @@ const Create = () => {
                   <div>
                     <div className="font-retro text-lg text-foreground">Graduation</div>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      When the curve fills, your coin moves into a Meteora pool paired with SOL. The pool's liquidity is locked for good, and the coin keeps trading there and on Jupiter.
+                      When the curve fills, your coin moves into a Meteora pool paired with {dbcQuote?.symbol || "SOL"}. The pool's liquidity is locked for good, and the coin keeps trading there and on Jupiter.
                     </p>
                   </div>
                   <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Pool</span><span className="text-foreground">{normalizedTicker || "TICKER"}/SOL on Meteora</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Pool</span><span className="text-foreground">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora</span></div>
                     <div className="flex justify-between gap-3"><span className="text-muted-foreground">Your share at graduation</span><span className="text-foreground">19.8% of what the curve raised</span></div>
                   </div>
                   <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" onClick={goNext}>Next</Button>
@@ -1345,7 +1345,7 @@ const Create = () => {
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Ticker</span><span className="font-medium text-foreground">{normalizedTicker ? `$${normalizedTicker}` : "—"}</span></div>
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation threshold</span><span className="text-foreground">{selectedGraduation?.label || "—"}</span></div>
                       {dbcLaunch ? (
-                        <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduates into</span><span className="text-right text-foreground">{normalizedTicker || "TICKER"}/SOL on Meteora</span></div>
+                        <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduates into</span><span className="text-right text-foreground">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora</span></div>
                       ) : (
                         <>
                           <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation Market</span><span className="text-right text-foreground">{graduationSummary.pair}</span></div>
@@ -1357,7 +1357,7 @@ const Create = () => {
                       {dbcLaunch ? (
                         <>
                           <div className="flex justify-between gap-3"><span className="text-muted-foreground">Creator fee</span><span className="text-foreground">{dbcFeeChoice}</span></div>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">First buy</span><span className="text-foreground">{dbcFirstBuySol ? `${dbcFirstBuySol} SOL` : "None"}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">First buy</span><span className="text-foreground">{dbcFirstBuySol ? `${dbcFirstBuySol} ${dbcQuote?.symbol || "SOL"}` : "None"}</span></div>
                         </>
                       ) : null}
                       {!creatorWallet ? <p className="pt-1 text-xs text-orange-300">Connect your wallet before launching.</p> : null}
