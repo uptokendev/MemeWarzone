@@ -139,6 +139,36 @@
     "configured": [],
     "skipped": "No testnet quote token has a pool on the 30 bps Topaz (pool factory 0xb9F2b64D holds 6 pools, all MEME/WBNB, read 2026-09-30); configureQuoteRoute requires the canonical WBNB/QUOTE pool and refuses a route below its own liquidity floor."
   },
-  "status": "deployed-paused",
-  "bnbSpentOnDeploy": "0.0038332228"
+  "status": "deployed-create-paused (live latch set by the lifecycle run)",
+  "bnbSpentOnDeploy": "0.0038332228",
+  "acceptance": {
+    "report": "reports/bnb-testnet-gen6-lifecycle.json",
+    "accepted": true,
+    "checks": 41,
+    "passed": 41,
+    "coins": {
+      "A": {
+        "campaign": "0x00b6d6624d21d85C08ABE5b308Ec2Cc676A800cC",
+        "token": "0x2850AA977C812A659F5c2cBC2Ba34A7610947cCB",
+        "pool": "0xf177285411A24Ae7c0406de59e18AeDFFF92530d"
+      },
+      "B": {
+        "campaign": "0x60d35C97D697c4ff945F64E20d821140E64F735D",
+        "token": "0xF7b62858fc715cd0B1d43DdEa89C4c41B3693cc0",
+        "pool": "0x909d692C35726ca7f4c590eb6A270BdE287D6927"
+      },
+      "C": {
+        "campaign": "0x38642fd518291DDb63Ec6FC8af773F1388d7D437",
+        "token": "0x376d57eb45b742d5FFcff69448AC4628351B0C6a"
+      }
+    },
+    "skipped": [
+      "MEME-side LP fees sold for WBNB at harvest (E9)",
+      "executeHolderBatch + holder claim",
+      "BnbQuoteGraduationAdapter quote routes / a quote-bound coin",
+      "creator escrow claim"
+    ],
+    "lifecycleBnbSpent": "0.015772913772783552",
+    "deployerAfter": "105083805427216448"
+  }
 }
