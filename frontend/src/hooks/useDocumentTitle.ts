@@ -17,6 +17,7 @@ export function titleForPath(pathname: string): string {
   if (path.includes("/promotion")) return "Promotion Setup";
   if (path.includes("/push-live")) return "Push Live";
   if (path.startsWith("/token/")) return "Token";
+  if (path.startsWith("/embed/chart")) return "Chart";
   if (path.startsWith("/battle/")) return "Battle";
   if (path.startsWith("/warzone/battles") || path.startsWith("/arena/battles")) return "Warzone Battles";
   if (path.startsWith("/warzone/tournaments") || path.startsWith("/arena/tournaments")) return "Tournaments";
