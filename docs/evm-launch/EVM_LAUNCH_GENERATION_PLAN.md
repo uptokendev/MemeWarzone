@@ -36,6 +36,20 @@ Written 2026-09-30. Every "today" fact cites the code on `build/dbc-staging` (`c
 - **E10. The fee choice works on quote-bound coins too** (BNB quote tokens, Robinhood stocks), as on
   Solana: holder payouts are swapped to native first; buyback spends the quote token in the coin's own
   pool; the creator's keep share is paid in what the pool earned.
+- **E11. Stock graduation band 200 bps, routes only through pools of 0.30% or less** (founder,
+  2026-09-30). On a 4663 fork SPY landed 63-69 bps below Chainlink; 100 bps was too tight and 1% pools
+  could never pass.
+- **E12. A quote coin whose route stays dead graduates into the native pool after 7 days Pending**, with
+  the same 2.2 / 19.8 / 78 split, callable by anyone (founder, 2026-09-30).
+- **E13. The Topaz locker accepts the pool's actual fee and records it** instead of requiring 30 bps, so
+  Topaz's own fee manager cannot freeze a coin (founder, 2026-09-30). E6 (0.30% default) is unchanged.
+- **E14. The current factories stay open until the new generation replaces them** (founder,
+  2026-09-30: "we update and deploy today").
+- **E15. Creator-vault caps per chain** (founder, 2026-09-30, adjustable later by the Safe with
+  `setCaps`; only the 0.5% impact ceiling is fixed): impact 50 bps; 6 h between buybacks per coin; max
+  per buyback $500 (0.65 BNB / 0.19 ETH); max buyback per coin per week $5,000 (6.5 BNB / 1.9 ETH);
+  max holder payout per week, all coins, $25,000 (32 BNB / 9.3 ETH); Safe pre-approval per weekly
+  holder batch $25,000 (32 BNB / 9.3 ETH). Prices used: BNB $767, ETH $2,695 (2026-09-30).
 
 ## Target economics, one table
 
