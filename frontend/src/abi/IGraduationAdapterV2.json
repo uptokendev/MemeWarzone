@@ -1,0 +1,115 @@
+{
+  "contractName": "IGraduationAdapterV2",
+  "generation": "IGraduationAdapterV2",
+  "sourceName": "contracts/interfaces/IGraduationAdapterV2.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "token",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "quoteToken",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "memeTarget",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "memeMax",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "curvePriceWad",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "nativeUsdWad",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "deadline",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IGraduationAdapterV2.Request",
+          "name": "r",
+          "type": "tuple"
+        }
+      ],
+      "name": "graduate",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "pool",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "positionId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "liquidity",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "memeUsed",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "pairedUsed",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "donationFound",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "startPriceWad",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bool",
+              "name": "repaired",
+              "type": "bool"
+            },
+            {
+              "internalType": "uint256",
+              "name": "repairMemeSold",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "repairProceeds",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IGraduationAdapterV2.Result",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "payable",
+      "type": "function"
+    }
+  ]
+}
