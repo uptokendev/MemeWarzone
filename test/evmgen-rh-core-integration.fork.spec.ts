@@ -7,6 +7,7 @@
  *   npx hardhat --config hardhat.rh-fork.config.ts test test/evmgen-rh-core-integration.fork.spec.ts
  */
 import { expect } from "chai";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 import { ethers, network } from "hardhat";
 import { createCoin, req, E, mineAt, buyNative } from "./fixtures/evmgenCore";
 import { assertFeeTierSpacing, bindAdapterToFactory, deployNativeGraduationAdapter } from "../scripts/deploy-robinhood-quote-generation";
@@ -49,12 +50,12 @@ d("evmgen-rh: real LaunchCampaign graduating through the V2 native adapter (4663
     // The deploy script's own adapter steps (scripts/deploy-robinhood-quote-generation.ts), rehearsed here.
     await assertFeeTierSpacing(RH.v3Factory);
     const adapter: any = await deployNativeGraduationAdapter(RH.v3Factory, RH.npm, RH.weth);
-    const factory = await (await ethers.getContractFactory("LaunchFactory")).deploy(
-      await adapter.getAddress(),
-      await evmRouter.getAddress(),
-      await impl.getAddress(),
-      await oracle.getAddress(),
-    );
+    // The factory takes a pre-deployed locker bound to it (hardening, C5 "Locker binding").
+    const { factory } = await deployFactoryWithLocker({
+      factoryName: "LaunchFactory",
+      args: [await adapter.getAddress(), await evmRouter.getAddress(), await impl.getAddress(), await oracle.getAddress()],
+      lockerKind: "v3",
+    });
     await vault.setFactory(await factory.getAddress());
     await factory.setNativeGraduationAdapter(await adapter.getAddress());
     await factory.setLaunchTokenDeployer(await tokenDeployer.getAddress());
