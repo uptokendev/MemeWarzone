@@ -34,6 +34,14 @@ interface ILaunchTokenDeployer {
     function deploy(string calldata name, string calldata symbol, uint256 cap) external returns (address);
 }
 
+/// @notice Chunked pre-made pool repair (Robinhood V3 adapters, C7 section 2 "Chunking"). Only adapters
+/// that implement it can serve `repairPool`; on any other adapter the call reverts.
+interface IGraduationRepairAdapter {
+    function repairStep(IGraduationAdapterV2.Request calldata r, uint160 sqrtPriceLimitX96)
+        external
+        returns (uint256 memeSold, uint256 proceeds);
+}
+
 interface IGraduationOracle {
     function nativeTargetForUsd(uint256 usdAmount) external view returns (uint256);
     function nativeUsdPrice() external view returns (uint256);
@@ -188,6 +196,13 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 public pendingCreatorQuote;
     uint256 public pendingProtocolGraduationFee;
 
+    // C5/C7 chunked repair (`repairPool`), consumed by graduate(). MEME sold into a pre-made pool
+    // leaves the budget; its proceeds are held for the pool: native is added to graduate()'s
+    // msg.value, the quote (stock) is approved to the adapter, which pulls it back.
+    uint256 public repairMemeSold;
+    uint256 public repairNativeHeld;
+    uint256 public repairQuoteHeld;
+
     modifier onlyFactory() {
         if (msg.sender != factory) revert OnlyFactory();
         _;
@@ -218,6 +233,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     event ProtocolGraduationFeeFlushed(uint256 amount);
     event CreatorGraduationClaimed(address indexed to, uint256 nativeAmount, uint256 quoteAmount);
     event ExcessNativeRescued(address indexed recipient, uint256 amount);
+    event PoolRepairStep(address indexed caller, uint256 memeSold, uint256 proceeds, uint256 repairMemeSoldTotal);
 
     error OnlyFactory();
     error AlreadyInitialized();
@@ -700,31 +716,21 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     /// TODO(founder) Q3: native fallback for a quote coin whose route stays dead after 7 days in
     /// Pending is NOT implemented; such a coin waits in Pending until its route works again.
     function graduate() external nonReentrant returns (address pool) {
-        if (launched) revert Finalized();
-        if (block.timestamp < launchAt) revert TradingNotOpen();
-        if (!graduationPending) {
-            _checkGraduationDue();
-            if (!graduationPending) revert GraduationNotDue();
-        }
-        if ((paused || graduationPaused) && block.timestamp < uint256(pendingSince) + PAUSE_HONOUR_WINDOW) revert GraduationPaused();
-        _beforeGraduate();
-
+        (uint256 raise, uint256 price, uint256 poolNative, uint256 memeTarget, uint256 budget) = _openGraduation();
         GraduationState storage g = graduation;
-        uint256 raise = g.graduationBalance;
-        uint256 price = g.finalCurvePrice;
         uint256 protocolShare = (raise * GRAD_PROTOCOL_BPS) / MAX_BPS;
         uint256 creatorShare = (raise * GRAD_CREATOR_BPS) / MAX_BPS;
-        uint256 poolNative = raise - protocolShare - creatorShare;
-        uint256 memeTarget = Math.mulDiv(poolNative, WAD, price);
-        // Unsold curve tokens + the liquidity allocation, from accounting (escrowed tokens are in
-        // `sold` and never touched). The factory's setConfig bound makes this revert unreachable.
-        uint256 budget = totalSupply - creatorReserve - sold;
-        if (memeTarget == 0 || memeTarget > budget) revert SupplyBound();
+        // Earlier repairPool steps: their MEME already left `budget` (see _openGraduation); their
+        // proceeds go into the pool with the 78%.
+        uint256 heldQuote = repairQuoteHeld;
+        uint256 poolValue = poolNative + repairNativeHeld;
 
         // Effects before any external call.
         launched = true;
         graduationPending = false;
         finalizedAt = block.timestamp;
+        repairNativeHeld = 0;
+        repairQuoteHeld = 0;
         address beneficiary = owner();
         creatorGraduationBeneficiary = beneficiary;
         pendingCreatorGraduation += creatorShare;
@@ -735,40 +741,16 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         }
 
         address quote = graduationQuoteToken;
-        IGraduationAdapterV2.Result memory res;
-        uint256 memeUsed;
-        uint256 nativeBack;
-        {
-            LaunchToken meme = token;
-            address adapter = graduationAdapter;
-            // I1: transfers open inside this call only, right before the adapter mints the pool.
-            meme.enableTrading();
-            IERC20(address(meme)).forceApprove(adapter, budget);
-            uint256 memeBefore = meme.balanceOf(address(this));
-            uint256 nativeBefore = address(this).balance - poolNative;
-            uint256 quoteBefore = quote == address(0) ? 0 : IERC20(quote).balanceOf(address(this));
-            res = IGraduationAdapterV2(adapter).graduate{value: poolNative}(
-                IGraduationAdapterV2.Request({
-                    token: address(meme),
-                    quoteToken: quote,
-                    memeTarget: memeTarget,
-                    memeMax: budget,
-                    curvePriceWad: price,
-                    nativeUsdWad: quote == address(0) ? 0 : graduationOracle.nativeUsdPrice(),
-                    deadline: block.timestamp
-                })
-            );
-            IERC20(address(meme)).forceApprove(adapter, 0);
-            memeUsed = memeBefore - meme.balanceOf(address(this));
-            nativeBack = address(this).balance - nativeBefore;
-            if (quote != address(0)) pendingCreatorQuote += IERC20(quote).balanceOf(address(this)) - quoteBefore;
-        }
+        (IGraduationAdapterV2.Result memory res, uint256 memeUsed, uint256 nativeBack) =
+            _adapterGraduate(quote, poolValue, heldQuote, memeTarget, budget, price);
+        // Conservation of the original budget B = totalSupply - creatorReserve - sold:
+        // B = soldInRepair (pool, earlier steps) + memeUsed (pool, this call) + memeBack (burned).
         uint256 memeBack = budget - memeUsed;
         if (res.pool == address(0) || memeUsed == 0 || res.memeUsed != memeUsed) revert AdapterResultInvalid();
         if (quote == address(0)) {
             if (memeUsed < memeTarget) revert AdapterResultInvalid();
             // Native refund is capped at 1 bp unless the repair used up the whole budget (C5 §10).
-            if (memeBack != 0 && nativeBack * MAX_BPS > poolNative * MAX_NATIVE_REFUND_BPS) revert AdapterResultInvalid();
+            if (memeBack != 0 && nativeBack * MAX_BPS > poolValue * MAX_NATIVE_REFUND_BPS) revert AdapterResultInvalid();
             uint256 start = res.startPriceWad;
             if (
                 start * MAX_BPS < price * (MAX_BPS - NATIVE_PRICE_BAND_BPS) ||
@@ -784,18 +766,123 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
 
         g.dexPair = res.pool;
         g.initialDexPrice = res.startPriceWad;
+        memeUsed += repairMemeSold;
         g.graduatedLiquidityTokens = memeUsed;
-        g.graduatedLiquidityBnb = poolNative > nativeBack ? poolNative - nativeBack : 0;
+        g.graduatedLiquidityBnb = poolValue > nativeBack ? poolValue - nativeBack : 0;
         g.graduatedLiquidityLp = res.liquidity;
         g.burnedUnsoldTokens = memeBack;
         g.postBurnTotalSupply = token.totalSupply();
 
         ILaunchFactoryGraduationNotify(factory).notifyCampaignGraduated(creator, res.pool);
-        emit Graduated(res.pool, raise, protocolShare, creatorShare, poolNative, memeUsed, memeBack, price, res.startPriceWad, res.repaired);
+        emit Graduated(res.pool, raise, protocolShare, creatorShare, poolValue, memeUsed, memeBack, price, res.startPriceWad, res.repaired);
         return res.pool;
     }
 
-    /// @dev Hook for quote campaigns (binding checks). Runs inside graduate() before any effect.
+    /// @dev The adapter leg of graduate(). I1: transfers open inside this call only, right before the
+    /// adapter mints the pool. Every amount is a balance delta; the caller verifies them.
+    function _adapterGraduate(
+        address quote,
+        uint256 poolValue,
+        uint256 heldQuote,
+        uint256 memeTarget,
+        uint256 budget,
+        uint256 price
+    ) private returns (IGraduationAdapterV2.Result memory res, uint256 memeUsed, uint256 nativeBack) {
+        LaunchToken meme = token;
+        address adapter = graduationAdapter;
+        meme.enableTrading();
+        IERC20(address(meme)).forceApprove(adapter, budget);
+        // Stock proceeds of earlier repair steps: the adapter pulls exactly this (its repairLedger).
+        if (heldQuote != 0) IERC20(quote).forceApprove(adapter, heldQuote);
+        uint256 memeBefore = meme.balanceOf(address(this));
+        uint256 nativeBefore = address(this).balance - poolValue;
+        uint256 quoteBefore = quote == address(0) ? 0 : IERC20(quote).balanceOf(address(this));
+        res = IGraduationAdapterV2(adapter).graduate{value: poolValue}(_graduationRequest(quote, memeTarget, budget, price));
+        IERC20(address(meme)).forceApprove(adapter, 0);
+        memeUsed = memeBefore - meme.balanceOf(address(this));
+        nativeBack = address(this).balance - nativeBefore;
+        if (quote != address(0)) {
+            if (heldQuote != 0) IERC20(quote).forceApprove(adapter, 0);
+            // Reverts if the adapter took more than the held repair proceeds.
+            pendingCreatorQuote += IERC20(quote).balanceOf(address(this)) + heldQuote - quoteBefore;
+        }
+    }
+
+    /// @notice Permissionless chunk of a pre-made pool repair (C7 section 2 "Chunking"), for a pool
+    /// seeded with more initialized ticks than one graduation can cross. Same entry rule as graduate()
+    /// (Pending, or due; after launchAt; pause honoured for 72 h; binding checks). Moves the canonical
+    /// pool's price toward the curve price, stopping at `sqrtPriceLimitX96` (0 = all the way), selling
+    /// at most the spare `budget - memeTarget` into bids at >= P. MEME moves campaign -> pool by
+    /// transferFrom inside the adapter's swap callback, which the token allows before enableTrading
+    /// because `from` is its owner (this campaign); transfers stay closed for everyone else.
+    /// Everything is measured by balance delta and must equal what the adapter reports.
+    function repairPool(uint160 sqrtPriceLimitX96) external nonReentrant returns (uint256 memeSold, uint256 proceeds) {
+        (, uint256 price,, uint256 memeTarget, uint256 budget) = _openGraduation();
+        address quote = graduationQuoteToken;
+        address adapter = graduationAdapter;
+        IERC20 meme = IERC20(address(token));
+        meme.forceApprove(adapter, budget - memeTarget);
+        uint256 memeBefore = meme.balanceOf(address(this));
+        uint256 nativeBefore = address(this).balance;
+        uint256 quoteBefore = quote == address(0) ? 0 : IERC20(quote).balanceOf(address(this));
+        (uint256 soldReported, uint256 proceedsReported) =
+            IGraduationRepairAdapter(adapter).repairStep(_graduationRequest(quote, memeTarget, budget, price), sqrtPriceLimitX96);
+        meme.forceApprove(adapter, 0);
+        memeSold = memeBefore - meme.balanceOf(address(this));
+        uint256 nativeIn = address(this).balance - nativeBefore;
+        proceeds = quote == address(0) ? nativeIn : IERC20(quote).balanceOf(address(this)) - quoteBefore;
+        if (memeSold != soldReported || proceeds != proceedsReported || (quote != address(0) && nativeIn != 0)) {
+            revert AdapterResultInvalid();
+        }
+        repairMemeSold += memeSold;
+        if (quote == address(0)) repairNativeHeld += proceeds;
+        else repairQuoteHeld += proceeds;
+        emit PoolRepairStep(msg.sender, memeSold, proceeds, repairMemeSold);
+    }
+
+    /// @dev Entry checks shared by graduate() and repairPool(), then the plan both use: the frozen raise
+    /// R, P, the 78% pool native, T = poolNative / P and the budget still available (unsold curve tokens
+    /// + the liquidity allocation, from accounting, minus MEME earlier repair steps sold into the pool;
+    /// escrowed tokens are in `sold` and never touched). Each repair step sells at most
+    /// `budget - memeTarget`, so `budget >= memeTarget` survives any number of steps; the factory's
+    /// setConfig bound makes SupplyBound unreachable.
+    function _openGraduation()
+        private
+        returns (uint256 raise, uint256 price, uint256 poolNative, uint256 memeTarget, uint256 budget)
+    {
+        if (launched) revert Finalized();
+        if (block.timestamp < launchAt) revert TradingNotOpen();
+        if (!graduationPending) {
+            _checkGraduationDue();
+            if (!graduationPending) revert GraduationNotDue();
+        }
+        if ((paused || graduationPaused) && block.timestamp < uint256(pendingSince) + PAUSE_HONOUR_WINDOW) revert GraduationPaused();
+        _beforeGraduate();
+        raise = graduation.graduationBalance;
+        price = graduation.finalCurvePrice;
+        poolNative = raise - (raise * GRAD_PROTOCOL_BPS) / MAX_BPS - (raise * GRAD_CREATOR_BPS) / MAX_BPS;
+        memeTarget = Math.mulDiv(poolNative, WAD, price);
+        budget = totalSupply - creatorReserve - sold - repairMemeSold;
+        if (memeTarget == 0 || memeTarget > budget) revert SupplyBound();
+    }
+
+    function _graduationRequest(address quote, uint256 memeTarget, uint256 budget, uint256 price)
+        private
+        view
+        returns (IGraduationAdapterV2.Request memory)
+    {
+        return IGraduationAdapterV2.Request({
+            token: address(token),
+            quoteToken: quote,
+            memeTarget: memeTarget,
+            memeMax: budget,
+            curvePriceWad: price,
+            nativeUsdWad: quote == address(0) ? 0 : graduationOracle.nativeUsdPrice(),
+            deadline: block.timestamp
+        });
+    }
+
+    /// @dev Hook for quote campaigns (binding checks). Runs inside graduate() and repairPool() before any effect.
     function _beforeGraduate() internal view virtual {}
 
     /// @notice The creator's 19.8% (plus any native/quote residual). Pull only; payable to any
@@ -826,10 +913,11 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         emit ProtocolGraduationFeeFlushed(amount);
     }
 
-    /// @notice Native that belongs to nobody: donations after graduation. Excludes both pull balances.
+    /// @notice Native that belongs to nobody: donations after graduation. Excludes both pull balances
+    /// and held repair proceeds (zero after graduation, which moves them into the pool).
     function excessNativeBalance() public view returns (uint256) {
         if (!launched) return 0;
-        uint256 held = pendingCreatorGraduation + pendingProtocolGraduationFee;
+        uint256 held = pendingCreatorGraduation + pendingProtocolGraduationFee + repairNativeHeld;
         uint256 balance = address(this).balance;
         return balance > held ? balance - held : 0;
     }

@@ -259,8 +259,100 @@ One implementation in `LaunchCampaign.graduate()` serves native, BNB quote and R
   850 (V3 = Robinhood). Create refuses `nativeTargetForUsd(target) > 95% * A(curveSupply)` (`TargetOutOfRangeAtPrice`)
   and an oracle revert (`OraclePriceUnavailable`).
 - **Not built (founder):** Q3, the native fallback for a quote coin whose route stays dead (marked `TODO(founder)` in
-  `graduate()`). **Not built (interface):** C7-robinhood's chunked `repairPool`/`repairStep`; the fixed
-  `IGraduationAdapterV2` has only `graduate`, so a V3 repair must fit in one transaction.
+  `graduate()`). The chunked repair is built: see "Chunked pool repair" below.
+
+### Chunked pool repair: `repairPool(uint160 sqrtPriceLimitX96)` (branch `claude/evm-core`, 2026-09-30)
+
+Why: a griefer can seed a pre-made Robinhood V3 pool with many one-tick bids above P. A one-shot repair inside
+`graduate()` costs ~37.5k gas per crossed tick, so ~816 ticks exceed the 32M Nitro transaction cap and the coin
+would stay in Pending forever. `RobinhoodV3PoolRepair.repairStep(Request, uint160 limit)` does one chunk, but only a
+registered campaign may call it, because before graduation only the campaign can move MEME. The campaign therefore
+exposes the permissionless entry point. The IGraduationAdapterV2 interface is unchanged; `repairStep` is reached
+through a separate `IGraduationRepairAdapter` interface, so an adapter without it (BNB Topaz) simply reverts.
+
+Code (`contracts/LaunchCampaign.sol`): state `repairMemeSold` / `repairNativeHeld` / `repairQuoteHeld` (`:202-204`);
+`graduate()` (`:718`); its adapter leg `_adapterGraduate` (`:783`); `repairPool` (`:819`); the shared entry checks
+and plan `_openGraduation` (`:849`); the shared request `_graduationRequest` (`:869`); `excessNativeBalance` (`:918`).
+
+Flow of `repairPool(limit)`:
+1. `_openGraduation()`, the same code graduate() runs: not launched, `now >= launchAt`, Pending (or due, and then it
+   marks Pending exactly as graduate() would), the 72 h pause-honour rule, `_beforeGraduate()` (quote binding
+   checks). It returns P, `memeTarget = T = poolNative / P` and the budget still available,
+   `budget = totalSupply - creatorReserve - sold - repairMemeSold`.
+2. `forceApprove(adapter, budget - T)`: only the spare. Snapshot MEME, native and quote balances.
+3. `adapter.repairStep(req, limit)` with the same Request graduate() would send now (`memeMax = budget`).
+4. `forceApprove(adapter, 0)`. Measure `memeSold` (MEME delta), `proceeds` (native delta on a native coin, quote delta
+   on a quote coin). Revert `AdapterResultInvalid` unless both equal what the adapter returned, and unless no native
+   arrived on a quote coin. Equality with the adapter's report is what keeps the campaign's figures and the adapter's
+   `repairLedger` identical, which graduate() relies on.
+5. `repairMemeSold += memeSold`; native: `repairNativeHeld += proceeds`, quote: `repairQuoteHeld += proceeds`. Emit
+   `PoolRepairStep`.
+
+How graduate() consumes the steps:
+- The budget it approves and sends as `memeMax` is already reduced by `repairMemeSold` (in `_openGraduation`).
+- The pool native is `poolValue = poolNative + repairNativeHeld`, sent as `msg.value`. The native adapter wraps all
+  of it and pairs it; the refund cap (1 bp) and `graduatedLiquidityBnb` use `poolValue`; the `Graduated` event's
+  `poolNative` field is `poolValue`.
+- Stock: `repairQuoteHeld` is approved to the adapter exactly, the adapter pulls it back (its `repairLedger`), the
+  allowance is reset to 0, and only the residual is credited to the creator:
+  `pendingCreatorQuote += balanceAfter + heldQuote - quoteBefore` (checked arithmetic: an adapter taking more than the
+  held proceeds reverts, and the exact allowance stops it first).
+- `repairNativeHeld` and `repairQuoteHeld` are zeroed with the other effects, before any external call.
+- Conservation of the original budget `B = totalSupply - creatorReserve - sold`:
+  `B = repairMemeSold (sold into the pool by the steps) + memeUsed (this call) + memeBack (burned)`. It holds by
+  construction (`memeBack = (B - repairMemeSold) - memeUsed`, checked subtraction) and is what the state records:
+  `graduatedLiquidityTokens = memeUsed + repairMemeSold`, `burnedUnsoldTokens = memeBack`. The fork test also checks
+  it from balances: the pool holds exactly `graduatedLiquidityTokens` MEME.
+- `budget >= T` survives any number of steps: each step's allowance is `(B - repairMemeSold) - T`, so
+  `repairMemeSold <= B - T` always. The existing `memeUsed >= T` check is unchanged and still meaningful.
+
+**How MEME moves without opening transfers (I1).** `repairPool` never calls `enableTrading`. The adapter's swap
+callback pays the pool with `transferFrom(campaign, pool, owed)`. `LaunchToken._update` allows a transfer before
+trading is enabled when `from == owner()`, and the campaign is the owner. Every other holder stays locked (tested:
+`transfer` by a holder after a step reverts `TradingNotEnabled`, `tradingEnabled` stays false). Only the campaign's own
+MEME can reach the pool, only inside a campaign-controlled `nonReentrant` call, only up to the spare it approved for
+that call, and the allowance is back to 0 when the call returns. MEME the steps put in the pool cannot come back out
+before graduation either: a swap that takes MEME out of the pool has `from == pool`, which the token refuses. That is
+what makes the adapter's progress monotone.
+
+Audit block for `repairPool`:
+- **Guard.** `nonReentrant` (shares the lock with buys, sells, graduate, claims, flush, rescue). An adapter
+  re-entering `graduate` or `repairPool` hits `ReentrancyGuardReentrantCall` (tested). `receive()` is unguarded and
+  only accepts value; it is how native proceeds arrive.
+- **CEI.** Checks (entry rule, plan) -> the approval and the snapshots -> one external call (`repairStep`; inside it the
+  adapter, the canonical pool, WETH or the STOCK) -> allowance reset -> verification -> effects
+  (`repairMemeSold`, held proceeds) -> event. The effects come after the call because they are the call's measured
+  deltas; this is safe because the lock covers every other entry point that reads them (graduate and repairPool are
+  both `nonReentrant`), and a failed verification reverts the step. The one effect before the call is marking Pending
+  when due, identical to graduate().
+- **Reachable states.** Pending, or Trading when due (marks Pending first). Never before `launchAt`, never after
+  graduation (`Finalized`), never while paused within 72 h of `pendingSince`. Quote coins need their binding
+  (`_beforeGraduate`). Only the campaign's adapter is called; it is fixed before the first buy.
+- **Overflow.** Sums are bounded by the token supply (<= 1e27) and by native actually received; checked 0.8 arithmetic
+  throughout. `memeBefore - balanceAfter` and `balanceAfter - before` cannot underflow for an honest adapter (MEME can
+  only leave; native and quote can only arrive, the campaign sends neither during the call); a dishonest one reverts.
+- **Griefing.** (a) Anyone may call it and choose the limit. The adapter only lets the step move the price toward the
+  target and only sells into bids at >= P (native) or >= the oracle estimate +5% (stock), so no choice of limit sells
+  MEME cheaply; the proceeds all go into the pool at graduation. (b) Tiny chunks only cost the caller gas. (c) A
+  griefer re-adding bids after a step pays a mint (200-400k gas) per tick against ~37.5k for us to cross it. (d) A
+  native donation during a step would inflate `proceeds` and fail the equality with the adapter's report, so it
+  reverts instead of being counted; a donation outside a step is never counted (all deltas). (e) A step cannot leave
+  the coin ungraduatable: `budget >= T` holds, and a failed graduate() keeps the held proceeds and the record intact
+  for a retry (tested). (f) On an adapter without `repairStep` the call reverts; graduation itself is unaffected.
+- **Excess native.** `excessNativeBalance()` subtracts `repairNativeHeld` too. It returns 0 before graduation anyway,
+  and graduate() moves the held native into the pool, so after graduation it is 0; subtracting it keeps the rescue
+  from ever touching repair proceeds should that change.
+
+Sizes after (runtime, limit 24,576): `LaunchCampaign` 20,148 (was 18,682), `BnbQuoteLaunchCampaign` 20,509 (19,043),
+`RobinhoodStockLaunchCampaign` 20,237 (18,771).
+
+Tests: `test/evmgen-core-repair.spec.ts` (15, mock adapter with `repairStep`: every refusal, native and quote flows,
+spare exhaustion, refund cap on `poolValue`, retry after a failed graduate); `test/evmgen-rh-core-integration.fork.spec.ts`
+(heavy tick seeding on the 4663 fork: the one-shot graduate is measured, a block gas cap is set below it, the one-shot
+reverts under the cap, `repairPool` chunks through the real campaign and native adapter, graduate() completes at P with
+the budget conserved). Measured: 120 one-tick bids, one-shot 6,255,403 gas; cap 3,842,701; 6 `repairPool` steps, max
+1,491,325 gas each; the graduation afterwards 1,547,725 gas, start price == P exactly, pool MEME == graduatedLiquidityTokens.
+Full plain suite: 867 passing, 0 failing, 40 pending (fork-only specs).
 
 ### Locker binding (hardening, branch `claude/evm-core`, 2026-09-30)
 

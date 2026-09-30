@@ -333,6 +333,22 @@ deployed generation and are not reused. Both new adapters implement `IGraduation
 target (`InvalidRepairLimit`); MEME paid from the campaign's exact allowance inside the callback; proceeds
 sent to the campaign after the ledger is updated; balances asserted unchanged.
 
+Its only caller is the campaign's permissionless **`LaunchCampaign.repairPool(uint160 sqrtPriceLimitX96)`**
+(built 2026-09-30; full audit block in C5-graduation.md "Chunked pool repair"). In short:
+- Entry rule identical to `graduate()` (shared `_openGraduation`): Pending or due, after `launchAt`, 72 h
+  pause-honour rule, binding checks. `nonReentrant` on the campaign as well as the adapter.
+- The campaign approves only the spare `(B - repairMemeSold) - T`, sends the same Request graduate() would
+  (`memeMax = B - repairMemeSold`), resets the allowance, and requires the measured MEME / native / STOCK
+  deltas to equal what `repairStep` returned (so its figures equal `repairLedger`); no native may arrive on a
+  stock coin.
+- **MEME moves without `enableTrading`**: the callback's `transferFrom(campaign, pool, owed)` is allowed by
+  `LaunchToken` because `from` is the token's owner. Holders stay locked; nothing leaves the pool.
+- Native proceeds are held in `repairNativeHeld` (excluded from `excessNativeBalance`) and added to
+  graduate()'s `msg.value`, where the native adapter wraps and pairs them. STOCK proceeds are held in
+  `repairQuoteHeld`, approved exactly to the stock adapter at graduate, pulled back by it, and never credited
+  to the creator (only the residual is). Both are zeroed before graduate()'s external calls.
+- Conservation: `B = repairMemeSold + memeUsed + burned`; `graduatedLiquidityTokens` includes the steps.
+
 **`uniswapV3SwapCallback`** (not guarded, runs inside our own swap): requires `msg.sender == _active.pool`
 (set right before `pool.swap`, deleted right after); refuses to pay the paired token; pays MEME only up to the
 spare, once. Called directly by anyone: `UnauthorizedCallback`.
@@ -340,7 +356,8 @@ spare, once. Called directly by anyone: `UnauthorizedCallback`.
 ### Tests
 
 - `test/evmgen-rh-graduation.fork.spec.ts` (4663 fork, 25): every scenario of section 7 in both orderings.
-- `test/evmgen-rh-core-integration.fork.spec.ts` (4663 fork, 2): the real C5 campaign/factory.
+- `test/evmgen-rh-core-integration.fork.spec.ts` (4663 fork, 3): the real C5 campaign/factory, including heavy
+  tick seeding repaired through `LaunchCampaign.repairPool` under a reduced block gas cap.
 - `test/evmgen-rh-adapters.unit.spec.ts` (13): branches on mocks.
 - Un-skipped against real V3 bytecode on the plain network (`test/helpers/evmgenRhRealV3.ts`):
   `LaunchFactoryLiquidityKinds` (V3 NFT auto-registration + `setNativeGraduationAdapter` acceptance),
@@ -348,7 +365,8 @@ spare, once. Called directly by anyone: `UnauthorizedCallback`.
 
 ### Open
 
-1. **Core has no `repairPool`.** Heavy tick seeding pushes a one-shot `graduate()` past the 32M Nitro cap:
+1. **Resolved 2026-09-30: core now has `repairPool`** (C5-graduation.md "Chunked pool repair";
+   `test/evmgen-rh-core-integration.fork.spec.ts` runs it through the real campaign). Original note: heavy tick seeding pushes a one-shot `graduate()` past the 32M Nitro cap:
    measured on the 4663 fork, 401 initialized ticks cost 16.45M gas in one graduation, ~37.5k per crossed
    tick, so **~816 one-tick bids freeze a coin** (the griefer's mints are cheap at 0.05 gwei). With the
    harness campaign's `repairPool` the same pool repairs in 6 steps (max 4.06M gas each) and the final

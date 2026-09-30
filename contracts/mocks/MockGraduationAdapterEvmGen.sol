@@ -8,6 +8,7 @@ import {MockTopazPool} from "./MockTopazPool.sol";
 
 interface IMockEvmGenCampaign {
     function graduate() external returns (address);
+    function repairPool(uint160 limit) external returns (uint256, uint256);
     function buyExactTokens(uint256 amountOut, uint256 maxCost) external payable returns (uint256);
 }
 
@@ -30,6 +31,17 @@ contract MockGraduationAdapterEvmGen is IGraduationAdapterV2 {
     uint256 public quoteResidual; // quote paths: quote returned to the campaign
     uint256 public quotePerNative = 2; // quote paths: quote acquired = msg.value * quotePerNative
     bool public reenter;
+
+    // repairStep (C7 chunked repair) knobs and a per-campaign ledger like RobinhoodV3PoolRepair's.
+    uint256 public stepMeme; // MEME pulled per step (type(uint256).max = the whole spare, spare + 1 = over)
+    uint256 public stepProceeds; // native (native coin) or quote (quote coin) paid to the campaign per step
+    uint8 public stepLie; // 1 report meme+1, 2 report proceeds+1, 3 also send 1 wei native on a quote coin
+    uint8 public stepReenter; // 1 re-enter graduate, 2 re-enter repairPool
+    uint256 public quotePullExtra; // graduate pulls ledger proceeds + this
+    mapping(address => uint256) public ledgerProceeds;
+    Request public lastStepRequest;
+    uint160 public lastStepLimit;
+    uint256 public stepCalls;
 
     Request public lastRequest;
     uint256 public lastValue;
@@ -94,6 +106,54 @@ contract MockGraduationAdapterEvmGen is IGraduationAdapterV2 {
         reenter = on;
     }
 
+    function setStep(uint256 meme, uint256 proceeds, uint8 lie, uint8 reenter_, uint256 pullExtra) external {
+        stepMeme = meme;
+        stepProceeds = proceeds;
+        stepLie = lie;
+        stepReenter = reenter_;
+        quotePullExtra = pullExtra;
+    }
+
+    function repairStep(Request calldata r, uint160 limit) external returns (uint256 memeSold, uint256 proceeds) {
+        stepCalls += 1;
+        lastStepRequest = r;
+        lastStepLimit = limit;
+        if (stepReenter == 1) IMockEvmGenCampaign(msg.sender).graduate();
+        if (stepReenter == 2) IMockEvmGenCampaign(msg.sender).repairPool(0);
+        uint256 spare = r.memeMax - r.memeTarget;
+        memeSold = stepMeme == type(uint256).max ? spare : stepMeme;
+        // Stands in for the pool: the campaign is the token owner, so this works before enableTrading.
+        if (memeSold != 0) IERC20(r.token).transferFrom(msg.sender, address(this), memeSold);
+        proceeds = stepProceeds;
+        if (proceeds != 0) {
+            if (r.quoteToken == address(0)) {
+                (bool ok, ) = msg.sender.call{value: proceeds}("");
+                require(ok, "proceeds");
+            } else {
+                IERC20(r.quoteToken).transfer(msg.sender, proceeds);
+            }
+        }
+        if (stepLie == 3) {
+            (bool ok2, ) = msg.sender.call{value: 1}("");
+            require(ok2, "lie");
+        }
+        ledgerProceeds[msg.sender] += proceeds;
+        if (stepLie == 1) memeSold += 1;
+        if (stepLie == 2) proceeds += 1;
+    }
+
+    function _quoteLeg(address quote, address pool) private returns (uint256 paired_) {
+        paired_ = msg.value * quotePerNative;
+        IERC20(quote).transfer(pool, paired_);
+        uint256 held = ledgerProceeds[msg.sender] + quotePullExtra;
+        if (held != 0) {
+            delete ledgerProceeds[msg.sender];
+            IERC20(quote).transferFrom(msg.sender, pool, held);
+            paired_ += held;
+        }
+        if (quoteResidual != 0) IERC20(quote).transfer(msg.sender, quoteResidual);
+    }
+
     function graduate(Request calldata r) external payable returns (Result memory res) {
         require(!shouldRevert, "adapter down");
         calls += 1;
@@ -107,11 +167,7 @@ contract MockGraduationAdapterEvmGen is IGraduationAdapterV2 {
         uint256 m = useAllMeme ? r.memeMax : r.memeTarget + extraMeme - memeShortfall;
         IERC20(r.token).transferFrom(msg.sender, pool, m);
         uint256 paired_ = msg.value;
-        if (r.quoteToken != address(0)) {
-            paired_ = msg.value * quotePerNative;
-            IERC20(r.quoteToken).transfer(pool, paired_);
-            if (quoteResidual != 0) IERC20(r.quoteToken).transfer(msg.sender, quoteResidual);
-        }
+        if (r.quoteToken != address(0)) paired_ = _quoteLeg(r.quoteToken, pool);
         MockTopazPool(pool).mint(locker, 1e18);
         if (nativeRefund != 0) {
             (bool ok, ) = msg.sender.call{value: nativeRefund}("");
