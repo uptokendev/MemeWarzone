@@ -26,7 +26,9 @@
  *   V3NativeSwapAdapter      enforced neither a deadline nor a non-zero
  *                            amountOutMinimum; the deployed one still carries
  *                            the old five-argument signature.
- *   ArenaWarPool + League    the battle system, never deployed anywhere.
+ *
+ * Not deployed: ArenaWarPoolTreasuryV2 / PostGradLeagueTreasuryV2. The live pair stays in use and nothing in
+ * the factory reads them (runbook D3, closed 2026-10-01).
  *
  * Everything lands paused. This script never calls enableLive.
  *
@@ -37,6 +39,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
 import { wireLpLocker } from "./lib/evmLpLockerWiring";
+import { isForkRehearsalNetwork, profileNetworkName, rehearsalPath } from "./lib/forkRehearsal";
 import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
 import {
   assertCreatorVaultServesGeneration,
@@ -290,7 +293,7 @@ export const TESTNET_ROUTE_AUTHORITY = "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bd
 /// The testnet route authority and a deployer-owned generation are testnet conveniences only. On
 /// mainnet (4663) both must be named explicitly (RH_ROUTE_AUTHORITY, RH_OWNER), the authority must not
 /// be the testnet one, and the owner must not be the deployer EOA (audit 5): a silent default would
-/// sign every create/trade with the testnet key or leave the factory, league and war pool owned by a
+/// sign every create/trade with the testnet key or leave the factory and registries owned by a
 /// hot key.
 export function resolveRouteAuthorityAndOwner(chainId: bigint, deployerAddress: string) {
   const isMainnet = chainId === 4663n;
@@ -305,8 +308,8 @@ export function resolveRouteAuthorityAndOwner(chainId: bigint, deployerAddress: 
   return { routeAuthority, owner };
 }
 
-async function main() {
-  const profile = PROFILES[network.name];
+export async function main() {
+  const profile = PROFILES[await profileNetworkName()];
   if (!profile) throw new Error(`Unsupported network ${network.name}; expected robinhoodTestnet or robinhoodMainnet`);
   if (String(process.env.CONFIRM_ROBINHOOD_GENERATION || "").trim() !== profile.confirm) {
     throw new Error(`Refusing to send on ${network.name}. Set CONFIRM_ROBINHOOD_GENERATION=${profile.confirm}.`);
@@ -402,22 +405,7 @@ async function main() {
   await nativeSwapAdapter.waitForDeployment();
   console.log(`[rh] RobinhoodV3NativeSwapAdapter = ${await nativeSwapAdapter.getAddress()}`);
 
-  const league = await (await ethers.getContractFactory("PostGradLeagueTreasuryV2")).deploy(deployerAddress, owner, owner);
-  await league.waitForDeployment();
-  const warPool = await (await ethers.getContractFactory("ArenaWarPoolTreasuryV2")).deploy(
-    deployerAddress,
-    pick("ARENA_RESOLVER", deployerAddress),
-    pick("ARENA_BOOST_QUOTE_SIGNER", deployerAddress),
-    pick("ARENA_PROTOCOL_RECEIVER", owner),
-    await league.getAddress(),
-  );
-  await warPool.waitForDeployment();
-  console.log(`[rh] PostGradLeagueTreasuryV2 = ${await league.getAddress()}`);
-  console.log(`[rh] ArenaWarPoolTreasuryV2 = ${await warPool.getAddress()}`);
-
   // --- wire, all closed ----------------------------------------------------
-  await waitTx((league as any).setSource(await warPool.getAddress(), true), "league.setSource(warPool)");
-  await waitTx((warPool as any).setDepositsPaused(true), "warPool.setDepositsPaused(true)");
   await waitTx((factory as any).setStockGraduationAdapter(await stockAdapter.getAddress()), "factory.setStockGraduationAdapter");
   const CONFIG = configFor(net.chainId);
   if (!(await (factory as any).isGraduationTargetAllowedForChain(net.chainId, CONFIG.graduationTarget))) {
@@ -483,7 +471,6 @@ async function main() {
 
   if ((await (factory as any).createPaused()) !== true) throw new Error("createPaused did not stick");
   if ((await (factory as any).live()) !== false) throw new Error("factory must not be live");
-  if ((await (warPool as any).depositsPaused()) !== true) throw new Error("war pool deposits must be paused");
 
   const artifact = {
     network: network.name,
@@ -507,16 +494,14 @@ async function main() {
       RobinhoodV3NativeGraduationAdapterV2: nativeGraduationAdapter,
       RobinhoodStockGraduationAdapterV2: await stockAdapter.getAddress(),
       RobinhoodV3NativeSwapAdapter: await nativeSwapAdapter.getAddress(),
-      PostGradLeagueTreasuryV2: await league.getAddress(),
-      ArenaWarPoolTreasuryV2: await warPool.getAddress(),
     },
     adapterBindActions,
     next: [
       ...adapterBindActions,
       ...(createPath.wired ? [] : ["the create-path owner actions (native adapter, token deployer, vault pin) -- CREATE is dead until they land, and before the first campaign"]),
       "register stock tokens and routes on the adapter",
-      "transfer ownership to the Safe (mainnet)",
-      "canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false)",
+      "transfer factory + registry ownership to the Safe (mainnet)",
+      "canary, then enableLive + setCreatePaused(false)",
     ],
   };
   (artifact as any).verification = [
@@ -533,12 +518,13 @@ async function main() {
       args: [v3Factory, positionManager, swapRouter, weth, nativeUsdFeed, String(MAX_ORACLE_AGE_SECONDS), adapterAdmin],
     },
   ];
-  if (profile.chainId === 4663n) appendVerificationEntries("4663", (artifact as any).verification);
+  // A fork rehearsal must not add its throwaway addresses to the mainnet verification manifest.
+  if (profile.chainId === 4663n && !isForkRehearsalNetwork()) appendVerificationEntries("4663", (artifact as any).verification);
   // RH_GENERATION_RECORD (relative to deployments/) keeps a new testnet cut from overwriting the record of
   // the generation it supersedes (deployments/robinhood/testnet.quote-generation.json is the accepted gen 4).
   const recordFile = String(process.env.RH_GENERATION_RECORD || "").trim() || profile.file;
   if (recordFile.includes("..")) throw new Error("RH_GENERATION_RECORD must stay inside deployments/");
-  const out = path.join(__dirname, "..", "deployments", recordFile);
+  const out = rehearsalPath(path.join(__dirname, "..", "deployments", recordFile));
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`);
   console.log(`[rh] wrote ${out}`);
@@ -546,6 +532,7 @@ async function main() {
   if (!createPath.wired) {
     console.log("[rh] WARNING: the create path is not wired. CREATE reverts until the pending owner actions execute.");
   }
+  return artifact;
 }
 
 if (require.main === module) {

@@ -118,24 +118,7 @@ describe("BNB quote generation deployment", function () {
     // configuration error rather than a silent re-point.
     await expect((adapter as any).setCampaignFactoryOnce(await factory.getAddress())).to.be.reverted;
 
-    // --- battle system -----------------------------------------------------
-    const league = await (await ethers.getContractFactory("PostGradLeagueTreasuryV2")).deploy(
-      await fx.owner.getAddress(),
-      await fx.safe.getAddress(),
-      await fx.safe.getAddress(),
-    );
-    await league.waitForDeployment();
-
-    const warPool = await (await ethers.getContractFactory("ArenaWarPoolTreasuryV2")).deploy(
-      await fx.owner.getAddress(),
-      await fx.owner.getAddress(),
-      await fx.owner.getAddress(),
-      await fx.safe.getAddress(),
-      await league.getAddress(),
-    );
-    await warPool.waitForDeployment();
-    await (await (league as any).setSource(await warPool.getAddress(), true)).wait();
-    await (await (warPool as any).setDepositsPaused(true)).wait();
+    // No battle contracts: the live war pool and league stay in use; the script deploys neither (D3).
 
     // --- configuration, all with CREATE closed -----------------------------
     await (await (factory as any).setConfig({
@@ -158,12 +141,10 @@ describe("BNB quote generation deployment", function () {
     // --- what the script promises it leaves behind -------------------------
     expect(await (factory as any).createPaused()).to.equal(true);
     expect(await (factory as any).live()).to.equal(false);
-    expect(await (warPool as any).depositsPaused()).to.equal(true);
     expect(await (factory as any).protocolFeeBps()).to.equal(200n);
     expect(await (factory as any).bnbQuoteGraduationAdapter()).to.equal(await adapter.getAddress());
 
-    // Closed means closed: nobody can create while CREATE is paused, and the
-    // war pool takes no money while deposits are.
+    // Closed means closed: nobody can create while CREATE is paused.
     await expect(
       (factory as any).connect(fx.owner).createCampaign({
         name: "Blocked",
@@ -522,6 +503,8 @@ describe("BNB quote generation deployment", function () {
         .to.equal(artifact.contracts.LaunchTokenDeployer);
 
       const factory: any = await ethers.getContractAt("BnbBasicLaunchFactory", artifact.contracts.BnbBasicLaunchFactory);
+      // D3: no second, unused war pool / league next to the live ones.
+      expect(artifact.contracts).to.not.have.any.keys("ArenaWarPoolTreasuryV2", "PostGradLeagueTreasuryV2");
       expect(await factory.nativeGraduationAdapter()).to.equal(artifact.contracts.BnbNativeGraduationAdapter);
       expect(artifact.contracts.BnbNativeGraduationAdapter).to.not.equal(ethers.ZeroAddress);
       expect(await factory.launchTokenDeployer()).to.equal(artifact.contracts.LaunchTokenDeployer);

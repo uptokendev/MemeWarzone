@@ -1,5 +1,5 @@
 /**
- * Deploy the BNB generation that accepts binding tokens, plus the battle system.
+ * Deploy the BNB generation that accepts binding tokens.
  *
  * Everything lands PAUSED and owned by the Safe. This script never calls
  * enableLive and never unpauses CREATE; going live is a separate, deliberate act
@@ -11,8 +11,9 @@
  *   2. BnbQuoteLaunchCampaign    campaign implementation for non-native quotes
  *   3. PermanentLpLocker + BnbBasicLaunchFactory  locker first (admin = factory's CREATE address), then the factory
  *   4. BnbNativeGraduationAdapter + BnbQuoteGraduationAdapter  both need the factory's locker, so they come after
- *   5. PostGradLeagueTreasuryV2  the war pool's league receiver
- *   6. ArenaWarPoolTreasuryV2    the battle system
+ *
+ * No battle contracts: the live ArenaWarPoolTreasuryV2 / PostGradLeagueTreasuryV2 stay in use and nothing in
+ * the factory reads them, so a second, unused pair is not deployed (runbook D3, closed 2026-10-01).
  *
  * The treasury router is an input, not a deployment, and the script refuses one
  * that cannot serve these contracts. That check exists because of a real bug:
@@ -53,6 +54,7 @@ import path from "node:path";
 import { ethers, network } from "hardhat";
 
 import { wireLpLocker } from "./lib/evmLpLockerWiring";
+import { profileNetworkName, rehearsalPath } from "./lib/forkRehearsal";
 import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
 import {
   assertCreatorVaultServesGeneration,
@@ -454,7 +456,7 @@ export async function assertTopazRoutersFit(
 }
 
 export async function main() {
-  const profile = PROFILES[network.name];
+  const profile = PROFILES[await profileNetworkName()];
   if (!profile) {
     throw new Error(`Unsupported network ${network.name}; expected bscTestnet or bscMainnet`);
   }
@@ -581,31 +583,6 @@ export async function main() {
     await readBack(() => (adapter as any).campaignFactory(), factoryAddress, "quoteAdapter.campaignFactory");
   }
 
-  // --- battle system -------------------------------------------------------
-  const league = await (await ethers.getContractFactory("PostGradLeagueTreasuryV2")).deploy(
-    deployerAddress,
-    safe,
-    safe,
-  );
-  await league.waitForDeployment();
-  const leagueAddress = await league.getAddress();
-  console.log(`[quote-gen] PostGradLeagueTreasuryV2=${leagueAddress}`);
-
-  const warPool = await (await ethers.getContractFactory("ArenaWarPoolTreasuryV2")).deploy(
-    deployerAddress,
-    envAddress("ARENA_RESOLVER", deployerAddress),
-    envAddress("ARENA_BOOST_QUOTE_SIGNER", deployerAddress),
-    envAddress("ARENA_PROTOCOL_RECEIVER", safe),
-    leagueAddress,
-  );
-  await warPool.waitForDeployment();
-  const warPoolAddress = await warPool.getAddress();
-  console.log(`[quote-gen] ArenaWarPoolTreasuryV2=${warPoolAddress}`);
-
-  await waitTx((league as any).setSource(warPoolAddress, true), "league.setSource(warPool)");
-  // Deposits closed until the canary says otherwise.
-  await waitTx((warPool as any).setDepositsPaused(true), "warPool.setDepositsPaused(true)");
-
   // --- factory configuration, all while CREATE stays closed ----------------
   await waitTx((factory as any).setConfig(CONFIG), "factory.setConfig");
   await waitTx((factory as any).setProtocolFee(PROTOCOL_FEE_BPS), "factory.setProtocolFee");
@@ -644,7 +621,6 @@ export async function main() {
 
   await readBack(() => (factory as any).createPaused(), true, "factory.createPaused");
   eq("factory.live", await (factory as any).live(), false);
-  await readBack(() => (warPool as any).depositsPaused(), true, "warPool.depositsPaused");
 
   const artifact = {
     network: network.name,
@@ -662,8 +638,6 @@ export async function main() {
       BnbNativeGraduationAdapter: nativeGraduationAdapter,
       BnbQuoteGraduationAdapter: adapterAddress,
       LaunchTokenDeployer: createPath.tokenDeployer,
-      PostGradLeagueTreasuryV2: leagueAddress,
-      ArenaWarPoolTreasuryV2: warPoolAddress,
     },
     config: Object.fromEntries(Object.entries(CONFIG).map(([k, v]) => [k, v.toString()])),
     protocolFeeBps: PROTOCOL_FEE_BPS.toString(),
@@ -689,13 +663,13 @@ export async function main() {
       ...(lpLocker.wired ? [] : ["treasuryRouter.setAuthorizedLpLocker(locker, true) -- the protocol's 20% of every LP harvest strands until this lands"]),
       ...(quoteAdminIsDeployer ? [] : ["quoteAdapter.setCampaignFactoryOnce(factory) from the Safe -- graduate reverts CampaignFactoryMissing until this lands"]),
       "configureQuoteRoute on the adapter for each approved quote token",
-      "transfer factory, locker, league and war pool ownership to the Safe",
-      "run the canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false) from the Safe",
+      "transfer factory ownership to the Safe (the locker's admin is the factory)",
+      "run the canary, then enableLive + setCreatePaused(false) from the Safe",
     ],
   };
 
   // QUOTE_GEN_OUT redirects the artifact (the in-process rehearsal writes to a temp dir, not the repo).
-  const out = String(process.env.QUOTE_GEN_OUT || "").trim() || path.join(__dirname, "..", "deployments", profile.deploymentFile);
+  const out = String(process.env.QUOTE_GEN_OUT || "").trim() || rehearsalPath(path.join(__dirname, "..", "deployments", profile.deploymentFile));
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`);
   console.log(`[quote-gen] wrote ${out}`);
