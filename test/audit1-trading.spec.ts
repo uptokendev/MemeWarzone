@@ -223,7 +223,8 @@ describe("audit1: trading and create paths", function () {
     expect(await campaign.netRaisedWei()).to.eq(costNoFee);
     // first-buy quote is the flat base fee even though the view reports 5000 bps before launchAt
     expect(await campaign.currentTradeFeeBps()).to.eq(5000n);
-    expect(await campaign.quoteCreatorFirstBuy(E(1_000_000))).to.eq(costNoFee + (costNoFee * 200n) / 10000n);
+    const next = area(E(2_000_000)) - area(E(1_000_000)); // the quote is from the current `sold`
+    expect(await campaign.quoteCreatorFirstBuy(E(1_000_000))).to.eq(next + (next * 200n) / 10000n);
     // Replaying the scheduled authorization fails (nonce + digest).
     await expect(env.factory.connect(env.creator).createScheduledCampaignAuthorized(sreq, routeAuth)).to.be.reverted;
     await expect(buyTokens(env, campaign, env.alice, E(1000))).to.be.revertedWithCustomError(campaign, "TradingNotOpen");
