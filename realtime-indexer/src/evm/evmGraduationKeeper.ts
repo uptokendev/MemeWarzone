@@ -19,6 +19,14 @@
  *      pool.increaseObservationCardinalityNext(slots), once. The fail-closed TWAP reads (the Buyback vault's
  *      buybackPool, any future MEME-sale guard) need history the pool only records once its slots are grown.
  *      Permissionless; costs gas proportional to the slots added. Only after any escrowed fee is flushed.
+ *   7. LP-fee harvest (after the campaign steps, only when nothing else was sent this pass): every pool
+ *      registered in the generation's locker (EVM_GEN5_LP_LOCKERS_<chainId>: PermanentLpLocker on BNB,
+ *      PermanentV3PositionLocker on Robinhood; GraduationPoolRegistered rows in evm_campaign_events) gets
+ *      locker.harvest(pool) at most once per EVM_KEEPER_HARVEST_INTERVAL_SEC (default 6 h), and only when
+ *      the eth_call of harvest collects fees or the locker carries unsold MEME. Gas limit
+ *      max(2 x estimateGas, EVM_KEEPER_HARVEST_MIN_GAS (default 2,000,000)), never the bare estimate: the
+ *      lockers revert InsufficientSaleGas when too little gas is left for the MEME sale (MIN_SALE_GAS).
+ *      Permissionless on chain. At most EVM_KEEPER_HARVEST_MAX_PER_PASS pools are looked at per pass.
  * Due but not Pending (the crossing buy's oracle read failed, or nobody traded since): the indexed net
  * raise (sum of gen-5 gross buys minus gross sells) is compared with the campaign's native target (a
  * cached view) and the indexed sold amount with curveSupply; a campaign that passes this cheap filter
@@ -34,11 +42,12 @@
  */
 import { ethers } from "ethers";
 import { GEN5_CAMPAIGN_ABI } from "./evmGen5Abi.js";
+import { configuredGen5AuxContracts } from "./evmGen5Aux.js";
 
 export const NATIVE_FALLBACK_DELAY_SECONDS = 7n * 86_400n;
 export const GEN5_CAMPAIGN_IFACE_FULL = new ethers.Interface(GEN5_CAMPAIGN_ABI as unknown as string[]);
 
-export type KeeperAction = "graduate" | "repair" | "native_fallback" | "flush" | "observations";
+export type KeeperAction = "graduate" | "repair" | "native_fallback" | "flush" | "observations" | "harvest";
 
 export type KeeperCall =
   | { action: "graduate"; fn: "graduate"; args: [] }
@@ -46,7 +55,9 @@ export type KeeperCall =
   | { action: "native_fallback"; fn: "useNativeFallback"; args: [] }
   | { action: "flush"; fn: "flushProtocolGraduationFee"; args: [] }
   /** The only call not sent to the campaign: `target` is the graduated Uniswap V3 pool. */
-  | { action: "observations"; fn: "increaseObservationCardinalityNext"; args: [number]; target: string };
+  | { action: "observations"; fn: "increaseObservationCardinalityNext"; args: [number]; target: string }
+  /** Sent to the generation's LP locker (`target`); the argument is the graduated pool. */
+  | { action: "harvest"; fn: "harvest"; args: [string]; target: string };
 
 export const CALLS = {
   graduate: (): KeeperCall => ({ action: "graduate", fn: "graduate", args: [] }),
@@ -59,7 +70,23 @@ export const CALLS = {
     args: [slots],
     target: pool,
   }),
+  harvest: (locker: string, pool: string): KeeperCall => ({
+    action: "harvest",
+    fn: "harvest",
+    args: [pool.toLowerCase()],
+    target: locker.toLowerCase(),
+  }),
 };
+
+/** Both lockers' harvest surface (PermanentLpLocker / PermanentV3PositionLocker share it). */
+export const LP_LOCKER_HARVEST_IFACE = new ethers.Interface([
+  "function harvest(address pool) returns (uint256 collected0, uint256 collected1)",
+  "function carriedMeme(address pool) view returns (uint256)",
+  "error PoolNotRegistered()",
+  "error InsufficientSaleGas()",
+  "error LpPrincipalChanged()",
+  "error PositionPrincipalChanged()",
+]);
 
 export const V3_POOL_OBSERVATIONS_IFACE = new ethers.Interface([
   "function slot0() view returns (uint160 sqrtPriceX96,int24 tick,uint16 observationIndex,uint16 observationCardinality,uint16 observationCardinalityNext,uint8 feeProtocol,bool unlocked)",
@@ -70,6 +97,9 @@ export const V3_POOL_OBSERVATIONS_IFACE = new ethers.Interface([
 export function encodeKeeperCall(campaign: string, call: KeeperCall): { to: string; data: string } {
   if (call.action === "observations") {
     return { to: call.target, data: V3_POOL_OBSERVATIONS_IFACE.encodeFunctionData(call.fn, call.args) };
+  }
+  if (call.action === "harvest") {
+    return { to: call.target, data: LP_LOCKER_HARVEST_IFACE.encodeFunctionData(call.fn, call.args) };
   }
   return { to: campaign, data: GEN5_CAMPAIGN_IFACE_FULL.encodeFunctionData(call.fn, call.args) };
 }
@@ -87,7 +117,7 @@ export type CampaignChainState = {
 };
 
 export type SimResult =
-  | { ok: true; gas: bigint; memeSold?: bigint }
+  | { ok: true; gas: bigint; memeSold?: bigint; harvested?: { collected0: bigint; collected1: bigint } }
   | { ok: false; error: string };
 
 export type RepairContext = { currentSqrtX96: bigint; targetSqrtX96: bigint };
@@ -96,7 +126,8 @@ export type RepairContext = { currentSqrtX96: bigint; targetSqrtX96: bigint };
 export type ObservationState = { pool: string; cardinalityNext: number };
 
 export type Decision =
-  | { kind: "send"; call: KeeperCall; gas: bigint; reason: string }
+  /** `gasLimit` overrides the default limit (estimate x 1.2 + 25k); harvest sets it. */
+  | { kind: "send"; call: KeeperCall; gas: bigint; reason: string; gasLimit?: bigint }
   | { kind: "idle"; reason: string }
   | { kind: "blocked"; reason: string };
 
@@ -113,6 +144,8 @@ export interface KeeperReader {
    * the read failed). `minSlots` lets an implementation cache pools already at or above it.
    */
   observationState?(campaign: string, minSlots: number): Promise<ObservationState | null>;
+  /** locker.carriedMeme(pool): MEME collected earlier and not yet sold; null when the read fails. */
+  carriedMeme?(locker: string, pool: string): Promise<bigint | null>;
 }
 
 export type DueInputs = { curveSupply: bigint; nativeTarget: bigint | null };
@@ -130,7 +163,48 @@ export type KeeperConfig = {
    * absent turns it off (BNB's Topaz pools have no oracle slots). Default 180 on 4663 / 46630.
    */
   v3ObservationSlots?: number;
+  /** Step 7. Absent: read from env by the pass (harvestConfigFromEnv). */
+  harvest?: HarvestConfig;
 };
+
+export type HarvestConfig = {
+  /** Per pool, at most one harvest per this many seconds. 0 turns step 7 off. */
+  intervalSec: number;
+  /** Gas limit floor for a harvest send; the limit is max(2 x estimate, minGas). */
+  minGas: bigint;
+  /** Pools looked at per pass. */
+  maxPerPass: number;
+  /** The generation's lockers (lowercase); only pools registered in these are harvested. */
+  lockers: string[];
+};
+
+export const DEFAULT_HARVEST_INTERVAL_SEC = 6 * 3600;
+export const DEFAULT_HARVEST_MIN_GAS = 2_000_000n;
+export const DEFAULT_HARVEST_MAX_PER_PASS = 10;
+
+/**
+ * EVM_KEEPER_HARVEST_INTERVAL_SEC (default 21600, 0 = off), EVM_KEEPER_HARVEST_MIN_GAS (default 2,000,000),
+ * EVM_KEEPER_HARVEST_MAX_PER_PASS (default 10), lockers from EVM_GEN5_LP_LOCKERS_<chainId>.
+ */
+export function harvestConfigFromEnv(chainId: number, env: NodeJS.ProcessEnv = process.env): HarvestConfig {
+  const intervalRaw = String(env.EVM_KEEPER_HARVEST_INTERVAL_SEC ?? "").trim();
+  const intervalSec = /^\d+$/.test(intervalRaw) ? Number(intervalRaw) : DEFAULT_HARVEST_INTERVAL_SEC;
+  const gasRaw = String(env.EVM_KEEPER_HARVEST_MIN_GAS ?? "").trim();
+  const minGas = /^\d+$/.test(gasRaw) ? BigInt(gasRaw) : DEFAULT_HARVEST_MIN_GAS;
+  const perPassRaw = String(env.EVM_KEEPER_HARVEST_MAX_PER_PASS ?? "").trim();
+  const maxPerPass = /^\d+$/.test(perPassRaw) ? Math.min(500, Number(perPassRaw)) : DEFAULT_HARVEST_MAX_PER_PASS;
+  const lockers = configuredGen5AuxContracts(chainId, env)
+    .filter((c) => c.kind === "lp_locker")
+    .map((c) => c.address.toLowerCase());
+  return { intervalSec, minGas, maxPerPass, lockers };
+}
+
+/** max(2 x estimate, floor), and never above the chain's gas cap (the estimate itself already fits it). */
+export function harvestGasLimit(estimate: bigint, minGas: bigint, maxGas: bigint): bigint {
+  const doubled = estimate * 2n;
+  const limit = doubled > minGas ? doubled : minGas;
+  return limit > maxGas ? maxGas : limit;
+}
 
 /** Reverts of graduate() that mean "not due yet", not "stuck". */
 export const NOT_DUE_REVERTS = new Set(["GraduationNotDue", "TradingNotOpen"]);
@@ -265,6 +339,37 @@ async function decideObservations(reader: KeeperReader, campaign: string, cfg: K
   return { kind: "blocked", reason: `observations: ${describe(sim, cfg)}` };
 }
 
+export type HarvestTarget = { campaign: string; locker: string; pool: string };
+
+/**
+ * Step 7: simulate locker.harvest(pool) (eth_call + estimateGas). Send only when the call collects fees
+ * (collected0 + collected1 > 0) or the locker carries unsold MEME for the pool; otherwise idle.
+ */
+export async function decideHarvest(
+  reader: KeeperReader,
+  target: HarvestTarget,
+  cfg: KeeperConfig,
+  harvest: Pick<HarvestConfig, "minGas">,
+): Promise<Decision> {
+  const call = CALLS.harvest(target.locker, target.pool);
+  const sim = await reader.simulate(target.campaign, call);
+  if (!sim.ok) return { kind: "blocked", reason: `harvest: ${sim.error}` };
+  const collected = (sim.harvested?.collected0 ?? 0n) + (sim.harvested?.collected1 ?? 0n);
+  let carried: bigint | null = 0n;
+  if (collected === 0n && reader.carriedMeme) carried = await reader.carriedMeme(target.locker, target.pool);
+  if (collected === 0n && !(carried && carried > 0n)) {
+    return { kind: "idle", reason: `pool ${target.pool}: no fees owed, nothing carried` };
+  }
+  if (sim.gas > cfg.maxGas) return { kind: "blocked", reason: `harvest: ${describe(sim, cfg)}` };
+  return {
+    kind: "send",
+    call,
+    gas: sim.gas,
+    gasLimit: harvestGasLimit(sim.gas, harvest.minGas, cfg.maxGas),
+    reason: collected > 0n ? `pool ${target.pool}: fees owed (collected ${collected})` : `pool ${target.pool}: carried MEME ${carried}`,
+  };
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Jobs: record before send, resolve after restart
 // ---------------------------------------------------------------------------------------------------
@@ -394,6 +499,48 @@ export async function listKeeperCampaigns(db: Queryable, chainId: number, opts: 
 }
 
 /**
+ * Step 7 candidates: pools registered in the generation's lockers (GraduationPoolRegistered, indexed from
+ * EVM_GEN5_LP_LOCKERS_<chainId>) for gen-5 campaigns, whose last harvest job (any status but 'dropped') is
+ * older than the interval or absent, least recently harvested first.
+ */
+export async function listHarvestTargets(
+  db: Queryable,
+  chainId: number,
+  cfg: Pick<HarvestConfig, "intervalSec" | "maxPerPass" | "lockers">,
+): Promise<HarvestTarget[]> {
+  if (cfg.intervalSec <= 0 || cfg.maxPerPass <= 0 || cfg.lockers.length === 0) return [];
+  const { rows } = await db.query(
+    `select lower(e.campaign_address) as campaign_address, lower(e.contract_address) as locker,
+            lower(e.args->>'pool') as pool
+       from public.evm_campaign_events e
+       join public.campaigns c
+         on c.chain_id = e.chain_id and lower(c.campaign_address) = lower(e.campaign_address)
+       left join lateral (
+         select max(j.created_at) as at
+           from public.evm_graduation_keeper_jobs j
+          where j.chain_id = e.chain_id and j.action = 'harvest' and j.status <> 'dropped'
+            and lower(j.call_args->>0) = lower(e.args->>'pool')
+       ) last on true
+      where e.chain_id = $1
+        and e.contract_kind = 'lp_locker'
+        and e.event_name = 'GraduationPoolRegistered'
+        and lower(e.contract_address) = any($2::text[])
+        and e.campaign_address is not null
+        and coalesce(c.campaign_generation, 0) >= 5
+        and (last.at is null or last.at <= now() - make_interval(secs => $3::double precision))
+      order by last.at nulls first, e.block_number, e.log_index
+      limit $4`,
+    [chainId, cfg.lockers.map((l) => l.toLowerCase()), cfg.intervalSec, cfg.maxPerPass],
+  );
+  return rows
+    .filter((r) => /^0x[a-f0-9]{40}$/.test(String(r.pool || "")))
+    .map((r) => ({ campaign: String(r.campaign_address), locker: String(r.locker), pool: String(r.pool) }));
+}
+
+/** Per chain:pool, when step 7 last looked at a pool without sending (idle / blocked / dry-run). */
+const harvestLastChecked = new Map<string, number>();
+
+/**
  * Gen-5 campaigns still trading (not Pending, not graduated) with their indexed net raise and sold amount,
  * largest raise first. gross_raw is the gen-5 trade annotation (buy: cost without fee, sell: gross before
  * fee), i.e. exactly what moves netRaisedWei; a row the annotation missed falls back to bnb_amount_raw,
@@ -499,6 +646,11 @@ export async function runEvmGraduationKeeperPass(input: {
   campaigns?: string[];
   /** Due-but-not-pending campaigns (tests); listed by listDueCampaigns when both lists are omitted. */
   dueCampaigns?: string[];
+  /** Step 7 pools (tests); listed by listHarvestTargets when this and `campaigns` are omitted. */
+  harvestTargets?: HarvestTarget[];
+  /** Step 7 "looked at, not sent" times per chain:pool (tests); a module-level map otherwise. */
+  harvestMemo?: Map<string, number>;
+  nowMs?: number;
 }): Promise<{ resolved: ResolveResult; steps: PassStep[]; inFlight: boolean }> {
   const resolved = await resolveSendingJobs({ db: input.db, chainId: input.chainId, sender: input.sender, send: input.send });
   const inFlight = resolved.waiting > 0;
@@ -517,25 +669,9 @@ export async function runEvmGraduationKeeperPass(input: {
   const all = [...campaigns, ...[...due].filter((c) => !campaigns.includes(c))];
   let sentThisPass = false;
 
-  for (const campaign of all) {
-    let decision: Decision;
-    try {
-      decision = await decideKeeperStep(input.reader, campaign, input.cfg, { dueCandidate: due.has(campaign) });
-    } catch (error) {
-      steps.push({ campaign, decision: { kind: "blocked", reason: "read failed" }, error: error instanceof Error ? error.message : String(error) });
-      continue;
-    }
-    const step: PassStep = { campaign, decision };
-    steps.push(step);
-    if (decision.kind === "blocked") {
-      if (input.send) await recordBlocked(input.db, input.chainId, campaign, decision.reason);
-      continue;
-    }
-    if (decision.kind !== "send") continue;
-    if (!input.send || inFlight || sentThisPass) continue;
-
-    // Record, then send.
-    const gasLimit = (decision.gas * 12n) / 10n + 25_000n;
+  // Record, then send.
+  async function recordAndSend(campaign: string, decision: Extract<Decision, { kind: "send" }>, step: PassStep) {
+    const gasLimit = decision.gasLimit ?? (decision.gas * 12n) / 10n + 25_000n;
     const nonce = await input.sender.getNonce("pending");
     const signed = await input.sender.sign(campaign, decision.call, gasLimit, nonce);
     const inserted = await input.db.query(
@@ -559,7 +695,6 @@ export async function runEvmGraduationKeeperPass(input: {
     );
     step.jobId = inserted.rows[0]?.id;
     step.txHash = signed.hash;
-    sentThisPass = true;
     await clearBlocked(input.db, input.chainId, campaign);
     try {
       await input.sender.broadcast(signed.raw);
@@ -574,6 +709,63 @@ export async function runEvmGraduationKeeperPass(input: {
       );
     }
   }
+
+  for (const campaign of all) {
+    let decision: Decision;
+    try {
+      decision = await decideKeeperStep(input.reader, campaign, input.cfg, { dueCandidate: due.has(campaign) });
+    } catch (error) {
+      steps.push({ campaign, decision: { kind: "blocked", reason: "read failed" }, error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+    const step: PassStep = { campaign, decision };
+    steps.push(step);
+    if (decision.kind === "blocked") {
+      if (input.send) await recordBlocked(input.db, input.chainId, campaign, decision.reason);
+      continue;
+    }
+    if (decision.kind !== "send") continue;
+    if (!input.send || inFlight || sentThisPass) continue;
+
+    await recordAndSend(campaign, decision, step);
+    sentThisPass = true;
+  }
+
+  // Step 7: LP-fee harvests, lowest priority: only when nothing else went out this pass.
+  const harvestCfg = input.cfg.harvest ?? harvestConfigFromEnv(input.chainId);
+  const memo = input.harvestMemo ?? harvestLastChecked;
+  const nowMs = input.nowMs ?? Date.now();
+  if (!(input.send && (inFlight || sentThisPass)) && harvestCfg.intervalSec > 0) {
+    let targets: HarvestTarget[] = input.harvestTargets ?? [];
+    if (!input.harvestTargets && !input.campaigns) {
+      try {
+        targets = await listHarvestTargets(input.db, input.chainId, harvestCfg);
+      } catch (error) {
+        console.warn("[evm-grad] harvest listing failed", { chainId: input.chainId, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    for (const target of targets) {
+      const key = `${input.chainId}:${target.pool.toLowerCase()}`;
+      const last = memo.get(key);
+      if (last !== undefined && nowMs - last < harvestCfg.intervalSec * 1000) continue;
+      let decision: Decision;
+      try {
+        decision = await decideHarvest(input.reader, target, input.cfg, harvestCfg);
+      } catch (error) {
+        steps.push({ campaign: target.campaign, decision: { kind: "blocked", reason: "harvest read failed" }, error: error instanceof Error ? error.message : String(error) });
+        memo.set(key, nowMs);
+        continue;
+      }
+      const step: PassStep = { campaign: target.campaign, decision };
+      steps.push(step);
+      if (decision.kind !== "send" || !input.send) {
+        memo.set(key, nowMs); // idle, blocked or dry-run: look again after the interval
+        continue;
+      }
+      await recordAndSend(target.campaign, decision, step);
+      break; // one transaction per chain per pass
+    }
+  }
   return { resolved, steps, inFlight };
 }
 
@@ -581,16 +773,18 @@ export async function runEvmGraduationKeeperPass(input: {
 // ethers implementations
 // ---------------------------------------------------------------------------------------------------
 
-/** Names a revert from its data when it is one of the campaign's custom errors. */
+/** Names a revert from its data when it is one of the campaign's (or the LP lockers') custom errors. */
 export function revertName(error: unknown): string {
   const e = error as any;
   const data: string | undefined = e?.data ?? e?.info?.error?.data ?? e?.error?.data;
   if (typeof data === "string" && data.startsWith("0x") && data.length >= 10) {
-    try {
-      const parsed = GEN5_CAMPAIGN_IFACE_FULL.parseError(data);
-      if (parsed) return parsed.name;
-    } catch {
-      // unknown selector
+    for (const iface of [GEN5_CAMPAIGN_IFACE_FULL, LP_LOCKER_HARVEST_IFACE]) {
+      try {
+        const parsed = iface.parseError(data);
+        if (parsed) return parsed.name;
+      } catch {
+        // unknown selector
+      }
     }
   }
   return String(e?.shortMessage || e?.reason || e?.message || e).slice(0, 300);
@@ -711,6 +905,10 @@ export function createEthersKeeperReader(provider: ethers.Provider, chainId: num
           const decoded = GEN5_CAMPAIGN_IFACE_FULL.decodeFunctionResult("repairPool", result);
           memeSold = BigInt(decoded[0]);
         }
+        if (call.fn === "harvest") {
+          const decoded = LP_LOCKER_HARVEST_IFACE.decodeFunctionResult("harvest", result);
+          return { ok: true, gas: BigInt(gas), harvested: { collected0: BigInt(decoded[0]), collected1: BigInt(decoded[1]) } };
+        }
         return { ok: true, gas: BigInt(gas), memeSold };
       } catch (error) {
         return { ok: false, error: revertName(error) };
@@ -807,6 +1005,14 @@ export function createEthersKeeperReader(provider: ethers.Provider, chainId: num
         return out;
       } catch {
         return null; // not a V3 pool (no slot0 of this shape) or the read failed
+      }
+    },
+    async carriedMeme(locker, pool) {
+      try {
+        const raw = await provider.call({ to: locker, data: LP_LOCKER_HARVEST_IFACE.encodeFunctionData("carriedMeme", [pool]) });
+        return BigInt(LP_LOCKER_HARVEST_IFACE.decodeFunctionResult("carriedMeme", raw)[0]);
+      } catch {
+        return null;
       }
     },
     async dueInputs(campaign) {

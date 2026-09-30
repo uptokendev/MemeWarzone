@@ -89,10 +89,25 @@ contract MockUniswapV3PoolEvmGen {
         if (a1 != 0) IERC20(token1).safeTransfer(recipient, a1);
     }
 
+    /// @dev Test knob: gas each swap burns first, to model an expensive real pool (harvest gas guard tests).
+    uint256 public swapGasBurn;
+
+    function setSwapGasBurn(uint256 amount) external {
+        swapGasBurn = amount;
+    }
+
+    function _burnSwapGas() internal view {
+        uint256 amount = swapGasBurn;
+        if (amount == 0) return;
+        uint256 start = gasleft();
+        while (start - gasleft() < amount) {}
+    }
+
     function swap(address recipient, bool zeroForOne, int256 amountSpecified, uint160 limit, bytes calldata data)
         external
         returns (int256 amount0, int256 amount1)
     {
+        _burnSwapGas();
         require(amountSpecified > 0, "exact input only");
         uint256 L = liquidity;
         uint256 sp = sqrtPriceX96;

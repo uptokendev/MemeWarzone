@@ -106,7 +106,22 @@ contract MockTopazPairEvmGen is ERC20 {
         return _out(amountIn, tokenIn, twapReserve0, twapReserve1);
     }
 
+    /// @dev Test knob: gas each swap burns first, to model an expensive real pool (harvest gas guard tests).
+    uint256 public swapGasBurn;
+
+    function setSwapGasBurn(uint256 amount) external {
+        swapGasBurn = amount;
+    }
+
+    function _burnSwapGas() internal view {
+        uint256 amount = swapGasBurn;
+        if (amount == 0) return;
+        uint256 start = gasleft();
+        while (start - gasleft() < amount) {}
+    }
+
     function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata) external {
+        _burnSwapGas();
         require(!swapDisabled, "swap disabled");
         require(amount0Out < reserve0 && amount1Out < reserve1, "IL");
         require(amount0Out != 0 || amount1Out != 0, "IOA");
