@@ -48,3 +48,23 @@ unit and fork tests to assert start price >= curve price (USD) within rounding.
 
 Same checklist as brief 1, plus the full `npx hardhat test` (baseline on staging: 921 passing, 0 failing)
 and `BNB_FORK=1 npx hardhat test test/evmgen-bnb-core-integration.fork.spec.ts --network hardhat`.
+
+## AMENDMENT (2026-09-30, after the internal audit): supersedes the M1 fix above where they differ
+
+The internal audit (branch `claude/evm-audit-5`, `test/audit5-quote-adapter-admin.spec.ts`) proved two
+things, so the M1 fix changes:
+
+1. **500 bps is not safe.** With the shipped policy (500 / 500) anyone, with an honest admin, can sandwich a
+   quote graduation for about 4.5% of the pool value (test `EXPLOIT (honest admin, shipped policy 500
+   bps)`). Cap `maxOracleDeviationBps` and `maxGraduationPriceDeviationBps` at **100 bps** (constants), and
+   `maxSwapSlippageBps` / `maxPriceImpactBps` at 100 bps too. Update `scan-bnb-quote-routes.mjs` defaults to
+   match. The test must then show the sandwich unprofitable.
+2. **The admin must not be the deployer EOA.** Today `admin = msg.sender`, immutable, so the deployer key
+   controls the feed that protects 78% of every quote coin's raise (test `EXPLOIT: the admin EOA swaps in
+   its own 'USDT/USD' feed`). Make the admin a constructor argument (the deploy script passes the Safe), and
+   keep the rule from M1: a quote token's feed is fixed the first time its route is set; later calls may
+   only tighten limits or disable the route.
+3. Both audit tests above must FAIL (the exploit no longer works) after your fix. Rename them to
+   `HOLDS: ...` in your branch, or add new HOLDS tests; do not delete the originals without replacing them.
+
+Everything else in this brief (L1, the verification config entry, the hand-in) stays.
