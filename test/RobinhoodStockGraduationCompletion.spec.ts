@@ -199,8 +199,8 @@ async function fixture() {
     acquisitionFeeTier: FEE,
     minimumRouteLiquidityUsdWad: ethers.parseEther("1000"),
     maxSwapSlippageBps: 500,
-    maxOracleDeviationBps: 500,
-    maxPriceImpactBps: 500,
+    maxOracleDeviationBps: 0,
+    maxPriceImpactBps: 0,
     enabled: true,
   };
   await stockAdapter.configureStockRoute(await stock.getAddress(), route);
@@ -333,8 +333,8 @@ describe("Robinhood Stock pending graduation completion", function () {
       acquisitionFeeTier: 500,
       minimumRouteLiquidityUsdWad: ethers.parseEther("50000"),
       maxSwapSlippageBps: 300,
-      maxOracleDeviationBps: 500,
-      maxPriceImpactBps: 500,
+      maxOracleDeviationBps: 0,
+      maxPriceImpactBps: 0,
       enabled: true,
     };
     await adapter.configureStockRoute(await spy.getAddress(), route);
@@ -397,11 +397,11 @@ describe("Robinhood Stock pending graduation completion", function () {
     expect(tokenId).to.not.equal(0n);
     expect(await v3.positionManager.ownerOf(tokenId)).to.equal(await locker.getAddress());
     expect(await launchFactory.lastNotifiedPool()).to.equal(pool);
-    // USD continuity held (the adapter enforces 100 bps): start (SPY per MEME) x SPYUSD vs P x ETHUSD.
+    // USD continuity held (the adapter enforces 200 bps, E11): start (SPY per MEME) x SPYUSD vs P x ETHUSD.
     const startUsd = (state.initialDexPrice * 766n) / 1n;
     const curveUsd = state.finalCurvePrice * 2694n;
     const dev = startUsd > curveUsd ? startUsd - curveUsd : curveUsd - startUsd;
-    expect(dev * BPS).to.be.lte(curveUsd * 100n);
+    expect(dev * BPS).to.be.lte(curveUsd * 200n);
     // Nothing stranded on the adapter; the campaign kept no MEME; residual SPY is the creator's pull balance.
     for (const t0 of [token, spy, v3.weth]) expect(await (t0 as any).balanceOf(await adapter.getAddress())).to.equal(0n);
     expect(await ethers.provider.getBalance(await adapter.getAddress())).to.equal(0n);

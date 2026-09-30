@@ -164,8 +164,8 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
       acquisitionFeeTier: 500,
       minimumRouteLiquidityUsdWad: 50_000n * WAD,
       maxSwapSlippageBps: 300,
-      maxOracleDeviationBps: 500,
-      maxPriceImpactBps: 500,
+      maxOracleDeviationBps: 0,
+      maxPriceImpactBps: 0,
       enabled: true,
     });
     base = await snapshot();
@@ -565,7 +565,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
     const oracleOut: bigint = ev.args.oracleStockOut;
     // STOCK conservation: acquired (+ earlier step proceeds) == used in the position + returned.
     expect(out.res.pairedUsed + quoteBack).to.equal(acquired + out.res.repairProceeds);
-    // USD continuity within the 100 bps quote band.
+    // USD continuity within the 200 bps quote band (E11).
     const nativeUsd = BigInt((await (await ethers.getContractAt(["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"], RH.ethUsd)).latestRoundData())[1]) * 10n ** 10n;
     const spyUsd = BigInt((await (await ethers.getContractAt(["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"], spyFeed)).latestRoundData())[1]) * 10n ** 10n;
     const startUsd = (out.start * spyUsd) / WAD;
@@ -574,7 +574,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
     console.log(
       `        ${label}: acquired ${ethers.formatEther(acquired)} SPY vs oracle ${ethers.formatEther(oracleOut)} (${Number(((acquired - oracleOut) * 1_000_000n) / oracleOut) / 100} bps), start vs curve USD ${devBps} bps, SPY back ${quoteBack} wei, MEME back ${out.memeBack}`,
     );
-    expect(Math.abs(devBps)).to.be.lte(100);
+    expect(Math.abs(devBps)).to.be.lte(200);
     return { ...out, acquired, oracleOut, quoteBack, ctx, c };
   }
 
@@ -601,6 +601,24 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
       expect(out.res.repairMemeSold).to.be.gt(0n);
     });
   }
+
+  it("stock E11: a route through a 1% pool (fee 10000) is refused; the 200 bps band is in force", async () => {
+    expect(await stock.QUOTE_PRICE_BAND_BPS()).to.equal(200n);
+    const route = await stock.stockRoutes(RH.spy);
+    const pool10000 = await v3.getPool(RH.weth, RH.spy, 10000);
+    await expect(
+      stock.configureStockRoute(RH.spy, {
+        oracleFeed: route[0],
+        acquisitionPool: pool10000 === ethers.ZeroAddress ? route[1] : pool10000,
+        acquisitionFeeTier: 10000,
+        minimumRouteLiquidityUsdWad: route[3],
+        maxSwapSlippageBps: route[4],
+        maxOracleDeviationBps: 0,
+        maxPriceImpactBps: 0,
+        enabled: true,
+      }),
+    ).to.be.revertedWithCustomError(stock, "InvalidFeeTier");
+  });
 
   it("stock: stale SPY feed -> OracleStale, campaign stays retryable; retry on a fresh round succeeds", async () => {
     const ctx = await newCampaign(RH.spy, false);
@@ -632,7 +650,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
     await buySpy(griefOwner, ethers.parseEther("1"));
     const tx = await ctx.campaign.graduate(await stock.getAddress(), RH.spy, c.T, c.budget, c.P, c.poolNative).catch((e: any) => e);
     if (tx instanceof Error) {
-      // Allowed outcome: the 100 bps continuity band refuses, the campaign stays Pending.
+      // Allowed outcome: the 200 bps continuity band refuses, the campaign stays Pending.
       expect(String(tx.message)).to.match(/PriceContinuityFailed|reverted/);
     } else {
       const rc = await tx.wait();

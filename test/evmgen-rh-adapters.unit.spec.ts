@@ -48,8 +48,8 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
       acquisitionFeeTier: 500,
       minimumRouteLiquidityUsdWad: 50_000n * WAD,
       maxSwapSlippageBps: 300,
-      maxOracleDeviationBps: 500,
-      maxPriceImpactBps: 500,
+      maxOracleDeviationBps: 0,
+      maxPriceImpactBps: 0,
       enabled: true,
     };
     return { admin, other, v3, weth, npm, router, ethUsd, stockUsd, stockToken, acquisitionPool, locker, factory, native, stock, campaign, route };
@@ -205,10 +205,21 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
       expect(stored.length).to.equal(8);
       expect(stored[7]).to.equal(true);
       expect(stored[4]).to.equal(300);
-      expect(stored[5]).to.equal(500);
-      expect(stored[6]).to.equal(500);
-      await expect(f.stock.configureStockRoute(stk, { ...f.route, maxOracleDeviationBps: 10_001 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
-      await expect(f.stock.configureStockRoute(stk, { ...f.route, maxPriceImpactBps: 10_001 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
+      expect(stored[5]).to.equal(0);
+      expect(stored[6]).to.equal(0);
+      // E11: the two reserved fields are enforced by nothing, so any non-zero value is refused.
+      await expect(f.stock.configureStockRoute(stk, { ...f.route, maxOracleDeviationBps: 1 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
+      await expect(f.stock.configureStockRoute(stk, { ...f.route, maxPriceImpactBps: 1 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
+    });
+
+    it("E11: band is 200 bps; a route through a pool above 0.30% (fee 10000) is refused", async () => {
+      const f = await fixture();
+      const stk = await f.stockToken.getAddress();
+      expect(await f.stock.QUOTE_PRICE_BAND_BPS()).to.equal(200n);
+      expect(await f.stock.MAX_ACQUISITION_FEE_TIER()).to.equal(3000n);
+      // 10000 is a valid V3 tier (spacing 200), so this is the E11 cap, not the tier check.
+      expect(await f.v3.feeAmountTickSpacing(10000)).to.equal(200n);
+      await expect(f.stock.configureStockRoute(stk, { ...f.route, acquisitionFeeTier: 10000 })).to.be.revertedWithCustomError(f.stock, "InvalidFeeTier");
     });
 
     it("enabling reads both feeds: a stale or broken feed is refused, disabling is not", async () => {

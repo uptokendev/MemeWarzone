@@ -50,7 +50,8 @@ interface IRhAggregatorV3 {
 ///    the acquired amount is measured by balance delta;
 /// 3. MEME/STOCK target P_Q = stockAcquired / memeTarget; repair and mint exactly as the native adapter;
 /// 4. USD continuity: the pool's start price (STOCK per MEME x STOCKUSD) must be >= curve USD price
-///    (curvePriceWad x ETHUSD) * (1 - 1%), and <= * (1 + 1%) unless the budget was exhausted by a repair;
+///    (curvePriceWad x ETHUSD) * (1 - 2%), and <= * (1 + 2%) unless the budget was exhausted by a repair
+///    (E11: 200 bps; on a 4663 fork SPY landed 63-69 bps below Chainlink, so 100 bps was too tight);
 /// 5. unused MEME and STOCK go back to the campaign. Nothing reverts on V3 rounding dust.
 ///
 /// AUDIT (money path `graduate`), in addition to RobinhoodV3PoolRepair's block:
@@ -59,6 +60,12 @@ interface IRhAggregatorV3 {
 ///   can only revert the whole call, leaving the campaign in Pending, retryable), the pool, NPM, locker.
 /// - Sandwich bound on the acquisition: the adapter receives >= oracleOut*(1 - slippage), slippage is
 ///   capped at 300 bps at route configuration; the continuity band then bounds the pool start price.
+/// - E11: the acquisition pool's fee tier is at most 3000 (0.30%), refused at configuration
+///   (`InvalidFeeTier`) and re-checked at graduation; a 1% pool's own fee alone would eat half the band.
+/// - `maxOracleDeviationBps` / `maxPriceImpactBps` are reserved route fields (kept only so the factory's
+///   8-field tuple read is unchanged). They must be 0 at configuration (`InvalidPolicy`), so no stored
+///   limit exists that the adapter does not enforce. The enforced bounds are `maxSwapSlippageBps` (oracle
+///   minimum on the acquisition) and the fixed 200 bps USD band.
 /// - Stale feed (weekends exceed 90,000 s on stock feeds): OracleStale, campaign stays in Pending.
 /// - Conservation: WETH, STOCK and MEME balances of the adapter are asserted equal to the entry snapshot.
 /// - Rebasing / fee-on-transfer stocks are excluded at route configuration (a transfer-in delta check
@@ -69,7 +76,9 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
     uint256 private constant BPS = 10_000;
     uint256 private constant WAD = 1e18;
     /// @notice C5 quote band: the MEME/STOCK start price in USD vs the curve price in USD.
-    uint256 public constant QUOTE_PRICE_BAND_BPS = 100;
+    uint256 public constant QUOTE_PRICE_BAND_BPS = 200;
+    /// @notice E11: highest acquisition pool fee tier a route may use (Uniswap V3 0.30%).
+    uint24 public constant MAX_ACQUISITION_FEE_TIER = 3000;
     /// @notice Upper bound for a route's acquisition slippage (C7.1: "keep maxSwapSlippageBps at 300 or lower").
     uint16 public constant MAX_SWAP_SLIPPAGE_BPS = 300;
     /// @notice `repairStep` stops this far above the oracle-estimated target, so a chunk never sells MEME
@@ -83,10 +92,10 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         uint24 acquisitionFeeTier;
         uint256 minimumRouteLiquidityUsdWad; // STOCK held by the acquisition pool, in USD, depth sanity check
         uint16 maxSwapSlippageBps; // vs the oracle-derived output, <= MAX_SWAP_SLIPPAGE_BPS
-        // The next two keep the 8-field route layout LaunchFactory reads at create
-        // (IRobinhoodStockGraduationRouteRegistry.stockRoutes). They are validated (<= 10000) and
-        // stored as route policy for off-chain tooling, but NOT enforced here: C7.1 deleted the
-        // in-transaction impact probe, and the start price is bounded by the fixed 100 bps band.
+        // Reserved: the next two only keep the 8-field route layout LaunchFactory reads at create
+        // (IRobinhoodStockGraduationRouteRegistry.stockRoutes). Nothing enforces them (C7.1 deleted the
+        // in-transaction impact probe; the start price is bounded by the fixed 200 bps band), so
+        // configureStockRoute requires both to be 0: a stored limit that does nothing cannot exist.
         uint16 maxOracleDeviationBps;
         uint16 maxPriceImpactBps;
         bool enabled;
@@ -153,11 +162,14 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         if (stockToken.code.length == 0 || route.oracleFeed.code.length == 0 || route.acquisitionPool.code.length == 0) {
             revert ContractCodeMissing();
         }
-        if (route.acquisitionFeeTier == 0 || IRhV3Factory(v3Factory).feeAmountTickSpacing(route.acquisitionFeeTier) <= 0) {
+        if (
+            route.acquisitionFeeTier == 0 || route.acquisitionFeeTier > MAX_ACQUISITION_FEE_TIER
+                || IRhV3Factory(v3Factory).feeAmountTickSpacing(route.acquisitionFeeTier) <= 0
+        ) {
             revert InvalidFeeTier();
         }
         if (
-            route.maxSwapSlippageBps > MAX_SWAP_SLIPPAGE_BPS || route.maxOracleDeviationBps > BPS || route.maxPriceImpactBps > BPS
+            route.maxSwapSlippageBps > MAX_SWAP_SLIPPAGE_BPS || route.maxOracleDeviationBps != 0 || route.maxPriceImpactBps != 0
                 || route.minimumRouteLiquidityUsdWad == 0
         ) revert InvalidPolicy();
         if (IERC20Metadata(stockToken).decimals() > 36) revert InvalidPolicy();
@@ -278,6 +290,8 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         returns (uint256 acquired)
     {
         StockRoute memory route = stockRoutes[stock];
+        // E11 re-check at graduation (a route stored by any earlier code path cannot bypass it).
+        if (route.acquisitionFeeTier > MAX_ACQUISITION_FEE_TIER) revert InvalidFeeTier();
         if (IRhV3Factory(v3Factory).getPool(WETH, stock, route.acquisitionFeeTier) != route.acquisitionPool) {
             revert AcquisitionPoolMismatch();
         }

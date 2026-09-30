@@ -304,8 +304,9 @@ deployed generation and are not reused. Both new adapters implement `IGraduation
 - **Stock `repairStep` target** is the oracle estimate of P_Q raised by 5% (`REPAIR_STEP_MARGIN_BPS`), so a
   chunk never sells below the acquisition-derived target; at spacing 60 the final 5% is <= 9 ticks.
 - **Stock route struct keeps 8 fields** (the factory reads that tuple at create). `maxOracleDeviationBps` and
-  `maxPriceImpactBps` are validated (<= 10000) and stored, but not enforced (impact probe deleted, band fixed
-  at 100 bps). `maxSwapSlippageBps <= 300` is enforced at configuration; enabling a route reads both feeds.
+  `maxPriceImpactBps` are reserved: since E11 `configureStockRoute` requires both to be **0** (`InvalidPolicy`),
+  so no stored limit exists that nothing enforces (impact probe deleted, band fixed at 200 bps).
+  `maxSwapSlippageBps <= 300` is enforced at configuration; enabling a route reads both feeds.
 - `nativeUsdWad` in the request is informational for the stock adapter; it reads ETH/USD itself.
 
 ### Audit per money path
@@ -375,6 +376,37 @@ spare, once. Called directly by anyone: `UnauthorizedCallback`.
    `adapter.repairStep(req, limit)`, reset allowance, subtract `repairMemeSold` from the budget, add the native
    proceeds to the pool native at graduate and keep them out of `excessNativeBalance`, approve STOCK proceeds
    to the stock adapter at graduate), such a coin stays in Pending.
-2. **Stock band vs acquisition cost.** On the fork a $23K acquisition of SPY landed 8-80 bps below the
+2. **Resolved by E11 (below).** **Stock band vs acquisition cost.** On the fork a $23K acquisition of SPY landed 8-80 bps below the
    Chainlink rate (fee 0.05% + impact + basis), against the 100 bps band. Routes at fee 10000 (MSTR) cannot
    pass the band at all. Either restrict routes to fee <= 3000 or widen the quote band to slippage + band.
+
+### E11 as built (branch `claude/evm-core`, 2026-09-30): band 200 bps, acquisition pools <= 0.30%
+
+Founder decision E11. `contracts/integrations/RobinhoodStockGraduationAdapterV2.sol`:
+- `QUOTE_PRICE_BAND_BPS` 100 -> **200** (`_checkContinuity`): the MEME/STOCK start price in USD must be
+  `>= curveUsd * (1 - 2%)`, and `<= curveUsd * (1 + 2%)` unless a repair used up the whole budget (unchanged rule).
+- `MAX_ACQUISITION_FEE_TIER = 3000`. `configureStockRoute` refuses `acquisitionFeeTier > 3000` (`InvalidFeeTier`,
+  checked before the tick-spacing read, so a valid 1% tier is refused by E11, not by accident), and `_acquire`
+  re-checks it at every graduation. The graduated MEME/STOCK pool itself is always `POOL_FEE = 3000`.
+- `maxOracleDeviationBps` / `maxPriceImpactBps` must be 0 at configuration (reserved; see Deviations).
+- No other logic changed; the factory's 8-field `stockRoutes` read is unchanged.
+
+Audit block (the diff):
+- **Reentrancy.** No new external call. `configureStockRoute` is `onlyAdmin` and writes after its reads (the
+  feeds and `getPool` are views); `graduate` keeps `nonReentrant`. The re-check in `_acquire` is a pure storage read
+  before any external call.
+- **CEI.** Unchanged ordering: checks (fee tier, canonical pool, depth, oracle minimum) all precede WETH deposit and
+  the swap. The re-check adds one more check at the top.
+- **Reachable states.** A route with tier > 3000 can no longer be stored, so graduation's re-check is defence in
+  depth (it also covers a route stored by any future code path). A route that was valid stays valid.
+- **Overflow.** `startUsd * 1e4` and `curveUsd * (1e4 +- 200)`: both operands are wad USD prices (< 1e40 for any
+  real price), far from 2^256. `BPS - 200` cannot underflow.
+- **Griefing.** A wider band gives a sandwicher of the acquisition no extra room: the acquisition minimum is still
+  `oracleOut * (1 - maxSwapSlippageBps)` (<= 3%), and the band only decides whether the pool start price is accepted.
+  The lower edge is what the widening moves: a start price up to 2% below the curve's USD price is now accepted,
+  i.e. the pool may open up to 2% cheaper (in USD) than the last curve buy. That is the founder's trade-off: at 100 bps
+  real SPY fills (63-69 bps below Chainlink plus fee) left no margin and the coin sat in Pending. A 1% acquisition
+  pool would spend half the band on its own fee, hence the 0.30% cap.
+- **Tests.** Unit: `evmgen-rh-adapters.unit.spec.ts` ("E11: band is 200 bps; ... fee 10000 is refused", reserved
+  fields refused when non-zero). Fork (4663): `evmgen-rh-graduation.fork.spec.ts` stock specs assert |dev| <= 200 bps
+  and "stock E11: a route through a 1% pool (fee 10000) is refused" (7 stock specs passing; SPY landed +2 to +7 bps).
