@@ -1,0 +1,169 @@
+{
+  "network": "robinhoodTestnet",
+  "chainId": 46630,
+  "kind": "robinhood-testnet-gen6b",
+  "fees": {
+    "deployedAt": "2026-09-30T20:31:08.541Z",
+    "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "router": "0x138F4F259619de83b6bDA5380d4a03F1e5204711",
+    "creatorRewardsVaultV2": "0xC494d09992cA54E9cc0CE3f7a402fb3C98ae2d25",
+    "holderRewardDistributor": "0x9d6903387a0914acF6A31039E5765C54F5F311e6",
+    "communityRewardsVault": "0x26c6834beb7483c94cb45030B0Fe3a912dA4F96d",
+    "communityWhyFresh": "CommunityRewardsVault serves one router (onlyRouter deposits). The testnet one 0xE6C243D4 serves TreasuryRouterV3 0xEf657286, which the accepted gen-4 factory 0xde9f7055 routes through; re-pointing it would revert every unlinked trade there.",
+    "reusedVaults": {
+      "weekly": "0xa48723e35061380Feb6D269f7c26D6E426F83efc",
+      "monthly": "0x5D5CC19B5BE86BA28b8164f85883F17843B69810",
+      "recruiter": "0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C",
+      "protocol": "0xf14dbfC92BCF313362668bD9fea42F9a23f0712b"
+    },
+    "wrappedNative": "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+    "dexFactory": "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+    "payoutOperator": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "caps": {
+      "maxBuyPerTx": "190000000000000000",
+      "maxBuybackPerCampaignWeek": "1900000000000000000",
+      "minBuyInterval": "21600",
+      "maxImpactBps": "50",
+      "maxHolderBatchPerWeek": "9300000000000000000",
+      "holderBatchAuthorizationMax": "9300000000000000000"
+    },
+    "batchA": [
+      {
+        "call": "TreasuryRouterV4.setRecruiterRewardsVault(0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C)",
+        "hash": "0xcf728fbdc5d7964acf632374542faebabb3af45640c0fc456b255ae08a727f5d",
+        "gasUsed": "55494"
+      },
+      {
+        "call": "TreasuryRouterV4.setCommunityRewardsVault(0x26c6834beb7483c94cb45030B0Fe3a912dA4F96d)",
+        "hash": "0x93b0268f0cec9742ebd97ccc80247483df19284d6ff76742e87b9c15e737a9c0",
+        "gasUsed": "55205"
+      },
+      {
+        "call": "TreasuryRouterV4.setProtocolRevenueVault(0xf14dbfC92BCF313362668bD9fea42F9a23f0712b)",
+        "hash": "0xa83d9d4b85f24e2b397e642facb694c93df42710a519bbd518ca5f7eeee5f62b",
+        "gasUsed": "55384"
+      },
+      {
+        "call": "TreasuryRouterV4.setCreatorRewardsVault(0xC494d09992cA54E9cc0CE3f7a402fb3C98ae2d25) # set once: the router's creator vault can never be rotated (audit F1)",
+        "hash": "0x1503c8ed997492a6538135a287a110cdd41b8fbb7cdd1253d4b27effeb6aa671",
+        "gasUsed": "56034"
+      },
+      {
+        "call": "RewardDistributor.setBatchOperator(0xC494d09992cA54E9cc0CE3f7a402fb3C98ae2d25)",
+        "hash": "0x467a645e29c8e1244d969fce1f07f1d86ac8999cbfd9dc4f21bf8c6bc1d8369e",
+        "gasUsed": "54941"
+      },
+      {
+        "call": "CreatorRewardsVaultV2.setHolderDistributorOnce(0x9d6903387a0914acF6A31039E5765C54F5F311e6)",
+        "hash": "0x64e521e7f92136b0dcace36cb74f85b82af7a65c73aacaa178c9602c2b233388",
+        "gasUsed": "52083"
+      },
+      {
+        "call": "CreatorRewardsVaultV2.setOperator(0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714,false)",
+        "hash": "0xf76a90e554d77e91b158dd35afcfc6d53df1edaf5e9a989a01913231a99db1d9",
+        "gasUsed": "54343"
+      },
+      {
+        "call": "CreatorRewardsVaultV2.setCaps(190000000000000000,1900000000000000000,21600,50,9300000000000000000)",
+        "hash": "0x9a63cc328fb4567e9fc9e0823f61029aebb9f3a9a97b158ee25b03664eba88fa",
+        "gasUsed": "147416"
+      }
+    ],
+    "ethSpent": "0.00011168899"
+  },
+  "factoryGeneration": 6,
+  "campaignGeneration": 5,
+  "liquidityKind": 2,
+  "factoryStartBlock": 126843443,
+  "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "v3Stack": {
+    "note": "Real Uniswap V3 on 46630 (same stack as gen6).",
+    "v3Factory": "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+    "positionManager": "0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4",
+    "swapRouter02": "0xDfd381ECfA6D4CcD4248e319C6fecD76A6bf3296",
+    "weth": "0x52A47A33930B8a90a2000b1bA3CB96e879569670"
+  },
+  "generation": {
+    "network": "robinhoodTestnet",
+    "chainId": 46630,
+    "deployedAt": "2026-09-30T20:33:16.397Z",
+    "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "owner": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "status": "deployed-paused",
+    "reused": {
+      "treasuryRouter": "0x138F4F259619de83b6bDA5380d4a03F1e5204711",
+      "weth": "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+      "v3Factory": "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+      "positionManager": "0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4",
+      "swapRouter": "0xDfd381ECfA6D4CcD4248e319C6fecD76A6bf3296",
+      "nativeUsdFeed": "0x896C55A66FD6e310f0e923ea682cBAA06bDf9bc4",
+      "graduationOracle": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA"
+    },
+    "registries": {
+      "creatorRegistry": "0xF84D9BECDCB2Fa8cDF6DE53100e2C64AA84C3F96",
+      "riskRegistry": "0xC8DF24F133B5eA46F1CFB626eceff4d7d71c9Ed5",
+      "launchRecorderWired": true
+    },
+    "lpLockerAuthorized": true,
+    "createPathWired": true,
+    "nativeGraduationAdapter": "0x68980E339b456fc81529041591F6f576350Eb25f",
+    "creatorVault": "0xC494d09992cA54E9cc0CE3f7a402fb3C98ae2d25",
+    "pendingOwnerActions": [],
+    "deployed": {
+      "LaunchFactory": "0x740587c402078029cB7C6f04049C0834215243A2",
+      "LaunchTokenDeployer": "0xf5daa04B1B3d6523dBd1FDB8caD58e80A13E204C",
+      "LaunchCampaignImplementation": "0x9F24Ba5a2e4e913188Afae1977dC9C15EAE8Bb71",
+      "PermanentV3PositionLocker": "0xcd2c34926894616F6768F15F15614b1F7816bC2E",
+      "RobinhoodV3NativeGraduationAdapterV2": "0x68980E339b456fc81529041591F6f576350Eb25f",
+      "RobinhoodStockGraduationAdapterV2": "0xA761DA0015Bf88407F4a04C068A23d5eD42B9fA8",
+      "RobinhoodV3NativeSwapAdapter": "0x116f9Bfe4D6B40AdA206acf31B8067bAda137069",
+      "PostGradLeagueTreasuryV2": "0x3D39A8535e228942B78Aa52C1daf68757D224d43",
+      "ArenaWarPoolTreasuryV2": "0x9b6F5Fb2ef244118bc783F6278EcD8bd7d10ffA7"
+    },
+    "adapterBindActions": [],
+    "next": [
+      "register stock tokens and routes on the adapter",
+      "transfer ownership to the Safe (mainnet)",
+      "canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false)"
+    ],
+    "verification": [
+      {
+        "name": "RobinhoodV3NativeGraduationAdapterV2",
+        "address": "0x68980E339b456fc81529041591F6f576350Eb25f",
+        "contract": "contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol:RobinhoodV3NativeGraduationAdapterV2",
+        "args": [
+          "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+          "0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4",
+          "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+          "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+        ]
+      },
+      {
+        "name": "RobinhoodStockGraduationAdapterV2",
+        "address": "0xA761DA0015Bf88407F4a04C068A23d5eD42B9fA8",
+        "contract": "contracts/integrations/RobinhoodStockGraduationAdapterV2.sol:RobinhoodStockGraduationAdapterV2",
+        "args": [
+          "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+          "0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4",
+          "0xDfd381ECfA6D4CcD4248e319C6fecD76A6bf3296",
+          "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+          "0x896C55A66FD6e310f0e923ea682cBAA06bDf9bc4",
+          "3600",
+          "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+        ]
+      }
+    ]
+  },
+  "supersedes": {
+    "record": "deployments/robinhood/testnet.gen6.json",
+    "factory": "0xcf7D6c2C8A644dD3bBbba0Fc69844E48C9025f1A",
+    "why": "pre-audit bytecode; this cut is the post-audit contracts (audit rounds A/B/C, staging 50e32756)"
+  },
+  "status": "accepted on 46630 (2026-09-30): 40/40 lifecycle + audit-fix checks (4th attempt, resumed for the last check), create re-paused, live latched",
+  "acceptance": {
+    "harness": "scripts/test-robinhood-testnet-gen6-lifecycle.ts (RH_GEN6_RECORD=testnet.gen6b.json)",
+    "report": "reports/robinhood-testnet-gen6b-lifecycle.json",
+    "freeze": "deployments/robinhood/testnet.accepted.json"
+  }
+}
