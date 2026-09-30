@@ -31,6 +31,7 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
       await v3.getAddress(),
       await npm.getAddress(),
       await weth.getAddress(),
+      admin.address,
     );
     const stock = await (await ethers.getContractFactory("RobinhoodStockGraduationAdapterV2")).deploy(
       await v3.getAddress(),
@@ -39,6 +40,7 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
       await weth.getAddress(),
       await ethUsd.getAddress(),
       90_000,
+      admin.address,
     );
     const campaign = await (await ethers.getContractFactory("MockEvmGenRhCampaign")).deploy();
     await campaign.init(ethers.ZeroHash, 10n ** 27n);
@@ -47,7 +49,7 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
       acquisitionPool,
       acquisitionFeeTier: 500,
       minimumRouteLiquidityUsdWad: 50_000n * WAD,
-      maxSwapSlippageBps: 300,
+      maxSwapSlippageBps: 100,
       maxOracleDeviationBps: 0,
       maxPriceImpactBps: 0,
       enabled: true,
@@ -73,17 +75,28 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
     it("refuses zero addresses, EOAs and a 0.30% tier that is not spacing 60", async () => {
       const f = await fixture();
       const N = await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2");
-      await expect(N.deploy(ethers.ZeroAddress, await f.npm.getAddress(), await f.weth.getAddress())).to.be.revertedWithCustomError(N, "ZeroAddress");
-      await expect(N.deploy(await f.v3.getAddress(), f.other.address, await f.weth.getAddress())).to.be.revertedWithCustomError(N, "ContractCodeMissing");
+      await expect(N.deploy(ethers.ZeroAddress, await f.npm.getAddress(), await f.weth.getAddress(), f.admin.address)).to.be.revertedWithCustomError(N, "ZeroAddress");
+      await expect(N.deploy(await f.v3.getAddress(), f.other.address, await f.weth.getAddress(), f.admin.address)).to.be.revertedWithCustomError(N, "ContractCodeMissing");
       const bad = await (await ethers.getContractFactory("MockEvmGenRhSpacingFactory")).deploy(10);
-      await expect(N.deploy(await bad.getAddress(), await f.npm.getAddress(), await f.weth.getAddress())).to.be.revertedWithCustomError(N, "InvalidFeeTier");
+      await expect(N.deploy(await bad.getAddress(), await f.npm.getAddress(), await f.weth.getAddress(), f.admin.address)).to.be.revertedWithCustomError(N, "InvalidFeeTier");
       const S = await ethers.getContractFactory("RobinhoodStockGraduationAdapterV2");
       await expect(
-        S.deploy(await f.v3.getAddress(), await f.npm.getAddress(), await f.router.getAddress(), await f.weth.getAddress(), await f.ethUsd.getAddress(), 0),
+        S.deploy(await f.v3.getAddress(), await f.npm.getAddress(), await f.router.getAddress(), await f.weth.getAddress(), await f.ethUsd.getAddress(), 0, f.admin.address),
       ).to.be.revertedWithCustomError(S, "InvalidPolicy");
       await expect(
-        S.deploy(await f.v3.getAddress(), await f.npm.getAddress(), ethers.ZeroAddress, await f.weth.getAddress(), await f.ethUsd.getAddress(), 1),
+        S.deploy(await f.v3.getAddress(), await f.npm.getAddress(), ethers.ZeroAddress, await f.weth.getAddress(), await f.ethUsd.getAddress(), 1, f.admin.address),
       ).to.be.revertedWithCustomError(S, "ZeroAddress");
+      // Audits 2/5: admin is the constructor argument (the Safe on 4663), never implicitly msg.sender.
+      await expect(N.deploy(await f.v3.getAddress(), await f.npm.getAddress(), await f.weth.getAddress(), ethers.ZeroAddress)).to.be.revertedWithCustomError(N, "ZeroAddress");
+      await expect(
+        S.deploy(await f.v3.getAddress(), await f.npm.getAddress(), await f.router.getAddress(), await f.weth.getAddress(), await f.ethUsd.getAddress(), 1, ethers.ZeroAddress),
+      ).to.be.revertedWithCustomError(S, "ZeroAddress");
+      const n2 = await N.deploy(await f.v3.getAddress(), await f.npm.getAddress(), await f.weth.getAddress(), f.other.address);
+      expect(await n2.admin()).to.equal(f.other.address);
+      await expect(n2.setCampaignFactoryOnce(await f.factory.getAddress())).to.be.revertedWithCustomError(n2, "OnlyAdmin");
+      const s2 = await S.deploy(await f.v3.getAddress(), await f.npm.getAddress(), await f.router.getAddress(), await f.weth.getAddress(), await f.ethUsd.getAddress(), 1, f.other.address);
+      expect(await s2.admin()).to.equal(f.other.address);
+      await expect(s2.configureStockRoute(await f.stockToken.getAddress(), f.route)).to.be.revertedWithCustomError(s2, "OnlyAdmin");
     });
 
     it("exposes the locker integration surface (kind 2, fee 3000, getPool via the V3 factory)", async () => {
@@ -187,11 +200,11 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
   });
 
   describe("stock route configuration", () => {
-    it("admin only; slippage <= 300 bps; depth > 0; canonical acquisition pool; not WETH", async () => {
+    it("admin only; slippage <= 100 bps; depth > 0; canonical acquisition pool; not WETH", async () => {
       const f = await fixture();
       const stk = await f.stockToken.getAddress();
       await expect((f.stock.connect(f.other) as any).configureStockRoute(stk, f.route)).to.be.revertedWithCustomError(f.stock, "OnlyAdmin");
-      await expect(f.stock.configureStockRoute(stk, { ...f.route, maxSwapSlippageBps: 301 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
+      await expect(f.stock.configureStockRoute(stk, { ...f.route, maxSwapSlippageBps: 101 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
       await expect(f.stock.configureStockRoute(stk, { ...f.route, minimumRouteLiquidityUsdWad: 0 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
       await expect(f.stock.configureStockRoute(stk, { ...f.route, acquisitionPool: await f.locker.getAddress() })).to.be.revertedWithCustomError(
         f.stock,
@@ -204,12 +217,39 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
       const stored = await f.stock.stockRoutes(stk);
       expect(stored.length).to.equal(8);
       expect(stored[7]).to.equal(true);
-      expect(stored[4]).to.equal(300);
+      expect(stored[4]).to.equal(100);
       expect(stored[5]).to.equal(0);
       expect(stored[6]).to.equal(0);
       // E11: the two reserved fields are enforced by nothing, so any non-zero value is refused.
       await expect(f.stock.configureStockRoute(stk, { ...f.route, maxOracleDeviationBps: 1 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
       await expect(f.stock.configureStockRoute(stk, { ...f.route, maxPriceImpactBps: 1 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
+    });
+
+    it("audits 2/5: feed, pool and fee tier are fixed at first configuration; limits only tighten; disable and re-enable work", async () => {
+      const f = await fixture();
+      const stk = await f.stockToken.getAddress();
+      await f.stock.configureStockRoute(stk, f.route);
+      const now = BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
+      const fake = await (await ethers.getContractFactory("MockUsdPriceFeed")).deploy(8);
+      await fake.setRoundData(1, 76_600_00000000n, now, now, 1);
+      await f.v3.createPool(await f.weth.getAddress(), stk, 3000);
+      const pool3000 = await f.v3.getPool(await f.weth.getAddress(), stk, 3000);
+      const R = (over: any) => f.stock.configureStockRoute(stk, { ...f.route, ...over });
+      await expect(R({ oracleFeed: await fake.getAddress() })).to.be.revertedWithCustomError(f.stock, "RouteFixed");
+      await expect(R({ acquisitionPool: pool3000, acquisitionFeeTier: 3000 })).to.be.revertedWithCustomError(f.stock, "RouteFixed");
+      await expect(R({ maxSwapSlippageBps: 100, minimumRouteLiquidityUsdWad: 50_000n * WAD - 1n })).to.be.revertedWithCustomError(f.stock, "RouteFixed");
+      await R({ maxSwapSlippageBps: 50 }); // tighten
+      await expect(R({ maxSwapSlippageBps: 51 })).to.be.revertedWithCustomError(f.stock, "RouteFixed");
+      await R({ maxSwapSlippageBps: 50, minimumRouteLiquidityUsdWad: 60_000n * WAD }); // tighten
+      await R({ maxSwapSlippageBps: 50, minimumRouteLiquidityUsdWad: 60_000n * WAD, enabled: false });
+      expect((await f.stock.stockRoutes(stk))[7]).to.equal(false);
+      // Disabled is still fixed: nothing can be re-pointed through a disable.
+      await expect(R({ oracleFeed: await fake.getAddress(), enabled: false })).to.be.revertedWithCustomError(f.stock, "RouteFixed");
+      await R({ maxSwapSlippageBps: 50, minimumRouteLiquidityUsdWad: 60_000n * WAD, enabled: true });
+      const stored = await f.stock.stockRoutes(stk);
+      expect(stored[0]).to.equal(await f.stockUsd.getAddress());
+      expect(stored[4]).to.equal(50);
+      expect(stored[7]).to.equal(true);
     });
 
     it("E11: band is 200 bps; a route through a pool above 0.30% (fee 10000) is refused", async () => {
@@ -241,7 +281,7 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
       await f.stock.configureStockRoute(stk, f.route);
       const [oracleOut, minOut] = await f.stock.oracleMinimumStockOut(stk, WAD);
       expect(oracleOut).to.equal((WAD * 2694n * WAD) / (766n * WAD));
-      expect(minOut).to.equal((oracleOut * 9700n) / 10_000n);
+      expect(minOut).to.equal((oracleOut * 9900n) / 10_000n);
       await f.stock.configureStockRoute(stk, { ...f.route, enabled: false });
       await expect(f.stock.oracleMinimumStockOut(stk, WAD)).to.be.revertedWithCustomError(f.stock, "RouteDisabled");
     });

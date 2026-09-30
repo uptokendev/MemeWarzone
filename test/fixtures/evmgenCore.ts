@@ -87,7 +87,7 @@ export async function signCreate(authority: Signer, factory: string, creator: st
 
 export async function signTrade(authority: Signer, campaign: string, actor: string, action: number, amount: bigint, limit: bigint, profile = PROFILE_UNLINKED, deadline?: number) {
   const chainId = (await ethers.provider.getNetwork()).chainId;
-  const dl = deadline ?? (await now()) + 3600 * 24 * 400;
+  const dl = deadline ?? (await now()) + 86400; // MAX_AUTH_TTL (audit 5)
   const payload = ethers.keccak256(
     coder.encode(
       ["string", "uint256", "address", "address", "uint8", "uint8", "uint256", "uint256", "uint64"],

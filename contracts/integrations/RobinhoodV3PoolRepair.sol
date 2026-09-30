@@ -77,6 +77,7 @@ library RobinhoodV3PriceMath {
     uint256 internal constant Q192 = uint256(1) << 192;
     uint256 internal constant Q128 = uint256(1) << 128;
     uint256 internal constant Q64 = uint256(1) << 64;
+    uint256 internal constant Q96 = uint256(1) << 96;
 
     /// @dev TickMath.getSqrtRatioAtTick(-887220) and (887220): the full-range ticks at spacing 60.
     uint160 internal constant MIN_FULL_RANGE_SQRT = 4306310044;
@@ -86,12 +87,27 @@ library RobinhoodV3PriceMath {
     error TargetOutOfRange();
 
     function sqrtFromPrice(uint256 pairedPerMemeWad, bool memeIs0) internal pure returns (uint160) {
-        if (pairedPerMemeWad == 0) revert InvalidPrice();
+        return sqrtFromRatio(pairedPerMemeWad, WAD, memeIs0);
+    }
+
+    /// @dev sqrtPriceX96 for `pairedRaw` paired per `memeRaw` MEME, both raw amounts, without first
+    /// rounding the ratio to "paired raw per 1e18 MEME" (audit 2: for a 6-decimal quote that integer is
+    /// single-digit at small curve prices, a rounding far wider than the 200 bps band). The only rounding
+    /// left is the 512-bit mulDiv and the sqrt, both relative ~1/sqrtPrice.
+    function sqrtFromRatio(uint256 pairedRaw, uint256 memeRaw, bool memeIs0) internal pure returns (uint160) {
+        if (pairedRaw == 0 || memeRaw == 0) revert InvalidPrice();
         // token1/token0 in raw units. Case A (MEME = token0): paired/MEME. Case B: MEME/paired.
-        uint256 ratioX192 = memeIs0 ? Math.mulDiv(pairedPerMemeWad, Q192, WAD) : Math.mulDiv(WAD, Q192, pairedPerMemeWad);
+        uint256 ratioX192 = memeIs0 ? Math.mulDiv(pairedRaw, Q192, memeRaw) : Math.mulDiv(memeRaw, Q192, pairedRaw);
         uint256 s = Math.sqrt(ratioX192);
         if (s <= MIN_FULL_RANGE_SQRT || s >= MAX_FULL_RANGE_SQRT) revert TargetOutOfRange();
         return uint160(s);
+    }
+
+    /// @dev MEME raw that `pairedRaw` pairs with at sqrtPriceX96 `s` (floor), computed from `s` directly.
+    function memeForPaired(uint256 pairedRaw, uint160 s, bool memeIs0) internal pure returns (uint256) {
+        // Case A: price = s^2/2^192 paired per MEME -> MEME = paired * 2^192 / s^2. Case B: paired * s^2 / 2^192.
+        if (memeIs0) return Math.mulDiv(Math.mulDiv(pairedRaw, Q96, s), Q96, s);
+        return Math.mulDiv(Math.mulDiv(pairedRaw, s, Q96), s, Q96);
     }
 
     function priceFromSqrt(uint160 sqrtPriceX96, bool memeIs0) internal pure returns (uint256) {
@@ -164,6 +180,7 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
     struct RepairLedger {
         uint256 memeSold; // MEME sold into the pool by repairStep, cumulative, until graduate
         uint256 proceeds; // paired token (native for the native adapter, STOCK for the stock adapter) sent to the campaign
+        uint160 sqrtReached; // pool price the latest step left (audit 2: the stock graduate never targets above it)
     }
 
     /// @notice Repair done by `repairStep` for a campaign and not yet consumed by its `graduate`.
@@ -232,15 +249,20 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
         _;
     }
 
-    constructor(address v3Factory_, address positionManager_, address weth_) {
-        if (v3Factory_ == address(0) || positionManager_ == address(0) || weth_ == address(0)) revert ZeroAddress();
+    /// @param admin_ The only key that may bind the campaign factory (and, on the stock adapter, configure
+    /// routes). A constructor argument, not msg.sender (audits 2/5): the deploy script passes the Safe and
+    /// refuses the deployer on 4663. Immutable, no transfer.
+    constructor(address v3Factory_, address positionManager_, address weth_, address admin_) {
+        if (v3Factory_ == address(0) || positionManager_ == address(0) || weth_ == address(0) || admin_ == address(0)) {
+            revert ZeroAddress();
+        }
         if (v3Factory_.code.length == 0 || positionManager_.code.length == 0 || weth_.code.length == 0) {
             revert ContractCodeMissing();
         }
         // Decision E6: 0.30%. The full-range ticks and the range check in RobinhoodV3PriceMath are
         // spacing-60 constants, so anything else is refused here rather than mis-minted later.
         if (IRhV3Factory(v3Factory_).feeAmountTickSpacing(POOL_FEE) != TICK_SPACING) revert InvalidFeeTier();
-        admin = msg.sender;
+        admin = admin_;
         v3Factory = v3Factory_;
         positionManager = positionManager_;
         WETH = weth_;
@@ -285,9 +307,9 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
     /// @dev Validates the request's paired side and returns the paired token (WETH or the STOCK).
     function _pairedToken(Request calldata r) internal view virtual returns (address);
 
-    /// @dev The price `repairStep` may move to, in paired per MEME (wad). Native: exactly P. Stock: an
-    /// oracle estimate, raised by a margin so a chunk never sells below the final (acquisition-derived) target.
-    function _repairStepPriceWad(Request calldata r, address paired) internal view virtual returns (uint256);
+    /// @dev The sqrtPriceX96 `repairStep` may move to. Native: exactly P. Stock: an oracle estimate, raised
+    /// by a margin so a chunk never sells below the final (acquisition-derived) target.
+    function _repairStepSqrt(Request calldata r, address paired, bool memeIs0) internal view virtual returns (uint160);
 
     /// @dev Sends paired token the adapter holds to `to` (native adapter: unwrap WETH and send native).
     function _sendPaired(address paired, address to, uint256 amount) internal virtual;
@@ -312,7 +334,7 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
         _checkCaller(r);
         address paired = _pairedToken(r);
         bool memeIs0 = r.token < paired;
-        uint160 sqrtStop = RobinhoodV3PriceMath.sqrtFromPrice(_repairStepPriceWad(r, paired), memeIs0);
+        uint160 sqrtStop = _repairStepSqrt(r, paired, memeIs0);
 
         address pool = IRhV3Factory(v3Factory).getPool(r.token, paired, POOL_FEE);
         if (pool == address(0)) revert NothingToRepair();
@@ -330,6 +352,7 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
         RepairLedger storage ledger = repairLedger[msg.sender];
         ledger.memeSold += memeSold;
         ledger.proceeds += proceeds;
+        (ledger.sqrtReached,,,,,,) = IRhV3Pool(pool).slot0();
         if (proceeds != 0) _sendPaired(paired, msg.sender, proceeds);
 
         if (IERC20(paired).balanceOf(address(this)) != pairedBefore || IERC20(r.token).balanceOf(address(this)) != memeBefore) {
@@ -419,11 +442,15 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
     /// @dev Find-or-create the canonical pool, repair its price to the target, mint the full-range
     /// position, lock it, refund the rest to msg.sender. The paired token `pairedIn` must already be on
     /// this adapter (wrapped native, or acquired STOCK plus pulled repair proceeds).
-    function _graduateInto(Execution memory x) internal returns (Result memory res, uint256 memeReturned, uint256 pairedReturned) {
+    /// `sqrtStart` is the pool's sqrtPriceX96 right after the mint (before any refund), full precision.
+    function _graduateInto(Execution memory x)
+        internal
+        returns (Result memory res, uint256 memeReturned, uint256 pairedReturned, uint160 sqrtStart)
+    {
         res.pool = _preparePool(x, res);
         (res.repairMemeSold, res.repairProceeds) = _repairInGraduation(res.pool, x);
         res.repaired = res.repairMemeSold != 0 || res.repairProceeds != 0;
-        (memeReturned, pairedReturned) = _mintLockRefund(x, res);
+        (memeReturned, pairedReturned, sqrtStart) = _mintLockRefund(x, res);
         emit V3GraduationExecuted(
             msg.sender,
             x.meme,
@@ -450,7 +477,7 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
 
     function _mintLockRefund(Execution memory x, Result memory res)
         private
-        returns (uint256 memeReturned, uint256 pairedReturned)
+        returns (uint256 memeReturned, uint256 pairedReturned, uint160 sqrtAfter)
     {
         uint256 memeForMint = x.memeAvailable - res.repairMemeSold;
         uint256 pairedForMint = x.pairedIn + res.repairProceeds;
@@ -463,7 +490,7 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
         memeReturned = memeForMint - memeMinted;
         pairedReturned = pairedForMint - pairedMinted;
 
-        (uint160 sqrtAfter,,,,,,) = IRhV3Pool(res.pool).slot0();
+        (sqrtAfter,,,,,,) = IRhV3Pool(res.pool).slot0();
         // The pool opens above the target only when the budget was used up absorbing bids; then the
         // MEME that comes back is V3 rounding dust (C5 sections 1.9 and 10).
         if (sqrtAfter != x.sqrtTarget && memeReturned > MAX_MEME_DUST) revert RepairInvariantBroken();
@@ -508,10 +535,14 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
 
         (uint160 sqrtNow,,,,,,) = IRhV3Pool(pool).slot0();
         if (sqrtNow == x.sqrtTarget) return (memeSold, proceeds);
-        uint256 priceNow = RobinhoodV3PriceMath.priceFromSqrt(sqrtNow, x.memeIs0);
         // MEME the paired side can pair at the current price, shaded down by 1e-9 so the rounding of this
-        // estimate can only leave the MEME side binding.
-        uint256 keep = Math.mulDiv(x.pairedIn + proceeds, RobinhoodV3PriceMath.WAD - 1e9, priceNow);
+        // estimate can only leave the MEME side binding. From sqrtPriceX96 directly (audit 2: a price
+        // rounded to paired raw per 1e18 MEME is far too coarse for a low-decimal quote).
+        uint256 keep = Math.mulDiv(
+            RobinhoodV3PriceMath.memeForPaired(x.pairedIn + proceeds, sqrtNow, x.memeIs0),
+            RobinhoodV3PriceMath.WAD - 1e9,
+            RobinhoodV3PriceMath.WAD
+        );
         uint256 memeLeft = x.memeAvailable - memeSold;
         if (memeLeft <= keep) return (memeSold, proceeds);
         (uint256 sold2, uint256 proceeds2) =

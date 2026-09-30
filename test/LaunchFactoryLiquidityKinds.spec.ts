@@ -230,7 +230,7 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
       lockerKind: "v3",
     });
     const locker = await ethers.getContractAt("PermanentV3PositionLocker", await factory.permanentLpLocker());
-    const adapter = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, RH_V3.weth);
+    const adapter = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, RH_V3.weth, owner.address);
     // The locker reads liquidityKind/v3Factory/positionManager/WETH/feeTier off the adapter and they match.
     await expect(factory.setNativeGraduationAdapter(await adapter.getAddress()))
       .to.emit(factory, "NativeGraduationAdapterUpdated")
@@ -239,7 +239,7 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
     expect(await factory.nativeGraduationAdapter()).to.equal(await adapter.getAddress());
     // An adapter on a different V3 stack (another WETH) is refused by the locker.
     const otherWeth = await (await ethers.getContractFactory("MockWETH9")).deploy();
-    const wrong = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, await otherWeth.getAddress());
+    const wrong = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, await otherWeth.getAddress(), owner.address);
     await expect(factory.setNativeGraduationAdapter(await wrong.getAddress())).to.be.reverted;
   });
 

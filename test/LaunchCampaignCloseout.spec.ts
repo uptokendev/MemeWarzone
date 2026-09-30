@@ -154,11 +154,13 @@ describe("LaunchCampaign closeout integration", function () {
     await makeGraduationEligibleByOracle(campaign, priceFeed);
     await factory.connect(owner).setCampaignPauses(await campaign.getAddress(), false, false, false, true);
 
-    // EVM launch generation: graduate() replaces graduateIfEligible(); it marks the due campaign Pending and
-    // honours the graduation pause for 72 h after that, so the whole call reverts and nothing is marked.
-    await expect(campaign.connect(alice).graduate()).to.be.revertedWithCustomError(campaign, "GraduationPaused");
-    expect(await campaign.graduationPending()).to.eq(false);
+    // EVM launch generation: graduate() replaces graduateIfEligible(). Audit 2: under a graduation pause the
+    // due campaign is still marked Pending (the call returns instead of reverting, so the 72 h clock starts),
+    // but no pool is built; a second call while the pause is honoured reverts.
+    await expect(campaign.connect(alice).graduate()).to.emit(campaign, "GraduationPending");
+    expect(await campaign.graduationPending()).to.eq(true);
     expect(await campaign.launched()).to.eq(false);
+    await expect(campaign.connect(alice).graduate()).to.be.revertedWithCustomError(campaign, "GraduationPaused");
 
     await factory.connect(owner).setCampaignPauses(await campaign.getAddress(), false, false, false, false);
     await expect(campaign.connect(alice).graduate()).to.emit(campaign, "Graduated");

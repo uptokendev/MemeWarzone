@@ -59,7 +59,9 @@ interface IRhAggregatorV3 {
 ///   exactly msg.value and reset to 0), STOCK transfers (route-configured; a pausing/blocklisting STOCK
 ///   can only revert the whole call, leaving the campaign in Pending, retryable), the pool, NPM, locker.
 /// - Sandwich bound on the acquisition: the adapter receives >= oracleOut*(1 - slippage), slippage is
-///   capped at 300 bps at route configuration; the continuity band then bounds the pool start price.
+///   capped at 100 bps at route configuration; the continuity band then bounds the pool start price.
+/// - Admin (audits 2/5): `admin` is a constructor argument (the Safe on 4663), and a stock's feed and
+///   acquisition pool are fixed at its first configuration; later calls may only tighten or disable.
 /// - E11: the acquisition pool's fee tier is at most 3000 (0.30%), refused at configuration
 ///   (`InvalidFeeTier`) and re-checked at graduation; a 1% pool's own fee alone would eat half the band.
 /// - `maxOracleDeviationBps` / `maxPriceImpactBps` are reserved route fields (kept only so the factory's
@@ -79,12 +81,15 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
     uint256 public constant QUOTE_PRICE_BAND_BPS = 200;
     /// @notice E11: highest acquisition pool fee tier a route may use (Uniswap V3 0.30%).
     uint24 public constant MAX_ACQUISITION_FEE_TIER = 3000;
-    /// @notice Upper bound for a route's acquisition slippage (C7.1: "keep maxSwapSlippageBps at 300 or lower").
-    uint16 public constant MAX_SWAP_SLIPPAGE_BPS = 300;
+    /// @notice Upper bound for a route's acquisition slippage (audit 2: 300 -> 100; the acquisition pool is
+    /// <= 0.30% and the start price must land within 200 bps of the curve in USD anyway).
+    uint16 public constant MAX_SWAP_SLIPPAGE_BPS = 100;
     /// @notice `repairStep` stops this far above the oracle-estimated target, so a chunk never sells MEME
-    /// below the real (acquisition-derived) target; `graduate` finishes the last few ticks (at spacing 60,
-    /// 5% is at most 9 initialized ticks).
-    uint256 public constant REPAIR_STEP_MARGIN_BPS = 500;
+    /// below the real (acquisition-derived) target, and an ETH/STOCK ratio move between a step and
+    /// `graduate` of up to ~20% (target up 25%) still leaves the fresh target below the step's stop, where
+    /// `graduate` only sells down. Audit 2: at 5% a ~10% move froze graduation. At spacing 60, 25% is at
+    /// most 38 initialized ticks for `graduate` to cross.
+    uint256 public constant REPAIR_STEP_MARGIN_BPS = 2500;
 
     struct StockRoute {
         address oracleFeed; // Chainlink STOCK/USD
@@ -137,6 +142,8 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
     error RouteLiquidityTooLow();
     error AcquisitionFailed();
     error PriceContinuityFailed();
+    /// @notice A configured route's feed, pool or fee tier cannot change, and its limits can only tighten.
+    error RouteFixed();
 
     constructor(
         address v3Factory_,
@@ -144,8 +151,9 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         address swapRouter_,
         address weth_,
         address nativeUsdOracle_,
-        uint32 maxOracleAgeSeconds_
-    ) RobinhoodV3PoolRepair(v3Factory_, positionManager_, weth_) {
+        uint32 maxOracleAgeSeconds_,
+        address admin_
+    ) RobinhoodV3PoolRepair(v3Factory_, positionManager_, weth_, admin_) {
         if (swapRouter_ == address(0) || nativeUsdOracle_ == address(0)) revert ZeroAddress();
         if (swapRouter_.code.length == 0 || nativeUsdOracle_.code.length == 0) revert ContractCodeMissing();
         if (maxOracleAgeSeconds_ == 0) revert InvalidPolicy();
@@ -156,6 +164,11 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
 
     /// @notice Configure or disable a Stock Token route. Enabling reads both feeds, so a feed that is
     /// already stale refuses the route rather than being discovered at graduation.
+    /// Audits 2/5: the first configuration of a stock fixes its feed, acquisition pool and fee tier for
+    /// the life of this adapter. Every later call must repeat them exactly and may only tighten the
+    /// limits (raise `minimumRouteLiquidityUsdWad`, lower `maxSwapSlippageBps`) or flip `enabled`
+    /// (`RouteFixed` otherwise). So no key can re-point a Pending coin's acquisition at a feed or pool
+    /// it controls, or loosen its minimum; disabling (or re-enabling what was fixed) is all that is left.
     function configureStockRoute(address stockToken, StockRoute calldata route) external onlyAdmin {
         if (stockToken == address(0) || route.oracleFeed == address(0) || route.acquisitionPool == address(0)) revert ZeroAddress();
         if (stockToken == WETH) revert InvalidPair();
@@ -172,9 +185,19 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
             route.maxSwapSlippageBps > MAX_SWAP_SLIPPAGE_BPS || route.maxOracleDeviationBps != 0 || route.maxPriceImpactBps != 0
                 || route.minimumRouteLiquidityUsdWad == 0
         ) revert InvalidPolicy();
-        if (IERC20Metadata(stockToken).decimals() > 36) revert InvalidPolicy();
+        // <= 18: the continuity math multiplies sqrtPriceX96 (< 2^160) by 10**decimals (audit 2 LOW).
+        if (IERC20Metadata(stockToken).decimals() > 18) revert InvalidPolicy();
         address canonical = IRhV3Factory(v3Factory).getPool(WETH, stockToken, route.acquisitionFeeTier);
         if (canonical == address(0) || canonical != route.acquisitionPool) revert AcquisitionPoolMismatch();
+        StockRoute storage current = stockRoutes[stockToken];
+        if (current.oracleFeed != address(0)) {
+            if (
+                route.oracleFeed != current.oracleFeed || route.acquisitionPool != current.acquisitionPool
+                    || route.acquisitionFeeTier != current.acquisitionFeeTier
+                    || route.minimumRouteLiquidityUsdWad < current.minimumRouteLiquidityUsdWad
+                    || route.maxSwapSlippageBps > current.maxSwapSlippageBps
+            ) revert RouteFixed();
+        }
         if (route.enabled) {
             _oraclePriceWad(nativeUsdOracle);
             _oraclePriceWad(route.oracleFeed);
@@ -208,8 +231,9 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
             IERC20(r.token).balanceOf(address(this))
         ];
 
-        uint256 stepProceeds = repairLedger[msg.sender].proceeds;
-        bool steppedBefore = repairLedger[msg.sender].memeSold != 0 || stepProceeds != 0;
+        RepairLedger memory ledger = repairLedger[msg.sender];
+        uint256 stepProceeds = ledger.proceeds;
+        bool steppedBefore = ledger.memeSold != 0 || stepProceeds != 0;
         delete repairLedger[msg.sender];
 
         (uint256 nativeUsdWad, uint256 stockUsdWad, uint256 stockUnit) = _prices(stock);
@@ -219,13 +243,21 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
             if (IERC20(stock).balanceOf(address(this)) != before[1] + acquired + stepProceeds) revert AcquisitionFailed();
         }
 
+        // Audit 2 (LOW): the target sqrt comes from the raw amounts, not from `targetWad` (STOCK raw per 1e18
+        // MEME, an integer that is single-digit for a 6-decimal quote at small curve prices). `targetWad` is
+        // only reported (event, `targetPriceWad`).
         uint256 targetWad = Math.mulDiv(acquired, WAD, r.memeTarget);
         bool memeIs0 = r.token < stock;
+        uint160 sqrtTarget = RobinhoodV3PriceMath.sqrtFromRatio(acquired, r.memeTarget, memeIs0);
+        if (ledger.memeSold != 0 && _aboveStepStop(sqrtTarget, ledger.sqrtReached, memeIs0)) {
+            sqrtTarget = ledger.sqrtReached;
+            targetWad = RobinhoodV3PriceMath.priceFromSqrt(sqrtTarget, memeIs0);
+        }
         Execution memory x = Execution({
             meme: r.token,
             paired: stock,
             memeIs0: memeIs0,
-            sqrtTarget: RobinhoodV3PriceMath.sqrtFromPrice(targetWad, memeIs0),
+            sqrtTarget: sqrtTarget,
             targetPriceWad: targetWad,
             memeAvailable: r.memeMax,
             pairedIn: acquired + stepProceeds,
@@ -233,10 +265,11 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
             deadline: r.deadline
         });
         uint256 memeReturned;
-        (res, memeReturned,) = _graduateInto(x);
+        uint160 sqrtStart;
+        (res, memeReturned,, sqrtStart) = _graduateInto(x);
         if (steppedBefore) res.repaired = true;
 
-        _checkContinuity(res.startPriceWad, r.curvePriceWad, nativeUsdWad, stockUsdWad, stockUnit, memeReturned != 0);
+        _checkContinuity(sqrtStart, memeIs0, r.curvePriceWad, nativeUsdWad, stockUsdWad, stockUnit, memeReturned != 0);
 
         if (
             IERC20(WETH).balanceOf(address(this)) != before[0] || IERC20(stock).balanceOf(address(this)) != before[1]
@@ -265,11 +298,13 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         if (!stockRoutes[stock].enabled) revert RouteDisabled();
     }
 
-    function _repairStepPriceWad(Request calldata r, address stock) internal view override returns (uint256) {
+    function _repairStepSqrt(Request calldata r, address stock, bool memeIs0) internal view override returns (uint160) {
         (uint256 nativeUsdWad, uint256 stockUsdWad, uint256 stockUnit) = _prices(stock);
-        // Estimated P_Q = P * ETHUSD / STOCKUSD in STOCK raw per 1e18 MEME, raised by the margin.
-        uint256 estimate = Math.mulDiv(Math.mulDiv(r.curvePriceWad, nativeUsdWad, stockUsdWad), stockUnit, WAD);
-        return Math.mulDiv(estimate, BPS + REPAIR_STEP_MARGIN_BPS, BPS);
+        // Estimated P_Q = P * ETHUSD / STOCKUSD, raised by the margin, as the raw ratio
+        // STOCK raw / MEME raw = P * (1 + m) * ETHUSD * stockUnit / (STOCKUSD * 1e18 * 1e18),
+        // kept as a fraction (audit 2 LOW: no rounding to an integer per 1e18 MEME).
+        uint256 num = Math.mulDiv(r.curvePriceWad * (BPS + REPAIR_STEP_MARGIN_BPS), nativeUsdWad * stockUnit, stockUsdWad);
+        return RobinhoodV3PriceMath.sqrtFromRatio(num, WAD * WAD * BPS, memeIs0);
     }
 
     function _sendPaired(address stock, address to, uint256 amount) internal override {
@@ -323,16 +358,39 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         emit StockAcquired(msg.sender, stock, msg.value, acquired, oracleOut, minimumOut, nativeUsdWad, stockUsdWad);
     }
 
+    /// @dev Audit 2. The MEME earlier `repairStep`s sold sits in the pool in ranges at or above the price
+    /// the last step left it at (`sqrtReached`); nobody can take it out before graduation (LaunchToken
+    /// refuses transfers from the pool). Moving the price back up through those ranges would need the
+    /// repair to pay STOCK, which the callback refuses (RepairInvariantBroken): a fresh target above the
+    /// step stop froze graduation. So when the fresh target is above `sqrtReached`, `sqrtReached` is the
+    /// target: reaching it from wherever the pool is now crosses only ranges without MEME (free), the mint
+    /// prices at it, and `_checkContinuity` still decides (a start more than 200 bps below the curve in
+    /// USD reverts PriceContinuityFailed, retryable). The stored price, not the live one, so a third party
+    /// moving the pool through empty ranges cannot lower the start price. A target at or below the stop
+    /// is unchanged: `graduate` sells down to it as before.
+    function _aboveStepStop(uint160 sqrtTarget, uint160 sqrtReached, bool memeIs0) private pure returns (bool) {
+        if (sqrtReached == 0) return false;
+        // MEME dearer at the target: token1/token0 higher when MEME is token0, lower when it is token1.
+        return memeIs0 ? sqrtTarget > sqrtReached : sqrtTarget < sqrtReached;
+    }
+
     function _checkContinuity(
-        uint256 startPriceWad,
+        uint160 sqrtStart,
+        bool memeIs0,
         uint256 curvePriceWad,
         uint256 nativeUsdWad,
         uint256 stockUsdWad,
         uint256 stockUnit,
         bool memeLeft
     ) private pure {
-        // startPriceWad is STOCK raw per 1e18 MEME; x STOCKUSD / stockUnit = USD per whole MEME (wad).
-        uint256 startUsd = Math.mulDiv(startPriceWad, stockUsdWad, stockUnit);
+        // USD per whole MEME (wad) = (STOCK raw per MEME raw) * 1e18 * STOCKUSD / stockUnit, from sqrtPriceX96
+        // at full precision (audit 2 LOW). STOCK raw per MEME raw = s^2/2^192 (MEME = token0) or 2^192/s^2.
+        // Overflow: s < 2^160, stockUnit <= 1e18 (route check), 1e18 * STOCKUSD < 2^256 for any real price;
+        // every product sits inside a 512-bit mulDiv, which reverts (fails closed) if a result exceeds 2^256.
+        uint256 s = uint256(sqrtStart);
+        uint256 startUsd = memeIs0
+            ? Math.mulDiv(Math.mulDiv(s, WAD * stockUsdWad, RobinhoodV3PriceMath.Q96), s, RobinhoodV3PriceMath.Q96 * stockUnit)
+            : Math.mulDiv(Math.mulDiv(RobinhoodV3PriceMath.Q192, WAD, s), stockUsdWad, s * stockUnit);
         uint256 curveUsd = Math.mulDiv(curvePriceWad, nativeUsdWad, WAD);
         if (startUsd * BPS < curveUsd * (BPS - QUOTE_PRICE_BAND_BPS)) revert PriceContinuityFailed();
         // Above the band is allowed only when a repair used up the whole budget (C5 section 1.9).

@@ -75,11 +75,31 @@ export async function assertFeeTierSpacing(v3FactoryAddress: string) {
   console.log(`[rh] ok V3 fee ${MEME_POOL_FEE_TIER} -> tick spacing ${spacing}`);
 }
 
+/** The Robinhood mainnet Safe (owner of every Ownable contract of this deployment). */
+export const RH_MAINNET_SAFE = "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7";
+
+/**
+ * Audits 2/5: the graduation adapters' `admin` is an immutable constructor argument with no transfer. On
+ * 4663 it is the Safe (RH_ADAPTER_ADMIN, default RH_MAINNET_SAFE) and must be a contract; the deployer is
+ * refused, since a single EOA key would otherwise control every stock coin's acquisition bound. On a
+ * testnet it defaults to the deployer so the script can bind the factory itself.
+ */
+export async function resolveAdapterAdmin(chainId: bigint, deployerAddress: string): Promise<string> {
+  const raw = String(process.env.RH_ADAPTER_ADMIN || "").trim();
+  if (chainId !== 4663n) return raw ? ethers.getAddress(raw) : ethers.getAddress(deployerAddress);
+  const admin = ethers.getAddress(raw || RH_MAINNET_SAFE);
+  if (admin === ethers.getAddress(deployerAddress)) throw new Error(`adapter admin on 4663 must be the Safe, not the deployer ${admin}`);
+  const code = await ethers.provider.getCode(admin);
+  if (!code || code === "0x") throw new Error(`adapter admin ${admin} on 4663 has no code; expected the Safe`);
+  return admin;
+}
+
 /** Deploys RobinhoodV3NativeGraduationAdapterV2 (the factory's router and native IGraduationAdapterV2). */
-export async function deployNativeGraduationAdapter(v3Factory: string, positionManager: string, weth: string) {
-  const adapter = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(v3Factory, positionManager, weth);
+export async function deployNativeGraduationAdapter(v3Factory: string, positionManager: string, weth: string, admin: string) {
+  const adapter = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(v3Factory, positionManager, weth, admin);
   await adapter.waitForDeployment();
   if ((await (adapter as any).POOL_FEE()) !== BigInt(MEME_POOL_FEE_TIER)) throw new Error("native adapter fee is not 3000");
+  if (ethers.getAddress(await (adapter as any).admin()) !== ethers.getAddress(admin)) throw new Error("native adapter admin mismatch");
   return adapter;
 }
 
@@ -105,6 +125,7 @@ export async function deployStockGraduationAdapter(
   weth: string,
   nativeUsdFeed: string,
   maxOracleAgeSeconds: number,
+  admin: string,
 ) {
   const adapter = await (await ethers.getContractFactory("RobinhoodStockGraduationAdapterV2")).deploy(
     v3Factory,
@@ -113,9 +134,11 @@ export async function deployStockGraduationAdapter(
     weth,
     nativeUsdFeed,
     maxOracleAgeSeconds,
+    admin,
   );
   await adapter.waitForDeployment();
   if (Number(await (adapter as any).maxOracleAgeSeconds()) !== maxOracleAgeSeconds) throw new Error("stock adapter max oracle age mismatch");
+  if (ethers.getAddress(await (adapter as any).admin()) !== ethers.getAddress(admin)) throw new Error("stock adapter admin mismatch");
   return adapter;
 }
 
@@ -262,6 +285,26 @@ export async function assertRouterCanServeStrictRouting(routerAddress: string) {
   });
 }
 
+export const TESTNET_ROUTE_AUTHORITY = "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0";
+
+/// The testnet route authority and a deployer-owned generation are testnet conveniences only. On
+/// mainnet (4663) both must be named explicitly (RH_ROUTE_AUTHORITY, RH_OWNER), the authority must not
+/// be the testnet one, and the owner must not be the deployer EOA (audit 5): a silent default would
+/// sign every create/trade with the testnet key or leave the factory, league and war pool owned by a
+/// hot key.
+export function resolveRouteAuthorityAndOwner(chainId: bigint, deployerAddress: string) {
+  const isMainnet = chainId === 4663n;
+  const routeAuthority = pick("RH_ROUTE_AUTHORITY", isMainnet ? "" : TESTNET_ROUTE_AUTHORITY);
+  if (isMainnet && routeAuthority === ethers.getAddress(TESTNET_ROUTE_AUTHORITY)) {
+    throw new Error("RH_ROUTE_AUTHORITY is the testnet authority; Robinhood mainnet (4663) needs the production one.");
+  }
+  const owner = pick("RH_OWNER", isMainnet ? "" : deployerAddress);
+  if (isMainnet && owner === ethers.getAddress(deployerAddress)) {
+    throw new Error("RH_OWNER must not be the deployer EOA on Robinhood mainnet (4663); name the Safe.");
+  }
+  return { routeAuthority, owner };
+}
+
 async function main() {
   const profile = PROFILES[network.name];
   if (!profile) throw new Error(`Unsupported network ${network.name}; expected robinhoodTestnet or robinhoodMainnet`);
@@ -283,12 +326,10 @@ async function main() {
   const swapRouter = pick("RH_SWAP_ROUTER", reuse.swapRouter ?? "");
   const nativeUsdFeed = pick("RH_NATIVE_USD_FEED", reuse.nativeUsdFeed ?? "");
   const graduationOracle = pick("RH_GRADUATION_ORACLE", reuse.graduationOracle ?? "");
-  const routeAuthority = pick("RH_ROUTE_AUTHORITY", "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0");
-
   const [deployer] = await ethers.getSigners();
   if (!deployer) throw new Error("No deployer signer for this network.");
   const deployerAddress = ethers.getAddress(await deployer.getAddress());
-  const owner = pick("RH_OWNER", deployerAddress);
+  const { routeAuthority, owner } = resolveRouteAuthorityAndOwner(profile.chainId, deployerAddress);
 
   console.log(`[rh] network=${network.name} chainId=${net.chainId}`);
   console.log(`[rh] deployer=${deployerAddress} balance=${ethers.formatEther(await ethers.provider.getBalance(deployerAddress))}`);
@@ -304,9 +345,11 @@ async function main() {
   // It is also the factory's router (liquidityKind V3 and the locker's integration source), so the
   // old RobinhoodUniswapV3GraduationAdapter is not reused anywhere (C7 section 8).
   await assertFeeTierSpacing(v3Factory);
+  const adapterAdmin = await resolveAdapterAdmin(net.chainId, deployerAddress);
+  console.log(`[rh] graduation adapter admin = ${adapterAdmin}`);
   const nativeAdapterDeployed = !String(process.env.RH_NATIVE_GRADUATION_ADAPTER || "").trim();
   const nativeGraduationAdapter = nativeAdapterDeployed
-    ? await (await deployNativeGraduationAdapter(v3Factory, positionManager, weth)).getAddress()
+    ? await (await deployNativeGraduationAdapter(v3Factory, positionManager, weth, adapterAdmin)).getAddress()
     : await requireNativeGraduationAdapter("RH_NATIVE_GRADUATION_ADAPTER");
   await assertNativeAdapterMatches(nativeGraduationAdapter, v3Factory, positionManager, weth);
   const v3GraduationRouter = nativeGraduationAdapter;
@@ -341,14 +384,19 @@ async function main() {
   if (ethers.getAddress(await (nativeAdapter as any).admin()) === deployerAddress) {
     await bindAdapterToFactory(nativeAdapter, factoryAddress, "native graduation adapter");
   } else {
-    adapterBindActions.push(`native adapter admin: setCampaignFactoryOnce(${factoryAddress}) on ${nativeGraduationAdapter}`);
+    adapterBindActions.push(`native adapter admin (${await (nativeAdapter as any).admin()}): setCampaignFactoryOnce(${factoryAddress}) on ${nativeGraduationAdapter}`);
   }
 
-  const stockAdapter = await deployStockGraduationAdapter(v3Factory, positionManager, swapRouter, weth, nativeUsdFeed, MAX_ORACLE_AGE_SECONDS);
+  const stockAdapter = await deployStockGraduationAdapter(v3Factory, positionManager, swapRouter, weth, nativeUsdFeed, MAX_ORACLE_AGE_SECONDS, adapterAdmin);
   console.log(`[rh] RobinhoodStockGraduationAdapterV2 = ${await stockAdapter.getAddress()}`);
-  // Bound in-script (the previous generation left this to configure-robinhood-stock-routes.ts and
-  // shipped with campaignFactory() == 0). Routes are configured separately, per stock.
-  await bindAdapterToFactory(stockAdapter, factoryAddress, "stock graduation adapter");
+  // Bound in-script when the deployer is the admin (testnet; the previous generation shipped with
+  // campaignFactory() == 0). On 4663 the admin is the Safe: the bind is a Safe action. Routes are
+  // configured separately, per stock, by the admin.
+  if (ethers.getAddress(adapterAdmin) === deployerAddress) {
+    await bindAdapterToFactory(stockAdapter, factoryAddress, "stock graduation adapter");
+  } else {
+    adapterBindActions.push(`stock adapter admin (${adapterAdmin}): setCampaignFactoryOnce(${factoryAddress}) on ${await stockAdapter.getAddress()}`);
+  }
 
   const nativeSwapAdapter = await (await ethers.getContractFactory("RobinhoodV3NativeSwapAdapter")).deploy(swapRouter, weth);
   await nativeSwapAdapter.waitForDeployment();
@@ -476,13 +524,13 @@ async function main() {
       name: "RobinhoodV3NativeGraduationAdapterV2",
       address: nativeGraduationAdapter,
       contract: "contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol:RobinhoodV3NativeGraduationAdapterV2",
-      args: [v3Factory, positionManager, weth],
+      args: [v3Factory, positionManager, weth, adapterAdmin],
     },
     {
       name: "RobinhoodStockGraduationAdapterV2",
       address: await stockAdapter.getAddress(),
       contract: "contracts/integrations/RobinhoodStockGraduationAdapterV2.sol:RobinhoodStockGraduationAdapterV2",
-      args: [v3Factory, positionManager, swapRouter, weth, nativeUsdFeed, String(MAX_ORACLE_AGE_SECONDS)],
+      args: [v3Factory, positionManager, swapRouter, weth, nativeUsdFeed, String(MAX_ORACLE_AGE_SECONDS), adapterAdmin],
     },
   ];
   if (profile.chainId === 4663n) appendVerificationEntries("4663", (artifact as any).verification);

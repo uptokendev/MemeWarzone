@@ -138,6 +138,10 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 private constant NATIVE_PRICE_BAND_BPS = 50;
     uint256 private constant MAX_NATIVE_REFUND_BPS = 1;
     uint256 private constant PAUSE_HONOUR_WINDOW = 72 hours;
+    uint256 private constant MAX_AUTH_TTL = 1 days;
+    // A new pause window may start only this long after the previous one did, so at least 72 h of every
+    // 144 h leave sells and graduation open whatever the factory owner does.
+    uint256 private constant PAUSE_REARM_AFTER = 144 hours;
     // E12: a quote coin may switch to the factory's native adapter this long after entering Pending.
     uint256 private constant NATIVE_FALLBACK_DELAY = 7 days;
 
@@ -182,6 +186,9 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     bool public sellPaused;
     bool public graduationPaused;
     bool public requireAuthorizedTrading;
+    /// @notice Start of the current pause window (audit 1/2). Sells and graduation honour any pause
+    /// only until pausedAt + 72 h; a window can be re-armed only 144 h after it started.
+    uint64 public pausedAt;
 
     uint256 public totalBuyVolumeWei;
     uint256 public totalSellVolumeWei;
@@ -305,6 +312,9 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error NotBeneficiary();
     error NativeFallbackUnavailable();
     error NativeFallbackNotDue();
+    error RenounceDisabled();
+    error ZeroCost();
+    error RouteAuthTooLong();
 
     bool private _initialized;
 
@@ -374,7 +384,20 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     /// @dev Donations and adapter refunds. Donations never change the raise (accounting, not balance).
     receive() external payable {}
 
+    /// @notice Disabled (audit 1): the owner is the creator's graduation beneficiary and receives the
+    /// creator reserve, so an owner of address(0) would make graduate() revert forever. Ownership can
+    /// still move to another address with transferOwnership (OZ refuses address(0) there).
+    function renounceOwnership() public view override onlyOwner {
+        revert RenounceDisabled();
+    }
+
     function setPauseState(bool paused_, bool buyPaused_, bool sellPaused_, bool graduationPaused_) external onlyFactory {
+        // Audit 1/2: a pause is honoured by sells and graduation for at most 72 h from pausedAt. Calling
+        // again (or unpause + re-pause) inside 144 h keeps the old window, so it cannot be extended.
+        if (
+            (paused_ || buyPaused_ || sellPaused_ || graduationPaused_) &&
+            block.timestamp >= uint256(pausedAt) + PAUSE_REARM_AFTER
+        ) pausedAt = uint64(block.timestamp);
         paused = paused_;
         buyPaused = buyPaused_;
         sellPaused = sellPaused_;
@@ -597,8 +620,10 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     }
 
     function _sellExactTokens(uint256 amountIn, uint256 minPayout, uint8 routeProfile) private returns (uint256 payout) {
-        if (paused) revert CampaignPaused();
-        if (sellPaused) revert SellsPaused();
+        if (_pauseWindowOpen()) {
+            if (paused) revert CampaignPaused();
+            if (sellPaused) revert SellsPaused();
+        }
         _requireTradingState();
         _assertWalletCanTrade(msg.sender);
         if (amountIn == 0) revert ZeroAmount();
@@ -620,6 +645,8 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     /// @dev `escrowable` is false only for the C3 first buy. A creator buy through any other path is
     /// held by the campaign (C4) and counted against the tier cap.
     function _recordBuy(address buyer, uint256 amountOut, uint256 costNoFee, uint256 fee, uint8 routeProfile, bool escrowable) private {
+        // Audit 1: a buy too small to cost 1 wei pays no fee and would still count as a buyer.
+        if (costNoFee == 0) revert ZeroCost();
         bool escrow = escrowable && buyer == creator;
         if (escrow) {
             uint256 bought = creatorBoughtWei + costNoFee;
@@ -735,6 +762,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     /// A quote coin that used useNativeFallback() (E12) graduates here into the native pool, with the
     /// native adapter and the native checks.
     function graduate() external nonReentrant returns (address pool) {
+        if (_enterPendingWhilePaused()) return address(0);
         (uint256 raise, uint256 price, uint256 poolNative, uint256 memeTarget, uint256 budget) = _openGraduation();
         GraduationState storage g = graduation;
         uint256 protocolShare = (raise * GRAD_PROTOCOL_BPS) / MAX_BPS;
@@ -750,7 +778,9 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         finalizedAt = block.timestamp;
         repairNativeHeld = 0;
         repairQuoteHeld = 0;
+        // renounceOwnership is disabled; the fallback to `creator` keeps graduate() live regardless.
         address beneficiary = owner();
+        if (beneficiary == address(0)) beneficiary = creator;
         creatorGraduationBeneficiary = beneficiary;
         pendingCreatorGraduation += creatorShare;
 
@@ -837,6 +867,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     /// because `from` is its owner (this campaign); transfers stay closed for everyone else.
     /// Everything is measured by balance delta and must equal what the adapter reports.
     function repairPool(uint160 sqrtPriceLimitX96) external nonReentrant returns (uint256 memeSold, uint256 proceeds) {
+        if (_enterPendingWhilePaused()) return (0, 0);
         (, uint256 price,, uint256 memeTarget, uint256 budget) = _openGraduation();
         address quote = _poolQuote();
         address adapter = graduationAdapter;
@@ -905,7 +936,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
             _checkGraduationDue();
             if (!graduationPending) revert GraduationNotDue();
         }
-        if ((paused || graduationPaused) && block.timestamp < uint256(pendingSince) + PAUSE_HONOUR_WINDOW) revert GraduationPaused();
+        if (_graduationPauseHonoured()) revert GraduationPaused();
         _beforeGraduate();
         raise = graduation.graduationBalance;
         price = graduation.finalCurvePrice;
@@ -929,6 +960,27 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
             nativeUsdWad: quote == address(0) ? 0 : graduationOracle.nativeUsdPrice(),
             deadline: block.timestamp
         });
+    }
+
+    /// @dev True while a pause set at pausedAt may still be honoured (72 h).
+    function _pauseWindowOpen() private view returns (bool) {
+        return block.timestamp < uint256(pausedAt) + PAUSE_HONOUR_WINDOW;
+    }
+
+    /// @dev A graduation pause holds only inside its own 72 h window and, once Pending, only inside
+    /// the 72 h after pendingSince: whichever ends first.
+    function _graduationPauseHonoured() private view returns (bool) {
+        if (!(paused || graduationPaused) || !_pauseWindowOpen()) return false;
+        return !graduationPending || block.timestamp < uint256(pendingSince) + PAUSE_HONOUR_WINDOW;
+    }
+
+    /// @dev Audit 2: a paused Trading coin that is due still enters Pending (so the 72 h Pending clock
+    /// starts), and the call returns instead of reverting, which would roll the entry back.
+    /// Returns true only when it recorded Pending and the pause is honoured.
+    function _enterPendingWhilePaused() private returns (bool) {
+        if (launched || graduationPending || block.timestamp < launchAt || !_graduationPauseHonoured()) return false;
+        _checkGraduationDue();
+        return graduationPending;
     }
 
     /// @dev Hook for quote campaigns (binding checks). Runs inside graduate() and repairPool() before any effect.
@@ -1000,6 +1052,8 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         bytes calldata signature
     ) private {
         if (deadline < block.timestamp) revert RouteAuthExpired();
+        // Audit 5: an authorization lives at most a day, so a leaked or stale signature expires.
+        if (deadline > block.timestamp + MAX_AUTH_TTL) revert RouteAuthTooLong();
         if (!_isValidRouteProfile(routeProfile)) revert InvalidTradeRouteProfile();
         address authority = IRouteAuthoritySource(factory).routeAuthority();
         if (authority == address(0)) revert RouteAuthUnavailable();

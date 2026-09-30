@@ -28,6 +28,7 @@ export async function deployEvmGenRh(opts: { ethUsd?: number } = {}) {
     RH_V3.v3Factory,
     RH_V3.positionManager,
     RH_V3.weth,
+    owner.address,
   );
   const { factory } = await deployFactoryWithLocker({
     factoryName: "LaunchFactory",

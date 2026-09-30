@@ -181,6 +181,23 @@ Deviations from the text above, all deliberate:
   `requireAuthorizedTrading` (default on). LaunchToken's creation code moved to `LaunchTokenDeployer` (the campaign
   mints its supply right after, and `mint` is `onlyOwner`, so a token not owned by the campaign cannot pass init).
 
+### Audit fixes (internal audits 1, 2, 5; branch `claude/evm-core`, 2026-09-30)
+
+Attack tests stay in `test/audit1-trading.spec.ts` / `test/audit2-core-graduation.spec.ts`, rewritten from
+`EXPLOIT` to `HOLDS` with the attack steps kept; new cases in `test/evmgen-core-audit-fixes.spec.ts` and
+`test/deploy-robinhood-quote-generation.defaults.spec.ts`.
+
+| Fix | Change | Guard / CEI | Reachable states | Overflow | Griefing |
+|---|---|---|---|---|---|
+| 1 renounce (Critical) | `LaunchCampaign.renounceOwnership` is `onlyOwner` and always reverts `RenounceDisabled`; `graduate()` uses `creator` if `owner()` is ever zero | view override, no state; the beneficiary choice is part of the effects block, before any external call | every state; `transferOwnership` to a real address still works (OZ refuses `address(0)`), so the reserve and the 19.8% follow the current owner | none | before: renouncing made `graduate()` revert `ERC20InvalidReceiver` forever with the raise locked and sells closed by Pending. Other owner-paid paths: `rescueExcessNative` (onlyOwner, explicit recipient); `claimCreatorEscrow` pays `creator`; `claimCreatorGraduation` pays the beneficiary's chosen `to` |
+| 2 pause cap (Medium/Info) | `pausedAt` (uint64). `setPauseState` with any flag set starts a window only if `now >= pausedAt + 144 h`; sells honour `paused`/`sellPaused` and graduation honours `paused`/`graduationPaused` only while `now < pausedAt + 72 h` (graduation also only while `now < pendingSince + 72 h` once Pending, whichever ends first). A due Trading coin under an honoured pause: `graduate()`/`repairPool()` mark Pending and return (0) instead of reverting | `_enterPendingWhilePaused` runs first inside `nonReentrant`; it only calls the oracle (view) and writes Pending, no transfer. Buys keep honouring a pause without limit (a paused buy locks nobody's money) | factory-only setter; windows are shared by all four flags, so adding a flag later never extends a window; unpause + re-pause inside 144 h keeps the old start | `pausedAt + 144 h` on uint256, no wrap; `uint64(block.timestamp)` safe | the owner can hold sells and graduation for at most 72 h of every 144 h; a pause set before the coin was due no longer blocks graduation forever, and a coin paused while Trading now starts its Pending clock |
+| 3 dust buy (Low) | `_recordBuy` reverts `ZeroCost` when `costNoFee == 0` (covers both buy paths and the first buy) | check before any effect | trading | none | before: a 0-wei buy of ~1e-9 token paid no fee and counted as a buyer |
+| 4 auth TTL (Low) | campaign `_verifyTradeRouteAuthorization`: `deadline > now + 1 day` reverts `RouteAuthTooLong`; factory `_consumeCreateAuthorization` (every create path, BnbBasic included): `RouteAuthorizationTooLong` | check before signature recovery and replay marking | every signed trade / create | `now + 86400` on uint256 | a leaked or pre-signed authorization expires within a day (the API signs 10 min) |
+| 5 factory `receive()` (Info) | removed | n/a | nothing sends native to the factory: the first-buy value is forwarded exactly (the campaign refuses any other amount) and the excess refunded in the same call; no adapter, locker, router or campaign pays the factory | n/a | a plain transfer now reverts instead of being trapped |
+| 6 RH deploy defaults (Low) | `scripts/deploy-robinhood-quote-generation.ts` `resolveRouteAuthorityAndOwner`: on 4663 `RH_ROUTE_AUTHORITY` and `RH_OWNER` are required, the testnet authority is refused, and the owner may not be the deployer EOA | script only | mainnet profile only; testnet keeps its defaults | n/a | a missing env var no longer signs mainnet with the testnet key or leaves the generation owned by a hot key |
+
+Not fixed here (out of this scope): the router `creatorRewardsVault` rotation freeze (audit 1, `TreasuryRouterV4`).
+
 ## Invariants (fuzz)
 
 1. `currentTradeFeeBps() ∈ [base, 5000]`, non-increasing in time, `== base` from `launchAt + 60`.

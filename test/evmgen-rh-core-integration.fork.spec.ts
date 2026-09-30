@@ -49,7 +49,7 @@ d("evmgen-rh: real LaunchCampaign graduating through the V2 native adapter (4663
     const tokenDeployer = await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy();
     // The deploy script's own adapter steps (scripts/deploy-robinhood-quote-generation.ts), rehearsed here.
     await assertFeeTierSpacing(RH.v3Factory);
-    const adapter: any = await deployNativeGraduationAdapter(RH.v3Factory, RH.npm, RH.weth);
+    const adapter: any = await deployNativeGraduationAdapter(RH.v3Factory, RH.npm, RH.weth, owner.address);
     // The factory takes a pre-deployed locker bound to it (hardening, C5 "Locker binding").
     const { factory } = await deployFactoryWithLocker({
       factoryName: "LaunchFactory",
