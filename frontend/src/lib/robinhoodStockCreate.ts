@@ -3,6 +3,7 @@ import { apiFetch } from "@/lib/apiBase";
 import type { RobinhoodStockToken } from "@/lib/marketContinuityApi";
 import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 import { signWalletAction } from "@/lib/walletActionAuth";
+import { gen6SignedRequest } from "@/lib/evmGen6Client";
 
 const STOCK_FACTORY_ABI = [
   "function createStockCampaignAuthorized((string name,string symbol,string logoURI,string xAccount,string website,string extraLink,uint256 graduationTarget) req,address stockToken,(uint8 tradeRouteProfile,uint8 finalizeRouteProfile,uint64 deadline,bytes signature) routeAuth) returns (address campaignAddr,address tokenAddr)",
@@ -208,8 +209,9 @@ export async function createRobinhoodStockCampaign(input: RobinhoodStockCreatePa
     deadline: Math.floor(new Date(auth.validUntil).getTime() / 1000),
     signature: auth.signature,
   };
-  const tx = input.gen6
-    ? await factory.createStockCampaignAuthorized(campaignRequest, stockTokenAddress, routeAuth, { value: input.gen6.value })
+  const signedGen6 = input.gen6 ? gen6SignedRequest(authResponse?.campaignRequest, input.gen6) : null;
+  const tx = signedGen6
+    ? await factory.createStockCampaignAuthorized(signedGen6.request, stockTokenAddress, routeAuth, { value: signedGen6.value })
     : await factory.createStockCampaignAuthorized(campaignRequest, stockTokenAddress, routeAuth);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("Stock campaign transaction did not return a receipt.");

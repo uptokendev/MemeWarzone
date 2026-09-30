@@ -181,3 +181,27 @@ test("findFirstTime finds when the escrow is fully free", async () => {
   const t = await (await import("./evmGen6.mjs")).findFirstTime(async (x) => escrowVested(buys, x) >= 2000n, DAY, DAY + 120 * DAY);
   assert.equal(t, 9 * DAY + 3 + 58 * DAY);
 });
+
+test("campaign-state API payload maps onto the creator view; older campaigns map to null", async () => {
+  const { creatorStateFromApi } = await import("./evmGen6.mjs");
+  assert.equal(creatorStateFromApi({ supported: false }, {}), null);
+  const view = creatorStateFromApi(
+    {
+      supported: true,
+      creatorEscrow: { totalTokens: "1000", claimedTokens: "100", lockedTokens: "600", claimableTokens: "300", nextRelease: { at: 1234, tokens: "200" }, fullyReleasedAt: 9999 },
+      creatorClaims: {
+        graduationBeneficiary: "0x" + "a".repeat(40),
+        graduationNativeWei: "5",
+        graduationQuote: "7",
+        vault: { creatorClaimableWei: "11", creatorClaimableQuote: "13" },
+      },
+    },
+    { walletBalance: 2n, totalSupply: 10n },
+  );
+  assert.deepEqual(
+    [view.escrowHeld, view.escrowLocked, view.escrowClaimable, view.nextReleaseAt, view.fullyFreeAt, view.pendingGraduation, view.pendingGraduationQuote, view.vaultCreatorBalance, view.vaultCreatorQuoteBalance],
+    [900n, 600n, 300n, 1234, 9999, 5n, 7n, 11n, 13n],
+  );
+  const noVault = creatorStateFromApi({ supported: true, creatorClaims: { vault: { error: "x" } } }, {});
+  assert.equal(noVault.vaultCreatorBalance, 0n);
+});

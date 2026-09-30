@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { getNativeSymbol } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { readGen6CreateContext, type Gen6FactoryContext } from "@/lib/evmGen6Client";
-import { LAUNCH_FEE_NOTE, planFirstBuy } from "@/lib/evmGen6.mjs";
+import { LAUNCH_FEE_NOTE, campaignFromFactoryConfig, planFirstBuy, quoteFirstBuy } from "@/lib/evmGen6.mjs";
 import { CreatorFeeChoicePicker, type CreatorFeeChoice } from "@/components/create/CreatorFeeChoicePicker";
 
 export type EvmFirstBuyPlan = ReturnType<typeof planFirstBuy>;
@@ -54,6 +54,7 @@ export function EvmGen6LaunchOptions({
   firstBuyInput,
   onFirstBuyInputChange,
   onPlanChange,
+  initialFirstBuyTokens = 0n,
 }: {
   chainId: number;
   factoryAddress: string;
@@ -65,6 +66,8 @@ export function EvmGen6LaunchOptions({
   firstBuyInput: string;
   onFirstBuyInputChange: (value: string) => void;
   onPlanChange?: (plan: EvmFirstBuyPlan | null) => void;
+  /** A draft's saved first buy (tokens); shown as its native cost once the curve is known. */
+  initialFirstBuyTokens?: bigint;
 }) {
   const symbol = getNativeSymbol(chainId);
   const [ctx, setCtx] = useState<Gen6FactoryContext | null>(null);
@@ -86,6 +89,15 @@ export function EvmGen6LaunchOptions({
       cancelled = true;
     };
   }, [chainId, factoryAddress, graduationTarget]);
+
+  useEffect(() => {
+    if (!ctx || initialFirstBuyTokens <= 0n || firstBuyInput) return;
+    const c = campaignFromFactoryConfig(ctx.config);
+    const { total } = quoteFirstBuy({ tokens: initialFirstBuyTokens, basePrice: c.basePrice, priceSlope: c.priceSlope, protocolFeeBps: ctx.protocolFeeBps });
+    if (total > 0n) onFirstBuyInputChange(ethers.formatEther(total));
+    // Only when the saved amount or the curve arrives; typing afterwards is the creator's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, initialFirstBuyTokens]);
 
   const budgetWei = parseNativeInput(firstBuyInput);
   const plan = useMemo(

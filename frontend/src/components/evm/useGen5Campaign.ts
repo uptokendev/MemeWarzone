@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AbstractProvider } from "ethers";
 import {
   readGen5Campaign,
-  readGen5CreatorState,
+  readGen5CreatorStatePreferApi,
   type Gen5CampaignState,
   type Gen5CreatorState,
 } from "@/lib/evmGen6Client";
@@ -13,7 +13,7 @@ const POLL_MS = 30_000;
  * Reads a generation-5 campaign (and its creator's balances) for the coin page.
  * `state` stays null for every older campaign, so nothing new renders there.
  */
-export function useGen5Campaign(provider: AbstractProvider | null, campaignAddress: string) {
+export function useGen5Campaign(provider: AbstractProvider | null, chainId: number, campaignAddress: string) {
   const [state, setState] = useState<Gen5CampaignState | null>(null);
   const [creator, setCreator] = useState<Gen5CreatorState | null>(null);
   const seq = useRef(0);
@@ -34,14 +34,14 @@ export function useGen5Campaign(provider: AbstractProvider | null, campaignAddre
         return;
       }
       if (!withCreator) return;
-      // The escrow release times are found by probing the contract, so this runs on load
-      // and after a confirmed transaction, not on every poll.
-      const creatorState = await readGen5CreatorState(provider, next);
+      // The creator view (escrow release times, balances) runs on load and after a
+      // confirmed transaction, not on every poll.
+      const creatorState = await readGen5CreatorStatePreferApi(provider, chainId, next);
       if (id === seq.current) setCreator(creatorState);
     } catch (error) {
       console.warn("[useGen5Campaign] read failed", error);
     }
-  }, [provider, campaignAddress]);
+  }, [provider, chainId, campaignAddress]);
 
   useEffect(() => {
     setState(null);

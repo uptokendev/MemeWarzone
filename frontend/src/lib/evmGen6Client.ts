@@ -7,12 +7,14 @@
  * every older generation, so today's create and trade paths are untouched (E14).
  */
 import { Contract, ethers, type AbstractProvider, type Signer } from "ethers";
+import { apiFetch } from "@/lib/apiBase";
 import LaunchFactoryGen6 from "@/abi/LaunchFactoryGen6.json";
 import LaunchCampaignGen5 from "@/abi/LaunchCampaignGen5.json";
 import CreatorRewardsVaultV2 from "@/abi/CreatorRewardsVaultV2.json";
 import {
   EVM_ESCROW_FULLY_FREE_SECONDS,
   decodeEvmFeeChoice,
+  creatorStateFromApi,
   escrowSummary,
   findFirstTime,
   findNextStepTime,
@@ -155,6 +157,44 @@ export function gen6CampaignRequestPayload(request: ReturnType<typeof gen6Campai
     firstBuyTokens: request.firstBuyTokens.toString(),
     firstBuyMaxCost: request.firstBuyMaxCost.toString(),
   };
+}
+
+/**
+ * The request the server signed (create-authorization returns it as `campaignRequest`), as
+ * the factory call takes it. The transaction is built from this, never from what the page
+ * sent: a changed field would fail InvalidRouteAuthorization on chain. It must still carry
+ * the first buy and fee choice the creator chose on screen, or the wallet would pay for
+ * something else. The value sent is firstBuyMaxCost; the factory refunds what the buy
+ * does not use.
+ */
+export function gen6SignedRequest(
+  signed: Record<string, any> | null | undefined,
+  expected: { firstBuyTokens: bigint; feeChoice: number; feeCreatorPct: number },
+) {
+  if (!signed || typeof signed !== "object") {
+    throw new Error("The launch authorization did not return the signed request. Refresh and try again.");
+  }
+  const request = {
+    name: String(signed.name ?? ""),
+    symbol: String(signed.symbol ?? ""),
+    logoURI: String(signed.logoURI ?? ""),
+    xAccount: String(signed.xAccount ?? ""),
+    website: String(signed.website ?? ""),
+    extraLink: String(signed.extraLink ?? ""),
+    graduationTarget: BigInt(String(signed.graduationTarget ?? "0")),
+    firstBuyTokens: BigInt(String(signed.firstBuyTokens ?? "0")),
+    firstBuyMaxCost: BigInt(String(signed.firstBuyMaxCost ?? "0")),
+    feeChoice: Number(signed.feeChoice),
+    feeCreatorPct: Number(signed.feeCreatorPct ?? 0),
+  };
+  if (
+    request.firstBuyTokens !== expected.firstBuyTokens ||
+    request.feeChoice !== expected.feeChoice ||
+    request.feeCreatorPct !== expected.feeCreatorPct
+  ) {
+    throw new Error("The signed launch does not match your first buy or creator fee choice. Refresh and try again.");
+  }
+  return { request, value: request.firstBuyMaxCost };
 }
 
 export function gen6FactoryWriter(factoryAddress: string, signer: Signer) {
@@ -342,6 +382,36 @@ export async function readGen5CreatorState(
     vaultCreatorBalance: BigInt(vaultCreator),
     vaultCreatorQuoteBalance: BigInt(vaultQuote),
   };
+}
+
+/**
+ * The creator view from the API's campaign-state endpoint (one server read, cached), with
+ * the token balances read here. Falls back to reading the contracts directly when the
+ * endpoint is unavailable.
+ */
+export async function readGen5CreatorStatePreferApi(
+  provider: AbstractProvider,
+  chainId: number,
+  state: Gen5CampaignState,
+): Promise<Gen5CreatorState> {
+  try {
+    const token = new Contract(state.token, ERC20_ABI, provider) as any;
+    const [response, walletBalance, totalSupply] = await Promise.all([
+      apiFetch(`/api/evm/campaign-state?chainId=${chainId}&campaign=${state.campaign}`, { cache: "no-store" }),
+      token.balanceOf(state.creator),
+      token.totalSupply(),
+    ]);
+    if (response.ok) {
+      const mapped: Gen5CreatorState | null = creatorStateFromApi(await response.json(), {
+        walletBalance: BigInt(walletBalance),
+        totalSupply: BigInt(totalSupply),
+      });
+      if (mapped) return mapped;
+    }
+  } catch {
+    // fall through to the direct reads
+  }
+  return readGen5CreatorState(provider, state);
 }
 
 // ---------------------------------------------------------------- creator writes

@@ -626,10 +626,13 @@ export type CampaignDraft = {
   dbcFeeChoice?: string | null;
   dbcCreatorSharePct?: number | null;
   dbcFirstBuyLamports?: string | null;
-  /** EVM generation-6 factories: creator fee choice and first-buy budget (native wei). */
-  evmFeeChoice?: string | null;
-  evmFeeCreatorPct?: number | null;
-  evmFirstBuyWei?: string | null;
+  /** EVM generation-6 factories: the saved first buy and creator fee choice (API: draftEvmLaunchOptions). */
+  evmLaunchOptions?: {
+    feeChoice: number;
+    feeChoiceName: "keep" | "holders" | "split" | "buyback" | null;
+    feeCreatorPct: number;
+    firstBuyTokens: string;
+  } | null;
   createdAt: string;
   updatedAt: string;
   tickerReservation?: TickerReservation | null;
@@ -795,10 +798,10 @@ export type CreateDraftInput = {
   dbcFeeChoice?: string | null;
   dbcCreatorSharePct?: number | null;
   dbcFirstBuyLamports?: string | null;
-  /** EVM generation-6 factories: creator fee choice and first-buy budget (native wei). */
-  evmFeeChoice?: string | null;
-  evmFeeCreatorPct?: number | null;
-  evmFirstBuyWei?: string | null;
+  /** EVM generation-6 factories: saved with the draft, priced again when it is armed. */
+  feeChoice?: string;
+  feeCreatorPct?: number;
+  firstBuyTokens?: string;
 };
 
 export type SavePromotionInput = {

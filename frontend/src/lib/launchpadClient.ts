@@ -26,6 +26,7 @@ import {
   GEN6_BNB_BASIC_QUOTE_CREATE_ABI,
   gen6CreateErrorMessage,
   gen6FactoryWriter,
+  gen6SignedRequest,
   isGen6Factory,
 } from "@/lib/evmGen6Client";
 import { apiFetch } from "@/lib/apiBase";
@@ -885,6 +886,7 @@ export function useLaunchpad(): LaunchpadAdapter {
       signature: auth.signature,
     };
     const gasOverrides = await legacyGasOverrides(signer, readProvider);
+    const signedGen6 = gen6 ? gen6SignedRequest((authResponse as any).campaignRequest, gen6) : null;
 
     let tx;
     if (authResponse.graduationMarket?.kind === "BNB_BASIC_QUOTE") {
@@ -894,15 +896,15 @@ export function useLaunchpad(): LaunchpadAdapter {
       if (!quoteToken || !ethers.isHexString(quoteCatalogBindingHash, 32)) {
         throw new Error("BNB BASIC quote authorization is missing its canonical quote binding");
       }
-      if (gen6) {
+      if (signedGen6) {
         const basicWriter = new Contract(factoryAddress, GEN6_BNB_BASIC_QUOTE_CREATE_ABI, signer) as any;
         tx = await sendGen6Create(() =>
           basicWriter.createBasicQuoteCampaignAuthorized(
-            campaignRequest,
+            signedGen6.request,
             quoteToken,
             quoteCatalogBindingHash,
             routeAuthorization,
-            { ...gasOverrides, value: gen6.value },
+            { ...gasOverrides, value: signedGen6.value },
           ),
         );
       } else {
@@ -915,10 +917,10 @@ export function useLaunchpad(): LaunchpadAdapter {
           gasOverrides,
         );
       }
-    } else if (gen6) {
+    } else if (signedGen6) {
       const gen6Writer = gen6FactoryWriter(factoryAddress, signer as any);
       tx = await sendGen6Create(() =>
-        gen6Writer.createCampaignAuthorized(campaignRequest, routeAuthorization, { ...gasOverrides, value: gen6.value }),
+        gen6Writer.createCampaignAuthorized(signedGen6.request, routeAuthorization, { ...gasOverrides, value: signedGen6.value }),
       );
     } else {
       tx = await writer.createCampaignAuthorized(campaignRequest, routeAuthorization, gasOverrides);

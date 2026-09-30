@@ -382,3 +382,41 @@ export function evmGraduationStatus({
     fallbackAt,
   };
 }
+
+// ---------------------------------------------------------------- API campaign-state
+
+/**
+ * Maps GET /api/evm/campaign-state (supported: true) onto the creator view the coin page
+ * shows; the token balances come from the caller. Null for an older campaign.
+ */
+export function creatorStateFromApi(payload, token) {
+  if (!payload || payload.supported !== true) return null;
+  const escrow = payload.creatorEscrow || {};
+  const claims = payload.creatorClaims || {};
+  const vault = claims.vault && !claims.vault.error ? claims.vault : null;
+  const num = (v) => {
+    try {
+      return BigInt(String(v ?? "0"));
+    } catch {
+      return 0n;
+    }
+  };
+  const total = num(escrow.totalTokens);
+  const claimed = num(escrow.claimedTokens);
+  return {
+    walletBalance: big(token?.walletBalance),
+    totalSupply: big(token?.totalSupply),
+    escrowTotal: total,
+    escrowClaimed: claimed,
+    escrowHeld: total > claimed ? total - claimed : 0n,
+    escrowLocked: num(escrow.lockedTokens),
+    escrowClaimable: num(escrow.claimableTokens),
+    nextReleaseAt: Number(escrow.nextRelease?.at || 0),
+    fullyFreeAt: Number(escrow.fullyReleasedAt || 0),
+    graduationBeneficiary: String(claims.graduationBeneficiary || "0x0000000000000000000000000000000000000000"),
+    pendingGraduation: num(claims.graduationNativeWei),
+    pendingGraduationQuote: num(claims.graduationQuote),
+    vaultCreatorBalance: num(vault?.creatorClaimableWei),
+    vaultCreatorQuoteBalance: num(vault?.creatorClaimableQuote),
+  };
+}

@@ -72,5 +72,5 @@ test("the DBC create form uses the same fee-choice component and launch-fee sent
 test("the coin page renders gen-5 lines only when the campaign reads as generation 5", () => {
   assert.match(tokenDetails, /\{gen5\.state \? \(\s*<EvmGen5TradeNotes/);
   assert.match(tokenDetails, /\{gen5\.state && gen5\.creator && gen5ViewerIsCreator \? \(\s*<EvmGen5CreatorPanel/);
-  assert.match(tokenDetails, /useGen5Campaign\(isSolanaPage \? null : readProvider/);
+  assert.match(tokenDetails, /useGen5Campaign\(isSolanaPage \? null : readProvider, Number\(chainIdForStorage\)/);
 });

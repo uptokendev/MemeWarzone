@@ -805,7 +805,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     [chainIdForStorage, isSolanaPage],
   );
   // EVM generation-5 coins only; every older campaign reads as null and renders nothing new (E14).
-  const gen5 = useGen5Campaign(isSolanaPage ? null : readProvider, isSolanaPage ? "" : resolvedCampaignAddress);
+  const gen5 = useGen5Campaign(isSolanaPage ? null : readProvider, Number(chainIdForStorage), isSolanaPage ? "" : resolvedCampaignAddress);
   const gen5ViewerIsCreator = Boolean(
     gen5.state && wallet.account && gen5.state.creator.toLowerCase() === String(wallet.account).toLowerCase(),
   );

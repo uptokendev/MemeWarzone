@@ -46,7 +46,6 @@ import {
 import { gen6CreateFields } from "@/lib/evmGen6.mjs";
 import { isGen6Factory } from "@/lib/evmGen6Client";
 import { getReadProvider } from "@/lib/readProvider";
-import { ethers } from "ethers";
 import {
   authorizeDbcCreate,
   beginDbcCreate,
@@ -159,6 +158,7 @@ export default function PushDraftLive() {
   const [evmCreatorSharePct, setEvmCreatorSharePct] = useState("50");
   const [evmFirstBuyInput, setEvmFirstBuyInput] = useState("");
   const [evmGen6FactoryAddress, setEvmGen6FactoryAddress] = useState("");
+  const [evmSavedFirstBuyTokens, setEvmSavedFirstBuyTokens] = useState(0n);
 
   const showArmBlock = (detail: Parameters<typeof emitCreatorArmBlocked>[0]) => {
     emitCreatorArmBlocked(detail);
@@ -181,12 +181,10 @@ export default function PushDraftLive() {
             ? getDbcGraduationTiers().some((tier) => tier.targetWei === persistedTarget)
             : isSupportedGraduationTarget(Number(data.draft.chainId), persistedTarget);
           if (supported) setGraduationTargetWei(persistedTarget);
-          const savedChoice = String((data.draft as { evmFeeChoice?: string | null }).evmFeeChoice || "");
-          if (["keep", "holders", "split", "buyback"].includes(savedChoice)) setEvmFeeChoice(savedChoice as CreatorFeeChoice);
-          const savedPct = (data.draft as { evmFeeCreatorPct?: number | null }).evmFeeCreatorPct;
-          if (savedPct != null) setEvmCreatorSharePct(String(savedPct));
-          const savedBuy = (data.draft as { evmFirstBuyWei?: string | null }).evmFirstBuyWei;
-          if (savedBuy) setEvmFirstBuyInput(ethers.formatEther(BigInt(savedBuy)));
+          const saved = data.draft.evmLaunchOptions;
+          if (saved?.feeChoiceName) setEvmFeeChoice(saved.feeChoiceName);
+          if (saved?.feeChoiceName === "split" && saved.feeCreatorPct) setEvmCreatorSharePct(String(saved.feeCreatorPct));
+          if (saved?.firstBuyTokens && BigInt(saved.firstBuyTokens) > 0n) setEvmSavedFirstBuyTokens(BigInt(saved.firstBuyTokens));
           // A scheduled DBC draft shows the time it was saved with, not a fresh default.
           const savedAt = dbc && data.draft.scheduledLaunchAt ? new Date(String(data.draft.scheduledLaunchAt)) : null;
           if (savedAt && Number.isFinite(savedAt.getTime())) setLaunchAtInput(toLocalInputValue(savedAt));
@@ -912,6 +910,7 @@ export default function PushDraftLive() {
               onSharePctChange={setEvmCreatorSharePct}
               firstBuyInput={evmFirstBuyInput}
               onFirstBuyInputChange={setEvmFirstBuyInput}
+              initialFirstBuyTokens={evmSavedFirstBuyTokens}
             />
           </div>
         ) : null}

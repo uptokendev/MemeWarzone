@@ -662,9 +662,9 @@ const Create = () => {
         ...(dbcLaunch ? {} : buildCreateDraftGraduationFields(graduationQuoteAsset, chainId)),
         ...(evmGen6
           ? {
-              evmFeeChoice,
-              evmFeeCreatorPct: evmFeeChoice === "split" ? Number(evmCreatorSharePct) : null,
-              evmFirstBuyWei: parseNativeInput(evmFirstBuyInput) > 0n ? parseNativeInput(evmFirstBuyInput).toString() : null,
+              feeChoice: evmFeeChoice,
+              feeCreatorPct: evmFeeChoice === "split" ? Number(evmCreatorSharePct) : 0,
+              firstBuyTokens: (evmFirstBuyPlan?.tokens ?? 0n).toString(),
             }
           : {}),
         ...(isSolanaCreator
