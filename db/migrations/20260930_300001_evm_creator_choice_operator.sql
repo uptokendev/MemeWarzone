@@ -88,6 +88,8 @@ create table if not exists public.evm_creator_choice_jobs (
   attempt integer not null default 0,
   last_error text,
   receipt_block bigint,
+  -- Latest block timestamp when the job was signed: the vault's weekly caps and intervals run on chain time.
+  chain_time bigint not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint evm_creator_choice_jobs_action_chk

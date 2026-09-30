@@ -106,6 +106,8 @@ function routeAuthorityKey(env) {
 export function createEvmBuybackAuthorizationHandler(deps = {}) {
   const env = deps.env || process.env;
   const nowMs = deps.nowMs || (() => Date.now());
+  // Tests (a local hardhat chain) may widen the chain set; production always uses EVM_CHOICE_CHAINS.
+  const chains = deps.chains || EVM_CHOICE_CHAINS;
   async function provider(chainId) {
     if (deps.getProvider) return deps.getProvider(chainId);
     const mod = await import("./lib/getServerReadProvider.js");
@@ -142,7 +144,7 @@ export function createEvmBuybackAuthorizationHandler(deps = {}) {
     try {
       const body = (await readJson(req)) || {};
       const chainId = Number(body.chainId);
-      if (!EVM_CHOICE_CHAINS.has(chainId)) throw new Refusal(400, "CHAIN_NOT_SUPPORTED", "chainId must be 56, 4663, 97 or 46630");
+      if (!chains.has(chainId)) throw new Refusal(400, "CHAIN_NOT_SUPPORTED", "chainId must be 56, 4663, 97 or 46630");
       const campaign = address(body.campaign, "campaign");
       const vault = address(body.vault, "vault");
       if (body.actor != null && address(body.actor, "actor") !== vault) throw new Refusal(403, "ACTOR_NOT_VAULT", "The actor of a buyback authorization is the vault.");

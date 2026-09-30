@@ -276,12 +276,12 @@ async function liveMomentKeys(db: Queryable, chainId: number, subject: string, a
   return new Set(rows.map((r: any) => String(r.moment_key)));
 }
 
-/** Unix seconds of the last confirmed job for this subject and actions, or null. */
+/** Chain time (unix seconds) of the last live (sending / confirmed) job for this key and actions, or null. */
 async function lastConfirmedAt(db: Queryable, chainId: number, column: "subject" | "interval_key", key: string, actions: ChoiceAction[]): Promise<number | null> {
   const { rows } = await db.query(
-    `select extract(epoch from created_at)::bigint as at from public.evm_creator_choice_jobs
+    `select chain_time as at from public.evm_creator_choice_jobs
       where chain_id = $1 and ${column} = $2 and action = any($3::text[]) and status in ('sending', 'confirmed')
-      order by created_at desc limit 1`,
+      order by chain_time desc, id desc limit 1`,
     [chainId, key, actions],
   );
   return rows[0] ? Number(rows[0].at) : null;
@@ -537,7 +537,7 @@ async function proposedInVaultWeek(db: Queryable, chainId: number, vault: string
        from public.evm_creator_choice_jobs j
        left join public.evm_holder_batches b on b.chain_id = j.chain_id and b.batch_id = j.subject
       where j.chain_id = $1 and j.vault_address = $2 and j.action = 'propose_holder_batch' and j.status in ('sending', 'confirmed')
-        and j.created_at >= to_timestamp($3) and coalesce(b.status, '') <> 'vetoed'`,
+        and j.chain_time >= $3 and coalesce(b.status, '') <> 'vetoed'`,
     [chainId, lc(vault), start],
   );
   return BigInt(String(rows[0]?.total ?? "0"));
@@ -1021,13 +1021,13 @@ export async function runEvmCreatorChoicePass(input: {
     const inserted = await db.query(
       `insert into public.evm_creator_choice_jobs(
           chain_id, vault_address, subject, action, moment_key, interval_key, call_args, amount_raw, operator_address,
-          nonce, gas_limit, tx_hash, raw_tx, status, reason
-       ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,'sending',$14)
+          nonce, gas_limit, tx_hash, raw_tx, status, reason, chain_time
+       ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,'sending',$14,$15)
        returning id`,
       [
         chainId, lc(chain.vault), subject, c.call.action, c.momentKey, c.intervalKey, callArgsJson(c.call),
         c.amount == null ? null : c.amount.toString(), lc(sender.address), nonce, gasLimit.toString(),
-        signed.hash.toLowerCase(), signed.raw, (c.report.reason ?? "").slice(0, 500),
+        signed.hash.toLowerCase(), signed.raw, (c.report.reason ?? "").slice(0, 500), block.timestamp.toString(),
       ],
     );
     const jobId = Number(inserted.rows[0]?.id);
