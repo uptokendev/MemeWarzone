@@ -486,7 +486,11 @@ async function main() {
     },
   ];
   if (profile.chainId === 4663n) appendVerificationEntries("4663", (artifact as any).verification);
-  const out = path.join(__dirname, "..", "deployments", profile.file);
+  // RH_GENERATION_RECORD (relative to deployments/) keeps a new testnet cut from overwriting the record of
+  // the generation it supersedes (deployments/robinhood/testnet.quote-generation.json is the accepted gen 4).
+  const recordFile = String(process.env.RH_GENERATION_RECORD || "").trim() || profile.file;
+  if (recordFile.includes("..")) throw new Error("RH_GENERATION_RECORD must stay inside deployments/");
+  const out = path.join(__dirname, "..", "deployments", recordFile);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`);
   console.log(`[rh] wrote ${out}`);

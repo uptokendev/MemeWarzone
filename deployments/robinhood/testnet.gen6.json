@@ -1,0 +1,216 @@
+{
+  "network": "robinhoodTestnet",
+  "chainId": 46630,
+  "kind": "robinhood-testnet-gen6",
+  "fees": {
+    "deployedAt": "2026-09-30T17:39:43.209Z",
+    "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "router": "0xDe4a32297CD310d64dE77AEcD1C39B8F398E83Eb",
+    "creatorRewardsVaultV2": "0xC01613bA3962A89f9a27f97b17A6CAdFc2Bb0d20",
+    "holderRewardDistributor": "0xD90e1F4BF1a6A5c1ac79788bE130084d1755C496",
+    "communityRewardsVault": "0x004f95eCf8f08dC6c1f76a4708aDE72C8E6dD64A",
+    "communityWhyFresh": "CommunityRewardsVault serves one router (onlyRouter deposits). The testnet one 0xE6C243D4 serves TreasuryRouterV3 0xEf657286, which the accepted gen-4 factory 0xde9f7055 routes through; re-pointing it would revert every unlinked trade there.",
+    "reusedVaults": {
+      "weekly": "0xa48723e35061380Feb6D269f7c26D6E426F83efc",
+      "monthly": "0x5D5CC19B5BE86BA28b8164f85883F17843B69810",
+      "recruiter": "0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C",
+      "protocol": "0xf14dbfC92BCF313362668bD9fea42F9a23f0712b"
+    },
+    "wrappedNative": "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+    "dexFactory": "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+    "payoutOperator": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "caps": {
+      "maxBuyPerTx": "190000000000000000",
+      "maxBuybackPerCampaignWeek": "1900000000000000000",
+      "minBuyInterval": "21600",
+      "maxImpactBps": "50",
+      "maxHolderBatchPerWeek": "9300000000000000000",
+      "holderBatchAuthorizationMax": "9300000000000000000"
+    },
+    "batchA": [
+      {
+        "call": "TreasuryRouterV4.setRecruiterRewardsVault(0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C)",
+        "hash": "0xdd8c0da7e5537ba324afa4eb57514ad4ba7e812ade2b80588aa0a53f6c8bb359",
+        "gasUsed": "53119"
+      },
+      {
+        "call": "TreasuryRouterV4.setCommunityRewardsVault(0x004f95eCf8f08dC6c1f76a4708aDE72C8E6dD64A)",
+        "hash": "0x4e9d1ecd870b0602336b81a27828b1520f2282f0bdafc7bdc4969ed3861f9a13",
+        "gasUsed": "52818"
+      },
+      {
+        "call": "TreasuryRouterV4.setProtocolRevenueVault(0xf14dbfC92BCF313362668bD9fea42F9a23f0712b)",
+        "hash": "0x386cc710700385f1f1c567bd17299cc06b3d5f41ae45331b90b40854273e767e",
+        "gasUsed": "52962"
+      },
+      {
+        "call": "TreasuryRouterV4.setCreatorRewardsVault(0xC01613bA3962A89f9a27f97b17A6CAdFc2Bb0d20)",
+        "hash": "0x1b3683a3da7fd328de90b572a4b1bcc44dd109e3d6ad5ce31a056e2ee56e7d78",
+        "gasUsed": "53710"
+      },
+      {
+        "call": "RewardDistributor.setBatchOperator(0xC01613bA3962A89f9a27f97b17A6CAdFc2Bb0d20)",
+        "hash": "0xbf5dcc0eeb5ea37e07a00f347853f1d81d5b8a371a3a0cbdb3c2f50466bd4f4d",
+        "gasUsed": "52519"
+      },
+      {
+        "call": "CreatorRewardsVaultV2.setHolderDistributorOnce(0xD90e1F4BF1a6A5c1ac79788bE130084d1755C496)",
+        "hash": "0xcad285425756294ad2532f9972ff217ecf460975baad08a556f7bc69587b997e",
+        "gasUsed": "49629"
+      },
+      {
+        "call": "CreatorRewardsVaultV2.setOperator(0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714,false)",
+        "hash": "0xc215e1364c1e892b4f5fdd63a7a75bd60b3136428ba9c16bafbdc7522e8a8681",
+        "gasUsed": "51365"
+      },
+      {
+        "call": "CreatorRewardsVaultV2.setCaps(190000000000000000,1900000000000000000,21600,50,9300000000000000000)",
+        "hash": "0x6558fbf1b71d156918dad71f5f4fc5744c04c680f25e399712ccfa5a24b7ae2d",
+        "gasUsed": "143467"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0x2743d25343402662b697483819dcf29683e06082e2ce27ba6de677a9b29f90e3,9300000000000000000,1791158400,1791676800) # 2026-09-28 airdrop_holders",
+        "hash": "0xded1232367b048b62f6954532721f7c9f1ebb9ad312ab2975e1ed8eeeb361fac",
+        "gasUsed": "81291"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0x89876676e7b9d060c3c1a2299909617784f77bd40222d8e44978b25124fd33ae,9300000000000000000,1791763200,1792281600) # 2026-10-05 airdrop_holders",
+        "hash": "0x423fe871f6977f93616b52d25335481dbe35a5aa0495fcf130b704071dd1fdbb",
+        "gasUsed": "81267"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0x1e1d30e31442525a97d9b5be52178360e3fa45c2ee0bcb115ef6d7c9f039f28b,9300000000000000000,1792368000,1792886400) # 2026-10-12 airdrop_holders",
+        "hash": "0xb95287498a31e8f9f18628521aba70fba5b33ad81c40a36864cfc90774a340c6",
+        "gasUsed": "81291"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0x2dd84ca86d264f369a2afbac9942b88168110553da520200102be4f16cd7c105,9300000000000000000,1792972800,1793491200) # 2026-10-19 airdrop_holders",
+        "hash": "0x3d5e7a8d88619a4ec94651f2a9057c389b3d204ddde46c7aa4a8bd6f98c48964",
+        "gasUsed": "81255"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0x6109485e21fe2117a9ec1a0ec3386caf2c9c5f04b5e8ca277484d27918376e2c,9300000000000000000,1793577600,1794096000) # 2026-10-26 airdrop_holders",
+        "hash": "0x6d772ced046c5728cb01c42af6e77fd4ad6baba2c352cf0f6e93c7f9978497e5",
+        "gasUsed": "81291"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0x036451845790f5f7a92537c6cadb75f519f1385a34fa5649b76defc5ceeaa45e,9300000000000000000,1794182400,1794700800) # 2026-11-02 airdrop_holders",
+        "hash": "0x2fb30ae3c0a73413781d56cba455feaa41e139c68af15d55dea019774fc6cf87",
+        "gasUsed": "81267"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0xae3eb0bf5f24f24459784310952719fb02217fe78d12a3b0c4b17c0d7b69d91a,9300000000000000000,1794787200,1795305600) # 2026-11-09 airdrop_holders",
+        "hash": "0x6738cccd7815bab6b6b27e288e71e5bfebe1f174483e4b2db9442a6fd985b001",
+        "gasUsed": "81291"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0x0f4f9998f8be2ede86ad8f63d909674713ed15f47579aa76c88beacd1950e3c0,9300000000000000000,1795392000,1795910400) # 2026-11-16 airdrop_holders",
+        "hash": "0x02175934d5c632d36614124fecebc4a71b482dcdccae60b97803f8743f1f20fd",
+        "gasUsed": "81267"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0xd18c6f43132eafaf0ec3ea726bec6411b5aa612ac751907fdc787361af81481c,9300000000000000000,1795996800,1796515200) # 2026-11-23 airdrop_holders",
+        "hash": "0x397cbba120b19a8633b7a4de8f246506a40e7a80306fc4a2be085d6ca61f6508",
+        "gasUsed": "81291"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0x30d7b00d4295ad4890275fb4a660ada2aff23d451bdf98451ed08ff300caac37,9300000000000000000,1796601600,1797120000) # 2026-11-30 airdrop_holders",
+        "hash": "0xa0dec41fab11931b16cf86bbffb2753112f89cc7ada278c4e790cacd496f99ca",
+        "gasUsed": "81255"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0x8b110a3cc4512870092dedcea79a1effb7558bde392562d01a377a477ff793e9,9300000000000000000,1797206400,1797724800) # 2026-12-07 airdrop_holders",
+        "hash": "0xcd071b4dda6483b6fca0ed4b87d1b3ba7baf1ebb89229a34d27692fc6eb34200",
+        "gasUsed": "81291"
+      },
+      {
+        "call": "RewardDistributor.authorizeBatch(0x491d4e5bffcad8f11406b1edd64890adde10c9742d3afda83b36c26ffa801401,9300000000000000000,1797811200,1798329600) # 2026-12-14 airdrop_holders",
+        "hash": "0x83ef4274a2c95eb4c7a95d3768102638b9b2c246084962936ede85a9506f1f12",
+        "gasUsed": "81267"
+      }
+    ],
+    "ethSpent": "0.00011492451"
+  },
+  "factoryGeneration": 6,
+  "campaignGeneration": 5,
+  "liquidityKind": 2,
+  "factoryStartBlock": 126797898,
+  "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "v3Stack": {
+    "note": "Real Uniswap V3 on 46630 (pool init code hash e34f199b verified against NPM positions). The mock stack (0xfdF80819/0xda0a9Ed9/mWETH 0x632061cA) used by gen 4 has no slot0/swap/mint, which the V2 native adapter needs.",
+    "v3Factory": "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+    "positionManager": "0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4",
+    "swapRouter02": "0xDfd381ECfA6D4CcD4248e319C6fecD76A6bf3296",
+    "weth": "0x52A47A33930B8a90a2000b1bA3CB96e879569670"
+  },
+  "generation": {
+    "network": "robinhoodTestnet",
+    "chainId": 46630,
+    "deployedAt": "2026-09-30T17:42:40.636Z",
+    "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "owner": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "status": "deployed-paused",
+    "reused": {
+      "treasuryRouter": "0xDe4a32297CD310d64dE77AEcD1C39B8F398E83Eb",
+      "weth": "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+      "v3Factory": "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+      "positionManager": "0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4",
+      "swapRouter": "0xDfd381ECfA6D4CcD4248e319C6fecD76A6bf3296",
+      "nativeUsdFeed": "0x896C55A66FD6e310f0e923ea682cBAA06bDf9bc4",
+      "graduationOracle": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA"
+    },
+    "registries": {
+      "creatorRegistry": "0x61E6a5737E80Bc72cb2866F771900C161eBC86B7",
+      "riskRegistry": "0xf9B2977db69CeBFB4C727bbe607C2A434dc2EbB4",
+      "launchRecorderWired": true
+    },
+    "lpLockerAuthorized": true,
+    "createPathWired": true,
+    "nativeGraduationAdapter": "0xfb1A8696E0Bd9AF09b706f67345DD9D3D7Fc40EF",
+    "creatorVault": "0xC01613bA3962A89f9a27f97b17A6CAdFc2Bb0d20",
+    "pendingOwnerActions": [],
+    "deployed": {
+      "LaunchFactory": "0xcf7D6c2C8A644dD3bBbba0Fc69844E48C9025f1A",
+      "LaunchTokenDeployer": "0x8a1C0f83CDb8574Ba45B3eE3022C614572B8339d",
+      "LaunchCampaignImplementation": "0xD8DDb48EB76d10427f99Ac1c4A094FD861A23088",
+      "PermanentV3PositionLocker": "0xc783Ea1Fc8DdAf73A80D4F75Dd4eb5784A301669",
+      "RobinhoodV3NativeGraduationAdapterV2": "0xfb1A8696E0Bd9AF09b706f67345DD9D3D7Fc40EF",
+      "RobinhoodStockGraduationAdapterV2": "0x28c3dc0a89C97ba2643d02052c2eB8C3ed27f962",
+      "RobinhoodV3NativeSwapAdapter": "0x9844Ff0c7441072bAAFc2Ffeb02dFEffA58F706b",
+      "PostGradLeagueTreasuryV2": "0x0b50A2F2FE208884f317902f006e6f63137B2948",
+      "ArenaWarPoolTreasuryV2": "0x756A4Af2259Ad87FE2115b64CD549CCC1BD21c7B"
+    },
+    "adapterBindActions": [],
+    "next": [
+      "register stock tokens and routes on the adapter",
+      "transfer ownership to the Safe (mainnet)",
+      "canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false)"
+    ],
+    "verification": [
+      {
+        "name": "RobinhoodV3NativeGraduationAdapterV2",
+        "address": "0xfb1A8696E0Bd9AF09b706f67345DD9D3D7Fc40EF",
+        "contract": "contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol:RobinhoodV3NativeGraduationAdapterV2",
+        "args": [
+          "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+          "0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4",
+          "0x52A47A33930B8a90a2000b1bA3CB96e879569670"
+        ]
+      },
+      {
+        "name": "RobinhoodStockGraduationAdapterV2",
+        "address": "0x28c3dc0a89C97ba2643d02052c2eB8C3ed27f962",
+        "contract": "contracts/integrations/RobinhoodStockGraduationAdapterV2.sol:RobinhoodStockGraduationAdapterV2",
+        "args": [
+          "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+          "0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4",
+          "0xDfd381ECfA6D4CcD4248e319C6fecD76A6bf3296",
+          "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+          "0x896C55A66FD6e310f0e923ea682cBAA06bDf9bc4",
+          "3600"
+        ]
+      }
+    ]
+  }
+}
