@@ -95,6 +95,7 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
     error SecurityDefaultsDisabled();
     error SecurityDefaultsLocked();
     error RouteAuthorizationExpired();
+    error RouteAuthorizationTooLong();
     error InvalidRouteAuthorization();
     error RouteAuthorizationReplayed();
     error Paused();
@@ -206,6 +207,7 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
     /// @dev C5 §2 rule 3: refuse a target the current price would put above 95% of the full curve.
     uint256 public constant MAX_TARGET_OF_CURVE_BPS = 9500;
     uint256 public constant MIN_SCHEDULE_DELAY = 5 minutes;
+    uint256 public constant MAX_AUTH_TTL = 1 days;
     uint256 public constant MAX_SCHEDULE_WINDOW = 30 days;
 
     uint256 public constant LEAGUE_FEE_BPS = 75;
@@ -897,6 +899,8 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
         address authority = routeAuthority;
         if (authority == address(0)) revert RouteAuthorityZero();
         if (routeAuth.deadline < block.timestamp) revert RouteAuthorizationExpired();
+        // Audit 5: a create authorization lives at most a day.
+        if (routeAuth.deadline > block.timestamp + MAX_AUTH_TTL) revert RouteAuthorizationTooLong();
         if (!_isValidRouteProfile(routeAuth.tradeRouteProfile) || !_isValidRouteProfile(routeAuth.finalizeRouteProfile)) revert InvalidRouteProfile();
         bytes32 digest = MessageHashUtils.toEthSignedMessageHash(payloadHash);
         if (digest.recover(routeAuth.signature) != authority) revert InvalidRouteAuthorization();

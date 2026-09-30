@@ -138,6 +138,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 private constant NATIVE_PRICE_BAND_BPS = 50;
     uint256 private constant MAX_NATIVE_REFUND_BPS = 1;
     uint256 private constant PAUSE_HONOUR_WINDOW = 72 hours;
+    uint256 private constant MAX_AUTH_TTL = 1 days;
     // A new pause window may start only this long after the previous one did, so at least 72 h of every
     // 144 h leave sells and graduation open whatever the factory owner does.
     uint256 private constant PAUSE_REARM_AFTER = 144 hours;
@@ -313,6 +314,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error NativeFallbackNotDue();
     error RenounceDisabled();
     error ZeroCost();
+    error RouteAuthTooLong();
 
     bool private _initialized;
 
@@ -1050,6 +1052,8 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         bytes calldata signature
     ) private {
         if (deadline < block.timestamp) revert RouteAuthExpired();
+        // Audit 5: an authorization lives at most a day, so a leaked or stale signature expires.
+        if (deadline > block.timestamp + MAX_AUTH_TTL) revert RouteAuthTooLong();
         if (!_isValidRouteProfile(routeProfile)) revert InvalidTradeRouteProfile();
         address authority = IRouteAuthoritySource(factory).routeAuthority();
         if (authority == address(0)) revert RouteAuthUnavailable();
