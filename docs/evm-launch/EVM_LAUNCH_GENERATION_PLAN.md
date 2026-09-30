@@ -29,6 +29,13 @@ Written 2026-09-30. Every "today" fact cites the code on `build/dbc-staging` (`c
   server is gone. If space is still short, the C4 escrow moves into its own contract.
 - **E8. The creator first buy pays the flat 2%, never the anti-sniper fee** (as D14), and its cost is
   capped below the coin's graduation target so it can never graduate the coin at create.
+- **E9. Graduated pool fees reach everyone in native only, on every coin** (founder: "same as Solana",
+  whose DAMM v2 pool collects SOL only). Topaz V2 and Uniswap V3 always accrue fees in both tokens, so
+  every harvest sells the MEME-side fees for native in the same pool (price-impact bound, chunked) before
+  the 80/20 split and the fee choice. This changes both lockers' harvest (new source, new generation).
+- **E10. The fee choice works on quote-bound coins too** (BNB quote tokens, Robinhood stocks), as on
+  Solana: holder payouts are swapped to native first; buyback spends the quote token in the coin's own
+  pool; the creator's keep share is paid in what the pool earned.
 
 ## Target economics, one table
 
