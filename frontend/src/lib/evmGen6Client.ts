@@ -32,6 +32,7 @@ const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
   "function totalSupply() view returns (uint256)",
   "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)",
 ] as const;
 
 const CAMPAIGN_REQUEST_TUPLE =
@@ -193,6 +194,7 @@ export type Gen5CampaignState = {
   nativeFallback: boolean;
   quoteToken: string;
   quoteSymbol: string | null;
+  quoteDecimals: number;
   pool: string;
   feeVault: string;
   feeChoice: string | null;
@@ -238,12 +240,15 @@ export async function readGen5Campaign(provider: AbstractProvider, campaignAddre
   }
   const quote = String(quoteToken || ZERO);
   let quoteSymbol: string | null = null;
+  let quoteDecimals = 18;
   if (quote !== ZERO) {
-    try {
-      quoteSymbol = String(await (new Contract(quote, ERC20_ABI, provider) as any).symbol());
-    } catch {
-      quoteSymbol = null;
-    }
+    const quoteContract = new Contract(quote, ERC20_ABI, provider) as any;
+    const [symbol, decimals] = await Promise.all([
+      quoteContract.symbol().catch(() => null),
+      quoteContract.decimals().catch(() => 18),
+    ]);
+    quoteSymbol = symbol == null ? null : String(symbol);
+    quoteDecimals = Number(decimals);
   }
   const decoded = feeChoice ? decodeEvmFeeChoice(Number(feeChoice.choice ?? feeChoice[1]), Number(feeChoice.creatorPct ?? feeChoice[2])) : { choice: null, creatorSharePct: null };
   return {
@@ -260,6 +265,7 @@ export async function readGen5Campaign(provider: AbstractProvider, campaignAddre
     nativeFallback: Boolean(nativeFallback),
     quoteToken: quote,
     quoteSymbol,
+    quoteDecimals,
     pool: pool && pool !== ZERO ? pool : "",
     feeVault: feeChoice ? String(feeChoice.vault ?? feeChoice[0] ?? "") : "",
     feeChoice: decoded.choice,
