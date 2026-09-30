@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "kind": "robinhood-testnet-acceptance-freeze",
+  "accepted5BSha": "9cecc579f8829d2b6cd4d07618c3450450e0a535",
+  "chainId": 46630,
+  "chainKey": "robinhood-testnet",
+  "factory": "0xcf7D6c2C8A644dD3bBbba0Fc69844E48C9025f1A",
+  "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "factoryGeneration": 6,
+  "campaignGeneration": 5,
+  "liquidityKind": 2,
+  "factoryStartBlock": 126797898,
+  "expectedLive": true,
+  "expectedCreatePaused": true,
+  "productionCompatible": false,
+  "productionCreationEnabled": false,
+  "acceptedAt": "2026-09-30",
+  "supersedes": "deployments/robinhood/testnet.accepted.superseded-0xde9f7055.json",
+  "acceptanceEvidence": {
+    "harness": "scripts/test-robinhood-testnet-gen6-lifecycle.ts",
+    "deployment": "deployments/robinhood/testnet.gen6.json",
+    "report": "reports/robinhood-testnet-gen6-lifecycle.json",
+    "checks": "32/32 PASS",
+    "coinA": {
+      "campaign": "0xfF1AbFbD0E6fF946D19e5550D89623Aa7A9d1DcD",
+      "pool": "0xeF403D813f5C71EfDE7B685fAB5092aa21249347",
+      "positionId": "3",
+      "graduateTx": "0x52bc69dd946581d9264fcfd1741a8fad88eada7fcf71a481dbf3473ee5a7803a",
+      "harvestTx": "0xb0d3108040660c782b727342b3cfe16c5913c9e0c96a13bf0d7370c4f94ed3ac",
+      "split": {
+        "raise": "2144085980392157",
+        "protocol": "47169891568627",
+        "creator": "424529024117647",
+        "pool": "1672387064705883"
+      },
+      "harvest80_20": {
+        "wethTotal": "2233250571446",
+        "creator": "1786600457156",
+        "protocol": "446650114290"
+      }
+    },
+    "coinB": {
+      "campaign": "0xe88Fa632585E705EAB944b700fD9418B49B05a93",
+      "pool": "0xBa0927E5d961368922FfBd38C72C561F21819Ede",
+      "griefedAt": "1000x curve price with WETH bids",
+      "graduateTx": "0xb17c0fde443a6351b0d6606c7324a40ddbd1320ba726d3898a87155317daba3b",
+      "repaired": true
+    },
+    "coinC": {
+      "campaign": "0xFE8DCF7C9C06f7279Bb85063a711Fa6c61222D75",
+      "feeChoice": "holders"
+    }
+  },
+  "contracts": {
+    "launchFactory": "0xcf7D6c2C8A644dD3bBbba0Fc69844E48C9025f1A",
+    "launchCampaignImplementation": "0xD8DDb48EB76d10427f99Ac1c4A094FD861A23088",
+    "launchTokenDeployer": "0x8a1C0f83CDb8574Ba45B3eE3022C614572B8339d",
+    "permanentV3PositionLocker": "0xc783Ea1Fc8DdAf73A80D4F75Dd4eb5784A301669",
+    "nativeGraduationAdapterV2": "0xfb1A8696E0Bd9AF09b706f67345DD9D3D7Fc40EF",
+    "stockGraduationAdapterV2": "0x28c3dc0a89C97ba2643d02052c2eB8C3ed27f962",
+    "v3NativeSwapAdapter": "0x9844Ff0c7441072bAAFc2Ffeb02dFEffA58F706b",
+    "treasuryRouterV4": "0xDe4a32297CD310d64dE77AEcD1C39B8F398E83Eb",
+    "creatorRewardsVaultV2": "0xC01613bA3962A89f9a27f97b17A6CAdFc2Bb0d20",
+    "holderRewardDistributor": "0xD90e1F4BF1a6A5c1ac79788bE130084d1755C496",
+    "communityRewardsVault": "0x004f95eCf8f08dC6c1f76a4708aDE72C8E6dD64A",
+    "creatorRegistry": "0x61E6a5737E80Bc72cb2866F771900C161eBC86B7",
+    "riskRegistry": "0xf9B2977db69CeBFB4C727bbe607C2A434dc2EbB4",
+    "postGradLeagueTreasuryV2": "0x0b50A2F2FE208884f317902f006e6f63137B2948",
+    "arenaWarPoolTreasuryV2": "0x756A4Af2259Ad87FE2115b64CD549CCC1BD21c7B"
+  }
+}

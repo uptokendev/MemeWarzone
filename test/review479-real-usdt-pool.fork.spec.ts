@@ -1,6 +1,7 @@
 /**
  * Review of PR #479: a BNB quote graduation against the REAL Topaz USDT/WBNB pool, untouched.
- * Nothing on the fork is deepened, synced or seeded; the pool is read as it is on BSC.
+ * Nothing on the fork is deepened, synced or seeded; the pool is read as it is on BSC. The L3 test
+ * deepens it only after the thin pool has been refused, to show the same route then configures.
  *
  *   BNB_FORK=1 npx hardhat test test/review479-real-usdt-pool.fork.spec.ts --network hardhat
  */
@@ -22,6 +23,9 @@ const WAD = 10n ** 18n;
 const SUPPLY = 10n ** 27n;
 const FEED_ABI = ["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)", "function decimals() view returns (uint8)"];
 const POOL_ABI = ["function token0() view returns (address)", "function getReserves() view returns (uint256,uint256,uint256)"];
+const ERC20_ABI = ["function balanceOf(address) view returns (uint256)", "function transfer(address,uint256) returns (bool)"];
+const WBNB_ABI = [...ERC20_ABI, "function deposit() payable"];
+const USDT_WHALES = ["0xF977814e90dA44bFA03b6295A0616a897441aceC", "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3", "0x4B16c5dE96EB2117bBE5fd171E4d203624B014aa"];
 const ROUTER_ABI = ["function getAmountsOut(uint256,(address from,address to,bool stable,address factory)[]) view returns (uint256[])"];
 
 async function wad(feed: string) {
@@ -92,15 +96,35 @@ d("review479: quote graduation against the real, untouched USDT/WBNB Topaz pool"
     }
   }
 
-  it("configureQuoteRoute accepts a route whose pool is far below its own floor (no liquidity check at configure)", async () => {
+  it("L3: configureQuoteRoute refuses the real thin pool at the $50k floor, and accepts it once deep", async () => {
     const snap = await network.provider.send("evm_snapshot", []);
-    await adapter.configureQuoteRoute(T.usdt, route(50_000n));
-    expect((await adapter.quoteRoutes(T.usdt)).enabled).to.equal(true);
-    for (const v of [11_700n, 23_400n]) {
-      const r = await tryGraduate(v);
-      console.log(`    floor $50k, pool native $${v}: ${r}`);
-      expect(r).to.equal("RouteLiquidityTooLow");
+    await expect(adapter.configureQuoteRoute(T.usdt, route(50_000n))).to.be.revertedWithCustomError(adapter, "RouteLiquidityTooLow");
+    expect((await adapter.quoteRoutes(T.usdt)).oracleFeed).to.equal(ethers.ZeroAddress);
+    console.log("    floor $50k on the untouched pool: RouteLiquidityTooLow at configure");
+
+    // Deepen the same canonical pool with ~$100k a side (real WBNB + real USDT from a whale, LP minted),
+    // then the identical route configures and is enabled.
+    const usdt = await ethers.getContractAt(ERC20_ABI, T.usdt);
+    const want = 100_000n * WAD;
+    for (const w of USDT_WHALES) {
+      const missing = want - (await usdt.balanceOf(deployer.address));
+      if (missing <= 0n) break;
+      const bal: bigint = await usdt.balanceOf(w);
+      if (bal === 0n) continue;
+      await network.provider.request({ method: "hardhat_impersonateAccount", params: [w] });
+      await network.provider.send("hardhat_setBalance", [w, "0x56BC75E2D63100000"]);
+      await (usdt.connect(await ethers.getSigner(w)) as any).transfer(deployer.address, bal > missing ? missing : bal);
     }
+    expect(await usdt.balanceOf(deployer.address), "no USDT whale on this fork block").to.be.gte(want);
+    const bnbIn = (want * WAD) / bnbUsd;
+    const wbnb = await ethers.getContractAt(WBNB_ABI, T.wbnb);
+    await wbnb.deposit({ value: bnbIn });
+    await wbnb.transfer(T.usdtPool, bnbIn);
+    await usdt.transfer(T.usdtPool, want);
+    await (await ethers.getContractAt(["function mint(address) returns (uint256)"], T.usdtPool)).mint(deployer.address);
+    await expect(adapter.configureQuoteRoute(T.usdt, route(50_000n))).to.emit(adapter, "QuoteRouteConfigured");
+    expect((await adapter.quoteRoutes(T.usdt)).enabled).to.equal(true);
+    console.log("    floor $50k after deepening to ~$200k: accepted");
     await network.provider.send("evm_revert", [snap]);
   });
 

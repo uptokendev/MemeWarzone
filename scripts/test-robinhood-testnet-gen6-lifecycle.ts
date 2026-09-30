@@ -20,6 +20,8 @@
  *   GEN6_WALLETS_FILE=/path/outside/repo.json GEN6_ENABLE_LIVE=true \
  *     npx hardhat run scripts/test-robinhood-testnet-gen6-lifecycle.ts --network robinhoodTestnet
  *   GEN6_SWEEP_ONLY=true ... (sweeps every wallet in the file back to the deployer)
+ *   RH_GEN6_RECORD=testnet.gen6b.json ... (the post-audit cut; adds the audit-fix checks, report robinhood-testnet-gen6b-lifecycle.json)
+ *   GEN6_RESUME_HOLDER_BATCH=true ... (a run that died after propose + approve of the holder batch: prove it, close the run)
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -34,15 +36,25 @@ const FEE_TIER = 3000;
 const ACT_BUY_TOKENS = 0;
 const ACT_BUY_NATIVE = 1;
 const ACT_SELL = 2;
-const RECORD = path.join(__dirname, "..", "deployments", "robinhood", "testnet.gen6.json");
-const REPORT = path.join(__dirname, "..", "reports", "robinhood-testnet-gen6-lifecycle.json");
+// RH_GEN6_RECORD selects the cut (testnet.gen6.json = the pre-audit run, testnet.gen6b.json = the post-audit one).
+const RECORD_NAME = String(process.env.RH_GEN6_RECORD || "testnet.gen6.json").trim();
+if (!/^testnet\.gen6[a-z0-9]*\.json$/.test(RECORD_NAME)) throw new Error(`RH_GEN6_RECORD ${RECORD_NAME}: expected testnet.gen6<suffix>.json`);
+const CUT = RECORD_NAME.slice(8, -5);
+const POST_AUDIT = CUT !== "gen6";
+const RECORD = path.join(__dirname, "..", "deployments", "robinhood", RECORD_NAME);
+const REPORT = path.join(__dirname, "..", "reports", `robinhood-testnet-${CUT}-lifecycle.json`);
+const MOCK_FEED = "0x896C55A66FD6e310f0e923ea682cBAA06bDf9bc4";
+// harvest() runs the MEME sale as `try this.sellMemeForPaired(...)`. eth_estimateGas on Nitro returned the exact
+// gas of a successful run (574928) and the transaction sent with it reverted out of gas (tx 0x0493041a...,
+// 2026-09-30); with a little more the inner sale can silently fail and be carried instead. Send with headroom.
+const HARVEST_GAS = 2_000_000n;
 
 type Signer = { signMessage(m: Uint8Array): Promise<string> };
 const signerUrl = pathToFileURL(path.join(__dirname, "..", "frontend", "api", "dev-fix", "routeAuthorizationSigner.js")).href;
 const signerMod: Promise<any> = Function("s", "return import(s)")(signerUrl);
 const freezeUrl = pathToFileURL(path.join(__dirname, "robinhoodTestnetFreeze.mjs")).href;
 
-const report: any = { chainId: 46630, startedAt: new Date().toISOString(), txs: [], checks: [], coins: {} };
+const report: any = { chainId: 46630, cut: CUT, startedAt: new Date().toISOString(), txs: [], checks: [], coins: {} };
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -110,6 +122,38 @@ function parseLogs(rc: any, contract: any, address?: string) {
     } catch {}
   }
   return out;
+}
+
+/** Runs a staticCall that must revert and returns the decoded custom error name (or reason string). */
+async function revertName(call: () => Promise<unknown>, ifaces: any[]): Promise<string> {
+  try {
+    await call();
+    return "NO_REVERT";
+  } catch (e: any) {
+    if (e?.revert?.name === "Error") return String(e.revert.args?.[0]);
+    if (e?.revert?.name) return e.revert.name;
+    const data = e?.data ?? e?.info?.error?.data ?? e?.error?.data;
+    if (typeof data === "string" && data.length >= 10) {
+      for (const i of ifaces) {
+        try {
+          const p = i.parseError(data);
+          if (p) return p.name === "Error" ? String(p.args[0]) : p.name;
+        } catch {}
+      }
+    }
+    if (e?.reason) return String(e.reason);
+    return String(e?.shortMessage || e?.message).slice(0, 120);
+  }
+}
+
+/**
+ * What `block.number` reads inside the EVM for an L2 block. Robinhood Chain is Arbitrum Nitro: there
+ * block.number is the parent-chain block number (the RPC exposes it as `l1BlockNumber`), not the L2 block, so
+ * the locker's one-sale-per-block rule is one sale per pool per PARENT block, which spans many L2 blocks.
+ */
+async function evmBlockNumber(l2Block: number): Promise<number> {
+  const b = await retry(() => ethers.provider.send("eth_getBlockByNumber", [ethers.toQuantity(l2Block), false]), `raw block ${l2Block}`);
+  return b?.l1BlockNumber ? Number(BigInt(b.l1BlockNumber)) : l2Block;
 }
 
 const ERC20 = new ethers.Interface(["event Transfer(address indexed from, address indexed to, uint256 value)"]);
@@ -244,6 +288,8 @@ async function main() {
   const swapAdapter = await ethers.getContractAt("RobinhoodV3NativeSwapAdapter", A.swapAdapter, deployer);
   const npm = await ethers.getContractAt(["function ownerOf(uint256) view returns (address)"], A.npm);
   const signer = await signerMod;
+  const { refreshMockFeed } = await import("./deploy-robinhood-testnet-gen6-fees");
+  const refreshFeed = async () => report.txs.push({ label: "refresh mock ETH/USD feed", hash: await refreshMockFeed(MOCK_FEED) });
 
   // Static wiring, read from chain.
   const fGen = Number(await factory.FACTORY_GENERATION());
@@ -262,6 +308,8 @@ async function main() {
     if (await factory.createPaused()) await send("factory.setCreatePaused(false)", factory.setCreatePaused(false));
   }
 
+  const RESUME = String(process.env.GEN6_RESUME_HOLDER_BATCH || "") === "true";
+  if (!RESUME) await refreshFeed();
   const creatorA = wallet(ws, walletsFile, "creatorA");
   const creatorB = wallet(ws, walletsFile, "creatorB");
   const creatorC = wallet(ws, walletsFile, "creatorC");
@@ -269,7 +317,7 @@ async function main() {
   const third = wallet(ws, walletsFile, "graduator");
   const griefer = wallet(ws, walletsFile, "griefer");
   report.wallets = { creatorA: creatorA.address, creatorB: creatorB.address, creatorC: creatorC.address, buyer: buyer.address, graduator: third.address, griefer: griefer.address };
-  for (const [w, amt] of [[creatorA, "0.004"], [creatorB, "0.002"], [creatorC, "0.002"], [buyer, "0.012"], [third, "0.003"], [griefer, "0.002"]] as const) {
+  if (!RESUME) for (const [w, amt] of [[creatorA, "0.004"], [creatorB, "0.002"], [creatorC, "0.002"], [buyer, "0.012"], [third, "0.003"], [griefer, "0.002"]] as const) {
     await fund(deployer, w.address, ethers.parseEther(amt));
   }
 
@@ -310,8 +358,8 @@ async function main() {
     return { r, campaign, token, campaignAddr: ev.args.campaign as string, tokenAddr: ev.args.token as string };
   }
 
-  async function tradeAuth(campaign: any, actor: string, action: number, amount: bigint, limit: bigint) {
-    const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp) + 3600n;
+  async function tradeAuth(campaign: any, actor: string, action: number, amount: bigint, limit: bigint, ttl = 3600n) {
+    const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp) + ttl;
     const sig = await signer.signTradeAuthorization({
       signer: routeAuthority as Signer,
       chainId: CHAIN_ID,
@@ -358,6 +406,92 @@ async function main() {
   }
 
   const launchAtOf = async (c: any) => BigInt(await c.launchAt());
+
+  // ------------------------------------------------------------------ audit 5 M1 (holder batch) and run close-out
+  /**
+   * A holder batch cannot execute until the admin approves its exact root + total. The "before approval" facts are
+   * read with eth_call at the propose transaction's block (state after propose, before approve), so they are the
+   * same whether the run sends both transactions now or resumes from ones it already sent (`existing`).
+   */
+  async function holderBatchAudit(campaignAddr: string, existing?: { proposeTx: string; approveTx: string }) {
+    let pr: any;
+    let ap: any;
+    let batchId: string;
+    let leaf: string;
+    let total: bigint;
+    let claimDeadline: bigint;
+    if (!existing) {
+      total = await vault.holderBalance(campaignAddr);
+      leaf = ethers.keccak256(ethers.concat([ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address", "uint256"], [deployerAddr, total]))]));
+      batchId = ethers.id(`mwz-rh-testnet-${CUT}-holders-${campaignAddr}-${Date.now()}`);
+      claimDeadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp) + 60n * 86400n;
+      pr = await send("C proposeHolderBatch (operator)", (vault as any).proposeHolderBatch(batchId, leaf, claimDeadline, [campaignAddr], [total]));
+      ap = null;
+    } else {
+      const rc = await retry(async () => { const r = await ethers.provider.getTransactionReceipt(existing.proposeTx); if (!r) throw new Error("no receipt"); return r; }, "propose receipt");
+      pr = { rc, block: rc.blockNumber };
+    }
+    const proposed = parseLogs(pr.rc, vault, A.vault).find((x) => x.name === "HolderBatchProposed");
+    if (!proposed) throw new Error("no HolderBatchProposed in the propose transaction");
+    batchId = proposed.args.batchId;
+    leaf = proposed.args.root;
+    total = proposed.args.total;
+    claimDeadline = BigInt(proposed.args.claimDeadline);
+    const executableAt = BigInt(proposed.args.executableAt);
+    const atPropose = { blockTag: pr.block };
+    const execBefore = await revertName(() => (vault as any).executeHolderBatch.staticCall(batchId, atPropose), [vault.interface]);
+    const wrongRoot = await revertName(() => (vault as any).approveHolderBatch.staticCall(batchId, ethers.id("not-the-root"), total, atPropose), [vault.interface]);
+    const wrongTotal = await revertName(() => (vault as any).approveHolderBatch.staticCall(batchId, leaf, total + 1n, atPropose), [vault.interface]);
+    if (!existing) {
+      ap = await send("C approveHolderBatch (admin, exact root + total)", (vault as any).approveHolderBatch(batchId, leaf, total));
+    } else {
+      const rc = await retry(async () => { const r = await ethers.provider.getTransactionReceipt(existing.approveTx); if (!r) throw new Error("no receipt"); return r; }, "approve receipt");
+      ap = { rc, block: rc.blockNumber };
+    }
+    const approvedEv = parseLogs(ap.rc, vault, A.vault).find((x) => x.name === "HolderBatchApproved");
+    const execAfter = await revertName(() => (vault as any).executeHolderBatch.staticCall(batchId), [vault.interface]);
+    // Distributor authorization for exactly this total, from executableAt for 6 days (holderWeekCalls), so the
+    // batch can be executed after the 24 h veto window without anything else.
+    const dist = await ethers.getContractAt("RewardDistributor", rec.fees.holderRewardDistributor, deployer);
+    const au = await send("C distributor.authorizeBatch(exact total)", (dist as any).authorizeBatch(batchId, total, executableAt, executableAt + 6n * 86400n));
+    check("audit: holder batch: execute refused NotApproved before approval; wrong root/total cannot be approved; after approveHolderBatch execute is held only by the 24 h window (TooSoon)",
+      total > 0n && ap.block > pr.block && execBefore === "NotApproved" && wrongRoot === "BadBatch" && wrongTotal === "BadBatch" && !!approvedEv &&
+      approvedEv.args.root === leaf && approvedEv.args.total === total && execAfter === "TooSoon" && (await vault.holderBalance(campaignAddr)) === 0n, {
+      batchId, root: leaf, total, leafTo: deployerAddr, executeBeforeApprove: execBefore, approveWrongRoot: wrongRoot, approveWrongTotal: wrongTotal,
+      readBeforeApprovalAtBlock: pr.block, approveBlock: ap.block, executeAfterApprove: execAfter, executableAt,
+      proposeTx: pr.rc.hash, approveTx: ap.rc.hash, distributorAuthTx: au.rc.hash, resumed: !!existing,
+      skipped: "executeHolderBatch after the 24 h veto window: not waited for in this run; the batch is approved and distributor-authorized, executable by the operator from executableAt",
+    });
+    report.pendingHolderBatch = { batchId, root: leaf, total: total.toString(), executableAt: executableAt.toString(), claimDeadline: claimDeadline.toString(), leaf: { account: deployerAddr, amount: total.toString(), proof: [] } };
+  }
+
+  async function closeRun() {
+    await send("factory.setCreatePaused(true)", factory.setCreatePaused(true));
+    check("create paused again after the run (live latch stays)", (await factory.createPaused()) && (await factory.live()), {});
+    await sweep(deployer, ws, weth);
+    report.deployerAfter = (await ethers.provider.getBalance(deployerAddr)).toString();
+    report.ethSpentByDeployer = ethers.formatEther(BigInt(report.deployerBefore) - BigInt(report.deployerAfter));
+    report.accepted = report.checks.every((c: any) => c.pass);
+    report.finishedAt = new Date().toISOString();
+    saveReport();
+    console.log(`[gen6] ACCEPTED=${report.accepted} checks=${report.checks.length} spent=${report.ethSpentByDeployer} ETH`);
+  }
+
+  // GEN6_RESUME_HOLDER_BATCH=true: the run died after sending proposeHolderBatch + approveHolderBatch (the last two
+  // transactions in its report). Pick the report up, prove the holder batch from those transactions, close the run.
+  if (RESUME) {
+    const prev = JSON.parse(fs.readFileSync(REPORT, "utf8"));
+    if (prev.cut !== CUT || !prev.coins?.C?.campaign || prev.accepted !== undefined) throw new Error("nothing to resume in " + REPORT);
+    const pTx = prev.txs.find((t: any) => t.label === "C proposeHolderBatch (operator)");
+    const aTx = prev.txs.find((t: any) => t.label === "C approveHolderBatch (admin, exact root + total)");
+    if (!pTx || !aTx) throw new Error("the previous run did not send propose + approve");
+    Object.assign(report, prev);
+    report.resume = { at: new Date().toISOString(), previousError: prev.error };
+    delete report.error;
+    await holderBatchAudit(prev.coins.C.campaign, { proposeTx: pTx.hash, approveTx: aTx.hash });
+    await closeRun();
+    return;
+  }
 
   // ================================================================== coin A (keep)
   {
@@ -478,7 +612,7 @@ async function main() {
     const info = await locker.poolInfo(gA.pool);
     const creatorWethBefore = await weth.balanceOf(creatorA.address);
     const protoWethBefore = await weth.balanceOf(A.protocol);
-    const h = await send("A harvest", (locker.connect(third) as any).harvest(gA.pool));
+    const h = await send("A harvest", (locker.connect(third) as any).harvest(gA.pool, { gasLimit: HARVEST_GAS }));
     const fh = parseLogs(h.rc, locker, A.locker).find((x) => x.name === "FeesHarvested");
     const ms = parseLogs(h.rc, locker, A.locker).find((x) => x.name === "MemeFeesSold");
     const creatorWethDelta = (await ercAt(A.weth, creatorA.address, h.block)) - creatorWethBefore;
@@ -488,13 +622,61 @@ async function main() {
     const tProto = wethT.filter((t: any) => same(t.to, A.protocol)).reduce((s: bigint, t: any) => s + t.value, 0n);
     const total = fh ? (fh.args.collected as bigint) : 0n;
     const wantCreator = (total * BigInt(info.creatorFeeBps)) / BPS;
+    const saleBlock = POST_AUDIT ? Number(await locker.lastSaleBlock(gA.pool, { blockTag: h.block })) : h.block;
+    const hEvmBlock = POST_AUDIT ? await evmBlockNumber(h.block) : h.block;
     check("A harvest: MEME-side fees sold for WETH, then exactly 80/20 in WETH (E9), by transfer logs and balance deltas",
-      !!fh && same(fh.args.token, A.weth) && !!ms && ms.args.memeSold > 0n && ms.args.memeCarried === 0n && Number(info.creatorFeeBps) === 8000 &&
+      !!fh && same(fh.args.token, A.weth) && !!ms && ms.args.memeSold > 0n && (POST_AUDIT || ms.args.memeCarried === 0n) && Number(info.creatorFeeBps) === 8000 &&
+      saleBlock === hEvmBlock &&
       fh.args.creatorPaid === wantCreator && fh.args.protocolRouted === total - wantCreator && tCreator === wantCreator && tProto === total - wantCreator &&
       creatorWethDelta === wantCreator && protoWethDelta === total - wantCreator, {
       memeFeeSold: ms?.args.memeSold, wethFromMemeSale: ms?.args.pairedOut, memeCarried: ms?.args.memeCarried, wethTotal: total,
-      creator80: creatorWethDelta, protocol20: protoWethDelta, memeIs0,
+      creator80: creatorWethDelta, protocol20: protoWethDelta, memeIs0, lastSaleBlock: saleBlock, harvestL2Block: h.block, harvestEvmBlockNumber: hEvmBlock,
+      rules: "post-audit locker: one MEME sale per pool per block (lastSaleBlock; on Nitro block.number is the parent-chain block, l1BlockNumber), sale bounded by sqrtPriceLimitX96 at the impact bound; the locker has NO TWAP guard (a fresh pool has one observation slot), the TWAP guard lives only in CreatorRewardsVaultV2 buyback/quote swaps",
     });
+    if (POST_AUDIT) {
+      // More pool trades, then a second harvest in a later block: it sells again (the one-sale-per-block rule is per
+      // block, not per pool lifetime) and whatever the bound left carried is offered again.
+      const carriedBefore: bigint = await locker.carriedMeme(gA.pool);
+      const dl2 = BigInt((await ethers.provider.getBlock("latest"))!.timestamp) + 1800n;
+      const q2: bigint = await (swapAdapter.connect(third) as any).buyExactNativeIn.staticCall(c.tokenAddr, FEE_TIER, 1n, third.address, dl2, { value: buyIn });
+      const pb2 = await send("A pool buy 2 (native adapter)", (swapAdapter.connect(third) as any).buyExactNativeIn(c.tokenAddr, FEE_TIER, (q2 * 99n) / 100n, third.address, dl2, { value: buyIn }));
+      const got2 = transfers(pb2.rc, c.tokenAddr).filter((t: any) => same(t.to, third.address)).reduce((s2: bigint, t: any) => s2 + t.value, 0n);
+      await send("A approve pool sell 2", (token.connect(third) as any).approve(A.swapAdapter, got2));
+      const sq2: bigint = await (swapAdapter.connect(third) as any).sellExactTokenIn.staticCall(c.tokenAddr, FEE_TIER, got2, 1n, third.address, dl2);
+      await send("A pool sell 2 (native adapter)", (swapAdapter.connect(third) as any).sellExactTokenIn(c.tokenAddr, FEE_TIER, got2, (sq2 * 99n) / 100n, third.address, dl2));
+      // Harvest in the same parent block as the last sale -> the sale is skipped and everything is carried; once the
+      // parent block advances the next harvest sells again. Whichever happens is recorded, and both are checked.
+      const rounds: any[] = [];
+      let sold = false;
+      for (let i = 2; i <= 6 && !sold; i++) {
+        const lastSale = Number(await locker.lastSaleBlock(gA.pool));
+        const hx = await send(`A harvest ${i}`, (locker.connect(third) as any).harvest(gA.pool, { gasLimit: HARVEST_GAS }));
+        const evmBn = await evmBlockNumber(hx.block);
+        const fhx = parseLogs(hx.rc, locker, A.locker).find((x) => x.name === "FeesHarvested");
+        const msx = parseLogs(hx.rc, locker, A.locker).find((x) => x.name === "MemeFeesSold");
+        const tx_ = transfers(hx.rc, A.weth);
+        const cx = tx_.filter((t: any) => same(t.to, creatorA.address)).reduce((s2: bigint, t: any) => s2 + t.value, 0n);
+        const px = tx_.filter((t: any) => same(t.to, A.protocol)).reduce((s2: bigint, t: any) => s2 + t.value, 0n);
+        const totx = fhx ? (fhx.args.collected as bigint) : 0n;
+        const row = {
+          harvest: i, tx: hx.rc.hash, l2Block: hx.block, evmBlockNumber: evmBn, previousSaleEvmBlock: lastSale, sameParentBlock: evmBn === lastSale,
+          memeSold: msx?.args.memeSold ?? 0n, memeCarried: msx?.args.memeCarried ?? 0n, wethTotal: totx, creator80: cx, protocol20: px,
+        };
+        rounds.push(row);
+        const split = cx === (totx * 8000n) / BPS && px === totx - cx;
+        if (evmBn === lastSale) {
+          check(`A harvest ${i} in the same parent block as the last sale: MEME sale skipped, all of it carried, WETH side still paid 80/20`,
+            !!msx && msx.args.memeSold === 0n && (msx.args.memeCarried as bigint) > 0n && (await locker.carriedMeme(gA.pool, { blockTag: hx.block })) === msx.args.memeCarried && split, row);
+          while ((await evmBlockNumber(await ethers.provider.getBlockNumber())) <= evmBn) await sleep(3000);
+        } else {
+          sold = true;
+          check(`A harvest ${i} in a later parent block sells the MEME fees (incl. anything carried) and pays exactly 80/20 in WETH`,
+            !!msx && (msx.args.memeSold as bigint) > 0n && Number(await locker.lastSaleBlock(gA.pool, { blockTag: hx.block })) === evmBn && split, { ...row, carriedBefore });
+        }
+      }
+      report.coins.A.laterHarvests = rounds;
+      if (!sold) check("A a later harvest sold MEME within 6 attempts", false, {});
+    }
 
     // Creator claims: graduation 19.8% (+ residual) and vault trade fees.
     const pendingGrad = await campaign.pendingCreatorGraduation();
@@ -646,25 +828,76 @@ async function main() {
     check("C trade fees (5.6%) accrue to the vault's holder balance, none to the creator", h1 - h0 === sum && vd1 + vd2 === sum &&
       acc.every((a) => a.args.toHolders === a.args.amount && a.args.toCreator === 0n && a.args.toBuyback === 0n) && (await vault.creatorBalance(c.campaignAddr)) === 0n &&
       acc.every((a, i) => a.args.amount === ([b1, b2][i].route.args.amountIn * 560n) / BPS), { holderBalance: h1, accrued: sum, vaultEthDelta: vd1 + vd2 });
-    let revertName = "";
-    try {
-      await (vault.connect(creatorC) as any).claimCreatorFees.staticCall(c.campaignAddr);
-    } catch (e: any) {
-      revertName = e?.revert?.name || (e?.data ? vault.interface.parseError(e.data)?.name : "") || String(e?.shortMessage || e?.message).slice(0, 80);
+    const noClaim = await revertName(() => (vault.connect(creatorC) as any).claimCreatorFees.staticCall(c.campaignAddr), [vault.interface]);
+    check("C creator cannot claim holder fees (claimCreatorFees reverts NothingToClaim)", noClaim === "NothingToClaim", { revert: noClaim });
+
+    if (POST_AUDIT) {
+      // ------------------------------------------------ audit-fix checks, on chain (coin C is still Trading)
+      const ifaces = [campaign.interface, factory.interface, vault.interface];
+      // Audit 1: renounceOwnership is disabled on the campaign.
+      const owner = await campaign.owner();
+      const renounce = await revertName(() => (campaign.connect(creatorC) as any).renounceOwnership.staticCall(), ifaces);
+      check("audit: campaign renounceOwnership reverts RenounceDisabled (called by its owner)", same(owner, creatorC.address) && renounce === "RenounceDisabled", { owner, revert: renounce });
+
+      // Audit 5: a trade authorization may live at most 1 day. Same buy, same signer: 1 h passes, 2 days is refused.
+      const amt = ethers.parseEther("1000");
+      const noFee = (await area(campaign, (await campaign.sold()) + amt)) - (await area(campaign, await campaign.sold()));
+      const maxCost = noFee + (noFee * 300n) / BPS + 1n;
+      const okAuth = await tradeAuth(campaign, buyer.address, ACT_BUY_TOKENS, amt, maxCost);
+      let okOut = "";
+      try {
+        await (campaign.connect(buyer) as any).buyExactTokensAuthorized.staticCall(amt, maxCost, tradeProfile, okAuth.deadline, okAuth.sig, { value: maxCost });
+        okOut = "ok";
+      } catch (e: any) {
+        okOut = `reverted ${e?.revert?.name || e?.shortMessage}`;
+      }
+      const longAuth = await tradeAuth(campaign, buyer.address, ACT_BUY_TOKENS, amt, maxCost, 2n * 86400n);
+      const longTrade = await revertName(
+        () => (campaign.connect(buyer) as any).buyExactTokensAuthorized.staticCall(amt, maxCost, tradeProfile, longAuth.deadline, longAuth.sig, { value: maxCost }),
+        ifaces,
+      );
+      check("audit: a 2-day trade signature is refused (RouteAuthTooLong); the same buy signed for 1 h simulates ok", okOut === "ok" && longTrade === "RouteAuthTooLong", {
+        deadline1h: okAuth.deadline, result1h: okOut, deadline2d: longAuth.deadline, result2d: longTrade,
+      });
+
+      // Audit 5: a create authorization may live at most 1 day.
+      const probe = ethers.Wallet.createRandom().connect(ethers.provider);
+      const req = {
+        name: "Gen6b TTL probe", symbol: "G6TTL", logoURI: "ipfs://memewarzone-gen6-testnet", xAccount: "", website: "", extraLink: "",
+        graduationTarget: ethers.parseEther("6"), firstBuyTokens: 0n, firstBuyMaxCost: 0n, feeChoice: 1, feeCreatorPct: 0,
+      };
+      const cDeadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp) + 2n * 86400n;
+      const cSig = await signer.signCreateAuthorization({
+        signer: routeAuthority as Signer, chainId: CHAIN_ID, factoryAddress: A.factory, creator: probe.address, request: req,
+        factoryGeneration: fGen, tradeRouteProfileId: tradeProfile, finalizeRouteProfileId: finalizeProfile, deadline: cDeadline,
+      });
+      const longCreate = await revertName(
+        () => (factory.connect(probe) as any).createCampaignAuthorized.staticCall(req, { tradeRouteProfile: tradeProfile, finalizeRouteProfile: finalizeProfile, deadline: cDeadline, signature: cSig }),
+        ifaces,
+      );
+      check("audit: a 2-day create signature is refused (RouteAuthorizationTooLong)", longCreate === "RouteAuthorizationTooLong", { deadline: cDeadline, revert: longCreate });
+
+      // Audit 1: a buy too small to cost 1 wei reverts ZeroCost (it would pay no fee and still count as a buyer).
+      const dustAuth = await tradeAuth(campaign, buyer.address, ACT_BUY_TOKENS, 1n, 1n);
+      const dust = await revertName(() => (campaign.connect(buyer) as any).buyExactTokensAuthorized.staticCall(1n, 1n, tradeProfile, dustAuth.deadline, dustAuth.sig, { value: 1n }), ifaces);
+      check("audit: a dust buy (1 wei of token) reverts ZeroCost", dust === "ZeroCost", { tokens: 1, revert: dust });
+
+      // Audit 1: the factory has no receive(); a plain transfer reverts instead of being trapped.
+      const plain = await revertName(() => ethers.provider.call({ from: deployerAddr, to: A.factory, value: 1n }), ifaces);
+      check("audit: the factory refuses a plain native transfer (no receive())", plain !== "NO_REVERT", { revert: plain });
+
+      // Audit F1: the router's creator vault is set once; there is no propose/accept path.
+      const again = await revertName(() => (router as any).setCreatorRewardsVault.staticCall(A.vault), [router.interface]);
+      const hasPropose = !!router.interface.getFunction("proposeCreatorRewardsVault", undefined as any) || (await ethers.provider.getCode(A.router)).includes(ethers.id("proposeCreatorRewardsVault(address)").slice(2, 10));
+      const vaultRouter = await vault.router();
+      check("audit: router V4 creator vault is set once (second set reverts 'already set', no propose selector); vault.router immutable == router",
+        again === "already set" && !hasPropose && same(vaultRouter, A.router), { revert: again, proposeSelectorPresent: hasPropose, vaultRouter });
+
+      await holderBatchAudit(c.campaignAddr);
     }
-    check("C creator cannot claim holder fees (claimCreatorFees reverts NothingToClaim)", revertName === "NothingToClaim", { revert: revertName });
   }
 
-  await send("factory.setCreatePaused(true)", factory.setCreatePaused(true));
-  check("create paused again after the run (live latch stays)", (await factory.createPaused()) && (await factory.live()), {});
-
-  await sweep(deployer, ws, weth);
-  report.deployerAfter = (await ethers.provider.getBalance(deployerAddr)).toString();
-  report.ethSpentByDeployer = ethers.formatEther(BigInt(report.deployerBefore) - BigInt(report.deployerAfter));
-  report.accepted = report.checks.every((c: any) => c.pass);
-  report.finishedAt = new Date().toISOString();
-  saveReport();
-  console.log(`[gen6] ACCEPTED=${report.accepted} checks=${report.checks.length} spent=${report.ethSpentByDeployer} ETH`);
+  await closeRun();
 }
 
 main().catch((error) => {
