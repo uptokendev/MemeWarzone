@@ -30,7 +30,8 @@ interface ILpRevenueTreasuryRouter {
 /// so creator and protocol are paid in the paired asset only: WBNB on native pools, the quote token on
 /// quote-bound pools, both through today's paths (creator transfer with pending fallback, protocol via
 /// routeLpToken). What the bound does not allow in one harvest is carried (`carriedMeme`) into the next
-/// one; neither the bound nor a failed sale ever reverts a harvest.
+/// one; neither the bound nor a failed sale ever reverts a harvest. Too little gas does: below MIN_SALE_GAS
+/// at the sale the harvest reverts InsufficientSaleGas, so no caller can make the sale fail silently.
 /// Sandwich resistance. The bound alone (sale <= 5/6 * fee of the reserve) beats a sandwich only while the
 /// attacker pays the pool fee on its own trades; an attacker who is also an LP earns part of those fees back,
 /// and the bound is measured on the reserve its own dump just inflated (audit 3 M2, BSC fork). So the sale
@@ -52,6 +53,13 @@ contract PermanentLpLocker is ReentrancyGuard {
     uint16 public constant MEME_SALE_MAX_IMPACT_BPS = 50;
     /// @notice The sale is skipped (MEME carried) when spot is worse than the 30 min TWAP by more than this.
     uint16 public constant MEME_SALE_TWAP_DEV_BPS = 100;
+    /// @notice Gas harvest must still hold right before the MEME sale, or it reverts instead of selling.
+    /// harvest is permissionless and the sale runs inside a try: a caller who sends just enough gas makes
+    /// the sale run out of gas inside the try (EIP-150 keeps 1/64 for the caller), the catch carries the
+    /// MEME and the harvest succeeds, so a griefer could keep the MEME side from ever being sold. With the
+    /// guard a short harvest fails loudly and the next honest one sells. Measured sale cost and margin:
+    /// docs/evm-launch/spec/C1-C6-fees.md, "Harvest gas guard".
+    uint256 public constant MIN_SALE_GAS = 500_000;
 
     struct PoolRegistration {
         address campaign;
@@ -137,6 +145,7 @@ contract PermanentLpLocker is ReentrancyGuard {
     error LpPrincipalChanged();
     error NativeClaimFailed();
     error OnlySelf();
+    error InsufficientSaleGas();
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert OnlyAdmin();
@@ -252,7 +261,8 @@ contract PermanentLpLocker is ReentrancyGuard {
     }
 
     /// @notice Permissionless. Claims the pair's fees, sells the MEME side (bounded) for the paired asset in
-    /// the same pair, then splits the paired asset 80/20. Never reverts because of the bound or a failed sale.
+    /// the same pair, then splits the paired asset 80/20. Never reverts because of the bound or a failed sale;
+    /// reverts InsufficientSaleGas when called with too little gas left for the sale (MIN_SALE_GAS).
     /// @return collected0 token0 fees claimed now; collected1 token1 fees claimed now.
     function harvest(address pool) external nonReentrant returns (uint256 collected0, uint256 collected1) {
         PoolRegistration memory info = poolInfo[pool];
@@ -280,6 +290,8 @@ contract PermanentLpLocker is ReentrancyGuard {
             uint256 impactBps = saleImpactBps(_refreshPoolFee(pool, info.poolFeeBps));
             if (lastSaleBlock[pool] != block.number) {
                 lastSaleBlock[pool] = block.number;
+                // Checked last, so nothing between the check and the call eats into the sale's budget.
+                if (gasleft() < MIN_SALE_GAS) revert InsufficientSaleGas();
                 try this.sellMemeForPaired(pool, info.memeToken, memeToSell, impactBps) returns (uint256 sold_, uint256 out_) {
                     memeSold = sold_;
                     pairedOut = out_;

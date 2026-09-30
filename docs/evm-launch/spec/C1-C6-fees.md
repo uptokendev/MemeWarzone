@@ -481,12 +481,57 @@ registration value, which is what `CreatorRewardsVaultV2._poolParties` checks.
   goes `0 -> registration value` once, then only the creator changes it. Overflow: none. Griefing: none; a
   creator cannot be forced onto a wallet by someone else's registration (keys are the creator's own).
 
+**F9 (MEDIUM, Robinhood testnet run 2026-09-30): harvest gas guard, both lockers.** `harvest` is
+permissionless and runs the MEME sale as a self-call inside `try`. The call forwards 63/64 of the gas left
+(EIP-150) and keeps 1/64. When the harvest has little left to do after a failed sale (MEME already carried,
+no paired fee: one warm SSTORE and an event), that 1/64 is enough, so a caller who sends just too little
+gas makes the sale run out of gas inside the `try`. The `catch` carries the MEME, the harvest succeeds,
+and anyone can repeat it every block to stop the MEME side from ever being sold. On testnet a harvest sent
+with exactly `eth_estimateGas` reverted. The same gas sensitivity is what the grief uses. Fix:
+`uint256 public constant MIN_SALE_GAS = 500_000` and `error InsufficientSaleGas()` in
+`PermanentLpLocker` and `PermanentV3PositionLocker`. Right before the `try`, and after the
+`lastSaleBlock` write so that SSTORE does not come out of the budget, `if (gasleft() < MIN_SALE_GAS)
+revert InsufficientSaleGas();`. A short harvest now fails loudly and changes nothing, and the next honest
+harvest sells. Harvests with no MEME to sell, or in a block that already had a sale, never reach the
+check and need no extra gas.
+- **How the value was set.** The sale frame (`sellMemeForPaired`, including its TWAP reads, the swap and
+  the V3 callback) was measured with `callTracer` inside a real harvest on local mainnet forks
+  (`test/evmgen-fees-fork.spec.ts`, anvil, nothing sent to a network). BSC real Topaz volatile pool:
+  **98,891 gas** (whole harvest 410,571). Robinhood real Uniswap V3 at 0.30%: **89,610 gas** (whole harvest
+  470,819). Pessimistic worst case about 220k: a LaunchToken instead of the mock ERC20 (+2.1k cold
+  SLOAD), a costlier paired token such as a Robinhood stock token (about +60k per transfer), a tick
+  crossing inside the 0.5% band (at most one at spacing 60, about +50k), and a fresh oracle observation
+  slot (about +22k). 500k leaves the sale 63/64 of it, about 492k: 5x the measured cost and 2.2x the
+  pessimistic case. Both fork tests now assert `2 x measured <= MIN_SALE_GAS x 63/64`.
+- Reentrancy: unchanged (`nonReentrant`, and the check makes no external call). CEI: the check sits
+  between the `lastSaleBlock` write and the self-call. On revert both are undone.
+- Reachable states: only a harvest with MEME to sell in a block without a sale reaches the check. A
+  revert there leaves every state as it was (`carriedMeme`, `lastSaleBlock`, balances, pending).
+- Overflow: none (a compare).
+- Griefing: a low-gas caller can now only waste its own gas. It can no longer spend the block's sale
+  attempt or carry the MEME. The guard is a floor, not a cap: a pool whose real sale costs more than
+  about 492k (not reachable with the pools we register) would again be exposed to a caller who sends
+  exactly enough to pass the guard, which is why the margin is 2x the pessimistic case. Unchanged and
+  still recoverable: a caller who gives the post-sale split too little gas parks the protocol share in
+  `pendingProtocolToken` (permissionless retry) or the creator share in `pendingToken`. Neither was
+  seen at any gas limit in the sweep below.
+- Callers: wallets and the keeper must not send the bare `eth_estimateGas`. The estimate already includes
+  the guard now (a lower limit reverts), but the keeper uses `max(2 x estimate, 2,000,000)`.
+- Tests: `test/evmgen-fees-harvest-gas-guard.spec.ts`, 5 per locker. The exact minimum gas limit is
+  found by binary search over `eth_call`. `min - 1` reverts `InsufficientSaleGas` and changes nothing,
+  then `min` sells in full and splits 80/20 with no pending. A sweep from 150k to `min + 400k` finds that
+  every successful harvest sold in full. The griefing shape (MEME already carried, no paired fee, a sale
+  that costs about 350k via the mock pools' new `setSwapGasBurn` knob) is swept too. **With the guard set
+  to 0 that sweep fails on both lockers** (for example "gas 286409 carried the MEME"). With 500k it passes.
+  A harvest with nothing to sell succeeds below `MIN_SALE_GAS`. Sizes: `PermanentLpLocker` 11,350 B,
+  `PermanentV3PositionLocker` 13,044 B.
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |
 |---|---|---|---|---|---|
 | Router V4 `routeTrade` | none, same as V3; every call goes to a fixed vault | stateless | `!forwardingPaused` | 0.8 checked; `a*560` is safe for `a < 2^256/560` | pausing it halts trading, same as today |
-| Locker `harvest` (both) | `nonReentrant`; the sale is a self-only external call inside `try` | principal checked before and after collect; `carriedMeme` written after the sale's result; split last | registered pool, any time, permissionless | reserve*50 and sqrtP*r (r < 2^34) cannot overflow; `memeToSell - memeSold >= 0` (sold <= amount by construction: V2 min(), V3 pool pays <= `activeSwapMaxPay`) | a failed or bounded sale carries, never reverts; sandwich unprofitable (bound vs 2x0.30% fee); a creator recipient that rejects the token -> `pendingToken`, unchanged |
+| Locker `harvest` (both) | `nonReentrant`; the sale is a self-only external call inside `try` | principal checked before and after collect; `carriedMeme` written after the sale's result; split last | registered pool, any time, permissionless | reserve*50 and sqrtP*r (r < 2^34) cannot overflow; `memeToSell - memeSold >= 0` (sold <= amount by construction: V2 min(), V3 pool pays <= `activeSwapMaxPay`) | a failed or bounded sale carries, never reverts; too little gas at the sale reverts `InsufficientSaleGas` (F9), so no caller can force a carry; sandwich unprofitable (bound vs 2x0.30% fee); a creator recipient that rejects the token -> `pendingToken`, unchanged |
 | V3 `uniswapV3SwapCallback` (locker, vault) | only `msg.sender == activeSwapPool` (set just before the swap, cleared after) | pays at most the in-flight amount, in the in-flight token | only during a sale / vault swap | `owed > 0` and `<= maxPay` checked | any other caller reverts `UnexpectedCallback` |
 | `accrueTradeFee` | **no** guard, on purpose: the buyback's own fee re-enters it | no external call | choice set | checked add | never pausable. A revert here would revert every trade |
 | `claimCreatorFees` / `claimCreatorQuote` | `nonReentrant` | zero, then send | any | none | a creator that rejects native blocks only itself (tested: rejecting and re-entering creators) |

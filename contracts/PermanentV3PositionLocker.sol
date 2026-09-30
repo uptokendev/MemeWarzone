@@ -63,7 +63,8 @@ interface IRobinhoodV3LpRevenueTreasuryRouter {
 /// either never be available or fail open). The bound makes a plain sandwich unprofitable, but NOT one by an
 /// attacker who is also the dominant in-range LP and earns its own swap fees back (see EvmGenPoolSwap and
 /// the spec, F3 residual); one sale per block (F2) keeps it to one bounded sale per block. The unsold rest is carried (`carriedMeme`)
-/// into the next harvest, and neither the bound nor a failed sale ever reverts a harvest. Creator and
+/// into the next harvest, and neither the bound nor a failed sale ever reverts a harvest (too little gas
+/// does: below MIN_SALE_GAS at the sale it reverts InsufficientSaleGas instead of carrying). Creator and
 /// protocol are paid in the paired asset only: WETH on native pools, the stock token on stock-bound pools,
 /// both through today's paths (creator transfer with pending fallback, protocol via routeLpToken).
 contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
@@ -75,6 +76,13 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     uint16 private constant FEE_BPS = 10_000;
     /// @notice Max price impact of one harvest's MEME sale (0.50%), enforced by the swap's price limit.
     uint16 public constant MEME_SALE_MAX_IMPACT_BPS = 50;
+    /// @notice Gas harvest must still hold right before the MEME sale, or it reverts instead of selling.
+    /// harvest is permissionless and the sale runs inside a try: a caller who sends just enough gas makes
+    /// the sale run out of gas inside the try (EIP-150 keeps 1/64 for the caller), the catch carries the
+    /// MEME and the harvest succeeds, so a griefer could keep the MEME side from ever being sold. With the
+    /// guard a short harvest fails loudly and the next honest one sells. Measured sale cost and margin:
+    /// docs/evm-launch/spec/C1-C6-fees.md, "Harvest gas guard".
+    uint256 public constant MIN_SALE_GAS = 500_000;
 
     struct PoolRegistration {
         address campaign;
@@ -173,6 +181,7 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     error PositionPrincipalChanged();
     error RegisteredFeeAssetRecoveryBlocked();
     error OnlySelf();
+    error InsufficientSaleGas();
     error UnexpectedCallback();
 
     modifier onlyAdmin() {
@@ -376,6 +385,8 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
             uint256 pairedOut;
             if (lastSaleBlock[pool] != block.number) {
                 lastSaleBlock[pool] = block.number;
+                // Checked last, so nothing between the check and the call eats into the sale's budget.
+                if (gasleft() < MIN_SALE_GAS) revert InsufficientSaleGas();
                 try this.sellMemeForPaired(pool, memeIs0, memeToSell) returns (uint256 sold_, uint256 out_) {
                     memeSold = sold_;
                     pairedOut = out_;

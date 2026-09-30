@@ -35,6 +35,23 @@ async function events(contract: any, rc: any, name: string) {
     .filter((e: any) => e && e.name === name);
 }
 
+// Gas the sellMemeForPaired frame actually used inside the harvest (callTracer on the local fork), and the
+// harvest's own gasUsed. The locker's MIN_SALE_GAS guard must cover the frame with margin (see C1-C6-fees.md).
+async function saleGas(locker: any, rc: any) {
+  const trace: any = await ethers.provider.send("debug_traceTransaction", [rc.hash, { tracer: "callTracer" }]);
+  const selector = locker.interface.getFunction("sellMemeForPaired")!.selector;
+  const lockerAddr = (await locker.getAddress()).toLowerCase();
+  const found: any[] = [];
+  const walk = (c: any) => {
+    if (String(c.to).toLowerCase() === lockerAddr && String(c.input).startsWith(selector)) found.push(c);
+    for (const k of c.calls || []) walk(k);
+  };
+  walk(trace);
+  expect(found.length).to.equal(1);
+  expect(found[0].error).to.equal(undefined);
+  return { sale: BigInt(found[0].gasUsed), harvest: rc.gasUsed as bigint };
+}
+
 async function localRouter(owner: any) {
   const Receiver = await ethers.getContractFactory("TreasuryRouterV3ReceiverMock");
   const weekly = await Receiver.deploy();
@@ -112,6 +129,11 @@ async function localRouter(owner: any) {
     const sold = (await events(locker, rc, "MemeFeesSold"))[0].args;
     const harvested = (await events(locker, rc, "FeesHarvested"))[0].args;
     expect(harvested.token).to.equal(WBNB);
+    const gas = await saleGas(locker, rc);
+    const minSaleGas = await locker.MIN_SALE_GAS();
+    // The guard must leave the sale (63/64 of it, EIP-150) at least 2x what a real Topaz sale costs.
+    expect(gas.sale * 2n).to.be.lte((minSaleGas * 63n) / 64n);
+    console.log(`      BSC fork gas: sellMemeForPaired frame ${gas.sale}, whole harvest ${gas.harvest}, MIN_SALE_GAS ${minSaleGas}`);
     // MEME fees: 0.3% of 2M = 6000 MEME (minus the pool's own rounding); all within one harvest's 0.25% cap (50k).
     expect(sold.memeSold).to.be.gt(5_900n * E18);
     expect(sold.memeCarried).to.equal(0n);
@@ -193,6 +215,10 @@ async function localRouter(owner: any) {
     const sold = (await events(locker, rc, "MemeFeesSold"))[0].args;
     const harvested = (await events(locker, rc, "FeesHarvested"))[0].args;
     expect(harvested.token).to.equal(WETH);
+    const gas = await saleGas(locker, rc);
+    const minSaleGas = await locker.MIN_SALE_GAS();
+    expect(gas.sale * 2n).to.be.lte((minSaleGas * 63n) / 64n);
+    console.log(`      RH fork gas: sellMemeForPaired frame ${gas.sale}, whole harvest ${gas.harvest}, MIN_SALE_GAS ${minSaleGas}`);
     expect(sold.memeSold).to.be.gt(5_900n * E18);
     expect(sold.memeSold + sold.memeCarried).to.be.gte(5_900n * E18);
     // Price of MEME moved by at most 0.5% in the sale.
