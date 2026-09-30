@@ -39,8 +39,10 @@ async function main() {
     factory.campaignsCount(),
   ]);
 
-  if (Number(factoryGeneration) !== 4 || Number(campaignGeneration) !== 3) {
-    throw new Error(`on-chain generations ${factoryGeneration}/${campaignGeneration} are not frozen 4/3`);
+  if (Number(factoryGeneration) !== Number(freeze.factoryGeneration) || Number(campaignGeneration) !== Number(freeze.campaignGeneration)) {
+    throw new Error(
+      `on-chain generations ${factoryGeneration}/${campaignGeneration} are not frozen ${freeze.factoryGeneration}/${freeze.campaignGeneration}`,
+    );
   }
   if (!sameAddress(routeAuthority, freeze.routeAuthority)) {
     throw new Error(`on-chain routeAuthority ${routeAuthority} != frozen ${freeze.routeAuthority}`);
