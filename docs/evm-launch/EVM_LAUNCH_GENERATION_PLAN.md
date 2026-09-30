@@ -62,6 +62,13 @@ Written 2026-09-30. Every "today" fact cites the code on `build/dbc-staging` (`c
 - **E19. Unclaimed holder payouts go back to the same coin's holders** (founder, 2026-09-30), like the
   airdrop rule of 2026-09-27: after the claim window the Safe recovers them in a monthly batch and credits
   them back to each coin's holder balance in CreatorRewardsVaultV2, to be paid in a later week.
+- **E20. Deployment decisions** (founder, 2026-10-01: "we need to go live", Claude's recommendations
+  taken): D1 the creator-choice worker gets its own new operator key (not the payout operator
+  0xdcf07EB0…, which already sends from the API); D2 on opening day create is paused on the old BNB
+  (0xc378221E…, 0x632061cA…) and Robinhood factories, existing coins keep trading; D3 batch A (router
+  switch) and the opening happen on the same day, back to back.
+- **E21. One combined release** (founder, 2026-10-01): Solana DBC, the EVM gen 6/5 generation and the
+  live fixes go live together from branch `release/all-chains`.
   As built: `creditUnclaimedHolders` + `scripts/make-holder-recovery-batch.ts`, audit in
   `spec/C1-C6-fees.md` "E19".
 
