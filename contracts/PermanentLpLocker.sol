@@ -30,7 +30,9 @@ interface ILpRevenueTreasuryRouter {
 /// so creator and protocol are paid in the paired asset only: WBNB on native pools, the quote token on
 /// quote-bound pools, both through today's paths (creator transfer with pending fallback, protocol via
 /// routeLpToken). What the bound does not allow in one harvest is carried (`carriedMeme`) into the next
-/// one; neither the bound nor a failed sale ever reverts a harvest.
+/// one; neither the bound nor a failed sale ever reverts a harvest. No TWAP guard here (bytes: the factory's
+/// initcode embeds this contract and sits at the EIP-3860 limit): the 0.25%-of-reserve bound alone makes a
+/// sandwich around the permissionless harvest unprofitable (EvmGenPoolSwap; test evmgen-fees-locker-v2).
 contract PermanentLpLocker is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -44,8 +46,6 @@ contract PermanentLpLocker is ReentrancyGuard {
     uint16 internal constant FEE_BPS = 10_000;
     /// @notice Max price impact of one harvest's MEME sale (0.50%: sells <= 0.25% of the MEME reserve).
     uint16 public constant MEME_SALE_MAX_IMPACT_BPS = 50;
-    /// @notice The sale is skipped (carried) while spot is worse than the pair's 30 min TWAP by more than this.
-    uint16 public constant MEME_SALE_MAX_TWAP_DEVIATION_BPS = 100;
 
 
     struct PoolRegistration {
@@ -272,19 +272,9 @@ contract PermanentLpLocker is ReentrancyGuard {
     /// @dev Callable by this contract only. Not nonReentrant: it runs inside harvest's guard.
     function sellMemeForPaired(address pool, address memeToken, uint256 amount) external returns (uint256 sold, uint256 out) {
         if (msg.sender != address(this)) revert OnlySelf();
-        (sold, out) = EvmGenPoolSwap.v2Plan(pool, memeToken, amount, MEME_SALE_MAX_IMPACT_BPS, MEME_SALE_MAX_TWAP_DEVIATION_BPS);
+        (sold, out) = EvmGenPoolSwap.v2Plan(pool, memeToken, amount, MEME_SALE_MAX_IMPACT_BPS, 0);
         if (sold == 0) return (0, 0);
         EvmGenPoolSwap.v2Execute(pool, memeToken, sold, out, address(this));
-    }
-
-    /// @notice One view for CreatorRewardsVaultV2 (same shape on the V3 locker).
-    function poolParties(address pool)
-        external
-        view
-        returns (address campaign, address creator, address creatorFeeRecipient, address memeToken, address pairedToken, bool registered)
-    {
-        PoolRegistration storage info = poolInfo[pool];
-        return (info.campaign, info.creator, info.creatorFeeRecipient, info.memeToken, info.pairedToken, info.registered);
     }
 
     function claimPendingToken(address token) external nonReentrant returns (uint256 amount) {

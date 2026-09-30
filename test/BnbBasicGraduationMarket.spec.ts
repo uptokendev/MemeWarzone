@@ -84,6 +84,10 @@ async function deployCore() {
     basePrice: 1_000_000_000n,
     priceSlope: 850n,
     graduationTarget: ethers.parseEther("60"),
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: 3300,
   })).wait();
   await (await factory.setProtocolFee(200)).wait();
@@ -105,6 +109,10 @@ async function createNativeCampaign(core: Awaited<ReturnType<typeof deployCore>>
     website: "",
     extraLink: "",
     graduationTarget: ethers.parseEther("60"),
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
   };
   await (await factory.connect(creator).createCampaign(req)).wait();
   const info = await factory.getCampaign(0);
@@ -124,7 +132,7 @@ async function signBasicQuoteCreate(
   const { owner, creator, factory, quoteImpl } = core;
   const coder = ethers.AbiCoder.defaultAbiCoder();
   const reqHash = ethers.keccak256(coder.encode(
-    ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"],
+    ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint256", "uint256", "uint8", "uint8"],
     [
       ethers.keccak256(ethers.toUtf8Bytes(req.name)),
       ethers.keccak256(ethers.toUtf8Bytes(req.symbol)),
@@ -132,7 +140,7 @@ async function signBasicQuoteCreate(
       ethers.keccak256(ethers.toUtf8Bytes(req.xAccount)),
       ethers.keccak256(ethers.toUtf8Bytes(req.website)),
       ethers.keccak256(ethers.toUtf8Bytes(req.extraLink)),
-      req.graduationTarget,
+      req.graduationTarget, req.firstBuyTokens ?? 0n, req.firstBuyMaxCost ?? 0n, req.feeChoice ?? 1, req.feeCreatorPct ?? 0,
     ],
   ));
 
@@ -218,6 +226,10 @@ async function createQuoteCampaign(core: Awaited<ReturnType<typeof deployCore>>,
     website: "",
     extraLink: "",
     graduationTarget: ethers.parseEther("60"),
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
   };
   const catalogBinding = buildCatalogBinding(await quote.getAddress());
   const deadline = (await nowTs()) + 3600n;

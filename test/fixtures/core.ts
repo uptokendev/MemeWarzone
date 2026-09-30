@@ -84,8 +84,10 @@ export async function deployCoreFixture(): Promise<CoreFixture> {
 
   // _routeTrade calls accrueTradeFee(campaign) on the creator vault, so it has
   // to be the real contract rather than something that merely accepts value.
-  const CreatorVault = await ethers.getContractFactory("CreatorRewardsVault");
-  const creatorVault = await CreatorVault.deploy(await owner.getAddress(), await treasuryRouter.getAddress());
+  // EVM launch generation: the factory registers every campaign's fee choice on the router's creator
+  // vault (ICreatorRewardsVaultV2.setCampaignChoice), so the fixture uses the choice-aware stand-in.
+  const CreatorVault = await ethers.getContractFactory("MockCreatorRewardsVaultEvmGen");
+  const creatorVault = await CreatorVault.deploy();
   await creatorVault.waitForDeployment();
 
   await treasuryRouter.connect(owner).setRecruiterRewardsVault(await recruiterVault.getAddress());
@@ -106,6 +108,12 @@ export async function deployCoreFixture(): Promise<CoreFixture> {
   );
   await factory.waitForDeployment();
   const permanentLpLocker = await ethers.getContractAt("PermanentLpLocker", await factory.permanentLpLocker());
+  await creatorVault.setFactory(await factory.getAddress());
+  const graduationAdapter = await (await ethers.getContractFactory("MockGraduationAdapterEvmGen")).deploy(await v2factory.getAddress(), await owner.getAddress());
+  await graduationAdapter.setLocker(await permanentLpLocker.getAddress());
+  const tokenDeployer = await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy();
+  await factory.connect(owner).setNativeGraduationAdapter(await graduationAdapter.getAddress());
+  await factory.connect(owner).setLaunchTokenDeployer(await tokenDeployer.getAddress());
 
   // Most historical contract tests exercise direct campaign creation and direct trades.
   // Production deployments keep both authorization gates enabled by default.
@@ -119,8 +127,14 @@ export async function deployCoreFixture(): Promise<CoreFixture> {
     curveBps: 5000,
     liquidityTokenBps: 4000,
     basePrice: 10n ** 12n,
-    priceSlope: 10n ** 9n,
+    // 1e13 (was 1e9): the new generation refuses a target above 95% of what the curve raises;
+    // at $1/native the 1 USD target needs a curve that raises > 1.06 native.
+    priceSlope: 10n ** 13n,
     graduationTarget: ethers.parseEther("1"),
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: 8000
   });
 
@@ -148,5 +162,7 @@ export async function deployCoreFixture(): Promise<CoreFixture> {
     protocolVault,
     campaignImplementation,
     factory,
-  };
+    graduationAdapter,
+    tokenDeployer,
+  } as any;
 }

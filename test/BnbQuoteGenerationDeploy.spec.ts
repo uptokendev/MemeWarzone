@@ -130,6 +130,10 @@ describe("BNB quote generation deployment", function () {
       basePrice: 1_000_000_000n,
       priceSlope: 850n,
       graduationTarget: ethers.parseEther("30000"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 3300n,
     })).wait();
     await (await (factory as any).setProtocolFee(200n)).wait();
@@ -156,6 +160,10 @@ describe("BNB quote generation deployment", function () {
         basePrice: 0n,
         priceSlope: 0n,
         graduationTarget: 0n,
+        firstBuyTokens: 0n,
+        firstBuyMaxCost: 0n,
+        feeChoice: 1,
+        feeCreatorPct: 0,
         lpReceiver: ethers.ZeroAddress,
         initialBuyBnbWei: 0n,
       }),
@@ -214,6 +222,10 @@ describe("BNB quote generation deployment", function () {
       basePrice: 1_000_000_000n,
       priceSlope: 850n,
       graduationTarget: ethers.parseEther("30000"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 3300n,
     })).wait();
     await (await (factory as any).setProtocolFee(200n)).wait();
@@ -233,6 +245,10 @@ describe("BNB quote generation deployment", function () {
       basePrice: 0n,
       priceSlope: 0n,
       graduationTarget: 0n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       lpReceiver: ethers.ZeroAddress,
       initialBuyBnbWei: 0n,
     };

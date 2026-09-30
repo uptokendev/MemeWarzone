@@ -139,6 +139,10 @@ describe("BNB mainnet fork: corrected locker vs real Topaz", function () {
       basePrice: cfg.basePrice,
       priceSlope: cfg.priceSlope,
       graduationTarget: ethers.parseEther("15000"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: cfg.liquidityBps,
     });
     // FORK HARNESS ONLY. Isolates LaunchCampaign → Topaz → locker → harvest.
@@ -171,6 +175,10 @@ describe("BNB mainnet fork: corrected locker vs real Topaz", function () {
       website: "",
       extraLink: "",
       graduationTarget: ethers.parseEther("15000"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
     });
     await createTx.wait();
     const created = await factory.getCampaign(0n);

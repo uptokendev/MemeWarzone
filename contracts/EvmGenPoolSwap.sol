@@ -87,9 +87,11 @@ library EvmGenPoolSwap {
         if (sellIn == 0) return (0, 0);
         out = IEvmGenV2Pool(pool).getAmountOut(sellIn, tokenIn);
         if (out == 0) return (0, 0);
-        try IEvmGenV2Pool(pool).quote(tokenIn, sellIn, 1) returns (uint256 twapOut) {
-            if (out * BPS < twapOut * (BPS - maxTwapDevBps)) return (0, 0);
-        } catch {}
+        if (maxTwapDevBps != 0) {
+            try IEvmGenV2Pool(pool).quote(tokenIn, sellIn, 1) returns (uint256 twapOut) {
+                if (out * BPS < twapOut * (BPS - maxTwapDevBps)) return (0, 0);
+            } catch {}
+        }
     }
 
     /// @notice Executes a plan from v2Plan: pays `sellIn` into the pair and takes exactly `out` to `recipient`.

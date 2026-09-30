@@ -9,7 +9,9 @@ import {
     ICreatorRewardsVaultV2,
     IEvmGenCampaignForVault,
     IEvmGenFactoryForVault,
-    IEvmGenLockerForVault
+    IEvmGenLockerForVault,
+    IEvmGenV2LockerPoolInfo,
+    IEvmGenV3LockerPoolInfo
 } from "./interfaces/ICreatorRewardsVaultV2.sol";
 
 interface IEvmGenHolderDistributor {
@@ -22,10 +24,6 @@ interface IEvmGenV2PoolFactory {
 
 interface IEvmGenV3PoolFactory {
     function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address);
-}
-
-interface IEvmGenLockerPendingClaim {
-    function claimPendingToken(address token) external returns (uint256);
 }
 
 interface IEvmGenLaunchTokenTrading {
@@ -334,8 +332,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     /// @notice Permissionless. Attributes to `campaign` what the locker has paid this vault for its pool since
     /// the last sync, under the coin's choice. Binds the pool on first use. Idempotent.
     function syncLpFees(address pool) external nonReentrant returns (uint256 delta) {
-        (address campaign, address creatorKey, address recipient, , address paired, bool registered) =
-            IEvmGenLockerForVault(locker).poolParties(pool);
+        (address campaign, address creatorKey, address recipient, address paired, bool registered) = _poolParties(pool);
         if (!registered || creatorKey != campaign || recipient != address(this)) revert PoolMismatch();
         Cfg storage c = cfg[campaign];
         if (c.choice == Choice.Unset || c.choice == Choice.Keep) revert WrongChoice();
@@ -544,7 +541,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     /// during a harvest) the locker parked it as pendingToken[vault][token]; this pulls it here. It arrives
     /// unattributed (the locker only counts paid amounts), so it is excess until attributeExcessQuote.
     function pullLockerPending(address token) external nonReentrant returns (uint256) {
-        return IEvmGenLockerPendingClaim(locker).claimPendingToken(token);
+        return IEvmGenLockerForVault(locker).claimPendingToken(token);
     }
 
     /// @notice Admin: assigns quote tokens held above every liability to a non-keep campaign bound to that quote,
@@ -587,6 +584,19 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     }
 
     // ------------------------------------------------------------------ internal
+
+    /// @dev The two lockers' poolInfo getters differ in shape; the chain's DEX kind says which one is pinned.
+    function _poolParties(address pool)
+        internal
+        view
+        returns (address campaign, address creatorKey, address recipient, address paired, bool registered)
+    {
+        if (dexKind == DEX_TOPAZ_V2) {
+            (campaign, creatorKey, recipient, , , , , , , registered, , paired) = IEvmGenV2LockerPoolInfo(locker).poolInfo(pool);
+        } else {
+            (campaign, creatorKey, recipient, , , , , , , , , registered, , paired) = IEvmGenV3LockerPoolInfo(locker).poolInfo(pool);
+        }
+    }
 
     function _credit(address campaign, Cfg storage c, uint256 v) internal returns (uint256 toCreator, uint256 toHolders, uint256 toBuyback) {
         Choice ch = c.choice;

@@ -33,7 +33,7 @@ describe("route authority verifier helper edges", function () {
       "bytes32",
       "bytes32",
       "bytes32",
-      "uint256",
+      "uint256", "uint256", "uint256", "uint8", "uint8",
     ]);
   });
 

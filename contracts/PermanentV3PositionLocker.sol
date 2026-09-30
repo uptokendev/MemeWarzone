@@ -401,16 +401,6 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         EvmGenPoolSwap.v3PayOwed(info.memeToken, memeIs0, amount0Delta, amount1Delta, activeSwapMaxPay);
     }
 
-    /// @notice One view for CreatorRewardsVaultV2 (same shape on PermanentLpLocker).
-    function poolParties(address pool)
-        external
-        view
-        returns (address campaign, address creator, address creatorFeeRecipient, address memeToken, address pairedToken, bool registered)
-    {
-        PoolRegistration storage info = poolInfo[pool];
-        return (info.campaign, info.creator, info.creatorFeeRecipient, info.memeToken, info.pairedToken, info.registered);
-    }
-
     function claimPendingToken(address token) external nonReentrant returns (uint256 amount) {
         amount = pendingToken[msg.sender][token];
         if (amount == 0) revert ZeroAmount();

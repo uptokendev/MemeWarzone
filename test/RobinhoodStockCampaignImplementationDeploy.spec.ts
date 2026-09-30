@@ -91,6 +91,10 @@ describe("Robinhood stock campaign implementation deployment", function () {
     await factory.connect(creator).createCampaign({
       name: "Native Meme", symbol: "NATIVE", logoURI: "ipfs://native", xAccount: "", website: "", extraLink: "",
       graduationTarget: ethers.parseEther("60"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
     });
     expect(await factory.campaignsCount()).to.equal(1n);
 

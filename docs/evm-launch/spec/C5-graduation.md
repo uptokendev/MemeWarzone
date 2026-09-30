@@ -218,6 +218,50 @@ be called by anyone but pays only the router.
 
 **Crossing buy**: it makes no new external calls. It is unchanged except for the Pending effects.
 
+### As built (branch `claude/evm-core`), audit block updated to the code
+
+One implementation in `LaunchCampaign.graduate()` serves native, BNB quote and Robinhood stock coins
+(`BnbQuoteLaunchCampaign` / `RobinhoodStockLaunchCampaign` only add a `_beforeGraduate` binding check).
+
+- **Guard.** `graduate`, `claimCreatorGraduation`, `flushProtocolGraduationFee`, `rescueExcessNative` are `nonReentrant`.
+  A re-entering adapter or router hits `ReentrancyGuardReentrantCall` (tested for adapter -> `graduate`, router ->
+  `graduate` on the trade path and router -> `flush` on the finalize path).
+- **CEI as built.** (1) checks: not launched, `now >= launchAt`, due or Pending, pause honour window (72 h from
+  `pendingSince`), `_beforeGraduate`; (2) compute split, `T`, `budget`, `SupplyBound`; (3) effects: `launched`,
+  `graduationPending = false`, `finalizedAt`, beneficiary = `owner()`, `pendingCreatorGraduation += 19.8%`;
+  (4) `try routeFinalize{2.2%}` - on catch `pendingProtocolGraduationFee += 2.2%` (the only write after an external
+  call before the adapter, under the guard); (5) `enableTrading`, `forceApprove(adapter, budget)`, balance snapshots,
+  `adapter.graduate{poolNative}`, `forceApprove(adapter, 0)`, deltas; (6) verification (reverts everything);
+  (7) credit native back and quote back to the creator's pull balances, burn `budget - memeUsed`, pay the creator
+  reserve, write the state struct, `notifyCampaignGraduated` (the factory registers the pool with the locker, which
+  checks the canonical pool/fee/LP), emit.
+- **Verification (balance deltas).** `memeUsed = balance before - after` (the adapter can only pull up to the
+  allowance `budget`); `res.pool != 0`, `memeUsed > 0`, `res.memeUsed == memeUsed`. Native path only:
+  `memeUsed >= memeTarget`; `nativeBack <= poolNative / 1e4` unless `memeBack == 0`; `start >= P*(1-50bps)` always and
+  `start <= P*(1+50bps)` unless `memeBack == 0`. `start` is the adapter's `startPriceWad` (pool state after the mint):
+  the campaign cannot read a V2 or V3 pool generically without DEX code, so this one value is trusted from the
+  factory-set adapter. Quote paths: the adapter enforces the USD band (C7) and sizes MEME from the quote actually
+  acquired, so `memeUsed < memeTarget` is allowed there; `nativeUsdWad` is `GraduationOracle.nativeUsdPrice()`.
+- **Reachable states.** Pending, or Trading when due (then it marks Pending in the same call). Never before `launchAt`.
+  Claims and flush: after graduation only (the beneficiary is zero before). Rescue: after graduation only, and only
+  `balance - pendingCreatorGraduation - pendingProtocolGraduationFee`.
+- **Overflow.** `R <= A(700M) ~ 2.7e20`; `R*1980 < 1e24`; `P >= basePrice > 0`; `start * 1e4` and `P * 10050` are far
+  below 2^256 for any real price; `x*x` bound unchanged (factory caps supply at 1e27). Factory-side curve math uses
+  plain checked arithmetic: `MAX_PRICE_SLOPE` is lowered to 1e22 so `slope * x^2 <= 1e76` and the floors equal the
+  campaign's `mulDiv` results exactly.
+- **Griefing.** A creator wallet that rejects native is not in the path (pull, any recipient; tested). A paused or
+  reverting router is caught and escrowed; the flush is permissionless and reverts (keeping the escrow) while the
+  router still refuses. An adapter/oracle failure reverts the call and leaves Pending intact for anyone to retry.
+  `claimCreatorGraduation(to, includeQuote=false)` lets the native out while a paused or blocklisting quote token
+  refuses transfers. Donations never change `R` (accounting).
+- **Supply bound (factory).** `_validateConfig` checks `T(curveSupply) <= liquiditySupply` with the campaign's exact
+  integer arithmetic (`SupplyBoundBroken`); the constructor defaults are 7000/2800, base 1e9, slope 1080 (V2 = BNB) or
+  850 (V3 = Robinhood). Create refuses `nativeTargetForUsd(target) > 95% * A(curveSupply)` (`TargetOutOfRangeAtPrice`)
+  and an oracle revert (`OraclePriceUnavailable`).
+- **Not built (founder):** Q3, the native fallback for a quote coin whose route stays dead (marked `TODO(founder)` in
+  `graduate()`). **Not built (interface):** C7-robinhood's chunked `repairPool`/`repairStep`; the fixed
+  `IGraduationAdapterV2` has only `graduate`, so a V3 repair must fit in one transaction.
+
 ## 5. Invariants
 
 1. `protocol + creator + poolNative == R`, and after graduation

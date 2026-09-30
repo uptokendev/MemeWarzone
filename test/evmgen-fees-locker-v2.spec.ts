@@ -116,19 +116,12 @@ describe("evmgen fees: PermanentLpLocker native-only harvest (E9, Topaz V2)", fu
     expect(r1.meme - r0.meme).to.equal(memeFee);
   });
 
-  it("skips the sale (carries) while spot is >1% worse than the TWAP, still pays the paired side, and resumes", async function () {
+  it("sells regardless of the pair's TWAP (no TWAP guard in the locker; the reserve bound carries the sandwich argument)", async function () {
     const f = await setup();
     await f.fundFees(100n * E18, 2n * E18);
-    // TWAP says MEME is worth 3% more than spot: selling now would be at a manipulated low.
     const r = await f.reserves();
     const tw = { meme: (r.meme * 100n) / 103n, paired: r.paired };
     await f.pair.setTwapReserves(f.memeIs0 ? tw.meme : tw.paired, f.memeIs0 ? tw.paired : tw.meme);
-    await f.locker.harvest(await f.pair.getAddress());
-    expect(await f.locker.carriedMeme(await f.pair.getAddress())).to.equal(100n * E18);
-    expect(await f.paired.balanceOf(f.recipient.address)).to.equal((2n * E18 * 8000n) / 10000n);
-    // TWAP within 1%: the carried MEME is sold on the next harvest.
-    const tw2 = { meme: (r.meme * 1000n) / 1005n, paired: r.paired };
-    await f.pair.setTwapReserves(f.memeIs0 ? tw2.meme : tw2.paired, f.memeIs0 ? tw2.paired : tw2.meme);
     await f.locker.harvest(await f.pair.getAddress());
     expect(await f.locker.carriedMeme(await f.pair.getAddress())).to.equal(0n);
   });

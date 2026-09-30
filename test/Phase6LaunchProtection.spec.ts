@@ -18,6 +18,10 @@ const req = (overrides: Record<string, unknown> = {}) => ({
   basePrice: ethers.parseEther("0.001"),
   priceSlope: 1n,
   graduationTarget: ethers.parseEther("100"),
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
@@ -34,6 +38,10 @@ async function createProtectedCampaign(overrides: Record<string, unknown> = {}) 
     basePrice: ethers.parseEther("0.001"),
     priceSlope: 1n,
     graduationTarget: ethers.parseEther("100"),
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: 8000,
   });
   await factory
