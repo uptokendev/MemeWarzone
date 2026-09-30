@@ -334,7 +334,13 @@ export async function deployFeesStack(signer: any, p: Pick<ChainPins, "safe" | "
   const Dist = await ethers.getContractFactory("RewardDistributor", signer);
   const holderDistributor = await Dist.deploy(p.safe);
   await holderDistributor.waitForDeployment();
-  return { router: routerAddress, vault: await vault.getAddress(), holderDistributor: await holderDistributor.getAddress() };
+  const blockOf = async (c: any) => Number((await c.deploymentTransaction()?.wait())?.blockNumber ?? 0);
+  return {
+    router: routerAddress,
+    vault: await vault.getAddress(),
+    holderDistributor: await holderDistributor.getAddress(),
+    deployBlocks: { router: await blockOf(router), vault: await blockOf(vault), holderDistributor: await blockOf(holderDistributor) },
+  };
 }
 
 function readJson(file: string): Json {
@@ -405,13 +411,13 @@ export async function main() {
 
   const [deployer] = await ethers.getSigners();
   console.log(`[fees-v4] chain ${pins.chainId} deployer ${await deployer.getAddress()} admin/owner = Safe ${pins.safe}`);
-  const d = await deployFeesStack(deployer, pins);
+  const { deployBlocks, ...d } = await deployFeesStack(deployer, pins);
   console.log(`[fees-v4] TreasuryRouterV4 ${d.router}\n[fees-v4] CreatorRewardsVaultV2 ${d.vault}\n[fees-v4] holder RewardDistributor ${d.holderDistributor}`);
 
   fs.mkdirSync(path.dirname(feesFile), { recursive: true });
   fs.writeFileSync(
     feesFile,
-    `${JSON.stringify({ chainId: pins.chainId, deployedAt: new Date().toISOString(), contracts: d, caps: Object.fromEntries(Object.entries(caps).map(([k, v]) => [k, v.toString()])) }, null, 2)}\n`,
+    `${JSON.stringify({ chainId: pins.chainId, deployedAt: new Date().toISOString(), contracts: d, deployBlocks, caps: Object.fromEntries(Object.entries(caps).map(([k, v]) => [k, v.toString()])) }, null, 2)}\n`,
   );
   writeBatch(rehearsalPath(path.join(outDir, "mainnet.evmgen-fees.A.safe-batch.json")), pins.chainId, "MWZ fees V4: A wiring", "Router V4 vaults, community vault -> V4, holder distributor, vault operator/caps (no holder batch pre-authorized)", batchACalls(pins, d, caps));
   console.log(`[fees-v4] wrote ${feesFile}`);
