@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @notice Topaz (Velodrome V2 style) volatile pool surface used for bounded swaps.
 /// Verified against BSC mainnet pool 0xe030E948... (USDT/WBNB) on 2026-09-30: getReserves returns three
@@ -55,9 +56,9 @@ interface IEvmGenWrappedNative {
 /// @dev Internal library: inlined into each caller, no linking, no storage of its own.
 ///
 /// The bound. Selling x into a constant-product reserve r moves the marginal price by ~2x/r. The V2 plan sells
-/// at most r * maxImpactBps / 20000 per call, so a 50 bps bound sells <= 0.25% of the reserve. V3 uses a
-/// sqrtPriceLimitX96 at sqrt(1 -/+ maxImpactBps), so the pool itself stops the swap at the bound (partial
-/// fill, no revert); the caller keeps the rest.
+/// at most r * maxImpactBps / 20000 per call, so a 50 bps bound sells <= 0.25% of the reserve (price move
+/// 1 - 1/1.0025^2 = 0.499%). V3 uses a sqrtPriceLimitX96 at sqrt(1 -/+ maxImpactBps), rounded inward, so the
+/// pool itself stops the swap at the bound (partial fill, no revert); the caller keeps the rest.
 ///
 /// Why a bounded sale cannot be sandwiched at a profit. To move the price by d the attacker trades about
 /// r*d/2 and pays the pool fee (0.30%) twice: ~0.003*r*d. The most the attacker can extract is our sale
@@ -113,8 +114,9 @@ library EvmGenPoolSwap {
             int256 dev = int256(maxTwapDevBps);
             if (has && (zeroForOne ? int256(tick) < avg - dev : int256(tick) > avg + dev)) return (false, 0);
         }
-        uint256 f = zeroForOne ? BPS - maxImpactBps / 2 : BPS + maxImpactBps / 2;
-        uint256 l = (uint256(sqrtP) * f) / BPS;
+        // sqrt(1 -/+ impact) with 9 decimals, rounded so the pool always stops at or before the bound.
+        uint256 r = Math.sqrt((zeroForOne ? BPS - maxImpactBps : BPS + maxImpactBps) * 1e14);
+        uint256 l = zeroForOne ? (uint256(sqrtP) * (r + 1) + 1e9 - 1) / 1e9 : (uint256(sqrtP) * r) / 1e9;
         if (l < MIN_SQRT_RATIO_PLUS_ONE) l = MIN_SQRT_RATIO_PLUS_ONE;
         if (l > MAX_SQRT_RATIO_MINUS_ONE) l = MAX_SQRT_RATIO_MINUS_ONE;
         return (true, uint160(l));

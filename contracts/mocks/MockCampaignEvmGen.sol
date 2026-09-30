@@ -52,6 +52,7 @@ contract MockCampaignEvmGen {
     bool public launched;
     bool public graduationPending;
     bytes32 public expectedSig;
+    bool public forceGraduationOnBuy;
     mapping(bytes32 => bool) public used;
 
     constructor(address router_, uint256 target_) {
@@ -75,6 +76,23 @@ contract MockCampaignEvmGen {
     function graduate() external {
         launched = true;
         token.enableTrading();
+    }
+
+    /// @dev Routes a trade fee as this campaign (what a trader's buy would do).
+    function payFee(uint8 profile) external payable {
+        IMockRouterTradeEvmGen(router).routeTrade{value: msg.value}(profile);
+    }
+
+    function setForceGraduationOnBuy(bool v) external {
+        forceGraduationOnBuy = v;
+    }
+
+    function setTarget(uint256 target_) external {
+        graduationNativeTarget = target_;
+    }
+
+    function setSlope(uint256 slope_) external {
+        slope = slope_;
     }
 
     function mintTo(address to, uint256 amount) external {
@@ -115,7 +133,7 @@ contract MockCampaignEvmGen {
             (bool ok, ) = msg.sender.call{value: msg.value - totalSpent}("");
             require(ok, "refund");
         }
-        if (netRaisedWei >= graduationNativeTarget) graduationPending = true;
+        if (netRaisedWei >= graduationNativeTarget || forceGraduationOnBuy) graduationPending = true;
     }
 
     receive() external payable {}

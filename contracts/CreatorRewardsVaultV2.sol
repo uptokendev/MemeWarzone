@@ -490,16 +490,19 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     }
 
     /// @notice Post-graduation buyback in the coin's own locked pool, MEME output to DEAD.
-    /// Native pool: spends the native buyback balance. Quote-bound pool (E10): spends the quote buyback balance.
+    /// Native pool: spends the native buyback balance (per-tx and weekly native caps apply). Quote-bound pool
+    /// (E10): spends the quote buyback balance; the native caps were already charged when that quote was bought
+    /// (convertBuybackNativeToQuote) and LP quote is bounded per swap by the impact limit and the interval.
     function buybackPool(address campaign, uint256 amountIn) external onlyOperator nonReentrant returns (uint256 spent, uint256 burned) {
         Cfg storage c = cfg[campaign];
         if (c.choice != Choice.Buyback) revert WrongChoice();
         if (c.pool == address(0)) revert PoolMismatch();
-        if (amountIn == 0 || amountIn > maxBuyPerTx) revert CapExceeded();
+        if (amountIn == 0) revert Insufficient();
         _checkInterval(campaign);
         address tokenIn;
         if (c.quote == address(0)) {
             if (amountIn > buybackBalance[campaign]) revert Insufficient();
+            if (amountIn > maxBuyPerTx) revert CapExceeded();
             _useWeekCap(campaign, amountIn);
             tokenIn = wrappedNative;
             IEvmGenWrappedNative(wrappedNative).deposit{value: amountIn}();
