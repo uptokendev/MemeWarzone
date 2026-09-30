@@ -77,6 +77,7 @@ import solanaCampaignAccount from "./solanaCampaignAccount.js";
 import solanaHolders from "./solanaHolders.js";
 import solanaCreatorFees from "./solanaCreatorFees.js";
 import evmCreatorFees from "./evmCreatorFees.js";
+import { evmBuybackAuthorization, evmCreatorChoiceWeeks, evmHolderBatch } from "./evmCreatorChoice.js";
 import evmCampaignState from "./evmCampaignState.js";
 import { solanaTradeAuthorizationV1, solanaTradeStatus } from "./dev-fix/solana-trade-authorization-v1.js";
 import { solanaGraduationAuthorizationV1 } from "./dev-fix/solana-graduation-authorization-v1.js";
@@ -480,6 +481,10 @@ router.all("/solana/graduation-handoff", wrap(solanaGraduationHandoff));
 router.all("/solana/trade-status", wrap(solanaTradeStatus));
 router.all("/solana/creator-fees", wrap(solanaCreatorFees));
 router.all("/evm/creator-fees", wrap(evmCreatorFees));
+router.get("/evm/creator-choice", wrap(evmCreatorChoiceWeeks));
+router.get("/evm/holder-batch", wrap(evmHolderBatch));
+// Internal, own shared secret (EVM_CREATOR_CHOICE_API_SECRET): the vault buyback trade authorization.
+router.post("/internal/evm/creator-choice/buyback-authorization", wrap(evmBuybackAuthorization));
 router.all("/evm/campaign-state", wrap(evmCampaignState));
 router.all("/solana/vote-ingest", wrap(solanaVoteIngest));
 router.all("/drafts/:draftId/follow", wrap(signedDraftFollow));

@@ -24,6 +24,9 @@ async function fixture() {
     await (await topaz.createPool(await wbnb.getAddress(), await q.getAddress(), stable)).wait();
     await (await (wbnb as any).deposit({ value: ethers.parseEther(wbnbDepth) })).wait();
     await (await (wbnb as any).transfer(pool, ethers.parseEther(wbnbDepth))).wait();
+    // Quote side at the $800 feed, synced: the adapter reads reserves when a route is enabled (L3).
+    await (await q.transfer(pool, ethers.parseEther(wbnbDepth) * 800n)).wait();
+    await (await (await ethers.getContractAt("MockTopazPool", pool)).sync()).wait();
     const feed = await feedAt("1", await now());
     return { symbol: sym, quoteToken: await q.getAddress(), oracleFeed: await feed.getAddress(), acquisitionPool: pool, feed };
   };

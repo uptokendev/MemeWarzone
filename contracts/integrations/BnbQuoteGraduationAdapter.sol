@@ -239,7 +239,7 @@ contract BnbQuoteGraduationAdapter is IGraduationAdapterV2, ReentrancyGuard {
     /// lower the four bps caps (each <= 100), raise the liquidity floor, or disable the route.
     ///
     /// AUDIT (`configureQuoteRoute`):
-    /// - Reentrancy: no external calls that send value. Views: `getPool`, `stable`, `code.length`.
+    /// - Reentrancy: no external calls that send value. Views: `getPool`, `stable`, `code.length`, and on enable `getReserves`, `token0`/`token1`, `decimals`, `latestRoundData`.
     /// - CEI: storage write is the last effect; the event follows.
     /// - Reachable states: only `admin`. First configure (`oracleFeed == 0`) accepts any feed and
     ///   any limits in (0, 100] for slippage and [0, 100] for the other three bps fields. A later
@@ -247,6 +247,9 @@ contract BnbQuoteGraduationAdapter is IGraduationAdapterV2, ReentrancyGuard {
     ///   cap or lowers the liquidity floor reverts `RouteLimitLoosened`. Disable (`enabled = false`)
     ///   is always a tightening. Re-enable is allowed when every limit is the same or tighter.
     ///   The acquisition pool must stay the canonical volatile WBNB/quote Topaz pool.
+    ///   Enabling (first enable, or re-enable after a disable) also requires both feeds healthy and
+    ///   the acquisition pool at or above `minimumRouteLiquidityUsdWad` (`RouteLiquidityTooLow`),
+    ///   so a thin route cannot accept bindings that would only ever reach the native fallback.
     /// - Overflow: uint16 caps compared as uint16; `minimumRouteLiquidityUsdWad` is uint256.
     /// - Griefing: a leaked admin key cannot retarget the feed or open the sandwich bound past
     ///   100 bps. The worst it can do is disable the route, after which E12's native fallback
@@ -280,6 +283,14 @@ contract BnbQuoteGraduationAdapter is IGraduationAdapterV2, ReentrancyGuard {
                     || route.maxGraduationPriceDeviationBps > existing.maxGraduationPriceDeviationBps
                     || route.minimumRouteLiquidityUsdWad < existing.minimumRouteLiquidityUsdWad
             ) revert RouteLimitLoosened();
+        }
+        // L3: a route cannot go live below its own floor. Checked on the first enable and on every
+        // re-enable; a tightening call on an already-enabled route is not blocked by it, so the
+        // admin can always raise the floor (graduate() re-checks it every time).
+        if (route.enabled && !existing.enabled) {
+            _requireRouteLiquidity(
+                quoteToken, route, _oraclePriceWad(nativeUsdOracle), _oraclePriceWad(route.oracleFeed)
+            );
         }
 
         quoteRoutes[quoteToken] = route;
