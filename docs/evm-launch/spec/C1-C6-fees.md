@@ -305,6 +305,21 @@ on the V3 locker's MEME sale when MEME is token0: MEME may fall by `1 - 1/1.005 
 pure arithmetic on `BPS <= 1e4` and `impact <= 50` (`1e4 * 1e18` fits easily). Pinned in both
 orientations by `test/evmgen-hardening-locker-binding.spec.ts` ("V3 impact bound").
 
+**Size cleanup (2026-09-30, `claude/evm-core`).** `CreatorRewardsVaultV2` runtime 24,518 -> 22,307
+bytes, no behaviour change: the `holderBatchLegs` view is removed (the legs are the calldata of
+the propose transaction and are still stored for execution); all 11 constants
+(`DEX_TOPAZ_V2`, `DEX_UNISWAP_V3`, `DEAD`, `BUYBACK_ROUTE_PROFILE`, `MAX_IMPACT_BPS_LIMIT`,
+`TWAP_DEVIATION_BPS`, `TWAP_WINDOW`, `FLAT_TRADE_FEE_BPS`, `MAX_CURVE_PROGRESS_BPS`,
+`MAX_BATCH_CAMPAIGNS`, `MIN_HOLDER_BATCH_DELAY`) are `internal`; and the getters nothing outside the
+contract reads are `internal`: `lpSynced`, `heldTokenAsset`, `holderBatches`, `buybackWeek`,
+`lastBuybackAt`, `holderWeek`, `holderProposedInWeek`, `operatorPaused`, `maxBuyPerTx`,
+`maxBuybackPerCampaignWeek`, `minBuyInterval`, `maxHolderBatchPerWeek` (the last five are emitted in
+`OperatorUpdated` / `CapsUpdated`). Still public because scripts, tests or the app read them:
+balances and quote balances, `heldBuybackTokens`, `quoteRoutePool`, `quoteLiabilities`,
+`totalLiabilities`, `buybackSpentInWeek`, `maxImpactBps`, `cfg`, `isKeep`, and the addresses
+(`admin`, `router`, `factory`, `locker`, `holderDistributor`, `operator`, `wrappedNative`,
+`dexKind`, `dexFactory`, `holderBatchDelay`). Logic, errors and the TWAP guard are untouched.
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |

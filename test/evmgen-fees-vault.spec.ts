@@ -93,6 +93,16 @@ async function base() {
 }
 
 describe("evmgen fees: CreatorRewardsVaultV2 choice and accrual", function () {
+  it("limits() reports the operator limits exactly as setCaps and setOperator wrote them", async function () {
+    const f = await base();
+    let l = await f.vault.limits();
+    expect([l[0], l[1], l[2], l[3], l[4], l[5]]).to.deep.equal([false, E18, 3n * E18, 3600n, 50n, 10n * E18]);
+    await f.vault.setCaps(2n * E18, 5n * E18, 21600, 40, 20n * E18);
+    await f.vault.setOperator(await f.vault.operator(), true);
+    l = await f.vault.limits();
+    expect([l[0], l[1], l[2], l[3], l[4], l[5]]).to.deep.equal([true, 2n * E18, 5n * E18, 21600n, 40n, 20n * E18]);
+  });
+
   it("the choice is set once, by the factory only, with pct only for split", async function () {
     const f = await base();
     const { campaign } = await f.campaignWith(KEEP);
