@@ -50,6 +50,12 @@ Written 2026-09-30. Every "today" fact cites the code on `build/dbc-staging` (`c
   per buyback $500 (0.65 BNB / 0.19 ETH); max buyback per coin per week $5,000 (6.5 BNB / 1.9 ETH);
   max holder payout per week, all coins, $25,000 (32 BNB / 9.3 ETH); Safe pre-approval per weekly
   holder batch $25,000 (32 BNB / 9.3 ETH). Prices used: BNB $767, ETH $2,695 (2026-09-30).
+- **E16. No paid external audit for this release** (founder, 2026-09-30: budget). Replaced by an internal
+  adversarial audit before mainnet: separate agents that did not write the code attack one money path
+  each, and every finding is reproduced in a test before it is fixed. Damage is further bounded by the
+  E15 caps, the Safe as admin, and M1's route limits.
+- **E17. Testnet runs are authorized for Claude with the testnet deployer key** (founder, 2026-09-30),
+  Robinhood testnet 46630 first, BSC testnet 97 after Grok's brief 2. Mainnet stays founder-only.
 
 ## Target economics, one table
 
