@@ -85,8 +85,9 @@ export function dayMoments(secret: string, chainId: number, campaign: string, da
 }
 
 /**
- * The latest moment that has passed (yesterday or today) and is not in `used`: at most one action per coin
- * per pass. Keys are "YYYY-MM-DD:i" (i = the moment's rank that day).
+ * The latest moment that has passed (yesterday or today), if it is not in `used`. Moments are never caught up:
+ * a moment missed (worker down, interval, nothing to spend) is simply skipped, so a buy never lands at a time that
+ * anyone could predict from the previous one. Keys are "YYYY-MM-DD:i" (i = the moment's rank that day).
  */
 export function dueMomentKey(input: {
   masterSecret: string;
@@ -97,17 +98,17 @@ export function dueMomentKey(input: {
   kind?: "buyback" | "convert";
   used: Set<string>;
 }): string | null {
-  let due: string | null = null;
+  let latest: { at: number; key: string } | null = null;
   for (const day of [new Date(input.now.getTime() - DAY_MS), input.now]) {
     const secret = weekSecret(input.masterSecret, input.chainId, weekOf(day).weekId);
     const moments = dayMoments(secret, input.chainId, input.campaign, day, input.perDay, input.kind ?? "buyback");
     for (let i = 0; i < moments.length; i += 1) {
-      if (moments[i].getTime() > input.now.getTime()) continue;
-      const key = `${moments[i].toISOString().slice(0, 10)}:${i}`;
-      if (!input.used.has(key)) due = key;
+      const at = moments[i].getTime();
+      if (at > input.now.getTime()) continue;
+      if (!latest || at >= latest.at) latest = { at, key: `${moments[i].toISOString().slice(0, 10)}:${i}` };
     }
   }
-  return due;
+  return latest && !input.used.has(latest.key) ? latest.key : null;
 }
 
 // ------------------------------------------------------------------------------------ vault limits

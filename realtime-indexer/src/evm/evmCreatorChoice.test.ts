@@ -66,14 +66,11 @@ test("seed: one secret per chain and week, its sha256 is the commitment, and eve
   assert.notDeepEqual(dayMoments(s56, 56, C, day, 4, "convert"), moments);
 });
 
-test("dueMomentKey: the latest passed moment that is not used, never a future one", () => {
+test("dueMomentKey: only the latest passed moment, once; missed moments are not caught up; never a future one", () => {
   const now = new Date("2026-09-30T23:59:59Z");
   const k = dueMomentKey({ masterSecret: "m", chainId: 56, campaign: C, now, perDay: 4, used: new Set() });
   assert.equal(k, "2026-09-30:3");
-  const k2 = dueMomentKey({ masterSecret: "m", chainId: 56, campaign: C, now, perDay: 4, used: new Set([k!]) });
-  assert.equal(k2, "2026-09-30:2");
-  const all = new Set(["2026-09-29:0", "2026-09-29:1", "2026-09-29:2", "2026-09-29:3", "2026-09-30:0", "2026-09-30:1", "2026-09-30:2", "2026-09-30:3"]);
-  assert.equal(dueMomentKey({ masterSecret: "m", chainId: 56, campaign: C, now, perDay: 4, used: all }), null);
+  assert.equal(dueMomentKey({ masterSecret: "m", chainId: 56, campaign: C, now, perDay: 4, used: new Set([k!]) }), null);
   // Before the first moment of the day only yesterday's can be due.
   const secret = weekSecret("m", 56, weekOf(new Date("2026-09-30T00:00:00Z")).weekId);
   const first = dayMoments(secret, 56, C, new Date("2026-09-30T00:00:00Z"), 4)[0];

@@ -201,7 +201,14 @@ async function finishJob(db: Queryable, chain: ChoiceChain, chainId: number, row
       const matches = ev && lc(ev.root) === lc(String(batch.root)) && ev.total.toString() === String(batch.total_raw);
       if (!matches) {
         console.error("[evm-choice] proposed batch on chain does not match the published leaf file", { chainId, batchId: row.subject, event: ev && { root: ev.root, total: ev.total.toString() } });
-        await setBatch(db, chainId, batch.week_id, "failed", "proposal event does not match the leaf file");
+        // Something other than the published file is on chain under this id: never rebuilt automatically (the id is
+        // taken on chain); the Safe vetoes it and a person looks.
+        await db.query(
+          `update public.evm_holder_batches set status = 'failed', attempt = 1000, last_reason = $3, updated_at = now()
+            where chain_id = $1 and week_id = $2`,
+          [chainId, batch.week_id, "the proposal on chain does not match the published leaf file: veto it"],
+        );
+        await archiveRewardBatch(db, batch.reward_batch_id, "proposal on chain does not match the leaf file");
         return;
       }
       await db.query(
