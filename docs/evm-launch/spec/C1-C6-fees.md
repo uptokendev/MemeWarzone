@@ -444,6 +444,20 @@ executes -> holders claim on the holder distributor.
   already able to veto; it still cannot redirect holder money except by approving a bad root, which is now
   an explicit signed act rather than silence.
 
+**F6 (LOW, audit 4 L1): only what `pullLockerPending` pulled can be attributed or rescued.** LP quote the
+locker has paid the vault but `syncLpFees` has not credited yet sits above `quoteLiabilities`, so
+`attributeExcessQuote` (to another campaign) and `rescueExcessToken` could take it, leaving the owning
+campaign's later sync insolvent. New `pulledUnattributed[token]` (public): `pullLockerPending` records the
+balance delta its `claimPendingToken` call produced (robust to fee-on-transfer tokens); both admin paths go
+through `_usePulled`, which requires `amount <= pulledUnattributed[token]` and `amount <= balance -
+quoteLiabilities[token]`, then decrements. Consequence: a token sent to the vault by mistake is not
+rescuable (it is not user money; the safer failure).
+- Reentrancy: `pullLockerPending` stays `nonReentrant`; the locker's `claimPendingToken` pays
+  `msg.sender` only. CEI: balance read, external claim, balance read, one counter write. Reachable: pull is
+  permissionless; attribute/rescue admin only. Overflow: `after - before` cannot underflow for a sane ERC20
+  (a token whose balance drops on receipt reverts the pull). Griefing: anyone can pull at any time, which
+  only moves the vault's own pending into the vault and makes it attributable.
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |
@@ -457,7 +471,7 @@ executes -> holders claim on the holder distributor.
 | holder convert/propose/approve/execute/veto | `nonReentrant` (approve: admin, no external call) | debit, then store, then `createBatch` | Proposed -> (Approved) -> Executed, or Vetoed | caps checked; total < 2^128 | operator key: the Safe approves the exact root + total (F5), 24 h veto, weekly cap, the distributor's `authorizeBatch` max and window |
 | `buybackCurve` | `nonReentrant` | debit, call, credit refund from the returned `spent`, post-check | pre-grad, fee flat 2%, <= 95% progress | checked | sandwich bounded by 0.5% impact vs ~4% curve round trip |
 | `buybackPool` / `convertBuybackNativeToQuote` | `nonReentrant` | wrap, swap (bounded, TWAP), unwrap leftover, debit `spent` | pool bound by sync | checked | bounded impact + TWAP + interval + native per-tx and weekly caps |
-| `pullLockerPending` / `attributeExcessQuote` | `nonReentrant` | pull, then credit only `balance - quoteLiabilities` | any / admin | checked | cannot move another campaign's balance |
+| `pullLockerPending` / `attributeExcessQuote` | `nonReentrant` | pull (balance delta recorded), then credit only `min(pulledUnattributed, balance - quoteLiabilities)` | any / admin | checked | cannot move another campaign's balance or unsynced LP quote (F6) |
 | rescue (native / token) | `nonReentrant`, admin | check excess, send | any | checked | cannot touch liabilities, wrapped native, or held MEME |
 | `receive()` | none | accepts only `wrappedNative` or `factory.isCampaign` | any | – | any other sender reverts |
 | operator pause | admin `setOperator(op, paused)` blocks every operator path | | | | |

@@ -136,7 +136,7 @@ describe("audit4: TreasuryRouterV4 <-> CreatorRewardsVaultV2 binding", function 
 });
 
 describe("audit4: CreatorRewardsVaultV2 quote excess (pullLockerPending / attributeExcessQuote / rescue)", function () {
-  it("EXPLOIT: 'excess' includes another campaign's harvested-but-unsynced LP quote; attributing or rescuing it leaves quote liabilities above assets", async function () {
+  it("HOLDS (was EXPLOIT): another campaign's harvested-but-unsynced LP quote cannot be attributed or rescued; only what pullLockerPending pulled can", async function () {
     const f = await bnb();
     const quote = await (await ethers.getContractFactory("MockERC20")).deploy("Quote", "USDX", 10n ** 30n, f.admin.address);
     const A = await f.campaignWith(SPLIT, 50);
@@ -153,18 +153,15 @@ describe("audit4: CreatorRewardsVaultV2 quote excess (pullLockerPending / attrib
     expect(await quote.balanceOf(await f.vault.getAddress())).to.equal(8n * E18);
     expect(await f.vault.quoteLiabilities(q)).to.equal(0n);
 
-    // Admin "attributes excess" to B (as it would after a pullLockerPending for B) -- the check allows it.
-    await f.vault.attributeExcessQuote(B.c, 8n * E18);
-    expect(await f.vault.holderQuoteBalance(B.c)).to.equal(8n * E18);
-    // Now anyone syncs A: A is credited the same 8 USDX again.
+    // The attack step: the admin "attributes excess" to B. Fix F6: nothing was pulled from the locker, so no
+    // excess is attributable, and the 8 USDX stay for A's sync.
+    expect(await f.vault.pulledUnattributed(q)).to.equal(0n);
+    await expect(f.vault.attributeExcessQuote(B.c, 8n * E18)).to.be.revertedWithCustomError(f.vault, "Insufficient");
     await f.vault.syncLpFees(await gA.pair.getAddress());
-    const liab = await f.vault.quoteLiabilities(q);
-    const bal = await quote.balanceOf(await f.vault.getAddress());
-    expect(liab).to.equal(16n * E18);
-    expect(bal).to.equal(8n * E18);
-    expect(liab).to.be.gt(bal); // insolvent in USDX
+    expect(await f.vault.quoteLiabilities(q)).to.equal(8n * E18);
+    expect(await quote.balanceOf(await f.vault.getAddress())).to.equal(8n * E18); // solvent
 
-    // Variant: rescueExcessToken takes unsynced LP quote the same way.
+    // Variant: rescueExcessToken cannot take unsynced LP quote either.
     const f2 = await bnb();
     const quote2 = await (await ethers.getContractFactory("MockERC20")).deploy("Quote", "USDX", 10n ** 30n, f2.admin.address);
     const S = await f2.campaignWith(SPLIT, 50);
@@ -172,10 +169,12 @@ describe("audit4: CreatorRewardsVaultV2 quote excess (pullLockerPending / attrib
     await f2.vault.syncLpFees(await gS.pair.getAddress());
     await gS.fundFees(0n, 10n * E18);
     await f2.locker.harvest(await gS.pair.getAddress());
-    await f2.vault.rescueExcessToken(await quote2.getAddress(), f2.other.address, 8n * E18);
+    await expect(f2.vault.rescueExcessToken(await quote2.getAddress(), f2.other.address, 8n * E18)).to.be.revertedWithCustomError(f2.vault, "Insufficient");
+    await expect(f2.vault.rescueExcessToken(await quote2.getAddress(), f2.other.address, 1n)).to.be.revertedWithCustomError(f2.vault, "Insufficient");
     await f2.vault.syncLpFees(await gS.pair.getAddress());
     expect(await f2.vault.creatorQuoteBalance(S.c)).to.equal(4n * E18);
-    await expect(f2.vault.connect(f2.creator).claimCreatorQuote(S.c)).to.be.reverted; // nothing left to pay the creator
+    await f2.vault.connect(f2.creator).claimCreatorQuote(S.c); // the creator is paid
+    expect(await quote2.balanceOf(f2.creator.address)).to.equal(4n * E18);
   });
 
   it("HOLDS: native side -- rescueExcessNative can never touch accrued or unsynced (WBNB) value", async function () {
@@ -361,9 +360,15 @@ async function rh(routeFee: number, holderQuote: bigint = 10_000n * E18, history
   await vault.setQuoteRoute(await stock.getAddress(), routeFee);
   // Fix F4: the V3 TWAP guard fails closed; `history` = the route pool can serve observe(1800) at spot.
   if (history) await route.setTwap(true, 0);
-  // 10,000 STK of holder quote (as LP fees; attributed here for brevity).
-  await stock.transfer(await vault.getAddress(), holderQuote);
-  await vault.attributeExcessQuote(c, holderQuote);
+  // `holderQuote` STK of holder quote, as real LP fees: accrue on the coin pool, harvest (80% to the vault), sync.
+  // (Was a direct transfer + attributeExcessQuote; fix F6 lets the admin attribute only what pullLockerPending pulled.)
+  const coinStockIs0 = (await coinPool.token0()).toLowerCase() === (await stock.getAddress()).toLowerCase();
+  await stock.approve(await coinPool.getAddress(), ethers.MaxUint256);
+  const lpFee = (holderQuote * 10000n) / 8000n;
+  await coinPool.accrueFees(coinStockIs0 ? lpFee : 0n, coinStockIs0 ? 0n : lpFee);
+  await locker.harvest(await coinPool.getAddress());
+  await vault.syncLpFees(await coinPool.getAddress());
+  expect(await vault.holderQuoteBalance(c)).to.equal(holderQuote);
   const attacker = await (await ethers.getContractFactory("Audit4Attacker")).deploy();
   await stock.transfer(await attacker.getAddress(), 1_000_000n * E18);
   await weth.transfer(await attacker.getAddress(), 1_000n * E18);

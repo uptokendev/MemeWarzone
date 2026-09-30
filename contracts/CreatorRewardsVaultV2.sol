@@ -129,6 +129,10 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     /// @notice Native owed to someone: every native balance above plus proposed, not yet executed batches.
     uint256 public totalLiabilities;
     mapping(address => uint256) public quoteLiabilities;
+    /// @notice Per token, what pullLockerPending actually brought in (balance delta) and nobody has attributed or
+    /// rescued yet. The only excess attributeExcessQuote / rescueExcessToken may move: LP quote the locker paid
+    /// but syncLpFees has not credited yet also sits above quoteLiabilities and belongs to its campaign (audit 4 L1).
+    mapping(address => uint256) public pulledUnattributed;
 
     mapping(address => uint256) internal buybackWeek;
     mapping(address => uint256) public buybackSpentInWeek;
@@ -562,17 +566,21 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     /// @notice Permissionless. If a locker payment to this vault failed (e.g. a pausable stock token was paused
     /// during a harvest) the locker parked it as pendingToken[vault][token]; this pulls it here. It arrives
     /// unattributed (the locker only counts paid amounts), so it is excess until attributeExcessQuote.
-    function pullLockerPending(address token) external nonReentrant returns (uint256) {
-        return IEvmGenLockerForVault(locker).claimPendingToken(token);
+    function pullLockerPending(address token) external nonReentrant returns (uint256 amount) {
+        uint256 before = IERC20(token).balanceOf(address(this));
+        IEvmGenLockerForVault(locker).claimPendingToken(token);
+        amount = IERC20(token).balanceOf(address(this)) - before;
+        pulledUnattributed[token] += amount;
     }
 
-    /// @notice Admin: assigns quote tokens held above every liability to a non-keep campaign bound to that quote,
-    /// under its choice. Can only move excess, never another campaign's balance.
+    /// @notice Admin: assigns quote tokens pulled from the locker's pending (and still above every liability) to a
+    /// non-keep campaign bound to that quote, under its choice. Never another campaign's balance or unsynced LP.
     function attributeExcessQuote(address campaign, uint256 amount) external onlyAdmin nonReentrant {
         Cfg storage c = cfg[campaign];
         address quote = c.quote;
         if (quote == address(0) || c.choice == Choice.Keep) revert WrongChoice();
-        if (amount == 0 || amount > IERC20(quote).balanceOf(address(this)) - quoteLiabilities[quote]) revert Insufficient();
+        _usePulled(quote, amount);
+        if (amount == 0) revert Insufficient();
         _creditQuote(campaign, c, quote, amount);
         emit ExcessQuoteAttributed(campaign, quote, amount);
     }
@@ -587,12 +595,14 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         emit ExcessRescued(address(0), to, amount);
     }
 
-    /// @notice Only what exceeds the token's liabilities; never a token held for a buyback burn, and never the
-    /// wrapped native (LP fees paid in it wait here until syncLpFees).
+    /// @notice Only pulled-and-unattributed tokens (pullLockerPending) that also exceed the token's liabilities;
+    /// never a token held for a buyback burn, never the wrapped native (LP fees paid in it wait here until
+    /// syncLpFees), never LP quote the locker paid but nobody synced yet (audit 4 L1). A token sent here by
+    /// mistake is therefore not rescuable.
     function rescueExcessToken(address token, address to, uint256 amount) external onlyAdmin nonReentrant {
         if (to == address(0)) revert ZeroAddress();
         if (heldTokenAsset[token] || token == wrappedNative) revert Blocked();
-        if (amount > IERC20(token).balanceOf(address(this)) - quoteLiabilities[token]) revert Insufficient();
+        _usePulled(token, amount);
         IERC20(token).safeTransfer(to, amount);
         emit ExcessRescued(token, to, amount);
     }
@@ -680,6 +690,13 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         if (amount > maxBuyPerTx) revert CapExceeded();
         _checkInterval(campaign);
         _useWeekCap(campaign, amount);
+    }
+
+    /// @dev Consumes `amount` of the token's pulled-and-unattributed balance, bounded also by balance - liabilities.
+    function _usePulled(address token, uint256 amount) internal {
+        uint256 pulled = pulledUnattributed[token];
+        if (amount > pulled || amount > IERC20(token).balanceOf(address(this)) - quoteLiabilities[token]) revert Insufficient();
+        pulledUnattributed[token] = pulled - amount;
     }
 
     function _checkInterval(address campaign) internal {
