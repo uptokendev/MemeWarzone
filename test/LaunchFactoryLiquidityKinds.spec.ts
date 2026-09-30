@@ -2,6 +2,9 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { deployCoreFixture } from "./fixtures/core";
 import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
+import { deployEvmGenRh } from "./fixtures/evmgenRh";
+import { installRealV3, RH_V3 } from "./helpers/evmgenRhRealV3";
+import { createCoin, req as evmReq, mineAt, buyNative } from "./fixtures/evmgenCore";
 
 const V3_FEE = 3000;
 
@@ -176,14 +179,69 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
     expect(await campaign.graduationAdapter()).to.equal(await adapter.getAddress());
   });
 
-  // CONTRACT FINDING: the source has no IGraduationAdapterV2 for Robinhood V3 native coins.
-  // RobinhoodUniswapV3GraduationAdapter (contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol) still only
-  // has the old addLiquidityETH path and no graduate(Request); LaunchCampaign.graduate() calls
-  // IGraduationAdapterV2(graduationAdapter).graduate (LaunchCampaign.sol:750), so a native coin on a V3 factory can
-  // never graduate and the factory's V3 NFT auto-registration (LaunchFactory.notifyCampaignGraduated) cannot be
-  // exercised end to end. Re-enable once the V3 native adapter exists: create -> sell out -> graduate() -> pool
-  // NFT owned by the locker, locker.poolInfo(pool) registered with campaign/creator/tokenId/lockedLiquidity.
-  it.skip("CONTRACT FINDING: auto-registers a Robinhood V3 graduation NFT through the factory (no V3 IGraduationAdapterV2 in source)", async () => {});
+  // Was pending ("no V3 IGraduationAdapterV2 in source"); RobinhoodV3NativeGraduationAdapterV2 now exists
+  // (claude/evm-rh). Real Uniswap V3 bytecode at the canonical 4663 addresses, real C5 campaign/factory.
+  it("auto-registers a Robinhood V3 graduation NFT through the factory (RobinhoodV3NativeGraduationAdapterV2)", async () => {
+    const env = await deployEvmGenRh();
+    const { campaign, token } = await createCoin(env as any, evmReq({ graduationTarget: ethers.parseEther("30000") }));
+    await mineAt(Number(await campaign.launchAt()) + 120);
+    for (let i = 0; i < 20 && !(await campaign.graduationPending()); i++) {
+      await buyNative(env as any, campaign, env.alice, ethers.parseEther("2"));
+    }
+    expect(await campaign.graduationPending()).to.equal(true);
+    await campaign.connect(env.carol).graduate();
+
+    const state = await campaign.getGraduationState();
+    const pool = state.dexPair;
+    expect(pool).to.equal(await env.v3Factory.getPool(await token.getAddress(), await env.weth.getAddress(), V3_FEE));
+    const info = await env.locker.poolInfo(pool);
+    expect(info.registered).to.equal(true);
+    expect(info.campaign).to.equal(await campaign.getAddress());
+    expect(info.creator).to.equal(env.creator.address);
+    expect(await env.positionManager.ownerOf(info.tokenId)).to.equal(await env.locker.getAddress());
+    const position = await env.positionManager.positions(info.tokenId);
+    expect(info.lockedLiquidity).to.equal(position.liquidity);
+    expect(position.fee).to.equal(3000n);
+    expect(position.tickLower).to.equal(-887220n);
+    expect(position.tickUpper).to.equal(887220n);
+    expect(state.graduatedLiquidityLp).to.equal(position.liquidity);
+    expect(await env.locker.pendingPositionByPool(pool)).to.equal(0n);
+    // Start price is the curve price (C5 band 50 bps; here exact up to sqrt rounding).
+    const p = state.finalCurvePrice;
+    const start = state.initialDexPrice;
+    expect((start > p ? start - p : p - start) * 10n ** 9n).to.be.lte(p);
+    for (const holder of [await env.adapter.getAddress()]) {
+      expect(await token.balanceOf(holder)).to.equal(0n);
+      expect(await env.weth.balanceOf(holder)).to.equal(0n);
+      expect(await ethers.provider.getBalance(holder)).to.equal(0n);
+    }
+  });
+
+  it("setNativeGraduationAdapter accepts RobinhoodV3NativeGraduationAdapterV2 on a V3 factory whose router is another adapter", async () => {
+    const [owner, , , weekly, monthly] = await ethers.getSigners();
+    await installRealV3();
+    const legacy = await (await ethers.getContractFactory("RobinhoodUniswapV3GraduationAdapter")).deploy(RH_V3.v3Factory, RH_V3.positionManager, RH_V3.weth, V3_FEE);
+    const treasury = await deployTreasury(owner, weekly, monthly);
+    const oracle = await deployTestOracle();
+    const implementation = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
+    const { factory } = await deployFactoryWithLocker({
+      factoryName: "LaunchFactory",
+      args: [await legacy.getAddress(), await treasury.getAddress(), await implementation.getAddress(), await oracle.getAddress()],
+      lockerKind: "v3",
+    });
+    const locker = await ethers.getContractAt("PermanentV3PositionLocker", await factory.permanentLpLocker());
+    const adapter = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, RH_V3.weth);
+    // The locker reads liquidityKind/v3Factory/positionManager/WETH/feeTier off the adapter and they match.
+    await expect(factory.setNativeGraduationAdapter(await adapter.getAddress()))
+      .to.emit(factory, "NativeGraduationAdapterUpdated")
+      .withArgs(await adapter.getAddress());
+    expect(await locker.authorizedIntegrationSource(await adapter.getAddress())).to.equal(true);
+    expect(await factory.nativeGraduationAdapter()).to.equal(await adapter.getAddress());
+    // An adapter on a different V3 stack (another WETH) is refused by the locker.
+    const otherWeth = await (await ethers.getContractFactory("MockWETH9")).deploy();
+    const wrong = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, await otherWeth.getAddress());
+    await expect(factory.setNativeGraduationAdapter(await wrong.getAddress())).to.be.reverted;
+  });
 
   it("refuses to switch a V3 factory back to a legacy V2 router even before first campaign", async () => {
     const [owner, , , weekly, monthly] = await ethers.getSigners();

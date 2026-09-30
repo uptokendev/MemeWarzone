@@ -1,5 +1,8 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployEvmGenRh } from "./fixtures/evmgenRh";
+import { RH_V3 } from "./helpers/evmgenRhRealV3";
+import { createCoin, req as evmReq, mineAt, buyNative } from "./fixtures/evmgenCore";
 
 const FEE = 3000;
 const Q96 = 1n << 96n;
@@ -77,142 +80,66 @@ describe("Robinhood V3 graduation compatibility", function () {
   // body drives the removed campaign surface (initialize with router/lpReceiver/liquidityBps, CampaignFinalized on the crossing buy).
   // A test double would only re-test the campaign (covered by evmgen-core-graduation / evmgen-core-lifecycle) and the V3 locker
   // (evmgen-fees-locker-v3); the subject here is the real V3 adapter. Rewrite against graduate() when the V2 adapter lands.
-  it.skip("graduates the unchanged LaunchCampaign into a permanently locked V3 NFT and harvests fees 80/20", async () => {
-    const [owner, creator, buyer, trader, weekly, monthly] = await ethers.getSigners();
-    const { weth, factory, positionManager, swapRouter, adapter } = await deployV3Stack();
-
-    const Treasury = await ethers.getContractFactory("TreasuryRouterV2");
-    const treasury = await Treasury.deploy(
-      await owner.getAddress(),
-      await weekly.getAddress(),
-      await monthly.getAddress(),
-      3600,
-    );
-    await treasury.waitForDeployment();
-    const ProtocolVault = await ethers.getContractFactory("ProtocolRevenueVault");
-    const protocolVault = await ProtocolVault.deploy(await owner.getAddress());
-    await protocolVault.waitForDeployment();
-    await treasury.setProtocolRevenueVault(await protocolVault.getAddress());
-
-    const Locker = await ethers.getContractFactory("PermanentV3PositionLocker");
-    const locker = await Locker.deploy(await owner.getAddress());
-    await locker.waitForDeployment();
-    await locker.configureRevenue(await treasury.getAddress(), await adapter.getAddress());
-    await treasury.setAuthorizedLpLocker(await locker.getAddress(), true);
-
-    const graduationOracle = await deployTestOracle();
-    const campaign = await deployDirectCampaign({
-      name: "Robinhood Adapter Token",
-      symbol: "RHADAPT",
-      logoURI: "ipfs://robinhood-adapter",
-      xAccount: "",
-      website: "",
-      extraLink: "",
-      totalSupply: ethers.parseEther("1000"),
-      curveBps: 5000,
-      liquidityTokenBps: 4000,
-      basePrice: 10n ** 12n,
-      priceSlope: 10n ** 9n,
-      graduationTarget: 1n,
-      firstBuyTokens: 0n,
-      firstBuyMaxCost: 0n,
-      feeChoice: 1,
-      feeCreatorPct: 0,
-      graduationOracle: await graduationOracle.getAddress(),
-      liquidityBps: 8000,
-      protocolFeeBps: 0,
-      leagueFeeBps: 0,
-      leagueReceiver: await owner.getAddress(),
-      router: await adapter.getAddress(),
-      lpReceiver: await locker.getAddress(),
-      feeRecipient: await owner.getAddress(),
-      creator: await creator.getAddress(),
-      factory: ethers.ZeroAddress,
-      creatorRegistry: ethers.ZeroAddress,
-      riskRegistry: ethers.ZeroAddress,
-      creatorBuyLockUntil: 0n,
-      creatorBuyCapWei: 0n,
-      requireAuthorizedTrading: false,
-      tradeRouteProfile: 1,
-      finalizeRouteProfile: 1,
-      strictFeeRouting: false,
-    });
-
-    const token = await ethers.getContractAt("LaunchToken", await campaign.token());
-    const curveSupply = await campaign.curveSupply();
-    const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
-
-    await expect(
-      campaign.connect(buyer).buyExactTokens(curveSupply, totalBuy, { value: totalBuy })
-    ).to.emit(campaign, "CampaignFinalized");
-
+  // Was pending ("no V3 IGraduationAdapterV2"). Now: the C5 LaunchCampaign graduates through
+  // RobinhoodV3NativeGraduationAdapterV2 into real Uniswap V3 (canonical 4663 bytecode), the factory registers
+  // the NFT, a trader swaps through SwapRouter02, and the locker harvests 80/20 without touching principal.
+  it("graduates the C5 LaunchCampaign into a permanently locked V3 NFT (RobinhoodV3NativeGraduationAdapterV2) and harvests fees 80/20", async () => {
+    const env = await deployEvmGenRh();
+    const { campaign, token } = await createCoin(env as any, evmReq({ graduationTarget: ethers.parseEther("30000") }));
+    await mineAt(Number(await campaign.launchAt()) + 120);
+    for (let i = 0; i < 20 && !(await campaign.graduationPending()); i++) {
+      await buyNative(env as any, campaign, env.alice, ethers.parseEther("2"));
+    }
+    await campaign.connect(env.carol).graduate();
     const state = await campaign.getGraduationState();
-    const poolAddress = await factory.getPool(await token.getAddress(), await weth.getAddress(), FEE);
-    const pool = await ethers.getContractAt("MockUniswapV3Pool", poolAddress);
+    const poolAddress = state.dexPair;
+    const info = await env.locker.poolInfo(poolAddress);
+    expect(info.registered).to.equal(true);
+    expect(await env.adapter.liquidityKind()).to.equal(2n);
+    expect(await env.adapter.poolFactory()).to.equal(await env.adapter.getAddress());
+    expect(await env.positionManager.ownerOf(info.tokenId)).to.equal(await env.locker.getAddress());
+    const positionBefore = await env.positionManager.positions(info.tokenId);
 
-    expect(await adapter.liquidityKind()).to.equal(2n);
-    expect(await adapter.poolFactory()).to.equal(await adapter.getAddress());
-    expect(state.dexPair).to.equal(poolAddress);
-    expect(state.graduatedLiquidityLp).to.be.greaterThan(0n);
-    expect(await pool.positionTokenId()).to.equal(1n);
-    expect(await positionManager.ownerOf(1n)).to.equal(await locker.getAddress());
-    expect(await locker.pendingPositionByPool(poolAddress)).to.equal(1n);
-
-    await locker.registerGraduatedPool(
-      await campaign.getAddress(),
-      await creator.getAddress(),
-      await creator.getAddress(),
-      poolAddress,
-      await token.getAddress(),
-      await weth.getAddress(),
-      state.graduatedLiquidityLp,
+    const trader = env.bob;
+    const swapIn = ethers.parseEther("1");
+    await env.weth.connect(trader).deposit({ value: swapIn });
+    await env.weth.connect(trader).approve(RH_V3.swapRouter02, swapIn);
+    const router = await ethers.getContractAt(
+      ["function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) payable returns (uint256)"],
+      RH_V3.swapRouter02,
     );
-
-    expect(await locker.registeredLpToken(poolAddress)).to.equal(true);
-    expect(await locker.lockedBalance(poolAddress)).to.equal(state.graduatedLiquidityLp);
-    expect(await locker.pendingPositionByPool(poolAddress)).to.equal(0n);
-
-    const positionBefore = await positionManager.positions(1n);
-    const swapIn = ethers.parseEther("0.001");
-    await weth.connect(trader).deposit({ value: swapIn });
-    await weth.connect(trader).approve(await swapRouter.getAddress(), swapIn);
-    const quoted = await swapRouter.quoteExactInputSingle(await weth.getAddress(), await token.getAddress(), FEE, swapIn);
-    expect(quoted).to.be.greaterThan(0n);
-
-    await swapRouter.connect(trader).exactInputSingle({
-      tokenIn: await weth.getAddress(),
+    await (router.connect(trader) as any).exactInputSingle({
+      tokenIn: RH_V3.weth,
       tokenOut: await token.getAddress(),
       fee: FEE,
-      recipient: await trader.getAddress(),
+      recipient: trader.address,
       amountIn: swapIn,
-      amountOutMinimum: quoted,
+      amountOutMinimum: 1n,
       sqrtPriceLimitX96: 0,
     });
+    expect(await token.balanceOf(trader.address)).to.be.greaterThan(0n);
 
+    const creatorBefore = await env.weth.balanceOf(env.creator.address);
+    const tx = await env.locker.connect(trader).harvest(poolAddress);
+    const rc = await tx.wait();
+    const harvested = rc!.logs
+      .map((l: any) => { try { return env.locker.interface.parseLog(l); } catch { return null; } })
+      .find((x: any) => x?.name === "FeesHarvested" && x.args.token === RH_V3.weth);
+    const amount: bigint = harvested!.args.collected;
     const expectedFee = (swapIn * BigInt(FEE)) / 1_000_000n;
-    const expectedCreator = (expectedFee * 8_000n) / 10_000n;
-    const expectedProtocol = expectedFee - expectedCreator;
-    const creatorBefore = await weth.balanceOf(await creator.getAddress());
-    const protocolBefore = await weth.balanceOf(await protocolVault.getAddress());
+    expect(expectedFee - amount).to.be.lte(1n); // the sole in-range position earns the whole 0.30% (V3 rounds down)
+    const creatorAmount = (amount * 8_000n) / 10_000n;
+    expect((await env.weth.balanceOf(env.creator.address)) - creatorBefore).to.equal(creatorAmount);
+    expect(harvested!.args.creatorPaid).to.equal(creatorAmount);
+    expect(harvested!.args.protocolRouted).to.equal(amount - creatorAmount);
 
-    await locker.connect(trader).harvest(poolAddress);
-
-    expect((await weth.balanceOf(await creator.getAddress())) - creatorBefore).to.equal(expectedCreator);
-    expect((await weth.balanceOf(await protocolVault.getAddress())) - protocolBefore).to.equal(expectedProtocol);
-    expect(await pool.claimable0()).to.equal(0n);
-    expect(await pool.claimable1()).to.equal(0n);
-    expect(await positionManager.ownerOf(1n)).to.equal(await locker.getAddress());
-    const positionAfter = await positionManager.positions(1n);
+    const positionAfter = await env.positionManager.positions(info.tokenId);
     expect(positionAfter.liquidity).to.equal(positionBefore.liquidity);
-
-    await expect(
-      positionManager.connect(trader).transferFrom(await locker.getAddress(), await trader.getAddress(), 1n)
-    ).to.be.reverted;
-
-    expect(await token.balanceOf(await adapter.getAddress())).to.equal(0n);
-    expect(await weth.balanceOf(await adapter.getAddress())).to.equal(0n);
-    expect(await ethers.provider.getBalance(await adapter.getAddress())).to.equal(0n);
-    expect(await token.allowance(await campaign.getAddress(), await adapter.getAddress())).to.equal(0n);
+    expect(await env.positionManager.ownerOf(info.tokenId)).to.equal(await env.locker.getAddress());
+    expect(await token.balanceOf(await env.adapter.getAddress())).to.equal(0n);
+    expect(await env.weth.balanceOf(await env.adapter.getAddress())).to.equal(0n);
+    expect(await ethers.provider.getBalance(await env.adapter.getAddress())).to.equal(0n);
+    expect(await token.allowance(await campaign.getAddress(), await env.adapter.getAddress())).to.equal(0n);
   });
 
   it("keeps the V3 compatibility boundary fail-closed", async () => {

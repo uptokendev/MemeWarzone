@@ -1,6 +1,8 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
+import { installRealV3, RH_V3, seedFullRangePool } from "./helpers/evmgenRhRealV3";
+import { mineAt, buyNative } from "./fixtures/evmgenCore";
 
 const FEE = 3000;
 const BPS = 10_000n;
@@ -301,148 +303,109 @@ async function completionBounds(fx: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("Robinhood Stock pending graduation completion", function () {
-  // BLOCKED ON claude/evm-rh: no IGraduationAdapterV2 V3 adapter in tree yet.
-  // RobinhoodStockTokenGraduationAdapter does not implement IGraduationAdapterV2 yet, and the body drives the removed
-  // completeStockGraduation(memeDesired, minStockOut, deadline) / OnlyStockGraduationExecutor surface (now permissionless graduate()).
-  // Campaign-side replacement with a test double: evmgen-core-quote > Robinhood stock campaign > completion is permissionless and
-  // never reverts on dust. The subject here is the real stock adapter + V3 locker; rewrite against graduate() when it lands.
-  it.skip("keeps the campaign pending after a failed route and completes safely on retry", async () => {
-    const fx = await fixture();
-    const bounds = await completionBounds(fx);
-    const deadline = (await nowTs()) + 3600n;
+  // Was pending ("BLOCKED ON claude/evm-rh"). Now against the real stock adapter
+  // (RobinhoodStockGraduationAdapterV2), real Uniswap V3 bytecode (canonical 4663 addresses: factory, NPM,
+  // SwapRouter02) and the C5 RobinhoodStockLaunchCampaign. graduate() is permissionless; a failed route
+  // leaves the campaign Pending with nothing moved, and the retry completes without reverting on dust.
+  it("keeps the campaign pending after a failed route and completes safely on retry (RobinhoodStockGraduationAdapterV2)", async () => {
+    const [owner, creator, alice, bob, authority, carol] = await ethers.getSigners();
+    const v3 = await installRealV3();
+    const ethFeed = await freshFeed("2694");
+    const spyFeed = await freshFeed("766");
+    const spy = await (await ethers.getContractFactory("MockERC20")).deploy("SPY", "SPY", ethers.parseEther("1000000"), owner.address);
+    await v3.weth.connect(owner).deposit({ value: ethers.parseEther("1000") });
+    await seedFullRangePool(owner, v3.weth, spy, 500, ethers.parseEther("1000"), (ethers.parseEther("1000") * 2694n) / 766n);
+    const acquisitionPool = await v3.v3Factory.getPool(RH_V3.weth, await spy.getAddress(), 500);
 
-    await expect(
-      fx.campaign.connect(fx.outsider).completeStockGraduation(bounds.memeDesired, bounds.minimumStockOut, deadline),
-    ).to.be.revertedWithCustomError(fx.campaign, "OnlyStockGraduationExecutor");
+    const receiver = await (await ethers.getContractFactory("AcceptingReceiver")).deploy();
+    const locker = await (await ethers.getContractFactory("PermanentV3PositionLocker")).deploy(owner.address);
+    const native = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, RH_V3.weth);
+    const adapter = await (await ethers.getContractFactory("RobinhoodStockGraduationAdapterV2")).deploy(
+      RH_V3.v3Factory, RH_V3.positionManager, RH_V3.swapRouter02, RH_V3.weth, await ethFeed.getAddress(), 90_000,
+    );
+    await locker.configureRevenue(await receiver.getAddress(), await native.getAddress());
+    await locker.setIntegrationSourceAuthorized(await adapter.getAddress(), true);
+    const registry = await (await ethers.getContractFactory("MockEvmGenRhFactory")).deploy(await locker.getAddress());
+    await adapter.setCampaignFactoryOnce(await registry.getAddress());
+    const route = {
+      oracleFeed: await spyFeed.getAddress(),
+      acquisitionPool,
+      acquisitionFeeTier: 500,
+      minimumRouteLiquidityUsdWad: ethers.parseEther("50000"),
+      maxSwapSlippageBps: 300,
+      maxOracleDeviationBps: 500,
+      maxPriceImpactBps: 500,
+      enabled: true,
+    };
+    await adapter.configureStockRoute(await spy.getAddress(), route);
 
-    await fx.stockAdapter.configureStockRoute(await fx.stock.getAddress(), { ...fx.route, enabled: false });
-    const treasuryBeforeFailure = await ethers.provider.getBalance(await fx.treasury.getAddress());
-    await expect(
-      fx.campaign.connect(fx.owner).completeStockGraduation(bounds.memeDesired, bounds.minimumStockOut, deadline),
-    ).to.be.revertedWithCustomError(fx.stockAdapter, "RouteDisabled");
+    // The C5 stock campaign, driven by the core's stand-in factory.
+    const oracle = await (await ethers.getContractFactory("GraduationOracle")).deploy(await ethFeed.getAddress(), 1_000_000_000);
+    const tokenDeployer = await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy();
+    const router = await (await ethers.getContractFactory("MockTreasuryRouterEvmGen")).deploy();
+    const launchFactory = await (await ethers.getContractFactory("MockLaunchFactoryEvmGen")).deploy();
+    await launchFactory.setRouteAuthority(authority.address);
+    const impl = await (await ethers.getContractFactory("RobinhoodStockLaunchCampaign")).deploy();
+    const params = {
+      name: "Stock", symbol: "STK", logoURI: "ipfs://s",
+      totalSupply: ethers.parseEther("1000000000"), curveBps: 7000, liquidityTokenBps: 2800,
+      basePrice: 1_000_000_000n, priceSlope: 850n, graduationTarget: ethers.parseEther("30000"),
+      graduationOracle: await oracle.getAddress(), protocolFeeBps: 200,
+      graduationAdapter: await native.getAddress(), feeRecipient: await router.getAddress(),
+      creator: creator.address, factory: ethers.ZeroAddress, riskRegistry: ethers.ZeroAddress,
+      tokenDeployer: await tokenDeployer.getAddress(), creatorBuyCapWei: 0n, requireAuthorizedTrading: true,
+      tradeRouteProfile: 1, finalizeRouteProfile: 1,
+    };
+    const campaignAddress = await launchFactory.create.staticCall(await impl.getAddress(), params);
+    await launchFactory.create(await impl.getAddress(), params);
+    const campaign = await ethers.getContractAt("RobinhoodStockLaunchCampaign", campaignAddress);
+    const token = await ethers.getContractAt("LaunchToken", await campaign.token());
+    await launchFactory.configure(campaignAddress, await spy.getAddress(), await adapter.getAddress());
+    await registry.setCampaign(campaignAddress, true);
 
-    expect(await fx.campaign.graduationPending()).to.equal(true);
-    expect(await fx.campaign.launched()).to.equal(false);
-    expect(await fx.token.tradingEnabled()).to.equal(false);
-    expect(await fx.factory.campaignGraduationRecorded(await fx.campaign.getAddress())).to.equal(false);
-    expect(await ethers.provider.getBalance(await fx.treasury.getAddress())).to.equal(treasuryBeforeFailure);
+    await mineAt(Number(await campaign.launchAt()) + 120);
+    for (let i = 0; i < 20 && !(await campaign.graduationPending()); i++) {
+      await buyNative({ authority } as any, campaign, alice, ethers.parseEther("2"));
+    }
+    expect(await campaign.graduationPending()).to.equal(true);
+    const balanceBefore = await ethers.provider.getBalance(campaignAddress);
 
-    await fx.stockAdapter.configureStockRoute(await fx.stock.getAddress(), fx.route);
-    const creatorBefore = await ethers.provider.getBalance(await fx.creator.getAddress());
-    const treasuryBefore = await ethers.provider.getBalance(await fx.treasury.getAddress());
+    // Route disabled: the permissionless graduate() reverts, nothing moves, the coin stays Pending.
+    await adapter.configureStockRoute(await spy.getAddress(), { ...route, enabled: false });
+    await expect(campaign.connect(bob).graduate()).to.be.revertedWithCustomError(adapter, "RouteDisabled");
+    expect(await campaign.graduationPending()).to.equal(true);
+    expect(await campaign.launched()).to.equal(false);
+    expect(await ethers.provider.getBalance(campaignAddress)).to.equal(balanceBefore);
 
-    await expect(
-      fx.campaign.connect(fx.owner).completeStockGraduation(bounds.memeDesired, bounds.minimumStockOut, deadline),
-    ).to.emit(fx.campaign, "StockGraduationCompleted");
+    // Stale stock feed: same, retryable.
+    await adapter.configureStockRoute(await spy.getAddress(), route);
+    const t = await nowTs();
+    await spyFeed.setRoundData(2n, ethers.parseUnits("766", 8), t - 95_000n, t - 95_000n, 2n);
+    await expect(campaign.connect(bob).graduate()).to.be.revertedWithCustomError(adapter, "OracleStale");
+    expect(await campaign.graduationPending()).to.equal(true);
 
-    expect(await fx.campaign.graduationPending()).to.equal(false);
-    expect(await fx.campaign.launched()).to.equal(true);
-    expect(await fx.token.tradingEnabled()).to.equal(true);
-    expect(await fx.factory.campaignGraduationRecorded(await fx.campaign.getAddress())).to.equal(true);
-    expect(await fx.campaign.stockFinalCurveMemeUsdWad()).to.be.greaterThan(0n);
-    expect(await fx.campaign.stockInitialDexMemeUsdWad()).to.be.greaterThan(0n);
+    // Fresh round: anyone completes it.
+    const t2 = await nowTs();
+    await spyFeed.setRoundData(3n, ethers.parseUnits("766", 8), t2, t2, 3n);
+    await campaign.connect(carol).graduate();
+    expect(await campaign.launched()).to.equal(true);
 
-    const pool = await fx.v3Factory.getPool(await fx.token.getAddress(), await fx.stock.getAddress(), FEE);
-    expect(pool).to.not.equal(ethers.ZeroAddress);
-    expect(await fx.locker.registeredLpToken(pool)).to.equal(true);
-
-    const tokenId = await fx.campaign.stockPositionTokenId();
-    expect(tokenId).to.be.greaterThan(0n);
-    expect(await fx.positionManager.ownerOf(tokenId)).to.equal(await fx.locker.getAddress());
-    const poolInfo = await fx.locker.poolInfo(pool);
-    expect(poolInfo.tokenId).to.equal(tokenId);
-    const pair = [poolInfo.token0.toLowerCase(), poolInfo.token1.toLowerCase()].sort();
-    expect(pair).to.deep.equal([
-      (await fx.token.getAddress()).toLowerCase(),
-      (await fx.stock.getAddress()).toLowerCase(),
-    ].sort());
-
-    expect(await fx.stock.balanceOf(await fx.stockAdapter.getAddress())).to.equal(0n);
-    expect(await fx.token.balanceOf(await fx.stockAdapter.getAddress())).to.equal(0n);
-    expect(await fx.stock.balanceOf(await fx.campaign.getAddress())).to.equal(0n);
-
-    const creatorAfter = await ethers.provider.getBalance(await fx.creator.getAddress());
-    const treasuryAfter = await ethers.provider.getBalance(await fx.treasury.getAddress());
-    expect(creatorAfter - creatorBefore).to.equal(bounds.creatorPayout);
-    expect(treasuryAfter - treasuryBefore).to.equal(bounds.protocolFee);
-
-    const finalState = await fx.campaign.getGraduationState();
-    expect(finalState.graduatedLiquidityBnb).to.equal(bounds.liquidityValue);
-    expect(finalState.graduatedLiquidityTokens).to.equal(bounds.memeDesired);
-    expect(finalState.initialDexPrice).to.equal(0n);
-
-    // RH-S8: generate fees in both pool assets, harvest only fees, and prove the NFT
-    // principal / V3 liquidity are unchanged. The creator gets 80%; protocol gets 20%.
-    const memeSwapIn = finalState.graduatedLiquidityTokens / 10n;
-    expect(memeSwapIn).to.be.greaterThan(0n);
-    await fx.token.connect(fx.buyer).approve(await fx.swapRouter.getAddress(), memeSwapIn);
-    const stockBeforeSwap = await fx.stock.balanceOf(await fx.buyer.getAddress());
-    await fx.swapRouter.connect(fx.buyer).exactInputSingle({
-      tokenIn: await fx.token.getAddress(),
-      tokenOut: await fx.stock.getAddress(),
-      fee: FEE,
-      recipient: await fx.buyer.getAddress(),
-      amountIn: memeSwapIn,
-      amountOutMinimum: 0n,
-      sqrtPriceLimitX96: 0n,
-    });
-    const stockReceived = (await fx.stock.balanceOf(await fx.buyer.getAddress())) - stockBeforeSwap;
-    expect(stockReceived).to.be.greaterThan(1n);
-
-    const stockSwapIn = stockReceived / 2n;
-    await fx.stock.connect(fx.buyer).approve(await fx.swapRouter.getAddress(), stockSwapIn);
-    await fx.swapRouter.connect(fx.buyer).exactInputSingle({
-      tokenIn: await fx.stock.getAddress(),
-      tokenOut: await fx.token.getAddress(),
-      fee: FEE,
-      recipient: await fx.buyer.getAddress(),
-      amountIn: stockSwapIn,
-      amountOutMinimum: 0n,
-      sqrtPriceLimitX96: 0n,
-    });
-
-    const graduatedPool = await ethers.getContractAt("MockUniswapV3Pool", pool);
-    const claimable0 = await graduatedPool.claimable0();
-    const claimable1 = await graduatedPool.claimable1();
-    expect(claimable0).to.be.greaterThan(0n);
-    expect(claimable1).to.be.greaterThan(0n);
-
-    const tokenAddress = (await fx.token.getAddress()).toLowerCase();
-    const token0Contract = poolInfo.token0.toLowerCase() === tokenAddress ? fx.token : fx.stock;
-    const token1Contract = poolInfo.token1.toLowerCase() === tokenAddress ? fx.token : fx.stock;
-    const creatorAddress = await fx.creator.getAddress();
-    const treasuryAddress = await fx.treasury.getAddress();
-
-    const creator0Before = await token0Contract.balanceOf(creatorAddress);
-    const creator1Before = await token1Contract.balanceOf(creatorAddress);
-    const treasury0Before = await token0Contract.balanceOf(treasuryAddress);
-    const treasury1Before = await token1Contract.balanceOf(treasuryAddress);
-    const positionBefore = await fx.positionManager.positions(tokenId);
-    const lockedBefore = await fx.locker.lockedBalance(pool);
-
-    await expect(fx.locker.connect(fx.outsider).harvest(pool)).to.emit(fx.locker, "FeesHarvested");
-
-    // E9 (new locker source): only the paired (stock) side is split; the MEME side is sold in the pool or, with
-    // this mock pool that has no V3 swap surface, carried to the next harvest.
-    const memeIs0 = token0Contract === fx.token;
-    const expectedCreator0 = memeIs0 ? 0n : (claimable0 * CREATOR_FEE_BPS) / BPS;
-    const expectedCreator1 = memeIs0 ? (claimable1 * CREATOR_FEE_BPS) / BPS : 0n;
-    const expectedProtocol0 = memeIs0 ? 0n : claimable0 - expectedCreator0;
-    const expectedProtocol1 = memeIs0 ? claimable1 - expectedCreator1 : 0n;
-
-    expect((await token0Contract.balanceOf(creatorAddress)) - creator0Before).to.equal(expectedCreator0);
-    expect((await token1Contract.balanceOf(creatorAddress)) - creator1Before).to.equal(expectedCreator1);
-    expect((await token0Contract.balanceOf(treasuryAddress)) - treasury0Before).to.equal(expectedProtocol0);
-    expect((await token1Contract.balanceOf(treasuryAddress)) - treasury1Before).to.equal(expectedProtocol1);
-    expect(await fx.treasury.lpTokenReceived(poolInfo.token0)).to.equal(expectedProtocol0);
-    expect(await fx.treasury.lpTokenReceived(poolInfo.token1)).to.equal(expectedProtocol1);
-
-    expect(await graduatedPool.claimable0()).to.equal(0n);
-    expect(await graduatedPool.claimable1()).to.equal(0n);
-    expect(await fx.positionManager.ownerOf(tokenId)).to.equal(await fx.locker.getAddress());
-    const positionAfter = await fx.positionManager.positions(tokenId);
-    expect(positionAfter.liquidity).to.equal(positionBefore.liquidity);
-    expect(await fx.locker.lockedBalance(pool)).to.equal(lockedBefore);
-    expect(lockedBefore).to.equal(poolInfo.lockedLiquidity);
+    const state = await campaign.getGraduationState();
+    const pool = state.dexPair;
+    expect(pool).to.equal(await v3.v3Factory.getPool(await token.getAddress(), await spy.getAddress(), FEE));
+    const tokenId = await locker.pendingPositionByPool(pool);
+    expect(tokenId).to.not.equal(0n);
+    expect(await v3.positionManager.ownerOf(tokenId)).to.equal(await locker.getAddress());
+    expect(await launchFactory.lastNotifiedPool()).to.equal(pool);
+    // USD continuity held (the adapter enforces 100 bps): start (SPY per MEME) x SPYUSD vs P x ETHUSD.
+    const startUsd = (state.initialDexPrice * 766n) / 1n;
+    const curveUsd = state.finalCurvePrice * 2694n;
+    const dev = startUsd > curveUsd ? startUsd - curveUsd : curveUsd - startUsd;
+    expect(dev * BPS).to.be.lte(curveUsd * 100n);
+    // Nothing stranded on the adapter; the campaign kept no MEME; residual SPY is the creator's pull balance.
+    for (const t0 of [token, spy, v3.weth]) expect(await (t0 as any).balanceOf(await adapter.getAddress())).to.equal(0n);
+    expect(await ethers.provider.getBalance(await adapter.getAddress())).to.equal(0n);
+    expect(await token.balanceOf(campaignAddress)).to.equal(0n);
+    expect(await spy.balanceOf(campaignAddress)).to.equal(await campaign.pendingCreatorQuote());
   });
 });
