@@ -182,3 +182,18 @@ contract MockCreatorActorEvmGen {
         if (mode == 2) IMockClaimVaultEvmGen(vault).claimCreatorFees(campaign);
     }
 }
+
+/// @dev The old generation factory's one setter the fees batch calls.
+contract MockOldFactoryEvmGen {
+    address public immutable owner;
+    bool public createPaused;
+
+    constructor(address owner_) {
+        owner = owner_;
+    }
+
+    function setCreatePaused(bool paused) external {
+        require(msg.sender == owner, "owner");
+        createPaused = paused;
+    }
+}

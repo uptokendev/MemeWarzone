@@ -279,8 +279,9 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
     const tokenIs0 = token0.toLowerCase() === tokenAddr.toLowerCase();
     const claimedToken = tokenIs0 ? claimable0 : claimable1;
     const claimedWbnb = tokenIs0 ? claimable1 : claimable0;
-    const expectedCreatorToken = (claimedToken * CREATOR_SHARE_BPS) / BPS;
-    const expectedProtocolToken = claimedToken - expectedCreatorToken;
+    // E9 (new locker source): the MEME side is never paid out; the local Topaz mock cannot swap, so it is carried.
+    const expectedCreatorToken = 0n;
+    const expectedProtocolToken = 0n;
     const expectedCreatorWbnb = (claimedWbnb * CREATOR_SHARE_BPS) / BPS;
     const expectedProtocolWbnb = claimedWbnb - expectedCreatorWbnb;
 

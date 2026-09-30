@@ -75,8 +75,10 @@ async function expectHarvestSplit(params: {
 
   await expect(params.locker.harvest(params.poolAddress)).to.emit(params.locker, "FeesHarvested");
 
-  const expectedCreatorToken = (params.feeToken * 8000n) / 10000n;
-  const expectedProtocolToken = params.feeToken - expectedCreatorToken;
+  // E9 (new generation): the MEME side is never paid out. It is sold in the pair; this mock pair has no swap
+  // surface, so the sale fails inside harvest's try and the MEME is carried to the next harvest.
+  const expectedCreatorToken = 0n;
+  const expectedProtocolToken = 0n;
   const expectedCreatorWbnb = (params.feeWbnb * 8000n) / 10000n;
   const expectedProtocolWbnb = params.feeWbnb - expectedCreatorWbnb;
 
@@ -87,7 +89,8 @@ async function expectHarvestSplit(params: {
 
   expect(await params.pool.balanceOf(await params.locker.getAddress())).to.equal(lpBefore);
   expect(await params.locker.lockedBalance(params.poolAddress)).to.equal(params.lockedLp);
-  expect(await params.token.balanceOf(await params.locker.getAddress())).to.equal(0n);
+  expect(await params.token.balanceOf(await params.locker.getAddress())).to.equal(params.feeToken);
+  expect(await params.locker.carriedMeme(params.poolAddress)).to.equal(params.feeToken);
   expect(await params.wbnb.balanceOf(await params.locker.getAddress())).to.equal(0n);
   expect(await params.locker.cumulativeCreatorPaid(params.poolAddress, params.tokenAddress)).to.equal(expectedCreatorToken);
   expect(await params.locker.cumulativeProtocolRouted(params.poolAddress, params.tokenAddress)).to.equal(expectedProtocolToken);
@@ -96,7 +99,7 @@ async function expectHarvestSplit(params: {
 }
 
 describe("PermanentLpLocker Topaz fee harvest", function () {
-  it("claims both Topaz fee assets, splits them 80/20, and preserves LP principal", async () => {
+  it("claims both Topaz fee assets, splits the paired asset 80/20, carries the unsellable MEME side (E9), and preserves LP principal", async () => {
     const [owner, creator, creatorFeeRecipient, campaign, protocolRevenueVault] = await ethers.getSigners();
 
     const Factory = await ethers.getContractFactory("MockTopazFactory");
