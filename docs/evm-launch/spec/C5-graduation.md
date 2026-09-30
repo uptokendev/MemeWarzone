@@ -227,8 +227,9 @@ One implementation in `LaunchCampaign.graduate()` serves native, BNB quote and R
   A re-entering adapter or router hits `ReentrancyGuardReentrantCall` (tested for adapter -> `graduate`, router ->
   `graduate` on the trade path and router -> `flush` on the finalize path).
 - **CEI as built.** (1) checks: not launched, `now >= launchAt`, due or Pending, pause honour window (72 h from
-  `pendingSince`), `_beforeGraduate`; (2) compute split, `T`, `budget`, `SupplyBound`; (3) effects: `launched`,
-  `graduationPending = false`, `finalizedAt`, beneficiary = `owner()`, `pendingCreatorGraduation += 19.8%`;
+  `pendingSince` and 72 h from `pausedAt`, whichever ends first; a due Trading coin under an honoured pause is
+  marked Pending and the call returns, audit 2), `_beforeGraduate`; (2) compute split, `T`, `budget`, `SupplyBound`; (3) effects: `launched`,
+  `graduationPending = false`, `finalizedAt`, beneficiary = `owner()` (or `creator` if the owner were ever zero; `renounceOwnership` is disabled, audit 1), `pendingCreatorGraduation += 19.8%`;
   (4) `try routeFinalize{2.2%}` - on catch `pendingProtocolGraduationFee += 2.2%` (the only write after an external
   call before the adapter, under the guard); (5) `enableTrading`, `forceApprove(adapter, budget)`, balance snapshots,
   `adapter.graduate{poolNative}`, `forceApprove(adapter, 0)`, deltas; (6) verification (reverts everything);
