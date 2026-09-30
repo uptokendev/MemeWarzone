@@ -92,6 +92,9 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 private constant WAD = 1e18;
     uint256 private constant MAX_BPS = 10_000;
     uint256 private constant GRADUATION_PRICE_TOLERANCE_BPS = 50;
+    /// @dev C2 anti-sniper fee: 5000 bps at launchAt, falling linearly to protocolFeeBps at launchAt + 60 s.
+    uint256 private constant ANTI_SNIPER_START_BPS = 5000;
+    uint256 private constant ANTI_SNIPER_WINDOW = 60;
     uint8 private constant ROUTE_KIND_TRADE = 0;
     uint8 private constant ROUTE_KIND_FINALIZE = 1;
     uint8 private constant ROUTE_PROFILE_STANDARD_LINKED = 0;
@@ -266,7 +269,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         if (params.graduationOracle == address(0)) revert GraduationOracleZero();
         if (params.creator == address(0)) revert CreatorZero();
         if (params.liquidityBps > MAX_BPS) revert InvalidLiquidityBps();
-        if (params.protocolFeeBps > MAX_BPS) revert InvalidProtocolBps();
+        if (params.protocolFeeBps > ANTI_SNIPER_START_BPS) revert InvalidProtocolBps();
         if (bytes(params.logoURI).length == 0) revert LogoUriRequired();
         if (!_isValidRouteProfile(params.tradeRouteProfile)) revert InvalidTradeRouteProfile();
         if (!_isValidRouteProfile(params.finalizeRouteProfile)) revert InvalidFinalizeRouteProfile();
@@ -698,9 +701,23 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         );
     }
 
+    /// @notice C2: the trade fee in bps right now. 5000 at launchAt, then linearly down to
+    /// protocolFeeBps at launchAt + 60 s, flat afterwards. Non-increasing in time, so a trade that
+    /// lands later than it was quoted never pays more fee. Before launchAt (views only; trades revert
+    /// TradingNotOpen) it reports the start value.
+    function currentTradeFeeBps() public view returns (uint256) {
+        uint256 base = protocolFeeBps;
+        uint256 end = uint256(launchAt) + ANTI_SNIPER_WINDOW;
+        if (block.timestamp >= end) return base;
+        uint256 left = end - block.timestamp;
+        if (left > ANTI_SNIPER_WINDOW) left = ANTI_SNIPER_WINDOW;
+        // base <= ANTI_SNIPER_START_BPS is enforced at init, so this cannot underflow.
+        return base + ((ANTI_SNIPER_START_BPS - base) * left) / ANTI_SNIPER_WINDOW;
+    }
+
+    /// @dev Every buy, sell and quote path charges through here, so quote == execution in a block.
     function _fee(uint256 amountWei) internal view returns (uint256) {
-        if (protocolFeeBps == 0) return 0;
-        return (amountWei * protocolFeeBps) / MAX_BPS;
+        return (amountWei * currentTradeFeeBps()) / MAX_BPS;
     }
 
     /// @dev E7(c): the only fee path. Every campaign of this generation routes through the treasury
