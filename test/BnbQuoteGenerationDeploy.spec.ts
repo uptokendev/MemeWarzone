@@ -239,18 +239,34 @@ describe("BNB quote generation deployment", function () {
       xAccount: "x",
       website: "https://memewar.zone",
       extraLink: "https://docs.memewar.zone",
-      basePrice: 0n,
-      priceSlope: 0n,
       graduationTarget: 0n,
       firstBuyTokens: 0n,
       firstBuyMaxCost: 0n,
       feeChoice: 1,
       feeCreatorPct: 0,
-      lpReceiver: ethers.ZeroAddress,
-      initialBuyBnbWei: 0n,
     };
 
+    // What the script leaves behind cannot create at all: it never sets the generation's native
+    // graduation adapter (IGraduationAdapterV2) nor the LaunchTokenDeployer, and create checks both
+    // before anything else. Found by this rehearsal; the script has no step for either yet.
+    await expect(
+      (factory as any).connect(creator).createCampaign(request),
+    ).to.be.revertedWithCustomError(factory, "NativeGraduationAdapterUnavailable");
+
+    // NOT in the script: the create-time wiring, with the generation's test doubles (no in-tree Topaz
+    // IGraduationAdapterV2 adapter exists yet), plus the choice-aware creator vault bound to the factory.
+    const nativeAdapter = await (await ethers.getContractFactory("MockGraduationAdapterEvmGen")).deploy(
+      await fx.topazRouter.poolFactory(),
+      await fx.wbnb.getAddress(),
+    );
+    await (await (nativeAdapter as any).setLocker(await (factory as any).permanentLpLocker())).wait();
+    await (await (factory as any).setNativeGraduationAdapter(await nativeAdapter.getAddress())).wait();
+    const tokenDeployer = await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy();
+    await (await (factory as any).setLaunchTokenDeployer(await tokenDeployer.getAddress())).wait();
+    await (await (fx.routing.creatorVault as any).setFactory(factoryAddress)).wait();
+
     expect(await (fx.creatorRegistry as any).launchRecorder(factoryAddress)).to.equal(false);
+    try { await (factory as any).connect(creator).createCampaign.staticCall(request); } catch (e: any) { console.log("DBG", e.data, e.revert, e.message); }
     await expect(
       (factory as any).connect(creator).createCampaign(request),
     ).to.be.revertedWithCustomError(fx.creatorRegistry, "NotLaunchRecorder");
