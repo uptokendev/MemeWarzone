@@ -20,6 +20,7 @@ interface IEvmGenHolderDistributor {
 
 interface IEvmGenV2PoolFactory {
     function getPool(address tokenA, address tokenB, bool stable) external view returns (address);
+    function getFee(address pool, bool stable) external view returns (uint256);
 }
 
 interface IEvmGenV3PoolFactory {
@@ -81,6 +82,10 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     uint16 internal constant MAX_IMPACT_BPS_LIMIT = 50;
     uint16 internal constant TWAP_DEVIATION_BPS = 100;
     uint32 internal constant TWAP_WINDOW = 1800;
+    /// @dev Observation slots requested on a V3 quote route pool when it is set, so observe(TWAP_WINDOW) can be
+    /// served (the TWAP guard fails closed). 180 slots cover 30 min at one touched block per 10 s on average;
+    /// a busier pool needs more, which anyone can add on the pool itself (increaseObservationCardinalityNext).
+    uint16 internal constant V3_ROUTE_OBSERVATIONS = 180;
     uint16 internal constant FLAT_TRADE_FEE_BPS = 200;
     uint16 internal constant MAX_CURVE_PROGRESS_BPS = 9_500;
     uint256 internal constant MAX_BATCH_CAMPAIGNS = 200;
@@ -275,6 +280,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
             ? IEvmGenV2PoolFactory(dexFactory).getPool(wrappedNative, quote, false)
             : IEvmGenV3PoolFactory(dexFactory).getPool(wrappedNative, quote, feeTier);
         if (pool == address(0)) revert NoRoute();
+        if (dexKind == DEX_UNISWAP_V3) IEvmGenV3Pool(pool).increaseObservationCardinalityNext(V3_ROUTE_OBSERVATIONS);
         quoteRoutePool[quote] = pool;
         emit QuoteRouteUpdated(quote, pool, feeTier);
     }
@@ -528,6 +534,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         _useWeekCap(campaign, amountIn);
         address pool = quoteRoutePool[c.quote];
         if (pool == address(0)) revert NoRoute();
+        _checkInterval(pool);
         IEvmGenWrappedNative(wrappedNative).deposit{value: amountIn}();
         (spent, out) = _swap(pool, wrappedNative, amountIn, address(this), maxImpactBps);
         if (amountIn > spent) IEvmGenWrappedNative(wrappedNative).withdraw(amountIn - spent);
@@ -623,21 +630,25 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     function _quoteToNative(address quote, uint256 amountIn) internal returns (uint256 spent, uint256 out) {
         address pool = quoteRoutePool[quote];
         if (quote == address(0) || pool == address(0)) revert NoRoute();
+        _checkInterval(pool);
         (spent, out) = _swap(pool, quote, amountIn, address(this), MAX_IMPACT_BPS_LIMIT);
         IEvmGenWrappedNative(wrappedNative).withdraw(out);
     }
 
     /// @dev One bounded swap in `pool`. Reverts NothingSwapped when the bound or the TWAP guard allows nothing.
+    /// The impact bound is scaled to the pool's fee (audit 4 M2: at 0.05% / 0.01% a 50 bps bound is sandwichable).
     function _swap(address pool, address tokenIn, uint256 amountIn, address recipient, uint256 impactBps)
         internal
         returns (uint256 spent, uint256 out)
     {
         if (dexKind == DEX_TOPAZ_V2) {
+            impactBps = EvmGenPoolSwap.feeScaledImpact(impactBps, IEvmGenV2PoolFactory(dexFactory).getFee(pool, false) * 100);
             (spent, out) = EvmGenPoolSwap.v2Plan(pool, tokenIn, amountIn, impactBps, TWAP_DEVIATION_BPS);
             if (spent == 0) revert NothingSwapped();
             EvmGenPoolSwap.v2Execute(pool, tokenIn, spent, out, recipient);
         } else {
             bool zeroForOne = tokenIn == IEvmGenV3Pool(pool).token0();
+            impactBps = EvmGenPoolSwap.feeScaledImpact(impactBps, IEvmGenV3Pool(pool).fee());
             (bool ok, uint160 limit) = EvmGenPoolSwap.v3Limit(pool, zeroForOne, impactBps, TWAP_DEVIATION_BPS, TWAP_WINDOW);
             if (!ok) revert NothingSwapped();
             activeSwapPool = pool;

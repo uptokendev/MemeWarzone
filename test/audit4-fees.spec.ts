@@ -304,7 +304,7 @@ describe("audit4: E9 harvest MEME sale bound is per call, not per block", functi
 });
 
 // ---------------------------------------------------------------- Robinhood-style fixture (Uniswap V3)
-async function rh(routeFee: number, holderQuote: bigint = 10_000n * E18) {
+async function rh(routeFee: number, holderQuote: bigint = 10_000n * E18, history = true) {
   const [admin, operator, creator, trader] = await ethers.getSigners();
   await network.provider.send("hardhat_setBalance", [admin.address, "0x" + (10n ** 26n).toString(16)]);
   const weth = await (await ethers.getContractFactory("MockWETH9")).deploy();
@@ -357,6 +357,8 @@ async function rh(routeFee: number, holderQuote: bigint = 10_000n * E18) {
   // Canonical WETH/stock route (the admin picks the fee tier; RH mainnet routes use 500 and 100 for SPY/NVDA...).
   const route = await makePool(stock, weth, routeFee, 1_000_000n * E18, 1_000n * E18);
   await vault.setQuoteRoute(await stock.getAddress(), routeFee);
+  // Fix F4: the V3 TWAP guard fails closed; `history` = the route pool can serve observe(1800) at spot.
+  if (history) await route.setTwap(true, 0);
   // 10,000 STK of holder quote (as LP fees; attributed here for brevity).
   await stock.transfer(await vault.getAddress(), holderQuote);
   await vault.attributeExcessQuote(c, holderQuote);
@@ -369,6 +371,7 @@ async function rh(routeFee: number, holderQuote: bigint = 10_000n * E18) {
 
 async function sandwichConvert(routeFee: number, frontRun: bigint) {
   const f = await rh(routeFee);
+  expect(await f.route.cardinalityNext()).to.equal(180n); // setQuoteRoute grew the route's observation slots
   // Baseline: native out for the same conversion with no attacker.
   const snap = await network.provider.send("evm_snapshot", []);
   await f.vault.connect(f.operator).convertHolderQuote(f.c, 10_000n * E18);
@@ -380,7 +383,7 @@ async function sandwichConvert(routeFee: number, frontRun: bigint) {
   const s0 = await f.stock.balanceOf(a);
   const w0 = await f.weth.balanceOf(a);
   await f.attacker.v3SwapIn(await f.route.getAddress(), f.stockIs0, frontRun); // sell STK first
-  await f.vault.connect(f.operator).convertHolderQuote(f.c, 10_000n * E18); // observe() has no history -> TWAP guard skipped
+  await f.vault.connect(f.operator).convertHolderQuote(f.c, 10_000n * E18); // the mock's tick does not follow the front-run: only the fee-scaled bound acts
   const got = (await f.weth.balanceOf(a)) - w0;
   await f.attacker.v3SwapIn(await f.route.getAddress(), !f.stockIs0, got); // buy STK back with all WETH gained
   const profit = (await f.stock.balanceOf(a)) - s0;
@@ -390,16 +393,23 @@ async function sandwichConvert(routeFee: number, frontRun: bigint) {
 }
 
 describe("audit4: vault quote->native conversion on a V3 route pool", function () {
-  it("EXPLOIT: on a 0.05% route pool whose oracle has no 30-min history, convertHolderQuote is sandwiched at a profit", async function () {
+  it("HOLDS (was EXPLOIT): on a 0.05% route pool the conversion refuses without 30-min history, and with it the fee-scaled bound makes the sandwich lose", async function () {
+    // Attack as found: no oracle history, front-run, convert. Fix: the TWAP guard fails closed.
+    const g = await rh(500, 10_000n * E18, false);
+    await g.attacker.v3SwapIn(await g.route.getAddress(), g.stockIs0, 50_000n * E18);
+    await expect(g.vault.connect(g.operator).convertHolderQuote(g.c, 10_000n * E18)).to.be.revertedWithCustomError(g.vault, "NothingSwapped");
+    // With history (and a front-run the guard does not see), the bound at 0.05% is fee*5/3 = 8 bps, not 50.
     for (const fr of [50_000n * E18, 200_000n * E18]) {
       const r = await sandwichConvert(500, fr);
-      const baseRate = (r.baseOut * 10n ** 12n) / r.baseSpent;
-      const rate = (r.out * 10n ** 12n) / r.spent;
       console.log(
-        `      fee 500, front-run ${fr / E18} STK: attacker +${ethers.formatEther(r.profit)} STK; vault got ${ethers.formatEther(r.out)} WETH for ${ethers.formatEther(r.spent)} STK (no attack: ${ethers.formatEther(r.baseOut)} for ${ethers.formatEther(r.baseSpent)})`,
+        `      fee 500, front-run ${fr / E18} STK: attacker ${ethers.formatEther(r.profit)} STK; vault got ${ethers.formatEther(r.out)} WETH for ${ethers.formatEther(r.spent)} STK (no attack: ${ethers.formatEther(r.baseOut)} for ${ethers.formatEther(r.baseSpent)})`,
       );
-      expect(r.profit).to.be.gt(0n);
-      expect(rate).to.be.lt(baseRate);
+      expect(r.profit).to.be.lt(0n);
+    }
+    // 0.01% tier: bound = 1 bp.
+    for (const fr of [50_000n * E18, 200_000n * E18]) {
+      const r = await sandwichConvert(100, fr);
+      expect(r.profit).to.be.lt(0n);
     }
   });
 
@@ -410,13 +420,18 @@ describe("audit4: vault quote->native conversion on a V3 route pool", function (
     }
   });
 
-  it("EXPLOIT: convertHolderQuote has no interval -- the operator can repeat it in one block, so 0.5% per call compounds", async function () {
+  it("HOLDS (was EXPLOIT): conversions through one route pool are spaced by the interval, so the operator cannot compound 0.5% per call in one block", async function () {
     const f = await rh(500, 100_000n * E18);
     const sp0 = await f.route.sqrtPriceX96();
-    for (let i = 0; i < 8; i++) await f.vault.connect(f.operator).convertHolderQuote(f.c, await f.vault.holderQuoteBalance(f.c));
+    await f.vault.connect(f.operator).convertHolderQuote(f.c, await f.vault.holderQuoteBalance(f.c));
+    for (let i = 1; i < 8; i++) {
+      await expect(f.vault.connect(f.operator).convertHolderQuote(f.c, await f.vault.holderQuoteBalance(f.c))).to.be.revertedWithCustomError(f.vault, "TooSoon");
+    }
     const sp1 = await f.route.sqrtPriceX96();
-    // price of STK in WETH moved by more than 3% (8 x ~0.5%) with no TWAP to stop it
-    const ratio = f.stockIs0 ? (sp1 * sp1 * 10000n) / (sp0 * sp0) : (sp0 * sp0 * 10000n) / (sp1 * sp1);
-    expect(ratio).to.be.lt(9700n);
+    // one fee-scaled bound (8 bps at 0.05%), not 8 x 0.5%
+    const ratio = f.stockIs0 ? (sp1 * sp1 * 100000n) / (sp0 * sp0) : (sp0 * sp0 * 100000n) / (sp1 * sp1);
+    expect(ratio).to.be.gte(99_920n);
+    await increase(3600);
+    await f.vault.connect(f.operator).convertHolderQuote(f.c, await f.vault.holderQuoteBalance(f.c));
   });
 });

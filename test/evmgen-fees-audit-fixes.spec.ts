@@ -81,3 +81,135 @@ describe("audit fix F2: one MEME sale per pool per block", function () {
     expect(await f.locker.carriedMeme(pool)).to.be.lt(carried1);
   });
 });
+
+/** BNB-style vault stack (Topaz V2), as audit4-fees.spec.ts. */
+async function bnbVault() {
+  const [admin, operator, creator, trader, other] = await ethers.getSigners();
+  const weth = await (await ethers.getContractFactory("MockWETH9")).deploy();
+  const topazFactory = await (await ethers.getContractFactory("MockTopazFactory")).deploy();
+  const Receiver = await ethers.getContractFactory("TreasuryRouterV3ReceiverMock");
+  const r = await Receiver.deploy();
+  const community = await (await ethers.getContractFactory("CommunityRewardsVaultV3Mock")).deploy();
+  const router = await (await ethers.getContractFactory("TreasuryRouterV4")).deploy(admin.address, await r.getAddress(), await r.getAddress(), 3600);
+  const vault = await (await ethers.getContractFactory("CreatorRewardsVaultV2")).deploy(admin.address, await router.getAddress(), await weth.getAddress(), 1, await topazFactory.getAddress(), DAY);
+  await router.setRecruiterRewardsVault(await r.getAddress());
+  await router.setCommunityRewardsVault(await community.getAddress());
+  await router.setProtocolRevenueVault(await r.getAddress());
+  await router.setCreatorRewardsVault(await vault.getAddress());
+  const locker = await (await ethers.getContractFactory("PermanentLpLocker")).deploy(admin.address);
+  await locker.configureRevenue(await router.getAddress(), await topazFactory.getAddress());
+  await router.setAuthorizedLpLocker(await locker.getAddress(), true);
+  const factory = await (await ethers.getContractFactory("MockFactoryEvmGen")).deploy(await locker.getAddress());
+  await vault.setFactoryOnce(await factory.getAddress());
+  const distributor = await (await ethers.getContractFactory("RewardDistributor")).deploy(admin.address);
+  await distributor.setBatchOperator(await vault.getAddress());
+  await vault.setHolderDistributorOnce(await distributor.getAddress());
+  await vault.setOperator(operator.address, false);
+  await vault.setCaps(10n * E18, 30n * E18, 3600, 50, 10n * E18);
+
+  async function campaignWith(choice: number, pct = 0) {
+    const campaign = await (await ethers.getContractFactory("MockCampaignEvmGen")).deploy(await router.getAddress(), 100n * E18);
+    await factory.addCampaign(await campaign.getAddress());
+    await factory.choose(await vault.getAddress(), await campaign.getAddress(), creator.address, choice, pct);
+    const token = await ethers.getContractAt("MockLaunchTokenEvmGen", await campaign.token());
+    return { campaign, token, c: await campaign.getAddress() };
+  }
+  async function graduate(campaign: any, token: any, paired: any, memeRes = 1_000_000n * E18, pairedRes = 100n * E18) {
+    await campaign.graduate();
+    await campaign.mintTo(admin.address, 2n * memeRes);
+    const pair = await (await ethers.getContractFactory("MockTopazPairEvmGen")).deploy();
+    await topazFactory.setPool(await token.getAddress(), await paired.getAddress(), false, await pair.getAddress());
+    await token.approve(await pair.getAddress(), ethers.MaxUint256);
+    await paired.approve(await pair.getAddress(), ethers.MaxUint256);
+    const memeIs0 = (await pair.token0()).toLowerCase() === (await token.getAddress()).toLowerCase();
+    await pair.seed(memeIs0 ? memeRes : pairedRes, memeIs0 ? pairedRes : memeRes);
+    await pair.setTwapFollowsSpot(true);
+    await pair.mint(await locker.getAddress(), E18);
+    const c = await campaign.getAddress();
+    await locker.registerGraduatedPool(c, c, await vault.getAddress(), await pair.getAddress(), await token.getAddress(), await paired.getAddress(), E18);
+    async function fundFees(memeFee: bigint, pairedFee: bigint) {
+      await pair.fundFees(await locker.getAddress(), memeIs0 ? memeFee : pairedFee, memeIs0 ? pairedFee : memeFee);
+    }
+    return { pair, memeIs0, fundFees };
+  }
+  return { admin, operator, creator, trader, other, weth, topazFactory, router, vault, locker, factory, distributor, campaignWith, graduate };
+}
+
+describe("audit fix F4: vault swaps scale the impact bound to the pool fee and fail closed without a TWAP", function () {
+  it("feeScaledImpact = min(bound, fee * 5/3) for every V3 tier and Topaz fee", async function () {
+    const h = await (await ethers.getContractFactory("EvmGenPoolSwapHarness")).deploy();
+    expect(await h.feeScaledImpact(50, 10_000)).to.equal(50n); // 1%
+    expect(await h.feeScaledImpact(50, 3_000)).to.equal(50n); // 0.30%
+    expect(await h.feeScaledImpact(50, 500)).to.equal(8n); // 0.05%
+    expect(await h.feeScaledImpact(50, 100)).to.equal(1n); // 0.01%
+    expect(await h.feeScaledImpact(50, 0)).to.equal(0n);
+    expect(await h.feeScaledImpact(20, 3_000)).to.equal(20n); // the admin's tighter cap still wins
+    expect(await h.feeScaledImpact(50, 5 * 100)).to.equal(8n); // Topaz 5 bps, passed as pips
+  });
+
+  it("V2 (Topaz): a 5 bps pool's buyback sells at most 8 bps / 2 of the reserve, not 50 / 2", async function () {
+    const f = await bnbVault();
+    const k = await f.campaignWith(4 /* Buyback */);
+    await k.campaign.connect(f.trader).payFee(1, { value: 200n * E18 }); // 11.2 native to buyback
+    await f.weth.deposit({ value: 300n * E18 });
+    const g = await f.graduate(k.campaign, k.token, f.weth);
+    await f.vault.syncLpFees(await g.pair.getAddress());
+    await f.topazFactory.setFeeBps(5);
+    const bal = await f.vault.buybackBalance(k.c);
+    await f.vault.connect(f.operator).buybackPool(k.c, 5n * E18);
+    const spent = bal - (await f.vault.buybackBalance(k.c));
+    expect(spent).to.equal((100n * E18 * 8n) / 20000n); // 0.04 WETH of the 100 WETH reserve
+  });
+
+  it("V2 and V3 TWAP guards fail closed when the pool cannot serve a TWAP", async function () {
+    const h = await (await ethers.getContractFactory("EvmGenPoolSwapHarness")).deploy();
+    const f = await v3Locker();
+    // V3: observe reverts (no history) -> not ok; with history at spot -> ok; the locker's no-window call is unaffected.
+    expect((await h.v3LimitTwap(await f.pool.getAddress(), true, 50, 100, 1800)).ok).to.equal(false);
+    expect((await h.v3LimitTwap(await f.pool.getAddress(), true, 50, 100, 0)).ok).to.equal(true);
+    await f.pool.setTwap(true, 0);
+    expect((await h.v3LimitTwap(await f.pool.getAddress(), true, 50, 100, 1800)).ok).to.equal(true);
+    // V2: quote reverts -> nothing to sell when a band is asked for; without a band (dev 0) the plan is unchanged.
+    const Token = await ethers.getContractFactory("MockERC20");
+    const [owner] = await ethers.getSigners();
+    const a = await Token.deploy("A", "A", 10n ** 30n, owner.address);
+    const b = await Token.deploy("B", "B", 10n ** 30n, owner.address);
+    const topaz = await (await ethers.getContractFactory("MockTopazFactory")).deploy();
+    const pair = await (await ethers.getContractFactory("MockTopazPairEvmGen")).deploy();
+    await topaz.setPool(await a.getAddress(), await b.getAddress(), false, await pair.getAddress());
+    await a.approve(await pair.getAddress(), ethers.MaxUint256);
+    await b.approve(await pair.getAddress(), ethers.MaxUint256);
+    await pair.seed(1_000n * E18, 1_000n * E18);
+    expect((await h.v2Plan(await pair.getAddress(), await a.getAddress(), E18, 50, 100)).sellIn).to.equal(0n);
+    expect((await h.v2Plan(await pair.getAddress(), await a.getAddress(), E18, 50, 0)).sellIn).to.equal(E18);
+    await pair.setTwapFollowsSpot(true);
+    expect((await h.v2Plan(await pair.getAddress(), await a.getAddress(), E18, 50, 100)).sellIn).to.equal(E18);
+  });
+
+  it("the interval is per route pool: conversions for two campaigns through one pool cannot share a block", async function () {
+    const f = await bnbVault();
+    const quote = await (await ethers.getContractFactory("MockERC20")).deploy("Quote", "USDX", 10n ** 30n, f.admin.address);
+    const A = await f.campaignWith(4 /* Buyback */);
+    const B = await f.campaignWith(4);
+    await A.campaign.connect(f.trader).payFee(1, { value: 100n * E18 });
+    await B.campaign.connect(f.trader).payFee(1, { value: 100n * E18 });
+    const gA = await f.graduate(A.campaign, A.token, quote);
+    const gB = await f.graduate(B.campaign, B.token, quote);
+    await f.vault.syncLpFees(await gA.pair.getAddress());
+    await f.vault.syncLpFees(await gB.pair.getAddress());
+    // canonical WBNB/USDX route
+    const route = await (await ethers.getContractFactory("MockTopazPairEvmGen")).deploy();
+    await f.topazFactory.setPool(await f.weth.getAddress(), await quote.getAddress(), false, await route.getAddress());
+    await f.weth.deposit({ value: 1_000n * E18 });
+    await f.weth.approve(await route.getAddress(), ethers.MaxUint256);
+    await quote.approve(await route.getAddress(), ethers.MaxUint256);
+    const qIs0 = (await route.token0()).toLowerCase() === (await quote.getAddress()).toLowerCase();
+    await route.seed(qIs0 ? 1_000_000n * E18 : 1_000n * E18, qIs0 ? 1_000n * E18 : 1_000_000n * E18);
+    await route.setTwapFollowsSpot(true);
+    await f.vault.setQuoteRoute(await quote.getAddress(), 0);
+    await f.vault.connect(f.operator).convertBuybackNativeToQuote(A.c, E18 / 10n);
+    await expect(f.vault.connect(f.operator).convertBuybackNativeToQuote(B.c, E18 / 10n)).to.be.revertedWithCustomError(f.vault, "TooSoon");
+    await increase(3600);
+    await f.vault.connect(f.operator).convertBuybackNativeToQuote(B.c, E18 / 10n);
+  });
+});

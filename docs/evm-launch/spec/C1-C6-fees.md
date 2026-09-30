@@ -390,6 +390,35 @@ factory's initcode (`deployFactoryWithLocker`), so the bytes the old text cited 
   per block (F2), each at most 0.50% below the price that attacker set. Founder item: a keeper that grows
   the pool's `observationCardinalityNext` would allow the same guard there.
 
+**F4 (MEDIUM, audit 4 M2): vault swaps scale the bound to the pool fee, the V3 TWAP guard fails closed,
+route pools get observation slots, and conversions are spaced per route pool.** On a 0.05% Uniswap V3
+route pool whose oracle had no 30 min history, `convertHolderQuote` was sandwiched at a profit (+195 STK
+on a 2,500 STK conversion), and the operator could repeat it in one block. Four changes:
+1. `EvmGenPoolSwap.feeScaledImpact(bound, feePips) = min(bound, feePips / 60)` (fee * 5/3 in bps, the
+   locker's E13 rule). `CreatorRewardsVaultV2._swap` applies it on both DEX kinds: Topaz reads
+   `dexFactory.getFee(pool, false)` (bps, x100 to pips), V3 reads `pool.fee()`. 0.30% -> 50 bps,
+   0.05% -> 8, 0.01% -> 1, a 0-fee pool -> 0 (`NothingSwapped`). The admin's `maxImpactBps` still caps it.
+2. `v3Limit` returns `ok=false` when `twapWindow != 0` and `observe` reverts (was: guard skipped). The
+   lockers pass `twapWindow = 0` and are unaffected. (`v2Plan` fails closed since F3.)
+3. `setQuoteRoute` on V3 calls `pool.increaseObservationCardinalityNext(180)` (`V3_ROUTE_OBSERVATIONS`),
+   so the route can serve `observe(1800)` once its slots span 30 min (one touched block per 10 s on
+   average). A busier pool needs more slots; anyone can add them on the pool directly. **Operational:** a
+   Buyback coin's own V3 pool is not grown by the vault; the keeper must call
+   `increaseObservationCardinalityNext` on it once before `buybackPool` can run there.
+4. `_checkInterval(routePool)` in `_quoteToNative` (`convertHolderQuote`) and in
+   `convertBuybackNativeToQuote`, sharing `minBuyInterval`. Keyed by the route pool, not the campaign,
+   because the route is shared: a per-campaign interval would still let the operator stack conversions
+   for many campaigns in one block. Consequence: one conversion per route pool per `minBuyInterval`.
+- Measured: at 0.05% and 0.01% the audit's sandwich (front-runs of 50k and 200k STK) now loses the
+  attacker 9.8-36.8 STK; without history the conversion refuses (`NothingSwapped`); a second conversion
+  through the same pool in the interval reverts `TooSoon`.
+- Reentrancy: `increaseObservationCardinalityNext` is an admin-only external call to the canonical pool
+  read from the DEX factory (no attacker-chosen address); `getFee`/`fee()` are views before the swap;
+  every swap path stays `nonReentrant`. CEI: interval stamped before the swap (a revert undoes it).
+- Overflow: `feePips / 60` with `feePips <= 1e6` (uint24) or `getFee * 100` with Topaz fees <= 1e4.
+- Griefing: the operator can only be slowed (interval, fail-closed guard); nobody else can call these.
+  A pool with too few observation slots blocks conversions until someone grows it (no funds at risk).
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |
