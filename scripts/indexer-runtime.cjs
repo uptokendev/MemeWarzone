@@ -2,7 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { ethers } = require("ethers");
-const { buildIndexerManifest } = require("./lib/indexerManifest.cjs");
+const { buildIndexerManifest, eventFragmentFor } = require("./lib/indexerManifest.cjs");
 
 const DEFAULT_CONFIRMATIONS = 6;
 const DEFAULT_BATCH_BLOCKS = 2_000;
@@ -22,6 +22,9 @@ const ARTIFACT_CANDIDATES = {
   RiskRegistry: ["contracts/RiskRegistry.sol/RiskRegistry.json"],
   GraduationOracle: ["contracts/GraduationOracle.sol/GraduationOracle.json"],
   PermanentLpLocker: ["contracts/PermanentLpLocker.sol/PermanentLpLocker.json"],
+  PermanentV3PositionLocker: ["contracts/PermanentV3PositionLocker.sol/PermanentV3PositionLocker.json"],
+  TreasuryRouterV4: ["contracts/TreasuryRouterV4.sol/TreasuryRouterV4.json"],
+  CreatorRewardsVaultV2: ["contracts/CreatorRewardsVaultV2.sol/CreatorRewardsVaultV2.json"],
   UPVoteTreasury: ["contracts/UPVoteTreasury.sol/UPVoteTreasury.json"],
 };
 
@@ -85,10 +88,6 @@ function loadArtifactInterface(contractName) {
   return new ethers.Interface(readJson(file).abi);
 }
 
-function fallbackInterface(signatures) {
-  return new ethers.Interface(signatures.map((signature) => `event ${signature}`));
-}
-
 function artifactCoversSignatures(iface, signatures) {
   if (!iface) return false;
   return signatures.every((signature) => {
@@ -100,14 +99,44 @@ function artifactCoversSignatures(iface, signatures) {
   });
 }
 
+function signatureFromEvent(eventFragment) {
+  return eventFragment.format("sighash");
+}
+
+/**
+ * The full fragment (with `indexed` flags) for one signature: the manifest's own `eventFragments`, then the
+ * built-in table (a manifest written before fragments existed), then the compiled artifact. Never a
+ * fragment built from the bare signature: that one marks nothing indexed, so ethers reads indexed topics as
+ * data and every CampaignCreated / TokensPurchased log throws. An unknown signature fails loudly here.
+ */
+function resolveEventFragment(manifest, contractName, signature, artifactIface) {
+  const fromManifest = manifest.eventFragments?.[contractName]?.[signature];
+  if (fromManifest) return fromManifest;
+  const builtIn = eventFragmentFor(contractName, signature);
+  if (builtIn) return builtIn;
+  if (artifactIface) {
+    try {
+      const event = artifactIface.getEvent(signature);
+      if (event && signatureFromEvent(event) === signature) return event.format("full");
+    } catch {
+      // not in the artifact
+    }
+  }
+  throw new Error(`indexer: no fragment with indexed flags for ${contractName}.${signature}; add it to EVENT_FRAGMENTS`);
+}
+
 function buildInterfaces(manifest) {
   const byContractTopic = new Map();
   for (const [contractName, events] of Object.entries(manifest.events || {})) {
     const signatures = Object.keys(events);
     if (signatures.length === 0) continue;
     const artifactIface = loadArtifactInterface(contractName);
-    const iface = artifactCoversSignatures(artifactIface, signatures) ? artifactIface : fallbackInterface(signatures);
     for (const [signature, topic] of Object.entries(events)) {
+      const fragment = resolveEventFragment(manifest, contractName, signature, artifactIface);
+      const iface = new ethers.Interface([fragment]);
+      if (iface.getEvent(signature).topicHash.toLowerCase() !== String(topic).toLowerCase()) {
+        throw new Error(`indexer: topic mismatch for ${contractName}.${signature}`);
+      }
       byContractTopic.set(`${contractName}:${String(topic).toLowerCase()}`, { contractName, signature, iface });
     }
   }

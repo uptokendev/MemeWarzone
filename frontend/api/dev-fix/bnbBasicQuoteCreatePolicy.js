@@ -4,8 +4,8 @@ import { getServerReadProvider } from "../lib/getServerReadProvider.js";
 import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";
 import { buildBnbBasicQuoteCatalogBinding } from "../lib/bnbBasicQuoteCatalogBinding.js";
 import {
-  BNB_BASIC_FACTORY_GENERATION,
-  BNB_BASIC_CAMPAIGN_GENERATION,
+  bnbBasicGenerationRule,
+  isSupportedBnbBasicGenerationPair,
   signBnbBasicQuoteAuthorization,
 } from "./routeAuthorizationSigner.js";
 
@@ -76,9 +76,10 @@ async function readBnbBasicFactoryBinding({ chainId, factoryAddress }) {
   if (adapter === ethers.ZeroAddress || campaignImplementation === ethers.ZeroAddress) {
     throw new Error("BNB BASIC quote factory is not fully wired");
   }
-  if (factoryGeneration !== BNB_BASIC_FACTORY_GENERATION || campaignGeneration !== BNB_BASIC_CAMPAIGN_GENERATION) {
+  // BASIC_FACTORY_GENERATION / BASIC_QUOTE_CAMPAIGN_GENERATION: 5/4 (live) or 6/5 (new generation).
+  if (!isSupportedBnbBasicGenerationPair(factoryGeneration, campaignGeneration)) {
     throw new Error(
-      `BNB BASIC quote generation mismatch: expected ${BNB_BASIC_FACTORY_GENERATION}/${BNB_BASIC_CAMPAIGN_GENERATION}, got ${factoryGeneration}/${campaignGeneration}`,
+      `BNB BASIC quote generation mismatch: expected ${bnbBasicGenerationRule()}, got ${factoryGeneration}/${campaignGeneration}`,
     );
   }
   return { adapter, campaignImplementation, factoryGeneration, campaignGeneration };
@@ -101,12 +102,12 @@ export async function readBnbBasicCreationPreflight({ chainId, factoryAddress, w
     ]);
     const factoryGeneration = Number(factoryGenerationRaw);
     const campaignGeneration = Number(campaignGenerationRaw);
-    if (factoryGeneration !== BNB_BASIC_FACTORY_GENERATION || campaignGeneration !== BNB_BASIC_CAMPAIGN_GENERATION) {
+    if (!isSupportedBnbBasicGenerationPair(factoryGeneration, campaignGeneration)) {
       return {
         ok: false,
         status: 409,
         code: "BNB_BASIC_FACTORY_GENERATION_MISMATCH",
-        error: `BNB BASIC creation requires factory/campaign generation ${BNB_BASIC_FACTORY_GENERATION}/${BNB_BASIC_CAMPAIGN_GENERATION}; configured factory reports ${factoryGeneration}/${campaignGeneration}.`,
+        error: `BNB BASIC creation requires factory/campaign generation ${bnbBasicGenerationRule()}; configured factory reports ${factoryGeneration}/${campaignGeneration}.`,
       };
     }
     if (!live || globalPaused || createPaused) {
@@ -174,8 +175,11 @@ export async function prepareBnbBasicQuoteCreateAuthorization({
   const catalogId = requiredCatalogId(graduationQuoteAssetId);
   const detail = await getGraduationQuoteAssetDetail(catalogId);
   const item = assertBnbBasicCatalogAuthority(detail?.item);
-  const binding = buildBnbBasicQuoteCatalogBinding(item);
   const factoryBinding = await readBnbBasicFactoryBinding({ chainId, factoryAddress });
+  const binding = buildBnbBasicQuoteCatalogBinding(item, {
+    factoryGeneration: factoryBinding.factoryGeneration,
+    campaignGeneration: factoryBinding.campaignGeneration,
+  });
 
   const signature = await signBnbBasicQuoteAuthorization({
     signer,
@@ -183,6 +187,8 @@ export async function prepareBnbBasicQuoteCreateAuthorization({
     factoryAddress,
     creator,
     request,
+    factoryGeneration: factoryBinding.factoryGeneration,
+    campaignGeneration: factoryBinding.campaignGeneration,
     quoteToken: binding.quoteToken,
     quoteCatalogBindingHash: binding.bindingHash,
     adapter: factoryBinding.adapter,

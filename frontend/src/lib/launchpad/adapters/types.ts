@@ -107,6 +107,17 @@ export type CreateCampaignParams = {
   /** Opaque server-side Quote Asset Catalog deployment id; never a raw quote token/router address. */
   graduationQuoteAssetId?: string;
   lpReceiver?: string;
+  /**
+   * Generation-6 factories only: first buy and creator fee choice. Absent for every
+   * older factory, whose create request and transaction stay exactly as before.
+   */
+  gen6?: {
+    firstBuyTokens: bigint;
+    firstBuyMaxCost: bigint;
+    feeChoice: number;
+    feeCreatorPct: number;
+    value: bigint;
+  };
 };
 
 export type FetchCampaignPageOptions = {

@@ -22,6 +22,13 @@ import {
   fetchLaunchpadSellPreflight,
 } from "@/lib/recruiterApi";
 import { getReadProvider } from "@/lib/readProvider";
+import {
+  GEN6_BNB_BASIC_QUOTE_CREATE_ABI,
+  gen6CreateErrorMessage,
+  gen6FactoryWriter,
+  gen6SignedRequest,
+  isGen6Factory,
+} from "@/lib/evmGen6Client";
 import { apiFetch } from "@/lib/apiBase";
 import { notifyIndexerFills } from "@/lib/indexerTradeIngest";
 import { resolveImageUri } from "@/lib/media";
@@ -101,6 +108,11 @@ type CampaignRequestPayload = {
   website: string;
   extraLink: string;
   graduationTarget: string;
+  // Generation-6 factories sign and check these four as well (C3, C6).
+  firstBuyTokens?: string;
+  firstBuyMaxCost?: string;
+  feeChoice?: number;
+  feeCreatorPct?: number;
 };
 
 type CreatedCampaignReceipt = {
@@ -120,6 +132,17 @@ async function postApiJson(path: string, body: any) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   }));
+}
+
+/** A generation-6 create that reverts with a first-buy or fee-choice error reads in plain words. */
+async function sendGen6Create<T>(send: () => Promise<T>): Promise<T> {
+  try {
+    return await send();
+  } catch (error) {
+    const friendly = gen6CreateErrorMessage(error);
+    if (friendly) throw new Error(friendly);
+    throw error;
+  }
 }
 
 async function requestCreateAuthorization(params: {
@@ -836,6 +859,16 @@ export function useLaunchpad(): LaunchpadAdapter {
       extraLink: params.extraLink,
       graduationTarget: (params.graduationTargetWei ?? 0n).toString(),
     };
+    const gen6 = params.gen6;
+    if (gen6) {
+      if (!(await isGen6Factory(readProvider, factoryAddress))) {
+        throw new Error("The configured factory is not generation 6, so it cannot take a first buy or fee choice.");
+      }
+      campaignRequest.firstBuyTokens = gen6.firstBuyTokens.toString();
+      campaignRequest.firstBuyMaxCost = gen6.firstBuyMaxCost.toString();
+      campaignRequest.feeChoice = gen6.feeChoice;
+      campaignRequest.feeCreatorPct = gen6.feeCreatorPct;
+    }
 
     await fetchLaunchpadCreatePreflight(wallet.account, activeChainId);
     const authResponse = await requestCreateAuthorization({
@@ -853,6 +886,7 @@ export function useLaunchpad(): LaunchpadAdapter {
       signature: auth.signature,
     };
     const gasOverrides = await legacyGasOverrides(signer, readProvider);
+    const signedGen6 = gen6 ? gen6SignedRequest((authResponse as any).campaignRequest, gen6) : null;
 
     let tx;
     if (authResponse.graduationMarket?.kind === "BNB_BASIC_QUOTE") {
@@ -862,13 +896,31 @@ export function useLaunchpad(): LaunchpadAdapter {
       if (!quoteToken || !ethers.isHexString(quoteCatalogBindingHash, 32)) {
         throw new Error("BNB BASIC quote authorization is missing its canonical quote binding");
       }
-      const basicWriter = new Contract(factoryAddress, BNB_BASIC_FACTORY_WRITE_ABI, signer) as any;
-      tx = await basicWriter.createBasicQuoteCampaignAuthorized(
-        campaignRequest,
-        quoteToken,
-        quoteCatalogBindingHash,
-        routeAuthorization,
-        gasOverrides,
+      if (signedGen6) {
+        const basicWriter = new Contract(factoryAddress, GEN6_BNB_BASIC_QUOTE_CREATE_ABI, signer) as any;
+        tx = await sendGen6Create(() =>
+          basicWriter.createBasicQuoteCampaignAuthorized(
+            signedGen6.request,
+            quoteToken,
+            quoteCatalogBindingHash,
+            routeAuthorization,
+            { ...gasOverrides, value: signedGen6.value },
+          ),
+        );
+      } else {
+        const basicWriter = new Contract(factoryAddress, BNB_BASIC_FACTORY_WRITE_ABI, signer) as any;
+        tx = await basicWriter.createBasicQuoteCampaignAuthorized(
+          campaignRequest,
+          quoteToken,
+          quoteCatalogBindingHash,
+          routeAuthorization,
+          gasOverrides,
+        );
+      }
+    } else if (signedGen6) {
+      const gen6Writer = gen6FactoryWriter(factoryAddress, signer as any);
+      tx = await sendGen6Create(() =>
+        gen6Writer.createCampaignAuthorized(signedGen6.request, routeAuthorization, { ...gasOverrides, value: signedGen6.value }),
       );
     } else {
       tx = await writer.createCampaignAuthorized(campaignRequest, routeAuthorization, gasOverrides);

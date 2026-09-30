@@ -9,7 +9,17 @@ import {
   assertSupportedGenerations,
   generationRule,
   signScheduledCreateAuthorization,
+  usesGen6RequestHash,
 } from "./routeAuthorizationSigner.js";
+import {
+  Gen6CreateOptionError,
+  assertNoGen6FieldsForLegacy,
+  hasGen6CreateFields,
+  prepareGen6CreateOptions,
+  readGen6FactoryCreateContext,
+} from "../lib/evmLaunchGen6.js";
+import { evmLaunchOptionsSource, loadDraftEvmLaunchOptions } from "../lib/draftEvmLaunchOptions.js";
+import { getServerReadProvider } from "../lib/getServerReadProvider.js";
 import {
   TickerReservationError,
   authorizeScheduledTickerReservation,
@@ -146,6 +156,33 @@ function hashText(value) {
   return ethers.keccak256(ethers.toUtf8Bytes(String(value ?? "")));
 }
 
+/**
+ * Generation 6 factories sign the creator first buy and fee choice with the scheduled request.
+ * Source: the arm request's own fields when it sends any, else the options saved on the draft
+ * (campaign_draft_evm_launch_options; there the max cost is set from the curve at arm time).
+ * Older factories refuse the fields. `deps` is injectable for tests.
+ */
+export async function resolveScheduledGen6Fields({ body, pool, draftId, chainId, factoryAddress, factoryGeneration, graduationTarget }, deps = {}) {
+  const source = body?.campaignRequest || body || {};
+  if (!usesGen6RequestHash(factoryGeneration)) {
+    assertNoGen6FieldsForLegacy(source, factoryGeneration);
+    return null;
+  }
+  const loadOptions = deps.loadOptions || loadDraftEvmLaunchOptions;
+  const readContext =
+    deps.readContext ||
+    (async ({ graduationTarget: target }) =>
+      readGen6FactoryCreateContext({ provider: await getServerReadProvider(chainId), factoryAddress, graduationTarget: target }));
+  let optionSource = source;
+  let autoMaxCost = false;
+  if (!hasGen6CreateFields(source)) {
+    const saved = (await loadOptions(pool, [draftId])).get(String(draftId));
+    optionSource = evmLaunchOptionsSource(saved) || {};
+    autoMaxCost = true;
+  }
+  return prepareGen6CreateOptions({ source: optionSource, graduationTarget, readContext, autoMaxCost });
+}
+
 async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
   const routeSigner = getRouteSigner();
   if (!routeSigner) return json(res, 503, { error: "Route authorization signer is not configured." });
@@ -181,7 +218,7 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
     return json(res, 400, { error: error.message });
   }
 
-  const campaign = {
+  let campaign = {
     name: String(row.name || ""),
     symbol: String(row.ticker || "").toUpperCase(),
     logoURI: String(row.logo_url || ""),
@@ -190,6 +227,25 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
     extraLink: String(row.other_url || ""),
     graduationTarget,
   };
+
+  let gen6 = null;
+  try {
+    gen6 = await resolveScheduledGen6Fields({
+      body,
+      pool,
+      draftId,
+      chainId,
+      factoryAddress,
+      factoryGeneration,
+      graduationTarget,
+    });
+  } catch (error) {
+    if (error instanceof Gen6CreateOptionError) {
+      return json(res, error.httpStatus || 400, { error: error.message, code: error.code, ...(error.details ? { details: error.details } : {}) });
+    }
+    throw error;
+  }
+  if (gen6) campaign = { ...campaign, ...gen6.requestFields };
 
   // The creator cooldown applies to this irreversible arm/deploy action now.
   // launchAt remains an immutable signed trading-open timestamp, but it must
@@ -299,12 +355,19 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
         preflight,
         factoryGeneration,
         campaignGeneration,
+        ...(gen6 ? { firstBuy: gen6.firstBuy, feeChoice: gen6.feeChoiceName } : {}),
       },
     });
 
     return json(res, 200, {
       scheduledRequest: canonical.scheduledRequest,
       authorization: canonical.authorization,
+      ...(gen6
+        ? {
+            firstBuy: gen6.firstBuy,
+            feeChoice: { id: gen6.requestFields.feeChoice, name: gen6.feeChoiceName, creatorPct: gen6.requestFields.feeCreatorPct },
+          }
+        : {}),
       tickerReservation: canonical.reservation,
       preflight: { ...preflight, factoryGeneration, campaignGeneration },
     });

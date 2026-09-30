@@ -47,7 +47,7 @@ describe("route authority verifier helpers", function () {
 
   // Pins the ops helper against the generation-6 factory's 11-field request hash (LaunchFactory
   // _hashCampaignRequest). scripts/verify-route-authority.cjs still hashes the old 7-field request.
-  it.skip(`hashes campaign requests exactly like the route auth ABI -- ${BACKEND_GAP}`, async () => {
+  it(`hashes campaign requests exactly like the route auth ABI (generation 6, gap closed: ${BACKEND_GAP.slice(0, 11)})`, async () => {
     const expected = ethers.keccak256(
       ethers.AbiCoder.defaultAbiCoder().encode(verifier.REQUEST_HASH_TYPES, [
         ethers.keccak256(ethers.toUtf8Bytes(sampleRequest.name)),

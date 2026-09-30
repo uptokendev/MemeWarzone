@@ -32,7 +32,7 @@ describe("route authority verifier helper edges", function () {
   });
 
   // The generation-6 factory hashes the 11-field CampaignRequest (LaunchFactory._hashCampaignRequest).
-  it.skip(`exports the ABI type layout used by request hashes -- ${BACKEND_GAP}`, async () => {
+  it(`exports the ABI type layout used by request hashes (generation 6, gap closed: ${BACKEND_GAP.slice(0, 11)})`, async () => {
     expect(verifier.REQUEST_HASH_TYPES).to.deep.eq([
       "bytes32",
       "bytes32",

@@ -551,6 +551,10 @@ import { readOwnerMintBalanceRaw, readQuoteUiMultiplier } from "@/lib/dbcQuoteMu
 import { WSOL_MINT, formatScaledQuote, quoteUiToRaw } from "../../shared/dbcQuotes.mjs";
 import DbcCreatorRewardsPanel from "@/components/dbc/DbcCreatorRewardsPanel";
 import DbcFeeChoiceLine from "@/components/dbc/DbcFeeChoiceLine";
+import { useGen5Campaign } from "@/components/evm/useGen5Campaign";
+import { EvmGen5TradeNotes } from "@/components/evm/EvmGen5TradeNotes";
+import { EvmGen5CreatorPanel } from "@/components/evm/EvmGen5CreatorPanel";
+import { evmCreatorBadge } from "@/lib/evmGen6.mjs";
 
 type TokenDetailsProps = { dbcLive?: Record<string, any> | null };
 
@@ -799,6 +803,11 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   const readProvider = useMemo(
     () => (isSolanaPage ? null : getReadProvider(chainIdForStorage)),
     [chainIdForStorage, isSolanaPage],
+  );
+  // EVM generation-5 coins only; every older campaign reads as null and renders nothing new (E14).
+  const gen5 = useGen5Campaign(isSolanaPage ? null : readProvider, Number(chainIdForStorage), isSolanaPage ? "" : resolvedCampaignAddress);
+  const gen5ViewerIsCreator = Boolean(
+    gen5.state && wallet.account && gen5.state.creator.toLowerCase() === String(wallet.account).toLowerCase(),
   );
 
   // Follow with the wallet of this coin's chain: Phantom on Solana pages, the EVM wallet elsewhere.
@@ -4851,6 +4860,18 @@ const toSeconds = (ts: number): number => {
                   </span>
                 ) : null}
 
+                {gen5.state && gen5.creator ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full border border-orange-400/40 text-orange-200 whitespace-nowrap" data-testid="evm-gen5-creator-badge">
+                    {evmCreatorBadge({
+                      walletBalance: gen5.creator.walletBalance,
+                      escrowHeld: gen5.creator.escrowHeld,
+                      locked: gen5.creator.escrowLocked,
+                      totalSupply: gen5.creator.totalSupply,
+                      fullyFreeUnix: gen5.creator.fullyFreeAt,
+                    })}
+                  </span>
+                ) : null}
+
                 <span
                   className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold whitespace-nowrap ${
                     isDexStage
@@ -5748,6 +5769,25 @@ const toSeconds = (ts: number): number => {
                       >
                         Claim released tokens
                       </Button>
+                    ) : null}
+                    {gen5.state ? (
+                      <EvmGen5TradeNotes
+                        state={gen5.state}
+                        viewerIsCreator={gen5ViewerIsCreator}
+                        tradeTab={tradeTab}
+                        nativeSymbol={nativeUnit}
+                        explorerBase={getExplorerBase(chainIdForStorage)}
+                      />
+                    ) : null}
+                    {gen5.state && gen5.creator && gen5ViewerIsCreator ? (
+                      <EvmGen5CreatorPanel
+                        state={gen5.state}
+                        creator={gen5.creator}
+                        signer={(wallet.signer as any) || null}
+                        account={String(wallet.account || "")}
+                        nativeSymbol={nativeUnit}
+                        onClaimed={() => void gen5.refresh()}
+                      />
                     ) : null}
                     {isDbcPage && dbcPool ? <DbcFeeChoiceLine pool={dbcPool} /> : null}
                     {isDbcPage && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (

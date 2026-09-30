@@ -17,6 +17,7 @@
  */
 import { PublicKey } from "@solana/web3.js";
 import { ethers } from "ethers";
+import { leagueExcludedFilter } from "../evm/curveTradeGen5Columns.js";
 
 type Db = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -49,6 +50,9 @@ function weights() {
 const native = (raw: unknown, decimals: number) => Number(String(raw ?? "0")) / 10 ** decimals;
 
 export async function recruiterLeagueStandings(db: Db, startIso: string, endIso: string, prices: NativeUsd): Promise<RecruiterStanding[]> {
+  // D13: a creator's own buys (gen-5 first buy and escrow buys, flagged by the indexer) are not
+  // referred volume. Empty until the gen-5 migration has added the column.
+  const creatorBuys = await leagueExcludedFilter(db, "t");
   const { rows } = await db.query(
     `WITH active_links AS (
        SELECT l.recruiter_id, l.wallet_address FROM public.wallet_recruiter_links l
@@ -70,7 +74,7 @@ export async function recruiterLeagueStandings(db: Db, startIso: string, endIso:
          FROM public.curve_trades t
          JOIN volume_wallets w
            ON (t.chain_id = $3 AND w.wallet_address = t.wallet) OR (t.chain_id <> $3 AND lower(w.wallet_address) = lower(t.wallet))
-        WHERE t.chain_id = ANY($4::int[]) AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz
+        WHERE t.chain_id = ANY($4::int[]) AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz${creatorBuys}
         GROUP BY 1, 2
      ), earned AS (
        SELECT w.recruiter_id, re.chain_id, sum(re.recruiter_amount) AS raw
