@@ -17,6 +17,10 @@ const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
   basePrice: 0n,
   priceSlope: 0n,
   graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
@@ -71,6 +75,10 @@ const directInitParams = async (values: {
   basePrice: values.basePrice ?? 10n ** 12n,
   priceSlope: values.priceSlope ?? 10n ** 9n,
   graduationTarget: values.graduationTarget ?? ethers.parseEther("1"),
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   graduationOracle: values.graduationOracle ?? await (await deployTestOracle()).graduationOracle.getAddress(),
   liquidityBps: 8000,
   protocolFeeBps: values.protocolFeeBps ?? 200,
@@ -117,6 +125,10 @@ async function createLowTargetCampaignFixture() {
     basePrice: 10n ** 12n,
     priceSlope: 10n ** 9n,
     graduationTarget: 1n,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: 8000,
   });
   await factory.connect(creator).createCampaign(baseCampaignRequest() as any);
@@ -410,6 +422,10 @@ describe("LaunchCampaign", function () {
         name: "Escrowed",
         symbol: "ESC",
         graduationTarget: total,
+        firstBuyTokens: 0n,
+        firstBuyMaxCost: 0n,
+        feeChoice: 1,
+        feeCreatorPct: 0,
         leagueFeeBps: 0,
         basePrice,
         priceSlope,
@@ -516,6 +532,10 @@ describe("LaunchCampaign", function () {
         basePrice: ethers.parseEther("0.005"),
         priceSlope: 10n ** 9n,
         graduationTarget: ethers.parseEther("2"),
+        firstBuyTokens: 0n,
+        firstBuyMaxCost: 0n,
+        feeChoice: 1,
+        feeCreatorPct: 0,
       })
     );
 

@@ -76,6 +76,10 @@ describe("verify-route-authority script", function () {
       basePrice: 0n,
       priceSlope: 0n,
       graduationTarget: 0n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       lpReceiver: ethers.ZeroAddress,
     });
     const deadline = 1234567890n;

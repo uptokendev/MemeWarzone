@@ -13,6 +13,10 @@ const req = (overrides: Record<string, unknown> = {}) => ({
   basePrice: 0n,
   priceSlope: 0n,
   graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
@@ -65,6 +69,10 @@ describe("Security & invariants", function () {
       basePrice: ethers.parseEther("0.005"),
       priceSlope: 10n ** 9n,
       graduationTarget: ethers.parseEther("0.005"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
 
@@ -105,6 +113,10 @@ describe("Security & invariants", function () {
       basePrice: ethers.parseEther("0.005"),
       priceSlope: 10n ** 9n,
       graduationTarget: ethers.parseEther("2"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
     await factory.connect(owner).setProtocolFee(200);
@@ -156,6 +168,10 @@ describe("Security & invariants", function () {
       basePrice: 10n ** 12n,
       priceSlope: 10n ** 9n,
       graduationTarget: 1n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
 
@@ -195,6 +211,10 @@ describe("Security & invariants", function () {
       basePrice: 10n ** 12n,
       priceSlope: 10n ** 9n,
       graduationTarget: ethers.parseEther("100"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
 
@@ -238,6 +258,10 @@ describe("Security & invariants", function () {
       basePrice: 10n ** 12n,
       priceSlope: 10n ** 9n,
       graduationTarget: 1n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
 

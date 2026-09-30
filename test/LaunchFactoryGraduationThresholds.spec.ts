@@ -88,6 +88,10 @@ describe("LaunchFactory graduation threshold policy", function () {
       basePrice: current.basePrice,
       priceSlope: current.priceSlope,
       graduationTarget: thirtyK,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: current.liquidityBps,
     });
 

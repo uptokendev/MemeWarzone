@@ -12,6 +12,10 @@ const baseReq = (overrides: Record<string, unknown> = {}) => ({
   basePrice: 0n,
   priceSlope: 0n,
   graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
@@ -248,6 +252,10 @@ describe("LaunchFactory lifecycle integration", function () {
       basePrice: 10n ** 12n,
       priceSlope: 10n ** 9n,
       graduationTarget: 1n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
 

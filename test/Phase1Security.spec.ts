@@ -14,6 +14,10 @@ const req = (overrides: Record<string, unknown> = {}) => ({
   basePrice: 0n,
   priceSlope: 0n,
   graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
@@ -81,6 +85,10 @@ describe("Phase 1 security layer", function () {
       basePrice: ethers.parseEther("0.001"),
       priceSlope: 1n,
       graduationTarget: ethers.parseEther("100"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
     await deployRegistries(factory);
@@ -185,6 +193,10 @@ describe("Phase 1 security layer", function () {
       basePrice: ethers.parseEther("0.005"),
       priceSlope: 10n ** 9n,
       graduationTarget: ethers.parseEther("0.005"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
     const { creatorRegistry } = await deployRegistries(factory);

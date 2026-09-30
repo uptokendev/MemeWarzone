@@ -16,6 +16,10 @@ const baseReq = (overrides: Record<string, unknown> = {}) => ({
   website: "",
   extraLink: "",
   graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   ...overrides,
 });
 
@@ -23,7 +27,7 @@ function hashCreateRouteRequest(req: ReturnType<typeof baseReq>) {
   const coder = ethers.AbiCoder.defaultAbiCoder();
   return ethers.keccak256(
     coder.encode(
-      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"],
+      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint256", "uint256", "uint8", "uint8"],
       [
         ethers.keccak256(ethers.toUtf8Bytes(req.name)),
         ethers.keccak256(ethers.toUtf8Bytes(req.symbol)),
@@ -31,7 +35,7 @@ function hashCreateRouteRequest(req: ReturnType<typeof baseReq>) {
         ethers.keccak256(ethers.toUtf8Bytes(req.xAccount)),
         ethers.keccak256(ethers.toUtf8Bytes(req.website)),
         ethers.keccak256(ethers.toUtf8Bytes(req.extraLink)),
-        req.graduationTarget,
+        req.graduationTarget, req.firstBuyTokens ?? 0n, req.firstBuyMaxCost ?? 0n, req.feeChoice ?? 1, req.feeCreatorPct ?? 0,
       ]
     )
   );
@@ -186,6 +190,10 @@ function validInitParams(addresses: {
     basePrice: 1n,
     priceSlope: 1n,
     graduationTarget: 1n,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     graduationOracle: addresses.graduationOracle,
     liquidityBps: 8000n,
     protocolFeeBps: 200n,
@@ -679,6 +687,10 @@ describe("LaunchFactory", function () {
         basePrice: 1n,
         priceSlope: 1n,
         graduationTarget: 1n,
+        firstBuyTokens: 0n,
+        firstBuyMaxCost: 0n,
+        feeChoice: 1,
+        feeCreatorPct: 0,
         liquidityBps: 8000n,
       })
     ).to.be.revertedWithCustomError(factory, "SupplyZero");
@@ -691,6 +703,10 @@ describe("LaunchFactory", function () {
         basePrice: 1n,
         priceSlope: 1n,
         graduationTarget: 1n,
+        firstBuyTokens: 0n,
+        firstBuyMaxCost: 0n,
+        feeChoice: 1,
+        feeCreatorPct: 0,
         liquidityBps: 8000n,
       })
     ).to.be.revertedWithCustomError(factory, "InvalidCurveBps");
@@ -705,6 +721,10 @@ describe("LaunchFactory", function () {
       basePrice: 1n,
       priceSlope: 1n,
       graduationTarget: 1n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000n,
     };
 
@@ -745,6 +765,10 @@ describe("LaunchFactory", function () {
       basePrice: MAX_BASE_PRICE,
       priceSlope: MAX_PRICE_SLOPE,
       graduationTarget: MAX_GRADUATION_TARGET,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: MAX_BPS,
     };
 
@@ -812,6 +836,10 @@ describe("LaunchFactory", function () {
         basePrice: 1n,
         priceSlope: 1n,
         graduationTarget: 1n,
+        firstBuyTokens: 0n,
+        firstBuyMaxCost: 0n,
+        feeChoice: 1,
+        feeCreatorPct: 0,
         liquidityBps: 8000n,
       })
     ).to.be.revertedWithCustomError(factory, "FactoryLocked");

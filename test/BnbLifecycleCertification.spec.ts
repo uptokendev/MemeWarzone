@@ -127,6 +127,10 @@ async function deploySourceHeadTopazStack() {
     basePrice: 10n ** 12n,
     priceSlope: 10n ** 9n,
     graduationTarget: 1n,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: 8000,
   });
 
@@ -196,6 +200,10 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
       website: "",
       extraLink: "",
       graduationTarget: 0n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
     });
     const createReceipt = await createTx.wait();
     const created = await factory.getCampaign(0n);
@@ -368,6 +376,10 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
       website: "",
       extraLink: "",
       graduationTarget: 0n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
     });
     const created = await factory.getCampaign(0n);
     const campaign = await ethers.getContractAt("LaunchCampaign", created.campaign);

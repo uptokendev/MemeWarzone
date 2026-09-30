@@ -127,6 +127,10 @@ async function deploySourceHead() {
       basePrice: cfg.basePrice,
       priceSlope: cfg.priceSlope,
       graduationTarget: VALID_BNB_TARGET_USD,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: cfg.liquidityBps,
     })
   ).wait();
@@ -171,6 +175,10 @@ describe("BNB source-head 4/3 + V3 fee stack on real Topaz mainnet fork", functi
         website: "",
         extraLink: "",
         graduationTarget: VALID_BNB_TARGET_USD,
+        firstBuyTokens: 0n,
+        firstBuyMaxCost: 0n,
+        feeChoice: 1,
+        feeCreatorPct: 0,
       })
     ).wait();
     const created = await factory.getCampaign(0n);

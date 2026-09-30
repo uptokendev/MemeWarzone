@@ -32,6 +32,10 @@ describe("backend route-authorization integration", function () {
       website: "",
       extraLink: "",
       graduationTarget: 0n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
     };
     const deadline = await currentDeadline();
     const createSignature = await signCreateAuthorization({
@@ -93,6 +97,10 @@ describe("backend route-authorization integration", function () {
       website: "",
       extraLink: "",
       graduationTarget: 0n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
     };
     const createDeadline = await currentDeadline();
     const createSignature = await signCreateAuthorization({

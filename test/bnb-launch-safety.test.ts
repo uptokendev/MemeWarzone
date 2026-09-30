@@ -16,6 +16,10 @@ function campaignRequest(overrides: Record<string, unknown> = {}) {
     website: "https://memewarzone.example/safety",
     extraLink: "https://memewarzone.example/docs",
     graduationTarget: 0n,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     ...overrides,
   };
 }
@@ -44,6 +48,10 @@ async function deploySafetyFixture() {
     basePrice: ethers.parseEther("0.00006"),
     priceSlope: 1n,
     graduationTarget: ethers.parseEther("100"),
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: 8000,
   });
   await factory.enableLive();
@@ -176,6 +184,10 @@ describe("BNB launch safety simulations", function () {
       basePrice: ethers.parseEther("0.001"),
       priceSlope: 1n,
       graduationTarget: ethers.parseEther("100"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
 

@@ -19,6 +19,10 @@ function campaignRequest(overrides: Record<string, unknown> = {}) {
     basePrice: 0,
     priceSlope: 0,
     graduationTarget: 0,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     lpReceiver: ethers.ZeroAddress,
     ...overrides,
   };
