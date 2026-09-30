@@ -133,8 +133,9 @@ describe("audit5 HOLDS: quote adapter admin, feed lock, 100 bps sandwich bound",
     ).to.be.revertedWithCustomError(f.adapter, "OracleDeviationTooHigh");
   });
 
-  it("HOLDS: the admin cannot swap in its own USDT/USD feed after the first configure", async () => {
+  it("HOLDS: the admin cannot swap in its own USDT/USD feed, so the original 100x sandwich is refused", async () => {
     const f = await bnbFixture();
+    // 1. the original EXPLOIT step: the admin re-points the route at a feed it controls ($100 USDT).
     const fake = await (await ethers.getContractFactory("MockUsdPriceFeed")).connect(f.attacker).deploy(8);
     const now = BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
     await fake.connect(f.attacker).setRoundData(1, 100n * 10n ** 8n, now, now, 1);
@@ -145,6 +146,21 @@ describe("audit5 HOLDS: quote adapter admin, feed lock, 100 bps sandwich bound",
         ...TIGHT,
       }),
     ).to.be.revertedWithCustomError(f.adapter, "RouteFeedImmutable");
+    expect((await f.adapter.quoteRoutes(await f.quote.getAddress())).oracleFeed).to.eq(await f.quoteFeed.getAddress());
+
+    // 2. the original front-run: attacker buys USDT with WBNB, k preserved: 1250 WBNB / 10,000 USDT.
+    const wbnbIs0 = (await f.acqPool.token0()) === (await f.wbnb.getAddress());
+    await f.acqPool.setReserves(wbnbIs0 ? 1250n * WAD : 10_000n * WAD, wbnbIs0 ? 10_000n * WAD : 1250n * WAD);
+    const [r0, r1] = await f.acqPool.getReserves();
+
+    // 3. the permissionless graduate() that the exploit landed between the two swaps: with the
+    //    honest feed still bound it is refused, so there is nothing to back-run.
+    await expect(
+      f.campaign.graduate(await f.adapter.getAddress(), await f.quote.getAddress(), f.Mt, 2n * f.Mt, f.P, f.N),
+    ).to.be.revertedWithCustomError(f.adapter, "OracleDeviationTooHigh");
+    const [s0, s1] = await f.acqPool.getReserves();
+    expect([s0, s1]).to.deep.eq([r0, r1]); // the graduation swap never happened
+    expect(await ethers.provider.getBalance(await f.campaign.getAddress())).to.eq(100n * WAD); // native stays with the campaign
   });
 
   it("HOLDS: a 500 bps route is refused, and the 4.5% reserve move reverts at 100 bps", async () => {

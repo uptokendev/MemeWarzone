@@ -1,5 +1,7 @@
 /**
- * Audit 3 HOLDS: quote acquisition sandwich under the 100 bps oracle-min policy.
+ * Audit 3 HOLDS: quote acquisition sandwich under the 100 bps oracle-min policy. The move grid
+ * runs 10-90 bps (accepted up to ~80: attacker must lose, pool shortfall ~70-80 bps, asserted under the
+ * 100 bps route bound) and 100-500 bps (all refused).
  * Copied from origin/claude/evm-audit-3 (the quote sandwich only). Harvest and
  * payout-recipient exploits are out of scope.
  *
@@ -158,7 +160,20 @@ d("audit3 HOLDS: quote acquisition sandwich on a BSC fork", function () {
     const pancake = await ethers.getContractAt(PANCAKE_ABI, TOPAZ.pancakeV2Router);
     const dl = BigInt((await ethers.provider.getBlock("latest"))!.timestamp) + 3600n;
     await pancake.connect(attacker).swapExactETHForTokens(0, [TOPAZ.wbnb, TOPAZ.usdt], attacker.address, dl, { value: 200n * WAD });
-    await wbnb.connect(attacker).deposit({ value: 500n * WAD });
+    // Fund the attacker for the sigma-90 rows (it adds 9x the pool as its own liquidity first).
+    await network.provider.send("hardhat_setBalance", [attacker.address, "0x" + (100_000n * WAD).toString(16)]);
+    await wbnb.connect(attacker).deposit({ value: 10n * Rw + 500n * WAD });
+    const Ru: bigint = wbnbIs0 ? r1 : r0;
+    const wantU = 10n * Ru;
+    for (const w of TOPAZ.usdtWhales) {
+      const missing = wantU - (await usdt.balanceOf(attacker.address));
+      if (missing <= 0n) break;
+      const bal: bigint = await usdt.balanceOf(w);
+      if (bal === 0n) continue;
+      const s = await impersonate(w);
+      await (usdt.connect(s) as any).transfer(attacker.address, bal > missing ? missing : bal);
+    }
+    expect(await usdt.balanceOf(attacker.address), "USDT whales too small for the sigma-90 rows").to.be.gte(wantU);
 
     const Nq = WAD;
     const Pq = P;
@@ -179,9 +194,17 @@ d("audit3 HOLDS: quote acquisition sandwich on a BSC fork", function () {
     let best = { loss: 0n, profit: 0n, row: "" };
     let accepted = 0;
     let refused = 0;
+    let acceptedSmall = 0;
+    let worstProfit: bigint | undefined;
+    const refusedLarge: string[] = [];
+    const setupFailures: string[] = [];
+    const acceptedLarge: string[] = [];
+    // 10-90 bps moves sit inside the 100 bps bounds and are expected to be ACCEPTED; they are the
+    // rows that measure the sandwich. 100+ bps moves are expected to be refused.
     for (const sig of [0n, 90n]) {
-      for (const bpsMove of [100n, 200n, 300n, 400n, 425n, 450n, 475n, 500n]) {
+      for (const bpsMove of [10n, 20n, 30n, 40n, 50n, 60n, 70n, 80n, 90n, 100n, 200n, 300n, 400n, 425n, 450n, 475n, 500n]) {
         const id = await snap();
+        let phase = "setup";
         const a0u = await usdt.balanceOf(attacker.address);
         const a0w = await wbnb.balanceOf(attacker.address);
         try {
@@ -199,8 +222,10 @@ d("audit3 HOLDS: quote acquisition sandwich on a BSC fork", function () {
           const inW = (W2 * bpsMove) / 20000n;
           const gotU = await swapIn(pool, attacker, TOPAZ.wbnb, inW, attacker.address);
           const c = await newCampaign(`q-${sig}-${bpsMove}`);
+          phase = "graduate";
           await c.graduate(await quoteAdapter.getAddress(), TOPAZ.usdt, Mt, Mmax, Pq, Nq);
           const got = (await c.lastResult()).pairedUsed as bigint;
+          phase = "back-run";
           await swapIn(pool, attacker, TOPAZ.usdt, gotU, attacker.address);
           if (sig > 0n) {
             await pool.connect(attacker).transfer(TOPAZ.usdtPool, await pool.balanceOf(attacker.address));
@@ -213,12 +238,22 @@ d("audit3 HOLDS: quote acquisition sandwich on a BSC fork", function () {
           const loss = honestQuote > got ? honestQuote - got : 0n;
           const lossBps = (loss * 10000n) / honestQuote;
           accepted += 1;
+          if (bpsMove < 100n) acceptedSmall += 1;
+          else acceptedLarge.push(`sigma ${sig} move ${bpsMove}`);
+          if (worstProfit === undefined || profitBnb > worstProfit) worstProfit = profitBnb;
           console.log(
             `      sigma ${sig}% move ${bpsMove}bps: adapter got ${ethers.formatEther(got)} USDT (-${lossBps} bps), attacker ${ethers.formatEther(profitBnb)} BNB (${(profitBnb * 10000n) / Nq} bps of pool native)`,
           );
           if (loss > best.loss) best = { loss, profit: profitBnb, row: `sigma ${sig} move ${bpsMove}` };
         } catch (e: any) {
+          if (phase !== "graduate") {
+            setupFailures.push(`sigma ${sig} move ${bpsMove} (${phase}): ${String(e.message).slice(0, 120)}`);
+            console.log(`      sigma ${sig}% move ${bpsMove}bps: ATTACKER ${phase} FAILED ${String(e.message).slice(0, 120)}`);
+            await revert(id);
+            continue;
+          }
           refused += 1;
+          if (bpsMove >= 100n) refusedLarge.push(`sigma ${sig} move ${bpsMove}`);
           console.log(
             `      sigma ${sig}% move ${bpsMove}bps: graduation refused (${String(e.message).match(/reverted with custom error '([^']+)'/)?.[1] ?? "revert"})`,
           );
@@ -229,6 +264,20 @@ d("audit3 HOLDS: quote acquisition sandwich on a BSC fork", function () {
     console.log(
       `      accepted ${accepted}, refused ${refused}; worst accepted: loss ${honestQuote === 0n ? 0 : (best.loss * 10000n) / honestQuote} bps (${best.row || "none"})`,
     );
-    expect(best.loss).to.equal(0n);
+    console.log(`      accepted in 10-90 bps: ${acceptedSmall}; best attacker result ${worstProfit === undefined ? "n/a" : ethers.formatEther(worstProfit)} BNB`);
+    // A row whose attacker setup or back-run failed measured nothing; none may.
+    expect(setupFailures, "attacker steps failed").to.deep.equal([]);
+    // The grid must exercise the sandwich, not only the refusals.
+    expect(acceptedSmall, "no 10-90 bps sandwich was accepted: the grid proves nothing").to.be.gt(0);
+    // Every accepted sandwich costs the attacker money...
+    expect(worstProfit! < 0n, `an accepted sandwich was profitable: ${ethers.formatEther(worstProfit!)} BNB`).to.equal(true);
+    // ...and the coin's pool shortfall against the honest run stays bounded. The contract bound is
+    // maxOracleDeviationBps (100): the implied BNB price after the front-run may sit at most 100 bps
+    // under the feed, and the honest run already sits ~fee+impact under it, so measured is ~70-80 bps
+    // (77 at sigma 90 / 80 bps on the 2026-09-30 fork block).
+    expect((best.loss * 10000n) / honestQuote, `shortfall above the 100 bps route bound (${best.row})`).to.be.lte(100n);
+    // 100 bps and larger moves are all refused.
+    expect(acceptedLarge, "a >= 100 bps move graduated").to.deep.equal([]);
+    expect(refusedLarge.length).to.equal(16);
   });
 });

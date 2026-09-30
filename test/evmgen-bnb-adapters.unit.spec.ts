@@ -604,4 +604,108 @@ describe("evmgen-bnb: BnbQuoteGraduationAdapter (unit, mocks)", function () {
     const [r0, r1] = await pool.getReserves();
     expect(r0 + r1).to.be.gt(0n);
   });
+
+  // A second quote token on the fixture's factory/router with its own acquisition pool.
+  async function addQuote(f: Awaited<ReturnType<typeof fixture>>, decimals: number, wbnbReserve: bigint, quoteReserve: bigint) {
+    const q = await (await ethers.getContractFactory("MockERC20Decimals")).deploy("Q", "Q", decimals, 10n ** 30n, f.admin.address);
+    await f.topazFactory.createPool(await f.wbnb.getAddress(), await q.getAddress(), false);
+    const acq = await f.topazFactory.getPool(await f.wbnb.getAddress(), await q.getAddress(), false);
+    const pool = await ethers.getContractAt("MockTopazPool", acq);
+    const setDepth = async (w: bigint, u: bigint) => {
+      const wbnbIs0 = (await pool.token0()) === (await f.wbnb.getAddress());
+      await pool.setReserves(wbnbIs0 ? w : u, wbnbIs0 ? u : w);
+    };
+    await setDepth(wbnbReserve, quoteReserve);
+    return { q, acq, pool, setDepth };
+  }
+
+  it("L3: a route cannot be enabled below its own liquidity floor (first set and re-enable)", async function () {
+    const f = await fixture();
+    const adapter = f.adapter;
+    // $800 BNB: 10 WBNB + 8,000 Q = $16k, below the $50k floor.
+    const t = await addQuote(f, 18, 10n * WAD, 8_000n * WAD);
+    const q = await t.q.getAddress();
+    const base = { oracleFeed: await f.quoteFeed.getAddress(), acquisitionPool: t.acq, ...POLICY };
+
+    await expect(adapter.configureQuoteRoute(q, base)).to.be.revertedWithCustomError(adapter, "RouteLiquidityTooLow");
+    expect((await adapter.quoteRoutes(q)).oracleFeed).to.equal(ethers.ZeroAddress);
+
+    // A disabled first set is not a bind point and is not checked; enabling it is.
+    await adapter.configureQuoteRoute(q, { ...base, enabled: false });
+    await expect(adapter.configureQuoteRoute(q, base)).to.be.revertedWithCustomError(adapter, "RouteLiquidityTooLow");
+    expect((await adapter.quoteRoutes(q)).enabled).to.equal(false);
+
+    // Deepen to 40 WBNB + 32,000 Q = $64k: enabling now succeeds.
+    await t.setDepth(40n * WAD, 32_000n * WAD);
+    await expect(adapter.configureQuoteRoute(q, base)).to.emit(adapter, "QuoteRouteConfigured");
+    expect((await adapter.quoteRoutes(q)).enabled).to.equal(true);
+
+    // Enabled route thins out: a tightening call on the live route is still allowed (graduate
+    // re-checks the floor), but disable + re-enable is refused until depth returns.
+    await t.setDepth(10n * WAD, 8_000n * WAD);
+    await expect(adapter.configureQuoteRoute(q, { ...base, minimumRouteLiquidityUsdWad: 60_000n * WAD })).to.emit(adapter, "QuoteRouteConfigured");
+    await adapter.configureQuoteRoute(q, { ...base, minimumRouteLiquidityUsdWad: 60_000n * WAD, enabled: false });
+    await expect(adapter.configureQuoteRoute(q, { ...base, minimumRouteLiquidityUsdWad: 60_000n * WAD })).to.be.revertedWithCustomError(
+      adapter,
+      "RouteLiquidityTooLow",
+    );
+    // Exactly at the floor is accepted: 37.5 WBNB ($30k) + 30,000 Q = $60k.
+    await t.setDepth((375n * WAD) / 10n, 30_000n * WAD);
+    await expect(adapter.configureQuoteRoute(q, { ...base, minimumRouteLiquidityUsdWad: 60_000n * WAD })).to.emit(adapter, "QuoteRouteConfigured");
+  });
+
+  it("L3: enabling needs both feeds healthy (a stale quote feed cannot enable a route)", async function () {
+    const f = await fixture();
+    const t = await addQuote(f, 18, 100n * WAD, 80_000n * WAD);
+    const stale = await (await ethers.getContractFactory("MockUsdPriceFeed")).deploy(8);
+    const now = BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
+    await stale.setRoundData(1, 1n * 10n ** 8n, now - 7200n, now - 7200n, 1);
+    const base = { oracleFeed: await stale.getAddress(), acquisitionPool: t.acq, ...POLICY };
+    await expect(f.adapter.configureQuoteRoute(await t.q.getAddress(), base)).to.be.revertedWithCustomError(f.adapter, "OracleStale");
+  });
+
+  it("L4: the oracle minimumQuoteOut scales to a 6-decimal quote token", async function () {
+    const f = await fixture();
+    // 100 WBNB + 80,000 Q(6 dec) = $160k at $800/BNB and $1/Q.
+    const t = await addQuote(f, 6, 100n * WAD, 80_000n * 10n ** 6n);
+    const q = await t.q.getAddress();
+    await t.q.transfer(await f.router.getAddress(), 10_000n * 10n ** 6n);
+    await f.adapter.configureQuoteRoute(q, { oracleFeed: await f.quoteFeed.getAddress(), acquisitionPool: t.acq, ...POLICY });
+
+    const snap = await ethers.provider.send("evm_snapshot", []);
+    // 0.1 BNB * $800 / $1 = 80 Q = 80e6 base units; haircut = 100 bps slippage + 30 bps pool fee.
+    const oracleOut = 80n * 10n ** 6n;
+    const fee = await f.topazFactory.feeBps();
+    const minOut = (oracleOut * (10_000n - 100n - fee)) / 10_000n;
+    const afterFee = f.Nnative - (f.Nnative * fee) / 10_000n;
+    const expectedOut = (80_000n * 10n ** 6n * afterFee) / (100n * WAD + afterFee);
+    await f.campaign.graduate(await f.adapter.getAddress(), q, f.Mt, f.Mmax, f.P, f.Nnative);
+    const res = await f.campaign.lastResult();
+    expect(res.pairedUsed).to.equal(expectedOut);
+    expect(res.pairedUsed).to.be.gte(minOut);
+    expect(res.pairedUsed).to.be.lt(oracleOut);
+    expect(await t.q.balanceOf(res.pool)).to.equal(expectedOut);
+    const memeBal = await (await ethers.getContractAt("LaunchToken", await f.campaign.token())).balanceOf(res.pool);
+    const dexUsd = (expectedOut * 10n ** 12n * WAD) / memeBal; // 6-dec quote at $1, scaled to 18
+    expect(dexUsd).to.be.gte((f.P * 800n * WAD) / WAD);
+    await ethers.provider.send("evm_revert", [snap]);
+
+    // Same pool, quote feed at $0.995 and slippage tightened to 10 bps: every pre-swap bound
+    // passes (oracle deviation ~90 bps < 100) but the 6-decimal minimum (~80.08e6) sits above
+    // what the pool gives (~79.68e6), so the swap itself refuses.
+    const cheap = await (await ethers.getContractFactory("MockUsdPriceFeed")).deploy(8);
+    const now = BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
+    await cheap.setRoundData(1, 99_500_000n, now, now, 1);
+    const t2 = await addQuote(f, 6, 100n * WAD, 80_000n * 10n ** 6n);
+    await t2.q.transfer(await f.router.getAddress(), 10_000n * 10n ** 6n);
+    await f.adapter.configureQuoteRoute(await t2.q.getAddress(), {
+      oracleFeed: await cheap.getAddress(),
+      acquisitionPool: t2.acq,
+      ...POLICY,
+      maxSwapSlippageBps: 10,
+    });
+    await expect(
+      f.campaign.graduate(await f.adapter.getAddress(), await t2.q.getAddress(), f.Mt, f.Mmax, f.P, f.Nnative),
+    ).to.be.revertedWith("slippage");
+  });
 });

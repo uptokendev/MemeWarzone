@@ -207,3 +207,51 @@ the locker registration, a post-graduation buy and sell through the Topaz router
    (`PermanentLpLocker.sol:149-151`). Accept any fee at registration and record it, or keep 30 and accept
    that dependency on the Topaz Safe? (Locker is Claude's.)
 2. C5 author: pull (`transferFrom` into the pool) or push (campaign transfers first, adapter refunds)?
+
+## 11. As built: review of PR #479, Low findings closed (2026-09-30, branch `claude/review-479`)
+
+`BnbQuoteGraduationAdapter` deployed bytecode 13,361 bytes (limit 24,576).
+
+- **L3 (contract). `configureQuoteRoute` checks route liquidity when a route goes live**
+  (`contracts/integrations/BnbQuoteGraduationAdapter.sol:287-294`). When `route.enabled` and the stored
+  route is not enabled (first set, or re-enable after a disable), it reads both feeds
+  (`_oraclePriceWad`, same staleness/health rules as `graduate`) and runs `_requireRouteLiquidity`
+  against the new floor, reverting `RouteLiquidityTooLow`. Before this, a route whose pool sat below its
+  own floor could be enabled; creators could bind to it and every such coin failed graduation on quote
+  and waited 7 days for the native fallback.
+  - Reentrancy: views only (`getReserves`, `token0/1`, `decimals`, `latestRoundData`); no value moves;
+    `onlyAdmin`. CEI: the check runs before the single storage write and the event.
+  - Reachable states: disabled first set is not checked (it binds nothing); enabled-to-enabled
+    tightening is not checked, so the admin can always raise the floor on a live route, and `graduate`
+    re-checks the floor on every call. Enabling with a stale or unhealthy feed reverts.
+  - Over/underflow: `mulDiv`; quote decimals capped at 36 as in `graduate`.
+  - Griefing: pool depth is read at configure time, so a donor can inflate reserves to get a route
+    enabled only by the admin's own call, and `graduate` re-checks depth then. A griefer who drains the
+    pool can delay a (re-)enable, never block a live route's graduation beyond what `graduate` already
+    refuses.
+  - Tests: `test/evmgen-bnb-adapters.unit.spec.ts:622` (thin first set refused, disabled set allowed,
+    re-enable refused until deep, exact floor accepted, live-route tightening allowed), `:657` (stale
+    feed refused); fork `test/review479-real-usdt-pool.fork.spec.ts:99` (real Topaz USDT/WBNB pool,
+    ~$1.2k: refused at the $50k floor; the same route accepted after deepening the pool to ~$200k).
+  - `scripts/configure-bnb-quote-routes.ts` keeps its off-chain pre-check (WBNB balance x2); the
+    contract's synced-reserve check is now the authority. Its spec fixture
+    (`test/BnbQuoteRoutesConfigure.spec.ts`) seeded only WBNB and never synced, so it now seeds the
+    quote side at the feed price and syncs.
+- **L1 (test).** `test/audit3-quote-acquisition.fork.spec.ts:205` grid now runs 10-90 bps moves, so
+  sandwiches are actually accepted and measured (15 accepted rows on the 2026-09-30 block, both sigma 0
+  and 90). Asserts: every accepted row loses the attacker money; worst pool shortfall vs the honest run
+  is under the 100 bps `maxOracleDeviationBps` bound (measured 77 bps at sigma 90 / 80 bps move);
+  every 100-500 bps row is refused. The sigma-90 rows had never executed (the attacker was not funded
+  for 9x the pool and the catch counted the setup failure as a refusal); the attacker is now funded and
+  a failed attacker step fails the test (`:269`).
+- **L2 (test).** `test/audit5-quote-adapter-admin.spec.ts:136` restores the original exploit sequence:
+  feed swap reverts `RouteFeedImmutable`, the 100x front-run is applied, and the permissionless
+  graduate between the swaps is refused `OracleDeviationTooHigh` with the pool reserves and the
+  campaign's native unchanged.
+- **L4 (test).** `test/evmgen-bnb-adapters.unit.spec.ts:667`: a 6-decimal quote graduates with
+  `pairedUsed` exactly the AMM output and above the 6-decimal `minimumQuoteOut`; with the quote feed at
+  $0.995 and 10 bps slippage, the oracle minimum (~80.08e6) sits above the pool output (~79.68e6) and the
+  swap refuses.
+- **L5 (config).** `config/verification/mainnet-contracts.json`: the existing entry stays for the
+  deployed adapter `0xfdF80819…` (old 4-argument constructor, noted); a placeholder entry for the new
+  generation's adapter lists the 5-argument constructor (Safe, Topaz router, locker, BNB/USD feed, 3600).

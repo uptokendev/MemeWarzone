@@ -77,6 +77,21 @@
             "0xdd41E0d13c637657A28b60F860205048221F325A",
             "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE",
             "3600"
+          ],
+          "note": "The DEPLOYED adapter (admin = deployer, set from msg.sender). Its constructor is (topazRouter, permanentLpLocker, nativeUsdOracle, maxOracleAgeSeconds); the source it was verified from is the tree before 556439fa. Kept for the deployed contract; the new generation's adapter is the placeholder entry below."
+        },
+        {
+          "name": "BnbQuoteGraduationAdapter (new generation)",
+          "address": "0x0000000000000000000000000000000000000000",
+          "placeholder": true,
+          "note": "Filled in at generation deploy (scripts/deploy-bnb-quote-generation.ts). Constructor is (admin, topazRouter, permanentLpLocker, nativeUsdOracle, maxOracleAgeSeconds): admin = the Safe, router = Topaz router (defaultFactory()/weth()), locker = the generation's PermanentLpLocker (replace if the generation deploys a new one, as for the native adapter), BNB/USD Chainlink feed, MAX_ORACLE_AGE_SECONDS 3600.",
+          "contract": "contracts/integrations/BnbQuoteGraduationAdapter.sol:BnbQuoteGraduationAdapter",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x1E98c8226e7d452e1888e3d3d2F929346321c6c3",
+            "0xdd41E0d13c637657A28b60F860205048221F325A",
+            "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE",
+            "3600"
           ]
         },
         {
