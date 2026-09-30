@@ -1,4 +1,5 @@
 import net from "node:net";
+import sharp from "sharp";
 import { lookup } from "node:dns/promises";
 /**
  * Shared HUD share-card SVG used by Prepare Mode and Token Details.
@@ -200,6 +201,8 @@ async function fetchImageResponse(clean) {
   throw lastError || new Error("image fetch failed");
 }
 
+const SHARE_CARD_IMAGE_MAX_BYTES = 10_000_000;
+
 export async function embedShareCardImage(src) {
   const clean = normalizeImageSrc(src);
   if (!clean) return "";
@@ -212,14 +215,26 @@ export async function embedShareCardImage(src) {
       .toLowerCase();
     if (!/^image\//i.test(contentType)) return "";
     const buffer = Buffer.from(await response.arrayBuffer());
-    if (!buffer.length || buffer.length > 2_500_000) return "";
+    if (!buffer.length || buffer.length > SHARE_CARD_IMAGE_MAX_BYTES) return "";
 
-    // @resvg/resvg-js@2.6.2 uses resvg 0.34, whose raster decoder supports
-    // PNG/JPEG/GIF but not WebP/AVIF. Returning an unsupported data URI creates
-    // a valid share-card PNG with a mysteriously blank token image, so fail
-    // explicitly to the ticker fallback instead of silently embedding it.
-    if (contentType === "image/webp" || contentType === "image/avif") {
-      console.warn(`[hud-share-card] unsupported raster format from ${clean}: ${contentType}`);
+    // Downscale every logo to at most 512 px and re-encode as PNG before embedding. The card draws
+    // logos at a few hundred pixels, so this loses nothing visible, keeps the SVG small, and turns
+    // WebP/AVIF (which @resvg/resvg-js@2.6.2 cannot draw) into PNG. A 1254 px, 2.77 MB PNG logo used
+    // to exceed the old 2.5 MB cap and left an empty circle on the card.
+    try {
+      const png = await sharp(buffer, { limitInputPixels: 50_000_000 })
+        .rotate()
+        .resize({ width: 512, height: 512, fit: "inside", withoutEnlargement: true })
+        .png()
+        .toBuffer();
+      return `data:image/png;base64,${png.toString("base64")}`;
+    } catch (err) {
+      console.warn(`[hud-share-card] could not decode image from ${clean}: ${err?.message || err}`);
+    }
+
+    // Fallback without sharp: only formats resvg can draw, and only small enough to embed as is.
+    if (contentType === "image/webp" || contentType === "image/avif" || buffer.length > 2_500_000) {
+      console.warn(`[hud-share-card] unsupported raster from ${clean}: ${contentType}, ${buffer.length} bytes`);
       return "";
     }
 

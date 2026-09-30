@@ -34,9 +34,10 @@ test("normal mode keeps the 24 / 72 / 168 set and the day shorthand", () => {
   assert.equal(parseBattleDurationHoursForMode("normal", 6, 12), 24);
 });
 
-test("vote mode takes exact hours: 1 is one hour, nothing else is coerced", () => {
-  assert.deepEqual([...battleDurationOptions("vote")], [1, 6, 12, 24]);
-  assert.equal(parseBattleDurationHoursForMode("vote", 1), 1);
+test("vote mode takes exact hours 6/12/24/48, nothing else is coerced", () => {
+  assert.deepEqual([...battleDurationOptions("vote")], [6, 12, 24, 48]);
+  assert.equal(parseBattleDurationHoursForMode("vote", 1), 24);
+  assert.equal(parseBattleDurationHoursForMode("vote", 48), 48);
   assert.equal(parseBattleDurationHoursForMode("vote", 6), 6);
   assert.equal(parseBattleDurationHoursForMode("vote", 12), 12);
   assert.equal(parseBattleDurationHoursForMode("vote", 24), 24);
