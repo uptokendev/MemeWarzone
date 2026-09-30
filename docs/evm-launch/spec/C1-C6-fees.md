@@ -232,21 +232,84 @@ The pending path (`_tryTransferToken` fails, then `pendingToken[vault]`) cannot 
 WETH9/WBNB or for a graduated `LaunchToken`. A test pins that. If it ever happened, the tokens would
 be claimable to the vault as excess, which only the Safe can move.
 
+## As built (fees builder, 2026-09-30, branch `claude/evm-fees`)
+
+This section supersedes the design text above wherever they differ. E9 and E10 (decided after this
+spec was written) replace open questions 1 and 2.
+
+**Files.** `contracts/TreasuryRouterV4.sol`, `contracts/CreatorRewardsVaultV2.sol`,
+`contracts/EvmGenPoolSwap.sol` (internal library shared by both lockers and the vault),
+`contracts/PermanentLpLocker.sol` and `contracts/PermanentV3PositionLocker.sol` (new generation
+source), `contracts/interfaces/ICreatorRewardsVaultV2.sol`, `scripts/deploy-evm-treasury-router-v4.ts`.
+
+**E9 in the lockers.** Registration is unchanged in signature; `expectedTokenA` is the MEME token and
+`expectedTokenB` the paired asset (the factory passes them in that order; the V3 locker refuses the
+wrapped native as the A side). `harvest` claims both sides as before, then sells `carriedMeme[pool] +`
+the new MEME fees into the same pool, bounded to 0.50% price impact:
+Topaz V2 sells at most `reserveMeme * 50 / 20000` (0.25% of the reserve, price move 0.499%) through a
+direct pair `swap` using the pair's own `getAmountOut`; Uniswap V3 swaps with `sqrtPriceLimitX96 =
+sqrtP * sqrt(1 - 0.005)` rounded inward, so the pool itself stops the sale (partial fill). What is not
+sold is carried to the next harvest. The sale runs in a self-only external call inside `try`, so a
+failing sale (paused pool, empty range, anything) reverts only itself and the harvest continues. The
+80/20 split then runs once, on the paired asset only (fees + proceeds), through the unchanged paths:
+creator transfer with `pendingToken` fallback, protocol `routeLpToken`. **The paired asset is paid as
+WBNB/WETH (wrapped), not unwrapped native**: no native push (no gas griefing surface), no new pending
+native state, no factory change for the V2 locker. Quote-bound pools pay the quote token.
+
+No TWAP guard in the lockers. Both lockers are embedded in the factory's initcode and the BNB factory
+sits at 48,797 of the 49,152-byte EIP-3860 initcode limit (the V2 TWAP check cost 220 bytes, V3 ~830).
+The bound alone makes a sandwich unprofitable: to move the price by d the attacker trades ~r*d/2 and
+pays 0.30% twice (~0.003*r*d); the most it extracts is the sale times d, <= 0.0025*r*d. Proven by
+`evmgen-fees-locker-v2` at 1%-10% attacker sizes (the attacker ends with less paired, every size).
+
+**CreatorRewardsVaultV2 as built.** Choice, accrual, creator claim and holder batches as specified,
+plus (E10) per-campaign quote balances (`creatorQuoteBalance`, `holderQuoteBalance`,
+`buybackQuoteBalance`, `quoteLiabilities[token]`):
+- `syncLpFees(pool)`: reads the locker's `poolInfo` (V2 or V3 shape, by the vault's immutable
+  `dexKind`), binds `cfg.pool` and `cfg.quote` (paired token when it is not the wrapped native) on first
+  use, and credits `cumulativeCreatorPaid - lpSynced`. Wrapped native is unwrapped (`withdraw(delta)`)
+  and credited under the choice; a quote token is credited to the quote balances.
+- `claimCreatorQuote(c)`: the creator part of a split coin's LP fees, in the quote token.
+- `convertHolderQuote(c, amt)` (operator): quote -> native through `quoteRoutePool[quote]`, credited to
+  the campaign's holders. `setQuoteRoute(quote, feeTier)` (admin) reads the pool from the DEX factory
+  (`getPool(wrapped, quote, false)` on Topaz, `getPool(wrapped, quote, fee)` on V3): no free address.
+- `buybackPool(c, amt)` (operator): native pool -> WBNB/WETH into the coin's pool (native caps apply);
+  quote pool -> the quote balance into the coin's pool. MEME output is `DEAD`, hard-coded.
+  `convertBuybackNativeToQuote(c, amt)` (operator) turns a quote coin's native buyback balance into
+  quote through the route pool (native caps charged here).
+- Every vault swap uses the same bound (`maxImpactBps <= 50`) plus a TWAP guard (Topaz `quote(...,1)`,
+  V3 `observe` over 1800 s, 100 bps; skipped when the pool cannot serve it) and reverts `NothingSwapped`
+  when nothing may be swapped. Buyback, conversions and holder batches are operator-only; the operator
+  names no recipient anywhere.
+- `buybackCurve`: the C2 window is detected without a new view: `quoteBuyExactBnb(amountIn)` must
+  report `fee * 1e4 <= totalCost * 200` (flat 2%). Progress check `(netRaisedWei + amountIn) <= 95%` of
+  `graduationNativeTarget()`, price impact via `currentPrice()`, and a post-check that the buy did not
+  enter Pending (it reverts the whole buy).
+- `pullLockerPending(token)` (permissionless) + `attributeExcessQuote(c, amt)` (admin): a pausable quote
+  (stock token) that fails the locker's transfer parks the vault's share as `pendingToken[vault]`; it is
+  pulled into the vault as unattributed excess and the admin can assign only excess, never another
+  campaign's balance.
+- `rescueExcessToken` refuses the wrapped native (LP fees wait there until sync) and every MEME token the
+  vault holds for a burn; `rescueExcessNative` moves only `balance - totalLiabilities`.
+- `receive()` accepts only the wrapped native (unwrap) and factory campaigns (buyback refunds).
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |
 |---|---|---|---|---|---|
 | Router V4 `routeTrade` | none, same as V3; every call goes to a fixed vault | stateless | `!forwardingPaused` | 0.8 checked; `a*560` is safe for `a < 2^256/560` | pausing it halts trading, same as today |
-| `accrueTradeFee` | **no** guard, on purpose: the buyback fee re-enters it | no external call | choice set | checked add | never pausable. A revert here would revert every trade |
-| `claimCreatorFees` | `nonReentrant` | zero, then send | any | none | a creator that rejects native blocks only itself |
-| `syncLpFees` | `nonReentrant` | `lpSynced` written before `withdraw`/transfer | registered non-Keep pool | counter subtraction ≥ 0 | idempotent; a spoofed pool fails the locker checks |
-| holder propose/execute/veto | `nonReentrant` | debit, then store, then `createBatch` | Proposed → Executed or Vetoed | caps checked | operator key: 24 h veto plus caps |
-| `buybackCurve` / `buybackPool` | `nonReentrant` | debit, then call, then credit refund, then post-check | pre-grad (≤ 95%, after 60 s) / post-grad | checked | sandwich bounded by 0.5% impact vs 4% (curve) or 0.6% (pool) round-trip fees |
+| Locker `harvest` (both) | `nonReentrant`; the sale is a self-only external call inside `try` | principal checked before and after collect; `carriedMeme` written after the sale's result; split last | registered pool, any time, permissionless | reserve*50 and sqrtP*r (r < 2^34) cannot overflow; `memeToSell - memeSold >= 0` (sold <= amount by construction: V2 min(), V3 pool pays <= `activeSwapMaxPay`) | a failed or bounded sale carries, never reverts; sandwich unprofitable (bound vs 2x0.30% fee); a creator recipient that rejects the token -> `pendingToken`, unchanged |
+| V3 `uniswapV3SwapCallback` (locker, vault) | only `msg.sender == activeSwapPool` (set just before the swap, cleared after) | pays at most the in-flight amount, in the in-flight token | only during a sale / vault swap | `owed > 0` and `<= maxPay` checked | any other caller reverts `UnexpectedCallback` |
+| `accrueTradeFee` | **no** guard, on purpose: the buyback's own fee re-enters it | no external call | choice set | checked add | never pausable. A revert here would revert every trade |
+| `claimCreatorFees` / `claimCreatorQuote` | `nonReentrant` | zero, then send | any | none | a creator that rejects native blocks only itself (tested: rejecting and re-entering creators) |
+| `syncLpFees` | `nonReentrant` | `lpSynced` written before `withdraw` | registered non-Keep pool, recipient = vault, key = campaign | cumulative - synced >= 0 | idempotent; spoofed pool fails the locker's registration fields |
+| holder convert/propose/execute/veto | `nonReentrant` | debit, then store, then `createBatch` | Proposed -> Executed or Vetoed | caps checked; total < 2^128 | operator key: 24 h veto + weekly cap + the distributor's Safe `authorizeBatch` max and window |
+| `buybackCurve` | `nonReentrant` | debit, call, credit refund from the returned `spent`, post-check | pre-grad, fee flat 2%, <= 95% progress | checked | sandwich bounded by 0.5% impact vs ~4% curve round trip |
+| `buybackPool` / `convertBuybackNativeToQuote` | `nonReentrant` | wrap, swap (bounded, TWAP), unwrap leftover, debit `spent` | pool bound by sync | checked | bounded impact + TWAP + interval + native per-tx and weekly caps |
+| `pullLockerPending` / `attributeExcessQuote` | `nonReentrant` | pull, then credit only `balance - quoteLiabilities` | any / admin | checked | cannot move another campaign's balance |
+| rescue (native / token) | `nonReentrant`, admin | check excess, send | any | checked | cannot touch liabilities, wrapped native, or held MEME |
 | `receive()` | none | accepts only `wrappedNative` or `factory.isCampaign` | any | – | any other sender reverts |
-| operator pause | admin sets `operatorPaused`, which blocks buyback and holder paths only | | | | |
-
-Choice front-running is impossible: the choice is set once, inside the create transaction, by the
-factory.
+| operator pause | admin `setOperator(op, paused)` blocks every operator path | | | | |
 
 ## Invariants
 
@@ -277,11 +340,12 @@ factory.
 
 ## Open questions for the founder
 
-1. **Meme-token side of LP fees on non-keep coins.** Solana's graduated pool collects fees in SOL
-   only, so the question never comes up there. On EVM both sides earn fees. Proposed: burn the
-   meme-token side (to DEAD) for holders, split and buyback coins. For split coins, the creator would
-   then get no meme-token LP fees.
-2. **Quote-bound coins (BNB quote tokens, Robinhood stocks) with a non-keep choice.** Their LP fees
-   are in the quote token, while holder batches and buybacks are native only. Proposed: the factory
-   refuses a non-keep choice on quote-bound coins in this generation, and allows it later with a quote
-   path.
+1. ~~Meme-token side of LP fees on non-keep coins.~~ Superseded by E9: every harvest sells the MEME side
+   in the pool, on every coin.
+2. ~~Quote-bound coins with a non-keep choice.~~ Superseded by E10: all choices, built as above.
+3. **(Q4) Topaz pool fee at registration.** Whether `PermanentLpLocker` should accept any Topaz volatile
+   fee and record it instead of requiring 30 bps. Not decided; the 30 bps requirement stays
+   (`TODO(founder)` at `REQUIRED_POOL_FEE_BPS`).
+4. **Buyback and holder caps per chain** (`EVMGEN_BUYBACK_MAX_PER_TX`, `..._PER_CAMPAIGN_WEEK`,
+   `EVMGEN_HOLDER_MAX_PER_WEEK`, `EVMGEN_HOLDER_BATCH_AUTH_MAX`): the deploy script refuses mainnet
+   without them.
