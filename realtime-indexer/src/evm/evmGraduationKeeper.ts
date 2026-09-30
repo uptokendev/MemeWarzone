@@ -6,10 +6,19 @@
  *   1. Graduated and a protocol fee escrowed (router refused routeFinalize) -> flushProtocolGraduationFee().
  *   2. Pending -> graduate(), when it simulates and fits the gas cap.
  *   3. graduate() reverts or exceeds the cap (a pre-made Robinhood pool seeded with bids) -> repairPool(limit):
- *      limit 0 (all the way) when that fits, else a partial limit between the pool's price and the curve
- *      price, halving until a step fits. A step must sell MEME (memeSold > 0), or it is no progress.
+ *      limit 0 (all the way) when that fits, else a partial limit between the pool's price and the price
+ *      the adapter's repairStep stops at, halving until a step fits: the curve price P for a MEME/WETH
+ *      pool; for a MEME/STOCK pool P * ETHUSD / STOCKUSD raised by REPAIR_STEP_MARGIN_BPS, read from the
+ *      adapter's two Chainlink feeds exactly as the adapter computes it. BNB's Topaz adapters have no
+ *      repairStep (graduate() repairs a Topaz pool itself), so there only graduate() is tried.
+ *      A step must sell MEME (memeSold > 0), or it is no progress.
  *   4. A quote coin Pending >= 7 days whose route still fails (E12) -> useNativeFallback(); graduate() next.
  *   5. Otherwise blocked with the named revert; retried next pass.
+ * Due but not Pending (the crossing buy's oracle read failed, or nobody traded since): the indexed net
+ * raise (sum of gen-5 gross buys minus gross sells) is compared with the campaign's native target (a
+ * cached view) and the indexed sold amount with curveSupply; a campaign that passes this cheap filter
+ * gets an eth_call graduate(), which runs the contract's own due check and enters Pending. GraduationNotDue
+ * or TradingNotOpen from that call is "not due" (idle), never "blocked".
  * All four entry points are permissionless on chain; the keeper only saves everyone the wait.
  *
  * Sends: sign locally with an explicit nonce, write the job row (status 'sending', hash, nonce, raw tx)
@@ -65,13 +74,42 @@ export interface KeeperReader {
   blockTimestamp(): Promise<bigint>;
   /** Pool price and curve price for partial repair limits; null when unknown (then only limit 0 is tried). */
   repairContext(campaign: string): Promise<RepairContext | null>;
+  /** curveSupply and the native graduation target (cached views); nativeTarget null when the oracle reverts. */
+  dueInputs?(campaign: string): Promise<DueInputs | null>;
 }
+
+export type DueInputs = { curveSupply: bigint; nativeTarget: bigint | null };
 
 export type KeeperConfig = {
   maxGas: bigint;
   minFlushWei: bigint;
   maxRepairHalvings: number;
+  /** Due pre-filter slack: a campaign within this many bps of its native target is simulated. Default 200. */
+  dueSlackBps?: number;
+  /** At most this many due-but-not-pending candidates are simulated per pass. Default 25. */
+  maxDueCandidates?: number;
 };
+
+/** Reverts of graduate() that mean "not due yet", not "stuck". */
+export const NOT_DUE_REVERTS = new Set(["GraduationNotDue", "TradingNotOpen"]);
+
+/**
+ * The cheap due filter over indexed state. Sold-out needs no oracle (the contract's trigger 1); otherwise
+ * the net raise must be within `slackBps` of the native target (indexed figures can trail the chain by a
+ * block, and the oracle target moves with the price). A null target (oracle down) passes only sold-out.
+ */
+export function isLikelyDue(input: {
+  netRaisedWei: bigint;
+  soldRaw: bigint;
+  curveSupply: bigint;
+  nativeTarget: bigint | null;
+  slackBps: number;
+}): boolean {
+  if (input.curveSupply > 0n && input.soldRaw >= input.curveSupply) return true;
+  if (input.nativeTarget === null || input.nativeTarget <= 0n || input.netRaisedWei <= 0n) return false;
+  const slack = BigInt(Math.max(0, Math.min(10_000, Math.floor(input.slackBps))));
+  return input.netRaisedWei * 10_000n >= input.nativeTarget * (10_000n - slack);
+}
 
 function fits(sim: SimResult, cfg: KeeperConfig): sim is { ok: true; gas: bigint; memeSold?: bigint } {
   return sim.ok && sim.gas <= cfg.maxGas;
@@ -99,8 +137,17 @@ export function partialRepairLimits(ctx: RepairContext, halvings: number): bigin
   return out;
 }
 
-/** Decide the next step for one campaign. Pure apart from the injected reader. */
-export async function decideKeeperStep(reader: KeeperReader, campaign: string, cfg: KeeperConfig): Promise<Decision> {
+/**
+ * Decide the next step for one campaign. Pure apart from the injected reader. `dueCandidate` marks a
+ * campaign listed by the due filter: when it is not Pending, graduate() is simulated anyway (it enters
+ * Pending itself when due); without the flag a campaign that is not Pending is idle.
+ */
+export async function decideKeeperStep(
+  reader: KeeperReader,
+  campaign: string,
+  cfg: KeeperConfig,
+  opts: { dueCandidate?: boolean } = {},
+): Promise<Decision> {
   const state = await reader.readCampaign(campaign);
 
   if (state.launched) {
@@ -112,10 +159,15 @@ export async function decideKeeperStep(reader: KeeperReader, campaign: string, c
     return { kind: "blocked", reason: `flush: ${describe(sim, cfg)}` };
   }
 
-  if (!state.graduationPending) return { kind: "idle", reason: "not pending" };
+  if (!state.graduationPending && !opts.dueCandidate) return { kind: "idle", reason: "not pending" };
 
   const grad = await reader.simulate(campaign, CALLS.graduate());
-  if (fits(grad, cfg)) return { kind: "send", call: CALLS.graduate(), gas: grad.gas, reason: "pending" };
+  if (fits(grad, cfg)) {
+    return { kind: "send", call: CALLS.graduate(), gas: grad.gas, reason: state.graduationPending ? "pending" : "due, not pending" };
+  }
+  if (!state.graduationPending && !grad.ok && NOT_DUE_REVERTS.has(grad.error)) {
+    return { kind: "idle", reason: `not due (${grad.error})` };
+  }
   const gradWhy = describe(grad, cfg);
 
   // A pre-made pool: repair in chunks while a step still sells MEME.
@@ -137,7 +189,8 @@ export async function decideKeeperStep(reader: KeeperReader, campaign: string, c
   }
 
   // E12: a quote coin whose route stays dead switches to the native pool after 7 days in Pending.
-  if (state.quoteToken && !state.nativeFallback) {
+  // Only from Pending: pendingSince is 0 before, and useNativeFallback() requires Pending.
+  if (state.graduationPending && state.quoteToken && !state.nativeFallback) {
     const now = await reader.blockTimestamp();
     if (now >= state.pendingSince + NATIVE_FALLBACK_DELAY_SECONDS) {
       const fb = await reader.simulate(campaign, CALLS.nativeFallback());
@@ -269,6 +322,85 @@ export async function listKeeperCampaigns(db: Queryable, chainId: number): Promi
   return rows.map((r) => String(r.campaign_address).toLowerCase());
 }
 
+/**
+ * Gen-5 campaigns still trading (not Pending, not graduated) with their indexed net raise and sold amount,
+ * largest raise first. gross_raw is the gen-5 trade annotation (buy: cost without fee, sell: gross before
+ * fee), i.e. exactly what moves netRaisedWei; a row the annotation missed falls back to bnb_amount_raw,
+ * which only overstates the raise (a pre-filter may overstate; graduate() decides).
+ */
+export async function listTradingDueCandidates(
+  db: Queryable,
+  chainId: number,
+  limit: number,
+): Promise<Array<{ campaign: string; netRaisedWei: bigint; soldRaw: bigint }>> {
+  const { rows } = await db.query(
+    `select c.campaign_address,
+            (coalesce(sum(case when t.side = 'buy' then coalesce(t.gross_raw, t.bnb_amount_raw::numeric) end), 0)
+             - coalesce(sum(case when t.side = 'sell' then coalesce(t.gross_raw, t.bnb_amount_raw::numeric) end), 0))::text as net_raised_raw,
+            (coalesce(sum(case when t.side = 'buy' then t.token_amount_raw::numeric end), 0)
+             - coalesce(sum(case when t.side = 'sell' then t.token_amount_raw::numeric end), 0))::text as sold_raw
+       from public.campaigns c
+       join public.curve_trades t
+         on t.chain_id = c.chain_id and t.campaign_address = c.campaign_address
+       left join public.evm_campaign_gen5_state s
+         on s.chain_id = c.chain_id and s.campaign_address = c.campaign_address
+      where c.chain_id = $1
+        and coalesce(c.campaign_generation, 0) >= 5
+        and coalesce(s.graduation_stage, 'trading') = 'trading'
+        and c.graduated_block is null
+      group by c.campaign_address
+     having coalesce(sum(case when t.side = 'buy' then coalesce(t.gross_raw, t.bnb_amount_raw::numeric) end), 0)
+            - coalesce(sum(case when t.side = 'sell' then coalesce(t.gross_raw, t.bnb_amount_raw::numeric) end), 0) > 0
+      order by 2 desc, c.campaign_address
+      limit $2`,
+    [chainId, Math.max(1, limit)],
+  );
+  const big = (v: unknown) => {
+    const text = String(v ?? "0").split(".")[0];
+    return /^-?\d+$/.test(text) ? BigInt(text) : 0n;
+  };
+  return rows.map((r) => ({
+    campaign: String(r.campaign_address).toLowerCase(),
+    netRaisedWei: big(r.net_raised_raw),
+    soldRaw: big(r.sold_raw),
+  }));
+}
+
+/** The due filter: indexed candidates whose raise or sold amount says graduate() is worth a call. */
+export async function listDueCampaigns(input: {
+  db: Queryable;
+  chainId: number;
+  reader: KeeperReader;
+  cfg: KeeperConfig;
+}): Promise<string[]> {
+  if (!input.reader.dueInputs) return [];
+  const limit = input.cfg.maxDueCandidates ?? 25;
+  if (limit <= 0) return [];
+  const candidates = await listTradingDueCandidates(input.db, input.chainId, limit);
+  const out: string[] = [];
+  for (const c of candidates) {
+    let due: DueInputs | null = null;
+    try {
+      due = await input.reader.dueInputs(c.campaign);
+    } catch {
+      due = null;
+    }
+    if (!due) continue;
+    if (
+      isLikelyDue({
+        netRaisedWei: c.netRaisedWei,
+        soldRaw: c.soldRaw,
+        curveSupply: due.curveSupply,
+        nativeTarget: due.nativeTarget,
+        slackBps: input.cfg.dueSlackBps ?? 200,
+      })
+    ) {
+      out.push(c.campaign);
+    }
+  }
+  return out;
+}
+
 async function recordBlocked(db: Queryable, chainId: number, campaign: string, reason: string) {
   await db.query(
     `insert into public.evm_graduation_keeper_blocks(chain_id, campaign_address, reason, seen_at)
@@ -294,17 +426,28 @@ export async function runEvmGraduationKeeperPass(input: {
   cfg: KeeperConfig;
   send: boolean;
   campaigns?: string[];
+  /** Due-but-not-pending campaigns (tests); listed by listDueCampaigns when both lists are omitted. */
+  dueCampaigns?: string[];
 }): Promise<{ resolved: ResolveResult; steps: PassStep[]; inFlight: boolean }> {
   const resolved = await resolveSendingJobs({ db: input.db, chainId: input.chainId, sender: input.sender, send: input.send });
   const inFlight = resolved.waiting > 0;
   const steps: PassStep[] = [];
   const campaigns = input.campaigns ?? (await listKeeperCampaigns(input.db, input.chainId));
+  const due = new Set(input.dueCampaigns ?? []);
+  if (!input.campaigns && input.dueCampaigns === undefined) {
+    try {
+      for (const c of await listDueCampaigns({ db: input.db, chainId: input.chainId, reader: input.reader, cfg: input.cfg })) due.add(c);
+    } catch (error) {
+      console.warn("[evm-grad] due filter failed", { chainId: input.chainId, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  const all = [...campaigns, ...[...due].filter((c) => !campaigns.includes(c))];
   let sentThisPass = false;
 
-  for (const campaign of campaigns) {
+  for (const campaign of all) {
     let decision: Decision;
     try {
-      decision = await decideKeeperStep(input.reader, campaign, input.cfg);
+      decision = await decideKeeperStep(input.reader, campaign, input.cfg, { dueCandidate: due.has(campaign) });
     } catch (error) {
       steps.push({ campaign, decision: { kind: "blocked", reason: "read failed" }, error: error instanceof Error ? error.message : String(error) });
       continue;
@@ -411,7 +554,51 @@ export function curvePriceToSqrtX96(priceWei: bigint, memeIsToken0: boolean): bi
   return memeIsToken0 ? bigintSqrt((priceWei * Q192) / WAD) : bigintSqrt((WAD * Q192) / priceWei);
 }
 
+const WAD = 10n ** 18n;
+const BPS = 10_000n;
+
+/** Chainlink answer to a WAD price, as RobinhoodStockGraduationAdapterV2._oraclePriceWad (null = unhealthy). */
+export function oraclePriceWad(answer: bigint, decimals: number): bigint | null {
+  if (answer <= 0n || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) return null;
+  return decimals <= 18 ? answer * 10n ** BigInt(18 - decimals) : answer / 10n ** BigInt(decimals - 18);
+}
+
+/**
+ * RobinhoodStockGraduationAdapterV2._repairStepPriceWad: the stock-per-MEME price (stock raw units per
+ * 1e18 MEME) at which repairStep stops, P * ETHUSD / STOCKUSD raised by the margin. Floors exactly like
+ * the contract's Math.mulDiv, so the partial limits the keeper derives lie strictly inside the range the
+ * adapter accepts (limit between the pool's price and this stop).
+ */
+export function stockRepairStopPriceWad(input: {
+  curvePriceWad: bigint;
+  nativeUsdWad: bigint;
+  stockUsdWad: bigint;
+  stockUnit: bigint;
+  marginBps: bigint;
+}): bigint {
+  if (input.stockUsdWad <= 0n) return 0n;
+  const estimate = (((input.curvePriceWad * input.nativeUsdWad) / input.stockUsdWad) * input.stockUnit) / WAD;
+  return (estimate * (BPS + input.marginBps)) / BPS;
+}
+
+const ADAPTER_REPAIR_ABI = [
+  "function v3Factory() view returns (address)",
+  "function WETH() view returns (address)",
+  "function POOL_FEE() view returns (uint24)",
+  "function nativeUsdOracle() view returns (address)",
+  "function REPAIR_STEP_MARGIN_BPS() view returns (uint256)",
+  "function stockRoutes(address) view returns (address oracleFeed, address acquisitionPool, uint24 acquisitionFeeTier, uint256 minimumRouteLiquidityUsdWad, uint16 maxSwapSlippageBps, uint16 maxOracleDeviationBps, uint16 maxPriceImpactBps, bool enabled)",
+];
+const FEED_ABI = [
+  "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
+  "function decimals() view returns (uint8)",
+];
+const ERC20_DECIMALS_ABI = ["function decimals() view returns (uint8)"];
+
 export function createEthersKeeperReader(provider: ethers.Provider, chainId: number, from: string, env: NodeJS.ProcessEnv = process.env): KeeperReader {
+  const curveSupplyCache = new Map<string, bigint>();
+  const targetCache = new Map<string, { at: number; value: bigint | null }>();
+  const targetTtlMs = Math.max(5_000, Number(env.EVM_GRADUATION_KEEPER_TARGET_TTL_MS || 60_000) || 60_000);
   const v3 = (() => {
     const known = KNOWN_V3[chainId];
     const factory = String(env[`EVM_KEEPER_V3_FACTORY_${chainId}`] || known?.factory || "").trim();
@@ -460,28 +647,97 @@ export function createEthersKeeperReader(provider: ethers.Provider, chainId: num
       return BigInt(block?.timestamp ?? Math.floor(Date.now() / 1000));
     },
     async repairContext(campaign) {
-      if (!v3) return null;
       try {
         const c = new ethers.Contract(campaign, GEN5_CAMPAIGN_ABI, provider) as any;
-        const [meme, quote, fallback, state] = await Promise.all([
+        const [meme, quote, fallback, state, adapterAddr] = await Promise.all([
           c.token(),
           c.graduationQuoteToken(),
           c.nativeFallback(),
           c.getGraduationState(),
+          c.graduationAdapter().catch(() => ethers.ZeroAddress),
         ]);
-        // Stock pools are priced in the stock, not in P: only limit 0 there.
-        if (String(quote).toLowerCase() !== ethers.ZeroAddress.toLowerCase() && !fallback) return null;
-        const factory = new ethers.Contract(v3.factory, V3_FACTORY_ABI, provider) as any;
-        const poolAddr = String(await factory.getPool(meme, v3.weth, v3.fee));
+        const price = BigInt(state.finalCurvePrice ?? state[1]);
+        const adapter = new ethers.Contract(String(adapterAddr), ADAPTER_REPAIR_ABI, provider) as any;
+        const hasAdapter = String(adapterAddr).toLowerCase() !== ethers.ZeroAddress.toLowerCase();
+        // The adapter's own V3 surface first (it is the one repairStep swaps on); env / known as fallback.
+        const [aFactory, aWeth, aFee] = hasAdapter
+          ? await Promise.all([
+              adapter.v3Factory().catch(() => null),
+              adapter.WETH().catch(() => null),
+              adapter.POOL_FEE().catch(() => null),
+            ])
+          : [null, null, null];
+        const factoryAddr = aFactory ? String(aFactory) : v3?.factory;
+        const weth = aWeth ? String(aWeth) : v3?.weth;
+        const fee = aFee != null ? Number(aFee) : v3?.fee ?? 3000;
+        if (!factoryAddr || !weth) return null;
+
+        const stockQuote = String(quote).toLowerCase() !== ethers.ZeroAddress.toLowerCase() && !fallback ? String(quote) : null;
+        const paired = stockQuote ?? weth;
+        const factory = new ethers.Contract(factoryAddr, V3_FACTORY_ABI, provider) as any;
+        const poolAddr = String(await factory.getPool(meme, paired, fee));
         if (poolAddr === ethers.ZeroAddress) return null;
         const pool = new ethers.Contract(poolAddr, V3_POOL_ABI, provider) as any;
         const [slot0, token0] = await Promise.all([pool.slot0(), pool.token0()]);
-        const price = BigInt(state.finalCurvePrice ?? state[1]);
         const memeIsToken0 = String(token0).toLowerCase() === String(meme).toLowerCase();
-        return { currentSqrtX96: BigInt(slot0.sqrtPriceX96 ?? slot0[0]), targetSqrtX96: curvePriceToSqrtX96(price, memeIsToken0) };
+        const currentSqrtX96 = BigInt(slot0.sqrtPriceX96 ?? slot0[0]);
+
+        if (!stockQuote) {
+          return { currentSqrtX96, targetSqrtX96: curvePriceToSqrtX96(price, memeIsToken0) };
+        }
+        // MEME/STOCK (C7 section 2): the adapter's repairStep stops at P * ETHUSD / STOCKUSD raised by its
+        // margin, read from the same two Chainlink feeds; partial limits go between the pool and that stop.
+        if (!hasAdapter) return null;
+        const [nativeOracle, route, margin] = await Promise.all([
+          adapter.nativeUsdOracle(),
+          adapter.stockRoutes(stockQuote),
+          adapter.REPAIR_STEP_MARGIN_BPS().catch(() => 500n),
+        ]);
+        const stockFeed = String(route.oracleFeed ?? route[0]);
+        const readFeed = async (addr: string) => {
+          const feed = new ethers.Contract(addr, FEED_ABI, provider) as any;
+          const [round, decimals] = await Promise.all([feed.latestRoundData(), feed.decimals()]);
+          return oraclePriceWad(BigInt(round.answer ?? round[1]), Number(decimals));
+        };
+        const [nativeUsdWad, stockUsdWad, stockDecimals] = await Promise.all([
+          readFeed(String(nativeOracle)),
+          readFeed(stockFeed),
+          new ethers.Contract(stockQuote, ERC20_DECIMALS_ABI, provider).decimals(),
+        ]);
+        if (!nativeUsdWad || !stockUsdWad) return null;
+        const stop = stockRepairStopPriceWad({
+          curvePriceWad: price,
+          nativeUsdWad,
+          stockUsdWad,
+          stockUnit: 10n ** BigInt(Number(stockDecimals)),
+          marginBps: BigInt(margin),
+        });
+        if (stop <= 0n) return null;
+        return { currentSqrtX96, targetSqrtX96: curvePriceToSqrtX96(stop, memeIsToken0) };
       } catch {
         return null;
       }
+    },
+    async dueInputs(campaign) {
+      const c = new ethers.Contract(campaign, GEN5_CAMPAIGN_ABI, provider) as any;
+      let curveSupply = curveSupplyCache.get(campaign);
+      if (curveSupply === undefined) {
+        curveSupply = BigInt(await c.curveSupply());
+        curveSupplyCache.set(campaign, curveSupply);
+      }
+      const hit = targetCache.get(campaign);
+      let nativeTarget: bigint | null;
+      if (hit && Date.now() - hit.at < targetTtlMs) {
+        nativeTarget = hit.value;
+      } else {
+        try {
+          nativeTarget = BigInt(await c.graduationNativeTarget());
+        } catch {
+          nativeTarget = null; // oracle down: only a sold-out curve can be due (trigger 1)
+        }
+        targetCache.set(campaign, { at: Date.now(), value: nativeTarget });
+      }
+      return { curveSupply, nativeTarget };
     },
   };
 }

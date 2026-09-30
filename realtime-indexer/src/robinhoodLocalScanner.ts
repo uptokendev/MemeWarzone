@@ -13,6 +13,18 @@ import { buildFactoryInventory, type SupportedFactory } from "./factoryInventory
 import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 import { notifyCampaignCreated, notifyCampaignGraduated } from "./campaignLifecycleNotifications.js";
+import { GEN5_CAMPAIGN_ABI } from "./evm/evmGen5Abi.js";
+import {
+  GEN5_ALL_TOPICS,
+  GEN5_CAMPAIGN_IFACE,
+  annotateGen5TradeRow,
+  firstBuysByTx,
+  recordGen5CampaignLog,
+  refreshGen5CampaignState,
+  type Gen5TradeContext,
+} from "./evm/evmGen5CampaignLogs.js";
+import { gen5GraduatedSnapshot } from "./evm/evmGen5Handoff.js";
+import { resolveCampaignGeneration, type CampaignGenerationInfo } from "./evm/evmGen5Store.js";
 
 const CHAIN_ID = 46630;
 const CURSOR_PREFIX = "robinhood-local";
@@ -369,11 +381,81 @@ async function recordTrade(input: {
   );
 }
 
+type GraduationFigures = {
+  pair: string;
+  liquidityTokens: string;
+  liquidityBnb: string;
+  liquidityLp: string;
+  burnedUnsoldTokens: string;
+  burnedUnusedLpTokens: string;
+  postBurnTotalSupply: string;
+  finalCurvePrice: string;
+  initialDexPrice: string;
+  quoteAsset: string;
+};
+
 async function recordFinalization(campaign: string, token: string | null, log: ethers.Log, blockDate: Date): Promise<void> {
   const parsed = CAMPAIGN_IFACE.parseLog(log);
   const args: any = parsed?.args;
   if (!args) return;
-  const pair = String(args.pair || "").toLowerCase();
+  await writeGraduation(campaign, token, log, blockDate, {
+    pair: String(args.pair || "").toLowerCase(),
+    liquidityTokens: String(args.liquidityTokens),
+    liquidityBnb: String(args.liquidityBnb),
+    liquidityLp: String(args.liquidityLp),
+    burnedUnsoldTokens: String(args.burnedUnsoldTokens),
+    burnedUnusedLpTokens: String(args.burnedUnusedLpTokens),
+    postBurnTotalSupply: String(args.postBurnTotalSupply),
+    finalCurvePrice: String(args.finalCurvePrice),
+    initialDexPrice: String(args.initialDexPrice),
+    quoteAsset: "WETH",
+  });
+}
+
+/**
+ * Generation 5: Graduated(pool, ...) plus getGraduationState() for the figures the event does not
+ * carry (LP liquidity, post-burn supply). The pool pairs MEME with WETH (native coin or E12 fallback)
+ * or with the bound Robinhood stock token; the V3 pool indexer classifies the quote from the pool.
+ */
+async function recordGen5Graduation(
+  provider: ethers.JsonRpcProvider,
+  campaign: string,
+  token: string | null,
+  log: ethers.Log,
+  blockDate: Date,
+): Promise<void> {
+  const parsed = GEN5_CAMPAIGN_IFACE.parseLog(log);
+  if (!parsed || parsed.name !== "Graduated") return;
+  const c = new ethers.Contract(campaign, GEN5_CAMPAIGN_ABI, provider) as any;
+  const [state, quote, fallback] = await Promise.all([
+    c.getGraduationState().catch(() => undefined),
+    c.graduationQuoteToken().catch(() => ethers.ZeroAddress),
+    c.nativeFallback().catch(() => false),
+  ]);
+  const snap = gen5GraduatedSnapshot(parsed.args, state);
+  const native = String(quote).toLowerCase() === ethers.ZeroAddress.toLowerCase() || Boolean(fallback);
+  await writeGraduation(campaign, token, log, blockDate, {
+    pair: snap.pair,
+    liquidityTokens: snap.liquidityTokenRaw,
+    liquidityBnb: snap.liquidityBnbRaw,
+    liquidityLp: snap.liquidityLpRaw,
+    burnedUnsoldTokens: snap.burnedUnsoldTokenRaw,
+    burnedUnusedLpTokens: snap.burnedUnusedLpTokenRaw,
+    postBurnTotalSupply: snap.postBurnTotalSupplyRaw,
+    finalCurvePrice: snap.finalCurvePriceRaw,
+    initialDexPrice: snap.initialDexPriceRaw,
+    quoteAsset: native ? "WETH" : String(quote).toLowerCase(),
+  });
+}
+
+async function writeGraduation(
+  campaign: string,
+  token: string | null,
+  log: ethers.Log,
+  blockDate: Date,
+  g: GraduationFigures,
+): Promise<void> {
+  const pair = g.pair;
   const normalized = campaign.toLowerCase();
 
   await pool.query(
@@ -390,7 +472,7 @@ async function recordFinalization(campaign: string, token: string | null, log: e
   await notifyCampaignGraduated(pool, {
     chainId: CHAIN_ID,
     campaignAddress: normalized,
-    market: { venue: "v3", pair, quoteAsset: "WETH" },
+    market: { venue: "v3", pair, quoteAsset: g.quoteAsset },
     graduatedAt: blockDate,
   });
 
@@ -426,16 +508,90 @@ async function recordFinalization(campaign: string, token: string | null, log: e
         log.blockNumber,
         blockDate,
         pair || null,
-        String(args.liquidityTokens),
-        String(args.liquidityBnb),
-        String(args.liquidityLp),
-        String(args.burnedUnsoldTokens),
-        String(args.burnedUnusedLpTokens),
-        String(args.postBurnTotalSupply),
-        String(args.finalCurvePrice),
-        String(args.initialDexPrice),
+        g.liquidityTokens,
+        g.liquidityBnb,
+        g.liquidityLp,
+        g.burnedUnsoldTokens,
+        g.burnedUnusedLpTokens,
+        g.postBurnTotalSupply,
+        g.finalCurvePrice,
+        g.initialDexPrice,
       ],
     );
+  }
+}
+
+async function resolveLocalGen5(provider: ethers.JsonRpcProvider, campaign: string): Promise<CampaignGenerationInfo | null> {
+  try {
+    const info = await resolveCampaignGeneration(pool, provider, CHAIN_ID, campaign);
+    return info.gen5 ? info : null;
+  } catch (error) {
+    console.warn("[robinhood-scanner] campaign generation unresolved; indexing as the old generation", {
+      campaign,
+      error: String((error as any)?.message || error),
+    });
+    return null;
+  }
+}
+
+async function scanGen5Campaign(
+  provider: ethers.JsonRpcProvider,
+  info: CampaignGenerationInfo,
+  address: string,
+  token: string | null,
+  startBlock: number,
+  head: number,
+): Promise<void> {
+  for (let from = startBlock; from <= head; from += ENV.LOG_CHUNK_SIZE) {
+    const to = Math.min(head, from + ENV.LOG_CHUNK_SIZE - 1);
+    const logs = await provider.getLogs({ address, topics: [GEN5_ALL_TOPICS], fromBlock: from, toBlock: to });
+    logs.sort((a, b) => a.blockNumber - b.blockNumber || a.index - b.index);
+    const ctx: Gen5TradeContext = { info, firstBuys: firstBuysByTx(logs) };
+    const times = new Map<number, Date>();
+    let dirty = false;
+    for (const log of logs) {
+      let date = times.get(log.blockNumber);
+      if (!date) {
+        date = await blockTime(provider, log.blockNumber);
+        times.set(log.blockNumber, date);
+      }
+      const parsed = GEN5_CAMPAIGN_IFACE.parseLog(log);
+      if (!parsed) continue;
+      const blockTimeSec = Math.floor(date.getTime() / 1_000);
+      if (parsed.name === "TokensPurchased" || parsed.name === "TokensSold") {
+        const buy = parsed.name === "TokensPurchased";
+        const trade = {
+          side: (buy ? "buy" : "sell") as "buy" | "sell",
+          wallet: String(buy ? parsed.args.buyer : parsed.args.seller),
+          tokenRaw: BigInt(buy ? parsed.args.amountOut : parsed.args.amountIn),
+          amountRaw: BigInt(buy ? parsed.args.cost : parsed.args.payout),
+          txHash: log.transactionHash,
+          logIndex: log.index,
+          blockTimeSec,
+        };
+        await recordTrade({
+          campaign: address,
+          token,
+          txHash: log.transactionHash,
+          logIndex: log.index,
+          blockNumber: log.blockNumber,
+          blockDate: date,
+          side: trade.side,
+          wallet: trade.wallet,
+          tokenRaw: trade.tokenRaw,
+          nativeRaw: trade.amountRaw,
+        });
+        await annotateGen5TradeRow(pool, CHAIN_ID, ctx, trade);
+        continue;
+      }
+      const recorded = await recordGen5CampaignLog(pool, CHAIN_ID, address, log, date);
+      if (recorded) dirty = true;
+      if (recorded?.eventName === "Graduated") {
+        await recordGen5Graduation(provider, address, token, log, date);
+      }
+    }
+    if (dirty) await refreshGen5CampaignState(pool, CHAIN_ID, address);
+    await setCursor("campaign", address, to + 1);
   }
 }
 
@@ -446,6 +602,14 @@ async function scanCampaign(provider: ethers.JsonRpcProvider, campaign: { campai
   const fallback = Math.max(0, head - ENV.INDEXER_TIP_SCAN_BLOCKS);
   let from = current > 0 ? current : created > 0 ? created : fallback;
   if (from > head) return;
+
+  // Launch generation (campaign 5): its own topics, the trade fee annotation and every non-trade event;
+  // the old generation keeps the path below unchanged.
+  const gen5 = await resolveLocalGen5(provider, address);
+  if (gen5) {
+    await scanGen5Campaign(provider, gen5, address, campaign.token_address, from, head);
+    return;
+  }
 
   for (; from <= head; from += ENV.LOG_CHUNK_SIZE) {
     const to = Math.min(head, from + ENV.LOG_CHUNK_SIZE - 1);

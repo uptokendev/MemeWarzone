@@ -3,6 +3,14 @@ import { LAUNCH_CAMPAIGN_ABI } from "./abis.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
+import { GEN5_NON_TRADE_TOPICS, planGen5Backfill } from "./evm/evmGen5Backfill.js";
+import { recordGen5CampaignLog, refreshGen5CampaignState } from "./evm/evmGen5CampaignLogs.js";
+import {
+  annotateCurveTrade,
+  forcedGen5Factories,
+  resolveCampaignGeneration,
+  type CampaignGenerationInfo,
+} from "./evm/evmGen5Store.js";
 
 const CAMPAIGN_READ_ABI = [
   ...LAUNCH_CAMPAIGN_ABI,
@@ -119,6 +127,8 @@ export async function ensureCampaignRowFromChain(
         ...DEFAULT_FACTORIES_97,
         ENV.FACTORY_ADDRESS_56,
         ...ENV.SUPPORTED_FACTORY_ADDRESSES_56,
+        // Launch-generation factories named for this chain (same getCampaignPage tuple).
+        ...forcedGen5Factories(chainId),
       ]
         .map((value) => normalizeAddress(value))
         .filter((value, index, arr) => isAddress(value) && arr.indexOf(value) === index);
@@ -254,6 +264,46 @@ async function getLogsChunked(
 }
 
 /**
+ * Gen-5 annotation of the rows the backfill just inserted (or found), and the non-trade events of the
+ * same window. Every write is idempotent (row update by chain/tx/log, event insert on conflict do
+ * nothing, state recomputed from rows), so a repeated repair changes nothing.
+ */
+async function applyGen5Backfill(
+  provider: ethers.JsonRpcProvider,
+  chainId: number,
+  campaign: string,
+  info: CampaignGenerationInfo,
+  logs: ethers.Log[],
+  tsCache: Map<number, number>,
+): Promise<void> {
+  try {
+    for (const log of logs) {
+      const n = Number(log.blockNumber ?? 0);
+      if (!tsCache.has(n)) {
+        const blk = await provider.getBlock(n);
+        tsCache.set(n, Number(blk?.timestamp ?? Math.floor(Date.now() / 1000)));
+      }
+    }
+    const plan = planGen5Backfill(info, logs, (n) => tsCache.get(n) ?? Math.floor(Date.now() / 1000));
+    for (const trade of plan.trades) {
+      await annotateCurveTrade(pool, chainId, trade.txHash, trade.logIndex, trade.annotation);
+    }
+    let dirty = false;
+    for (const log of plan.events) {
+      const when = new Date((tsCache.get(Number(log.blockNumber)) ?? Math.floor(Date.now() / 1000)) * 1000);
+      if (await recordGen5CampaignLog(pool, chainId, campaign, log as any, when)) dirty = true;
+    }
+    if (dirty) await refreshGen5CampaignState(pool, chainId, campaign);
+  } catch (error) {
+    console.warn("[indexer] trade backfill gen-5 annotation failed", {
+      chainId,
+      campaign,
+      error: String((error as any)?.message || error),
+    });
+  }
+}
+
+/**
  * When a campaign has zero curve_trades (cleanup, cursor stuck, discovery lag),
  * scan TokensPurchased/TokensSold on-chain and insert missing rows.
  */
@@ -364,9 +414,23 @@ export async function backfillEmptyCampaignTrades(
       })(),
     });
 
+    // Launch generation (campaign 5): same trade rows, plus the gen-5 annotation and non-trade events.
+    // The old generation resolves to null here and takes the unchanged path (E14).
+    let gen5: CampaignGenerationInfo | null = null;
+    try {
+      const info = await resolveCampaignGeneration(pool, provider, chainId, campaign);
+      gen5 = info.gen5 ? info : null;
+    } catch (error) {
+      console.warn("[indexer] trade backfill: campaign generation unresolved; old-generation rows only", {
+        chainId,
+        campaign,
+        error: String((error as any)?.message || error),
+      });
+    }
+    const tsCache = new Map<number, number>();
+
     const insertLogs = async (logs: ethers.Log[]): Promise<number> => {
       let insertedLocal = 0;
-      const tsCache = new Map<number, number>();
       logs.sort((a, b) => a.blockNumber - b.blockNumber || Number(a.index ?? 0) - Number(b.index ?? 0));
       for (const log of logs) {
         const parsed = iface.parseLog(log);
@@ -450,6 +514,16 @@ export async function backfillEmptyCampaignTrades(
         maxSeenBlock = Math.max(maxSeenBlock, Number(log.blockNumber || 0));
       }
       inserted += await insertLogs(logs);
+      if (gen5) {
+        const nonTrade = await getLogsChunked(
+          provider,
+          { address: campaign, topics: [GEN5_NON_TRADE_TOPICS] },
+          win.from,
+          win.to,
+          logChunkSize,
+        );
+        await applyGen5Backfill(provider, chainId, campaign, gen5, [...logs, ...nonTrade], tsCache);
+      }
     }
 
     // Empty-campaign recovery: pin the historical cursor to the end of the history

@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { LAUNCH_CAMPAIGN_ABI } from "./abis.js";
 import { pool } from "./db.js";
+import { GEN5_GRADUATED_TOPIC } from "./evm/evmGen5Handoff.js";
 
 const ZERO = ethers.ZeroAddress.toLowerCase();
 
@@ -41,9 +42,10 @@ async function findGraduationAnchor(
     const iface = new ethers.Interface(LAUNCH_CAMPAIGN_ABI);
     const topic = iface.getEvent("CampaignFinalized")?.topicHash;
     if (!topic) return null;
+    // Launch generation (campaign 5) anchors on Graduated; one filter covers both generations.
     const logs = await provider.getLogs({
       address: camp,
-      topics: [topic],
+      topics: [[topic, GEN5_GRADUATED_TOPIC]],
       fromBlock: Number(known?.created_block || 0),
       toBlock: "latest",
     });
@@ -72,15 +74,31 @@ async function findGraduationAnchor(
  * graduation router, which is the adapter that actually provided the liquidity,
  * so this can never resolve to a different (staged) V3 surface.
  */
+/**
+ * The old generation's venue is its router(); generation 5 has none and names the adapter that built
+ * (or, after the E12 native fallback, will build) the pool: graduationAdapter(). Both adapter families
+ * on Robinhood (V3 native / stock, RobinhoodV3PoolRepair) answer WETH() and v3Factory().
+ */
+async function readGraduationVenueSource(provider: ethers.Provider, campaign: string): Promise<string> {
+  const c = new ethers.Contract(
+    campaign,
+    ["function router() view returns (address)", "function graduationAdapter() view returns (address)"],
+    provider,
+  ) as any;
+  try {
+    return String(await c.router()).toLowerCase();
+  } catch {
+    return String(await c.graduationAdapter()).toLowerCase();
+  }
+}
+
 async function readGraduationVenue(
   provider: ethers.Provider,
   campaign: string,
 ): Promise<{ wrappedNative: string; v3Factory: string }> {
   const empty = { wrappedNative: "", v3Factory: "" };
   try {
-    const router = String(
-      await new ethers.Contract(campaign, ["function router() view returns (address)"], provider).router(),
-    ).toLowerCase();
+    const router = await readGraduationVenueSource(provider, campaign);
     if (!/^0x[a-f0-9]{40}$/.test(router) || router === ZERO) return empty;
     const adapter = new ethers.Contract(
       router,

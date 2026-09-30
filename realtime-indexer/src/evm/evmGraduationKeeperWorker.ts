@@ -9,6 +9,9 @@
  *   EVM_GRADUATION_KEEPER_MAX_GAS[_<chainId>]       default 56: 15,000,000; 4663: 30,000,000 (Nitro cap 32M)
  *   EVM_GRADUATION_KEEPER_MIN_FLUSH_WEI             default 1
  *   EVM_GRADUATION_KEEPER_REPAIR_HALVINGS           default 8
+ *   EVM_GRADUATION_KEEPER_DUE_SLACK_BPS             default 200 (due-but-not-pending pre-filter slack)
+ *   EVM_GRADUATION_KEEPER_MAX_DUE_CANDIDATES        default 25 per pass (0 turns the due filter off)
+ *   EVM_GRADUATION_KEEPER_TARGET_TTL_MS             default 60000 (cached graduationNativeTarget())
  *   EVM_KEEPER_V3_FACTORY_<id> / EVM_KEEPER_WETH_<id> / EVM_KEEPER_V3_FEE_<id>  partial-repair price read
  *   EVM_KEEPER_FORBIDDEN_ADDRESSES                  extra refused keeper addresses
  */

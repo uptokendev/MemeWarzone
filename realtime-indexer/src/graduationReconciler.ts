@@ -3,7 +3,10 @@ import { ablyRest, tokenChannel } from "./ably.js";
 import { LAUNCH_CAMPAIGN_ABI } from "./abis.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
-import { reconcileGraduationHandoff } from "./marketContinuity.js";
+import { reconcileGen5GraduationHandoff, reconcileGraduationHandoff } from "./marketContinuity.js";
+import { GEN5_CAMPAIGN_IFACE } from "./evm/evmGen5CampaignLogs.js";
+import { GEN5_GRADUATED_TOPIC, storedGraduatedFromRow, type StoredGraduated } from "./evm/evmGen5Handoff.js";
+import { resolveCampaignGeneration } from "./evm/evmGen5Store.js";
 import {
   graduationLogChunkRanges,
   graduationLogSearchWindow,
@@ -139,10 +142,12 @@ async function findGraduationLog(
   provider: ethers.JsonRpcProvider,
   candidate: Candidate,
   finalizedHead: number,
+  topic0?: string,
 ): Promise<ethers.Log | null> {
   const iface = new ethers.Interface(LAUNCH_CAMPAIGN_ABI);
   const event = iface.getEvent("CampaignFinalized");
   if (!event) throw new Error("CampaignFinalized event is missing from LAUNCH_CAMPAIGN_ABI");
+  const topic = topic0 ?? event.topicHash;
 
   const window = graduationLogSearchWindow({
     finalizedHead,
@@ -162,7 +167,7 @@ async function findGraduationLog(
     const logs = await getLogsAdaptive(
       provider,
       candidate.campaignAddress,
-      event.topicHash,
+      topic,
       start,
       end,
     );
@@ -235,6 +240,97 @@ async function noteMissingGraduationLog(chainId: number, candidate: Candidate) {
   );
 }
 
+/** Generation 5? A failed resolution answers false; the old path then retries it next pass. */
+async function isGen5Campaign(provider: ethers.JsonRpcProvider, chainId: number, campaign: string): Promise<boolean> {
+  try {
+    const info = await resolveCampaignGeneration(pool, provider, chainId, campaign);
+    return info.gen5;
+  } catch (error: any) {
+    console.warn("[wtr] campaign generation unresolved; using the CampaignFinalized handoff", {
+      chainId,
+      campaign,
+      error: error?.shortMessage || error?.message || String(error),
+    });
+    return false;
+  }
+}
+
+/** The Graduated row the campaign scan already stored (evm_campaign_events), if any. */
+async function storedGen5Graduated(chainId: number, campaign: string): Promise<StoredGraduated | null> {
+  try {
+    const r = await pool.query(
+      `select tx_hash, block_number, block_time, args
+         from public.evm_campaign_events
+        where chain_id=$1 and campaign_address=$2 and contract_kind='campaign' and event_name='Graduated'
+        order by block_number desc, log_index desc
+        limit 1`,
+      [chainId, campaign],
+    );
+    return storedGraduatedFromRow(r.rows[0]);
+  } catch {
+    // Table absent (migration not applied yet): fall back to the log search.
+    return null;
+  }
+}
+
+async function reconcileGen5Candidate(
+  provider: ethers.JsonRpcProvider,
+  chainId: number,
+  candidate: Candidate,
+  finalizedHead: number,
+): Promise<"skipped" | "not_launched" | "cooldown" | "pending" | "reconciled"> {
+  let graduated = await storedGen5Graduated(chainId, candidate.campaignAddress);
+  if (!graduated) {
+    if (isInScanCooldown(chainId, candidate.campaignAddress) && candidate.graduatedBlock == null) {
+      return "cooldown";
+    }
+    const log = await findGraduationLog(provider, candidate, finalizedHead, GEN5_GRADUATED_TOPIC);
+    if (!log) {
+      markScanCooldown(chainId, candidate.campaignAddress);
+      await noteMissingGraduationLog(chainId, candidate);
+      console.log("[wtr] gen-5 Graduated log not in window (cooldown applied)", {
+        chainId,
+        campaign: candidate.campaignAddress,
+        createdBlock: candidate.createdBlock,
+      });
+      return "pending";
+    }
+    const parsed = GEN5_CAMPAIGN_IFACE.parseLog(log);
+    if (!parsed || parsed.name !== "Graduated") {
+      throw new Error(`Unable to decode Graduated for ${candidate.campaignAddress}`);
+    }
+    graduated = { txHash: log.transactionHash.toLowerCase(), blockNumber: log.blockNumber, blockTime: null, args: parsed.args as any };
+  }
+
+  let blockTime = graduated.blockTime;
+  if (!blockTime) {
+    const block = await provider.getBlock(graduated.blockNumber);
+    blockTime = new Date(Number(block?.timestamp || 0) * 1000);
+  }
+  const result = await reconcileGen5GraduationHandoff({
+    provider,
+    chainId,
+    campaignAddress: candidate.campaignAddress,
+    txHash: graduated.txHash,
+    blockNumber: graduated.blockNumber,
+    blockTime,
+    args: graduated.args,
+  });
+
+  clearScanCooldown(chainId, candidate.campaignAddress);
+  await publishStageChange({
+    chainId,
+    campaignAddress: candidate.campaignAddress,
+    from: candidate.marketStage,
+    to: result.marketStage,
+    blockNumber: graduated.blockNumber,
+    txHash: graduated.txHash,
+    reason: result.reason,
+  });
+  console.log("[wtr] gen-5 graduation reconciled", result);
+  return "reconciled";
+}
+
 async function reconcileCandidate(
   provider: ethers.JsonRpcProvider,
   chainId: number,
@@ -256,6 +352,12 @@ async function reconcileCandidate(
     return "skipped";
   }
   if (!launched) return "not_launched";
+
+  // Launch generation (campaign 5): hands off from Graduated, not CampaignFinalized. The old
+  // generation never reaches this branch (E14).
+  if (await isGen5Campaign(provider, chainId, candidate.campaignAddress)) {
+    return reconcileGen5Candidate(provider, chainId, candidate, finalizedHead);
+  }
 
   // Cheap eth_call only above; expensive getLogs behind cooldown after misses.
   if (isInScanCooldown(chainId, candidate.campaignAddress) && candidate.graduatedBlock == null) {

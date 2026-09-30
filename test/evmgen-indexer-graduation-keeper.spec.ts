@@ -157,4 +157,68 @@ describe("indexer: EVM graduation keeper against the gen-5 campaign", function (
     expect(p2.steps[0].decision.call.fn).to.eq("graduate");
     expect(await campaign.launched()).to.eq(true);
   });
+
+  it("due but not Pending (the crossing buy's oracle read failed): the due filter lists it and graduate() marks and graduates", async () => {
+    const env = await deployEvmGen();
+    const { campaign } = await createCoin(env);
+    await mineAt(Number(await campaign.launchAt()) + 61);
+    const t = Number((await ethers.provider.getBlock("latest"))!.timestamp);
+    await env.feed.setRoundData(2, 0, t, t, 2); // oracle reverts on the crossing buy
+    await buyNative(env, campaign, env.alice, E(60));
+    expect(await campaign.graduationPending()).to.eq(false);
+
+    const addr = (await campaign.getAddress()).toLowerCase();
+    const w = ethers.Wallet.createRandom().connect(ethers.provider);
+    await env.owner.sendTransaction({ to: w.address, value: E(1) });
+    const provider = ethers.provider as any;
+    const chainId = Number((await ethers.provider.getNetwork()).chainId);
+    const reader = keeper.createEthersKeeperReader(provider, chainId, w.address, { EVM_GRADUATION_KEEPER_TARGET_TTL_MS: "5000" });
+    const sender = keeper.createEthersKeeperSender(provider, new ethers.Wallet(w.privateKey), chainId);
+    const cfg = { maxGas: 15_000_000n, minFlushWei: 1n, maxRepairHalvings: 2, dueSlackBps: 200, maxDueCandidates: 5 };
+
+    // Indexed state: the campaign's net raise as the indexer derives it (gross buys - gross sells).
+    const netRaised = (await campaign.netRaisedWei()).toString();
+    const sold = (await campaign.sold()).toString();
+    const db = memoryDb();
+    const baseQuery = db.query.bind(db);
+    (db as any).query = async (sql: string, params: any[] = []) => {
+      if (/from public\.campaigns c\s+join public\.curve_trades t/.test(sql)) {
+        return { rows: [{ campaign_address: addr, net_raised_raw: netRaised, sold_raw: sold }] };
+      }
+      if (/from public\.campaigns c\s+left join public\.evm_campaign_gen5_state/.test(sql)) return { rows: [] };
+      return baseQuery(sql, params);
+    };
+
+    // Oracle still down: the target is unreadable and the curve is not sold out, so nothing is listed.
+    expect(await keeper.listDueCampaigns({ db, chainId, reader, cfg })).to.deep.eq([]);
+
+    // Oracle back (fresh reader: no cached null target): listed, simulated, sent; Pending and Graduated in one call.
+    const t2 = Number((await ethers.provider.getBlock("latest"))!.timestamp);
+    await env.feed.setRoundData(3, 600n * 10n ** 8n, t2, t2, 3);
+    const fresh = keeper.createEthersKeeperReader(provider, chainId, w.address, {});
+    expect(await keeper.listDueCampaigns({ db, chainId, reader: fresh, cfg })).to.deep.eq([addr]);
+    const pass = await keeper.runEvmGraduationKeeperPass({ db, chainId, reader: fresh, sender, cfg, send: true });
+    const step = pass.steps.find((s: any) => s.campaign === addr);
+    expect(step.decision.kind).to.eq("send");
+    expect(step.decision.reason).to.eq("due, not pending");
+    expect(await campaign.launched()).to.eq(true);
+  });
+
+  it("a trading campaign short of its target is simulated only as a due candidate and answers idle (GraduationNotDue)", async () => {
+    const env = await deployEvmGen();
+    const { campaign } = await createCoin(env);
+    await mineAt(Number(await campaign.launchAt()) + 61);
+    await buyNative(env, campaign, env.alice, E(1));
+    const addr = (await campaign.getAddress()).toLowerCase();
+    const provider = ethers.provider as any;
+    const chainId = Number((await ethers.provider.getNetwork()).chainId);
+    const w = ethers.Wallet.createRandom();
+    const reader = keeper.createEthersKeeperReader(provider, chainId, w.address, {});
+    const cfg = { maxGas: 15_000_000n, minFlushWei: 1n, maxRepairHalvings: 2 };
+    const d = await keeper.decideKeeperStep(reader, addr, cfg, { dueCandidate: true });
+    expect(d.kind).to.eq("idle");
+    expect(d.reason).to.eq("not due (GraduationNotDue)");
+    const due = await reader.dueInputs(addr);
+    expect(keeper.isLikelyDue({ netRaisedWei: await campaign.netRaisedWei(), soldRaw: await campaign.sold(), curveSupply: due.curveSupply, nativeTarget: due.nativeTarget, slackBps: 200 })).to.eq(false);
+  });
 });

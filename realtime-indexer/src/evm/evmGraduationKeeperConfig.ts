@@ -14,7 +14,11 @@ export function keeperConfig(chainId: number, env: NodeJS.ProcessEnv = process.e
   const flushRaw = String(env.EVM_GRADUATION_KEEPER_MIN_FLUSH_WEI || "1").trim();
   const minFlushWei = /^\d+$/.test(flushRaw) ? BigInt(flushRaw) : 1n;
   const halvings = Math.max(0, Math.min(32, Number(env.EVM_GRADUATION_KEEPER_REPAIR_HALVINGS || 8) || 0));
-  return { maxGas, minFlushWei, maxRepairHalvings: halvings };
+  const slack = Number(env.EVM_GRADUATION_KEEPER_DUE_SLACK_BPS ?? 200);
+  const dueSlackBps = Number.isFinite(slack) ? Math.max(0, Math.min(10_000, Math.floor(slack))) : 200;
+  const maxDue = Number(env.EVM_GRADUATION_KEEPER_MAX_DUE_CANDIDATES ?? 25);
+  const maxDueCandidates = Number.isFinite(maxDue) ? Math.max(0, Math.min(500, Math.floor(maxDue))) : 25;
+  return { maxGas, minFlushWei, maxRepairHalvings: halvings, dueSlackBps, maxDueCandidates };
 }
 
 export function enabledKeeperChains(env: NodeJS.ProcessEnv = process.env): number[] {
