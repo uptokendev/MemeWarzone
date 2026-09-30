@@ -626,6 +626,10 @@ export type CampaignDraft = {
   dbcFeeChoice?: string | null;
   dbcCreatorSharePct?: number | null;
   dbcFirstBuyLamports?: string | null;
+  /** EVM generation-6 factories: creator fee choice and first-buy budget (native wei). */
+  evmFeeChoice?: string | null;
+  evmFeeCreatorPct?: number | null;
+  evmFirstBuyWei?: string | null;
   createdAt: string;
   updatedAt: string;
   tickerReservation?: TickerReservation | null;
@@ -791,6 +795,10 @@ export type CreateDraftInput = {
   dbcFeeChoice?: string | null;
   dbcCreatorSharePct?: number | null;
   dbcFirstBuyLamports?: string | null;
+  /** EVM generation-6 factories: creator fee choice and first-buy budget (native wei). */
+  evmFeeChoice?: string | null;
+  evmFeeCreatorPct?: number | null;
+  evmFirstBuyWei?: string | null;
 };
 
 export type SavePromotionInput = {

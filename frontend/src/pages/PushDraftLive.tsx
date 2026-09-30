@@ -37,6 +37,16 @@ import { signSolanaDraftAction } from "@/lib/solanaWallet";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { isDbcLaunchEnabled } from "@/lib/dbcLaunchEnabled";
 import { getDbcGraduationTiers } from "@/lib/dbcGraduationTiers";
+import type { CreatorFeeChoice } from "@/components/create/CreatorFeeChoicePicker";
+import {
+  EvmGen6LaunchOptions,
+  freshEvmFirstBuyPlan,
+  parseNativeInput,
+} from "@/components/create/EvmGen6LaunchOptions";
+import { gen6CreateFields } from "@/lib/evmGen6.mjs";
+import { isGen6Factory } from "@/lib/evmGen6Client";
+import { getReadProvider } from "@/lib/readProvider";
+import { ethers } from "ethers";
 import {
   authorizeDbcCreate,
   beginDbcCreate,
@@ -144,6 +154,11 @@ export default function PushDraftLive() {
   const [mode, setMode] = useState<"now" | "scheduled">("now");
   const [graduationTargetWei, setGraduationTargetWei] = useState(DEFAULT_GRADUATION_TARGET_WEI);
   const [launchAtInput, setLaunchAtInput] = useState(() => toLocalInputValue(new Date(Date.now() + 60 * 60 * 1000)));
+  // EVM generation-6 factories only (E14: older factories keep today's deploy form).
+  const [evmFeeChoice, setEvmFeeChoice] = useState<CreatorFeeChoice>("keep");
+  const [evmCreatorSharePct, setEvmCreatorSharePct] = useState("50");
+  const [evmFirstBuyInput, setEvmFirstBuyInput] = useState("");
+  const [evmGen6FactoryAddress, setEvmGen6FactoryAddress] = useState("");
 
   const showArmBlock = (detail: Parameters<typeof emitCreatorArmBlocked>[0]) => {
     emitCreatorArmBlocked(detail);
@@ -166,6 +181,12 @@ export default function PushDraftLive() {
             ? getDbcGraduationTiers().some((tier) => tier.targetWei === persistedTarget)
             : isSupportedGraduationTarget(Number(data.draft.chainId), persistedTarget);
           if (supported) setGraduationTargetWei(persistedTarget);
+          const savedChoice = String((data.draft as { evmFeeChoice?: string | null }).evmFeeChoice || "");
+          if (["keep", "holders", "split", "buyback"].includes(savedChoice)) setEvmFeeChoice(savedChoice as CreatorFeeChoice);
+          const savedPct = (data.draft as { evmFeeCreatorPct?: number | null }).evmFeeCreatorPct;
+          if (savedPct != null) setEvmCreatorSharePct(String(savedPct));
+          const savedBuy = (data.draft as { evmFirstBuyWei?: string | null }).evmFirstBuyWei;
+          if (savedBuy) setEvmFirstBuyInput(ethers.formatEther(BigInt(savedBuy)));
           // A scheduled DBC draft shows the time it was saved with, not a fresh default.
           const savedAt = dbc && data.draft.scheduledLaunchAt ? new Date(String(data.draft.scheduledLaunchAt)) : null;
           if (savedAt && Number.isFinite(savedAt.getTime())) setLaunchAtInput(toLocalInputValue(savedAt));
@@ -199,6 +220,37 @@ export default function PushDraftLive() {
     [draft?.chainId, launchpad.factoryAddress],
   );
   const eligibilityFactoryAddress = scheduledFactoryAddress || launchpad.factoryAddress;
+  const deployFactoryAddress = mode === "scheduled" ? scheduledFactoryAddress : launchpad.factoryAddress;
+
+  useEffect(() => {
+    if (!draft || draftIsSolana || !deployFactoryAddress) {
+      setEvmGen6FactoryAddress("");
+      return;
+    }
+    let cancelled = false;
+    void isGen6Factory(getReadProvider(Number(draft.chainId) as any), deployFactoryAddress)
+      .then((yes) => {
+        if (!cancelled) setEvmGen6FactoryAddress(yes ? deployFactoryAddress : "");
+      })
+      .catch(() => {
+        if (!cancelled) setEvmGen6FactoryAddress("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [draft, draftIsSolana, deployFactoryAddress]);
+  const evmGen6 = Boolean(evmGen6FactoryAddress) && !draftIsSolana;
+
+  /** The four gen-6 create fields, priced again right before the wallet signs. */
+  const buildEvmGen6Fields = async () => {
+    if (!evmGen6 || !draft) return undefined;
+    const budgetWei = parseNativeInput(evmFirstBuyInput);
+    const plan = budgetWei > 0n
+      ? await freshEvmFirstBuyPlan({ chainId: Number(draft.chainId), factoryAddress: evmGen6FactoryAddress, graduationTarget: graduationTargetWei, budgetWei })
+      : null;
+    if (plan?.exceedsCap) throw new Error("Your first buy is over the cap. Lower the amount.");
+    return gen6CreateFields({ choice: evmFeeChoice, creatorSharePct: evmCreatorSharePct, firstBuy: plan });
+  };
   const creatorTimeZone = useMemo(() => browserTimeZone(), []);
   const selectedLaunchDate = useMemo(() => new Date(launchAtInput), [launchAtInput]);
   const selectedLaunchValid = Number.isFinite(selectedLaunchDate.getTime());
@@ -633,6 +685,8 @@ export default function PushDraftLive() {
         draftId: draft.id,
       });
 
+      const gen6Fields = await buildEvmGen6Fields();
+
       if (mode === "scheduled" && scheduledLaunchAt) {
         const created = await deployScheduledDraftCampaignV2({
           signer: wallet.signer,
@@ -642,6 +696,7 @@ export default function PushDraftLive() {
           draftId: draft.id,
           launchAt: scheduledLaunchAt,
           graduationTargetWei,
+          ...(gen6Fields ? { gen6: gen6Fields } : {}),
         });
         if (!created.campaignAddress) throw new Error("Scheduled campaign was deployed but its address could not be read from the receipt.");
 
@@ -670,6 +725,7 @@ export default function PushDraftLive() {
         priceSlopeWei: 0n,
         graduationTargetWei,
         lpReceiver: "",
+        ...(gen6Fields ? { gen6: gen6Fields } : {}),
       });
 
       if (!created.campaignAddress) throw new Error("Campaign was deployed but its address could not be read from the receipt.");
@@ -707,7 +763,11 @@ export default function PushDraftLive() {
 
       if (looksLikeArmBlock || (latestEligibility != null && isCreatorArmCooldownActive(latestEligibility))) {
         showArmBlock(resolveCreatorArmBlock({ mode, eligibility: latestEligibility, errorMessage: message, errorCode: code }));
-      } else if (message.startsWith("Choose a trading-open time") || message.startsWith("Scheduled launches cannot")) {
+      } else if (
+        message.startsWith("Choose a trading-open time") ||
+        message.startsWith("Scheduled launches cannot") ||
+        (evmGen6 && /first buy|first-buy|fee choice|price feed|graduation target|signed launch/i.test(message))
+      ) {
         toast.error(message);
       } else {
         toast.error(`We couldn’t deploy your campaign on ${chainLabel}. Your draft remains saved. Please try again.`);
@@ -837,6 +897,22 @@ export default function PushDraftLive() {
                 </p>
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {evmGen6 && !dbcDraft ? (
+          <div className="mt-4">
+            <EvmGen6LaunchOptions
+              chainId={Number(draft.chainId)}
+              factoryAddress={evmGen6FactoryAddress}
+              graduationTarget={graduationTargetWei}
+              feeChoice={evmFeeChoice}
+              onFeeChoiceChange={setEvmFeeChoice}
+              sharePct={evmCreatorSharePct}
+              onSharePctChange={setEvmCreatorSharePct}
+              firstBuyInput={evmFirstBuyInput}
+              onFirstBuyInputChange={setEvmFirstBuyInput}
+            />
           </div>
         ) : null}
 

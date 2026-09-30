@@ -43,6 +43,16 @@ import {
   type DbcFeeChoice,
 } from "@/lib/dbcCreate";
 import { submitDbcCreateTransaction } from "@/lib/dbcCreateSubmit";
+import { CreatorFeeChoicePicker, type CreatorFeeChoice } from "@/components/create/CreatorFeeChoicePicker";
+import {
+  EvmGen6LaunchOptions,
+  freshEvmFirstBuyPlan,
+  parseNativeInput,
+  type EvmFirstBuyPlan,
+} from "@/components/create/EvmGen6LaunchOptions";
+import { gen6CreateFields, LAUNCH_FEE_NOTE } from "@/lib/evmGen6.mjs";
+import { isGen6Factory } from "@/lib/evmGen6Client";
+import { getReadProvider } from "@/lib/readProvider";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 import { apiFetch } from "@/lib/apiBase";
 import {
@@ -222,6 +232,12 @@ const Create = () => {
   const dbcFirstBuyRaw = (): bigint => quoteUiToRaw(dbcFirstBuySol, Number(dbcQuote?.decimals ?? 9), dbcQuoteMultiplier);
   const chooseDbcQuote = (mint: string) => setDbcQuoteMint(mint);
   const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ tokensOut: string; bps: string; exceedsCap: boolean } | null>(null);
+  // EVM generation-6 factories only (E14: older factories keep today's create form).
+  const [evmFeeChoice, setEvmFeeChoice] = useState<CreatorFeeChoice>("keep");
+  const [evmCreatorSharePct, setEvmCreatorSharePct] = useState("50");
+  const [evmFirstBuyInput, setEvmFirstBuyInput] = useState("");
+  const [evmFirstBuyPlan, setEvmFirstBuyPlan] = useState<EvmFirstBuyPlan | null>(null);
+  const [evmGen6FactoryAddress, setEvmGen6FactoryAddress] = useState("");
   const [creatorEligibility, setCreatorEligibility] = useState<ScheduledCreatorLaunchEligibility | null>(null);
   const [creatorEligibilityError, setCreatorEligibilityError] = useState<string | null>(null);
   const armDialogShownForWallet = useRef<string | null>(null);
@@ -447,6 +463,39 @@ const Create = () => {
     };
   }, [isSolanaCreator, wallet.account, wallet.signer, chainId, launchpad.factoryAddress]);
 
+  useEffect(() => {
+    const factoryAddress = launchpad.factoryAddress || "";
+    if (isSolanaCreator || !isEvmChainId(chainId) || !factoryAddress) {
+      setEvmGen6FactoryAddress("");
+      return;
+    }
+    let cancelled = false;
+    void isGen6Factory(getReadProvider(Number(chainId) as any), factoryAddress)
+      .then((yes) => {
+        if (!cancelled) setEvmGen6FactoryAddress(yes ? factoryAddress : "");
+      })
+      .catch(() => {
+        if (!cancelled) setEvmGen6FactoryAddress("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSolanaCreator, chainId, launchpad.factoryAddress]);
+  const evmGen6 = Boolean(evmGen6FactoryAddress) && !isSolanaCreator;
+
+  /** The four gen-6 create fields, priced again right before the wallet signs. */
+  const buildEvmGen6Fields = async () => {
+    if (!evmGen6) return undefined;
+    const budgetWei = parseNativeInput(evmFirstBuyInput);
+    const plan = budgetWei > 0n
+      ? await freshEvmFirstBuyPlan({ chainId: Number(chainId), factoryAddress: evmGen6FactoryAddress, graduationTarget: graduationTargetWei, budgetWei })
+      : null;
+    if (plan?.exceedsCap) {
+      throw new Error("Your first buy is over the cap. Lower the amount.");
+    }
+    return gen6CreateFields({ choice: evmFeeChoice, creatorSharePct: evmCreatorSharePct, firstBuy: plan });
+  };
+
   const ensureTickerAvailable = () => {
     if (!normalizedTicker) {
       toast.error("Ticker is required.");
@@ -611,6 +660,13 @@ const Create = () => {
             }
           : {}),
         ...(dbcLaunch ? {} : buildCreateDraftGraduationFields(graduationQuoteAsset, chainId)),
+        ...(evmGen6
+          ? {
+              evmFeeChoice,
+              evmFeeCreatorPct: evmFeeChoice === "split" ? Number(evmCreatorSharePct) : null,
+              evmFirstBuyWei: parseNativeInput(evmFirstBuyInput) > 0n ? parseNativeInput(evmFirstBuyInput).toString() : null,
+            }
+          : {}),
         ...(isSolanaCreator
           ? { cluster: String(import.meta.env.VITE_SOLANA_CLUSTER || "solana-mainnet-beta") }
           : {}),
@@ -948,6 +1004,7 @@ const Create = () => {
         }
       }
 
+      const gen6Fields = await buildEvmGen6Fields();
       const logoUrl = await uploadLogo();
       let campaignAddress = "";
       let tokenAddress = "";
@@ -970,6 +1027,7 @@ const Create = () => {
           extraLink: normalizeSocialUrl(formData.otherLink, "other"),
           graduationTargetWei,
           stockToken,
+          ...(gen6Fields ? { gen6: gen6Fields } : {}),
         });
         campaignAddress = created.campaignAddress;
         tokenAddress = created.tokenAddress;
@@ -991,6 +1049,7 @@ const Create = () => {
           website: normalizeSocialUrl(formData.website, "website"),
           extraLink: normalizeSocialUrl(formData.otherLink, "other"),
           graduationTargetWei,
+          ...(gen6Fields ? { gen6: gen6Fields } : {}),
         });
         campaignAddress = String(receipt?.campaignAddress || "").trim();
         tokenAddress = String(receipt?.tokenAddress || "").trim();
@@ -1292,28 +1351,7 @@ const Create = () => {
                             ))}
                           </div>
                         </div>
-                        <div>
-                          <div className="font-retro text-sm text-foreground">Creator fee</div>
-                          <div className="mt-2 grid gap-1.5">
-                            {([
-                              ["keep", "Keep it", "Your share of every trade fee is yours to claim."],
-                              ["holders", "Give it to holders", "Your share is paid out to the coin's holders every week."],
-                              ["split", "Split", "You keep a percentage; holders get the rest every week."],
-                              ["buyback", "Buyback and burn", "Bought back at random times each week and burned."],
-                            ] as const).map(([id, label, detail]) => (
-                              <button key={id} type="button" onClick={() => setDbcFeeChoice(id)} className={cn("rounded-lg border px-2.5 py-2 text-left", dbcFeeChoice === id ? "border-accent bg-accent/15" : "border-border bg-muted/30")}>
-                                <div className="font-retro text-sm">{label}</div>
-                                <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">{detail}</p>
-                              </button>
-                            ))}
-                          </div>
-                          {dbcFeeChoice === "split" ? (
-                            <div className="mt-2">
-                              <label className="text-xs text-muted-foreground">Your share percent</label>
-                              <Input type="number" min={1} max={99} value={dbcCreatorSharePct} onChange={(e) => setDbcCreatorSharePct(e.target.value)} className="mt-1 max-w-[8rem]" />
-                            </div>
-                          ) : null}
-                        </div>
+                        <CreatorFeeChoicePicker value={dbcFeeChoice} onChange={setDbcFeeChoice} sharePct={dbcCreatorSharePct} onSharePctChange={setDbcCreatorSharePct} />
                         <div>
                           <div className="font-retro text-sm text-foreground">Your first buy (optional)</div>
                           <p className="mt-0.5 text-xs text-muted-foreground">Buys in the same transaction as the launch, at the normal 2% fee.</p>
@@ -1325,7 +1363,7 @@ const Create = () => {
                             </p>
                           ) : null}
                         </div>
-                        <p className="text-xs text-muted-foreground">The fee starts at 50% and falls to 2% within 60 seconds, so bots that buy at launch pay for it. Your own first buy does not.</p>
+                        <p className="text-xs text-muted-foreground">{LAUNCH_FEE_NOTE}</p>
                         {pendingStock ? (
                           <DbcStockRiskDialog
                             mint={pendingStock.mint}
@@ -1339,6 +1377,20 @@ const Create = () => {
                           />
                         ) : null}
                       </div>
+                    ) : null}
+                    {evmGen6 ? (
+                      <EvmGen6LaunchOptions
+                        chainId={Number(chainId)}
+                        factoryAddress={evmGen6FactoryAddress}
+                        graduationTarget={graduationTargetWei}
+                        feeChoice={evmFeeChoice}
+                        onFeeChoiceChange={setEvmFeeChoice}
+                        sharePct={evmCreatorSharePct}
+                        onSharePctChange={setEvmCreatorSharePct}
+                        firstBuyInput={evmFirstBuyInput}
+                        onFirstBuyInputChange={setEvmFirstBuyInput}
+                        onPlanChange={setEvmFirstBuyPlan}
+                      />
                     ) : null}
                     <Collapsible open={safetyOpen} onOpenChange={setSafetyOpen} className="rounded-xl border border-border/50 bg-background/25">
                       <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 p-3 text-left">
@@ -1409,6 +1461,12 @@ const Create = () => {
                         <>
                           <div className="flex justify-between gap-3"><span className="text-muted-foreground">Creator fee</span><span className="text-foreground">{DBC_FEE_CHOICE_LABEL[dbcFeeChoice] || dbcFeeChoice}</span></div>
                           <div className="flex justify-between gap-3"><span className="text-muted-foreground">First buy</span><span className="text-foreground">{dbcFirstBuySol ? `${dbcFirstBuySol} ${dbcQuote?.symbol || "SOL"}` : "None"}</span></div>
+                        </>
+                      ) : null}
+                      {evmGen6 ? (
+                        <>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Creator fee</span><span className="text-foreground">{DBC_FEE_CHOICE_LABEL[evmFeeChoice] || evmFeeChoice}{evmFeeChoice === "split" ? ` (${evmCreatorSharePct}% to you)` : ""}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">First buy</span><span className="text-foreground">{evmFirstBuyPlan && evmFirstBuyPlan.tokens > 0n ? `${evmFirstBuyInput} ${getNativeSymbol(chainId)} (${(evmFirstBuyPlan.supplyBps / 100).toFixed(2)}% of supply)` : "None"}</span></div>
                         </>
                       ) : null}
                       {!creatorWallet ? <p className="pt-1 text-xs text-orange-300">Connect your wallet before launching.</p> : null}
