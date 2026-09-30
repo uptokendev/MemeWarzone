@@ -52,7 +52,7 @@ export type FactoryReadiness = {
 };
 
 /** Every reason the Safe call would revert or be pointless, found before a wei is spent. */
-export async function readFactoryReadiness(factoryAddress: string): Promise<FactoryReadiness> {
+export async function readFactoryReadiness(factoryAddress: string, expectedStockAdapter?: string): Promise<FactoryReadiness> {
   const factory = ethers.getAddress(factoryAddress);
   if ((await ethers.provider.getCode(factory)) === "0x") throw new Error(`factory ${factory} has no code on this chain`);
   const reader = new ethers.Contract(factory, FACTORY_ABI, ethers.provider);
@@ -67,6 +67,12 @@ export async function readFactoryReadiness(factoryAddress: string): Promise<Fact
   }
   if (ethers.getAddress(stockAdapter) === ethers.ZeroAddress) {
     throw new Error("factory has no stockGraduationAdapter; set it in the same Safe batch, before this call");
+  }
+  if (expectedStockAdapter && ethers.getAddress(stockAdapter) !== ethers.getAddress(expectedStockAdapter)) {
+    throw new Error(
+      `factory stockGraduationAdapter is ${stockAdapter}, not the generation's RobinhoodStockGraduationAdapterV2 ${expectedStockAdapter}; ` +
+        "a stock campaign would graduate through the wrong adapter",
+    );
   }
   if (ethers.getAddress(stockImplementation) !== ethers.ZeroAddress) {
     throw new Error(`factory already has stockCampaignImplementation ${stockImplementation}; nothing to do`);
@@ -114,7 +120,23 @@ async function main() {
   const generation = JSON.parse(fs.readFileSync(GENERATION_RECORD_PATH, "utf8"));
   const factoryAddress = ethers.getAddress(String(generation.deployed?.LaunchFactory || ""));
   const safe = ethers.getAddress(String(generation.owner || ""));
-  const readiness = await readFactoryReadiness(factoryAddress);
+  // C7 section 8: the factory must point at this generation's V2 stock adapter (the old one's quote
+  // call does not exist on SwapRouter02), and that adapter must be bound to this factory.
+  const expectedStockAdapter = generation.deployed?.RobinhoodStockGraduationAdapterV2
+    ? ethers.getAddress(String(generation.deployed.RobinhoodStockGraduationAdapterV2))
+    : undefined;
+  if (!expectedStockAdapter) {
+    throw new Error("generation record has no RobinhoodStockGraduationAdapterV2; deploy the generation with deploy-robinhood-quote-generation.ts first");
+  }
+  const readiness = await readFactoryReadiness(factoryAddress, expectedStockAdapter);
+  const adapter = new ethers.Contract(
+    expectedStockAdapter,
+    ["function campaignFactory() view returns (address)", "function campaignFactoryLocked() view returns (bool)"],
+    ethers.provider,
+  );
+  if (ethers.getAddress(await adapter.campaignFactory()) !== readiness.factory || (await adapter.campaignFactoryLocked()) !== true) {
+    throw new Error(`stock adapter ${expectedStockAdapter} is not bound to factory ${readiness.factory}`);
+  }
   if (readiness.owner !== safe) throw new Error(`factory owner is ${readiness.owner}, expected the Safe ${safe}`);
 
   const [deployer] = await ethers.getSigners();

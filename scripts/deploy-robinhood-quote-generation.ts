@@ -14,10 +14,15 @@
  *                            fresh PermanentV3PositionLocker, which the factory
  *                            deploys itself.
  *   LaunchCampaign           the implementation the factory clones.
- *   StockGraduationAdapter   minted the LP position straight to the locker, and
- *                            NonfungiblePositionManager.mint uses _mint, so
- *                            onERC721Received never fired and every stock
- *                            graduation reverted PositionMissing.
+ *   NativeGraduationAdapterV2 (EVM launch generation, C7.2) the factory's
+ *                            "router". The old RobinhoodUniswapV3GraduationAdapter
+ *                            minted at a griefer's price on a pre-initialized pool
+ *                            and had no caller check; it is NOT reused. The new
+ *                            one repairs a pre-made pool to the curve price and
+ *                            only serves campaigns of the factory it is bound to.
+ *   StockGraduationAdapterV2 (C7.1) the old one called quoteExactInputSingle on
+ *                            SwapRouter02, which has none, so every stock
+ *                            graduation reverted; minima now come from Chainlink.
  *   V3NativeSwapAdapter      enforced neither a deadline nor a non-zero
  *                            amountOutMinimum; the deployed one still carries
  *                            the old five-argument signature.
@@ -47,15 +52,66 @@ const TESTNET_REUSE = {
   swapRouter: "0xdE9Ec7c679FD260D76A390eEC00FA8ab1E621D2a",
   nativeUsdFeed: "0x896C55A66FD6e310f0e923ea682cBAA06bDf9bc4",
   graduationOracle: "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA",
-  // LaunchFactory's "router" is the V3 graduation adapter, not the raw swap
-  // router: it is what reports liquidityKind() == V3_NFT, and without that the
-  // factory falls back to V2 and demands a poolFactory() the swap router does
-  // not have. This is also the adapter that already mints to itself and
-  // safe-transfers into the locker, so it carries no defect and is reused.
-  v3GraduationRouter: "0xe69a6a41363a48179beaB9b1E6122885bbFe8C65",
 };
 
+/** Decision E6: the graduated pool is Uniswap V3 0.30%, tick spacing 60. The adapters pin both. */
 const MEME_POOL_FEE_TIER = 3000;
+const MEME_POOL_TICK_SPACING = 60n;
+
+/** Refuse a V3 factory whose 0.30% tier is not spacing 60 (the adapters' full-range ticks assume it). */
+export async function assertFeeTierSpacing(v3FactoryAddress: string) {
+  const v3 = await ethers.getContractAt(["function feeAmountTickSpacing(uint24) view returns (int24)"], v3FactoryAddress);
+  const spacing = BigInt(await (v3 as any).feeAmountTickSpacing(MEME_POOL_FEE_TIER));
+  if (spacing !== MEME_POOL_TICK_SPACING) {
+    throw new Error(`V3 factory ${v3FactoryAddress}: fee ${MEME_POOL_FEE_TIER} has tick spacing ${spacing}, expected ${MEME_POOL_TICK_SPACING}`);
+  }
+  console.log(`[rh] ok V3 fee ${MEME_POOL_FEE_TIER} -> tick spacing ${spacing}`);
+}
+
+/**
+ * Deploys both V2 graduation adapters and binds them to `factory` (and so to the locker the factory
+ * deployed). The native adapter must exist before the factory (it is the factory's router); the stock
+ * adapter after. Exported so the rehearsal spec drives the same code.
+ */
+export async function deployNativeGraduationAdapter(v3Factory: string, positionManager: string, weth: string) {
+  const adapter = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(v3Factory, positionManager, weth);
+  await adapter.waitForDeployment();
+  if ((await (adapter as any).POOL_FEE()) !== BigInt(MEME_POOL_FEE_TIER)) throw new Error("native adapter fee is not 3000");
+  return adapter;
+}
+
+export async function deployStockGraduationAdapter(
+  v3Factory: string,
+  positionManager: string,
+  swapRouter: string,
+  weth: string,
+  nativeUsdFeed: string,
+  maxOracleAgeSeconds: number,
+) {
+  const adapter = await (await ethers.getContractFactory("RobinhoodStockGraduationAdapterV2")).deploy(
+    v3Factory,
+    positionManager,
+    swapRouter,
+    weth,
+    nativeUsdFeed,
+    maxOracleAgeSeconds,
+  );
+  await adapter.waitForDeployment();
+  if (Number(await (adapter as any).maxOracleAgeSeconds()) !== maxOracleAgeSeconds) throw new Error("stock adapter max oracle age mismatch");
+  return adapter;
+}
+
+/** setCampaignFactoryOnce on an adapter, then read back factory, locker and the lock. */
+export async function bindAdapterToFactory(adapter: any, factoryAddress: string, label: string) {
+  const tx = await adapter.setCampaignFactoryOnce(factoryAddress);
+  await tx.wait(1);
+  const factory = await ethers.getContractAt(["function permanentLpLocker() view returns (address)"], factoryAddress);
+  const locker = ethers.getAddress(await (factory as any).permanentLpLocker());
+  if (ethers.getAddress(await adapter.campaignFactory()) !== ethers.getAddress(factoryAddress)) throw new Error(`${label}: factory not bound`);
+  if (ethers.getAddress(await adapter.permanentPositionLocker()) !== locker) throw new Error(`${label}: locker mismatch`);
+  if ((await adapter.campaignFactoryLocked()) !== true) throw new Error(`${label}: factory binding not locked`);
+  console.log(`[rh] ok ${label} bound to factory ${factoryAddress}, locker ${locker}`);
+}
 /**
  * How stale a price the stock adapter will still act on. Immutable in the
  * adapter, so it has to be right at deploy.
@@ -117,6 +173,20 @@ export function configFor(chainId: bigint) {
     graduationTarget: graduationTargetFor(chainId),
     liquidityBps: 3300n,
   };
+}
+
+/** Adds entries to config/verification/mainnet-contracts.json (chain 4663) unless the address is already listed. */
+function appendVerificationEntries(chainKey: string, entries: Array<{ name: string; address: string; contract: string; args: string[] }>) {
+  const file = path.join(__dirname, "..", "config", "verification", "mainnet-contracts.json");
+  const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+  const list: any[] = manifest.chains?.[chainKey]?.contracts;
+  if (!Array.isArray(list)) throw new Error(`verification manifest has no chains.${chainKey}.contracts`);
+  for (const entry of entries) {
+    if (list.some((c) => String(c.address).toLowerCase() === entry.address.toLowerCase())) continue;
+    list.push(entry);
+  }
+  fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+  console.log(`[rh] recorded ${entries.length} adapter(s) in ${file}`);
 }
 
 function pick(envName: string, fallback: string): string {
@@ -190,7 +260,6 @@ async function main() {
   const swapRouter = pick("RH_SWAP_ROUTER", reuse.swapRouter ?? "");
   const nativeUsdFeed = pick("RH_NATIVE_USD_FEED", reuse.nativeUsdFeed ?? "");
   const graduationOracle = pick("RH_GRADUATION_ORACLE", reuse.graduationOracle ?? "");
-  const v3GraduationRouter = pick("RH_V3_GRADUATION_ROUTER", reuse.v3GraduationRouter ?? "");
   const routeAuthority = pick("RH_ROUTE_AUTHORITY", "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0");
 
   const [deployer] = await ethers.getSigners();
@@ -201,17 +270,23 @@ async function main() {
   console.log(`[rh] network=${network.name} chainId=${net.chainId}`);
   console.log(`[rh] deployer=${deployerAddress} balance=${ethers.formatEther(await ethers.provider.getBalance(deployerAddress))}`);
   console.log("[rh] reusing:");
-  for (const [label, address] of Object.entries({ treasuryRouter, weth, v3Factory, positionManager, swapRouter, nativeUsdFeed, graduationOracle, v3GraduationRouter })) {
+  for (const [label, address] of Object.entries({ treasuryRouter, weth, v3Factory, positionManager, swapRouter, nativeUsdFeed, graduationOracle })) {
     await requireCode(label, address);
   }
   await assertRouterCanServeStrictRouting(treasuryRouter);
   const MAX_ORACLE_AGE_SECONDS = maxOracleAgeFor(net.chainId);
   await assertFeedWithinMaxAge(nativeUsdFeed, MAX_ORACLE_AGE_SECONDS, "stock adapter oracle age");
+  await assertFeeTierSpacing(v3Factory);
 
   // --- redeploy ------------------------------------------------------------
   const campaignImpl = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
   await campaignImpl.waitForDeployment();
   console.log(`[rh] LaunchCampaign impl = ${await campaignImpl.getAddress()}`);
+
+  // The native adapter is the factory's router: deployed first, bound to the factory right after.
+  const nativeAdapter = await deployNativeGraduationAdapter(v3Factory, positionManager, weth);
+  const v3GraduationRouter = await nativeAdapter.getAddress();
+  console.log(`[rh] RobinhoodV3NativeGraduationAdapterV2 = ${v3GraduationRouter}`);
 
   const factory = await (await ethers.getContractFactory("LaunchFactory")).deploy(
     v3GraduationRouter,
@@ -233,18 +308,13 @@ async function main() {
   }
   console.log(`[rh] ok feeRecipient == leagueReceiver == ${feeRecipient}`);
 
-  const stockAdapter = await (await ethers.getContractFactory("RobinhoodStockTokenGraduationAdapter")).deploy(
-    v3Factory,
-    positionManager,
-    swapRouter,
-    weth,
-    lockerAddress,
-    nativeUsdFeed,
-    MEME_POOL_FEE_TIER,
-    MAX_ORACLE_AGE_SECONDS,
-  );
-  await stockAdapter.waitForDeployment();
-  console.log(`[rh] RobinhoodStockTokenGraduationAdapter = ${await stockAdapter.getAddress()}`);
+  await bindAdapterToFactory(nativeAdapter, factoryAddress, "native graduation adapter");
+
+  const stockAdapter = await deployStockGraduationAdapter(v3Factory, positionManager, swapRouter, weth, nativeUsdFeed, MAX_ORACLE_AGE_SECONDS);
+  console.log(`[rh] RobinhoodStockGraduationAdapterV2 = ${await stockAdapter.getAddress()}`);
+  // Bound in-script (the previous generation left this to configure-robinhood-stock-routes.ts and
+  // shipped with campaignFactory() == 0). Routes are configured separately, per stock.
+  await bindAdapterToFactory(stockAdapter, factoryAddress, "stock graduation adapter");
 
   const nativeSwapAdapter = await (await ethers.getContractFactory("RobinhoodV3NativeSwapAdapter")).deploy(swapRouter, weth);
   await nativeSwapAdapter.waitForDeployment();
@@ -326,7 +396,7 @@ async function main() {
     deployer: deployerAddress,
     owner,
     status: "deployed-paused",
-    reused: { treasuryRouter, weth, v3Factory, positionManager, swapRouter, nativeUsdFeed, graduationOracle, v3GraduationRouter },
+    reused: { treasuryRouter, weth, v3Factory, positionManager, swapRouter, nativeUsdFeed, graduationOracle },
     registries: { creatorRegistry: creatorRegistryAddress, riskRegistry: riskRegistryAddress, launchRecorderWired: true },
     lpLockerAuthorized: lpLocker.wired,
     pendingOwnerActions: lpLocker.ownerActions,
@@ -334,7 +404,8 @@ async function main() {
       LaunchFactory: factoryAddress,
       LaunchCampaignImplementation: await campaignImpl.getAddress(),
       PermanentV3PositionLocker: lockerAddress,
-      RobinhoodStockTokenGraduationAdapter: await stockAdapter.getAddress(),
+      RobinhoodV3NativeGraduationAdapterV2: v3GraduationRouter,
+      RobinhoodStockGraduationAdapterV2: await stockAdapter.getAddress(),
       RobinhoodV3NativeSwapAdapter: await nativeSwapAdapter.getAddress(),
       PostGradLeagueTreasuryV2: await league.getAddress(),
       ArenaWarPoolTreasuryV2: await warPool.getAddress(),
@@ -345,6 +416,23 @@ async function main() {
       "canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false)",
     ],
   };
+  (artifact as any).verification = [
+    {
+      name: "RobinhoodV3NativeGraduationAdapterV2",
+      address: v3GraduationRouter,
+      contract: "contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol:RobinhoodV3NativeGraduationAdapterV2",
+      args: [v3Factory, positionManager, weth],
+    },
+    {
+      name: "RobinhoodStockGraduationAdapterV2",
+      address: await stockAdapter.getAddress(),
+      contract: "contracts/integrations/RobinhoodStockGraduationAdapterV2.sol:RobinhoodStockGraduationAdapterV2",
+      args: [v3Factory, positionManager, swapRouter, weth, nativeUsdFeed, String(MAX_ORACLE_AGE_SECONDS)],
+    },
+  ];
+  if (profile.chainId === 4663n) {
+    appendVerificationEntries("4663", (artifact as any).verification);
+  }
   const out = path.join(__dirname, "..", "deployments", profile.file);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`);
