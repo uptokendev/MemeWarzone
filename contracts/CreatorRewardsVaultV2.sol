@@ -245,6 +245,15 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         emit OperatorUpdated(operator_, paused_);
     }
 
+    /// @notice Every operator limit in one read, for the payout-bounds check run after each deploy or Safe batch.
+    function limits()
+        external
+        view
+        returns (bool paused, uint256 buyPerTx, uint256 buybackPerCampaignWeek, uint256 buyInterval, uint256 impactBps, uint256 holderBatchPerWeek)
+    {
+        return (operatorPaused, maxBuyPerTx, maxBuybackPerCampaignWeek, minBuyInterval, maxImpactBps, maxHolderBatchPerWeek);
+    }
+
     function setCaps(
         uint256 maxBuyPerTx_,
         uint256 maxBuybackPerCampaignWeek_,
