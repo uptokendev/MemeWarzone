@@ -70,6 +70,7 @@ async function bnb() {
     await paired.approve(await pair.getAddress(), ethers.MaxUint256);
     const memeIs0 = (await pair.token0()).toLowerCase() === (await token.getAddress()).toLowerCase();
     await pair.seed(memeIs0 ? 1_000_000n * E18 : 100n * E18, memeIs0 ? 100n * E18 : 1_000_000n * E18);
+    await pair.setTwapFollowsSpot(true); // pool with TWAP history at spot (fix F3/F4: the TWAP guard fails closed)
     await pair.mint(await locker.getAddress(), E18);
     const c = await campaign.getAddress();
     await locker.registerGraduatedPool(c, c, await vault.getAddress(), await pair.getAddress(), await token.getAddress(), await paired.getAddress(), E18);
@@ -246,6 +247,7 @@ async function lockerV2() {
   const memeIs0 = (await pair.token0()).toLowerCase() === (await meme.getAddress()).toLowerCase();
   const RM = 1_000_000n * E18, RP = 1_000n * E18;
   await pair.seed(memeIs0 ? RM : RP, memeIs0 ? RP : RM);
+  await pair.setTwapFollowsSpot(true); // pool with TWAP history at spot (fix F3/F4: the TWAP guard fails closed)
   await pair.mint(await locker.getAddress(), 10n * E18);
   await locker.registerGraduatedPool(creator.address, creator.address, recipient.address, await pair.getAddress(), await meme.getAddress(), await paired.getAddress(), 10n * E18);
   const attacker = await (await ethers.getContractFactory("Audit4Attacker")).deploy();

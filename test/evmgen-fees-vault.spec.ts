@@ -69,6 +69,7 @@ async function base() {
     const rm = 1_000_000n * E18;
     const rp = 100n * E18;
     await pair.seed(memeIs0 ? rm : rp, memeIs0 ? rp : rm);
+    await pair.setTwapFollowsSpot(true); // pool with TWAP history at spot (fix F3/F4: the TWAP guard fails closed)
     await pair.mint(await locker.getAddress(), E18);
     const c = await campaign.getAddress();
     await locker.registerGraduatedPool(
@@ -238,6 +239,7 @@ describe("evmgen fees: CreatorRewardsVaultV2 LP fees follow the choice (D19, E9)
     await f.weth.approve(await route.getAddress(), ethers.MaxUint256);
     const qIs0 = (await route.token0()).toLowerCase() === (await quote.getAddress()).toLowerCase();
     await route.seed(qIs0 ? 1_000_000n * E18 : 500n * E18, qIs0 ? 500n * E18 : 1_000_000n * E18);
+    await route.setTwapFollowsSpot(true); // pool with TWAP history at spot (fix F3/F4: the TWAP guard fails closed)
     await expect(f.vault.connect(f.other).setQuoteRoute(await quote.getAddress(), 0)).to.be.revertedWithCustomError(f.vault, "OnlyAdmin");
     await f.vault.setQuoteRoute(await quote.getAddress(), 0);
     const holderQuote = await f.vault.holderQuoteBalance(c);
@@ -449,6 +451,7 @@ describe("evmgen fees: CreatorRewardsVaultV2 buyback", function () {
     await f.weth.approve(await route.getAddress(), ethers.MaxUint256);
     const qIs0 = (await route.token0()).toLowerCase() === (await quote.getAddress()).toLowerCase();
     await route.seed(qIs0 ? 2_000_000n * E18 : 1_000n * E18, qIs0 ? 1_000n * E18 : 2_000_000n * E18);
+    await route.setTwapFollowsSpot(true); // pool with TWAP history at spot (fix F3/F4: the TWAP guard fails closed)
     await f.vault.setQuoteRoute(await quote.getAddress(), 0);
     const quoteOut = await route.getAmountOut(E18 / 2n, await f.weth.getAddress());
     await f.vault.connect(f.operator).convertBuybackNativeToQuote(c, E18 / 2n);

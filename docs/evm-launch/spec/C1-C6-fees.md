@@ -360,6 +360,36 @@ the paired side; its MEME is added to `carriedMeme` and sold by the next block's
   `harvest` first, which is exactly an honest harvest; the next block sells again. Harvest never reverts
   because of the marker.
 
+**F3 (MEDIUM, audit 3 M2): the Topaz locker's sale needs the pair's TWAP; the unprofitability claim is
+corrected.** On a BSC fork with real Topaz, an attacker who adds 30-66% of the pool's liquidity, dumps MEME,
+triggers `harvest` and buys back, profited at 5 and 30 bps: as an LP it earns back most of its own swap
+fees, and the sale cap is measured on the reserve its dump just inflated. The earlier text ("the bound alone
+makes a sandwich unprofitable") was wrong for that attacker and is corrected in `EvmGenPoolSwap`,
+`PermanentLpLocker` and `PermanentV3PositionLocker`. Fix: `PermanentLpLocker.sellMemeForPaired` passes
+`MEME_SALE_TWAP_DEV_BPS = 100` to `v2Plan` (was hard-wired 0), and `v2Plan` now fails CLOSED: it sells
+nothing when spot `getAmountOut` is worse than Topaz `quote(tokenIn, sellIn, 1)` (TWAP reserves of the
+last closed 30 min observation window, which no transaction in the current block can move) by more than
+1%, or when `quote` reverts (pair younger than one window). The locker is no longer embedded in the
+factory's initcode (`deployFactoryWithLocker`), so the bytes the old text cited are not a constraint.
+- Measured (`audit3-bnb-graduation.fork.spec.ts`, fees 1/5/30/100 bps): every dump in the audit's grid
+  (0.05x-2x the MEME reserve, LP share 0-66%) now sells nothing and loses the attacker money; the
+  creator/protocol side gains the attacker's fees. Residual, pinned: a dump small enough to stay inside the
+  1% band (0.2-0.4% of the reserve) with a 50-66% LP position nets the attacker at most ~0.2% of one honest
+  harvest (e.g. 0.000038 BNB on a 0.0295 BNB harvest at 30 bps), for capital of twice the pool.
+- Behaviour change: a harvest while spot is more than 1% below the last closed window's TWAP, or in the
+  pool's first 30 minutes, sells no MEME; it is carried (never lost) and the paired side is split as
+  before. The vault's Topaz swaps (`buybackPool`, conversions) share `v2Plan` and fail closed the same way
+  (`NothingSwapped`).
+- Reentrancy / CEI: the new call is a `staticcall` to the pair inside the self-only sale step, before any
+  transfer. Reachable states: unchanged. Overflow: `out * 1e4` and `twapOut * (1e4 - 100)` with amounts
+  bounded by token supplies (< 2^128 in practice; checked arithmetic reverts inside the `try`, which only
+  carries). Griefing: nobody can make a registered pair's `quote` revert; a price pushed >1% off TWAP only
+  delays the sale (and costs the pusher the pool fee).
+- The V3 locker keeps no TWAP guard (a new V3 pool has one observation slot, so a TWAP would never be
+  available or would fail open). Its residual against a dominant in-range LP attacker is one bounded sale
+  per block (F2), each at most 0.50% below the price that attacker set. Founder item: a keeper that grows
+  the pool's `observationCardinalityNext` would allow the same guard there.
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |

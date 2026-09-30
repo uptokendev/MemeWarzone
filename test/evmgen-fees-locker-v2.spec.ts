@@ -33,6 +33,7 @@ async function setup(opts: { quote?: boolean; feeBps?: number } = {}) {
   await paired.approve(await pair.getAddress(), ethers.MaxUint256);
   const memeIs0 = (await pair.token0()).toLowerCase() === (await meme.getAddress()).toLowerCase();
   await pair.seed(memeIs0 ? RESERVE_MEME : RESERVE_PAIRED, memeIs0 ? RESERVE_PAIRED : RESERVE_MEME);
+  await pair.setTwapFollowsSpot(true); // pool with TWAP history at spot (fix F3/F4: the TWAP guard fails closed)
   const lp = 10n * E18;
   await pair.mint(await locker.getAddress(), lp);
   const campaign = stranger.address;
@@ -117,14 +118,25 @@ describe("evmgen fees: PermanentLpLocker native-only harvest (E9, Topaz V2)", fu
     expect(r1.meme - r0.meme).to.equal(memeFee);
   });
 
-  it("sells regardless of the pair's TWAP (no TWAP guard in the locker; the reserve bound carries the sandwich argument)", async function () {
+  it("audit fix F3: sells only while spot is within 1% of the pair's TWAP, and nothing while the pair has no TWAP", async function () {
     const f = await setup();
+    const pool = await f.pair.getAddress();
+    await f.pair.setTwapFollowsSpot(false);
+    // No TWAP yet (quote reverts, like a pair younger than one 30 min window): nothing sold, paired still split.
     await f.fundFees(100n * E18, 2n * E18);
+    await expect(f.locker.harvest(pool)).to.emit(f.locker, "MemeFeesSold").withArgs(pool, await f.meme.getAddress(), 0n, 0n, 100n * E18);
+    expect(await f.paired.balanceOf(f.recipient.address)).to.equal((2n * E18 * 8000n) / 10000n);
+    // Spot 3% worse than the TWAP (as after a same-bundle MEME dump): still nothing sold.
     const r = await f.reserves();
     const tw = { meme: (r.meme * 100n) / 103n, paired: r.paired };
     await f.pair.setTwapReserves(f.memeIs0 ? tw.meme : tw.paired, f.memeIs0 ? tw.paired : tw.meme);
-    await f.locker.harvest(await f.pair.getAddress());
-    expect(await f.locker.carriedMeme(await f.pair.getAddress())).to.equal(0n);
+    await f.locker.harvest(pool);
+    expect(await f.locker.carriedMeme(pool)).to.equal(100n * E18);
+    // Spot 0.5% off the TWAP: inside the band, the carried MEME sells.
+    const tw2 = { meme: (r.meme * 1000n) / 1005n, paired: r.paired };
+    await f.pair.setTwapReserves(f.memeIs0 ? tw2.meme : tw2.paired, f.memeIs0 ? tw2.paired : tw2.meme);
+    await f.locker.harvest(pool);
+    expect(await f.locker.carriedMeme(pool)).to.equal(0n);
   });
 
   it("never reverts the harvest when the sale itself fails: MEME is carried, paired is split", async function () {

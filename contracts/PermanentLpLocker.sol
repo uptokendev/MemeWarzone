@@ -30,9 +30,14 @@ interface ILpRevenueTreasuryRouter {
 /// so creator and protocol are paid in the paired asset only: WBNB on native pools, the quote token on
 /// quote-bound pools, both through today's paths (creator transfer with pending fallback, protocol via
 /// routeLpToken). What the bound does not allow in one harvest is carried (`carriedMeme`) into the next
-/// one; neither the bound nor a failed sale ever reverts a harvest. No TWAP guard here (bytes: the factory's
-/// initcode embeds this contract and sits at the EIP-3860 limit): the 0.25%-of-reserve bound alone makes a
-/// sandwich around the permissionless harvest unprofitable (EvmGenPoolSwap; test evmgen-fees-locker-v2).
+/// one; neither the bound nor a failed sale ever reverts a harvest.
+/// Sandwich resistance. The bound alone (sale <= 5/6 * fee of the reserve) beats a sandwich only while the
+/// attacker pays the pool fee on its own trades; an attacker who is also an LP earns part of those fees back,
+/// and the bound is measured on the reserve its own dump just inflated (audit 3 M2, BSC fork). So the sale
+/// also requires spot to be within MEME_SALE_TWAP_DEV_BPS of the pair's TWAP (Topaz `quote`, last closed
+/// 30 min window, not movable inside a block) and sells nothing while the pair has no TWAP. A same-bundle
+/// dump that moves the price by more than 1% therefore sells nothing; below that the bound grows by < 0.5%
+/// and an LP attacker's edge is at most ~1% of one bounded sale.
 contract PermanentLpLocker is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -45,7 +50,8 @@ contract PermanentLpLocker is ReentrancyGuard {
     /// @notice Max price impact of one harvest's MEME sale (0.50%: sells <= 0.25% of the MEME reserve).
     /// E13: on a pool whose fee is below 0.30% the bound shrinks with it (`saleImpactBps`).
     uint16 public constant MEME_SALE_MAX_IMPACT_BPS = 50;
-
+    /// @notice The sale is skipped (MEME carried) when spot is worse than the 30 min TWAP by more than this.
+    uint16 public constant MEME_SALE_TWAP_DEV_BPS = 100;
 
     struct PoolRegistration {
         address campaign;
@@ -291,7 +297,7 @@ contract PermanentLpLocker is ReentrancyGuard {
         returns (uint256 sold, uint256 out)
     {
         if (msg.sender != address(this)) revert OnlySelf();
-        (sold, out) = EvmGenPoolSwap.v2Plan(pool, memeToken, amount, impactBps, 0);
+        (sold, out) = EvmGenPoolSwap.v2Plan(pool, memeToken, amount, impactBps, MEME_SALE_TWAP_DEV_BPS);
         if (sold == 0) return (0, 0);
         EvmGenPoolSwap.v2Execute(pool, memeToken, sold, out, address(this));
     }

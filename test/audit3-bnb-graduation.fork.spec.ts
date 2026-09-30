@@ -173,6 +173,10 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
     const pool = await ethers.getContractAt(POOL_ABI, res.pool);
     const token = await ethers.getContractAt(ERC20_ABI, await c.token());
     await (await topazFactory.connect(safe).setCustomFee(res.pool, volumeFeeBps)).wait();
+    // Audit fix F3: the locker's sale needs the pair's TWAP (one closed 30 min window). Let the pool age
+    // past Topaz's periodSize so the first volume trade below writes the second observation.
+    await network.provider.send("evm_increaseTime", [1801]);
+    await network.provider.send("evm_mine", []);
     // Volume: the trader sells Mt MEME and buys it back `trips` times -> MEME-side fees accrue to the locker.
     await c.giveMeme(deployer.address, Mt * 10n);
     await wbnb.deposit({ value: 100n * WAD });
@@ -180,6 +184,11 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
       const got = await swapIn(pool, deployer, await c.token(), Mt, deployer.address);
       await swapIn(pool, deployer, TOPAZ.wbnb, got, deployer.address);
     }
+    // The round trips moved the price (fees stay out of the reserves); close one more 30 min window so the
+    // TWAP reflects the settled price, as it would before a keeper's harvest (F3 skips a sale >1% off TWAP).
+    await network.provider.send("evm_increaseTime", [1801]);
+    await network.provider.send("evm_mine", []);
+    await (await pool.sync()).wait();
     const [r0, r1] = await pool.getReserves();
     const memeIs0 = (await pool.token0()).toLowerCase() === (await c.token()).toLowerCase();
     return { pool, token, creator, p0num: memeIs0 ? r1 : r0, p0den: memeIs0 ? r0 : r1 };
@@ -229,7 +238,7 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
   }
 
   for (const feeBps of [1, 5, 30, 100]) {
-    it(`harvest sandwich at ${feeBps} bps: HOLDS without LP, EXPLOIT with the attacker as LP (carried MEME ~2% of reserve)`, async () => {
+    it(`harvest sandwich at ${feeBps} bps: HOLDS without LP, HOLDS (was EXPLOIT) with the attacker as LP (carried MEME ~2% of reserve)`, async () => {
       const c = null;
       const s = await graduatedPoolWithMemeFees(`sw-${feeBps}`, 100, 2);
       await (await topazFactory.connect(safe).setCustomFee(await s.pool.getAddress(), feeBps)).wait();
@@ -238,7 +247,10 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
       await fundAttacker(s, c);
 
       const start = await snap();
-      await (await locker.harvest(await s.pool.getAddress())).wait();
+      const hrc = await (await locker.harvest(await s.pool.getAddress())).wait();
+      const sold = hrc.logs.map((l: any) => { try { return locker.interface.parseLog(l); } catch { return null; } }).find((e: any) => e && e.name === "MemeFeesSold");
+      // Not vacuous: with the TWAP available the honest harvest sells (the fee-0 case aside, none here).
+      expect(sold.args.memeSold).to.be.gt(0n);
       const honest = await victimValue(s);
       const memeCollectedCarried = await locker.carriedMeme(await s.pool.getAddress());
       await revert(start);
@@ -246,10 +258,13 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
       const grid: Array<[bigint, bigint]> = [
         [0n, 50n], [0n, 200n], [0n, 1000n], [0n, 2000n],
         [30n, 400n], [50n, 500n], [50n, 1000n], [50n, 2000n], [66n, 1000n],
+        // F3 residual: dumps small enough to stay inside the 1% TWAP band (~0.4%-0.8% price move).
+        [50n, 4n], [66n, 2n], [66n, 4n],
       ];
       let bestNoLp = -(10n ** 40n);
       let bestLp = -(10n ** 40n);
       let bestLpRow = "";
+      let bestLpLarge = -(10n ** 40n);
       for (const [sig, a] of grid) {
         const id = await snap();
         const a0 = await attackerValue(s);
@@ -264,6 +279,7 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
           const loss = honest - (await victimValue(s));
           console.log(`      fee ${feeBps}bps sigma ${sig}% A=${Number(a) / 1000}xM: attacker ${ethers.formatEther(profit)} BNB, creator+protocol loss ${ethers.formatEther(loss)} BNB (honest harvest worth ${ethers.formatEther(honest)} BNB)`);
           if (sig === 0n && profit > bestNoLp) bestNoLp = profit;
+          if (sig > 0n && a >= 50n && profit > bestLpLarge) bestLpLarge = profit;
           if (sig > 0n && profit > bestLp) {
             bestLp = profit;
             bestLpRow = `sigma ${sig}% A ${a}`;
@@ -274,11 +290,12 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
       console.log(`      fee ${feeBps}: carried after honest harvest ${ethers.formatEther(memeCollectedCarried)} MEME; best no-LP ${ethers.formatEther(bestNoLp)}; best LP ${ethers.formatEther(bestLp)} (${bestLpRow})`);
       // HOLDS: the documented bound (sale <= 5/6 * fee * reserve) makes a plain sandwich unprofitable at every fee.
       expect(bestNoLp).to.be.lte(0n);
-      // EXPLOIT (5 and 30 bps, where the bound is fee*5/3): an attacker who is also an LP recoups its own swap
-      // fees and profits, because the cap is measured on the reserve it just inflated. At 100 bps the bound is
-      // capped at 50 (sale <= 0.25% << fee) and the grid finds no profit.
-      if (feeBps === 5 || feeBps === 30) expect(bestLp).to.be.gt(0n);
-      if (feeBps === 100) expect(bestLp).to.be.lte(0n);
+      // HOLDS (was EXPLOIT at 5 and 30 bps: an attacker who is also an LP recouped its own swap fees and the cap
+      // was measured on the reserve its dump had just inflated). Fix F3: the sale also needs spot within 1% of
+      // the pair's TWAP (last closed window, not movable in the bundle), so every dump in the grid sells nothing.
+      expect(bestLpLarge).to.be.lte(0n);
+      // Inside the band the LP attacker's edge is bounded by ~1% of one honest harvest (spec F3 residual).
+      expect(bestLp).to.be.lte(honest / 100n);
     });
   }
 

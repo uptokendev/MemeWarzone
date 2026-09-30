@@ -59,8 +59,10 @@ interface IRobinhoodV3LpRevenueTreasuryRouter {
 /// migration or rescue path. Principal remains in the position forever; only earned fees can move.
 /// EVM launch generation (E9, docs/evm-launch/spec/C1-C6-fees.md): every harvest sells the MEME-side fees
 /// for the paired asset in the same pool with a sqrtPriceLimitX96 at the impact bound (EvmGenPoolSwap), so
-/// the pool itself stops the sale (no TWAP guard here: a new pool has one observation slot, and the bound
-/// alone makes a sandwich unprofitable, see EvmGenPoolSwap); the unsold rest is carried (`carriedMeme`)
+/// the pool itself stops the sale (no TWAP guard here: a new pool has one observation slot, so a TWAP would
+/// either never be available or fail open). The bound makes a plain sandwich unprofitable, but NOT one by an
+/// attacker who is also the dominant in-range LP and earns its own swap fees back (see EvmGenPoolSwap and
+/// the spec, F3 residual); one sale per block (F2) keeps it to one bounded sale per block. The unsold rest is carried (`carriedMeme`)
 /// into the next harvest, and neither the bound nor a failed sale ever reverts a harvest. Creator and
 /// protocol are paid in the paired asset only: WETH on native pools, the stock token on stock-bound pools,
 /// both through today's paths (creator transfer with pending fallback, protocol via routeLpToken).
