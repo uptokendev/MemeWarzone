@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ACCEPTED_5B_SHA,
+  ACCEPTED_CAMPAIGN_GENERATION,
+  ACCEPTED_FACTORY_GENERATION,
   ACCEPTED_FACTORY_START_BLOCK,
   assertRobinhoodTestnetMutationForbidden,
   loadRobinhoodTestnetFreeze,
@@ -15,11 +17,11 @@ function validFreeze(overrides = {}) {
     kind: "robinhood-testnet-acceptance-freeze",
     accepted5BSha: ACCEPTED_5B_SHA,
     chainId: 46630,
-    factory: "0xde9f7055f768A6A1AFBCD5263be64961241927a4",
+    factory: "0xcf7D6c2C8A644dD3bBbba0Fc69844E48C9025f1A",
     routeAuthority: "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
     admin: "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
-    factoryGeneration: 4,
-    campaignGeneration: 3,
+    factoryGeneration: ACCEPTED_FACTORY_GENERATION,
+    campaignGeneration: ACCEPTED_CAMPAIGN_GENERATION,
     // Taken from the module, not restated: the start-block check runs before
     // expectedLive / expectedCreatePaused / productionCompatible, so a stale
     // value here would make those cases throw the wrong error and pass for
@@ -33,13 +35,13 @@ function validFreeze(overrides = {}) {
   };
 }
 
-test("committed freeze is valid and pins 5B SHA plus 46630 4/3", () => {
+test("committed freeze is valid and pins 5B SHA plus 46630 6/5", () => {
   const freeze = loadRobinhoodTestnetFreeze();
   assert.ok(freeze);
   assert.equal(freeze.accepted5BSha, ACCEPTED_5B_SHA);
   assert.equal(freeze.chainId, 46630);
-  assert.equal(freeze.factoryGeneration, 4);
-  assert.equal(freeze.campaignGeneration, 3);
+  assert.equal(freeze.factoryGeneration, 6);
+  assert.equal(freeze.campaignGeneration, 5);
   assert.notEqual(freeze.routeAuthority.toLowerCase(), freeze.admin.toLowerCase());
   assert.equal(freeze.expectedLive, true);
   assert.equal(freeze.expectedCreatePaused, true);
@@ -48,7 +50,7 @@ test("committed freeze is valid and pins 5B SHA plus 46630 4/3", () => {
 test("malformed freeze fails closed instead of counting as absent", () => {
   assert.throws(() => parseRobinhoodTestnetFreeze({}), /schemaVersion/);
   assert.throws(() => parseRobinhoodTestnetFreeze(validFreeze({ chainId: 56 })), /46630/);
-  assert.throws(() => parseRobinhoodTestnetFreeze(validFreeze({ campaignGeneration: 2 })), /campaign 3/);
+  assert.throws(() => parseRobinhoodTestnetFreeze(validFreeze({ campaignGeneration: 3 })), /campaign 5/);
   assert.throws(
     () => parseRobinhoodTestnetFreeze(validFreeze({ routeAuthority: "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714" })),
     /differ from admin/,

@@ -9,8 +9,11 @@ export const LOCAL_HARDHAT_CHAIN_ID = 31337;
 // The tree that produced the accepted run. Moves only when a new generation is
 // cut and accepted; the previous record is archived beside the freeze, never
 // deleted.
-export const ACCEPTED_5B_SHA = "8832ad77bf88a1aff4c3b96ec4969c33106dbf04";
-export const ACCEPTED_FACTORY_START_BLOCK = 123211064;
+export const ACCEPTED_5B_SHA = "9cecc579f8829d2b6cd4d07618c3450450e0a535";
+export const ACCEPTED_FACTORY_START_BLOCK = 126797898;
+// The accepted generation (EVM launch generation, 2026-09-30). The previous cut was 4/3.
+export const ACCEPTED_FACTORY_GENERATION = 6;
+export const ACCEPTED_CAMPAIGN_GENERATION = 5;
 export const FREEZE_KIND = "robinhood-testnet-acceptance-freeze";
 
 function repoRoot() {
@@ -45,8 +48,10 @@ export function parseRobinhoodTestnetFreeze(raw) {
   if (sameAddress(raw.routeAuthority, raw.admin)) {
     throw new Error("Robinhood freeze routeAuthority must differ from admin");
   }
-  if (Number(raw.factoryGeneration) !== 4 || Number(raw.campaignGeneration) !== 3) {
-    throw new Error("Robinhood freeze generations must be factory 4 / campaign 3");
+  if (Number(raw.factoryGeneration) !== ACCEPTED_FACTORY_GENERATION || Number(raw.campaignGeneration) !== ACCEPTED_CAMPAIGN_GENERATION) {
+    throw new Error(
+      `Robinhood freeze generations must be factory ${ACCEPTED_FACTORY_GENERATION} / campaign ${ACCEPTED_CAMPAIGN_GENERATION}`,
+    );
   }
   if (Number(raw.factoryStartBlock) !== ACCEPTED_FACTORY_START_BLOCK) {
     throw new Error(`Robinhood freeze factoryStartBlock must be ${ACCEPTED_FACTORY_START_BLOCK}`);

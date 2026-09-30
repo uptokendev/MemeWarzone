@@ -212,5 +212,12 @@
         ]
       }
     ]
+  },
+  "status": "accepted on 46630 (2026-09-30): 32/32 lifecycle checks, create re-paused, live latched",
+  "acceptance": {
+    "harness": "scripts/test-robinhood-testnet-gen6-lifecycle.ts",
+    "report": "reports/robinhood-testnet-gen6-lifecycle.json",
+    "tree": "9cecc579f8829d2b6cd4d07618c3450450e0a535",
+    "freeze": "deployments/robinhood/testnet.accepted.json"
   }
 }
