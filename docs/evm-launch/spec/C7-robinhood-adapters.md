@@ -275,3 +275,76 @@ Assert:
 1. Who gets repair surplus native or STOCK when the spare is exhausted? The default here is creator pull
    (C5 §1.10). The alternative is the 10/90 protocol/creator split.
 2. Confirm Robinhood Chain's per-transaction gas cap (assumed Nitro 32M). It sets the chunking threshold.
+
+## 10. As built (evm-rh, 2026-09-30)
+
+Files: `contracts/integrations/RobinhoodV3PoolRepair.sol` (shared engine + `RobinhoodV3PriceMath`),
+`RobinhoodV3NativeGraduationAdapterV2.sol`, `RobinhoodStockGraduationAdapterV2.sol`. The old
+`RobinhoodUniswapV3GraduationAdapter` / `RobinhoodStockTokenGraduationAdapter` are left untouched for the
+deployed generation and are not reused. Both new adapters implement `IGraduationAdapterV2` unchanged.
+
+### Deviations from sections 1-4, and why
+
+- **Phase 2 of the repair (not in section 2).** Phase 1 sells at most the spare (`memeMax - memeTarget`). If it
+  is used up with the price still above P and the paired side cannot pair the MEME left at the current price,
+  a plain mint leaves real MEME behind with the pool above P. The C5 campaign rejects exactly that, so a
+  griefer could freeze a **sold-out** graduation (spare only ~6.6M tokens vs T ~273M) for a few ETH of bids,
+  most of which they get back. Phase 2 sells the excess (`memeLeft - pairedHave/price * (1 - 1e-9)`), still
+  limited at the target (so every unit still sells at >= P before fee). Afterwards the MEME side binds the
+  mint. Proven on the fork: sold-out coin, bids 5-100x the spare, graduation completes, start in [P, 2.56P].
+- **Rounding dust into the pool.** V3 liquidity rounding leaves <= ~3e4 wei (bound `MAX_MEME_DUST = 1e12`).
+  Core's `graduate()` checks `memeUsed >= memeTarget` and, for the exhausted case, `memeBack == 0` exactly.
+  The adapter therefore transfers that dust into the pool instead of back (inert: V3 never accounts
+  balances outside its callbacks), so memeUsed is exactly memeMax when MEME binds and >= memeTarget otherwise.
+- **Chunked repair lives on the adapter as `repairStep(Request, uint160 limit)`**, callable only by a
+  registered campaign for its own token. It cannot be permissionless on the adapter alone: before
+  `enableTrading` only the campaign can move MEME, and filling bids needs MEME. It needs a campaign entry
+  point (section 2 "Chunking"; see "Open" below). Proceeds go to the campaign (native unwrapped / STOCK);
+  `repairLedger[campaign]` records them; the stock adapter pulls the STOCK back at graduate.
+- **Stock `repairStep` target** is the oracle estimate of P_Q raised by 5% (`REPAIR_STEP_MARGIN_BPS`), so a
+  chunk never sells below the acquisition-derived target; at spacing 60 the final 5% is <= 9 ticks.
+- **Stock route struct keeps 8 fields** (the factory reads that tuple at create). `maxOracleDeviationBps` and
+  `maxPriceImpactBps` are validated (<= 10000) and stored, but not enforced (impact probe deleted, band fixed
+  at 100 bps). `maxSwapSlippageBps <= 300` is enforced at configuration; enabling a route reads both feeds.
+- `nativeUsdWad` in the request is informational for the stock adapter; it reads ETH/USD itself.
+
+### Audit per money path
+
+**`NativeV2.graduate` / `StockV2.graduate`** (`nonReentrant`)
+- Reachable only from `factory.isCampaign(msg.sender)` after `setCampaignFactoryOnce`, only for
+  `campaign.token() == r.token`, before `r.deadline`, with `memeTarget > 0`, `memeMax >= memeTarget`, P > 0,
+  `msg.value > 0`. Stock: route enabled, both feeds fresh (<= 90,000 s), acquisition pool canonical.
+- CEI: ledger read and zeroed first; then external calls (WETH deposit; stock: SwapRouter02
+  `exactInputSingle` with approval exactly `msg.value`, reset to 0; pool create/init via NPM; pool swap(s);
+  pull MEME; NPM mint with exact approvals, reset to 0; NFT safe-transfer to the locker; refunds). No state
+  that later code relies on is written after an external call except the transient callback context.
+- Conservation asserted on chain: the adapter's WETH, MEME and STOCK balances equal the entry snapshot
+  (`ConservationBroken`). Refunds are computed from deltas, never `balanceOf`, so tokens donated to the
+  adapter can neither inflate `nativeBack` nor be swept.
+- Overflow: 512-bit mulDiv throughout; sqrt target range-checked to the +-887220 tick ratios
+  (`TargetOutOfRange`), which keeps every swap limit inside V3's bounds; `amountSpecified <= 1e27`.
+- Griefing: (a) wrong empty price: free move, 0 wei paid (fork: 1/1000x and 1000x, both orderings);
+  (b) bids above P: sold at >= 0.997 P (asserted); (c) bids beyond the spare: phase 2, no freeze;
+  (d) bids below P: untouched; (e) MEME-bearing mint, MEME transfer to the pool, pushing the price back
+  through filled ranges mid-repair: all revert (LaunchToken lock); (f) decoy pools at 500/10000 ignored;
+  (g) acquisition sandwich beyond 3%: `Too little received`, retryable; (h) stale stock feed: `OracleStale`.
+
+**`repairStep`** (`nonReentrant`): same caller checks; limit strictly between the current price and the step
+target (`InvalidRepairLimit`); MEME paid from the campaign's exact allowance inside the callback; proceeds
+sent to the campaign after the ledger is updated; balances asserted unchanged.
+
+**`uniswapV3SwapCallback`** (not guarded, runs inside our own swap): requires `msg.sender == _active.pool`
+(set right before `pool.swap`, deleted right after); refuses to pay the paired token; pays MEME only up to the
+spare, once. Called directly by anyone: `UnauthorizedCallback`.
+
+### Open
+
+1. **Core has no `repairPool`.** Heavy tick seeding (each crossing ~20-30k gas; see the fork 1,500-tick test)
+   pushes a one-shot `graduate()` past the 32M Nitro cap. Without a campaign entry point (Pending only,
+   `nonReentrant`, permissionless: approve `budget - repairMemeSold - memeTarget`, call
+   `adapter.repairStep(req, limit)`, reset allowance, subtract `repairMemeSold` from the budget, add the native
+   proceeds to the pool native at graduate and keep them out of `excessNativeBalance`, approve STOCK proceeds
+   to the stock adapter at graduate), such a coin stays in Pending.
+2. **Stock band vs acquisition cost.** On the fork a $23K acquisition of SPY landed 8-80 bps below the
+   Chainlink rate (fee 0.05% + impact + basis), against the 100 bps band. Routes at fee 10000 (MSTR) cannot
+   pass the band at all. Either restrict routes to fee <= 3000 or widen the quote band to slippage + band.
