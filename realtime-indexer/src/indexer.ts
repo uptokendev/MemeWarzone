@@ -14,6 +14,18 @@ import { bnbCurveState, parseRawTokenAmount } from "./bnbCurvePricing.js";
 import { campaignScanChunks } from "./campaignScanChunks.js";
 import { checkMilestones } from "./milestones.js";
 import { notifyCampaignCreated, notifyCampaignGraduated } from "./campaignLifecycleNotifications.js";
+import { resolveCampaignGeneration, type CampaignGenerationInfo } from "./evm/evmGen5Store.js";
+import { auxTopics, configuredGen5AuxContracts, recordGen5AuxLog, type AuxContract } from "./evm/evmGen5Aux.js";
+import {
+  GEN5_ALL_TOPICS,
+  GEN5_CAMPAIGN_IFACE,
+  GEN5_TIP_TOPICS,
+  annotateGen5TradeRow,
+  firstBuysByTx,
+  recordGen5CampaignLog,
+  refreshGen5CampaignState,
+  type Gen5TradeContext,
+} from "./evm/evmGen5CampaignLogs.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1175,13 +1187,26 @@ const KNOWN_TREASURY_ROUTERS: Record<number, Array<{ address: string; startBlock
   4663: [{ address: "0xda0a9ed9e68d2b468257abd66465fdd94f4338bb", startBlock: 70863388 }], // V3
 };
 
-export function configuredTreasuryRouters(chainId: number): Array<{ address: string; startBlock: number }> {
-  const raw = String(process.env[`TREASURY_ROUTERS_${chainId}`] || "").trim();
-  if (!raw) return KNOWN_TREASURY_ROUTERS[chainId] ?? [];
+function parseRouterEntries(raw: string): Array<{ address: string; startBlock: number }> {
   return raw.split(",").map((entry) => {
     const [address, block] = entry.trim().split("@");
     return { address: String(address || "").toLowerCase(), startBlock: Number(block || 0) };
   }).filter((r) => /^0x[a-f0-9]{40}$/.test(r.address));
+}
+
+/**
+ * TREASURY_ROUTERS_<id> replaces the known list (as before). TREASURY_ROUTERS_EXTRA_<id> is appended to
+ * whichever list applies: the launch generation's TreasuryRouterV4 goes there, so the V3/V2 routers of
+ * the old generation keep being scanned (E14). V4's RouteExecuted has the V3 topic.
+ */
+export function configuredTreasuryRouters(chainId: number): Array<{ address: string; startBlock: number }> {
+  const raw = String(process.env[`TREASURY_ROUTERS_${chainId}`] || "").trim();
+  const base = raw ? parseRouterEntries(raw) : [...(KNOWN_TREASURY_ROUTERS[chainId] ?? [])];
+  const extra = parseRouterEntries(String(process.env[`TREASURY_ROUTERS_EXTRA_${chainId}`] || "").trim());
+  for (const router of extra) {
+    if (!base.some((r) => r.address === router.address)) base.push(router);
+  }
+  return base;
 }
 
 async function resolveTreasuryRouters(
@@ -1270,6 +1295,36 @@ async function scanRouterRange(
   }
 }
 
+async function scanGen5AuxRange(
+  provider: ethers.JsonRpcProvider,
+  chain: ChainCfg,
+  contract: AuxContract,
+  fromBlock: number,
+  toBlock: number,
+  cursor: string
+) {
+  const step = ENV.LOG_CHUNK_SIZE;
+  for (let start = fromBlock; start <= toBlock; start += step) {
+    const end = Math.min(toBlock, start + step - 1);
+    const logs = await getLogsSafe(provider, {
+      address: contract.address,
+      fromBlock: start,
+      toBlock: end,
+      topics: [auxTopics(contract.kind)],
+    });
+    logs.sort((a, b) => a.blockNumber - b.blockNumber || ((a.index ?? 0) - (b.index ?? 0)));
+    const blockTimes = new Map<number, Date>();
+    for (const log of logs) {
+      if (!blockTimes.has(log.blockNumber)) {
+        const b = await provider.getBlock(log.blockNumber);
+        blockTimes.set(log.blockNumber, new Date(Number(b?.timestamp || 0) * 1000));
+      }
+      await recordGen5AuxLog(pool, chain.chainId, contract, log, blockTimes.get(log.blockNumber) || null);
+    }
+    await setStateMax(chain.chainId, cursor, end + 1);
+  }
+}
+
 async function syncFactoryCampaignsByCall(
   provider: ethers.JsonRpcProvider,
   chain: ChainCfg
@@ -1334,6 +1389,103 @@ async function syncFactoryCampaignsByCall(
   }
 }
 
+/**
+ * The graduation marker shared by both generations: activity row, campaigns.graduated_*, the Robinhood
+ * market-state seed (so the V3 pool indexer picks the pool up) and the home feed. Old generation: from
+ * CampaignFinalized. Generation 5: from Graduated (pool = the locked DEX pool).
+ */
+async function markEvmCampaignGraduated(input: {
+  chainId: number;
+  campaign: string;
+  tokenAddr: string | null;
+  txHash: string;
+  logIndex: number;
+  blockNumber: number;
+  tsSec: number;
+  actor: string;
+  pair: string;
+  meta: Record<string, unknown>;
+}) {
+  const { chainId, campaign, tokenAddr, txHash, logIndex, tsSec } = input;
+  await insertActivityEvent({
+    chainId,
+    eventType: "FINALIZE",
+    txHash,
+    logIndex,
+    blockNumber: input.blockNumber,
+    blockTime: new Date(tsSec * 1000),
+    actor: input.actor,
+    campaign,
+    token: tokenAddr,
+    meta: input.meta,
+  });
+
+  // Graduation marker for league categories
+  await setCampaignGraduated(chainId, campaign, input.blockNumber, new Date(tsSec * 1000), txHash);
+  if ((chainId === 46630 || chainId === 4663) && tokenAddr) {
+    const pair = input.pair;
+    try {
+      await pool.query(
+        `insert into public.campaign_market_state(
+           chain_id,campaign_address,token_address,market_stage,graduation_tx_hash,
+           graduation_block,graduation_time,dex_pair_address,indexing_enabled
+         ) values($1,$2,$3,'GRADUATING',$4,$5,$6,$7,true)
+         on conflict(chain_id,campaign_address) do update set
+           market_stage=excluded.market_stage,
+           graduation_tx_hash=excluded.graduation_tx_hash,
+           graduation_block=excluded.graduation_block,
+           graduation_time=excluded.graduation_time,
+           dex_pair_address=coalesce(excluded.dex_pair_address, public.campaign_market_state.dex_pair_address),
+           indexing_enabled=true,
+           updated_at=now()`,
+        [
+          chainId,
+          campaign.toLowerCase(),
+          String(tokenAddr).toLowerCase(),
+          txHash.toLowerCase(),
+          input.blockNumber,
+          new Date(tsSec * 1000),
+          pair && /^0x[a-f0-9]{40}$/.test(pair) ? pair : null,
+        ],
+      );
+    } catch (cmsErr) {
+      console.warn("[indexer] RH campaign_market_state seed failed", { chainId, campaign, error: String(cmsErr) });
+    }
+  }
+  leagueFeed.queueGraduation(chainId, campaign, new Date(tsSec * 1000).toISOString());
+}
+
+async function resolveGen5(
+  provider: ethers.JsonRpcProvider,
+  chainId: number,
+  campaign: string,
+): Promise<CampaignGenerationInfo | null> {
+  if (chainId === 101 || chainId === 102) return null;
+  try {
+    const info = await resolveCampaignGeneration(pool, provider, chainId, campaign);
+    return info.gen5 ? info : null;
+  } catch (e) {
+    console.warn("[indexer] campaign generation unresolved; indexing trades without gen-5 fields", {
+      chainId,
+      campaign: campaign.toLowerCase(),
+      error: String((e as any)?.message || e),
+    });
+    return null;
+  }
+}
+
+async function gen5AnnotateAfterInsert(
+  chainId: number,
+  ctx: Gen5TradeContext,
+  trade: { side: "buy" | "sell"; wallet: string; amountRaw: bigint; tokenRaw: bigint; txHash: string; logIndex: number; blockTimeSec: number },
+) {
+  try {
+    await annotateGen5TradeRow(pool, chainId, ctx, trade);
+  } catch (e) {
+    console.warn("[indexer] gen-5 trade annotation failed", { chainId, txHash: trade.txHash, error: String((e as any)?.message || e) });
+  }
+}
+
 async function scanCampaignRange(
   provider: ethers.JsonRpcProvider,
   chainId: number,
@@ -1365,6 +1517,11 @@ async function scanCampaignRange(
   const tokenAddr = campaignInfo?.tokenAddress ?? null;
   let insertedTotal = 0;
   const startedAt = Date.now();
+
+  // Launch generation (campaign 5) is selected per factory; the old generation keeps the path below
+  // unchanged (E14). A failed resolution indexes the trades the old way and retries next pass.
+  const gen5 = await resolveGen5(provider, chainId, campaign);
+  const logIface = gen5 ? GEN5_CAMPAIGN_IFACE : iface;
 
   // Best-effort: hydrate campaign feeRecipient for anti-abuse checks (Largest Buys).
   // Skip on tip scans — latency-sensitive path for live TokenDetails trades.
@@ -1406,7 +1563,14 @@ async function scanCampaignRange(
     // Tip may skip a dead chunk (advanceCursor is false there). History must
     // not: a soft-fail + cursor bump is how WIC lost the 2-day fills.
     let logs: ethers.Log[];
-    if (tradesOnly) {
+    if (gen5) {
+      logs = await getLogsSafe(
+        provider,
+        { address: campaign, fromBlock: start, toBlock: end, topics: [tradesOnly ? GEN5_TIP_TOPICS : GEN5_ALL_TOPICS] },
+        0,
+        tradesOnly ? { skipDelay: true, softFail: true } : { softFail: false }
+      );
+    } else if (tradesOnly) {
       const buyLogs = await getLogsSafe(
         provider,
         { address: campaign, fromBlock: start, toBlock: end, topics: [buyTopic] },
@@ -1435,6 +1599,8 @@ async function scanCampaignRange(
     }
 
     logs.sort((a, b) => a.blockNumber - b.blockNumber || ((a.index ?? 0) - (b.index ?? 0)));
+    const gen5Ctx: Gen5TradeContext | null = gen5 ? { info: gen5, firstBuys: firstBuysByTx(logs) } : null;
+    let gen5Dirty = false;
 
     for (const log of logs) {
       const txHash = log.transactionHash;
@@ -1447,7 +1613,7 @@ async function scanCampaignRange(
         blockTimeCache.set(log.blockNumber, tsSec);
       }
 
-      const parsed = iface.parseLog(log);
+      const parsed = logIface.parseLog(log);
       if (!parsed) continue;
       const name = parsed.name;
       const logIndex = log.index ?? 0;
@@ -1469,6 +1635,9 @@ async function scanCampaignRange(
           tokenRaw: amountOut,
           bnbRaw: cost
         });
+        if (gen5Ctx) {
+          await gen5AnnotateAfterInsert(chainId, gen5Ctx, { side: "buy", wallet: buyer, amountRaw: cost, tokenRaw: amountOut, txHash, logIndex, blockTimeSec: tsSec });
+        }
 
         if (inserted) {
           insertedTotal += 1;
@@ -1531,6 +1700,9 @@ async function scanCampaignRange(
           tokenRaw: amountIn,
           bnbRaw: payout
         });
+        if (gen5Ctx) {
+          await gen5AnnotateAfterInsert(chainId, gen5Ctx, { side: "sell", wallet: seller, amountRaw: payout, tokenRaw: amountIn, txHash, logIndex, blockTimeSec: tsSec });
+        }
 
         if (inserted) {
           insertedTotal += 1;
@@ -1583,17 +1755,16 @@ async function scanCampaignRange(
         const liquidityBnb = (parsed.args as any).liquidityBnb as bigint;
         const protocolFee = (parsed.args as any).protocolFee as bigint;
         const creatorPayout = (parsed.args as any).creatorPayout as bigint;
-
-        await insertActivityEvent({
+        await markEvmCampaignGraduated({
           chainId,
-          eventType: "FINALIZE",
+          campaign,
+          tokenAddr,
           txHash,
           logIndex,
           blockNumber: log.blockNumber,
-          blockTime: new Date(tsSec * 1000),
+          tsSec,
           actor: caller || campaign,
-          campaign,
-          token: tokenAddr,
+          pair: String((parsed.args as any).pair || "").toLowerCase(),
           meta: {
             liquidityTokens: liquidityTokens?.toString?.() ?? null,
             liquidityBnb: liquidityBnb?.toString?.() ?? null,
@@ -1601,43 +1772,41 @@ async function scanCampaignRange(
             creatorPayout: creatorPayout?.toString?.() ?? null,
           },
         });
-
-        // Graduation marker for league categories
-        await setCampaignGraduated(chainId, campaign, log.blockNumber, new Date(tsSec * 1000), txHash);
-        if ((chainId === 46630 || chainId === 4663) && tokenAddr) {
-          const pair = String((parsed.args as any).pair || "").toLowerCase();
-          try {
-            await pool.query(
-              `insert into public.campaign_market_state(
-                 chain_id,campaign_address,token_address,market_stage,graduation_tx_hash,
-                 graduation_block,graduation_time,dex_pair_address,indexing_enabled
-               ) values($1,$2,$3,'GRADUATING',$4,$5,$6,$7,true)
-               on conflict(chain_id,campaign_address) do update set
-                 market_stage=excluded.market_stage,
-                 graduation_tx_hash=excluded.graduation_tx_hash,
-                 graduation_block=excluded.graduation_block,
-                 graduation_time=excluded.graduation_time,
-                 dex_pair_address=coalesce(excluded.dex_pair_address, public.campaign_market_state.dex_pair_address),
-                 indexing_enabled=true,
-                 updated_at=now()`,
-              [
-                chainId,
-                campaign.toLowerCase(),
-                String(tokenAddr).toLowerCase(),
-                txHash.toLowerCase(),
-                log.blockNumber,
-                new Date(tsSec * 1000),
-                pair && /^0x[a-f0-9]{40}$/.test(pair) ? pair : null,
-              ],
-            );
-          } catch (cmsErr) {
-            console.warn("[indexer] RH campaign_market_state seed failed", { chainId, campaign, error: String(cmsErr) });
-          }
+      } else if (gen5Ctx) {
+        // Generation 5: everything that is not a trade (C3 first buy, C4 escrow, C5 Pending/Graduated,
+        // repair steps, E12 fallback, escrowed protocol fee, creator claims).
+        const recorded = await recordGen5CampaignLog(pool, chainId, campaign, log, new Date(tsSec * 1000));
+        if (recorded) gen5Dirty = true;
+        if (recorded?.eventName === "Graduated") {
+          const a = parsed.args as any;
+          await markEvmCampaignGraduated({
+            chainId,
+            campaign,
+            tokenAddr,
+            txHash,
+            logIndex,
+            blockNumber: log.blockNumber,
+            tsSec,
+            actor: campaign,
+            pair: recorded.graduatedPool || "",
+            meta: {
+              generation: 5,
+              raise: String(a.raise),
+              protocolShare: String(a.protocolShare),
+              creatorShare: String(a.creatorShare),
+              poolNative: String(a.poolNative),
+              memeUsed: String(a.memeUsed),
+              memeBurned: String(a.memeBurned),
+              repaired: Boolean(a.repaired),
+            },
+          });
         }
-        leagueFeed.queueGraduation(chainId, campaign, new Date(tsSec * 1000).toISOString());
       }
     }
 
+    if (gen5Ctx && gen5Dirty) {
+      await refreshGen5CampaignState(pool, chainId, campaign);
+    }
     if (advanceCursor) {
       await setStateMax(chainId, cursor, end + 1);
     }
@@ -1751,6 +1920,21 @@ export async function ingestCampaignTransaction(input: {
     blockNumber: number;
   }> = [];
 
+  const gen5 = await resolveGen5(provider, chain.chainId, campaign);
+  const campaignLogs = receipt.logs.filter((log) => String(log.address || "").toLowerCase() === campaign);
+  const gen5Ctx: Gen5TradeContext | null = gen5 ? { info: gen5, firstBuys: firstBuysByTx(campaignLogs) } : null;
+  if (gen5Ctx) {
+    let dirty = false;
+    for (const log of campaignLogs) {
+      try {
+        if (await recordGen5CampaignLog(pool, chain.chainId, campaign, log, blockTime)) dirty = true;
+      } catch {
+        // not a gen-5 event
+      }
+    }
+    if (dirty) await refreshGen5CampaignState(pool, chain.chainId, campaign);
+  }
+
   for (const log of receipt.logs) {
     if (String(log.address || "").toLowerCase() !== campaign) continue;
 
@@ -1775,6 +1959,17 @@ export async function ingestCampaignTransaction(input: {
       tokenRaw: trade.tokenRaw,
       bnbRaw: trade.bnbRaw,
     });
+    if (gen5Ctx) {
+      await gen5AnnotateAfterInsert(chain.chainId, gen5Ctx, {
+        side: trade.side,
+        wallet: trade.wallet,
+        amountRaw: trade.bnbRaw,
+        tokenRaw: trade.tokenRaw,
+        txHash,
+        logIndex,
+        blockTimeSec: tsSec,
+      });
+    }
 
     if (inserted) {
       leagueFeed.queueRaisedDelta(
@@ -2423,6 +2618,26 @@ async function runIndexerCore(opts: {
         }
       } catch (e) {
         console.error("scanRewardRoutes error (all RPCs failed)", { chainId: chain.chainId }, e);
+      }
+
+      // Launch generation: creator vault V2 and the generation's lockers (E9 harvests).
+      try {
+        for (const contract of configuredGen5AuxContracts(chain.chainId)) {
+          const cursor = `gen5-aux:${contract.address}`;
+          const state = await getState(chain.chainId, cursor);
+          const windowStart = Math.max(0, target - opts.lookbackBlocks);
+          const from = state <= 0
+            ? Math.max(0, contract.startBlock || windowStart)
+            : opts.mode === "repair"
+              ? Math.max(windowStart, Math.max(0, state - opts.rewindBlocks))
+              : Math.max(state, windowStart);
+          if (from > target) continue;
+          const maxBlocks = Math.max(1_000, Number(process.env.ROUTER_SCAN_MAX_BLOCKS_PER_PASS || 200_000));
+          const to = Math.min(target, from + maxBlocks - 1);
+          await withProviderRetry((p) => scanGen5AuxRange(p, chain, contract, from, to, cursor));
+        }
+      } catch (e) {
+        console.error("scanGen5Aux error (all RPCs failed)", { chainId: chain.chainId }, e);
       }
     }
   }
