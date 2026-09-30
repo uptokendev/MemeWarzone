@@ -14,6 +14,11 @@
  *      A step must sell MEME (memeSold > 0), or it is no progress.
  *   4. A quote coin Pending >= 7 days whose route still fails (E12) -> useNativeFallback(); graduate() next.
  *   5. Otherwise blocked with the named revert; retried next pass.
+ *   6. Graduated into a Uniswap V3 pool (Robinhood 4663 / 46630) whose observationCardinalityNext is below
+ *      the configured slot count (EVM_KEEPER_V3_OBSERVATION_SLOTS, default 180) ->
+ *      pool.increaseObservationCardinalityNext(slots), once. The fail-closed TWAP reads (the Buyback vault's
+ *      buybackPool, any future MEME-sale guard) need history the pool only records once its slots are grown.
+ *      Permissionless; costs gas proportional to the slots added. Only after any escrowed fee is flushed.
  * Due but not Pending (the crossing buy's oracle read failed, or nobody traded since): the indexed net
  * raise (sum of gen-5 gross buys minus gross sells) is compared with the campaign's native target (a
  * cached view) and the indexed sold amount with curveSupply; a campaign that passes this cheap filter
@@ -33,20 +38,44 @@ import { GEN5_CAMPAIGN_ABI } from "./evmGen5Abi.js";
 export const NATIVE_FALLBACK_DELAY_SECONDS = 7n * 86_400n;
 export const GEN5_CAMPAIGN_IFACE_FULL = new ethers.Interface(GEN5_CAMPAIGN_ABI as unknown as string[]);
 
-export type KeeperAction = "graduate" | "repair" | "native_fallback" | "flush";
+export type KeeperAction = "graduate" | "repair" | "native_fallback" | "flush" | "observations";
 
 export type KeeperCall =
   | { action: "graduate"; fn: "graduate"; args: [] }
   | { action: "repair"; fn: "repairPool"; args: [bigint] }
   | { action: "native_fallback"; fn: "useNativeFallback"; args: [] }
-  | { action: "flush"; fn: "flushProtocolGraduationFee"; args: [] };
+  | { action: "flush"; fn: "flushProtocolGraduationFee"; args: [] }
+  /** The only call not sent to the campaign: `target` is the graduated Uniswap V3 pool. */
+  | { action: "observations"; fn: "increaseObservationCardinalityNext"; args: [number]; target: string };
 
 export const CALLS = {
   graduate: (): KeeperCall => ({ action: "graduate", fn: "graduate", args: [] }),
   repair: (limit: bigint): KeeperCall => ({ action: "repair", fn: "repairPool", args: [limit] }),
   nativeFallback: (): KeeperCall => ({ action: "native_fallback", fn: "useNativeFallback", args: [] }),
   flush: (): KeeperCall => ({ action: "flush", fn: "flushProtocolGraduationFee", args: [] }),
+  observations: (pool: string, slots: number): KeeperCall => ({
+    action: "observations",
+    fn: "increaseObservationCardinalityNext",
+    args: [slots],
+    target: pool,
+  }),
 };
+
+export const V3_POOL_OBSERVATIONS_IFACE = new ethers.Interface([
+  "function slot0() view returns (uint160 sqrtPriceX96,int24 tick,uint16 observationIndex,uint16 observationCardinality,uint16 observationCardinalityNext,uint8 feeProtocol,bool unlocked)",
+  "function increaseObservationCardinalityNext(uint16 observationCardinalityNext)",
+]);
+
+/** Where a keeper call goes and its calldata: the campaign, except the observation growth (the pool). */
+export function encodeKeeperCall(campaign: string, call: KeeperCall): { to: string; data: string } {
+  if (call.action === "observations") {
+    return { to: call.target, data: V3_POOL_OBSERVATIONS_IFACE.encodeFunctionData(call.fn, call.args) };
+  }
+  return { to: campaign, data: GEN5_CAMPAIGN_IFACE_FULL.encodeFunctionData(call.fn, call.args) };
+}
+
+/** uint16 slot count; 0 turns the step off. */
+export const MAX_V3_OBSERVATION_SLOTS = 65_535;
 
 export type CampaignChainState = {
   launched: boolean;
@@ -63,6 +92,9 @@ export type SimResult =
 
 export type RepairContext = { currentSqrtX96: bigint; targetSqrtX96: bigint };
 
+/** A graduated campaign's Uniswap V3 pool and its slot0().observationCardinalityNext. */
+export type ObservationState = { pool: string; cardinalityNext: number };
+
 export type Decision =
   | { kind: "send"; call: KeeperCall; gas: bigint; reason: string }
   | { kind: "idle"; reason: string }
@@ -76,6 +108,11 @@ export interface KeeperReader {
   repairContext(campaign: string): Promise<RepairContext | null>;
   /** curveSupply and the native graduation target (cached views); nativeTarget null when the oracle reverts. */
   dueInputs?(campaign: string): Promise<DueInputs | null>;
+  /**
+   * The graduated V3 pool and its observationCardinalityNext; null when there is no V3 pool (Topaz, or
+   * the read failed). `minSlots` lets an implementation cache pools already at or above it.
+   */
+  observationState?(campaign: string, minSlots: number): Promise<ObservationState | null>;
 }
 
 export type DueInputs = { curveSupply: bigint; nativeTarget: bigint | null };
@@ -88,6 +125,11 @@ export type KeeperConfig = {
   dueSlackBps?: number;
   /** At most this many due-but-not-pending candidates are simulated per pass. Default 25. */
   maxDueCandidates?: number;
+  /**
+   * Grow a graduated Uniswap V3 pool's observationCardinalityNext to this many slots (step 6). 0 or
+   * absent turns it off (BNB's Topaz pools have no oracle slots). Default 180 on 4663 / 46630.
+   */
+  v3ObservationSlots?: number;
 };
 
 /** Reverts of graduate() that mean "not due yet", not "stuck". */
@@ -152,7 +194,7 @@ export async function decideKeeperStep(
 
   if (state.launched) {
     if (state.pendingProtocolFee < cfg.minFlushWei || state.pendingProtocolFee === 0n) {
-      return { kind: "idle", reason: "graduated" };
+      return decideObservations(reader, campaign, cfg);
     }
     const sim = await reader.simulate(campaign, CALLS.flush());
     if (fits(sim, cfg)) return { kind: "send", call: CALLS.flush(), gas: sim.gas, reason: `escrowed protocol fee ${state.pendingProtocolFee}` };
@@ -200,6 +242,27 @@ export async function decideKeeperStep(
   }
 
   return { kind: "blocked", reason: `graduate: ${gradWhy}; repair: ${describe(full, cfg)}` };
+}
+
+/**
+ * Step 6: a graduated campaign's V3 pool below the configured observation slots gets
+ * increaseObservationCardinalityNext(slots), simulated and gas-estimated first. Already at or above the
+ * slots (by us or anyone) -> idle, so the call happens once.
+ */
+async function decideObservations(reader: KeeperReader, campaign: string, cfg: KeeperConfig): Promise<Decision> {
+  const slots = Math.floor(Number(cfg.v3ObservationSlots ?? 0));
+  if (!(slots > 0) || !reader.observationState) return { kind: "idle", reason: "graduated" };
+  const obs = await reader.observationState(campaign, slots);
+  if (!obs) return { kind: "idle", reason: "graduated" };
+  if (obs.cardinalityNext >= slots) {
+    return { kind: "idle", reason: `graduated; observations ${obs.cardinalityNext} >= ${slots}` };
+  }
+  const call = CALLS.observations(obs.pool, slots);
+  const sim = await reader.simulate(campaign, call);
+  if (fits(sim, cfg)) {
+    return { kind: "send", call, gas: sim.gas, reason: `pool ${obs.pool} observations ${obs.cardinalityNext} -> ${slots}` };
+  }
+  return { kind: "blocked", reason: `observations: ${describe(sim, cfg)}` };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -304,7 +367,11 @@ export type PassStep = {
   error?: string;
 };
 
-export async function listKeeperCampaigns(db: Queryable, chainId: number): Promise<string[]> {
+/**
+ * Campaigns the keeper looks at. With `observations`, graduated campaigns that have no confirmed
+ * observation-growth job are listed too (step 6); the chain read decides whether one is still needed.
+ */
+export async function listKeeperCampaigns(db: Queryable, chainId: number, opts: { observations?: boolean } = {}): Promise<string[]> {
   const { rows } = await db.query(
     `select c.campaign_address
        from public.campaigns c
@@ -315,9 +382,13 @@ export async function listKeeperCampaigns(db: Queryable, chainId: number): Promi
         and (
           s.graduation_stage = 'pending'
           or (s.graduation_stage = 'graduated' and s.protocol_fee_escrowed_raw > s.protocol_fee_flushed_raw)
+          or ($2::boolean and s.graduation_stage = 'graduated' and not exists (
+                select 1 from public.evm_graduation_keeper_jobs j
+                 where j.chain_id = c.chain_id and j.campaign_address = c.campaign_address
+                   and j.action = 'observations' and j.status = 'confirmed'))
         )
       order by s.pending_since nulls last, c.campaign_address`,
-    [chainId],
+    [chainId, Boolean(opts.observations)],
   );
   return rows.map((r) => String(r.campaign_address).toLowerCase());
 }
@@ -432,7 +503,9 @@ export async function runEvmGraduationKeeperPass(input: {
   const resolved = await resolveSendingJobs({ db: input.db, chainId: input.chainId, sender: input.sender, send: input.send });
   const inFlight = resolved.waiting > 0;
   const steps: PassStep[] = [];
-  const campaigns = input.campaigns ?? (await listKeeperCampaigns(input.db, input.chainId));
+  const campaigns =
+    input.campaigns ??
+    (await listKeeperCampaigns(input.db, input.chainId, { observations: (input.cfg.v3ObservationSlots ?? 0) > 0 }));
   const due = new Set(input.dueCampaigns ?? []);
   if (!input.campaigns && input.dueCampaigns === undefined) {
     try {
@@ -598,6 +671,7 @@ const ERC20_DECIMALS_ABI = ["function decimals() view returns (uint8)"];
 export function createEthersKeeperReader(provider: ethers.Provider, chainId: number, from: string, env: NodeJS.ProcessEnv = process.env): KeeperReader {
   const curveSupplyCache = new Map<string, bigint>();
   const targetCache = new Map<string, { at: number; value: bigint | null }>();
+  const observationDone = new Map<string, ObservationState>();
   const targetTtlMs = Math.max(5_000, Number(env.EVM_GRADUATION_KEEPER_TARGET_TTL_MS || 60_000) || 60_000);
   const v3 = (() => {
     const known = KNOWN_V3[chainId];
@@ -628,10 +702,10 @@ export function createEthersKeeperReader(provider: ethers.Provider, chainId: num
       };
     },
     async simulate(campaign, call) {
-      const data = GEN5_CAMPAIGN_IFACE_FULL.encodeFunctionData(call.fn, call.args);
+      const { to, data } = encodeKeeperCall(campaign, call);
       try {
-        const result = await provider.call({ to: campaign, from, data });
-        const gas = await provider.estimateGas({ to: campaign, from, data });
+        const result = await provider.call({ to, from, data });
+        const gas = await provider.estimateGas({ to, from, data });
         let memeSold: bigint | undefined;
         if (call.fn === "repairPool") {
           const decoded = GEN5_CAMPAIGN_IFACE_FULL.decodeFunctionResult("repairPool", result);
@@ -718,6 +792,23 @@ export function createEthersKeeperReader(provider: ethers.Provider, chainId: num
         return null;
       }
     },
+    async observationState(campaign, minSlots) {
+      const known = observationDone.get(campaign);
+      if (known && known.cardinalityNext >= minSlots) return known;
+      try {
+        const c = new ethers.Contract(campaign, GEN5_CAMPAIGN_ABI, provider) as any;
+        const state = await c.getGraduationState();
+        const pool = String(state.dexPair ?? state[0]);
+        if (!ethers.isAddress(pool) || pool.toLowerCase() === ethers.ZeroAddress.toLowerCase()) return null;
+        const raw = await provider.call({ to: pool, data: V3_POOL_OBSERVATIONS_IFACE.encodeFunctionData("slot0", []) });
+        const slot0 = V3_POOL_OBSERVATIONS_IFACE.decodeFunctionResult("slot0", raw);
+        const out = { pool: ethers.getAddress(pool), cardinalityNext: Number(slot0.observationCardinalityNext ?? slot0[4]) };
+        if (out.cardinalityNext >= minSlots) observationDone.set(campaign, out);
+        return out;
+      } catch {
+        return null; // not a V3 pool (no slot0 of this shape) or the read failed
+      }
+    },
     async dueInputs(campaign) {
       const c = new ethers.Contract(campaign, GEN5_CAMPAIGN_ABI, provider) as any;
       let curveSupply = curveSupplyCache.get(campaign);
@@ -752,9 +843,9 @@ export function createEthersKeeperSender(provider: ethers.Provider, wallet: ethe
       return r ? { status: Number(r.status ?? 0), blockNumber: r.blockNumber } : null;
     },
     async sign(campaign, call, gasLimit, nonce) {
-      const data = GEN5_CAMPAIGN_IFACE_FULL.encodeFunctionData(call.fn, call.args);
+      const { to, data } = encodeKeeperCall(campaign, call);
       const fee = await provider.getFeeData();
-      const tx: ethers.TransactionRequest = { to: campaign, data, gasLimit, nonce, chainId, value: 0n };
+      const tx: ethers.TransactionRequest = { to, data, gasLimit, nonce, chainId, value: 0n };
       if (fee.maxFeePerGas != null && fee.maxPriorityFeePerGas != null) {
         tx.type = 2;
         tx.maxFeePerGas = fee.maxFeePerGas;
