@@ -301,7 +301,12 @@ async function completionBounds(fx: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("Robinhood Stock pending graduation completion", function () {
-  it("keeps the campaign pending after a failed route and completes safely on retry", async () => {
+  // BLOCKED ON claude/evm-rh: no IGraduationAdapterV2 V3 adapter in tree yet.
+  // RobinhoodStockTokenGraduationAdapter does not implement IGraduationAdapterV2 yet, and the body drives the removed
+  // completeStockGraduation(memeDesired, minStockOut, deadline) / OnlyStockGraduationExecutor surface (now permissionless graduate()).
+  // Campaign-side replacement with a test double: evmgen-core-quote > Robinhood stock campaign > completion is permissionless and
+  // never reverts on dust. The subject here is the real stock adapter + V3 locker; rewrite against graduate() when it lands.
+  it.skip("keeps the campaign pending after a failed route and completes safely on retry", async () => {
     const fx = await fixture();
     const bounds = await completionBounds(fx);
     const deadline = (await nowTs()) + 3600n;

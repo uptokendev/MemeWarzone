@@ -11,14 +11,11 @@ const req = (overrides: Record<string, unknown> = {}) => ({
   xAccount: "",
   website: "",
   extraLink: "",
-  basePrice: 0n,
-  priceSlope: 0n,
   graduationTarget: 0n,
   firstBuyTokens: 0n,
   firstBuyMaxCost: 0n,
   feeChoice: 1,
   feeCreatorPct: 0,
-  lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
 
@@ -57,48 +54,62 @@ describe("Phase 1 security layer", function () {
     ).to.be.revertedWithCustomError(factory, "CreatorNotEligible");
   });
 
+  // EVM launch generation (C4): the tier buy lock is replaced by escrow. A creator buy is accepted but the tokens
+  // are held by the campaign (nothing reaches the creator's wallet) and release from +30 days; the 24 h after launch
+  // that the lock used to cover now has nothing claimable.
   it("blocks creator buys during the tier lock and allows them after lock expiry", async () => {
     const { factory, creator } = await deployCoreFixture();
     await deployRegistries(factory);
-    const { campaign } = await createCampaign(factory, creator);
+    const { campaign, token } = await createCampaign(factory, creator);
+    const creatorAddr = await creator.getAddress();
 
-    await expect(
-      campaign.connect(creator).buyExactBnb(0n, { value: ethers.parseEther("0.01") })
-    ).to.be.revertedWithCustomError(campaign, "CreatorBuyLocked");
+    const quote = await campaign.quoteBuyExactBnb(ethers.parseEther("0.01"));
+    await expect(campaign.connect(creator).buyExactBnb(0n, { value: ethers.parseEther("0.01") }))
+      .to.emit(campaign, "CreatorBuyEscrowed")
+      .and.to.emit(campaign, "TokensPurchased");
+    const escrowed = await campaign.creatorEscrowTotal();
+    expect(escrowed).to.be.gte(quote.tokensOut);
+    expect(await token.balanceOf(creatorAddr)).to.eq(0n);
+    expect(await token.balanceOf(await campaign.getAddress())).to.be.gte(escrowed);
+    expect(await campaign.creatorBoughtWei()).to.be.gt(0n);
 
     await ethers.provider.send("evm_increaseTime", [24 * 60 * 60 + 1]);
     await ethers.provider.send("evm_mine", []);
 
     await expect(campaign.connect(creator).buyExactBnb(0n, { value: ethers.parseEther("0.01") })).to.emit(
       campaign,
-      "TokensPurchased"
+      "CreatorBuyEscrowed"
     );
-    expect(await campaign.creatorBoughtWei()).to.be.gt(0n);
+    expect(await token.balanceOf(creatorAddr)).to.eq(0n);
+    expect(await campaign.creatorEscrowClaimable()).to.eq(0n);
+    await expect(campaign.connect(creator).claimCreatorEscrow()).to.be.revertedWithCustomError(campaign, "NothingToClaim");
   });
 
   it("enforces creator buy cap after the lock expires", async () => {
-    const { factory, owner, creator } = await deployCoreFixture();
-    await factory.connect(owner).setConfig({
-      totalSupply: ethers.parseEther("1000"),
-      curveBps: 5000,
-      liquidityTokenBps: 4000,
-      basePrice: ethers.parseEther("0.001"),
-      priceSlope: 1n,
-      graduationTarget: ethers.parseEther("100"),
-      firstBuyTokens: 0n,
-      firstBuyMaxCost: 0n,
-      feeChoice: 1,
-      feeCreatorPct: 0,
-      liquidityBps: 8000,
-    });
-    await deployRegistries(factory);
+    // EVM launch generation: the fixture curve (the old 0.001/slope-1 curve with a $100 target is refused at
+    // create: TargetOutOfRangeAtPrice). The NewCreator cap is 0.25 native of curve cost, excluding the fee.
+    const { factory, creator } = await deployCoreFixture();
+    const { creatorRegistry } = await deployRegistries(factory);
     const { campaign } = await createCampaign(factory, creator);
+    const cap = (await creatorRegistry.getCreatorRules(await creator.getAddress())).creatorBuyCapWei;
+    expect(await campaign.creatorBuyCapWei()).to.eq(cap);
+    expect(cap).to.eq(ethers.parseEther("0.25"));
 
     await ethers.provider.send("evm_increaseTime", [24 * 60 * 60 + 1]);
     await ethers.provider.send("evm_mine", []);
 
     await expect(
       campaign.connect(creator).buyExactBnb(0n, { value: ethers.parseEther("0.3") })
+    ).to.be.revertedWithCustomError(campaign, "CreatorBuyCapExceeded");
+    expect(await campaign.creatorBoughtWei()).to.eq(0n);
+
+    // up to the cap is accepted, one more wei of curve cost is not
+    const underCap = await campaign.quoteBuyExactBnb(ethers.parseEther("0.25"));
+    expect(underCap.totalCostWei - underCap.feeWei).to.be.lte(cap);
+    await campaign.connect(creator).buyExactBnb(0n, { value: ethers.parseEther("0.25") });
+    expect(await campaign.creatorBoughtWei()).to.eq(underCap.totalCostWei - underCap.feeWei);
+    await expect(
+      campaign.connect(creator).buyExactBnb(0n, { value: ethers.parseEther("0.01") })
     ).to.be.revertedWithCustomError(campaign, "CreatorBuyCapExceeded");
   });
 
@@ -205,10 +216,21 @@ describe("Phase 1 security layer", function () {
     let profile = await creatorRegistry.getCreatorProfile(await creator.getAddress());
     expect(profile.liveBondingCount).to.eq(1n);
 
-    await campaign.connect(alice).buyExactBnb(0n, { value: ethers.parseEther("0.01") });
+    // EVM launch generation (C5): the crossing buy only marks Pending; the campaign is still live bonding.
+    await expect(campaign.connect(alice).buyExactBnb(0n, { value: ethers.parseEther("0.01") })).to.emit(
+      campaign,
+      "GraduationPending"
+    );
+    profile = await creatorRegistry.getCreatorProfile(await creator.getAddress());
+    expect(await campaign.launched()).to.eq(false);
+    expect(profile.liveBondingCount).to.eq(1n);
+
+    // graduate() is permissionless; the factory records the graduation on the registry exactly once.
+    await expect(campaign.connect(alice).graduate()).to.emit(factory, "CampaignGraduated");
 
     profile = await creatorRegistry.getCreatorProfile(await creator.getAddress());
     expect(await campaign.launched()).to.eq(true);
     expect(profile.liveBondingCount).to.eq(0n);
+    expect(await factory.campaignGraduationRecorded(await campaign.getAddress())).to.eq(true);
   });
 });

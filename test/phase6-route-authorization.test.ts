@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { deployRoutedLaunchFactory } from "./helpers/deployRouting";
+import { passAntiSniperWindow, setNativeUsd, signCreate, splitBuyTotal } from "./helpers/legacy-B2";
 
 const STANDARD_LINKED = 0;
 const STANDARD_UNLINKED = 1;
@@ -21,6 +22,9 @@ async function deployFixture() {
   const [admin, routeAuthority, creator, trader] = await ethers.getSigners();
   const { factory, treasuryRouter: treasury } = await deployRoutedLaunchFactory(admin);
   await factory.connect(admin).setRouteAuthority(routeAuthority.address);
+  // Generation 6 refuses a target above 95% of what the curve raises at the oracle price (C5 rule 3);
+  // at the helper's $1 the default $30k target is out of range, at $600 it is 50 native.
+  await setNativeUsd(factory, 600);
   await factory.connect(admin).enableLive();
 
   const chainId = BigInt((await ethers.provider.getNetwork()).chainId);
@@ -41,18 +45,13 @@ async function deployFixture() {
   return { admin, routeAuthority, creator, trader, factory, treasury, chainId, request };
 }
 
-async function signCreateRouteAuth({ signer, chainId, factory, creator, request, tradeRouteProfile, finalizeRouteProfile, deadline }: any) {
-  const { signCreateAuthorization } = await signerHelpers();
-  return signCreateAuthorization({
-    signer,
-    chainId,
-    factoryAddress: factory,
-    creator,
-    request,
-    tradeRouteProfileId: tradeRouteProfile,
-    finalizeRouteProfileId: finalizeRouteProfile,
-    deadline,
-  });
+// Create authorizations are signed with the generation-6 11-field CampaignRequest layout (evmgenCore
+// hashReq). The backend helper still hashes the old 7-field request because the live mainnet factories
+// are the old generation -- that gap is pinned (skipped) in RouteAuthorization.backend.integration.spec.ts.
+// Trade authorizations keep using the backend helper: the trade digest is unchanged.
+async function signCreateRouteAuth({ signer, factory, creator, request, tradeRouteProfile, finalizeRouteProfile, deadline }: any) {
+  const auth = await signCreate(signer, factory, creator, request, [tradeRouteProfile, finalizeRouteProfile], Number(deadline));
+  return auth.signature;
 }
 
 async function signTradeRouteAuth({ signer, chainId, campaign, actor, routeProfile, action, amount, limit, deadline }: any) {
@@ -197,10 +196,13 @@ describe("Phase 6 route authorization alignment", function () {
     const { trader, routeAuthority, treasury, chainId } = fixture;
     const { campaign, campaignAddress } = await createAuthorizedCampaign(fixture, STANDARD_UNLINKED, STANDARD_UNLINKED);
 
+    // past the C2 anti-sniper window the fee is the flat protocolFeeBps (2%)
+    await passAntiSniperWindow(campaign);
     const amountOut = ethers.parseEther("1000");
     const maxCost = await campaign.quoteBuyExactTokens(amountOut);
     const protocolFeeBps = await campaign.protocolFeeBps();
-    const feeAmount = (maxCost * protocolFeeBps) / (10_000n + protocolFeeBps);
+    expect(protocolFeeBps).to.equal(200n);
+    const { fee: feeAmount } = splitBuyTotal(maxCost, protocolFeeBps);
     const routeAmounts = await treasury.previewRoute(feeAmount, 0, OG_LINKED);
     const deadline = await currentDeadline();
     const signature = await signTradeRouteAuth({

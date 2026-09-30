@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { quoteBuyExactTokens, quoteSellExactTokens } from "./helpers/math";
 import { getBalance } from "./helpers/balances";
 import { deployLaunchFactory } from "./helpers/deployFactory";
@@ -105,21 +105,20 @@ async function createCampaignViaPhase1RouterFixture(tradeRouteProfile = 1, final
     xAccount: "phase1",
     website: "https://memewar.zone",
     extraLink: "https://docs.memewar.zone",
-    basePrice: 0n,
-    priceSlope: 0n,
     graduationTarget: 0n,
     firstBuyTokens: 0n,
     firstBuyMaxCost: 0n,
     feeChoice: 1,
     feeCreatorPct: 0,
-    lpReceiver: ethers.ZeroAddress,
-    initialBuyBnbWei: 0n,
   };
 
   await fx.factory.connect(fx.creator).createCampaign(req as any);
   const info = await fx.factory.getCampaign(0n);
   const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
   const token = await ethers.getContractAt("LaunchToken", await campaign.token());
+  // EVM launch generation (C2): the trade fee starts at 5000 bps and falls to the flat protocolFeeBps (200) at
+  // launchAt + 60 s. The splits below are asserted on the flat fee, so trading starts after the window.
+  await time.increase(61);
 
   return { ...fx, req, info, campaign, token, tradeRouteProfile, finalizeRouteProfile };
 }
@@ -243,9 +242,9 @@ describe("LaunchCampaign Phase 1 router integration", function () {
     await campaign.connect(alice).buyExactTokens(oneToken, quote, { value: quote });
     await makeGraduationEligibleByOracle(campaign, priceFeed);
 
+    // EVM launch generation (C5): graduation routes 2.2% of the frozen raise through routeFinalize.
     const graduationPrincipal = await campaign.netRaisedWei();
-    const protocolFeeBps = await campaign.protocolFeeBps();
-    const protocolFee = (graduationPrincipal * protocolFeeBps) / 10_000n;
+    const protocolFee = (graduationPrincipal * 220n) / 10_000n;
     const expected = await treasuryRouter.previewRoute(protocolFee, 1, 1);
 
     // TreasuryRouterV3 splits league into weekly and monthly, so reading the
@@ -258,7 +257,7 @@ describe("LaunchCampaign Phase 1 router integration", function () {
     const airdropBefore = await communityVault.warzoneAirdropBalance();
     const squadBefore = await communityVault.squadPoolBalance();
 
-    const tx = await campaign.connect(alice).graduateIfEligible(0, 0);
+    const tx = await campaign.connect(alice).graduate();
     const rc = await tx.wait();
 
     expect(await campaign.launched()).to.equal(true);
@@ -281,10 +280,13 @@ describe("LaunchCampaign Phase 1 router integration", function () {
           return null;
         }
       })
-      .find((parsed: any) => parsed?.name === "CampaignFinalized");
+      .find((parsed: any) => parsed?.name === "Graduated");
 
+    // EVM launch generation: CampaignFinalized was replaced by Graduated (C5).
     expect(event).to.not.equal(undefined);
-    expect(event!.args.protocolFee).to.equal(protocolFee);
+    expect(event!.args.protocolShare).to.equal(protocolFee);
+    expect(event!.args.raise).to.equal(graduationPrincipal);
+    expect(await campaign.pendingProtocolGraduationFee()).to.equal(0n);
   });
 
   it("routes linked trade + finalize profiles end to end when factory is configured for StandardLinked", async () => {
@@ -318,15 +320,16 @@ describe("LaunchCampaign Phase 1 router integration", function () {
 
     await makeGraduationEligibleByOracle(campaign, priceFeed);
 
+    // EVM launch generation (C5): graduation routes 2.2% of the frozen raise through routeFinalize.
     const graduationPrincipal = await campaign.netRaisedWei();
-    const protocolFee = (graduationPrincipal * feeBps) / 10_000n;
+    const protocolFee = (graduationPrincipal * 220n) / 10_000n;
     const expectedFinalize = await treasuryRouter.previewRoute(protocolFee, 1, 0);
 
     const recruiterBeforeFinalize = await getBalance(await recruiterVault.getAddress());
     const protocolBeforeFinalize = await getBalance(await protocolVault.getAddress());
     const squadBeforeFinalize = await communityVault.squadPoolBalance();
 
-    await campaign.connect(alice).graduateIfEligible(0, 0);
+    await campaign.connect(alice).graduate();
 
     expect((await getBalance(await recruiterVault.getAddress())) - recruiterBeforeFinalize).to.equal(expectedFinalize.recruiter);
     expect((await getBalance(await protocolVault.getAddress())) - protocolBeforeFinalize).to.equal(expectedFinalize.protocol);
@@ -364,15 +367,16 @@ describe("LaunchCampaign Phase 1 router integration", function () {
 
     await makeGraduationEligibleByOracle(campaign, priceFeed);
 
+    // EVM launch generation (C5): graduation routes 2.2% of the frozen raise through routeFinalize.
     const graduationPrincipal = await campaign.netRaisedWei();
-    const protocolFee = (graduationPrincipal * feeBps) / 10_000n;
+    const protocolFee = (graduationPrincipal * 220n) / 10_000n;
     const expectedFinalize = await treasuryRouter.previewRoute(protocolFee, 1, 2);
 
     const recruiterBeforeFinalize = await getBalance(await recruiterVault.getAddress());
     const protocolBeforeFinalize = await getBalance(await protocolVault.getAddress());
     const squadBeforeFinalize = await communityVault.squadPoolBalance();
 
-    await campaign.connect(alice).graduateIfEligible(0, 0);
+    await campaign.connect(alice).graduate();
 
     expect((await getBalance(await recruiterVault.getAddress())) - recruiterBeforeFinalize).to.equal(expectedFinalize.recruiter);
     expect((await getBalance(await protocolVault.getAddress())) - protocolBeforeFinalize).to.equal(expectedFinalize.protocol);

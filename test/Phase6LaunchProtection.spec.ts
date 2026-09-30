@@ -15,38 +15,25 @@ const req = (overrides: Record<string, unknown> = {}) => ({
   xAccount: "",
   website: "",
   extraLink: "",
-  basePrice: ethers.parseEther("0.001"),
-  priceSlope: 1n,
-  graduationTarget: ethers.parseEther("100"),
+  graduationTarget: 0n, // the fixture config's $1 target (1 native at the fixture's $1 oracle)
   firstBuyTokens: 0n,
   firstBuyMaxCost: 0n,
   feeChoice: 1,
   feeCreatorPct: 0,
-  lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
 
+// EVM launch generation (E7): block-based launch protection (setLaunchProtectionConfig, protected blocks,
+// per-buy / per-wallet caps) was removed and replaced by the C2 anti-sniper fee (5000 bps at launchAt,
+// linear to the flat fee at +60 s). The route-authorization guarantees these tests pinned now hold for
+// the whole life of the coin: authorized trading is the production default, so the fixture (which turns
+// it off for the historical direct-trade specs) turns it back on before the create.
 async function createProtectedCampaign(overrides: Record<string, unknown> = {}) {
   const fixture = await deployCoreFixture();
   const { factory, owner, creator } = fixture;
 
   await factory.connect(owner).setRouteAuthority(await owner.getAddress());
-  await factory.connect(owner).setConfig({
-    totalSupply: ethers.parseEther("1000"),
-    curveBps: 5000,
-    liquidityTokenBps: 4000,
-    basePrice: ethers.parseEther("0.001"),
-    priceSlope: 1n,
-    graduationTarget: ethers.parseEther("100"),
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
-    liquidityBps: 8000,
-  });
-  await factory
-    .connect(owner)
-    .setLaunchProtectionConfig(4n, ethers.parseEther("0.0015"), ethers.parseEther("0.0025"));
+  await factory.connect(owner).setRequireAuthorizedTrading(true);
   await factory.connect(creator).createCampaign(req(overrides) as any);
 
   const info = await factory.getCampaign(0n);
@@ -110,17 +97,16 @@ async function buyAuthorized(campaign: any, authority: any, buyer: any, amount =
 }
 
 describe("Phase 6 launch protection", function () {
-  it("blocks direct buys during the protected blocks and allows signed route buys", async () => {
-    const { campaign, owner, alice } = await createProtectedCampaign();
-    const currentBlock = await ethers.provider.getBlockNumber();
-
-    expect(await campaign.launchProtectionEndBlock()).to.be.gt(currentBlock);
+  it("blocks direct buys during the anti-sniper window and allows signed route buys", async () => {
+    const { campaign, token, owner, alice } = await createProtectedCampaign();
+    // inside the C2 anti-sniper window
+    expect(await campaign.currentTradeFeeBps()).to.be.gt(await campaign.protocolFeeBps());
     await expect(
       campaign.connect(alice).buyExactBnb(0n, { value: ethers.parseEther("0.01") })
     ).to.be.revertedWithCustomError(campaign, "AuthorizedTradingRequired");
 
     await expect(buyAuthorized(campaign, owner, alice)).to.emit(campaign, "TokensPurchased");
-    expect(await campaign.protectedBuyWei(await alice.getAddress())).to.be.gt(0n);
+    expect(await token.balanceOf(await alice.getAddress())).to.equal(TOKEN);
   });
 
   it("prevents signed route authorization replay", async () => {
@@ -203,39 +189,7 @@ describe("Phase 6 launch protection", function () {
     ).to.be.revertedWithCustomError(campaign, "BadRouteAuth");
   });
 
-  it("enforces per-buy and cumulative wallet caps so split buys cannot bypass the window", async () => {
-    const { campaign, owner, alice, bob } = await createProtectedCampaign();
-    const oversizedAmount = 2n * TOKEN;
-    const oversizedQuote = await campaign.quoteBuyExactTokens(oversizedAmount);
-    const oversizedAuth = await routeSignature(
-      owner,
-      campaign,
-      bob,
-      TRADE_AUTH_BUY_EXACT_TOKENS,
-      oversizedAmount,
-      oversizedQuote
-    );
-
-    await expect(
-      campaign.connect(bob).buyExactTokensAuthorized(
-        oversizedAmount,
-        oversizedQuote,
-        oversizedAuth.routeProfile,
-        oversizedAuth.deadline,
-        oversizedAuth.signature,
-        { value: oversizedQuote }
-      )
-    ).to.be.revertedWithCustomError(campaign, "LaunchProtectionBuyLimit");
-
-    await buyAuthorized(campaign, owner, alice);
-    await buyAuthorized(campaign, owner, alice);
-    await expect(buyAuthorized(campaign, owner, alice)).to.be.revertedWithCustomError(
-      campaign,
-      "LaunchProtectionWalletLimit"
-    );
-  });
-
-  it("keeps sells route-authorized during the protected window", async () => {
+  it("keeps sells route-authorized during the anti-sniper window", async () => {
     const { campaign, token, owner, alice } = await createProtectedCampaign();
     await buyAuthorized(campaign, owner, alice);
     await token.connect(alice).approve(await campaign.getAddress(), TOKEN);
@@ -251,19 +205,30 @@ describe("Phase 6 launch protection", function () {
     ).to.emit(campaign, "TokensSold");
   });
 
-  it("expires at the block boundary and cannot be restarted after campaigns exist", async () => {
+  it("the fee window closes by time, the launch config cannot be changed after campaigns exist, and trading stays route-authorized", async () => {
     const { campaign, factory, owner, alice } = await createProtectedCampaign();
 
     await expect(
-      factory.connect(owner).setLaunchProtectionConfig(8n, ethers.parseEther("0.01"), ethers.parseEther("0.02"))
+      factory.connect(owner).setConfig({
+        totalSupply: ethers.parseEther("1000"),
+        curveBps: 5000,
+        liquidityTokenBps: 4000,
+        basePrice: 10n ** 12n,
+        priceSlope: 10n ** 13n,
+        graduationTarget: ethers.parseEther("1"),
+      })
     ).to.be.revertedWithCustomError(factory, "FactoryLocked");
+    await expect(factory.connect(owner).setProtocolFee(100n)).to.be.revertedWithCustomError(factory, "FactoryLocked");
 
-    for (let i = 0; i < 5; i++) {
-      await ethers.provider.send("evm_mine", []);
-    }
+    const launchAt = Number(await campaign.launchAt());
+    await ethers.provider.send("evm_setNextBlockTimestamp", [launchAt + 60]);
+    await ethers.provider.send("evm_mine", []);
+    expect(await campaign.currentTradeFeeBps()).to.equal(await campaign.protocolFeeBps());
 
+    // E7(b): the unsigned entry points stay closed after the window; only a signed route trades.
     await expect(
       campaign.connect(alice).buyExactBnb(0n, { value: ethers.parseEther("0.01") })
-    ).to.emit(campaign, "TokensPurchased");
+    ).to.be.revertedWithCustomError(campaign, "AuthorizedTradingRequired");
+    await expect(buyAuthorized(campaign, owner, alice)).to.emit(campaign, "TokensPurchased");
   });
 });

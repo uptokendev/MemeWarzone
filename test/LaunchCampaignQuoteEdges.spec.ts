@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { deployCoreFixture } from "./fixtures/core";
 
 const TOKEN_UNIT = ethers.parseEther("1");
@@ -12,14 +12,13 @@ const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
   xAccount: "",
   website: "",
   extraLink: "",
-  basePrice: 0n,
-  priceSlope: 0n,
-  graduationTarget: ethers.parseEther("100000"),
+  // EVM launch generation: 0 = the fixture default ($1 = 1 native at the $1 oracle). The old $100k target is
+  // refused at create (TargetOutOfRangeAtPrice: above 95% of what the whole curve raises).
+  graduationTarget: 0n,
   firstBuyTokens: 0n,
   firstBuyMaxCost: 0n,
   feeChoice: 1,
   feeCreatorPct: 0,
-  lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
 
@@ -29,6 +28,8 @@ async function createCampaignFixture() {
   const info = await fx.factory.getCampaign(0n);
   const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
   const token = await ethers.getContractAt("LaunchToken", info.token);
+  // Past the C2 anti-sniper window: flat 2% fee, so a quote and the next block's execution agree.
+  await time.increase(61);
   return { ...fx, info, campaign, token };
 }
 
@@ -97,8 +98,14 @@ describe("LaunchCampaign quote edge behavior", function () {
     const curveSupply = await campaign.curveSupply();
     const fullCurveCost = await campaign.quoteBuyExactTokens(curveSupply);
 
-    await campaign.connect(alice).buyExactTokens(curveSupply, fullCurveCost, { value: fullCurveCost });
+    // EVM launch generation (C5): selling out marks Pending (trigger 1) and does not graduate in the buy.
+    await expect(campaign.connect(alice).buyExactTokens(curveSupply, fullCurveCost, { value: fullCurveCost })).to.emit(
+      campaign,
+      "GraduationPending"
+    );
     expect(await campaign.launched()).to.eq(false);
+    expect(await campaign.graduationPending()).to.eq(true);
+    expect(await campaign.pendingTrigger()).to.eq(1);
     expect(await campaign.sold()).to.eq(curveSupply);
 
     const quote = await campaign.quoteBuyExactBnb(ethers.parseEther("1"));
@@ -109,27 +116,15 @@ describe("LaunchCampaign quote edge behavior", function () {
   });
 
   it("quoteBuyExactBnb returns zero after all curve tokens are sold and finalized", async () => {
-    const fx = await deployCoreFixture();
-    await fx.factory.connect(fx.owner).setConfig({
-      totalSupply: ethers.parseEther("1000"),
-      curveBps: 5000,
-      liquidityTokenBps: 4000,
-      basePrice: 10n ** 12n,
-      priceSlope: 10n ** 9n,
-      graduationTarget: 1n,
-      firstBuyTokens: 0n,
-      firstBuyMaxCost: 0n,
-      feeChoice: 1,
-      feeCreatorPct: 0,
-      liquidityBps: 8000,
-    });
-    await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest({ graduationTarget: 0n }) as any);
-    const info = await fx.factory.getCampaign(0n);
-    const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
+    const fx = await createCampaignFixture();
+    const { campaign } = fx;
     const curveSupply = await campaign.curveSupply();
     const fullCurveCost = await campaign.quoteBuyExactTokens(curveSupply);
 
     await campaign.connect(fx.alice).buyExactTokens(curveSupply, fullCurveCost, { value: fullCurveCost });
+    // EVM launch generation (C5): the sold-out buy marks Pending; graduate() is the separate permissionless step.
+    expect(await campaign.graduationPending()).to.eq(true);
+    await expect(campaign.connect(fx.bob).graduate()).to.emit(campaign, "Graduated");
     expect(await campaign.launched()).to.eq(true);
 
     const quote = await campaign.quoteBuyExactBnb(ethers.parseEther("1"));

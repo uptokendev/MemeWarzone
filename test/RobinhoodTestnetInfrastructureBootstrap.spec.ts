@@ -8,6 +8,20 @@ const TOOL_ROOT = path.resolve("tools/robinhood-testnet-infra/node_modules");
 const SQRT_PRICE_1_1 = 2n ** 96n;
 const FEE = 3000;
 
+const UNISWAP_ARTIFACT_PROBE = "@uniswap/v3-core/artifacts/contracts/UniswapV3Factory.sol/UniswapV3Factory.json";
+
+/**
+ * ENV: these tests deploy the canonical Uniswap V3 bytecode from the tool's own install
+ * (tools/robinhood-testnet-infra, `npm ci` there). Without that install there is nothing to deploy;
+ * skip with the reason rather than fail on ENOENT.
+ */
+function skipWithoutUniswapArtifacts(ctx: Mocha.Context) {
+  if (!fs.existsSync(path.join(TOOL_ROOT, UNISWAP_ARTIFACT_PROBE))) {
+    console.log(`    [env] skipped: ${path.join(TOOL_ROOT, UNISWAP_ARTIFACT_PROBE)} is absent (run npm ci in tools/robinhood-testnet-infra)`);
+    ctx.skip();
+  }
+}
+
 function loadArtifact(packagePath: string): any {
   return JSON.parse(fs.readFileSync(path.join(TOOL_ROOT, packagePath), "utf8"));
 }
@@ -51,11 +65,26 @@ async function loadCurrentStageAuthority() {
   );
 }
 
-async function deployStack() {
+/** The in-repo contracts only (WETH, oracle, token): no upstream Uniswap artifacts needed. */
+async function deployLocalContracts() {
   const [deployer, updater, other] = await ethers.getSigners();
   const WETH = await ethers.getContractFactory("RobinhoodTestnetWETH9", deployer);
   const weth = await WETH.deploy(true);
   await weth.waitForDeployment();
+
+  const Oracle = await ethers.getContractFactory("RobinhoodTestnetEthUsdOracle", deployer);
+  const oracle = await Oracle.deploy(await updater.getAddress(), 2500n * 10n ** 8n, true);
+  await oracle.waitForDeployment();
+
+  const Token = await ethers.getContractFactory("MockERC20", deployer);
+  const token = await Token.deploy("Robinhood Test Token", "RTT", ethers.parseEther("1000000"), await deployer.getAddress());
+  await token.waitForDeployment();
+
+  return { deployer, updater, other, weth, oracle, token };
+}
+
+async function deployStack() {
+  const { deployer, updater, other, weth, oracle, token } = await deployLocalContracts();
 
   const factoryArtifact = loadArtifact("@uniswap/v3-core/artifacts/contracts/UniswapV3Factory.sol/UniswapV3Factory.json");
   const nftDescriptorArtifact = loadArtifact("@uniswap/v3-periphery/artifacts/contracts/libraries/NFTDescriptor.sol/NFTDescriptor.json");
@@ -68,14 +97,6 @@ async function deployStack() {
   const descriptor = await deployArtifact(descriptorArtifact, [await weth.getAddress(), ethers.encodeBytes32String("ETH")], { NFTDescriptor: await nftDescriptor.getAddress() });
   const npm = await deployArtifact(npmArtifact, [await v3Factory.getAddress(), await weth.getAddress(), await descriptor.getAddress()]);
   const router = await deployArtifact(routerArtifact, [ethers.ZeroAddress, await v3Factory.getAddress(), await npm.getAddress(), await weth.getAddress()]);
-
-  const Oracle = await ethers.getContractFactory("RobinhoodTestnetEthUsdOracle", deployer);
-  const oracle = await Oracle.deploy(await updater.getAddress(), 2500n * 10n ** 8n, true);
-  await oracle.waitForDeployment();
-
-  const Token = await ethers.getContractFactory("MockERC20", deployer);
-  const token = await Token.deploy("Robinhood Test Token", "RTT", ethers.parseEther("1000000"), await deployer.getAddress());
-  await token.waitForDeployment();
 
   return { deployer, updater, other, weth, v3Factory, npm, router, oracle, token };
 }
@@ -92,7 +113,7 @@ describe("Robinhood 46630 testnet infrastructure bootstrap", function () {
   });
 
   it("WETH performs deposit, transfer and withdraw", async function () {
-    const { deployer, other, weth } = await deployStack();
+    const { deployer, other, weth } = await deployLocalContracts();
     await weth.deposit({ value: ethers.parseEther("2") });
     expect(await weth.balanceOf(await deployer.getAddress())).to.equal(ethers.parseEther("2"));
     await weth.transfer(await other.getAddress(), ethers.parseEther("0.5"));
@@ -102,6 +123,7 @@ describe("Robinhood 46630 testnet infrastructure bootstrap", function () {
   });
 
   it("deploys canonical V3 factory/NPM/SwapRouter02 with exact bindings and fee 3000", async function () {
+    skipWithoutUniswapArtifacts(this);
     const { weth, v3Factory, npm, router } = await deployStack();
     expect(await v3Factory.feeAmountTickSpacing(FEE)).to.equal(60);
     expect(await npm.factory()).to.equal(await v3Factory.getAddress());
@@ -116,6 +138,7 @@ describe("Robinhood 46630 testnet infrastructure bootstrap", function () {
   });
 
   it("creates a real V3 pool, mints an NFT position, and executes no-deadline exactInputSingle", async function () {
+    skipWithoutUniswapArtifacts(this);
     const { deployer, weth, v3Factory, npm, router, token } = await deployStack();
     const wethAddress = await weth.getAddress();
     const tokenAddress = await token.getAddress();
@@ -161,7 +184,7 @@ describe("Robinhood 46630 testnet infrastructure bootstrap", function () {
   });
 
   it("oracle enforces updater authority and valid monotonically increasing positive rounds", async function () {
-    const { updater, other, oracle } = await deployStack();
+    const { updater, other, oracle } = await deployLocalContracts();
     const first = await oracle.latestRoundData();
     expect(first[0]).to.equal(1);
     expect(first[1]).to.be.greaterThan(0);
@@ -191,6 +214,7 @@ describe("Robinhood 46630 testnet infrastructure bootstrap", function () {
   });
 
   it("locally deployed identities satisfy the current-stage infrastructure qualification surfaces", async function () {
+    skipWithoutUniswapArtifacts(this);
     const { weth, v3Factory, npm, router, oracle } = await deployStack();
     const current = await loadCurrentStageAuthority();
     const infra = await loadAuthority();
