@@ -114,8 +114,8 @@ describe("audit5: privileged roles over user funds", function () {
     await expect(v2.setCampaignChoice(await f.campaign.getAddress(), f.creator.address, 1, 0)).to.be.revertedWithCustomError(v2, "OnlyFactory");
   });
 
-  it("EXPLOIT (single EOA key): the vault payout operator proposes a holder root that pays itself; it executes after 24 h unless the Safe vetoes", async () => {
-    const [safe, routerEoa, operator, creator] = await ethers.getSigners();
+  it("HOLDS (was EXPLOIT, single EOA key): the vault payout operator proposes a holder root that pays itself; it never executes because the Safe approves roots, not ids", async () => {
+    const [safe, routerEoa, operator, creator, holder] = await ethers.getSigners();
     const wbnb = await (await ethers.getContractFactory("MockWBNB")).deploy();
     const topazFactory = await (await ethers.getContractFactory("MockTopazFactory")).deploy();
     const lockerStandIn = await (await ethers.getContractFactory("AcceptingReceiver")).deploy();
@@ -128,8 +128,8 @@ describe("audit5: privileged roles over user funds", function () {
     // A week of holder-share trade fees accrues.
     await vault.connect(routerEoa).accrueTradeFee(campaign, { value: E(9) });
 
-    // Safe batch A, exactly as deploy-evm-treasury-router-v4.ts builds it: distributor operator = vault,
-    // operator + caps, and 12 weeks of batch ids authorized in advance by id and max amount only (no root).
+    // Wiring as deploy-evm-treasury-router-v4.ts batch A (no batch pre-authorized any more), plus the worst case
+    // for this attack: the distributor authorization for the week's id and max already exists.
     const distributor = await (await ethers.getContractFactory("RewardDistributor")).deploy(safe.address);
     await distributor.setBatchOperator(await vault.getAddress());
     await vault.setHolderDistributorOnce(await distributor.getAddress());
@@ -144,13 +144,29 @@ describe("audit5: privileged roles over user funds", function () {
     const leaf = ethers.keccak256(ethers.concat([ethers.keccak256(coder.encode(["address", "uint256"], [operator.address, amount]))]));
     await vault.connect(operator).proposeHolderBatch(batchId, leaf, 0, [campaign], [amount]);
     await increase(86400);
-    await vault.connect(operator).executeHolderBatch(batchId);
-    const before = await ethers.provider.getBalance(operator.address);
-    const tx = await distributor.connect(operator).claim(batchId, amount, []);
-    const rc = await tx.wait();
-    const gas = rc!.gasUsed * rc!.gasPrice;
-    expect((await ethers.provider.getBalance(operator.address)) + gas - before).to.eq(amount);
-    expect(await vault.holderBalance(campaign)).to.eq(0n);
+    // Fix F5: the veto window passing is not enough; the Safe must approve the exact root.
+    await expect(vault.connect(operator).executeHolderBatch(batchId)).to.be.revertedWithCustomError(vault, "NotApproved");
+    // The Safe checks the root against the published holder list and does not approve it. The operator cannot
+    // swap in another root either: a second proposal with the same id is refused, and approval is root-bound.
+    const honest = ethers.keccak256(ethers.concat([ethers.keccak256(coder.encode(["address", "uint256"], [holder.address, amount]))]));
+    await expect(vault.connect(operator).proposeHolderBatch(batchId, honest, 0, [campaign], [amount])).to.be.revertedWithCustomError(vault, "AlreadySet");
+    await expect(vault.approveHolderBatch(batchId, honest, amount)).to.be.revertedWithCustomError(vault, "BadBatch");
+    await expect(vault.connect(operator).approveHolderBatch(batchId, leaf, amount)).to.be.revertedWithCustomError(vault, "OnlyAdmin");
+    await vault.vetoHolderBatch(batchId); // the veto is kept
+    expect(await vault.holderBalance(campaign)).to.eq(amount);
+    await expect(distributor.connect(operator).claim(batchId, amount, [])).to.be.reverted; // no batch was funded
+
+    // The honest path: operator proposes the real root under a fresh id, the Safe approves root + total.
+    const id2 = ethers.keccak256(ethers.toUtf8Bytes("mwz-weekly-airdrop:56:2026-10-05:airdrop_holders:2"));
+    await vault.connect(operator).proposeHolderBatch(id2, honest, 0, [campaign], [amount]);
+    await vault.approveHolderBatch(id2, honest, amount);
+    const t2 = await now();
+    await distributor.authorizeBatch(id2, amount, t2, t2 + 30 * 86400);
+    await increase(86400);
+    await vault.connect(operator).executeHolderBatch(id2);
+    const before = await ethers.provider.getBalance(holder.address);
+    const rc = await (await distributor.connect(holder).claim(id2, amount, [])).wait();
+    expect((await ethers.provider.getBalance(holder.address)) + rc!.gasUsed * rc!.gasPrice - before).to.eq(amount);
   });
 
   it("HOLDS: the vault admin cannot pull liabilities (rescue is excess-only); only the operator path moves holder money", async () => {

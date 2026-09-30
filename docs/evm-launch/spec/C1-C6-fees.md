@@ -144,8 +144,10 @@ and the Claim Center reads both distributors.
 - `proposeHolderBatch(batchId, root, claimDeadline, campaigns[], amounts[])`, onlyOperator. It debits
   each `holderBalance`, enforces `maxHolderBatchPerWeek` and stores the batch with
   `executableAt = now + holderBatchDelay`. The leaf file is published at proposal time.
+- `approveHolderBatch(batchId, root, total)`, onlyAdmin (Safe), added by audit fix F5 below: the Safe
+  approves the exact root and total the operator proposed; without it nothing executes.
 - `vetoHolderBatch(batchId)`, onlyAdmin, allowed until executed. It credits every amount back.
-- `executeHolderBatch(batchId)`, onlyOperator, allowed after `executableAt`. It sets executed and then
+- `executeHolderBatch(batchId)`, onlyOperator, allowed after `executableAt` and only once approved. It sets executed and then
   calls `holderDistributor.createBatch{value: total}`, which enforces the Safe's
   `authorizeBatch` max and publish window (`RewardDistributor.sol:103-108`).
 - Unclaimed money after the deadline goes back through the existing atomic recovery batch into the
@@ -419,6 +421,29 @@ on a 2,500 STK conversion), and the operator could repeat it in one block. Four 
 - Griefing: the operator can only be slowed (interval, fail-closed guard); nobody else can call these.
   A pool with too few observation slots blocks conversions until someone grows it (no funds at risk).
 
+**F5 (MEDIUM, audit 5 M1): the Safe approves holder payout content, not just an id and a max.** Batch A
+pre-authorized 12 weeks of holder batch ids on the distributor by id and max only, so the payout operator
+(an EOA) could propose a root that paid itself up to the weekly cap and it executed after 24 h unless the
+Safe noticed and vetoed. Fix in `CreatorRewardsVaultV2` (the distributor is the unchanged audited
+`RewardDistributor`): `HolderBatch.approved` (packs into the status slot), `approveHolderBatch(batchId,
+root, total)` onlyAdmin, which reverts `BadBatch` unless the batch is proposed (status 1) with exactly that
+root and total, and `executeHolderBatch` reverts `NotApproved` until approved. The operator still proposes
+(and the vault still debits balances and enforces the weekly cap at proposal); it cannot change a proposed
+root (ids are single-use, `AlreadySet`); the veto stays available until execution, approved or not.
+Deploy script: batch A no longer pre-authorizes any week. New `holderWeekCalls(d, {batchId, root, total},
+caps, now)` builds the weekly Safe batch H: `vault.approveHolderBatch(id, root, total)` +
+`distributor.authorizeBatch(id, total, now, now + 6 days)`, refusing a total above
+`EVMGEN_HOLDER_BATCH_AUTH_MAX`. Weekly flow: operator proposes and publishes the leaf file -> Safe signers
+recompute the root from that file and check the total -> Safe executes batch H -> after 24 h the operator
+executes -> holders claim on the holder distributor.
+- Reentrancy: `approveHolderBatch` makes no external call. CEI unchanged in `executeHolderBatch` (status
+  written before `createBatch`). Reachable: approve only in status 1; approving twice is harmless; a vetoed
+  or executed batch cannot be approved. Overflow: `total` compared as uint256 against the stored uint128.
+- Griefing: a compromised operator can propose junk that the Safe simply does not approve (the amounts stay
+  debited until the Safe vetoes, which returns them; see F7 for the weekly cap). A compromised Safe was
+  already able to veto; it still cannot redirect holder money except by approving a bad root, which is now
+  an explicit signed act rather than silence.
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |
@@ -429,7 +454,7 @@ on a 2,500 STK conversion), and the operator could repeat it in one block. Four 
 | `accrueTradeFee` | **no** guard, on purpose: the buyback's own fee re-enters it | no external call | choice set | checked add | never pausable. A revert here would revert every trade |
 | `claimCreatorFees` / `claimCreatorQuote` | `nonReentrant` | zero, then send | any | none | a creator that rejects native blocks only itself (tested: rejecting and re-entering creators) |
 | `syncLpFees` | `nonReentrant` | `lpSynced` written before `withdraw` | registered non-Keep pool, recipient = vault, key = campaign | cumulative - synced >= 0 | idempotent; spoofed pool fails the locker's registration fields |
-| holder convert/propose/execute/veto | `nonReentrant` | debit, then store, then `createBatch` | Proposed -> Executed or Vetoed | caps checked; total < 2^128 | operator key: 24 h veto + weekly cap + the distributor's Safe `authorizeBatch` max and window |
+| holder convert/propose/approve/execute/veto | `nonReentrant` (approve: admin, no external call) | debit, then store, then `createBatch` | Proposed -> (Approved) -> Executed, or Vetoed | caps checked; total < 2^128 | operator key: the Safe approves the exact root + total (F5), 24 h veto, weekly cap, the distributor's `authorizeBatch` max and window |
 | `buybackCurve` | `nonReentrant` | debit, call, credit refund from the returned `spent`, post-check | pre-grad, fee flat 2%, <= 95% progress | checked | sandwich bounded by 0.5% impact vs ~4% curve round trip |
 | `buybackPool` / `convertBuybackNativeToQuote` | `nonReentrant` | wrap, swap (bounded, TWAP), unwrap leftover, debit `spent` | pool bound by sync | checked | bounded impact + TWAP + interval + native per-tx and weekly caps |
 | `pullLockerPending` / `attributeExcessQuote` | `nonReentrant` | pull, then credit only `balance - quoteLiabilities` | any / admin | checked | cannot move another campaign's balance |

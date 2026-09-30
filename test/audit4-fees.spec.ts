@@ -212,6 +212,8 @@ describe("audit4: holder batches", function () {
     await campaign.connect(f.trader).payFee(1, { value: 100n * E18 });
     const id = ethers.id("w1");
     await f.vault.connect(f.operator).proposeHolderBatch(id, ethers.id("root"), 0, [c], [5n * E18]);
+    await expect(f.vault.connect(f.operator).executeHolderBatch(id)).to.be.revertedWithCustomError(f.vault, "NotApproved");
+    await f.vault.approveHolderBatch(id, ethers.id("root"), 5n * E18); // fix F5: the Safe approves the root
     await expect(f.vault.connect(f.operator).executeHolderBatch(id)).to.be.revertedWithCustomError(f.vault, "TooSoon");
     await increase(DAY);
     // No Safe authorization on the distributor: reverts, money stays in the vault and is vetoable.

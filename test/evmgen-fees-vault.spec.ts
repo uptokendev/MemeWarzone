@@ -294,6 +294,12 @@ describe("evmgen fees: CreatorRewardsVaultV2 holders batches", function () {
 
     await f.vault.connect(f.operator).proposeHolderBatch(id1, root, 0, [ca, cb], [va, hb]);
     expect(await f.vault.holderBalance(ca)).to.equal(0n);
+    // Audit fix F5: nothing executes until the Safe approves this exact root and total.
+    await expect(f.vault.connect(f.operator).executeHolderBatch(id1)).to.be.revertedWithCustomError(f.vault, "NotApproved");
+    await expect(f.vault.connect(f.operator).approveHolderBatch(id1, root, va + hb)).to.be.revertedWithCustomError(f.vault, "OnlyAdmin");
+    await expect(f.vault.approveHolderBatch(id1, ethers.keccak256("0x09"), va + hb)).to.be.revertedWithCustomError(f.vault, "BadBatch");
+    await expect(f.vault.approveHolderBatch(id1, root, va + hb - 1n)).to.be.revertedWithCustomError(f.vault, "BadBatch");
+    await f.vault.approveHolderBatch(id1, root, va + hb);
     await expect(f.vault.connect(f.operator).executeHolderBatch(id1)).to.be.revertedWithCustomError(f.vault, "TooSoon");
     await expect(f.vault.connect(f.operator).vetoHolderBatch(id1)).to.be.revertedWithCustomError(f.vault, "OnlyAdmin");
     await f.vault.vetoHolderBatch(id1);
@@ -303,6 +309,7 @@ describe("evmgen fees: CreatorRewardsVaultV2 holders batches", function () {
 
     const id2 = ethers.id("holders-week-1b");
     await f.vault.connect(f.operator).proposeHolderBatch(id2, root, 0, [ca, cb], [va, hb]);
+    await f.vault.approveHolderBatch(id2, root, va + hb);
     await increase(DAY);
     // Not authorized by the Safe on the distributor: execution reverts atomically.
     await expect(f.vault.connect(f.operator).executeHolderBatch(id2)).to.be.revertedWithCustomError(f.distributor, "BatchNotAuthorized");
@@ -324,6 +331,7 @@ describe("evmgen fees: CreatorRewardsVaultV2 holders batches", function () {
     const root = ethers.keccak256("0x02");
     await expect(f.vault.connect(f.operator).proposeHolderBatch(ethers.id("x"), root, 0, [ca], [va])).to.be.revertedWithCustomError(f.vault, "CapExceeded");
     await f.vault.connect(f.operator).proposeHolderBatch(ethers.id("x"), root, 0, [ca], [10n ** 15n]);
+    await f.vault.approveHolderBatch(ethers.id("x"), root, 10n ** 15n);
     await increase(DAY);
     const now = (await ethers.provider.getBlock("latest"))!.timestamp;
     await f.distributor.authorizeBatch(ethers.id("x"), 10n ** 15n - 1n, now - 10, now + DAY);

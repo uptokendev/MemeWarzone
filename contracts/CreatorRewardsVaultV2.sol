@@ -39,15 +39,15 @@ interface IEvmGenLaunchTokenTrading {
 ///
 /// Where value can leave this contract (complete list):
 /// - native to cfg.creator (claimCreatorFees), quote to cfg.creator (claimCreatorQuote);
-/// - native to holderDistributor, only through a proposed batch that survived the admin's veto window and the
-///   distributor's own Safe authorization (max amount + publish window);
+/// - native to holderDistributor, only through a proposed batch whose exact merkle root and total the admin
+///   (Safe) approved, after the veto window, within the distributor's own Safe authorization (max + window);
 /// - native to a factory campaign (buybackCurve, tokens come back to this vault and end at DEAD);
 /// - wrapped native / quote into the coin's locked pool or the admin-selected canonical quote route pool, with
 ///   the MEME output hard-coded to DEAD and the native/quote output hard-coded to this vault;
 /// - MEME to DEAD (flushBuybackTokens);
 /// - admin rescue of the excess above every liability.
 /// A compromised operator can therefore pick bad moments within the caps, or propose a bad holder root that
-/// the admin can veto for `holderBatchDelay`; it cannot send value to itself.
+/// never executes unless the admin approves that root; it cannot send value to itself.
 contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -73,6 +73,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         uint64 executableAt;
         uint64 claimDeadline;
         uint8 status; // 1 proposed, 2 executed, 3 vetoed
+        bool approved; // the admin (Safe) approved this exact root and total (approveHolderBatch)
     }
 
     uint8 internal constant DEX_TOPAZ_V2 = 1;
@@ -157,6 +158,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     event QuoteConverted(address indexed campaign, bool holders, uint256 quoteSpent, uint256 nativeOut);
     event BuybackNativeConverted(address indexed campaign, uint256 nativeSpent, uint256 quoteOut);
     event HolderBatchProposed(bytes32 indexed batchId, bytes32 root, uint256 total, uint64 executableAt, uint64 claimDeadline);
+    event HolderBatchApproved(bytes32 indexed batchId, bytes32 root, uint256 total);
     event HolderBatchVetoed(bytes32 indexed batchId, uint256 total);
     event HolderBatchExecuted(bytes32 indexed batchId, uint256 total);
     event BuybackCurve(address indexed campaign, uint256 nativeSpent, uint256 tokensHeld);
@@ -183,6 +185,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     error CapExceeded();
     error TooSoon();
     error BadBatch();
+    error NotApproved();
     error CurveState();
     error ImpactTooHigh();
     error NothingSwapped();
@@ -411,10 +414,20 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         if (holderProposedInWeek + total > maxHolderBatchPerWeek || total > type(uint128).max) revert CapExceeded();
         holderProposedInWeek += total;
         uint64 executableAt = uint64(block.timestamp + holderBatchDelay);
-        holderBatches[batchId] = HolderBatch({root: root, total: uint128(total), executableAt: executableAt, claimDeadline: claimDeadline, status: 1});
+        holderBatches[batchId] = HolderBatch({root: root, total: uint128(total), executableAt: executableAt, claimDeadline: claimDeadline, status: 1, approved: false});
         batchCampaigns[batchId] = campaigns;
         batchAmounts[batchId] = amounts;
         emit HolderBatchProposed(batchId, root, total, executableAt, claimDeadline);
+    }
+
+    /// @notice Admin (Safe) approval of a proposed batch's payout content: the exact merkle root and total the
+    /// operator proposed. Only an approved batch executes, so the operator (an EOA) cannot pay a root of its
+    /// own choosing; it can still only propose, and the admin can still veto until execution (audit 5 M1).
+    function approveHolderBatch(bytes32 batchId, bytes32 root, uint256 total) external onlyAdmin {
+        HolderBatch storage b = holderBatches[batchId];
+        if (b.status != 1 || b.root != root || b.total != total) revert BadBatch();
+        b.approved = true;
+        emit HolderBatchApproved(batchId, root, total);
     }
 
     /// @notice Admin veto until executed: every amount goes back to its campaign's holder balance.
@@ -431,6 +444,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     function executeHolderBatch(bytes32 batchId) external onlyOperator nonReentrant {
         HolderBatch storage b = holderBatches[batchId];
         if (b.status != 1) revert BadBatch();
+        if (!b.approved) revert NotApproved();
         if (block.timestamp < b.executableAt) revert TooSoon();
         b.status = 2;
         uint256 total = b.total;
