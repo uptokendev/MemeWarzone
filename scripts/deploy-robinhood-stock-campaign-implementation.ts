@@ -25,13 +25,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
+import { rehearsalPath } from "./lib/forkRehearsal";
 
 import { buildBatch } from "./make-safe-batch";
 
 export const ROBINHOOD_MAINNET_CHAIN_ID = 4663n;
 export const RECORD_PATH = path.resolve(__dirname, "..", "deployments", "robinhood", "mainnet.stock-campaign-implementation.json");
 export const BATCH_PATH = path.resolve(__dirname, "..", "deployments", "robinhood", "mainnet.R5-stock-campaign-implementation.safe-batch.json");
-const GENERATION_RECORD_PATH = path.resolve(__dirname, "..", "deployments", "robinhood", "mainnet.quote-generation.json");
+const RECORD_PATH_MAINNET = RECORD_PATH;
+const BATCH_PATH_MAINNET = BATCH_PATH;
+const GENERATION_RECORD_PATH_MAINNET = path.resolve(__dirname, "..", "deployments", "robinhood", "mainnet.quote-generation.json");
 
 const FACTORY_ABI = [
   "function liquidityKind() view returns (uint8)",
@@ -109,7 +112,10 @@ export function stockImplementationBatch(chainId: number, factoryAddress: string
   );
 }
 
-async function main() {
+export async function main() {
+  const RECORD_PATH = rehearsalPath(RECORD_PATH_MAINNET);
+  const BATCH_PATH = rehearsalPath(BATCH_PATH_MAINNET);
+  const GENERATION_RECORD_PATH = rehearsalPath(GENERATION_RECORD_PATH_MAINNET);
   const chainId = (await ethers.provider.getNetwork()).chainId;
   if (chainId !== ROBINHOOD_MAINNET_CHAIN_ID) {
     throw new Error(`this script is for Robinhood mainnet (4663); ${network.name} reports chain ${chainId}`);
@@ -147,6 +153,7 @@ async function main() {
   const implementation = await deployStockCampaignImplementation();
   const block = await ethers.provider.getBlockNumber();
   const batch = stockImplementationBatch(Number(chainId), readiness.factory, implementation);
+  fs.mkdirSync(path.dirname(BATCH_PATH), { recursive: true });
   fs.writeFileSync(BATCH_PATH, `${JSON.stringify(batch, null, 2)}\n`);
   const record = {
     network: network.name,
@@ -168,6 +175,7 @@ async function main() {
   console.log("[stock-impl] ORDER: execute this batch BEFORE mainnet.H-open.safe-batch.json. The first campaign locks the setter forever.");
   console.log("[stock-impl] then: node scripts/sync-robinhood-stock-registry.mjs --rescan-only   (in the API container)");
   console.log(`[stock-impl] verification manifest entry: ${JSON.stringify(record.verification)}`);
+  return { implementation, batchFile: BATCH_PATH, recordFile: RECORD_PATH };
 }
 
 if (require.main === module) {
