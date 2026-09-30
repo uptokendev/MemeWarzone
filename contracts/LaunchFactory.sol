@@ -74,7 +74,6 @@ contract LaunchFactory is Ownable {
     error SlopeZero();
     error TargetZero();
     error LiquidityBps();
-    error LaunchProtectionBounds();
     error NotLive();
     error AlreadyLive();
     error FactoryLocked();
@@ -175,9 +174,6 @@ contract LaunchFactory is Ownable {
     uint256 public constant MAX_BASE_PRICE = 1_000 ether;
     uint256 public constant MAX_PRICE_SLOPE = 1e36;
     uint256 public constant MAX_GRADUATION_TARGET = 1_000_000 ether;
-    uint256 public constant MAX_LAUNCH_PROTECTION_BLOCKS = 28_800;
-    uint256 public constant MAX_LAUNCH_PROTECTION_BUY_WEI = 1_000 ether;
-    uint256 public constant MAX_LAUNCH_PROTECTION_WALLET_WEI = 1_000 ether;
 
     LaunchConfig public config;
     address public feeRecipient;
@@ -192,9 +188,6 @@ contract LaunchFactory is Ownable {
     bool public requireAuthorizedTrading;
     bool public requireRouteAuthorization;
     bool public securityDefaultsLocked;
-    uint256 public launchProtectionBlocks;
-    uint256 public launchProtectionMaxBuyWei;
-    uint256 public launchProtectionMaxWalletWei;
 
     /// @dev Must stay equal to feeRecipient. LaunchCampaign only takes the
     /// unified routing path when feeRecipient == leagueReceiver, and it creates
@@ -256,7 +249,6 @@ contract LaunchFactory is Ownable {
     event ProtocolFeeUpdated(uint256 newFeeBps);
     event RouteProfilesUpdated(uint8 tradeRouteProfile, uint8 finalizeRouteProfile);
     event RouteAuthorityUpdated(address indexed newAuthority);
-    event LaunchProtectionConfigUpdated(uint256 blocks_, uint256 maxBuyWei, uint256 maxWalletWei);
     event LiveEnabled(uint64 at);
     event GlobalPauseUpdated(bool paused);
     event CreatePauseUpdated(bool paused);
@@ -469,8 +461,6 @@ contract LaunchFactory is Ownable {
             graduationOracle: graduationOracle,
             liquidityBps: config.liquidityBps,
             protocolFeeBps: protocolFeeBps,
-            leagueFeeBps: LEAGUE_FEE_BPS,
-            leagueReceiver: leagueReceiver,
             router: router,
             lpReceiver: lockedLpReceiver,
             feeRecipient: feeRecipient,
@@ -481,8 +471,7 @@ contract LaunchFactory is Ownable {
             creatorBuyCapWei: creatorBuyCapWei,
             requireAuthorizedTrading: requireAuthorizedTrading,
             tradeRouteProfile: campaignTradeRouteProfile,
-            finalizeRouteProfile: campaignFinalizeRouteProfile,
-            strictFeeRouting: true
+            finalizeRouteProfile: campaignFinalizeRouteProfile
         });
 
         address clone = Clones.clone(implementation);
@@ -636,18 +625,6 @@ contract LaunchFactory is Ownable {
     function setRouteAuthority(address newAuthority) external onlyOwner {
         routeAuthority = newAuthority;
         emit RouteAuthorityUpdated(newAuthority);
-    }
-
-    function setLaunchProtectionConfig(uint256 blocks_, uint256 maxBuyWei, uint256 maxWalletWei) external onlyOwner whenMutable {
-        _validateLaunchProtectionConfig(blocks_, maxBuyWei, maxWalletWei);
-        launchProtectionBlocks = blocks_;
-        launchProtectionMaxBuyWei = maxBuyWei;
-        launchProtectionMaxWalletWei = maxWalletWei;
-        emit LaunchProtectionConfigUpdated(blocks_, maxBuyWei, maxWalletWei);
-    }
-
-    function launchProtectionConfig() external view returns (uint256 blocks_, uint256 maxBuyWei, uint256 maxWalletWei) {
-        return (launchProtectionBlocks, launchProtectionMaxBuyWei, launchProtectionMaxWalletWei);
     }
 
     function setRegistries(address newCreatorRegistry, address newRiskRegistry) external onlyOwner {
@@ -910,11 +887,5 @@ contract LaunchFactory is Ownable {
         if (newConfig.graduationTarget == 0) revert TargetZero();
         if (newConfig.graduationTarget > MAX_GRADUATION_TARGET) revert ParamTooHigh();
         if (newConfig.liquidityBps > MAX_BPS) revert LiquidityBps();
-    }
-
-    function _validateLaunchProtectionConfig(uint256 blocks_, uint256 maxBuyWei, uint256 maxWalletWei) internal pure {
-        if (blocks_ > MAX_LAUNCH_PROTECTION_BLOCKS) revert LaunchProtectionBounds();
-        if (maxBuyWei > MAX_LAUNCH_PROTECTION_BUY_WEI) revert LaunchProtectionBounds();
-        if (maxWalletWei > MAX_LAUNCH_PROTECTION_WALLET_WEI) revert LaunchProtectionBounds();
     }
 }

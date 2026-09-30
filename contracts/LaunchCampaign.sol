@@ -16,7 +16,6 @@ import {ITopazV2Factory} from "./interfaces/ITopazV2Factory.sol";
 interface IPhase1TreasuryRouterV3 {
     function routeTrade(uint8 profile) external payable;
     function routeFinalize(uint8 profile) external payable;
-    function route(uint8 kind, uint8 profile) external payable;
 }
 
 interface IRouteAuthoritySource {
@@ -33,10 +32,6 @@ interface ILaunchFactoryGraduationNotify {
 
 interface IGraduationOracle {
     function nativeTargetForUsd(uint256 usdAmount) external view returns (uint256);
-}
-
-interface ILaunchProtectionConfigSource {
-    function launchProtectionConfig() external view returns (uint256 blocks_, uint256 maxBuyWei, uint256 maxWalletWei);
 }
 
 contract LaunchCampaign is ReentrancyGuard, Ownable {
@@ -56,8 +51,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         address graduationOracle;
         uint256 liquidityBps;
         uint256 protocolFeeBps;
-        uint256 leagueFeeBps;
-        address leagueReceiver;
         address router;
         address lpReceiver;
         address feeRecipient;
@@ -69,7 +62,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         bool requireAuthorizedTrading;
         uint8 tradeRouteProfile;
         uint8 finalizeRouteProfile;
-        bool strictFeeRouting;
     }
 
     struct ScheduleParams {
@@ -115,12 +107,9 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     IGraduationOracle public graduationOracle;
     address public factory;
     address public feeRecipient;
-    address public leagueReceiver;
-    uint256 public leagueFeeBps;
     address public lpReceiver;
     uint8 public tradeRouteProfile;
     uint8 public finalizeRouteProfile;
-    bool public strictFeeRouting;
 
     uint256 public basePrice;
     uint256 public priceSlope;
@@ -155,10 +144,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     bool public sellPaused;
     bool public graduationPaused;
     bool public requireAuthorizedTrading;
-    uint256 public launchProtectionEndBlock;
-    uint256 public launchProtectionBlocksPending;
-    uint256 public launchProtectionMaxBuyWei;
-    uint256 public launchProtectionMaxWalletWei;
     uint64 public launchAt;
 
     modifier onlyFactory() {
@@ -170,15 +155,10 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 public totalSellVolumeWei;
     uint256 public buyersCount;
     mapping(address => bool) public hasBought;
-    mapping(address => uint256) public protectedBuyWei;
     mapping(bytes32 => bool) public usedRouteAuthorizations;
-    mapping(address => uint256) public pendingNative;
-    uint256 public pendingNativeTotal;
 
     event TokensPurchased(address indexed buyer, uint256 amountOut, uint256 cost);
     event TokensSold(address indexed seller, uint256 amountIn, uint256 payout);
-    event NativeEscrowed(address indexed beneficiary, uint256 amount);
-    event NativeClaimed(address indexed beneficiary, uint256 amount);
     event CampaignPauseStateUpdated(bool paused, bool buyPaused, bool sellPaused, bool graduationPaused);
     event RequireAuthorizedTradingUpdated(bool required);
     event StockGraduationConfigured(address indexed quoteToken, address indexed adapter);
@@ -220,13 +200,10 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error CreatorZero();
     error InvalidLiquidityBps();
     error InvalidProtocolBps();
-    error LeagueFeeTooHigh();
-    error LeagueReceiverZero();
     error LogoUriRequired();
     error InvalidTradeRouteProfile();
     error InvalidFinalizeRouteProfile();
     error LiquidityTokenSupplyZero();
-    error NoPendingNative();
     error ClaimFailed();
     error CampaignPaused();
     error BuysPaused();
@@ -239,8 +216,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error CreatorBuyLocked();
     error CreatorBuyCapExceeded();
     error AuthorizedTradingRequired();
-    error LaunchProtectionBuyLimit();
-    error LaunchProtectionWalletLimit();
     error RouteAuthExpired();
     error RouteAuthUnavailable();
     error BadRouteAuth();
@@ -260,7 +235,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error ExceedsSold();
     error Slippage();
     error InsufficientValue();
-    error FeeRoutingFailed();
     error GraduationPending();
     error StockGraduationConfigLocked();
     error StockGraduationConfigInvalid();
@@ -293,8 +267,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         if (params.creator == address(0)) revert CreatorZero();
         if (params.liquidityBps > MAX_BPS) revert InvalidLiquidityBps();
         if (params.protocolFeeBps > MAX_BPS) revert InvalidProtocolBps();
-        if (params.leagueFeeBps > params.protocolFeeBps) revert LeagueFeeTooHigh();
-        if (params.leagueReceiver == address(0)) revert LeagueReceiverZero();
         if (bytes(params.logoURI).length == 0) revert LogoUriRequired();
         if (!_isValidRouteProfile(params.tradeRouteProfile)) revert InvalidTradeRouteProfile();
         if (!_isValidRouteProfile(params.finalizeRouteProfile)) revert InvalidFinalizeRouteProfile();
@@ -309,13 +281,10 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         protocolFeeBps = params.protocolFeeBps;
         factory = params.factory;
         feeRecipient = params.feeRecipient;
-        leagueReceiver = params.leagueReceiver;
-        leagueFeeBps = params.leagueFeeBps;
         lpReceiver = params.lpReceiver == address(0) ? params.creator : params.lpReceiver;
         router = ITopazRouter02(params.router);
         tradeRouteProfile = params.tradeRouteProfile;
         finalizeRouteProfile = params.finalizeRouteProfile;
-        strictFeeRouting = params.strictFeeRouting;
         creator = params.creator;
         riskRegistry = params.riskRegistry;
         creatorBuyLockUntil = params.creatorBuyLockUntil;
@@ -324,8 +293,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         launchAt = scheduledLaunchAt == 0 || uint256(scheduledLaunchAt) < block.timestamp
             ? uint64(block.timestamp)
             : scheduledLaunchAt;
-
-        _loadLaunchProtection(params.factory);
 
         totalSupply = params.totalSupply;
         curveSupply = (params.totalSupply * params.curveBps) / MAX_BPS;
@@ -491,20 +458,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         return _sellExactTokens(msg.sender, amountIn, minPayout, true, routeProfile);
     }
 
-    function claimPendingNative() external nonReentrant returns (uint256 amount) {
-        amount = pendingNative[msg.sender];
-        if (amount == 0) revert NoPendingNative();
-        pendingNative[msg.sender] = 0;
-        pendingNativeTotal -= amount;
-        (bool ok, ) = payable(msg.sender).call{value: amount}("");
-        if (!ok) {
-            pendingNative[msg.sender] = amount;
-            pendingNativeTotal += amount;
-            revert ClaimFailed();
-        }
-        emit NativeClaimed(msg.sender, amount);
-    }
-
     function excessNativeBalance() public view returns (uint256) {
         if (!launched) return 0;
         return _availableNativeBalance();
@@ -614,16 +567,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         if (buyPaused) revert BuysPaused();
         if (graduationPending) revert GraduationPending();
         _requireTradingOpen();
-        _activateLaunchProtectionIfNeeded();
         _assertWalletCanTrade(buyer);
-        if (_launchProtectionActive()) {
-            if (launchProtectionMaxBuyWei > 0 && costNoFee > launchProtectionMaxBuyWei) revert LaunchProtectionBuyLimit();
-            if (launchProtectionMaxWalletWei > 0) {
-                uint256 nextProtectedBuyWei = protectedBuyWei[buyer] + costNoFee;
-                if (nextProtectedBuyWei > launchProtectionMaxWalletWei) revert LaunchProtectionWalletLimit();
-                protectedBuyWei[buyer] = nextProtectedBuyWei;
-            }
-        }
         if (buyer == creator) {
             if (block.timestamp < creatorBuyLockUntil) revert CreatorBuyLocked();
             if (creatorBuyCapWei > 0 && creatorBoughtWei + costNoFee > creatorBuyCapWei) revert CreatorBuyCapExceeded();
@@ -649,33 +593,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     }
 
     function _requireDirectTradeAllowed() internal view {
-        if (requireAuthorizedTrading || launchProtectionBlocksPending != 0 || _launchProtectionActive()) revert AuthorizedTradingRequired();
-    }
-
-    function _launchProtectionActive() internal view returns (bool) {
-        uint256 endBlock = launchProtectionEndBlock;
-        return endBlock != 0 && block.number <= endBlock;
-    }
-
-    function _activateLaunchProtectionIfNeeded() internal {
-        uint256 blocks_ = launchProtectionBlocksPending;
-        if (blocks_ == 0) return;
-        launchProtectionBlocksPending = 0;
-        launchProtectionEndBlock = block.number + blocks_;
-    }
-
-    function _loadLaunchProtection(address source) private {
-        if (source.code.length == 0) return;
-        try ILaunchProtectionConfigSource(source).launchProtectionConfig() returns (uint256 blocks_, uint256 maxBuyWei, uint256 maxWalletWei) {
-            if (blocks_ == 0) return;
-            launchProtectionMaxBuyWei = maxBuyWei;
-            launchProtectionMaxWalletWei = maxWalletWei;
-            if (block.timestamp >= launchAt) {
-                launchProtectionEndBlock = block.number + blocks_;
-            } else {
-                launchProtectionBlocksPending = blocks_;
-            }
-        } catch {}
+        if (requireAuthorizedTrading) revert AuthorizedTradingRequired();
     }
 
     function _autoFinalizeIfEligible(address caller) internal virtual {
@@ -785,54 +703,16 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         return (amountWei * protocolFeeBps) / MAX_BPS;
     }
 
-    function _feeSplit(uint256 amountWei) internal view returns (uint256 totalFeeWei, uint256 protocolNetFeeWei, uint256 leagueFeeWei) {
-        totalFeeWei = _fee(amountWei);
-        if (totalFeeWei == 0) return (0, 0, 0);
-        leagueFeeWei = (amountWei * leagueFeeBps) / MAX_BPS;
-        if (leagueReceiver == address(0) || leagueFeeWei == 0) return (totalFeeWei, totalFeeWei, 0);
-        if (leagueFeeWei > totalFeeWei) leagueFeeWei = totalFeeWei;
-        protocolNetFeeWei = totalFeeWei - leagueFeeWei;
+    /// @dev E7(c): the only fee path. Every campaign of this generation routes through the treasury
+    /// router; a router that reverts reverts the trade (same as the old strict mode).
+    function _routeFeeOrSendLegacy(uint256 feeAmount, uint8 routeKind, uint256) internal {
+        _routeFeeOrSendLegacyWithProfile(feeAmount, routeKind, 0, _routeProfileForKind(routeKind));
     }
 
-    function _useUnifiedRewardRouter() internal view returns (bool) {
-        address receiver = feeRecipient;
-        if (receiver == address(0) || receiver != leagueReceiver) return false;
-        return receiver.code.length > 0;
-    }
-
-    function _routeFeeOrSendLegacy(uint256 feeAmount, uint8 routeKind, uint256 feeBaseAmount) internal {
-        _routeFeeOrSendLegacyWithProfile(feeAmount, routeKind, feeBaseAmount, _routeProfileForKind(routeKind));
-    }
-
-    function _routeFeeOrSendLegacyWithProfile(uint256 feeAmount, uint8 routeKind, uint256 feeBaseAmount, uint8 routeProfile) internal {
+    function _routeFeeOrSendLegacyWithProfile(uint256 feeAmount, uint8 routeKind, uint256, uint8 routeProfile) internal {
         if (feeAmount == 0) return;
-
-        if (_useUnifiedRewardRouter()) {
-            if (strictFeeRouting) {
-                if (routeKind == ROUTE_KIND_TRADE) {
-                    IPhase1TreasuryRouterV3(payable(feeRecipient)).routeTrade{value: feeAmount}(routeProfile);
-                } else {
-                    IPhase1TreasuryRouterV3(payable(feeRecipient)).routeFinalize{value: feeAmount}(routeProfile);
-                }
-                return;
-            }
-
-            try IPhase1TreasuryRouterV3(payable(feeRecipient)).route(routeKind, routeProfile) {
-                return;
-            } catch {
-                _escrowNativeFee(feeRecipient, feeAmount);
-                return;
-            }
-        }
-
-        if (strictFeeRouting) revert FeeRoutingFailed();
-        if (routeKind == ROUTE_KIND_FINALIZE) {
-            if (feeRecipient != address(0)) _sendNativeFee(payable(feeRecipient), feeAmount);
-            return;
-        }
-        (, uint256 protocolNet, uint256 leagueFee) = _feeSplit(feeBaseAmount);
-        if (protocolNet > 0 && feeRecipient != address(0)) _sendNativeFee(payable(feeRecipient), protocolNet);
-        if (leagueFee > 0) _sendNativeFee(payable(leagueReceiver), leagueFee);
+        if (routeKind == ROUTE_KIND_TRADE) IPhase1TreasuryRouterV3(payable(feeRecipient)).routeTrade{value: feeAmount}(routeProfile);
+        else IPhase1TreasuryRouterV3(payable(feeRecipient)).routeFinalize{value: feeAmount}(routeProfile);
     }
 
     function _routeProfileForKind(uint8 routeKind) internal view returns (uint8) {
@@ -898,23 +778,8 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         return linear + slopeTerm;
     }
 
-    function _sendNativeFee(address payable to, uint256 value) private {
-        if (value == 0) return;
-        (bool ok, ) = to.call{value: value}("");
-        if (!ok) _escrowNativeFee(to, value);
-    }
-
-    function _escrowNativeFee(address to, uint256 value) private {
-        pendingNative[to] += value;
-        pendingNativeTotal += value;
-        emit NativeEscrowed(to, value);
-    }
-
     function _availableNativeBalance() internal view returns (uint256) {
-        uint256 balance = address(this).balance;
-        uint256 reserved = pendingNativeTotal;
-        if (reserved >= balance) return 0;
-        return balance - reserved;
+        return address(this).balance;
     }
 
     function _sendNative(address to, uint256 value) private {
