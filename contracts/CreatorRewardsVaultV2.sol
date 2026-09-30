@@ -74,17 +74,17 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         uint8 status; // 1 proposed, 2 executed, 3 vetoed
     }
 
-    uint8 public constant DEX_TOPAZ_V2 = 1;
-    uint8 public constant DEX_UNISWAP_V3 = 2;
-    address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
-    uint8 public constant BUYBACK_ROUTE_PROFILE = 1; // StandardUnlinked
-    uint16 public constant MAX_IMPACT_BPS_LIMIT = 50;
-    uint16 public constant TWAP_DEVIATION_BPS = 100;
-    uint32 public constant TWAP_WINDOW = 1800;
-    uint16 public constant FLAT_TRADE_FEE_BPS = 200;
-    uint16 public constant MAX_CURVE_PROGRESS_BPS = 9_500;
-    uint256 public constant MAX_BATCH_CAMPAIGNS = 200;
-    uint256 public constant MIN_HOLDER_BATCH_DELAY = 24 hours;
+    uint8 internal constant DEX_TOPAZ_V2 = 1;
+    uint8 internal constant DEX_UNISWAP_V3 = 2;
+    address internal constant DEAD = 0x000000000000000000000000000000000000dEaD;
+    uint8 internal constant BUYBACK_ROUTE_PROFILE = 1; // StandardUnlinked
+    uint16 internal constant MAX_IMPACT_BPS_LIMIT = 50;
+    uint16 internal constant TWAP_DEVIATION_BPS = 100;
+    uint32 internal constant TWAP_WINDOW = 1800;
+    uint16 internal constant FLAT_TRADE_FEE_BPS = 200;
+    uint16 internal constant MAX_CURVE_PROGRESS_BPS = 9_500;
+    uint256 internal constant MAX_BATCH_CAMPAIGNS = 200;
+    uint256 internal constant MIN_HOLDER_BATCH_DELAY = 24 hours;
     uint256 internal constant BPS = 10_000;
 
     address public immutable admin;
@@ -98,13 +98,13 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     address public locker;
     address public holderDistributor;
     address public operator;
-    bool public operatorPaused;
+    bool internal operatorPaused;
 
-    uint256 public maxBuyPerTx;
-    uint256 public maxBuybackPerCampaignWeek;
-    uint256 public minBuyInterval;
+    uint256 internal maxBuyPerTx;
+    uint256 internal maxBuybackPerCampaignWeek;
+    uint256 internal minBuyInterval;
     uint256 public maxImpactBps;
-    uint256 public maxHolderBatchPerWeek;
+    uint256 internal maxHolderBatchPerWeek;
 
     mapping(address => Cfg) public cfg;
     mapping(address => uint256) public creatorBalance;
@@ -114,21 +114,21 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     mapping(address => uint256) public holderQuoteBalance;
     mapping(address => uint256) public buybackQuoteBalance;
     mapping(address => uint256) public heldBuybackTokens;
-    mapping(address => bool) public heldTokenAsset;
-    mapping(address => mapping(address => uint256)) public lpSynced;
+    mapping(address => bool) internal heldTokenAsset;
+    mapping(address => mapping(address => uint256)) internal lpSynced;
     mapping(address => address) public quoteRoutePool;
 
     /// @notice Native owed to someone: every native balance above plus proposed, not yet executed batches.
     uint256 public totalLiabilities;
     mapping(address => uint256) public quoteLiabilities;
 
-    mapping(address => uint256) public buybackWeek;
+    mapping(address => uint256) internal buybackWeek;
     mapping(address => uint256) public buybackSpentInWeek;
-    mapping(address => uint256) public lastBuybackAt;
-    uint256 public holderWeek;
-    uint256 public holderProposedInWeek;
+    mapping(address => uint256) internal lastBuybackAt;
+    uint256 internal holderWeek;
+    uint256 internal holderProposedInWeek;
 
-    mapping(bytes32 => HolderBatch) public holderBatches;
+    mapping(bytes32 => HolderBatch) internal holderBatches;
     mapping(bytes32 => address[]) internal batchCampaigns;
     mapping(bytes32 => uint256[]) internal batchAmounts;
 
@@ -426,10 +426,6 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         totalLiabilities -= total;
         IEvmGenHolderDistributor(holderDistributor).createBatch{value: total}(batchId, b.root, b.claimDeadline);
         emit HolderBatchExecuted(batchId, total);
-    }
-
-    function holderBatchLegs(bytes32 batchId) external view returns (address[] memory, uint256[] memory) {
-        return (batchCampaigns[batchId], batchAmounts[batchId]);
     }
 
     // ------------------------------------------------------------------ buyback
