@@ -175,3 +175,9 @@ test("user-facing copy has no em dashes", async () => {
   const src = fs.readFileSync(new URL("./evmGen6.mjs", import.meta.url), "utf8");
   assert.equal(src.includes("\u2014"), false);
 });
+
+test("findFirstTime finds when the escrow is fully free", async () => {
+  const buys = [{ at: 0, amount: 1000n }, { at: 9 * DAY + 3, amount: 1000n }];
+  const t = await (await import("./evmGen6.mjs")).findFirstTime(async (x) => escrowVested(buys, x) >= 2000n, DAY, DAY + 120 * DAY);
+  assert.equal(t, 9 * DAY + 3 + 58 * DAY);
+});

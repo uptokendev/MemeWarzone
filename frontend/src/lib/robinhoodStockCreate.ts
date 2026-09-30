@@ -9,6 +9,11 @@ const STOCK_FACTORY_ABI = [
   "event CampaignCreated(uint256 indexed id,address indexed campaign,address indexed token,address creator,string name,string symbol,string logoURI,string metadataURI)",
 ] as const;
 
+/** Generation-6 factory: the request gains first buy + fee choice and the call is payable. */
+const GEN6_STOCK_FACTORY_ABI = [
+  "function createStockCampaignAuthorized((string name,string symbol,string logoURI,string xAccount,string website,string extraLink,uint256 graduationTarget,uint256 firstBuyTokens,uint256 firstBuyMaxCost,uint8 feeChoice,uint8 feeCreatorPct) req,address stockToken,(uint8 tradeRouteProfile,uint8 finalizeRouteProfile,uint64 deadline,bytes signature) routeAuth) payable returns (address campaignAddr,address tokenAddr)",
+] as const;
+
 const STOCK_FACTORY_INTERFACE = new ethers.Interface(STOCK_FACTORY_ABI);
 
 export type RobinhoodGraduationMarketKind = "NATIVE" | "STOCK_TOKEN";
@@ -32,6 +37,14 @@ export type RobinhoodStockCreateParams = {
   extraLink: string;
   graduationTargetWei: bigint;
   stockToken: RobinhoodStockToken;
+  /** Generation-6 factories only; absent keeps today's request and call unchanged. */
+  gen6?: {
+    firstBuyTokens: bigint;
+    firstBuyMaxCost: bigint;
+    feeChoice: number;
+    feeCreatorPct: number;
+    value: bigint;
+  };
 };
 
 export type RobinhoodStockCreateResult = {
@@ -153,6 +166,14 @@ export async function createRobinhoodStockCampaign(input: RobinhoodStockCreatePa
     website: input.website,
     extraLink: input.extraLink,
     graduationTarget: input.graduationTargetWei.toString(),
+    ...(input.gen6
+      ? {
+          firstBuyTokens: input.gen6.firstBuyTokens.toString(),
+          firstBuyMaxCost: input.gen6.firstBuyMaxCost.toString(),
+          feeChoice: input.gen6.feeChoice,
+          feeCreatorPct: input.gen6.feeCreatorPct,
+        }
+      : {}),
   };
 
   const authResponse = await readJson<any>(await apiFetch("/api/routing/create-authorization", {
@@ -180,17 +201,16 @@ export async function createRobinhoodStockCampaign(input: RobinhoodStockCreatePa
     throw new Error("Unsupported Stock Battlefield market policy version.");
   }
 
-  const factory = new Contract(factoryAddress, STOCK_FACTORY_ABI, input.signer) as any;
-  const tx = await factory.createStockCampaignAuthorized(
-    campaignRequest,
-    stockTokenAddress,
-    {
-      tradeRouteProfile: Number(auth.tradeRouteProfileId),
-      finalizeRouteProfile: Number(auth.finalizeRouteProfileId),
-      deadline: Math.floor(new Date(auth.validUntil).getTime() / 1000),
-      signature: auth.signature,
-    },
-  );
+  const factory = new Contract(factoryAddress, input.gen6 ? GEN6_STOCK_FACTORY_ABI : STOCK_FACTORY_ABI, input.signer) as any;
+  const routeAuth = {
+    tradeRouteProfile: Number(auth.tradeRouteProfileId),
+    finalizeRouteProfile: Number(auth.finalizeRouteProfileId),
+    deadline: Math.floor(new Date(auth.validUntil).getTime() / 1000),
+    signature: auth.signature,
+  };
+  const tx = input.gen6
+    ? await factory.createStockCampaignAuthorized(campaignRequest, stockTokenAddress, routeAuth, { value: input.gen6.value })
+    : await factory.createStockCampaignAuthorized(campaignRequest, stockTokenAddress, routeAuth);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("Stock campaign transaction did not return a receipt.");
   const created = extractCampaignCreated(receipt);

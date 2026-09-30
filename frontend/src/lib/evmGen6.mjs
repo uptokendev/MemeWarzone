@@ -266,17 +266,15 @@ export function nextEscrowRelease(buys, nowUnix) {
 }
 
 /**
- * The first time in (lo, hi] at which an increasing step function changes, found with
- * `probe(t)` (for example creatorEscrowVested(t) on the campaign). Returns 0 when it
- * does not change in the range. `fanout` probes run in parallel per round.
+ * The smallest time t in (lo, hi] for which the monotone async `predicate(t)` is true,
+ * or 0 when it is false at hi. `fanout` probes run in parallel per round, so a
+ * 58-day range at one-second precision takes about eight rounds.
  */
-export async function findNextStepTime(probe, lo, hi, { fanout = 8 } = {}) {
-  const start = Math.floor(Number(lo));
+export async function findFirstTime(predicate, lo, hi, { fanout = 8 } = {}) {
+  let low = Math.floor(Number(lo));
   let high = Math.floor(Number(hi));
-  if (!(high > start)) return 0;
-  const base = big(await probe(start));
-  if (big(await probe(high)) <= base) return 0;
-  let low = start;
+  if (!(high > low)) return 0;
+  if (!(await predicate(high))) return 0;
   while (high - low > 1) {
     const span = high - low;
     const points = [];
@@ -285,11 +283,11 @@ export async function findNextStepTime(probe, lo, hi, { fanout = 8 } = {}) {
       if (p > low && p < high && !points.includes(p)) points.push(p);
     }
     if (!points.length) break;
-    const values = await Promise.all(points.map((p) => probe(p)));
+    const results = await Promise.all(points.map((p) => predicate(p)));
     let newLow = low;
     let newHigh = high;
     for (let i = 0; i < points.length; i += 1) {
-      if (big(values[i]) > base) {
+      if (results[i]) {
         newHigh = points[i];
         break;
       }
@@ -299,6 +297,16 @@ export async function findNextStepTime(probe, lo, hi, { fanout = 8 } = {}) {
     high = newHigh;
   }
   return high;
+}
+
+/**
+ * The first time in (lo, hi] at which an increasing step function changes, found with
+ * `probe(t)` (for example creatorEscrowVested(t) on the campaign). 0 when it does not
+ * change in the range.
+ */
+export async function findNextStepTime(probe, lo, hi, options) {
+  const base = big(await probe(Math.floor(Number(lo))));
+  return findFirstTime(async (t) => big(await probe(t)) > base, lo, hi, options);
 }
 
 /** The escrow summary the creator panel and the coin badge show. */

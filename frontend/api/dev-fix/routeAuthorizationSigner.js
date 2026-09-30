@@ -122,11 +122,11 @@ function assertCreationFactoryAllowed(chainId, factory) {
  * new mainnet factories with CREATE_FACTORY_GENERATION_MISMATCH.
  */
 const ALLOWED_GENERATION_PAIRS = new Map([
-  [56n, [[3, 2], [4, 2], [4, 3]]],
-  [97n, [[3, 2], [4, 2], [4, 3]]],
-  [ROBINHOOD_MAINNET_CHAIN_ID, [[4, 3]]],
-  [ROBINHOOD_TESTNET_CHAIN_ID, [[4, 3]]],
-  [LOCAL_HARDHAT_CHAIN_ID, [[4, 3]]],
+  [56n, [[3, 2], [4, 2], [4, 3], [6, 5]]],
+  [97n, [[3, 2], [4, 2], [4, 3], [6, 5]]],
+  [ROBINHOOD_MAINNET_CHAIN_ID, [[4, 3], [6, 5]]],
+  [ROBINHOOD_TESTNET_CHAIN_ID, [[4, 3], [6, 5]]],
+  [LOCAL_HARDHAT_CHAIN_ID, [[4, 3], [6, 5]]],
 ]);
 
 export function supportedGenerationPairs(chainId) {
@@ -168,8 +168,9 @@ export function assertSupportedGenerations(chainId, factoryGeneration, campaignG
   const campaignGen = positiveGeneration(campaignGeneration, "campaignGeneration");
   if (!isSupportedGenerationPair(chainId, factoryGen, campaignGen)) {
     const id = toBigInt(chainId, "chainId");
-    if (ROBINHOOD_CHAIN_IDS.has(id) && factoryGen !== 4) {
-      throw new Error(`Robinhood scheduled authorization requires factory generation 4; got ${factoryGen}`);
+    const factoryGens = [...new Set(supportedGenerationPairs(chainId).map(([f]) => f))];
+    if (ROBINHOOD_CHAIN_IDS.has(id) && !factoryGens.includes(factoryGen)) {
+      throw new Error(`Robinhood scheduled authorization requires factory generation ${factoryGens.join(" or ")}; got ${factoryGen}`);
     }
     throw new Error(
       `Unsupported factory/campaign generation ${factoryGen}/${campaignGen}; chain ${chainId} requires ${generationRule(chainId)}`,

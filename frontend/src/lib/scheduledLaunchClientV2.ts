@@ -2,6 +2,9 @@ import { Contract, ethers, type JsonRpcSigner } from "ethers";
 import { apiFetch } from "@/lib/apiBase";
 import { normalizeCreatorArmCooldownEndsAt } from "@/lib/creatorArmCooldown";
 import type { DraftActionAuth } from "@/lib/draftAuth";
+import LaunchFactoryGen6 from "@/abi/LaunchFactoryGen6.json";
+import { gen6CreateErrorMessage } from "@/lib/evmGen6Client";
+import { isEvmGen6Pair } from "@/lib/evmGen6.mjs";
 
 const SCHEDULED_FACTORY_ABI = [
   "function live() view returns (bool)",
@@ -53,11 +56,11 @@ const ROBINHOOD_CHAIN_IDS = new Set([ROBINHOOD_MAINNET_CHAIN_ID, ROBINHOOD_TESTN
  * and the mainnet factory were 4/3, and every Robinhood create died on the last step).
  */
 const ALLOWED_GENERATION_PAIRS: Record<number, ReadonlyArray<readonly [number, number]>> = {
-  56: [[3, 2], [4, 2], [4, 3]],
-  97: [[3, 2], [4, 2], [4, 3]],
-  4663: [[4, 3]],
-  46630: [[4, 3]],
-  31337: [[4, 3]],
+  56: [[3, 2], [4, 2], [4, 3], [6, 5]],
+  97: [[3, 2], [4, 2], [4, 3], [6, 5]],
+  4663: [[4, 3], [6, 5]],
+  46630: [[4, 3], [6, 5]],
+  31337: [[4, 3], [6, 5]],
 };
 
 function supportedGenerationPairs(chainId: number): ReadonlyArray<readonly [number, number]> {
@@ -325,8 +328,27 @@ export async function deployScheduledDraftCampaignV2(input: {
   draftId: string;
   launchAt: number;
   graduationTargetWei: bigint;
+  /**
+   * Generation-6 factories only: the four signed create fields and the native value
+   * to send (the factory refunds anything above the first-buy cost).
+   */
+  gen6?: {
+    firstBuyTokens: bigint;
+    firstBuyMaxCost: bigint;
+    feeChoice: number;
+    feeCreatorPct: number;
+    value: bigint;
+  };
 }) {
-  const { factory, eligibility } = await assertScheduledFactoryReady(input);
+  const { factory: legacyFactory, eligibility } = await assertScheduledFactoryReady(input);
+  const gen6Factory = isEvmGen6Pair(eligibility.factoryGeneration, eligibility.campaignGeneration);
+  if (input.gen6 && !gen6Factory) {
+    throw new Error("The configured factory is not generation 6, so it cannot take a first buy or fee choice.");
+  }
+  const gen6 = gen6Factory ? input.gen6 ?? { firstBuyTokens: 0n, firstBuyMaxCost: 0n, feeChoice: 1, feeCreatorPct: 0, value: 0n } : null;
+  const factory = gen6
+    ? (new Contract(input.factoryAddress, (LaunchFactoryGen6 as any).abi, input.signer) as any)
+    : legacyFactory;
   const response = await apiFetch(`/api/drafts/${encodeURIComponent(input.draftId)}/deploy`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -337,6 +359,14 @@ export async function deployScheduledDraftCampaignV2(input: {
       factoryAddress: input.factoryAddress,
       launchAt: input.launchAt,
       graduationTargetWei: input.graduationTargetWei.toString(),
+      ...(gen6
+        ? {
+            firstBuyTokens: gen6.firstBuyTokens.toString(),
+            firstBuyMaxCost: gen6.firstBuyMaxCost.toString(),
+            feeChoice: gen6.feeChoice,
+            feeCreatorPct: gen6.feeCreatorPct,
+          }
+        : {}),
     }),
   });
   const json = await parseApiJson(response);
@@ -356,10 +386,20 @@ export async function deployScheduledDraftCampaignV2(input: {
     );
   }
 
+  const signedCampaign = scheduledRequest.campaign || {};
+  if (gen6) assertGen6Echo(signedCampaign, gen6);
   const request = {
     campaign: {
-      ...scheduledRequest.campaign,
-      graduationTarget: BigInt(scheduledRequest.campaign.graduationTarget),
+      ...signedCampaign,
+      graduationTarget: BigInt(signedCampaign.graduationTarget),
+      ...(gen6
+        ? {
+            firstBuyTokens: BigInt(signedCampaign.firstBuyTokens),
+            firstBuyMaxCost: BigInt(signedCampaign.firstBuyMaxCost),
+            feeChoice: Number(signedCampaign.feeChoice),
+            feeCreatorPct: Number(signedCampaign.feeCreatorPct),
+          }
+        : {}),
     },
     launchAt: Number(scheduledRequest.launchAt),
     draftReferenceHash: scheduledRequest.draftReferenceHash,
@@ -376,11 +416,31 @@ export async function deployScheduledDraftCampaignV2(input: {
   };
 
   try {
-    await factory.createScheduledCampaignAuthorized.staticCall(request, routeAuth);
-    const tx = await factory.createScheduledCampaignAuthorized(request, routeAuth);
+    const overrides = gen6 ? [{ value: gen6.value }] : [];
+    await factory.createScheduledCampaignAuthorized.staticCall(request, routeAuth, ...overrides);
+    const tx = await factory.createScheduledCampaignAuthorized(request, routeAuth, ...overrides);
     const receipt = await tx.wait();
     return { receipt, txHash: String(receipt?.hash || tx.hash || ""), ...extractCreated(receipt) };
   } catch (error: any) {
-    throw new Error(friendlyFactoryError(error));
+    throw new Error((gen6 && gen6CreateErrorMessage(error)) || friendlyFactoryError(error));
+  }
+}
+
+/**
+ * The server signs the scheduled request. On a generation-6 factory the four new
+ * fields must be what the creator chose, or the wallet would pay for a different
+ * first buy or fee choice than the one on screen.
+ */
+function assertGen6Echo(
+  campaign: Record<string, unknown>,
+  gen6: { firstBuyTokens: bigint; firstBuyMaxCost: bigint; feeChoice: number; feeCreatorPct: number },
+) {
+  const same =
+    String(campaign.firstBuyTokens ?? "") === gen6.firstBuyTokens.toString() &&
+    String(campaign.firstBuyMaxCost ?? "") === gen6.firstBuyMaxCost.toString() &&
+    Number(campaign.feeChoice) === gen6.feeChoice &&
+    Number(campaign.feeCreatorPct) === gen6.feeCreatorPct;
+  if (!same) {
+    throw new Error("The signed launch does not match your first buy or creator fee choice. Refresh and try again.");
   }
 }
