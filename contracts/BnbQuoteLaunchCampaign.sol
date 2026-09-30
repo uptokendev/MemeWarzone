@@ -7,7 +7,8 @@ import {LaunchCampaign} from "./LaunchCampaign.sol";
 /// @dev Bonding, anti-sniper fee, first buy, creator escrow and the whole graduation (split
 /// 2.2/19.8/78, Pending, permissionless graduate(), pull claims) are LaunchCampaign's. This subclass
 /// only carries the signed Quote Asset Catalog binding and refuses to graduate without it and without
-/// its quote route. There is deliberately no fallback to a native MEME/WBNB pool (founder Q3 open).
+/// its quote route. After 7 days in Pending anyone may switch it to the native MEME/WBNB pool
+/// (LaunchCampaign.useNativeFallback, founder E12); the binding checks still run on that path.
 contract BnbQuoteLaunchCampaign is LaunchCampaign {
     bytes32 public quoteCatalogBindingHash;
 

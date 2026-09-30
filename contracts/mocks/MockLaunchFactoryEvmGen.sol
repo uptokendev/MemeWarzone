@@ -12,6 +12,11 @@ contract MockLaunchFactoryEvmGen {
     address public lastNotifiedCreator;
     address public lastNotifiedPool;
     uint256 public notifications;
+    address public nativeGraduationAdapter;
+
+    function setNativeGraduationAdapter(address a) external {
+        nativeGraduationAdapter = a;
+    }
 
     function setRouteAuthority(address a) external {
         routeAuthority = a;

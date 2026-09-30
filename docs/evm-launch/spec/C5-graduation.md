@@ -180,7 +180,7 @@ What can block `graduate()`, and how each ends:
 | Stale oracle (quote paths only; native needs none after Pending) | Retry after the next round |
 | `paused` / `graduationPaused` | Honoured for 72 h after `pendingSince`, then ignored |
 | Low gas from the caller | The call reverts and anyone retries |
-| Quote route disabled or illiquid | Open question 1 |
+| Quote route disabled or illiquid | E12: after 7 days in Pending, anyone may switch the coin to the native pool (`useNativeFallback`) |
 
 - **Graduated.** Creator claim (any time), protocol flush (permissionless), and `rescueExcessNative`
   (donations only).
@@ -258,8 +258,63 @@ One implementation in `LaunchCampaign.graduate()` serves native, BNB quote and R
   integer arithmetic (`SupplyBoundBroken`); the constructor defaults are 7000/2800, base 1e9, slope 1080 (V2 = BNB) or
   850 (V3 = Robinhood). Create refuses `nativeTargetForUsd(target) > 95% * A(curveSupply)` (`TargetOutOfRangeAtPrice`)
   and an oracle revert (`OraclePriceUnavailable`).
-- **Not built (founder):** Q3, the native fallback for a quote coin whose route stays dead (marked `TODO(founder)` in
-  `graduate()`). The chunked repair is built: see "Chunked pool repair" below.
+- **Q3 is built as E12** (native fallback for a quote coin whose route stays dead): see "E12 as built" below. The
+  chunked repair is built: see "Chunked pool repair" below.
+
+### E12 as built: native fallback for a quote coin (branch `claude/evm-core`, 2026-09-30)
+
+Founder decision E12. `contracts/LaunchCampaign.sol` (`useNativeFallback`, `_poolQuote`, `graduate`, `repairPool`),
+`contracts/LaunchFactory.sol` (`notifyCampaignGraduated`). Serves `BnbQuoteLaunchCampaign` and
+`RobinhoodStockLaunchCampaign` unchanged (their `_beforeGraduate` binding checks still run).
+
+- **`useNativeFallback()`**, external, `nonReentrant`, permissionless. Requires: not launched (`Finalized`), a quote coin
+  (`graduationQuoteToken != 0`) that has not switched (`NativeFallbackUnavailable`), `graduationPending` and
+  `block.timestamp >= pendingSince + 7 days` (`NativeFallbackNotDue`), and a non-zero
+  `factory.nativeGraduationAdapter()` (`NativeFallbackUnavailable`; the factory setter is `whenMutable`, so this is the
+  adapter fixed before the first campaign). Effects only, no value moves: `nativeFallback = true` (irreversible),
+  `graduationAdapter = nativeAdapter`, `fallbackQuoteMemeSold = repairMemeSold`, `repairQuoteHeld -> pendingCreatorQuote`,
+  event `NativeFallbackCommitted(caller, nativeAdapter, quoteToken, quoteHeldToCreator, quoteRepairMemeSold)`.
+- **After the switch** `graduate()` and `repairPool()` pass `quoteToken = address(0)` (`_poolQuote()`), so the native
+  adapter builds MEME/WETH(WBNB) with the unchanged split (2.2% `routeFinalize`, 19.8% creator pull, 78% + held native
+  repair proceeds to the pool) and the native checks run: `memeUsed >= memeTarget`, native refund <= 1 bp unless the
+  budget is exhausted, start price within +-50 bps of P. `nativeUsdWad = 0`. Before the switch only the quote route
+  exists (graduate/repair use the quote adapter); after it only the native route does, even if the quote route revives.
+- **Held quote.** `repairQuoteHeld` (quote paid for MEME that quote-route `repairPool` steps sold into a pre-made
+  MEME/quote pool) moves to the creator's quote pull balance: the native pool cannot use it, and the creator is who
+  the quote residual already goes to on the quote path (C7 section 3). Claimable after graduation through
+  `claimCreatorGraduation(to, includeQuote = true)`; `graduationQuoteToken` keeps naming the token for that reason.
+  The MEME those steps sold stays out of the budget (it is in the MEME/quote pool), is recorded in
+  `fallbackQuoteMemeSold`, and is excluded from `graduatedLiquidityTokens` and the `Graduated` event's `memeUsed`
+  (they count MEME in the graduated pool only). Conservation: `B = repairMemeSold + memeUsed + burned` still holds.
+- **Registration (D19).** `notifyCampaignGraduated` passes WETH/WBNB as the locker's expected paired token when the
+  campaign reports `nativeFallback()` (read only for quote coins; native coins never make the call). The fee-choice key
+  and recipient (campaign/vault or creator) are unchanged, so D19 holds: the vault's `syncLpFees` binds the pool's
+  paired token on first use, which is the wrapped native, so LP fees are credited as native.
+
+Audit block:
+- **Reentrancy.** `useNativeFallback` is `nonReentrant` and makes one external call, a view on the factory
+  (`nativeGraduationAdapter()`), before its effects; the factory is the trusted deployer of this clone. `graduate` and
+  `repairPool` are unchanged in guard and order. The factory's new `nativeFallback()` read during `notifyCampaignGraduated`
+  is a view on the calling campaign.
+- **CEI.** Checks, then the factory view, then effects; no transfer. `graduate()` after the switch is the audited native
+  order (C5 "As built").
+- **Reachable states.** Only Pending, only >= 7 days after `pendingSince`, only for quote coins, once. The 72 h pause
+  honour window has expired by then, so a pause cannot hold a coin past the fallback. `graduate()`/`repairPool()` keep
+  their own entry checks. After graduation: `Finalized`.
+- **Overflow.** `pendingSince + 7 days` (uint64 widened to uint256). `pendingCreatorQuote += repairQuoteHeld` is a quote
+  balance the campaign actually holds. `repairMemeSold - fallbackQuoteMemeSold >= 0` since `repairMemeSold` only grows.
+- **Griefing.** Anyone can force the switch after 7 days even if the quote route has just revived; that is the
+  founder's rule (a keeper graduates a healthy quote coin within blocks, so a coin still Pending at 7 days has a dead
+  route). The switch cannot move value, cannot be undone and cannot be repeated. A pre-made MEME/WETH pool is the
+  native griefing case and is repaired by the native adapter (`repairPool` chunks after the switch). A creator whose
+  quote token blocks transfers only affects their own quote claim (`includeQuote = false` lets the native out).
+- **Sizes (runtime, EIP-170 24,576):** `LaunchCampaign` 20,696, `BnbQuoteLaunchCampaign` 21,057,
+  `RobinhoodStockLaunchCampaign` 20,785. `LaunchFactory` 22,096.
+- **Tests.** `test/evmgen-core-quote-fallback.spec.ts` (5): refused before 7 days, on a native coin and in Trading;
+  switch + graduation with exact split, request and native checks (band, `memeUsed < T` refused), locker registration
+  with WBNB through the real `BnbBasicLaunchFactory`; held quote to the creator and claimed, quote-step MEME excluded
+  from pool figures, native repair after the switch; retry with a failing native adapter and a revived quote route;
+  Robinhood stock campaign.
 
 ### Chunked pool repair: `repairPool(uint160 sqrtPriceLimitX96)` (branch `claude/evm-core`, 2026-09-30)
 

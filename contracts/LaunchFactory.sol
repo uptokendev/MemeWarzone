@@ -627,7 +627,10 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
         if (lpToken != address(0) && !permanentLpLocker.registeredLpToken(lpToken)) {
             address tokenAddr = address(LaunchCampaign(payable(msg.sender)).token());
             address quoteToken = campaignGraduationQuoteToken[msg.sender];
-            if (quoteToken == address(0)) quoteToken = ITopazRouter02(router).WETH();
+            // E12: a quote coin that took the native fallback graduated into a MEME/WETH pool.
+            if (quoteToken == address(0) || LaunchCampaign(payable(msg.sender)).nativeFallback()) {
+                quoteToken = ITopazRouter02(router).WETH();
+            }
             uint256 lockedLpAmount = liquidityKind == LIQUIDITY_KIND_V2_ERC20
                 ? IERC20(lpToken).balanceOf(address(permanentLpLocker))
                 : 0;

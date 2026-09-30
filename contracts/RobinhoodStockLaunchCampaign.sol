@@ -8,7 +8,8 @@ import {LaunchCampaign} from "./LaunchCampaign.sol";
 /// permissionless (it was factory/owner-only with caller-supplied minima), the adapter derives its
 /// own minima from Chainlink, and graduation never reverts on dust: leftover MEME is burned, leftover
 /// native and stock go to the creator's pull balances. This subclass only refuses to graduate a
-/// campaign that was never bound to a stock, so it can never fall back to a native MEME/WETH pool.
+/// campaign that was never bound to a stock. A bound stock campaign still in Pending after 7 days may be
+/// switched by anyone to the native MEME/WETH pool (LaunchCampaign.useNativeFallback, founder E12).
 contract RobinhoodStockLaunchCampaign is LaunchCampaign {
     error StockCampaignNotConfigured();
 

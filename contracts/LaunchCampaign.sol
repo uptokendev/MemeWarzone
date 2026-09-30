@@ -28,6 +28,7 @@ interface IRiskRegistryView {
 
 interface ILaunchFactoryGraduationNotify {
     function notifyCampaignGraduated(address creator, address lpToken) external;
+    function nativeGraduationAdapter() external view returns (address);
 }
 
 interface ILaunchTokenDeployer {
@@ -137,6 +138,8 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 private constant NATIVE_PRICE_BAND_BPS = 50;
     uint256 private constant MAX_NATIVE_REFUND_BPS = 1;
     uint256 private constant PAUSE_HONOUR_WINDOW = 72 hours;
+    // E12: a quote coin may switch to the factory's native adapter this long after entering Pending.
+    uint256 private constant NATIVE_FALLBACK_DELAY = 7 days;
 
     LaunchToken public token;
     IGraduationOracle public graduationOracle;
@@ -203,6 +206,13 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 public repairNativeHeld;
     uint256 public repairQuoteHeld;
 
+    // E12: set once by useNativeFallback(); from then on this quote coin graduates into a native pool
+    // through the factory's native adapter (graduationQuoteToken keeps naming the quote token, which is
+    // only still needed to pay out pendingCreatorQuote). `fallbackQuoteMemeSold` is the MEME that
+    // quote-route repair steps had already sold into the MEME/quote pool before the switch.
+    bool public nativeFallback;
+    uint256 public fallbackQuoteMemeSold;
+
     modifier onlyFactory() {
         if (msg.sender != factory) revert OnlyFactory();
         _;
@@ -234,6 +244,13 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     event CreatorGraduationClaimed(address indexed to, uint256 nativeAmount, uint256 quoteAmount);
     event ExcessNativeRescued(address indexed recipient, uint256 amount);
     event PoolRepairStep(address indexed caller, uint256 memeSold, uint256 proceeds, uint256 repairMemeSoldTotal);
+    event NativeFallbackCommitted(
+        address indexed caller,
+        address indexed nativeAdapter,
+        address indexed quoteToken,
+        uint256 quoteHeldToCreator,
+        uint256 quoteRepairMemeSold
+    );
 
     error OnlyFactory();
     error AlreadyInitialized();
@@ -286,6 +303,8 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error AdapterResultInvalid();
     error StartPriceOutOfBand();
     error NotBeneficiary();
+    error NativeFallbackUnavailable();
+    error NativeFallbackNotDue();
 
     bool private _initialized;
 
@@ -713,8 +732,8 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     /// routeFinalize with the creator's finalize profile (escrowed for a permissionless flush if the
     /// router refuses), 19.8% to the creator's pull balance, 78% (plus rounding dust) to the pool,
     /// priced at the curve's last price P. Any revert leaves Pending intact.
-    /// TODO(founder) Q3: native fallback for a quote coin whose route stays dead after 7 days in
-    /// Pending is NOT implemented; such a coin waits in Pending until its route works again.
+    /// A quote coin that used useNativeFallback() (E12) graduates here into the native pool, with the
+    /// native adapter and the native checks.
     function graduate() external nonReentrant returns (address pool) {
         (uint256 raise, uint256 price, uint256 poolNative, uint256 memeTarget, uint256 budget) = _openGraduation();
         GraduationState storage g = graduation;
@@ -740,7 +759,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
             emit ProtocolGraduationFeeEscrowed(protocolShare);
         }
 
-        address quote = graduationQuoteToken;
+        address quote = _poolQuote();
         (IGraduationAdapterV2.Result memory res, uint256 memeUsed, uint256 nativeBack) =
             _adapterGraduate(quote, poolValue, heldQuote, memeTarget, budget, price);
         // Conservation of the original budget B = totalSupply - creatorReserve - sold:
@@ -766,7 +785,8 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
 
         g.dexPair = res.pool;
         g.initialDexPrice = res.startPriceWad;
-        memeUsed += repairMemeSold;
+        // Repair steps into this pool (E12: not those a quote route sold into the MEME/quote pool).
+        memeUsed += repairMemeSold - fallbackQuoteMemeSold;
         g.graduatedLiquidityTokens = memeUsed;
         g.graduatedLiquidityBnb = poolValue > nativeBack ? poolValue - nativeBack : 0;
         g.graduatedLiquidityLp = res.liquidity;
@@ -818,7 +838,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     /// Everything is measured by balance delta and must equal what the adapter reports.
     function repairPool(uint160 sqrtPriceLimitX96) external nonReentrant returns (uint256 memeSold, uint256 proceeds) {
         (, uint256 price,, uint256 memeTarget, uint256 budget) = _openGraduation();
-        address quote = graduationQuoteToken;
+        address quote = _poolQuote();
         address adapter = graduationAdapter;
         IERC20 meme = IERC20(address(token));
         meme.forceApprove(adapter, budget - memeTarget);
@@ -838,6 +858,35 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         if (quote == address(0)) repairNativeHeld += proceeds;
         else repairQuoteHeld += proceeds;
         emit PoolRepairStep(msg.sender, memeSold, proceeds, repairMemeSold);
+    }
+
+    /// @notice E12 (founder): a quote coin still in Pending 7 days after `pendingSince` switches, for good,
+    /// to the factory's native graduation adapter; graduate() then builds the native MEME/WETH pool with the
+    /// same 2.2 / 19.8 / 78 split and the native price checks, and repairPool() repairs the native pool.
+    /// Permissionless. Quote proceeds held from earlier quote-route repair steps (`repairQuoteHeld`) move
+    /// to the creator's quote pull balance (`pendingCreatorQuote`, claimable after graduation); the MEME
+    /// those steps sold stays out of the budget (it is in the MEME/quote pool) and is recorded.
+    /// Before 7 days only the quote route exists; once used, only the native route does.
+    function useNativeFallback() external nonReentrant {
+        if (launched) revert Finalized();
+        address quote = graduationQuoteToken;
+        if (quote == address(0) || nativeFallback) revert NativeFallbackUnavailable();
+        if (!graduationPending || block.timestamp < uint256(pendingSince) + NATIVE_FALLBACK_DELAY) revert NativeFallbackNotDue();
+        address adapter = ILaunchFactoryGraduationNotify(factory).nativeGraduationAdapter();
+        if (adapter == address(0)) revert NativeFallbackUnavailable();
+        uint256 heldQuote = repairQuoteHeld;
+        uint256 quoteMemeSold = repairMemeSold;
+        nativeFallback = true;
+        graduationAdapter = adapter;
+        fallbackQuoteMemeSold = quoteMemeSold;
+        repairQuoteHeld = 0;
+        pendingCreatorQuote += heldQuote;
+        emit NativeFallbackCommitted(msg.sender, adapter, quote, heldQuote, quoteMemeSold);
+    }
+
+    /// @dev The pool's paired side for the adapter: address(0) (native) for native coins and after E12.
+    function _poolQuote() private view returns (address) {
+        return nativeFallback ? address(0) : graduationQuoteToken;
     }
 
     /// @dev Entry checks shared by graduate() and repairPool(), then the plan both use: the frozen raise
