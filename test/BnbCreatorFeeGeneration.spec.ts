@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const PROTOCOL_FEE_BPS = 200n;
 const ROUTE_BPS = 10_000n;
@@ -142,12 +143,10 @@ async function deploySourceHeadFeeStack() {
   await campaignImplementation.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await router.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
     await treasuryRouter.getAddress(),
     await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress(),
-  );
+    await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
 
   await factory.setRouteAuthority(await owner.getAddress());

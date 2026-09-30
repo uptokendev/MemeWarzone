@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const FEE = 3000;
 
@@ -113,12 +114,10 @@ async function fixture() {
   await graduationOracle.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await nativeAdapter.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await nativeAdapter.getAddress(),
     await treasury.getAddress(),
     await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress(),
-  );
+    await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
   await factory.setRouteAuthority(await routeSigner.getAddress());
   await factory.setStockCampaignImplementation(await stockCampaignImplementation.getAddress());

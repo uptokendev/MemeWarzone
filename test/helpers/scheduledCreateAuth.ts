@@ -1,5 +1,6 @@
 import { ethers } from "hardhat";
 import { deployCoreFixture } from "../fixtures/core";
+import { deployFactoryWithLocker } from "../../scripts/lib/deployFactoryWithLocker";
 
 function hashCampaignRequest(req: {
   name: string;
@@ -42,12 +43,10 @@ export async function deployScheduledCreateFixture() {
   await feeRouter.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await core.router.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await core.router.getAddress(),
     await feeRouter.getAddress(),
     await core.campaignImplementation.getAddress(),
-    await core.graduationOracle.getAddress(),
-  );
+    await core.graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
 
   const { owner } = core;

@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { ethers, network } from "hardhat";
 import { assertCode, resolveContracts } from "./verify-deployment";
+import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
 
 const TESTNET_CHAIN_ID = 97n;
 const MAINNET_CHAIN_ID = 56n;
@@ -149,7 +150,7 @@ async function main() {
   console.log(`[scheduled-test-factory] LaunchCampaign implementation=${campaignImplementationAddress}`);
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(launchRouter, treasuryRouter, campaignImplementationAddress, graduationOracle);
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [launchRouter, treasuryRouter, campaignImplementationAddress, graduationOracle] })).factory;
   await factory.waitForDeployment();
   const newFactory = await factory.getAddress();
   const newLocker = await factory.permanentLpLocker();

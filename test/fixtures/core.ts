@@ -1,4 +1,5 @@
 import { ethers } from "hardhat";
+import { deployFactoryWithLocker } from "../../scripts/lib/deployFactoryWithLocker";
 
 export type CoreFixture = {
   owner: any;
@@ -100,12 +101,10 @@ export async function deployCoreFixture(): Promise<CoreFixture> {
   await campaignImplementation.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await router.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
     await treasuryRouter.getAddress(),
     await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress()
-  );
+    await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
   const permanentLpLocker = await ethers.getContractAt("PermanentLpLocker", await factory.permanentLpLocker());
   await creatorVault.setFactory(await factory.getAddress());

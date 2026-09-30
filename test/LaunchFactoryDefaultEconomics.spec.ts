@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const MAX_BPS = 10_000n;
 const DEFAULT_TOTAL_SUPPLY = ethers.parseEther("1000000000");
@@ -108,12 +109,10 @@ async function deployFactoryWithProductionDefaults() {
   await implementation.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await router.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
     await treasuryRouter.getAddress(),
     await implementation.getAddress(),
-    await graduationOracle.getAddress()
-  );
+    await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
 
   return { deployer, factory };

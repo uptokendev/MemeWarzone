@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 
 import { assertFeedWithinMaxAge, configFor, graduationTargetFor, maxOracleAgeFor } from "../scripts/deploy-robinhood-quote-generation";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 /**
  * The factory's default graduation target has to be one the factory allows on
@@ -27,9 +28,7 @@ describe("Robinhood generation config", function () {
     await adapter.waitForDeployment();
     const impl = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
     await impl.waitForDeployment();
-    const factory = await (await ethers.getContractFactory("LaunchFactory")).deploy(
-      await adapter.getAddress(), await routing.treasuryRouter.getAddress(), await impl.getAddress(), await oracle.getAddress(),
-    );
+    const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await adapter.getAddress(), await routing.treasuryRouter.getAddress(), await impl.getAddress(), await oracle.getAddress()] })).factory;
     await factory.waitForDeployment();
     return factory as any;
   }

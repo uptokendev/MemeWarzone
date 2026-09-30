@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { ethers, network } from "hardhat";
+import { deployFactoryWithLocker } from "./deployFactoryWithLocker";
 
 function mustEnv(name: string, fallback?: string): string {
   const v = (process.env[name] ?? fallback ?? "").trim();
@@ -516,12 +517,10 @@ export async function deployProtocol() {
   console.log("LaunchCampaign implementation:", campaignImplementationAddress);
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    routerAddress,
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [routerAddress,
     leagueRouterAddress,
     campaignImplementationAddress,
-    graduationOracleConfig.oracleAddress
-  );
+    graduationOracleConfig.oracleAddress] })).factory;
   await factory.waitForDeployment();
   const factoryAddress = await factory.getAddress();
   const permanentLpLockerAddress = await factory.permanentLpLocker();

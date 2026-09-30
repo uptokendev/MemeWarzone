@@ -3,6 +3,7 @@ import { ethers, network } from "hardhat";
 
 import { deployConfiguredTreasuryRouterV3 } from "./helpers/deployRouting";
 import { assertTopazRoutersFit } from "../scripts/deploy-bnb-quote-generation";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 /**
  * Rehearsal for scripts/deploy-bnb-quote-generation.ts.
@@ -70,13 +71,11 @@ describe("BNB quote generation deployment", function () {
     await quoteImpl.waitForDeployment();
     expect(await (quoteImpl as any).isBnbQuoteCampaignImplementation()).to.equal(true);
 
-    const factory = await (await ethers.getContractFactory("BnbBasicLaunchFactory")).deploy(
-      await fx.topazRouter.getAddress(),
+    const factory = await (await deployFactoryWithLocker({ factoryName: "BnbBasicLaunchFactory", args: [await fx.topazRouter.getAddress(),
       await fx.routing.treasuryRouter.getAddress(),
       await nativeImpl.getAddress(),
       await fx.graduationOracle.getAddress(),
-      await quoteImpl.getAddress(),
-    );
+      await quoteImpl.getAddress()] })).factory;
     await factory.waitForDeployment();
 
     // The invariant whose absence bricked every campaign after a router change.
@@ -191,13 +190,11 @@ describe("BNB quote generation deployment", function () {
     const quoteImpl = await (await ethers.getContractFactory("BnbQuoteLaunchCampaign")).deploy();
     await quoteImpl.waitForDeployment();
 
-    const factory = await (await ethers.getContractFactory("BnbBasicLaunchFactory")).deploy(
-      await fx.topazRouter.getAddress(),
+    const factory = await (await deployFactoryWithLocker({ factoryName: "BnbBasicLaunchFactory", args: [await fx.topazRouter.getAddress(),
       await fx.routing.treasuryRouter.getAddress(),
       await nativeImpl.getAddress(),
       await fx.graduationOracle.getAddress(),
-      await quoteImpl.getAddress(),
-    );
+      await quoteImpl.getAddress()] })).factory;
     await factory.waitForDeployment();
     const factoryAddress = await factory.getAddress();
 
@@ -402,14 +399,22 @@ describe("BNB quote generation deployment", function () {
 
     // The native implementation is a contract with code, so only the explicit
     // self-identification call separates it from a real quote implementation.
+    // A correctly bound locker, so the refusal can only come from the quote implementation check.
+    const [signer] = await ethers.getSigners();
+    const nonce = await ethers.provider.getTransactionCount(await signer.getAddress(), "pending");
+    const predicted = ethers.getCreateAddress({ from: await signer.getAddress(), nonce: nonce + 1 });
+    const locker = await (await ethers.getContractFactory("PermanentLpLocker")).deploy(predicted);
+    await locker.waitForDeployment();
+    const BasicFactory = await ethers.getContractFactory("BnbBasicLaunchFactory");
     await expect(
-      (await ethers.getContractFactory("BnbBasicLaunchFactory")).deploy(
+      BasicFactory.deploy(
         await fx.topazRouter.getAddress(),
         await fx.routing.treasuryRouter.getAddress(),
         await nativeImpl.getAddress(),
         await fx.graduationOracle.getAddress(),
         await nativeImpl.getAddress(),
+        await locker.getAddress(),
       ),
-    ).to.be.reverted;
+    ).to.be.revertedWithCustomError(BasicFactory, "BnbQuoteCampaignImplementationUnavailable");
   });
 });

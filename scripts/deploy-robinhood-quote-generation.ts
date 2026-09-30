@@ -11,8 +11,8 @@
  *   LaunchFactory            leagueReceiver was immutable while feeRecipient was
  *                            not, so the first setCoreRouting would have bricked
  *                            every campaign created afterwards. Also brings a
- *                            fresh PermanentV3PositionLocker, which the factory
- *                            deploys itself.
+ *                            fresh PermanentV3PositionLocker, deployed just before
+ *                            the factory with admin = the factory address.
  *   LaunchCampaign           the implementation the factory clones.
  *   StockGraduationAdapter   minted the LP position straight to the locker, and
  *                            NonfungiblePositionManager.mint uses _mint, so
@@ -32,6 +32,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
 import { wireLpLocker } from "./lib/evmLpLockerWiring";
+import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
 
 const PROFILES: Record<string, { chainId: bigint; confirm: string; file: string }> = {
   robinhoodTestnet: { chainId: 46630n, confirm: "I_UNDERSTAND_TESTNET", file: "robinhood/testnet.quote-generation.json" },
@@ -213,17 +214,13 @@ async function main() {
   await campaignImpl.waitForDeployment();
   console.log(`[rh] LaunchCampaign impl = ${await campaignImpl.getAddress()}`);
 
-  const factory = await (await ethers.getContractFactory("LaunchFactory")).deploy(
-    v3GraduationRouter,
-    treasuryRouter,
-    await campaignImpl.getAddress(),
-    graduationOracle,
-  );
-  await factory.waitForDeployment();
-  const factoryAddress = await factory.getAddress();
-  const lockerAddress = await (factory as any).permanentLpLocker();
-  console.log(`[rh] LaunchFactory = ${factoryAddress}`);
-  console.log(`[rh] PermanentV3PositionLocker = ${lockerAddress}`);
+  // Locker first with admin = the factory's CREATE address; the factory constructor refuses any other.
+  const { factory, factoryAddress, lockerAddress } = await deployFactoryWithLocker({
+    factoryName: "LaunchFactory",
+    args: [v3GraduationRouter, treasuryRouter, await campaignImpl.getAddress(), graduationOracle],
+    lockerKind: "v3",
+    log: (line) => console.log(`[rh] ${line}`),
+  });
 
   // The invariant that bricked the previous generation.
   const feeRecipient = await (factory as any).feeRecipient();

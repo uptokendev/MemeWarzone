@@ -9,7 +9,7 @@
  *
  *   1. LaunchCampaign            native campaign implementation
  *   2. BnbQuoteLaunchCampaign    campaign implementation for non-native quotes
- *   3. BnbBasicLaunchFactory     the factory, which deploys its own locker
+ *   3. PermanentLpLocker + BnbBasicLaunchFactory  locker first (admin = factory's CREATE address), then the factory
  *   4. BnbQuoteGraduationAdapter needs the factory's locker, so it comes after
  *   5. PostGradLeagueTreasuryV2  the war pool's league receiver
  *   6. ArenaWarPoolTreasuryV2    the battle system
@@ -46,6 +46,7 @@ import path from "node:path";
 import { ethers, network } from "hardhat";
 
 import { wireLpLocker } from "./lib/evmLpLockerWiring";
+import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
 
 type ChainProfile = {
   chainId: bigint;
@@ -478,19 +479,15 @@ async function main() {
     throw new Error("quote implementation does not self-identify; the factory constructor would reject it");
   }
 
-  // --- factory, which deploys its own permanent locker ---------------------
-  const factory = await (await ethers.getContractFactory("BnbBasicLaunchFactory")).deploy(
-    topazRouter,
-    treasuryRouter,
-    await nativeImpl.getAddress(),
-    graduationOracle,
-    quoteImplAddress,
-  );
-  await factory.waitForDeployment();
-  const factoryAddress = await factory.getAddress();
-  const lockerAddress = await (factory as any).permanentLpLocker();
-  console.log(`[quote-gen] BnbBasicLaunchFactory=${factoryAddress}`);
-  console.log(`[quote-gen] PermanentLpLocker=${lockerAddress}`);
+  // --- permanent locker, then the factory it is bound to ---------------------
+  // The locker is deployed with admin = the factory's CREATE address; the factory constructor refuses
+  // any locker whose admin() is not itself (EIP-3860: the factory no longer embeds the locker).
+  const { factory, factoryAddress, lockerAddress } = await deployFactoryWithLocker({
+    factoryName: "BnbBasicLaunchFactory",
+    args: [topazRouter, treasuryRouter, await nativeImpl.getAddress(), graduationOracle, quoteImplAddress],
+    lockerKind: "v2",
+    log: (line) => console.log(`[quote-gen] ${line}`),
+  });
 
   // The invariant whose absence bricked the previous generation.
   eq("factory.feeRecipient", await (factory as any).feeRecipient(), treasuryRouter);

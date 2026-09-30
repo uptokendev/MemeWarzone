@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const PRODUCTION_CONFIG = {
   totalSupply: ethers.parseEther("1000000000"),
@@ -112,12 +113,10 @@ describe("BNB factory replacement security sequence", function () {
     expect(await treasury.authorizedLpLocker(await oldLocker.getAddress())).to.equal(true);
 
     const Factory = await ethers.getContractFactory("LaunchFactory");
-    const factory = await Factory.connect(deployer).deploy(
-      await router.getAddress(),
+    const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
       await treasury.getAddress(),
       await implementation.getAddress(),
-      await oracle.getAddress(),
-    );
+      await oracle.getAddress()] })).factory;
     await factory.waitForDeployment();
     const locker = await ethers.getContractAt("PermanentLpLocker", await factory.permanentLpLocker());
 

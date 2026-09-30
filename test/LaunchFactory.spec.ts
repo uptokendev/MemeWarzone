@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { artifacts, ethers } from "hardhat";
 import { deployCoreFixture } from "./fixtures/core";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const DEAD = "0x000000000000000000000000000000000000dEaD";
 const MAX_BPS = 10_000n;
@@ -219,45 +220,46 @@ describe("LaunchFactory", function () {
   it("constructor requires contract router, treasury router, campaign implementation, and graduation oracle", async () => {
     const Factory = await ethers.getContractFactory("LaunchFactory");
     const { deployer, router, treasuryRouter, implementation, graduationOracle } = await deployFactoryPrereqs();
+    // The factory binds a pre-deployed locker; for the argument checks any locker with code will do.
+    const anyLocker = await (await ethers.getContractFactory("PermanentLpLocker")).deploy(await deployer.getAddress());
+    const lockerAddress = await anyLocker.getAddress();
 
     await expect(
-      Factory.deploy(ethers.ZeroAddress, await treasuryRouter.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress())
+      Factory.deploy(ethers.ZeroAddress, await treasuryRouter.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "RouterZero");
 
     await expect(
-      Factory.deploy(await router.getAddress(), ethers.ZeroAddress, await implementation.getAddress(), await graduationOracle.getAddress())
+      Factory.deploy(await router.getAddress(), ethers.ZeroAddress, await implementation.getAddress(), await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "RecipientZero");
 
     await expect(
-      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), ethers.ZeroAddress, await graduationOracle.getAddress())
+      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), ethers.ZeroAddress, await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "ImplementationZero");
 
     await expect(
-      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), ethers.ZeroAddress)
+      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), ethers.ZeroAddress, lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "GraduationOracleZero");
 
     await expect(
-      Factory.deploy(await deployer.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress())
+      Factory.deploy(await deployer.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "ContractCodeMissing");
 
     await expect(
-      Factory.deploy(await router.getAddress(), await deployer.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress())
+      Factory.deploy(await router.getAddress(), await deployer.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "ContractCodeMissing");
 
     await expect(
-      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await deployer.getAddress(), await graduationOracle.getAddress())
+      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await deployer.getAddress(), await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "ContractCodeMissing");
 
     await expect(
-      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), await deployer.getAddress())
+      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), await deployer.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "ContractCodeMissing");
 
-    const factory = await Factory.deploy(
-      await router.getAddress(),
+    const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
       await treasuryRouter.getAddress(),
       await implementation.getAddress(),
-      await graduationOracle.getAddress()
-    );
+      await graduationOracle.getAddress()] })).factory;
     expect(await factory.router()).to.eq(await router.getAddress());
     expect(await factory.graduationOracle()).to.eq(await graduationOracle.getAddress());
     expect(await factory.leagueReceiver()).to.eq(await treasuryRouter.getAddress());
@@ -299,12 +301,10 @@ describe("LaunchFactory", function () {
     const [owner, creator] = await ethers.getSigners();
     const { router, treasuryRouter, implementation, graduationOracle } = await deployFactoryPrereqs();
     const Factory = await ethers.getContractFactory("LaunchFactory");
-    const factory = await Factory.deploy(
-      await router.getAddress(),
+    const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
       await treasuryRouter.getAddress(),
       await implementation.getAddress(),
-      await graduationOracle.getAddress()
-    );
+      await graduationOracle.getAddress()] })).factory;
 
     await expect(factory.connect(creator).createCampaign(baseReq() as any)).to.be.revertedWithCustomError(factory, "RouteAuthorizationRequired");
     await factory.connect(owner).setRequireRouteAuthorization(false);

@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import fs from "fs";
 import path from "path";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const CREATOR_SHARE_BPS = 8000n;
 const BPS = 10000n;
@@ -107,12 +108,10 @@ async function deploySourceHeadTopazStack() {
   await campaignImplementation.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await router.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
     await treasuryRouter.getAddress(),
     await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress(),
-  );
+    await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
   const locker = await ethers.getContractAt("PermanentLpLocker", await factory.permanentLpLocker());
   await treasuryRouter.setAuthorizedLpLocker(await locker.getAddress(), true);

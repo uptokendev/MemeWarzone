@@ -60,8 +60,9 @@ contract BnbBasicLaunchFactory is LaunchFactory {
         address treasuryRouter_,
         address nativeCampaignImplementation_,
         address graduationOracle_,
-        address bnbQuoteCampaignImplementation_
-    ) LaunchFactory(topazRouter_, treasuryRouter_, nativeCampaignImplementation_, graduationOracle_) {
+        address bnbQuoteCampaignImplementation_,
+        address permanentLpLocker_
+    ) LaunchFactory(topazRouter_, treasuryRouter_, nativeCampaignImplementation_, graduationOracle_, permanentLpLocker_) {
         if (bnbQuoteCampaignImplementation_ == address(0) || bnbQuoteCampaignImplementation_.code.length == 0) {
             revert BnbQuoteCampaignImplementationUnavailable();
         }

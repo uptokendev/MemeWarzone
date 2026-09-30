@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { deployCoreFixture } from "./fixtures/core";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const V3_FEE = 3000;
 
@@ -108,12 +109,10 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
     await implementation.waitForDeployment();
 
     const Factory = await ethers.getContractFactory("LaunchFactory");
-    const factory = await Factory.deploy(
-      await adapter.getAddress(),
+    const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await adapter.getAddress(),
       await treasury.getAddress(),
       await implementation.getAddress(),
-      await oracle.getAddress(),
-    );
+      await oracle.getAddress()] })).factory;
     await factory.waitForDeployment();
 
     expect(await factory.FACTORY_GENERATION()).to.equal(4n);
@@ -200,12 +199,10 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
     await implementation.waitForDeployment();
 
     const Factory = await ethers.getContractFactory("LaunchFactory");
-    const factory = await Factory.deploy(
-      await adapter.getAddress(),
+    const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await adapter.getAddress(),
       await treasury.getAddress(),
       await implementation.getAddress(),
-      await oracle.getAddress(),
-    );
+      await oracle.getAddress()] })).factory;
     await factory.waitForDeployment();
 
     const TopazFactory = await ethers.getContractFactory("MockTopazFactory");

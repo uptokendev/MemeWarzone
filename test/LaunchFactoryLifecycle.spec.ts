@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers, network } from "hardhat";
 import { deployCoreFixture } from "./fixtures/core";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const baseReq = (overrides: Record<string, unknown> = {}) => ({
   name: "LifecycleToken",
@@ -45,12 +46,10 @@ async function deployLifecycleFactoryWithUnifiedFeeRouter() {
   await strictFeeRouter.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await router.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
     await strictFeeRouter.getAddress(),
     await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress()
-  );
+    await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
 
   const permanentLpLocker = await ethers.getContractAt(

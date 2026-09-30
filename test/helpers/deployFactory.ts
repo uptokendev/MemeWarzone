@@ -1,4 +1,5 @@
 import { ethers } from "hardhat";
+import { deployFactoryWithLocker } from "../../scripts/lib/deployFactoryWithLocker";
 
 async function latestTimestamp() {
   const block = await ethers.provider.getBlock("latest");
@@ -21,12 +22,10 @@ export async function deployLaunchFactory(routerAddress: string, treasuryRouterA
   await campaignImplementation.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    routerAddress,
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [routerAddress,
     treasuryRouterAddress,
     await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress()
-  );
+    await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
 
   return { factory, campaignImplementation, priceFeed, graduationOracle };

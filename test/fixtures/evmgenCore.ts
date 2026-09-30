@@ -1,5 +1,6 @@
 import { ethers, network } from "hardhat";
 import type { Signer } from "ethers";
+import { deployFactoryWithLocker } from "../../scripts/lib/deployFactoryWithLocker";
 
 export const coder = ethers.AbiCoder.defaultAbiCoder();
 export const E = (v: string | number) => ethers.parseEther(String(v));
@@ -116,12 +117,10 @@ export async function deployEvmGen(opts: { nativeUsd?: number } = {}) {
 
   const impl = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
   const tokenDeployer = await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy();
-  const factory = await (await ethers.getContractFactory("LaunchFactory")).deploy(
-    await topazRouter.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await topazRouter.getAddress(),
     await evmRouter.getAddress(),
     await impl.getAddress(),
-    await oracle.getAddress(),
-  );
+    await oracle.getAddress()] })).factory;
   await vault.setFactory(await factory.getAddress());
 
   const adapter = await (await ethers.getContractFactory("MockGraduationAdapterEvmGen")).deploy(await topazFactory.getAddress(), await wbnb.getAddress());

@@ -1,19 +1,18 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { deployEvmGen, req, E, area, mineAt, buyTokens, buyNative, hashReq, now, coder } from "./fixtures/evmgenCore";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const firstBuyCost = (tokens: bigint) => area(tokens) + (area(tokens) * 200n) / 10000n;
 
 async function deployBnbQuote() {
   const env = await deployEvmGen();
   const quoteImpl = await (await ethers.getContractFactory("BnbQuoteLaunchCampaign")).deploy();
-  const factory = await (await ethers.getContractFactory("BnbBasicLaunchFactory")).deploy(
-    await env.topazRouter.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "BnbBasicLaunchFactory", args: [await env.topazRouter.getAddress(),
     await env.evmRouter.getAddress(),
     await env.impl.getAddress(),
     await env.oracle.getAddress(),
-    await quoteImpl.getAddress(),
-  );
+    await quoteImpl.getAddress()] })).factory;
   await env.vault.setFactory(await factory.getAddress());
   const quoteAdapter = await (await ethers.getContractFactory("MockGraduationAdapterEvmGen")).deploy(await env.topazFactory.getAddress(), await env.wbnb.getAddress());
   await quoteAdapter.setLocker(await factory.permanentLpLocker());

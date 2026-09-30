@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const WAD = 10n ** 18n;
 const BPS = 10_000n;
@@ -68,13 +69,11 @@ async function deployCore() {
   await quoteImpl.waitForDeployment();
 
   const BasicFactory = await ethers.getContractFactory("BnbBasicLaunchFactory");
-  const factory = await BasicFactory.deploy(
-    await router.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "BnbBasicLaunchFactory", args: [await router.getAddress(),
     await treasury.getAddress(),
     await nativeImpl.getAddress(),
     await graduationOracle.getAddress(),
-    await quoteImpl.getAddress(),
-  );
+    await quoteImpl.getAddress()] })).factory;
   await factory.waitForDeployment();
 
   await (await factory.setConfig({

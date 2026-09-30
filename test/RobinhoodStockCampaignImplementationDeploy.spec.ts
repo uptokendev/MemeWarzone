@@ -6,6 +6,7 @@ import {
   readFactoryReadiness,
   stockImplementationBatch,
 } from "../scripts/deploy-robinhood-stock-campaign-implementation";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const FEE = 3000;
 
@@ -34,9 +35,7 @@ async function fixture() {
   const treasury = await (await ethers.getContractFactory("MockPhase1TreasuryRouter")).deploy();
   const nativeFeed = await freshFeed("3000");
   const graduationOracle = await (await ethers.getContractFactory("GraduationOracle")).deploy(await nativeFeed.getAddress(), 30 * 24 * 60 * 60);
-  const factory = await (await ethers.getContractFactory("LaunchFactory")).deploy(
-    await nativeAdapter.getAddress(), await treasury.getAddress(), await campaignImplementation.getAddress(), await graduationOracle.getAddress(),
-  );
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await nativeAdapter.getAddress(), await treasury.getAddress(), await campaignImplementation.getAddress(), await graduationOracle.getAddress()] })).factory;
   await factory.setRouteAuthority(await routeSigner.getAddress());
   const locker = await factory.permanentLpLocker();
   const stockAdapter = await (await ethers.getContractFactory("RobinhoodStockTokenGraduationAdapter")).deploy(
