@@ -38,10 +38,14 @@ function hashCreateRouteRequest(req: {
   website: string;
   extraLink: string;
   graduationTarget: bigint;
+  firstBuyTokens?: bigint;
+  firstBuyMaxCost?: bigint;
+  feeChoice?: number;
+  feeCreatorPct?: number;
 }) {
   return ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"],
+      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint256", "uint256", "uint8", "uint8"],
       [
         ethers.keccak256(ethers.toUtf8Bytes(req.name)),
         ethers.keccak256(ethers.toUtf8Bytes(req.symbol)),
@@ -49,7 +53,7 @@ function hashCreateRouteRequest(req: {
         ethers.keccak256(ethers.toUtf8Bytes(req.xAccount)),
         ethers.keccak256(ethers.toUtf8Bytes(req.website)),
         ethers.keccak256(ethers.toUtf8Bytes(req.extraLink)),
-        req.graduationTarget,
+        req.graduationTarget, req.firstBuyTokens ?? 0n, req.firstBuyMaxCost ?? 0n, req.feeChoice ?? 1, req.feeCreatorPct ?? 0,
       ],
     ),
   );
@@ -155,6 +159,10 @@ async function deploySourceHeadFeeStack() {
     basePrice: 10n ** 12n,
     priceSlope: 10n ** 9n,
     graduationTarget: ethers.parseEther("30000"),
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: 8000,
   });
   await factory.enableLive();
@@ -195,6 +203,10 @@ describe("BNB 6B creator-fee generation (local source-head only)", function () {
         website: "",
         extraLink: "",
         graduationTarget: 0n,
+        firstBuyTokens: 0n,
+        firstBuyMaxCost: 0n,
+        feeChoice: 1,
+        feeCreatorPct: 0,
       };
       const deadline = (await latestTimestamp()) + 600n;
       const signature = await signCreateRoute(

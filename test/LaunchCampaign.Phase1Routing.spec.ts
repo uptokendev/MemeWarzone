@@ -39,6 +39,10 @@ async function deployPhase1RoutingFixture() {
     basePrice: ethers.parseEther("0.005"),
     priceSlope: 10n ** 9n,
     graduationTarget: ethers.parseEther("2"),
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: 8000,
   });
   await factory.connect(owner).enableLive();
@@ -104,6 +108,10 @@ async function createCampaignViaPhase1RouterFixture(tradeRouteProfile = 1, final
     basePrice: 0n,
     priceSlope: 0n,
     graduationTarget: 0n,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     lpReceiver: ethers.ZeroAddress,
     initialBuyBnbWei: 0n,
   };

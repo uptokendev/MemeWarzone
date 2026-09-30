@@ -47,8 +47,9 @@ describe("PermanentLpLocker pending payouts", function () {
       await creator.getAddress(),
       await creator.getAddress(),
       await pool.getAddress(),
-      await feeToken.getAddress(),
+      // E9: the paired asset is the one paid out, so the blockable fee token is registered as the paired side.
       await otherToken.getAddress(),
+      await feeToken.getAddress(),
       locked,
     )).wait();
 

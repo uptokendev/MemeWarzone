@@ -11,6 +11,10 @@ function campaignRequest(name: string, symbol: string) {
     website: "",
     extraLink: "",
     graduationTarget: 0n,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
   };
 }
 

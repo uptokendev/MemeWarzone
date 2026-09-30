@@ -11,6 +11,10 @@ const baseCampaign = (overrides: Record<string, unknown> = {}) => ({
   website: "https://example.test",
   extraLink: "",
   graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   ...overrides,
 });
 
@@ -47,6 +51,10 @@ async function scheduledFixture() {
     basePrice: current.basePrice,
     priceSlope: current.priceSlope,
     graduationTarget: ethers.parseEther("6"),
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: current.liquidityBps,
   });
 

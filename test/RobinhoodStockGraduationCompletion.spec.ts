@@ -22,7 +22,7 @@ async function freshFeed(price: string) {
 function hashCampaignRequest(req: any) {
   return ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"],
+      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint256", "uint256", "uint8", "uint8"],
       [
         ethers.keccak256(ethers.toUtf8Bytes(req.name)),
         ethers.keccak256(ethers.toUtf8Bytes(req.symbol)),
@@ -30,7 +30,7 @@ function hashCampaignRequest(req: any) {
         ethers.keccak256(ethers.toUtf8Bytes(req.xAccount)),
         ethers.keccak256(ethers.toUtf8Bytes(req.website)),
         ethers.keccak256(ethers.toUtf8Bytes(req.extraLink)),
-        req.graduationTarget,
+        req.graduationTarget, req.firstBuyTokens ?? 0n, req.firstBuyMaxCost ?? 0n, req.feeChoice ?? 1, req.feeCreatorPct ?? 0,
       ],
     ),
   );
@@ -213,6 +213,10 @@ async function fixture() {
     website: "",
     extraLink: "",
     graduationTarget: 1n,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
   };
   const createDeadline = (await nowTs()) + 3600n;
   const signature = await signStockAuthorization(
@@ -414,10 +418,13 @@ describe("Robinhood Stock pending graduation completion", function () {
 
     await expect(fx.locker.connect(fx.outsider).harvest(pool)).to.emit(fx.locker, "FeesHarvested");
 
-    const expectedCreator0 = (claimable0 * CREATOR_FEE_BPS) / BPS;
-    const expectedCreator1 = (claimable1 * CREATOR_FEE_BPS) / BPS;
-    const expectedProtocol0 = claimable0 - expectedCreator0;
-    const expectedProtocol1 = claimable1 - expectedCreator1;
+    // E9 (new locker source): only the paired (stock) side is split; the MEME side is sold in the pool or, with
+    // this mock pool that has no V3 swap surface, carried to the next harvest.
+    const memeIs0 = token0Contract === fx.token;
+    const expectedCreator0 = memeIs0 ? 0n : (claimable0 * CREATOR_FEE_BPS) / BPS;
+    const expectedCreator1 = memeIs0 ? (claimable1 * CREATOR_FEE_BPS) / BPS : 0n;
+    const expectedProtocol0 = memeIs0 ? 0n : claimable0 - expectedCreator0;
+    const expectedProtocol1 = memeIs0 ? claimable1 - expectedCreator1 : 0n;
 
     expect((await token0Contract.balanceOf(creatorAddress)) - creator0Before).to.equal(expectedCreator0);
     expect((await token1Contract.balanceOf(creatorAddress)) - creator1Before).to.equal(expectedCreator1);

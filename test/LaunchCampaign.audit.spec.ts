@@ -14,6 +14,10 @@ const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
   basePrice: 0n,
   priceSlope: 0n,
   graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
@@ -36,6 +40,10 @@ async function createLowTargetCampaign() {
     basePrice: 10n ** 12n,
     priceSlope: 10n ** 9n,
     graduationTarget: 1n,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: 8000,
   });
   await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest() as any);

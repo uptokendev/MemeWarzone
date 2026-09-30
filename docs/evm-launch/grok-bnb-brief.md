@@ -1,6 +1,6 @@
 # Grok brief, EVM generation (BNB 56): graduation adapters that survive a pre-made pool
 
-Read first: `docs/evm-launch/EVM_LAUNCH_GENERATION_PLAN.md` (E1-E6, C5, C7) and
+Read first: `docs/evm-launch/EVM_LAUNCH_GENERATION_PLAN.md` (decisions E1-E10, C5, C7) and
 `docs/evm-launch/spec/C7-bnb-adapters.md` (the spec you build to; its section numbers are used below).
 
 ## Branch rules (hard)
@@ -24,6 +24,15 @@ Read first: `docs/evm-launch/EVM_LAUNCH_GENERATION_PLAN.md` (E1-E6, C5, C7) and
 > new external function on a treasury is audited as a diff before it is tested, and tested before it
 > is deployed. Write it so an external auditor finds nothing, not so it passes our tests.
 
+## Parallel work (so you know what moves under you)
+
+Claude builds, at the same time, on other branches: the campaign and factory (graduation calls your
+adapter through `IGraduationAdapterV2`, approves `memeMax`, sends the pool native as `msg.value`, and
+enables MEME transfers right before the call), the new treasury router, the creator vault and both
+lockers, and the Robinhood adapters. Your tests use a harness campaign in `contracts/test/` that does
+exactly what the interface section says. Pull `build/evm-launch-staging` before you open the PR and
+rebase on it; conflicts in files outside your scope mean you edited something that is not yours.
+
 ## Scope
 
 Yours:
@@ -37,7 +46,9 @@ Yours:
 
 Not yours (Claude owns them; do not edit, even to make a test pass): `LaunchCampaign.sol`,
 `BnbQuoteLaunchCampaign.sol`, `LaunchFactory.sol`, `BnbBasicLaunchFactory.sol`, every `TreasuryRouter*`,
-every `CreatorRewardsVault*`, the lockers' economics (`PermanentLpLocker.sol` stays as it is),
+every `CreatorRewardsVault*`, `PermanentLpLocker.sol` (Claude is changing its harvest: from this generation every harvest sells the
+MEME-side fees for WBNB before the 80/20 split, decision E9; build against its registration interface,
+which does not change),
 `TopazRouterAdapter.sol`, `scripts/deploy-evm-treasury-router-v3.ts`, anything Robinhood. If your work
 needs a change there, write it in the PR under "Needs from Claude" and build against a test-only
 harness campaign in `contracts/test/`.
@@ -77,6 +88,10 @@ QUOTE and call `sync()`. Today the quote adapter reverts `FinalPoolAlreadyExists
    above is allowed); check the pool's QUOTE balance rose by exactly `N` before minting.
 
 ## Interface to build against (fixed)
+
+The interface is a real file on `build/evm-launch-staging`: `contracts/interfaces/IGraduationAdapterV2.sol`.
+Import it; do not copy or edit it. If you believe it must change, stop and write it under "Needs from
+Claude". The text below is the same file, for reading.
 
 ```solidity
 // One interface for every graduation adapter (BNB Topaz native + quote, Robinhood V3 native + stock).
@@ -123,7 +138,8 @@ binding, `bm > 0` and `totalSupply > 0` fail closed.
 BSC mainnet fork (`BNB_FORK=1`, `--network hardhat`, mine one block before the first read), with a
 test-only harness campaign that holds MEME as token owner: all eleven cases of spec section 8, both
 adapters. For each: graduation succeeds, invariants 1-5 of spec section 7 hold, the locker registers
-the pool, a buy and a sell through the real Topaz router work afterwards, a harvest pays 80/20. Case 7
+the pool, a buy and a sell through the real Topaz router work afterwards, a harvest against today's `PermanentLpLocker` pays 80/20 (a smoke test only: the new locker's
+harvest is tested by Claude). Case 7
 (griefer tries to get MEME into the pool) must show every attempt reverting. Case 9 (custom fee)
 documents the failure; do not work around it.
 

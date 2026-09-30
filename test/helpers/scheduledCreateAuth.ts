@@ -9,10 +9,14 @@ function hashCampaignRequest(req: {
   website: string;
   extraLink: string;
   graduationTarget: bigint;
+  firstBuyTokens?: bigint;
+  firstBuyMaxCost?: bigint;
+  feeChoice?: number;
+  feeCreatorPct?: number;
 }) {
   return ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"],
+      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint256", "uint256", "uint8", "uint8"],
       [
         ethers.keccak256(ethers.toUtf8Bytes(String(req.name))),
         ethers.keccak256(ethers.toUtf8Bytes(String(req.symbol))),
@@ -20,7 +24,7 @@ function hashCampaignRequest(req: {
         ethers.keccak256(ethers.toUtf8Bytes(String(req.xAccount))),
         ethers.keccak256(ethers.toUtf8Bytes(String(req.website))),
         ethers.keccak256(ethers.toUtf8Bytes(String(req.extraLink))),
-        req.graduationTarget,
+        req.graduationTarget, req.firstBuyTokens ?? 0n, req.firstBuyMaxCost ?? 0n, req.feeChoice ?? 1, req.feeCreatorPct ?? 0,
       ],
     ),
   );
@@ -57,6 +61,10 @@ export async function deployScheduledCreateFixture() {
     basePrice: current.basePrice,
     priceSlope: current.priceSlope,
     graduationTarget: current.graduationTarget,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: current.liquidityBps,
   });
   await factory.connect(owner).enableLive();

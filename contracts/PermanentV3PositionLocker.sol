@@ -6,6 +6,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {EvmGenPoolSwap} from "./EvmGenPoolSwap.sol";
 
 interface IRobinhoodV3LockerIntegration {
     function liquidityKind() external view returns (uint8);
@@ -56,6 +57,13 @@ interface IRobinhoodV3LpRevenueTreasuryRouter {
 /// @notice Permanent locker for MemeWarzone Robinhood Chain Uniswap V3 graduation positions.
 /// @dev The locker deliberately exposes no NFT transfer, approve, decrease-liquidity, burn,
 /// migration or rescue path. Principal remains in the position forever; only earned fees can move.
+/// EVM launch generation (E9, docs/evm-launch/spec/C1-C6-fees.md): every harvest sells the MEME-side fees
+/// for the paired asset in the same pool with a sqrtPriceLimitX96 at the impact bound (EvmGenPoolSwap), so
+/// the pool itself stops the sale (no TWAP guard here: a new pool has one observation slot, and the bound
+/// alone makes a sandwich unprofitable, see EvmGenPoolSwap); the unsold rest is carried (`carriedMeme`)
+/// into the next harvest, and neither the bound nor a failed sale ever reverts a harvest. Creator and
+/// protocol are paid in the paired asset only: WETH on native pools, the stock token on stock-bound pools,
+/// both through today's paths (creator transfer with pending fallback, protocol via routeLpToken).
 contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -63,6 +71,8 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     uint16 public constant CREATOR_FEE_BPS = 8_000;
     uint16 public constant PROTOCOL_FEE_BPS = 2_000;
     uint16 private constant FEE_BPS = 10_000;
+    /// @notice Max price impact of one harvest's MEME sale (0.50%), enforced by the swap's price limit.
+    uint16 public constant MEME_SALE_MAX_IMPACT_BPS = 50;
 
     struct PoolRegistration {
         address campaign;
@@ -77,6 +87,8 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
         bool registered;
+        address memeToken;
+        address pairedToken;
     }
 
     address public immutable admin;
@@ -102,6 +114,11 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     mapping(address => uint256) public pendingProtocolToken;
     mapping(address => mapping(address => uint256)) public cumulativeCreatorPaid;
     mapping(address => mapping(address => uint256)) public cumulativeProtocolRouted;
+    /// @notice MEME fees collected but not yet sold because of the impact bound, per pool.
+    mapping(address => uint256) public carriedMeme;
+    // In-flight V3 swap, checked by uniswapV3SwapCallback; zero outside sellMemeForPaired.
+    address private activeSwapPool;
+    uint256 private activeSwapMaxPay;
 
     event RevenueConfigUpdated(
         address indexed treasuryRouter,
@@ -132,6 +149,7 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     event PendingTokenClaimed(address indexed recipient, address indexed token, uint256 amount);
     event PendingProtocolTokenRouted(address indexed token, uint256 amount);
     event UnregisteredTokenRecovered(address indexed token, address indexed to, uint256 amount);
+    event MemeFeesSold(address indexed pool, address indexed memeToken, uint256 memeSold, uint256 pairedOut, uint256 memeCarried);
 
     error OnlyAdmin();
     error OnlyCreator();
@@ -149,6 +167,8 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     error PositionMissing();
     error PositionPrincipalChanged();
     error RegisteredFeeAssetRecoveryBlocked();
+    error OnlySelf();
+    error UnexpectedCallback();
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert OnlyAdmin();
@@ -234,7 +254,9 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         return IERC721Receiver.onERC721Received.selector;
     }
 
-    /// @dev Signature intentionally matches PermanentLpLocker so the next LaunchFactory generation
+    /// @dev `expectedTokenA` is the campaign's MEME token and `expectedTokenB` the paired asset (WETH or the
+    /// stock token); LaunchFactory passes them in that order. The MEME side is the one sold at harvest.
+    /// Signature intentionally matches PermanentLpLocker so the next LaunchFactory generation
     /// can use one registration boundary. lockedLpAmount may be zero for V3; actual NFT liquidity is
     /// read from the canonical position manager and becomes the locked principal invariant.
     function registerGraduatedPool(
@@ -259,7 +281,8 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
 
         (address token0_, address token1_, uint24 fee_, uint128 liquidity_) = _positionCore(tokenId);
         if (fee_ != configuredFeeTier) revert InvalidFeeTier();
-        if (!_samePair(token0_, token1_, expectedTokenA, expectedTokenB)) revert TokenPairMismatch();
+        // expectedTokenA is the MEME side that harvest sells; it can never be the wrapped native.
+        if (!_samePair(token0_, token1_, expectedTokenA, expectedTokenB) || expectedTokenA == wrappedNative) revert TokenPairMismatch();
         if (IRobinhoodV3LockerFactory(v3Factory).getPool(token0_, token1_, fee_) != pool) revert InvalidPool();
         if (liquidity_ == 0) revert ZeroAmount();
         if (lockedLpAmount != 0 && lockedLpAmount != uint256(liquidity_)) revert PositionPrincipalChanged();
@@ -284,7 +307,9 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
             feeTier: fee_,
             creatorFeeBps: CREATOR_FEE_BPS,
             protocolFeeBps: PROTOCOL_FEE_BPS,
-            registered: true
+            registered: true,
+            memeToken: expectedTokenA,
+            pairedToken: expectedTokenB
         });
 
         emit GraduationPoolRegistered(
@@ -336,8 +361,44 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         (, , , uint128 liquidityAfter) = _positionCore(info.tokenId);
         if (liquidityAfter != liquidityBefore) revert PositionPrincipalChanged();
 
-        _splitAndRoute(info, info.token0, collected0);
-        _splitAndRoute(info, info.token1, collected1);
+        bool memeIs0 = info.memeToken == info.token0;
+        uint256 memeToSell = carriedMeme[pool] + (memeIs0 ? collected0 : collected1);
+        uint256 paired = memeIs0 ? collected1 : collected0;
+        if (memeToSell != 0) {
+            uint256 memeSold;
+            uint256 pairedOut;
+            try this.sellMemeForPaired(pool, memeIs0, memeToSell) returns (uint256 sold_, uint256 out_) {
+                memeSold = sold_;
+                pairedOut = out_;
+            } catch {}
+            carriedMeme[pool] = memeToSell - memeSold;
+            paired += pairedOut;
+            emit MemeFeesSold(pool, info.memeToken, memeSold, pairedOut, memeToSell - memeSold);
+        }
+
+        _splitAndRoute(info, info.pairedToken, paired);
+    }
+
+    /// @notice Internal step of harvest, external only so a failed sale reverts atomically inside a try.
+    /// @dev Callable by this contract only; runs inside harvest's reentrancy guard.
+    function sellMemeForPaired(address pool, bool memeIs0, uint256 amount) external returns (uint256 sold, uint256 out) {
+        if (msg.sender != address(this)) revert OnlySelf();
+        (bool ok, uint160 limit) =
+            EvmGenPoolSwap.v3Limit(pool, memeIs0, MEME_SALE_MAX_IMPACT_BPS, 0, 0);
+        if (!ok) return (0, 0);
+        activeSwapPool = pool;
+        activeSwapMaxPay = amount;
+        (sold, out) = EvmGenPoolSwap.v3Swap(pool, memeIs0, amount, limit, address(this));
+        activeSwapPool = address(0);
+        activeSwapMaxPay = 0;
+    }
+
+    /// @notice Pays the pool during sellMemeForPaired only. Any other caller or time reverts.
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata) external {
+        if (msg.sender != activeSwapPool || msg.sender == address(0)) revert UnexpectedCallback();
+        PoolRegistration storage info = poolInfo[msg.sender];
+        bool memeIs0 = info.memeToken == info.token0;
+        EvmGenPoolSwap.v3PayOwed(info.memeToken, memeIs0, amount0Delta, amount1Delta, activeSwapMaxPay);
     }
 
     function claimPendingToken(address token) external nonReentrant returns (uint256 amount) {

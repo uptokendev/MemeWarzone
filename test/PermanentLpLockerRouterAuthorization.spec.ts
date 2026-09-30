@@ -95,9 +95,11 @@ describe("LP harvest when the locker is not authorized on the treasury router", 
     // The harvest does not revert. That is the whole problem.
     await expect(fx.locker.harvest(fx.poolAddress)).to.not.be.reverted;
 
-    const expectedCreatorToken = (FEE_TOKEN * CREATOR_BPS) / BPS;
+    // E9: the MEME side is never paid out; this mock pool cannot swap, so it is carried to the next harvest.
+    const expectedCreatorToken = 0n;
     const expectedCreatorWbnb = (FEE_WBNB * CREATOR_BPS) / BPS;
-    expect(await fx.token.balanceOf(creatorAddress), "creator is paid in full").to.equal(expectedCreatorToken);
+    expect(await fx.locker.carriedMeme(fx.poolAddress)).to.equal(FEE_TOKEN);
+    expect(await fx.token.balanceOf(creatorAddress), "creator gets no MEME").to.equal(expectedCreatorToken);
     expect(await fx.wbnb.balanceOf(creatorAddress)).to.equal(expectedCreatorWbnb);
 
     // And the protocol vault, which is the thing nobody looks at, is empty.
@@ -105,7 +107,7 @@ describe("LP harvest when the locker is not authorized on the treasury router", 
     expect(await fx.wbnb.balanceOf(protocolVault)).to.equal(0n);
 
     // The money is not lost, it is parked.
-    expect(await fx.locker.pendingProtocolToken(fx.tokenAddress)).to.equal(FEE_TOKEN - expectedCreatorToken);
+    expect(await fx.locker.pendingProtocolToken(fx.tokenAddress)).to.equal(0n);
     expect(await fx.locker.pendingProtocolToken(fx.wbnbAddress)).to.equal(FEE_WBNB - expectedCreatorWbnb);
   });
 
@@ -117,7 +119,8 @@ describe("LP harvest when the locker is not authorized on the treasury router", 
 
     const parkedToken = await fx.locker.pendingProtocolToken(fx.tokenAddress);
     const parkedWbnb = await fx.locker.pendingProtocolToken(fx.wbnbAddress);
-    expect(parkedToken).to.be.greaterThan(0n);
+    expect(parkedToken).to.equal(0n); // E9: only the paired asset is ever routed
+    expect(parkedWbnb).to.be.greaterThan(0n);
 
     // The one call the deployment was missing. A fresh router takes it directly;
     // once any locker is authorized the router requires propose/accept instead.
@@ -126,7 +129,6 @@ describe("LP harvest when the locker is not authorized on the treasury router", 
 
     // Permissionless: recovery does not need the admin key.
     const [, , , stranger] = await ethers.getSigners();
-    await (await fx.locker.connect(stranger).retryPendingProtocolToken(fx.tokenAddress)).wait();
     await (await fx.locker.connect(stranger).retryPendingProtocolToken(fx.wbnbAddress)).wait();
 
     expect(await fx.token.balanceOf(protocolVault)).to.equal(parkedToken);
@@ -142,7 +144,7 @@ describe("LP harvest when the locker is not authorized on the treasury router", 
 
     await (await fx.locker.harvest(fx.poolAddress)).wait();
 
-    expect(await fx.token.balanceOf(protocolVault)).to.equal(FEE_TOKEN - (FEE_TOKEN * CREATOR_BPS) / BPS);
+    expect(await fx.token.balanceOf(protocolVault)).to.equal(0n);
     expect(await fx.wbnb.balanceOf(protocolVault)).to.equal(FEE_WBNB - (FEE_WBNB * CREATOR_BPS) / BPS);
     expect(await fx.locker.pendingProtocolToken(fx.tokenAddress)).to.equal(0n);
   });

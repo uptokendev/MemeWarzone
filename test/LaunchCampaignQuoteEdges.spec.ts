@@ -15,6 +15,10 @@ const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
   basePrice: 0n,
   priceSlope: 0n,
   graduationTarget: ethers.parseEther("100000"),
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
@@ -113,6 +117,10 @@ describe("LaunchCampaign quote edge behavior", function () {
       basePrice: 10n ** 12n,
       priceSlope: 10n ** 9n,
       graduationTarget: 1n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
     await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest({ graduationTarget: 0n }) as any);
