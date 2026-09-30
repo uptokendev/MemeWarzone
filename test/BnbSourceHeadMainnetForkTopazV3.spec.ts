@@ -110,7 +110,7 @@ async function deploySourceHead() {
   expect(await factory.FACTORY_GENERATION()).to.equal(4n);
   expect(await factory.CAMPAIGN_GENERATION()).to.equal(3n);
   expect(await factory.liquidityKind()).to.equal(1n);
-  expect(await locker.REQUIRED_POOL_FEE_BPS()).to.equal(30n);
+  expect(await locker.REQUIRED_LIQUIDITY_KIND()).to.equal(1n);
   expect(await locker.CREATOR_FEE_BPS()).to.equal(8000n);
   expect(await locker.PROTOCOL_FEE_BPS()).to.equal(2000n);
   expect(await locker.topazFactory()).to.equal(TOPAZ_FACTORY);

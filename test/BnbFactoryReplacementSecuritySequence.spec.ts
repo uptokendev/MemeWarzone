@@ -166,7 +166,7 @@ describe("BNB factory replacement security sequence", function () {
       "SecurityDefaultsLocked",
     );
 
-    expect(await locker.REQUIRED_POOL_FEE_BPS()).to.equal(30n);
+    expect(await locker.REQUIRED_LIQUIDITY_KIND()).to.equal(1n);
     expect(await locker.CREATOR_FEE_BPS()).to.equal(8000n);
     expect(await locker.PROTOCOL_FEE_BPS()).to.equal(2000n);
     expect(await locker.admin()).to.equal(await factory.getAddress());

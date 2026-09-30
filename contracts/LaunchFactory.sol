@@ -30,15 +30,13 @@ interface IPermanentLiquidityLocker {
     ) external;
 }
 
-/// @dev Kind probes: each selector exists on exactly one locker, and neither locker has a fallback,
-/// so calling the other kind's selector reverts the factory constructor.
-interface IPermanentV3LockerKind {
+/// @dev Kind probe: both lockers of this generation answer REQUIRED_LIQUIDITY_KIND (V2 Topaz = 1, V3
+/// NFT = 2); the factory requires the answer to equal its router's liquidity kind. A contract without the
+/// selector (neither locker has a fallback) reverts the factory constructor.
+interface IPermanentLockerKind {
     function REQUIRED_LIQUIDITY_KIND() external view returns (uint8);
 }
 
-interface IPermanentV2LockerKind {
-    function REQUIRED_POOL_FEE_BPS() external view returns (uint16);
-}
 
 interface IRobinhoodStockGraduationRouteRegistry {
     function stockRoutes(address stockToken)
@@ -355,15 +353,11 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
         uint8 detectedLiquidityKind = _readLiquidityKind(topazRouter_);
         liquidityKind = detectedLiquidityKind;
         permanentLpLocker = IPermanentLiquidityLocker(permanentLpLocker_);
-        if (detectedLiquidityKind == LIQUIDITY_KIND_V3_NFT) {
-            if (IPermanentV3LockerKind(permanentLpLocker_).REQUIRED_LIQUIDITY_KIND() != LIQUIDITY_KIND_V3_NFT) {
-                revert LockerKindMismatch();
-            }
-            IPermanentLiquidityLocker(permanentLpLocker_).configureRevenue(treasuryRouter_, topazRouter_);
-        } else {
-            if (IPermanentV2LockerKind(permanentLpLocker_).REQUIRED_POOL_FEE_BPS() == 0) revert LockerKindMismatch();
-            IPermanentLiquidityLocker(permanentLpLocker_).configureRevenue(treasuryRouter_, _v2PoolFactory(topazRouter_));
-        }
+        if (IPermanentLockerKind(permanentLpLocker_).REQUIRED_LIQUIDITY_KIND() != detectedLiquidityKind) revert LockerKindMismatch();
+        IPermanentLiquidityLocker(permanentLpLocker_).configureRevenue(
+            treasuryRouter_,
+            detectedLiquidityKind == LIQUIDITY_KIND_V3_NFT ? topazRouter_ : _v2PoolFactory(topazRouter_)
+        );
 
         // C5 §2: supply-bound curve. 70% curve, 28% liquidity allocation, 2% creator reserve; BNB
         // (Topaz V2) slope 1080, Robinhood (Uniswap V3) slope 850. Checked by _validateConfig too.

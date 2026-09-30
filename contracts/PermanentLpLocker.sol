@@ -38,13 +38,12 @@ contract PermanentLpLocker is ReentrancyGuard {
 
     uint16 public constant CREATOR_FEE_BPS = 8_000;
     uint16 public constant PROTOCOL_FEE_BPS = 2_000;
-    /// @dev Must match the live Topaz volatile v2 factory fee (0.30%). This is a
-    /// pool-fee check, not an extra locker charge. Harvested LP fees still split 80/20.
-    // TODO(founder) Q4: accept any Topaz volatile pool fee at registration (and record it) instead of
-    // requiring 30 bps. Not decided; today's 30 bps requirement stays.
-    uint16 public constant REQUIRED_POOL_FEE_BPS = 30;
+    /// @notice Kind probe for LaunchFactory (1 = Topaz V2 ERC20 LP). PermanentV3PositionLocker answers the
+    /// same selector with 2, so the factory binds a locker only of its own liquidity kind.
+    uint8 public constant REQUIRED_LIQUIDITY_KIND = 1;
     uint16 internal constant FEE_BPS = 10_000;
     /// @notice Max price impact of one harvest's MEME sale (0.50%: sells <= 0.25% of the MEME reserve).
+    /// E13: on a pool whose fee is below 0.30% the bound shrinks with it (`saleImpactBps`).
     uint16 public constant MEME_SALE_MAX_IMPACT_BPS = 50;
 
 
@@ -61,6 +60,9 @@ contract PermanentLpLocker is ReentrancyGuard {
         bool registered;
         address memeToken;
         address pairedToken;
+        /// @dev E13: the pool's Topaz fee in bps (getFee(pool, false)), recorded at registration and
+        /// refreshed by harvest when Topaz's fee manager changes it. 0 is a valid Topaz fee.
+        uint16 poolFeeBps;
     }
 
     address public immutable admin;
@@ -105,6 +107,8 @@ contract PermanentLpLocker is ReentrancyGuard {
     event PendingProtocolNativeRouted(uint256 amount);
     event UnregisteredTokenRecovered(address indexed token, address indexed to, uint256 amount);
     event MemeFeesSold(address indexed pool, address indexed memeToken, uint256 memeSold, uint256 pairedOut, uint256 memeCarried);
+    /// @notice E13: the pool's Topaz fee as recorded (at registration, and whenever harvest sees it changed).
+    event PoolFeeRecorded(address indexed pool, uint16 poolFeeBps);
 
     error OnlyAdmin();
     error OnlyCreator();
@@ -164,13 +168,15 @@ contract PermanentLpLocker is ReentrancyGuard {
         if (poolInfo[pool].registered) revert AlreadyRegistered();
         if (lockedLpAmount == 0) revert ZeroAmount();
 
+        // E13: any fee Topaz's own fee manager sets is accepted and recorded (it must not be able to freeze
+        // a graduation); what is still refused is a pool that is not a volatile pool of the configured
+        // Topaz factory, and a fee that is not a fee (> 100%).
         ITopazPoolFeeSource topazPool = ITopazPoolFeeSource(pool);
         address configuredFactory = topazFactory;
-        if (configuredFactory != address(0) && topazPool.factory() != configuredFactory) revert InvalidTopazFactory();
+        if (configuredFactory == address(0) || topazPool.factory() != configuredFactory) revert InvalidTopazFactory();
         if (topazPool.stable()) revert StablePoolUnsupported();
-        if (configuredFactory != address(0) && ITopazPoolFactory(configuredFactory).getFee(pool, false) != REQUIRED_POOL_FEE_BPS) {
-            revert InvalidTradingFee();
-        }
+        uint256 poolFee = ITopazPoolFactory(configuredFactory).getFee(pool, false);
+        if (poolFee > FEE_BPS) revert InvalidTradingFee();
 
         address token0_ = topazPool.token0();
         address token1_ = topazPool.token1();
@@ -195,8 +201,10 @@ contract PermanentLpLocker is ReentrancyGuard {
             protocolFeeBps: PROTOCOL_FEE_BPS,
             registered: true,
             memeToken: expectedTokenA,
-            pairedToken: expectedTokenB
+            pairedToken: expectedTokenB,
+            poolFeeBps: uint16(poolFee)
         });
+        emit PoolFeeRecorded(pool, uint16(poolFee));
 
         emit LpPermanentlyLocked(pool, address(this), lockedLpAmount, lockedBalance[pool]);
         emit GraduationPoolRegistered(
@@ -257,7 +265,8 @@ contract PermanentLpLocker is ReentrancyGuard {
         uint256 memeSold;
         uint256 pairedOut;
         if (memeToSell != 0) {
-            try this.sellMemeForPaired(pool, info.memeToken, memeToSell) returns (uint256 sold_, uint256 out_) {
+            uint256 impactBps = saleImpactBps(_refreshPoolFee(pool, info.poolFeeBps));
+            try this.sellMemeForPaired(pool, info.memeToken, memeToSell, impactBps) returns (uint256 sold_, uint256 out_) {
                 memeSold = sold_;
                 pairedOut = out_;
             } catch {}
@@ -270,11 +279,36 @@ contract PermanentLpLocker is ReentrancyGuard {
 
     /// @notice Internal step of harvest, external only so a failed sale reverts atomically inside a try.
     /// @dev Callable by this contract only. Not nonReentrant: it runs inside harvest's guard.
-    function sellMemeForPaired(address pool, address memeToken, uint256 amount) external returns (uint256 sold, uint256 out) {
+    function sellMemeForPaired(address pool, address memeToken, uint256 amount, uint256 impactBps)
+        external
+        returns (uint256 sold, uint256 out)
+    {
         if (msg.sender != address(this)) revert OnlySelf();
-        (sold, out) = EvmGenPoolSwap.v2Plan(pool, memeToken, amount, MEME_SALE_MAX_IMPACT_BPS, 0);
+        (sold, out) = EvmGenPoolSwap.v2Plan(pool, memeToken, amount, impactBps, 0);
         if (sold == 0) return (0, 0);
         EvmGenPoolSwap.v2Execute(pool, memeToken, sold, out, address(this));
+    }
+
+    /// @notice E13: the MEME sale bound for a pool fee. The sale is at most `impact/2` of the reserve, and a
+    /// sandwich that moves the price by d costs the attacker ~fee*r*d while extracting at most sale*d, so the
+    /// sale must stay below `fee` of the reserve: impact = fee * 5/3 (sale <= 5/6 * fee), capped at 50 bps
+    /// (the 0.30% default gives exactly 50). A 0-fee pool accrues no fees and sells nothing.
+    function saleImpactBps(uint256 poolFeeBps) public pure returns (uint256) {
+        uint256 impact = (poolFeeBps * 5) / 3;
+        return impact < MEME_SALE_MAX_IMPACT_BPS ? impact : MEME_SALE_MAX_IMPACT_BPS;
+    }
+
+    /// @dev The pool's current Topaz fee (Topaz's fee manager can change it after registration); falls back
+    /// to the recorded fee if the factory read fails, so a harvest never reverts on it. Records a change.
+    function _refreshPoolFee(address pool, uint16 recorded) internal returns (uint256 fee) {
+        fee = recorded;
+        try ITopazPoolFactory(topazFactory).getFee(pool, false) returns (uint256 live) {
+            if (live <= FEE_BPS && live != recorded) {
+                fee = live;
+                poolInfo[pool].poolFeeBps = uint16(live);
+                emit PoolFeeRecorded(pool, uint16(live));
+            }
+        } catch {}
     }
 
     function claimPendingToken(address token) external nonReentrant returns (uint256 amount) {

@@ -126,7 +126,7 @@ describe("BNB mainnet fork: corrected locker vs real Topaz", function () {
 
     expect(await factory.campaignImplementation()).to.equal(CAMPAIGN_IMPL);
     expect(await factory.router()).to.equal(ADAPTER);
-    expect(await locker.REQUIRED_POOL_FEE_BPS()).to.equal(30n);
+    expect(await locker.REQUIRED_LIQUIDITY_KIND()).to.equal(1n);
     expect(await locker.CREATOR_FEE_BPS()).to.equal(8000n);
     expect(await locker.PROTOCOL_FEE_BPS()).to.equal(2000n);
     expect(lockerAddr.toLowerCase()).to.not.equal(PROD_LOCKER.toLowerCase());

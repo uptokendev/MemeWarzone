@@ -67,7 +67,8 @@ interface IEvmGenV2LockerPoolInfo {
             uint16 protocolFeeBps,
             bool registered,
             address memeToken,
-            address pairedToken
+            address pairedToken,
+            uint16 poolFeeBps
         );
 }
 

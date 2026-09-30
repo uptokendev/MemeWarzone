@@ -371,8 +371,9 @@ argument** (`LaunchFactory(router, treasuryRouter, campaignImpl, oracle, locker)
   its next nonce, then the factory at that nonce (`scripts/lib/deployFactoryWithLocker.ts`, explicit consecutive
   nonces). The factory constructor requires `locker.code.length != 0` (`ContractCodeMissing`),
   `locker.admin() == address(this)` (`LockerNotBoundToFactory`) and the kind probe for its liquidity kind
-  (V3: `REQUIRED_LIQUIDITY_KIND() == 2`; V2: `REQUIRED_POOL_FEE_BPS() != 0`; neither locker has a fallback, so the
-  other kind's selector reverts), then calls `configureRevenue` exactly as before. No locker code changed; no new
+  (since E13 both lockers answer `REQUIRED_LIQUIDITY_KIND()`, V2 = 1 and V3 = 2, and the answer must equal the
+  router's liquidity kind; a contract without the selector reverts; before E13 V2 was probed with
+  `REQUIRED_POOL_FEE_BPS() != 0`, now removed), then calls `configureRevenue` exactly as before. No locker code changed; no new
   setter exists anywhere.
 - **Why not a set-once `setFactory` on the locker.** It adds a mutable window (a locker deployed but not yet bound)
   and a privileged role on the locker to reason about; the immutable-admin binding has neither. A set-once setter

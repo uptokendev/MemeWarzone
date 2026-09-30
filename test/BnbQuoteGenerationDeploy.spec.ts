@@ -347,23 +347,23 @@ describe("BNB quote generation deployment", function () {
       // records point at charges 100 bps; the authoritative manifest's charges
       // 30, like BNB mainnet. Nothing in the addresses says which is which, and
       // the whole generation was deployed against the 100 bps one before this
-      // check existed. PermanentLpLocker.REQUIRED_POOL_FEE_BPS is 30 and
-      // lockPosition reverts on anything else, so the failure would have landed
-      // at graduation, after a campaign had already sold out.
+      // check existed. (Before E13 the locker also refused any fee but 30 at
+      // graduation; it now records the real fee, and this guard enforces E6.)
       await (await (factory as any).setFeeBps(100n)).wait();
       await expect(
         assertTopazRoutersFit(await full.getAddress(), await full.getAddress()),
-      ).to.be.rejectedWith(/charges 100 bps[\s\S]*REQUIRED_POOL_FEE_BPS is 30/);
+      ).to.be.rejectedWith(/charges 100 bps[\s\S]*E6 requires 30 bps/);
 
       await (await (factory as any).setFeeBps(30n)).wait();
       await assertTopazRoutersFit(await full.getAddress(), await full.getAddress());
     });
 
-    it("takes its 30 from the locker, so the guard cannot drift from the contract", async function () {
+    it("E13: the locker no longer pins 30 bps; the deploy guard is E6's intended Topaz, not a locker rule", async function () {
       const [owner] = await ethers.getSigners();
       const locker = await (await ethers.getContractFactory("PermanentLpLocker")).deploy(await owner.getAddress());
       await locker.waitForDeployment();
-      expect(await (locker as any).REQUIRED_POOL_FEE_BPS()).to.equal(30n);
+      expect((locker as any).REQUIRED_POOL_FEE_BPS).to.equal(undefined);
+      expect(await (locker as any).REQUIRED_LIQUIDITY_KIND()).to.equal(1n);
     });
 
     it("refuses two routers pointing at different Topaz deployments", async function () {

@@ -592,7 +592,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         returns (address campaign, address creatorKey, address recipient, address paired, bool registered)
     {
         if (dexKind == DEX_TOPAZ_V2) {
-            (campaign, creatorKey, recipient, , , , , , , registered, , paired) = IEvmGenV2LockerPoolInfo(locker).poolInfo(pool);
+            (campaign, creatorKey, recipient, , , , , , , registered, , paired, ) = IEvmGenV2LockerPoolInfo(locker).poolInfo(pool);
         } else {
             (campaign, creatorKey, recipient, , , , , , , , , registered, , paired) = IEvmGenV3LockerPoolInfo(locker).poolInfo(pool);
         }

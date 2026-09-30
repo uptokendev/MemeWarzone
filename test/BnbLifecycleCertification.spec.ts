@@ -197,7 +197,7 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
     expect(await factory.FACTORY_GENERATION()).to.not.equal(PREVIOUS_FACTORY_GENERATION);
     expect(await factory.CAMPAIGN_GENERATION()).to.not.equal(PREVIOUS_CAMPAIGN_GENERATION);
     expect(await factory.liquidityKind()).to.equal(1n);
-    expect(await locker.REQUIRED_POOL_FEE_BPS()).to.equal(30n);
+    expect(await locker.REQUIRED_LIQUIDITY_KIND()).to.equal(1n);
     expect(await locker.CREATOR_FEE_BPS()).to.equal(8000n);
     expect(await locker.PROTOCOL_FEE_BPS()).to.equal(2000n);
     expect(await locker.admin()).to.equal(await factory.getAddress());
@@ -363,25 +363,27 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
     expect(state.finalCurvePrice).to.equal(state.initialDexPrice);
   });
 
-  it("fails closed when Topaz reports 100 bps against the locker's required 30 bps", async function () {
+  it("E13: graduates when Topaz reports 100 bps and the locker records the pool's real fee", async function () {
     this.timeout(180_000);
     const { creator, buyer, topazFactory, factory, locker } = await deploySourceHeadTopazStack();
-    expect(await locker.REQUIRED_POOL_FEE_BPS()).to.equal(30n);
+    expect(await locker.REQUIRED_LIQUIDITY_KIND()).to.equal(1n);
     await topazFactory.setFeeBps(100);
     expect(await topazFactory.feeBps()).to.equal(100n);
     await factory.enableLive();
 
-    await factory.connect(creator).createCampaign({ ...CERT_REQUEST, name: "BadFee", symbol: "BADF", logoURI: "ipfs://bad-fee" });
+    await factory.connect(creator).createCampaign({ ...CERT_REQUEST, name: "CustomFee", symbol: "CFEE", logoURI: "ipfs://custom-fee" });
     const created = await factory.getCampaign(0n);
     const campaign = await ethers.getContractAt("LaunchCampaign", created.campaign);
 
-    // The crossing buy no longer graduates inline, so it lands; graduation is what refuses the pool,
-    // and the whole graduate() reverts, leaving the campaign Pending for a retry.
+    // Topaz's fee manager setting a pool fee other than 30 bps no longer freezes a graduation (E13).
     await sellOut(campaign, buyer);
-    await expect(campaign.connect(buyer).graduate()).to.be.revertedWithCustomError(locker, "InvalidTradingFee");
-    expect(await campaign.graduationPending()).to.equal(true);
-    expect(await campaign.launched()).to.equal(false);
-    expect(await factory.campaignGraduationRecorded(created.campaign)).to.equal(false);
-    expect((await campaign.getGraduationState()).dexPair).to.equal(ethers.ZeroAddress);
+    await campaign.connect(buyer).graduate();
+    expect(await campaign.launched()).to.equal(true);
+    expect(await factory.campaignGraduationRecorded(created.campaign)).to.equal(true);
+    const pair = (await campaign.getGraduationState()).dexPair;
+    expect(pair).to.not.equal(ethers.ZeroAddress);
+    const info = await locker.poolInfo(pair);
+    expect(info.registered).to.equal(true);
+    expect(info.poolFeeBps).to.equal(100n);
   });
 });

@@ -145,7 +145,8 @@ const CONFIG = {
 };
 const PROTOCOL_FEE_BPS = 200n;
 const MAX_ORACLE_AGE_SECONDS = 3600;
-/** PermanentLpLocker.REQUIRED_POOL_FEE_BPS. Graduation reverts against any other tier. */
+/** E6: the generation's Topaz volatile fee. Since E13 the locker accepts and records any fee Topaz sets,
+ * so this is a deploy-time check that the operator pointed at the intended (30 bps) Topaz, not a locker rule. */
 const REQUIRED_POOL_FEE_BPS = 30;
 
 function envAddress(name: string, fallback: string): string {
@@ -396,13 +397,9 @@ export async function assertTopazRoutersFit(topazRouter: string, topazQuoteRoute
   }
   console.log(`[quote-gen] ok topaz poolFactory=${poolFactory} wrapped=${wrapped} (both routers agree)`);
 
-  // The fee the locker will not bend on.
-  //
-  // PermanentLpLocker.REQUIRED_POOL_FEE_BPS is 30 and lockPosition reverts when
-  // the configured factory reports anything else, so a Topaz on any other fee
-  // tier gives a generation that creates and trades perfectly well and then
-  // fails closed at graduation -- after a campaign has already sold out, which
-  // is the worst moment to find out.
+  // E6: the generation graduates into the 30 bps Topaz. (Before E13 the locker
+  // refused any other fee at graduation; it now records the real per-pool fee,
+  // so this check only guards against pointing the deploy at the wrong Topaz.)
   //
   // BSC testnet has two Topaz deployments and they are not the same: the one
   // the older records point at charges 100 bps, and the authoritative manifest's
@@ -420,11 +417,10 @@ export async function assertTopazRoutersFit(topazRouter: string, topazQuoteRoute
   if (volatileFeeBps !== BigInt(REQUIRED_POOL_FEE_BPS)) {
     throw new Error(
       `topaz pool factory ${poolFactory} charges ${volatileFeeBps} bps on volatile pools, but ` +
-        `PermanentLpLocker.REQUIRED_POOL_FEE_BPS is ${REQUIRED_POOL_FEE_BPS}. Every graduation would revert ` +
-        `once the campaign had already closed. Point BNB_TOPAZ_ROUTER and BNB_TOPAZ_QUOTE_ROUTER at a ${REQUIRED_POOL_FEE_BPS} bps Topaz.`,
+        `E6 requires ${REQUIRED_POOL_FEE_BPS} bps. This is not the intended Topaz. Point BNB_TOPAZ_ROUTER and BNB_TOPAZ_QUOTE_ROUTER at a ${REQUIRED_POOL_FEE_BPS} bps Topaz.`,
     );
   }
-  console.log(`[quote-gen] ok topaz volatile fee = ${volatileFeeBps} bps (the locker requires ${REQUIRED_POOL_FEE_BPS})`);
+  console.log(`[quote-gen] ok topaz volatile fee = ${volatileFeeBps} bps (E6: ${REQUIRED_POOL_FEE_BPS})`);
 }
 
 export async function main() {

@@ -8,12 +8,13 @@ const E18 = 10n ** 18n;
 const RESERVE_MEME = 1_000_000n * E18;
 const RESERVE_PAIRED = 1_000n * E18;
 
-async function setup(opts: { quote?: boolean } = {}) {
+async function setup(opts: { quote?: boolean; feeBps?: number } = {}) {
   const [owner, creator, recipient, attacker, stranger] = await ethers.getSigners();
   const Token = await ethers.getContractFactory("MockERC20");
   const meme = await Token.deploy("Meme", "MEME", 10n ** 30n, owner.address);
   const paired = await Token.deploy(opts.quote ? "Quote" : "Wrapped BNB", opts.quote ? "USDX" : "WBNB", 10n ** 30n, owner.address);
   const topazFactory = await (await ethers.getContractFactory("MockTopazFactory")).deploy();
+  if (opts.feeBps !== undefined) await topazFactory.setFeeBps(opts.feeBps);
   const pair = await (await ethers.getContractFactory("MockTopazPairEvmGen")).deploy();
   await topazFactory.setPool(await meme.getAddress(), await paired.getAddress(), false, await pair.getAddress());
 
@@ -61,7 +62,7 @@ async function setup(opts: { quote?: boolean } = {}) {
     await pair.connect(signer).swap(inIs0 ? 0n : out, inIs0 ? out : 0n, signer.address, "0x");
     return out;
   }
-  return { owner, creator, recipient, attacker, meme, paired, pair, locker, router, protocolVault, fundFees, reserves, price, swapIn, memeIs0 };
+  return { owner, creator, recipient, attacker, meme, paired, pair, locker, router, protocolVault, topazFactory, fundFees, reserves, price, swapIn, memeIs0 };
 }
 
 describe("evmgen fees: PermanentLpLocker native-only harvest (E9, Topaz V2)", function () {
@@ -151,7 +152,7 @@ describe("evmgen fees: PermanentLpLocker native-only harvest (E9, Topaz V2)", fu
 
   it("sellMemeForPaired is callable by the locker only", async function () {
     const f = await setup();
-    await expect(f.locker.sellMemeForPaired(await f.pair.getAddress(), await f.meme.getAddress(), 1n)).to.be.revertedWithCustomError(f.locker, "OnlySelf");
+    await expect(f.locker.sellMemeForPaired(await f.pair.getAddress(), await f.meme.getAddress(), 1n, 50n)).to.be.revertedWithCustomError(f.locker, "OnlySelf");
   });
 
   it("a sandwich around a permissionless harvest loses the attacker money at every size", async function () {
@@ -208,7 +209,83 @@ describe("evmgen fees: PermanentLpLocker native-only harvest (E9, Topaz V2)", fu
     expect(paid).to.equal(pairedIn + (r0.paired - r1.paired));
   });
 
-  it("keeps the 30 bps pool fee requirement (founder Q4 open)", async function () {
-    expect(await (await (await ethers.getContractFactory("PermanentLpLocker")).deploy((await ethers.getSigners())[0].address)).REQUIRED_POOL_FEE_BPS()).to.equal(30n);
+  it("E13: the locker kind probe is REQUIRED_LIQUIDITY_KIND = 1; the sale bound scales with the pool fee", async function () {
+    const locker = await (await ethers.getContractFactory("PermanentLpLocker")).deploy((await ethers.getSigners())[0].address);
+    expect(await locker.REQUIRED_LIQUIDITY_KIND()).to.equal(1n);
+    expect(await locker.saleImpactBps(30)).to.equal(50n);
+    expect(await locker.saleImpactBps(100)).to.equal(50n);
+    expect(await locker.saleImpactBps(15)).to.equal(25n);
+    expect(await locker.saleImpactBps(1)).to.equal(1n);
+    expect(await locker.saleImpactBps(0)).to.equal(0n);
+  });
+
+  it("E13: registers a pool at a custom Topaz fee (15 bps) and records it; harvest is exact at the fee's bound", async function () {
+    const f = await setup({ feeBps: 15 });
+    const pool = await f.pair.getAddress();
+    expect((await f.locker.poolInfo(pool)).poolFeeBps).to.equal(15n);
+    const memeFee = 10_000n * E18; // 1% of the reserve: the bound binds
+    const pairedFee = 2n * E18;
+    await f.fundFees(memeFee, pairedFee);
+    const r0 = await f.reserves();
+    const cap = (r0.meme * 25n) / 20000n; // saleImpactBps(15) = 25 -> sells <= 0.125% of the reserve
+    const expectedOut = await f.pair.getAmountOut(cap, await f.meme.getAddress()); // pair charges the 15 bps fee
+    await f.locker.harvest(pool);
+    expect(await f.locker.carriedMeme(pool)).to.equal(memeFee - cap);
+    const total = pairedFee + expectedOut;
+    const creatorShare = (total * 8000n) / 10000n;
+    expect(await f.paired.balanceOf(f.recipient.address)).to.equal(creatorShare);
+    expect(await f.paired.balanceOf(await f.protocolVault.getAddress())).to.equal(total - creatorShare);
+    expect(await f.paired.balanceOf(await f.locker.getAddress())).to.equal(0n);
+    const r1 = await f.reserves();
+    expect(r1.meme - r0.meme).to.equal(cap);
+    expect(r0.paired - r1.paired).to.equal(expectedOut);
+  });
+
+  it("E13: a fee change by Topaz's fee manager after registration is recorded and used at the next harvest", async function () {
+    const f = await setup();
+    const pool = await f.pair.getAddress();
+    expect((await f.locker.poolInfo(pool)).poolFeeBps).to.equal(30n);
+    await f.topazFactory.setFeeBps(6);
+    await f.fundFees(10_000n * E18, 0n);
+    const r0 = await f.reserves();
+    await expect(f.locker.harvest(pool)).to.emit(f.locker, "PoolFeeRecorded").withArgs(pool, 6);
+    expect((await f.locker.poolInfo(pool)).poolFeeBps).to.equal(6n);
+    const r1 = await f.reserves();
+    expect(r1.meme - r0.meme).to.equal((r0.meme * 10n) / 20000n); // saleImpactBps(6) = 10
+    // Fee 0 (Topaz's zero-fee indicator): nothing is sold, everything carried, the harvest does not revert.
+    await f.topazFactory.setFeeBps(0);
+    const carried = await f.locker.carriedMeme(pool);
+    await f.locker.harvest(pool);
+    expect(await f.locker.carriedMeme(pool)).to.equal(carried);
+  });
+
+  it("E13: still refuses a stable pool, a pool of another factory, and a fee above 100%", async function () {
+    const [owner, creator, recipient, campaign] = await ethers.getSigners();
+    const Token = await ethers.getContractFactory("MockERC20");
+    const meme = await Token.deploy("Meme", "MEME", 10n ** 30n, owner.address);
+    const paired = await Token.deploy("WBNB", "WBNB", 10n ** 30n, owner.address);
+    const topazFactory = await (await ethers.getContractFactory("MockTopazFactory")).deploy();
+    const other = await (await ethers.getContractFactory("MockTopazFactory")).deploy();
+    const locker = await (await ethers.getContractFactory("PermanentLpLocker")).deploy(owner.address);
+    const reg = (pool: string) =>
+      locker.registerGraduatedPool(campaign.address, creator.address, recipient.address, pool, meme.getAddress(), paired.getAddress(), 1n);
+    const stablePair = await (await ethers.getContractFactory("MockTopazPairEvmGen")).deploy();
+    await topazFactory.setPool(await meme.getAddress(), await paired.getAddress(), true, await stablePair.getAddress());
+    await stablePair.mint(await locker.getAddress(), 1n);
+    // Not configured yet: no factory to check the pool against.
+    await expect(reg(await stablePair.getAddress())).to.be.revertedWithCustomError(locker, "InvalidTopazFactory");
+    await locker.configureRevenue(owner.address, await topazFactory.getAddress());
+    await expect(reg(await stablePair.getAddress())).to.be.revertedWithCustomError(locker, "StablePoolUnsupported");
+    const foreign = await (await ethers.getContractFactory("MockTopazPairEvmGen")).deploy();
+    await other.setPool(await meme.getAddress(), await paired.getAddress(), false, await foreign.getAddress());
+    await foreign.mint(await locker.getAddress(), 1n);
+    await expect(reg(await foreign.getAddress())).to.be.revertedWithCustomError(locker, "InvalidTopazFactory");
+    const pair = await (await ethers.getContractFactory("MockTopazPairEvmGen")).deploy();
+    await topazFactory.setPool(await meme.getAddress(), await paired.getAddress(), false, await pair.getAddress());
+    await pair.mint(await locker.getAddress(), 1n);
+    await topazFactory.setFeeBps(10_001);
+    await expect(reg(await pair.getAddress())).to.be.revertedWithCustomError(locker, "InvalidTradingFee");
+    await topazFactory.setFeeBps(100);
+    await expect(reg(await pair.getAddress())).to.emit(locker, "PoolFeeRecorded").withArgs(await pair.getAddress(), 100);
   });
 });

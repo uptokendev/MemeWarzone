@@ -39,6 +39,14 @@ describe("PermanentLpLocker pending payouts", function () {
     await pool.waitForDeployment();
     await (await pool["setTokens(address,address)"](await feeToken.getAddress(), await otherToken.getAddress())).wait();
 
+    // E13: the locker reads the pool's fee from the configured Topaz factory, so it must be configured
+    // (in production the factory constructor does it). The treasury router refuses every call, so the
+    // protocol's share is held exactly as it would be with no router.
+    const topazFactory = await (await ethers.getContractFactory("MockTopazFeeFactory")).deploy(30);
+    const refusingRouter = await (await ethers.getContractFactory("RevertingReceiver")).deploy();
+    await (await pool.setFactory(await topazFactory.getAddress())).wait();
+    await (await locker.configureRevenue(await refusingRouter.getAddress(), await topazFactory.getAddress())).wait();
+
     // Permanently locked liquidity has to be there before registration.
     const locked = ethers.parseEther("10");
     await (await pool.mint(await locker.getAddress(), locked)).wait();
@@ -67,7 +75,7 @@ describe("PermanentLpLocker pending payouts", function () {
     const creatorShare = (fees * 8_000n) / 10_000n;
     const protocolShare = fees - creatorShare;
     expect(await locker.pendingToken(await creator.getAddress(), await feeToken.getAddress())).to.equal(creatorShare);
-    // No treasury router is configured, so the protocol's share is held too.
+    // The treasury router refuses, so the protocol's share is held too.
     expect(await locker.pendingProtocolToken(await feeToken.getAddress())).to.equal(protocolShare);
     expect(await feeToken.balanceOf(await creator.getAddress())).to.equal(0n);
 

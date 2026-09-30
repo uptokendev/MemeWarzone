@@ -94,6 +94,11 @@ contract MockTopazPool is ERC20 {
         }
     }
 
+    /// @dev Test helper: name the Topaz factory this pool reports (the locker checks it at registration, E13).
+    function setFactory(address factory_) external {
+        factory = factory_;
+    }
+
     function _setTokens(address token0_, address token1_, bool stable_) internal {
         token0 = token0_;
         token1 = token1_;

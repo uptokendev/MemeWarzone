@@ -10,7 +10,7 @@ async function deployToken(name: string, symbol: string, owner: any) {
 }
 
 describe("PermanentLpLocker Topaz fee validation", function () {
-  it("registers only volatile Topaz pools with the required 0.30% trading fee", async () => {
+  it("registers a volatile Topaz pool at the default 0.30% fee and records it", async () => {
     const [owner, creator, feeRecipient, campaign] = await ethers.getSigners();
 
     const Locker = await ethers.getContractFactory("PermanentLpLocker");
@@ -43,7 +43,7 @@ describe("PermanentLpLocker Topaz fee validation", function () {
     ).to.emit(locker, "GraduationPoolRegistered");
   });
 
-  it("rejects volatile Topaz pools that do not use the required 0.30% trading fee", async () => {
+  it("E13: accepts a volatile Topaz pool at any fee Topaz sets (100 bps) and records it", async () => {
     const [owner, creator, feeRecipient, campaign] = await ethers.getSigners();
 
     const Locker = await ethers.getContractFactory("PermanentLpLocker");
@@ -73,6 +73,7 @@ describe("PermanentLpLocker Topaz fee validation", function () {
         await wbnb.getAddress(),
         ethers.parseEther("1")
       )
-    ).to.be.revertedWithCustomError(locker, "InvalidTradingFee");
+    ).to.emit(locker, "PoolFeeRecorded").withArgs(await pool.getAddress(), 100);
+    expect((await locker.poolInfo(await pool.getAddress())).poolFeeBps).to.equal(100n);
   });
 });

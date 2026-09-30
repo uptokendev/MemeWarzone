@@ -9,6 +9,10 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 /// swap with a 30 bps fee and K check, getAmountOut/getReserves/quote with the live pool's signatures, LP fees
 /// held apart from reserves and paid by claimFees. `quote` answers from settable "TWAP reserves" and reverts
 /// until they are set, like a pool with too few observations.
+interface IMockTopazFeeSource {
+    function getFee(address pool, bool stable) external view returns (uint256);
+}
+
 contract MockTopazPairEvmGen is ERC20 {
     using SafeERC20 for IERC20;
 
@@ -38,6 +42,12 @@ contract MockTopazPairEvmGen is ERC20 {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+
+    /// @dev The swap fee follows the factory's getFee (Topaz's per-pool fee, E13); 30 bps without a factory.
+    function _feeBps() internal view returns (uint256) {
+        if (factory == address(0)) return 30;
+        return IMockTopazFeeSource(factory).getFee(address(this), false);
     }
 
     function seed(uint256 amount0, uint256 amount1) external {
@@ -101,8 +111,8 @@ contract MockTopazPairEvmGen is ERC20 {
         uint256 in1 = b1 > reserve1 - amount1Out ? b1 - (reserve1 - amount1Out) : 0;
         require(in0 != 0 || in1 != 0, "IIA");
         // Same rounding as the live pool: the fee is floor(in * 30 / 10000), removed before the K check.
-        uint256 adj0 = b0 - (in0 * 30) / 10_000;
-        uint256 adj1 = b1 - (in1 * 30) / 10_000;
+        uint256 adj0 = b0 - (in0 * _feeBps()) / 10_000;
+        uint256 adj1 = b1 - (in1 * _feeBps()) / 10_000;
         require(adj0 * adj1 >= reserve0 * reserve1, "K");
         reserve0 = b0;
         reserve1 = b1;
@@ -110,7 +120,7 @@ contract MockTopazPairEvmGen is ERC20 {
 
     function _out(uint256 amountIn, address tokenIn, uint256 r0, uint256 r1) private view returns (uint256) {
         (uint256 rIn, uint256 rOut) = tokenIn == token0 ? (r0, r1) : (r1, r0);
-        uint256 net = amountIn - (amountIn * 30) / 10_000;
+        uint256 net = amountIn - (amountIn * _feeBps()) / 10_000;
         return (net * rOut) / (rIn + net);
     }
 }

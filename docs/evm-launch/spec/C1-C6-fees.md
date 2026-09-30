@@ -355,9 +355,53 @@ orientations by `test/evmgen-hardening-locker-binding.spec.ts` ("V3 impact bound
 1. ~~Meme-token side of LP fees on non-keep coins.~~ Superseded by E9: every harvest sells the MEME side
    in the pool, on every coin.
 2. ~~Quote-bound coins with a non-keep choice.~~ Superseded by E10: all choices, built as above.
-3. **(Q4) Topaz pool fee at registration.** Whether `PermanentLpLocker` should accept any Topaz volatile
-   fee and record it instead of requiring 30 bps. Not decided; the 30 bps requirement stays
-   (`TODO(founder)` at `REQUIRED_POOL_FEE_BPS`).
+3. ~~(Q4) Topaz pool fee at registration.~~ Decided by E13 (accept and record); built, see
+   "E13 as built" below.
 4. **Buyback and holder caps per chain** (`EVMGEN_BUYBACK_MAX_PER_TX`, `..._PER_CAMPAIGN_WEEK`,
    `EVMGEN_HOLDER_MAX_PER_WEEK`, `EVMGEN_HOLDER_BATCH_AUTH_MAX`): the deploy script refuses mainnet
    without them.
+
+## E13 as built (branch `claude/evm-core`, 2026-09-30): the Topaz locker accepts the pool's actual fee
+
+Founder decision E13: Topaz's own fee manager must not be able to freeze a coin. `contracts/PermanentLpLocker.sol`:
+- `REQUIRED_POOL_FEE_BPS` (30) is **removed**. `registerGraduatedPool` reads `getFee(pool, false)` from the configured
+  Topaz factory and records it in `poolInfo[pool].poolFeeBps` (new last field; event `PoolFeeRecorded`). Any fee
+  Topaz can set is accepted, including 0 (Topaz's zero-fee indicator); only a value above 10,000 bps (not a fee) is
+  refused (`InvalidTradingFee`).
+- Still refused: a stable pool (`StablePoolUnsupported`), a pool whose `factory()` is not the configured Topaz factory
+  and registration before `configureRevenue` (both `InvalidTopazFactory`; before E13 an unconfigured locker skipped
+  the factory check), a token pair that is not (MEME, paired) (`TokenPairMismatch`), missing LP (`LockedLpMissing`).
+- **Harvest maths follow the fee.** The MEME-sale bound's sandwich argument (above: sale <= 0.25% of the reserve vs
+  the attacker paying 0.30% twice) only holds while the sale stays below the pool fee. `saleImpactBps(fee) =
+  min(50, fee * 5 / 3)`, so one harvest sells at most `5/6 * fee` of the MEME reserve (30 bps -> 50, exactly today's
+  bound; 15 bps -> 25; 0 -> 0, a zero-fee pool accrues no fees and sells nothing). Harvest reads the live fee
+  (`_refreshPoolFee`, inside a `try`, falling back to the recorded fee) and records a change, so a fee lowered after
+  registration shrinks the bound at the next harvest. The sale price itself is the pair's own `getAmountOut`, which
+  already charges the pool's real fee. The 80/20 split is unchanged.
+- **Factory kind probe.** Both lockers now answer `REQUIRED_LIQUIDITY_KIND()` (V2 = 1, V3 = 2), and
+  `LaunchFactory`'s constructor requires it to equal the router's detected liquidity kind (`LockerKindMismatch`); a
+  contract without the selector reverts the constructor. Safer than before: the old V2 probe only checked that a
+  30 bps getter was non-zero.
+- `CreatorRewardsVaultV2`'s V2 `poolInfo` interface gains the trailing `poolFeeBps` (static field; the vault ignores it).
+
+Audit block (the diff):
+- **Reentrancy.** `registerGraduatedPool` is `onlyAdmin` (the factory) and makes only view calls (pool, factory
+  `getFee`, LP balance) before its writes. `harvest` stays `nonReentrant`; the new `getFee` read is a `staticcall`
+  inside `try`, before `claimFees`'s effects are used; `sellMemeForPaired` stays self-only and takes the bound as an
+  argument (`OnlySelf` for any other caller).
+- **CEI.** Harvest: principal check, claim, principal re-check, fee read + record (`poolInfo[pool].poolFeeBps`, a
+  storage write under the guard that no later step reads from storage), bounded sale in `try`, `carriedMeme`, split.
+- **Reachable states.** Registration: once per pool, admin only, configured locker only. Harvest: registered pool,
+  permissionless, any time. A fee change by Topaz can only shrink or restore the sale bound (capped at 50 bps).
+- **Overflow.** `poolFee <= 10_000` before the `uint16` cast; `fee * 5` with `fee <= 10_000`; live values above 10,000
+  are ignored (recorded fee kept), so the cast never truncates.
+- **Griefing.** Topaz's fee manager (a Topaz role, not ours) can no longer block a graduation by setting a custom fee.
+  A fee lowered to near zero lowers the harvest's MEME sale per call (more carried; nothing lost, `carriedMeme`
+  accumulates); a zero fee means no fees accrue at all. A reverting or hostile `getFee` cannot revert a harvest (try,
+  fallback). A sandwich of the permissionless harvest remains unprofitable at every fee (sale < fee x reserve).
+- **Tests.** `evmgen-fees-locker-v2.spec.ts` (E13: probe + bound table; 15 bps registration recorded, harvest exact
+  at the 25 bps bound with the pair charging 15 bps; fee change after registration recorded and used, fee 0 sells
+  nothing; stable / foreign factory / unconfigured / >100% still refused), `PermanentLpLockerTopazFee.spec.ts`
+  (100 bps recorded), `BnbLifecycleCertification.spec.ts` (a campaign graduates through the real factory while
+  Topaz reports 100 bps; the pool is registered with `poolFeeBps = 100`). The mock pair's swap fee now follows its
+  factory's `getFee` (30 by default, so every other test is unchanged).
