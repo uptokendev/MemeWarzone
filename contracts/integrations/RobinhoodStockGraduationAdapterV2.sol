@@ -185,7 +185,8 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
             route.maxSwapSlippageBps > MAX_SWAP_SLIPPAGE_BPS || route.maxOracleDeviationBps != 0 || route.maxPriceImpactBps != 0
                 || route.minimumRouteLiquidityUsdWad == 0
         ) revert InvalidPolicy();
-        if (IERC20Metadata(stockToken).decimals() > 36) revert InvalidPolicy();
+        // <= 18: the continuity math multiplies sqrtPriceX96 (< 2^160) by 10**decimals (audit 2 LOW).
+        if (IERC20Metadata(stockToken).decimals() > 18) revert InvalidPolicy();
         address canonical = IRhV3Factory(v3Factory).getPool(WETH, stockToken, route.acquisitionFeeTier);
         if (canonical == address(0) || canonical != route.acquisitionPool) revert AcquisitionPoolMismatch();
         StockRoute storage current = stockRoutes[stockToken];
@@ -242,9 +243,12 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
             if (IERC20(stock).balanceOf(address(this)) != before[1] + acquired + stepProceeds) revert AcquisitionFailed();
         }
 
+        // Audit 2 (LOW): the target sqrt comes from the raw amounts, not from `targetWad` (STOCK raw per 1e18
+        // MEME, an integer that is single-digit for a 6-decimal quote at small curve prices). `targetWad` is
+        // only reported (event, `targetPriceWad`).
         uint256 targetWad = Math.mulDiv(acquired, WAD, r.memeTarget);
         bool memeIs0 = r.token < stock;
-        uint160 sqrtTarget = RobinhoodV3PriceMath.sqrtFromPrice(targetWad, memeIs0);
+        uint160 sqrtTarget = RobinhoodV3PriceMath.sqrtFromRatio(acquired, r.memeTarget, memeIs0);
         if (ledger.memeSold != 0 && _aboveStepStop(sqrtTarget, ledger.sqrtReached, memeIs0)) {
             sqrtTarget = ledger.sqrtReached;
             targetWad = RobinhoodV3PriceMath.priceFromSqrt(sqrtTarget, memeIs0);
@@ -261,10 +265,11 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
             deadline: r.deadline
         });
         uint256 memeReturned;
-        (res, memeReturned,) = _graduateInto(x);
+        uint160 sqrtStart;
+        (res, memeReturned,, sqrtStart) = _graduateInto(x);
         if (steppedBefore) res.repaired = true;
 
-        _checkContinuity(res.startPriceWad, r.curvePriceWad, nativeUsdWad, stockUsdWad, stockUnit, memeReturned != 0);
+        _checkContinuity(sqrtStart, memeIs0, r.curvePriceWad, nativeUsdWad, stockUsdWad, stockUnit, memeReturned != 0);
 
         if (
             IERC20(WETH).balanceOf(address(this)) != before[0] || IERC20(stock).balanceOf(address(this)) != before[1]
@@ -293,11 +298,13 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         if (!stockRoutes[stock].enabled) revert RouteDisabled();
     }
 
-    function _repairStepPriceWad(Request calldata r, address stock) internal view override returns (uint256) {
+    function _repairStepSqrt(Request calldata r, address stock, bool memeIs0) internal view override returns (uint160) {
         (uint256 nativeUsdWad, uint256 stockUsdWad, uint256 stockUnit) = _prices(stock);
-        // Estimated P_Q = P * ETHUSD / STOCKUSD in STOCK raw per 1e18 MEME, raised by the margin.
-        uint256 estimate = Math.mulDiv(Math.mulDiv(r.curvePriceWad, nativeUsdWad, stockUsdWad), stockUnit, WAD);
-        return Math.mulDiv(estimate, BPS + REPAIR_STEP_MARGIN_BPS, BPS);
+        // Estimated P_Q = P * ETHUSD / STOCKUSD, raised by the margin, as the raw ratio
+        // STOCK raw / MEME raw = P * (1 + m) * ETHUSD * stockUnit / (STOCKUSD * 1e18 * 1e18),
+        // kept as a fraction (audit 2 LOW: no rounding to an integer per 1e18 MEME).
+        uint256 num = Math.mulDiv(r.curvePriceWad * (BPS + REPAIR_STEP_MARGIN_BPS), nativeUsdWad * stockUnit, stockUsdWad);
+        return RobinhoodV3PriceMath.sqrtFromRatio(num, WAD * WAD * BPS, memeIs0);
     }
 
     function _sendPaired(address stock, address to, uint256 amount) internal override {
@@ -368,15 +375,22 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
     }
 
     function _checkContinuity(
-        uint256 startPriceWad,
+        uint160 sqrtStart,
+        bool memeIs0,
         uint256 curvePriceWad,
         uint256 nativeUsdWad,
         uint256 stockUsdWad,
         uint256 stockUnit,
         bool memeLeft
     ) private pure {
-        // startPriceWad is STOCK raw per 1e18 MEME; x STOCKUSD / stockUnit = USD per whole MEME (wad).
-        uint256 startUsd = Math.mulDiv(startPriceWad, stockUsdWad, stockUnit);
+        // USD per whole MEME (wad) = (STOCK raw per MEME raw) * 1e18 * STOCKUSD / stockUnit, from sqrtPriceX96
+        // at full precision (audit 2 LOW). STOCK raw per MEME raw = s^2/2^192 (MEME = token0) or 2^192/s^2.
+        // Overflow: s < 2^160, stockUnit <= 1e18 (route check), 1e18 * STOCKUSD < 2^256 for any real price;
+        // every product sits inside a 512-bit mulDiv, which reverts (fails closed) if a result exceeds 2^256.
+        uint256 s = uint256(sqrtStart);
+        uint256 startUsd = memeIs0
+            ? Math.mulDiv(Math.mulDiv(s, WAD * stockUsdWad, RobinhoodV3PriceMath.Q96), s, RobinhoodV3PriceMath.Q96 * stockUnit)
+            : Math.mulDiv(Math.mulDiv(RobinhoodV3PriceMath.Q192, WAD, s), stockUsdWad, s * stockUnit);
         uint256 curveUsd = Math.mulDiv(curvePriceWad, nativeUsdWad, WAD);
         if (startUsd * BPS < curveUsd * (BPS - QUOTE_PRICE_BAND_BPS)) revert PriceContinuityFailed();
         // Above the band is allowed only when a repair used up the whole budget (C5 section 1.9).

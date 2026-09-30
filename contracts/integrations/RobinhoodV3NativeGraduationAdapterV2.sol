@@ -68,7 +68,7 @@ contract RobinhoodV3NativeGraduationAdapterV2 is RobinhoodV3PoolRepair {
             spare: r.memeMax - r.memeTarget,
             deadline: r.deadline
         });
-        (res,,) = _graduateInto(x);
+        (res,,,) = _graduateInto(x);
         if (stepMemeSold != 0) res.repaired = true;
 
         if (IERC20(WETH).balanceOf(address(this)) != wethBefore || IERC20(r.token).balanceOf(address(this)) != memeBefore) {
@@ -81,8 +81,8 @@ contract RobinhoodV3NativeGraduationAdapterV2 is RobinhoodV3PoolRepair {
         return WETH;
     }
 
-    function _repairStepPriceWad(Request calldata r, address) internal pure override returns (uint256) {
-        return r.curvePriceWad;
+    function _repairStepSqrt(Request calldata r, address, bool memeIs0) internal pure override returns (uint160) {
+        return RobinhoodV3PriceMath.sqrtFromPrice(r.curvePriceWad, memeIs0);
     }
 
     function _sendPaired(address, address to, uint256 amount) internal override {
