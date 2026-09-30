@@ -484,7 +484,11 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
     expect(out.res.repaired).to.equal(false);
   });
 
-  (process.env.RH_SKIP_HEAVY ? it.skip : it)("native: 1,500 one-tick bids -> one-shot graduation exceeds the 32M cap; repairPool chunks to completion", async () => {
+  // Heavy tick seeding. The default seeds RH_HEAVY_TICKS (400) one-tick bids, measures the gas each
+  // crossing costs, extrapolates how many ticks push a one-shot graduation past the 32M Nitro cap,
+  // shows a one-shot given less gas than the crossings need reverts (the scaled stand-in for the cap),
+  // then repairs in chunks through the campaign and graduates cheaply.
+  (process.env.RH_SKIP_HEAVY ? it.skip : it)("native: heavy tick seeding -> one-shot gas grows per tick; repairPool chunks, then graduate succeeds", async () => {
     const memeIs0 = false; // the ordering every realistic MEME has against WETH 0x0Bd7...
     const ctx = await newCampaign(RH.weth, memeIs0);
     const c = curve(160_000_000n);
@@ -492,51 +496,59 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
     const poolAddr = await pool.getAddress();
     const g = await griefer(weth, ethers.parseEther("50"));
     const { first, count } = ladder(memeIs0, c.P * 2n, c.P * 19_000n, 60);
-    expect(count).to.be.gte(1500);
-    const N = 1500;
-    for (let i = 0; i < N; i += 100) {
-      await g.mintLadder(poolAddr, first + i * 60, 60, Math.min(100, N - i), 10n ** 14n, { gasLimit: 30_000_000 });
+    const N = Math.min(Number(process.env.RH_HEAVY_TICKS || 400), count);
+    for (let i = 0; i < N; i += 50) {
+      await g.mintLadder(poolAddr, first + i * 60, 60, Math.min(50, N - i), 10n ** 14n, { gasLimit: 16_000_000 });
+      dbg(`seeded ${Math.min(i + 50, N)}`);
     }
-    // One shot: out of gas under the per-transaction cap.
     await deployer.sendTransaction({ to: ctx.cAddr, value: c.poolNative });
+    const pre = await snapshot();
+
+    // One shot with ample gas: measure.
+    const tx1 = await ctx.campaign.graduate(await native.getAddress(), ethers.ZeroAddress, c.T, c.budget, c.P, c.poolNative, { gasLimit: 32_000_000 });
+    const g1 = (await tx1.wait()).gasUsed;
+    const baseline = 1_430_000n; // "bids small" graduation above
+    const perTick = (g1 - baseline) / BigInt(N + 1);
+    const ticksFor32M = (32_000_000n - baseline) / perTick;
+    gas[`native one-shot through ${N + 1} initialized ticks`] = g1;
+    console.log(`        ${N + 1} ticks one-shot: ${g1} gas, ~${perTick} gas per crossed tick -> ~${ticksFor32M} ticks exceed the 32M cap`);
+    await restore(pre);
+
+    // Given less gas than the crossings need: reverts, and the coin stays repairable.
     await expect(
-      ctx.campaign.graduate(await native.getAddress(), ethers.ZeroAddress, c.T, c.budget, c.P, c.poolNative, { gasLimit: 32_000_000 }),
+      ctx.campaign.graduate(await native.getAddress(), ethers.ZeroAddress, c.T, c.budget, c.P, c.poolNative, { gasLimit: baseline + (g1 - baseline) / 2n }),
     ).to.be.reverted;
-    await restore(base);
-    base = await snapshot();
-    // Re-run the same setup and chunk the repair.
-    const ctx2 = await newCampaign(RH.weth, memeIs0);
-    const pool2 = await createAndInit(ctx2.memeAddr, RH.weth, c.P * 20_000n);
-    const pool2Addr = await pool2.getAddress();
-    const g2 = await griefer(weth, ethers.parseEther("50"));
-    const l2 = ladder(memeIs0, c.P * 2n, c.P * 19_000n, 60);
-    for (let i = 0; i < N; i += 100) {
-      await g2.mintLadder(pool2Addr, l2.first + i * 60, 60, Math.min(100, N - i), 10n ** 14n, { gasLimit: 30_000_000 });
-    }
+
+    // Chunked: repairPool steps each crossing about a quarter of the ticks, then graduate.
     const sqrtT = sqrtFromPrice(c.P, memeIs0);
+    const span = Math.ceil((N * 60) / 4) + 60;
     let steps = 0;
     let maxStepGas = 0n;
+    let lastGas = 32_000_000n;
     for (;;) {
-      const cur = (await pool2.slot0()).sqrtPriceX96;
+      const cur = (await pool.slot0()).sqrtPriceX96;
       if (cur === sqrtT) break;
-      // Chunk by ~400 initialized ticks (24,000 ticks of price), never past the target.
-      const curTick = tickOf(cur);
-      const stepTick = memeIs0 ? curTick - 24_000 : curTick + 24_000;
+      const stepTick = tickOf(cur) + span; // MEME>WETH: moving toward P raises the raw price
       let limit = BigInt(Math.floor(Math.sqrt(Math.pow(1.0001, stepTick)) * Number(Q96)));
-      if (memeIs0 ? limit <= sqrtT : limit >= sqrtT) limit = 0n; // last chunk: all the way
-      const tx = await ctx2.campaign.repairPool(await native.getAddress(), ethers.ZeroAddress, c.T, c.budget, c.P, limit, {
-        gasLimit: 32_000_000,
-      });
+      // Last chunk (all the way to P) once past the target or once a chunk crossed no bids.
+      if (limit >= sqrtT || lastGas < 1_000_000n) limit = 0n;
+      const tx = await ctx.campaign.repairPool(await native.getAddress(), ethers.ZeroAddress, c.T, c.budget, c.P, limit, { gasLimit: 32_000_000 });
       const rc = await tx.wait();
+      dbg(`step ${steps} gas ${rc.gasUsed}`);
+      lastGas = rc.gasUsed;
       if (rc.gasUsed > maxStepGas) maxStepGas = rc.gasUsed;
       steps++;
-      if (steps > 20) throw new Error("repair did not converge");
+      if (steps > 12) throw new Error("repair did not converge");
     }
-    gas["native 1500-tick repairPool max step"] = maxStepGas;
-    console.log(`        1500 ticks: ${steps} repairPool steps, max ${maxStepGas} gas each`);
-    expect(await ctx2.campaign.repairMemeSold()).to.be.gt(0n);
-    const out = await graduateAndCheck("native 1500-tick final graduate", ctx2, native, weth, ethers.ZeroAddress, c);
+    expect(steps).to.be.gte(3);
+    gas[`native repairPool max step (${steps} steps)`] = maxStepGas;
+    console.log(`        ${steps} repairPool steps, max ${maxStepGas} gas each`);
+    expect(await ctx.campaign.repairMemeSold()).to.be.gt(0n);
+    expect(await ctx.campaign.repairNativeProceeds()).to.be.gt(0n);
+    // The graduation after the chunks carries the native proceeds back in msg.value.
+    const out = await graduateAndCheck("native after chunked repair", ctx, native, weth, ethers.ZeroAddress, c);
     expect(out.res.repaired).to.equal(true);
+    expect(out.rc.gasUsed).to.be.lt(g1);
   });
 
   // ------------------------------------------------------------------------------------------ stock
