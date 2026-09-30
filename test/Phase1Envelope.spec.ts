@@ -11,7 +11,6 @@ const ROUTE_KIND_FINALIZE = 1;
 const ROUTE_PROFILE_STANDARD_UNLINKED = 1;
 
 type RoutedSystem = Awaited<ReturnType<typeof deployRoutedSystem>>;
-type LegacySystem = Awaited<ReturnType<typeof deployLegacySystem>>;
 
 async function latestTimestamp() {
   const block = await ethers.provider.getBlock("latest");
@@ -68,50 +67,6 @@ async function deployRoutedSystem() {
     recruiterVault,
     communityVault,
     protocolVault,
-    factory,
-    priceFeed,
-  };
-}
-
-async function deployLegacySystem() {
-  const { owner, creator, alice, dexRouter } = await deployCommonDex();
-
-  const AcceptingReceiver = await ethers.getContractFactory("AcceptingReceiver");
-  const leagueVault = await AcceptingReceiver.deploy();
-  const legacyFeeRecipient = await AcceptingReceiver.deploy();
-  await Promise.all([leagueVault.waitForDeployment(), legacyFeeRecipient.waitForDeployment()]);
-
-  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouter");
-  const leagueRouter = await TreasuryRouter.deploy(await owner.getAddress(), await leagueVault.getAddress(), 3600);
-  await leagueRouter.waitForDeployment();
-
-  const { factory, priceFeed } = await deployLaunchFactory(await dexRouter.getAddress(), await leagueRouter.getAddress());
-  await factory.connect(owner).setRequireRouteAuthorization(false);
-  await factory.connect(owner).setRequireAuthorizedTrading(false);
-  await factory.connect(owner).setCoreRouting(await dexRouter.getAddress(), await legacyFeeRecipient.getAddress());
-  await factory.connect(owner).setConfig({
-    totalSupply: ethers.parseEther("1000"),
-    curveBps: 5000,
-    liquidityTokenBps: 4000,
-    basePrice: ethers.parseEther("0.005"),
-    priceSlope: 10n ** 9n,
-    graduationTarget: ethers.parseEther("2"),
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
-    liquidityBps: 8000,
-  });
-  await factory.connect(owner).enableLive();
-
-  return {
-    owner,
-    creator,
-    alice,
-    dexRouter,
-    leagueRouter,
-    leagueVault,
-    legacyFeeRecipient,
     factory,
     priceFeed,
   };

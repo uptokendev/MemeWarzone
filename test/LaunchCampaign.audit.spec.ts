@@ -52,7 +52,6 @@ async function createLowTargetCampaign() {
     firstBuyMaxCost: 0n,
     feeChoice: 1,
     feeCreatorPct: 0,
-    liquidityBps: 8000,
   });
   await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest() as any);
   const info = await fx.factory.getCampaign(0n);

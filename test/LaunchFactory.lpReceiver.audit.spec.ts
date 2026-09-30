@@ -51,9 +51,25 @@ describe("LaunchFactory permanent LP receiver", function () {
 
     await expect(factory.connect(creator).createCampaign(baseReq() as any)).to.emit(factory, "CampaignCreated");
 
+    // The creator-facing request has no LP receiver field, and neither does the campaign any more.
+    const createFragment = factory.interface.getFunction("createCampaign")!;
+    const requestFields = createFragment.inputs[0].components!.map((c: any) => c.name);
+    expect(requestFields).to.not.include("lpReceiver");
+    expect(requestFields).to.have.length(11);
+
     const info = await factory.getCampaign(0n);
     const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
-    expect(await campaign.lpReceiver()).to.eq(await factory.permanentLpLocker());
+    expect(campaign.interface.getFunction("lpReceiver")).to.eq(null);
+
+    // Launch generation: the LP receiver is structural. The factory injects its native graduation adapter,
+    // the adapter mints the LP to the factory's permanent locker, and the locker is bound to this factory
+    // (admin == factory) so nothing else can register or redirect a pool on it.
+    const adapterAddress = await factory.nativeGraduationAdapter();
+    expect(await campaign.graduationAdapter()).to.eq(adapterAddress);
+    const adapter = await ethers.getContractAt("MockGraduationAdapterEvmGen", adapterAddress);
+    expect(await adapter.locker()).to.eq(await factory.permanentLpLocker());
+    const locker = await ethers.getContractAt("PermanentLpLocker", await factory.permanentLpLocker());
+    expect(await locker.admin()).to.eq(await factory.getAddress());
   });
 
   it("binds authorized creation to the complete public campaign request", async () => {

@@ -4,7 +4,8 @@ import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker"
 
 const PROTOCOL_FEE_BPS = 200n;
 const ROUTE_BPS = 10_000n;
-const CREATOR_SHARE_BPS = 500n;
+// TreasuryRouterV4.CREATOR_TRADE_BPS (C1): 5.6% of the 2% trade fee, i.e. 0.112% of volume.
+const CREATOR_SHARE_BPS = 560n;
 const LEAGUE_SHARE_BPS = 3_750n;
 const STANDARD_LINKED = 0;
 const STANDARD_UNLINKED = 1;
@@ -112,7 +113,7 @@ async function deploySourceHeadFeeStack() {
   await monthly.waitForDeployment();
   await recruiter.waitForDeployment();
 
-  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouterV3");
+  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouterV4");
   const treasuryRouter = await TreasuryRouter.deploy(
     await owner.getAddress(),
     await weekly.getAddress(),
@@ -129,8 +130,17 @@ async function deploySourceHeadFeeStack() {
   const protocolVault = await ProtocolVault.deploy(await owner.getAddress());
   await protocolVault.waitForDeployment();
 
-  const CreatorVault = await ethers.getContractFactory("CreatorRewardsVault");
-  const creatorVault = await CreatorVault.deploy(await owner.getAddress(), await treasuryRouter.getAddress());
+  // The generation's creator vault: the factory registers each coin's fee choice on it at create, and
+  // the router accrues the creator slice per campaign.
+  const CreatorVault = await ethers.getContractFactory("CreatorRewardsVaultV2");
+  const creatorVault = await CreatorVault.deploy(
+    await owner.getAddress(),
+    await treasuryRouter.getAddress(),
+    await wbnb.getAddress(),
+    1, // DEX_TOPAZ_V2
+    await topazFactory.getAddress(),
+    24 * 60 * 60,
+  );
   await creatorVault.waitForDeployment();
 
   await treasuryRouter.setRecruiterRewardsVault(await recruiter.getAddress());
@@ -149,20 +159,27 @@ async function deploySourceHeadFeeStack() {
     await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
 
+  await creatorVault.setFactoryOnce(await factory.getAddress());
+  // Create needs a native graduation adapter and the LaunchTokenDeployer; nothing graduates here.
+  const adapter = await (await ethers.getContractFactory("MockGraduationAdapterEvmGen")).deploy(
+    await topazFactory.getAddress(),
+    await wbnb.getAddress(),
+  );
+  await adapter.setLocker(await factory.permanentLpLocker());
+  await factory.setNativeGraduationAdapter(await adapter.getAddress());
+  await factory.setLaunchTokenDeployer(await (await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy()).getAddress());
+
   await factory.setRouteAuthority(await owner.getAddress());
   await factory.setRequireAuthorizedTrading(false);
+  // Small curve for a $1 oracle: the generation refuses a target above 95% of what the full curve
+  // raises (TargetOutOfRangeAtPrice), and a curve whose sold-out graduation would not fit (SupplyBoundBroken).
   await factory.setConfig({
     totalSupply: ethers.parseEther("1000"),
     curveBps: 5000,
     liquidityTokenBps: 4000,
     basePrice: 10n ** 12n,
-    priceSlope: 10n ** 9n,
-    graduationTarget: ethers.parseEther("30000"),
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
-    liquidityBps: 8000,
+    priceSlope: 10n ** 13n,
+    graduationTarget: ethers.parseEther("1"),
   });
   await factory.enableLive();
 
@@ -181,17 +198,21 @@ async function deploySourceHeadFeeStack() {
   };
 }
 
-describe("BNB 6B creator-fee generation (local source-head only)", function () {
-  it("Factory 4/3 + Topaz V2 + TreasuryRouterV3 pays 0.10% of volume to creator for Standard, OG, and Unlinked", async function () {
+describe("BNB creator-fee generation (local source-head only)", function () {
+  it("Factory 6/5 + Topaz V2 + TreasuryRouterV4 pays 0.112% of volume to creator for Standard, OG, and Unlinked", async function () {
     this.timeout(180_000);
     const stack = await deploySourceHeadFeeStack();
     const { owner, creator, buyer, weekly, monthly, recruiter, community, protocolVault, creatorVault, treasuryRouter, factory } = stack;
 
-    expect(await factory.FACTORY_GENERATION()).to.equal(4n);
-    expect(await factory.CAMPAIGN_GENERATION()).to.equal(3n);
+    // The previous generation (4/3 + TreasuryRouterV3, 5% creator) was replaced in place; its source is
+    // recoverable from c676ed7f. This pins the generation that replaces it.
+    expect(await factory.FACTORY_GENERATION()).to.equal(6n);
+    expect(await factory.CAMPAIGN_GENERATION()).to.equal(5n);
     expect(await factory.liquidityKind()).to.equal(1n);
     expect(await factory.protocolFeeBps()).to.equal(PROTOCOL_FEE_BPS);
-    expect((PROTOCOL_FEE_BPS * CREATOR_SHARE_BPS) / ROUTE_BPS).to.equal(10n);
+    expect(await treasuryRouter.CREATOR_TRADE_BPS()).to.equal(CREATOR_SHARE_BPS);
+    // 0.112% of volume, in hundredths of a bp: 200 bps * 5.6%.
+    expect(PROTOCOL_FEE_BPS * CREATOR_SHARE_BPS).to.equal(112_000n);
 
     for (const [index, profile] of PROFILES.entries()) {
       const req = {
@@ -225,9 +246,17 @@ describe("BNB 6B creator-fee generation (local source-head only)", function () {
       });
       const created = await factory.getCampaign(BigInt(index));
       const campaign = await ethers.getContractAt("LaunchCampaign", created.campaign);
-      expect(await campaign.strictFeeRouting()).to.equal(true);
+      // Strict routing is the only path now (E7c): no strictFeeRouting flag, a refusing router reverts the trade.
+      const choice = await creatorVault.cfg(created.campaign);
+      expect(choice.creator).to.equal(await creator.getAddress());
+      expect(choice.choice).to.equal(1n); // Keep
       expect(await campaign.tradeRouteProfile()).to.equal(BigInt(profile.id));
       expect(await campaign.protocolFeeBps()).to.equal(PROTOCOL_FEE_BPS);
+
+      // Past the C2 anti-sniper window (5000 bps at launch, down to the flat 200 bps at +60 s).
+      await ethers.provider.send("evm_increaseTime", [61]);
+      await ethers.provider.send("evm_mine", []);
+      expect(await campaign.currentTradeFeeBps()).to.equal(PROTOCOL_FEE_BPS);
 
       const amountOut = ethers.parseEther("10");
       const totalCost = await campaign.quoteBuyExactTokens(amountOut);
@@ -237,7 +266,7 @@ describe("BNB 6B creator-fee generation (local source-head only)", function () {
       const airdropBefore = await community.airdropReceived();
       const squadBefore = await community.squadReceived();
       const protocolBefore = await ethers.provider.getBalance(await protocolVault.getAddress());
-      const creatorBefore = await creatorVault.pendingCreatorFees(created.campaign);
+      const creatorBefore = await creatorVault.creatorBalance(created.campaign);
 
       const buyTx = await campaign.connect(buyer).buyExactTokens(amountOut, totalCost, { value: totalCost });
       const buyReceipt = await buyTx.wait();
@@ -260,7 +289,6 @@ describe("BNB 6B creator-fee generation (local source-head only)", function () {
       expect(costNoFee + fee).to.equal(totalCost);
       const expected = expectedTradeSplit(fee, profile);
       expect(expected.creator).to.equal((fee * CREATOR_SHARE_BPS) / ROUTE_BPS);
-      expect((PROTOCOL_FEE_BPS * CREATOR_SHARE_BPS) / ROUTE_BPS).to.equal(10n);
       expect(expected.creator).to.equal((costNoFee * PROTOCOL_FEE_BPS / ROUTE_BPS) * CREATOR_SHARE_BPS / ROUTE_BPS);
       expect(await campaign.launched()).to.equal(false);
 
@@ -270,7 +298,8 @@ describe("BNB 6B creator-fee generation (local source-head only)", function () {
       expect(executed!.args.airdropAmount).to.equal(expected.airdrop);
       expect(executed!.args.squadAmount).to.equal(expected.squad);
       expect(executed!.args.protocolAmount).to.equal(expected.protocol);
-      expect((await creatorVault.pendingCreatorFees(created.campaign)) - creatorBefore).to.equal(expected.creator);
+      expect((await creatorVault.creatorBalance(created.campaign)) - creatorBefore).to.equal(expected.creator);
+      expect(await creatorVault.totalLiabilities()).to.equal(await ethers.provider.getBalance(await creatorVault.getAddress()));
       expect((await weekly.received()) - weeklyBefore + ((await monthly.received()) - monthlyBefore)).to.equal(expected.league);
       expect((await recruiter.received()) - recruiterBefore).to.equal(expected.recruiter);
       expect((await community.airdropReceived()) - airdropBefore).to.equal(expected.airdrop);

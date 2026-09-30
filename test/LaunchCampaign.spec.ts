@@ -68,7 +68,6 @@ async function createLowTargetCampaignFixture() {
     firstBuyMaxCost: 0n,
     feeChoice: 1,
     feeCreatorPct: 0,
-    liquidityBps: 8000,
   });
   await factory.connect(creator).createCampaign(baseCampaignRequest() as any);
   const info = await factory.getCampaign(0n);

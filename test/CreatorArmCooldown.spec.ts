@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers, network } from "hardhat";
-import { deployScheduledCreateFixture, signScheduledCreateAuthorization } from "./helpers/scheduledCreateAuth";
+import { deployScheduledCreateFixture, signScheduledCreateAuthorization } from "./helpers/legacy-B1";
 
 function campaignRequest(name: string, symbol: string) {
   return {

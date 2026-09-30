@@ -1,9 +1,8 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
 import { deployLaunchFactory } from "./helpers/deployFactory";
 import { deployConfiguredTreasuryRouterV3 } from "./helpers/deployRouting";
 
-const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 
 const request = (overrides: Record<string, unknown> = {}) => ({
   name: "Topaz Token",
@@ -58,7 +57,7 @@ describe("Topaz v2 mocks", function () {
     const { topazFactory, topazRouter } = await deployTopazDex(await owner.getAddress());
     // V3: campaigns from this factory are strict and call routeTrade.
     const routing = await deployConfiguredTreasuryRouterV3(await owner.getAddress());
-    const { factory } = await deployLaunchFactory(await topazRouter.getAddress(), await routing.treasuryRouter.getAddress());
+    const { factory, graduationAdapter } = await deployLaunchFactory(await topazRouter.getAddress(), await routing.treasuryRouter.getAddress());
 
     await factory.connect(owner).setRequireRouteAuthorization(false);
     await factory.connect(owner).setRequireAuthorizedTrading(false);
@@ -73,7 +72,6 @@ describe("Topaz v2 mocks", function () {
       firstBuyMaxCost: 0n,
       feeChoice: 1,
       feeCreatorPct: 0,
-      liquidityBps: 8000,
     });
     await factory.connect(owner).enableLive();
 
@@ -82,16 +80,25 @@ describe("Topaz v2 mocks", function () {
     const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
     const token = await ethers.getContractAt("LaunchToken", info.token);
 
+    await network.provider.send("evm_setNextBlockTimestamp", [Number(await campaign.launchAt()) + 61]);
+    await network.provider.send("evm_mine");
+
     const oneToken = ethers.parseUnits("1", 18);
     const quote = await campaign.quoteBuyExactTokens(oneToken);
-    const tx = await campaign.connect(trader).buyExactTokens(oneToken, quote, { value: quote });
-
-    await expect(tx).to.emit(campaign, "CampaignFinalized");
-    await expect(tx).to.emit(topazRouter, "TopazLiquidityAdded").withArgs(await token.getAddress(), false, anyValue, anyValue, "0x000000000000000000000000000000000000dEaD");
+    // C5: the crossing buy marks Pending; graduate() builds the pool through the native adapter.
+    await expect(campaign.connect(trader).buyExactTokens(oneToken, quote, { value: quote })).to.emit(campaign, "GraduationPending");
+    const tx = await campaign.connect(trader).graduate();
+    await expect(tx).to.emit(campaign, "Graduated");
+    expect(await graduationAdapter.calls()).to.equal(1n);
+    const lr = await graduationAdapter.lastRequest();
+    expect(lr.token).to.equal(await token.getAddress());
+    expect(lr.quoteToken).to.equal(ethers.ZeroAddress);
 
     const stored = await campaign.getGraduationState();
     const volatilePool = await topazFactory.getPool(await token.getAddress(), await topazRouter.WETH(), false);
     expect(stored[0]).to.equal(volatilePool);
+    expect(volatilePool).to.not.equal(ethers.ZeroAddress);
+    expect(await (await ethers.getContractAt("MockTopazPool", volatilePool)).stable()).to.equal(false);
     expect(await topazFactory.getPool(await token.getAddress(), await topazRouter.WETH(), true)).to.equal(ethers.ZeroAddress);
   });
 

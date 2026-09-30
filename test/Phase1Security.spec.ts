@@ -103,7 +103,7 @@ describe("Phase 1 security layer", function () {
     ).to.be.revertedWithCustomError(campaign, "CreatorBuyCapExceeded");
     expect(await campaign.creatorBoughtWei()).to.eq(0n);
 
-    // up to the cap is accepted, one more wei of curve cost is not
+    // a buy that stays within the cap is accepted; a further buy past it is not
     const underCap = await campaign.quoteBuyExactBnb(ethers.parseEther("0.25"));
     expect(underCap.totalCostWei - underCap.feeWei).to.be.lte(cap);
     await campaign.connect(creator).buyExactBnb(0n, { value: ethers.parseEther("0.25") });
