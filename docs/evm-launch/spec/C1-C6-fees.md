@@ -458,6 +458,18 @@ rescuable (it is not user money; the safer failure).
   (a token whose balance drops on receipt reverts the pull). Griefing: anyone can pull at any time, which
   only moves the vault's own pending into the vault and makes it attributable.
 
+**F7 (LOW, audit 4 L2): a veto frees the weekly holder cap.** A vetoed batch kept counting against
+`maxHolderBatchPerWeek`, so one bad proposal of the full cap blocked every honest batch for the rest of the
+week. `vetoHolderBatch` now subtracts the batch total from `holderProposedInWeek` when the batch was
+proposed in the week the counter tracks: `(executableAt - holderBatchDelay) / 1 weeks == holderWeek`
+(`holderBatchDelay` is immutable, so this is exactly the proposal week). A batch from an earlier week frees
+nothing (that week's counter is gone).
+- Reentrancy / CEI: no external call added; the subtraction happens with the status write, before the
+  per-campaign refunds (all storage). Reachable: status 1 -> 3 once, so each total is subtracted at most
+  once. Overflow: `holderProposedInWeek >= b.total` whenever the weeks match, because the total was added
+  in that same week and the counter is only reset when a new week starts. Griefing: none added; the
+  operator gains nothing by proposing and having it vetoed.
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |

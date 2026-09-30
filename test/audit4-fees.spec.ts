@@ -194,15 +194,24 @@ describe("audit4: CreatorRewardsVaultV2 quote excess (pullLockerPending / attrib
 });
 
 describe("audit4: holder batches", function () {
-  it("EXPLOIT (low): a vetoed batch still consumes the weekly holder cap, so a bad proposal blocks honest batches for the week", async function () {
+  it("HOLDS (was EXPLOIT, low): a vetoed batch frees the weekly holder cap, so a bad proposal no longer blocks honest batches for the week", async function () {
     const f = await bnb();
     const { campaign, c } = await f.campaignWith(HOLDERS);
     await campaign.connect(f.trader).payFee(1, { value: 400n * E18 }); // 22.4 native to holders
     const id1 = ethers.id("bad");
-    await f.vault.connect(f.operator).proposeHolderBatch(id1, ethers.id("root"), 0, [c], [10n * E18]);
+    await f.vault.connect(f.operator).proposeHolderBatch(id1, ethers.id("root"), 0, [c], [10n * E18]); // the whole weekly cap
+    await expect(f.vault.connect(f.operator).proposeHolderBatch(ethers.id("more"), ethers.id("root3"), 0, [c], [1n])).to.be.revertedWithCustomError(f.vault, "CapExceeded");
     await f.vault.vetoHolderBatch(id1);
     expect(await f.vault.holderBalance(c)).to.equal((400n * E18 * 560n) / 10000n);
-    await expect(f.vault.connect(f.operator).proposeHolderBatch(ethers.id("good"), ethers.id("root2"), 0, [c], [E18])).to.be.revertedWithCustomError(f.vault, "CapExceeded");
+    await f.vault.connect(f.operator).proposeHolderBatch(ethers.id("good"), ethers.id("root2"), 0, [c], [10n * E18]); // full cap again
+    await expect(f.vault.connect(f.operator).proposeHolderBatch(ethers.id("over"), ethers.id("root4"), 0, [c], [1n])).to.be.revertedWithCustomError(f.vault, "CapExceeded");
+    // A batch proposed in an earlier week does not free this week's cap when vetoed.
+    await f.vault.vetoHolderBatch(ethers.id("good"));
+    await f.vault.connect(f.operator).proposeHolderBatch(ethers.id("w1"), ethers.id("r5"), 0, [c], [4n * E18]);
+    await increase(7 * DAY);
+    await f.vault.connect(f.operator).proposeHolderBatch(ethers.id("w2"), ethers.id("r6"), 0, [c], [10n * E18]);
+    await f.vault.vetoHolderBatch(ethers.id("w1"));
+    await expect(f.vault.connect(f.operator).proposeHolderBatch(ethers.id("w2b"), ethers.id("r7"), 0, [c], [1n])).to.be.revertedWithCustomError(f.vault, "CapExceeded");
   });
 
   it("HOLDS: the operator cannot pay a batch before the veto window, nor twice, nor beyond the Safe's authorization", async function () {

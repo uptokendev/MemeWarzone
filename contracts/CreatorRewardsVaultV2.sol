@@ -439,6 +439,8 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         HolderBatch storage b = holderBatches[batchId];
         if (b.status != 1) revert BadBatch();
         b.status = 3;
+        // Vetoed within the week it was proposed in: its total no longer counts against that week's cap (audit 4 L2).
+        if ((b.executableAt - holderBatchDelay) / 1 weeks == holderWeek) holderProposedInWeek -= b.total;
         address[] storage cs = batchCampaigns[batchId];
         uint256[] storage as_ = batchAmounts[batchId];
         for (uint256 i; i < cs.length; ++i) holderBalance[cs[i]] += as_[i];
