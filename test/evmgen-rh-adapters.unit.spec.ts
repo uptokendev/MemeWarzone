@@ -48,6 +48,8 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
       acquisitionFeeTier: 500,
       minimumRouteLiquidityUsdWad: 50_000n * WAD,
       maxSwapSlippageBps: 300,
+      maxOracleDeviationBps: 500,
+      maxPriceImpactBps: 500,
       enabled: true,
     };
     return { admin, other, v3, weth, npm, router, ethUsd, stockUsd, stockToken, acquisitionPool, locker, factory, native, stock, campaign, route };
@@ -238,7 +240,7 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
           expect(s * s <= expected && (s + 1n) * (s + 1n) > expected).to.equal(true);
           const back = await m.priceFromSqrt(s, memeIs0);
           const diff = back > p ? back - p : p - back;
-          expect(diff * 10n ** 12n).to.be.lte(p);
+          expect(diff <= 1n || diff * 10n ** 12n <= p).to.equal(true); // 1 wei of sqrt rounding
         }
       }
       await expect(m.sqrtFromPrice(0, true)).to.be.revertedWithCustomError(m, "InvalidPrice");

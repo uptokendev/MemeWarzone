@@ -205,6 +205,8 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
         uint256 targetPriceWad
     );
 
+    event MemeDustToPool(address indexed campaign, address indexed pool, uint256 amount);
+
     error OnlyAdmin();
     error ZeroAddress();
     error ContractCodeMissing();
@@ -466,6 +468,25 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
         // MEME that comes back is V3 rounding dust (C5 sections 1.9 and 10).
         if (sqrtAfter != x.sqrtTarget && memeReturned > MAX_MEME_DUST) revert RepairInvariantBroken();
         res.startPriceWad = RobinhoodV3PriceMath.priceFromSqrt(sqrtAfter, x.memeIs0);
+
+        // V3 rounding dust goes into the pool instead of back, so the campaign's exact checks hold:
+        // (a) MEME side bound the mint (budget used up): memeUsed == memeMax exactly;
+        // (b) the paired side bound it: memeUsed >= memeTarget despite liquidity/sqrt rounding down.
+        // A token balance the pool does not account is inert (V3 reads balances only as
+        // before/after deltas inside its own callbacks), so this is a burn of <= MAX_MEME_DUST wei.
+        uint256 dust;
+        if (memeReturned != 0 && memeReturned <= MAX_MEME_DUST) {
+            dust = memeReturned;
+        } else {
+            uint256 memeTarget = x.memeAvailable - x.spare;
+            if (res.memeUsed < memeTarget && memeTarget - res.memeUsed <= MAX_MEME_DUST) dust = memeTarget - res.memeUsed;
+        }
+        if (dust != 0) {
+            IERC20(x.meme).safeTransfer(res.pool, dust);
+            memeReturned -= dust;
+            res.memeUsed += dust;
+            emit MemeDustToPool(msg.sender, res.pool, dust);
+        }
 
         if (memeReturned != 0) IERC20(x.meme).safeTransfer(msg.sender, memeReturned);
         if (pairedReturned != 0) _sendPaired(x.paired, msg.sender, pairedReturned);

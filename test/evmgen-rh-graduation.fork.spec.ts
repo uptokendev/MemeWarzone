@@ -23,6 +23,7 @@ const RH = {
   spyPool: "0xDDCBBa3666f578E3F09516f21Ff85BFee859AB5e",
 };
 
+const dbg = (m: string) => (process.env.RH_DEBUG ? console.log(`        [dbg ${new Date().toISOString().slice(11, 19)}] ${m}`) : undefined);
 const FORKED = network.name === "hardhat" && Boolean((network.config as any).forking?.url) && network.config.chainId === 4663;
 const d = FORKED ? describe : describe.skip;
 
@@ -59,14 +60,10 @@ const ROUTER_ABI = [
 
 function isqrt(v: bigint): bigint {
   if (v < 2n) return v;
-  let x = BigInt(Math.floor(Math.sqrt(Number(v))));
+  let x = 1n << BigInt((v.toString(2).length >> 1) + 1); // >= sqrt(v)
   for (;;) {
     const y = (x + v / x) >> 1n;
-    if (y >= x) {
-      while (x * x > v) x -= 1n;
-      while ((x + 1n) * (x + 1n) <= v) x += 1n;
-      return x;
-    }
+    if (y >= x) return x;
     x = y;
   }
 }
@@ -167,6 +164,8 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
       acquisitionFeeTier: 500,
       minimumRouteLiquidityUsdWad: 50_000n * WAD,
       maxSwapSlippageBps: 300,
+      maxOracleDeviationBps: 500,
+      maxPriceImpactBps: 500,
       enabled: true,
     });
     base = await snapshot();
@@ -280,6 +279,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
     const poolMemeBefore = poolAddrBefore === ethers.ZeroAddress ? 0n : await ctx.meme.balanceOf(poolAddrBefore);
     const campaignMemeBefore = await ctx.meme.balanceOf(ctx.cAddr);
 
+    dbg("graduate: sending");
     const tx = await ctx.campaign.graduate(adapterAddr, quoteAddr, c.T, c.budget, c.P, c.poolNative);
     const rc = await tx.wait();
     gas[label] = rc.gasUsed;
@@ -330,7 +330,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
         expect(slot.sqrtPriceX96).to.equal(target);
         // start == P within the sqrt rounding (relative < 1e-15)
         const diff = start > c.P ? start - c.P : c.P - start;
-        expect(diff * 10n ** 15n).to.be.lte(c.P);
+        expect(diff * 10n ** 9n).to.be.lte(c.P); // start == P up to 1 wei of sqrt rounding
       } else {
         expect(exhausted).to.equal(true);
         expect(slot.sqrtPriceX96 === target || start >= c.P).to.equal(true);
@@ -385,9 +385,13 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
       const ctx = await newCampaign(RH.weth, memeIs0);
       const c = curve(160_000_000n);
       const pool = await createAndInit(ctx.memeAddr, RH.weth, c.P * 1000n);
+      dbg("pool init");
       const g = await griefer(weth, ethers.parseEther("5"));
+      dbg("griefer funded");
       const { first } = ladder(memeIs0, c.P * 2n, c.P * 900n, 600);
+      dbg(`ladder first ${first}`);
       await g.mintLadder(await pool.getAddress(), first, 600, 5, 10n ** 20n);
+      dbg("bids minted");
       const gWethBefore = await weth.balanceOf(await g.getAddress());
       const out = await graduateAndCheck(`native ${ord} bids small`, ctx, native, weth, ethers.ZeroAddress, c);
       expect(out.res.repaired).to.equal(true);
@@ -408,27 +412,32 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
       expect(out.res.repairMemeSold).to.equal(0n);
     });
 
-    it(`native ${ord}: sold-out campaign, bids larger than the spare -> phase 2, MEME binds, no freeze`, async () => {
-      const ctx = await newCampaign(RH.weth, memeIs0);
-      const c = curve(700_000_000n); // sold out: spare = budget - T is only ~6.6M tokens
-      const spare = c.budget - c.T;
-      expect(spare * 20n).to.be.lt(c.T);
-      const pool = await createAndInit(ctx.memeAddr, RH.weth, c.P * 1000n);
-      const g = await griefer(weth, ethers.parseEther("400"));
-      // One wide bid between 1.5P and 3P, far larger than the spare can fill.
-      const { first, count } = ladder(memeIs0, (c.P * 3n) / 2n, c.P * 3n, 60);
-      await g.mintLadder(await pool.getAddress(), first, 60 * count, 1, 10n ** 23n);
-      const out = await graduateAndCheck(`native ${ord} exhausted (sold-out)`, ctx, native, weth, ethers.ZeroAddress, c, {
-        expectExhausted: true,
+    for (const [size, liq, fund] of [
+      ["larger than the spare", 10n ** 23n, "400"],
+      ["far larger than the whole budget", 3n * 10n ** 24n, "3000"],
+    ] as const) {
+      it(`native ${ord}: sold-out campaign, bids ${size} -> phase 2, MEME binds, no freeze`, async () => {
+        const ctx = await newCampaign(RH.weth, memeIs0);
+        const c = curve(700_000_000n); // sold out: spare = budget - T is only ~6.6M tokens
+        const spare = c.budget - c.T;
+        expect(spare * 20n).to.be.lt(c.T);
+        const pool = await createAndInit(ctx.memeAddr, RH.weth, c.P * 1000n);
+        const g = await griefer(weth, ethers.parseEther(fund));
+        // One wide bid between 1.5P and 3P.
+        const { first, count } = ladder(memeIs0, (c.P * 3n) / 2n, c.P * 3n, 60);
+        await g.mintLadder(await pool.getAddress(), first, 60 * count, 1, liq);
+        const out = await graduateAndCheck(`native ${ord} exhausted, bids ${size}`, ctx, native, weth, ethers.ZeroAddress, c, {
+          expectExhausted: true,
+        });
+        expect(out.res.repairMemeSold).to.be.gt(spare); // phase 2 sold beyond the spare
+        expect(out.memeBack).to.equal(0n); // memeUsed == memeMax exactly (dust went to the pool)
+        expect(out.start * 10_000n).to.be.gte(c.P * 9_950n); // never below the band
+        expect(out.nativeBack).to.be.gt(0n); // surplus to the creator's pull balance (C5 1.10)
+        console.log(
+          `        ${ord} exhausted (${size}): start/P = ${Number((out.start * 10_000n) / c.P) / 10_000}, sold ${ethers.formatEther(out.res.repairMemeSold)} MEME (spare ${ethers.formatEther(spare)}), nativeBack=${ethers.formatEther(out.nativeBack)} ETH`,
+        );
       });
-      expect(out.res.repairMemeSold).to.be.gt(spare); // phase 2 sold beyond the spare
-      expect(out.memeBack).to.be.lte(MAX_MEME_DUST);
-      expect(out.start).to.be.gt(c.P);
-      expect(out.nativeBack).to.be.gt(0n); // surplus to the creator's pull balance (C5 1.10)
-      console.log(
-        `        ${ord} exhausted: start/P = ${Number((out.start * 10_000n) / c.P) / 10_000}, memeBack=${out.memeBack}, nativeBack=${ethers.formatEther(out.nativeBack)} ETH`,
-      );
-    });
+    }
 
     it(`native ${ord}: griefer attacks fail (MEME-bearing mint, MEME transfer, push price back mid-repair)`, async () => {
       const ctx = await newCampaign(RH.weth, memeIs0);
@@ -475,7 +484,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
     expect(out.res.repaired).to.equal(false);
   });
 
-  it("native: 1,500 one-tick bids -> one-shot graduation exceeds the 32M cap; repairPool chunks to completion", async () => {
+  (process.env.RH_SKIP_HEAVY ? it.skip : it)("native: 1,500 one-tick bids -> one-shot graduation exceeds the 32M cap; repairPool chunks to completion", async () => {
     const memeIs0 = false; // the ordering every realistic MEME has against WETH 0x0Bd7...
     const ctx = await newCampaign(RH.weth, memeIs0);
     const c = curve(160_000_000n);

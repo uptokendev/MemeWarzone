@@ -83,6 +83,12 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         uint24 acquisitionFeeTier;
         uint256 minimumRouteLiquidityUsdWad; // STOCK held by the acquisition pool, in USD, depth sanity check
         uint16 maxSwapSlippageBps; // vs the oracle-derived output, <= MAX_SWAP_SLIPPAGE_BPS
+        // The next two keep the 8-field route layout LaunchFactory reads at create
+        // (IRobinhoodStockGraduationRouteRegistry.stockRoutes). They are validated (<= 10000) and
+        // stored as route policy for off-chain tooling, but NOT enforced here: C7.1 deleted the
+        // in-transaction impact probe, and the start price is bounded by the fixed 100 bps band.
+        uint16 maxOracleDeviationBps;
+        uint16 maxPriceImpactBps;
         bool enabled;
     }
 
@@ -99,6 +105,8 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         uint24 acquisitionFeeTier,
         uint256 minimumRouteLiquidityUsdWad,
         uint16 maxSwapSlippageBps,
+        uint16 maxOracleDeviationBps,
+        uint16 maxPriceImpactBps,
         bool enabled
     );
     event StockAcquired(
@@ -148,7 +156,10 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         if (route.acquisitionFeeTier == 0 || IRhV3Factory(v3Factory).feeAmountTickSpacing(route.acquisitionFeeTier) <= 0) {
             revert InvalidFeeTier();
         }
-        if (route.maxSwapSlippageBps > MAX_SWAP_SLIPPAGE_BPS || route.minimumRouteLiquidityUsdWad == 0) revert InvalidPolicy();
+        if (
+            route.maxSwapSlippageBps > MAX_SWAP_SLIPPAGE_BPS || route.maxOracleDeviationBps > BPS || route.maxPriceImpactBps > BPS
+                || route.minimumRouteLiquidityUsdWad == 0
+        ) revert InvalidPolicy();
         if (IERC20Metadata(stockToken).decimals() > 36) revert InvalidPolicy();
         address canonical = IRhV3Factory(v3Factory).getPool(WETH, stockToken, route.acquisitionFeeTier);
         if (canonical == address(0) || canonical != route.acquisitionPool) revert AcquisitionPoolMismatch();
@@ -164,6 +175,8 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
             route.acquisitionFeeTier,
             route.minimumRouteLiquidityUsdWad,
             route.maxSwapSlippageBps,
+            route.maxOracleDeviationBps,
+            route.maxPriceImpactBps,
             route.enabled
         );
     }
