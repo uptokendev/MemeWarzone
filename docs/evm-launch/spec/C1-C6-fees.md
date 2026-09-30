@@ -345,6 +345,21 @@ vault. Old-generation routers (V3) are untouched.
   through `setForwardingPaused` (documented, unchanged).
 - Indexer: `CreatorRewardsVaultProposed` in `scripts/lib/indexerManifest.cjs` can no longer fire.
 
+**F2 (MEDIUM, audit 4 M1): one MEME sale per pool per block, in both lockers.** `harvest` is
+permissionless and each call re-applied the impact bound to the price the previous call left, so a
+contract looping `harvest` 13 times in one transaction sold 3% of the reserve (all carried MEME) at
+compounding impact and a single back-run profited. New state `lastSaleBlock[pool]` (public) in
+`PermanentLpLocker` and `PermanentV3PositionLocker`: the sale step runs only when `lastSaleBlock[pool] !=
+block.number`, and sets it before the `try`. A second harvest in the same block still claims and splits
+the paired side; its MEME is added to `carriedMeme` and sold by the next block's harvest.
+- Reentrancy: unchanged (`harvest` is `nonReentrant`; the write happens inside the guard, before the
+  self-call). CEI: the marker is written before the external sale; if the sale reverts, the `try`
+  swallows it and the marker stays (the block's sale attempt is spent, nothing is lost: all MEME carries).
+- Reachable states: `lastSaleBlock` only increases, one write per pool per block with MEME to sell.
+- Overflow: none (block number compare). Griefing: anyone can spend a block's sale attempt by calling
+  `harvest` first, which is exactly an honest harvest; the next block sells again. Harvest never reverts
+  because of the marker.
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |

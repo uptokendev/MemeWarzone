@@ -70,6 +70,10 @@ contract PermanentLpLocker is ReentrancyGuard {
     address public topazFactory;
     /// @notice MEME fees collected but not yet sold because of the impact bound, per pool.
     mapping(address => uint256) public carriedMeme;
+    /// @notice Block of the pool's last MEME sale attempt. One sale per pool per block: harvest is
+    /// permissionless, so without it a loop of harvests in one transaction re-applies the bound on the price
+    /// the previous call left and dumps every carried MEME at compounding impact (audit 4 M1).
+    mapping(address => uint256) public lastSaleBlock;
 
     mapping(address => bool) public registeredLpToken;
     mapping(address => bool) public registeredFeeAsset;
@@ -266,10 +270,13 @@ contract PermanentLpLocker is ReentrancyGuard {
         uint256 pairedOut;
         if (memeToSell != 0) {
             uint256 impactBps = saleImpactBps(_refreshPoolFee(pool, info.poolFeeBps));
-            try this.sellMemeForPaired(pool, info.memeToken, memeToSell, impactBps) returns (uint256 sold_, uint256 out_) {
-                memeSold = sold_;
-                pairedOut = out_;
-            } catch {}
+            if (lastSaleBlock[pool] != block.number) {
+                lastSaleBlock[pool] = block.number;
+                try this.sellMemeForPaired(pool, info.memeToken, memeToSell, impactBps) returns (uint256 sold_, uint256 out_) {
+                    memeSold = sold_;
+                    pairedOut = out_;
+                } catch {}
+            }
             carriedMeme[pool] = memeToSell - memeSold;
             emit MemeFeesSold(pool, info.memeToken, memeSold, pairedOut, memeToSell - memeSold);
         }

@@ -286,19 +286,18 @@ describe("audit4: E9 harvest MEME sale bound is per call, not per block", functi
     expect(r.profit).to.be.lt(0n);
   });
 
-  it("EXPLOIT: looping the permissionless harvest in one tx dumps all carried MEME at compounding impact; a single back-run profits", async function () {
+  it("HOLDS (was EXPLOIT): looping the permissionless harvest in one tx sells once; the rest stays carried and a back-run does not profit", async function () {
     const f = await lockerV2();
     await f.fundMemeFees(30_000n * E18);
     const pool = await f.pair.getAddress();
     await f.attacker.loopHarvest(await f.locker.getAddress(), pool, 13);
-    expect(await f.locker.carriedMeme(pool)).to.equal(0n); // 3% of reserve sold in ONE transaction
-    const recv = await f.paired.balanceOf((await ethers.getSigners())[2].address);
-    const fair = (30_000n * E18 * f.RP) / f.RM; // value of the sold MEME at the pre-harvest price
+    // One sale per pool per block: the first call sells at most 0.25% of the reserve, the other 12 carry.
+    const carried = await f.locker.carriedMeme(pool);
+    expect(carried).to.be.gt(0n);
+    expect(30_000n * E18 - carried).to.be.lte((f.RM * 50n) / 20000n);
     const r = await f.backrunProfit();
-    console.log(
-      `      loop x13: MEME sold 30000 (3% of reserve); creator got ${ethers.formatEther(recv)} (fair 80% = ${ethers.formatEther((fair * 8000n) / 10000n)}); attacker profit ${ethers.formatEther(r.profit)} WBNB`,
-    );
-    expect(r.profit).to.be.gt(0n);
+    console.log(`      loop x13: MEME sold ${ethers.formatEther(30_000n * E18 - carried)}, carried ${ethers.formatEther(carried)}; attacker profit ${ethers.formatEther(r.profit)} WBNB`);
+    expect(r.profit).to.be.lte(0n);
   });
 });
 

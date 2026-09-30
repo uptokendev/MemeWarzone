@@ -116,6 +116,9 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     mapping(address => mapping(address => uint256)) public cumulativeProtocolRouted;
     /// @notice MEME fees collected but not yet sold because of the impact bound, per pool.
     mapping(address => uint256) public carriedMeme;
+    /// @notice Block of the pool's last MEME sale attempt: one sale per pool per block, so a loop of the
+    /// permissionless harvest in one transaction cannot compound the bound (audit 4 M1).
+    mapping(address => uint256) public lastSaleBlock;
     // In-flight V3 swap, checked by uniswapV3SwapCallback; zero outside sellMemeForPaired.
     address private activeSwapPool;
     uint256 private activeSwapMaxPay;
@@ -367,10 +370,13 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         if (memeToSell != 0) {
             uint256 memeSold;
             uint256 pairedOut;
-            try this.sellMemeForPaired(pool, memeIs0, memeToSell) returns (uint256 sold_, uint256 out_) {
-                memeSold = sold_;
-                pairedOut = out_;
-            } catch {}
+            if (lastSaleBlock[pool] != block.number) {
+                lastSaleBlock[pool] = block.number;
+                try this.sellMemeForPaired(pool, memeIs0, memeToSell) returns (uint256 sold_, uint256 out_) {
+                    memeSold = sold_;
+                    pairedOut = out_;
+                } catch {}
+            }
             carriedMeme[pool] = memeToSell - memeSold;
             paired += pairedOut;
             emit MemeFeesSold(pool, info.memeToken, memeSold, pairedOut, memeToSell - memeSold);
