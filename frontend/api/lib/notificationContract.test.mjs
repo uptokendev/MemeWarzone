@@ -12,6 +12,7 @@ import {
 test("Robinhood ids are not BNB", () => {
   assert.equal(normalizeChain(4663), "robinhood");
   assert.equal(normalizeChain(46630), "robinhood");
+  assert.equal(normalizeChain(6281971), "dogeos");
   assert.equal(getChainById(56), "bnb");
   assert.equal(getChainById(101), "solana");
   assert.equal(getChainById(102), "solana");
@@ -21,10 +22,12 @@ test("Robinhood ids are not BNB", () => {
 test("not-Solana is not silently BNB", () => {
   assert.notEqual(normalizeChain(4663), "bnb");
   assert.notEqual(normalizeChain(46630), normalizeChain(97));
+  assert.notEqual(normalizeChain(6281971), "bnb");
 });
 
 test("environment follows chain id", () => {
   assert.equal(resolveChainEnvironment({ chainId: 46630 }), "staging");
+  assert.equal(resolveChainEnvironment({ chainId: 6281971 }), "staging");
   assert.equal(resolveChainEnvironment({ chainId: 4663 }), "production");
   assert.equal(resolveChainEnvironment({ chainId: 97 }), "staging");
   assert.equal(resolveChainEnvironment({ chainId: 101 }), "production");

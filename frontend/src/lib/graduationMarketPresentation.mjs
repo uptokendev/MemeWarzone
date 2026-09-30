@@ -43,11 +43,13 @@ export const ROBINHOOD_STOCK_PROVIDER_KEY = "robinhood-stock-token";
 export const ROBINHOOD_STOCK_COMPAT_PREFIX = "rh-stock:";
 
 const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
+const DOGEOS_CHAIN_IDS = new Set([6281971]);
 
 export function nativeSymbol(chainId) {
   const n = Number(chainId);
   if (n === 101) return "SOL";
   if (ROBINHOOD_CHAIN_IDS.has(n)) return "ETH";
+  if (DOGEOS_CHAIN_IDS.has(n)) return "DOGE";
   return "BNB";
 }
 
@@ -82,6 +84,7 @@ export function providerLabel(asset) {
   if (key.includes("robinhood")) return "Robinhood";
   const chainId = Number(asset?.chainId);
   if (chainId === 101 || key.includes("solana")) return "Solana";
+  if (chainId === 6281971 || key.includes("dogeos")) return "DogeOS";
   if (chainId === 56 || chainId === 97 || key.includes("bnb") || key.includes("bsc")) return "BNB";
   const displayName = String(asset?.provider?.displayName || "").trim();
   return displayName || "MemeWarzone";
@@ -229,6 +232,7 @@ export function nativeProviderKey(chainId) {
   const n = Number(chainId);
   if (n === 101) return "solana-basic";
   if (ROBINHOOD_CHAIN_IDS.has(n)) return "robinhood-basic";
+  if (DOGEOS_CHAIN_IDS.has(n)) return "dogeos-basic";
   return "bnb-basic";
 }
 
@@ -240,7 +244,7 @@ export function nativeProviderKey(chainId) {
  * picker (the catalog's WETH row is a wrapped duplicate the verifier does not
  * activate) and could not pass the market step at all.
  */
-export const EVM_NATIVE_LAUNCH_CHAIN_IDS = Object.freeze(new Set([56, 97, 4663, 46630]));
+export const EVM_NATIVE_LAUNCH_CHAIN_IDS = Object.freeze(new Set([56, 97, 4663, 46630, 6281971]));
 
 export function evmNativeLaunchQuote(chainId) {
   const n = Number(chainId);

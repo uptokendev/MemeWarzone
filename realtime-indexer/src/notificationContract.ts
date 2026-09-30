@@ -5,16 +5,17 @@
 
 export const NOTIFICATION_SCHEMA_VERSION = 1 as const;
 
-const CHAIN_IDS: Record<number, "bnb" | "solana" | "robinhood"> = {
+const CHAIN_IDS: Record<number, "bnb" | "solana" | "robinhood" | "dogeos"> = {
   56: "bnb",
   97: "bnb",
   101: "solana",
   102: "solana",
   4663: "robinhood",
   46630: "robinhood",
+  6281971: "dogeos",
 };
 
-const LABEL_ALIASES: Record<string, "bnb" | "solana" | "robinhood"> = {
+const LABEL_ALIASES: Record<string, "bnb" | "solana" | "robinhood" | "dogeos"> = {
   bnb: "bnb",
   bsc: "bnb",
   solana: "solana",
@@ -26,9 +27,12 @@ const LABEL_ALIASES: Record<string, "bnb" | "solana" | "robinhood"> = {
   robinhood: "robinhood",
   rh: "robinhood",
   "robinhood-testnet": "robinhood",
+  dogeos: "dogeos",
+  "dogeos-testnet": "dogeos",
+  chikyu: "dogeos",
 };
 
-const STAGING_IDS = new Set(["97", "102", "46630"]);
+const STAGING_IDS = new Set(["97", "102", "46630", "6281971"]);
 const PRODUCTION_IDS = new Set(["56", "101", "4663"]);
 const ENTITY_TYPES = [
   "campaign",
@@ -41,7 +45,7 @@ const ENTITY_TYPES = [
   "platform",
 ] as const;
 
-export type NotificationChain = "bnb" | "solana" | "robinhood" | "global";
+export type NotificationChain = "bnb" | "solana" | "robinhood" | "dogeos" | "global";
 
 function chainIdKey(input: unknown): string | null {
   if (input === null || input === undefined) return null;
@@ -55,14 +59,14 @@ function chainIdKey(input: unknown): string | null {
   return trimmed.toLowerCase();
 }
 
-export function normalizeChain(input: unknown): "bnb" | "solana" | "robinhood" | null {
+export function normalizeChain(input: unknown): "bnb" | "solana" | "robinhood" | "dogeos" | null {
   if (input === null || input === undefined) return null;
   if (typeof input === "number") {
     return CHAIN_IDS[input] ?? null;
   }
   const normalized = String(input).trim().toLowerCase();
   if (!normalized) return null;
-  if (normalized === "bnb" || normalized === "solana" || normalized === "robinhood") return normalized;
+  if (normalized === "bnb" || normalized === "solana" || normalized === "robinhood" || normalized === "dogeos") return normalized;
   if (LABEL_ALIASES[normalized]) return LABEL_ALIASES[normalized];
   const key = chainIdKey(normalized);
   if (key && /^\d+$/.test(key)) return CHAIN_IDS[Number(key)] ?? null;

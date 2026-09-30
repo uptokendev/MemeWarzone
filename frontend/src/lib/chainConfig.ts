@@ -1,6 +1,6 @@
 // src/lib/chainConfig.ts
 // Centralized chain + env config for MemeWarzone.
-// Supports BNB Smart Chain, Solana mainnet, and opt-in Robinhood Chain EVM networks.
+// Supports BNB Smart Chain, Solana, opt-in Robinhood Chain, and opt-in DogeOS Chikyū.
 //
 // Design goal:
 // - Reads follow explicit route/feed chain context first, then the wallet's connected chain,
@@ -9,14 +9,15 @@
 
 import { getActiveWalletKind, readStoredFeedChainId } from "@/lib/activeWalletChain";
 
-export type SupportedChainId = 56 | 97 | 101 | 4663 | 46630;
+export type SupportedChainId = 56 | 97 | 101 | 4663 | 46630 | 6281971;
 
 export const BNB_CHAIN_ID: SupportedChainId = 56;
 export const BNB_TESTNET_CHAIN_ID: SupportedChainId = 97;
 export const SOLANA_CHAIN_ID: SupportedChainId = 101;
 export const ROBINHOOD_CHAIN_ID: SupportedChainId = 4663;
 export const ROBINHOOD_TESTNET_CHAIN_ID: SupportedChainId = 46630;
-export const SUPPORTED_CHAIN_IDS: SupportedChainId[] = [56, 97, 101, 4663, 46630];
+export const DOGEOS_TESTNET_CHAIN_ID: SupportedChainId = 6281971;
+export const SUPPORTED_CHAIN_IDS: SupportedChainId[] = [56, 97, 101, 4663, 46630, 6281971];
 
 // Preserve the public product surface unless a runtime explicitly opts Robinhood in.
 const DEFAULT_ALLOWED: SupportedChainId[] = [56, 97, 101];
@@ -50,7 +51,14 @@ export function getDefaultChainId(): SupportedChainId {
 }
 
 export function isSupportedChainId(chainId?: number | null): boolean {
-  return chainId === 56 || chainId === 97 || chainId === 101 || chainId === 4663 || chainId === 46630;
+  return (
+    chainId === 56 ||
+    chainId === 97 ||
+    chainId === 101 ||
+    chainId === 4663 ||
+    chainId === 46630 ||
+    chainId === 6281971
+  );
 }
 
 export function isAllowedChainId(chainId?: number | null): boolean {
@@ -66,19 +74,25 @@ export function isRobinhoodChainId(chainId?: number | null): boolean {
   return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
 }
 
+export function isDogeosChainId(chainId?: number | null): boolean {
+  return chainId === DOGEOS_TESTNET_CHAIN_ID;
+}
+
 export function isEvmChainId(chainId?: number | null): boolean {
   return (
     chainId === BNB_CHAIN_ID ||
     chainId === BNB_TESTNET_CHAIN_ID ||
     chainId === ROBINHOOD_CHAIN_ID ||
-    chainId === ROBINHOOD_TESTNET_CHAIN_ID
+    chainId === ROBINHOOD_TESTNET_CHAIN_ID ||
+    chainId === DOGEOS_TESTNET_CHAIN_ID
   );
 }
 
-/** Native gas token for Warzone stakes, Support, and claims. Robinhood uses ETH, not RH. */
+/** Native gas token for Warzone stakes, Support, and claims. Robinhood uses ETH, not RH. DogeOS uses DOGE. */
 export function getNativeSymbol(chainId?: number | null): string {
   if (isSolanaChainId(chainId)) return "SOL";
   if (isRobinhoodChainId(chainId)) return "ETH";
+  if (isDogeosChainId(chainId)) return "DOGE";
   return "BNB";
 }
 
@@ -306,6 +320,11 @@ function robinhoodDefaultRpc(chainId: SupportedChainId): string {
   return "";
 }
 
+function dogeosDefaultRpc(chainId: SupportedChainId): string {
+  if (chainId === DOGEOS_TESTNET_CHAIN_ID) return "https://rpc.testnet.dogeos.com";
+  return "";
+}
+
 function firstSolanaMainnetRpc(): string {
   // Evaluate each key with firstFromCsv so an empty VITE_SOLANA_MAINNET_RPC
   // cannot hide a real VITE_SOLANA_RPC via `??`. Never fall back to public
@@ -335,6 +354,10 @@ export function getPublicRpcUrl(chainId: SupportedChainId): string {
 
   if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) {
     return robinhoodDefaultRpc(chainId);
+  }
+
+  if (chainId === DOGEOS_TESTNET_CHAIN_ID) {
+    return dogeosDefaultRpc(chainId);
   }
 
   if (chainId === 56) {
@@ -384,6 +407,10 @@ export function getPublicRpcUrls(chainId: SupportedChainId): string[] {
 
   if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) {
     return [robinhoodDefaultRpc(chainId)];
+  }
+
+  if (chainId === DOGEOS_TESTNET_CHAIN_ID) {
+    return [dogeosDefaultRpc(chainId)];
   }
 
   if (chainId === 56) {
@@ -531,6 +558,7 @@ export function getExplorerTxBase(chainId: SupportedChainId): string {
   if (chainId === SOLANA_CHAIN_ID) return "https://solscan.io/tx/";
   if (chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "https://explorer.testnet.chain.robinhood.com/tx/";
   if (chainId === ROBINHOOD_CHAIN_ID) return "https://robinhoodchain.blockscout.com/tx/";
+  if (chainId === DOGEOS_TESTNET_CHAIN_ID) return "https://dogeos-testnet.l2scan.co/tx/";
   return chainId === 97 ? "https://testnet.bscscan.com/tx/" : "https://bscscan.com/tx/";
 }
 
@@ -575,6 +603,16 @@ export function getChainParams(chainId: SupportedChainId) {
     };
   }
 
+  if (chainId === DOGEOS_TESTNET_CHAIN_ID) {
+    return {
+      chainId: "0x5fe533",
+      chainName: "DogeOS Chikyū Testnet",
+      nativeCurrency: { name: "DOGE", symbol: "DOGE", decimals: 18 },
+      rpcUrls: getPublicRpcUrls(DOGEOS_TESTNET_CHAIN_ID),
+      blockExplorerUrls: ["https://dogeos-testnet.l2scan.co/"],
+    };
+  }
+
   return {
     chainId: "0x65",
     chainName: "Solana mainnet",
@@ -594,6 +632,7 @@ const CHAIN_LABELS: Record<number, string> = {
   137: "Polygon",
   4663: "Robinhood Chain",
   46630: "Robinhood Chain Testnet",
+  6281971: "DogeOS Chikyū Testnet",
   8453: "Base",
   42161: "Arbitrum One",
   10: "Optimism",
@@ -607,5 +646,6 @@ export function getChainLabel(chainId?: number | null): string {
   if (chainId === 101) return "Solana";
   if (chainId === 4663) return "Robinhood";
   if (chainId === 46630) return "Robinhood Testnet";
+  if (chainId === 6281971) return "DogeOS Testnet";
   return CHAIN_LABELS[chainId] ?? `Chain ${chainId}`;
 }

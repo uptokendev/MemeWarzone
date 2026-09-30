@@ -9,7 +9,8 @@ export type ChainKey =
   | "solana-mainnet"
   | "solana-devnet"
   | "robinhood-mainnet"
-  | "robinhood-testnet";
+  | "robinhood-testnet"
+  | "dogeos-testnet";
 
 export interface ChainDefinition {
   key: ChainKey;
@@ -123,6 +124,22 @@ export const CHAIN_REGISTRY: Readonly<Record<ChainKey, ChainDefinition>> = Objec
     graduationAdapter: "robinhood-dex-testnet",
     swapAdapter: "robinhood-dex-testnet",
     oracleAdapter: "eth-usd-test",
+    supportsCreation: false,
+  },
+  "dogeos-testnet": {
+    key: "dogeos-testnet",
+    displayName: "DogeOS Chikyū Testnet",
+    family: "evm",
+    networkClass: "test",
+    runtimeEnvironment: "staging",
+    chainId: 6281971,
+    nativeAsset: "DOGE",
+    explorerBaseUrl: "https://dogeos-testnet.l2scan.co",
+    publicRpcEnvKey: "VITE_PUBLIC_RPC_6281971",
+    deploymentManifest: "deployments/dogeos/testnet.json",
+    graduationAdapter: "pending-dex",
+    swapAdapter: "pending-dex",
+    oracleAdapter: "doge-usd-test",
     supportsCreation: false,
   },
 });

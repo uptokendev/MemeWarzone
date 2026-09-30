@@ -6,8 +6,8 @@ import { solanaLaneAddresses, verifySolanaRewardLaneClaim } from "../lib/solanaR
 import { preflightRecruiterPayout, recruiterEvmChainId, sendRecruiterPayout } from "../lib/recruiterEvmPayout.js";
 
 const COOKIE_NAME = "mwz_recruiter_session";
-const CHAINS = { bnb: { token: "BNB" }, solana: { token: "SOL" }, robinhood: { token: "ETH" } };
-const EVM_CHAINS = new Set(["bnb", "robinhood"]);
+const CHAINS = { bnb: { token: "BNB" }, solana: { token: "SOL" }, robinhood: { token: "ETH" }, dogeos: { token: "DOGE" } };
+const EVM_CHAINS = new Set(["bnb", "robinhood", "dogeos"]);
 
 // Testnet/devnet ledger rows (certification runs) never count on a mainnet API.
 function mainnetRuntime() {
@@ -70,7 +70,7 @@ function readBearerToken(req) {
 
 function normalizeChain(value) {
   const chain = String(value || "").trim().toLowerCase();
-  return chain === "bnb" || chain === "solana" || chain === "robinhood" ? chain : "";
+  return chain === "bnb" || chain === "solana" || chain === "robinhood" || chain === "dogeos" ? chain : "";
 }
 
 function normalizeWallet(chain, value) {

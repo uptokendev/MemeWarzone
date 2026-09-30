@@ -28,6 +28,7 @@ const MAINNET_VAULTS = {
 export function recruiterEvmChainId(chain) {
   if (chain === "bnb") return Number(process.env.RECRUITER_BNB_CHAIN_ID || 56);
   if (chain === "robinhood") return Number(process.env.RECRUITER_ROBINHOOD_CHAIN_ID || 4663);
+  if (chain === "dogeos") return Number(process.env.RECRUITER_DOGEOS_CHAIN_ID || 6281971);
   return 0;
 }
 
@@ -42,6 +43,7 @@ function rpcUrl(chainId) {
   if (chainId === 4663) return String(process.env.ROBINHOOD_MAINNET_RPC_URL || "https://rpc.mainnet.chain.robinhood.com").trim();
   if (chainId === 46630) return String(process.env.ROBINHOOD_TESTNET_RPC_URL || "https://rpc.testnet.chain.robinhood.com").trim();
   if (chainId === 56) return String(process.env.BSC_RPC_HTTP || "https://bsc-dataseed.binance.org").trim();
+  if (chainId === 6281971) return String(process.env.DOGEOS_RPC_HTTP_6281971 || process.env.DOGEOS_TESTNET_RPC_URL || "https://rpc.testnet.dogeos.com").trim();
   return "";
 }
 

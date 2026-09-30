@@ -3,9 +3,10 @@ const EVM_ENVIRONMENT_BY_CHAIN = Object.freeze({
   97: "staging",
   4663: "production",
   46630: "staging",
+  6281971: "staging",
 });
 
-export const ARENA_CHAIN_IDS = Object.freeze([56, 97, 101, 4663, 46630]);
+export const ARENA_CHAIN_IDS = Object.freeze([56, 97, 101, 4663, 46630, 6281971]);
 const SUPPORTED = new Set(ARENA_CHAIN_IDS);
 
 export function requiredArenaChainId(value, label = "Arena") {

@@ -1,4 +1,4 @@
-export const MWL_SUPPORTED_CHAIN_IDS = Object.freeze([56, 97, 101, 4663, 46630]);
+export const MWL_SUPPORTED_CHAIN_IDS = Object.freeze([56, 97, 101, 4663, 46630, 6281971]);
 
 const CHAINS = Object.freeze({
   56: { family: "bnb", environment: "production", nativeSymbol: "BNB" },
@@ -6,6 +6,7 @@ const CHAINS = Object.freeze({
   101: { family: "solana", environment: "cluster", nativeSymbol: "SOL" },
   4663: { family: "robinhood", environment: "production", nativeSymbol: "ETH" },
   46630: { family: "robinhood", environment: "staging", nativeSymbol: "ETH" },
+  6281971: { family: "dogeos", environment: "staging", nativeSymbol: "DOGE" },
 });
 
 export class MwlIdentityError extends Error {

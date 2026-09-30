@@ -9,6 +9,7 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: path.resolve(__dirname, ".env") });
 dotenv.config({ path: path.resolve(__dirname, "config/robinhood.local") });
 dotenv.config({ path: path.resolve(__dirname, "config/bnb.local") });
+dotenv.config({ path: path.resolve(__dirname, "config/dogeos.local") });
 
 function argvSelectsNetwork(name: string): boolean {
   return process.argv.some((arg, index, args) => arg === name || (arg === "--network" && args[index + 1] === name));
@@ -48,6 +49,14 @@ const robinhoodTestnetPrivateKey = normalizePrivateKey(
 );
 const robinhoodMainnetPrivateKey = normalizePrivateKey(
   process.env.ROBINHOOD_MAINNET_DEPLOYER_PRIVATE_KEY || process.env.PRIVATE_KEY_DEPLOY || process.env.DEPLOYER_PK || "",
+);
+const dogeosTestnetRpcUrl = requiredNetworkUrl(
+  process.env.DOGEOS_TESTNET_RPC_URL || process.env.DOGEOS_TESTNET_RPC || process.env.DOGEOS_RPC_HTTP_6281971 || "",
+  "dogeosTestnet",
+  ["DOGEOS_TESTNET_RPC_URL", "DOGEOS_TESTNET_RPC", "DOGEOS_RPC_HTTP_6281971"],
+);
+const dogeosTestnetPrivateKey = normalizePrivateKey(
+  process.env.DOGEOS_TESTNET_DEPLOYER_PRIVATE_KEY || process.env.PRIVATE_KEY_DEPLOY || process.env.DEPLOYER_PK || "",
 );
 const explorerApiKey = process.env.ETHERSCAN_API_KEY || "";
 const forkMainnet = ["1", "true", "yes", "on"].includes(String(process.env.BNB_FORK || "").trim().toLowerCase());
@@ -133,6 +142,11 @@ const config: HardhatUserConfig = {
       url: robinhoodMainnetRpcUrl,
       accounts: robinhoodMainnetPrivateKey ? [robinhoodMainnetPrivateKey] : [],
       chainId: 4663,
+    },
+    dogeosTestnet: {
+      url: dogeosTestnetRpcUrl,
+      accounts: dogeosTestnetPrivateKey ? [dogeosTestnetPrivateKey] : [],
+      chainId: 6281971,
     },
   },
 

@@ -6,6 +6,8 @@ test("Robinhood is not BNB", () => {
   assert.equal(normalizeChain(4663), "robinhood");
   assert.equal(normalizeChain(46630), "robinhood");
   assert.notEqual(normalizeChain(46630), "bnb");
+  assert.equal(normalizeChain(6281971), "dogeos");
+  assert.notEqual(normalizeChain(6281971), "bnb");
 });
 
 test("envelope resolves staging Robinhood from chainId", () => {
