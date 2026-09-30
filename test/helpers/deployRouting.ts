@@ -76,10 +76,11 @@ export async function deployConfiguredTreasuryRouterV3(adminAddress: string) {
   const communityVault = await CommunityRewardsVault.deploy(adminAddress, await treasuryRouter.getAddress());
   await communityVault.waitForDeployment();
 
-  // The real vault, not a bare receiver: _routeTrade calls accrueTradeFee on it,
-  // so anything that merely accepts value reverts the whole buy.
-  const CreatorRewardsVault = await ethers.getContractFactory("CreatorRewardsVault");
-  const creatorVault = await CreatorRewardsVault.deploy(adminAddress, await treasuryRouter.getAddress());
+  // Not a bare receiver: _routeTrade calls accrueTradeFee on it, and the EVM launch generation's factory
+  // registers each coin's fee choice on it (setCampaignChoice) at create. The choice-aware stand-in keeps
+  // what it is paid, so balance assertions still hold; deployLaunchFactory binds it to the factory.
+  const CreatorRewardsVault = await ethers.getContractFactory("MockCreatorRewardsVaultEvmGen");
+  const creatorVault = await CreatorRewardsVault.deploy();
   await creatorVault.waitForDeployment();
 
   await treasuryRouter.setRecruiterRewardsVault(await recruiterVault.getAddress());
