@@ -22,6 +22,13 @@ Written 2026-09-30. Every "today" fact cites the code on `build/dbc-staging` (`c
 - **E6. Graduated pool fee 0.30% on both chains** (founder, 2026-09-30): Topaz V2 30 bps on BNB,
   Uniswap V3 3000 on Robinhood, the DEXes and lockers already deployed. This is the one deliberate
   difference from Solana's 0.25% (D8): 0.25% does not exist on either DEX we graduate into.
+- **E7. Contract size (founder, 2026-09-30).** `LaunchCampaign` is at 24,575 of 24,576 bytes. The new
+  implementation drops (a) block-based launch protection (off on mainnet, replaced by the C2 fee) and
+  (c) the legacy non-router fee path `_feeSplit` (unreachable: `strictFeeRouting` is always true). It
+  keeps (b) the unsigned buy/sell entry points as the Safe-controlled emergency exit if the signing
+  server is gone. If space is still short, the C4 escrow moves into its own contract.
+- **E8. The creator first buy pays the flat 2%, never the anti-sniper fee** (as D14), and its cost is
+  capped below the coin's graduation target so it can never graduate the coin at create.
 
 ## Target economics, one table
 
