@@ -303,10 +303,12 @@ deployed generation and are not reused. Both new adapters implement `IGraduation
   `repairLedger[campaign]` records them; the stock adapter pulls the STOCK back at graduate.
 - **Stock `repairStep` target** is the oracle estimate of P_Q raised by 5% (`REPAIR_STEP_MARGIN_BPS`), so a
   chunk never sells below the acquisition-derived target; at spacing 60 the final 5% is <= 9 ticks.
+  *Superseded by the audit 2 fix below: 25%, plus a per-campaign cap at the step's stop.*
 - **Stock route struct keeps 8 fields** (the factory reads that tuple at create). `maxOracleDeviationBps` and
   `maxPriceImpactBps` are reserved: since E11 `configureStockRoute` requires both to be **0** (`InvalidPolicy`),
   so no stored limit exists that nothing enforces (impact probe deleted, band fixed at 200 bps).
   `maxSwapSlippageBps <= 300` is enforced at configuration; enabling a route reads both feeds.
+  *Superseded by the audit 2/5 fix below: <= 100, and a route is fixed at its first configuration.*
 - `nativeUsdWad` in the request is informational for the stock adapter; it reads ETH/USD itself.
 
 ### Audit per money path
@@ -410,3 +412,90 @@ Audit block (the diff):
 - **Tests.** Unit: `evmgen-rh-adapters.unit.spec.ts` ("E11: band is 200 bps; ... fee 10000 is refused", reserved
   fields refused when non-zero). Fork (4663): `evmgen-rh-graduation.fork.spec.ts` stock specs assert |dev| <= 200 bps
   and "stock E11: a route through a 1% pool (fee 10000) is refused" (7 stock specs passing; SPY landed +2 to +7 bps).
+
+### Audit 2/5 fixes as built (branch `claude/evm-rh`, 2026-09-30)
+
+Three findings against the Robinhood adapters, fixed one commit each. Every EXPLOIT test is now a `HOLDS:`
+test that runs the same attack steps. Files: `RobinhoodV3PoolRepair.sol`, `RobinhoodV3NativeGraduationAdapterV2.sol`,
+`RobinhoodStockGraduationAdapterV2.sol`, the adapter steps of `scripts/deploy-robinhood-quote-generation.ts`.
+
+**1. HIGH (audits 2/5): the stock adapter's admin was the deployer EOA and could re-point any route instantly.**
+`admin = msg.sender`, immutable; `configureStockRoute` overwrote feed, pool, fee tier, depth floor and slippage
+at any time, also for coins already Pending. A 100x feed divided the acquisition minimum by 100, and
+`graduate()` is permissionless, so one key could sandwich every Pending stock coin.
+- `admin` is a constructor argument (non-zero) on both adapters (`RobinhoodV3PoolRepair` constructor). The deploy
+  script resolves it with `resolveAdapterAdmin`: `RH_ADAPTER_ADMIN`, default the Safe `0x1edcEdf5…` on 4663,
+  which must have code and must not be the deployer; on a testnet it defaults to the deployer. The script binds
+  `setCampaignFactoryOnce` itself only when the deployer is the admin; otherwise the bind is recorded in
+  `adapterBindActions` / `next` as a Safe action. Verification args carry the admin.
+- `configureStockRoute`: the first configuration of a stock (stored `oracleFeed != 0`) fixes `oracleFeed`,
+  `acquisitionPool` and `acquisitionFeeTier` for the life of the adapter. A later call must repeat them, may only
+  raise `minimumRouteLiquidityUsdWad` and lower `maxSwapSlippageBps`, and may flip `enabled` either way
+  (`RouteFixed` otherwise). Re-enabling restores nothing looser than what was fixed, so it is allowed (an
+  operator disables a stock while its feed is stale and re-enables it).
+- `MAX_SWAP_SLIPPAGE_BPS` 300 -> **100** (audit 2 low).
+- Audit block. *Reentrancy:* no new external call; `configureStockRoute` stays `onlyAdmin`, reads (views) before
+  its single storage write. *CEI:* the fixed-route check is a storage read before the feed reads and the write.
+  *Reachable states:* a route can go unset -> fixed(enabled or not) -> tightened/disabled/re-enabled; it can never
+  return to unset or change feed/pool/tier. *Overflow:* comparisons only. *Griefing:* what remains to the admin
+  (the Safe) is disabling a route or raising its depth floor, which leaves Pending coins in Pending (retryable,
+  E12 native fallback after 7 days); it cannot move money. A Chainlink proxy that is later migrated cannot be
+  followed: that stock's route is disabled and a new adapter generation carries the new feed.
+- Tests: `audit5-quote-adapter-admin.spec.ts` "HOLDS (Robinhood stock adapter, was EXPLOIT)"; `audit2-rh-stock-repair.spec.ts`
+  "HOLDS (was trust note)"; `evmgen-rh-adapters.unit.spec.ts` constructor admin refusals and "feed, pool and fee
+  tier are fixed at first configuration".
+
+**2. MEDIUM (audit 2): a repair step plus a ~5-10% ETH/STOCK move froze stock graduation.**
+`repairStep` stopped at the oracle estimate + 5%. If STOCK then fell vs ETH, the fresh (acquisition-derived)
+target was above the step's stop; reaching it meant moving the price back up through the ranges the step had
+filled with MEME, i.e. paying STOCK, which the callback refuses (`RepairInvariantBroken`) until the 7-day fallback.
+- `REPAIR_STEP_MARGIN_BPS` 500 -> **2500**: a move of up to ~20% (target +25%) leaves the fresh target below
+  the stop, and `graduate` only sells down. At spacing 60 the final 25% is at most 38 initialized ticks
+  (~1.4M gas at the measured ~37.5k per crossed tick).
+- `repairStep` stores the pool price it left (`repairLedger[campaign].sqrtReached`, slot0 after the swap). The stock
+  `graduate` reads it with the ledger (then deletes the ledger, before any external call) and, when MEME was sold
+  by steps and the fresh target is above `sqrtReached`, targets `sqrtReached` instead (`_aboveStepStop`). All MEME
+  the steps sold lies at or above that price, and nobody can take it out before graduation (LaunchToken refuses
+  transfers from the pool), so reaching `sqrtReached` from wherever the pool is crosses only MEME-free ranges (free).
+  The stored price rather than the live one: a third party can move the pool through empty ranges for free and
+  must not be able to lower the start price. `_checkContinuity` still decides; beyond the band it is a clean,
+  retryable `PriceContinuityFailed`.
+- Audit block. *Reentrancy:* no new external call (one `slot0` view inside `nonReentrant` `repairStep`).
+  *CEI:* `sqrtReached` is written after the swap like the rest of the ledger; it is the pool's own state after our
+  swap, so ordering cannot change it; graduate reads and zeroes it first. *Reachable states:* the cap only applies
+  with `ledger.memeSold != 0`; native ignores the field (its step target is P exactly, no drift). *Overflow:* none new
+  (price comparisons; `priceFromSqrt` for the reported target). *Griefing:* moving the pool through empty ranges
+  after a step changes nothing (stored price); a move past ~20% plus the band keeps the coin Pending, retryable
+  when the ratio returns, E12 fallback after 7 days.
+- Tests (`audit2-rh-stock-repair.spec.ts`, real V3 bytecode): "HOLDS (was EXPLOIT)": step, then STOCK -10% vs ETH,
+  graduation succeeds at **-59 bps** vs the curve in USD (was `RepairInvariantBroken`); "past the step margin":
+  STOCK -21% (target +26.6%), the pool stays at the stop, start **-125 bps**; "far past the margin": -30%, clean
+  `PriceContinuityFailed`, graduates after the ratio returns. The cap is load-bearing: with it disabled the last two
+  revert `RepairInvariantBroken`.
+
+**3. LOW (audit 2): stock prices were computed in raw units and rounded past the band for low-decimal quotes.**
+The target was `acquired * 1e18 / memeTarget`, STOCK raw per 1e18 MEME: an integer that is 5 for a 6-decimal $1
+quote at a 1.85 gwei curve price, so the pool target and the continuity check rounded by >10%
+(`PriceContinuityFailed` on every retry).
+- `RobinhoodV3PriceMath.sqrtFromRatio(pairedRaw, memeRaw, memeIs0)` (sqrtFromPrice is now `sqrtFromRatio(p, 1e18)`,
+  identical results) and `memeForPaired(paired, sqrt, memeIs0)`. The stock target sqrt comes from
+  `(acquired, memeTarget)`; the `repairStep` stop from the oracle fraction `P(1+m)·ETHUSD·unit / (STOCKUSD·1e36·1e4)`;
+  `_checkContinuity` from the post-mint sqrtPriceX96 (returned by `_graduateInto`) at full precision; the phase-2 keep
+  estimate from the sqrt (shared engine; for the native pair this only tightens the rounding the 1e-9 shading covers).
+  `targetPriceWad` / `startPriceWad` remain as reported values only.
+- `configureStockRoute` refuses decimals > 18 (was > 36).
+- Audit block. *Reentrancy/CEI:* pure math; `_graduateInto` additionally returns the slot0 it already read before the
+  refunds. *Reachable states:* unchanged. *Overflow:* all products inside 512-bit `mulDiv`; `s < 2^160`, unit `<= 1e18`
+  so `s·unit < 2^220`; `1e18·STOCKUSD` and `P·(1e4+2500)`, `ETHUSD·unit` are checked multiplications that only overflow
+  for prices beyond 1e50 (revert, fail closed); a result above 2^256 reverts in `mulDiv`. *Griefing:* none new.
+- Tests: `test/audit2-rh-stock-low-decimals.spec.ts` (USDG-like 6-decimal quote on real V3 bytecode): 1e6 / 3e7 /
+  1.6e8 tokens sold graduate at **-30 / -31 / -58 bps** (pre-fix: `PriceContinuityFailed` at 1e6, -63 bps at 3e7);
+  decimals 19 refused, 18 accepted.
+
+Sizes (runtime, EIP-170 24,576): `RobinhoodStockGraduationAdapterV2` 19,175 B, `RobinhoodV3NativeGraduationAdapterV2`
+12,574 B.
+
+Runs after the three fixes: `npx hardhat test` **939 passing, 0 failing** (54 pending, the fork-only specs);
+4663 fork `evmgen-rh-graduation.fork.spec.ts` 25/25 (the 18 native specs in one run, the 7 stock specs re-run
+after the public RPC pruned the fork block during the 506 s heavy-seeding spec; SPY at 100 bps slippage landed
+-4 to -9 bps vs the curve) and `evmgen-rh-core-integration.fork.spec.ts` 3/3.

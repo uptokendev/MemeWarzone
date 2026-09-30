@@ -637,7 +637,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
     expect(await npm.ownerOf((await ctx.campaign.lastResult()).positionId)).to.equal(await locker.getAddress());
   });
 
-  it("stock: acquisition sandwich beyond the oracle bound reverts; inside it the adapter still gets >= oracle*(1-3%)", async () => {
+  it("stock: acquisition sandwich beyond the oracle bound reverts; inside it the adapter still gets >= oracle*(1 - maxSwapSlippageBps)", async () => {
     const ctx = await newCampaign(RH.spy, false);
     const c = curve(160_000_000n);
     await deployer.sendTransaction({ to: ctx.cAddr, value: c.poolNative });
