@@ -130,16 +130,18 @@ describe("audit1: trading and create paths", function () {
     expect(await campaign.launched()).to.eq(true);
   });
 
-  it("EXPLOIT (info): dust buys cost 0 wei and pay 0 fee, and still count as a new buyer", async () => {
+  it("HOLDS: a dust buy that would cost 0 wei is refused, so it pays no zero fee and adds no buyer (was EXPLOIT, fixed)", async () => {
     const { env, campaign, token } = await tradingCoin();
     await buyTokens(env, campaign, env.bob, E(1000));
     const before = await campaign.buyersCount();
     const q = await campaign.quoteBuyExactTokens(1n);
     expect(q).to.eq(0n);
     const a = await signTrade(env.authority, await campaign.getAddress(), env.carol.address, 0, 1n, 0n);
-    await campaign.connect(env.carol).buyExactTokensAuthorized(1n, 0n, a.profile, a.deadline, a.signature, { value: 0 });
-    expect(await token.balanceOf(env.carol.address)).to.eq(1n);
-    expect(await campaign.buyersCount()).to.eq(before + 1n);
+    await expect(
+      campaign.connect(env.carol).buyExactTokensAuthorized(1n, 0n, a.profile, a.deadline, a.signature, { value: 0 }),
+    ).to.be.revertedWithCustomError(campaign, "ZeroCost");
+    expect(await token.balanceOf(env.carol.address)).to.eq(0n);
+    expect(await campaign.buyersCount()).to.eq(before);
     // The largest free chunk is tiny: ~1e9 base units (1e-9 token) at the base price of 1 gwei/token.
     expect(await campaign.quoteBuyExactTokens(2n * 10n ** 9n)).to.be.gt(0n);
   });

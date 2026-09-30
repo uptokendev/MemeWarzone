@@ -312,6 +312,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error NativeFallbackUnavailable();
     error NativeFallbackNotDue();
     error RenounceDisabled();
+    error ZeroCost();
 
     bool private _initialized;
 
@@ -642,6 +643,8 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     /// @dev `escrowable` is false only for the C3 first buy. A creator buy through any other path is
     /// held by the campaign (C4) and counted against the tier cap.
     function _recordBuy(address buyer, uint256 amountOut, uint256 costNoFee, uint256 fee, uint8 routeProfile, bool escrowable) private {
+        // Audit 1: a buy too small to cost 1 wei pays no fee and would still count as a buyer.
+        if (costNoFee == 0) revert ZeroCost();
         bool escrow = escrowable && buyer == creator;
         if (escrow) {
             uint256 bought = creatorBoughtWei + costNoFee;
