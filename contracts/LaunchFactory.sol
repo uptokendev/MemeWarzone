@@ -391,7 +391,10 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
         emit SecurityDefaultsLockedEnabled();
     }
 
-    receive() external payable {}
+    // Audit 1: no receive(). Nothing pays the factory native: the first-buy value is forwarded exactly
+    // (the campaign refuses any other amount) and the excess refunded to the creator in the same call;
+    // no adapter, locker, router or campaign sends native here. A plain transfer now reverts instead of
+    // being trapped.
 
     function isGraduationTargetAllowedForChain(uint256 chainId, uint256 target) public pure returns (bool) {
         if (
