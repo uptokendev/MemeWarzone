@@ -19,7 +19,14 @@ import {
   isSupportedGenerationPair,
   signCreateAuthorization,
   signTradeAuthorization,
+  usesGen6RequestHash,
 } from "./routeAuthorizationSigner.js";
+import {
+  Gen6CreateOptionError,
+  assertNoGen6FieldsForLegacy,
+  prepareGen6CreateOptions,
+  readGen6FactoryCreateContext,
+} from "../lib/evmLaunchGen6.js";
 import { prepareRobinhoodStockCreateAuthorization } from "./robinhoodStockCreatePolicy.js";
 import { prepareBnbBasicQuoteCreateAuthorization, readBnbBasicCreationPreflight } from "./bnbBasicQuoteCreatePolicy.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
@@ -179,8 +186,38 @@ function validateGraduationTarget(chainId, graduationTarget) {
   throw new Error("Unsupported graduation target");
 }
 
+function campaignRequestSource(body) {
+  return body.campaignRequest || body.request || body;
+}
+
+/**
+ * Generation 6 factories sign the creator first buy and fee choice with the request; older ones must
+ * not see those fields. Returns the request to sign plus the first-buy quote (null on legacy).
+ */
+export async function applyGenerationCreateFields({ body, campaignRequest, factoryGeneration, readContext }) {
+  const source = campaignRequestSource(body);
+  if (!usesGen6RequestHash(factoryGeneration)) {
+    assertNoGen6FieldsForLegacy(source, factoryGeneration);
+    return { campaignRequest, gen6: null };
+  }
+  const gen6 = await prepareGen6CreateOptions({
+    source,
+    graduationTarget: campaignRequest.graduationTarget,
+    readContext,
+  });
+  return { campaignRequest: { ...campaignRequest, ...gen6.requestFields }, gen6 };
+}
+
+function gen6ErrorResponse(res, error) {
+  return json(res, error.httpStatus || 400, {
+    error: error.message,
+    code: error.code,
+    ...(error.details ? { details: error.details } : {}),
+  });
+}
+
 function normalizeCampaignRequest(body) {
-  const source = body.campaignRequest || body.request || body;
+  const source = campaignRequestSource(body);
   const request = {
     name: String(source.name || ""),
     symbol: String(source.symbol || ""),
@@ -387,6 +424,21 @@ export async function routingCreateAuthorization(req, res) {
     return json(res, 503, { error: "Configured route signer does not match the active factory route authority.", code: "ROUTE_AUTHORITY_MISMATCH" });
   }
 
+  const factoryGeneration = Number(onChainPreflight.onChain.factoryGeneration);
+  let gen6 = null;
+  try {
+    ({ campaignRequest, gen6 } = await applyGenerationCreateFields({
+      body,
+      campaignRequest,
+      factoryGeneration,
+      readContext: async ({ graduationTarget }) =>
+        readGen6FactoryCreateContext({ provider: await getServerReadProvider(chainId), factoryAddress, graduationTarget }),
+    }));
+  } catch (error) {
+    if (error instanceof Gen6CreateOptionError) return gen6ErrorResponse(res, error);
+    throw error;
+  }
+
   const createPreflight = await evaluateCreatePreflight({ walletAddress });
   if (!createPreflight.allowed) {
     return json(res, 403, {
@@ -411,6 +463,8 @@ export async function routingCreateAuthorization(req, res) {
         factoryAddress,
         creator: walletAddress,
         request: campaignRequest,
+        factoryGeneration,
+        campaignGeneration: Number(onChainPreflight.onChain.campaignGeneration),
         graduationQuoteAssetId,
         tradeRouteProfileId,
         finalizeRouteProfileId,
@@ -446,6 +500,7 @@ export async function routingCreateAuthorization(req, res) {
         factoryAddress,
         creator: walletAddress,
         request: campaignRequest,
+        factoryGeneration,
         stockToken,
         tradeRouteProfileId,
         finalizeRouteProfileId,
@@ -474,12 +529,18 @@ export async function routingCreateAuthorization(req, res) {
       factoryAddress,
       creator: walletAddress,
       request: campaignRequest,
+      factoryGeneration,
       tradeRouteProfileId,
       finalizeRouteProfileId,
       deadline,
     });
   }
 
+  const generation = {
+    factoryGeneration,
+    campaignGeneration: Number(onChainPreflight.onChain.campaignGeneration),
+    requestHashLayout: gen6 ? "gen6_11_field" : "legacy_7_field",
+  };
   const combinedPreflight = { ...createPreflight, ...onChainPreflight.onChain };
   await logRouteAuthorization({
     chainId,
@@ -492,11 +553,28 @@ export async function routingCreateAuthorization(req, res) {
     routeAuthority: signer.address,
     authorizationDeadline: deadline,
     validUntil,
-    metadata: { endpoint: "/api/routing/create-authorization", campaignRequest, graduationMarket, preflight: combinedPreflight },
+    metadata: {
+      endpoint: "/api/routing/create-authorization",
+      campaignRequest,
+      graduationMarket,
+      generation,
+      ...(gen6 ? { firstBuy: gen6.firstBuy, feeChoice: gen6.feeChoiceName } : {}),
+      preflight: combinedPreflight,
+    },
   });
 
   return json(res, 200, {
     authorization: { tradeRouteProfileId, finalizeRouteProfileId, validUntil, signature },
+    // The exact request the signature covers. Generation 6 clients must send these values unchanged
+    // (a changed first buy or fee choice fails InvalidRouteAuthorization on chain).
+    campaignRequest,
+    generation,
+    ...(gen6
+      ? {
+          firstBuy: gen6.firstBuy,
+          feeChoice: { id: gen6.requestFields.feeChoice, name: gen6.feeChoiceName, creatorPct: gen6.requestFields.feeCreatorPct },
+        }
+      : {}),
     graduationMarket,
     routeAuthority: signer.address,
     decision,

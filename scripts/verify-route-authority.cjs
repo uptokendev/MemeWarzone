@@ -2,7 +2,23 @@ const { ethers } = require("ethers");
 
 const CREATE_AUTH_TYPES = ["string", "uint256", "address", "address", "bytes32", "uint8", "uint8", "uint64"];
 const TRADE_AUTH_TYPES = ["string", "uint256", "address", "address", "uint8", "uint8", "uint256", "uint256", "uint64"];
-const REQUEST_HASH_TYPES = ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"];
+// LaunchFactory._hashCampaignRequest from factory generation 6 (C3 first buy, C6 fee choice).
+const REQUEST_HASH_TYPES = [
+  "bytes32",
+  "bytes32",
+  "bytes32",
+  "bytes32",
+  "bytes32",
+  "bytes32",
+  "uint256",
+  "uint256",
+  "uint256",
+  "uint8",
+  "uint8",
+];
+// Factories before generation 6 (the live 4/3 and older, E14) hash only the first seven fields.
+const LEGACY_REQUEST_HASH_TYPES = ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"];
+const GEN6_FACTORY_GENERATION = 6;
 
 function normalizeAddress(value, label) {
   if (!value) throw new Error(`${label} is required`);
@@ -46,18 +62,43 @@ function hashString(value) {
   return ethers.keccak256(ethers.toUtf8Bytes(String(value ?? "")));
 }
 
-function hashCampaignRequest(req) {
+/**
+ * The request hash the factory checks. `factoryGeneration` >= 6 (or omitted) hashes the 11-field
+ * generation-6 request; an older generation hashes the 7-field one.
+ */
+function hashCampaignRequest(req, { factoryGeneration = GEN6_FACTORY_GENERATION } = {}) {
+  const base = [
+    hashString(req.name),
+    hashString(req.symbol),
+    hashString(req.logoURI),
+    hashString(req.xAccount),
+    hashString(req.website),
+    hashString(req.extraLink),
+    BigInt(req.graduationTarget ?? 0),
+  ];
+  const coder = ethers.AbiCoder.defaultAbiCoder();
+  if (Number(factoryGeneration) < GEN6_FACTORY_GENERATION) {
+    return ethers.keccak256(coder.encode(LEGACY_REQUEST_HASH_TYPES, base));
+  }
   return ethers.keccak256(
-    ethers.AbiCoder.defaultAbiCoder().encode(REQUEST_HASH_TYPES, [
-      hashString(req.name),
-      hashString(req.symbol),
-      hashString(req.logoURI),
-      hashString(req.xAccount),
-      hashString(req.website),
-      hashString(req.extraLink),
-      BigInt(req.graduationTarget ?? 0),
+    coder.encode(REQUEST_HASH_TYPES, [
+      ...base,
+      BigInt(req.firstBuyTokens ?? 0),
+      BigInt(req.firstBuyMaxCost ?? 0),
+      Number(req.feeChoice ?? 1),
+      Number(req.feeCreatorPct ?? 0),
     ])
   );
+}
+
+/** FACTORY_GENERATION() from chain; factories that predate the constant read as generation 0 (legacy layout). */
+async function readFactoryGeneration(factoryAddress, provider) {
+  try {
+    const factory = new ethers.Contract(factoryAddress, ["function FACTORY_GENERATION() view returns (uint32)"], provider);
+    return Number(await factory.FACTORY_GENERATION());
+  } catch {
+    return 0;
+  }
 }
 
 function createRouteAuthDigest({ chainId, factory, creator, requestHash, tradeRouteProfile, finalizeRouteProfile, deadline }) {
@@ -127,6 +168,12 @@ async function main() {
     throw new Error("Route authority mismatch: backend signer does not match LaunchFactory.routeAuthority");
   }
 
+  const factoryGeneration = await readFactoryGeneration(factoryAddress, provider);
+  console.log(
+    `[route-authority] factory generation=${factoryGeneration} request layout=${
+      factoryGeneration >= GEN6_FACTORY_GENERATION ? "11-field (generation 6)" : "7-field (legacy)"
+    }`
+  );
   const sampleRequest = {
     name: "RouteAuthProbe",
     symbol: "RAP",
@@ -134,8 +181,12 @@ async function main() {
     xAccount: "",
     website: "",
     extraLink: "",
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
   };
-  const requestHash = hashCampaignRequest(sampleRequest);
+  const requestHash = hashCampaignRequest(sampleRequest, { factoryGeneration });
   const sampleDeadline = BigInt(Math.floor(Date.now() / 1000) + 600);
   const sampleCreator = expectedAuthority;
   const sampleCampaign = process.env.CAMPAIGN_ADDRESS
@@ -180,6 +231,9 @@ module.exports = {
   CREATE_AUTH_TYPES,
   TRADE_AUTH_TYPES,
   REQUEST_HASH_TYPES,
+  LEGACY_REQUEST_HASH_TYPES,
+  GEN6_FACTORY_GENERATION,
+  readFactoryGeneration,
   normalizeAddress,
   hardhatEphemeralHint,
   requireContractCode,
