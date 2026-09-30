@@ -173,7 +173,9 @@ What it runs, in the order of section 2:
    the API (`frontend/api/dev-fix/routeAuthorizationSigner.js`); batch H as the Safe;
 10. one coin: create with a 1% creator first buy (BNB fee choice keep, Robinhood holders), a signed buy after
     the 60 s window and a signed sell, buys to the $15,000 target (Pending), `graduate()` from a third wallet,
-    a DEX buy and sell on the locked pool, `harvest()`.
+    a DEX buy and sell on the locked pool, `harvest()`. BNB, when that harvest carried the MEME side: three
+    small Topaz round trips 1801 s apart (> 30 min of pool history), then a second `harvest()` (gas 2,000,000)
+    that must sell the carried MEME, pay 80/20 exact and move the price by no more than the locker's bound.
 
 Result 2026-10-01 (fork blocks BNB 124,989,815 and Robinhood 76,880,885): **accepted on both chains.**
 
@@ -184,6 +186,7 @@ Result 2026-10-01 (fork blocks BNB 124,989,815 and Robinhood 76,880,885): **acce
 | Read-backs 2.1-2.9, payout bounds | all pass (vault caps 0.65 / 6.5 / 21600 / 50 / 32 BNB) | all pass (0.19 / 1.9 / 21600 / 50 / 9.3 ETH) |
 | Coin: create, trade, graduate | $15,000 target = 19.53 BNB; 2.2 / 19.8 / 78 exact; start price = curve price | $15,000 = 5.59 ETH; same |
 | Harvest | WBNB 80/20 exact; MEME side carried (the new pool has no 30 min TWAP yet: fail closed, as designed) | WETH 80/20 exact; MEME side sold |
+| Second harvest after 30 min of history | MEME sold 7,552.69 (carried 6,723.17 + new fees), carry 6,723.17 -> 0, sale proceeds 0.001627 WBNB; paired 0.001807 WBNB 80/20 exact; price moved 1.93 bps vs the 50 bps bound (cap 195,022 MEME); 4 observations, gas 316,516. Same numbers on two runs (fork blocks 124,992,060 / 124,992,125) | not needed (first harvest sold) |
 | Deployer gas | 32.37M in 20 txs | 37.22M in 25 txs (+ 70.6k L1-data gas units) |
 
 BNB ran five times: four accepted; one stopped in step 10 at the post-graduation Topaz round trip with a
@@ -813,10 +816,14 @@ Open decisions (founder):
 
 Still to verify or watch:
 
-4. **BNB harvest MEME sale (E9)** was not observed on BSC testnet (its Topaz has no `quote()`) nor on the BNB
-   fork rehearsal (the fresh pool had no 30 min TWAP at the harvest: fail closed, MEME carried, WBNB 80/20
-   exact). Proven on the BSC fork specs; on the Robinhood fork the MEME side was sold. Watch the first
-   mainnet BNB harvest: MEME sold, then exactly 80/20 in WBNB.
+4. **BNB harvest MEME sale (E9)** is now shown on a fresh graduated pool on the BNB fork: the first harvest
+   right after graduation carries the MEME side (no closed 30 min TWAP window yet: fail closed, WBNB 80/20
+   exact); after > 30 min of pool swaps a second harvest sells all of it inside the bound (section 2 table).
+   Expect the same on mainnet: **the first harvest on a new BNB pool carries the MEME side until the pool has
+   30 min of history** (Topaz records an observation only on a swap/sync after each 1800 s period, so a pool
+   nobody trades keeps carrying). Not a fault and nothing to do: the keeper retries every 6 h
+   (`EVM_KEEPER_HARVEST_INTERVAL_SEC` 21600, gas floor 2,000,000) and the carried MEME is sold by a later
+   harvest. Watch the first mainnet BNB harvest that sells: MEME sold, then exactly 80/20 in WBNB.
 5. **Migrations on staging**: whether all seven are applied (section 1).
 6. **App `VITE_*` completeness** for generation 6 pages (5.3).
 7. **Stock- or quote-bound coin end to end**: the fork configured all nine Robinhood routes as the Safe

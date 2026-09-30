@@ -25,6 +25,8 @@
  *   9. batch H (enableLive + setCreatePaused(false)) executed as the Safe
  *  10. one coin: create with a creator first buy (API signer module), buy after the anti-sniper window, sell,
  *      buy to the graduation target, graduate() from a third wallet, a DEX round trip, harvest()
+ *      (BNB: when the first harvest carried the MEME side for want of TWAP history, > 30 min of small pool
+ *      round trips and a second harvest that must sell it within the locker's bound, 80/20 exact)
  * and reports gas per phase x the current mainnet gas price (Robinhood: plus the Nitro L1 data component,
  * from NodeInterface.gasEstimateL1Component on the upstream RPC).
  */
@@ -375,20 +377,29 @@ async function lifecycle(c: ChainSetup, fees: any, gen: any, authority: any) {
   const dl = BigInt((await ethers.provider.getBlock("latest"))!.timestamp) + 1800n;
   const dexIn = ethers.parseEther(c.key === "bnb" ? "0.5" : "0.2");
   let memeBought = 0n;
+  // BNB: one Topaz buy + sell of `amountIn` native on the graduated pool, each simulated first so a revert
+  // prints its reason. Returns the MEME bought (all of it is sold back).
+  let topazRoundTrip: ((amountIn: bigint) => Promise<bigint>) | null = null;
   if (c.key === "bnb") {
     const ROUTE = "(address from,address to,bool stable,address factory)[]";
     const topaz = new ethers.Contract("0x1E98c8226e7d452e1888e3d3d2F929346321c6c3", [`function swapExactETHForTokens(uint256,${ROUTE},address,uint256) payable returns (uint256[])`, `function swapExactTokensForETH(uint256,uint256,${ROUTE},address,uint256) returns (uint256[])`], third);
     const wbnb = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", topazFactory = "0x65E6cD0eF5D3467030103cf3d433034E570b5784";
     const buyRoute = [{ from: wbnb, to: created.args.token, stable: false, factory: topazFactory }];
     const sellRoute = [{ from: created.args.token, to: wbnb, stable: false, factory: topazFactory }];
-    const buyWhy = await revertReason(() => topaz.swapExactETHForTokens.staticCall(1n, buyRoute, third.address, dl, { value: dexIn }));
-    if (buyWhy) throw new Error(`Topaz pool buy would revert: ${buyWhy}`);
-    await (await topaz.swapExactETHForTokens(1n, buyRoute, third.address, dl, { value: dexIn })).wait();
-    memeBought = await token.balanceOf(third.address);
-    await (await (token.connect(third) as any).approve(await topaz.getAddress(), memeBought)).wait();
-    const sellWhy = await revertReason(() => topaz.swapExactTokensForETH.staticCall(memeBought, 1n, sellRoute, third.address, dl));
-    if (sellWhy) throw new Error(`Topaz pool sell would revert: ${sellWhy}`);
-    await (await topaz.swapExactTokensForETH(memeBought, 1n, sellRoute, third.address, dl)).wait();
+    topazRoundTrip = async (amountIn: bigint) => {
+      const d = BigInt((await ethers.provider.getBlock("latest"))!.timestamp) + 1800n;
+      const before: bigint = await token.balanceOf(third.address);
+      const buyWhy = await revertReason(() => topaz.swapExactETHForTokens.staticCall(1n, buyRoute, third.address, d, { value: amountIn }));
+      if (buyWhy) throw new Error(`Topaz pool buy would revert: ${buyWhy}`);
+      await (await topaz.swapExactETHForTokens(1n, buyRoute, third.address, d, { value: amountIn })).wait();
+      const got = ((await token.balanceOf(third.address)) as bigint) - before;
+      await (await (token.connect(third) as any).approve(await topaz.getAddress(), got)).wait();
+      const sellWhy = await revertReason(() => topaz.swapExactTokensForETH.staticCall(got, 1n, sellRoute, third.address, d));
+      if (sellWhy) throw new Error(`Topaz pool sell would revert: ${sellWhy}`);
+      await (await topaz.swapExactTokensForETH(got, 1n, sellRoute, third.address, d)).wait();
+      return got;
+    };
+    memeBought = await topazRoundTrip(dexIn);
   } else {
     const swap: any = await ethers.getContractAt("RobinhoodV3NativeSwapAdapter", deployed.RobinhoodV3NativeSwapAdapter, third);
     await (await swap.buyExactNativeIn(created.args.token, 3000, 1n, third.address, dl, { value: dexIn })).wait();
@@ -406,6 +417,45 @@ async function lifecycle(c: ChainSetup, fees: any, gen: any, authority: any) {
   const sold = hEvents.find((e: any) => e.name === "MemeFeesSold");
   const splitOk = paired.every((e: any) => e.args.creatorPaid === (e.args.collected * 8000n) / BPS && e.args.creatorPaid + e.args.protocolRouted === e.args.collected);
   check("harvest(): LP fees collected, paired side paid exactly 80/20 creator/protocol", paired.length > 0 && splitOk, { harvested: paired.map((e: any) => ({ token: e.args.token, collected: e.args.collected, creatorPaid: e.args.creatorPaid, protocolRouted: e.args.protocolRouted })), memeSold: sold?.args.memeSold, memeCarried: sold?.args.memeCarried, gas: hRc.gasUsed });
+
+  // A fresh Topaz pool has no closed 30 min observation window, so the first harvest's MEME sale fails closed
+  // (TWAP guard) and the MEME side is carried. Give the pool history the way mainnet trading would (small
+  // round trips spread over > 30 min of fork time; Topaz records an observation on the first update after
+  // each 1800 s period), then harvest again: the carried MEME must sell within the locker's bound.
+  if (c.key === "bnb" && topazRoundTrip && sold && sold.args.memeCarried > 0n) {
+    const carried1: bigint = sold.args.memeCarried;
+    const pair = new ethers.Contract(pool, ["function getReserves() view returns (uint256,uint256,uint256)", "function token0() view returns (address)", "function quote(address,uint256,uint256) view returns (uint256)", "function observationLength() view returns (uint256)"], ethers.provider);
+    const small = ethers.parseEther("0.02");
+    for (let i = 0; i < 3; i += 1) {
+      await warp(1801);
+      await topazRoundTrip(small);
+    }
+    await warp(600);
+    const memeIs0 = same(await pair.token0(), created.args.token);
+    const probe = ethers.parseEther("1000");
+    const twapWhy = await revertReason(() => pair.quote.staticCall(created.args.token, probe, 1));
+    const [r0a, r1a] = await pair.getReserves();
+    const [mA, pA] = memeIs0 ? [r0a as bigint, r1a as bigint] : [r1a as bigint, r0a as bigint];
+    const impactBps = BigInt(await locker.saleImpactBps(Number(await locker.poolInfo(pool).then((p: any) => p.poolFeeBps))));
+    const h2 = await (await locker.harvest(pool, { gasLimit: 2_000_000 })).wait();
+    const ev2 = h2.logs.map((l: any) => { try { return locker.interface.parseLog(l); } catch { return null; } }).filter(Boolean);
+    const paired2 = ev2.filter((e: any) => e.name === "FeesHarvested");
+    const sold2 = ev2.find((e: any) => e.name === "MemeFeesSold");
+    const [r0b, r1b] = await pair.getReserves();
+    const [mB, pB] = memeIs0 ? [r0b as bigint, r1b as bigint] : [r1b as bigint, r0b as bigint];
+    // Spot price of MEME in the paired asset, 1e18-scaled; the sale lowers it.
+    const priceA = (pA * WAD) / mA, priceB = (pB * WAD) / mB;
+    const moveBps = Number(((priceA - priceB) * 1_000_000n) / priceA) / 100;
+    const memeSold2: bigint = sold2?.args.memeSold ?? 0n;
+    const carried2: bigint = sold2?.args.memeCarried ?? carried1;
+    const pairedOut2: bigint = sold2?.args.pairedOut ?? 0n;
+    const split2 = paired2.every((e: any) => e.args.creatorPaid === (e.args.collected * 8000n) / BPS && e.args.creatorPaid + e.args.protocolRouted === e.args.collected);
+    const collected2: bigint = paired2.reduce((s: bigint, e: any) => s + (e.args.collected as bigint), 0n);
+    const stored: bigint = await locker.carriedMeme(pool);
+    report.secondHarvest = { observations: await pair.observationLength().then(String, () => "n/a"), twapBeforeHarvest: twapWhy ? `reverts: ${twapWhy}` : "ok", memeSold: memeSold2, pairedOut: pairedOut2, carriedBefore: carried1, carriedAfter: carried2, pairedCollected: collected2, impactBoundBps: impactBps, priceMoveBps: moveBps, memeReserveBefore: mA, gas: h2.gasUsed };
+    check("second harvest after > 30 min of pool history: carried MEME sold, carry reduced, paired side (incl. sale proceeds) 80/20 exact", memeSold2 > 0n && carried2 < carried1 && stored === carried2 && memeSold2 + carried2 >= carried1 && paired2.length > 0 && split2 && collected2 >= pairedOut2 && pairedOut2 > 0n, report.secondHarvest);
+    check("second harvest: sale within the locker's bound (sold <= impact/2 of the MEME reserve, price moved <= impact bps)", memeSold2 <= (mA * impactBps) / (2n * BPS) && moveBps > 0 && moveBps <= Number(impactBps), { memeSold: memeSold2, cap: (mA * impactBps) / (2n * BPS), priceMoveBps: moveBps, impactBoundBps: impactBps });
+  }
   report.coin = { campaign: campaignAddr, token: created.args.token, pool };
 }
 
