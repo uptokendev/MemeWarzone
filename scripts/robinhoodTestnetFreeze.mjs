@@ -9,9 +9,9 @@ export const LOCAL_HARDHAT_CHAIN_ID = 31337;
 // The tree that produced the accepted run. Moves only when a new generation is
 // cut and accepted; the previous record is archived beside the freeze, never
 // deleted.
-export const ACCEPTED_5B_SHA = "9cecc579f8829d2b6cd4d07618c3450450e0a535";
-export const ACCEPTED_FACTORY_START_BLOCK = 126797898;
-// The accepted generation (EVM launch generation, 2026-09-30). The previous cut was 4/3.
+export const ACCEPTED_5B_SHA = "4a16ed4e367fb4d72b1ceeff8cc9f2db681cd622";
+export const ACCEPTED_FACTORY_START_BLOCK = 126843443;
+// The accepted generation (EVM launch generation, post-audit cut 2026-09-30). Before it: gen 6/5 pre-audit, then 4/3.
 export const ACCEPTED_FACTORY_GENERATION = 6;
 export const ACCEPTED_CAMPAIGN_GENERATION = 5;
 export const FREEZE_KIND = "robinhood-testnet-acceptance-freeze";

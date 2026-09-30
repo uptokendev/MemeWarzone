@@ -164,6 +164,7 @@
   "acceptance": {
     "harness": "scripts/test-robinhood-testnet-gen6-lifecycle.ts (RH_GEN6_RECORD=testnet.gen6b.json)",
     "report": "reports/robinhood-testnet-gen6b-lifecycle.json",
-    "freeze": "deployments/robinhood/testnet.accepted.json"
+    "freeze": "deployments/robinhood/testnet.accepted.json",
+    "tree": "4a16ed4e367fb4d72b1ceeff8cc9f2db681cd622"
   }
 }

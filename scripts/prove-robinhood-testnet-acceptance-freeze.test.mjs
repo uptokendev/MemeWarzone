@@ -17,7 +17,7 @@ function validFreeze(overrides = {}) {
     kind: "robinhood-testnet-acceptance-freeze",
     accepted5BSha: ACCEPTED_5B_SHA,
     chainId: 46630,
-    factory: "0xcf7D6c2C8A644dD3bBbba0Fc69844E48C9025f1A",
+    factory: "0x740587c402078029cB7C6f04049C0834215243A2",
     routeAuthority: "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
     admin: "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
     factoryGeneration: ACCEPTED_FACTORY_GENERATION,
