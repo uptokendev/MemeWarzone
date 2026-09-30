@@ -23,7 +23,10 @@ function loadKeeper() {
     return mod.exports;
   };
   const abi = load("evmGen5Abi.ts", {});
-  return load("evmGraduationKeeper.ts", { ethers: require("ethers"), "./evmGen5Abi.js": abi });
+  // The keeper's harvest step (step 7) reads the generation's lockers from evmGen5Aux, which also pulls in
+  // the database store. This spec has no lockers configured, so a stub with the same config reading is enough.
+  const aux = { configuredGen5AuxContracts: () => [] };
+  return load("evmGraduationKeeper.ts", { ethers: require("ethers"), "./evmGen5Abi.js": abi, "./evmGen5Aux.js": aux });
 }
 const keeper = loadKeeper();
 
