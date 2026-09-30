@@ -46,7 +46,11 @@ export async function installRealV3() {
     await network.provider.send("hardhat_setStorageAt", [RH_V3.v3Factory, slot, word(spacing)]);
   }
   // NonfungiblePositionManager: slot 13 packs uint176 _nextId (low) and uint80 _nextPoolId; both start at 1.
-  await network.provider.send("hardhat_setStorageAt", [RH_V3.positionManager, word(13n), word((1n << 176n) | 1n)]);
+  // Only on first install: tokens minted by an earlier test in the same run keep their ids.
+  const slot13 = await network.provider.send("eth_getStorageAt", [RH_V3.positionManager, word(13n), "latest"]);
+  if (BigInt(slot13) === 0n) {
+    await network.provider.send("hardhat_setStorageAt", [RH_V3.positionManager, word(13n), word((1n << 176n) | 1n)]);
+  }
 
   return {
     v3Factory: await ethers.getContractAt(
