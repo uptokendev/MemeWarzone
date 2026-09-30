@@ -20,6 +20,11 @@ contract MockTreasuryRouterEvmGen {
     uint8 public lastFinalizeProfile;
     uint256 public lastTradeValue;
 
+    bytes public reenterData;
+    bool public reenterAttempted;
+    bool public reenterSucceeded;
+    bytes4 public reenterRevertSelector;
+
     event TradeRouted(address indexed campaign, uint8 profile, uint256 value);
     event FinalizeRouted(address indexed campaign, uint8 profile, uint256 value);
 
@@ -32,8 +37,23 @@ contract MockTreasuryRouterEvmGen {
         revertFinalize = finalize_;
     }
 
+    /// @dev When set, every route call first tries msg.sender.call(data) (a re-entry attempt) and
+    /// records the outcome instead of reverting.
+    function setReenter(bytes calldata data) external {
+        reenterData = data;
+    }
+
+    function _tryReenter() internal {
+        if (reenterData.length == 0) return;
+        reenterAttempted = true;
+        (bool ok, bytes memory ret) = msg.sender.call(reenterData);
+        reenterSucceeded = ok;
+        if (!ok && ret.length >= 4) reenterRevertSelector = bytes4(ret);
+    }
+
     function routeTrade(uint8 profile) external payable {
         require(!revertTrade, "trade paused");
+        _tryReenter();
         tradeTotal += msg.value;
         tradeCalls += 1;
         lastTradeProfile = profile;
@@ -47,6 +67,7 @@ contract MockTreasuryRouterEvmGen {
 
     function routeFinalize(uint8 profile) external payable {
         require(!revertFinalize, "finalize paused");
+        _tryReenter();
         finalizeTotal += msg.value;
         finalizeCalls += 1;
         lastFinalizeProfile = profile;
