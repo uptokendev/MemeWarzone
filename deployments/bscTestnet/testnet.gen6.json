@@ -1,0 +1,144 @@
+{
+  "network": "bscTestnet",
+  "chainId": 97,
+  "kind": "bnb-testnet-gen6",
+  "balanceBefore": "124689942000000000",
+  "fees": {
+    "deployedAt": "2026-09-30T21:23:29.854Z",
+    "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "router": "0x00b7A353baC4D5e03986FcEAD5084930Df4404Dd",
+    "creatorRewardsVaultV2": "0xD56eaC94E98ccBD2BFE7932f8b89a8E2f02CB2d5",
+    "holderRewardDistributor": "0x18f8B614bD09b844F5E71526e121e77F20c4cF68",
+    "communityRewardsVault": "0xF62aD982bB7a931de3c0e3976327Cd2FFce335A6",
+    "communityWhyFresh": "CommunityRewardsVault serves one router (onlyRouter deposits). The testnet one 0x093D3428 serves TreasuryRouterV3 0x529C0c4A, which the previous quote generation 0xFb8159f4 routes through; re-pointing it would revert every unlinked trade there.",
+    "reusedVaults": {
+      "weekly": "0xEc505ebE1Eb5e70275D2600CE5620fF13F1f5B41",
+      "monthly": "0x0Ffc7293482bB711D24124Dd8c1aBa9505eD7205",
+      "recruiter": "0xA8A4F570ac984a1F10Dc6999254f46c056c640De",
+      "protocol": "0xa1b2e68469d042d3A641251851825AdAcD4291B5"
+    },
+    "wrappedNative": "0xcd2c34926894616F6768F15F15614b1F7816bC2E",
+    "dexFactory": "0xb9F2b64DE9f7850Dcc9C5fFed0ca33603250640e",
+    "payoutOperator": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "caps": {
+      "maxBuyPerTx": "650000000000000000",
+      "maxBuybackPerCampaignWeek": "6500000000000000000",
+      "minBuyInterval": "21600",
+      "maxImpactBps": "50",
+      "maxHolderBatchPerWeek": "32000000000000000000",
+      "holderBatchAuthorizationMax": "32000000000000000000"
+    },
+    "batchA": [
+      {
+        "call": "TreasuryRouterV4.setRecruiterRewardsVault(0xA8A4F570ac984a1F10Dc6999254f46c056c640De)",
+        "hash": "0xc3155c0201be79b02d5176a2f882c12248c271e1e300d179ca35a46fc917c8a7",
+        "gasUsed": "48473"
+      },
+      {
+        "call": "TreasuryRouterV4.setCommunityRewardsVault(0xF62aD982bB7a931de3c0e3976327Cd2FFce335A6)",
+        "hash": "0x64670d9d3d32598a6cd6bf67570b1f5c3895d0ecf15b5212cd945215ab1cc8d4",
+        "gasUsed": "48184"
+      },
+      {
+        "call": "TreasuryRouterV4.setProtocolRevenueVault(0xa1b2e68469d042d3A641251851825AdAcD4291B5)",
+        "hash": "0xcaf5c2c3751378b1c755c18b56b6fc35295dbe7be23ad91e6a46d1e1151b153a",
+        "gasUsed": "48316"
+      },
+      {
+        "call": "TreasuryRouterV4.setCreatorRewardsVault(0xD56eaC94E98ccBD2BFE7932f8b89a8E2f02CB2d5) # set once: the router's creator vault can never be rotated (audit F1)",
+        "hash": "0x1e194ebb679f2eecb478bad63708541cbfbb3dcdff3c3cadef0cef4217bcdb34",
+        "gasUsed": "48966"
+      },
+      {
+        "call": "RewardDistributor.setBatchOperator(0xD56eaC94E98ccBD2BFE7932f8b89a8E2f02CB2d5)",
+        "hash": "0xde5530bdbf7778488316337db02f3a68bec9badfbc79e4f225876b16d1c9bac4",
+        "gasUsed": "47873"
+      },
+      {
+        "call": "CreatorRewardsVaultV2.setHolderDistributorOnce(0x18f8B614bD09b844F5E71526e121e77F20c4cF68)",
+        "hash": "0x056bc89e726921055ea10629a968f605cd2fd86045ab00aeb1494d2cd3202fd3",
+        "gasUsed": "45015"
+      },
+      {
+        "call": "CreatorRewardsVaultV2.setOperator(0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714,false)",
+        "hash": "0xd2ff51af50488f8b0162d5f9782463a080c3d48aee5dd5022bd31efc689d64e4",
+        "gasUsed": "45698"
+      },
+      {
+        "call": "CreatorRewardsVaultV2.setCaps(650000000000000000,6500000000000000000,21600,50,32000000000000000000)",
+        "hash": "0x9d43b2570c64f8c4d821d0da01ed46c76421b63e4256f8f100722437b48f7741",
+        "gasUsed": "135536"
+      }
+    ]
+  },
+  "factoryGeneration": 6,
+  "campaignGeneration": 5,
+  "liquidityKind": 1,
+  "factoryStartBlock": 134125597,
+  "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "topaz": {
+    "router": "0xa241AEd1cfE4eC2892d6Cb2274B4BeB6EcD07EaF",
+    "routerAdapter": "0x13537C6273dF312067cE775AAf9635c217A931fd",
+    "poolFactory": "0xb9F2b64DE9f7850Dcc9C5fFed0ca33603250640e",
+    "wbnb": "0xcd2c34926894616F6768F15F15614b1F7816bC2E",
+    "forbiddenRouter100bps": "0xe559d93643631E9E8Cc7d10ADFA581Be4b5399C8"
+  },
+  "graduationOracle": "0xc9Ee6b5bAA4c7b6C5fA0995FE29D358C59bC52Cb",
+  "nativeUsdFeed": "0x2514895c72f50D8bd4B4F9b1110F0D6bD2c97526",
+  "generation": {
+    "network": "bscTestnet",
+    "chainId": 97,
+    "deployedAt": "2026-09-30T21:24:34.071Z",
+    "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "owner": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+    "status": "deployed-paused",
+    "inputs": {
+      "topazRouter": "0x13537C6273dF312067cE775AAf9635c217A931fd",
+      "topazQuoteRouter": "0xa241AEd1cfE4eC2892d6Cb2274B4BeB6EcD07EaF",
+      "treasuryRouter": "0x00b7A353baC4D5e03986FcEAD5084930Df4404Dd",
+      "graduationOracle": "0xc9Ee6b5bAA4c7b6C5fA0995FE29D358C59bC52Cb",
+      "creatorRegistry": "0x7FEDe4b1E9BfE65948B6AEd24667bF440B466561",
+      "riskRegistry": "0xb37bFEDb889E33a31Fe23A4CF2e2329C436bcE39",
+      "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+      "nativeUsdFeed": "0x2514895c72f50D8bd4B4F9b1110F0D6bD2c97526",
+      "creatorVault": "0xD56eaC94E98ccBD2BFE7932f8b89a8E2f02CB2d5"
+    },
+    "contracts": {
+      "BnbBasicLaunchFactory": "0xE700e2016B0D54517D6D1119BC7147F11A0beCA6",
+      "PermanentLpLocker": "0x1B55cFB80035b3Fc4dd6B3628d9a9ca171fFeD29",
+      "LaunchCampaignImplementation": "0x2d80AB1A3cFC2e2e8408959Ea5DFe3956bffe4e5",
+      "BnbQuoteLaunchCampaign": "0x080446Ed02cE669797Bf97D73e6e550C61293a23",
+      "BnbNativeGraduationAdapter": "0x7E095595E9Dd666ee0C18fA6a31c07F862422dAE",
+      "BnbQuoteGraduationAdapter": "0x09B9e1880279868F712725988403bdC8b0DE4017",
+      "LaunchTokenDeployer": "0xF0fAb03940E497149016a5ADdC292Da3e16Bf4B9",
+      "PostGradLeagueTreasuryV2": "0x4936EC8A76fB6c06d6fbBd76abd9255BEF95d583",
+      "ArenaWarPoolTreasuryV2": "0x501AeD796363340753262E57D7e8e5F1a0B40205"
+    },
+    "config": {
+      "totalSupply": "1000000000000000000000000000",
+      "curveBps": "7000",
+      "liquidityTokenBps": "2800",
+      "basePrice": "1000000000",
+      "priceSlope": "1080",
+      "graduationTarget": "30000000000000000000000",
+      "liquidityBps": "3300"
+    },
+    "protocolFeeBps": "200",
+    "launchRecorderWired": true,
+    "lpLockerAuthorized": true,
+    "createPathWired": true,
+    "pendingOwnerActions": [],
+    "next": [
+      "configureQuoteRoute on the adapter for each approved quote token",
+      "transfer factory, locker, league and war pool ownership to the Safe",
+      "run the canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false) from the Safe"
+    ]
+  },
+  "quoteRoutes": {
+    "configured": [],
+    "skipped": "No testnet quote token has a pool on the 30 bps Topaz (pool factory 0xb9F2b64D holds 6 pools, all MEME/WBNB, read 2026-09-30); configureQuoteRoute requires the canonical WBNB/QUOTE pool and refuses a route below its own liquidity floor."
+  },
+  "status": "deployed-paused",
+  "bnbSpentOnDeploy": "0.0038332228"
+}
