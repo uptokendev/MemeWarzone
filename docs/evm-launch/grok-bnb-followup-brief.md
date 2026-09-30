@@ -68,3 +68,18 @@ things, so the M1 fix changes:
    `HOLDS: ...` in your branch, or add new HOLDS tests; do not delete the originals without replacing them.
 
 Everything else in this brief (L1, the verification config entry, the hand-in) stays.
+
+## AMENDMENT 2 (2026-09-30, audit 3): the acquisition minimum must come from the oracle
+
+Branch `claude/evm-audit-3`, `test/audit3-bnb-graduation.fork.spec.ts`, test `EXPLOIT (quantified): quote
+acquisition sandwich under the production 500/500/500 policy`: `minimumQuoteOut` and the impact probe are
+computed inside the same transaction, after any front-run, so `maxSwapSlippageBps` protects nothing. On the
+real USDT/WBNB pool a front-run of ~4% is accepted and the attacker nets ~329 bps of the pool's BNB
+(~$770-900 per quote graduation at the $30k target).
+
+Fix in `BnbQuoteGraduationAdapter` (`:268-291`):
+- `minimumQuoteOut = msg.value * nativeUsd / quoteUsd * (1 - poolFee - maxSwapSlippageBps)` from the
+  oracle prices (native via the campaign's `nativeUsdWad`, quote via the route's fixed feed), not from a
+  spot quote. With the 100 bps caps from amendment 1 the sandwich must be unprofitable.
+- Remove or keep the spot impact probe only as an extra check; it must never be the bound.
+- That audit test must fail after your fix (rename to HOLDS or add a HOLDS test proving the sandwich loses).
