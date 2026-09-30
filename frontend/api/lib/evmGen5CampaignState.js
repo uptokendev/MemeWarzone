@@ -104,6 +104,7 @@ export function decodeCampaignRevert(error) {
     if (typeof data !== "string" || data.length < 10) continue;
     try {
       const parsed = campaignInterface.parseError(data);
+      if (parsed?.name === "Error") return String(parsed.args[0]); // require(..., "reason") in an adapter
       if (parsed) return parsed.name;
     } catch {}
     return `unknown:${data.slice(0, 10)}`;
@@ -297,30 +298,36 @@ export async function readGen5CampaignState({ provider, campaignAddress, wallet 
     const vault = new ethers.Contract(vaultAddress, VAULT_ABI, provider);
     // cfg, creatorBalance and creatorQuoteBalance are the vault's stable public surface; the holder and
     // buyback getters are informational and read tolerantly (the vault is being trimmed for size).
-    const [cfg, creatorBal, creatorQuoteBal] = await Promise.all([
-      vault.cfg(address), vault.creatorBalance(address), vault.creatorQuoteBalance(address),
-    ]);
-    const optional = await Promise.all([
-      settle(vault.holderBalance(address)), settle(vault.holderQuoteBalance(address)),
-      settle(vault.buybackBalance(address)), settle(vault.buybackQuoteBalance(address)),
-      settle(vault.heldBuybackTokens(address)),
-    ]);
-    const opt = (i) => (optional[i].ok ? optional[i].value.toString() : null);
-    creatorVault = {
-      address: vaultAddress,
-      creator: ethers.getAddress(cfg.creator ?? cfg[0]),
-      pool: (cfg.pool ?? cfg[3]) === ZERO ? null : ethers.getAddress(cfg.pool ?? cfg[3]),
-      quoteToken: (cfg.quote ?? cfg[4]) === ZERO ? null : ethers.getAddress(cfg.quote ?? cfg[4]),
-      // claimCreatorFees(campaign): keep, and the creator part of split
-      creatorClaimableWei: creatorBal.toString(),
-      // claimCreatorQuote(campaign): the creator part of LP fees on a quote-bound split coin
-      creatorClaimableQuote: creatorQuoteBal.toString(),
-      holderPendingWei: opt(0),
-      holderPendingQuote: opt(1),
-      buybackPendingWei: opt(2),
-      buybackPendingQuote: opt(3),
-      heldBuybackTokens: opt(4),
-    };
+    const required = await settle(Promise.all([vault.cfg(address), vault.creatorBalance(address), vault.creatorQuoteBalance(address)]));
+    if (!required.ok) {
+      // A vault without this surface (not a CreatorRewardsVaultV2) must not hide the rest of the page.
+      creatorVault = { address: vaultAddress, error: "The creator vault could not be read." };
+    } else {
+      const [cfg, creatorBal, creatorQuoteBal] = required.value;
+      const optional = await Promise.all([
+        settle(vault.holderBalance(address)), settle(vault.holderQuoteBalance(address)),
+        settle(vault.buybackBalance(address)), settle(vault.buybackQuoteBalance(address)),
+        settle(vault.heldBuybackTokens(address)),
+      ]);
+      const opt = (i) => (optional[i].ok ? optional[i].value.toString() : null);
+      const cfgPool = cfg.pool ?? cfg[3];
+      const cfgQuote = cfg.quote ?? cfg[4];
+      creatorVault = {
+        address: vaultAddress,
+        creator: ethers.getAddress(cfg.creator ?? cfg[0]),
+        pool: cfgPool === ZERO ? null : ethers.getAddress(cfgPool),
+        quoteToken: cfgQuote === ZERO ? null : ethers.getAddress(cfgQuote),
+        // claimCreatorFees(campaign): keep, and the creator part of split
+        creatorClaimableWei: creatorBal.toString(),
+        // claimCreatorQuote(campaign): the creator part of LP fees on a quote-bound split coin
+        creatorClaimableQuote: creatorQuoteBal.toString(),
+        holderPendingWei: opt(0),
+        holderPendingQuote: opt(1),
+        buybackPendingWei: opt(2),
+        buybackPendingQuote: opt(3),
+        heldBuybackTokens: opt(4),
+      };
+    }
   }
 
   const beneficiaryAddress = beneficiary === ZERO ? null : ethers.getAddress(beneficiary);
@@ -384,7 +391,7 @@ export async function readGen5CampaignState({ provider, campaignAddress, wallet 
           isCreator: viewer === creatorAddress,
           canClaimGraduation: Boolean(beneficiaryAddress && viewer === beneficiaryAddress && (pendingCreatorGraduation > 0n || pendingCreatorQuote > 0n)),
           canClaimEscrow: viewer === creatorAddress && BigInt(escrow.claimableTokens) > 0n,
-          canClaimVaultFees: Boolean(creatorVault && viewer === creatorVault.creator && (BigInt(creatorVault.creatorClaimableWei) > 0n || BigInt(creatorVault.creatorClaimableQuote) > 0n)),
+          canClaimVaultFees: Boolean(creatorVault && !creatorVault.error && viewer === creatorVault.creator && (BigInt(creatorVault.creatorClaimableWei) > 0n || BigInt(creatorVault.creatorClaimableQuote) > 0n)),
         }
       : null,
   };
