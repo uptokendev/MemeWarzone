@@ -976,7 +976,10 @@ export async function runEvmCreatorChoicePass(input: {
   const now = input.now ?? new Date();
   const steps: StepReport[] = [];
   const info = await chain.vaultInfo();
-  if (lc(await chain.routeAuthority(info.factory)) === lc(sender.address)) {
+  // A factory without the getter (or a failed read) cannot be checked here; the API still signs only as the
+  // factory's route authority, so this refusal is a second line, not the only one.
+  const authority = await chain.routeAuthority(info.factory).catch(() => null);
+  if (authority && lc(authority) === lc(sender.address)) {
     throw new Error("the operator key is the route authority: refused (the route authority key never runs on the indexer)");
   }
   const operatorOk = lc(info.operator) === lc(sender.address) && !info.limits.paused;
