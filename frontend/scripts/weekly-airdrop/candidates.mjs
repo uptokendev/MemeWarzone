@@ -75,6 +75,28 @@ export function isWalletExcluded(exclusions, wallet) {
   return Boolean(exclusions?.all?.has(raw) || exclusions?.all?.has(raw.toLowerCase()));
 }
 
+// E18 (founder, 2026-09-30): a holder payout is a share of a coin's fees, not a draw win, so it never
+// starts the 14-day cooldown. EVM gen-5 holder batches carry program 'airdrop_holders'; Solana DBC holder
+// leaves carry program 'dbc_holders' / programCode 2. Trader (code 0) and creator (code 1) wins -- and any
+// legacy row without a program -- keep counting exactly as before.
+export const HOLDER_PAYOUT_PROGRAMS = Object.freeze(["airdrop_holders", "dbc_holders"]);
+export const HOLDER_PAYOUT_PROGRAM_CODE = 2;
+
+/** JS mirror of the cooldown SQL predicate below: does this reward_ledger airdrop row start the cooldown? */
+export function countsTowardAirdropCooldown(metadata) {
+  const program = String(metadata?.program ?? "");
+  if (HOLDER_PAYOUT_PROGRAMS.includes(program)) return false;
+  if (String(metadata?.programCode ?? "") === String(HOLDER_PAYOUT_PROGRAM_CODE)) return false;
+  return true;
+}
+
+export const AIRDROP_COOLDOWN_SQL = `select distinct %WALLET% wallet from public.reward_ledger
+        where reward_type='airdrop' and chain::text=$1
+          and created_at >= $2::timestamptz - interval '14 days' and created_at < $2
+          and status not in ('cancelled','expired')
+          and coalesce(metadata->>'program','') <> all($3::text[])
+          and coalesce(metadata->>'programCode','') <> $4`;
+
 export async function exclusionSets(client, { chainId, start, end }) {
   const solana = isSolanaAirdropChain(chainId);
   const [risk, creators, recruiters, league, cooldown] = await Promise.all([
@@ -105,11 +127,8 @@ export async function exclusionSets(client, { chainId, start, end }) {
       [chainId, start, end],
     ),
     client.query(
-      `select distinct ${walletExpr("wallet_address", chainId)} wallet from public.reward_ledger
-        where reward_type='airdrop' and chain::text=$1
-          and created_at >= $2::timestamptz - interval '14 days' and created_at < $2
-          and status not in ('cancelled','expired')`,
-      [String(chainId), start],
+      AIRDROP_COOLDOWN_SQL.replace("%WALLET%", walletExpr("wallet_address", chainId)),
+      [String(chainId), start, [...HOLDER_PAYOUT_PROGRAMS], String(HOLDER_PAYOUT_PROGRAM_CODE)],
     ),
   ]);
   const all = new Set();

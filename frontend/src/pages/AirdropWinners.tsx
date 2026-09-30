@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { BNB_CHAIN_ID, isSolanaChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 import { fetchAirdropWinners, type AirdropWinner } from "@/lib/rewardProgramsApi";
+import { airdropProgramLabel, airdropRankNoun } from "@/lib/airdropProgramLabel.mjs";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -109,7 +110,7 @@ export default function AirdropWinners() {
                   <div>
                     <p className="font-retro text-sm text-foreground">{winner.walletAddress}</p>
                     <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                      {winner.program === "airdrop_trader" ? "Trader draw" : "Creator draw"} · epoch #{winner.epochId} · winner #{winner.winnerRank}
+                      {airdropProgramLabel(winner.program)} · epoch #{winner.epochId} · {airdropRankNoun(winner.program)} #{winner.winnerRank}
                     </p>
                   </div>
                   <div className="text-right">

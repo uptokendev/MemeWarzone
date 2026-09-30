@@ -11,6 +11,7 @@ import { isSolanaAddress } from "@/lib/address";
 import { BNB_CHAIN_ID, isSolanaChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 import { fetchWalletRewardSummary, type WalletRewardSummary } from "@/lib/recruiterApi";
 import { fetchAirdropWinners, fetchWalletRewardEligibility, type AirdropWinner, type WalletEligibilityItem } from "@/lib/rewardProgramsApi";
+import { airdropProgramLabel, airdropRankNoun } from "@/lib/airdropProgramLabel.mjs";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -186,7 +187,7 @@ export default function AirdropOverview() {
           {winners.length === 0 ? <div className="rounded-2xl border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">No published airdrop winners yet.</div> : winners.map((winner) => (
             <div key={`${winner.drawId}-${winner.walletAddress}-${winner.program}`} className="rounded-2xl border border-border/60 bg-background/35 p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div><p className="font-retro text-sm text-foreground">{winner.walletAddress} · {winner.program === "airdrop_trader" ? "Trader" : "Creator"} draw</p><p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">Epoch #{winner.epochId} · winner #{winner.winnerRank}</p></div>
+                <div><p className="font-retro text-sm text-foreground">{winner.walletAddress} · {airdropProgramLabel(winner.program)}</p><p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">Epoch #{winner.epochId} · {airdropRankNoun(winner.program)} #{winner.winnerRank}</p></div>
                 <div className="text-right"><p className="font-retro text-sm text-foreground">{formatNative(winner.payoutAmount, solana)} {symbol}</p><p className="mt-1 text-xs text-muted-foreground">Weight tier {winner.weightTier}</p></div>
               </div>
             </div>

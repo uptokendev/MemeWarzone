@@ -13,6 +13,7 @@ import {
   type AirdropWinner,
   type WalletEligibilityItem,
 } from "@/lib/rewardProgramsApi";
+import { airdropProgramLabel, airdropRankNoun } from "@/lib/airdropProgramLabel.mjs";
 
 type ProfileAirdropsPanelProps = {
   account: string | null;
@@ -245,10 +246,10 @@ export function ProfileAirdropsPanel({ account, isConnected, isOwnProfile }: Pro
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
                     <p className="font-retro text-sm text-foreground">
-                      {winner.program === "airdrop_trader" ? "Trader" : "Creator"} draw · {winner.walletAddress}
+                      {airdropProgramLabel(winner.program)} · {winner.walletAddress}
                     </p>
                     <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                      Epoch #{winner.epochId} · winner #{winner.winnerRank}
+                      Epoch #{winner.epochId} · {airdropRankNoun(winner.program)} #{winner.winnerRank}
                     </p>
                   </div>
                   <div className="text-right">
