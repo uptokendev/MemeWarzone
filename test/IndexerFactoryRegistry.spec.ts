@@ -142,15 +142,9 @@ describe("Indexer factory registry support", function () {
     expect(previousScope.key).to.not.eq(currentScope.key);
   });
 
-  // CONTRACT FINDING (indexer script, outside this group's edit scope): scripts/lib/indexerManifest.cjs:34-60
-  // EVENT_SIGNATURES still lists events the launch generation removed (LaunchFactory:
-  // LaunchProtectionConfigUpdated; LaunchCampaign: NativeEscrowed, NativeClaimed, CampaignFinalized,
-  // GraduationLiquidityCapped). scripts/indexer-runtime.cjs:109 then falls back to an ABI built from bare
-  // signatures, which has no `indexed` flags, so every CampaignCreated (and TokensPurchased/TokensSold) log is
-  // decoded as if all topics were data -> ethers overflow. The generation's new events (GraduationPending,
-  // Graduated, CreatorBuyEscrowed, CampaignFeeChoiceSet, ...) are not indexed at all. Fix the manifest, then
-  // re-enable this test unchanged.
-  it.skip("CONTRACT FINDING: preserves factory address and generation on decoded LaunchFactory events (indexer manifest lists removed events)", async () => {
+  // Was skipped as a CONTRACT FINDING until 2026-09-30: the manifest listed bare signatures only and the
+  // runtime decoded with a fallback ABI that marks nothing indexed. The manifest now carries full fragments.
+  it("preserves factory address and generation on decoded LaunchFactory events", async () => {
     const deployment = baseDeployment();
     const manifest = buildIndexerManifest(deployment, "decode deployment");
     const topicMap = buildInterfaces(manifest);
@@ -191,5 +185,32 @@ describe("Indexer factory registry support", function () {
     expect(decoded.factoryGeneration).to.eq("previous");
     expect(decoded.args["0"]).to.eq("7");
     expect(decoded.args["1"]).to.eq(ethers.getAddress(addr(40)));
+  });
+
+  it("decodes launch-generation campaign and factory events with their indexed topics, and keeps the old ones", async () => {
+    const manifest = buildIndexerManifest(baseDeployment(), "gen5 deployment");
+    const topicMap = buildInterfaces(manifest);
+    const campaignIface = new ethers.Interface([
+      "event Graduated(address indexed pool, uint256 raise, uint256 protocolShare, uint256 creatorShare, uint256 poolNative, uint256 memeUsed, uint256 memeBurned, uint256 curvePrice, uint256 startPrice, bool repaired)",
+      "event CampaignFinalized(address indexed caller, address indexed pair, uint256 graduationBalance, uint256 graduationOvershoot, uint256 liquidityTokens, uint256 liquidityBnb, uint256 liquidityLp, uint256 protocolFee, uint256 creatorPayout, uint256 burnedUnsoldTokens, uint256 burnedUnusedLpTokens, uint256 finalCurvePrice, uint256 initialDexPrice, uint256 postBurnTotalSupply)",
+    ]);
+    const factoryIface = new ethers.Interface([
+      "event CampaignFeeChoiceSet(address indexed campaign, address indexed creator, address indexed vault, uint8 choice, uint8 creatorPct)",
+    ]);
+    const base = { chainId: 97, blockNumber: 1, blockHash: `0x${"1".repeat(64)}`, transactionHash: `0x${"2".repeat(64)}`, transactionIndex: 0, logIndex: 0 };
+    const graduated = campaignIface.encodeEventLog(campaignIface.getEvent("Graduated")!, [addr(50), 100n, 2n, 19n, 78n, 5n, 6n, 7n, 8n, true]);
+    const decodedGrad = decodeLog({ ...base, contractName: "LaunchCampaign", address: addr(60), topics: graduated.topics, data: graduated.data }, topicMap);
+    expect(decodedGrad.eventName).to.eq("Graduated");
+    expect(decodedGrad.args["0"]).to.eq(ethers.getAddress(addr(50)));
+    expect(decodedGrad.args["9"]).to.eq(true);
+    const finalized = campaignIface.encodeEventLog(campaignIface.getEvent("CampaignFinalized")!, [addr(51), addr(52), 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n, 12n]);
+    const decodedFin = decodeLog({ ...base, contractName: "LaunchCampaign", address: addr(61), topics: finalized.topics, data: finalized.data }, topicMap);
+    expect(decodedFin.eventName).to.eq("CampaignFinalized");
+    expect(decodedFin.args["1"]).to.eq(ethers.getAddress(addr(52)));
+    const choice = factoryIface.encodeEventLog(factoryIface.getEvent("CampaignFeeChoiceSet")!, [addr(53), addr(54), addr(55), 3, 40]);
+    const decodedChoice = decodeLog({ ...base, contractName: "LaunchFactory", address: addr(1), topics: choice.topics, data: choice.data }, topicMap);
+    expect(decodedChoice.eventName).to.eq("CampaignFeeChoiceSet");
+    expect(decodedChoice.args["3"]).to.eq("3");
+    expect(decodedChoice.args["4"]).to.eq("40");
   });
 });
