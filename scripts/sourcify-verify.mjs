@@ -62,6 +62,11 @@ async function waitForJob(verificationId) {
 const summary = [];
 for (const c of chain.contracts) {
   if (only.length && !only.some((o) => c.name.includes(o))) continue;
+  if (c.placeholder || !c.address || /^0x0+$/i.test(c.address)) {
+    summary.push([c.name, "placeholder"]);
+    console.log(`  placeholder          ${c.name} ${c.address || "(unset)"}`);
+    continue;
+  }
   try {
     const before = await status(chainId, c.address);
     if (before) { summary.push([c.name, `already ${before}`]); console.log(`  already ${before.padEnd(12)} ${c.name} ${c.address}`); continue; }

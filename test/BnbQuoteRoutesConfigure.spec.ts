@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { ADAPTER_ABI, configureRoutes, requireFactoryBound } from "../scripts/configure-bnb-quote-routes";
 
-const POLICY = { minimumRouteLiquidityUsd: "50000", maxSwapSlippageBps: 300, maxOracleDeviationBps: 500, maxPriceImpactBps: 500, maxGraduationPriceDeviationBps: 500 };
+const POLICY = { minimumRouteLiquidityUsd: "50000", maxSwapSlippageBps: 100, maxOracleDeviationBps: 100, maxPriceImpactBps: 100, maxGraduationPriceDeviationBps: 100 };
 async function now() { return (await ethers.provider.getBlock("latest"))!.timestamp; }
 async function feedAt(price: string, updatedAt: number) { const f = await (await ethers.getContractFactory("MockUsdPriceFeed")).deploy(8); await f.waitForDeployment(); await (await (f as any).setRoundData(1n, ethers.parseUnits(price, 8), updatedAt, updatedAt, 1n)).wait(); return f; }
 
@@ -13,7 +13,7 @@ async function fixture() {
   const router = await (await ethers.getContractFactory("MockBnbQuoteTopazRouter")).deploy(await topaz.getAddress(), await wbnb.getAddress()); await router.waitForDeployment();
   const nativeFeed = await feedAt("800", await now());
   // The adapter only requires code at the locker address at construction; routes never touch it.
-  const impl = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(await router.getAddress(), await topaz.getAddress(), await nativeFeed.getAddress(), 3600);
+  const impl = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(owner.address, await router.getAddress(), await topaz.getAddress(), await nativeFeed.getAddress(), 3600);
   await impl.waitForDeployment();
   const factoryStandIn = await (await ethers.getContractFactory("MockTopazFactory")).deploy(); await factoryStandIn.waitForDeployment();
   const adapter = new ethers.Contract(await impl.getAddress(), ADAPTER_ABI, owner);
@@ -44,7 +44,7 @@ describe("BNB quote routes configuration", function () {
     expect(sent[0].action).to.equal("configured");
     const stored = await f.adapter.quoteRoutes(usdt.quoteToken);
     expect(stored.enabled).to.equal(true);
-    expect(Number(stored.maxGraduationPriceDeviationBps)).to.equal(500);
+    expect(Number(stored.maxGraduationPriceDeviationBps)).to.equal(100);
     expect((await configureRoutes({ adapter: f.adapter, routes: [usdt], policy: POLICY, send: true, nowSeconds: await now() }))[0].action).to.equal("unchanged");
   });
 

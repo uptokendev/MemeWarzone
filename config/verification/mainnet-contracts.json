@@ -80,6 +80,18 @@
           ]
         },
         {
+          "name": "BnbNativeGraduationAdapter",
+          "address": "0x0000000000000000000000000000000000000000",
+          "placeholder": true,
+          "note": "Filled in at generation deploy. Constructor is (topazFactory, WBNB, permanentLpLocker).",
+          "contract": "contracts/integrations/BnbNativeGraduationAdapter.sol:BnbNativeGraduationAdapter",
+          "args": [
+            "0x65E6cD0eF5D3467030103cf3d433034E570b5784",
+            "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+            "0xdd41E0d13c637657A28b60F860205048221F325A"
+          ]
+        },
+        {
           "name": "PostGradLeagueTreasuryV2",
           "address": "0xD9E381408A4e361C66D8b1e657583bdE6c52402d",
           "contract": "contracts/PostGradLeagueTreasuryV2.sol:PostGradLeagueTreasuryV2",

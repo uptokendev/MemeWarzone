@@ -14,6 +14,8 @@
  *   EVM_GRADUATION_KEEPER_TARGET_TTL_MS             default 60000 (cached graduationNativeTarget())
  *   EVM_KEEPER_V3_FACTORY_<id> / EVM_KEEPER_WETH_<id> / EVM_KEEPER_V3_FEE_<id>  partial-repair price read
  *   EVM_KEEPER_FORBIDDEN_ADDRESSES                  extra refused keeper addresses
+ *   EVM_KEEPER_V3_OBSERVATION_SLOTS[_<chainId>]     default 180 on 4663 / 46630 (0 = off): grow a graduated V3
+ *                                                   pool's observationCardinalityNext once, for TWAP reads
  */
 import type { ethers } from "ethers";
 import { pool } from "../db.js";

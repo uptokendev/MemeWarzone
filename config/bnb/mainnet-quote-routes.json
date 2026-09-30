@@ -10,10 +10,10 @@
   },
   "policy": {
     "minimumRouteLiquidityUsd": "50000",
-    "maxSwapSlippageBps": 300,
-    "maxOracleDeviationBps": 500,
-    "maxPriceImpactBps": 500,
-    "maxGraduationPriceDeviationBps": 500
+    "maxSwapSlippageBps": 100,
+    "maxOracleDeviationBps": 100,
+    "maxPriceImpactBps": 100,
+    "maxGraduationPriceDeviationBps": 100
   },
   "routes": [],
   "belowFloor": [

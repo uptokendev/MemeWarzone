@@ -109,6 +109,7 @@ export const CREATOR_REWARDS_VAULT_V2_EVENTS = [
   "event QuoteConverted(address indexed campaign, bool holders, uint256 quoteSpent, uint256 nativeOut)",
   "event BuybackNativeConverted(address indexed campaign, uint256 nativeSpent, uint256 quoteOut)",
   "event HolderBatchProposed(bytes32 indexed batchId, bytes32 root, uint256 total, uint64 executableAt, uint64 claimDeadline)",
+  "event HolderBatchApproved(bytes32 indexed batchId, bytes32 root, uint256 total)",
   "event HolderBatchVetoed(bytes32 indexed batchId, uint256 total)",
   "event HolderBatchExecuted(bytes32 indexed batchId, uint256 total)",
   "event BuybackCurve(address indexed campaign, uint256 nativeSpent, uint256 tokensHeld)",

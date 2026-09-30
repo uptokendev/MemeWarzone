@@ -35,6 +35,10 @@ let ok = 0; const results = [];
 for (const c of chain.contracts) {
   const [src, name] = c.contract.split(":");
   if (only.length && !only.some((o) => name.includes(o))) continue;
+  if (c.placeholder || !c.address || /^0x0+$/i.test(c.address)) {
+    console.log(`  skip placeholder ${name}`);
+    continue;
+  }
   const dbg = path.join(root, "artifacts", src, `${name}.dbg.json`); const bi = require(path.resolve(path.dirname(dbg), require(dbg).buildInfo));
   const keep = closure(bi.input.sources, src);
   const input = { language: bi.input.language, sources: Object.fromEntries(keep.map((k) => [k, bi.input.sources[k]])), settings: { ...bi.input.settings, outputSelection: { "*": { "*": ["evm.deployedBytecode.object", "evm.deployedBytecode.immutableReferences"] } } } };

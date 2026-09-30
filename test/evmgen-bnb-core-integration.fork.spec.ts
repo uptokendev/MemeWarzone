@@ -82,7 +82,13 @@ d("review 478: real BNB core graduating through the Topaz adapters (BSC fork)", 
     });
     await vault.setFactory(await factory.getAddress());
     const nativeAdapter: any = await (await ethers.getContractFactory("BnbNativeGraduationAdapter")).deploy(BSC.topazFactory, BSC.wbnb, lockerAddress);
-    const quoteAdapter: any = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(BSC.topazRouter, lockerAddress, BSC.bnbUsd, 90_000);
+    const quoteAdapter: any = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(
+      owner.address,
+      BSC.topazRouter,
+      lockerAddress,
+      BSC.bnbUsd,
+      90_000,
+    );
     await nativeAdapter.setCampaignFactoryOnce(await factory.getAddress());
     await quoteAdapter.setCampaignFactoryOnce(await factory.getAddress());
     await factory.setNativeGraduationAdapter(await nativeAdapter.getAddress());
@@ -125,9 +131,9 @@ d("review 478: real BNB core graduating through the Topaz adapters (BSC fork)", 
       acquisitionPool: BSC.usdtPool,
       minimumRouteLiquidityUsdWad: 100_000n * WAD,
       maxSwapSlippageBps: 100,
-      maxOracleDeviationBps: 300,
-      maxPriceImpactBps: 300,
-      maxGraduationPriceDeviationBps: 300,
+      maxOracleDeviationBps: 100,
+      maxPriceImpactBps: 100,
+      maxGraduationPriceDeviationBps: 100,
       enabled: true,
     });
   }
@@ -265,13 +271,10 @@ d("review 478: real BNB core graduating through the Topaz adapters (BSC fork)", 
     const { campaign, token } = await quoteCoin(env, "QNP");
     await toPending(env, campaign);
     const out = await graduateAndCheck(env, campaign, token, BSC.usdt, "quote no pool");
-    // memeUsed >= memeTarget holds on this adapter (core does not require it on quote paths)
-    const R: bigint = out.g.graduationBalance;
-    const T = ((R - (R * 220n) / 10000n - (R * 1980n) / 10000n) * WAD) / out.P;
-    expect(out.ev.args[5]).to.be.gte(T);
     const qev = out.rc.logs.map((l: any) => { try { return env.quoteAdapter.interface.parseLog(l); } catch { return null; } }).find((x: any) => x?.name === "QuoteGraduationExecuted") as any;
     console.log(`        quote no pool: curve $/MEME ${qev.args[8]}, dex $/MEME ${qev.args[9]}, deviation ${qev.args[10]} bps below`);
-    expect(qev.args[10]).to.be.lte(300n);
+    expect(qev.args[9], "L1: dex USD start >= curve USD").to.be.gte(qev.args[8]);
+    expect(qev.args[10]).to.equal(0n);
   });
 
   it("quote (USDT), griefer MEME/USDT pool with a synced USDT donation: absorbed", async () => {
@@ -282,22 +285,70 @@ d("review 478: real BNB core graduating through the Topaz adapters (BSC fork)", 
     await toPending(env, campaign);
     const out = await graduateAndCheck(env, campaign, token, BSC.usdt, "quote griefed synced");
     expect(out.ev.args[9]).to.equal(true);
+    const qev = out.rc.logs.map((l: any) => { try { return env.quoteAdapter.interface.parseLog(l); } catch { return null; } }).find((x: any) => x?.name === "QuoteGraduationExecuted") as any;
+    expect(qev.args[9], "L1 griefed: dex USD start >= curve USD").to.be.gte(qev.args[8]);
+    expect(qev.args[10]).to.equal(0n);
   });
 
-  it("E12: a quote coin whose route is dead for 7 days graduates through the native adapter (griefed native pool too)", async () => {
-    const env = await deploy();
-    await deepenUsdtPool(env);
-    const { campaign, token } = await quoteCoin(env, "QFB");
-    await toPending(env, campaign);
-    await grief(await token.getAddress(), BSC.wbnb, 1n, true, env);
-    const since = Number(await campaign.pendingSince());
-    await mineAt(since + DAYS7 + 1);
-    // the quote route is dead: its feeds are a week old on the fork
-    await expect(campaign.graduate()).to.be.reverted;
-    await campaign.connect(env.bob).useNativeFallback();
-    expect(await campaign.graduationAdapter()).to.equal(await env.nativeAdapter.getAddress());
-    const out = await graduateAndCheck(env, campaign, token, BSC.wbnb, "E12 native fallback");
-    expect(out.g.initialDexPrice).to.be.gte(out.P);
-    expect(out.g.initialDexPrice * 10_000n).to.be.lte(out.P * 10_050n);
+  describe("native fallback after 7 days", function () {
+    let snap: string;
+    beforeEach(async () => {
+      if (snap) await network.provider.send("evm_revert", [snap]);
+      snap = await network.provider.send("evm_snapshot", []);
+    });
+
+    it("E12: a quote coin whose route is dead for 7 days graduates through the native adapter (griefed native pool too)", async () => {
+      const env = await deploy();
+      await deepenUsdtPool(env);
+      const { campaign, token } = await quoteCoin(env, "QFB");
+      await toPending(env, campaign);
+      await grief(await token.getAddress(), BSC.wbnb, 1n, true, env);
+      const since = Number(await campaign.pendingSince());
+      await mineAt(since + DAYS7 + 1);
+      // the quote route is dead: its feeds are a week old on the fork
+      await expect(campaign.graduate()).to.be.reverted;
+      await campaign.connect(env.bob).useNativeFallback();
+      expect(await campaign.graduationAdapter()).to.equal(await env.nativeAdapter.getAddress());
+      const out = await graduateAndCheck(env, campaign, token, BSC.wbnb, "E12 native fallback");
+      expect(out.g.initialDexPrice).to.be.gte(out.P);
+      expect(out.g.initialDexPrice * 10_000n).to.be.lte(out.P * 10_050n);
+    });
+
+    it("M1: disabling the quote route lets a Pending coin take the native fallback after 7 days", async () => {
+      const env = await deploy();
+      // Quote graduate is never reached; only the route must exist so it can be disabled.
+      await env.quoteAdapter.configureQuoteRoute(BSC.usdt, {
+        oracleFeed: BSC.usdtFeed,
+        acquisitionPool: BSC.usdtPool,
+        minimumRouteLiquidityUsdWad: WAD,
+        maxSwapSlippageBps: 100,
+        maxOracleDeviationBps: 100,
+        maxPriceImpactBps: 100,
+        maxGraduationPriceDeviationBps: 100,
+        enabled: true,
+      });
+      const { campaign, token } = await quoteCoin(env, "QDS");
+      await toPending(env, campaign);
+      const have = await env.quoteAdapter.quoteRoutes(BSC.usdt);
+      await env.quoteAdapter.configureQuoteRoute(BSC.usdt, {
+        oracleFeed: have.oracleFeed,
+        acquisitionPool: have.acquisitionPool,
+        minimumRouteLiquidityUsdWad: have.minimumRouteLiquidityUsdWad,
+        maxSwapSlippageBps: have.maxSwapSlippageBps,
+        maxOracleDeviationBps: have.maxOracleDeviationBps,
+        maxPriceImpactBps: have.maxPriceImpactBps,
+        maxGraduationPriceDeviationBps: have.maxGraduationPriceDeviationBps,
+        enabled: false,
+      });
+      expect((await env.quoteAdapter.quoteRoutes(BSC.usdt)).enabled).to.equal(false);
+      await expect(campaign.graduate()).to.be.revertedWithCustomError(env.quoteAdapter, "RouteDisabled");
+      const since = Number(await campaign.pendingSince());
+      await mineAt(since + DAYS7 + 1);
+      await campaign.connect(env.bob).useNativeFallback();
+      expect(await campaign.graduationAdapter()).to.equal(await env.nativeAdapter.getAddress());
+      const out = await graduateAndCheck(env, campaign, token, BSC.wbnb, "M1 disabled-route fallback");
+      expect(out.g.initialDexPrice).to.be.gte(out.P);
+      expect(out.g.initialDexPrice * 10_000n).to.be.lte(out.P * 10_050n);
+    });
   });
 });

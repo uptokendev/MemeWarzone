@@ -549,6 +549,7 @@ export async function main() {
   console.log(`[quote-gen] BnbNativeGraduationAdapter=${nativeGraduationAdapter}`);
 
   const adapter = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(
+    safe,
     topazQuoteRouter,
     lockerAddress,
     nativeUsdFeed,
@@ -557,9 +558,16 @@ export async function main() {
   await adapter.waitForDeployment();
   const adapterAddress = await adapter.getAddress();
   console.log(`[quote-gen] BnbQuoteGraduationAdapter=${adapterAddress}`);
+  eq("quoteAdapter.admin", await (adapter as any).admin(), safe);
+  console.log(`[quote-gen] quoteAdapter.admin=${await (adapter as any).admin()}`);
 
   await waitTx((nativeAdapter as any).setCampaignFactoryOnce(factoryAddress), "nativeAdapter.setCampaignFactoryOnce");
-  await waitTx((adapter as any).setCampaignFactoryOnce(factoryAddress), "quoteAdapter.setCampaignFactoryOnce");
+  const quoteAdminIsDeployer = ethers.getAddress(await (adapter as any).admin()) === deployerAddress;
+  if (quoteAdminIsDeployer) {
+    await waitTx((adapter as any).setCampaignFactoryOnce(factoryAddress), "quoteAdapter.setCampaignFactoryOnce");
+  } else {
+    console.log("[quote-gen] quoteAdapter.admin is not the deployer; setCampaignFactoryOnce is a Safe transaction");
+  }
   await waitTx((factory as any).setBnbQuoteGraduationAdapter(adapterAddress), "factory.setBnbQuoteGraduationAdapter");
 
   eq("nativeAdapter.topazFactory", await (nativeAdapter as any).topazFactory(), topazPoolFactory);
@@ -569,7 +577,9 @@ export async function main() {
   eq("quoteAdapter.WBNB", await (adapter as any).WBNB(), topazWbnb);
   eq("quoteAdapter.permanentLpLocker", await (adapter as any).permanentLpLocker(), lockerAddress);
   await readBack(() => (nativeAdapter as any).campaignFactory(), factoryAddress, "nativeAdapter.campaignFactory");
-  await readBack(() => (adapter as any).campaignFactory(), factoryAddress, "quoteAdapter.campaignFactory");
+  if (quoteAdminIsDeployer) {
+    await readBack(() => (adapter as any).campaignFactory(), factoryAddress, "quoteAdapter.campaignFactory");
+  }
 
   // --- battle system -------------------------------------------------------
   const league = await (await ethers.getContractFactory("PostGradLeagueTreasuryV2")).deploy(
@@ -664,11 +674,20 @@ export async function main() {
       ...(recorder.ownerAction ? [{ ...recorder.ownerAction, why: "setLaunchRecorder(factory, true); CREATE reverts NotLaunchRecorder without it" }] : []),
       ...createPath.ownerActions,
       ...lpLocker.ownerActions,
+      ...(quoteAdminIsDeployer
+        ? []
+        : [{
+            to: adapterAddress,
+            method: "setCampaignFactoryOnce",
+            args: [factoryAddress],
+            why: "quote adapter admin is the Safe; graduate reverts CampaignFactoryMissing until this lands",
+          }]),
     ],
     next: [
       ...(recorder.wired ? [] : ["creatorRegistry.setLaunchRecorder(factory, true) from the registry owner -- CREATE is dead until this lands"]),
       ...(createPath.wired ? [] : ["the create-path owner actions above (native adapter, token deployer, vault pin) -- CREATE is dead until they land, and before the first campaign"]),
       ...(lpLocker.wired ? [] : ["treasuryRouter.setAuthorizedLpLocker(locker, true) -- the protocol's 20% of every LP harvest strands until this lands"]),
+      ...(quoteAdminIsDeployer ? [] : ["quoteAdapter.setCampaignFactoryOnce(factory) from the Safe -- graduate reverts CampaignFactoryMissing until this lands"]),
       "configureQuoteRoute on the adapter for each approved quote token",
       "transfer factory, locker, league and war pool ownership to the Safe",
       "run the canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false) from the Safe",

@@ -43,7 +43,7 @@ for (const a of manifest.assets.filter((x) => String(x.chainId) === "56" && /^0x
   if (!feed) noFeed.push(row); else if (usd >= floor && row.acquisitionPool) routes.push(row); else belowFloor.push(row);
 }
 const out = { chainId: 56, generatedAt: new Date().toISOString(), floorUsd: floor, bnbUsdAtScan: bnbUsd, source: { assets: "frontend/api/data/approved-quote-catalog.v1.json (chain 56)", feeds: "https://reference-data-directory.vercel.app/feeds-bsc-mainnet.json", pools: `Topaz factory ${TOPAZ_FACTORY} getPool(WBNB, token, false)` },
-  policy: { minimumRouteLiquidityUsd: String(floor), maxSwapSlippageBps: 300, maxOracleDeviationBps: 500, maxPriceImpactBps: 500, maxGraduationPriceDeviationBps: 500 }, routes, belowFloor, noFeed };
+  policy: { minimumRouteLiquidityUsd: String(floor), maxSwapSlippageBps: 100, maxOracleDeviationBps: 100, maxPriceImpactBps: 100, maxGraduationPriceDeviationBps: 100 }, routes, belowFloor, noFeed };
 fs.mkdirSync(new URL("../config/bnb/", import.meta.url), { recursive: true });
 fs.writeFileSync(new URL("../config/bnb/mainnet-quote-routes.json", import.meta.url), JSON.stringify(out, null, 2) + "\n");
 console.log(`BNB/USD ${bnbUsd.toFixed(0)}  floor $${floor}: ${routes.length} bindable, ${belowFloor.length} below floor / no pool, ${noFeed.length} without a Chainlink feed`);

@@ -97,18 +97,31 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
     await locker.configureRevenue(await treasury.getAddress(), TOPAZ.factory);
     factory = await (await ethers.getContractFactory("MockEvmGenRhFactory")).deploy(await locker.getAddress());
     native = await (await ethers.getContractFactory("BnbNativeGraduationAdapter")).deploy(TOPAZ.factory, TOPAZ.wbnb, await locker.getAddress());
-    quoteAdapter = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(TOPAZ.router, await locker.getAddress(), TOPAZ.bnbUsd, 86_400);
+    quoteAdapter = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(deployer.address, TOPAZ.router, await locker.getAddress(), TOPAZ.bnbUsd, 86_400);
     await native.setCampaignFactoryOnce(await factory.getAddress());
     await quoteAdapter.setCampaignFactoryOnce(await factory.getAddress());
-    // The production BNB policy (scripts/scan-bnb-quote-routes.mjs): 300 / 500 / 500 / 500.
+    // PR #479: the old production policy 300 / 500 / 500 / 500 is now refused (MAX_ROUTE_LIMIT_BPS = 100).
+    await expect(
+      quoteAdapter.configureQuoteRoute(TOPAZ.usdt, {
+        oracleFeed: TOPAZ.usdtFeed,
+        acquisitionPool: TOPAZ.usdtPool,
+        minimumRouteLiquidityUsdWad: WAD,
+        maxSwapSlippageBps: 300,
+        maxOracleDeviationBps: 500,
+        maxPriceImpactBps: 500,
+        maxGraduationPriceDeviationBps: 500,
+        enabled: true,
+      }),
+    ).to.be.revertedWithCustomError(quoteAdapter, "InvalidPolicy");
+    // The production BNB policy (scripts/scan-bnb-quote-routes.mjs): 100 / 100 / 100 / 100.
     await quoteAdapter.configureQuoteRoute(TOPAZ.usdt, {
       oracleFeed: TOPAZ.usdtFeed,
       acquisitionPool: TOPAZ.usdtPool,
       minimumRouteLiquidityUsdWad: WAD,
-      maxSwapSlippageBps: 300,
-      maxOracleDeviationBps: 500,
-      maxPriceImpactBps: 500,
-      maxGraduationPriceDeviationBps: 500,
+      maxSwapSlippageBps: 100,
+      maxOracleDeviationBps: 100,
+      maxPriceImpactBps: 100,
+      maxGraduationPriceDeviationBps: 100,
       enabled: true,
     });
     base = await snap();
@@ -300,7 +313,7 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
   }
 
   // ------------------------------------------------------------------ quote acquisition sandwich
-  it("EXPLOIT (quantified): quote acquisition sandwich under the production 500/500/500 policy", async () => {
+  it("HOLDS (was EXPLOIT, quantified): quote acquisition sandwich under the 100/100/100/100 policy with the oracle minimum", async () => {
     const pool = await ethers.getContractAt(POOL_ABI, TOPAZ.usdtPool);
     const [r0, r1] = await pool.getReserves();
     const wbnbIs0 = (await pool.token0()).toLowerCase() === TOPAZ.wbnb.toLowerCase();
@@ -314,7 +327,9 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
     await pancake.connect(attacker).swapExactETHForTokens(0, [TOPAZ.wbnb, TOPAZ.usdt], attacker.address, dl, { value: 200n * WAD });
     await wbnb.connect(attacker).deposit({ value: 500n * WAD });
 
-    const Nq = Rw / 100n; // pool native = 1% of the WBNB reserve (own impact ~1%)
+    // pool native = 0.1% of the WBNB reserve: own impact ~0.1%, so the honest run fits the 100 bps caps
+    // (at 1% of the reserve, fee + impact alone exceed the 100 bps oracle-deviation cap).
+    const Nq = Rw / 1000n;
     const Pq = (Nq * WAD) / Mt; // campaign rule: memeTarget = poolNative / P
 
     // Honest run.
@@ -328,12 +343,13 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
       console.log(`      honest quote graduation reverted on this fork block (natural deviation?): ${e.message?.slice(0, 120)}`);
     }
     await revert(start);
-    if (honestQuote === 0n) this.skip();
+    expect(honestQuote, "honest quote graduation must fit the 100 bps policy").to.be.gt(0n);
     console.log(`      honest: ${ethers.formatEther(Nq)} BNB -> ${ethers.formatEther(honestQuote)} USDT`);
 
     let best = { loss: 0n, profit: 0n, row: "" };
+    let bestProfit = { loss: 0n, profit: -(10n ** 30n), row: "" };
     for (const sig of [0n, 90n]) {
-      for (const bpsMove of [100n, 200n, 300n, 400n, 425n, 450n, 475n, 500n]) {
+      for (const bpsMove of [10n, 20n, 30n, 40n, 50n, 60n, 70n, 80n, 90n, 100n, 200n, 300n, 400n, 425n, 450n, 475n, 500n]) {
         const id = await snap();
         const a0u = await usdt.balanceOf(attacker.address);
         const a0w = await wbnb.balanceOf(attacker.address);
@@ -369,6 +385,7 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
           const lossBps = (loss * 10000n) / honestQuote;
           console.log(`      sigma ${sig}% move ${bpsMove}bps: adapter got ${ethers.formatEther(got)} USDT (-${lossBps} bps), attacker ${ethers.formatEther(profitBnb)} BNB (${(profitBnb * 10000n) / Nq} bps of pool native)`);
           if (loss > best.loss) best = { loss, profit: profitBnb, row: `sigma ${sig} move ${bpsMove}` };
+          if (profitBnb > bestProfit.profit) bestProfit = { loss, profit: profitBnb, row: `sigma ${sig} move ${bpsMove}` };
         } catch (e: any) {
           console.log(`      sigma ${sig}% move ${bpsMove}bps: graduation refused (${String(e.message).match(/reverted with custom error '([^']+)'/)?.[1] ?? "revert"})`);
         }
@@ -376,7 +393,9 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
       }
     }
     console.log(`      worst accepted: loss ${(best.loss * 10000n) / honestQuote} bps of the pool's quote, attacker ${(best.profit * 10000n) / Nq} bps (${best.row})`);
-    expect(best.loss).to.be.gt(0n);
+    console.log(`      best attacker row: ${(bestProfit.profit * 10000n) / Nq} bps of pool native (${bestProfit.row || "none accepted"})`);
+    // HOLDS: every accepted sandwich stays inside the 100 bps oracle bound (was -329 bps at 500).
+    expect((best.loss * 10000n) / honestQuote).to.be.lte(100n);
   });
 
   // ------------------------------------------------------------------ payout recipients

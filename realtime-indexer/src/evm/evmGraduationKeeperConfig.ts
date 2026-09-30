@@ -1,6 +1,6 @@
 /** Pure configuration of the EVM graduation keeper (env names: see evmGraduationKeeperWorker.ts). */
 import { ethers } from "ethers";
-import { assertKeeperKeyAllowed, type KeeperConfig } from "./evmGraduationKeeper.js";
+import { MAX_V3_OBSERVATION_SLOTS, assertKeeperKeyAllowed, type KeeperConfig } from "./evmGraduationKeeper.js";
 
 export function truthy(value: unknown): boolean {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -18,7 +18,20 @@ export function keeperConfig(chainId: number, env: NodeJS.ProcessEnv = process.e
   const dueSlackBps = Number.isFinite(slack) ? Math.max(0, Math.min(10_000, Math.floor(slack))) : 200;
   const maxDue = Number(env.EVM_GRADUATION_KEEPER_MAX_DUE_CANDIDATES ?? 25);
   const maxDueCandidates = Number.isFinite(maxDue) ? Math.max(0, Math.min(500, Math.floor(maxDue))) : 25;
-  return { maxGas, minFlushWei, maxRepairHalvings: halvings, dueSlackBps, maxDueCandidates };
+  return { maxGas, minFlushWei, maxRepairHalvings: halvings, dueSlackBps, maxDueCandidates, v3ObservationSlots: v3ObservationSlots(chainId, env) };
+}
+
+/** Chains whose graduated pools are Uniswap V3 (Robinhood). BNB graduates into Topaz: no oracle slots. */
+export const V3_GRADUATION_CHAINS = new Set([4663, 46630]);
+export const DEFAULT_V3_OBSERVATION_SLOTS = 180;
+
+/** EVM_KEEPER_V3_OBSERVATION_SLOTS[_<chainId>], default 180 on V3 chains, 0 (off) elsewhere; uint16. */
+export function v3ObservationSlots(chainId: number, env: NodeJS.ProcessEnv = process.env): number {
+  if (!V3_GRADUATION_CHAINS.has(chainId)) return 0;
+  const raw = String(env[`EVM_KEEPER_V3_OBSERVATION_SLOTS_${chainId}`] ?? env.EVM_KEEPER_V3_OBSERVATION_SLOTS ?? "").trim();
+  if (!raw) return DEFAULT_V3_OBSERVATION_SLOTS;
+  if (!/^\d+$/.test(raw)) return DEFAULT_V3_OBSERVATION_SLOTS;
+  return Math.min(MAX_V3_OBSERVATION_SLOTS, Number(raw));
 }
 
 export function enabledKeeperChains(env: NodeJS.ProcessEnv = process.env): number[] {
