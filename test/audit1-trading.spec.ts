@@ -51,7 +51,7 @@ describe("audit1: trading and create paths", function () {
     expect(await campaign.creatorGraduationBeneficiary()).to.eq(env.creator.address);
   });
 
-  it("EXPLOIT: rotating the router's creatorRewardsVault (e.g. for the next factory generation) freezes buys AND sells of every existing campaign", async () => {
+  it("HOLDS: the router's creatorRewardsVault cannot be rotated (e.g. for the next factory generation), so buys AND sells of existing campaigns keep working (was EXPLOIT, fixed)", async () => {
     const [admin, creator, alice, , authority] = await ethers.getSigners();
     const wbnb = await (await ethers.getContractFactory("MockWBNB")).deploy();
     const topazFactory = await (await ethers.getContractFactory("MockTopazFactory")).deploy();
@@ -95,14 +95,19 @@ describe("audit1: trading and create paths", function () {
     expect(await token.balanceOf(alice.address)).to.eq(E(1_000_000));
 
     // Next generation: a new vault (setFactoryOnce binds one factory per vault), rotated in after the delay.
+    // Fix (fees F1): the router has no propose/accept for its creator vault and the setter is set-once, so the
+    // rotation cannot happen; a new generation gets a new router.
     const vault2 = await Vault.deploy(admin.address, await v4.getAddress(), await wbnb.getAddress(), 1, await topazFactory.getAddress(), 86400);
-    await v4.proposeCreatorRewardsVault(await vault2.getAddress());
+    const rotate = new ethers.Interface(["function proposeCreatorRewardsVault(address)", "function acceptCreatorRewardsVault()"]);
+    await expect(admin.sendTransaction({ to: await v4.getAddress(), data: rotate.encodeFunctionData("proposeCreatorRewardsVault", [await vault2.getAddress()]) })).to.be.reverted;
     await increaseTime(3601);
-    await v4.acceptCreatorRewardsVault();
+    await expect(admin.sendTransaction({ to: await v4.getAddress(), data: rotate.encodeFunctionData("acceptCreatorRewardsVault", []) })).to.be.reverted;
+    await expect(v4.setCreatorRewardsVault(await vault2.getAddress())).to.be.revertedWith("already set");
+    expect(await v4.creatorRewardsVault()).to.eq(await vault.getAddress());
 
-    // Every fee-bearing trade on the old campaign now reverts inside routeTrade: holders are stuck.
-    await expect(sellTokens(env, campaign, token, alice, E(1000))).to.be.revertedWithCustomError(vault2, "ChoiceUnset");
-    await expect(buyTokens(env, campaign, alice, E(1000))).to.be.revertedWithCustomError(vault2, "ChoiceUnset");
+    // Every fee-bearing trade on the old campaign still routes to its own vault: holders can exit and buy.
+    await sellTokens(env, campaign, token, alice, E(1000));
+    await buyTokens(env, campaign, alice, E(1000));
   });
 
   it("HOLDS: a campaign paused before it is due graduates once the pause is 72h old; sells reopen then too, and re-pausing cannot extend the window (was EXPLOIT, fixed)", async () => {

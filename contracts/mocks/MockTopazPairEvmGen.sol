@@ -27,6 +27,8 @@ contract MockTopazPairEvmGen is ERC20 {
     uint256 public twapReserve0;
     uint256 public twapReserve1;
     bool public swapDisabled;
+    /// @dev A pool with TWAP history whose last closed window equals spot (quote answers from live reserves).
+    bool public twapFollowsSpot;
     mapping(address => uint256) public claimable0;
     mapping(address => uint256) public claimable1;
 
@@ -94,7 +96,12 @@ contract MockTopazPairEvmGen is ERC20 {
         swapDisabled = disabled;
     }
 
+    function setTwapFollowsSpot(bool on) external {
+        twapFollowsSpot = on;
+    }
+
     function quote(address tokenIn, uint256 amountIn, uint256) external view returns (uint256) {
+        if (twapFollowsSpot) return _out(amountIn, tokenIn, reserve0, reserve1);
         require(twapReserve0 != 0 && twapReserve1 != 0, "observations");
         return _out(amountIn, tokenIn, twapReserve0, twapReserve1);
     }

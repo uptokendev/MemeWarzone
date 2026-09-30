@@ -69,9 +69,10 @@ contract TreasuryRouterV4 {
     address public pendingProtocolRevenueVault;
     uint64 public pendingProtocolRevenueVaultSince;
 
+    /// @notice Set once (setCreatorRewardsVault) and never rotated: every campaign's fee choice lives on this
+    /// vault only, so pointing the router at another vault would revert every trade of every existing campaign
+    /// (audit 1/4/5). A new vault means a new router and a new factory generation.
     address public creatorRewardsVault;
-    address public pendingCreatorRewardsVault;
-    uint64 public pendingCreatorRewardsVaultSince;
 
     address public pendingAuthorizedLpLocker;
     uint64 public pendingAuthorizedLpLockerSince;
@@ -98,7 +99,6 @@ contract TreasuryRouterV4 {
     event CommunityRewardsVaultUpdated(address indexed oldVault, address indexed newVault);
     event ProtocolRevenueVaultProposed(address indexed newVault, uint64 executeAfter);
     event ProtocolRevenueVaultUpdated(address indexed oldVault, address indexed newVault);
-    event CreatorRewardsVaultProposed(address indexed newVault, uint64 executeAfter);
     event CreatorRewardsVaultUpdated(address indexed oldVault, address indexed newVault);
     event LpLockerAuthorizationProposed(address indexed locker, uint64 executeAfter);
     event LpLockerEmergencyDisabled(address indexed locker);
@@ -310,26 +310,10 @@ contract TreasuryRouterV4 {
     }
 
     function setCreatorRewardsVault(address newVault) external onlyAdmin {
-        require(creatorRewardsVault == address(0), "use propose");
+        require(creatorRewardsVault == address(0), "already set");
         requireContract(newVault);
         emit CreatorRewardsVaultUpdated(address(0), newVault);
         creatorRewardsVault = newVault;
-    }
-
-    function proposeCreatorRewardsVault(address newVault) external onlyAdmin {
-        requireContract(newVault);
-        pendingCreatorRewardsVault = newVault;
-        pendingCreatorRewardsVaultSince = uint64(block.timestamp);
-        emit CreatorRewardsVaultProposed(newVault, uint64(block.timestamp) + upgradeDelay);
-    }
-
-    function acceptCreatorRewardsVault() external onlyAdmin {
-        address newVault = _acceptPending(pendingCreatorRewardsVault, pendingCreatorRewardsVaultSince);
-        address old = creatorRewardsVault;
-        creatorRewardsVault = newVault;
-        pendingCreatorRewardsVault = address(0);
-        pendingCreatorRewardsVaultSince = 0;
-        emit CreatorRewardsVaultUpdated(old, newVault);
     }
 
     function setLeagueSplit(uint16 newWeeklyBps, uint16 newMonthlyBps) external onlyAdmin {

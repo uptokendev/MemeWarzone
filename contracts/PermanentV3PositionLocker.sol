@@ -59,8 +59,10 @@ interface IRobinhoodV3LpRevenueTreasuryRouter {
 /// migration or rescue path. Principal remains in the position forever; only earned fees can move.
 /// EVM launch generation (E9, docs/evm-launch/spec/C1-C6-fees.md): every harvest sells the MEME-side fees
 /// for the paired asset in the same pool with a sqrtPriceLimitX96 at the impact bound (EvmGenPoolSwap), so
-/// the pool itself stops the sale (no TWAP guard here: a new pool has one observation slot, and the bound
-/// alone makes a sandwich unprofitable, see EvmGenPoolSwap); the unsold rest is carried (`carriedMeme`)
+/// the pool itself stops the sale (no TWAP guard here: a new pool has one observation slot, so a TWAP would
+/// either never be available or fail open). The bound makes a plain sandwich unprofitable, but NOT one by an
+/// attacker who is also the dominant in-range LP and earns its own swap fees back (see EvmGenPoolSwap and
+/// the spec, F3 residual); one sale per block (F2) keeps it to one bounded sale per block. The unsold rest is carried (`carriedMeme`)
 /// into the next harvest, and neither the bound nor a failed sale ever reverts a harvest. Creator and
 /// protocol are paid in the paired asset only: WETH on native pools, the stock token on stock-bound pools,
 /// both through today's paths (creator transfer with pending fallback, protocol via routeLpToken).
@@ -116,6 +118,9 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     mapping(address => mapping(address => uint256)) public cumulativeProtocolRouted;
     /// @notice MEME fees collected but not yet sold because of the impact bound, per pool.
     mapping(address => uint256) public carriedMeme;
+    /// @notice Block of the pool's last MEME sale attempt: one sale per pool per block, so a loop of the
+    /// permissionless harvest in one transaction cannot compound the bound (audit 4 M1).
+    mapping(address => uint256) public lastSaleBlock;
     // In-flight V3 swap, checked by uniswapV3SwapCallback; zero outside sellMemeForPaired.
     address private activeSwapPool;
     uint256 private activeSwapMaxPay;
@@ -294,7 +299,9 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         registeredFeeAsset[token0_] = true;
         registeredFeeAsset[token1_] = true;
         lockedBalance[pool] = uint256(liquidity_);
-        creatorPayoutRecipient[creator] = creatorFeeRecipient;
+        // Only the first registration of a creator key sets its payout wallet; a later graduation by the same
+        // (Keep) creator must not undo the wallet chosen with updateCreatorPayoutRecipient (audit 3 L1).
+        if (creatorPayoutRecipient[creator] == address(0)) creatorPayoutRecipient[creator] = creatorFeeRecipient;
         poolInfo[pool] = PoolRegistration({
             campaign: campaign,
             creator: creator,
@@ -367,10 +374,13 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         if (memeToSell != 0) {
             uint256 memeSold;
             uint256 pairedOut;
-            try this.sellMemeForPaired(pool, memeIs0, memeToSell) returns (uint256 sold_, uint256 out_) {
-                memeSold = sold_;
-                pairedOut = out_;
-            } catch {}
+            if (lastSaleBlock[pool] != block.number) {
+                lastSaleBlock[pool] = block.number;
+                try this.sellMemeForPaired(pool, memeIs0, memeToSell) returns (uint256 sold_, uint256 out_) {
+                    memeSold = sold_;
+                    pairedOut = out_;
+                } catch {}
+            }
             carriedMeme[pool] = memeToSell - memeSold;
             paired += pairedOut;
             emit MemeFeesSold(pool, info.memeToken, memeSold, pairedOut, memeToSell - memeSold);

@@ -69,6 +69,7 @@ async function base() {
     const rm = 1_000_000n * E18;
     const rp = 100n * E18;
     await pair.seed(memeIs0 ? rm : rp, memeIs0 ? rp : rm);
+    await pair.setTwapFollowsSpot(true); // pool with TWAP history at spot (fix F3/F4: the TWAP guard fails closed)
     await pair.mint(await locker.getAddress(), E18);
     const c = await campaign.getAddress();
     await locker.registerGraduatedPool(
@@ -238,6 +239,7 @@ describe("evmgen fees: CreatorRewardsVaultV2 LP fees follow the choice (D19, E9)
     await f.weth.approve(await route.getAddress(), ethers.MaxUint256);
     const qIs0 = (await route.token0()).toLowerCase() === (await quote.getAddress()).toLowerCase();
     await route.seed(qIs0 ? 1_000_000n * E18 : 500n * E18, qIs0 ? 500n * E18 : 1_000_000n * E18);
+    await route.setTwapFollowsSpot(true); // pool with TWAP history at spot (fix F3/F4: the TWAP guard fails closed)
     await expect(f.vault.connect(f.other).setQuoteRoute(await quote.getAddress(), 0)).to.be.revertedWithCustomError(f.vault, "OnlyAdmin");
     await f.vault.setQuoteRoute(await quote.getAddress(), 0);
     const holderQuote = await f.vault.holderQuoteBalance(c);
@@ -292,6 +294,12 @@ describe("evmgen fees: CreatorRewardsVaultV2 holders batches", function () {
 
     await f.vault.connect(f.operator).proposeHolderBatch(id1, root, 0, [ca, cb], [va, hb]);
     expect(await f.vault.holderBalance(ca)).to.equal(0n);
+    // Audit fix F5: nothing executes until the Safe approves this exact root and total.
+    await expect(f.vault.connect(f.operator).executeHolderBatch(id1)).to.be.revertedWithCustomError(f.vault, "NotApproved");
+    await expect(f.vault.connect(f.operator).approveHolderBatch(id1, root, va + hb)).to.be.revertedWithCustomError(f.vault, "OnlyAdmin");
+    await expect(f.vault.approveHolderBatch(id1, ethers.keccak256("0x09"), va + hb)).to.be.revertedWithCustomError(f.vault, "BadBatch");
+    await expect(f.vault.approveHolderBatch(id1, root, va + hb - 1n)).to.be.revertedWithCustomError(f.vault, "BadBatch");
+    await f.vault.approveHolderBatch(id1, root, va + hb);
     await expect(f.vault.connect(f.operator).executeHolderBatch(id1)).to.be.revertedWithCustomError(f.vault, "TooSoon");
     await expect(f.vault.connect(f.operator).vetoHolderBatch(id1)).to.be.revertedWithCustomError(f.vault, "OnlyAdmin");
     await f.vault.vetoHolderBatch(id1);
@@ -301,6 +309,7 @@ describe("evmgen fees: CreatorRewardsVaultV2 holders batches", function () {
 
     const id2 = ethers.id("holders-week-1b");
     await f.vault.connect(f.operator).proposeHolderBatch(id2, root, 0, [ca, cb], [va, hb]);
+    await f.vault.approveHolderBatch(id2, root, va + hb);
     await increase(DAY);
     // Not authorized by the Safe on the distributor: execution reverts atomically.
     await expect(f.vault.connect(f.operator).executeHolderBatch(id2)).to.be.revertedWithCustomError(f.distributor, "BatchNotAuthorized");
@@ -322,6 +331,7 @@ describe("evmgen fees: CreatorRewardsVaultV2 holders batches", function () {
     const root = ethers.keccak256("0x02");
     await expect(f.vault.connect(f.operator).proposeHolderBatch(ethers.id("x"), root, 0, [ca], [va])).to.be.revertedWithCustomError(f.vault, "CapExceeded");
     await f.vault.connect(f.operator).proposeHolderBatch(ethers.id("x"), root, 0, [ca], [10n ** 15n]);
+    await f.vault.approveHolderBatch(ethers.id("x"), root, 10n ** 15n);
     await increase(DAY);
     const now = (await ethers.provider.getBlock("latest"))!.timestamp;
     await f.distributor.authorizeBatch(ethers.id("x"), 10n ** 15n - 1n, now - 10, now + DAY);
@@ -449,6 +459,7 @@ describe("evmgen fees: CreatorRewardsVaultV2 buyback", function () {
     await f.weth.approve(await route.getAddress(), ethers.MaxUint256);
     const qIs0 = (await route.token0()).toLowerCase() === (await quote.getAddress()).toLowerCase();
     await route.seed(qIs0 ? 2_000_000n * E18 : 1_000n * E18, qIs0 ? 1_000n * E18 : 2_000_000n * E18);
+    await route.setTwapFollowsSpot(true); // pool with TWAP history at spot (fix F3/F4: the TWAP guard fails closed)
     await f.vault.setQuoteRoute(await quote.getAddress(), 0);
     const quoteOut = await route.getAmountOut(E18 / 2n, await f.weth.getAddress());
     await f.vault.connect(f.operator).convertBuybackNativeToQuote(c, E18 / 2n);

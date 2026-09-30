@@ -7,7 +7,11 @@
  * construction (TreasuryRouterV4.admin and CreatorRewardsVaultV2.admin are immutable), so all wiring comes back
  * as Safe batches:
  *   A  (right after this deploy)  pause the old factory, V4 vault setters, community vault -> V4, holder distributor
- *                                 wiring, vault operator + caps, 12 weeks of holder batch authorizations
+ *                                 wiring, vault operator + caps. No holder batch is pre-authorized (audit 5 M1).
+ *   H  (weekly, per holder batch) holderWeekCalls: after the operator proposes, the Safe approves that batch's
+ *                                 exact merkle root + total on the vault and authorizes its id on the distributor
+ *                                 for exactly that total. Without a Safe-approved root nothing executes, so the
+ *                                 payout operator (an EOA) cannot pay itself; the Safe can still veto.
  *   B  (after the new factory)    V4 authorizes + makes primary the factory's locker, VaultV2.setFactoryOnce(factory)
  *                                 and, per approved quote token, VaultV2.setQuoteRoute
  * Batch B is written only when EVMGEN_NEW_FACTORY is set (the core builder's factory must exist first).
@@ -110,13 +114,13 @@ export function nextEpochEnds(nowSec: number, weeks: number): number[] {
 
 type Call = { contract: string; to: string; fn: string; args: unknown[]; note?: string };
 
-export function batchACalls(p: ChainPins, d: { router: string; vault: string; holderDistributor: string }, caps: Caps, nowSec: number, weeks = 12): Call[] {
-  const calls: Call[] = [
+export function batchACalls(p: ChainPins, d: { router: string; vault: string; holderDistributor: string }, caps: Caps, _nowSec?: number): Call[] {
+  return [
     { contract: "LaunchFactory", to: p.oldFactory, fn: "setCreatePaused", args: [true], note: "old generation stops creating first (spec C1 step 1)" },
     { contract: "TreasuryRouterV4", to: d.router, fn: "setRecruiterRewardsVault", args: [p.recruiter] },
     { contract: "TreasuryRouterV4", to: d.router, fn: "setCommunityRewardsVault", args: [p.community] },
     { contract: "TreasuryRouterV4", to: d.router, fn: "setProtocolRevenueVault", args: [p.protocol] },
-    { contract: "TreasuryRouterV4", to: d.router, fn: "setCreatorRewardsVault", args: [d.vault] },
+    { contract: "TreasuryRouterV4", to: d.router, fn: "setCreatorRewardsVault", args: [d.vault], note: "set once: the router's creator vault can never be rotated (audit F1)" },
     { contract: "CommunityRewardsVault", to: p.community, fn: "setRouter", args: [d.router], note: "after this the old V3 router's airdrop/squad routes revert" },
     { contract: "RewardDistributor", to: d.holderDistributor, fn: "setBatchOperator", args: [d.vault] },
     { contract: "CreatorRewardsVaultV2", to: d.vault, fn: "setHolderDistributorOnce", args: [d.holderDistributor] },
@@ -128,18 +132,37 @@ export function batchACalls(p: ChainPins, d: { router: string; vault: string; ho
       args: [caps.maxBuyPerTx, caps.maxBuybackPerCampaignWeek, caps.minBuyInterval, caps.maxImpactBps, caps.maxHolderBatchPerWeek].map(String),
     },
   ];
-  for (const end of nextEpochEnds(nowSec, weeks)) {
-    const epochId = new Date((end - 7 * DAY) * 1000).toISOString().slice(0, 10);
-    // Publishable from the epoch end + the vault's 24 h veto window, for 6 days.
-    calls.push({
+}
+
+/**
+ * The weekly Safe batch for one proposed holder batch (audit 5 M1). The operator has already called
+ * proposeHolderBatch(batchId, root, claimDeadline, campaigns, amounts) and published the leaf file; the Safe
+ * signers recompute the root from that file and check the total before signing this batch:
+ *   1. CreatorRewardsVaultV2.approveHolderBatch(batchId, root, total): reverts unless the proposal has exactly
+ *      this root and total, so the signed content is what executes.
+ *   2. RewardDistributor.authorizeBatch(batchId, total, now, now + 6 days): max = the exact total.
+ * executeHolderBatch then runs after the vault's 24 h veto window. Refuses a total above the authorization cap.
+ */
+export function holderWeekCalls(
+  d: { vault: string; holderDistributor: string },
+  batch: { batchId: string; root: string; total: bigint },
+  caps: Pick<Caps, "holderBatchAuthorizationMax">,
+  nowSec: number,
+): Call[] {
+  if (batch.total <= 0n) throw new Error("holder batch total must be positive");
+  if (batch.total > caps.holderBatchAuthorizationMax) {
+    throw new Error(`holder batch total ${batch.total} is above EVMGEN_HOLDER_BATCH_AUTH_MAX ${caps.holderBatchAuthorizationMax}`);
+  }
+  return [
+    { contract: "CreatorRewardsVaultV2", to: d.vault, fn: "approveHolderBatch", args: [batch.batchId, batch.root, String(batch.total)], note: "Safe approves this exact root + total" },
+    {
       contract: "RewardDistributor",
       to: d.holderDistributor,
       fn: "authorizeBatch",
-      args: [holderBatchId(p.chainId, epochId), String(caps.holderBatchAuthorizationMax), String(end), String(end + 6 * DAY)],
-      note: `${epochId} airdrop_holders`,
-    });
-  }
-  return calls;
+      args: [batch.batchId, String(batch.total), String(nowSec), String(nowSec + 6 * DAY)],
+      note: "publishable after the vault's 24 h veto window, for 6 days",
+    },
+  ];
 }
 
 export function batchBCalls(d: { router: string; vault: string }, factory: string, locker: string, quoteRoutes: Array<{ quote: string; feeTier: number }>): Call[] {
@@ -249,7 +272,7 @@ async function main() {
   const outDir = path.join(__dirname, "..", "deployments", profile.dir);
   fs.mkdirSync(outDir, { recursive: true });
   const now = Math.floor(Date.now() / 1000);
-  const a = buildBatch(pins.chainId, "MWZ fees V4: A wiring", "Router V4 vaults, community vault -> V4, holder distributor, vault operator/caps, 12 weeks of holder batch authorizations", batchACalls(pins, d, caps, now) as any);
+  const a = buildBatch(pins.chainId, "MWZ fees V4: A wiring", "Router V4 vaults, community vault -> V4, holder distributor, vault operator/caps (no holder batch pre-authorized)", batchACalls(pins, d, caps, now) as any);
   fs.writeFileSync(path.join(outDir, "mainnet.evmgen-fees.A.safe-batch.json"), `${JSON.stringify(a, null, 2)}\n`);
   const factory = String(process.env.EVMGEN_NEW_FACTORY || "").trim();
   if (factory) {

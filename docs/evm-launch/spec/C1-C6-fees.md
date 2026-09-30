@@ -144,8 +144,10 @@ and the Claim Center reads both distributors.
 - `proposeHolderBatch(batchId, root, claimDeadline, campaigns[], amounts[])`, onlyOperator. It debits
   each `holderBalance`, enforces `maxHolderBatchPerWeek` and stores the batch with
   `executableAt = now + holderBatchDelay`. The leaf file is published at proposal time.
+- `approveHolderBatch(batchId, root, total)`, onlyAdmin (Safe), added by audit fix F5 below: the Safe
+  approves the exact root and total the operator proposed; without it nothing executes.
 - `vetoHolderBatch(batchId)`, onlyAdmin, allowed until executed. It credits every amount back.
-- `executeHolderBatch(batchId)`, onlyOperator, allowed after `executableAt`. It sets executed and then
+- `executeHolderBatch(batchId)`, onlyOperator, allowed after `executableAt` and only once approved. It sets executed and then
   calls `holderDistributor.createBatch{value: total}`, which enforces the Safe's
   `authorizeBatch` max and publish window (`RewardDistributor.sol:103-108`).
 - Unclaimed money after the deadline goes back through the existing atomic recovery batch into the
@@ -320,6 +322,165 @@ balances and quote balances, `heldBuybackTokens`, `quoteRoutePool`, `quoteLiabil
 (`admin`, `router`, `factory`, `locker`, `holderDistributor`, `operator`, `wrappedNative`,
 `dexKind`, `dexFactory`, `holderBatchDelay`). Logic, errors and the TWAP guard are untouched.
 
+### Internal-audit fixes (2026-09-30, branch `claude/evm-fees`)
+
+Findings from internal audits 1, 3, 4 and 5 against this stack. Each fix below supersedes the text above
+where they differ. The audit specs (`test/audit3-bnb-graduation.fork.spec.ts`, `test/audit4-fees.spec.ts`,
+`test/audit5-privileged-roles.spec.ts`) keep every attack's steps; the former EXPLOIT tests now assert
+`HOLDS`.
+
+**F1 (HIGH, audits 1/4/5): the router <-> creator vault binding is fixed for life.** A routine Safe
+rotation of `TreasuryRouterV4.creatorRewardsVault` (propose/accept), or re-pointing
+`CreatorRewardsVaultV2.router`, reverted every buy and sell of every existing campaign: the choices live
+only on the vault that was bound at create, `accrueTradeFee` reverts `ChoiceUnset`/`OnlyRouter`, and
+strict fee routing bubbles it. Fix, chosen for the least new surface (nothing added, two paths removed):
+`proposeCreatorRewardsVault`, `acceptCreatorRewardsVault`, `pendingCreatorRewardsVault(Since)` and the
+`CreatorRewardsVaultProposed` event are deleted from the router; `setCreatorRewardsVault` is set-once
+(`"already set"`). The vault's `setRouter` is deleted and `router` is `immutable` (constructor). Keying
+the vault per campaign was rejected: it adds a per-campaign storage write to every create and a new
+lookup to every trade for a property the set-once binding gives for free. Consequence: a vault bug is
+fixed by a new router + vault + factory generation; campaigns already created keep their router and
+vault. Old-generation routers (V3) are untouched.
+- Reentrancy / CEI: no new external call; `setCreatorRewardsVault` checks, emits, writes (admin only).
+- Reachable states: `creatorRewardsVault` goes `0 -> vault` once; `_routeTrade` refuses while it is 0.
+- Overflow: none. Griefing: the Safe can no longer freeze trading through this slot; it still can
+  through `setForwardingPaused` (documented, unchanged).
+- Indexer: `CreatorRewardsVaultProposed` in `scripts/lib/indexerManifest.cjs` can no longer fire.
+
+**F2 (MEDIUM, audit 4 M1): one MEME sale per pool per block, in both lockers.** `harvest` is
+permissionless and each call re-applied the impact bound to the price the previous call left, so a
+contract looping `harvest` 13 times in one transaction sold 3% of the reserve (all carried MEME) at
+compounding impact and a single back-run profited. New state `lastSaleBlock[pool]` (public) in
+`PermanentLpLocker` and `PermanentV3PositionLocker`: the sale step runs only when `lastSaleBlock[pool] !=
+block.number`, and sets it before the `try`. A second harvest in the same block still claims and splits
+the paired side; its MEME is added to `carriedMeme` and sold by the next block's harvest.
+- Reentrancy: unchanged (`harvest` is `nonReentrant`; the write happens inside the guard, before the
+  self-call). CEI: the marker is written before the external sale; if the sale reverts, the `try`
+  swallows it and the marker stays (the block's sale attempt is spent, nothing is lost: all MEME carries).
+- Reachable states: `lastSaleBlock` only increases, one write per pool per block with MEME to sell.
+- Overflow: none (block number compare). Griefing: anyone can spend a block's sale attempt by calling
+  `harvest` first, which is exactly an honest harvest; the next block sells again. Harvest never reverts
+  because of the marker.
+
+**F3 (MEDIUM, audit 3 M2): the Topaz locker's sale needs the pair's TWAP; the unprofitability claim is
+corrected.** On a BSC fork with real Topaz, an attacker who adds 30-66% of the pool's liquidity, dumps MEME,
+triggers `harvest` and buys back, profited at 5 and 30 bps: as an LP it earns back most of its own swap
+fees, and the sale cap is measured on the reserve its dump just inflated. The earlier text ("the bound alone
+makes a sandwich unprofitable") was wrong for that attacker and is corrected in `EvmGenPoolSwap`,
+`PermanentLpLocker` and `PermanentV3PositionLocker`. Fix: `PermanentLpLocker.sellMemeForPaired` passes
+`MEME_SALE_TWAP_DEV_BPS = 100` to `v2Plan` (was hard-wired 0), and `v2Plan` now fails CLOSED: it sells
+nothing when spot `getAmountOut` is worse than Topaz `quote(tokenIn, sellIn, 1)` (TWAP reserves of the
+last closed 30 min observation window, which no transaction in the current block can move) by more than
+1%, or when `quote` reverts (pair younger than one window). The locker is no longer embedded in the
+factory's initcode (`deployFactoryWithLocker`), so the bytes the old text cited are not a constraint.
+- Measured (`audit3-bnb-graduation.fork.spec.ts`, fees 1/5/30/100 bps): every dump in the audit's grid
+  (0.05x-2x the MEME reserve, LP share 0-66%) now sells nothing and loses the attacker money; the
+  creator/protocol side gains the attacker's fees. Residual, pinned: a dump small enough to stay inside the
+  1% band (0.2-0.4% of the reserve) with a 50-66% LP position nets the attacker at most ~0.2% of one honest
+  harvest (e.g. 0.000038 BNB on a 0.0295 BNB harvest at 30 bps), for capital of twice the pool.
+- Behaviour change: a harvest while spot is more than 1% below the last closed window's TWAP, or in the
+  pool's first 30 minutes, sells no MEME; it is carried (never lost) and the paired side is split as
+  before. The vault's Topaz swaps (`buybackPool`, conversions) share `v2Plan` and fail closed the same way
+  (`NothingSwapped`).
+- Reentrancy / CEI: the new call is a `staticcall` to the pair inside the self-only sale step, before any
+  transfer. Reachable states: unchanged. Overflow: `out * 1e4` and `twapOut * (1e4 - 100)` with amounts
+  bounded by token supplies (< 2^128 in practice; checked arithmetic reverts inside the `try`, which only
+  carries). Griefing: nobody can make a registered pair's `quote` revert; a price pushed >1% off TWAP only
+  delays the sale (and costs the pusher the pool fee).
+- The V3 locker keeps no TWAP guard (a new V3 pool has one observation slot, so a TWAP would never be
+  available or would fail open). Its residual against a dominant in-range LP attacker is one bounded sale
+  per block (F2), each at most 0.50% below the price that attacker set. Founder item: a keeper that grows
+  the pool's `observationCardinalityNext` would allow the same guard there.
+
+**F4 (MEDIUM, audit 4 M2): vault swaps scale the bound to the pool fee, the V3 TWAP guard fails closed,
+route pools get observation slots, and conversions are spaced per route pool.** On a 0.05% Uniswap V3
+route pool whose oracle had no 30 min history, `convertHolderQuote` was sandwiched at a profit (+195 STK
+on a 2,500 STK conversion), and the operator could repeat it in one block. Four changes:
+1. `EvmGenPoolSwap.feeScaledImpact(bound, feePips) = min(bound, feePips / 60)` (fee * 5/3 in bps, the
+   locker's E13 rule). `CreatorRewardsVaultV2._swap` applies it on both DEX kinds: Topaz reads
+   `dexFactory.getFee(pool, false)` (bps, x100 to pips), V3 reads `pool.fee()`. 0.30% -> 50 bps,
+   0.05% -> 8, 0.01% -> 1, a 0-fee pool -> 0 (`NothingSwapped`). The admin's `maxImpactBps` still caps it.
+2. `v3Limit` returns `ok=false` when `twapWindow != 0` and `observe` reverts (was: guard skipped). The
+   lockers pass `twapWindow = 0` and are unaffected. (`v2Plan` fails closed since F3.)
+3. `setQuoteRoute` on V3 calls `pool.increaseObservationCardinalityNext(180)` (`V3_ROUTE_OBSERVATIONS`),
+   so the route can serve `observe(1800)` once its slots span 30 min (one touched block per 10 s on
+   average). A busier pool needs more slots; anyone can add them on the pool directly. **Operational:** a
+   Buyback coin's own V3 pool is not grown by the vault; the keeper must call
+   `increaseObservationCardinalityNext` on it once before `buybackPool` can run there.
+4. `_checkInterval(routePool)` in `_quoteToNative` (`convertHolderQuote`) and in
+   `convertBuybackNativeToQuote`, sharing `minBuyInterval`. Keyed by the route pool, not the campaign,
+   because the route is shared: a per-campaign interval would still let the operator stack conversions
+   for many campaigns in one block. Consequence: one conversion per route pool per `minBuyInterval`.
+- Measured: at 0.05% and 0.01% the audit's sandwich (front-runs of 50k and 200k STK) now loses the
+  attacker 9.8-36.8 STK; without history the conversion refuses (`NothingSwapped`); a second conversion
+  through the same pool in the interval reverts `TooSoon`.
+- Reentrancy: `increaseObservationCardinalityNext` is an admin-only external call to the canonical pool
+  read from the DEX factory (no attacker-chosen address); `getFee`/`fee()` are views before the swap;
+  every swap path stays `nonReentrant`. CEI: interval stamped before the swap (a revert undoes it).
+- Overflow: `feePips / 60` with `feePips <= 1e6` (uint24) or `getFee * 100` with Topaz fees <= 1e4.
+- Griefing: the operator can only be slowed (interval, fail-closed guard); nobody else can call these.
+  A pool with too few observation slots blocks conversions until someone grows it (no funds at risk).
+
+**F5 (MEDIUM, audit 5 M1): the Safe approves holder payout content, not just an id and a max.** Batch A
+pre-authorized 12 weeks of holder batch ids on the distributor by id and max only, so the payout operator
+(an EOA) could propose a root that paid itself up to the weekly cap and it executed after 24 h unless the
+Safe noticed and vetoed. Fix in `CreatorRewardsVaultV2` (the distributor is the unchanged audited
+`RewardDistributor`): `HolderBatch.approved` (packs into the status slot), `approveHolderBatch(batchId,
+root, total)` onlyAdmin, which reverts `BadBatch` unless the batch is proposed (status 1) with exactly that
+root and total, and `executeHolderBatch` reverts `NotApproved` until approved. The operator still proposes
+(and the vault still debits balances and enforces the weekly cap at proposal); it cannot change a proposed
+root (ids are single-use, `AlreadySet`); the veto stays available until execution, approved or not.
+Deploy script: batch A no longer pre-authorizes any week. New `holderWeekCalls(d, {batchId, root, total},
+caps, now)` builds the weekly Safe batch H: `vault.approveHolderBatch(id, root, total)` +
+`distributor.authorizeBatch(id, total, now, now + 6 days)`, refusing a total above
+`EVMGEN_HOLDER_BATCH_AUTH_MAX`. Weekly flow: operator proposes and publishes the leaf file -> Safe signers
+recompute the root from that file and check the total -> Safe executes batch H -> after 24 h the operator
+executes -> holders claim on the holder distributor.
+- Reentrancy: `approveHolderBatch` makes no external call. CEI unchanged in `executeHolderBatch` (status
+  written before `createBatch`). Reachable: approve only in status 1; approving twice is harmless; a vetoed
+  or executed batch cannot be approved. Overflow: `total` compared as uint256 against the stored uint128.
+- Griefing: a compromised operator can propose junk that the Safe simply does not approve (the amounts stay
+  debited until the Safe vetoes, which returns them; see F7 for the weekly cap). A compromised Safe was
+  already able to veto; it still cannot redirect holder money except by approving a bad root, which is now
+  an explicit signed act rather than silence.
+
+**F6 (LOW, audit 4 L1): only what `pullLockerPending` pulled can be attributed or rescued.** LP quote the
+locker has paid the vault but `syncLpFees` has not credited yet sits above `quoteLiabilities`, so
+`attributeExcessQuote` (to another campaign) and `rescueExcessToken` could take it, leaving the owning
+campaign's later sync insolvent. New `pulledUnattributed[token]` (public): `pullLockerPending` records the
+balance delta its `claimPendingToken` call produced (robust to fee-on-transfer tokens); both admin paths go
+through `_usePulled`, which requires `amount <= pulledUnattributed[token]` and `amount <= balance -
+quoteLiabilities[token]`, then decrements. Consequence: a token sent to the vault by mistake is not
+rescuable (it is not user money; the safer failure).
+- Reentrancy: `pullLockerPending` stays `nonReentrant`; the locker's `claimPendingToken` pays
+  `msg.sender` only. CEI: balance read, external claim, balance read, one counter write. Reachable: pull is
+  permissionless; attribute/rescue admin only. Overflow: `after - before` cannot underflow for a sane ERC20
+  (a token whose balance drops on receipt reverts the pull). Griefing: anyone can pull at any time, which
+  only moves the vault's own pending into the vault and makes it attributable.
+
+**F7 (LOW, audit 4 L2): a veto frees the weekly holder cap.** A vetoed batch kept counting against
+`maxHolderBatchPerWeek`, so one bad proposal of the full cap blocked every honest batch for the rest of the
+week. `vetoHolderBatch` now subtracts the batch total from `holderProposedInWeek` when the batch was
+proposed in the week the counter tracks: `(executableAt - holderBatchDelay) / 1 weeks == holderWeek`
+(`holderBatchDelay` is immutable, so this is exactly the proposal week). A batch from an earlier week frees
+nothing (that week's counter is gone).
+- Reentrancy / CEI: no external call added; the subtraction happens with the status write, before the
+  per-campaign refunds (all storage). Reachable: status 1 -> 3 once, so each total is subtracted at most
+  once. Overflow: `holderProposedInWeek >= b.total` whenever the weeks match, because the total was added
+  in that same week and the counter is only reset when a new week starts. Griefing: none added; the
+  operator gains nothing by proposing and having it vetoed.
+
+**F8 (LOW, audit 3 L1): a creator's chosen payout wallet survives later graduations.** Both lockers
+wrote `creatorPayoutRecipient[creator] = creatorFeeRecipient` on every `registerGraduatedPool`, so a Keep
+creator's second graduation (the factory passes `(creator, creator)`) silently reset the wallet chosen with
+`updateCreatorPayoutRecipient`, for all of that creator's pools. Now both `PermanentLpLocker` and
+`PermanentV3PositionLocker` set it only when unset. Non-Keep coins are unaffected (their key is the
+campaign, registered once, recipient the vault). `poolInfo[pool].creatorFeeRecipient` still records the
+registration value, which is what `CreatorRewardsVaultV2._poolParties` checks.
+- Reentrancy / CEI: no external call added (registration is admin/factory-only). Reachable: the mapping
+  goes `0 -> registration value` once, then only the creator changes it. Overflow: none. Griefing: none; a
+  creator cannot be forced onto a wallet by someone else's registration (keys are the creator's own).
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |
@@ -330,10 +491,10 @@ balances and quote balances, `heldBuybackTokens`, `quoteRoutePool`, `quoteLiabil
 | `accrueTradeFee` | **no** guard, on purpose: the buyback's own fee re-enters it | no external call | choice set | checked add | never pausable. A revert here would revert every trade |
 | `claimCreatorFees` / `claimCreatorQuote` | `nonReentrant` | zero, then send | any | none | a creator that rejects native blocks only itself (tested: rejecting and re-entering creators) |
 | `syncLpFees` | `nonReentrant` | `lpSynced` written before `withdraw` | registered non-Keep pool, recipient = vault, key = campaign | cumulative - synced >= 0 | idempotent; spoofed pool fails the locker's registration fields |
-| holder convert/propose/execute/veto | `nonReentrant` | debit, then store, then `createBatch` | Proposed -> Executed or Vetoed | caps checked; total < 2^128 | operator key: 24 h veto + weekly cap + the distributor's Safe `authorizeBatch` max and window |
+| holder convert/propose/approve/execute/veto | `nonReentrant` (approve: admin, no external call) | debit, then store, then `createBatch` | Proposed -> (Approved) -> Executed, or Vetoed | caps checked; total < 2^128 | operator key: the Safe approves the exact root + total (F5), 24 h veto, weekly cap, the distributor's `authorizeBatch` max and window |
 | `buybackCurve` | `nonReentrant` | debit, call, credit refund from the returned `spent`, post-check | pre-grad, fee flat 2%, <= 95% progress | checked | sandwich bounded by 0.5% impact vs ~4% curve round trip |
 | `buybackPool` / `convertBuybackNativeToQuote` | `nonReentrant` | wrap, swap (bounded, TWAP), unwrap leftover, debit `spent` | pool bound by sync | checked | bounded impact + TWAP + interval + native per-tx and weekly caps |
-| `pullLockerPending` / `attributeExcessQuote` | `nonReentrant` | pull, then credit only `balance - quoteLiabilities` | any / admin | checked | cannot move another campaign's balance |
+| `pullLockerPending` / `attributeExcessQuote` | `nonReentrant` | pull (balance delta recorded), then credit only `min(pulledUnattributed, balance - quoteLiabilities)` | any / admin | checked | cannot move another campaign's balance or unsynced LP quote (F6) |
 | rescue (native / token) | `nonReentrant`, admin | check excess, send | any | checked | cannot touch liabilities, wrapped native, or held MEME |
 | `receive()` | none | accepts only `wrappedNative` or `factory.isCampaign` | any | – | any other sender reverts |
 | operator pause | admin `setOperator(op, paused)` blocks every operator path | | | | |

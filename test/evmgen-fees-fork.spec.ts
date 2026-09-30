@@ -67,6 +67,7 @@ async function localRouter(owner: any) {
         "function getAmountOut(uint256,address) view returns (uint256)",
         "function swap(uint256,uint256,address,bytes)",
         "function balanceOf(address) view returns (uint256)",
+        "function sync()",
       ],
       poolAddr,
     );
@@ -98,6 +99,13 @@ async function localRouter(owner: any) {
       await swapIn(wbnb, 1n * E18);
     }
 
+    // Audit fix F3: the locker sells only with the pair's TWAP (Topaz `quote`, one closed 30 min window) within
+    // 1% of spot. Age the pool past two windows so the last closed one reflects the settled price.
+    for (let w = 0; w < 2; w++) {
+      await ethers.provider.send("evm_increaseTime", [1801]);
+      await ethers.provider.send("evm_mine", []);
+      await (await pool.sync()).wait();
+    }
     const [r0b, r1b] = await pool.getReserves();
     const memeReserveBefore = memeIs0 ? r0b : r1b;
     const rc = await (await locker.connect(trader).harvest(poolAddr)).wait();

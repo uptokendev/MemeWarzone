@@ -80,6 +80,7 @@ describe("evmgen fees: CreatorRewardsVaultV2 on Uniswap V3 (Robinhood)", functio
     const bal = await f.vault.buybackBalance(g.c);
     const sp0 = await g.pool.sqrtPriceX96();
     await f.vault.setCaps(10n * E18, 30n * E18, 3600, 50, 10n * E18);
+    await g.pool.setTwap(true, 0); // 30 min of history at spot (the TWAP guard fails closed without it, fix F4)
     await f.vault.connect(f.operator).buybackPool(g.c, 5n * E18); // 5 native vs a 1000-native pool: hits the 0.5% limit
     const sp1 = await g.pool.sqrtPriceX96();
     const memeIs0 = (await g.pool.token0()).toLowerCase() === (await g.token.getAddress()).toLowerCase();
@@ -118,8 +119,10 @@ describe("evmgen fees: CreatorRewardsVaultV2 on Uniswap V3 (Robinhood)", functio
     await f.vault.syncLpFees(await g.pool.getAddress());
     expect(await f.vault.holderQuoteBalance(g.c)).to.equal(4n * E18);
     await expect(f.vault.setQuoteRoute(await stock.getAddress(), 500)).to.be.revertedWithCustomError(f.vault, "NoRoute");
-    await f.makePool(stock, f.weth, 500, 1_000_000n * E18, 100n * E18);
+    const route = await f.makePool(stock, f.weth, 500, 1_000_000n * E18, 100n * E18);
     await f.vault.setQuoteRoute(await stock.getAddress(), 500);
+    expect(await route.cardinalityNext()).to.equal(180n); // fix F4: setQuoteRoute grows the route's observations
+    await route.setTwap(true, 0); // ... and once they span 30 min the conversion may run
     const before = await f.vault.holderBalance(g.c);
     await f.vault.connect(f.operator).convertHolderQuote(g.c, 4n * E18);
     expect(await f.vault.holderQuoteBalance(g.c)).to.equal(0n);

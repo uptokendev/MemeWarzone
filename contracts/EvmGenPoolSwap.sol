@@ -23,6 +23,7 @@ interface IEvmGenV2Pool {
 interface IEvmGenV3Pool {
     function token0() external view returns (address);
     function token1() external view returns (address);
+    function fee() external view returns (uint24);
     function slot0()
         external
         view
@@ -60,11 +61,15 @@ interface IEvmGenWrappedNative {
 /// 1 - 1/1.0025^2 = 0.499%). V3 uses a sqrtPriceLimitX96 at sqrt(1 -/+ maxImpactBps), rounded inward, so the
 /// pool itself stops the swap at the bound (partial fill, no revert); the caller keeps the rest.
 ///
-/// Why a bounded sale cannot be sandwiched at a profit. To move the price by d the attacker trades about
-/// r*d/2 and pays the pool fee (0.30%) twice: ~0.003*r*d. The most the attacker can extract is our sale
-/// times d: c*d with c <= 0.0025*r. So extraction (0.0025*r*d) < cost (0.003*r*d) for every d. The TWAP
-/// guard (skip when spot is worse than the 30 min TWAP by more than maxTwapDevBps) is defence in depth
-/// against multi-block manipulation; when no TWAP is available the fee argument above still holds.
+/// Sandwich economics. To move the price by d the attacker trades about r*d/2 and pays the pool fee (0.30%)
+/// twice: ~0.003*r*d. The most it can extract is our sale times d: c*d with c <= 0.0025*r. So a plain
+/// sandwich loses for every d, but ONLY while the attacker keeps paying that fee: an attacker who is also a
+/// large LP earns a share of its own swap fees back, and a sale bounded on the current reserve grows with
+/// the attacker's own dump (audit 3 M2). The bound therefore does not make a sandwich unprofitable on its
+/// own. Callers scale the impact bound to the pool fee (feeScaledImpact).
+/// What bounds d is the TWAP guard (skip when spot is worse than the pool's TWAP by more than
+/// maxTwapDevBps; fails CLOSED when the pool cannot serve a TWAP): an LP attacker's edge is then at most
+/// ~maxTwapDevBps of one bounded sale.
 library EvmGenPoolSwap {
     using SafeERC20 for IERC20;
 
@@ -73,7 +78,8 @@ library EvmGenPoolSwap {
     uint160 internal constant MAX_SQRT_RATIO_MINUS_ONE = 1461446703485210103287273052203988822378723970341;
 
     /// @notice How much of `amountIn` may be sold into a V2 pool now, and for how much.
-    /// Returns (0, 0) when the reserve is empty, the output rounds to zero, or spot is worse than TWAP.
+    /// Returns (0, 0) when the reserve is empty, the output rounds to zero, or (maxTwapDevBps != 0) spot is
+    /// worse than the TWAP by more than maxTwapDevBps or the pool has no TWAP yet.
     function v2Plan(address pool, address tokenIn, uint256 amountIn, uint256 maxImpactBps, uint256 maxTwapDevBps)
         internal
         view
@@ -88,10 +94,21 @@ library EvmGenPoolSwap {
         out = IEvmGenV2Pool(pool).getAmountOut(sellIn, tokenIn);
         if (out == 0) return (0, 0);
         if (maxTwapDevBps != 0) {
+            // Fails closed: a pool that cannot serve a TWAP (fewer than one closed 30 min window) sells nothing.
             try IEvmGenV2Pool(pool).quote(tokenIn, sellIn, 1) returns (uint256 twapOut) {
                 if (out * BPS < twapOut * (BPS - maxTwapDevBps)) return (0, 0);
-            } catch {}
+            } catch {
+                return (0, 0);
+            }
         }
+    }
+
+    /// @notice The impact bound for a pool charging `feePips` (millionths: 3000 = 0.30%, 500 = 0.05%):
+    /// min(maxImpactBps, fee * 5/3 in bps). A sale of at most impact/2 of the reserve then stays below 5/6 of
+    /// the fee an attacker pays per unit of price it moves, so a plain sandwich loses on any fee tier.
+    function feeScaledImpact(uint256 maxImpactBps, uint256 feePips) internal pure returns (uint256) {
+        uint256 byFee = feePips / 60;
+        return byFee < maxImpactBps ? byFee : maxImpactBps;
     }
 
     /// @notice Executes a plan from v2Plan: pays `sellIn` into the pair and takes exactly `out` to `recipient`.
@@ -103,7 +120,8 @@ library EvmGenPoolSwap {
     }
 
     /// @notice The sqrt price limit that caps a V3 swap at `maxImpactBps`, or ok=false when the pool is
-    /// uninitialized or spot is worse than the TWAP by more than `maxTwapDevBps` (1 tick ~ 1 bp).
+    /// uninitialized, or (twapWindow != 0) spot is worse than the TWAP by more than `maxTwapDevBps` (1 tick ~
+    /// 1 bp) or the pool cannot serve the window.
     function v3Limit(address pool, bool zeroForOne, uint256 maxImpactBps, uint256 maxTwapDevBps, uint32 twapWindow)
         internal
         view
@@ -112,9 +130,10 @@ library EvmGenPoolSwap {
         (uint160 sqrtP, int24 tick, , , , , ) = IEvmGenV3Pool(pool).slot0();
         if (sqrtP == 0) return (false, 0);
         if (twapWindow != 0) {
+            // Fails closed: no TWAP over the window (observe reverts, e.g. too few observation slots) = no swap.
             (bool has, int256 avg) = v3TwapTick(pool, twapWindow);
             int256 dev = int256(maxTwapDevBps);
-            if (has && (zeroForOne ? int256(tick) < avg - dev : int256(tick) > avg + dev)) return (false, 0);
+            if (!has || (zeroForOne ? int256(tick) < avg - dev : int256(tick) > avg + dev)) return (false, 0);
         }
         // The bought token's price may rise by at most `maxImpactBps` in either orientation (spec C6:
         // `after <= before * (1e4 + maxImpactBps) / 1e4`). zeroForOne buys token1, whose price is 1/p, so

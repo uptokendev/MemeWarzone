@@ -20,6 +20,7 @@ interface IEvmGenHolderDistributor {
 
 interface IEvmGenV2PoolFactory {
     function getPool(address tokenA, address tokenB, bool stable) external view returns (address);
+    function getFee(address pool, bool stable) external view returns (uint256);
 }
 
 interface IEvmGenV3PoolFactory {
@@ -38,15 +39,15 @@ interface IEvmGenLaunchTokenTrading {
 ///
 /// Where value can leave this contract (complete list):
 /// - native to cfg.creator (claimCreatorFees), quote to cfg.creator (claimCreatorQuote);
-/// - native to holderDistributor, only through a proposed batch that survived the admin's veto window and the
-///   distributor's own Safe authorization (max amount + publish window);
+/// - native to holderDistributor, only through a proposed batch whose exact merkle root and total the admin
+///   (Safe) approved, after the veto window, within the distributor's own Safe authorization (max + window);
 /// - native to a factory campaign (buybackCurve, tokens come back to this vault and end at DEAD);
 /// - wrapped native / quote into the coin's locked pool or the admin-selected canonical quote route pool, with
 ///   the MEME output hard-coded to DEAD and the native/quote output hard-coded to this vault;
 /// - MEME to DEAD (flushBuybackTokens);
 /// - admin rescue of the excess above every liability.
 /// A compromised operator can therefore pick bad moments within the caps, or propose a bad holder root that
-/// the admin can veto for `holderBatchDelay`; it cannot send value to itself.
+/// never executes unless the admin approves that root; it cannot send value to itself.
 contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -72,6 +73,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         uint64 executableAt;
         uint64 claimDeadline;
         uint8 status; // 1 proposed, 2 executed, 3 vetoed
+        bool approved; // the admin (Safe) approved this exact root and total (approveHolderBatch)
     }
 
     uint8 internal constant DEX_TOPAZ_V2 = 1;
@@ -81,6 +83,10 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     uint16 internal constant MAX_IMPACT_BPS_LIMIT = 50;
     uint16 internal constant TWAP_DEVIATION_BPS = 100;
     uint32 internal constant TWAP_WINDOW = 1800;
+    /// @dev Observation slots requested on a V3 quote route pool when it is set, so observe(TWAP_WINDOW) can be
+    /// served (the TWAP guard fails closed). 180 slots cover 30 min at one touched block per 10 s on average;
+    /// a busier pool needs more, which anyone can add on the pool itself (increaseObservationCardinalityNext).
+    uint16 internal constant V3_ROUTE_OBSERVATIONS = 180;
     uint16 internal constant FLAT_TRADE_FEE_BPS = 200;
     uint16 internal constant MAX_CURVE_PROGRESS_BPS = 9_500;
     uint256 internal constant MAX_BATCH_CAMPAIGNS = 200;
@@ -93,7 +99,9 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     address public immutable dexFactory;
     uint256 public immutable holderBatchDelay;
 
-    address public router;
+    /// @notice The only router whose accruals count. Immutable, and TreasuryRouterV4 sets its creator vault once:
+    /// the pair is bound both ways, so no admin action can strand the campaigns whose choices live here.
+    address public immutable router;
     address public factory;
     address public locker;
     address public holderDistributor;
@@ -121,6 +129,10 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     /// @notice Native owed to someone: every native balance above plus proposed, not yet executed batches.
     uint256 public totalLiabilities;
     mapping(address => uint256) public quoteLiabilities;
+    /// @notice Per token, what pullLockerPending actually brought in (balance delta) and nobody has attributed or
+    /// rescued yet. The only excess attributeExcessQuote / rescueExcessToken may move: LP quote the locker paid
+    /// but syncLpFees has not credited yet also sits above quoteLiabilities and belongs to its campaign (audit 4 L1).
+    mapping(address => uint256) public pulledUnattributed;
 
     mapping(address => uint256) internal buybackWeek;
     mapping(address => uint256) public buybackSpentInWeek;
@@ -150,6 +162,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     event QuoteConverted(address indexed campaign, bool holders, uint256 quoteSpent, uint256 nativeOut);
     event BuybackNativeConverted(address indexed campaign, uint256 nativeSpent, uint256 quoteOut);
     event HolderBatchProposed(bytes32 indexed batchId, bytes32 root, uint256 total, uint64 executableAt, uint64 claimDeadline);
+    event HolderBatchApproved(bytes32 indexed batchId, bytes32 root, uint256 total);
     event HolderBatchVetoed(bytes32 indexed batchId, uint256 total);
     event HolderBatchExecuted(bytes32 indexed batchId, uint256 total);
     event BuybackCurve(address indexed campaign, uint256 nativeSpent, uint256 tokensHeld);
@@ -176,6 +189,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     error CapExceeded();
     error TooSoon();
     error BadBatch();
+    error NotApproved();
     error CurveState();
     error ImpactTooHigh();
     error NothingSwapped();
@@ -214,12 +228,6 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     }
 
     // ------------------------------------------------------------------ admin
-
-    function setRouter(address newRouter) external onlyAdmin {
-        if (newRouter == address(0)) revert ZeroAddress();
-        emit RouterUpdated(router, newRouter);
-        router = newRouter;
-    }
 
     /// @notice Pins the factory and the locker it created.
     function setFactoryOnce(address factory_) external onlyAdmin {
@@ -279,6 +287,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
             ? IEvmGenV2PoolFactory(dexFactory).getPool(wrappedNative, quote, false)
             : IEvmGenV3PoolFactory(dexFactory).getPool(wrappedNative, quote, feeTier);
         if (pool == address(0)) revert NoRoute();
+        if (dexKind == DEX_UNISWAP_V3) IEvmGenV3Pool(pool).increaseObservationCardinalityNext(V3_ROUTE_OBSERVATIONS);
         quoteRoutePool[quote] = pool;
         emit QuoteRouteUpdated(quote, pool, feeTier);
     }
@@ -409,10 +418,20 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         if (holderProposedInWeek + total > maxHolderBatchPerWeek || total > type(uint128).max) revert CapExceeded();
         holderProposedInWeek += total;
         uint64 executableAt = uint64(block.timestamp + holderBatchDelay);
-        holderBatches[batchId] = HolderBatch({root: root, total: uint128(total), executableAt: executableAt, claimDeadline: claimDeadline, status: 1});
+        holderBatches[batchId] = HolderBatch({root: root, total: uint128(total), executableAt: executableAt, claimDeadline: claimDeadline, status: 1, approved: false});
         batchCampaigns[batchId] = campaigns;
         batchAmounts[batchId] = amounts;
         emit HolderBatchProposed(batchId, root, total, executableAt, claimDeadline);
+    }
+
+    /// @notice Admin (Safe) approval of a proposed batch's payout content: the exact merkle root and total the
+    /// operator proposed. Only an approved batch executes, so the operator (an EOA) cannot pay a root of its
+    /// own choosing; it can still only propose, and the admin can still veto until execution (audit 5 M1).
+    function approveHolderBatch(bytes32 batchId, bytes32 root, uint256 total) external onlyAdmin {
+        HolderBatch storage b = holderBatches[batchId];
+        if (b.status != 1 || b.root != root || b.total != total) revert BadBatch();
+        b.approved = true;
+        emit HolderBatchApproved(batchId, root, total);
     }
 
     /// @notice Admin veto until executed: every amount goes back to its campaign's holder balance.
@@ -420,6 +439,8 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         HolderBatch storage b = holderBatches[batchId];
         if (b.status != 1) revert BadBatch();
         b.status = 3;
+        // Vetoed within the week it was proposed in: its total no longer counts against that week's cap (audit 4 L2).
+        if ((b.executableAt - holderBatchDelay) / 1 weeks == holderWeek) holderProposedInWeek -= b.total;
         address[] storage cs = batchCampaigns[batchId];
         uint256[] storage as_ = batchAmounts[batchId];
         for (uint256 i; i < cs.length; ++i) holderBalance[cs[i]] += as_[i];
@@ -429,6 +450,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     function executeHolderBatch(bytes32 batchId) external onlyOperator nonReentrant {
         HolderBatch storage b = holderBatches[batchId];
         if (b.status != 1) revert BadBatch();
+        if (!b.approved) revert NotApproved();
         if (block.timestamp < b.executableAt) revert TooSoon();
         b.status = 2;
         uint256 total = b.total;
@@ -532,6 +554,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         _useWeekCap(campaign, amountIn);
         address pool = quoteRoutePool[c.quote];
         if (pool == address(0)) revert NoRoute();
+        _checkInterval(pool);
         IEvmGenWrappedNative(wrappedNative).deposit{value: amountIn}();
         (spent, out) = _swap(pool, wrappedNative, amountIn, address(this), maxImpactBps);
         if (amountIn > spent) IEvmGenWrappedNative(wrappedNative).withdraw(amountIn - spent);
@@ -545,17 +568,21 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     /// @notice Permissionless. If a locker payment to this vault failed (e.g. a pausable stock token was paused
     /// during a harvest) the locker parked it as pendingToken[vault][token]; this pulls it here. It arrives
     /// unattributed (the locker only counts paid amounts), so it is excess until attributeExcessQuote.
-    function pullLockerPending(address token) external nonReentrant returns (uint256) {
-        return IEvmGenLockerForVault(locker).claimPendingToken(token);
+    function pullLockerPending(address token) external nonReentrant returns (uint256 amount) {
+        uint256 before = IERC20(token).balanceOf(address(this));
+        IEvmGenLockerForVault(locker).claimPendingToken(token);
+        amount = IERC20(token).balanceOf(address(this)) - before;
+        pulledUnattributed[token] += amount;
     }
 
-    /// @notice Admin: assigns quote tokens held above every liability to a non-keep campaign bound to that quote,
-    /// under its choice. Can only move excess, never another campaign's balance.
+    /// @notice Admin: assigns quote tokens pulled from the locker's pending (and still above every liability) to a
+    /// non-keep campaign bound to that quote, under its choice. Never another campaign's balance or unsynced LP.
     function attributeExcessQuote(address campaign, uint256 amount) external onlyAdmin nonReentrant {
         Cfg storage c = cfg[campaign];
         address quote = c.quote;
         if (quote == address(0) || c.choice == Choice.Keep) revert WrongChoice();
-        if (amount == 0 || amount > IERC20(quote).balanceOf(address(this)) - quoteLiabilities[quote]) revert Insufficient();
+        _usePulled(quote, amount);
+        if (amount == 0) revert Insufficient();
         _creditQuote(campaign, c, quote, amount);
         emit ExcessQuoteAttributed(campaign, quote, amount);
     }
@@ -570,12 +597,14 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         emit ExcessRescued(address(0), to, amount);
     }
 
-    /// @notice Only what exceeds the token's liabilities; never a token held for a buyback burn, and never the
-    /// wrapped native (LP fees paid in it wait here until syncLpFees).
+    /// @notice Only pulled-and-unattributed tokens (pullLockerPending) that also exceed the token's liabilities;
+    /// never a token held for a buyback burn, never the wrapped native (LP fees paid in it wait here until
+    /// syncLpFees), never LP quote the locker paid but nobody synced yet (audit 4 L1). A token sent here by
+    /// mistake is therefore not rescuable.
     function rescueExcessToken(address token, address to, uint256 amount) external onlyAdmin nonReentrant {
         if (to == address(0)) revert ZeroAddress();
         if (heldTokenAsset[token] || token == wrappedNative) revert Blocked();
-        if (amount > IERC20(token).balanceOf(address(this)) - quoteLiabilities[token]) revert Insufficient();
+        _usePulled(token, amount);
         IERC20(token).safeTransfer(to, amount);
         emit ExcessRescued(token, to, amount);
     }
@@ -627,21 +656,25 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     function _quoteToNative(address quote, uint256 amountIn) internal returns (uint256 spent, uint256 out) {
         address pool = quoteRoutePool[quote];
         if (quote == address(0) || pool == address(0)) revert NoRoute();
+        _checkInterval(pool);
         (spent, out) = _swap(pool, quote, amountIn, address(this), MAX_IMPACT_BPS_LIMIT);
         IEvmGenWrappedNative(wrappedNative).withdraw(out);
     }
 
     /// @dev One bounded swap in `pool`. Reverts NothingSwapped when the bound or the TWAP guard allows nothing.
+    /// The impact bound is scaled to the pool's fee (audit 4 M2: at 0.05% / 0.01% a 50 bps bound is sandwichable).
     function _swap(address pool, address tokenIn, uint256 amountIn, address recipient, uint256 impactBps)
         internal
         returns (uint256 spent, uint256 out)
     {
         if (dexKind == DEX_TOPAZ_V2) {
+            impactBps = EvmGenPoolSwap.feeScaledImpact(impactBps, IEvmGenV2PoolFactory(dexFactory).getFee(pool, false) * 100);
             (spent, out) = EvmGenPoolSwap.v2Plan(pool, tokenIn, amountIn, impactBps, TWAP_DEVIATION_BPS);
             if (spent == 0) revert NothingSwapped();
             EvmGenPoolSwap.v2Execute(pool, tokenIn, spent, out, recipient);
         } else {
             bool zeroForOne = tokenIn == IEvmGenV3Pool(pool).token0();
+            impactBps = EvmGenPoolSwap.feeScaledImpact(impactBps, IEvmGenV3Pool(pool).fee());
             (bool ok, uint160 limit) = EvmGenPoolSwap.v3Limit(pool, zeroForOne, impactBps, TWAP_DEVIATION_BPS, TWAP_WINDOW);
             if (!ok) revert NothingSwapped();
             activeSwapPool = pool;
@@ -659,6 +692,13 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         if (amount > maxBuyPerTx) revert CapExceeded();
         _checkInterval(campaign);
         _useWeekCap(campaign, amount);
+    }
+
+    /// @dev Consumes `amount` of the token's pulled-and-unattributed balance, bounded also by balance - liabilities.
+    function _usePulled(address token, uint256 amount) internal {
+        uint256 pulled = pulledUnattributed[token];
+        if (amount > pulled || amount > IERC20(token).balanceOf(address(this)) - quoteLiabilities[token]) revert Insufficient();
+        pulledUnattributed[token] = pulled - amount;
     }
 
     function _checkInterval(address campaign) internal {
