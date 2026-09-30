@@ -11,9 +11,8 @@
 -- Proven 2026-10-01: applied twice, ON_ERROR_STOP, to a local PostgreSQL loaded with the staging public schema
 -- and again with the production public schema (both schema-only dumps).
 --
--- Re-run caveat: 20260930_200001 re-adds evm_graduation_keeper_jobs_action_check without 'harvest', and
--- 20260930_300002 re-adds it with 'harvest'. Re-running the bundle after the keeper has written a 'harvest'
--- row would fail at 200001 and roll that one migration back (nothing else changes). Run it once.
+-- Re-run: 20260930_200001 and 20260930_300002 both set evm_graduation_keeper_jobs_action_check to the
+-- same full list (including 'harvest'), so the whole file stays re-runnable after the keeper has run.
 --
 -- Run the whole file once in the Supabase SQL editor (production).
 -- ############################## Part 1: Solana DBC ##############################
@@ -755,7 +754,7 @@ alter table public.evm_graduation_keeper_jobs
   drop constraint if exists evm_graduation_keeper_jobs_action_check;
 alter table public.evm_graduation_keeper_jobs
   add constraint evm_graduation_keeper_jobs_action_check
-    check (action in ('graduate', 'repair', 'native_fallback', 'flush', 'observations'));
+    check (action in ('graduate', 'repair', 'native_fallback', 'flush', 'observations', 'harvest'));
 
 comment on table public.evm_graduation_keeper_jobs is
   'EVM graduation keeper sends (graduate / repairPool / useNativeFallback / flushProtocolGraduationFee / pool increaseObservationCardinalityNext), recorded before broadcast.';
