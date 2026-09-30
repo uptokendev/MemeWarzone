@@ -337,10 +337,22 @@ sent to the campaign after the ledger is updated; balances asserted unchanged.
 (set right before `pool.swap`, deleted right after); refuses to pay the paired token; pays MEME only up to the
 spare, once. Called directly by anyone: `UnauthorizedCallback`.
 
+### Tests
+
+- `test/evmgen-rh-graduation.fork.spec.ts` (4663 fork, 25): every scenario of section 7 in both orderings.
+- `test/evmgen-rh-core-integration.fork.spec.ts` (4663 fork, 2): the real C5 campaign/factory.
+- `test/evmgen-rh-adapters.unit.spec.ts` (13): branches on mocks.
+- Un-skipped against real V3 bytecode on the plain network (`test/helpers/evmgenRhRealV3.ts`):
+  `LaunchFactoryLiquidityKinds` (V3 NFT auto-registration + `setNativeGraduationAdapter` acceptance),
+  `RobinhoodV3GraduationAdapter` (graduate + 80/20 harvest), `RobinhoodStockGraduationCompletion`.
+
 ### Open
 
-1. **Core has no `repairPool`.** Heavy tick seeding (each crossing ~20-30k gas; see the fork 1,500-tick test)
-   pushes a one-shot `graduate()` past the 32M Nitro cap. Without a campaign entry point (Pending only,
+1. **Core has no `repairPool`.** Heavy tick seeding pushes a one-shot `graduate()` past the 32M Nitro cap:
+   measured on the 4663 fork, 401 initialized ticks cost 16.45M gas in one graduation, ~37.5k per crossed
+   tick, so **~816 one-tick bids freeze a coin** (the griefer's mints are cheap at 0.05 gwei). With the
+   harness campaign's `repairPool` the same pool repairs in 6 steps (max 4.06M gas each) and the final
+   graduation costs 1.04M. Without a campaign entry point (Pending only,
    `nonReentrant`, permissionless: approve `budget - repairMemeSold - memeTarget`, call
    `adapter.repairStep(req, limit)`, reset allowance, subtract `repairMemeSold` from the budget, add the native
    proceeds to the pool native at graduate and keep them out of `excessNativeBalance`, approve STOCK proceeds
