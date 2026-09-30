@@ -18,13 +18,15 @@ import path from "node:path";
 const LIMIT = 24576;
 
 const WATCHED: Array<{ name: string; file?: string; headroom: number }> = [
-  // The one with no room at all. Anything added here must be paid for by
-  // removing something else.
-  { name: "LaunchCampaign", headroom: 1 },
-  { name: "BnbQuoteLaunchCampaign", headroom: 1840 },
-  { name: "RobinhoodStockLaunchCampaign", headroom: 1778 },
-  { name: "LaunchFactory", headroom: 3696 },
-  { name: "BnbBasicLaunchFactory", headroom: 2055 },
+  // EVM launch generation (E7): launch protection and the legacy fee path are gone and LaunchToken's
+  // creation code moved to LaunchTokenDeployer, which paid for C2-C5. BnbBasicLaunchFactory is now the
+  // tightest one.
+  { name: "LaunchCampaign", headroom: 5894 },
+  { name: "BnbQuoteLaunchCampaign", headroom: 5533 },
+  { name: "RobinhoodStockLaunchCampaign", headroom: 5805 },
+  { name: "LaunchFactory", headroom: 2581 },
+  { name: "BnbBasicLaunchFactory", headroom: 1158 },
+  { name: "LaunchTokenDeployer", file: "token/LaunchTokenDeployer.sol", headroom: 20260 },
 ];
 
 function deployedSize(name: string, file?: string): number {

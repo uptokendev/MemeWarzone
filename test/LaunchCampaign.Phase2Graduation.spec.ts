@@ -49,6 +49,10 @@ const directInitParams = async (values: {
   basePrice: values.basePrice ?? ethers.parseEther("0.001"),
   priceSlope: values.priceSlope ?? 1n,
   graduationTarget: values.graduationTarget ?? ethers.parseEther("10"),
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   graduationOracle: values.graduationOracle ?? await (await deployTestOracle()).graduationOracle.getAddress(),
   liquidityBps: 8000,
   protocolFeeBps: 200,
@@ -101,6 +105,10 @@ async function deployEarlyGraduationCampaign() {
     basePrice: ethers.parseEther("0.025"),
     priceSlope: 10n ** 9n,
     graduationTarget: ethers.parseEther("10"),
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     liquidityBps: 8000,
   });
 
@@ -114,6 +122,10 @@ async function deployEarlyGraduationCampaign() {
     basePrice: 0n,
     priceSlope: 0n,
     graduationTarget: 0n,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
     lpReceiver: ethers.ZeroAddress,
   } as any);
 

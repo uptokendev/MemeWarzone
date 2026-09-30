@@ -32,6 +32,10 @@ async function deployFixture() {
     website: "",
     extraLink: "",
     graduationTarget: 0n,
+    firstBuyTokens: 0n,
+    firstBuyMaxCost: 0n,
+    feeChoice: 1,
+    feeCreatorPct: 0,
   };
 
   return { admin, routeAuthority, creator, trader, factory, treasury, chainId, request };

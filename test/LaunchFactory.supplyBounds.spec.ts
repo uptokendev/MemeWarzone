@@ -14,6 +14,10 @@ const baseReq = (overrides: Record<string, unknown> = {}) => ({
   basePrice: 0n,
   priceSlope: 0n,
   graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
@@ -31,6 +35,10 @@ describe("LaunchFactory supply bounds", function () {
         basePrice: 1n,
         priceSlope: 1n,
         graduationTarget: 1n,
+        firstBuyTokens: 0n,
+        firstBuyMaxCost: 0n,
+        feeChoice: 1,
+        feeCreatorPct: 0,
         liquidityBps: 8000n,
       })
     ).to.be.revertedWithCustomError(factory, "ParamTooHigh");
@@ -50,6 +58,10 @@ describe("LaunchFactory supply bounds", function () {
         basePrice: 1n,
         priceSlope: 1n,
         graduationTarget: 1n,
+        firstBuyTokens: 0n,
+        firstBuyMaxCost: 0n,
+        feeChoice: 1,
+        feeCreatorPct: 0,
         liquidityBps: 8000n,
       })
     ).to.emit(factory, "ConfigUpdated");

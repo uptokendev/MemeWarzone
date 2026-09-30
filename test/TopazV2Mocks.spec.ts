@@ -15,6 +15,10 @@ const request = (overrides: Record<string, unknown> = {}) => ({
   basePrice: 0n,
   priceSlope: 0n,
   graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
@@ -65,6 +69,10 @@ describe("Topaz v2 mocks", function () {
       basePrice: ethers.parseEther("0.005"),
       priceSlope: 10n ** 9n,
       graduationTarget: ethers.parseEther("0.005"),
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
     await factory.connect(owner).enableLive();

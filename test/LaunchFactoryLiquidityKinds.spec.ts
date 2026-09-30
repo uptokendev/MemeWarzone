@@ -137,6 +137,10 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
       basePrice: 10n ** 12n,
       priceSlope: 10n ** 9n,
       graduationTarget: 1n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
       liquidityBps: 8000,
     });
     await factory.enableLive();
@@ -149,6 +153,10 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
       website: "",
       extraLink: "",
       graduationTarget: 1n,
+      firstBuyTokens: 0n,
+      firstBuyMaxCost: 0n,
+      feeChoice: 1,
+      feeCreatorPct: 0,
     });
 
     const info = await factory.getCampaign(0n);

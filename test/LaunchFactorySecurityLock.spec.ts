@@ -10,6 +10,10 @@ type CampaignRequest = {
   website: string;
   extraLink: string;
   graduationTarget: bigint;
+  firstBuyTokens?: bigint;
+  firstBuyMaxCost?: bigint;
+  feeChoice?: number;
+  feeCreatorPct?: number;
 };
 
 const baseReq = (overrides: Partial<CampaignRequest> = {}): CampaignRequest => ({
@@ -20,6 +24,10 @@ const baseReq = (overrides: Partial<CampaignRequest> = {}): CampaignRequest => (
   website: "",
   extraLink: "",
   graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
   ...overrides,
 });
 
@@ -32,7 +40,7 @@ async function signCreateRouteAuthorization(factory: any, routeAuthority: any, c
 
   const requestHash = ethers.keccak256(
     abi.encode(
-      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"],
+      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint256", "uint256", "uint8", "uint8"],
       [
         ethers.keccak256(ethers.toUtf8Bytes(req.name)),
         ethers.keccak256(ethers.toUtf8Bytes(req.symbol)),
@@ -40,7 +48,7 @@ async function signCreateRouteAuthorization(factory: any, routeAuthority: any, c
         ethers.keccak256(ethers.toUtf8Bytes(req.xAccount)),
         ethers.keccak256(ethers.toUtf8Bytes(req.website)),
         ethers.keccak256(ethers.toUtf8Bytes(req.extraLink)),
-        req.graduationTarget,
+        req.graduationTarget, req.firstBuyTokens ?? 0n, req.firstBuyMaxCost ?? 0n, req.feeChoice ?? 1, req.feeCreatorPct ?? 0,
       ]
     )
   );
