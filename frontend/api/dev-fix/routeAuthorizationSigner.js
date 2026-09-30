@@ -21,6 +21,22 @@ export const ROBINHOOD_MAINNET_CHAIN_ID = 4663n;
 export const LOCAL_HARDHAT_CHAIN_ID = 31337n;
 export const BNB_BASIC_FACTORY_GENERATION = 5;
 export const BNB_BASIC_CAMPAIGN_GENERATION = 4;
+/**
+ * EVM launch generation (docs/evm-launch, E1-E15): LaunchFactory FACTORY_GENERATION 6 /
+ * CAMPAIGN_GENERATION 5 on BNB (56) and Robinhood (4663). BnbBasicLaunchFactory's quote path
+ * reports the same pair through BASIC_FACTORY_GENERATION / BASIC_QUOTE_CAMPAIGN_GENERATION.
+ * From factory generation 6 the signed CampaignRequest hash has 11 fields (C3 first buy, C6 fee
+ * choice); every older generation keeps the 7-field hash. The live 4/3 (and older) factories are
+ * untouched (E14): the layout is chosen by the factory's own generation, never globally.
+ */
+export const EVM_GEN6_FACTORY_GENERATION = 6;
+export const EVM_GEN5_CAMPAIGN_GENERATION = 5;
+export const REQUEST_HASH_GEN6_MIN_FACTORY_GENERATION = EVM_GEN6_FACTORY_GENERATION;
+/** BNB BASIC quote factory generations, per factory kind: [factory, campaign]. */
+const BNB_BASIC_GENERATION_PAIRS = [
+  [BNB_BASIC_FACTORY_GENERATION, BNB_BASIC_CAMPAIGN_GENERATION],
+  [EVM_GEN6_FACTORY_GENERATION, EVM_GEN5_CAMPAIGN_GENERATION],
+];
 const ROBINHOOD_CHAIN_IDS = new Set([ROBINHOOD_MAINNET_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID]);
 
 export const CREATE_AUTH_TYPES = ["string", "uint256", "address", "address", "bytes32", "uint8", "uint8", "uint64"];
@@ -60,6 +76,21 @@ export const SCHEDULED_CREATE_AUTH_TYPES = [
 ];
 export const TRADE_AUTH_TYPES = ["string", "uint256", "address", "address", "uint8", "uint8", "uint256", "uint256", "uint64"];
 export const REQUEST_HASH_TYPES = ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"];
+/** LaunchFactory._hashCampaignRequest from generation 6: + firstBuyTokens, firstBuyMaxCost, feeChoice, feeCreatorPct. */
+export const REQUEST_HASH_TYPES_GEN6 = [
+  "bytes32",
+  "bytes32",
+  "bytes32",
+  "bytes32",
+  "bytes32",
+  "bytes32",
+  "uint256",
+  "uint256",
+  "uint256",
+  "uint8",
+  "uint8",
+];
+const GEN6_REQUEST_FIELDS = ["firstBuyTokens", "firstBuyMaxCost", "feeChoice", "feeCreatorPct"];
 
 const coder = ethers.AbiCoder.defaultAbiCoder();
 
@@ -122,11 +153,11 @@ function assertCreationFactoryAllowed(chainId, factory) {
  * new mainnet factories with CREATE_FACTORY_GENERATION_MISMATCH.
  */
 const ALLOWED_GENERATION_PAIRS = new Map([
-  [56n, [[3, 2], [4, 2], [4, 3]]],
-  [97n, [[3, 2], [4, 2], [4, 3]]],
-  [ROBINHOOD_MAINNET_CHAIN_ID, [[4, 3]]],
-  [ROBINHOOD_TESTNET_CHAIN_ID, [[4, 3]]],
-  [LOCAL_HARDHAT_CHAIN_ID, [[4, 3]]],
+  [56n, [[3, 2], [4, 2], [4, 3], [6, 5]]],
+  [97n, [[3, 2], [4, 2], [4, 3], [6, 5]]],
+  [ROBINHOOD_MAINNET_CHAIN_ID, [[4, 3], [6, 5]]],
+  [ROBINHOOD_TESTNET_CHAIN_ID, [[4, 3], [6, 5]]],
+  [LOCAL_HARDHAT_CHAIN_ID, [[4, 3], [6, 5]]],
 ]);
 
 export function supportedGenerationPairs(chainId) {
@@ -143,7 +174,7 @@ export function isSupportedGenerationPair(chainId, factoryGeneration, campaignGe
   }
 }
 
-/** Campaign generation of the newest supported pair on this chain (3 everywhere since 2026-09-24). */
+/** Campaign generation of the newest supported pair on this chain (5 everywhere since generation 6/5, 2026-09-30). */
 export function expectedCampaignGeneration(chainId) {
   const pairs = supportedGenerationPairs(chainId);
   return pairs.length ? pairs[pairs.length - 1][1] : 3;
@@ -168,8 +199,9 @@ export function assertSupportedGenerations(chainId, factoryGeneration, campaignG
   const campaignGen = positiveGeneration(campaignGeneration, "campaignGeneration");
   if (!isSupportedGenerationPair(chainId, factoryGen, campaignGen)) {
     const id = toBigInt(chainId, "chainId");
-    if (ROBINHOOD_CHAIN_IDS.has(id) && factoryGen !== 4) {
-      throw new Error(`Robinhood scheduled authorization requires factory generation 4; got ${factoryGen}`);
+    if (ROBINHOOD_CHAIN_IDS.has(id) && !isSupportedFactoryGeneration(id, factoryGen)) {
+      const allowed = [...new Set(supportedGenerationPairs(id).map(([f]) => f))].join(" or ");
+      throw new Error(`Robinhood scheduled authorization requires factory generation ${allowed}; got ${factoryGen}`);
     }
     throw new Error(
       `Unsupported factory/campaign generation ${factoryGen}/${campaignGen}; chain ${chainId} requires ${generationRule(chainId)}`,
@@ -182,16 +214,77 @@ function assertScheduledGeneration(chainId, factoryGeneration, campaignGeneratio
   return assertSupportedGenerations(chainId, factoryGeneration, campaignGeneration);
 }
 
-export function hashCampaignRequest(request) {
+/** True when a factory of this generation signs the 11-field (generation 6) CampaignRequest hash. */
+export function usesGen6RequestHash(factoryGeneration) {
+  const n = Number(factoryGeneration);
+  return Number.isInteger(n) && n >= REQUEST_HASH_GEN6_MIN_FACTORY_GENERATION;
+}
+
+function hasNonZeroGen6Fields(request) {
+  return GEN6_REQUEST_FIELDS.some((field) => {
+    const value = request?.[field];
+    if (value === undefined || value === null || value === "") return false;
+    try {
+      return BigInt(value) !== 0n;
+    } catch {
+      return true;
+    }
+  });
+}
+
+/**
+ * Which request layout to hash. The factory's generation decides when the caller supplies it (every
+ * API path does: it is read from the factory before signing). Without it, the request's own shape
+ * decides: a generation-6 request always carries feeChoice (1..4 is mandatory there), a legacy one
+ * never does.
+ */
+export function requestHashLayout(request, factoryGeneration) {
+  if (factoryGeneration !== undefined && factoryGeneration !== null) {
+    const gen6 = usesGen6RequestHash(factoryGeneration);
+    if (!gen6 && hasNonZeroGen6Fields(request)) {
+      throw new Error(`Factory generation ${factoryGeneration} does not accept first-buy or fee-choice fields`);
+    }
+    return gen6 ? "gen6" : "legacy";
+  }
+  const hasChoice = request?.feeChoice !== undefined && request?.feeChoice !== null && request?.feeChoice !== "";
+  if (hasChoice) return "gen6";
+  if (hasNonZeroGen6Fields(request)) {
+    throw new Error("A request with a first buy must also carry feeChoice (generation 6), or pass factoryGeneration");
+  }
+  return "legacy";
+}
+
+function uint8Field(value, label) {
+  const n = Number(value ?? 0);
+  if (!Number.isInteger(n) || n < 0 || n > 255) throw new Error(`${label} must be a uint8 value`);
+  return n;
+}
+
+/**
+ * LaunchFactory._hashCampaignRequest for the factory's generation.
+ *
+ * Layout per requestHashLayout. A legacy factory with non-zero generation-6 fields is refused: those
+ * fields would silently drop out of the signature and the create would revert on chain.
+ */
+export function hashCampaignRequest(request, { factoryGeneration } = {}) {
+  const gen6 = requestHashLayout(request, factoryGeneration) === "gen6";
+  const base = [
+    textHash(request?.name),
+    textHash(request?.symbol),
+    textHash(request?.logoURI),
+    textHash(request?.xAccount),
+    textHash(request?.website),
+    textHash(request?.extraLink),
+    toBigInt(request?.graduationTarget ?? 0, "graduationTarget"),
+  ];
+  if (!gen6) return ethers.keccak256(coder.encode(REQUEST_HASH_TYPES, base));
   return ethers.keccak256(
-    coder.encode(REQUEST_HASH_TYPES, [
-      textHash(request?.name),
-      textHash(request?.symbol),
-      textHash(request?.logoURI),
-      textHash(request?.xAccount),
-      textHash(request?.website),
-      textHash(request?.extraLink),
-      toBigInt(request?.graduationTarget ?? 0, "graduationTarget"),
+    coder.encode(REQUEST_HASH_TYPES_GEN6, [
+      ...base,
+      toBigInt(request?.firstBuyTokens ?? 0, "firstBuyTokens"),
+      toBigInt(request?.firstBuyMaxCost ?? 0, "firstBuyMaxCost"),
+      uint8Field(request?.feeChoice, "feeChoice"),
+      uint8Field(request?.feeCreatorPct, "feeCreatorPct"),
     ]),
   );
 }
@@ -202,7 +295,8 @@ export function buildCreateAuthorizationDigest({
   factory = factoryAddress,
   creator,
   request,
-  requestHash = hashCampaignRequest(request),
+  factoryGeneration,
+  requestHash = hashCampaignRequest(request, { factoryGeneration }),
   tradeRouteProfileId,
   tradeRouteProfile = tradeRouteProfileId,
   finalizeRouteProfileId,
@@ -229,13 +323,23 @@ export async function signCreateAuthorization(options) {
   return options.signer.signMessage(ethers.getBytes(digest));
 }
 
+export function isSupportedBnbBasicGenerationPair(factoryGeneration, campaignGeneration) {
+  return BNB_BASIC_GENERATION_PAIRS.some(([f, c]) => f === Number(factoryGeneration) && c === Number(campaignGeneration));
+}
+
+export function bnbBasicGenerationRule() {
+  return BNB_BASIC_GENERATION_PAIRS.map(([f, c]) => `${f}/${c}`).join("-or-");
+}
+
 export function buildBnbBasicQuoteAuthorizationDigest({
   chainId,
   factoryAddress,
   factory = factoryAddress,
   creator,
   request,
-  requestHash = hashCampaignRequest(request),
+  factoryGeneration = BNB_BASIC_FACTORY_GENERATION,
+  campaignGeneration = BNB_BASIC_CAMPAIGN_GENERATION,
+  requestHash = hashCampaignRequest(request, { factoryGeneration }),
   quoteToken,
   quoteCatalogBindingHash,
   adapter,
@@ -250,6 +354,11 @@ export function buildBnbBasicQuoteAuthorizationDigest({
   if (!quoteCatalogBindingHash || quoteCatalogBindingHash === ethers.ZeroHash) {
     throw new Error("quoteCatalogBindingHash is required");
   }
+  if (!isSupportedBnbBasicGenerationPair(factoryGeneration, campaignGeneration)) {
+    throw new Error(
+      `Unsupported BNB BASIC quote generation ${factoryGeneration}/${campaignGeneration}; requires ${bnbBasicGenerationRule()}`,
+    );
+  }
   return ethers.keccak256(
     coder.encode(BNB_BASIC_QUOTE_AUTH_TYPES, [
       "MWZ_CREATE_BNB_BASIC_QUOTE_AUTH_V2",
@@ -261,8 +370,8 @@ export function buildBnbBasicQuoteAuthorizationDigest({
       quoteCatalogBindingHash,
       ethers.getAddress(adapter),
       ethers.getAddress(campaignImplementation),
-      BNB_BASIC_FACTORY_GENERATION,
-      BNB_BASIC_CAMPAIGN_GENERATION,
+      Number(factoryGeneration),
+      Number(campaignGeneration),
       Number(tradeRouteProfile),
       Number(finalizeRouteProfile),
       toBigInt(deadline, "deadline"),
@@ -281,7 +390,7 @@ export function buildScheduledCreateAuthorizationDigest({
   factory = factoryAddress,
   creator,
   request,
-  requestHash = hashCampaignRequest(request?.campaign || request),
+  requestHash,
   launchAt,
   draftReferenceHash,
   normalizedTickerHash,
@@ -302,13 +411,14 @@ export function buildScheduledCreateAuthorizationDigest({
     factoryGeneration,
     campaignGeneration,
   );
+  const scheduledRequestHash = requestHash ?? hashCampaignRequest(request?.campaign || request, { factoryGeneration: factoryGen });
   return ethers.keccak256(
     coder.encode(SCHEDULED_CREATE_AUTH_TYPES, [
       "MWZ_CREATE_SCHEDULED_V2_AUTH",
       normalizedChainId,
       normalizedFactory,
       ethers.getAddress(creator),
-      requestHash,
+      scheduledRequestHash,
       toBigInt(launchAt, "launchAt"),
       draftReferenceHash,
       normalizedTickerHash,

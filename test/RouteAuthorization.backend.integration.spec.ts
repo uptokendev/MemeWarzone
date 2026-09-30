@@ -21,7 +21,7 @@ async function currentDeadline(offset = 3600) {
 describe("backend route-authorization integration", function () {
   // The subject of this test IS the backend helper's create hash against the deployed factory: it stays
   // pending until frontend/api/dev-fix/routeAuthorizationSigner.js signs the generation-6 request.
-  it.skip(`submits signatures from the dependency-free backend helper to the deployed factory and campaign -- ${BACKEND_GAP}`, async () => {
+  it(`submits signatures from the dependency-free backend helper to the deployed factory and campaign (gap closed: ${BACKEND_GAP.slice(0, 11)})`, async () => {
     const [admin, routeAuthority, creator, buyer] = await ethers.getSigners();
     const { signCreateAuthorization, signTradeAuthorization } = await signerHelpers();
     const { factory } = await deployRoutedLaunchFactory(admin);

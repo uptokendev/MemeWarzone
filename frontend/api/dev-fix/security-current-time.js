@@ -20,6 +20,9 @@ const CAMPAIGN_PROTECTION_ABI = [
   "function riskRegistry() view returns (address)",
   "function launchAt() view returns (uint64)",
 ];
+// Generation 5 campaigns (docs/evm-launch C4) have no creator buy lock: a creator buy is escrowed
+// (20% at 30 days, then 20% every 7 days). currentTradeFeeBps (C2) exists only on generation 5.
+const GEN5_CAMPAIGN_PROBE_ABI = ["function currentTradeFeeBps() view returns (uint256)"];
 
 const RISK_REGISTRY_ABI = [
   "function getWalletRisk(address wallet) view returns (uint8 riskLevel,bool restricted,bytes32 clusterId)",
@@ -155,19 +158,41 @@ export function requestedCreatorBuyWei({ action, amount, limit }) {
   return 0n;
 }
 
+/**
+ * The creator buy lock, or on a generation 5 campaign the escrow that replaced it (lock 0, the cap
+ * stays). Anything else that lacks creatorBuyLockUntil rethrows the original error, so the older
+ * legacy-interface handling below is unchanged.
+ */
+export async function readCreatorBuyLock(campaign, campaignAddress, provider) {
+  try {
+    return { lockUntil: await campaign.creatorBuyLockUntil(), escrow: false };
+  } catch (error) {
+    // An unknown selector on the generation 5 implementation reverts with no data.
+    const emptyRevert = error?.code === "CALL_EXCEPTION" && (!error?.data || error.data === "0x");
+    if (!emptyRevert && !isLegacyProtectionInterfaceUnavailable(error)) throw error;
+    try {
+      await new ethers.Contract(campaignAddress, GEN5_CAMPAIGN_PROBE_ABI, provider).currentTradeFeeBps();
+    } catch {
+      throw error;
+    }
+    return { lockUntil: 0n, escrow: true };
+  }
+}
+
 async function readOnchainCreatorProtection({ chainId, campaignAddress, walletAddress }) {
   if (!getRpcUrls(chainId).length) throw new Error("RPC URL is not configured for creator-cluster protection.");
 
   const provider = await getServerReadProvider(chainId);
   const campaign = new ethers.Contract(campaignAddress, CAMPAIGN_PROTECTION_ABI, provider);
-  const [creatorRaw, lockUntilRaw, capWeiRaw, boughtWeiRaw, riskRegistryRaw, launchAtRaw] = await Promise.all([
+  const [creatorRaw, lockRead, capWeiRaw, boughtWeiRaw, riskRegistryRaw, launchAtRaw] = await Promise.all([
     campaign.creator(),
-    campaign.creatorBuyLockUntil(),
+    readCreatorBuyLock(campaign, campaignAddress, provider),
     campaign.creatorBuyCapWei(),
     campaign.creatorBoughtWei(),
     campaign.riskRegistry(),
     campaign.launchAt(),
   ]);
+  const lockUntilRaw = lockRead.lockUntil;
 
   const creator = normalizeAddress(creatorRaw);
   if (!creator) throw new Error("Campaign returned an invalid creator address.");
@@ -188,6 +213,7 @@ async function readOnchainCreatorProtection({ chainId, campaignAddress, walletAd
 
   return {
     creator,
+    creatorBuyEscrow: lockRead.escrow,
     creatorBuyLockUntil: Number(lockUntilRaw),
     creatorBuyCapWei: BigInt(capWeiRaw).toString(),
     creatorBoughtWei: BigInt(boughtWeiRaw).toString(),
@@ -355,6 +381,8 @@ export async function evaluateTradePreflight({ walletAddress, campaignAddress, c
       tierNumber,
       unlockAt,
       creatorBuyLockUntil: onChain.creatorBuyLockUntil,
+      // Generation 5: the creator's own buys land in the campaign's escrow, not the wallet (C4).
+      creatorBuyEscrow: Boolean(onChain.creatorBuyEscrow),
       creatorBuyCapWei: onChain.creatorBuyCapWei,
       creatorBoughtWei: onChain.creatorBoughtWei,
       launchAt: onChain.launchAt,

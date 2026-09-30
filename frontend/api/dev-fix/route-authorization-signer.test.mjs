@@ -133,9 +133,9 @@ test("accepts BNB factory generation 4 without changing campaign generation", ()
   assert.match(digest, /^0x[0-9a-f]{64}$/i);
 });
 
-test("Robinhood testnet refuses factory generation 3 and requires 4/3", () => {
-  assert.equal(expectedCampaignGeneration(46630), 3);
-  assert.equal(generationRule(46630), "4/3");
+test("Robinhood testnet refuses factory generation 3 and requires 4/3 (or the new 6/5)", () => {
+  assert.equal(expectedCampaignGeneration(46630), 5);
+  assert.equal(generationRule(46630), "4/3-or-6/5");
   assert.throws(
     () => buildScheduledCreateAuthorizationDigest(scheduledInput({
       chainId: 46630,
@@ -153,7 +153,7 @@ test("Robinhood testnet refuses factory generation 3 and requires 4/3", () => {
       factoryGeneration: 4,
       campaignGeneration: 2,
     })),
-    /chain 46630 requires 4\/3/,
+    /chain 46630 requires 4\/3-or-6\/5/,
   );
 
   const input = scheduledInput({
@@ -206,17 +206,20 @@ test("Robinhood testnet refuses factory generation 3 and requires 4/3", () => {
   assert.equal(digest, expected);
 });
 
-test("BNB and Robinhood production sign for the deployed 4/3 generation; legacy BNB pairs stay; other pairs are refused", () => {
+test("BNB and Robinhood production sign for the deployed 4/3 generation and the new 6/5; legacy BNB pairs stay; other pairs are refused", () => {
   // Read from chain 2026-09-24: 0x632061cA... (56) and 0x35E93D0b... (4663) report 4/3; the old BNB factory 0xc378221E... reports 3/2.
-  assert.equal(expectedCampaignGeneration(56), 3);
-  assert.equal(expectedCampaignGeneration(97), 3);
-  assert.equal(expectedCampaignGeneration(4663), 3);
-  assert.equal(generationRule(56), "3/2-or-4/2-or-4/3");
-  assert.equal(generationRule(97), "3/2-or-4/2-or-4/3");
-  assert.equal(generationRule(4663), "4/3");
+  // Generation 6/5 (docs/evm-launch) is added beside them; the live factories keep working (E14).
+  assert.equal(expectedCampaignGeneration(56), 5);
+  assert.equal(expectedCampaignGeneration(97), 5);
+  assert.equal(expectedCampaignGeneration(4663), 5);
+  assert.equal(generationRule(56), "3/2-or-4/2-or-4/3-or-6/5");
+  assert.equal(generationRule(97), "3/2-or-4/2-or-4/3-or-6/5");
+  assert.equal(generationRule(4663), "4/3-or-6/5");
   for (const [chainId, factoryGeneration, campaignGeneration, ok] of [
     [56, 4, 3, true], [56, 3, 2, true], [56, 4, 2, true], [56, 3, 3, false], [56, 5, 4, false],
     [97, 4, 3, true], [4663, 4, 3, true], [4663, 4, 2, false], [4663, 3, 2, false], [1, 4, 3, false],
+    [56, 6, 5, true], [97, 6, 5, true], [4663, 6, 5, true], [46630, 6, 5, true], [31337, 6, 5, true],
+    [56, 6, 4, false], [4663, 6, 3, false], [4663, 5, 5, false],
   ]) {
     assert.equal(isSupportedGenerationPair(chainId, factoryGeneration, campaignGeneration), ok, `${chainId} ${factoryGeneration}/${campaignGeneration}`);
   }
@@ -230,11 +233,11 @@ test("BNB and Robinhood production sign for the deployed 4/3 generation; legacy 
   );
   assert.throws(
     () => buildScheduledCreateAuthorizationDigest(scheduledInput({ chainId: 56, factoryGeneration: 3, campaignGeneration: 3 })),
-    /chain 56 requires 3\/2-or-4\/2-or-4\/3/,
+    /chain 56 requires 3\/2-or-4\/2-or-4\/3-or-6\/5/,
   );
   assert.throws(
     () => buildScheduledCreateAuthorizationDigest(scheduledInput({ chainId: 4663, factoryAddress: ROBINHOOD_FACTORY, factoryGeneration: 4, campaignGeneration: 2 })),
-    /chain 4663 requires 4\/3/,
+    /chain 4663 requires 4\/3-or-6\/5/,
   );
   assert.throws(
     () => buildScheduledCreateAuthorizationDigest(scheduledInput({ chainId: 4663, factoryAddress: ROBINHOOD_FACTORY, factoryGeneration: 3, campaignGeneration: 3 })),
