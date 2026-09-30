@@ -109,6 +109,23 @@ const config: HardhatUserConfig = {
       },
     },
 
+    // Fork rehearsal of the generation 6 mainnet sequence (scripts/rehearse-evm-gen6-mainnet-fork.ts). No key:
+    // the signer is whatever the local anvil fork has impersonated (the deployer, then the Safe). The deploy
+    // scripts accept these as aliases of bscMainnet / robinhoodMainnet only after anvil_nodeInfo proves a
+    // local fork (scripts/lib/forkRehearsal.ts).
+    bscForkRehearsal: {
+      url: process.env.BSC_FORK_REHEARSAL_URL || "http://127.0.0.1:8645",
+      chainId: 56,
+      accounts: "remote",
+      timeout: 600_000,
+    },
+    robinhoodForkRehearsal: {
+      url: process.env.ROBINHOOD_FORK_REHEARSAL_URL || "http://127.0.0.1:8646",
+      chainId: 4663,
+      accounts: "remote",
+      timeout: 600_000,
+    },
+
     localhost: {
       url: "http://127.0.0.1:8545",
       chainId: 31337,

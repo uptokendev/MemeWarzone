@@ -121,3 +121,4 @@ owner-b.json
 env.zip
 **/env.zip
 *.env.zip
+deployments/fork-rehearsal/
