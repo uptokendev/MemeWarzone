@@ -2,8 +2,14 @@ import { expect } from "chai";
 import { ethers, network } from "hardhat";
 
 import { deployConfiguredTreasuryRouterV3 } from "./helpers/deployRouting";
-import { assertTopazRoutersFit } from "../scripts/deploy-bnb-quote-generation";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { assertRouterCanServeStrictRouting, assertTopazRoutersFit, main as deployQuoteGeneration } from "../scripts/deploy-bnb-quote-generation";
 import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
+import { wireGenerationCreatePath } from "../scripts/lib/evmGenerationCreateWiring";
+import { E, req, signCreate } from "./fixtures/evmgenCore";
 
 /**
  * Rehearsal for scripts/deploy-bnb-quote-generation.ts.
@@ -431,5 +437,213 @@ describe("BNB quote generation deployment", function () {
         await locker.getAddress(),
       ),
     ).to.be.revertedWithCustomError(BasicFactory, "BnbQuoteCampaignImplementationUnavailable");
+  });
+
+  /**
+   * The generation's real fee path: TreasuryRouterV4 whose creatorRewardsVault() is a
+   * CreatorRewardsVaultV2 paying that router, on the Topaz mocks. This is what the script now demands.
+   */
+  async function deployGenerationRouting(admin: string, topazFactory: string, wbnb: string) {
+    const Receiver = await ethers.getContractFactory("TreasuryRouterV3ReceiverMock");
+    const weekly = await Receiver.deploy();
+    const monthly = await Receiver.deploy();
+    const recruiter = await Receiver.deploy();
+    const router = await (await ethers.getContractFactory("TreasuryRouterV4")).deploy(admin, await weekly.getAddress(), await monthly.getAddress(), 3600);
+    const community = await (await ethers.getContractFactory("CommunityRewardsVaultV3Mock")).deploy();
+    const protocolVault = await (await ethers.getContractFactory("ProtocolRevenueVault")).deploy(admin);
+    const creatorVault = await (await ethers.getContractFactory("CreatorRewardsVaultV2")).deploy(
+      admin, await router.getAddress(), wbnb, 1, topazFactory, 24 * 60 * 60,
+    );
+    await (await router.setRecruiterRewardsVault(await recruiter.getAddress())).wait();
+    await (await router.setCommunityRewardsVault(await community.getAddress())).wait();
+    await (await router.setProtocolRevenueVault(await protocolVault.getAddress())).wait();
+    await (await router.setCreatorRewardsVault(await creatorVault.getAddress())).wait();
+    return { router, creatorVault, weekly, monthly };
+  }
+
+  describe("the script itself, run on the throwaway chain", function () {
+    const ENV_KEYS = [
+      "CONFIRM_BNB_QUOTE_GENERATION", "BNB_TOPAZ_ROUTER", "BNB_TOPAZ_QUOTE_ROUTER", "BNB_GRADUATION_ORACLE",
+      "BNB_ROUTE_AUTHORITY", "BNB_TREASURY_ROUTER", "BNB_NATIVE_USD_FEED", "BNB_NATIVE_GRADUATION_ADAPTER",
+      "BNB_OWNER_SAFE", "BNB_CREATOR_REGISTRY", "BNB_RISK_REGISTRY", "QUOTE_GEN_OUT",
+    ];
+    let saved: Record<string, string | undefined>;
+    let outDir: string;
+    beforeEach(function () {
+      saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+      for (const k of ENV_KEYS) delete process.env[k];
+      outDir = fs.mkdtempSync(path.join(os.tmpdir(), "mwz-quote-gen-"));
+    });
+    afterEach(function () {
+      for (const k of ENV_KEYS) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+      fs.rmSync(outDir, { recursive: true, force: true });
+    });
+
+    async function scriptInputs() {
+      const fx = await deployPrerequisites();
+      const topazFactory = await fx.topazRouter.poolFactory();
+      const routing = await deployGenerationRouting(await fx.owner.getAddress(), topazFactory, await fx.wbnb.getAddress());
+      const nativeAdapter = await (await ethers.getContractFactory("MockGraduationAdapterEvmGen")).deploy(topazFactory, await fx.wbnb.getAddress());
+      Object.assign(process.env, {
+        CONFIRM_BNB_QUOTE_GENERATION: "I_UNDERSTAND_REHEARSAL",
+        BNB_TOPAZ_ROUTER: await fx.topazRouter.getAddress(),
+        BNB_TOPAZ_QUOTE_ROUTER: await fx.topazRouter.getAddress(),
+        BNB_GRADUATION_ORACLE: await fx.graduationOracle.getAddress(),
+        BNB_ROUTE_AUTHORITY: await fx.routeAuthority.getAddress(),
+        BNB_TREASURY_ROUTER: await routing.router.getAddress(),
+        BNB_NATIVE_USD_FEED: await fx.nativeFeed.getAddress(),
+        BNB_NATIVE_GRADUATION_ADAPTER: await nativeAdapter.getAddress(),
+        QUOTE_GEN_OUT: path.join(outDir, "rehearsal.json"),
+      });
+      return { fx, routing, nativeAdapter };
+    }
+
+    it("leaves a closed factory that can create the moment it is opened", async function () {
+      this.timeout(120_000);
+      const { fx, routing, nativeAdapter } = await scriptInputs();
+      const artifact: any = await deployQuoteGeneration();
+
+      expect(artifact.createPathWired).to.equal(true);
+      expect(artifact.launchRecorderWired).to.equal(true);
+      expect(artifact.lpLockerAuthorized).to.equal(true);
+      expect(artifact.pendingOwnerActions).to.deep.equal([]);
+      expect(JSON.parse(fs.readFileSync(process.env.QUOTE_GEN_OUT!, "utf8")).contracts.LaunchTokenDeployer)
+        .to.equal(artifact.contracts.LaunchTokenDeployer);
+
+      const factory: any = await ethers.getContractAt("BnbBasicLaunchFactory", artifact.contracts.BnbBasicLaunchFactory);
+      expect(await factory.nativeGraduationAdapter()).to.equal(await nativeAdapter.getAddress());
+      expect(await factory.launchTokenDeployer()).to.equal(artifact.contracts.LaunchTokenDeployer);
+      expect(await routing.creatorVault.factory()).to.equal(await factory.getAddress());
+      expect(await factory.createPaused()).to.equal(true);
+      expect(await factory.live()).to.equal(false);
+
+      // Closed as promised...
+      const [, , , creator] = await ethers.getSigners();
+      const request = req({ name: "Opened", symbol: "OPEN", logoURI: "ipfs://open" });
+      const auth = await signCreate(fx.routeAuthority, await factory.getAddress(), creator.address, request);
+      await expect(factory.connect(creator).createCampaignAuthorized(request, auth)).to.be.reverted;
+
+      // ...and opening is the only step left: no further wiring is needed for a create to land.
+      await (await factory.enableLive()).wait();
+      await (await factory.setCreatePaused(false)).wait();
+      await expect(factory.connect(creator).createCampaignAuthorized(request, auth)).to.emit(routing.creatorVault, "CampaignChoiceSet");
+      expect(await factory.campaignsCount()).to.equal(1n);
+    });
+
+    it("refuses to start without the native graduation adapter, before deploying anything", async function () {
+      await scriptInputs();
+      delete process.env.BNB_NATIVE_GRADUATION_ADAPTER;
+      const [deployer] = await ethers.getSigners();
+      const nonceBefore = await ethers.provider.getTransactionCount(deployer.address);
+      await expect(deployQuoteGeneration()).to.be.rejectedWith(/BNB_NATIVE_GRADUATION_ADAPTER is required[\s\S]*NativeGraduationAdapterUnavailable/);
+      expect(await ethers.provider.getTransactionCount(deployer.address)).to.equal(nonceBefore);
+    });
+  });
+
+  it("returns the create wiring as owner actions when the factory belongs to the Safe, and they are sufficient", async function () {
+    const fx = await deployPrerequisites();
+    const [, , , creator] = await ethers.getSigners();
+    const topazFactory = await fx.topazRouter.poolFactory();
+    const routing = await deployGenerationRouting(await fx.owner.getAddress(), topazFactory, await fx.wbnb.getAddress());
+    const nativeImpl = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
+    const quoteImpl = await (await ethers.getContractFactory("BnbQuoteLaunchCampaign")).deploy();
+    const { factory } = await deployFactoryWithLocker({ factoryName: "BnbBasicLaunchFactory", args: [
+      await fx.topazRouter.getAddress(), await routing.router.getAddress(), await nativeImpl.getAddress(),
+      await fx.graduationOracle.getAddress(), await quoteImpl.getAddress(),
+    ] });
+    const f: any = factory;
+    await (await f.setRegistries(await fx.creatorRegistry.getAddress(), await fx.riskRegistry.getAddress())).wait();
+    await (await (fx.creatorRegistry as any).setLaunchRecorder(await f.getAddress(), true)).wait();
+    await (await f.setRouteAuthority(await fx.routeAuthority.getAddress())).wait();
+    await (await f.enableLive()).wait();
+    await (await f.transferOwnership(await fx.safe.getAddress())).wait();
+    const nativeAdapter = await (await ethers.getContractFactory("MockGraduationAdapterEvmGen")).deploy(topazFactory, await fx.wbnb.getAddress());
+
+    // The deployer is neither factory owner nor vault admin here: nothing is sent, all three are returned.
+    const wiring = await wireGenerationCreatePath({
+      factoryAddress: await f.getAddress(),
+      nativeGraduationAdapter: await nativeAdapter.getAddress(),
+      creatorVault: await routing.creatorVault.getAddress(),
+      senderAddress: await creator.getAddress(),
+    });
+    expect(wiring.wired).to.equal(false);
+    expect(wiring.ownerActions.map((a) => a.why.split("(")[0])).to.deep.equal(["setNativeGraduationAdapter", "setLaunchTokenDeployer", "setFactoryOnce"]);
+    expect(await f.nativeGraduationAdapter()).to.equal(ethers.ZeroAddress);
+
+    const request = req({ name: "Safe", symbol: "SAFE", logoURI: "ipfs://safe" });
+    const auth = await signCreate(fx.routeAuthority, await f.getAddress(), creator.address, request);
+    await expect(f.connect(creator).createCampaignAuthorized(request, auth)).to.be.revertedWithCustomError(f, "NativeGraduationAdapterUnavailable");
+
+    // Executing exactly the returned calls (factory ones from the Safe, the vault pin from the vault admin) opens create.
+    for (const action of wiring.ownerActions) {
+      const from = action.to.toLowerCase() === (await f.getAddress()).toLowerCase() ? fx.safe : fx.owner;
+      await (await from.sendTransaction({ to: action.to, data: action.data })).wait();
+    }
+    await expect(f.connect(creator).createCampaignAuthorized(request, auth)).to.not.be.reverted;
+  });
+
+  describe("the router's creator vault", function () {
+    async function routingFixture() {
+      const fx = await deployPrerequisites();
+      const topazFactory = await fx.topazRouter.poolFactory();
+      const routing = await deployGenerationRouting(await fx.owner.getAddress(), topazFactory, await fx.wbnb.getAddress());
+      return { fx, topazFactory, routing };
+    }
+
+    it("accepts TreasuryRouterV4 with an unpinned CreatorRewardsVaultV2 that pays it", async function () {
+      const { routing } = await routingFixture();
+      await assertRouterCanServeStrictRouting(await routing.router.getAddress());
+    });
+
+    it("refuses a router whose creatorRewardsVault() is the first-generation vault (the live BNB V3 router's shape)", async function () {
+      const { fx } = await routingFixture();
+      // TreasuryRouterV3 + CreatorRewardsVault: every presence check passes, and every create would revert,
+      // because the first vault has no setCampaignChoice.
+      const v3 = fx.routing.treasuryRouter;
+      const v1Vault = await (await ethers.getContractFactory("CreatorRewardsVault")).deploy(await fx.owner.getAddress(), await v3.getAddress());
+      const fresh = await (await ethers.getContractFactory("TreasuryRouterV3")).deploy(
+        await fx.owner.getAddress(), await fx.routing.leagueVault.getAddress(), await fx.routing.monthlyVault.getAddress(), 3600,
+      );
+      await (await fresh.setRecruiterRewardsVault(await fx.routing.recruiterVault.getAddress())).wait();
+      await (await fresh.setCommunityRewardsVault(await fx.routing.communityVault.getAddress())).wait();
+      await (await fresh.setProtocolRevenueVault(await fx.routing.protocolVault.getAddress())).wait();
+      await (await fresh.setCreatorRewardsVault(await v1Vault.getAddress())).wait();
+      await expect(assertRouterCanServeStrictRouting(await fresh.getAddress()))
+        .to.be.rejectedWith(/not a CreatorRewardsVaultV2[\s\S]*TreasuryRouterV4[\s\S]*CreatorRewardsVaultV2/);
+    });
+
+    it("refuses a CreatorRewardsVaultV2 that pays a different router", async function () {
+      const { fx, topazFactory } = await routingFixture();
+      const stray = await (await ethers.getContractFactory("CreatorRewardsVaultV2")).deploy(
+        await fx.owner.getAddress(), await fx.routing.treasuryRouter.getAddress(), await fx.wbnb.getAddress(), 1, topazFactory, 24 * 60 * 60,
+      );
+      // A second router whose creatorRewardsVault() is that vault: the vault still pays the first one.
+      const other = await deployGenerationRouting(await fx.owner.getAddress(), topazFactory, await fx.wbnb.getAddress());
+      const r2 = await (await ethers.getContractFactory("TreasuryRouterV4")).deploy(
+        await fx.owner.getAddress(), await other.weekly.getAddress(), await other.monthly.getAddress(), 3600,
+      );
+      await (await r2.setRecruiterRewardsVault(await other.weekly.getAddress())).wait();
+      await (await r2.setCommunityRewardsVault(await other.weekly.getAddress())).wait();
+      await (await r2.setProtocolRevenueVault(await other.weekly.getAddress())).wait();
+      await (await r2.setCreatorRewardsVault(await stray.getAddress())).wait();
+      await expect(assertRouterCanServeStrictRouting(await r2.getAddress()))
+        .to.be.rejectedWith(/pays router .* accrueTradeFee is onlyRouter[\s\S]*TreasuryRouterV4/);
+    });
+
+    it("refuses a CreatorRewardsVaultV2 already pinned to another factory", async function () {
+      const { fx, routing } = await routingFixture();
+      const nativeImpl = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
+      const quoteImpl = await (await ethers.getContractFactory("BnbQuoteLaunchCampaign")).deploy();
+      const { factory } = await deployFactoryWithLocker({ factoryName: "BnbBasicLaunchFactory", args: [
+        await fx.topazRouter.getAddress(), await routing.router.getAddress(), await nativeImpl.getAddress(),
+        await fx.graduationOracle.getAddress(), await quoteImpl.getAddress(),
+      ] });
+      await (await routing.creatorVault.setFactoryOnce(await factory.getAddress())).wait();
+      await expect(assertRouterCanServeStrictRouting(await routing.router.getAddress()))
+        .to.be.rejectedWith(/already pinned to factory[\s\S]*could never create/);
+    });
   });
 });

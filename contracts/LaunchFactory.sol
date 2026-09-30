@@ -88,7 +88,6 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
     error PriceZero();
     error SlopeZero();
     error TargetZero();
-    error LiquidityBps();
     error NotLive();
     error AlreadyLive();
     error FactoryLocked();

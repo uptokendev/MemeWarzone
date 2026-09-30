@@ -33,6 +33,12 @@ import path from "node:path";
 import { ethers, network } from "hardhat";
 import { wireLpLocker } from "./lib/evmLpLockerWiring";
 import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
+import {
+  assertCreatorVaultServesGeneration,
+  requireNativeGraduationAdapter,
+  VAULT_DEX_UNISWAP_V3,
+  wireGenerationCreatePath,
+} from "./lib/evmGenerationCreateWiring";
 
 const PROFILES: Record<string, { chainId: bigint; confirm: string; file: string }> = {
   robinhoodTestnet: { chainId: 46630n, confirm: "I_UNDERSTAND_TESTNET", file: "robinhood/testnet.quote-generation.json" },
@@ -141,7 +147,7 @@ async function waitTx(txPromise: Promise<any> | any, label: string) {
 }
 
 /** The same refusal the BNB script makes, for the same reason. */
-async function assertRouterCanServeStrictRouting(routerAddress: string) {
+export async function assertRouterCanServeStrictRouting(routerAddress: string) {
   const router = await ethers.getContractAt(
     [
       "function creatorRewardsVault() view returns (address)",
@@ -159,7 +165,7 @@ async function assertRouterCanServeStrictRouting(routerAddress: string) {
     } catch {
       throw new Error(
         `treasury router ${routerAddress} has no ${name}(); campaigns from this factory would revert ` +
-          `FeeRoutingFailed on every trade. Deploy TreasuryRouterV3 first.`,
+          `FeeRoutingFailed on every trade. Deploy TreasuryRouterV4 (with a CreatorRewardsVaultV2) first.`,
       );
     }
     if (value === ethers.ZeroAddress) throw new Error(`router ${name}() is unset`);
@@ -168,6 +174,11 @@ async function assertRouterCanServeStrictRouting(routerAddress: string) {
   if (await (router as any).forwardingPaused()) {
     throw new Error("router forwarding is paused; under strict routing that halts every trade");
   }
+  // Presence is not enough: the vault behind creatorRewardsVault() must take the generation's fee choice.
+  await assertCreatorVaultServesGeneration(routerAddress, {
+    dexKind: VAULT_DEX_UNISWAP_V3,
+    log: (line) => console.log(`  ${line.trim()}`),
+  });
 }
 
 async function main() {
@@ -206,6 +217,12 @@ async function main() {
     await requireCode(label, address);
   }
   await assertRouterCanServeStrictRouting(treasuryRouter);
+  // The generation's V3 native graduation adapter (IGraduationAdapterV2). Required: without it, or the
+  // LaunchTokenDeployer, create reverts NativeGraduationAdapterUnavailable, and both setters lock at the
+  // first campaign. On this V3 factory the setter also authorizes the adapter on the position locker, which
+  // reverts unless the adapter reports the locker's liquidityKind/v3Factory/positionManager/WETH/feeTier.
+  const nativeGraduationAdapter = await requireNativeGraduationAdapter("RH_NATIVE_GRADUATION_ADAPTER");
+  console.log(`[rh] nativeGraduationAdapter = ${nativeGraduationAdapter}`);
   const MAX_ORACLE_AGE_SECONDS = maxOracleAgeFor(net.chainId);
   await assertFeedWithinMaxAge(nativeUsdFeed, MAX_ORACLE_AGE_SECONDS, "stock adapter oracle age");
 
@@ -310,6 +327,20 @@ async function main() {
     log: (message) => console.log(`[rh]${message}`),
   });
 
+  // Native adapter + token deployer (whenMutable) and the creator vault pinned to this factory
+  // (setCampaignChoice is onlyFactory). Sent when the deployer can; owner actions otherwise.
+  const creatorVault = await (await ethers.getContractAt(
+    ["function creatorRewardsVault() view returns (address)"],
+    treasuryRouter,
+  ) as any).creatorRewardsVault();
+  const createPath = await wireGenerationCreatePath({
+    factoryAddress,
+    nativeGraduationAdapter,
+    creatorVault,
+    senderAddress: deployerAddress,
+    log: (line) => console.log(`[rh]${line}`),
+  });
+
   await waitTx((factory as any).setCreatePaused(true), "factory.setCreatePaused(true)");
 
   if ((await (factory as any).createPaused()) !== true) throw new Error("createPaused did not stick");
@@ -326,9 +357,13 @@ async function main() {
     reused: { treasuryRouter, weth, v3Factory, positionManager, swapRouter, nativeUsdFeed, graduationOracle, v3GraduationRouter },
     registries: { creatorRegistry: creatorRegistryAddress, riskRegistry: riskRegistryAddress, launchRecorderWired: true },
     lpLockerAuthorized: lpLocker.wired,
-    pendingOwnerActions: lpLocker.ownerActions,
+    createPathWired: createPath.wired,
+    nativeGraduationAdapter,
+    creatorVault,
+    pendingOwnerActions: [...createPath.ownerActions, ...lpLocker.ownerActions],
     deployed: {
       LaunchFactory: factoryAddress,
+      LaunchTokenDeployer: createPath.tokenDeployer,
       LaunchCampaignImplementation: await campaignImpl.getAddress(),
       PermanentV3PositionLocker: lockerAddress,
       RobinhoodStockTokenGraduationAdapter: await stockAdapter.getAddress(),
@@ -337,6 +372,7 @@ async function main() {
       ArenaWarPoolTreasuryV2: await warPool.getAddress(),
     },
     next: [
+      ...(createPath.wired ? [] : ["the create-path owner actions (native adapter, token deployer, vault pin) -- CREATE is dead until they land, and before the first campaign"]),
       "register stock tokens and routes on the adapter",
       "transfer ownership to the Safe (mainnet)",
       "canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false)",
@@ -347,6 +383,9 @@ async function main() {
   fs.writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`);
   console.log(`[rh] wrote ${out}`);
   console.log("[rh] STOP. Everything is paused and nothing is live.");
+  if (!createPath.wired) {
+    console.log("[rh] WARNING: the create path is not wired. CREATE reverts until the pending owner actions execute.");
+  }
 }
 
 if (require.main === module) {

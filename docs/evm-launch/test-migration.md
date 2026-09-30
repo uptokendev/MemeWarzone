@@ -98,6 +98,7 @@ Pending also includes 4 pre-existing fork tests (BSC/Robinhood forks, need `*_FO
 1. Backend create signer on the 7-field request hash (see pending table).
 2. No V3 (Robinhood) or real Topaz V2 `IGraduationAdapterV2` in tree; graduation tests run on `MockGraduationAdapterEvmGen`.
 3. `scripts/lib/indexerManifest.cjs` lists removed events and misses the new ones.
-4. `scripts/deploy-bnb-quote-generation.ts` / `deploy-robinhood-quote-generation.ts` never call `setNativeGraduationAdapter` / `setLaunchTokenDeployer` nor list them as pending owner actions: the deployed factory cannot create until they are set.
-5. `assertRouterCanServeStrictRouting` accepts a router whose creator vault lacks `setCampaignChoice` (the live V3 router on BNB): every create would revert. The generation needs TreasuryRouterV4 + CreatorRewardsVaultV2.
-6. `error LiquidityBps()` in `LaunchFactory.sol` is unused.
+4. ~~`scripts/deploy-bnb-quote-generation.ts` / `deploy-robinhood-quote-generation.ts` never call `setNativeGraduationAdapter` / `setLaunchTokenDeployer`.~~ Fixed: both require `BNB_NATIVE_GRADUATION_ADAPTER` / `RH_NATIVE_GRADUATION_ADAPTER`, deploy the `LaunchTokenDeployer`, set both and pin the creator vault (`setFactoryOnce`) through `scripts/lib/evmGenerationCreateWiring.ts`, sending what the deployer may and returning the rest as pending owner actions. `BnbQuoteGenerationDeploy.spec.ts` runs the BNB script's `main()` in-process and creates on the result.
+5. ~~`assertRouterCanServeStrictRouting` accepts a router whose creator vault lacks `setCampaignChoice`.~~ Fixed: the vault must answer `isKeep/factory/router/dexKind` (CreatorRewardsVaultV2), pay this router, match the chain's DEX kind and be unpinned; refusals tested on both scripts.
+6. ~~`error LiquidityBps()` in `LaunchFactory.sol` is unused.~~ Removed (bytecode unchanged).
+7. No script deploys TreasuryRouterV4 + CreatorRewardsVaultV2: `deploy-evm-treasury-router-v3.ts` (and the older cutover/testnet-stage scripts) deploy TreasuryRouterV3 with the first-generation `CreatorRewardsVault`, which the tightened guard now refuses.
