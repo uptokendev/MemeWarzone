@@ -61,6 +61,26 @@ import {
 
 export type Queryable = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }> };
 
+type PoolLike = Queryable & { connect?: () => Promise<Queryable & { release: () => void }> };
+
+/** Runs fn in one transaction on ONE connection: a pg Pool would hand every query to any of its clients. */
+async function withTx<T>(db: Queryable, fn: (tx: Queryable) => Promise<T>): Promise<T> {
+  const pool = db as PoolLike;
+  const client = typeof pool.connect === "function" ? await pool.connect() : null;
+  const tx: Queryable = client ?? db;
+  try {
+    await tx.query("begin");
+    const out = await fn(tx);
+    await tx.query("commit");
+    return out;
+  } catch (error) {
+    await tx.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client?.release();
+  }
+}
+
 export type PlatformCoin = {
   campaign: string; // lowercase
   token: string | null;
@@ -318,18 +338,14 @@ function nativeSymbol(chainId: number) {
 export async function publishRewardBatch(db: Queryable, file: LeafFile): Promise<string | null> {
   const entries = file.leaves.map((l) => ({ account: l.account, amount: BigInt(l.amount) }));
   const { leaves, proofs, root } = merklePlan(entries);
-  await db.query("begin");
-  try {
+  return withTx(db, async (db) => {
     const dup = await db.query(
       `select id from public.reward_batches
         where reward_type='airdrop' and chain::text=$1 and metadata->>'epochId'=$2 and metadata->>'program'='airdrop_holders'
           and status<>'archived' limit 1 for update`,
       [String(file.chainId), file.weekId],
     );
-    if (dup.rows[0]) {
-      await db.query("rollback");
-      return String(dup.rows[0].id);
-    }
+    if (dup.rows[0]) return String(dup.rows[0].id);
     const metadata = {
       epochId: file.weekId,
       program: "airdrop_holders",
@@ -383,18 +399,13 @@ export async function publishRewardBatch(db: Queryable, file: LeafFile): Promise
         [batch.id, ledger.id, wallet, entries[i].amount.toString(), JSON.stringify(meta)],
       );
     }
-    await db.query("commit");
     return String(batch.id);
-  } catch (error) {
-    await db.query("rollback");
-    throw error;
-  }
+  });
 }
 
 async function openRewardBatch(db: Queryable, rewardBatchId: string | null, txHash: string, block: number | null) {
   if (!rewardBatchId) return;
-  await db.query("begin");
-  try {
+  await withTx(db, async (db) => {
     const ledger = await db.query(
       `update public.reward_ledger set status='claimable',claimable_at=coalesce(claimable_at,now()),claim_error=null,updated_at=now()
         where id in (select reward_ledger_id from public.reward_batch_items where batch_id=$1::uuid) and status='approved'
@@ -408,11 +419,7 @@ async function openRewardBatch(db: Queryable, rewardBatchId: string | null, txHa
         where id=$1::uuid`,
       [rewardBatchId, ledger.rows.length, JSON.stringify({ onChainBatchCreated: true, onChainBatchTxHash: txHash, onChainBatchBlockNumber: block, onChainBatchVerifiedAt: new Date().toISOString() })],
     );
-    await db.query("commit");
-  } catch (error) {
-    await db.query("rollback");
-    throw error;
-  }
+  });
 }
 
 async function archiveRewardBatch(db: Queryable, rewardBatchId: string | null, reason: string) {
@@ -509,25 +516,20 @@ export async function takeDueSnapshots(input: {
     excluded ??= new Set([...input.cfg.excluded, lc(input.operator), ...(await riskExcludedWallets(input.db))]);
     const block = await input.chain.latestBlock();
     const holders = await holderSnapshot({ chain: input.chain, census: input.census, coin, atBlock: block.number, excluded });
-    await input.db.query("begin");
-    try {
+    await withTx(input.db, async (tx) => {
       for (const h of holders) {
-        await input.db.query(
+        await tx.query(
           `insert into public.evm_holder_snapshots (chain_id, week_id, campaign_address, wallet, amount) values ($1,$2,$3,$4,$5)
            on conflict (chain_id, week_id, campaign_address, wallet) do nothing`,
           [input.chainId, week.weekId, coin.campaign, h.wallet, h.amount.toString()],
         );
       }
-      await input.db.query(
+      await tx.query(
         `insert into public.evm_holder_snapshot_runs (chain_id, week_id, campaign_address, token_address, block_number, holders)
          values ($1,$2,$3,$4,$5,$6) on conflict (chain_id, week_id, campaign_address) do nothing`,
         [input.chainId, week.weekId, coin.campaign, coin.token, block.number, holders.length],
       );
-      await input.db.query("commit");
-    } catch (error) {
-      await input.db.query("rollback");
-      throw error;
-    }
+    });
     taken += 1;
     out.push({ kind: "snapshot", subject: coin.campaign, decision: "sent", reason: `${holders.length} holders at block ${block.number}` });
   }
@@ -677,6 +679,12 @@ async function holderBatchCandidates(input: {
   for (const batch of open.rows) {
     const subject = String(batch.batch_id);
     if (batch.status === "built") {
+      if (input.send && input.cfg.publishRewardBatches && !batch.reward_batch_id) {
+        // Published before it is proposed, also when an earlier pass stopped between the two.
+        const rewardBatchId = await publishRewardBatch(db, batch.leaf_file as LeafFile);
+        await db.query(`update public.evm_holder_batches set reward_batch_id = $3 where chain_id = $1 and week_id = $2`, [chainId, batch.week_id, rewardBatchId]);
+        batch.reward_batch_id = rewardBatchId;
+      }
       const call = proposeCall(batch.leaf_file as LeafFile);
       const sim = await chain.simulate(call);
       if (!sim.ok) {
