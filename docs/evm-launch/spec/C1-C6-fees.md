@@ -470,6 +470,17 @@ nothing (that week's counter is gone).
   in that same week and the counter is only reset when a new week starts. Griefing: none added; the
   operator gains nothing by proposing and having it vetoed.
 
+**F8 (LOW, audit 3 L1): a creator's chosen payout wallet survives later graduations.** Both lockers
+wrote `creatorPayoutRecipient[creator] = creatorFeeRecipient` on every `registerGraduatedPool`, so a Keep
+creator's second graduation (the factory passes `(creator, creator)`) silently reset the wallet chosen with
+`updateCreatorPayoutRecipient`, for all of that creator's pools. Now both `PermanentLpLocker` and
+`PermanentV3PositionLocker` set it only when unset. Non-Keep coins are unaffected (their key is the
+campaign, registered once, recipient the vault). `poolInfo[pool].creatorFeeRecipient` still records the
+registration value, which is what `CreatorRewardsVaultV2._poolParties` checks.
+- Reentrancy / CEI: no external call added (registration is admin/factory-only). Reachable: the mapping
+  goes `0 -> registration value` once, then only the creator changes it. Overflow: none. Griefing: none; a
+  creator cannot be forced onto a wallet by someone else's registration (keys are the creator's own).
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |

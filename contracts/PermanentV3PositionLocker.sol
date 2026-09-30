@@ -299,7 +299,9 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         registeredFeeAsset[token0_] = true;
         registeredFeeAsset[token1_] = true;
         lockedBalance[pool] = uint256(liquidity_);
-        creatorPayoutRecipient[creator] = creatorFeeRecipient;
+        // Only the first registration of a creator key sets its payout wallet; a later graduation by the same
+        // (Keep) creator must not undo the wallet chosen with updateCreatorPayoutRecipient (audit 3 L1).
+        if (creatorPayoutRecipient[creator] == address(0)) creatorPayoutRecipient[creator] = creatorFeeRecipient;
         poolInfo[pool] = PoolRegistration({
             campaign: campaign,
             creator: creator,

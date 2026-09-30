@@ -380,7 +380,7 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
   });
 
   // ------------------------------------------------------------------ payout recipients
-  it("EXPLOIT (low): a Keep creator's chosen payout recipient is silently reset by their next graduation", async () => {
+  it("HOLDS (was EXPLOIT, low): a Keep creator's chosen payout recipient survives their next graduation", async () => {
     const creator = attacker; // any Keep creator
     const newWallet = ethers.Wallet.createRandom().address;
     const c1 = await newCampaign("rcpt-1");
@@ -394,7 +394,8 @@ d("audit3: BNB graduation + locker on a BSC fork (real Topaz)", function () {
     const r2 = await c2.lastResult();
     // LaunchFactory.notifyCampaignGraduated passes (creator, creator) for Keep coins.
     await locker.registerGraduatedPool(await c2.getAddress(), creator.address, creator.address, r2.pool, await c2.token(), TOPAZ.wbnb, r2.liquidity);
-    expect(await locker.creatorPayoutRecipient(creator.address)).to.equal(creator.address); // reset, both pools
+    // Fix F8: only the first registration of a creator key sets the wallet; both pools keep paying newWallet.
+    expect(await locker.creatorPayoutRecipient(creator.address)).to.equal(newWallet);
   });
 
   // ------------------------------------------------------------------ fee manager mid-flight (E13)

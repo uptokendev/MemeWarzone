@@ -213,3 +213,43 @@ describe("audit fix F4: vault swaps scale the impact bound to the pool fee and f
     await f.vault.connect(f.operator).convertBuybackNativeToQuote(B.c, E18 / 10n);
   });
 });
+
+describe("audit fix F8: a creator's chosen payout wallet survives later registrations", function () {
+  it("V2 locker: the second graduation of a Keep creator does not reset updateCreatorPayoutRecipient", async function () {
+    const [owner, creator, , , chosen] = await ethers.getSigners();
+    const Token = await ethers.getContractFactory("MockERC20");
+    const topaz = await (await ethers.getContractFactory("MockTopazFactory")).deploy();
+    const locker = await (await ethers.getContractFactory("PermanentLpLocker")).deploy(owner.address);
+    await locker.configureRevenue(owner.address, await topaz.getAddress());
+    const weth = await Token.deploy("W", "W", 10n ** 30n, owner.address);
+    async function pool() {
+      const meme = await Token.deploy("M", "M", 10n ** 30n, owner.address);
+      const pair = await (await ethers.getContractFactory("MockTopazPairEvmGen")).deploy();
+      await topaz.setPool(await meme.getAddress(), await weth.getAddress(), false, await pair.getAddress());
+      await pair.mint(await locker.getAddress(), E18);
+      return { meme, pair };
+    }
+    const p1 = await pool();
+    await locker.registerGraduatedPool(creator.address, creator.address, creator.address, await p1.pair.getAddress(), await p1.meme.getAddress(), await weth.getAddress(), E18);
+    await locker.connect(creator).updateCreatorPayoutRecipient(chosen.address);
+    const p2 = await pool();
+    await locker.registerGraduatedPool(owner.address, creator.address, creator.address, await p2.pair.getAddress(), await p2.meme.getAddress(), await weth.getAddress(), E18);
+    expect(await locker.creatorPayoutRecipient(creator.address)).to.equal(chosen.address);
+  });
+
+  it("V3 locker: the same, for Uniswap V3 positions", async function () {
+    const f = await v3Locker();
+    const [, , , , chosen] = await ethers.getSigners();
+    await f.locker.connect(f.creator).updateCreatorPayoutRecipient(chosen.address);
+    // a second coin by the same creator graduates
+    const meme2 = await (await ethers.getContractFactory("MockERC20")).deploy("Meme2", "M2", 10n ** 30n, f.owner.address);
+    const pool2 = await (await ethers.getContractFactory("MockUniswapV3PoolEvmGen")).deploy(await meme2.getAddress(), await f.weth.getAddress(), 3000);
+    await f.v3f.setPool(await meme2.getAddress(), await f.weth.getAddress(), 3000, await pool2.getAddress());
+    await pool2.setup(await f.npm.getAddress(), Q96, 10n ** 20n);
+    const id = await f.npm.nextId();
+    await f.npm.mintPosition(await f.integration.getAddress(), await pool2.getAddress());
+    await f.integration.deliver(await f.locker.getAddress(), id);
+    await f.locker.registerGraduatedPool(f.owner.address, f.creator.address, f.creator.address, await pool2.getAddress(), await meme2.getAddress(), await f.weth.getAddress(), 0n);
+    expect(await f.locker.creatorPayoutRecipient(f.creator.address)).to.equal(chosen.address);
+  });
+});
