@@ -14,6 +14,7 @@ import {
   type AirdropPreview,
   type AirdropWinner,
 } from "@/lib/rewardProgramsApi";
+import { airdropProgramKind, isHolderPayoutProgram } from "@/lib/airdropProgramLabel.mjs";
 
 const ZERO_RAW = "0";
 const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -84,7 +85,7 @@ function formatCountdown(target: Date, nowMs: number): string {
 }
 
 function winnerType(program: string): string {
-  return program === "airdrop_creator" ? "Creator" : "Trader";
+  return airdropProgramKind(program);
 }
 
 export default function CommandCenterAirdrops() {
@@ -208,7 +209,7 @@ export default function CommandCenterAirdrops() {
                         <p className="truncate font-retro text-sm text-foreground">{shortenAddress(winner.walletAddress)}</p>
                       </div>
                       <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                        {winnerType(winner.program)} winner #{winner.winnerRank}
+                        {isHolderPayoutProgram(winner.program) ? "Holder payout" : `${winnerType(winner.program)} winner`} #{winner.winnerRank}
                       </p>
                     </div>
                     <p className="shrink-0 font-retro text-sm text-foreground">
