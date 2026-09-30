@@ -93,7 +93,9 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     address public immutable dexFactory;
     uint256 public immutable holderBatchDelay;
 
-    address public router;
+    /// @notice The only router whose accruals count. Immutable, and TreasuryRouterV4 sets its creator vault once:
+    /// the pair is bound both ways, so no admin action can strand the campaigns whose choices live here.
+    address public immutable router;
     address public factory;
     address public locker;
     address public holderDistributor;
@@ -214,12 +216,6 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     }
 
     // ------------------------------------------------------------------ admin
-
-    function setRouter(address newRouter) external onlyAdmin {
-        if (newRouter == address(0)) revert ZeroAddress();
-        emit RouterUpdated(router, newRouter);
-        router = newRouter;
-    }
 
     /// @notice Pins the factory and the locker it created.
     function setFactoryOnce(address factory_) external onlyAdmin {

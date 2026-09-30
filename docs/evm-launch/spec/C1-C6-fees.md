@@ -320,6 +320,31 @@ balances and quote balances, `heldBuybackTokens`, `quoteRoutePool`, `quoteLiabil
 (`admin`, `router`, `factory`, `locker`, `holderDistributor`, `operator`, `wrappedNative`,
 `dexKind`, `dexFactory`, `holderBatchDelay`). Logic, errors and the TWAP guard are untouched.
 
+### Internal-audit fixes (2026-09-30, branch `claude/evm-fees`)
+
+Findings from internal audits 1, 3, 4 and 5 against this stack. Each fix below supersedes the text above
+where they differ. The audit specs (`test/audit3-bnb-graduation.fork.spec.ts`, `test/audit4-fees.spec.ts`,
+`test/audit5-privileged-roles.spec.ts`) keep every attack's steps; the former EXPLOIT tests now assert
+`HOLDS`.
+
+**F1 (HIGH, audits 1/4/5): the router <-> creator vault binding is fixed for life.** A routine Safe
+rotation of `TreasuryRouterV4.creatorRewardsVault` (propose/accept), or re-pointing
+`CreatorRewardsVaultV2.router`, reverted every buy and sell of every existing campaign: the choices live
+only on the vault that was bound at create, `accrueTradeFee` reverts `ChoiceUnset`/`OnlyRouter`, and
+strict fee routing bubbles it. Fix, chosen for the least new surface (nothing added, two paths removed):
+`proposeCreatorRewardsVault`, `acceptCreatorRewardsVault`, `pendingCreatorRewardsVault(Since)` and the
+`CreatorRewardsVaultProposed` event are deleted from the router; `setCreatorRewardsVault` is set-once
+(`"already set"`). The vault's `setRouter` is deleted and `router` is `immutable` (constructor). Keying
+the vault per campaign was rejected: it adds a per-campaign storage write to every create and a new
+lookup to every trade for a property the set-once binding gives for free. Consequence: a vault bug is
+fixed by a new router + vault + factory generation; campaigns already created keep their router and
+vault. Old-generation routers (V3) are untouched.
+- Reentrancy / CEI: no new external call; `setCreatorRewardsVault` checks, emits, writes (admin only).
+- Reachable states: `creatorRewardsVault` goes `0 -> vault` once; `_routeTrade` refuses while it is 0.
+- Overflow: none. Griefing: the Safe can no longer freeze trading through this slot; it still can
+  through `setForwardingPaused` (documented, unchanged).
+- Indexer: `CreatorRewardsVaultProposed` in `scripts/lib/indexerManifest.cjs` can no longer fire.
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |
