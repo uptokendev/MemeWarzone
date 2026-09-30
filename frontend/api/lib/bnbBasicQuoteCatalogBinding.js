@@ -43,7 +43,17 @@ function positiveBigInt(value, label) {
  * exact selected identity/config so the frontend/creator cannot substitute another quote or policy
  * after the route authority signs creation.
  */
-export function buildBnbBasicQuoteCatalogBinding(item) {
+export function buildBnbBasicQuoteCatalogBinding(
+  item,
+  { factoryGeneration = BNB_BASIC_FACTORY_GENERATION, campaignGeneration = BNB_BASIC_CAMPAIGN_GENERATION } = {},
+) {
+  // The commitment names the factory generation that will store it: 5/4 on the live BNB BASIC factory,
+  // 6/5 on the new generation (BnbBasicLaunchFactory.BASIC_FACTORY_GENERATION).
+  const fGen = Number(factoryGeneration);
+  const cGen = Number(campaignGeneration);
+  if (!Number.isInteger(fGen) || fGen <= 0 || !Number.isInteger(cGen) || cGen <= 0) {
+    throw new Error("BNB BASIC binding generation must be positive integers");
+  }
   const deploymentId = requiredText(item?.id, "Quote Asset Catalog deployment id");
   const quoteToken = ethers.getAddress(requiredText(item?.contractAddressOrMint, "quote contract address"));
   const providerId = requiredText(item?.provider?.id, "quote provider id");
@@ -62,8 +72,8 @@ export function buildBnbBasicQuoteCatalogBinding(item) {
       policyKey,
       policyVersion,
       deploymentStateVersion,
-      BNB_BASIC_FACTORY_GENERATION,
-      BNB_BASIC_CAMPAIGN_GENERATION,
+      fGen,
+      cGen,
     ]),
   );
 
@@ -76,7 +86,7 @@ export function buildBnbBasicQuoteCatalogBinding(item) {
     policyKey,
     policyVersion,
     deploymentStateVersion,
-    factoryGeneration: BNB_BASIC_FACTORY_GENERATION,
-    campaignGeneration: BNB_BASIC_CAMPAIGN_GENERATION,
+    factoryGeneration: fGen,
+    campaignGeneration: cGen,
   };
 }

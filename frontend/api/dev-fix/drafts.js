@@ -6,6 +6,12 @@ import { getRobinhoodStockGraduationAsset } from "../lib/robinhoodStockGraduatio
 import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";
 import { catalogQuoteSelectionReference } from "../lib/draftGraduationQuoteSelection.js";
 import { runJsonTransform } from "./json-transform.js";
+import {
+  attachDraftEvmLaunchOptions,
+  loadDraftEvmLaunchOptions,
+  persistDraftEvmLaunchOptions,
+} from "../lib/draftEvmLaunchOptions.js";
+import { hasGen6CreateFields } from "../lib/evmLaunchGen6.js";
 import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 import {
   augmentDraftLifecycle,
@@ -237,6 +243,21 @@ async function persistDraftGraduationPolicy(pool, draftId, body) {
   return result.rows[0] || null;
 }
 
+async function applyEvmLaunchOptions(pool, draftId, body, next) {
+  try {
+    const row = await persistDraftEvmLaunchOptions(pool, draftId, body);
+    if (!row) return next;
+    return { ...next, evmLaunchOptionsPersisted: true, draft: attachDraftEvmLaunchOptions(next.draft, row) };
+  } catch (error) {
+    return {
+      ...next,
+      evmLaunchOptionsPersisted: false,
+      evmLaunchOptionsError: String(error?.message || error || "First buy and fee choice could not be saved."),
+      ...(error?.code ? { evmLaunchOptionsErrorCode: error.code } : {}),
+    };
+  }
+}
+
 async function enrichPayload(payload, pool) {
   if (!payload || typeof payload !== "object") return payload;
 
@@ -244,15 +265,19 @@ async function enrichPayload(payload, pool) {
     const items = await enrichDraftItems(pool, payload.items);
     if (!pool) return { ...payload, items };
     const ids = items.map((item) => item.id);
-    const [reservations, policies, quoteSelections] = await Promise.all([
+    const [reservations, policies, quoteSelections, evmOptions] = await Promise.all([
       loadTickerReservationsByDraftIds(pool, ids),
       loadDraftGraduationPolicies(pool, ids),
       loadDraftQuoteSelections(pool, ids),
+      loadDraftEvmLaunchOptions(pool, ids),
     ]);
     return {
       ...payload,
       items: items.map((item) => ({
-        ...attachDraftQuoteSelection(attachDraftPolicy(item, policies.get(String(item.id))), quoteSelections.get(String(item.id))),
+        ...attachDraftEvmLaunchOptions(
+          attachDraftQuoteSelection(attachDraftPolicy(item, policies.get(String(item.id))), quoteSelections.get(String(item.id))),
+          evmOptions.get(String(item.id)),
+        ),
         tickerReservation: reservations.get(String(item.id)) || null,
       })),
     };
@@ -260,17 +285,21 @@ async function enrichPayload(payload, pool) {
 
   if (payload.draft?.id) {
     const row = await loadDraftRowById(pool, payload.draft.id);
-    const [tickerReservation, policies, quoteSelections] = await Promise.all([
+    const [tickerReservation, policies, quoteSelections, evmOptions] = await Promise.all([
       pool ? loadTickerReservationByDraft(pool, payload.draft.id, { includeReleased: true }) : null,
       loadDraftGraduationPolicies(pool, [payload.draft.id]),
       loadDraftQuoteSelections(pool, [payload.draft.id]),
+      loadDraftEvmLaunchOptions(pool, [payload.draft.id]),
     ]);
     return {
       ...payload,
       draft: {
-        ...attachDraftQuoteSelection(
-          attachDraftPolicy(augmentDraftLifecycle(payload.draft, row), policies.get(String(payload.draft.id))),
-          quoteSelections.get(String(payload.draft.id)),
+        ...attachDraftEvmLaunchOptions(
+          attachDraftQuoteSelection(
+            attachDraftPolicy(augmentDraftLifecycle(payload.draft, row), policies.get(String(payload.draft.id))),
+            quoteSelections.get(String(payload.draft.id)),
+          ),
+          evmOptions.get(String(payload.draft.id)),
         ),
         tickerReservation,
       },
@@ -354,9 +383,14 @@ export async function drafts(req, res) {
     String(body.graduationMarketKind || body.graduation_market_kind || "").trim(),
   );
   const wantsQuoteSelection = req.method === "POST" && Boolean(String(body.graduationQuoteAssetId || "").trim());
+  const wantsEvmOptions = req.method === "POST" && Number(body.chainId) !== 101 && Number(body.chainId) !== 102 && hasGen6CreateFields(body);
 
   return runJsonTransform(base.drafts, req, res, async (payload, meta) => {
     let enriched = await enrichPayload(payload, pool);
+
+    if (wantsEvmOptions && meta.statusCode >= 200 && meta.statusCode < 300 && enriched?.draft?.id) {
+      enriched = await applyEvmLaunchOptions(pool, enriched.draft.id, body, enriched);
+    }
 
     if (
       wantsQuoteSelection &&
@@ -446,10 +480,15 @@ export async function draftPromotion(req, res) {
   const body = requestBody(req);
   const wantsGraduationPolicy = Boolean(String(body.graduationMarketKind || body.graduation_market_kind || "").trim());
   const wantsQuoteSelection = Boolean(String(body.graduationQuoteAssetId || "").trim());
+  const wantsEvmOptions = hasGen6CreateFields(body);
 
   return runJsonTransform(base.draftPromotion, req, res, async (payload, meta) => {
     let next = await enrichPayload(payload, pool);
     if (meta.statusCode < 200 || meta.statusCode >= 300) return next;
+
+    if (wantsEvmOptions && next?.draft) {
+      next = await applyEvmLaunchOptions(pool, String(req.params?.draftId || ""), body, next);
+    }
 
     if (wantsQuoteSelection) {
       try {
@@ -501,4 +540,5 @@ export const robinhoodDraftGraduationPolicyInternals = {
   attachDraftPolicy,
   attachDraftQuoteSelection,
   persistGraduationQuoteSelection,
+  applyEvmLaunchOptions,
 };
