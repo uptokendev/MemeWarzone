@@ -49,7 +49,7 @@ describe("PermanentLpLocker pending payouts", function () {
 
     // Permanently locked liquidity has to be there before registration.
     const locked = ethers.parseEther("10");
-    await (await pool.mint(await locker.getAddress(), locked)).wait();
+    await (await pool["mint(address,uint256)"](await locker.getAddress(), locked)).wait();
     await (await locker.registerGraduatedPool(
       await admin.getAddress(),
       await creator.getAddress(),

@@ -27,7 +27,7 @@ describe("PermanentLpLocker Topaz fee validation", function () {
     const Pool = await ethers.getContractFactory("MockTopazFeePool");
     const pool = await Pool.deploy(await factory.getAddress(), await token.getAddress(), await wbnb.getAddress(), false);
     await pool.waitForDeployment();
-    await pool.mint(await locker.getAddress(), ethers.parseEther("1"));
+    await pool["mint(address,uint256)"](await locker.getAddress(), ethers.parseEther("1"));
 
     await locker.connect(owner).configureRevenue(await owner.getAddress(), await factory.getAddress());
     await expect(
@@ -60,7 +60,7 @@ describe("PermanentLpLocker Topaz fee validation", function () {
     const Pool = await ethers.getContractFactory("MockTopazFeePool");
     const pool = await Pool.deploy(await factory.getAddress(), await token.getAddress(), await wbnb.getAddress(), false);
     await pool.waitForDeployment();
-    await pool.mint(await locker.getAddress(), ethers.parseEther("1"));
+    await pool["mint(address,uint256)"](await locker.getAddress(), ethers.parseEther("1"));
 
     await locker.connect(owner).configureRevenue(await owner.getAddress(), await factory.getAddress());
     await expect(

@@ -27,7 +27,7 @@ async function createRegisteredPool(params: {
   const pool = await ethers.getContractAt("MockTopazPool", poolAddress);
 
   const lockedLp = ethers.parseEther("10");
-  await pool.mint(await params.locker.getAddress(), lockedLp);
+  await pool["mint(address,uint256)"](await params.locker.getAddress(), lockedLp);
 
   await params.locker.registerGraduatedPool(
     await params.campaign.getAddress(),

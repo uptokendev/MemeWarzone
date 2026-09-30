@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @dev Minimal Topaz v2 volatile pool mock for launch/graduation and LP-fee tests.
 contract MockTopazPool is ERC20 {
@@ -50,6 +51,59 @@ contract MockTopazPool is ERC20 {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+
+    /// @notice Velodrome/Topaz first-mint: `sqrt(a0*a1) - 1000` to `to`, 1000 to `address(1)`.
+    /// Later mints `min(a0*S/r0, a1*S/r1)`. Used by TopazPoolRepair; the two-arg `mint` stays for older tests.
+    function mint(address to) external returns (uint256 liquidity) {
+        uint256 bal0 = IERC20(token0).balanceOf(address(this));
+        uint256 bal1 = IERC20(token1).balanceOf(address(this));
+        uint256 amount0 = bal0 - uint256(_r0);
+        uint256 amount1 = bal1 - uint256(_r1);
+        uint256 supply = totalSupply();
+        if (supply == 0) {
+            liquidity = Math.sqrt(amount0 * amount1);
+            require(liquidity >= 2000, "ILM");
+            liquidity -= 1000;
+            _mint(address(1), 1000);
+        } else {
+            liquidity = _min((amount0 * supply) / uint256(_r0), (amount1 * supply) / uint256(_r1));
+            require(liquidity > 0, "ILM");
+        }
+        _mint(to, liquidity);
+        _r0 = uint112(bal0);
+        _r1 = uint112(bal1);
+        _ts = uint32(block.timestamp);
+    }
+
+    function sync() external {
+        _r0 = uint112(IERC20(token0).balanceOf(address(this)));
+        _r1 = uint112(IERC20(token1).balanceOf(address(this)));
+        _ts = uint32(block.timestamp);
+    }
+
+    function skim(address to) external {
+        uint256 bal0 = IERC20(token0).balanceOf(address(this));
+        uint256 bal1 = IERC20(token1).balanceOf(address(this));
+        if (bal0 > _r0) IERC20(token0).safeTransfer(to, bal0 - uint256(_r0));
+        if (bal1 > _r1) IERC20(token1).safeTransfer(to, bal1 - uint256(_r1));
+    }
+
+    /// @dev Topaz: `amountOut >= reserve` reverts, and `0 >= 0` is true, so a zero-reserve pool cannot swap.
+    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata) external {
+        require(amount0Out < uint256(_r0) && amount1Out < uint256(_r1), "IL");
+        require(amount0Out != 0 || amount1Out != 0, "IOA");
+        if (amount0Out != 0) IERC20(token0).safeTransfer(to, amount0Out);
+        if (amount1Out != 0) IERC20(token1).safeTransfer(to, amount1Out);
+        uint256 b0 = IERC20(token0).balanceOf(address(this));
+        uint256 b1 = IERC20(token1).balanceOf(address(this));
+        _r0 = uint112(b0);
+        _r1 = uint112(b1);
+        _ts = uint32(block.timestamp);
+    }
+
+    function _min(uint256 a, uint256 b) private pure returns (uint256) {
+        return a < b ? a : b;
     }
 
     function setReserves(uint112 r0, uint112 r1) external {

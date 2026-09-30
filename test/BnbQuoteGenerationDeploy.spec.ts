@@ -93,6 +93,13 @@ describe("BNB quote generation deployment", function () {
     const lockerAddress = await (factory as any).permanentLpLocker();
     expect(lockerAddress).to.not.equal(ethers.ZeroAddress);
 
+    const nativeAdapter = await (await ethers.getContractFactory("BnbNativeGraduationAdapter")).deploy(
+      await fx.topazRouter.poolFactory(),
+      await fx.wbnb.getAddress(),
+      lockerAddress,
+    );
+    await nativeAdapter.waitForDeployment();
+
     const adapter = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(
       await fx.topazRouter.getAddress(),
       lockerAddress,
@@ -101,6 +108,7 @@ describe("BNB quote generation deployment", function () {
     );
     await adapter.waitForDeployment();
 
+    await (await (nativeAdapter as any).setCampaignFactoryOnce(await factory.getAddress())).wait();
     await (await (adapter as any).setCampaignFactoryOnce(await factory.getAddress())).wait();
     await (await (factory as any).setBnbQuoteGraduationAdapter(await adapter.getAddress())).wait();
 
@@ -252,20 +260,20 @@ describe("BNB quote generation deployment", function () {
       feeCreatorPct: 0,
     };
 
-    // What the script leaves behind cannot create at all: it never sets the generation's native
-    // graduation adapter (IGraduationAdapterV2) nor the LaunchTokenDeployer, and create checks both
-    // before anything else. Found by this rehearsal; the script has no step for either yet.
+    // The copy above deploys both adapters and binds them on the adapter side, but does not call
+    // factory.setNativeGraduationAdapter (that lives in wireGenerationCreatePath). Create still
+    // reverts until that setter and the token deployer land.
     await expect(
       (factory as any).connect(creator).createCampaign(request),
     ).to.be.revertedWithCustomError(factory, "NativeGraduationAdapterUnavailable");
 
-    // NOT in the script: the create-time wiring, with the generation's test doubles (no in-tree Topaz
-    // IGraduationAdapterV2 adapter exists yet), plus the choice-aware creator vault bound to the factory.
-    const nativeAdapter = await (await ethers.getContractFactory("MockGraduationAdapterEvmGen")).deploy(
+    const lockerAddress = await (factory as any).permanentLpLocker();
+    const nativeAdapter = await (await ethers.getContractFactory("BnbNativeGraduationAdapter")).deploy(
       await fx.topazRouter.poolFactory(),
       await fx.wbnb.getAddress(),
+      lockerAddress,
     );
-    await (await (nativeAdapter as any).setLocker(await (factory as any).permanentLpLocker())).wait();
+    await nativeAdapter.waitForDeployment();
     await (await (factory as any).setNativeGraduationAdapter(await nativeAdapter.getAddress())).wait();
     const tokenDeployer = await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy();
     await (await (factory as any).setLaunchTokenDeployer(await tokenDeployer.getAddress())).wait();
@@ -464,7 +472,7 @@ describe("BNB quote generation deployment", function () {
   describe("the script itself, run on the throwaway chain", function () {
     const ENV_KEYS = [
       "CONFIRM_BNB_QUOTE_GENERATION", "BNB_TOPAZ_ROUTER", "BNB_TOPAZ_QUOTE_ROUTER", "BNB_GRADUATION_ORACLE",
-      "BNB_ROUTE_AUTHORITY", "BNB_TREASURY_ROUTER", "BNB_NATIVE_USD_FEED", "BNB_NATIVE_GRADUATION_ADAPTER",
+      "BNB_ROUTE_AUTHORITY", "BNB_TREASURY_ROUTER", "BNB_NATIVE_USD_FEED",
       "BNB_OWNER_SAFE", "BNB_CREATOR_REGISTRY", "BNB_RISK_REGISTRY", "QUOTE_GEN_OUT",
     ];
     let saved: Record<string, string | undefined>;
@@ -486,7 +494,6 @@ describe("BNB quote generation deployment", function () {
       const fx = await deployPrerequisites();
       const topazFactory = await fx.topazRouter.poolFactory();
       const routing = await deployGenerationRouting(await fx.owner.getAddress(), topazFactory, await fx.wbnb.getAddress());
-      const nativeAdapter = await (await ethers.getContractFactory("MockGraduationAdapterEvmGen")).deploy(topazFactory, await fx.wbnb.getAddress());
       Object.assign(process.env, {
         CONFIRM_BNB_QUOTE_GENERATION: "I_UNDERSTAND_REHEARSAL",
         BNB_TOPAZ_ROUTER: await fx.topazRouter.getAddress(),
@@ -495,15 +502,14 @@ describe("BNB quote generation deployment", function () {
         BNB_ROUTE_AUTHORITY: await fx.routeAuthority.getAddress(),
         BNB_TREASURY_ROUTER: await routing.router.getAddress(),
         BNB_NATIVE_USD_FEED: await fx.nativeFeed.getAddress(),
-        BNB_NATIVE_GRADUATION_ADAPTER: await nativeAdapter.getAddress(),
         QUOTE_GEN_OUT: path.join(outDir, "rehearsal.json"),
       });
-      return { fx, routing, nativeAdapter };
+      return { fx, routing };
     }
 
     it("leaves a closed factory that can create the moment it is opened", async function () {
       this.timeout(120_000);
-      const { fx, routing, nativeAdapter } = await scriptInputs();
+      const { fx, routing } = await scriptInputs();
       const artifact: any = await deployQuoteGeneration();
 
       expect(artifact.createPathWired).to.equal(true);
@@ -514,11 +520,18 @@ describe("BNB quote generation deployment", function () {
         .to.equal(artifact.contracts.LaunchTokenDeployer);
 
       const factory: any = await ethers.getContractAt("BnbBasicLaunchFactory", artifact.contracts.BnbBasicLaunchFactory);
-      expect(await factory.nativeGraduationAdapter()).to.equal(await nativeAdapter.getAddress());
+      expect(await factory.nativeGraduationAdapter()).to.equal(artifact.contracts.BnbNativeGraduationAdapter);
+      expect(artifact.contracts.BnbNativeGraduationAdapter).to.not.equal(ethers.ZeroAddress);
       expect(await factory.launchTokenDeployer()).to.equal(artifact.contracts.LaunchTokenDeployer);
       expect(await routing.creatorVault.factory()).to.equal(await factory.getAddress());
       expect(await factory.createPaused()).to.equal(true);
       expect(await factory.live()).to.equal(false);
+
+      const nativeOnChain: any = await ethers.getContractAt("BnbNativeGraduationAdapter", artifact.contracts.BnbNativeGraduationAdapter);
+      expect(await nativeOnChain.topazFactory()).to.equal(await fx.topazRouter.poolFactory());
+      expect(await nativeOnChain.WBNB()).to.equal(await fx.wbnb.getAddress());
+      expect(await nativeOnChain.permanentLpLocker()).to.equal(artifact.contracts.PermanentLpLocker);
+      expect(await nativeOnChain.campaignFactory()).to.equal(artifact.contracts.BnbBasicLaunchFactory);
 
       // Closed as promised...
       const [, , , creator] = await ethers.getSigners();
@@ -533,13 +546,19 @@ describe("BNB quote generation deployment", function () {
       expect(await factory.campaignsCount()).to.equal(1n);
     });
 
-    it("refuses to start without the native graduation adapter, before deploying anything", async function () {
-      await scriptInputs();
-      delete process.env.BNB_NATIVE_GRADUATION_ADAPTER;
-      const [deployer] = await ethers.getSigners();
-      const nonceBefore = await ethers.provider.getTransactionCount(deployer.address);
-      await expect(deployQuoteGeneration()).to.be.rejectedWith(/BNB_NATIVE_GRADUATION_ADAPTER is required[\s\S]*NativeGraduationAdapterUnavailable/);
-      expect(await ethers.provider.getTransactionCount(deployer.address)).to.equal(nonceBefore);
+    it("deploys BnbNativeGraduationAdapter after the factory and binds it on both sides", async function () {
+      this.timeout(120_000);
+      const { fx } = await scriptInputs();
+      const artifact: any = await deployQuoteGeneration();
+      const native: any = await ethers.getContractAt("BnbNativeGraduationAdapter", artifact.contracts.BnbNativeGraduationAdapter);
+      const quote: any = await ethers.getContractAt("BnbQuoteGraduationAdapter", artifact.contracts.BnbQuoteGraduationAdapter);
+      const factory: any = await ethers.getContractAt("BnbBasicLaunchFactory", artifact.contracts.BnbBasicLaunchFactory);
+      expect(await native.campaignFactoryLocked()).to.equal(true);
+      expect(await quote.campaignFactoryLocked()).to.equal(true);
+      expect(await factory.bnbQuoteGraduationAdapter()).to.equal(artifact.contracts.BnbQuoteGraduationAdapter);
+      expect(await factory.nativeGraduationAdapter()).to.equal(artifact.contracts.BnbNativeGraduationAdapter);
+      expect(await quote.topazFactory()).to.equal(await fx.topazRouter.poolFactory());
+      expect(await quote.WBNB()).to.equal(await fx.wbnb.getAddress());
     });
   });
 

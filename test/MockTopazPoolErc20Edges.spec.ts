@@ -13,7 +13,7 @@ describe("MockTopazPool ERC20 behavior", function () {
   it("minted LP balances can be transferred", async () => {
     const { pool, alice, bob } = await deployPool();
 
-    await pool.mint(await alice.getAddress(), 100n);
+    await pool["mint(address,uint256)"](await alice.getAddress(), 100n);
     await expect(pool.connect(alice).transfer(await bob.getAddress(), 40n))
       .to.emit(pool, "Transfer")
       .withArgs(await alice.getAddress(), await bob.getAddress(), 40n);
@@ -26,7 +26,7 @@ describe("MockTopazPool ERC20 behavior", function () {
   it("minted LP balances support approvals and transferFrom", async () => {
     const { pool, alice, bob, spender } = await deployPool();
 
-    await pool.mint(await alice.getAddress(), 100n);
+    await pool["mint(address,uint256)"](await alice.getAddress(), 100n);
     await pool.connect(alice).approve(await spender.getAddress(), 25n);
     await pool.connect(spender).transferFrom(await alice.getAddress(), await bob.getAddress(), 25n);
 

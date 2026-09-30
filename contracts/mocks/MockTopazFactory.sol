@@ -10,7 +10,9 @@ interface IPairTokenSetter {
 /// @dev Minimal Topaz v2 factory mock with stable/volatile pool separation.
 contract MockTopazFactory {
     mapping(bytes32 => address) public pools;
+    mapping(address => bool) public isPool;
     uint256 public feeBps = 30;
+    address public implementation = address(this);
 
     function _key(address a, address b, bool stable) internal pure returns (bytes32) {
         return a < b ? keccak256(abi.encodePacked(a, b, stable)) : keccak256(abi.encodePacked(b, a, stable));
@@ -24,13 +26,19 @@ contract MockTopazFactory {
         return feeBps;
     }
 
+    function setImplementation(address implementation_) external {
+        implementation = implementation_;
+    }
+
     function setPool(address tokenA, address tokenB, bool stable, address pool) external {
         pools[_key(tokenA, tokenB, stable)] = pool;
+        isPool[pool] = true;
         MockTopazPool(pool).setTokens(tokenA < tokenB ? tokenA : tokenB, tokenA < tokenB ? tokenB : tokenA, stable);
     }
 
     function setPair(address tokenA, address tokenB, address pair) external {
         pools[_key(tokenA, tokenB, false)] = pair;
+        isPool[pair] = true;
         IPairTokenSetter(pair).setTokens(tokenA < tokenB ? tokenA : tokenB, tokenA < tokenB ? tokenB : tokenA);
     }
 
@@ -42,6 +50,7 @@ contract MockTopazFactory {
         created.setTokens(tokenA < tokenB ? tokenA : tokenB, tokenA < tokenB ? tokenB : tokenA, stable);
         pool = address(created);
         pools[key] = pool;
+        isPool[pool] = true;
     }
 
     function createPair(address tokenA, address tokenB) external returns (address pair) {

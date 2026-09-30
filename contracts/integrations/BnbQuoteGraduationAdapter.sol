@@ -7,6 +7,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
+import {IGraduationAdapterV2} from "../interfaces/IGraduationAdapterV2.sol";
+import {TopazPoolRepair} from "./lib/TopazPoolRepair.sol";
+
 interface IBnbQuoteTopazFactory {
     function getPool(address tokenA, address tokenB, bool stable) external view returns (address pool);
 }
@@ -15,7 +18,7 @@ interface IBnbQuoteTopazPool {
     function token0() external view returns (address);
     function token1() external view returns (address);
     function stable() external view returns (bool);
-    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function getReserves() external view returns (uint256 reserve0, uint256 reserve1, uint256 blockTimestampLast);
 }
 
 interface IBnbQuoteTopazRouter {
@@ -35,17 +38,6 @@ interface IBnbQuoteTopazRouter {
         address to,
         uint256 deadline
     ) external payable returns (uint256[] memory amounts);
-    function addLiquidity(
-        address tokenA,
-        address tokenB,
-        bool stable,
-        uint256 amountADesired,
-        uint256 amountBDesired,
-        uint256 amountAMin,
-        uint256 amountBMin,
-        address to,
-        uint256 deadline
-    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
 }
 
 interface IBnbQuoteAggregatorV3 {
@@ -60,11 +52,36 @@ interface IBnbQuoteCampaignFactory {
     function isCampaign(address campaign) external view returns (bool);
 }
 
-/// @notice BNB graduation execution boundary for approved non-native quote assets.
-/// @dev Bonding remains native BNB. This adapter only executes the graduation-sized
-/// WBNB/native -> approved QUOTE acquisition and creates the final volatile MEME/QUOTE
-/// Topaz pool with LP minted directly to the factory generation's permanent locker.
-contract BnbQuoteGraduationAdapter is ReentrancyGuard {
+interface IBnbQuoteCampaignToken {
+    function token() external view returns (address);
+}
+
+/// @notice BNB quote graduation (MEME/QUOTE Topaz V2 volatile, permanently locked).
+/// Implements IGraduationAdapterV2. Bonding remains native BNB; this adapter swaps the pool native
+/// for the approved quote and mints the MEME/QUOTE pair. Spec: C7-bnb-adapters.md sections 4-6.
+///
+/// A pre-made MEME/QUOTE pool is accepted and repaired: the `FinalPoolAlreadyExists` revert is gone,
+/// and liquidity is minted straight into the pair (the Topaz router refuses a one-sided pool).
+///
+/// AUDIT (money path `graduate`):
+/// - Reentrancy: `nonReentrant`. Topaz `mint`/`swap` are `nonReentrant`. External calls: LaunchToken
+///   (no hooks), the quote token (routes must be plain ERC20: no hooks, no fee-on-transfer, no
+///   rebase — the library requires the pair's QUOTE balance rose by exactly N), WBNB inside the
+///   router swap, the Topaz router, the acquisition pool (view) and the final pool.
+/// - CEI: no per-graduation storage. Validate, swap native -> QUOTE onto this adapter, library
+///   (MEME pull into the pair + QUOTE transfer + mint), one-sided USD check, refund leftover native
+///   or quote to msg.sender, assert this contract's MEME and QUOTE balances equal the entry snapshot.
+/// - Reachable states: only `campaignFactory.isCampaign(msg.sender)` after `setCampaignFactoryOnce`,
+///   and only for that campaign's token, with an enabled route. Pool absent / empty / unsynced QUOTE
+///   / synced QUOTE. Factory paused: the acquisition swap reverts and PENDING retries (Claude).
+///   `totalSupply > 0` or `T <= bm` reverts `PoolAlreadyInitialized`.
+/// - Overflow: `mulDiv` everywhere; quote decimals capped at 36.
+/// - Griefing: pre-made pool absorbed. Donation (synced or not) becomes locked LP. Front-run `skim`
+///   only reduces the donation. Swaps before our mint are impossible (zero reserve). The acquisition
+///   swap is sandwichable: `minimumQuoteOut` is derived from a spot quote the attacker can move, so
+///   the real bound is `maxOracleDeviationBps`, not `maxSwapSlippageBps`. Keep the oracle bound tight.
+///   This adapter has no admin path over funds; `configureQuoteRoute` only sets policy.
+contract BnbQuoteGraduationAdapter is IGraduationAdapterV2, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 private constant BPS = 10_000;
@@ -79,26 +96,6 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
         uint16 maxPriceImpactBps;
         uint16 maxGraduationPriceDeviationBps;
         bool enabled;
-    }
-
-    struct GraduationRequest {
-        address campaignToken;
-        address quoteToken;
-        uint256 memeAmountDesired;
-        uint256 finalCurvePriceNativeWad;
-        uint256 deadline;
-    }
-
-    struct GraduationResult {
-        address canonicalPool;
-        uint256 lpAmount;
-        uint256 nativeLiquidityUsed;
-        uint256 quoteTokenAcquired;
-        uint256 quoteTokenUsed;
-        uint256 memeTokenUsed;
-        uint256 finalCurveMemeUsdWad;
-        uint256 initialDexMemeUsdWad;
-        uint256 priceDeviationBps;
     }
 
     address public immutable admin;
@@ -145,11 +142,12 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
     error FactoryAlreadyLocked();
     error CampaignFactoryMissing();
     error UnauthorizedCampaign();
+    error TokenMismatch();
     error RouteDisabled();
     error InvalidPolicy();
     error InvalidPair();
+    error InvalidRequest();
     error AcquisitionPoolMismatch();
-    error FinalPoolAlreadyExists();
     error DeadlineExpired();
     error OracleUnhealthy();
     error OracleStale();
@@ -159,7 +157,12 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
     error OracleDeviationTooHigh();
     error GraduationPriceDeviationTooHigh();
     error ZeroLiquidity();
-    error LiquidityResidual();
+    error ConservationBroken();
+    error NativeTransferFailed();
+    error PoolAlreadyInitialized();
+    error PairedDepositMismatch();
+    error PriceBelowTarget();
+    error ReservesDesynced();
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert OnlyAdmin();
@@ -194,6 +197,9 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
         maxOracleAgeSeconds = maxOracleAgeSeconds_;
     }
 
+    receive() external payable {}
+
+    /// @notice Binds the campaign factory once. `graduate` refuses every caller until this lands.
     function setCampaignFactoryOnce(address campaignFactory_) external onlyAdmin {
         if (campaignFactoryLocked) revert FactoryAlreadyLocked();
         if (campaignFactory_ == address(0)) revert ZeroAddress();
@@ -233,39 +239,28 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
         );
     }
 
-    function graduateQuoteLiquidity(GraduationRequest calldata request)
-        external
-        payable
-        nonReentrant
-        returns (GraduationResult memory result)
-    {
-        address factory_ = campaignFactory;
-        if (!campaignFactoryLocked || factory_ == address(0)) revert CampaignFactoryMissing();
-        if (!IBnbQuoteCampaignFactory(factory_).isCampaign(msg.sender)) revert UnauthorizedCampaign();
-        if (block.timestamp > request.deadline) revert DeadlineExpired();
-        if (request.campaignToken == address(0) || request.quoteToken == address(0)) revert ZeroAddress();
-        if (request.campaignToken == request.quoteToken || request.campaignToken == WBNB || request.quoteToken == WBNB) revert InvalidPair();
-        if (request.memeAmountDesired == 0 || msg.value == 0 || request.finalCurvePriceNativeWad == 0) revert ZeroLiquidity();
+    /// @notice IGraduationAdapterV2.graduate for a MEME/QUOTE pool. `r.quoteToken` is the bound quote.
+    /// `msg.value` is the pool native; it is swapped for QUOTE and all of the acquired QUOTE is deposited.
+    function graduate(Request calldata r) external payable override nonReentrant returns (Result memory res) {
+        _checkCaller(r);
+        if (r.quoteToken == address(0) || r.token == r.quoteToken || r.token == WBNB || r.quoteToken == WBNB) revert InvalidPair();
+        if (msg.value == 0) revert ZeroLiquidity();
 
-        QuoteRoute memory route = quoteRoutes[request.quoteToken];
+        QuoteRoute memory route = quoteRoutes[r.quoteToken];
         if (!route.enabled) revert RouteDisabled();
 
-        address acquisitionPool = IBnbQuoteTopazFactory(topazFactory).getPool(WBNB, request.quoteToken, false);
+        address acquisitionPool = IBnbQuoteTopazFactory(topazFactory).getPool(WBNB, r.quoteToken, false);
         if (acquisitionPool == address(0) || acquisitionPool != route.acquisitionPool) revert AcquisitionPoolMismatch();
         if (IBnbQuoteTopazPool(acquisitionPool).stable()) revert InvalidPair();
 
-        if (IBnbQuoteTopazFactory(topazFactory).getPool(request.campaignToken, request.quoteToken, false) != address(0)) {
-            revert FinalPoolAlreadyExists();
-        }
-
         uint256 nativeUsdWad = _oraclePriceWad(nativeUsdOracle);
         uint256 quoteUsdWad = _oraclePriceWad(route.oracleFeed);
-        _requireRouteLiquidity(request.quoteToken, route, nativeUsdWad, quoteUsdWad);
+        _requireRouteLiquidity(r.quoteToken, route, nativeUsdWad, quoteUsdWad);
 
         IBnbQuoteTopazRouter.Route[] memory acquisitionRoute = new IBnbQuoteTopazRouter.Route[](1);
         acquisitionRoute[0] = IBnbQuoteTopazRouter.Route({
             from: WBNB,
-            to: request.quoteToken,
+            to: r.quoteToken,
             stable: false,
             factory: topazFactory
         });
@@ -280,86 +275,108 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
         uint256 priceImpactBps = _priceImpactBps(msg.value, quotedQuoteOut, probeNative, probeQuoteOut);
         if (priceImpactBps > route.maxPriceImpactBps) revert PriceImpactTooHigh();
 
-        uint8 quoteDecimals = IERC20Metadata(request.quoteToken).decimals();
+        uint8 quoteDecimals = IERC20Metadata(r.quoteToken).decimals();
         uint256 impliedNativeUsdWad = _impliedNativeUsdWad(msg.value, quotedQuoteOut, quoteDecimals, quoteUsdWad);
         if (_deviationBps(impliedNativeUsdWad, nativeUsdWad) > route.maxOracleDeviationBps) revert OracleDeviationTooHigh();
 
-        IERC20 meme = IERC20(request.campaignToken);
-        meme.safeTransferFrom(msg.sender, address(this), request.memeAmountDesired);
+        uint256 quoteBeforeAdapter = IERC20(r.quoteToken).balanceOf(address(this));
+        uint256 memeBeforeAdapter = IERC20(r.token).balanceOf(address(this));
 
-        uint256 quoteBefore = IERC20(request.quoteToken).balanceOf(address(this));
+        uint256 quoteBefore = IERC20(r.quoteToken).balanceOf(address(this));
         uint256[] memory swapAmounts = IBnbQuoteTopazRouter(topazRouter).swapExactETHForTokens{value: msg.value}(
             minimumQuoteOut,
             acquisitionRoute,
             address(this),
-            request.deadline
+            r.deadline
         );
-        uint256 quoteAcquired = IERC20(request.quoteToken).balanceOf(address(this)) - quoteBefore;
-        if (swapAmounts.length < 2 || quoteAcquired == 0 || quoteAcquired != swapAmounts[swapAmounts.length - 1]) revert QuoteUnavailable();
+        uint256 quoteAcquired = IERC20(r.quoteToken).balanceOf(address(this)) - quoteBefore;
+        if (swapAmounts.length < 2 || quoteAcquired == 0 || quoteAcquired != swapAmounts[swapAmounts.length - 1]) {
+            revert QuoteUnavailable();
+        }
 
-        meme.forceApprove(topazRouter, request.memeAmountDesired);
-        IERC20(request.quoteToken).forceApprove(topazRouter, quoteAcquired);
-        (uint256 memeUsed, uint256 quoteUsed, uint256 lpAmount) = IBnbQuoteTopazRouter(topazRouter).addLiquidity(
-            request.campaignToken,
-            request.quoteToken,
-            false,
-            request.memeAmountDesired,
-            quoteAcquired,
-            request.memeAmountDesired,
-            quoteAcquired,
-            permanentLpLocker,
-            request.deadline
+        TopazPoolRepair.Outcome memory out = TopazPoolRepair.repairAndMint(
+            TopazPoolRepair.Params({
+                factory: topazFactory,
+                meme: r.token,
+                paired: r.quoteToken,
+                pairedAmount: quoteAcquired,
+                memeTarget: r.memeTarget,
+                memeMax: r.memeMax,
+                memePayer: msg.sender,
+                locker: permanentLpLocker
+            })
         );
-        meme.forceApprove(topazRouter, 0);
-        IERC20(request.quoteToken).forceApprove(topazRouter, 0);
 
-        if (memeUsed == 0 || quoteUsed == 0 || lpAmount == 0) revert ZeroLiquidity();
-        if (memeUsed != request.memeAmountDesired || quoteUsed != quoteAcquired) revert LiquidityResidual();
+        uint256 curveUsd = r.nativeUsdWad == 0 ? nativeUsdWad : r.nativeUsdWad;
+        uint256 finalCurveMemeUsdWad = Math.mulDiv(r.curvePriceWad, curveUsd, WAD);
+        uint256 memeBal = IERC20(r.token).balanceOf(out.pool);
+        uint256 quoteBal = IERC20(r.quoteToken).balanceOf(out.pool);
+        uint256 initialDexMemeUsdWad = _memeUsdFromQuote(memeBal, quoteBal, quoteDecimals, quoteUsdWad);
+        uint256 graduationDeviation;
+        if (initialDexMemeUsdWad < finalCurveMemeUsdWad) {
+            graduationDeviation = Math.mulDiv(finalCurveMemeUsdWad - initialDexMemeUsdWad, BPS, finalCurveMemeUsdWad);
+            if (graduationDeviation > route.maxGraduationPriceDeviationBps) revert GraduationPriceDeviationTooHigh();
+        }
 
-        address finalPool = IBnbQuoteTopazFactory(topazFactory).getPool(request.campaignToken, request.quoteToken, false);
-        if (finalPool == address(0) || IBnbQuoteTopazPool(finalPool).stable()) revert InvalidPair();
+        uint256 quoteLeftover = IERC20(r.quoteToken).balanceOf(address(this)) - quoteBeforeAdapter;
+        if (quoteLeftover != 0) IERC20(r.quoteToken).safeTransfer(msg.sender, quoteLeftover);
+        uint256 nativeLeftover = address(this).balance;
+        if (nativeLeftover != 0) {
+            (bool ok,) = payable(msg.sender).call{value: nativeLeftover}("");
+            if (!ok) revert NativeTransferFailed();
+        }
 
-        uint256 finalCurveMemeUsdWad = Math.mulDiv(request.finalCurvePriceNativeWad, nativeUsdWad, WAD);
-        uint256 initialDexMemeUsdWad = _memeUsdFromQuote(memeUsed, quoteUsed, quoteDecimals, quoteUsdWad);
-        uint256 graduationDeviation = _deviationBps(initialDexMemeUsdWad, finalCurveMemeUsdWad);
-        if (graduationDeviation > route.maxGraduationPriceDeviationBps) revert GraduationPriceDeviationTooHigh();
+        if (
+            IERC20(r.quoteToken).balanceOf(address(this)) != quoteBeforeAdapter
+                || IERC20(r.token).balanceOf(address(this)) != memeBeforeAdapter
+        ) revert ConservationBroken();
 
-        result = GraduationResult({
-            canonicalPool: finalPool,
-            lpAmount: lpAmount,
-            nativeLiquidityUsed: msg.value,
-            quoteTokenAcquired: quoteAcquired,
-            quoteTokenUsed: quoteUsed,
-            memeTokenUsed: memeUsed,
-            finalCurveMemeUsdWad: finalCurveMemeUsdWad,
-            initialDexMemeUsdWad: initialDexMemeUsdWad,
-            priceDeviationBps: graduationDeviation
+        res = Result({
+            pool: out.pool,
+            positionId: 0,
+            liquidity: out.liquidity,
+            memeUsed: out.memeUsed,
+            pairedUsed: quoteAcquired,
+            donationFound: out.donationFound,
+            startPriceWad: out.startPriceWad,
+            repaired: out.repaired,
+            repairMemeSold: 0,
+            repairProceeds: 0
         });
 
         emit QuoteGraduationExecuted(
             msg.sender,
-            request.campaignToken,
-            request.quoteToken,
-            finalPool,
-            lpAmount,
+            r.token,
+            r.quoteToken,
+            out.pool,
+            out.liquidity,
             msg.value,
             quoteAcquired,
-            memeUsed,
+            out.memeUsed,
             finalCurveMemeUsdWad,
             initialDexMemeUsdWad,
             graduationDeviation
         );
     }
 
+    function _checkCaller(Request calldata r) private view {
+        address factory_ = campaignFactory;
+        if (!campaignFactoryLocked || factory_ == address(0)) revert CampaignFactoryMissing();
+        if (!IBnbQuoteCampaignFactory(factory_).isCampaign(msg.sender)) revert UnauthorizedCampaign();
+        if (r.token == address(0) || IBnbQuoteCampaignToken(msg.sender).token() != r.token) revert TokenMismatch();
+        if (block.timestamp > r.deadline) revert DeadlineExpired();
+        if (r.memeTarget == 0 || r.memeMax < r.memeTarget || r.curvePriceWad == 0) revert InvalidRequest();
+    }
+
     function _requireRouteLiquidity(address quoteToken, QuoteRoute memory route, uint256 nativeUsdWad, uint256 quoteUsdWad) private view {
         IBnbQuoteTopazPool pool = IBnbQuoteTopazPool(route.acquisitionPool);
-        (uint112 reserve0, uint112 reserve1,) = pool.getReserves();
+        (uint256 reserve0, uint256 reserve1,) = pool.getReserves();
         address token0 = pool.token0();
         address token1 = pool.token1();
         if (!((token0 == WBNB && token1 == quoteToken) || (token1 == WBNB && token0 == quoteToken))) revert InvalidPair();
 
-        uint256 nativeReserve = token0 == WBNB ? uint256(reserve0) : uint256(reserve1);
-        uint256 quoteReserve = token0 == quoteToken ? uint256(reserve0) : uint256(reserve1);
+        uint256 nativeReserve = token0 == WBNB ? reserve0 : reserve1;
+        uint256 quoteReserve = token0 == quoteToken ? reserve0 : reserve1;
         uint8 quoteDecimals = IERC20Metadata(quoteToken).decimals();
         if (quoteDecimals > 36) revert InvalidPolicy();
         uint256 quoteScale = 10 ** uint256(quoteDecimals);

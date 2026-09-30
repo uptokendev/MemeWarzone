@@ -60,7 +60,7 @@ describe("LP harvest when the locker is not authorized on the treasury router", 
     const pool = await ethers.getContractAt("MockTopazPool", poolAddress);
 
     const lockedLp = ethers.parseEther("10");
-    await (await pool.mint(await locker.getAddress(), lockedLp)).wait();
+    await (await pool["mint(address,uint256)"](await locker.getAddress(), lockedLp)).wait();
     await (await locker.registerGraduatedPool(
       await campaign.getAddress(),
       await creator.getAddress(),

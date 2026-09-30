@@ -10,7 +10,7 @@
  *   1. LaunchCampaign            native campaign implementation
  *   2. BnbQuoteLaunchCampaign    campaign implementation for non-native quotes
  *   3. PermanentLpLocker + BnbBasicLaunchFactory  locker first (admin = factory's CREATE address), then the factory
- *   4. BnbQuoteGraduationAdapter needs the factory's locker, so it comes after
+ *   4. BnbNativeGraduationAdapter + BnbQuoteGraduationAdapter  both need the factory's locker, so they come after
  *   5. PostGradLeagueTreasuryV2  the war pool's league receiver
  *   6. ArenaWarPoolTreasuryV2    the battle system
  *
@@ -32,20 +32,20 @@
  * the active factory.
  *
  * The generation's native graduation adapter (BnbNativeGraduationAdapter, an
- * IGraduationAdapterV2) is an input too, BNB_NATIVE_GRADUATION_ADAPTER, and the
- * script refuses to start without it: a factory without one, or without a
- * LaunchTokenDeployer, cannot create, and both setters lock at the first
- * campaign. The router's creator vault must be a CreatorRewardsVaultV2 that
- * pays this router and is not pinned to another factory.
+ * IGraduationAdapterV2) is deployed after the factory, because it needs the
+ * factory's locker. Both adapters are bound with setCampaignFactoryOnce and
+ * wired into the factory (setNativeGraduationAdapter, setBnbQuoteGraduationAdapter).
+ * The router's creator vault must be a CreatorRewardsVaultV2 that pays this
+ * router and is not pinned to another factory.
  *
  *   BSC testnet first, against real Topaz:
  *     CONFIRM_BNB_QUOTE_GENERATION=I_UNDERSTAND_TESTNET \
- *     BNB_TREASURY_ROUTER=0x… BNB_NATIVE_USD_FEED=0x… BNB_NATIVE_GRADUATION_ADAPTER=0x… \
+ *     BNB_TREASURY_ROUTER=0x… BNB_NATIVE_USD_FEED=0x… \
  *       npx hardhat run scripts/deploy-bnb-quote-generation.ts --network bscTestnet
  *
  *   Then mainnet:
  *     CONFIRM_BNB_QUOTE_GENERATION=I_UNDERSTAND_MAINNET \
- *     BNB_TREASURY_ROUTER=0x… BNB_NATIVE_USD_FEED=0x… BNB_NATIVE_GRADUATION_ADAPTER=0x… \
+ *     BNB_TREASURY_ROUTER=0x… BNB_NATIVE_USD_FEED=0x… \
  *       npx hardhat run scripts/deploy-bnb-quote-generation.ts --network bscMainnet
  */
 import fs from "node:fs";
@@ -56,7 +56,6 @@ import { wireLpLocker } from "./lib/evmLpLockerWiring";
 import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
 import {
   assertCreatorVaultServesGeneration,
-  requireNativeGraduationAdapter,
   VAULT_DEX_TOPAZ_V2,
   wireGenerationCreatePath,
 } from "./lib/evmGenerationCreateWiring";
@@ -148,6 +147,11 @@ const MAX_ORACLE_AGE_SECONDS = 3600;
 /** E6: the generation's Topaz volatile fee. Since E13 the locker accepts and records any fee Topaz sets,
  * so this is a deploy-time check that the operator pointed at the intended (30 bps) Topaz, not a locker rule. */
 const REQUIRED_POOL_FEE_BPS = 30;
+/** Topaz PoolFactory.implementation(), pinned from BscScan (mainnet) and deployments/bscTestnet/minimal-topaz.json. */
+const PINNED_TOPAZ_IMPLEMENTATION: Record<string, string> = {
+  "56": "0xdC942D8e37cC20BCf9aD1Fe0111eE6c5908f3678",
+  "97": "0x740587c402078029cB7C6f04049C0834215243A2",
+};
 
 function envAddress(name: string, fallback: string): string {
   const raw = String(process.env[name] || "").trim() || fallback;
@@ -347,7 +351,10 @@ async function wireLaunchRecorder(
  * native, and that failure is the quiet one: the graduation would build its
  * pool on a different Topaz than the one the campaign trades against.
  */
-export async function assertTopazRoutersFit(topazRouter: string, topazQuoteRouter: string) {
+export async function assertTopazRoutersFit(
+  topazRouter: string,
+  topazQuoteRouter: string,
+): Promise<{ poolFactory: string; wrapped: string }> {
   const factorySide = await ethers.getContractAt(
     ["function poolFactory() view returns (address)", "function WETH() view returns (address)"],
     topazRouter,
@@ -421,6 +428,29 @@ export async function assertTopazRoutersFit(topazRouter: string, topazQuoteRoute
     );
   }
   console.log(`[quote-gen] ok topaz volatile fee = ${volatileFeeBps} bps (E6: ${REQUIRED_POOL_FEE_BPS})`);
+
+  const implProbe = await ethers.getContractAt(["function implementation() view returns (address)"], poolFactory);
+  let implementation: string;
+  try {
+    implementation = await (implProbe as any).implementation();
+  } catch {
+    throw new Error(
+      `topaz pool factory ${poolFactory} has no implementation(); a factory that is not Topaz would let graduation mint into the wrong pair code`,
+    );
+  }
+  if (!implementation || implementation === ethers.ZeroAddress) {
+    throw new Error(`topaz pool factory ${poolFactory} implementation() is unset`);
+  }
+  await requireCode("topazPoolImplementation", implementation);
+  const chainId = (await ethers.provider.getNetwork()).chainId;
+  const pinned = PINNED_TOPAZ_IMPLEMENTATION[String(chainId)];
+  if (pinned && implementation.toLowerCase() !== pinned.toLowerCase()) {
+    throw new Error(
+      `topaz pool factory ${poolFactory} implementation()=${implementation}, pinned for chain ${chainId} is ${pinned}`,
+    );
+  }
+  console.log(`[quote-gen] ok topaz implementation=${implementation}`);
+  return { poolFactory, wrapped };
 }
 
 export async function main() {
@@ -473,10 +503,8 @@ export async function main() {
   ] as const) {
     await requireCode(label, address);
   }
-  await assertTopazRoutersFit(topazRouter, topazQuoteRouter);
+  const { poolFactory: topazPoolFactory, wrapped: topazWbnb } = await assertTopazRoutersFit(topazRouter, topazQuoteRouter);
   await assertRouterCanServeStrictRouting(treasuryRouter);
-  const nativeGraduationAdapter = await requireNativeGraduationAdapter("BNB_NATIVE_GRADUATION_ADAPTER");
-  console.log(`[quote-gen] nativeGraduationAdapter=${nativeGraduationAdapter}`);
 
   // After the read-only guards, so a rejected router never costs a deployment.
   const creatorRegistry = await supplyOrDeployRegistry("CreatorRegistry", "BNB_CREATOR_REGISTRY", profile.creatorRegistry, isMainnetChain);
@@ -510,7 +538,16 @@ export async function main() {
   eq("factory.feeRecipient", await (factory as any).feeRecipient(), treasuryRouter);
   eq("factory.leagueReceiver", await (factory as any).leagueReceiver(), treasuryRouter);
 
-  // --- quote graduation adapter, which needs the factory's locker ----------
+  // --- native + quote graduation adapters, which need the factory's locker ----------
+  const nativeAdapter = await (await ethers.getContractFactory("BnbNativeGraduationAdapter")).deploy(
+    topazPoolFactory,
+    topazWbnb,
+    lockerAddress,
+  );
+  await nativeAdapter.waitForDeployment();
+  const nativeGraduationAdapter = await nativeAdapter.getAddress();
+  console.log(`[quote-gen] BnbNativeGraduationAdapter=${nativeGraduationAdapter}`);
+
   const adapter = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(
     topazQuoteRouter,
     lockerAddress,
@@ -521,8 +558,18 @@ export async function main() {
   const adapterAddress = await adapter.getAddress();
   console.log(`[quote-gen] BnbQuoteGraduationAdapter=${adapterAddress}`);
 
-  await waitTx((adapter as any).setCampaignFactoryOnce(factoryAddress), "adapter.setCampaignFactoryOnce");
+  await waitTx((nativeAdapter as any).setCampaignFactoryOnce(factoryAddress), "nativeAdapter.setCampaignFactoryOnce");
+  await waitTx((adapter as any).setCampaignFactoryOnce(factoryAddress), "quoteAdapter.setCampaignFactoryOnce");
   await waitTx((factory as any).setBnbQuoteGraduationAdapter(adapterAddress), "factory.setBnbQuoteGraduationAdapter");
+
+  eq("nativeAdapter.topazFactory", await (nativeAdapter as any).topazFactory(), topazPoolFactory);
+  eq("nativeAdapter.WBNB", await (nativeAdapter as any).WBNB(), topazWbnb);
+  eq("nativeAdapter.permanentLpLocker", await (nativeAdapter as any).permanentLpLocker(), lockerAddress);
+  eq("quoteAdapter.topazFactory", await (adapter as any).topazFactory(), topazPoolFactory);
+  eq("quoteAdapter.WBNB", await (adapter as any).WBNB(), topazWbnb);
+  eq("quoteAdapter.permanentLpLocker", await (adapter as any).permanentLpLocker(), lockerAddress);
+  await readBack(() => (nativeAdapter as any).campaignFactory(), factoryAddress, "nativeAdapter.campaignFactory");
+  await readBack(() => (adapter as any).campaignFactory(), factoryAddress, "quoteAdapter.campaignFactory");
 
   // --- battle system -------------------------------------------------------
   const league = await (await ethers.getContractFactory("PostGradLeagueTreasuryV2")).deploy(
@@ -596,12 +643,13 @@ export async function main() {
     deployer: deployerAddress,
     owner: safe,
     status: "deployed-paused",
-    inputs: { topazRouter, topazQuoteRouter, treasuryRouter, graduationOracle, creatorRegistry, riskRegistry, routeAuthority, nativeUsdFeed, nativeGraduationAdapter, creatorVault },
+    inputs: { topazRouter, topazQuoteRouter, treasuryRouter, graduationOracle, creatorRegistry, riskRegistry, routeAuthority, nativeUsdFeed, creatorVault },
     contracts: {
       BnbBasicLaunchFactory: factoryAddress,
       PermanentLpLocker: lockerAddress,
       LaunchCampaignImplementation: await nativeImpl.getAddress(),
       BnbQuoteLaunchCampaign: quoteImplAddress,
+      BnbNativeGraduationAdapter: nativeGraduationAdapter,
       BnbQuoteGraduationAdapter: adapterAddress,
       LaunchTokenDeployer: createPath.tokenDeployer,
       PostGradLeagueTreasuryV2: leagueAddress,

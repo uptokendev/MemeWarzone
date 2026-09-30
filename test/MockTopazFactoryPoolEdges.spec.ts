@@ -101,7 +101,7 @@ describe("MockTopazFactory and MockTopazPool", function () {
   it("MockTopazPool mint and reserves can be updated independently", async () => {
     const { alice, pool } = await deployFixture();
 
-    await pool.mint(await alice.getAddress(), 77n);
+    await pool["mint(address,uint256)"](await alice.getAddress(), 77n);
     await pool.setReserves(11n, 22n);
     const reserves = await pool.getReserves();
 
