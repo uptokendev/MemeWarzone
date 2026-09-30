@@ -32,8 +32,9 @@ interface IRhWETH9 {
 /// - Native in == native minted + native returned (+0 held). MEME pulled == MEME minted + MEME returned,
 ///   and MEME sold in the repair was paid by the campaign directly to the pool from its allowance.
 contract RobinhoodV3NativeGraduationAdapterV2 is RobinhoodV3PoolRepair {
-    constructor(address v3Factory_, address positionManager_, address weth_)
-        RobinhoodV3PoolRepair(v3Factory_, positionManager_, weth_)
+    /// @param admin_ Binds the campaign factory once (`setCampaignFactoryOnce`); the Safe on 4663.
+    constructor(address v3Factory_, address positionManager_, address weth_, address admin_)
+        RobinhoodV3PoolRepair(v3Factory_, positionManager_, weth_, admin_)
     {}
 
     receive() external payable {
@@ -67,7 +68,7 @@ contract RobinhoodV3NativeGraduationAdapterV2 is RobinhoodV3PoolRepair {
             spare: r.memeMax - r.memeTarget,
             deadline: r.deadline
         });
-        (res,,) = _graduateInto(x);
+        (res,,,) = _graduateInto(x);
         if (stepMemeSold != 0) res.repaired = true;
 
         if (IERC20(WETH).balanceOf(address(this)) != wethBefore || IERC20(r.token).balanceOf(address(this)) != memeBefore) {
@@ -80,8 +81,8 @@ contract RobinhoodV3NativeGraduationAdapterV2 is RobinhoodV3PoolRepair {
         return WETH;
     }
 
-    function _repairStepPriceWad(Request calldata r, address) internal pure override returns (uint256) {
-        return r.curvePriceWad;
+    function _repairStepSqrt(Request calldata r, address, bool memeIs0) internal pure override returns (uint160) {
+        return RobinhoodV3PriceMath.sqrtFromPrice(r.curvePriceWad, memeIs0);
     }
 
     function _sendPaired(address, address to, uint256 amount) internal override {
