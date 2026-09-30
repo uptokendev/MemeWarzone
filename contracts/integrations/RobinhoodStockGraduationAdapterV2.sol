@@ -85,9 +85,11 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
     /// <= 0.30% and the start price must land within 200 bps of the curve in USD anyway).
     uint16 public constant MAX_SWAP_SLIPPAGE_BPS = 100;
     /// @notice `repairStep` stops this far above the oracle-estimated target, so a chunk never sells MEME
-    /// below the real (acquisition-derived) target; `graduate` finishes the last few ticks (at spacing 60,
-    /// 5% is at most 9 initialized ticks).
-    uint256 public constant REPAIR_STEP_MARGIN_BPS = 500;
+    /// below the real (acquisition-derived) target, and an ETH/STOCK ratio move between a step and
+    /// `graduate` of up to ~20% (target up 25%) still leaves the fresh target below the step's stop, where
+    /// `graduate` only sells down. Audit 2: at 5% a ~10% move froze graduation. At spacing 60, 25% is at
+    /// most 38 initialized ticks for `graduate` to cross.
+    uint256 public constant REPAIR_STEP_MARGIN_BPS = 2500;
 
     struct StockRoute {
         address oracleFeed; // Chainlink STOCK/USD
@@ -228,8 +230,9 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
             IERC20(r.token).balanceOf(address(this))
         ];
 
-        uint256 stepProceeds = repairLedger[msg.sender].proceeds;
-        bool steppedBefore = repairLedger[msg.sender].memeSold != 0 || stepProceeds != 0;
+        RepairLedger memory ledger = repairLedger[msg.sender];
+        uint256 stepProceeds = ledger.proceeds;
+        bool steppedBefore = ledger.memeSold != 0 || stepProceeds != 0;
         delete repairLedger[msg.sender];
 
         (uint256 nativeUsdWad, uint256 stockUsdWad, uint256 stockUnit) = _prices(stock);
@@ -241,11 +244,16 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
 
         uint256 targetWad = Math.mulDiv(acquired, WAD, r.memeTarget);
         bool memeIs0 = r.token < stock;
+        uint160 sqrtTarget = RobinhoodV3PriceMath.sqrtFromPrice(targetWad, memeIs0);
+        if (ledger.memeSold != 0 && _aboveStepStop(sqrtTarget, ledger.sqrtReached, memeIs0)) {
+            sqrtTarget = ledger.sqrtReached;
+            targetWad = RobinhoodV3PriceMath.priceFromSqrt(sqrtTarget, memeIs0);
+        }
         Execution memory x = Execution({
             meme: r.token,
             paired: stock,
             memeIs0: memeIs0,
-            sqrtTarget: RobinhoodV3PriceMath.sqrtFromPrice(targetWad, memeIs0),
+            sqrtTarget: sqrtTarget,
             targetPriceWad: targetWad,
             memeAvailable: r.memeMax,
             pairedIn: acquired + stepProceeds,
@@ -341,6 +349,22 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         acquired = IERC20(stock).balanceOf(address(this)) - stockBefore;
         if (acquired < minimumOut) revert AcquisitionFailed();
         emit StockAcquired(msg.sender, stock, msg.value, acquired, oracleOut, minimumOut, nativeUsdWad, stockUsdWad);
+    }
+
+    /// @dev Audit 2. The MEME earlier `repairStep`s sold sits in the pool in ranges at or above the price
+    /// the last step left it at (`sqrtReached`); nobody can take it out before graduation (LaunchToken
+    /// refuses transfers from the pool). Moving the price back up through those ranges would need the
+    /// repair to pay STOCK, which the callback refuses (RepairInvariantBroken): a fresh target above the
+    /// step stop froze graduation. So when the fresh target is above `sqrtReached`, `sqrtReached` is the
+    /// target: reaching it from wherever the pool is now crosses only ranges without MEME (free), the mint
+    /// prices at it, and `_checkContinuity` still decides (a start more than 200 bps below the curve in
+    /// USD reverts PriceContinuityFailed, retryable). The stored price, not the live one, so a third party
+    /// moving the pool through empty ranges cannot lower the start price. A target at or below the stop
+    /// is unchanged: `graduate` sells down to it as before.
+    function _aboveStepStop(uint160 sqrtTarget, uint160 sqrtReached, bool memeIs0) private pure returns (bool) {
+        if (sqrtReached == 0) return false;
+        // MEME dearer at the target: token1/token0 higher when MEME is token0, lower when it is token1.
+        return memeIs0 ? sqrtTarget > sqrtReached : sqrtTarget < sqrtReached;
     }
 
     function _checkContinuity(

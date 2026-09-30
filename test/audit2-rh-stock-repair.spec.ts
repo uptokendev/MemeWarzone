@@ -47,6 +47,7 @@ describe("audit2: Robinhood stock adapter, chunked repair vs oracle drift (real 
 
   async function setup() {
     const [owner, griefOwner] = await ethers.getSigners();
+    await network.provider.send("hardhat_setBalance", [owner.address, "0x" + (10n ** 24n).toString(16)]);
     const v3 = await installRealV3();
     const ethUsd = await (await ethers.getContractFactory("MockUsdPriceFeed")).deploy(8);
     const stockUsd = await (await ethers.getContractFactory("MockUsdPriceFeed")).deploy(8);
@@ -125,14 +126,8 @@ describe("audit2: Robinhood stock adapter, chunked repair vs oracle drift (real 
     await ctx.stockUsd.setRoundData(9, stockUsd * 10n ** 8n, t, t, 9);
   }
 
-  it("EXPLOIT: a permissionless repair step followed by a ~10% ETH/STOCK ratio move freezes stock graduation (RepairInvariantBroken); the same drift without the step graduates", async () => {
-    const ctx = await setup();
-    const c = curve(160_000_000n);
-    const cAddr = await ctx.campaign.getAddress();
-    await ctx.owner.sendTransaction({ to: cAddr, value: c.poolNative });
-
-    // Griefer: pre-made MEME/STOCK pool far above the estimate, one STOCK-only bid range above the step stop.
-    const est = (c.P * 3000n) / 100n; // STOCK raw per 1e18 MEME
+  /** Griefer: pre-made MEME/STOCK pool far above the estimate, one STOCK-only bid range above the step stop. */
+  async function griefedPool(ctx: any, est: bigint) {
     await ctx.v3.v3Factory.createPool(ctx.meme, ctx.stockAddr, 3000);
     const poolAddr = await ctx.v3.v3Factory.getPool(ctx.meme, ctx.stockAddr, 3000);
     const pool = await ethers.getContractAt(["function initialize(uint160)", "function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)"], poolAddr);
@@ -144,24 +139,43 @@ describe("audit2: Robinhood stock adapter, chunked repair vs oracle drift (real 
     const lower = (Math.floor(Math.min(ta, tb) / 60) + 1) * 60;
     const upper = (Math.floor(Math.max(ta, tb) / 60) - 1) * 60;
     await g.mintRange(poolAddr, lower, upper, 10n ** 15n);
+    return { poolAddr, pool };
+  }
+
+  /** Start price in USD vs the curve's USD price, in bps (signed). ETH is $3000, STOCK has 18 decimals. */
+  async function startDevBps(ctx: any, P: bigint, stockUsd: bigint) {
+    const start = (await ctx.campaign.lastResult()).startPriceWad as bigint;
+    const startUsd = start * stockUsd;
+    const curveUsd = P * 3000n;
+    return ((startUsd - curveUsd) * 10_000n) / curveUsd;
+  }
+
+  it("HOLDS (was EXPLOIT): a permissionless repair step followed by a ~10% ETH/STOCK ratio move no longer freezes stock graduation; the start price is within the 200 bps band", async () => {
+    const ctx = await setup();
+    const c = curve(160_000_000n);
+    const cAddr = await ctx.campaign.getAddress();
+    await ctx.owner.sendTransaction({ to: cAddr, value: c.poolNative });
+    const est = (c.P * 3000n) / 100n; // STOCK raw per 1e18 MEME
+    const { poolAddr } = await griefedPool(ctx, est);
 
     const beforeStep = await snap();
 
-    // Anyone runs one repair chunk now (oracle ratio 30): stops at est * 1.05, selling MEME into the bid.
+    // Anyone runs one repair chunk now (oracle ratio 30): stops at est * 1.25, selling MEME into the bid.
     await ctx.campaign.repairPool(await ctx.adapter.getAddress(), ctx.stockAddr, c.T, c.budget, c.P, 0);
     expect(await ctx.campaign.repairMemeSold()).to.be.gt(0n);
+    expect((await ctx.adapter.repairLedger(cAddr)).sqrtReached).to.eq(sqrtFromPrice((est * 12_500n) / 10_000n, ctx.memeIs0));
 
     // STOCK falls 10% vs ETH; arbitrage syncs the acquisition pool to the new oracle ratio.
     await freshFeeds(ctx, 90n);
     await syncAcquisitionPool(ctx, 3000n, 90n);
-    await expect(ctx.campaign.graduate(await ctx.adapter.getAddress(), ctx.stockAddr, c.T, c.budget, c.P, c.poolNative)).to.be.revertedWithCustomError(
-      ctx.adapter,
-      "RepairInvariantBroken",
-    );
-    // Retrying keeps failing while the ratio stays there (no path back: MEME cannot be bought out by the repair).
-    await network.provider.send("evm_increaseTime", [3600]);
-    await freshFeeds(ctx, 90n);
-    await expect(ctx.campaign.graduate(await ctx.adapter.getAddress(), ctx.stockAddr, c.T, c.budget, c.P, c.poolNative)).to.be.reverted;
+    // The fresh target (~est * 1.11) is below the step's stop (est * 1.25): graduate sells down to it.
+    await ctx.campaign.graduate(await ctx.adapter.getAddress(), ctx.stockAddr, c.T, c.budget, c.P, c.poolNative);
+    expect((await ctx.campaign.lastResult()).pool).to.eq(poolAddr);
+    const dev = await startDevBps(ctx, c.P, 90n);
+    console.log(`      start price vs curve (USD) after step + 10% drift: ${dev} bps`);
+    expect(dev).to.be.gte(-200n);
+    expect(dev).to.be.lte(200n);
+    expect((await ctx.adapter.repairLedger(cAddr)).memeSold).to.eq(0n);
 
     // Control: identical state and drift, but no repair step -> graduates.
     await revert(beforeStep);
@@ -169,6 +183,59 @@ describe("audit2: Robinhood stock adapter, chunked repair vs oracle drift (real 
     await syncAcquisitionPool(ctx, 3000n, 90n);
     await ctx.campaign.graduate(await ctx.adapter.getAddress(), ctx.stockAddr, c.T, c.budget, c.P, c.poolNative);
     expect((await ctx.campaign.lastResult()).pool).to.eq(poolAddr);
+  });
+
+  it("HOLDS: a ratio move past the step margin (fresh target ~1% above the stop) graduates at the stop price, not through the MEME the step sold, within the band", async () => {
+    const ctx = await setup();
+    const c = curve(160_000_000n);
+    await ctx.owner.sendTransaction({ to: await ctx.campaign.getAddress(), value: c.poolNative });
+    const est = (c.P * 3000n) / 100n;
+    const { pool } = await griefedPool(ctx, est);
+    await ctx.campaign.repairPool(await ctx.adapter.getAddress(), ctx.stockAddr, c.T, c.budget, c.P, 0);
+    const [stop] = await pool.slot0();
+    // STOCK $100 -> $79: the oracle target rises ~26.6%, above the step stop (+25%).
+    await freshFeeds(ctx, 79n);
+    await syncAcquisitionPool(ctx, 3000n, 79n);
+    await ctx.campaign.graduate(await ctx.adapter.getAddress(), ctx.stockAddr, c.T, c.budget, c.P, c.poolNative);
+    const [after] = await pool.slot0();
+    expect(after).to.eq(stop); // the price stayed at the stop
+    const dev = await startDevBps(ctx, c.P, 79n);
+    console.log(`      start price vs curve (USD), target capped at the stop: ${dev} bps`);
+    expect(dev).to.be.gte(-200n);
+    expect(dev).to.be.lt(0n);
+  });
+
+  it("HOLDS: a ratio move far past the margin is a clean, retryable PriceContinuityFailed (not RepairInvariantBroken), and graduates once the ratio is back", async () => {
+    const ctx = await setup();
+    const c = curve(160_000_000n);
+    await ctx.owner.sendTransaction({ to: await ctx.campaign.getAddress(), value: c.poolNative });
+    const est = (c.P * 3000n) / 100n;
+    await griefedPool(ctx, est);
+    await ctx.campaign.repairPool(await ctx.adapter.getAddress(), ctx.stockAddr, c.T, c.budget, c.P, 0);
+    await freshFeeds(ctx, 70n);
+    await syncAcquisitionPool(ctx, 3000n, 70n);
+    await expect(ctx.campaign.graduate(await ctx.adapter.getAddress(), ctx.stockAddr, c.T, c.budget, c.P, c.poolNative)).to.be.revertedWithCustomError(
+      ctx.adapter,
+      "PriceContinuityFailed",
+    );
+    // The ratio comes back (STOCK buys WETH back to ~30 per WETH); the same campaign graduates.
+    const router = await ethers.getContractAt(
+      ["function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) payable returns (uint256)"],
+      RH_V3.swapRouter02,
+    );
+    const wethIs0 = BigInt(RH_V3.weth) < BigInt(ctx.stockAddr);
+    const limit = isqrt(wethIs0 ? (30n * Q192) / 1n : (1n * Q192) / 30n);
+    await ctx.v3.weth.connect(ctx.owner).deposit({ value: ethers.parseEther("2000") });
+    await ctx.v3.weth.connect(ctx.owner).approve(RH_V3.swapRouter02, ethers.parseEther("2000"));
+    await (router.connect(ctx.owner) as any).exactInputSingle({
+      tokenIn: RH_V3.weth, tokenOut: ctx.stockAddr, fee: 3000, recipient: ctx.owner.address,
+      amountIn: ethers.parseEther("2000"), amountOutMinimum: 0, sqrtPriceLimitX96: limit,
+    });
+    await freshFeeds(ctx, 100n);
+    await ctx.campaign.graduate(await ctx.adapter.getAddress(), ctx.stockAddr, c.T, c.budget, c.P, c.poolNative);
+    const dev = await startDevBps(ctx, c.P, 100n);
+    expect(dev).to.be.gte(-200n);
+    expect(dev).to.be.lte(200n);
   });
 
   it("HOLDS: without drift, repair step then graduate succeeds, adapter holds nothing, MEME conserved", async () => {

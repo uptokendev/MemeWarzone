@@ -164,6 +164,7 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
     struct RepairLedger {
         uint256 memeSold; // MEME sold into the pool by repairStep, cumulative, until graduate
         uint256 proceeds; // paired token (native for the native adapter, STOCK for the stock adapter) sent to the campaign
+        uint160 sqrtReached; // pool price the latest step left (audit 2: the stock graduate never targets above it)
     }
 
     /// @notice Repair done by `repairStep` for a campaign and not yet consumed by its `graduate`.
@@ -335,6 +336,7 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
         RepairLedger storage ledger = repairLedger[msg.sender];
         ledger.memeSold += memeSold;
         ledger.proceeds += proceeds;
+        (ledger.sqrtReached,,,,,,) = IRhV3Pool(pool).slot0();
         if (proceeds != 0) _sendPaired(paired, msg.sender, proceeds);
 
         if (IERC20(paired).balanceOf(address(this)) != pairedBefore || IERC20(r.token).balanceOf(address(this)) != memeBefore) {
