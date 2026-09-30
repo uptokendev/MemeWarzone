@@ -283,7 +283,7 @@ export function ChallengeCoinModal({
                   </button>
                   <button type="button" data-battle-mode="vote" onClick={() => pickMode("vote")} className={cn("rounded-xl border p-4 text-left transition", battleMode === "vote" ? selectedClass : idleClass)}>
                     <div className="font-retro text-lg text-foreground">Vote Battle</div>
-                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Free votes + boosts, 1 to 24 hours. Any coin can challenge any coin.</p>
+                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Free votes + boosts, 6 to 48 hours. Any coin can challenge any coin.</p>
                   </button>
                   <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" onClick={goNext}>Next</Button>
                 </div>

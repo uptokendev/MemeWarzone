@@ -135,7 +135,6 @@ export function BattleWallCombatant({
   const imageUrl = profile?.imageUrl || participant?.imageUrl || participant?.logoUri || null;
   const bleedSrc = resolveImageUri(imageUrl);
   const bleed = bleedSrc && bleedSrc !== "/placeholder.svg" ? bleedSrc : null;
-  const description = String(profile?.description || "").trim();
   const currentMcap = firstFiniteBattleMetric(
     metricsSide?.current?.marketCapUsd,
     profile?.marketCapUsd,
@@ -199,7 +198,7 @@ export function BattleWallCombatant({
       >
         <div
           data-battle-combatant-art="true"
-          className="relative aspect-square h-0 min-h-full w-auto shrink-0 self-stretch overflow-hidden"
+          className="relative aspect-square h-0 min-h-full w-auto shrink-0 self-stretch overflow-hidden max-w-[40%] md:max-w-[15rem]"
         >
           <CombatantArtwork imageUrl={imageUrl} ticker={displaySymbol} name={displayName} accent={accent} />
           <div className="absolute left-1 top-1 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">
@@ -239,9 +238,7 @@ export function BattleWallCombatant({
               ) : (
                 <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-white/58 md:mt-1 md:text-[11px] md:tracking-[0.16em]">{displayName}</div>
               )}
-              {description ? (
-                <p className="mt-1 hidden line-clamp-2 text-[11px] leading-4 text-white/48 md:block">{description}</p>
-              ) : null}
+
             </div>
 
             <div className="grid w-full grid-cols-2 gap-1 sm:gap-1.5" data-battle-metric-grid="true">

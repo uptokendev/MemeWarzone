@@ -16,7 +16,7 @@ export const BATTLE_MODE_VOTE = "vote";
 export const BATTLE_MODES = Object.freeze([BATTLE_MODE_NORMAL, BATTLE_MODE_VOTE]);
 
 export const NORMAL_BATTLE_DURATION_HOURS = Object.freeze([24, 72, 168]);
-export const VOTE_BATTLE_DURATION_HOURS = Object.freeze([1, 6, 12, 24]);
+export const VOTE_BATTLE_DURATION_HOURS = Object.freeze([6, 12, 24, 48]);
 
 export const VOTE_BATTLE_SCORING_VERSION = "vote_tournament_v1";
 export const VOTE_BATTLE_COMPETITION_GENERATION = "arena_competition_v2";
@@ -57,8 +57,8 @@ function voteFallback(fallback) {
 
 /**
  * Mode-aware duration parse. Normal mode keeps the historical day shorthand
- * (1 / 3 / 7 days -> 24 / 72 / 168 hours). Vote mode takes exact hours only,
- * so "1" is one hour, never a day.
+ * (1 / 3 / 7 days -> 24 / 72 / 168 hours). Vote mode takes exact hours only (6 / 12 / 24 / 48),
+ * never coerced from days.
  */
 export function parseBattleDurationHoursForMode(mode, value, fallback = 24) {
   const n = Number(value);

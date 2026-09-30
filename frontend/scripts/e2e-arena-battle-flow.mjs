@@ -300,7 +300,7 @@ async function main() {
   // ---- Durations per mode
   r = await challenge(A, coinA, coinB, { mode: "vote", hours: 72 });
   const badVote = r.json?.battle;
-  check("a Vote Battle cannot run a metrics duration (refused, or clamped to a vote duration)", r.status !== 200 || [1, 6, 12, 24].includes(badVote?.durationHours), `${r.status} ${badVote?.durationHours ?? "-"}h`);
+  check("a Vote Battle cannot run a metrics duration (refused, or clamped to a vote duration)", r.status !== 200 || [6, 12, 24, 48].includes(badVote?.durationHours), `${r.status} ${badVote?.durationHours ?? "-"}h`);
   if (badVote?.id) await decline(B, badVote.id);
 }
 

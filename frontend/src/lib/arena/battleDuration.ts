@@ -4,12 +4,12 @@ export const BATTLE_DURATIONS = [
   { hours: 168, label: "7 days" },
 ] as const;
 
-/** Vote Battles: free votes + boosts, short clocks (1 hour up to 24 hours). */
+/** Vote Battles: free votes + boosts, 6, 12, 24 or 48 hours. */
 export const VOTE_BATTLE_DURATIONS = [
-  { hours: 1, label: "1 hour" },
   { hours: 6, label: "6 hours" },
   { hours: 12, label: "12 hours" },
   { hours: 24, label: "24 hours" },
+  { hours: 48, label: "48 hours" },
 ] as const;
 
 export type BattleMode = "normal" | "vote";
@@ -26,7 +26,7 @@ export function parseBattleDurationHours(value: unknown, fallback = 24): 24 | 72
 
 export function parseVoteBattleDurationHours(value: unknown, fallback: VoteBattleDurationHours = 24): VoteBattleDurationHours {
   const n = Number(value);
-  if (n === 1 || n === 6 || n === 12 || n === 24) return n;
+  if (n === 6 || n === 12 || n === 24 || n === 48) return n;
   return fallback;
 }
 
@@ -38,7 +38,7 @@ export function battleDurationOptions(mode: BattleMode): ReadonlyArray<{ hours: 
   return mode === "vote" ? VOTE_BATTLE_DURATIONS : BATTLE_DURATIONS;
 }
 
-/** The duration a battle of this mode accepts: vote 1/6/12/24 h, metrics 24 h / 3 d / 7 d. */
+/** The duration a battle of this mode accepts: vote 6/12/24/48 h, metrics 24 h / 3 d / 7 d. */
 export function parseBattleDurationHoursForMode(mode: BattleMode | string | undefined | null, value: unknown, fallback = 24): number {
   return parseBattleMode(mode) === "vote"
     ? parseVoteBattleDurationHours(value, parseVoteBattleDurationHours(fallback, 24))
@@ -48,5 +48,8 @@ export function parseBattleDurationHoursForMode(mode: BattleMode | string | unde
 export function battleDurationLabel(hours: unknown): string {
   const n = Number(hours);
   const match = BATTLE_DURATIONS.find((item) => item.hours === n) || VOTE_BATTLE_DURATIONS.find((item) => item.hours === n);
-  return match?.label || "24 hours";
+  if (match) return match.label;
+  // Battles created before 2026-10-01 could run 1 hour; show any other whole-hour clock as it is.
+  if (Number.isFinite(n) && n > 0) return n === 1 ? "1 hour" : `${n} hours`;
+  return "24 hours";
 }

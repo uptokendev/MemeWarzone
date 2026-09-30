@@ -785,7 +785,8 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE (no MORE), an
   assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
   assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
   assert.doesNotMatch(combatant, /grid-cols-1/);
-  assert.match(combatant, /hidden line-clamp-2[\s\S]*md:block/);
+  // Founder, 2026-10-01: battle cards show no description (a long one grew the card and the art).
+  assert.doesNotMatch(combatant, /profile\?\.description/);
   assert.match(combatant, /firstFiniteBattleMetric/);
   assert.match(combatant, /currentMcap === null \? "—" : formatCompactUsd\(currentMcap\)/);
   assert.match(combatant, /currentHolders === null \? "—" : Number\(currentHolders\)\.toLocaleString\(\)/);
@@ -877,7 +878,8 @@ test("Battle Wall combatant keeps art-left split on mobile instead of stacking i
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
   assert.match(combatant, /h-auto max-h-\[22rem\]/);
   assert.doesNotMatch(combatant, /100vh|min-h-screen/);
-  assert.match(combatant, /hidden line-clamp-2[\s\S]*md:block/);
+  // Founder, 2026-10-01: battle cards show no description (a long one grew the card and the art).
+  assert.doesNotMatch(combatant, /profile\?\.description/);
   assert.match(combatant, /grid-cols-2/);
   assert.match(combatant, /data-battle-combatant-actions/);
   assert.match(moduleSrc, /grid-cols-1/);
