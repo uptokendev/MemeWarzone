@@ -166,12 +166,13 @@ export function graduationTargetFor(chainId: bigint): bigint {
 export function configFor(chainId: bigint) {
   return {
     totalSupply: ethers.parseEther("1000000000"),
-    curveBps: 8400n,
-    liquidityTokenBps: 1400n,
+    // C5 section 2: curve 70%, pool allocation 28%, reserve 2%; Robinhood k = 850. The factory's
+    // setConfig refuses any config that fails the supply bound (8400/1400 does).
+    curveBps: 7000n,
+    liquidityTokenBps: 2800n,
     basePrice: 1_000_000_000n,
     priceSlope: 850n,
     graduationTarget: graduationTargetFor(chainId),
-    liquidityBps: 3300n,
   };
 }
 
@@ -309,6 +310,14 @@ async function main() {
   console.log(`[rh] ok feeRecipient == leagueReceiver == ${feeRecipient}`);
 
   await bindAdapterToFactory(nativeAdapter, factoryAddress, "native graduation adapter");
+  // The C5 factory creates only with a native IGraduationAdapterV2 and a token deployer set.
+  await waitTx((factory as any).setNativeGraduationAdapter(v3GraduationRouter), "factory.setNativeGraduationAdapter");
+  const tokenDeployer = await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy();
+  await tokenDeployer.waitForDeployment();
+  await waitTx((factory as any).setLaunchTokenDeployer(await tokenDeployer.getAddress()), "factory.setLaunchTokenDeployer");
+  if (ethers.getAddress(await (factory as any).nativeGraduationAdapter()) !== ethers.getAddress(v3GraduationRouter)) {
+    throw new Error("factory.nativeGraduationAdapter did not stick");
+  }
 
   const stockAdapter = await deployStockGraduationAdapter(v3Factory, positionManager, swapRouter, weth, nativeUsdFeed, MAX_ORACLE_AGE_SECONDS);
   console.log(`[rh] RobinhoodStockGraduationAdapterV2 = ${await stockAdapter.getAddress()}`);
@@ -405,6 +414,7 @@ async function main() {
       LaunchCampaignImplementation: await campaignImpl.getAddress(),
       PermanentV3PositionLocker: lockerAddress,
       RobinhoodV3NativeGraduationAdapterV2: v3GraduationRouter,
+      LaunchTokenDeployer: await tokenDeployer.getAddress(),
       RobinhoodStockGraduationAdapterV2: await stockAdapter.getAddress(),
       RobinhoodV3NativeSwapAdapter: await nativeSwapAdapter.getAddress(),
       PostGradLeagueTreasuryV2: await league.getAddress(),

@@ -44,6 +44,9 @@ const config: HardhatUserConfig = {
       allowUnlimitedContractSize: false,
       // Robinhood Chain is Arbitrum Nitro: one transaction is capped at 32M gas (C7 open question 2).
       blockGasLimit: 32_000_000,
+      // Cancun rules: EDR's newer default applies Osaka's 2^24 per-transaction gas cap (EIP-7825),
+      // which Nitro does not have; the 32M block limit above is the cap that matters on 4663.
+      hardfork: "cancun",
     },
   },
   mocha: { timeout: 1_800_000 },

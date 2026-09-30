@@ -109,7 +109,7 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
   describe("factory binding", () => {
     it("admin only, once, refuses zero/EOA/no-locker, reads the locker from the factory", async () => {
       const f = await fixture();
-      await expect(f.native.connect(f.other).setCampaignFactoryOnce(await f.factory.getAddress())).to.be.revertedWithCustomError(f.native, "OnlyAdmin");
+      await expect((f.native.connect(f.other) as any).setCampaignFactoryOnce(await f.factory.getAddress())).to.be.revertedWithCustomError(f.native, "OnlyAdmin");
       await expect(f.native.setCampaignFactoryOnce(ethers.ZeroAddress)).to.be.revertedWithCustomError(f.native, "ZeroAddress");
       await expect(f.native.setCampaignFactoryOnce(f.other.address)).to.be.revertedWithCustomError(f.native, "ContractCodeMissing");
       const noLocker = await (await ethers.getContractFactory("MockEvmGenRhFactory")).deploy(ethers.ZeroAddress);
@@ -176,7 +176,7 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
     it("the swap callback only answers the pool of an in-flight repair", async () => {
       const f = await fixture();
       await expect(f.native.uniswapV3SwapCallback(1, 0, "0x")).to.be.revertedWithCustomError(f.native, "UnauthorizedCallback");
-      await expect(f.stock.connect(f.other).uniswapV3SwapCallback(0, 1, "0x")).to.be.revertedWithCustomError(f.stock, "UnauthorizedCallback");
+      await expect((f.stock.connect(f.other) as any).uniswapV3SwapCallback(0, 1, "0x")).to.be.revertedWithCustomError(f.stock, "UnauthorizedCallback");
     });
 
     it("native adapter accepts ETH only from WETH's unwrap", async () => {
@@ -190,7 +190,7 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
     it("admin only; slippage <= 300 bps; depth > 0; canonical acquisition pool; not WETH", async () => {
       const f = await fixture();
       const stk = await f.stockToken.getAddress();
-      await expect(f.stock.connect(f.other).configureStockRoute(stk, f.route)).to.be.revertedWithCustomError(f.stock, "OnlyAdmin");
+      await expect((f.stock.connect(f.other) as any).configureStockRoute(stk, f.route)).to.be.revertedWithCustomError(f.stock, "OnlyAdmin");
       await expect(f.stock.configureStockRoute(stk, { ...f.route, maxSwapSlippageBps: 301 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
       await expect(f.stock.configureStockRoute(stk, { ...f.route, minimumRouteLiquidityUsdWad: 0 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
       await expect(f.stock.configureStockRoute(stk, { ...f.route, acquisitionPool: await f.locker.getAddress() })).to.be.revertedWithCustomError(
@@ -200,9 +200,15 @@ describe("evmgen-rh: Robinhood V2 graduation adapters (unit, mocks)", function (
       await expect(f.stock.configureStockRoute(stk, { ...f.route, acquisitionFeeTier: 777 })).to.be.revertedWithCustomError(f.stock, "InvalidFeeTier");
       await expect(f.stock.configureStockRoute(await f.weth.getAddress(), f.route)).to.be.revertedWithCustomError(f.stock, "InvalidPair");
       await expect(f.stock.configureStockRoute(stk, f.route)).to.emit(f.stock, "StockRouteConfigured");
+      // The 8-field layout LaunchFactory reads at create: (feed, pool, fee, depth, slip, dev, impact, enabled).
       const stored = await f.stock.stockRoutes(stk);
-      expect(stored.enabled).to.equal(true);
-      expect(stored.maxSwapSlippageBps).to.equal(300);
+      expect(stored.length).to.equal(8);
+      expect(stored[7]).to.equal(true);
+      expect(stored[4]).to.equal(300);
+      expect(stored[5]).to.equal(500);
+      expect(stored[6]).to.equal(500);
+      await expect(f.stock.configureStockRoute(stk, { ...f.route, maxOracleDeviationBps: 10_001 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
+      await expect(f.stock.configureStockRoute(stk, { ...f.route, maxPriceImpactBps: 10_001 })).to.be.revertedWithCustomError(f.stock, "InvalidPolicy");
     });
 
     it("enabling reads both feeds: a stale or broken feed is refused, disabling is not", async () => {

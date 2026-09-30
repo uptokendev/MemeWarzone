@@ -246,7 +246,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
     await weth.connect(to).deposit({ value: wethIn });
     await weth.connect(to).approve(RH.swapRouter, wethIn);
     const router = await ethers.getContractAt(ROUTER_ABI, RH.swapRouter);
-    await router.connect(to).exactInputSingle({
+    await (router.connect(to) as any).exactInputSingle({
       tokenIn: RH.weth,
       tokenOut: RH.spy,
       fee: 500,
