@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {EvmGenPoolSwap, IEvmGenWrappedNative} from "./EvmGenPoolSwap.sol";
+import {EvmGenPoolSwap} from "./EvmGenPoolSwap.sol";
 
 interface ITopazPoolFeeSource {
     function claimFees() external;
@@ -27,11 +27,10 @@ interface ILpRevenueTreasuryRouter {
 /// @dev Registered LP principal has no withdrawal, transfer, approval, migration, or rescue path.
 /// EVM launch generation (E9, docs/evm-launch/spec/C1-C6-fees.md): every harvest sells the MEME-side fees
 /// for the paired asset in the same pair, bounded by price impact (EvmGenPoolSwap), before the 80/20 split,
-/// so creator and protocol are paid in the paired asset only. What the bound does not allow in one harvest
-/// is carried (`carriedMeme`) into the next one; the bound never reverts a harvest. When the paired asset
-/// is the configured wrapped native it is unwrapped: the creator side is pushed as native (gas-capped,
-/// pending on failure) and the protocol side goes through routeLpNative. A quote-bound pool (BNB quote
-/// tokens) pays both sides in the quote token; the protocol side keeps routeLpToken.
+/// so creator and protocol are paid in the paired asset only: WBNB on native pools, the quote token on
+/// quote-bound pools, both through today's paths (creator transfer with pending fallback, protocol via
+/// routeLpToken). What the bound does not allow in one harvest is carried (`carriedMeme`) into the next
+/// one; neither the bound nor a failed sale ever reverts a harvest.
 contract PermanentLpLocker is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -47,8 +46,7 @@ contract PermanentLpLocker is ReentrancyGuard {
     uint16 public constant MEME_SALE_MAX_IMPACT_BPS = 50;
     /// @notice The sale is skipped (carried) while spot is worse than the pair's 30 min TWAP by more than this.
     uint16 public constant MEME_SALE_MAX_TWAP_DEVIATION_BPS = 100;
-    /// @notice Gas forwarded with the creator's native payment; a recipient that needs more is paid by pull.
-    uint256 public constant CREATOR_NATIVE_PUSH_GAS = 100_000;
+
 
     struct PoolRegistration {
         address campaign;
@@ -68,9 +66,6 @@ contract PermanentLpLocker is ReentrancyGuard {
     address public immutable admin;
     address public treasuryRouter;
     address public topazFactory;
-    /// @notice WBNB. Set once by the admin (the factory) before the first registration; zero = pay WBNB as a token.
-    address public wrappedNative;
-    uint256 public registrationCount;
     /// @notice MEME fees collected but not yet sold because of the impact bound, per pool.
     mapping(address => uint256) public carriedMeme;
 
@@ -109,7 +104,6 @@ contract PermanentLpLocker is ReentrancyGuard {
     event PendingProtocolTokenRouted(address indexed token, uint256 amount);
     event PendingProtocolNativeRouted(uint256 amount);
     event UnregisteredTokenRecovered(address indexed token, address indexed to, uint256 amount);
-    event WrappedNativeConfigured(address indexed wrappedNative);
     event MemeFeesSold(address indexed pool, address indexed memeToken, uint256 memeSold, uint256 pairedOut, uint256 memeCarried);
 
     error OnlyAdmin();
@@ -128,7 +122,6 @@ contract PermanentLpLocker is ReentrancyGuard {
     error LockedLpMissing();
     error LpPrincipalChanged();
     error NativeClaimFailed();
-    error WrappedNativeLocked();
     error OnlySelf();
 
     modifier onlyAdmin() {
@@ -142,15 +135,6 @@ contract PermanentLpLocker is ReentrancyGuard {
     }
 
     receive() external payable {}
-
-    /// @notice Sets WBNB so native pools pay out native. Only before the first registration, so a pool's payout
-    /// asset can never change after it is registered.
-    function configureWrappedNative(address wrappedNative_) external onlyAdmin {
-        if (wrappedNative_ == address(0)) revert ZeroAddress();
-        if (registrationCount != 0) revert WrappedNativeLocked();
-        wrappedNative = wrappedNative_;
-        emit WrappedNativeConfigured(wrappedNative_);
-    }
 
     function configureRevenue(address treasuryRouter_, address topazFactory_) external onlyAdmin {
         if (treasuryRouter_ == address(0) || topazFactory_ == address(0)) revert ZeroAddress();
@@ -194,7 +178,6 @@ contract PermanentLpLocker is ReentrancyGuard {
         if (IERC20(pool).balanceOf(address(this)) < lockedLpAmount) revert LockedLpMissing();
 
         _registerLpToken(pool, false, address(this));
-        registrationCount += 1;
         registeredFeeAsset[token0_] = true;
         registeredFeeAsset[token1_] = true;
         lockedBalance[pool] += lockedLpAmount;
@@ -373,37 +356,18 @@ contract PermanentLpLocker is ReentrancyGuard {
         address recipient = creatorPayoutRecipient[info.creator];
         if (recipient == address(0)) recipient = info.creatorFeeRecipient;
 
-        if (token == wrappedNative) {
-            // Unwrap the whole paired amount; creator by gas-capped push (pull on failure), protocol by routeLpNative.
-            IEvmGenWrappedNative(token).withdraw(amount);
-            if (_trySendNative(recipient, creatorAmount)) {
-                cumulativeCreatorPaid[info.pool][token] += creatorAmount;
-            } else {
-                pendingNative[recipient] += creatorAmount;
-                emit HarvestPaymentPending(info.pool, recipient, address(0), creatorAmount, false);
-            }
-            if (_routeProtocolNative(info.pool, protocolAmount)) {
-                cumulativeProtocolRouted[info.pool][token] += protocolAmount;
-            }
+        if (_tryTransferToken(token, recipient, creatorAmount)) {
+            cumulativeCreatorPaid[info.pool][token] += creatorAmount;
         } else {
-            if (_tryTransferToken(token, recipient, creatorAmount)) {
-                cumulativeCreatorPaid[info.pool][token] += creatorAmount;
-            } else {
-                pendingToken[recipient][token] += creatorAmount;
-                emit HarvestPaymentPending(info.pool, recipient, token, creatorAmount, false);
-            }
+            pendingToken[recipient][token] += creatorAmount;
+            emit HarvestPaymentPending(info.pool, recipient, token, creatorAmount, false);
+        }
 
-            if (_routeProtocolToken(info.pool, token, protocolAmount)) {
-                cumulativeProtocolRouted[info.pool][token] += protocolAmount;
-            }
+        if (_routeProtocolToken(info.pool, token, protocolAmount)) {
+            cumulativeProtocolRouted[info.pool][token] += protocolAmount;
         }
 
         emit FeesHarvested(info.pool, msg.sender, token, amount, creatorAmount, protocolAmount);
-    }
-
-    function _trySendNative(address to, uint256 amount) internal returns (bool ok) {
-        if (amount == 0) return true;
-        (ok, ) = payable(to).call{value: amount, gas: CREATOR_NATIVE_PUSH_GAS}("");
     }
 
     function _routeProtocolToken(address pool, address token, uint256 amount) internal returns (bool) {
