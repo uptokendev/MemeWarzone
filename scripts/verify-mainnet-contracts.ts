@@ -29,6 +29,11 @@ async function main() {
   const summary: Record<string, string> = {};
   for (const c of chain.contracts) {
     if (only.length && !only.some((o) => c.name.includes(o))) continue;
+    if (c.placeholder || !c.address || /^0x0+$/i.test(c.address)) {
+      summary[c.name] = "placeholder";
+      console.log(`  ${summary[c.name].padEnd(20)} ${c.name} ${c.address || "(unset)"}`);
+      continue;
+    }
     try {
       await hre.run("verify:verify", { address: c.address, constructorArguments: c.args, contract: c.contract });
       summary[c.name] = "verified";

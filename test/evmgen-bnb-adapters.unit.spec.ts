@@ -377,10 +377,10 @@ describe("evmgen-bnb: BnbNativeGraduationAdapter (unit, mocks)", function () {
 describe("evmgen-bnb: BnbQuoteGraduationAdapter (unit, mocks)", function () {
   const POLICY = {
     minimumRouteLiquidityUsdWad: 50_000n * WAD,
-    maxSwapSlippageBps: 300,
-    maxOracleDeviationBps: 5000,
-    maxPriceImpactBps: 5000,
-    maxGraduationPriceDeviationBps: 500,
+    maxSwapSlippageBps: 100,
+    maxOracleDeviationBps: 100,
+    maxPriceImpactBps: 100,
+    maxGraduationPriceDeviationBps: 100,
     enabled: true,
   };
 
@@ -397,10 +397,10 @@ describe("evmgen-bnb: BnbQuoteGraduationAdapter (unit, mocks)", function () {
     const quote = await (await ethers.getContractFactory("MockERC20")).deploy("USDT", "USDT", 10n ** 30n, admin.address);
     const acq = await topazFactory.createPool.staticCall(await wbnb.getAddress(), await quote.getAddress(), false);
     await topazFactory.createPool(await wbnb.getAddress(), await quote.getAddress(), false);
-    // Depth: 100 WBNB * $800 + 100_000 USDT = $180k, above the $50k floor.
+    // Depth at oracle: 100 WBNB * $800 + 80_000 USDT = $160k, above the $50k floor.
     await wbnb.deposit({ value: 100n * WAD });
     await wbnb.transfer(acq, 100n * WAD);
-    await quote.transfer(acq, 100_000n * WAD);
+    await quote.transfer(acq, 80_000n * WAD);
     const acqPool = await ethers.getContractAt("MockTopazPool", acq);
     await acqPool.sync();
     // Router inventory for the mock swap.
@@ -410,6 +410,7 @@ describe("evmgen-bnb: BnbQuoteGraduationAdapter (unit, mocks)", function () {
     await locker.configureRevenue(admin.address, await topazFactory.getAddress());
     const factory = await (await ethers.getContractFactory("MockEvmGenRhFactory")).deploy(await locker.getAddress());
     const adapter = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(
+      admin.address,
       await router.getAddress(),
       await locker.getAddress(),
       await nativeFeed.getAddress(),
@@ -453,15 +454,109 @@ describe("evmgen-bnb: BnbQuoteGraduationAdapter (unit, mocks)", function () {
     ).to.be.revertedWithCustomError(Q, "AcquisitionPoolMismatch");
   });
 
+  it("M1: caps every route limit at 100 bps and refuses 0 slippage / 0 floor", async function () {
+    const f = await fixture();
+    const adapter = f.adapter;
+    const quote = await f.quote.getAddress();
+    const base = { oracleFeed: await f.quoteFeed.getAddress(), acquisitionPool: f.acq, ...POLICY };
+    expect(await adapter.MAX_ROUTE_LIMIT_BPS()).to.equal(100);
+    expect(await adapter.admin()).to.equal(f.admin.address);
+    await expect(adapter.connect(f.other).configureQuoteRoute(quote, base)).to.be.revertedWithCustomError(adapter, "OnlyAdmin");
+    for (const field of ["maxSwapSlippageBps", "maxOracleDeviationBps", "maxPriceImpactBps", "maxGraduationPriceDeviationBps"] as const) {
+      await expect(adapter.configureQuoteRoute(quote, { ...base, [field]: 101 })).to.be.revertedWithCustomError(adapter, "InvalidPolicy");
+      await expect(adapter.configureQuoteRoute(quote, { ...base, [field]: 10_000 })).to.be.revertedWithCustomError(adapter, "InvalidPolicy");
+    }
+    await expect(adapter.configureQuoteRoute(quote, { ...base, maxSwapSlippageBps: 0 })).to.be.revertedWithCustomError(adapter, "InvalidPolicy");
+    await expect(adapter.configureQuoteRoute(quote, { ...base, minimumRouteLiquidityUsdWad: 0n })).to.be.revertedWithCustomError(adapter, "InvalidPolicy");
+  });
+
+  it("M1: the oracle feed is fixed; later calls may only tighten limits or disable", async function () {
+    const f = await fixture();
+    const adapter = f.adapter;
+    const quote = await f.quote.getAddress();
+    const otherFeed = await (await ethers.getContractFactory("MockUsdPriceFeed")).deploy(8);
+    const now = BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
+    await otherFeed.setRoundData(1, 1n * 10n ** 8n, now, now, 1);
+    const base = { oracleFeed: await f.quoteFeed.getAddress(), acquisitionPool: f.acq, ...POLICY };
+
+    await expect(adapter.configureQuoteRoute(quote, { ...base, oracleFeed: await otherFeed.getAddress() })).to.be.revertedWithCustomError(
+      adapter,
+      "RouteFeedImmutable",
+    );
+    await expect(adapter.configureQuoteRoute(quote, { ...base, maxSwapSlippageBps: 101 })).to.be.revertedWithCustomError(adapter, "InvalidPolicy");
+    await expect(adapter.configureQuoteRoute(quote, { ...base, maxOracleDeviationBps: 101 })).to.be.revertedWithCustomError(adapter, "InvalidPolicy");
+    await expect(adapter.configureQuoteRoute(quote, { ...base, minimumRouteLiquidityUsdWad: 49_000n * WAD })).to.be.revertedWithCustomError(
+      adapter,
+      "RouteLimitLoosened",
+    );
+
+    await expect(
+      adapter.configureQuoteRoute(quote, {
+        ...base,
+        maxSwapSlippageBps: 50,
+        maxOracleDeviationBps: 80,
+        maxPriceImpactBps: 80,
+        maxGraduationPriceDeviationBps: 50,
+        minimumRouteLiquidityUsdWad: 60_000n * WAD,
+      }),
+    ).to.emit(adapter, "QuoteRouteConfigured");
+    const tightened = await adapter.quoteRoutes(quote);
+    expect(tightened.oracleFeed).to.equal(await f.quoteFeed.getAddress());
+    expect(tightened.maxSwapSlippageBps).to.equal(50);
+    expect(tightened.maxOracleDeviationBps).to.equal(80);
+    expect(tightened.maxPriceImpactBps).to.equal(80);
+    expect(tightened.maxGraduationPriceDeviationBps).to.equal(50);
+    expect(tightened.minimumRouteLiquidityUsdWad).to.equal(60_000n * WAD);
+    expect(tightened.enabled).to.equal(true);
+
+    await expect(adapter.configureQuoteRoute(quote, { ...base, maxSwapSlippageBps: 50, maxOracleDeviationBps: 80, maxPriceImpactBps: 80, maxGraduationPriceDeviationBps: 50, minimumRouteLiquidityUsdWad: 60_000n * WAD, enabled: false })).to.emit(
+      adapter,
+      "QuoteRouteConfigured",
+    );
+    expect((await adapter.quoteRoutes(quote)).enabled).to.equal(false);
+
+    await expect(
+      adapter.configureQuoteRoute(quote, {
+        ...base,
+        maxSwapSlippageBps: 50,
+        maxOracleDeviationBps: 80,
+        maxPriceImpactBps: 80,
+        maxGraduationPriceDeviationBps: 50,
+        minimumRouteLiquidityUsdWad: 60_000n * WAD,
+        enabled: true,
+      }),
+    ).to.emit(adapter, "QuoteRouteConfigured");
+    expect((await adapter.quoteRoutes(quote)).enabled).to.equal(true);
+
+    await expect(
+      adapter.configureQuoteRoute(quote, {
+        ...base,
+        maxSwapSlippageBps: 90,
+        maxOracleDeviationBps: 80,
+        maxPriceImpactBps: 80,
+        maxGraduationPriceDeviationBps: 50,
+        minimumRouteLiquidityUsdWad: 60_000n * WAD,
+      }),
+    ).to.be.revertedWithCustomError(adapter, "RouteLimitLoosened");
+  });
+
   it("graduates a quote pool through the repair library (no FinalPoolAlreadyExists)", async function () {
     const f = await fixture();
     await f.campaign.graduate(await f.adapter.getAddress(), await f.quote.getAddress(), f.Mt, f.Mmax, f.P, f.Nnative);
     const res = await f.campaign.lastResult();
     expect(res.pool).to.not.equal(ethers.ZeroAddress);
     expect(res.positionId).to.equal(0n);
-    expect(res.memeUsed).to.be.gte(f.Mt);
+    expect(res.memeUsed).to.be.gt(0n);
+    expect(res.memeUsed).to.be.lte(f.Mt);
     expect(res.memeUsed).to.be.lte(f.Mmax);
     expect(res.pairedUsed).to.be.gt(0n);
+    const memeBal = await (await ethers.getContractAt("LaunchToken", await f.campaign.token())).balanceOf(res.pool);
+    const quoteBal = await f.quote.balanceOf(res.pool);
+    const nativeUsdWad = 800n * WAD;
+    const quoteUsdWad = WAD;
+    const curveUsd = (f.P * nativeUsdWad) / WAD;
+    const dexUsd = (quoteBal * quoteUsdWad) / memeBal;
+    expect(dexUsd).to.be.gte(curveUsd);
     expect(await f.quote.balanceOf(await f.adapter.getAddress())).to.equal(0n);
     expect(await ethers.provider.getBalance(await f.adapter.getAddress())).to.equal(0n);
     await f.locker.registerGraduatedPool(
@@ -490,13 +585,17 @@ describe("evmgen-bnb: BnbQuoteGraduationAdapter (unit, mocks)", function () {
     expect(res.pairedUsed).to.be.gt(0n);
   });
 
-  it("USD deviation is one-sided: below the band reverts, above is allowed", async function () {
+  it("L1: sizes MEME from quote acquired at curve USD, so a high curve price opens at or above it", async function () {
     const f = await fixture();
-    // A huge curve price makes the DEX USD look far below target.
-    const tooHighP = 10n ** 20n;
-    await expect(
-      f.campaign.graduate(await f.adapter.getAddress(), await f.quote.getAddress(), f.Mt, f.Mmax, tooHighP, f.Nnative),
-    ).to.be.revertedWithCustomError(f.adapter, "GraduationPriceDeviationTooHigh");
+    const highP = 10n ** 13n; // 100x the fixture curve; DEX must still open at or above that USD
+    await f.campaign.graduate(await f.adapter.getAddress(), await f.quote.getAddress(), f.Mt, f.Mmax, highP, f.Nnative);
+    const res = await f.campaign.lastResult();
+    const memeBal = await (await ethers.getContractAt("LaunchToken", await f.campaign.token())).balanceOf(res.pool);
+    const quoteBal = await f.quote.balanceOf(res.pool);
+    const curveUsd = (highP * 800n * WAD) / WAD;
+    const dexUsd = (quoteBal * WAD) / memeBal;
+    expect(dexUsd).to.be.gte(curveUsd);
+    expect(res.memeUsed).to.be.lt(f.Mt);
   });
 
   it("reads acquisition reserves as uint256 (Topaz returns uint256, not uint112)", async function () {

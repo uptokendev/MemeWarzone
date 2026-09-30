@@ -101,15 +101,17 @@ describe("BNB quote generation deployment", function () {
     await nativeAdapter.waitForDeployment();
 
     const adapter = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(
+      await fx.safe.getAddress(),
       await fx.topazRouter.getAddress(),
       lockerAddress,
       await fx.nativeFeed.getAddress(),
       3600,
     );
     await adapter.waitForDeployment();
+    expect(await (adapter as any).admin()).to.equal(await fx.safe.getAddress());
 
     await (await (nativeAdapter as any).setCampaignFactoryOnce(await factory.getAddress())).wait();
-    await (await (adapter as any).setCampaignFactoryOnce(await factory.getAddress())).wait();
+    await (await (adapter as any).connect(fx.safe).setCampaignFactoryOnce(await factory.getAddress())).wait();
     await (await (factory as any).setBnbQuoteGraduationAdapter(await adapter.getAddress())).wait();
 
     // The factory pointer locks after the first set, so a second attempt is a
@@ -557,6 +559,7 @@ describe("BNB quote generation deployment", function () {
       expect(await quote.campaignFactoryLocked()).to.equal(true);
       expect(await factory.bnbQuoteGraduationAdapter()).to.equal(artifact.contracts.BnbQuoteGraduationAdapter);
       expect(await factory.nativeGraduationAdapter()).to.equal(artifact.contracts.BnbNativeGraduationAdapter);
+      expect(await quote.admin()).to.equal(artifact.owner);
       expect(await quote.topazFactory()).to.equal(await fx.topazRouter.poolFactory());
       expect(await quote.WBNB()).to.equal(await fx.wbnb.getAddress());
     });

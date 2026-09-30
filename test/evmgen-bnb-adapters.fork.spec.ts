@@ -20,6 +20,7 @@ const TOPAZ = {
   usdtFeed: "0x501e21126486424567f40D490856094D72986E41",
   usdtPool: "0xe030E94879204403dB8eAA73251667551446ae01",
   bnbUsd: "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE",
+  usdtWhales: ["0xF977814e90dA44bFA03b6295A0616a897441aceC", "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3", "0x4B16c5dE96EB2117bBE5fd171E4d203624B014aa"],
 };
 
 const FORKED = network.name === "hardhat" && Boolean((network.config as any).forking?.url) && network.config.chainId === 56;
@@ -67,6 +68,10 @@ const ERC20_ABI = [
   "function decimals() view returns (uint8)",
 ];
 const WBNB_ABI = [...ERC20_ABI, "function deposit() payable", "function withdraw(uint256)"];
+const FEED_ABI = [
+  "function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)",
+  "function decimals() view returns (uint8)",
+];
 
 const gas: Record<string, bigint> = {};
 
@@ -119,9 +124,26 @@ d("evmgen-bnb: BNB Topaz graduation adapters on a BSC mainnet fork", function ()
   }
 
   async function graduateQuote(campaign: any, value = quoteNative) {
-    const tx = await campaign.graduate(await quoteAdapter.getAddress(), TOPAZ.usdt, Mt, Mmax, 1n, value);
+    const tx = await campaign.graduate(await quoteAdapter.getAddress(), TOPAZ.usdt, Mt, Mmax, P, value);
     const rec = await tx.wait();
     return { res: await campaign.lastResult(), gasUsed: rec!.gasUsed as bigint };
+  }
+
+  async function assertQuoteStartAtOrAboveCurve(res: any, token: string) {
+    const feedAbi = ["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)", "function decimals() view returns (uint8)"];
+    const bnbFeed = await ethers.getContractAt(feedAbi, TOPAZ.bnbUsd);
+    const usdtFeed = await ethers.getContractAt(feedAbi, TOPAZ.usdtFeed);
+    const [, bnbAns, , ,] = await bnbFeed.latestRoundData();
+    const [, usdtAns, , ,] = await usdtFeed.latestRoundData();
+    const bnbDec = Number(await bnbFeed.decimals());
+    const usdtDec = Number(await usdtFeed.decimals());
+    const nativeUsdWad = bnbDec === 18 ? BigInt(bnbAns) : bnbDec < 18 ? BigInt(bnbAns) * 10n ** BigInt(18 - bnbDec) : BigInt(bnbAns) / 10n ** BigInt(bnbDec - 18);
+    const quoteUsdWad = usdtDec === 18 ? BigInt(usdtAns) : usdtDec < 18 ? BigInt(usdtAns) * 10n ** BigInt(18 - usdtDec) : BigInt(usdtAns) / 10n ** BigInt(usdtDec - 18);
+    const memeBal = await (await ethers.getContractAt(ERC20_ABI, token)).balanceOf(res.pool);
+    const quoteBal = await usdt.balanceOf(res.pool);
+    const curveUsd = (P * nativeUsdWad) / WAD;
+    const dexUsd = (quoteBal * quoteUsdWad) / memeBal;
+    expect(dexUsd, "quote pool USD start must be at or above the curve").to.be.gte(curveUsd);
   }
 
   async function register(campaign: any, res: any, paired: string) {
@@ -229,17 +251,53 @@ d("evmgen-bnb: BNB Topaz graduation adapters on a BSC mainnet fork", function ()
     factory = await (await ethers.getContractFactory("MockEvmGenRhFactory")).deploy(await locker.getAddress());
 
     native = await (await ethers.getContractFactory("BnbNativeGraduationAdapter")).deploy(TOPAZ.factory, TOPAZ.wbnb, await locker.getAddress());
-    quoteAdapter = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(TOPAZ.router, await locker.getAddress(), TOPAZ.bnbUsd, 86_400);
+    quoteAdapter = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(
+      deployer.address,
+      TOPAZ.router,
+      await locker.getAddress(),
+      TOPAZ.bnbUsd,
+      86_400,
+    );
     await native.setCampaignFactoryOnce(await factory.getAddress());
     await quoteAdapter.setCampaignFactoryOnce(await factory.getAddress());
+
+    // Live WBNB/USDT is ~$1.2k. 0.01 BNB into that pool exceeds the 100 bps impact
+    // cap. Deepen at the oracle so quote graduation is a real swap, not a thin-pool skip.
+    const want = 3_000_000n * WAD;
+    const keep = 1_000n * WAD;
+    for (const w of TOPAZ.usdtWhales) {
+      const missing = want + keep - (await usdt.balanceOf(deployer.address));
+      if (missing <= 0n) break;
+      const bal: bigint = await usdt.balanceOf(w);
+      if (bal === 0n) continue;
+      const s = await impersonate(w);
+      await (usdt.connect(s) as any).transfer(deployer.address, bal > missing ? missing : bal);
+    }
+    expect(await usdt.balanceOf(deployer.address), "no USDT whale on this fork block").to.be.gte(want + keep);
+    const bnbFeed = await ethers.getContractAt(FEED_ABI, TOPAZ.bnbUsd);
+    const [, bnbAns] = await bnbFeed.latestRoundData();
+    const bnbDec = Number(await bnbFeed.decimals());
+    const bnbUsdWad =
+      bnbDec === 18
+        ? BigInt(bnbAns)
+        : bnbDec < 18
+          ? BigInt(bnbAns) * 10n ** BigInt(18 - bnbDec)
+          : BigInt(bnbAns) / 10n ** BigInt(bnbDec - 18);
+    const bnbIn = (want * WAD) / bnbUsdWad;
+    await wbnb.deposit({ value: bnbIn });
+    await wbnb.transfer(TOPAZ.usdtPool, bnbIn);
+    await usdt.transfer(TOPAZ.usdtPool, want);
+    const usdtPool = await ethers.getContractAt(POOL_ABI, TOPAZ.usdtPool);
+    await usdtPool["mint(address)"](deployer.address);
+
     await quoteAdapter.configureQuoteRoute(TOPAZ.usdt, {
       oracleFeed: TOPAZ.usdtFeed,
       acquisitionPool: TOPAZ.usdtPool,
-      minimumRouteLiquidityUsdWad: WAD, // real USDT pool is ~$1.2k, below the $50k floor
-      maxSwapSlippageBps: 3000,
-      maxOracleDeviationBps: 5000,
-      maxPriceImpactBps: 5000,
-      maxGraduationPriceDeviationBps: 5000,
+      minimumRouteLiquidityUsdWad: 100_000n * WAD,
+      maxSwapSlippageBps: 100,
+      maxOracleDeviationBps: 100,
+      maxPriceImpactBps: 100,
+      maxGraduationPriceDeviationBps: 100,
       enabled: true,
     });
 
@@ -275,7 +333,9 @@ d("evmgen-bnb: BNB Topaz graduation adapters on a BSC mainnet fork", function ()
     gas["quote baseline"] = q.gasUsed;
     expect(q.res.repaired).to.equal(false);
     expect(q.res.pairedUsed).to.be.gt(0n);
-    expect(q.res.memeUsed).to.be.gte(Mt);
+    expect(q.res.memeUsed).to.be.gt(0n);
+    expect(q.res.memeUsed).to.be.lte(Mmax);
+    await assertQuoteStartAtOrAboveCurve(q.res, await cQ.token());
     await register(cQ, q.res, TOPAZ.usdt);
     await postGradRoundtrip(q.res, await cQ.token(), TOPAZ.usdt);
     await harvestSplit(q.res, TOPAZ.usdt);
