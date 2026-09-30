@@ -49,3 +49,18 @@ export function priceBnbFromRaw(
   const fraction = (scaled % 10n ** BigInt(precision)).toString().padStart(precision, "0").replace(/0+$/, "");
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
+
+/** Pool's paired token (the side that is not the campaign token). */
+export function pairedTokenOf(p: { tokenAddress: string; token0Address: string; token1Address: string }): string {
+  return p.token0Address === p.tokenAddress ? p.token1Address : p.token0Address;
+}
+
+/** True when the pool pairs the campaign token with the wrapped native (every pre-quote coin). */
+export function isNativePairedPool(p: {
+  tokenAddress: string;
+  token0Address: string;
+  token1Address: string;
+  wrappedNativeAddress: string;
+}): boolean {
+  return pairedTokenOf(p) === p.wrappedNativeAddress;
+}

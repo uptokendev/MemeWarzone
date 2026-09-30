@@ -8,6 +8,7 @@ import {
   TOPAZ_ROUTER_ADAPTER_ABI,
 } from "./abis.js";
 import { GEN5_CAMPAIGN_ABI } from "./evm/evmGen5Abi.js";
+import { quoteRawToNativeRawViaReserves, quoteWadRatioToNativeWad } from "./evmQuoteNativeValuation.js";
 import {
   GEN5_ADAPTER_VIEW_ABI,
   classifyGen5TopazPool,
@@ -549,6 +550,29 @@ export async function reconcileGraduationHandoff(input: GraduationHandoffInput) 
  * adapter's topazRouter(), else EVM_TOPAZ_ROUTER_<chainId>, else the adapter. Same writes as the old
  * generation, so the Topaz pool indexer picks the pool up unchanged.
  */
+/** quote/WBNB reserves of the Topaz volatile pool, at `blockNumber` when served, else latest; null when unreadable. */
+async function readQuoteNativeReserves(
+  provider: ethers.Provider,
+  factory: any,
+  quote: string,
+  wrappedNative: string,
+  blockNumber: number,
+): Promise<{ reserveQuoteRaw: bigint; reserveNativeRaw: bigint } | null> {
+  const ratePool = address(await tryCall(() => factory.getPool(quote, wrappedNative, false)));
+  if (ratePool === ZERO) return null;
+  const pair = new ethers.Contract(ratePool, TOPAZ_POOL_ABI, provider) as any;
+  const token0 = address(await tryCall(() => pair.token0()));
+  if (token0 === ZERO) return null;
+  const reservesRaw =
+    (await tryCall(() => pair.getReserves({ blockTag: blockNumber }))) ?? (await tryCall(() => pair.getReserves()));
+  if (!reservesRaw) return null;
+  const r0 = BigInt((reservesRaw as any)[0] ?? 0);
+  const r1 = BigInt((reservesRaw as any)[1] ?? 0);
+  const quoteIs0 = token0 === quote;
+  const result = { reserveQuoteRaw: quoteIs0 ? r0 : r1, reserveNativeRaw: quoteIs0 ? r1 : r0 };
+  return result.reserveQuoteRaw > 0n && result.reserveNativeRaw > 0n ? result : null;
+}
+
 export async function reconcileGen5GraduationHandoff(input: GraduationHandoffInput) {
   const campaign = address(input.campaignAddress);
   let snapshot = gen5GraduatedSnapshot(input.args, undefined, input.args?.caller ?? null);
@@ -640,6 +664,24 @@ export async function reconcileGen5GraduationHandoff(input: GraduationHandoffInp
     });
     const reserves = splitReserves({ token: tokenAddress, token0: token0Address, reserve0, reserve1 });
 
+    // dex_pools.reserve_native_raw and campaign_market_state.initial_dex_price_bnb are native (BNB).
+    // For a MEME/QUOTE pool the paired reserve and the contract's startPrice are in quote units, so
+    // value them at the quote/WBNB Topaz pool (the one the quote adapter acquired through), at the
+    // graduation block when the RPC serves it. The Topaz pool indexer refreshes both every pass.
+    let reserveNativeRaw = reserves.reserveQuoteRaw;
+    if (expectedQuote !== wrappedNativeAddress) {
+      const rate = await readQuoteNativeReserves(input.provider, factory, expectedQuote, wrappedNativeAddress, input.blockNumber);
+      reserveNativeRaw = rate
+        ? (quoteRawToNativeRawViaReserves({ quoteAmountRaw: reserves.reserveQuoteRaw, ...rate }) ?? 0n).toString()
+        : "0";
+      const nativeStart = rate
+        ? quoteWadRatioToNativeWad({ ratioWad: snapshot.initialDexPriceRaw, ...rate })
+        : null;
+      // Without a readable rate the curve's closing price (native, and within the adapter's USD
+      // start-price band) is the closest native figure; never the quote-unit start price.
+      snapshot = { ...snapshot, initialDexPriceRaw: nativeStart != null ? nativeStart.toString() : snapshot.finalCurvePriceRaw };
+    }
+
     await persistVerifiedHandoff({
       input,
       campaign,
@@ -656,9 +698,9 @@ export async function reconcileGen5GraduationHandoff(input: GraduationHandoffInp
       token0Address,
       token1Address,
       reserveTokenRaw: reserves.reserveTokenRaw,
-      // dex_pools names the paired leg "native"; for a quote pool it is the quote reserve, and
-      // dex_pools.quote_token_address (generated from token0/token1) names that quote.
-      reserveNativeRaw: reserves.reserveQuoteRaw,
+      // Native (BNB) value of the paired reserve; the quote reserve itself is returned below and the
+      // Topaz pool indexer records it in dex_pools.reserve_quote_raw / quote_token_address.
+      reserveNativeRaw,
     });
 
     return {
@@ -673,7 +715,8 @@ export async function reconcileGen5GraduationHandoff(input: GraduationHandoffInp
       wrappedNativeAddress,
       feeBps,
       reserveTokenRaw: reserves.reserveTokenRaw,
-      reserveNativeRaw: reserves.reserveQuoteRaw,
+      reserveNativeRaw,
+      reserveQuoteRaw: reserves.reserveQuoteRaw,
     };
   } catch (error: any) {
     const message = String(error?.shortMessage || error?.message || error);

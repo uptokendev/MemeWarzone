@@ -4,7 +4,11 @@ import { TOPAZ_POOL_ABI } from "./abis.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createWorkingProvider, maskRpcUrl, parseRpcList } from "./rpcProvider.js";
-import { normalizeTopazSwap, priceBnbFromRaw } from "./topazPoolCore.js";
+import { isNativePairedPool, normalizeTopazSwap, pairedTokenOf, priceBnbFromRaw } from "./topazPoolCore.js";
+import {
+  quoteRawToNativeRawViaReserves,
+  rawToDecimal,
+} from "./evmQuoteNativeValuation.js";
 
 type ChainConfig = {
   chainId: number;
@@ -19,8 +23,21 @@ type IndexedPool = {
   wrappedNativeAddress: string;
   token0Address: string;
   token1Address: string;
+  factoryAddress: string;
   graduationBlock: number;
   lastIndexedBlock: number | null;
+};
+
+/**
+ * The non-MEME leg of a pool that is not paired with the wrapped native (a quote-bound coin's
+ * MEME/QUOTE pool, e.g. MEME/USDT). Its amounts are converted to native through the canonical
+ * quote/WBNB Topaz pool, the one the quote graduation adapter acquires through.
+ */
+type QuoteLeg = {
+  tokenAddress: string;
+  decimals: number;
+  /** quote/WBNB reserves at a block (falls back to the latest reserves when the RPC has no archive). */
+  reservesAt: (blockNumber: number | null) => Promise<{ reserveQuoteRaw: bigint; reserveNativeRaw: bigint }>;
 };
 
 type CandleResolution = "1s" | "5s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
@@ -40,6 +57,76 @@ const RESOLUTION_MS: Record<CandleResolution, number> = {
 const LOOP_SYMBOL = Symbol.for("memewarzone.wtrTopazPoolIndexerStarted");
 const globalState = globalThis as any;
 const ERC20_METADATA_ABI = ["function decimals() view returns (uint8)"];
+const TOPAZ_FACTORY_GET_POOL_ABI = ["function getPool(address tokenA,address tokenB,bool stable) view returns (address)"];
+const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
+
+const quoteDecimalsCache = new Map<string, number>();
+const quoteNativePoolCache = new Map<string, string>();
+
+async function buildQuoteLeg(provider: ethers.JsonRpcProvider, indexedPool: IndexedPool): Promise<QuoteLeg> {
+  const quoteToken = pairedTokenOf(indexedPool);
+  const decimalsKey = `${indexedPool.chainId}:${quoteToken}`;
+  let decimals = quoteDecimalsCache.get(decimalsKey);
+  if (decimals == null) {
+    const value = Number(await (new ethers.Contract(quoteToken, ERC20_METADATA_ABI, provider) as any).decimals());
+    if (!Number.isInteger(value) || value < 0 || value > 36) throw new Error(`Quote token ${quoteToken} decimals invalid: ${value}; quote/native rate unavailable`);
+    decimals = value;
+    quoteDecimalsCache.set(decimalsKey, decimals);
+  }
+
+  if (!ethers.isAddress(indexedPool.factoryAddress) || indexedPool.factoryAddress === ZERO_ADDRESS) {
+    throw new Error("Topaz factory unknown; quote/native rate unavailable");
+  }
+  const poolKey = `${indexedPool.chainId}:${indexedPool.factoryAddress}:${quoteToken}:${indexedPool.wrappedNativeAddress}`;
+  let ratePool = quoteNativePoolCache.get(poolKey);
+  if (!ratePool) {
+    const factory = new ethers.Contract(indexedPool.factoryAddress, TOPAZ_FACTORY_GET_POOL_ABI, provider) as any;
+    const found = String(await factory.getPool(quoteToken, indexedPool.wrappedNativeAddress, false)).toLowerCase();
+    if (!ethers.isAddress(found) || found === ZERO_ADDRESS) {
+      throw new Error(`No Topaz volatile ${quoteToken}/WBNB pool; quote/native rate unavailable`);
+    }
+    ratePool = found;
+    quoteNativePoolCache.set(poolKey, ratePool);
+  }
+
+  const pair = new ethers.Contract(ratePool, TOPAZ_POOL_ABI, provider) as any;
+  const token0 = String(await pair.token0()).toLowerCase();
+  const quoteIs0 = token0 === quoteToken;
+  const cache = new Map<string, { reserveQuoteRaw: bigint; reserveNativeRaw: bigint }>();
+  const split = (reserves: any) => {
+    const r0 = BigInt(reserves[0]);
+    const r1 = BigInt(reserves[1]);
+    const result = { reserveQuoteRaw: quoteIs0 ? r0 : r1, reserveNativeRaw: quoteIs0 ? r1 : r0 };
+    if (result.reserveQuoteRaw <= 0n || result.reserveNativeRaw <= 0n) {
+      throw new Error(`Topaz ${quoteToken}/WBNB pool has no reserves; quote/native rate unavailable`);
+    }
+    return result;
+  };
+  return {
+    tokenAddress: quoteToken,
+    decimals,
+    reservesAt: async (blockNumber) => {
+      const key = blockNumber == null ? "latest" : String(blockNumber);
+      const cached = cache.get(key);
+      if (cached) return cached;
+      let value: { reserveQuoteRaw: bigint; reserveNativeRaw: bigint } | null = null;
+      if (blockNumber != null) {
+        try {
+          value = split(await pair.getReserves({ blockTag: blockNumber }));
+        } catch {
+          value = null; // no archive state on this RPC: the latest reserves are the best known rate
+        }
+      }
+      if (!value) {
+        const latest = cache.get("latest") ?? split(await pair.getReserves());
+        cache.set("latest", latest);
+        value = latest;
+      }
+      cache.set(key, value);
+      return value;
+    },
+  };
+}
 
 function chainConfigs(): ChainConfig[] {
   const result: ChainConfig[] = [];
@@ -66,6 +153,7 @@ async function listPools(chainId: number): Promise<IndexedPool[]> {
        dp.wrapped_native_address,
        dp.token0_address,
        dp.token1_address,
+       dp.factory_address,
        dp.graduation_block,
        dp.last_indexed_block
      from public.dex_pools dp
@@ -91,6 +179,7 @@ async function listPools(chainId: number): Promise<IndexedPool[]> {
     wrappedNativeAddress: String(row.wrapped_native_address).toLowerCase(),
     token0Address: String(row.token0_address).toLowerCase(),
     token1Address: String(row.token1_address).toLowerCase(),
+    factoryAddress: String(row.factory_address || "").toLowerCase(),
     graduationBlock: Number(row.graduation_block),
     lastIndexedBlock: row.last_indexed_block == null ? null : Number(row.last_indexed_block),
   }));
@@ -158,7 +247,9 @@ function isTransientRpcError(error: unknown): boolean {
     msg.includes("502") ||
     msg.includes("econnreset") ||
     msg.includes("socket hang up") ||
-    msg.includes("limit exceeded")
+    msg.includes("limit exceeded") ||
+    // A quote pool whose native valuation cannot be read yet: retry next pass, never degrade trading.
+    msg.includes("quote/native rate unavailable")
   );
 }
 
@@ -244,6 +335,8 @@ async function insertSwap(input: {
   block: ethers.Block;
   transactionFrom: string | null;
   tokenDecimals: number;
+  /** Set for a MEME/QUOTE pool; null for a MEME/WBNB pool (unchanged native path). */
+  quote: QuoteLeg | null;
 }): Promise<boolean> {
   const token0IsLaunchToken = input.indexedPool.token0Address === input.indexedPool.tokenAddress;
   const normalized = normalizeTopazSwap(token0IsLaunchToken, {
@@ -254,9 +347,22 @@ async function insertSwap(input: {
   });
   if (!normalized) return false;
 
+  // normalizeTopazSwap names the paired leg "native". For a MEME/QUOTE pool it is the quote amount:
+  // keep it as the quote leg and value it in native at the quote/WBNB rate of the trade's block.
+  const pairedAmountRaw = normalized.nativeAmountRaw;
+  let nativeAmountRaw = pairedAmountRaw;
+  let priceQuote: string | null = null;
+  if (input.quote) {
+    const reserves = await input.quote.reservesAt(input.log.blockNumber);
+    const converted = quoteRawToNativeRawViaReserves({ quoteAmountRaw: pairedAmountRaw, ...reserves });
+    if (converted == null) return false; // dust below one wei of native
+    nativeAmountRaw = converted;
+    priceQuote = priceBnbFromRaw(normalized.tokenAmountRaw, pairedAmountRaw, input.tokenDecimals, input.quote.decimals);
+  }
+
   const priceBnb = priceBnbFromRaw(
     normalized.tokenAmountRaw,
-    normalized.nativeAmountRaw,
+    nativeAmountRaw,
     input.tokenDecimals,
     18,
   );
@@ -277,7 +383,51 @@ async function insertSwap(input: {
   const logIndex = Number(input.log.index);
   const blockTime = new Date(Number(input.block.timestamp) * 1000);
 
-  const inserted = await pool.query(
+  const inserted = input.quote
+    ? await pool.query(
+        `insert into public.dex_trades(
+           chain_id,campaign_address,token_address,pair_address,
+           tx_hash,log_index,block_number,block_hash,block_time,status,side,
+           sender_address,recipient_address,transaction_from,
+           token_amount_raw,native_amount_raw,token_amount,native_amount,price_bnb,
+           base_amount_raw,base_amount,quote_token_address,quote_amount_raw,quote_amount,price_quote,
+           execution_source,origin,trade_intent_id,created_at,updated_at
+         ) values(
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,'confirmed',$10,
+           $11,$12,$13,$14,$15,
+           ($14::numeric / power(10::numeric,$16)),($15::numeric / 1e18),$17,
+           $14,($14::numeric / power(10::numeric,$16)),$20,$21,$22,$23,
+           'topaz_v2',$18,$19,now(),now()
+         )
+         on conflict(chain_id,tx_hash,log_index) do nothing
+         returning tx_hash`,
+        [
+          input.indexedPool.chainId,
+          input.indexedPool.campaignAddress,
+          input.indexedPool.tokenAddress,
+          input.indexedPool.pairAddress,
+          txHash,
+          logIndex,
+          input.log.blockNumber,
+          input.block.hash,
+          blockTime,
+          normalized.side,
+          sender,
+          recipient,
+          input.transactionFrom,
+          normalized.tokenAmountRaw.toString(),
+          nativeAmountRaw.toString(),
+          input.tokenDecimals,
+          priceBnb,
+          tradeIntentId ? "memewarzone" : "topaz",
+          tradeIntentId,
+          input.quote.tokenAddress,
+          pairedAmountRaw.toString(),
+          rawToDecimal(pairedAmountRaw, input.quote.decimals),
+          priceQuote,
+        ],
+      )
+    : await pool.query(
     `insert into public.dex_trades(
        chain_id,campaign_address,token_address,pair_address,
        tx_hash,log_index,block_number,block_hash,block_time,status,side,
@@ -323,7 +473,7 @@ async function insertSwap(input: {
     blockNumber: input.log.blockNumber,
     logIndex,
     priceBnb,
-    nativeAmountRaw: normalized.nativeAmountRaw,
+    nativeAmountRaw,
   });
 
   await publishMarketEvent(input.indexedPool, "market_trade", {
@@ -334,8 +484,11 @@ async function insertSwap(input: {
     wallet: input.transactionFrom,
     recipient,
     tokenAmountRaw: normalized.tokenAmountRaw.toString(),
-    nativeAmountRaw: normalized.nativeAmountRaw.toString(),
+    nativeAmountRaw: nativeAmountRaw.toString(),
     priceBnb,
+    ...(input.quote
+      ? { quoteTokenAddress: input.quote.tokenAddress, quoteAmountRaw: pairedAmountRaw.toString(), priceQuote }
+      : {}),
     txHash,
     logIndex,
     blockNumber: input.log.blockNumber,
@@ -349,7 +502,7 @@ async function insertSwap(input: {
       resolution,
       bucketStart: bucketStart(blockTime, resolution).toISOString(),
       priceBnb,
-      nativeVolumeRaw: normalized.nativeAmountRaw.toString(),
+      nativeVolumeRaw: nativeAmountRaw.toString(),
       blockNumber: input.log.blockNumber,
       logIndex,
       sourceMask: 2,
@@ -486,6 +639,28 @@ async function refreshMarketStats(
   return summary;
 }
 
+/** Quote-side identity + last quote price for a MEME/QUOTE pool; native columns stay authoritative. */
+async function refreshQuoteMarketStats(indexedPool: IndexedPool, quoteTokenAddress: string) {
+  await pool.query(
+    `update public.market_stats
+        set quote_token_address=$3,
+            last_price_quote=coalesce((
+              select price_quote from public.dex_trades
+               where chain_id=$1 and campaign_address=$2 and status='confirmed' and price_quote is not null
+               order by block_number desc,log_index desc
+               limit 1
+            ),last_price_quote),
+            dex_volume_24h_quote=(
+              select coalesce(sum(quote_amount),0) from public.dex_trades
+               where chain_id=$1 and campaign_address=$2 and status='confirmed'
+                 and block_time>=now()-interval '24 hours'
+            ),
+            updated_at=now()
+      where chain_id=$1 and campaign_address=$2`,
+    [indexedPool.chainId, indexedPool.campaignAddress, quoteTokenAddress],
+  );
+}
+
 async function scanPool(
   provider: ethers.JsonRpcProvider,
   indexedPool: IndexedPool,
@@ -536,17 +711,49 @@ async function scanPool(
   const reserve1 = BigInt(reserves[1]);
   const token0IsLaunch = indexedPool.token0Address === indexedPool.tokenAddress;
   const reserveTokenRaw = token0IsLaunch ? reserve0 : reserve1;
-  const reserveNativeRaw = token0IsLaunch ? reserve1 : reserve0;
+  const reservePairedRaw = token0IsLaunch ? reserve1 : reserve0;
 
-  await pool.query(
-    `update public.dex_pools
-        set last_sync_at=now(),
-            reserve_token_raw=$3,
-            reserve_native_raw=$4,
-            updated_at=now()
-      where chain_id=$1 and lower(pair_address)=lower($2)`,
-    [indexedPool.chainId, indexedPool.pairAddress, reserveTokenRaw.toString(), reserveNativeRaw.toString()],
-  );
+  // A quote-bound coin's pool pairs MEME with the quote, not WBNB. Value that leg in native so every
+  // *_bnb reader (market_stats, candles, market_trades_v, the API's native x USD) stays in BNB.
+  const quote = isNativePairedPool(indexedPool) ? null : await buildQuoteLeg(provider, indexedPool);
+  let reserveNativeRaw = reservePairedRaw;
+  if (quote) {
+    const latest = await quote.reservesAt(null);
+    reserveNativeRaw =
+      quoteRawToNativeRawViaReserves({ quoteAmountRaw: reservePairedRaw, ...latest }) ?? 0n;
+    await pool.query(
+      `update public.dex_pools
+          set last_sync_at=now(),
+              reserve_token_raw=$3,
+              reserve_native_raw=$4,
+              base_token_address=coalesce(nullif(base_token_address,''),token_address),
+              quote_token_address=$5,
+              quote_decimals=$6,
+              reserve_base_raw=$3,
+              reserve_quote_raw=$7,
+              updated_at=now()
+        where chain_id=$1 and lower(pair_address)=lower($2)`,
+      [
+        indexedPool.chainId,
+        indexedPool.pairAddress,
+        reserveTokenRaw.toString(),
+        reserveNativeRaw.toString(),
+        quote.tokenAddress,
+        quote.decimals,
+        reservePairedRaw.toString(),
+      ],
+    );
+  } else {
+    await pool.query(
+      `update public.dex_pools
+          set last_sync_at=now(),
+              reserve_token_raw=$3,
+              reserve_native_raw=$4,
+              updated_at=now()
+        where chain_id=$1 and lower(pair_address)=lower($2)`,
+      [indexedPool.chainId, indexedPool.pairAddress, reserveTokenRaw.toString(), reserveNativeRaw.toString()],
+    );
+  }
 
   if (startBlock <= endBlock) {
     const chunk = Math.max(50, Number(ENV.LOG_CHUNK_SIZE || 500));
@@ -601,6 +808,7 @@ async function scanPool(
               block,
               transactionFrom,
               tokenDecimals,
+              quote,
             })
           ) {
             insertedTrades += 1;
@@ -681,6 +889,7 @@ async function scanPool(
   }
 
   const summary = await refreshMarketStats(indexedPool, reserveTokenRaw, reserveNativeRaw);
+  if (quote) await refreshQuoteMarketStats(indexedPool, quote.tokenAddress);
   return {
     insertedTrades,
     startBlock,

@@ -15,6 +15,13 @@ import {
   type RobinhoodPairDescriptor,
 } from "./robinhoodPairSemantics.js";
 import { describeRobinhoodQuoteAsset } from "./robinhoodStockTokenRegistry.js";
+import {
+  nativePerQuoteFromUsd,
+  quotePriceToNative,
+  quoteRawToNativeRaw,
+  rawRatioToWholePrice,
+  rawToDecimal,
+} from "./evmQuoteNativeValuation.js";
 import { createWorkingProvider, maskRpcUrl, parseRpcList } from "./rpcProvider.js";
 
 const MOCK_POOL_ABI = [
@@ -616,6 +623,37 @@ function valuationError(reference: RobinhoodQuoteUsdReference, valuation: { pric
 }
 
 /**
+ * Whole ETH per whole quote token for a MEME/STOCK pool: the stock's Chainlink USD price over the
+ * chain's ETH/USD feed. A stale round still carries the last price, which is the best known rate for
+ * display; only an unreadable feed yields null. Null for a MEME/WETH pool (no conversion needed).
+ */
+async function stockNativePerQuote(
+  indexedPool: IndexedPool,
+  stockReference?: RobinhoodQuoteUsdReference,
+): Promise<string | null> {
+  if (indexedPool.quoteAssetType !== "STOCK_TOKEN") return null;
+  try {
+    const [stock, native] = await Promise.all([
+      stockReference
+        ? Promise.resolve(stockReference)
+        : resolveRobinhoodQuoteUsdReference({
+            chainId: indexedPool.chainId,
+            quoteTokenAddress: indexedPool.quoteTokenAddress,
+            quoteAssetType: "STOCK_TOKEN",
+          }),
+      resolveRobinhoodQuoteUsdReference({
+        chainId: indexedPool.chainId,
+        quoteTokenAddress: indexedPool.wrappedNativeAddress,
+        quoteAssetType: "WRAPPED_NATIVE",
+      }),
+    ]);
+    return nativePerQuoteFromUsd(stock.priceUsd, native.priceUsd);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Post-burn total supply for a graduated campaign, cached per campaign.
  *
  * Token Details values market cap as spot x post-burn supply. Writing the same
@@ -658,9 +696,12 @@ async function upsertCandle(input: {
   mcapNative: string | null;
   openMcapNative: string | null;
   reference: RobinhoodQuoteUsdReference;
+  /** Native value of the trade for a MEME/STOCK pool (o/h/l/c are then native too). */
+  nativeVolume?: string | null;
 }): Promise<void> {
   const quoteVolume = ethers.formatUnits(input.quoteAmountRaw, input.indexedPool.quoteDecimals);
-  const nativeVolume = input.indexedPool.quoteAssetType === "WRAPPED_NATIVE" ? quoteVolume : "0";
+  const nativeVolume =
+    input.indexedPool.quoteAssetType === "WRAPPED_NATIVE" ? quoteVolume : (input.nativeVolume ?? "0");
   const written: Array<Record<string, unknown>> = [];
   for (const resolution of Object.keys(RESOLUTION_MS) as CandleResolution[]) {
     const upserted = await pool.query(
@@ -829,6 +870,9 @@ async function refreshRobinhoodMarketStats(
   // Read current pool spot rather than the newest fill. On a thin pool a fill
   // sits well above spot, and market cap derives from this number.
   let lastPrice: string | number | null = null;
+  // Slot0 spot is quote per MEME; for a MEME/STOCK pool it is converted to ETH below. The fallbacks
+  // (market_stats.last_price_bnb, the newest trade's priceBnb) are already native.
+  const nativePerQuote = await stockNativePerQuote(indexedPool);
   try {
     const slot0 = await new ethers.Contract(
       indexedPool.pairAddress,
@@ -842,6 +886,9 @@ async function refreshRobinhoodMarketStats(
       indexedPool.baseDecimals,
       indexedPool.quoteDecimals,
     );
+    if (indexedPool.quoteAssetType === "STOCK_TOKEN") {
+      lastPrice = lastPrice != null && nativePerQuote ? quotePriceToNative(lastPrice, nativePerQuote) : null;
+    }
   } catch {
     lastPrice = null;
   }
@@ -861,7 +908,11 @@ async function refreshRobinhoodMarketStats(
     baseTokenAddress: indexedPool.baseTokenAddress,
     quoteTokenAddress: indexedPool.quoteTokenAddress,
   });
-  const nativeSide = Number(ethers.formatUnits(balances.reserveQuoteRaw, indexedPool.quoteDecimals));
+  const quoteSide = Number(ethers.formatUnits(balances.reserveQuoteRaw, indexedPool.quoteDecimals));
+  const nativeSide =
+    indexedPool.quoteAssetType === "STOCK_TOKEN"
+      ? (nativePerQuote ? quoteSide * Number(nativePerQuote) : 0)
+      : quoteSide;
   const tokenSide = Number(ethers.formatUnits(balances.reserveBaseRaw, indexedPool.baseDecimals));
   // Concentrated liquidity holds unequal value per side, so sum both rather
   // than doubling the quote side the way a V2 pool allows.
@@ -1164,14 +1215,28 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
   const tradeIntentId = intent.rows[0]?.intent_id ?? null;
   const origin = tradeIntentId ? "memewarzone" : "robinhood_v3";
   const isNativeQuote = indexedPool.quoteAssetType === "WRAPPED_NATIVE";
-  const nativeAmountRaw = isNativeQuote ? normalized.quoteAmountRaw.toString() : null;
-  const nativeAmount = isNativeQuote ? execution.quoteAmount : null;
-  const priceBnb = isNativeQuote ? execution.priceQuote : null;
   const reference = await resolveRobinhoodQuoteUsdReference({
     chainId: indexedPool.chainId,
     quoteTokenAddress: indexedPool.quoteTokenAddress,
     quoteAssetType: indexedPool.quoteAssetType,
   });
+  // A MEME/STOCK trade keeps its stock leg in quote_* and is valued in ETH (stock USD / ETH USD), so
+  // native price, volume and market cap read like every other coin's. Null only if a feed is unreadable.
+  const nativePerQuote = isNativeQuote ? null : await stockNativePerQuote(indexedPool, reference);
+  const stockNativeRaw = nativePerQuote
+    ? quoteRawToNativeRaw({
+        quoteAmountRaw: normalized.quoteAmountRaw,
+        quoteDecimals: indexedPool.quoteDecimals,
+        nativePerQuote,
+      })
+    : null;
+  const nativeAmountRaw = isNativeQuote ? normalized.quoteAmountRaw.toString() : stockNativeRaw?.toString() ?? null;
+  const nativeAmount = isNativeQuote ? execution.quoteAmount : stockNativeRaw != null ? rawToDecimal(stockNativeRaw, 18) : null;
+  const priceBnb = isNativeQuote
+    ? execution.priceQuote
+    : nativePerQuote
+      ? quotePriceToNative(execution.priceQuote, nativePerQuote)
+      : null;
   const tradeValuation = reference.healthy && reference.priceUsd
     ? deriveRobinhoodUsdValuation({
         priceQuote: execution.priceQuote,
@@ -1210,6 +1275,10 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
   // price to the new one. Writing one price into o/h/l/c drew flat ticks with no
   // body at all. dex_pools.price_quote still holds the previous swap's spot here,
   // because this row is only updated further down.
+  // Candles are native (ETH per MEME) on every pool. A MEME/WETH pool's quote price already is; a
+  // MEME/STOCK pool's spot is converted. Without a rate the candle is skipped rather than written in
+  // stock units (the trade row keeps its quote leg, so a rebuild can restore it).
+  const spotCandle = isNativeQuote ? spotQuote : nativePerQuote ? quotePriceToNative(spotQuote, nativePerQuote) : null;
   const openQuote = await (async () => {
     try {
       // The close of the newest earlier candle is the spot left by the previous
@@ -1234,12 +1303,22 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
         [indexedPool.chainId, indexedPool.campaignAddress],
       );
       const initial = Number(graduation.rows[0]?.initial_dex_price_bnb);
-      if (Number.isFinite(initial) && initial > 0) return String(graduation.rows[0].initial_dex_price_bnb);
+      if (Number.isFinite(initial) && initial > 0) {
+        if (isNativeQuote) return String(graduation.rows[0].initial_dex_price_bnb);
+        // Stock pool: the contract's startPrice is a raw stock-per-MEME ratio; make it native.
+        const whole = rawRatioToWholePrice(
+          String(graduation.rows[0].initial_dex_price_bnb),
+          indexedPool.baseDecimals,
+          indexedPool.quoteDecimals,
+        );
+        const native = whole && nativePerQuote ? quotePriceToNative(whole, nativePerQuote) : null;
+        if (native) return native;
+      }
     } catch {
       // fall through to a flat candle
     }
     // Nothing to open from: flat, rather than a bar spanning from zero.
-    return spotQuote;
+    return spotCandle ?? spotQuote;
   })();
 
   // Null mcap makes the chart fall back to fills, which on a thin pool sit far
@@ -1247,7 +1326,7 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
   const supplyWhole = await postBurnSupplyWhole(indexedPool.chainId, indexedPool.campaignAddress, indexedPool.baseDecimals);
   const mcapNative = (() => {
     if (!(supplyWhole > 0)) return null;
-    const spot = Number(spotQuote);
+    const spot = Number(spotCandle);
     if (!Number.isFinite(spot) || spot <= 0) return null;
     const value = spot * supplyWhole;
     return Number.isFinite(value) && value > 0 ? value.toFixed(18) : null;
@@ -1261,20 +1340,29 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
     return Number.isFinite(value) && value > 0 ? value.toFixed(18) : null;
   })();
 
-  await upsertCandle({
-    indexedPool,
-    openQuote,
-    mcapNative,
-    openMcapNative,
-    blockTime,
-    blockNumber: log.blockNumber,
-    logIndex,
-    priceQuote: spotQuote,
-    quoteAmountRaw: normalized.quoteAmountRaw,
-    priceUsd: tradeValuationHealthy ? tradeValuation.priceUsd : null,
-    volumeUsd: tradeValuationHealthy ? tradeValuation.volumeUsd : null,
-    reference,
-  });
+  if (spotCandle) {
+    await upsertCandle({
+      indexedPool,
+      openQuote,
+      mcapNative,
+      openMcapNative,
+      blockTime,
+      blockNumber: log.blockNumber,
+      logIndex,
+      priceQuote: spotCandle,
+      quoteAmountRaw: normalized.quoteAmountRaw,
+      priceUsd: tradeValuationHealthy ? tradeValuation.priceUsd : null,
+      volumeUsd: tradeValuationHealthy ? tradeValuation.volumeUsd : null,
+      reference,
+      nativeVolume: nativeAmount,
+    });
+  } else {
+    console.warn("[robinhood-v3] stock trade has no ETH rate; candle skipped", {
+      chainId: indexedPool.chainId,
+      campaign: indexedPool.campaignAddress,
+      txHash,
+    });
+  }
   try {
     await updateMarketStats(indexedPool, spotQuote, execution.quoteAmount, normalized.side, log.blockNumber, blockTime);
     passHealth.lastStatsError = null;
@@ -1320,11 +1408,11 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
     baseAmountRaw:normalized.baseAmountRaw.toString(),
     quoteAmountRaw:normalized.quoteAmountRaw.toString(),
     tokenAmountRaw:normalized.baseAmountRaw.toString(),
-    nativeAmountRaw:isNativeQuote ? normalized.quoteAmountRaw.toString() : null,
+    nativeAmountRaw,
     priceQuote:execution.priceQuote,
     spotPriceQuote:spotQuote,
-    spotPriceBnb:isNativeQuote ? spotQuote : null,
-    priceBnb:isNativeQuote ? execution.priceQuote : null,
+    spotPriceBnb:spotCandle,
+    priceBnb,
     priceUsd:tradeValuationHealthy ? tradeValuation.priceUsd : null,
     volumeUsd:tradeValuationHealthy ? tradeValuation.volumeUsd : null,
     referencePriceUsd:reference.priceUsd,

@@ -28,6 +28,7 @@ const W = "0x00000000000000000000000000000000000000b2"; // WBNB
 const Q = "0x00000000000000000000000000000000000000d3"; // bound quote (e.g. USDT)
 const P = "0x00000000000000000000000000000000000000e4"; // pool
 const P2 = "0x00000000000000000000000000000000000000e5"; // the MEME/WBNB pool (fallback case)
+const QW = "0x00000000000000000000000000000000000000e6"; // the quote/WBNB pool (native valuation of the quote)
 const A = "0x00000000000000000000000000000000000000f5"; // graduation adapter
 const TF = "0x0000000000000000000000000000000000000106"; // Topaz pool factory
 const R = "0x0000000000000000000000000000000000000107"; // Topaz router
@@ -180,7 +181,14 @@ test("repair's extra filter covers every non-trade gen-5 event and no trade topi
 
 type Handler = () => string;
 
-function chain(opts: { quote: string; fallback: boolean; poolTokens: [string, string]; factoryPool: Record<string, string>; adapterRouter?: boolean }) {
+function chain(opts: {
+  quote: string;
+  fallback: boolean;
+  poolTokens: [string, string];
+  factoryPool: Record<string, string>;
+  adapterRouter?: boolean;
+  ratePool?: { token0: string; token1: string; reserves: [bigint, bigint] };
+}) {
   const campaignIface = new ethers.Interface(GEN5_CAMPAIGN_ABI as unknown as string[]);
   const adapterIface = new ethers.Interface(GEN5_ADAPTER_VIEW_ABI as unknown as string[]);
   const factoryIface = new ethers.Interface(TOPAZ_FACTORY_ABI);
@@ -215,6 +223,12 @@ function chain(opts: { quote: string; fallback: boolean; poolTokens: [string, st
   on(P, poolIface, "token1", () => [opts.poolTokens[1]]);
   on(P, poolIface, "stable", () => [false]);
   on(P, poolIface, "getReserves", () => [4_000n, 70n, 1n]);
+  if (opts.ratePool) {
+    const rate = opts.ratePool;
+    on(QW, poolIface, "token0", () => [rate.token0]);
+    on(QW, poolIface, "token1", () => [rate.token1]);
+    on(QW, poolIface, "getReserves", () => [rate.reserves[0], rate.reserves[1], 1n]);
+  }
   const calls: string[] = [];
   const provider = {
     async call(tx: any) {
@@ -252,7 +266,15 @@ const BLOCK_TIME = new Date("2026-09-30T00:00:00Z");
 
 test("gen-5 BNB handoff: a quote coin's MEME/QUOTE Topaz pool verifies ACTIVE and lands in dex_pools", async () => {
   const queries = recordingDb();
-  const { provider, calls } = chain({ quote: Q, fallback: false, poolTokens: [T, Q], factoryPool: { [pairKey(T, Q)]: P }, adapterRouter: true });
+  // quote/WBNB pool: 1,200 WBNB vs 600 quote (raw) -> one raw quote unit is worth 2 raw WBNB units.
+  const { provider, calls } = chain({
+    quote: Q,
+    fallback: false,
+    poolTokens: [T, Q],
+    factoryPool: { [pairKey(T, Q)]: P, [pairKey(Q, W)]: QW },
+    adapterRouter: true,
+    ratePool: { token0: W, token1: Q, reserves: [1_200n, 600n] },
+  });
   const parsed = GEN5_CAMPAIGN_IFACE.parseLog(graduatedLog())!;
   const result: any = await reconcileGen5GraduationHandoff({ provider, chainId: 56, campaignAddress: C, txHash: TX(50), blockNumber: 50, blockTime: BLOCK_TIME, args: parsed.args });
   assert.equal(result.marketStage, "TOPAZ_ACTIVE", result.reason);
@@ -260,7 +282,9 @@ test("gen-5 BNB handoff: a quote coin's MEME/QUOTE Topaz pool verifies ACTIVE an
   assert.equal(result.pairAddress, P);
   assert.equal(result.routerAddress, R);
   assert.equal(result.reserveTokenRaw, "4000");
-  assert.equal(result.reserveNativeRaw, "70");
+  // The paired reserve is 70 quote units; native columns carry its BNB value, the quote leg is kept.
+  assert.equal(result.reserveQuoteRaw, "70");
+  assert.equal(result.reserveNativeRaw, "140");
   // No old-generation read: gen 5 has no router().
   const routerSel = new ethers.Interface(LAUNCH_CAMPAIGN_ABI).getFunction("router")!.selector;
   assert.ok(!calls.some((k) => k === `${C}:${routerSel}`));
@@ -274,13 +298,27 @@ test("gen-5 BNB handoff: a quote coin's MEME/QUOTE Topaz pool verifies ACTIVE an
   assert.equal(cms.params[19], "999"); // LP from getGraduationState
   assert.equal(cms.params[17], "5000");
   assert.equal(cms.params[18], "78");
+  assert.equal(cms.params[15], "11"); // final curve price: native already
+  assert.equal(cms.params[16], "24"); // start price 12 quote/MEME (raw ratio) -> 24 native
   const dex = queries.find((x) => /insert into public\.dex_pools/.test(x.sql))!;
   assert.deepEqual(dex.params.slice(0, 9), [56, P, C, T, W, R, TF, T, Q]);
   assert.equal(dex.params[9], 30);
-  assert.deepEqual(dex.params.slice(11), ["4000", "70"]);
+  assert.deepEqual(dex.params.slice(11), ["4000", "140"]);
   const camp = queries.find((x) => /update public\.campaigns/.test(x.sql))!;
   assert.equal(camp.params[2], "TOPAZ_ACTIVE");
   assert.ok(queries.some((x) => x.sql.trim() === "commit"));
+});
+
+test("gen-5 BNB handoff: a quote coin without a readable quote/WBNB rate never records quote units as native", async () => {
+  const queries = recordingDb();
+  const { provider } = chain({ quote: Q, fallback: false, poolTokens: [Q, T], factoryPool: { [pairKey(T, Q)]: P }, adapterRouter: true });
+  const parsed = GEN5_CAMPAIGN_IFACE.parseLog(graduatedLog())!;
+  const result: any = await reconcileGen5GraduationHandoff({ provider, chainId: 56, campaignAddress: C, txHash: TX(50), blockNumber: 50, blockTime: BLOCK_TIME, args: parsed.args });
+  assert.equal(result.marketStage, "TOPAZ_ACTIVE", result.reason);
+  assert.equal(result.reserveQuoteRaw, "4000");
+  assert.equal(result.reserveNativeRaw, "0");
+  const cms = queries.find((x) => /insert into public\.campaign_market_state/.test(x.sql))!;
+  assert.equal(cms.params[16], "11"); // falls back to the native curve price, not the quote start price
 });
 
 test("gen-5 BNB handoff: a native coin's MEME/WBNB pool verifies; router from EVM_TOPAZ_ROUTER_<id> when the adapter has none", async () => {
