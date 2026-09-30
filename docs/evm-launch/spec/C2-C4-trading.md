@@ -158,6 +158,29 @@ claimable = vested(now) − creatorEscrowClaimed
 | Overflow | `tokens ≤ 1e26`; cost ≤ `_area(curveSupply)` ≤ ~5e53 (`MAX_PRICE_SLOPE`, `MAX_TOTAL_SUPPLY`) | `x · 5000 ≤ 2.5e57` < 2²⁵⁶; `5000 − base` cannot underflow (base ≤ 1000) | `Cum ≤ 1e27 < 2²⁰⁸`; `uint48` time | `Σ5 Cum ≤ 5e27`; `claimed ≤ vested` |
 | Griefing | nobody can buy before it: the campaign does not exist earlier in the transaction, and later buys close it. A refund to a rejecting creator only fails their own create | a sniper pays 50%; a validator or sequencer that skews time by s seconds changes the fee by 80·s bps inside the window only. BSC: ~0.75-3 s blocks, many blocks share a second. Robinhood (Orbit sequencer, ~0.1 s blocks): the sequencer sets the time. Worst case, a sniper pays less, and users stay bounded by `maxCost`/`minPayout` | creator only; bounded as above | pays only `creator`; nobody else can call it or block it |
 
+### As built (branch `claude/evm-core`), audit block updated to the code
+
+Files: `contracts/LaunchCampaign.sol` (all three campaign kinds inherit it), `contracts/LaunchFactory.sol`,
+`contracts/BnbBasicLaunchFactory.sol`, `contracts/token/LaunchTokenDeployer.sol`.
+
+| Path | Guard | CEI order as built | Reachable states | Overflow | Griefing |
+|---|---|---|---|---|---|
+| factory `create*` (payable) | factory `nonReentrant` (OZ `ReentrancyGuard`) on all five public creates | verify signature -> eligibility -> oracle range check -> clone + init -> `setCampaignChoice` on the router's vault -> quote/stock/binding config -> `_creatorFirstBuy` last; inside it: view quote, `creatorFirstBuy{value: cost}`, refund `msg.value - cost` to `msg.sender` as the very last call, reverting the create on failure | live, not paused, create not paused | `cost <= msg.value` checked before the subtraction | a rejecting refund receiver only fails its own create (tested); value sent without `firstBuyTokens` reverts, so the factory never keeps native |
+| `creatorFirstBuy` | `onlyFactory` + campaign `nonReentrant` | checks (`totalBuyVolumeWei == 0`, `0 < tokens <= 10% supply`, `tokens <= curveSupply`, `costNoFee*1e4 <= nativeTarget*5000`, exact `msg.value`) -> risk check -> `_recordBuy` (volume, raise, buyers, sold, then token transfer to creator, then `routeTrade{fee}`) | only inside create; `launchAt` untouched; skips trading-open and the tier cap | `tokens <= 1e26`; `costNoFee * 1e4 <= ~2.7e24` | the oracle is read (revert fails the create closed); the cap is 50% of the live native target, not "cannot reach target", so it can never graduate the coin at create (E8, C5 §8) |
+| trade fee (C2) | existing `nonReentrant` on every entry | `_fee` = `x * currentTradeFeeBps() / 1e4`; `quoteBuyExactBnb` computes the bps once per call | trading open, not Pending, not launched | `x*5000 <= 2.5e57`; `5000 - base` safe: init refuses `protocolFeeBps > 5000` | as in the table above |
+| escrow buy (C4) | same as a buy | cap check -> volume/raise/sold -> `Checkpoints.Trace208.push(uint48(now), latest + amount)` -> `routeTrade` -> refund -> Pending check | creator (`creator`, the signed actor) buying through any path except the first buy | `Cum <= 1e27 < 2^208`; the `uint208` cast is safe by the supply cap | creator only; each entry costs a signature, the fee and the tier cap |
+| `claimCreatorEscrow` | `nonReentrant` | `claimed += amount` then `safeTransfer(creator)` | every state including paused, Pending and Graduated | `sum of 5 Cum <= 5e27`; `creatorEscrowVested(t)` clamps `t - offset` to `uint48.max`, so any `t` is safe | pays only `creator`; nobody else can call it |
+
+Deviations from the text above, all deliberate:
+- The first-buy limit is `costNoFee <= 50% of the native target` (C5 §8), which implies "cannot reach the target".
+- The factory relays the first buy through a view quote (`quoteCreatorFirstBuy`) and the campaign re-checks the
+  exact value, so the factory never holds native between calls.
+- `CreatorRegistry` is unchanged; the factory ignores `creatorBuyLockSeconds` and keeps `creatorBuyCapWei`.
+- E7: launch protection, `_feeSplit`, the non-strict routing branches, `leagueReceiver/leagueFeeBps/strictFeeRouting`
+  and the `pendingNative` fee escrow are removed from the campaign; the unsigned entry points stay, closed while
+  `requireAuthorizedTrading` (default on). LaunchToken's creation code moved to `LaunchTokenDeployer` (the campaign
+  mints its supply right after, and `mint` is `onlyOwner`, so a token not owned by the campaign cannot pass init).
+
 ## Invariants (fuzz)
 
 1. `currentTradeFeeBps() ∈ [base, 5000]`, non-increasing in time, `== base` from `launchAt + 60`.
