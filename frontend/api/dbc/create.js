@@ -8,6 +8,7 @@ import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { json, badMethod, readJson } from "../../server/http.js";
 import { requireWalletActionAuth } from "../lib/walletActionAuth.js";
+import { CreateCanaryError, assertCreateAllowedForWallet, createCanaryRefusalBody } from "../lib/createCanary.js";
 import {
   TickerReservationError,
   mapTickerReservationRow,
@@ -397,6 +398,7 @@ export function createDbcCreateHandler(deps = {}) {
   async function handlePreflight(body, res) {
     const creatorWallet = String(body.creatorWallet || "").trim();
     if (!creatorWallet) return json(res, 400, { ok: false, error: "creatorWallet is required", code: "DBC_BAD_WALLET" });
+    assertCreateAllowedForWallet(creatorWallet, env);
     const cluster = requiredCluster(env);
     const targetUsdMicros = parseTargetUsdToMicros(body.targetUsd);
     if (targetUsdMicros == null) {
@@ -421,6 +423,7 @@ export function createDbcCreateHandler(deps = {}) {
 
   async function handleBegin(body, res) {
     const creatorWallet = String(body.creatorWallet || "").trim();
+    assertCreateAllowedForWallet(creatorWallet, env);
     const ticker = normalizeTicker(body.ticker);
     if (!ticker) return json(res, 400, { ok: false, error: "Ticker is required.", code: "INVALID_RESERVATION_TICKER" });
     const cluster = requiredCluster(env);
@@ -475,6 +478,7 @@ export function createDbcCreateHandler(deps = {}) {
   async function handleAuthorize(body, res) {
     const session = verifyOpaqueToken(body.sessionToken, SESSION_PURPOSE, env);
     const creatorWallet = session.creatorWallet;
+    assertCreateAllowedForWallet(creatorWallet, env);
     const ticker = session.ticker;
     const cluster = session.cluster;
     const fee = parseFeeChoice(body.feeChoice, body.creatorSharePct);
@@ -605,6 +609,7 @@ export function createDbcCreateHandler(deps = {}) {
 
   async function handleFinalize(body, res) {
     const token = verifyOpaqueToken(body.finalizeToken, FINALIZE_PURPOSE, env);
+    assertCreateAllowedForWallet(token.creatorWallet, env);
     const conn = connection();
     const client = clientFor(conn);
     const poolPk = new PublicKey(token.pool);
@@ -763,6 +768,8 @@ export function createDbcCreateHandler(deps = {}) {
     if (!creatorWallet || !draftId) {
       return json(res, 400, { ok: false, error: "draftId and creatorWallet are required", code: "DBC_BAD_DRAFT" });
     }
+    // Setting a launch time arms the create; saving the draft itself is never gated.
+    assertCreateAllowedForWallet(creatorWallet, env);
     const database = await db();
     const verified = await (deps.requireWalletActionAuth || requireWalletActionAuth)({
       res,
@@ -949,6 +956,9 @@ export function createDbcCreateHandler(deps = {}) {
       if (operation === "quote-first-buy") return await handleQuoteFirstBuy(body, res);
       return json(res, 400, { ok: false, error: "operation must be preflight, begin, authorize, finalize, schedule or quote-first-buy", code: "DBC_BAD_OPERATION" });
     } catch (error) {
+      if (error instanceof CreateCanaryError) {
+        return json(res, 403, createCanaryRefusalBody());
+      }
       if (error instanceof DbcCreateError || error instanceof TickerReservationError || error instanceof DbcStockQuoteError) {
         return json(res, error.httpStatus || 409, { ok: false, error: error.message, code: error.code });
       }

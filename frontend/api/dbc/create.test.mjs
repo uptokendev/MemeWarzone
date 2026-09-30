@@ -663,3 +663,77 @@ test("a stock the chain says cannot be used is refused with the reason", async (
   assert.equal(res.statusCode, 400);
   assert.equal(res.body.code, "DBC_QUOTE_PAUSED");
 });
+
+// Go-live canary (CREATE_CANARY_WALLETS): only listed creator wallets may create.
+function canaryHandler(db, canaryWallets) {
+  return handlerFor(db, {
+    env: {
+      DBC_LAUNCH_ENABLED: "true",
+      SOLANA_CLUSTER: "devnet",
+      SOLANA_ROUTE_SIGNER_SECRET_KEY: SECRET,
+      SOLANA_RPC_URL: "http://127.0.0.1:8899",
+      ...(canaryWallets == null ? {} : { CREATE_CANARY_WALLETS: canaryWallets }),
+    },
+  });
+}
+
+async function beginAndAuthorize(handle, ticker) {
+  const begun = await post(handle, { operation: "begin", creatorWallet: SIGNER.publicKey.toBase58(), ticker, auth: {} });
+  assert.equal(begun.body.ok, true);
+  const auth = await post(handle, {
+    operation: "authorize",
+    sessionToken: begun.body.sessionToken,
+    mint: MINT.publicKey.toBase58(),
+    name: ticker,
+    symbol: ticker,
+    targetUsd: 15000,
+    feeChoice: "keep",
+    firstBuyLamports: "0",
+  });
+  assert.equal(auth.body.ok, true);
+  return { sessionToken: begun.body.sessionToken, finalizeToken: auth.body.finalizeToken };
+}
+
+test("canary: an allowlisted wallet runs the whole DBC create", async () => {
+  const db = memoryDb();
+  const handle = canaryHandler(db, ` ${OTHER.publicKey.toBase58()} , ${SIGNER.publicKey.toBase58()} `);
+  const pre = await post(handle, { operation: "preflight", creatorWallet: SIGNER.publicKey.toBase58(), targetUsd: 15000 });
+  assert.equal(pre.body.ok, true);
+  const { finalizeToken } = await beginAndAuthorize(handle, "CANARY");
+  const fin = await post(handle, { operation: "finalize", finalizeToken, signature: "sigcanary" });
+  assert.equal(fin.body.ok, true);
+  assert.equal(db.campaigns.length, 1);
+});
+
+test("canary: a wallet not on the list gets 403 CREATE_CANARY_ONLY at every DBC create step", async () => {
+  const db = memoryDb();
+  // Tokens issued while creation was open are refused once the canary is on.
+  const open = canaryHandler(db, "");
+  const { sessionToken, finalizeToken } = await beginAndAuthorize(open, "LATER");
+  const handle = canaryHandler(db, OTHER.publicKey.toBase58());
+  const wallet = SIGNER.publicKey.toBase58();
+  const refusals = [
+    { operation: "preflight", creatorWallet: wallet, targetUsd: 15000 },
+    { operation: "begin", creatorWallet: wallet, ticker: "NOPE", auth: {} },
+    { operation: "authorize", sessionToken, mint: MINT.publicKey.toBase58(), name: "N", symbol: "N", targetUsd: 15000, feeChoice: "keep" },
+    { operation: "finalize", finalizeToken, signature: "x" },
+    { operation: "schedule", creatorWallet: wallet, draftId: "d1", scheduledLaunchAt: 1, auth: {} },
+  ];
+  for (const body of refusals) {
+    const res = await post(handle, body);
+    assert.equal(res.statusCode, 403, body.operation);
+    assert.equal(res.body.code, "CREATE_CANARY_ONLY", body.operation);
+    assert.equal(res.body.error, "Launches open soon. Creation is limited to the launch team for a short test.");
+  }
+  assert.equal(db.campaigns.length, 0);
+});
+
+test("canary: unset or empty CREATE_CANARY_WALLETS leaves DBC create unchanged", async () => {
+  for (const value of [undefined, "", " , "]) {
+    const db = memoryDb();
+    const handle = canaryHandler(db, value);
+    const { finalizeToken } = await beginAndAuthorize(handle, "OPEN");
+    const fin = await post(handle, { operation: "finalize", finalizeToken, signature: "sigopen" });
+    assert.equal(fin.body.ok, true);
+  }
+});

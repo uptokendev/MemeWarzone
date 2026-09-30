@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { getQuery, json, readJson } from "../../server/http.js";
 import { getRpcUrls, getServerReadProvider } from "../lib/getServerReadProvider.js";
+import { CREATE_CANARY_CODE, CREATE_CANARY_MESSAGE, createCanaryRefusalBody, isCreateAllowedForWallet } from "../lib/createCanary.js";
 import {
   creatorClusterFundingDetectorConfigured,
   detectDirectCreatorFunding,
@@ -650,6 +651,12 @@ export async function launchpadPreflightCreate(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
   const body = await readJson(req);
   const walletAddress = body.walletAddress || body.creatorWallet || body.creator;
+  if (!isCreateAllowedForWallet(walletAddress)) {
+    return json(res, 403, {
+      ...createCanaryRefusalBody(),
+      preflight: { allowed: false, reasons: [CREATE_CANARY_MESSAGE], code: CREATE_CANARY_CODE },
+    });
+  }
   const preflight = await evaluateCreatePreflight({ walletAddress });
   return json(res, preflight.allowed ? 200 : 403, { preflight });
 }

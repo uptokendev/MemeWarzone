@@ -17,6 +17,7 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { LaunchpadSafetyStatus } from "@/components/launchpad/LaunchpadSafetyStatus";
 import { emitCreatorArmBlocked, resolveCreatorArmBlock } from "@/components/prepare/CreatorArmEligibilityDialog";
 import { GraduationMarketStep } from "@/components/create/GraduationMarketStep";
+import { LaunchCanaryBanner } from "@/components/create/LaunchCanaryBanner";
 import { getBnbContractAddresses, getBnbContractReadiness } from "@/lib/bnbContracts";
 import { checkTickerAvailability, createCampaignDraft, type TickerAvailability } from "@/lib/draftApi";
 import { signDraftAction } from "@/lib/draftAuth";
@@ -1199,6 +1200,8 @@ const Create = () => {
           <Link to="/playbook"><BookOpen className="mr-1.5 h-3.5 w-3.5" />Playbook</Link>
         </Button>
       </div>
+
+      <LaunchCanaryBanner />
 
       <CreateWizardShell
         step={step}

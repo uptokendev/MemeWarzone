@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { pool } from "../../server/db.js";
 import { badMethod, isSolanaChain, json, readJson } from "../../server/http.js";
 import { requireWalletActionAuth } from "../lib/walletActionAuth.js";
+import { assertCreateAllowedForWallet } from "../lib/createCanary.js";
 
 import {
   TickerReservationError,
@@ -781,6 +782,7 @@ function publicAccounts({ creatorWallet, onchain, pdas }) {
 
 async function handlePreflight(body, res) {
   const creatorWallet = validateCreatorWallet(body.creatorWallet);
+  assertCreateAllowedForWallet(creatorWallet);
   const chainId = Number(body.chainId || 101);
   // Read policy without throwing creator cooldown/live-cap so the frontend can show the same rich arm dialog as BNB.
   // Begin/authorize still enforce the limits again server-side to close races.
@@ -821,6 +823,7 @@ async function handlePreflight(body, res) {
 
 async function handleBegin(body, res) {
   const creatorWallet = validateCreatorWallet(body.creatorWallet);
+  assertCreateAllowedForWallet(creatorWallet);
   const chainId = Number(body.chainId || 101);
   const ticker = normalizeTicker(body.ticker);
   if (!ticker) {
@@ -920,6 +923,7 @@ async function handleBegin(body, res) {
 async function handleAuthorize(body, res) {
   const session = verifySolanaDirectSessionToken(body.sessionToken);
   const creatorWallet = validateCreatorWallet(session.creatorWallet);
+  assertCreateAllowedForWallet(creatorWallet);
   const chainId = Number(session.chainId);
   const ticker = normalizeTicker(session.ticker);
   const runtime = await loadRuntime({ creatorWallet, chainId, skipCreatorLaunchLimits: true });
@@ -1221,6 +1225,7 @@ async function handleAuthorize(body, res) {
 async function handleFinalize(body, res) {
   const token = verifyOpaqueToken(body.finalizeToken, DIRECT_FINALIZE_PURPOSE);
   const creatorWallet = validateCreatorWallet(token.creatorWallet);
+  assertCreateAllowedForWallet(creatorWallet);
   const chainId = Number(token.chainId);
   const cluster = canonicalClusterForChain(chainId, requiredEnv("SOLANA_CLUSTER"));
   if (cluster !== token.cluster) {

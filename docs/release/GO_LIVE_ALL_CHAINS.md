@@ -240,6 +240,7 @@ API (`api.memewar.zone`):
 | Name | Value now | Later |
 |---|---|---|
 | `DBC_LAUNCH_ENABLED` | `false` | `true` at opening (2.8) |
+| `CREATE_CANARY_WALLETS` | unset | your wallets in 2.5, removed at opening (2.8) |
 | `DBC_FEE_COLLECTOR` | collector public key | |
 | `DBC_CONFIG_PAYER_SECRET` | config payer keypair JSON | |
 | `RUNTIME_ENVIRONMENT` | `production` (Solana drafts refuse without it) | |
@@ -326,8 +327,14 @@ order (section 6, item 2).
 
 ### 2.5 Solana DBC canary
 
-There is no wallet allowlist for DBC launches (no such env or check exists in the code), so the canary
-opens DBC launches for everyone for its duration. Keep it short, and do it right before the EVM session.
+The API holds creation to the launch team while `CREATE_CANARY_WALLETS` is set (comma-separated creator
+wallets; EVM any case, Solana exact). Every create path (DBC, Solana launchpad, EVM direct, scheduled arm,
+BNB quote, Robinhood stock) answers 403 `CREATE_CANARY_ONLY` to any other wallet; drafts still save.
+
+- API: set `CREATE_CANARY_WALLETS=<your Solana wallet>,<your EVM 6 wallet>` and redeploy before step 1;
+  `GET /api/launch-status` returns `{"canary":true}`.
+- App: nothing to set; the Create page shows a "Launches open soon" banner while the API reports canary.
+- Indexer and workers: nothing to set.
 
 1. API `DBC_LAUNCH_ENABLED=true`, app `VITE_DBC_LAUNCH_ENABLED=true`; redeploy API, then app.
 2. Launch one coin on the site: SOL pairing, $15K, fee choice keep. One wallet signature.
@@ -336,7 +343,7 @@ opens DBC launches for everyone for its duration. Keep it short, and do it right
 5. Indexer log: the trades are indexed, the fee accrual appears, `[dbc-fee]` logs a dry-run route.
 
 If anything is wrong: set both flags back to `false` and redeploy (section 4). Otherwise leave them on;
-DBC is then open, which is part of the opening anyway.
+DBC stays limited to the canary wallets until `CREATE_CANARY_WALLETS` is removed at the public opening (2.8).
 
 - [ ] DBC canary coin launched, traded, routed on Jupiter, indexed
 
@@ -443,9 +450,9 @@ Robinhood `0x35E93D0b…`).
 - [ ] BNB batch H executed; new open, both old paused
 - [ ] Robinhood batch H executed; new open, old paused
 
-**I. EVM canary, right after H.** There is no creator allowlist on the factory or in the API signer, so the
-factory is open to everyone from H; nobody knows yet, and a failure is followed by `setCreatePaused(true)`.
-From your wallet (EVM 6):
+**I. EVM canary, right after H.** The factory has no creator allowlist, but it only creates with the API's
+signature, and the API signs only for `CREATE_CANARY_WALLETS` (set in 2.5, still set). A failure is
+followed by `setCreatePaused(true)`. From your wallet (EVM 6):
 
 1. Create one coin, $15,000 target, 1% first buy. BNB: fee choice keep. Robinhood: fee choice holders.
 2. After 60 s buy about 0.01 BNB / 0.003 ETH, sell half.
@@ -462,8 +469,12 @@ From your wallet (EVM 6):
 
 ### 2.8 Public opening
 
-When both EVM canaries and the DBC canary pass, everything is open: DBC flags on since 2.5, both new
-factories live since H, old factories paused. Announce.
+When both EVM canaries and the DBC canary pass, open creation to everyone:
+
+- API: remove `CREATE_CANARY_WALLETS` (or set it empty) and redeploy; `GET /api/launch-status` returns `{"canary":false}`.
+- App, indexer, workers: nothing to change; the Create page banner disappears on its own.
+
+Everything is then open: DBC flags on since 2.5, both new factories live since H, old factories paused. Announce.
 
 - [ ] Announced
 
@@ -639,7 +650,6 @@ config payer pays ~0.006 SOL for each new target and SOL price step).
 8. **Airdrop runner on chain 101.** The Monday Coolify task that adds DBC holder leaves exists and runs for Solana.
 9. **Robinhood deployer gas** on the day (top up if above 0.05 gwei).
 10. **DBC collector rotation** for pools already created (4.1).
-11. **DBC canary without opening to everyone.** A local app build with `VITE_DBC_LAUNCH_ENABLED=true` against the
-    production API might let you launch while the public app still hides DBC; the API flag would still have
-    to be on. Not tried.
+11. ~~**DBC canary without opening to everyone.**~~ Solved in the API: `CREATE_CANARY_WALLETS` (2.5, removed in 2.8).
+    Still to verify on the day: a non-listed wallet gets `CREATE_CANARY_ONLY` on each chain before the canary.
 12. **Rollback on the trigger change** in `20260930_000003` with the old code (4.3).

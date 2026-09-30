@@ -29,6 +29,7 @@ import {
   withTickerReservationTransaction,
 } from "./ticker-reservation-service.js";
 import { upsertCampaignFromDraft } from "./campaign-registry.js";
+import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
 
 const MIN_SCHEDULE_SECONDS = 5 * 60;
 const MAX_SCHEDULE_SECONDS = 30 * 24 * 60 * 60;
@@ -419,6 +420,8 @@ export async function draftDeploy(req, res) {
   if (!ok) return;
 
   if (body.operation === "authorize_scheduled") {
+    // Go-live canary: arming a scheduled create signs a create authorization.
+    if (refuseCreateIfCanaryBlocked(res, row.creator_wallet)) return;
     return authorizeScheduledLaunch({ body, row, pool, draftId, res });
   }
 

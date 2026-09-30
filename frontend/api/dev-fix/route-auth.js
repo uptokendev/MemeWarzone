@@ -30,6 +30,7 @@ import {
 import { prepareRobinhoodStockCreateAuthorization } from "./robinhoodStockCreatePolicy.js";
 import { prepareBnbBasicQuoteCreateAuthorization, readBnbBasicCreationPreflight } from "./bnbBasicQuoteCreatePolicy.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
+import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 
 const VALID_PROFILES = new Set([
@@ -397,6 +398,8 @@ export async function routingCreateAuthorization(req, res) {
   if (!walletAddress) return json(res, 400, { error: "Invalid or missing walletAddress" });
   if (!factoryAddress) return json(res, 400, { error: "Invalid or missing factoryAddress" });
   if (!chainId) return json(res, 400, { error: "Invalid or missing chainId" });
+  // Go-live canary: native, gen 6, BNB quote and Robinhood stock creates all sign here.
+  if (refuseCreateIfCanaryBlocked(res, walletAddress)) return;
   if (requestedStockToken && !stockToken) return json(res, 400, { error: "Invalid stockToken" });
   if (stockToken && graduationQuoteAssetId) {
     return json(res, 400, { error: "Choose either a stock-token graduation or BNB approved quote, not both" });

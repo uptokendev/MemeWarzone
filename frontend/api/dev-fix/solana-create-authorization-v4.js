@@ -12,6 +12,7 @@ import {
   withTickerReservationTransaction,
 } from "./ticker-reservation-service.js";
 import { upsertCampaignFromDraft } from "./campaign-registry.js";
+import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
 import { recordSolanaCampaignGraduationQuote } from "../lib/solanaCampaignGraduationQuote.js";
 import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
 import {
@@ -1097,6 +1098,8 @@ export async function solanaCreateAuthorizationV4(req, res) {
       draftId,
     });
     if (!ownerOk) return;
+    // Go-live canary. A draft already linked to an on-chain campaign is recovery, not a new create.
+    if (!draft.campaign_address && refuseCreateIfCanaryBlocked(res, draft.creator_wallet)) return;
 
     const configuredCluster = requiredEnv("SOLANA_CLUSTER");
     const cluster = canonicalClusterForChain(Number(draft.chain_id), configuredCluster);
