@@ -54,7 +54,10 @@ export const TESTNET_CAPS: Caps = {
   holderBatchAuthorizationMax: ethers.parseEther("9.3"),
 };
 
-export const GEN6_RECORD = path.join(__dirname, "..", "deployments", "robinhood", "testnet.gen6.json");
+/** RH_GEN6_RECORD (a file name inside deployments/robinhood) lets a later cut keep the record it supersedes. */
+const recordName = String(process.env.RH_GEN6_RECORD || "testnet.gen6.json").trim();
+if (!/^testnet\.gen6[a-z0-9]*\.json$/.test(recordName)) throw new Error(`RH_GEN6_RECORD ${recordName}: expected testnet.gen6<suffix>.json`);
+export const GEN6_RECORD = path.join(__dirname, "..", "deployments", "robinhood", recordName);
 
 export async function assertRobinhoodTestnet() {
   const { chainId } = await ethers.provider.getNetwork();
@@ -123,8 +126,8 @@ async function main() {
   console.log(`[gen6] CommunityRewardsVault (fresh, router = V4) ${communityAddress}`);
 
   const pins = { ...TESTNET_PINS, community: communityAddress };
-  const now = Number((await ethers.provider.getBlock("latest"))!.timestamp);
-  const calls = batchACalls(pins, d, TESTNET_CAPS, now).filter(
+  // Post-audit batch A: no holder batch is pre-authorized (audit 5 M1); router creator vault is set once (F1).
+  const calls = batchACalls(pins, d, TESTNET_CAPS).filter(
     (c) => !(c.fn === "setCreatePaused" && same(c.to, pins.oldFactory)) && !(c.fn === "setRouter" && same(c.to, communityAddress)),
   );
   const txs: Array<{ call: string; hash: string; gasUsed: string }> = [];
@@ -151,6 +154,7 @@ async function main() {
   await retryRead(() => router.admin(), (v) => same(v, me), "router.admin");
   await retryRead(() => (community as any).router(), (v: string) => same(v, d.router), "community.router");
   await retryRead(() => dist.batchOperator(), (v) => same(v, d.vault), "distributor.batchOperator");
+  await retryRead(() => vault.router(), (v) => same(v, d.router), "vault.router (immutable)");
   await retryRead(() => vault.holderDistributor(), (v) => same(v, d.holderDistributor), "vault.holderDistributor");
   await retryRead(() => vault.operator(), (v) => same(v, pins.payoutOperator), "vault.operator");
   const lim = await retryRead(() => vault.limits(), (l: any) => l[1] === TESTNET_CAPS.maxBuyPerTx, "vault.limits");
@@ -168,7 +172,7 @@ async function main() {
   const record = {
     network: network.name,
     chainId: 46630,
-    kind: "robinhood-testnet-gen6",
+    kind: recordName === "testnet.gen6.json" ? "robinhood-testnet-gen6" : `robinhood-testnet-${recordName.slice(8, -5)}`,
     fees: {
       deployedAt: new Date().toISOString(),
       admin: me,
