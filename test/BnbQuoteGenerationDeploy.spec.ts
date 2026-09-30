@@ -266,7 +266,6 @@ describe("BNB quote generation deployment", function () {
     await (await (fx.routing.creatorVault as any).setFactory(factoryAddress)).wait();
 
     expect(await (fx.creatorRegistry as any).launchRecorder(factoryAddress)).to.equal(false);
-    try { await (factory as any).connect(creator).createCampaign.staticCall(request); } catch (e: any) { console.log("DBG", e.data, e.revert, e.message); }
     await expect(
       (factory as any).connect(creator).createCampaign(request),
     ).to.be.revertedWithCustomError(fx.creatorRegistry, "NotLaunchRecorder");
