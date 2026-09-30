@@ -20,6 +20,7 @@ import { normalizeChain } from "../notificationContract.js";
 
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "../rewards/pokerPayout.js";
 import { recruiterLeagueStandings, recruiterPrizeRecipient, type NativeUsd, type RecruiterStanding } from "../rewards/recruiterLeague.js";
+import { curveTradeGen5Columns } from "../evm/curveTradeGen5Columns.js";
 import { fetchAirdropNativeUsd } from "../rewards/airdropThresholds.js";
 const DEFAULT_PROTOCOL_FEE_BPS = 200; // 2%
 const DEFAULT_LEAGUE_FEE_BPS = 75; // 0.75% slice of gross (carved out of the 2% protocol fee)
@@ -79,12 +80,17 @@ async function computeTotalLeagueFeeRawInRange(
   protocolFeeBps: number,
   leagueFeeBps: number
 ): Promise<bigint> {
+  // Gen-5 EVM trades carry the fee actually charged (anti-sniper 50% -> 2%, first buy flat 2%); the
+  // reverse derivation below assumes a flat protocolFeeBps and would misprice them. Their league slice is
+  // fee * leagueFeeBps / protocolFeeBps (37.5% of the fee, the router's split). Older rows: unchanged.
+  const { feeRaw } = await curveTradeGen5Columns(pool);
   const { rows } = await pool.query(
     `
     WITH trades AS (
       SELECT
         t.side,
-        t.bnb_amount_raw::numeric AS amt
+        t.bnb_amount_raw::numeric AS amt,
+        ${feeRaw ? "t.fee_raw::numeric" : "NULL::numeric"} AS fee_raw
       FROM public.curve_trades t
       WHERE t.chain_id = $1
         AND t.block_time >= $2::timestamptz
@@ -97,6 +103,7 @@ async function computeTotalLeagueFeeRawInRange(
       SELECT
         side,
         amt,
+        fee_raw,
         floor((amt * 10000) / (10000 + $4)) AS buy_g0,
         ceiling((amt * 10000) / (10000 - $4)) AS sell_g0
       FROM trades
@@ -125,11 +132,15 @@ async function computeTotalLeagueFeeRawInRange(
               ELSE sell_g0
             END
           )
-        END AS gross
+        END AS gross,
+        fee_raw
       FROM base
     ),
     fees AS (
-      SELECT floor((gross * $5) / 10000) AS league_fee
+      SELECT CASE
+               WHEN fee_raw IS NOT NULL THEN floor((fee_raw * $5) / NULLIF($4, 0))
+               ELSE floor((gross * $5) / 10000)
+             END AS league_fee
       FROM calc
     )
     SELECT COALESCE(sum(league_fee), 0)::numeric(78, 0) AS total_league_fee_raw

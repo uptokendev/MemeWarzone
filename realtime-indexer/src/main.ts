@@ -7,6 +7,7 @@ import { startSolanaMarketStatsLoop } from "./solanaMarketStats.js";
 import { startDbcFeeRoutingWorker } from "./dbcFeeRoutingWorker.js";
 import { startDbcCreatorChoiceWorker } from "./dbcCreatorChoiceWorker.js";
 import { startDbcGraduationWorker } from "./dbcGraduationWorker.js";
+import { startEvmGraduationKeeperWorker } from "./evm/evmGraduationKeeperWorker.js";
 import { startSolanaFeeEscrowWorker } from "./solanaFeeEscrowWorker.js";
 import { startSolanaIndexerLoop } from "./solanaIndexer.js";
 
@@ -16,6 +17,7 @@ startSolanaFeeEscrowWorker();
 startDbcFeeRoutingWorker();
 startDbcCreatorChoiceWorker();
 startDbcGraduationWorker();
+startEvmGraduationKeeperWorker();
 startMeteoraSwapIndexerLoop();
 startDbcIndexerLoop();
 if (String(process.env.ENABLE_SOLANA_MARKET_STATS || "1") === "1") startSolanaMarketStatsLoop();

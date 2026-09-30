@@ -1,0 +1,535 @@
+/**
+ * EVM graduation keeper for the launch generation (campaign generation 5), modelled on the Solana DBC
+ * keeper (src/dbc/dbcGraduationKeeper.ts). Spec: docs/evm-launch/spec/C5-graduation.md.
+ *
+ * Per campaign, one step per pass, every step simulated (eth_call + estimateGas) before anything is sent:
+ *   1. Graduated and a protocol fee escrowed (router refused routeFinalize) -> flushProtocolGraduationFee().
+ *   2. Pending -> graduate(), when it simulates and fits the gas cap.
+ *   3. graduate() reverts or exceeds the cap (a pre-made Robinhood pool seeded with bids) -> repairPool(limit):
+ *      limit 0 (all the way) when that fits, else a partial limit between the pool's price and the curve
+ *      price, halving until a step fits. A step must sell MEME (memeSold > 0), or it is no progress.
+ *   4. A quote coin Pending >= 7 days whose route still fails (E12) -> useNativeFallback(); graduate() next.
+ *   5. Otherwise blocked with the named revert; retried next pass.
+ * All four entry points are permissionless on chain; the keeper only saves everyone the wait.
+ *
+ * Sends: sign locally with an explicit nonce, write the job row (status 'sending', hash, nonce, raw tx)
+ * BEFORE broadcasting, then broadcast. After a restart a 'sending' row is resolved by its receipt; with no
+ * receipt and the nonce still unused, the same raw transaction is broadcast again (same hash, so it cannot
+ * land twice); with the nonce used by something else it is marked 'dropped'. At most one transaction per
+ * chain is in flight. Dry-run unless EVM_GRADUATION_KEEPER_SEND=true.
+ */
+import { ethers } from "ethers";
+import { GEN5_CAMPAIGN_ABI } from "./evmGen5Abi.js";
+
+export const NATIVE_FALLBACK_DELAY_SECONDS = 7n * 86_400n;
+export const GEN5_CAMPAIGN_IFACE_FULL = new ethers.Interface(GEN5_CAMPAIGN_ABI as unknown as string[]);
+
+export type KeeperAction = "graduate" | "repair" | "native_fallback" | "flush";
+
+export type KeeperCall =
+  | { action: "graduate"; fn: "graduate"; args: [] }
+  | { action: "repair"; fn: "repairPool"; args: [bigint] }
+  | { action: "native_fallback"; fn: "useNativeFallback"; args: [] }
+  | { action: "flush"; fn: "flushProtocolGraduationFee"; args: [] };
+
+export const CALLS = {
+  graduate: (): KeeperCall => ({ action: "graduate", fn: "graduate", args: [] }),
+  repair: (limit: bigint): KeeperCall => ({ action: "repair", fn: "repairPool", args: [limit] }),
+  nativeFallback: (): KeeperCall => ({ action: "native_fallback", fn: "useNativeFallback", args: [] }),
+  flush: (): KeeperCall => ({ action: "flush", fn: "flushProtocolGraduationFee", args: [] }),
+};
+
+export type CampaignChainState = {
+  launched: boolean;
+  graduationPending: boolean;
+  pendingSince: bigint;
+  quoteToken: string | null;
+  nativeFallback: boolean;
+  pendingProtocolFee: bigint;
+};
+
+export type SimResult =
+  | { ok: true; gas: bigint; memeSold?: bigint }
+  | { ok: false; error: string };
+
+export type RepairContext = { currentSqrtX96: bigint; targetSqrtX96: bigint };
+
+export type Decision =
+  | { kind: "send"; call: KeeperCall; gas: bigint; reason: string }
+  | { kind: "idle"; reason: string }
+  | { kind: "blocked"; reason: string };
+
+export interface KeeperReader {
+  readCampaign(campaign: string): Promise<CampaignChainState>;
+  simulate(campaign: string, call: KeeperCall): Promise<SimResult>;
+  blockTimestamp(): Promise<bigint>;
+  /** Pool price and curve price for partial repair limits; null when unknown (then only limit 0 is tried). */
+  repairContext(campaign: string): Promise<RepairContext | null>;
+}
+
+export type KeeperConfig = {
+  maxGas: bigint;
+  minFlushWei: bigint;
+  maxRepairHalvings: number;
+};
+
+function fits(sim: SimResult, cfg: KeeperConfig): sim is { ok: true; gas: bigint; memeSold?: bigint } {
+  return sim.ok && sim.gas <= cfg.maxGas;
+}
+
+function describe(sim: SimResult, cfg: KeeperConfig): string {
+  if (!sim.ok) return sim.error;
+  return `gas ${sim.gas} > cap ${cfg.maxGas}`;
+}
+
+/**
+ * Partial repair limits between the pool's current sqrt price and the curve's: 1/2, 1/4, 1/8 ... of the
+ * way from the current price (largest step first). Never 0 (0 means "all the way") and never past the target.
+ */
+export function partialRepairLimits(ctx: RepairContext, halvings: number): bigint[] {
+  const out: bigint[] = [];
+  const { currentSqrtX96: cur, targetSqrtX96: target } = ctx;
+  if (cur <= 0n || target <= 0n || cur === target) return out;
+  const span = target > cur ? target - cur : cur - target;
+  for (let k = 1; k <= halvings; k += 1) {
+    const step = span >> BigInt(k);
+    if (step === 0n) break;
+    out.push(target > cur ? cur + step : cur - step);
+  }
+  return out;
+}
+
+/** Decide the next step for one campaign. Pure apart from the injected reader. */
+export async function decideKeeperStep(reader: KeeperReader, campaign: string, cfg: KeeperConfig): Promise<Decision> {
+  const state = await reader.readCampaign(campaign);
+
+  if (state.launched) {
+    if (state.pendingProtocolFee < cfg.minFlushWei || state.pendingProtocolFee === 0n) {
+      return { kind: "idle", reason: "graduated" };
+    }
+    const sim = await reader.simulate(campaign, CALLS.flush());
+    if (fits(sim, cfg)) return { kind: "send", call: CALLS.flush(), gas: sim.gas, reason: `escrowed protocol fee ${state.pendingProtocolFee}` };
+    return { kind: "blocked", reason: `flush: ${describe(sim, cfg)}` };
+  }
+
+  if (!state.graduationPending) return { kind: "idle", reason: "not pending" };
+
+  const grad = await reader.simulate(campaign, CALLS.graduate());
+  if (fits(grad, cfg)) return { kind: "send", call: CALLS.graduate(), gas: grad.gas, reason: "pending" };
+  const gradWhy = describe(grad, cfg);
+
+  // A pre-made pool: repair in chunks while a step still sells MEME.
+  const full = await reader.simulate(campaign, CALLS.repair(0n));
+  if (fits(full, cfg) && (full.memeSold ?? 0n) > 0n) {
+    return { kind: "send", call: CALLS.repair(0n), gas: full.gas, reason: `graduate: ${gradWhy}; repair all the way` };
+  }
+  const fullBlockedByGas = full.ok ? full.gas > cfg.maxGas : /gas/i.test(full.error);
+  if (fullBlockedByGas) {
+    const ctx = await reader.repairContext(campaign);
+    if (ctx) {
+      for (const limit of partialRepairLimits(ctx, cfg.maxRepairHalvings)) {
+        const part = await reader.simulate(campaign, CALLS.repair(limit));
+        if (fits(part, cfg) && (part.memeSold ?? 0n) > 0n) {
+          return { kind: "send", call: CALLS.repair(limit), gas: part.gas, reason: `graduate: ${gradWhy}; partial repair` };
+        }
+      }
+    }
+  }
+
+  // E12: a quote coin whose route stays dead switches to the native pool after 7 days in Pending.
+  if (state.quoteToken && !state.nativeFallback) {
+    const now = await reader.blockTimestamp();
+    if (now >= state.pendingSince + NATIVE_FALLBACK_DELAY_SECONDS) {
+      const fb = await reader.simulate(campaign, CALLS.nativeFallback());
+      if (fits(fb, cfg)) return { kind: "send", call: CALLS.nativeFallback(), gas: fb.gas, reason: `graduate: ${gradWhy}; quote route dead 7 days` };
+      return { kind: "blocked", reason: `graduate: ${gradWhy}; native fallback: ${describe(fb, cfg)}` };
+    }
+  }
+
+  return { kind: "blocked", reason: `graduate: ${gradWhy}; repair: ${describe(full, cfg)}` };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Jobs: record before send, resolve after restart
+// ---------------------------------------------------------------------------------------------------
+
+export type Queryable = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }> };
+
+export interface KeeperSender {
+  address: string;
+  getNonce(tag: "latest" | "pending"): Promise<number>;
+  getReceipt(hash: string): Promise<{ status: number; blockNumber: number } | null>;
+  /** Signs a call; never broadcasts. */
+  sign(campaign: string, call: KeeperCall, gasLimit: bigint, nonce: number): Promise<{ raw: string; hash: string }>;
+  broadcast(raw: string): Promise<void>;
+}
+
+export type ResolveResult = { confirmed: number; reverted: number; dropped: number; rebroadcast: number; waiting: number };
+
+/** Errors that mean the node has the transaction or already mined its nonce; the job stays 'sending'. */
+export function isBenignBroadcastError(message: string): boolean {
+  return /already known|known transaction|nonce too low|replacement transaction underpriced|already imported/i.test(message);
+}
+
+export async function resolveSendingJobs(input: {
+  db: Queryable;
+  chainId: number;
+  sender: KeeperSender;
+  send: boolean;
+}): Promise<ResolveResult> {
+  const out: ResolveResult = { confirmed: 0, reverted: 0, dropped: 0, rebroadcast: 0, waiting: 0 };
+  const { rows } = await input.db.query(
+    `select * from public.evm_graduation_keeper_jobs
+      where chain_id = $1 and status = 'sending' order by id`,
+    [input.chainId],
+  );
+  for (const row of rows) {
+    const receipt = await input.sender.getReceipt(String(row.tx_hash));
+    if (receipt) {
+      const ok = Number(receipt.status) === 1;
+      await input.db.query(
+        `update public.evm_graduation_keeper_jobs
+            set status = $2, receipt_block = $3, updated_at = now()
+          where id = $1`,
+        [row.id, ok ? "confirmed" : "reverted", receipt.blockNumber],
+      );
+      if (ok) out.confirmed += 1;
+      else out.reverted += 1;
+      continue;
+    }
+    const latest = await input.sender.getNonce("latest");
+    if (latest > Number(row.nonce)) {
+      // Nonce used, no receipt for our hash. Re-check once: the receipt may have just appeared.
+      const again = await input.sender.getReceipt(String(row.tx_hash));
+      if (again) {
+        await input.db.query(
+          `update public.evm_graduation_keeper_jobs set status = $2, receipt_block = $3, updated_at = now() where id = $1`,
+          [row.id, Number(again.status) === 1 ? "confirmed" : "reverted", again.blockNumber],
+        );
+        if (Number(again.status) === 1) out.confirmed += 1;
+        else out.reverted += 1;
+        continue;
+      }
+      await input.db.query(
+        `update public.evm_graduation_keeper_jobs
+            set status = 'dropped', last_error = 'nonce used by another transaction', updated_at = now()
+          where id = $1`,
+        [row.id],
+      );
+      out.dropped += 1;
+      continue;
+    }
+    if (input.send && row.raw_tx) {
+      try {
+        await input.sender.broadcast(String(row.raw_tx));
+        await input.db.query(
+          `update public.evm_graduation_keeper_jobs set attempt = attempt + 1, updated_at = now() where id = $1`,
+          [row.id],
+        );
+        out.rebroadcast += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!isBenignBroadcastError(message)) {
+          await input.db.query(
+            `update public.evm_graduation_keeper_jobs set last_error = $2, updated_at = now() where id = $1`,
+            [row.id, message.slice(0, 500)],
+          );
+        }
+      }
+    }
+    out.waiting += 1;
+  }
+  return out;
+}
+
+export type PassStep = {
+  campaign: string;
+  decision: Decision;
+  jobId?: number | string;
+  txHash?: string;
+  sent?: boolean;
+  error?: string;
+};
+
+export async function listKeeperCampaigns(db: Queryable, chainId: number): Promise<string[]> {
+  const { rows } = await db.query(
+    `select c.campaign_address
+       from public.campaigns c
+       left join public.evm_campaign_gen5_state s
+         on s.chain_id = c.chain_id and s.campaign_address = c.campaign_address
+      where c.chain_id = $1
+        and coalesce(c.campaign_generation, 0) >= 5
+        and (
+          s.graduation_stage = 'pending'
+          or (s.graduation_stage = 'graduated' and s.protocol_fee_escrowed_raw > s.protocol_fee_flushed_raw)
+        )
+      order by s.pending_since nulls last, c.campaign_address`,
+    [chainId],
+  );
+  return rows.map((r) => String(r.campaign_address).toLowerCase());
+}
+
+async function recordBlocked(db: Queryable, chainId: number, campaign: string, reason: string) {
+  await db.query(
+    `insert into public.evm_graduation_keeper_blocks(chain_id, campaign_address, reason, seen_at)
+     values ($1, $2, $3, now())
+     on conflict (chain_id, campaign_address) do update set reason = excluded.reason, seen_at = now()`,
+    [chainId, campaign, reason.slice(0, 500)],
+  );
+}
+
+async function clearBlocked(db: Queryable, chainId: number, campaign: string) {
+  await db.query(`delete from public.evm_graduation_keeper_blocks where chain_id = $1 and campaign_address = $2`, [chainId, campaign]);
+}
+
+/**
+ * One keeper pass on one chain: resolve what is in flight, then at most one new transaction.
+ * Dry-run (send=false) decides and logs; it writes no job and signs nothing.
+ */
+export async function runEvmGraduationKeeperPass(input: {
+  db: Queryable;
+  chainId: number;
+  reader: KeeperReader;
+  sender: KeeperSender;
+  cfg: KeeperConfig;
+  send: boolean;
+  campaigns?: string[];
+}): Promise<{ resolved: ResolveResult; steps: PassStep[]; inFlight: boolean }> {
+  const resolved = await resolveSendingJobs({ db: input.db, chainId: input.chainId, sender: input.sender, send: input.send });
+  const inFlight = resolved.waiting > 0;
+  const steps: PassStep[] = [];
+  const campaigns = input.campaigns ?? (await listKeeperCampaigns(input.db, input.chainId));
+  let sentThisPass = false;
+
+  for (const campaign of campaigns) {
+    let decision: Decision;
+    try {
+      decision = await decideKeeperStep(input.reader, campaign, input.cfg);
+    } catch (error) {
+      steps.push({ campaign, decision: { kind: "blocked", reason: "read failed" }, error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+    const step: PassStep = { campaign, decision };
+    steps.push(step);
+    if (decision.kind === "blocked") {
+      if (input.send) await recordBlocked(input.db, input.chainId, campaign, decision.reason);
+      continue;
+    }
+    if (decision.kind !== "send") continue;
+    if (!input.send || inFlight || sentThisPass) continue;
+
+    // Record, then send.
+    const gasLimit = (decision.gas * 12n) / 10n + 25_000n;
+    const nonce = await input.sender.getNonce("pending");
+    const signed = await input.sender.sign(campaign, decision.call, gasLimit, nonce);
+    const inserted = await input.db.query(
+      `insert into public.evm_graduation_keeper_jobs(
+          chain_id, campaign_address, action, call_args, keeper_address, nonce, gas_limit,
+          tx_hash, raw_tx, status, reason
+       ) values ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,'sending',$10)
+       returning id`,
+      [
+        input.chainId,
+        campaign,
+        decision.call.action,
+        JSON.stringify(decision.call.args.map((a) => String(a))),
+        input.sender.address.toLowerCase(),
+        nonce,
+        gasLimit.toString(),
+        signed.hash.toLowerCase(),
+        signed.raw,
+        decision.reason.slice(0, 500),
+      ],
+    );
+    step.jobId = inserted.rows[0]?.id;
+    step.txHash = signed.hash;
+    sentThisPass = true;
+    await clearBlocked(input.db, input.chainId, campaign);
+    try {
+      await input.sender.broadcast(signed.raw);
+      step.sent = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      step.error = message;
+      // The job stays 'sending': the next pass decides by receipt and nonce whether it left.
+      await input.db.query(
+        `update public.evm_graduation_keeper_jobs set last_error = $2, updated_at = now() where id = $1`,
+        [step.jobId, message.slice(0, 500)],
+      );
+    }
+  }
+  return { resolved, steps, inFlight };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// ethers implementations
+// ---------------------------------------------------------------------------------------------------
+
+/** Names a revert from its data when it is one of the campaign's custom errors. */
+export function revertName(error: unknown): string {
+  const e = error as any;
+  const data: string | undefined = e?.data ?? e?.info?.error?.data ?? e?.error?.data;
+  if (typeof data === "string" && data.startsWith("0x") && data.length >= 10) {
+    try {
+      const parsed = GEN5_CAMPAIGN_IFACE_FULL.parseError(data);
+      if (parsed) return parsed.name;
+    } catch {
+      // unknown selector
+    }
+  }
+  return String(e?.shortMessage || e?.reason || e?.message || e).slice(0, 300);
+}
+
+const V3_FACTORY_ABI = ["function getPool(address,address,uint24) view returns (address)"];
+const V3_POOL_ABI = ["function slot0() view returns (uint160 sqrtPriceX96,int24 tick,uint16,uint16,uint16,uint8,bool)", "function token0() view returns (address)"];
+
+/** Known Uniswap V3 deployments for the partial-repair price read (C7 section 2). Env overrides. */
+const KNOWN_V3: Record<number, { factory: string; weth: string; fee: number }> = {
+  4663: { factory: "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA", weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", fee: 3000 },
+};
+
+export function bigintSqrt(value: bigint): bigint {
+  if (value < 0n) throw new Error("sqrt of negative");
+  if (value < 2n) return value;
+  let x = value;
+  let y = (x + 1n) >> 1n;
+  while (y < x) {
+    x = y;
+    y = (x + value / x) >> 1n;
+  }
+  return x;
+}
+
+/**
+ * Curve price P (wei of native per whole MEME, both 18 decimals) as a V3 sqrtPriceX96 for the MEME/WETH
+ * pool: token1/token0 = P / 1e18 when MEME is token0, 1e18 / P otherwise.
+ */
+export function curvePriceToSqrtX96(priceWei: bigint, memeIsToken0: boolean): bigint {
+  if (priceWei <= 0n) return 0n;
+  const Q192 = 1n << 192n;
+  const WAD = 10n ** 18n;
+  return memeIsToken0 ? bigintSqrt((priceWei * Q192) / WAD) : bigintSqrt((WAD * Q192) / priceWei);
+}
+
+export function createEthersKeeperReader(provider: ethers.Provider, chainId: number, from: string, env: NodeJS.ProcessEnv = process.env): KeeperReader {
+  const v3 = (() => {
+    const known = KNOWN_V3[chainId];
+    const factory = String(env[`EVM_KEEPER_V3_FACTORY_${chainId}`] || known?.factory || "").trim();
+    const weth = String(env[`EVM_KEEPER_WETH_${chainId}`] || known?.weth || "").trim();
+    const fee = Number(env[`EVM_KEEPER_V3_FEE_${chainId}`] || known?.fee || 3000);
+    return factory && weth ? { factory, weth, fee } : null;
+  })();
+  return {
+    async readCampaign(campaign) {
+      const c = new ethers.Contract(campaign, GEN5_CAMPAIGN_ABI, provider) as any;
+      const [launched, pending, since, quote, fallback, fee] = await Promise.all([
+        c.launched(),
+        c.graduationPending(),
+        c.pendingSince(),
+        c.graduationQuoteToken(),
+        c.nativeFallback(),
+        c.pendingProtocolGraduationFee(),
+      ]);
+      const q = String(quote).toLowerCase();
+      return {
+        launched: Boolean(launched),
+        graduationPending: Boolean(pending),
+        pendingSince: BigInt(since),
+        quoteToken: q === ethers.ZeroAddress.toLowerCase() ? null : q,
+        nativeFallback: Boolean(fallback),
+        pendingProtocolFee: BigInt(fee),
+      };
+    },
+    async simulate(campaign, call) {
+      const data = GEN5_CAMPAIGN_IFACE_FULL.encodeFunctionData(call.fn, call.args);
+      try {
+        const result = await provider.call({ to: campaign, from, data });
+        const gas = await provider.estimateGas({ to: campaign, from, data });
+        let memeSold: bigint | undefined;
+        if (call.fn === "repairPool") {
+          const decoded = GEN5_CAMPAIGN_IFACE_FULL.decodeFunctionResult("repairPool", result);
+          memeSold = BigInt(decoded[0]);
+        }
+        return { ok: true, gas: BigInt(gas), memeSold };
+      } catch (error) {
+        return { ok: false, error: revertName(error) };
+      }
+    },
+    async blockTimestamp() {
+      const block = await provider.getBlock("latest");
+      return BigInt(block?.timestamp ?? Math.floor(Date.now() / 1000));
+    },
+    async repairContext(campaign) {
+      if (!v3) return null;
+      try {
+        const c = new ethers.Contract(campaign, GEN5_CAMPAIGN_ABI, provider) as any;
+        const [meme, quote, fallback, state] = await Promise.all([
+          c.token(),
+          c.graduationQuoteToken(),
+          c.nativeFallback(),
+          c.getGraduationState(),
+        ]);
+        // Stock pools are priced in the stock, not in P: only limit 0 there.
+        if (String(quote).toLowerCase() !== ethers.ZeroAddress.toLowerCase() && !fallback) return null;
+        const factory = new ethers.Contract(v3.factory, V3_FACTORY_ABI, provider) as any;
+        const poolAddr = String(await factory.getPool(meme, v3.weth, v3.fee));
+        if (poolAddr === ethers.ZeroAddress) return null;
+        const pool = new ethers.Contract(poolAddr, V3_POOL_ABI, provider) as any;
+        const [slot0, token0] = await Promise.all([pool.slot0(), pool.token0()]);
+        const price = BigInt(state.finalCurvePrice ?? state[1]);
+        const memeIsToken0 = String(token0).toLowerCase() === String(meme).toLowerCase();
+        return { currentSqrtX96: BigInt(slot0.sqrtPriceX96 ?? slot0[0]), targetSqrtX96: curvePriceToSqrtX96(price, memeIsToken0) };
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+export function createEthersKeeperSender(provider: ethers.Provider, wallet: ethers.Wallet, chainId: number): KeeperSender {
+  const signer = wallet.connect(provider);
+  return {
+    address: wallet.address,
+    getNonce: (tag) => provider.getTransactionCount(wallet.address, tag),
+    async getReceipt(hash) {
+      const r = await provider.getTransactionReceipt(hash);
+      return r ? { status: Number(r.status ?? 0), blockNumber: r.blockNumber } : null;
+    },
+    async sign(campaign, call, gasLimit, nonce) {
+      const data = GEN5_CAMPAIGN_IFACE_FULL.encodeFunctionData(call.fn, call.args);
+      const fee = await provider.getFeeData();
+      const tx: ethers.TransactionRequest = { to: campaign, data, gasLimit, nonce, chainId, value: 0n };
+      if (fee.maxFeePerGas != null && fee.maxPriorityFeePerGas != null) {
+        tx.type = 2;
+        tx.maxFeePerGas = fee.maxFeePerGas;
+        tx.maxPriorityFeePerGas = fee.maxPriorityFeePerGas;
+      } else {
+        tx.type = 0;
+        tx.gasPrice = fee.gasPrice ?? undefined;
+      }
+      const raw = await signer.signTransaction(tx);
+      return { raw, hash: ethers.Transaction.from(raw).hash! };
+    },
+    async broadcast(raw) {
+      await (provider as ethers.JsonRpcProvider).broadcastTransaction(raw);
+    },
+  };
+}
+
+/** Deployers and other keys the keeper must never run with. */
+export const FORBIDDEN_KEEPER_ADDRESSES = [
+  "0x77f96a7d3bea7a090aacbd00a50002d2b9ae0714", // EVM mainnet deployer (deployments/*.json)
+  "0x13ad79765e14927df2c554d9662bbe539e89c8e8", // testnet deployer
+  "0x1a367016f10b230e28cf1abda2594c47bf60fe34", // testnet deployer
+];
+
+export function assertKeeperKeyAllowed(address: string, env: NodeJS.ProcessEnv = process.env): void {
+  const extra = String(env.EVM_KEEPER_FORBIDDEN_ADDRESSES || "")
+    .split(",")
+    .map((a) => a.trim().toLowerCase())
+    .filter(Boolean);
+  const forbidden = new Set([...FORBIDDEN_KEEPER_ADDRESSES, ...extra]);
+  if (forbidden.has(address.toLowerCase())) {
+    throw new Error(`EVM graduation keeper refuses key ${address}: it is a deployer / forbidden address`);
+  }
+}
