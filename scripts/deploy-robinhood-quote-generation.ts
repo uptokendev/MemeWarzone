@@ -262,6 +262,26 @@ export async function assertRouterCanServeStrictRouting(routerAddress: string) {
   });
 }
 
+export const TESTNET_ROUTE_AUTHORITY = "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0";
+
+/// The testnet route authority and a deployer-owned generation are testnet conveniences only. On
+/// mainnet (4663) both must be named explicitly (RH_ROUTE_AUTHORITY, RH_OWNER), the authority must not
+/// be the testnet one, and the owner must not be the deployer EOA (audit 5): a silent default would
+/// sign every create/trade with the testnet key or leave the factory, league and war pool owned by a
+/// hot key.
+export function resolveRouteAuthorityAndOwner(chainId: bigint, deployerAddress: string) {
+  const isMainnet = chainId === 4663n;
+  const routeAuthority = pick("RH_ROUTE_AUTHORITY", isMainnet ? "" : TESTNET_ROUTE_AUTHORITY);
+  if (isMainnet && routeAuthority === ethers.getAddress(TESTNET_ROUTE_AUTHORITY)) {
+    throw new Error("RH_ROUTE_AUTHORITY is the testnet authority; Robinhood mainnet (4663) needs the production one.");
+  }
+  const owner = pick("RH_OWNER", isMainnet ? "" : deployerAddress);
+  if (isMainnet && owner === ethers.getAddress(deployerAddress)) {
+    throw new Error("RH_OWNER must not be the deployer EOA on Robinhood mainnet (4663); name the Safe.");
+  }
+  return { routeAuthority, owner };
+}
+
 async function main() {
   const profile = PROFILES[network.name];
   if (!profile) throw new Error(`Unsupported network ${network.name}; expected robinhoodTestnet or robinhoodMainnet`);
@@ -283,12 +303,10 @@ async function main() {
   const swapRouter = pick("RH_SWAP_ROUTER", reuse.swapRouter ?? "");
   const nativeUsdFeed = pick("RH_NATIVE_USD_FEED", reuse.nativeUsdFeed ?? "");
   const graduationOracle = pick("RH_GRADUATION_ORACLE", reuse.graduationOracle ?? "");
-  const routeAuthority = pick("RH_ROUTE_AUTHORITY", "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0");
-
   const [deployer] = await ethers.getSigners();
   if (!deployer) throw new Error("No deployer signer for this network.");
   const deployerAddress = ethers.getAddress(await deployer.getAddress());
-  const owner = pick("RH_OWNER", deployerAddress);
+  const { routeAuthority, owner } = resolveRouteAuthorityAndOwner(profile.chainId, deployerAddress);
 
   console.log(`[rh] network=${network.name} chainId=${net.chainId}`);
   console.log(`[rh] deployer=${deployerAddress} balance=${ethers.formatEther(await ethers.provider.getBalance(deployerAddress))}`);
