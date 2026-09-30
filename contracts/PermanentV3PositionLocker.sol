@@ -6,6 +6,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {EvmGenPoolSwap, IEvmGenV3Pool, IEvmGenWrappedNative} from "./EvmGenPoolSwap.sol";
 
 interface IRobinhoodV3LockerIntegration {
     function liquidityKind() external view returns (uint8);
@@ -50,12 +51,19 @@ interface IRobinhoodV3LockerPositionManager is IERC721 {
 }
 
 interface IRobinhoodV3LpRevenueTreasuryRouter {
+    function routeLpNative() external payable;
     function routeLpToken(address token, uint256 amount) external;
 }
 
 /// @notice Permanent locker for MemeWarzone Robinhood Chain Uniswap V3 graduation positions.
 /// @dev The locker deliberately exposes no NFT transfer, approve, decrease-liquidity, burn,
 /// migration or rescue path. Principal remains in the position forever; only earned fees can move.
+/// EVM launch generation (E9, docs/evm-launch/spec/C1-C6-fees.md): every harvest sells the MEME-side fees
+/// for the paired asset in the same pool with a sqrtPriceLimitX96 at the impact bound (EvmGenPoolSwap), so
+/// the pool itself stops the sale; the unsold rest is carried (`carriedMeme`) into the next harvest and the
+/// harvest never reverts because of the bound. WETH is unwrapped: the creator side is pushed as native
+/// (gas-capped, pending on failure) and the protocol side goes through routeLpNative. A stock-bound pool
+/// pays both sides in the stock token; the protocol side keeps routeLpToken.
 contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -63,6 +71,14 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     uint16 public constant CREATOR_FEE_BPS = 8_000;
     uint16 public constant PROTOCOL_FEE_BPS = 2_000;
     uint16 private constant FEE_BPS = 10_000;
+    /// @notice Max price impact of one harvest's MEME sale (0.50%), enforced by the swap's price limit.
+    uint16 public constant MEME_SALE_MAX_IMPACT_BPS = 50;
+    /// @notice The sale is skipped (carried) while spot is worse than the 30 min TWAP by more than this (ticks ~ bps).
+    uint16 public constant MEME_SALE_MAX_TWAP_DEVIATION_BPS = 100;
+    uint32 public constant MEME_SALE_TWAP_WINDOW = 1800;
+    /// @notice Observation slots requested on a pool's first harvest so the TWAP window can be served.
+    uint16 public constant MEME_SALE_OBSERVATION_CARDINALITY = 32;
+    uint256 public constant CREATOR_NATIVE_PUSH_GAS = 100_000;
 
     struct PoolRegistration {
         address campaign;
@@ -77,6 +93,8 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
         bool registered;
+        address memeToken;
+        address pairedToken;
     }
 
     address public immutable admin;
@@ -102,6 +120,14 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     mapping(address => uint256) public pendingProtocolToken;
     mapping(address => mapping(address => uint256)) public cumulativeCreatorPaid;
     mapping(address => mapping(address => uint256)) public cumulativeProtocolRouted;
+    mapping(address => uint256) public pendingNative;
+    uint256 public pendingProtocolNative;
+    /// @notice MEME fees collected but not yet sold because of the impact bound, per pool.
+    mapping(address => uint256) public carriedMeme;
+    mapping(address => bool) public observationCardinalityRequested;
+    // In-flight V3 swap, checked by uniswapV3SwapCallback; zero outside sellMemeForPaired.
+    address private activeSwapPool;
+    uint256 private activeSwapMaxPay;
 
     event RevenueConfigUpdated(
         address indexed treasuryRouter,
@@ -132,6 +158,9 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     event PendingTokenClaimed(address indexed recipient, address indexed token, uint256 amount);
     event PendingProtocolTokenRouted(address indexed token, uint256 amount);
     event UnregisteredTokenRecovered(address indexed token, address indexed to, uint256 amount);
+    event MemeFeesSold(address indexed pool, address indexed memeToken, uint256 memeSold, uint256 pairedOut, uint256 memeCarried);
+    event PendingNativeClaimed(address indexed recipient, uint256 amount);
+    event PendingProtocolNativeRouted(uint256 amount);
 
     error OnlyAdmin();
     error OnlyCreator();
@@ -149,6 +178,9 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     error PositionMissing();
     error PositionPrincipalChanged();
     error RegisteredFeeAssetRecoveryBlocked();
+    error OnlySelf();
+    error NativeClaimFailed();
+    error UnexpectedCallback();
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert OnlyAdmin();
@@ -158,6 +190,11 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     constructor(address admin_) {
         if (admin_ == address(0)) revert ZeroAddress();
         admin = admin_;
+    }
+
+    /// @dev Only WETH unwrapping pays this contract native.
+    receive() external payable {
+        if (msg.sender != wrappedNative) revert InvalidIntegration();
     }
 
     function configureRevenue(address treasuryRouter_, address integrationSource_) external onlyAdmin {
@@ -234,7 +271,9 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         return IERC721Receiver.onERC721Received.selector;
     }
 
-    /// @dev Signature intentionally matches PermanentLpLocker so the next LaunchFactory generation
+    /// @dev `expectedTokenA` is the campaign's MEME token and `expectedTokenB` the paired asset (WETH or the
+    /// stock token); LaunchFactory passes them in that order. The MEME side is the one sold at harvest.
+    /// Signature intentionally matches PermanentLpLocker so the next LaunchFactory generation
     /// can use one registration boundary. lockedLpAmount may be zero for V3; actual NFT liquidity is
     /// read from the canonical position manager and becomes the locked principal invariant.
     function registerGraduatedPool(
@@ -284,7 +323,9 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
             feeTier: fee_,
             creatorFeeBps: CREATOR_FEE_BPS,
             protocolFeeBps: PROTOCOL_FEE_BPS,
-            registered: true
+            registered: true,
+            memeToken: expectedTokenA,
+            pairedToken: expectedTokenB
         });
 
         emit GraduationPoolRegistered(
@@ -336,8 +377,76 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         (, , , uint128 liquidityAfter) = _positionCore(info.tokenId);
         if (liquidityAfter != liquidityBefore) revert PositionPrincipalChanged();
 
-        _splitAndRoute(info, info.token0, collected0);
-        _splitAndRoute(info, info.token1, collected1);
+        if (!observationCardinalityRequested[pool]) {
+            observationCardinalityRequested[pool] = true;
+            try IEvmGenV3Pool(pool).increaseObservationCardinalityNext(MEME_SALE_OBSERVATION_CARDINALITY) {} catch {}
+        }
+
+        bool memeIs0 = info.memeToken == info.token0;
+        uint256 memeToSell = carriedMeme[pool] + (memeIs0 ? collected0 : collected1);
+        uint256 paired = memeIs0 ? collected1 : collected0;
+        if (memeToSell != 0) {
+            uint256 memeSold;
+            uint256 pairedOut;
+            try this.sellMemeForPaired(pool, memeIs0, memeToSell) returns (uint256 sold_, uint256 out_) {
+                memeSold = sold_;
+                pairedOut = out_;
+            } catch {}
+            carriedMeme[pool] = memeToSell - memeSold;
+            paired += pairedOut;
+            emit MemeFeesSold(pool, info.memeToken, memeSold, pairedOut, memeToSell - memeSold);
+        }
+
+        _splitAndRoute(info, info.pairedToken, paired);
+    }
+
+    /// @notice Internal step of harvest, external only so a failed sale reverts atomically inside a try.
+    /// @dev Callable by this contract only; runs inside harvest's reentrancy guard.
+    function sellMemeForPaired(address pool, bool memeIs0, uint256 amount) external returns (uint256 sold, uint256 out) {
+        if (msg.sender != address(this)) revert OnlySelf();
+        (bool ok, uint160 limit) =
+            EvmGenPoolSwap.v3Limit(pool, memeIs0, MEME_SALE_MAX_IMPACT_BPS, MEME_SALE_MAX_TWAP_DEVIATION_BPS, MEME_SALE_TWAP_WINDOW);
+        if (!ok) return (0, 0);
+        activeSwapPool = pool;
+        activeSwapMaxPay = amount;
+        (sold, out) = EvmGenPoolSwap.v3Swap(pool, memeIs0, amount, limit, address(this));
+        activeSwapPool = address(0);
+        activeSwapMaxPay = 0;
+    }
+
+    /// @notice Pays the pool during sellMemeForPaired only. Any other caller or time reverts.
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata) external {
+        if (msg.sender != activeSwapPool || msg.sender == address(0)) revert UnexpectedCallback();
+        PoolRegistration storage info = poolInfo[msg.sender];
+        bool memeIs0 = info.memeToken == info.token0;
+        EvmGenPoolSwap.v3PayOwed(info.memeToken, memeIs0, amount0Delta, amount1Delta, activeSwapMaxPay);
+    }
+
+    /// @notice One view for CreatorRewardsVaultV2 (same shape on PermanentLpLocker).
+    function poolParties(address pool)
+        external
+        view
+        returns (address campaign, address creator, address creatorFeeRecipient, address memeToken, address pairedToken, bool registered)
+    {
+        PoolRegistration storage info = poolInfo[pool];
+        return (info.campaign, info.creator, info.creatorFeeRecipient, info.memeToken, info.pairedToken, info.registered);
+    }
+
+    function claimPendingNative() external nonReentrant returns (uint256 amount) {
+        amount = pendingNative[msg.sender];
+        if (amount == 0) revert ZeroAmount();
+        pendingNative[msg.sender] = 0;
+        (bool ok, ) = payable(msg.sender).call{value: amount}("");
+        if (!ok) revert NativeClaimFailed();
+        emit PendingNativeClaimed(msg.sender, amount);
+    }
+
+    function retryPendingProtocolNative() external nonReentrant returns (uint256 amount) {
+        amount = pendingProtocolNative;
+        if (amount == 0) revert ZeroAmount();
+        pendingProtocolNative = 0;
+        _routeProtocolNative(address(0), amount);
+        emit PendingProtocolNativeRouted(amount);
     }
 
     function claimPendingToken(address token) external nonReentrant returns (uint256 amount) {
@@ -371,18 +480,50 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         address recipient = creatorPayoutRecipient[info.creator];
         if (recipient == address(0)) recipient = info.creatorFeeRecipient;
 
-        if (_tryTransferToken(token, recipient, creatorAmount)) {
-            cumulativeCreatorPaid[info.pool][token] += creatorAmount;
+        if (token == wrappedNative) {
+            IEvmGenWrappedNative(token).withdraw(amount);
+            bool ok = true;
+            if (creatorAmount != 0) (ok, ) = payable(recipient).call{value: creatorAmount, gas: CREATOR_NATIVE_PUSH_GAS}("");
+            if (ok) {
+                cumulativeCreatorPaid[info.pool][token] += creatorAmount;
+            } else {
+                pendingNative[recipient] += creatorAmount;
+                emit HarvestPaymentPending(info.pool, recipient, address(0), creatorAmount, false);
+            }
+            if (_routeProtocolNative(info.pool, protocolAmount)) {
+                cumulativeProtocolRouted[info.pool][token] += protocolAmount;
+            }
         } else {
-            pendingToken[recipient][token] += creatorAmount;
-            emit HarvestPaymentPending(info.pool, recipient, token, creatorAmount, false);
-        }
+            if (_tryTransferToken(token, recipient, creatorAmount)) {
+                cumulativeCreatorPaid[info.pool][token] += creatorAmount;
+            } else {
+                pendingToken[recipient][token] += creatorAmount;
+                emit HarvestPaymentPending(info.pool, recipient, token, creatorAmount, false);
+            }
 
-        if (_routeProtocolToken(info.pool, token, protocolAmount)) {
-            cumulativeProtocolRouted[info.pool][token] += protocolAmount;
+            if (_routeProtocolToken(info.pool, token, protocolAmount)) {
+                cumulativeProtocolRouted[info.pool][token] += protocolAmount;
+            }
         }
 
         emit FeesHarvested(info.pool, msg.sender, token, amount, creatorAmount, protocolAmount);
+    }
+
+    function _routeProtocolNative(address pool, uint256 amount) private returns (bool) {
+        if (amount == 0) return true;
+        address router_ = treasuryRouter;
+        if (router_ == address(0)) {
+            pendingProtocolNative += amount;
+            emit HarvestPaymentPending(pool, address(0), address(0), amount, true);
+            return false;
+        }
+        try IRobinhoodV3LpRevenueTreasuryRouter(router_).routeLpNative{value: amount}() {
+            return true;
+        } catch {
+            pendingProtocolNative += amount;
+            emit HarvestPaymentPending(pool, router_, address(0), amount, true);
+            return false;
+        }
     }
 
     function _routeProtocolToken(address pool, address token, uint256 amount) private returns (bool) {

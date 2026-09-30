@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {EvmGenPoolSwap, IEvmGenWrappedNative} from "./EvmGenPoolSwap.sol";
 
 interface ITopazPoolFeeSource {
     function claimFees() external;
@@ -24,6 +25,13 @@ interface ILpRevenueTreasuryRouter {
 
 /// @notice Shared permanent locker for approved Topaz LP tokens and fee harvests.
 /// @dev Registered LP principal has no withdrawal, transfer, approval, migration, or rescue path.
+/// EVM launch generation (E9, docs/evm-launch/spec/C1-C6-fees.md): every harvest sells the MEME-side fees
+/// for the paired asset in the same pair, bounded by price impact (EvmGenPoolSwap), before the 80/20 split,
+/// so creator and protocol are paid in the paired asset only. What the bound does not allow in one harvest
+/// is carried (`carriedMeme`) into the next one; the bound never reverts a harvest. When the paired asset
+/// is the configured wrapped native it is unwrapped: the creator side is pushed as native (gas-capped,
+/// pending on failure) and the protocol side goes through routeLpNative. A quote-bound pool (BNB quote
+/// tokens) pays both sides in the quote token; the protocol side keeps routeLpToken.
 contract PermanentLpLocker is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -31,8 +39,16 @@ contract PermanentLpLocker is ReentrancyGuard {
     uint16 public constant PROTOCOL_FEE_BPS = 2_000;
     /// @dev Must match the live Topaz volatile v2 factory fee (0.30%). This is a
     /// pool-fee check, not an extra locker charge. Harvested LP fees still split 80/20.
+    // TODO(founder) Q4: accept any Topaz volatile pool fee at registration (and record it) instead of
+    // requiring 30 bps. Not decided; today's 30 bps requirement stays.
     uint16 public constant REQUIRED_POOL_FEE_BPS = 30;
     uint16 internal constant FEE_BPS = 10_000;
+    /// @notice Max price impact of one harvest's MEME sale (0.50%: sells <= 0.25% of the MEME reserve).
+    uint16 public constant MEME_SALE_MAX_IMPACT_BPS = 50;
+    /// @notice The sale is skipped (carried) while spot is worse than the pair's 30 min TWAP by more than this.
+    uint16 public constant MEME_SALE_MAX_TWAP_DEVIATION_BPS = 100;
+    /// @notice Gas forwarded with the creator's native payment; a recipient that needs more is paid by pull.
+    uint256 public constant CREATOR_NATIVE_PUSH_GAS = 100_000;
 
     struct PoolRegistration {
         address campaign;
@@ -45,11 +61,18 @@ contract PermanentLpLocker is ReentrancyGuard {
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
         bool registered;
+        address memeToken;
+        address pairedToken;
     }
 
     address public immutable admin;
     address public treasuryRouter;
     address public topazFactory;
+    /// @notice WBNB. Set once by the admin (the factory) before the first registration; zero = pay WBNB as a token.
+    address public wrappedNative;
+    uint256 public registrationCount;
+    /// @notice MEME fees collected but not yet sold because of the impact bound, per pool.
+    mapping(address => uint256) public carriedMeme;
 
     mapping(address => bool) public registeredLpToken;
     mapping(address => bool) public registeredFeeAsset;
@@ -86,6 +109,8 @@ contract PermanentLpLocker is ReentrancyGuard {
     event PendingProtocolTokenRouted(address indexed token, uint256 amount);
     event PendingProtocolNativeRouted(uint256 amount);
     event UnregisteredTokenRecovered(address indexed token, address indexed to, uint256 amount);
+    event WrappedNativeConfigured(address indexed wrappedNative);
+    event MemeFeesSold(address indexed pool, address indexed memeToken, uint256 memeSold, uint256 pairedOut, uint256 memeCarried);
 
     error OnlyAdmin();
     error OnlyCreator();
@@ -103,6 +128,8 @@ contract PermanentLpLocker is ReentrancyGuard {
     error LockedLpMissing();
     error LpPrincipalChanged();
     error NativeClaimFailed();
+    error WrappedNativeLocked();
+    error OnlySelf();
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert OnlyAdmin();
@@ -116,6 +143,15 @@ contract PermanentLpLocker is ReentrancyGuard {
 
     receive() external payable {}
 
+    /// @notice Sets WBNB so native pools pay out native. Only before the first registration, so a pool's payout
+    /// asset can never change after it is registered.
+    function configureWrappedNative(address wrappedNative_) external onlyAdmin {
+        if (wrappedNative_ == address(0)) revert ZeroAddress();
+        if (registrationCount != 0) revert WrappedNativeLocked();
+        wrappedNative = wrappedNative_;
+        emit WrappedNativeConfigured(wrappedNative_);
+    }
+
     function configureRevenue(address treasuryRouter_, address topazFactory_) external onlyAdmin {
         if (treasuryRouter_ == address(0) || topazFactory_ == address(0)) revert ZeroAddress();
         treasuryRouter = treasuryRouter_;
@@ -128,6 +164,8 @@ contract PermanentLpLocker is ReentrancyGuard {
         _registerLpToken(lpToken, true, address(this));
     }
 
+    /// @dev `expectedTokenA` is the campaign's MEME token and `expectedTokenB` the paired asset (WBNB or the
+    /// quote token); LaunchFactory passes them in that order. The MEME side is the one sold at harvest.
     function registerGraduatedPool(
         address campaign,
         address creator,
@@ -156,6 +194,7 @@ contract PermanentLpLocker is ReentrancyGuard {
         if (IERC20(pool).balanceOf(address(this)) < lockedLpAmount) revert LockedLpMissing();
 
         _registerLpToken(pool, false, address(this));
+        registrationCount += 1;
         registeredFeeAsset[token0_] = true;
         registeredFeeAsset[token1_] = true;
         lockedBalance[pool] += lockedLpAmount;
@@ -171,7 +210,9 @@ contract PermanentLpLocker is ReentrancyGuard {
             lockedLpAmount: lockedLpAmount,
             creatorFeeBps: CREATOR_FEE_BPS,
             protocolFeeBps: PROTOCOL_FEE_BPS,
-            registered: true
+            registered: true,
+            memeToken: expectedTokenA,
+            pairedToken: expectedTokenB
         });
 
         emit LpPermanentlyLocked(pool, address(this), lockedLpAmount, lockedBalance[pool]);
@@ -207,6 +248,9 @@ contract PermanentLpLocker is ReentrancyGuard {
         emit LpPermanentlyLocked(lpToken, msg.sender, amount, lockedBalance[lpToken]);
     }
 
+    /// @notice Permissionless. Claims the pair's fees, sells the MEME side (bounded) for the paired asset in
+    /// the same pair, then splits the paired asset 80/20. Never reverts because of the bound or a failed sale.
+    /// @return collected0 token0 fees claimed now; collected1 token1 fees claimed now.
     function harvest(address pool) external nonReentrant returns (uint256 collected0, uint256 collected1) {
         PoolRegistration memory info = poolInfo[pool];
         if (!info.registered) revert PoolNotRegistered();
@@ -222,8 +266,42 @@ contract PermanentLpLocker is ReentrancyGuard {
 
         if (IERC20(pool).balanceOf(address(this)) < principalBefore) revert LpPrincipalChanged();
 
-        _splitAndRoute(info, info.token0, collected0);
-        _splitAndRoute(info, info.token1, collected1);
+        bool memeIs0 = info.memeToken == info.token0;
+        uint256 memeCollected = memeIs0 ? collected0 : collected1;
+        uint256 paired = memeIs0 ? collected1 : collected0;
+
+        uint256 memeToSell = carriedMeme[pool] + memeCollected;
+        uint256 memeSold;
+        uint256 pairedOut;
+        if (memeToSell != 0) {
+            try this.sellMemeForPaired(pool, info.memeToken, memeToSell) returns (uint256 sold_, uint256 out_) {
+                memeSold = sold_;
+                pairedOut = out_;
+            } catch {}
+            carriedMeme[pool] = memeToSell - memeSold;
+            emit MemeFeesSold(pool, info.memeToken, memeSold, pairedOut, memeToSell - memeSold);
+        }
+
+        _splitAndRoute(info, info.pairedToken, paired + pairedOut);
+    }
+
+    /// @notice Internal step of harvest, external only so a failed sale reverts atomically inside a try.
+    /// @dev Callable by this contract only. Not nonReentrant: it runs inside harvest's guard.
+    function sellMemeForPaired(address pool, address memeToken, uint256 amount) external returns (uint256 sold, uint256 out) {
+        if (msg.sender != address(this)) revert OnlySelf();
+        (sold, out) = EvmGenPoolSwap.v2Plan(pool, memeToken, amount, MEME_SALE_MAX_IMPACT_BPS, MEME_SALE_MAX_TWAP_DEVIATION_BPS);
+        if (sold == 0) return (0, 0);
+        EvmGenPoolSwap.v2Execute(pool, memeToken, sold, out, address(this));
+    }
+
+    /// @notice One view for CreatorRewardsVaultV2 (same shape on the V3 locker).
+    function poolParties(address pool)
+        external
+        view
+        returns (address campaign, address creator, address creatorFeeRecipient, address memeToken, address pairedToken, bool registered)
+    {
+        PoolRegistration storage info = poolInfo[pool];
+        return (info.campaign, info.creator, info.creatorFeeRecipient, info.memeToken, info.pairedToken, info.registered);
     }
 
     function claimPendingToken(address token) external nonReentrant returns (uint256 amount) {
@@ -295,18 +373,37 @@ contract PermanentLpLocker is ReentrancyGuard {
         address recipient = creatorPayoutRecipient[info.creator];
         if (recipient == address(0)) recipient = info.creatorFeeRecipient;
 
-        if (_tryTransferToken(token, recipient, creatorAmount)) {
-            cumulativeCreatorPaid[info.pool][token] += creatorAmount;
+        if (token == wrappedNative) {
+            // Unwrap the whole paired amount; creator by gas-capped push (pull on failure), protocol by routeLpNative.
+            IEvmGenWrappedNative(token).withdraw(amount);
+            if (_trySendNative(recipient, creatorAmount)) {
+                cumulativeCreatorPaid[info.pool][token] += creatorAmount;
+            } else {
+                pendingNative[recipient] += creatorAmount;
+                emit HarvestPaymentPending(info.pool, recipient, address(0), creatorAmount, false);
+            }
+            if (_routeProtocolNative(info.pool, protocolAmount)) {
+                cumulativeProtocolRouted[info.pool][token] += protocolAmount;
+            }
         } else {
-            pendingToken[recipient][token] += creatorAmount;
-            emit HarvestPaymentPending(info.pool, recipient, token, creatorAmount, false);
-        }
+            if (_tryTransferToken(token, recipient, creatorAmount)) {
+                cumulativeCreatorPaid[info.pool][token] += creatorAmount;
+            } else {
+                pendingToken[recipient][token] += creatorAmount;
+                emit HarvestPaymentPending(info.pool, recipient, token, creatorAmount, false);
+            }
 
-        if (_routeProtocolToken(info.pool, token, protocolAmount)) {
-            cumulativeProtocolRouted[info.pool][token] += protocolAmount;
+            if (_routeProtocolToken(info.pool, token, protocolAmount)) {
+                cumulativeProtocolRouted[info.pool][token] += protocolAmount;
+            }
         }
 
         emit FeesHarvested(info.pool, msg.sender, token, amount, creatorAmount, protocolAmount);
+    }
+
+    function _trySendNative(address to, uint256 amount) internal returns (bool ok) {
+        if (amount == 0) return true;
+        (ok, ) = payable(to).call{value: amount, gas: CREATOR_NATIVE_PUSH_GAS}("");
     }
 
     function _routeProtocolToken(address pool, address token, uint256 amount) internal returns (bool) {
