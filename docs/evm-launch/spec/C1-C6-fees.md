@@ -526,6 +526,65 @@ check and need no extra gas.
   A harvest with nothing to sell succeeds below `MIN_SALE_GAS`. Sizes: `PermanentLpLocker` 11,350 B,
   `PermanentV3PositionLocker` 13,044 B.
 
+### E19: unclaimed holder payouts back to the same coin's holders (2026-10-01, branch `claude/evm-fees`)
+
+Founder decision E19 (2026-09-30), same shape as the airdrop rule of 2026-09-27. After a holder batch's
+claim window the Safe recovers what nobody claimed from the holder `RewardDistributor` and credits it back
+to each coin's `holderBalance`, to be paid in a later week.
+
+**Contract.** `CreatorRewardsVaultV2.creditUnclaimedHolders(address[] campaigns, uint256[] amounts)`,
+`external payable onlyAdmin nonReentrant`, plus `event HolderUnclaimedCredited(campaign, amount)` (one per
+leg) and `error ValueMismatch()`. For each leg: the campaign's choice must be Holders or Split
+(`WrongChoice` otherwise, which covers an unknown campaign, Keep and Buyback), the amount must be non-zero
+(`Insufficient`); it is added to `holderBalance[campaign]`. Then `sum == msg.value` (`ValueMismatch`) and
+`totalLiabilities += sum`. 1..200 legs, lengths equal (`BadBatch`). No other state is touched: the weekly
+holder cap (`holderProposedInWeek`), batches and quote balances are unchanged; the credited native is paid
+only through a later proposed, Safe-approved, vetoable holder batch like any other holder money.
+Runtime size 23,601 -> **24,063 bytes** (limit 24,576; 513 left).
+
+**Leaf file.** The weekly leaf file (`realtime-indexer/src/evm/evmCreatorChoice.ts` `buildLeafFile`) now
+carries, per leaf, `parts: [{campaign, amount}]`: which coin each wei of that wallet's leaf came from (the
+per-coin shares that `holderLeaves` summed). Not part of the merkle leaf, so roots are unchanged.
+`checkLeafParts` (indexer and `scripts/evm-holder-batch-verify.mjs`, same rule) requires each leaf's parts to
+add up to the leaf and each campaign's parts to add up to that campaign's `proposeHolderBatch` amount. A file
+without parts still verifies for the weekly flow; the recovery script refuses it.
+
+**Script.** `scripts/make-holder-recovery-batch.ts` (`HOLDER_RECOVERY_FILE=<leaf file or API URL> npx hardhat
+run ... --network <chain>`). Reads the distributor's batch and `hasClaimed` for every leaf, excludes claimed
+leaves, sums the parts of the rest per campaign, and writes ONE Safe batch:
+`RewardDistributor.recoverUnclaimed(batchId, Safe)` then
+`CreatorRewardsVaultV2.creditUnclaimedHolders{value: total}(campaigns, amounts)`. Refuses: before the
+deadline; already recovered or fully claimed; root, funded total, deadline, distributor or vault not the
+file's; vault admin not the Safe or not the distributor's owner; claimed leaves not adding up to
+`totalClaimed`; attribution not summing exactly to `totalFunded - totalClaimed`; a campaign that is not a
+holders or split coin in the vault; a file without parts.
+
+**Audit.**
+- Reentrancy: `nonReentrant`, and the function makes no external call at all (it only receives value).
+  `recoverUnclaimed` in the same batch is `nonReentrant` on the distributor and pays the Safe, whose
+  receive does nothing.
+- CEI: checks, then effects, no interaction. The value check runs after the loop; any failure reverts
+  every credit in the call. The Safe runs both calls as one MultiSend transaction: if the credit reverts,
+  the recovery reverts too and the money stays claimable-expired in the distributor (tested).
+- Reachable states: any time, admin only. Only for coins whose immutable choice is Holders or Split, so
+  holder money can only land where holder money comes from. Keep, Buyback, unset or foreign addresses
+  revert. It cannot lower any balance, change a batch, or pay anyone: it has no transfer.
+- Over/underflow: checked 0.8 adds; `sum` and each `holderBalance` are bounded by native supply, and
+  `msg.value` equality makes a wrapped sum impossible without reverting first. No subtraction.
+- Griefing: none from outside (admin only). A wrong attribution by the admin can only move expired holder
+  money between holder coins, never out of holder balances; the script refuses anything that does not
+  reconcile exactly with the distributor and the published leaf file. Sending value to the vault this way
+  cannot inflate `rescueExcessNative` (liabilities rise by exactly the value) nor break I2.
+- Admin trust: unchanged in kind. The admin (Safe) could already recover expired distributor money to any
+  address (`recoverUnclaimed` recipient) and rescue excess; this adds a path that returns money INTO
+  liabilities, not out. Replay: the same Safe batch reverts in `recoverUnclaimed` (`AmountZero`).
+- Invariants: I2 holds (balance and liabilities rise by the same `msg.value`); I3 gains a term
+  (`+ recovered credited`); I5 unchanged (no new exit).
+- Tests: `test/HolderRecoveryBatch.spec.ts` (full holder week, partial claims, deadline, generated Safe
+  batch through `MockSafeBatchExecutor`, per-coin exact credit, Safe ends at 0, atomic failure, replay,
+  script refusals, non-admin / wrong sum / unknown / keep / buyback / zero / empty legs);
+  `realtime-indexer/src/evm/evmCreatorChoice.test.ts` (parts per leaf, both checkers refuse moved parts).
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |
@@ -541,6 +600,7 @@ check and need no extra gas.
 | `buybackPool` / `convertBuybackNativeToQuote` | `nonReentrant` | wrap, swap (bounded, TWAP), unwrap leftover, debit `spent` | pool bound by sync | checked | bounded impact + TWAP + interval + native per-tx and weekly caps |
 | `pullLockerPending` / `attributeExcessQuote` | `nonReentrant` | pull (balance delta recorded), then credit only `min(pulledUnattributed, balance - quoteLiabilities)` | any / admin | checked | cannot move another campaign's balance or unsynced LP quote (F6) |
 | rescue (native / token) | `nonReentrant`, admin | check excess, send | any | checked | cannot touch liabilities, wrapped native, or held MEME |
+| `creditUnclaimedHolders` (E19) | `nonReentrant`, admin | no external call; credit, then `sum == msg.value`, then liabilities | any, Holders/Split coins only | checked adds, no subtraction | admin only; returns money into holder liabilities, never out; replay reverts in `recoverUnclaimed` |
 | `receive()` | none | accepts only `wrappedNative` or `factory.isCampaign` | any | – | any other sender reverts |
 | operator pause | admin `setOperator(op, paused)` blocks every operator path | | | | |
 

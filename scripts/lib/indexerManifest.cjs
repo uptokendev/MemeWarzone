@@ -232,6 +232,7 @@ const EVENT_FRAGMENTS = {
     "HolderBatchApproved(bytes32 indexed batchId, bytes32 root, uint256 total)",
     "HolderBatchVetoed(bytes32 indexed batchId, uint256 total)",
     "HolderBatchExecuted(bytes32 indexed batchId, uint256 total)",
+    "HolderUnclaimedCredited(address indexed campaign, uint256 amount)",
     "BuybackCurve(address indexed campaign, uint256 nativeSpent, uint256 tokensHeld)",
     "BuybackPool(address indexed campaign, address indexed tokenIn, uint256 amountSpent, uint256 memeBurned)",
     "BuybackTokensFlushed(address indexed campaign, address indexed token, uint256 amount)",

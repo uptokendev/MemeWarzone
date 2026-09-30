@@ -162,6 +162,27 @@ test("leaf file: any tampering is refused", () => {
   assert.throws(bad((f) => { f.leaves[1].amount = "0"; }), /non-positive/);
 });
 
+test("leaf file (E19): every leaf says which coin each wei came from; both checkers refuse moved parts", async () => {
+  const f = sampleFile();
+  const a1 = f.leaves.find((l) => l.account.toLowerCase().endsWith("a1"))!;
+  assert.deepEqual(a1.parts!.map((p) => p.amount).sort(), ["100", "700"]);
+  for (const l of f.leaves) assert.equal(l.parts!.reduce((s, p) => s + BigInt(p.amount), 0n), BigInt(l.amount));
+  const script: any = await import(new URL("../../../scripts/evm-holder-batch-verify.mjs", import.meta.url).href);
+  assert.equal(script.checkLeafParts(f), true);
+  const moved: any = JSON.parse(JSON.stringify(f));
+  const two = moved.leaves.find((l: any) => l.parts.length === 2);
+  two.parts[0].amount = String(BigInt(two.parts[0].amount) - 1n);
+  two.parts[1].amount = String(BigInt(two.parts[1].amount) + 1n);
+  assert.throws(() => checkLeafFile(moved), /leaf parts for/);
+  assert.throws(() => script.checkLeafFile(moved), /leaf parts for/);
+  const short: any = JSON.parse(JSON.stringify(f));
+  short.leaves[0].parts[0].amount = String(BigInt(short.leaves[0].parts[0].amount) - 1n);
+  assert.throws(() => checkLeafFile(short), /do not add up to its leaf/);
+  const none: any = JSON.parse(JSON.stringify(f));
+  for (const l of none.leaves) delete l.parts;
+  assert.deepEqual(checkLeafFile(none), { root: f.root, total: 1000n }); // older files still verify
+});
+
 test("the Safe signers' script, the weekly airdrop tree and the worker agree on the root", async () => {
   const f = sampleFile();
   const scriptPath = new URL("../../../scripts/evm-holder-batch-verify.mjs", import.meta.url).href;
