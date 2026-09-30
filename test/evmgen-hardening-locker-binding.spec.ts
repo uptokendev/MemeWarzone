@@ -145,3 +145,32 @@ describe("EVM generation hardening: factory/locker binding and initcode headroom
     ).to.be.revertedWithCustomError(Basic, "LockerNotBoundToFactory");
   });
 });
+
+describe("EVM generation hardening: V3 impact bound is on the bought token in both orientations", function () {
+  it("zeroForOne and oneForZero both let the bought token's price rise by at most maxImpactBps, and not by much less", async function () {
+    const harness = await (await ethers.getContractFactory("EvmGenPoolSwapHarness")).deploy();
+    const a = await (await ethers.getContractFactory("MockWETH9")).deploy();
+    const b = await (await ethers.getContractFactory("MockWETH9")).deploy();
+    const pool = await (await ethers.getContractFactory("MockUniswapV3PoolEvmGen")).deploy(await a.getAddress(), await b.getAddress(), 3000);
+    const [owner] = await ethers.getSigners();
+    const Q96 = 2n ** 96n;
+    for (const sqrtP of [Q96, (Q96 * 1000n) / 31n, Q96 / 1000n, Q96 * 1000n]) {
+      await pool.setup(owner.address, sqrtP, 10n ** 18n);
+      for (const impact of [1n, 50n]) {
+        const S = 10n ** 12n;
+        // zeroForOne buys token1 (price 1/p): rise = sqrtP^2 / limit^2
+        const [ok0, l0] = await harness.v3Limit(await pool.getAddress(), true, impact);
+        expect(ok0).to.equal(true);
+        const rise0 = (sqrtP * sqrtP * S) / (l0 * l0);
+        expect(rise0).to.be.lte(S + (S * impact) / 10_000n);
+        expect(rise0).to.be.gte(S + (S * impact) / 10_000n - S / 10n ** 7n);
+        // oneForZero buys token0 (price p): rise = limit^2 / sqrtP^2
+        const [ok1, l1] = await harness.v3Limit(await pool.getAddress(), false, impact);
+        expect(ok1).to.equal(true);
+        const rise1 = (l1 * l1 * S) / (sqrtP * sqrtP);
+        expect(rise1).to.be.lte(S + (S * impact) / 10_000n);
+        expect(rise1).to.be.gte(S + (S * impact) / 10_000n - S / 10n ** 7n);
+      }
+    }
+  });
+});

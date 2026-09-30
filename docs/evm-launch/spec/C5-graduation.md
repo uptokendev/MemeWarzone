@@ -262,6 +262,47 @@ One implementation in `LaunchCampaign.graduate()` serves native, BNB quote and R
   `graduate()`). **Not built (interface):** C7-robinhood's chunked `repairPool`/`repairStep`; the fixed
   `IGraduationAdapterV2` has only `graduate`, so a V3 repair must fit in one transaction.
 
+### Locker binding (hardening, branch `claude/evm-core`, 2026-09-30)
+
+The factory constructor used to `new` its locker, which put `PermanentLpLocker`'s and
+`PermanentV3PositionLocker`'s creation code inside the factory's initcode: `BnbBasicLaunchFactory` was 48,797 of
+EIP-3860's 49,152 bytes. The locker is now deployed separately and passed as the factory's **last constructor
+argument** (`LaunchFactory(router, treasuryRouter, campaignImpl, oracle, locker)`,
+`BnbBasicLaunchFactory(..., bnbQuoteImpl, locker)`). Sizes after: `LaunchFactory` initcode 24,061 / runtime 21,995,
+`BnbBasicLaunchFactory` initcode 25,728 / runtime 23,418 (runtime unchanged; pinned by
+`test/evmgen-hardening-locker-binding.spec.ts`, target <= 45,000).
+
+- **Design chosen: admin = predicted factory address, checked in the factory constructor.** Both lockers already
+  have `address public immutable admin` and gate every configuration and registration entry point
+  (`configureRevenue`, `setIntegrationSourceAuthorized`, `registerGraduatedPool`, `registerLpToken`,
+  `recoverUnregisteredToken`) with `onlyAdmin`. The deployer creates the locker with `admin` = the CREATE address of
+  its next nonce, then the factory at that nonce (`scripts/lib/deployFactoryWithLocker.ts`, explicit consecutive
+  nonces). The factory constructor requires `locker.code.length != 0` (`ContractCodeMissing`),
+  `locker.admin() == address(this)` (`LockerNotBoundToFactory`) and the kind probe for its liquidity kind
+  (V3: `REQUIRED_LIQUIDITY_KIND() == 2`; V2: `REQUIRED_POOL_FEE_BPS() != 0`; neither locker has a fallback, so the
+  other kind's selector reverts), then calls `configureRevenue` exactly as before. No locker code changed; no new
+  setter exists anywhere.
+- **Why not a set-once `setFactory` on the locker.** It adds a mutable window (a locker deployed but not yet bound)
+  and a privileged role on the locker to reason about; the immutable-admin binding has neither. A set-once setter
+  restricted to the deployer is also only as good as the deployer key during that window.
+- **Reachable states before the factory exists.** None that matter: every admin entry point needs `msg.sender ==`
+  an address that has no code and no key until the factory constructor runs, so the locker is unconfigured and holds
+  no registration when the factory binds it. Permissionless calls in that window (`updateCreatorPayoutRecipient`,
+  `lock`, `harvest`, claims) either need a registered pool (none) or only set the caller's own recipient.
+- **Failure mode.** If any transaction from the deployer lands between the two, the factory is at another address,
+  the constructor reverts `LockerNotBoundToFactory`, and the only cost is one orphaned locker that no address can
+  ever administer (it can hold nothing: registration is impossible). The script also re-reads
+  `factory.permanentLpLocker()` and the predicted address and throws on mismatch.
+- **What the factory cannot prove on chain.** That the contract at `locker` is the audited locker bytecode (a
+  contract answering `admin() == factory` could be anything). The deployer supplies both addresses in consecutive
+  transactions from the same script, and the locker is source-verified with the rest of the generation; the
+  factory's trust in the locker is unchanged from before (the factory used to create it).
+- **Guard / CEI / overflow.** Constructor only: no value moves, no reentrancy surface (the locker's
+  `configureRevenue` is the only call back into a contract we just checked), no arithmetic.
+- **Griefing.** A third party cannot pre-deploy a locker at an address the factory would accept: the factory reads the
+  locker address from its own constructor argument, not from a registry, and a foreign locker bound to our predicted
+  address is harmless unless our deployer passes it.
+
 ## 5. Invariants
 
 1. `protocol + creator + poolNative == R`, and after graduation
