@@ -32,26 +32,23 @@ async function tradingCoin(env?: Env, r = req()) {
 describe("audit1: trading and create paths", function () {
   // ---------------------------------------------------------------- EXPLOITS
 
-  it("EXPLOIT: creator renounceOwnership() makes graduate() revert forever; the whole raise is locked (sells blocked by Pending)", async () => {
+  it("HOLDS: creator renounceOwnership() is refused, so graduate() still pays the creator reserve and the raise is not locked (was EXPLOIT, fixed)", async () => {
     const { env, campaign, token } = await tradingCoin();
     await buyTokens(env, campaign, env.bob, E(10_000_000));
-    // The creator 'renounces' (a common memecoin trust signal) before the coin fills.
-    await campaign.connect(env.creator).renounceOwnership();
-    expect(await campaign.owner()).to.eq(ethers.ZeroAddress);
+    // The creator tries to 'renounce' (a common memecoin trust signal) before the coin fills: refused.
+    await expect(campaign.connect(env.creator).renounceOwnership()).to.be.revertedWithCustomError(campaign, "RenounceDisabled");
+    await expect(campaign.connect(env.carol).renounceOwnership()).to.be.revertedWithCustomError(campaign, "OwnableUnauthorizedAccount");
+    await expect(campaign.connect(env.creator).transferOwnership(ethers.ZeroAddress)).to.be.revertedWithCustomError(campaign, "OwnableInvalidOwner");
+    expect(await campaign.owner()).to.eq(env.creator.address);
     await buyNative(env, campaign, env.alice, E(60)); // crosses the $30k (50 BNB) target -> Pending
     expect(await campaign.graduationPending()).to.eq(true);
-    const locked = await ethers.provider.getBalance(await campaign.getAddress());
-    expect(locked).to.be.gt(E(50));
-    // graduate() pays creatorReserve to owner() == address(0): ERC20InvalidReceiver, every retry.
-    await expect(campaign.connect(env.carol).graduate()).to.be.revertedWithCustomError(token, "ERC20InvalidReceiver");
-    await increaseTime(365 * DAY);
-    await expect(campaign.connect(env.carol).graduate()).to.be.revertedWithCustomError(token, "ERC20InvalidReceiver");
-    // Holders cannot exit: sells revert while Pending, and nothing ever leaves Pending.
-    await expect(sellTokens(env, campaign, token, env.bob, E(1000))).to.be.revertedWithCustomError(campaign, "GraduationIsPending");
-    // The Safe has no lever either: pausing/unpausing changes nothing.
-    await env.factory.setCampaignPauses(await campaign.getAddress(), false, false, false, false);
-    await expect(campaign.graduate()).to.be.revertedWithCustomError(token, "ERC20InvalidReceiver");
-    expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(locked);
+    const reserve = await campaign.creatorReserve();
+    const before = await token.balanceOf(env.creator.address);
+    // Anyone graduates; the reserve goes to the (non-zero) owner, the 19.8% becomes claimable.
+    await campaign.connect(env.carol).graduate();
+    expect(await campaign.launched()).to.eq(true);
+    expect((await token.balanceOf(env.creator.address)) - before).to.eq(reserve);
+    expect(await campaign.creatorGraduationBeneficiary()).to.eq(env.creator.address);
   });
 
   it("EXPLOIT: rotating the router's creatorRewardsVault (e.g. for the next factory generation) freezes buys AND sells of every existing campaign", async () => {

@@ -305,6 +305,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error NotBeneficiary();
     error NativeFallbackUnavailable();
     error NativeFallbackNotDue();
+    error RenounceDisabled();
 
     bool private _initialized;
 
@@ -373,6 +374,13 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
 
     /// @dev Donations and adapter refunds. Donations never change the raise (accounting, not balance).
     receive() external payable {}
+
+    /// @notice Disabled (audit 1): the owner is the creator's graduation beneficiary and receives the
+    /// creator reserve, so an owner of address(0) would make graduate() revert forever. Ownership can
+    /// still move to another address with transferOwnership (OZ refuses address(0) there).
+    function renounceOwnership() public view override onlyOwner {
+        revert RenounceDisabled();
+    }
 
     function setPauseState(bool paused_, bool buyPaused_, bool sellPaused_, bool graduationPaused_) external onlyFactory {
         paused = paused_;
@@ -750,7 +758,9 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         finalizedAt = block.timestamp;
         repairNativeHeld = 0;
         repairQuoteHeld = 0;
+        // renounceOwnership is disabled; the fallback to `creator` keeps graduate() live regardless.
         address beneficiary = owner();
+        if (beneficiary == address(0)) beneficiary = creator;
         creatorGraduationBeneficiary = beneficiary;
         pendingCreatorGraduation += creatorShare;
 
