@@ -32,8 +32,9 @@ interface IRhWETH9 {
 /// - Native in == native minted + native returned (+0 held). MEME pulled == MEME minted + MEME returned,
 ///   and MEME sold in the repair was paid by the campaign directly to the pool from its allowance.
 contract RobinhoodV3NativeGraduationAdapterV2 is RobinhoodV3PoolRepair {
-    constructor(address v3Factory_, address positionManager_, address weth_)
-        RobinhoodV3PoolRepair(v3Factory_, positionManager_, weth_)
+    /// @param admin_ Binds the campaign factory once (`setCampaignFactoryOnce`); the Safe on 4663.
+    constructor(address v3Factory_, address positionManager_, address weth_, address admin_)
+        RobinhoodV3PoolRepair(v3Factory_, positionManager_, weth_, admin_)
     {}
 
     receive() external payable {

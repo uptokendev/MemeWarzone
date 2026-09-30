@@ -63,7 +63,7 @@ describe("audit2: Robinhood stock adapter, chunked repair vs oracle drift (real 
     const receiver = await (await ethers.getContractFactory("AcceptingReceiver")).deploy();
     const locker = await (await ethers.getContractFactory("PermanentV3PositionLocker")).deploy(owner.address);
     const factory = await (await ethers.getContractFactory("MockEvmGenRhFactory")).deploy(await locker.getAddress());
-    const native = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, RH_V3.weth);
+    const native = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, RH_V3.weth, owner.address);
     const adapter = await (await ethers.getContractFactory("RobinhoodStockGraduationAdapterV2")).deploy(
       RH_V3.v3Factory,
       RH_V3.positionManager,
@@ -71,6 +71,7 @@ describe("audit2: Robinhood stock adapter, chunked repair vs oracle drift (real 
       RH_V3.weth,
       await ethUsd.getAddress(),
       90_000,
+      owner.address,
     );
     await locker.configureRevenue(await receiver.getAddress(), await native.getAddress());
     await locker.setIntegrationSourceAuthorized(await adapter.getAddress(), true);
@@ -80,7 +81,7 @@ describe("audit2: Robinhood stock adapter, chunked repair vs oracle drift (real 
       acquisitionPool: acqPool,
       acquisitionFeeTier: 3000,
       minimumRouteLiquidityUsdWad: 50_000n * WAD,
-      maxSwapSlippageBps: 300,
+      maxSwapSlippageBps: 100,
       maxOracleDeviationBps: 0,
       maxPriceImpactBps: 0,
       enabled: true,
@@ -197,24 +198,39 @@ describe("audit2: Robinhood stock adapter, chunked repair vs oracle drift (real 
     expect((await ctx.campaign.lastMemeUsed()) + (await ctx.campaign.lastMemeBack()) + sold).to.eq(c.budget);
   });
 
-  it("HOLDS (trust note): the stock adapter admin can reconfigure an enabled route (feed, pool, slippage) at any time, with no delay, for coins already Pending", async () => {
+  it("HOLDS (was trust note): the admin cannot re-point an enabled route (feed, pool, fee tier) or loosen it for coins already Pending; only tighten or disable", async () => {
     const ctx = await setup();
     const other = await (await ethers.getContractFactory("MockUsdPriceFeed")).deploy(8);
     const t = await nowTs();
     await other.setRoundData(1, 1n * 10n ** 8n, t, t, 1);
     const route = await ctx.adapter.stockRoutes(ctx.stockAddr);
+    const same = {
+      oracleFeed: route[0],
+      acquisitionPool: route[1],
+      acquisitionFeeTier: route[2],
+      minimumRouteLiquidityUsdWad: route[3],
+      maxSwapSlippageBps: route[4],
+      maxOracleDeviationBps: 0,
+      maxPriceImpactBps: 0,
+      enabled: true,
+    };
     await expect(
-      ctx.adapter.configureStockRoute(ctx.stockAddr, {
-        oracleFeed: await other.getAddress(),
-        acquisitionPool: route[1],
-        acquisitionFeeTier: route[2],
-        minimumRouteLiquidityUsdWad: 1n,
-        maxSwapSlippageBps: 300,
-        maxOracleDeviationBps: 0,
-        maxPriceImpactBps: 0,
-        enabled: true,
-      }),
-    ).to.emit(ctx.adapter, "StockRouteConfigured");
-    expect((await ctx.adapter.stockRoutes(ctx.stockAddr))[0]).to.eq(await other.getAddress());
+      ctx.adapter.configureStockRoute(ctx.stockAddr, { ...same, oracleFeed: await other.getAddress(), minimumRouteLiquidityUsdWad: 1n }),
+    ).to.be.revertedWithCustomError(ctx.adapter, "RouteFixed");
+    await expect(ctx.adapter.configureStockRoute(ctx.stockAddr, { ...same, oracleFeed: await other.getAddress() })).to.be.revertedWithCustomError(
+      ctx.adapter,
+      "RouteFixed",
+    );
+    await expect(ctx.adapter.configureStockRoute(ctx.stockAddr, { ...same, minimumRouteLiquidityUsdWad: 1n })).to.be.revertedWithCustomError(
+      ctx.adapter,
+      "RouteFixed",
+    );
+    expect((await ctx.adapter.stockRoutes(ctx.stockAddr))[0]).to.eq(await ctx.stockUsd.getAddress());
+    // What is left: tighten, or disable.
+    await expect(ctx.adapter.configureStockRoute(ctx.stockAddr, { ...same, maxSwapSlippageBps: 50 })).to.emit(ctx.adapter, "StockRouteConfigured");
+    await expect(ctx.adapter.configureStockRoute(ctx.stockAddr, { ...same, maxSwapSlippageBps: 50, enabled: false })).to.emit(
+      ctx.adapter,
+      "StockRouteConfigured",
+    );
   });
 });

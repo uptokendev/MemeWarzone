@@ -319,9 +319,9 @@ describe("Robinhood Stock pending graduation completion", function () {
 
     const receiver = await (await ethers.getContractFactory("AcceptingReceiver")).deploy();
     const locker = await (await ethers.getContractFactory("PermanentV3PositionLocker")).deploy(owner.address);
-    const native = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, RH_V3.weth);
+    const native = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH_V3.v3Factory, RH_V3.positionManager, RH_V3.weth, owner.address);
     const adapter = await (await ethers.getContractFactory("RobinhoodStockGraduationAdapterV2")).deploy(
-      RH_V3.v3Factory, RH_V3.positionManager, RH_V3.swapRouter02, RH_V3.weth, await ethFeed.getAddress(), 90_000,
+      RH_V3.v3Factory, RH_V3.positionManager, RH_V3.swapRouter02, RH_V3.weth, await ethFeed.getAddress(), 90_000, owner.address,
     );
     await locker.configureRevenue(await receiver.getAddress(), await native.getAddress());
     await locker.setIntegrationSourceAuthorized(await adapter.getAddress(), true);
@@ -332,7 +332,7 @@ describe("Robinhood Stock pending graduation completion", function () {
       acquisitionPool,
       acquisitionFeeTier: 500,
       minimumRouteLiquidityUsdWad: ethers.parseEther("50000"),
-      maxSwapSlippageBps: 300,
+      maxSwapSlippageBps: 100,
       maxOracleDeviationBps: 0,
       maxPriceImpactBps: 0,
       enabled: true,

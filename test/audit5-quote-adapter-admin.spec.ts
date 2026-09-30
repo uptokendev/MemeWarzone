@@ -129,8 +129,8 @@ describe("audit5: quote adapter admin (EOA) controls the graduation swap bound",
     expect(q).to.be.lt(76_200n * WAD / 1000n); // >= 4.4% below fair, all bounds passed
   });
 
-  it("EXPLOIT (Robinhood stock adapter, same shape): the admin EOA can set an arbitrary stock feed; a 100x feed divides the oracle minimum on the acquisition by 100", async () => {
-    const [admin, attacker] = await ethers.getSigners();
+  it("HOLDS (Robinhood stock adapter, was EXPLOIT): the admin is the Safe passed to the constructor, not the deployer; re-pointing a configured stock at a 100x feed is refused (RouteFixed), so the oracle minimum on the acquisition cannot be divided by 100", async () => {
+    const [deployer, attacker, safe] = await ethers.getSigners();
     const v3 = await (await ethers.getContractFactory("MockUniswapV3Factory")).deploy();
     const weth = await (await ethers.getContractFactory("MockWETH9")).deploy();
     const npm = await (await ethers.getContractFactory("MockUniswapV3PositionManager")).deploy(await v3.getAddress(), await weth.getAddress());
@@ -140,25 +140,32 @@ describe("audit5: quote adapter admin (EOA) controls the graduation swap bound",
     const now = BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
     await ethUsd.setRoundData(1, 2_694_00000000n, now, now, 1);
     await stockUsd.setRoundData(1, 766_00000000n, now, now, 1);
-    const stock = await (await ethers.getContractFactory("MockERC20")).deploy("SPY", "SPY", 10n ** 24n, admin.address);
+    const stock = await (await ethers.getContractFactory("MockERC20")).deploy("SPY", "SPY", 10n ** 24n, deployer.address);
     await v3.createPool(await weth.getAddress(), await stock.getAddress(), 500);
     const acq = await v3.getPool(await weth.getAddress(), await stock.getAddress(), 500);
     await stock.transfer(acq, 1_000n * WAD); // depth for the route check
     const adapter = await (await ethers.getContractFactory("RobinhoodStockGraduationAdapterV2")).deploy(
-      await v3.getAddress(), await npm.getAddress(), await router.getAddress(), await weth.getAddress(), await ethUsd.getAddress(), 90_000,
+      await v3.getAddress(), await npm.getAddress(), await router.getAddress(), await weth.getAddress(), await ethUsd.getAddress(), 90_000, safe.address,
     );
-    expect(await adapter.admin()).to.eq(admin.address);
-    const route = { oracleFeed: await stockUsd.getAddress(), acquisitionPool: acq, acquisitionFeeTier: 500, minimumRouteLiquidityUsdWad: 50_000n * WAD, maxSwapSlippageBps: 300, maxOracleDeviationBps: 0, maxPriceImpactBps: 0, enabled: true };
-    await adapter.configureStockRoute(await stock.getAddress(), route);
+    // The deploying key holds nothing: the admin is the constructor argument (the Safe on 4663).
+    expect(await adapter.admin()).to.eq(safe.address);
+    expect(await adapter.admin()).to.not.eq(deployer.address);
+    const route = { oracleFeed: await stockUsd.getAddress(), acquisitionPool: acq, acquisitionFeeTier: 500, minimumRouteLiquidityUsdWad: 50_000n * WAD, maxSwapSlippageBps: 100, maxOracleDeviationBps: 0, maxPriceImpactBps: 0, enabled: true };
+    await expect(adapter.connect(deployer).configureStockRoute(await stock.getAddress(), route)).to.be.revertedWithCustomError(adapter, "OnlyAdmin");
+    await adapter.connect(safe).configureStockRoute(await stock.getAddress(), route);
     const [, honestMin] = await adapter.oracleMinimumStockOut(await stock.getAddress(), WAD);
 
+    // The attack: a 100x feed, set by the admin key (now the Safe itself), on an already configured stock.
     const fake = await (await ethers.getContractFactory("MockUsdPriceFeed")).connect(attacker).deploy(8);
     await fake.connect(attacker).setRoundData(1, 76_600_00000000n, now, now, 1); // 100x the real price
-    await adapter.connect(admin).configureStockRoute(await stock.getAddress(), { ...route, oracleFeed: await fake.getAddress() });
-    const [, rigged] = await adapter.oracleMinimumStockOut(await stock.getAddress(), WAD);
-    expect(rigged * 100n).to.be.closeTo(honestMin, 10n ** 6n);
-    expect(rigged).to.be.lt(honestMin / 99n);
-    // The continuity band multiplies the pool's STOCK/MEME price by the same rigged feed, so a pool seeded
-    // with 1/100 of the stock still reads as "at the curve price" (RobinhoodStockGraduationAdapterV2._checkContinuity).
+    await expect(
+      adapter.connect(safe).configureStockRoute(await stock.getAddress(), { ...route, oracleFeed: await fake.getAddress() }),
+    ).to.be.revertedWithCustomError(adapter, "RouteFixed");
+    // Loosening the slippage (the other way to lower the minimum) is refused too; the minimum is unchanged.
+    await expect(
+      adapter.connect(safe).configureStockRoute(await stock.getAddress(), { ...route, maxSwapSlippageBps: 101 }),
+    ).to.be.revertedWithCustomError(adapter, "InvalidPolicy");
+    const [, after] = await adapter.oracleMinimumStockOut(await stock.getAddress(), WAD);
+    expect(after).to.eq(honestMin);
   });
 });

@@ -130,7 +130,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
     const receiver = await (await ethers.getContractFactory("AcceptingReceiver")).deploy();
     locker = await (await ethers.getContractFactory("PermanentV3PositionLocker")).deploy(deployer.address);
     factory = await (await ethers.getContractFactory("MockEvmGenRhFactory")).deploy(await locker.getAddress());
-    native = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH.v3Factory, RH.npm, RH.weth);
+    native = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(RH.v3Factory, RH.npm, RH.weth, deployer.address);
     stock = await (await ethers.getContractFactory("RobinhoodStockGraduationAdapterV2")).deploy(
       RH.v3Factory,
       RH.npm,
@@ -138,6 +138,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
       RH.weth,
       RH.ethUsd,
       90_000,
+      deployer.address,
     );
     await locker.configureRevenue(await receiver.getAddress(), await native.getAddress());
     await locker.setIntegrationSourceAuthorized(await stock.getAddress(), true);
@@ -163,7 +164,7 @@ d("evmgen-rh: Robinhood V3 graduation adapters on a 4663 fork", function () {
       acquisitionPool: RH.spyPool,
       acquisitionFeeTier: 500,
       minimumRouteLiquidityUsdWad: 50_000n * WAD,
-      maxSwapSlippageBps: 300,
+      maxSwapSlippageBps: 100,
       maxOracleDeviationBps: 0,
       maxPriceImpactBps: 0,
       enabled: true,

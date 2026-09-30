@@ -232,15 +232,20 @@ abstract contract RobinhoodV3PoolRepair is IGraduationAdapterV2, ReentrancyGuard
         _;
     }
 
-    constructor(address v3Factory_, address positionManager_, address weth_) {
-        if (v3Factory_ == address(0) || positionManager_ == address(0) || weth_ == address(0)) revert ZeroAddress();
+    /// @param admin_ The only key that may bind the campaign factory (and, on the stock adapter, configure
+    /// routes). A constructor argument, not msg.sender (audits 2/5): the deploy script passes the Safe and
+    /// refuses the deployer on 4663. Immutable, no transfer.
+    constructor(address v3Factory_, address positionManager_, address weth_, address admin_) {
+        if (v3Factory_ == address(0) || positionManager_ == address(0) || weth_ == address(0) || admin_ == address(0)) {
+            revert ZeroAddress();
+        }
         if (v3Factory_.code.length == 0 || positionManager_.code.length == 0 || weth_.code.length == 0) {
             revert ContractCodeMissing();
         }
         // Decision E6: 0.30%. The full-range ticks and the range check in RobinhoodV3PriceMath are
         // spacing-60 constants, so anything else is refused here rather than mis-minted later.
         if (IRhV3Factory(v3Factory_).feeAmountTickSpacing(POOL_FEE) != TICK_SPACING) revert InvalidFeeTier();
-        admin = msg.sender;
+        admin = admin_;
         v3Factory = v3Factory_;
         positionManager = positionManager_;
         WETH = weth_;

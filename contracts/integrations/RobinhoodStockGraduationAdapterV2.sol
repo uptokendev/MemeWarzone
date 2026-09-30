@@ -59,7 +59,9 @@ interface IRhAggregatorV3 {
 ///   exactly msg.value and reset to 0), STOCK transfers (route-configured; a pausing/blocklisting STOCK
 ///   can only revert the whole call, leaving the campaign in Pending, retryable), the pool, NPM, locker.
 /// - Sandwich bound on the acquisition: the adapter receives >= oracleOut*(1 - slippage), slippage is
-///   capped at 300 bps at route configuration; the continuity band then bounds the pool start price.
+///   capped at 100 bps at route configuration; the continuity band then bounds the pool start price.
+/// - Admin (audits 2/5): `admin` is a constructor argument (the Safe on 4663), and a stock's feed and
+///   acquisition pool are fixed at its first configuration; later calls may only tighten or disable.
 /// - E11: the acquisition pool's fee tier is at most 3000 (0.30%), refused at configuration
 ///   (`InvalidFeeTier`) and re-checked at graduation; a 1% pool's own fee alone would eat half the band.
 /// - `maxOracleDeviationBps` / `maxPriceImpactBps` are reserved route fields (kept only so the factory's
@@ -79,8 +81,9 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
     uint256 public constant QUOTE_PRICE_BAND_BPS = 200;
     /// @notice E11: highest acquisition pool fee tier a route may use (Uniswap V3 0.30%).
     uint24 public constant MAX_ACQUISITION_FEE_TIER = 3000;
-    /// @notice Upper bound for a route's acquisition slippage (C7.1: "keep maxSwapSlippageBps at 300 or lower").
-    uint16 public constant MAX_SWAP_SLIPPAGE_BPS = 300;
+    /// @notice Upper bound for a route's acquisition slippage (audit 2: 300 -> 100; the acquisition pool is
+    /// <= 0.30% and the start price must land within 200 bps of the curve in USD anyway).
+    uint16 public constant MAX_SWAP_SLIPPAGE_BPS = 100;
     /// @notice `repairStep` stops this far above the oracle-estimated target, so a chunk never sells MEME
     /// below the real (acquisition-derived) target; `graduate` finishes the last few ticks (at spacing 60,
     /// 5% is at most 9 initialized ticks).
@@ -137,6 +140,8 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
     error RouteLiquidityTooLow();
     error AcquisitionFailed();
     error PriceContinuityFailed();
+    /// @notice A configured route's feed, pool or fee tier cannot change, and its limits can only tighten.
+    error RouteFixed();
 
     constructor(
         address v3Factory_,
@@ -144,8 +149,9 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         address swapRouter_,
         address weth_,
         address nativeUsdOracle_,
-        uint32 maxOracleAgeSeconds_
-    ) RobinhoodV3PoolRepair(v3Factory_, positionManager_, weth_) {
+        uint32 maxOracleAgeSeconds_,
+        address admin_
+    ) RobinhoodV3PoolRepair(v3Factory_, positionManager_, weth_, admin_) {
         if (swapRouter_ == address(0) || nativeUsdOracle_ == address(0)) revert ZeroAddress();
         if (swapRouter_.code.length == 0 || nativeUsdOracle_.code.length == 0) revert ContractCodeMissing();
         if (maxOracleAgeSeconds_ == 0) revert InvalidPolicy();
@@ -156,6 +162,11 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
 
     /// @notice Configure or disable a Stock Token route. Enabling reads both feeds, so a feed that is
     /// already stale refuses the route rather than being discovered at graduation.
+    /// Audits 2/5: the first configuration of a stock fixes its feed, acquisition pool and fee tier for
+    /// the life of this adapter. Every later call must repeat them exactly and may only tighten the
+    /// limits (raise `minimumRouteLiquidityUsdWad`, lower `maxSwapSlippageBps`) or flip `enabled`
+    /// (`RouteFixed` otherwise). So no key can re-point a Pending coin's acquisition at a feed or pool
+    /// it controls, or loosen its minimum; disabling (or re-enabling what was fixed) is all that is left.
     function configureStockRoute(address stockToken, StockRoute calldata route) external onlyAdmin {
         if (stockToken == address(0) || route.oracleFeed == address(0) || route.acquisitionPool == address(0)) revert ZeroAddress();
         if (stockToken == WETH) revert InvalidPair();
@@ -175,6 +186,15 @@ contract RobinhoodStockGraduationAdapterV2 is RobinhoodV3PoolRepair {
         if (IERC20Metadata(stockToken).decimals() > 36) revert InvalidPolicy();
         address canonical = IRhV3Factory(v3Factory).getPool(WETH, stockToken, route.acquisitionFeeTier);
         if (canonical == address(0) || canonical != route.acquisitionPool) revert AcquisitionPoolMismatch();
+        StockRoute storage current = stockRoutes[stockToken];
+        if (current.oracleFeed != address(0)) {
+            if (
+                route.oracleFeed != current.oracleFeed || route.acquisitionPool != current.acquisitionPool
+                    || route.acquisitionFeeTier != current.acquisitionFeeTier
+                    || route.minimumRouteLiquidityUsdWad < current.minimumRouteLiquidityUsdWad
+                    || route.maxSwapSlippageBps > current.maxSwapSlippageBps
+            ) revert RouteFixed();
+        }
         if (route.enabled) {
             _oraclePriceWad(nativeUsdOracle);
             _oraclePriceWad(route.oracleFeed);
