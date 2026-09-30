@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-
 import {LaunchFactory} from "./LaunchFactory.sol";
 import {LaunchCampaign} from "./LaunchCampaign.sol";
 
@@ -36,10 +33,8 @@ interface IBnbQuoteCatalogBoundCampaign {
 /// The backend Quote Asset Catalog remains the eligibility authority. This contract only
 /// verifies and persists the signed immutable catalog-selection commitment.
 contract BnbBasicLaunchFactory is LaunchFactory {
-    using ECDSA for bytes32;
-
-    uint32 public constant BASIC_FACTORY_GENERATION = 5;
-    uint32 public constant BASIC_QUOTE_CAMPAIGN_GENERATION = 4;
+    uint32 public constant BASIC_FACTORY_GENERATION = 6;
+    uint32 public constant BASIC_QUOTE_CAMPAIGN_GENERATION = 5;
 
     address public immutable bnbQuoteCampaignImplementation;
     address public bnbQuoteGraduationAdapter;
@@ -94,7 +89,7 @@ contract BnbBasicLaunchFactory is LaunchFactory {
         address quoteToken,
         bytes32 quoteCatalogBindingHash,
         RouteAuthorization calldata routeAuth
-    ) external returns (address campaignAddr, address tokenAddr) {
+    ) external payable nonReentrant returns (address campaignAddr, address tokenAddr) {
         address adapter = bnbQuoteGraduationAdapter;
         if (adapter == address(0)) revert BnbQuoteGraduationAdapterUnavailable();
         if (quoteCatalogBindingHash == bytes32(0)) revert QuoteCatalogBindingRequired();
@@ -124,6 +119,7 @@ contract BnbBasicLaunchFactory is LaunchFactory {
             BASIC_FACTORY_GENERATION,
             BASIC_QUOTE_CAMPAIGN_GENERATION
         );
+        _creatorFirstBuy(campaignAddr, req);
     }
 
     function _verifyBasicQuoteRouteAuthorization(
@@ -134,14 +130,7 @@ contract BnbBasicLaunchFactory is LaunchFactory {
         address adapter,
         RouteAuthorization calldata routeAuth
     ) internal {
-        address authority = routeAuthority;
-        if (authority == address(0)) revert RouteAuthorityZero();
-        if (routeAuth.deadline < block.timestamp) revert RouteAuthorizationExpired();
-        if (!_isValidRouteProfile(routeAuth.tradeRouteProfile) || !_isValidRouteProfile(routeAuth.finalizeRouteProfile)) {
-            revert InvalidRouteProfile();
-        }
-
-        bytes32 digest = MessageHashUtils.toEthSignedMessageHash(
+        _consumeCreateAuthorization(
             keccak256(
                 abi.encode(
                     "MWZ_CREATE_BNB_BASIC_QUOTE_AUTH_V2",
@@ -159,11 +148,9 @@ contract BnbBasicLaunchFactory is LaunchFactory {
                     routeAuth.finalizeRouteProfile,
                     routeAuth.deadline
                 )
-            )
+            ),
+            routeAuth
         );
-        if (digest.recover(routeAuth.signature) != authority) revert InvalidRouteAuthorization();
-        if (usedCreateRouteAuthorizations[digest]) revert RouteAuthorizationReplayed();
-        usedCreateRouteAuthorizations[digest] = true;
     }
 
     function _requireBasicQuoteRouteEnabled(address adapter, address quoteToken) internal view {
