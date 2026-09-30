@@ -56,6 +56,12 @@ Written 2026-09-30. Every "today" fact cites the code on `build/dbc-staging` (`c
   E15 caps, the Safe as admin, and M1's route limits.
 - **E17. Testnet runs are authorized for Claude with the testnet deployer key** (founder, 2026-09-30),
   Robinhood testnet 46630 first, BSC testnet 97 after Grok's brief 2. Mainnet stays founder-only.
+- **E18. A holder payout does not count toward the 14-day airdrop cooldown** (founder, 2026-09-30), on
+  every chain including Solana (code-2 holder leaves): a holder payout is a share of fees, not a lottery
+  win, so it never excludes that wallet from the weekly trader/creator draw.
+- **E19. Unclaimed holder payouts go back to the same coin's holders** (founder, 2026-09-30), like the
+  airdrop rule of 2026-09-27: after the claim window the Safe recovers them in a monthly batch and credits
+  them back to each coin's holder balance in CreatorRewardsVaultV2, to be paid in a later week.
 
 ## Target economics, one table
 
