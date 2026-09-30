@@ -62,6 +62,8 @@ Written 2026-09-30. Every "today" fact cites the code on `build/dbc-staging` (`c
 - **E19. Unclaimed holder payouts go back to the same coin's holders** (founder, 2026-09-30), like the
   airdrop rule of 2026-09-27: after the claim window the Safe recovers them in a monthly batch and credits
   them back to each coin's holder balance in CreatorRewardsVaultV2, to be paid in a later week.
+  As built: `creditUnclaimedHolders` + `scripts/make-holder-recovery-batch.ts`, audit in
+  `spec/C1-C6-fees.md` "E19".
 
 ## Target economics, one table
 

@@ -270,8 +270,12 @@ export type LeafFile = {
   total: string;
   /** Exactly proposeHolderBatch's campaigns[] and amounts[], in calldata order. */
   campaigns: Array<{ campaign: string; amount: string }>;
-  /** Tree order: account ascending. */
-  leaves: Array<{ account: string; amount: string }>;
+  /**
+   * Tree order: account ascending. `parts` (E19) says which campaign each wei of the leaf came from, campaign
+   * ascending; the parts add up to the leaf. After the claim window the unclaimed leaves' parts are credited back
+   * to those campaigns' holders (scripts/make-holder-recovery-batch.ts). Not part of the merkle leaf.
+   */
+  leaves: Array<{ account: string; amount: string; parts?: Array<{ campaign: string; amount: string }> }>;
   snapshot: { weekCommitment: string; perCampaign: Array<{ campaign: string; token: string; block: number; holders: number; pot: string }> };
 };
 
@@ -317,12 +321,50 @@ export function buildLeafFile(input: {
     root,
     total: total.toString(),
     campaigns: campaigns.map((c) => ({ campaign: c.campaign, amount: c.amount.toString() })),
-    leaves: entries.map((e) => ({ account: e.account, amount: e.amount.toString() })),
+    leaves: entries.map((e) => ({ account: e.account, amount: e.amount.toString(), parts: leafParts(input.perCoin, e.account) })),
     snapshot: {
       weekCommitment: input.weekCommitment,
       perCampaign: input.snapshots.map((s) => ({ campaign: ethers.getAddress(s.campaign), token: ethers.getAddress(s.token), block: s.block, holders: s.holders, pot: s.pot.toString() })),
     },
   };
+}
+
+/** E19: one leaf's amount per campaign, from the same per-coin shares holderLeaves summed. */
+function leafParts(perCoin: Map<string, Map<string, bigint>>, account: string): Array<{ campaign: string; amount: string }> {
+  const key = account.toLowerCase();
+  const parts: Array<{ campaign: string; amount: bigint }> = [];
+  for (const [campaign, shares] of perCoin) {
+    for (const [owner, amount] of shares) if (owner.toLowerCase() === key && amount > 0n) parts.push({ campaign: ethers.getAddress(campaign), amount });
+  }
+  return parts
+    .sort((a, b) => (a.campaign.toLowerCase() < b.campaign.toLowerCase() ? -1 : 1))
+    .map((p) => ({ campaign: p.campaign, amount: p.amount.toString() }));
+}
+
+/**
+ * E19: when the leaves carry parts, each leaf's parts add up to the leaf and each campaign's parts add up to that
+ * campaign's amount. Throws on any mismatch; a file without parts passes (older files).
+ */
+export function checkLeafParts(file: Pick<LeafFile, "leaves" | "campaigns">): boolean {
+  if (!file.leaves.some((l) => l.parts)) return false;
+  const byCampaign = new Map<string, bigint>();
+  for (const l of file.leaves) {
+    if (!Array.isArray(l.parts) || !l.parts.length) throw new Error(`leaf ${l.account} has no parts`);
+    let sum = 0n;
+    for (const p of l.parts) {
+      const a = BigInt(p.amount);
+      if (a <= 0n) throw new Error(`non-positive part for ${l.account}`);
+      const c = ethers.getAddress(p.campaign).toLowerCase();
+      byCampaign.set(c, (byCampaign.get(c) || 0n) + a);
+      sum += a;
+    }
+    if (sum !== BigInt(l.amount)) throw new Error(`parts of ${l.account} (${sum}) do not add up to its leaf (${l.amount})`);
+  }
+  if (byCampaign.size !== file.campaigns.length) throw new Error("leaf parts name a different set of campaigns");
+  for (const c of file.campaigns) {
+    if (byCampaign.get(ethers.getAddress(c.campaign).toLowerCase()) !== BigInt(c.amount)) throw new Error(`leaf parts for ${c.campaign} do not add up to its amount`);
+  }
+  return true;
 }
 
 /** Recomputes a leaf file's root and total and checks its internal consistency. Throws on any mismatch. */
@@ -345,5 +387,6 @@ export function checkLeafFile(file: LeafFile): { root: string; total: bigint } {
   const { root } = merklePlan(entries);
   if (root.toLowerCase() !== String(file.root).toLowerCase()) throw new Error(`root ${file.root} does not match the leaves (${root})`);
   if (holderBatchId(file.chainId, file.weekId).toLowerCase() !== String(file.batchId).toLowerCase()) throw new Error("batch id is not this chain and week's holder batch id");
+  checkLeafParts(file);
   return { root, total };
 }

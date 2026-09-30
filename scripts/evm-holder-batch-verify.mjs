@@ -99,7 +99,35 @@ export function checkLeafFile(file) {
   if (holderBatchId(file.chainId, file.weekId).toLowerCase() !== String(file.batchId).toLowerCase()) {
     throw new Error("batch id is not this chain and week's holder batch id");
   }
+  checkLeafParts(file);
   return { root, total };
+}
+
+/**
+ * E19, same rule as the indexer's checkLeafParts: when the leaves carry `parts` (which campaign each wei came
+ * from), each leaf's parts add up to the leaf and each campaign's parts add up to that campaign's amount.
+ * Returns false for a file without parts; throws on any mismatch.
+ */
+export function checkLeafParts(file) {
+  if (!file.leaves.some((l) => l.parts)) return false;
+  const byCampaign = new Map();
+  for (const l of file.leaves) {
+    if (!Array.isArray(l.parts) || !l.parts.length) throw new Error(`leaf ${l.account} has no parts`);
+    let sum = 0n;
+    for (const p of l.parts) {
+      const a = BigInt(p.amount);
+      if (a <= 0n) throw new Error(`non-positive part for ${l.account}`);
+      const c = ethers.getAddress(p.campaign).toLowerCase();
+      byCampaign.set(c, (byCampaign.get(c) || 0n) + a);
+      sum += a;
+    }
+    if (sum !== BigInt(l.amount)) throw new Error(`parts of ${l.account} (${sum}) do not add up to its leaf (${l.amount})`);
+  }
+  if (byCampaign.size !== file.campaigns.length) throw new Error("leaf parts name a different set of campaigns");
+  for (const c of file.campaigns) {
+    if (byCampaign.get(ethers.getAddress(c.campaign).toLowerCase()) !== BigInt(c.amount)) throw new Error(`leaf parts for ${c.campaign} do not add up to its amount`);
+  }
+  return true;
 }
 
 // ------------------------------------------------------------------------------------ the chain

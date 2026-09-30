@@ -112,6 +112,7 @@ export const CREATOR_REWARDS_VAULT_V2_EVENTS = [
   "event HolderBatchApproved(bytes32 indexed batchId, bytes32 root, uint256 total)",
   "event HolderBatchVetoed(bytes32 indexed batchId, uint256 total)",
   "event HolderBatchExecuted(bytes32 indexed batchId, uint256 total)",
+  "event HolderUnclaimedCredited(address indexed campaign, uint256 amount)",
   "event BuybackCurve(address indexed campaign, uint256 nativeSpent, uint256 tokensHeld)",
   "event BuybackPool(address indexed campaign, address indexed tokenIn, uint256 amountSpent, uint256 memeBurned)",
   "event BuybackTokensFlushed(address indexed campaign, address indexed token, uint256 amount)",

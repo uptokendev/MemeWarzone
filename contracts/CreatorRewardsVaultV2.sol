@@ -46,6 +46,8 @@ interface IEvmGenLaunchTokenTrading {
 ///   the MEME output hard-coded to DEAD and the native/quote output hard-coded to this vault;
 /// - MEME to DEAD (flushBuybackTokens);
 /// - admin rescue of the excess above every liability.
+/// Value can also come back in: creditUnclaimedHolders (admin, E19) re-credits expired holder payouts to the same
+/// coins' holder balances; it pays nobody.
 /// A compromised operator can therefore pick bad moments within the caps, or propose a bad holder root that
 /// never executes unless the admin approves that root; it cannot send value to itself.
 contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
@@ -165,6 +167,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     event HolderBatchApproved(bytes32 indexed batchId, bytes32 root, uint256 total);
     event HolderBatchVetoed(bytes32 indexed batchId, uint256 total);
     event HolderBatchExecuted(bytes32 indexed batchId, uint256 total);
+    event HolderUnclaimedCredited(address indexed campaign, uint256 amount);
     event BuybackCurve(address indexed campaign, uint256 nativeSpent, uint256 tokensHeld);
     event BuybackPool(address indexed campaign, address indexed tokenIn, uint256 amountSpent, uint256 memeBurned);
     event BuybackTokensFlushed(address indexed campaign, address indexed token, uint256 amount);
@@ -196,6 +199,7 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
     error NoRoute();
     error UnexpectedCallback();
     error Blocked();
+    error ValueMismatch();
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert OnlyAdmin();
@@ -445,6 +449,30 @@ contract CreatorRewardsVaultV2 is ICreatorRewardsVaultV2, ReentrancyGuard {
         uint256[] storage as_ = batchAmounts[batchId];
         for (uint256 i; i < cs.length; ++i) holderBalance[cs[i]] += as_[i];
         emit HolderBatchVetoed(batchId, b.total);
+    }
+
+    /// @notice E19: unclaimed holder payouts go back to the same coin's holders. After a holder batch's claim
+    /// window the admin (Safe) recovers the unclaimed native from the holder distributor (recoverUnclaimed pays the
+    /// Safe) and, in the same Safe transaction, sends it back here attributed per campaign from the published leaf
+    /// file (scripts/make-holder-recovery-batch.ts). Only adds to holder balances; pays nobody. msg.value must be
+    /// exactly the sum, and every campaign must be a holders or split coin, so no amount lands where holder money
+    /// never came from. Audit block: docs/evm-launch/spec/C1-C6-fees.md "As built", E19.
+    function creditUnclaimedHolders(address[] calldata campaigns, uint256[] calldata amounts) external payable onlyAdmin nonReentrant {
+        uint256 n = campaigns.length;
+        if (n == 0 || n != amounts.length || n > MAX_BATCH_CAMPAIGNS) revert BadBatch();
+        uint256 total;
+        for (uint256 i; i < n; ++i) {
+            address campaign = campaigns[i];
+            Choice ch = cfg[campaign].choice;
+            if (ch != Choice.Holders && ch != Choice.Split) revert WrongChoice();
+            uint256 a = amounts[i];
+            if (a == 0) revert Insufficient();
+            total += a;
+            holderBalance[campaign] += a;
+            emit HolderUnclaimedCredited(campaign, a);
+        }
+        if (total != msg.value) revert ValueMismatch();
+        totalLiabilities += total;
     }
 
     function executeHolderBatch(bytes32 batchId) external onlyOperator nonReentrant {
