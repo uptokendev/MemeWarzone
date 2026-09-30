@@ -3,6 +3,7 @@ import path from "path";
 import { ethers, network } from "hardhat";
 import { assertCode, pickAddress, resolveContracts } from "./verify-deployment";
 import { refuseBnbFactoryBroadcastIfSourceHeadIsNotLive } from "./lib/bnbLiveGenerationGuard";
+import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
 
 const { writeFrontendEnv } = require("./lib/frontendEnv.cjs");
 const { writeIndexerManifest } = require("./lib/indexerManifest.cjs");
@@ -202,7 +203,7 @@ async function main() {
   await assertCode("RiskRegistry", riskRegistry);
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(launchRouter, treasuryRouter, campaignImplementation, graduationOracle);
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [launchRouter, treasuryRouter, campaignImplementation, graduationOracle] })).factory;
   await factory.waitForDeployment();
   const newFactory = await factory.getAddress();
   const newLocker = await factory.permanentLpLocker();

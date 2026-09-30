@@ -11,15 +11,15 @@
  *   LaunchFactory            leagueReceiver was immutable while feeRecipient was
  *                            not, so the first setCoreRouting would have bricked
  *                            every campaign created afterwards. Also brings a
- *                            fresh PermanentV3PositionLocker, which the factory
- *                            deploys itself.
+ *                            fresh PermanentV3PositionLocker, deployed just before
+ *                            the factory with admin = the factory address.
  *   LaunchCampaign           the implementation the factory clones.
  *   NativeGraduationAdapterV2 (EVM launch generation, C7.2) the factory's
- *                            "router". The old RobinhoodUniswapV3GraduationAdapter
- *                            minted at a griefer's price on a pre-initialized pool
- *                            and had no caller check; it is NOT reused. The new
- *                            one repairs a pre-made pool to the curve price and
- *                            only serves campaigns of the factory it is bound to.
+ *                            router AND its native IGraduationAdapterV2. The old
+ *                            RobinhoodUniswapV3GraduationAdapter minted at a
+ *                            griefer's price on a pre-initialized pool and had no
+ *                            caller check; it is NOT reused. RH_NATIVE_GRADUATION_ADAPTER
+ *                            names a pre-deployed one; unset, this script deploys it.
  *   StockGraduationAdapterV2 (C7.1) the old one called quoteExactInputSingle on
  *                            SwapRouter02, which has none, so every stock
  *                            graduation reverted; minima now come from Chainlink.
@@ -37,6 +37,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
 import { wireLpLocker } from "./lib/evmLpLockerWiring";
+import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
+import {
+  assertCreatorVaultServesGeneration,
+  requireNativeGraduationAdapter,
+  VAULT_DEX_UNISWAP_V3,
+  wireGenerationCreatePath,
+} from "./lib/evmGenerationCreateWiring";
 
 const PROFILES: Record<string, { chainId: bigint; confirm: string; file: string }> = {
   robinhoodTestnet: { chainId: 46630n, confirm: "I_UNDERSTAND_TESTNET", file: "robinhood/testnet.quote-generation.json" },
@@ -68,16 +75,27 @@ export async function assertFeeTierSpacing(v3FactoryAddress: string) {
   console.log(`[rh] ok V3 fee ${MEME_POOL_FEE_TIER} -> tick spacing ${spacing}`);
 }
 
-/**
- * Deploys both V2 graduation adapters and binds them to `factory` (and so to the locker the factory
- * deployed). The native adapter must exist before the factory (it is the factory's router); the stock
- * adapter after. Exported so the rehearsal spec drives the same code.
- */
+/** Deploys RobinhoodV3NativeGraduationAdapterV2 (the factory's router and native IGraduationAdapterV2). */
 export async function deployNativeGraduationAdapter(v3Factory: string, positionManager: string, weth: string) {
   const adapter = await (await ethers.getContractFactory("RobinhoodV3NativeGraduationAdapterV2")).deploy(v3Factory, positionManager, weth);
   await adapter.waitForDeployment();
   if ((await (adapter as any).POOL_FEE()) !== BigInt(MEME_POOL_FEE_TIER)) throw new Error("native adapter fee is not 3000");
   return adapter;
+}
+
+/** A pre-deployed native adapter must be the V2 one on this chain's V3 stack, or the locker refuses it. */
+export async function assertNativeAdapterMatches(adapterAddress: string, v3Factory: string, positionManager: string, weth: string) {
+  const a = await ethers.getContractAt("RobinhoodV3NativeGraduationAdapterV2", adapterAddress);
+  const same = (x: string, y: string) => ethers.getAddress(x) === ethers.getAddress(y);
+  if (
+    Number(await (a as any).liquidityKind()) !== 2 ||
+    Number(await (a as any).feeTier()) !== MEME_POOL_FEE_TIER ||
+    !same(await (a as any).v3Factory(), v3Factory) ||
+    !same(await (a as any).positionManager(), positionManager) ||
+    !same(await (a as any).WETH(), weth)
+  ) {
+    throw new Error(`native adapter ${adapterAddress} does not report this chain's V3 stack at fee ${MEME_POOL_FEE_TIER}`);
+  }
 }
 
 export async function deployStockGraduationAdapter(
@@ -111,6 +129,20 @@ export async function bindAdapterToFactory(adapter: any, factoryAddress: string,
   if (ethers.getAddress(await adapter.permanentPositionLocker()) !== locker) throw new Error(`${label}: locker mismatch`);
   if ((await adapter.campaignFactoryLocked()) !== true) throw new Error(`${label}: factory binding not locked`);
   console.log(`[rh] ok ${label} bound to factory ${factoryAddress}, locker ${locker}`);
+}
+
+/** Adds entries to config/verification/mainnet-contracts.json (chain 4663) unless the address is already listed. */
+function appendVerificationEntries(chainKey: string, entries: Array<{ name: string; address: string; contract: string; args: string[] }>) {
+  const file = path.join(__dirname, "..", "config", "verification", "mainnet-contracts.json");
+  const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+  const list: any[] = manifest.chains?.[chainKey]?.contracts;
+  if (!Array.isArray(list)) throw new Error(`verification manifest has no chains.${chainKey}.contracts`);
+  for (const entry of entries) {
+    if (list.some((c) => String(c.address).toLowerCase() === entry.address.toLowerCase())) continue;
+    list.push(entry);
+  }
+  fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+  console.log(`[rh] recorded ${entries.length} adapter(s) in ${file}`);
 }
 /**
  * How stale a price the stock adapter will still act on. Immutable in the
@@ -166,28 +198,13 @@ export function graduationTargetFor(chainId: bigint): bigint {
 export function configFor(chainId: bigint) {
   return {
     totalSupply: ethers.parseEther("1000000000"),
-    // C5 section 2: curve 70%, pool allocation 28%, reserve 2%; Robinhood k = 850. The factory's
-    // setConfig refuses any config that fails the supply bound (8400/1400 does).
     curveBps: 7000n,
     liquidityTokenBps: 2800n,
     basePrice: 1_000_000_000n,
     priceSlope: 850n,
     graduationTarget: graduationTargetFor(chainId),
+    liquidityBps: 3300n,
   };
-}
-
-/** Adds entries to config/verification/mainnet-contracts.json (chain 4663) unless the address is already listed. */
-function appendVerificationEntries(chainKey: string, entries: Array<{ name: string; address: string; contract: string; args: string[] }>) {
-  const file = path.join(__dirname, "..", "config", "verification", "mainnet-contracts.json");
-  const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
-  const list: any[] = manifest.chains?.[chainKey]?.contracts;
-  if (!Array.isArray(list)) throw new Error(`verification manifest has no chains.${chainKey}.contracts`);
-  for (const entry of entries) {
-    if (list.some((c) => String(c.address).toLowerCase() === entry.address.toLowerCase())) continue;
-    list.push(entry);
-  }
-  fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
-  console.log(`[rh] recorded ${entries.length} adapter(s) in ${file}`);
 }
 
 function pick(envName: string, fallback: string): string {
@@ -211,7 +228,7 @@ async function waitTx(txPromise: Promise<any> | any, label: string) {
 }
 
 /** The same refusal the BNB script makes, for the same reason. */
-async function assertRouterCanServeStrictRouting(routerAddress: string) {
+export async function assertRouterCanServeStrictRouting(routerAddress: string) {
   const router = await ethers.getContractAt(
     [
       "function creatorRewardsVault() view returns (address)",
@@ -229,7 +246,7 @@ async function assertRouterCanServeStrictRouting(routerAddress: string) {
     } catch {
       throw new Error(
         `treasury router ${routerAddress} has no ${name}(); campaigns from this factory would revert ` +
-          `FeeRoutingFailed on every trade. Deploy TreasuryRouterV3 first.`,
+          `FeeRoutingFailed on every trade. Deploy TreasuryRouterV4 (with a CreatorRewardsVaultV2) first.`,
       );
     }
     if (value === ethers.ZeroAddress) throw new Error(`router ${name}() is unset`);
@@ -238,6 +255,11 @@ async function assertRouterCanServeStrictRouting(routerAddress: string) {
   if (await (router as any).forwardingPaused()) {
     throw new Error("router forwarding is paused; under strict routing that halts every trade");
   }
+  // Presence is not enough: the vault behind creatorRewardsVault() must take the generation's fee choice.
+  await assertCreatorVaultServesGeneration(routerAddress, {
+    dexKind: VAULT_DEX_UNISWAP_V3,
+    log: (line) => console.log(`  ${line.trim()}`),
+  });
 }
 
 async function main() {
@@ -275,31 +297,35 @@ async function main() {
     await requireCode(label, address);
   }
   await assertRouterCanServeStrictRouting(treasuryRouter);
+  // The generation's V3 native graduation adapter (IGraduationAdapterV2). Required: without it, or the
+  // LaunchTokenDeployer, create reverts NativeGraduationAdapterUnavailable, and both setters lock at the
+  // first campaign. On this V3 factory the setter also authorizes the adapter on the position locker, which
+  // reverts unless the adapter reports the locker's liquidityKind/v3Factory/positionManager/WETH/feeTier.
+  // It is also the factory's router (liquidityKind V3 and the locker's integration source), so the
+  // old RobinhoodUniswapV3GraduationAdapter is not reused anywhere (C7 section 8).
+  await assertFeeTierSpacing(v3Factory);
+  const nativeAdapterDeployed = !String(process.env.RH_NATIVE_GRADUATION_ADAPTER || "").trim();
+  const nativeGraduationAdapter = nativeAdapterDeployed
+    ? await (await deployNativeGraduationAdapter(v3Factory, positionManager, weth)).getAddress()
+    : await requireNativeGraduationAdapter("RH_NATIVE_GRADUATION_ADAPTER");
+  await assertNativeAdapterMatches(nativeGraduationAdapter, v3Factory, positionManager, weth);
+  const v3GraduationRouter = nativeGraduationAdapter;
+  console.log(`[rh] nativeGraduationAdapter = ${nativeGraduationAdapter}${nativeAdapterDeployed ? " (deployed now)" : ""}`);
   const MAX_ORACLE_AGE_SECONDS = maxOracleAgeFor(net.chainId);
   await assertFeedWithinMaxAge(nativeUsdFeed, MAX_ORACLE_AGE_SECONDS, "stock adapter oracle age");
-  await assertFeeTierSpacing(v3Factory);
 
   // --- redeploy ------------------------------------------------------------
   const campaignImpl = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
   await campaignImpl.waitForDeployment();
   console.log(`[rh] LaunchCampaign impl = ${await campaignImpl.getAddress()}`);
 
-  // The native adapter is the factory's router: deployed first, bound to the factory right after.
-  const nativeAdapter = await deployNativeGraduationAdapter(v3Factory, positionManager, weth);
-  const v3GraduationRouter = await nativeAdapter.getAddress();
-  console.log(`[rh] RobinhoodV3NativeGraduationAdapterV2 = ${v3GraduationRouter}`);
-
-  const factory = await (await ethers.getContractFactory("LaunchFactory")).deploy(
-    v3GraduationRouter,
-    treasuryRouter,
-    await campaignImpl.getAddress(),
-    graduationOracle,
-  );
-  await factory.waitForDeployment();
-  const factoryAddress = await factory.getAddress();
-  const lockerAddress = await (factory as any).permanentLpLocker();
-  console.log(`[rh] LaunchFactory = ${factoryAddress}`);
-  console.log(`[rh] PermanentV3PositionLocker = ${lockerAddress}`);
+  // Locker first with admin = the factory's CREATE address; the factory constructor refuses any other.
+  const { factory, factoryAddress, lockerAddress } = await deployFactoryWithLocker({
+    factoryName: "LaunchFactory",
+    args: [v3GraduationRouter, treasuryRouter, await campaignImpl.getAddress(), graduationOracle],
+    lockerKind: "v3",
+    log: (line) => console.log(`[rh] ${line}`),
+  });
 
   // The invariant that bricked the previous generation.
   const feeRecipient = await (factory as any).feeRecipient();
@@ -309,14 +335,13 @@ async function main() {
   }
   console.log(`[rh] ok feeRecipient == leagueReceiver == ${feeRecipient}`);
 
-  await bindAdapterToFactory(nativeAdapter, factoryAddress, "native graduation adapter");
-  // The C5 factory creates only with a native IGraduationAdapterV2 and a token deployer set.
-  await waitTx((factory as any).setNativeGraduationAdapter(v3GraduationRouter), "factory.setNativeGraduationAdapter");
-  const tokenDeployer = await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy();
-  await tokenDeployer.waitForDeployment();
-  await waitTx((factory as any).setLaunchTokenDeployer(await tokenDeployer.getAddress()), "factory.setLaunchTokenDeployer");
-  if (ethers.getAddress(await (factory as any).nativeGraduationAdapter()) !== ethers.getAddress(v3GraduationRouter)) {
-    throw new Error("factory.nativeGraduationAdapter did not stick");
+  // Both V2 adapters serve only campaigns of the factory they are bound to, and read the locker from it.
+  const nativeAdapter = await ethers.getContractAt("RobinhoodV3NativeGraduationAdapterV2", nativeGraduationAdapter);
+  const adapterBindActions: string[] = [];
+  if (ethers.getAddress(await (nativeAdapter as any).admin()) === deployerAddress) {
+    await bindAdapterToFactory(nativeAdapter, factoryAddress, "native graduation adapter");
+  } else {
+    adapterBindActions.push(`native adapter admin: setCampaignFactoryOnce(${factoryAddress}) on ${nativeGraduationAdapter}`);
   }
 
   const stockAdapter = await deployStockGraduationAdapter(v3Factory, positionManager, swapRouter, weth, nativeUsdFeed, MAX_ORACLE_AGE_SECONDS);
@@ -392,6 +417,20 @@ async function main() {
     log: (message) => console.log(`[rh]${message}`),
   });
 
+  // Native adapter + token deployer (whenMutable) and the creator vault pinned to this factory
+  // (setCampaignChoice is onlyFactory). Sent when the deployer can; owner actions otherwise.
+  const creatorVault = await (await ethers.getContractAt(
+    ["function creatorRewardsVault() view returns (address)"],
+    treasuryRouter,
+  ) as any).creatorRewardsVault();
+  const createPath = await wireGenerationCreatePath({
+    factoryAddress,
+    nativeGraduationAdapter,
+    creatorVault,
+    senderAddress: deployerAddress,
+    log: (line) => console.log(`[rh]${line}`),
+  });
+
   await waitTx((factory as any).setCreatePaused(true), "factory.setCreatePaused(true)");
 
   if ((await (factory as any).createPaused()) !== true) throw new Error("createPaused did not stick");
@@ -408,19 +447,25 @@ async function main() {
     reused: { treasuryRouter, weth, v3Factory, positionManager, swapRouter, nativeUsdFeed, graduationOracle },
     registries: { creatorRegistry: creatorRegistryAddress, riskRegistry: riskRegistryAddress, launchRecorderWired: true },
     lpLockerAuthorized: lpLocker.wired,
-    pendingOwnerActions: lpLocker.ownerActions,
+    createPathWired: createPath.wired,
+    nativeGraduationAdapter,
+    creatorVault,
+    pendingOwnerActions: [...createPath.ownerActions, ...lpLocker.ownerActions],
     deployed: {
       LaunchFactory: factoryAddress,
+      LaunchTokenDeployer: createPath.tokenDeployer,
       LaunchCampaignImplementation: await campaignImpl.getAddress(),
       PermanentV3PositionLocker: lockerAddress,
-      RobinhoodV3NativeGraduationAdapterV2: v3GraduationRouter,
-      LaunchTokenDeployer: await tokenDeployer.getAddress(),
+      RobinhoodV3NativeGraduationAdapterV2: nativeGraduationAdapter,
       RobinhoodStockGraduationAdapterV2: await stockAdapter.getAddress(),
       RobinhoodV3NativeSwapAdapter: await nativeSwapAdapter.getAddress(),
       PostGradLeagueTreasuryV2: await league.getAddress(),
       ArenaWarPoolTreasuryV2: await warPool.getAddress(),
     },
+    adapterBindActions,
     next: [
+      ...adapterBindActions,
+      ...(createPath.wired ? [] : ["the create-path owner actions (native adapter, token deployer, vault pin) -- CREATE is dead until they land, and before the first campaign"]),
       "register stock tokens and routes on the adapter",
       "transfer ownership to the Safe (mainnet)",
       "canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false)",
@@ -429,7 +474,7 @@ async function main() {
   (artifact as any).verification = [
     {
       name: "RobinhoodV3NativeGraduationAdapterV2",
-      address: v3GraduationRouter,
+      address: nativeGraduationAdapter,
       contract: "contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol:RobinhoodV3NativeGraduationAdapterV2",
       args: [v3Factory, positionManager, weth],
     },
@@ -440,14 +485,15 @@ async function main() {
       args: [v3Factory, positionManager, swapRouter, weth, nativeUsdFeed, String(MAX_ORACLE_AGE_SECONDS)],
     },
   ];
-  if (profile.chainId === 4663n) {
-    appendVerificationEntries("4663", (artifact as any).verification);
-  }
+  if (profile.chainId === 4663n) appendVerificationEntries("4663", (artifact as any).verification);
   const out = path.join(__dirname, "..", "deployments", profile.file);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`);
   console.log(`[rh] wrote ${out}`);
   console.log("[rh] STOP. Everything is paused and nothing is live.");
+  if (!createPath.wired) {
+    console.log("[rh] WARNING: the create path is not wired. CREATE reverts until the pending owner actions execute.");
+  }
 }
 
 if (require.main === module) {

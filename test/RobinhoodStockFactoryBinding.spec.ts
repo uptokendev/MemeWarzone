@@ -1,5 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
+import { deployEvmGenTreasuryDoubles, wireFactoryForCreate } from "./helpers/legacy-C";
 
 const FEE = 3000;
 
@@ -103,9 +105,8 @@ async function fixture() {
   const stockCampaignImplementation = await StockCampaign.deploy();
   await stockCampaignImplementation.waitForDeployment();
 
-  const Treasury = await ethers.getContractFactory("MockPhase1TreasuryRouter");
-  const treasury = await Treasury.deploy();
-  await treasury.waitForDeployment();
+  // The generation registers each coin's fee choice on the router's creator vault at create.
+  const { router: treasury, vault: creatorVault } = await deployEvmGenTreasuryDoubles();
 
   const nativeFeed = await freshFeed("3000");
   const GraduationOracle = await ethers.getContractFactory("GraduationOracle");
@@ -113,15 +114,15 @@ async function fixture() {
   await graduationOracle.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await nativeAdapter.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await nativeAdapter.getAddress(),
     await treasury.getAddress(),
     await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress(),
-  );
+    await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
   await factory.setRouteAuthority(await routeSigner.getAddress());
   await factory.setStockCampaignImplementation(await stockCampaignImplementation.getAddress());
+  // Nothing graduates here, so the V3 router stands in as the native adapter create requires.
+  await wireFactoryForCreate(factory, creatorVault, await nativeAdapter.getAddress());
 
   const locker = await factory.permanentLpLocker();
   const StockAdapter = await ethers.getContractFactory("RobinhoodStockTokenGraduationAdapter");
@@ -263,9 +264,10 @@ describe("Robinhood Stock campaign factory binding", function () {
     const campaign = await ethers.getContractAt("RobinhoodStockLaunchCampaign", info.campaign);
     expect(await factory.campaignGraduationQuoteToken(info.campaign)).to.equal(await stock1.getAddress());
     expect(await campaign.isStockCampaignImplementation()).to.equal(true);
-    expect(await campaign.stockGraduationEnabled()).to.equal(true);
+    // stockGraduationEnabled/stockGraduationAdapter were folded into the one binding: the quote
+    // token and the IGraduationAdapterV2 adapter graduate() calls.
     expect(await campaign.graduationQuoteToken()).to.equal(await stock1.getAddress());
-    expect(await campaign.stockGraduationAdapter()).to.equal(await stockAdapter.getAddress());
+    expect(await campaign.graduationAdapter()).to.equal(await stockAdapter.getAddress());
 
     const permanentLocker = await ethers.getContractAt("PermanentV3PositionLocker", locker);
     expect(await permanentLocker.authorizedIntegrationSource(await stockAdapter.getAddress())).to.equal(true);

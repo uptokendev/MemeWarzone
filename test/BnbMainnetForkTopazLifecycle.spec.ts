@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers, network } from "hardhat";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const PROD_FACTORY = "0x3068eAE6F8431bFc3c5Faae9c3bBB95F007be59a";
 const PROD_LOCKER = "0x64710A4f87aBa3b5ED5B8B25e8ebA4DaC339C998";
@@ -118,7 +119,7 @@ describe("BNB mainnet fork: corrected locker vs real Topaz", function () {
     await network.provider.send("hardhat_setBalance", [await deployer.getAddress(), "0x56BC75E2D63100000"]);
 
     const Factory = await ethers.getContractFactory("LaunchFactory");
-    const factory = await Factory.deploy(ADAPTER, TREASURY, CAMPAIGN_IMPL, ORACLE);
+    const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [ADAPTER, TREASURY, CAMPAIGN_IMPL, ORACLE] })).factory;
     await factory.waitForDeployment();
     const lockerAddr = await factory.permanentLpLocker();
     const locker = await ethers.getContractAt("PermanentLpLocker", lockerAddr);

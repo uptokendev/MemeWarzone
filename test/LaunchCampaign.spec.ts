@@ -1,11 +1,10 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import { mineAt } from "./fixtures/evmgenCore";
 import { deployCoreFixture } from "./fixtures/core";
 import { quoteBuyExactTokens, quoteSellExactTokens, currentPrice as priceFn } from "./helpers/math";
 import { getBalance } from "./helpers/balances";
-
-const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 
 const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
   name: "MyToken",
@@ -30,78 +29,17 @@ async function latestTimestamp() {
   return BigInt(block!.timestamp);
 }
 
-async function deployTestOracle(price = "1") {
-  const PriceFeed = await ethers.getContractFactory("MockUsdPriceFeed");
-  const priceFeed = await PriceFeed.deploy(8);
-  await priceFeed.waitForDeployment();
-  const now = await latestTimestamp();
-  await priceFeed.setRoundData(1n, ethers.parseUnits(price, 8), now, now, 1n);
-
-  const GraduationOracle = await ethers.getContractFactory("GraduationOracle");
-  const graduationOracle = await GraduationOracle.deploy(await priceFeed.getAddress(), 30 * 24 * 60 * 60);
-  await graduationOracle.waitForDeployment();
-  return { priceFeed, graduationOracle };
-}
-
 async function makeGraduationEligibleByOracle(campaign: any, priceFeed: any) {
   const now = await latestTimestamp();
   await priceFeed.setRoundData(2n, ethers.parseUnits("1000", 8), now, now, 2n);
   expect(await campaign.netRaisedWei()).to.be.gte(await campaign.graduationNativeTarget());
 }
 
-const directInitParams = async (values: {
-  creator: string;
-  owner: string;
-  router: string;
-  graduationOracle?: string;
-  feeRecipient?: string;
-  leagueReceiver?: string;
-  lpReceiver?: string;
-  name?: string;
-  symbol?: string;
-  graduationTarget?: bigint;
-  protocolFeeBps?: bigint | number;
-  leagueFeeBps?: bigint | number;
-  basePrice?: bigint;
-  priceSlope?: bigint;
-  strictFeeRouting?: boolean;
-}) => ({
-  name: values.name ?? "T",
-  symbol: values.symbol ?? "T",
-  logoURI: "ipfs://logo",
-  totalSupply: ethers.parseEther("1000"),
-  curveBps: 5000,
-  liquidityTokenBps: 4000,
-  basePrice: values.basePrice ?? 10n ** 12n,
-  priceSlope: values.priceSlope ?? 10n ** 9n,
-  graduationTarget: values.graduationTarget ?? ethers.parseEther("1"),
-  firstBuyTokens: 0n,
-  firstBuyMaxCost: 0n,
-  feeChoice: 1,
-  feeCreatorPct: 0,
-  graduationOracle: values.graduationOracle ?? await (await deployTestOracle()).graduationOracle.getAddress(),
-  liquidityBps: 8000,
-  protocolFeeBps: values.protocolFeeBps ?? 200,
-  leagueFeeBps: values.leagueFeeBps ?? 75,
-  leagueReceiver: values.leagueReceiver ?? values.owner,
-  router: values.router,
-  lpReceiver: values.lpReceiver ?? values.creator,
-  feeRecipient: values.feeRecipient ?? values.owner,
-  creator: values.creator,
-  factory: values.creator,
-  riskRegistry: ethers.ZeroAddress,
-  creatorBuyLockUntil: 0n,
-  creatorBuyCapWei: 0n,
-  requireAuthorizedTrading: false,
-  tradeRouteProfile: 1,
-  finalizeRouteProfile: 1,
-  // LaunchFactory creates every real campaign with strictFeeRouting: true, so a
-  // fee that cannot be routed reverts instead of being quietly escrowed. These
-  // direct-init campaigns hand feeRecipient an EOA rather than a
-  // TreasuryRouterV3, which is the legacy path -- strict there would revert
-  // every fee-bearing call. Tests that want production's behaviour opt in.
-  strictFeeRouting: values.strictFeeRouting ?? false,
-});
+// Every direct buy/sell below lands after the C2 anti-sniper window (5000 bps at launchAt falling to
+// the flat 200 bps at +60 s), so the fee math is the flat protocolFeeBps the old tests assumed.
+async function pastSniperWindow(campaign: any) {
+  await mineAt(Number(await campaign.launchAt()) + 61);
+}
 
 async function createCampaignFixture() {
   const fx = await deployCoreFixture();
@@ -111,6 +49,7 @@ async function createCampaignFixture() {
   const info = await factory.getCampaign(0n);
   const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
   const token = await ethers.getContractAt("LaunchToken", await campaign.token());
+  await pastSniperWindow(campaign);
   return { ...fx, info, campaign, token };
 }
 
@@ -129,33 +68,13 @@ async function createLowTargetCampaignFixture() {
     firstBuyMaxCost: 0n,
     feeChoice: 1,
     feeCreatorPct: 0,
-    liquidityBps: 8000,
   });
   await factory.connect(creator).createCampaign(baseCampaignRequest() as any);
   const info = await factory.getCampaign(0n);
   const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
   const token = await ethers.getContractAt("LaunchToken", await campaign.token());
+  await pastSniperWindow(campaign);
   return { ...fx, info, campaign, token };
-}
-
-async function deployDirectCampaign(params: any) {
-  const Campaign = await ethers.getContractFactory("LaunchCampaign");
-  const impl = await Campaign.deploy();
-  await impl.waitForDeployment();
-
-  const implAddr = await impl.getAddress();
-  const minimalProxyBytecode =
-    "0x3d602d80600a3d3981f3363d3d373d3d3d363d73" +
-    implAddr.slice(2).toLowerCase() +
-    "5af43d82803e903d91602b57fd5bf3";
-
-  const [, creator] = await ethers.getSigners();
-  const txClone = await creator.sendTransaction({ data: minimalProxyBytecode });
-  const receipt = await txClone.wait();
-  const cloneAddr = receipt!.contractAddress;
-  const campaign = Campaign.attach(cloneAddr);
-  await campaign.initialize(params);
-  return campaign;
 }
 
 // Every destination a routed fee can reach. TreasuryRouterV3 splits the league
@@ -338,269 +257,167 @@ describe("LaunchCampaign", function () {
     await expect(campaign.connect(alice).sellExactTokens(0n, 0n)).to.be.revertedWithCustomError(campaign, "ZeroAmount");
   });
 
-  it("fee receivers cannot DOS: feeRecipient revert escrows; leagueReceiver router forward failure doesn't revert", async () => {
-    const { creator, owner, alice } = await deployCoreFixture();
-
-    const Reverting = await ethers.getContractFactory("RevertingReceiver");
-    const feeRecipient = await Reverting.deploy();
-    await feeRecipient.waitForDeployment();
-
-    const vault = await Reverting.deploy();
-    await vault.waitForDeployment();
-
-    const TreasuryRouter = await ethers.getContractFactory("TreasuryRouter");
-    const leagueReceiver = await TreasuryRouter.deploy(await owner.getAddress(), await vault.getAddress(), 3600);
-    await leagueReceiver.waitForDeployment();
-
-    const TopazFactory = await ethers.getContractFactory("MockTopazFactory");
-    const topazFactory = await TopazFactory.deploy();
-    await topazFactory.waitForDeployment();
-
-    const Router = await ethers.getContractFactory("MockRouter");
-    const dexRouter = await Router.deploy(await topazFactory.getAddress(), await owner.getAddress());
-    await dexRouter.waitForDeployment();
-
-    const campaign = await deployDirectCampaign(
-      await directInitParams({
-        creator: await creator.getAddress(),
-        owner: await owner.getAddress(),
-        router: await dexRouter.getAddress(),
-        feeRecipient: await feeRecipient.getAddress(),
-        leagueReceiver: await leagueReceiver.getAddress(),
-      })
-    );
-    const token = await ethers.getContractAt("LaunchToken", await campaign.token());
-
-    const base = await campaign.basePrice();
-    const slope = await campaign.priceSlope();
-    const feeBps = await campaign.protocolFeeBps();
-    const amountOut = ethers.parseEther("10");
-    const sold0 = await campaign.sold();
-    const { costNoFee, fee, total } = quoteBuyExactTokens(BigInt(sold0), BigInt(amountOut), BigInt(base), BigInt(slope), BigInt(feeBps));
-
-    const leagueFeeBps = BigInt(await campaign.leagueFeeBps());
-    const leagueFee = (costNoFee * leagueFeeBps) / 10_000n;
-    const protocolNet = fee - leagueFee;
-
-    const tx = await campaign.connect(alice).buyExactTokens(amountOut, total, { value: total });
-
-    expect(await token.balanceOf(await alice.getAddress())).to.eq(amountOut);
-    await expect(tx).to.emit(campaign, "NativeEscrowed").withArgs(await feeRecipient.getAddress(), protocolNet);
-    expect(await campaign.pendingNative(await feeRecipient.getAddress())).to.eq(protocolNet);
-    expect(await campaign.pendingNativeTotal()).to.eq(protocolNet);
-    await expect(tx).to.emit(leagueReceiver, "ForwardFailed").withArgs(await vault.getAddress(), leagueFee);
-    expect(await ethers.provider.getBalance(await leagueReceiver.getAddress())).to.eq(leagueFee);
-  });
-
-  it("pending escrow does not count toward graduation threshold", async () => {
-    const { creator, owner, alice } = await deployCoreFixture();
-
-    const Reverting = await ethers.getContractFactory("RevertingReceiver");
-    const feeRecipient = await Reverting.deploy();
-    await feeRecipient.waitForDeployment();
-
-    const TopazFactory = await ethers.getContractFactory("MockTopazFactory");
-    const topazFactory = await TopazFactory.deploy();
-    await topazFactory.waitForDeployment();
-
-    const Router = await ethers.getContractFactory("MockRouter");
-    const dexRouter = await Router.deploy(await topazFactory.getAddress(), await owner.getAddress());
-    await dexRouter.waitForDeployment();
-
-    const amountOut = ethers.parseEther("1");
-    const basePrice = 10n ** 12n;
-    const priceSlope = 10n ** 9n;
-    const protocolFeeBps = 200n;
-    const { total } = quoteBuyExactTokens(0n, amountOut, basePrice, priceSlope, protocolFeeBps);
-
-    const campaign = await deployDirectCampaign(
-      await directInitParams({
-        creator: await creator.getAddress(),
-        owner: await owner.getAddress(),
-        router: await dexRouter.getAddress(),
-        feeRecipient: await feeRecipient.getAddress(),
-        name: "Escrowed",
-        symbol: "ESC",
-        graduationTarget: total,
-        firstBuyTokens: 0n,
-        firstBuyMaxCost: 0n,
-        feeChoice: 1,
-        feeCreatorPct: 0,
-        leagueFeeBps: 0,
-        basePrice,
-        priceSlope,
-        protocolFeeBps,
-      })
-    );
-
-    await campaign.connect(alice).buyExactTokens(amountOut, total, { value: total });
-
-    expect(await campaign.launched()).to.eq(false);
-    expect(await campaign.pendingNativeTotal()).to.be.gt(0n);
-    expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(total);
-  });
-
+  // C5: the completion buy only marks Pending (no DEX, router-finalize or adapter call); anyone then
+  // calls graduate(), which routes 2.2% to the protocol, credits 19.8% to the creator's pull balance
+  // and sends 78% to the pool through the native graduation adapter (LP to the permanent locker).
   it("auto-finalize: completion buy triggers graduation; adds liquidity; burns unsold; transfers creatorReserve; pays creator; enables trading", async () => {
-    const { campaign, token, creator, alice, router, treasuryRouter, treasuryVault, monthlyLeagueReceiver, creatorVault, recruiterVault, communityVault, protocolVault } = await loadFixture(createLowTargetCampaignFixture);
+    const { campaign, token, factory, creator, alice, bob, graduationAdapter, permanentLpLocker, treasuryRouter, treasuryVault, monthlyLeagueReceiver, creatorVault, recruiterVault, communityVault, protocolVault } = await loadFixture(createLowTargetCampaignFixture);
 
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
     const base = await campaign.basePrice();
     const slope = await campaign.priceSlope();
     const feeBps = await campaign.protocolFeeBps();
-    const { fee: tradeFee } = quoteBuyExactTokens(
+    expect(await campaign.currentTradeFeeBps()).to.eq(feeBps);
+    const { costNoFee, fee: tradeFee } = quoteBuyExactTokens(
       BigInt(await campaign.sold()),
       BigInt(curveSupply),
       BigInt(base),
       BigInt(slope),
       BigInt(feeBps)
     );
+    expect(totalBuy).to.eq(costNoFee + tradeFee);
     const routeVaults = { treasuryVault, monthlyLeagueReceiver, creatorVault, recruiterVault, communityVault, protocolVault };
     const routeBefore = await captureRouteBalances(routeVaults);
     const tradeRoute = await treasuryRouter.previewRoute(tradeFee, 0, await campaign.tradeRouteProfile());
-    const ownerAddr = await creator.getAddress();
-    const creatorBalBefore = await getBalance(ownerAddr);
+    const creatorAddr = await creator.getAddress();
 
-    const tx = await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
-    const receipt = await tx.wait();
-
+    const buyTx = await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
     expect(await campaign.sold()).to.eq(curveSupply);
-    await expect(tx).to.emit(campaign, "CampaignFinalized");
-    await expect(tx).to.emit(router, "LiquidityAdded");
-    await expect(tx).to.emit(router, "LiquidityAdded").withArgs(await token.getAddress(), anyValue, anyValue, "0x000000000000000000000000000000000000dEaD");
+    const lastPrice = await campaign.currentPrice();
+    // sold out: trigger 1, no oracle target
+    await expect(buyTx).to.emit(campaign, "GraduationPending").withArgs(await alice.getAddress(), 1, costNoFee, 0n, lastPrice);
+    await expect(buyTx).to.not.emit(campaign, "Graduated");
+    expect(await campaign.graduationPending()).to.eq(true);
+    expect(await campaign.launched()).to.eq(false);
+    expect(await token.tradingEnabled()).to.eq(false);
+    expect(await graduationAdapter.calls()).to.eq(0n);
+
+    // exact C5 split of the frozen raise
+    const R = costNoFee;
+    const protocolShare = (R * 220n) / 10_000n;
+    const creatorShare = (R * 1980n) / 10_000n;
+    const poolNative = R - protocolShare - creatorShare;
+    const memeTarget = (poolNative * 10n ** 18n) / lastPrice;
+    const totalSupply = await campaign.totalSupply();
+    const creatorReserve = await campaign.creatorReserve();
+    const budget = totalSupply - creatorReserve - curveSupply;
+    expect(budget).to.eq(await campaign.liquiditySupply());
+    const burned = budget - memeTarget;
+
+    const tx = await campaign.connect(bob).graduate();
+    const state = await campaign.getGraduationState();
+    await expect(tx)
+      .to.emit(campaign, "Graduated")
+      .withArgs(state.dexPair, R, protocolShare, creatorShare, poolNative, memeTarget, burned, lastPrice, lastPrice, false);
+    await expect(tx).to.emit(factory, "CampaignGraduated").withArgs(await campaign.getAddress(), creatorAddr, state.dexPair, await permanentLpLocker.getAddress());
     expect(await campaign.launched()).to.eq(true);
     expect(await token.tradingEnabled()).to.eq(true);
+    expect(await graduationAdapter.lastValue()).to.eq(poolNative);
+
+    // trade fee + protocol graduation share, routed to the exact destinations
+    const finalizeRoute = await treasuryRouter.previewRoute(protocolShare, 1, await campaign.finalizeRouteProfile());
+    await expectRouteBalanceDelta(routeBefore, routeVaults, addRouteAmounts(tradeRoute, finalizeRoute));
+
+    // the campaign keeps exactly the creator's pull balance; the creator pulls it
+    expect(await campaign.pendingCreatorGraduation()).to.eq(creatorShare);
+    expect(await getBalance(await campaign.getAddress())).to.eq(creatorShare);
+    await expect(campaign.connect(creator).claimCreatorGraduation(creatorAddr, false)).to.changeEtherBalances(
+      [campaign, creator],
+      [-creatorShare, creatorShare]
+    );
     expect(await getBalance(await campaign.getAddress())).to.eq(0n);
 
-    const ev = receipt!.logs
-      .map((l: any) => {
-        try {
-          return campaign.interface.parseLog(l);
-        } catch {
-          return null;
-        }
-      })
-      .find((p: any) => p && p.name === "CampaignFinalized");
+    expect(await token.balanceOf(creatorAddr)).to.eq(creatorReserve);
+    expect(await token.balanceOf(await campaign.getAddress())).to.eq(0n);
+    expect(await token.balanceOf(state.dexPair)).to.eq(memeTarget);
 
-    expect(ev).to.not.eq(undefined);
-    const protocolFee = BigInt(ev!.args.protocolFee.toString());
-    const finalizeRoute = await treasuryRouter.previewRoute(protocolFee, 1, await campaign.finalizeRouteProfile());
-    await expectRouteBalanceDelta(routeBefore, routeVaults, addRouteAmounts(tradeRoute, finalizeRoute));
-    const creatorBalAfter = await getBalance(ownerAddr);
-    expect(creatorBalAfter).to.be.gt(creatorBalBefore);
-
-    const creatorReserve = await campaign.creatorReserve();
-    expect(await token.balanceOf(ownerAddr)).to.be.gte(creatorReserve);
-
-    const state = await campaign.getGraduationState();
-    expect(state[0]).to.not.eq(ethers.ZeroAddress);
-    expect(state[1]).to.eq(await campaign.currentPrice());
-    expect(state[2]).to.eq(state[1]);
-    expect(ev!.args.finalCurvePrice).to.eq(state[1]);
-    expect(ev!.args.initialDexPrice).to.eq(state[2]);
-
-    const totalSupply = await campaign.totalSupply();
-    const soldAtFinalize = await campaign.sold();
-    const expectedUnsoldBurn = curveSupply - soldAtFinalize;
-    const expectedUnusedLpBurn = state[7];
-    expect(state[6]).to.eq(expectedUnsoldBurn);
-    expect(expectedUnusedLpBurn).to.be.gt(0n);
-    expect(await token.totalSupply()).to.eq(totalSupply - expectedUnsoldBurn - expectedUnusedLpBurn);
-    expect(state[8]).to.eq(await token.totalSupply());
+    expect(state.dexPair).to.not.eq(ethers.ZeroAddress);
+    expect(state.finalCurvePrice).to.eq(lastPrice);
+    expect(state.initialDexPrice).to.eq(lastPrice);
+    expect(state.graduatedLiquidityTokens).to.eq(memeTarget);
+    expect(state.graduatedLiquidityBnb).to.eq(poolNative);
+    expect(state.burnedUnsoldTokens).to.eq(burned);
+    expect(state.burnedUnusedLpTokens).to.eq(0n);
+    expect(await token.totalSupply()).to.eq(totalSupply - burned);
+    expect(state.postBurnTotalSupply).to.eq(await token.totalSupply());
   });
 
   it("permissionless graduation: rejects router liquidity that opens outside the curve price tolerance", async () => {
-    const { owner, creator, alice } = await deployCoreFixture();
+    const { campaign, alice, priceFeed, graduationAdapter } = await loadFixture(createCampaignFixture);
 
-    const TopazFactory = await ethers.getContractFactory("MockTopazFactory");
-    const topazFactory = await TopazFactory.deploy();
-    await topazFactory.waitForDeployment();
-
-    const DriftRouter = await ethers.getContractFactory("MockDriftRouter");
-    const driftRouter = await DriftRouter.deploy(await topazFactory.getAddress(), await owner.getAddress());
-    await driftRouter.waitForDeployment();
-
-    const { priceFeed, graduationOracle } = await deployTestOracle();
-    const campaign = await deployDirectCampaign(
-      await directInitParams({
-        creator: await creator.getAddress(),
-        owner: await owner.getAddress(),
-        router: await driftRouter.getAddress(),
-        graduationOracle: await graduationOracle.getAddress(),
-        feeRecipient: await owner.getAddress(),
-        leagueReceiver: await owner.getAddress(),
-        basePrice: ethers.parseEther("0.005"),
-        priceSlope: 10n ** 9n,
-        graduationTarget: ethers.parseEther("2"),
-        firstBuyTokens: 0n,
-        firstBuyMaxCost: 0n,
-        feeChoice: 1,
-        feeCreatorPct: 0,
-      })
-    );
-
-    const oneToken = ethers.parseUnits("1", 18);
-    const quote = await campaign.quoteBuyExactTokens(oneToken);
-    await campaign.connect(alice).buyExactTokens(oneToken, quote, { value: quote });
+    const amount = ethers.parseUnits("20", 18);
+    const quote = await campaign.quoteBuyExactTokens(amount);
+    await campaign.connect(alice).buyExactTokens(amount, quote, { value: quote });
+    expect(await campaign.graduationPending()).to.eq(false);
     await makeGraduationEligibleByOracle(campaign, priceFeed);
 
-    await expect(campaign.connect(alice).graduateIfEligible(0, 0)).to.be.revertedWithCustomError(campaign, "DexPriceDrift");
+    // the pool opens 51 bps below the curve price (band is 50 bps): graduation reverts, nothing moves
+    await graduationAdapter.setBehaviour(false, false, 0, 0, 0, 51, true);
+    await expect(campaign.connect(alice).graduate()).to.be.revertedWithCustomError(campaign, "StartPriceOutOfBand");
+    expect(await campaign.launched()).to.eq(false);
+    expect(await campaign.graduationPending()).to.eq(false);
+
+    // within the band it graduates, permissionlessly
+    await graduationAdapter.setBehaviour(false, false, 0, 0, 0, 50, true);
+    await expect(campaign.connect(alice).graduate()).to.emit(campaign, "Graduated");
+    expect(await campaign.launched()).to.eq(true);
   });
 
   it("auto-finalize: reaching oracle USD threshold (without selling out) finalizes inside buy", async () => {
-    const { campaign, token, alice, router } = await loadFixture(createLowTargetCampaignFixture);
+    const { campaign, token, alice, bob, graduationAdapter } = await loadFixture(createLowTargetCampaignFixture);
 
     const curveSupply = await campaign.curveSupply();
-    let amountOut = ethers.parseEther("1");
-    while (amountOut * 2n < curveSupply) {
-      const totalBuy = await campaign.quoteBuyExactTokens(amountOut);
-      const txTry = await campaign.connect(alice).buyExactTokens(amountOut, totalBuy, { value: totalBuy });
-      const launched = await campaign.launched();
-      if (launched) {
-        await expect(txTry).to.emit(campaign, "CampaignFinalized");
-        await expect(txTry).to.emit(router, "LiquidityAdded");
-        expect(await token.tradingEnabled()).to.eq(true);
-        expect(await campaign.sold()).to.eq(amountOut);
-        expect(await campaign.sold()).to.be.lt(curveSupply);
-        return;
-      }
-      await token.connect(alice).approve(await campaign.getAddress(), amountOut);
-      await campaign.connect(alice).sellExactTokens(amountOut, 0n);
-      amountOut = amountOut * 2n;
-    }
+    const amountOut = ethers.parseEther("1");
+    const totalBuy = await campaign.quoteBuyExactTokens(amountOut);
+    const tx = await campaign.connect(alice).buyExactTokens(amountOut, totalBuy, { value: totalBuy });
 
-    throw new Error("Failed to trigger oracle graduation threshold without selling out curve");
+    // USD target reached inside the buy: trigger 0, Pending in the same transaction, curve not sold out
+    await expect(tx).to.emit(campaign, "GraduationPending");
+    expect(await campaign.graduationPending()).to.eq(true);
+    expect(await campaign.pendingTrigger()).to.eq(0);
+    expect(await campaign.sold()).to.eq(amountOut);
+    expect(await campaign.sold()).to.be.lt(curveSupply);
+    expect(await graduationAdapter.calls()).to.eq(0n);
+
+    await expect(campaign.connect(bob).graduate()).to.emit(campaign, "Graduated");
+    expect(await campaign.launched()).to.eq(true);
+    expect(await token.tradingEnabled()).to.eq(true);
+    expect(await campaign.sold()).to.eq(amountOut);
   });
 
   it("price-driven graduation can be triggered permissionlessly after the oracle target falls", async () => {
-    const { factory, creator, alice, priceFeed } = await deployCoreFixture();
-
-    await factory.connect(creator).createCampaign(baseCampaignRequest({ graduationTarget: ethers.parseEther("100") }) as any);
-    const info = await factory.getCampaign(0n);
-    const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
+    const { campaign, alice, priceFeed } = await loadFixture(createCampaignFixture);
 
     const amountOut = ethers.parseEther("10");
     const totalBuy = await campaign.quoteBuyExactTokens(amountOut);
     await campaign.connect(alice).buyExactTokens(amountOut, totalBuy, { value: totalBuy });
     expect(await campaign.launched()).to.eq(false);
+    expect(await campaign.graduationPending()).to.eq(false);
 
+    const target = await campaign.graduationTarget();
     const netRaised = await campaign.netRaisedWei();
-    const bumpedPrice = (ethers.parseEther("100") * ethers.parseUnits("1", 8) + netRaised - 1n) / netRaised;
+    expect(netRaised).to.be.lt(await campaign.graduationNativeTarget());
+    const bumpedPrice = (target * ethers.parseUnits("1", 8) + netRaised - 1n) / netRaised;
     const now = await latestTimestamp();
     await priceFeed.setRoundData(2n, bumpedPrice, now, now, 2n);
+    expect(await campaign.graduationNativeTarget()).to.be.lte(netRaised);
 
-    await expect(campaign.connect(alice).graduateIfEligible(0, 0)).to.emit(campaign, "CampaignFinalized");
+    await expect(campaign.connect(alice).graduate())
+      .to.emit(campaign, "GraduationPending")
+      .and.to.emit(campaign, "Graduated");
     expect(await campaign.launched()).to.eq(true);
   });
 
   it("permissionless graduation rejects callers while oracle threshold is not met", async () => {
     const { campaign, alice } = await loadFixture(createCampaignFixture);
 
-    await expect(campaign.connect(alice).graduateIfEligible(0, 0)).to.be.revertedWithCustomError(campaign, "ThresholdNotMet");
+    await expect(campaign.connect(alice).graduate()).to.be.revertedWithCustomError(campaign, "GraduationNotDue");
+    expect(await campaign.graduationPending()).to.eq(false);
   });
 
   it("auto-finalize: succeeds even if Topaz volatile pool is pre-created (empty)", async () => {
-    const { campaign, token, alice, router, v2factory } = await loadFixture(createLowTargetCampaignFixture);
+    const { campaign, token, alice, router, v2factory, permanentLpLocker } = await loadFixture(createLowTargetCampaignFixture);
 
     const Pool = await ethers.getContractFactory("MockTopazPool");
     const pool = await Pool.deploy();
@@ -610,13 +427,13 @@ describe("LaunchCampaign", function () {
 
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
-    const tx = await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    await expect(campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy })).to.emit(campaign, "GraduationPending");
+    await expect(campaign.connect(alice).graduate()).to.emit(campaign, "Graduated");
 
-    await expect(tx).to.emit(campaign, "CampaignFinalized");
-    await expect(tx).to.emit(router, "LiquidityAdded");
     expect(await token.tradingEnabled()).to.eq(true);
     const state = await campaign.getGraduationState();
     expect(state[0]).to.eq(await pool.getAddress());
+    expect(await permanentLpLocker.registeredLpToken(await pool.getAddress())).to.eq(true);
   });
 
   it("post-finalize: trading restriction lifted; buys/sells revert", async () => {
@@ -626,8 +443,16 @@ describe("LaunchCampaign", function () {
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
     await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
 
+    // Pending: the curve is frozen and the token is not yet transferable
+    await expect(campaign.connect(alice).buyExactTokens(1n, 0n, { value: 0n })).to.be.revertedWithCustomError(campaign, "GraduationIsPending");
+    await expect(campaign.connect(alice).sellExactTokens(1n, 0n)).to.be.revertedWithCustomError(campaign, "GraduationIsPending");
+    await expect(token.connect(alice).transfer(await bob.getAddress(), 1n)).to.be.reverted;
+
+    await campaign.connect(bob).graduate();
+
     await expect(campaign.connect(alice).buyExactTokens(1n, 0n, { value: 0n })).to.be.revertedWithCustomError(campaign, "Finalized");
     await expect(campaign.connect(alice).sellExactTokens(1n, 0n)).to.be.revertedWithCustomError(campaign, "Finalized");
+    await expect(campaign.connect(alice).graduate()).to.be.revertedWithCustomError(campaign, "Finalized");
 
     await token.connect(alice).transfer(await bob.getAddress(), ethers.parseEther("1"));
     expect(await token.balanceOf(await bob.getAddress())).to.eq(ethers.parseEther("1"));

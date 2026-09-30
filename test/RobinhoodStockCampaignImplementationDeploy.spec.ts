@@ -6,6 +6,8 @@ import {
   readFactoryReadiness,
   stockImplementationBatch,
 } from "../scripts/deploy-robinhood-stock-campaign-implementation";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
+import { deployEvmGenTreasuryDoubles, wireFactoryForCreate } from "./helpers/legacy-C";
 
 const FEE = 3000;
 
@@ -31,12 +33,11 @@ async function fixture() {
     await v3Factory.getAddress(), await positionManager.getAddress(), await weth.getAddress(), FEE,
   );
   const campaignImplementation = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
-  const treasury = await (await ethers.getContractFactory("MockPhase1TreasuryRouter")).deploy();
+  // The generation registers each coin's fee choice on the router's creator vault at create.
+  const { router: treasury, vault: creatorVault } = await deployEvmGenTreasuryDoubles();
   const nativeFeed = await freshFeed("3000");
   const graduationOracle = await (await ethers.getContractFactory("GraduationOracle")).deploy(await nativeFeed.getAddress(), 30 * 24 * 60 * 60);
-  const factory = await (await ethers.getContractFactory("LaunchFactory")).deploy(
-    await nativeAdapter.getAddress(), await treasury.getAddress(), await campaignImplementation.getAddress(), await graduationOracle.getAddress(),
-  );
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await nativeAdapter.getAddress(), await treasury.getAddress(), await campaignImplementation.getAddress(), await graduationOracle.getAddress()] })).factory;
   await factory.setRouteAuthority(await routeSigner.getAddress());
   const locker = await factory.permanentLpLocker();
   const stockAdapter = await (await ethers.getContractFactory("RobinhoodStockTokenGraduationAdapter")).deploy(
@@ -44,7 +45,7 @@ async function fixture() {
   );
   await stockAdapter.setCampaignFactoryOnce(await factory.getAddress());
   await factory.setStockGraduationAdapter(await stockAdapter.getAddress());
-  return { owner, factory, stockAdapter };
+  return { owner, factory, stockAdapter, nativeAdapter, creatorVault };
 }
 
 describe("Robinhood stock campaign implementation deployment", function () {
@@ -75,15 +76,14 @@ describe("Robinhood stock campaign implementation deployment", function () {
   });
 
   it("refuses a factory that already holds a campaign, and the setter itself reverts FactoryLocked -- why R5 runs before step H", async function () {
-    const { owner, factory } = await fixture();
+    const { owner, factory, nativeAdapter, creatorVault } = await fixture();
     const [, , creator] = await ethers.getSigners();
     const implementation = await deployStockCampaignImplementation();
 
-    // The mainnet mistake, replayed: open the doors first and let one native campaign in.
-    await factory.setConfig({
-      totalSupply: ethers.parseEther("1000000000"), curveBps: 8400, liquidityTokenBps: 1400,
-      basePrice: 1_000_000_000n, priceSlope: 850n, graduationTarget: ethers.parseEther("60"), liquidityBps: 3300,
-    });
+    // The mainnet mistake, replayed: open the doors first and let one native campaign in. The factory's
+    // own default config (70/28, base 1e9, slope 850 on V3) is the production curve; the old 84/14 one
+    // is refused by setConfig (SupplyBoundBroken). The generation also needs its create-time wiring.
+    await wireFactoryForCreate(factory, creatorVault, await nativeAdapter.getAddress());
     await factory.setRequireRouteAuthorization(false);
     await factory.setRequireAuthorizedTrading(false);
     await factory.enableLive();

@@ -2,47 +2,29 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import fs from "fs";
 import path from "path";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const CREATOR_SHARE_BPS = 8000n;
 const BPS = 10000n;
-const V3_FEE = 3000;
 const LIVE_BNB_FACTORY_GENERATION = 3n;
 const LIVE_BNB_CAMPAIGN_GENERATION = 2n;
+// The previous (6B) generation, 4/3, was replaced in place; its source is recoverable from c676ed7f.
+const PREVIOUS_FACTORY_GENERATION = 4n;
+const PREVIOUS_CAMPAIGN_GENERATION = 3n;
 
 async function latestTimestamp() {
   const block = await ethers.provider.getBlock("latest");
   return BigInt(block!.timestamp);
 }
 
-async function deployV3Adapter() {
-  const WETH = await ethers.getContractFactory("MockWETH9");
-  const weth = await WETH.deploy();
-  await weth.waitForDeployment();
-
-  const V3Factory = await ethers.getContractFactory("MockUniswapV3Factory");
-  const v3Factory = await V3Factory.deploy();
-  await v3Factory.waitForDeployment();
-
-  const PositionManager = await ethers.getContractFactory("MockUniswapV3PositionManager");
-  const positionManager = await PositionManager.deploy(await v3Factory.getAddress(), await weth.getAddress());
-  await positionManager.waitForDeployment();
-
-  const SwapRouter = await ethers.getContractFactory("MockUniswapV3SwapRouter");
-  const swapRouter = await SwapRouter.deploy(await v3Factory.getAddress(), await weth.getAddress());
-  await swapRouter.waitForDeployment();
-  await v3Factory.configurePeriphery(await positionManager.getAddress(), await swapRouter.getAddress());
-
-  const Adapter = await ethers.getContractFactory("RobinhoodUniswapV3GraduationAdapter");
-  const adapter = await Adapter.deploy(
-    await v3Factory.getAddress(),
-    await positionManager.getAddress(),
-    await weth.getAddress(),
-    V3_FEE,
-  );
-  await adapter.waitForDeployment();
-  return adapter;
-}
-
+/**
+ * Local source-head stack for the EVM launch generation on BNB: Topaz V2 mocks, TreasuryRouterV4 with the
+ * generation's CreatorRewardsVaultV2, the factory-bound PermanentLpLocker. The native graduation adapter is
+ * the generation's test double (MockGraduationAdapterEvmGen: builds a MEME/WBNB MockTopazPool and mints the LP
+ * to the locker); no in-tree Topaz IGraduationAdapterV2 adapter exists yet, so the pool build itself is not
+ * certified here -- the factory -> locker registration, the 30 bps gate, the permanent lock and the 80/20
+ * harvest are.
+ */
 async function deploySourceHeadTopazStack() {
   const [owner, creator, buyer, weeklySigner, monthlySigner] = await ethers.getSigners();
 
@@ -76,7 +58,7 @@ async function deploySourceHeadTopazStack() {
   await monthly.waitForDeployment();
   await recruiter.waitForDeployment();
 
-  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouterV3");
+  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouterV4");
   const treasuryRouter = await TreasuryRouter.deploy(
     await owner.getAddress(),
     await weekly.getAddress(),
@@ -93,8 +75,15 @@ async function deploySourceHeadTopazStack() {
   const protocolVault = await ProtocolVault.deploy(await owner.getAddress());
   await protocolVault.waitForDeployment();
 
-  const CreatorVault = await ethers.getContractFactory("CreatorRewardsVault");
-  const creatorVault = await CreatorVault.deploy(await owner.getAddress(), await treasuryRouter.getAddress());
+  const CreatorVault = await ethers.getContractFactory("CreatorRewardsVaultV2");
+  const creatorVault = await CreatorVault.deploy(
+    await owner.getAddress(),
+    await treasuryRouter.getAddress(),
+    await wbnb.getAddress(),
+    1, // DEX_TOPAZ_V2
+    await topazFactory.getAddress(),
+    24 * 60 * 60,
+  );
   await creatorVault.waitForDeployment();
 
   await treasuryRouter.setRecruiterRewardsVault(await recruiter.getAddress());
@@ -106,17 +95,25 @@ async function deploySourceHeadTopazStack() {
   const campaignImplementation = await Campaign.deploy();
   await campaignImplementation.waitForDeployment();
 
-  const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await router.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
     await treasuryRouter.getAddress(),
     await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress(),
-  );
+    await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
   const locker = await ethers.getContractAt("PermanentLpLocker", await factory.permanentLpLocker());
   await treasuryRouter.setAuthorizedLpLocker(await locker.getAddress(), true);
-  await router.setFeeCollector(await locker.getAddress());
+  await creatorVault.setFactoryOnce(await factory.getAddress());
+
+  const graduationAdapter = await (await ethers.getContractFactory("MockGraduationAdapterEvmGen")).deploy(
+    await topazFactory.getAddress(),
+    await wbnb.getAddress(),
+  );
+  await graduationAdapter.waitForDeployment();
+  await graduationAdapter.setLocker(await locker.getAddress());
+  await factory.setNativeGraduationAdapter(await graduationAdapter.getAddress());
+  const tokenDeployer = await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy();
+  await tokenDeployer.waitForDeployment();
+  await factory.setLaunchTokenDeployer(await tokenDeployer.getAddress());
 
   await factory.setRequireRouteAuthorization(false);
   await factory.setRequireAuthorizedTrading(false);
@@ -127,11 +124,6 @@ async function deploySourceHeadTopazStack() {
     basePrice: 10n ** 12n,
     priceSlope: 10n ** 9n,
     graduationTarget: 1n,
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
-    liquidityBps: 8000,
   });
 
   return {
@@ -150,11 +142,37 @@ async function deploySourceHeadTopazStack() {
     recruiter,
     factory,
     locker,
+    graduationAdapter,
   };
 }
 
+const CERT_REQUEST = {
+  name: "CertToken",
+  symbol: "CERT",
+  logoURI: "ipfs://cert",
+  xAccount: "",
+  website: "",
+  extraLink: "",
+  graduationTarget: 0n,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
+};
+
+/** Buys the whole remaining curve (sold-out trigger): the crossing buy only marks Pending (C5). */
+async function sellOut(campaign: any, buyer: any) {
+  const remaining = (await campaign.curveSupply()) - (await campaign.sold());
+  const crossingCost = await campaign.quoteBuyExactTokens(remaining);
+  const tx = await campaign.connect(buyer).buyExactTokens(remaining, crossingCost, { value: crossingCost });
+  await expect(tx).to.emit(campaign, "GraduationPending");
+  expect(await campaign.graduationPending()).to.equal(true);
+  expect(await campaign.launched()).to.equal(false);
+  return tx;
+}
+
 describe("BNB lifecycle certification (Gate D local source-head evidence)", function () {
-  it("LaunchFactory 4/3 + Topaz V2 + TreasuryRouterV3 + kind 1 + 30 bps; not live BNB 3/2", async function () {
+  it("LaunchFactory 6/5 + Topaz V2 + TreasuryRouterV4 + kind 1 + 30 bps; not live BNB 3/2 nor the replaced 4/3", async function () {
     this.timeout(180_000);
     const stack = await deploySourceHeadTopazStack();
     const {
@@ -169,57 +187,52 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
       creatorVault,
       factory,
       locker,
+      graduationAdapter,
     } = stack;
 
-    expect(await factory.FACTORY_GENERATION()).to.equal(4n);
-    expect(await factory.CAMPAIGN_GENERATION()).to.equal(3n);
+    expect(await factory.FACTORY_GENERATION()).to.equal(6n);
+    expect(await factory.CAMPAIGN_GENERATION()).to.equal(5n);
     expect(await factory.FACTORY_GENERATION()).to.not.equal(LIVE_BNB_FACTORY_GENERATION);
     expect(await factory.CAMPAIGN_GENERATION()).to.not.equal(LIVE_BNB_CAMPAIGN_GENERATION);
+    expect(await factory.FACTORY_GENERATION()).to.not.equal(PREVIOUS_FACTORY_GENERATION);
+    expect(await factory.CAMPAIGN_GENERATION()).to.not.equal(PREVIOUS_CAMPAIGN_GENERATION);
     expect(await factory.liquidityKind()).to.equal(1n);
     expect(await locker.REQUIRED_POOL_FEE_BPS()).to.equal(30n);
     expect(await locker.CREATOR_FEE_BPS()).to.equal(8000n);
     expect(await locker.PROTOCOL_FEE_BPS()).to.equal(2000n);
+    expect(await locker.admin()).to.equal(await factory.getAddress());
     expect(await locker.topazFactory()).to.equal(await topazFactory.getAddress());
     expect(await topazFactory.feeBps()).to.equal(30n);
     expect(await factory.feeRecipient()).to.equal(await treasuryRouter.getAddress());
+    expect(await factory.leagueReceiver()).to.equal(await treasuryRouter.getAddress());
     expect(await treasuryRouter.creatorRewardsVault()).to.equal(await creatorVault.getAddress());
     expect(locker.interface.fragments.filter((fragment: { name?: string }) => ["withdraw", "unlock", "migrate", "release"].includes(String(fragment.name || "")))).to.deep.equal([]);
 
-    const v3Adapter = await deployV3Adapter();
-    await expect(
-      factory.connect(owner).setCoreRouting(await v3Adapter.getAddress(), await treasuryRouter.getAddress()),
-    ).to.be.revertedWithCustomError(factory, "LiquidityKindMismatch");
+    // The DEX router, fee recipient and league receiver are fixed at construction: a V3 router can never be
+    // swapped in behind a Topaz V2 locker (setCoreRouting and its LiquidityKindMismatch path are gone).
+    expect(factory.interface.getFunction("setCoreRouting")).to.equal(null);
 
     await factory.enableLive();
 
-    const createTx = await factory.connect(creator).createCampaign({
-      name: "CertToken",
-      symbol: "CERT",
-      logoURI: "ipfs://cert",
-      xAccount: "",
-      website: "",
-      extraLink: "",
-      graduationTarget: 0n,
-      firstBuyTokens: 0n,
-      firstBuyMaxCost: 0n,
-      feeChoice: 1,
-      feeCreatorPct: 0,
-    });
+    const createTx = await factory.connect(creator).createCampaign(CERT_REQUEST);
     const createReceipt = await createTx.wait();
     const created = await factory.getCampaign(0n);
     const campaign = await ethers.getContractAt("LaunchCampaign", created.campaign);
     const token = await ethers.getContractAt("LaunchToken", created.token);
-    expect(await campaign.strictFeeRouting()).to.equal(true);
-    expect(await campaign.lpReceiver()).to.equal(await locker.getAddress());
+    expect(await campaign.graduationAdapter()).to.equal(await graduationAdapter.getAddress());
+    expect(await campaign.feeRecipient()).to.equal(await treasuryRouter.getAddress());
 
-    const curveSupply = await campaign.curveSupply();
-    const remaining = curveSupply - (await campaign.sold());
-    const crossingCost = await campaign.quoteBuyExactTokens(remaining);
-    const graduationTx = await campaign.connect(buyer).buyExactTokens(remaining, crossingCost, { value: crossingCost });
-    await expect(graduationTx).to.emit(treasuryRouter, "RouteExecuted");
+    const pendingTx = await sellOut(campaign, buyer);
+    await expect(pendingTx).to.emit(treasuryRouter, "RouteExecuted");
+    expect(await creatorVault.creatorBalance(created.campaign)).to.be.gt(0n);
+
+    // Anyone completes it.
+    const graduationTx = await campaign.connect(buyer).graduate();
+    await expect(graduationTx).to.emit(campaign, "Graduated");
+    await expect(graduationTx).to.emit(factory, "CampaignGraduated");
     const graduationReceipt = await graduationTx.wait();
     expect(await campaign.launched()).to.equal(true);
-    expect(await creatorVault.pendingCreatorFees(created.campaign)).to.be.gt(0n);
+    expect(await campaign.graduationPending()).to.equal(false);
 
     const state = await campaign.getGraduationState();
     expect(state.dexPair).to.not.equal(ethers.ZeroAddress);
@@ -241,6 +254,12 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
     expect(lpBeforeTrades).to.equal(state.graduatedLiquidityLp);
     expect(lpBeforeTrades).to.be.gt(0n);
     expect(await locker.lockedBalance(state.dexPair)).to.equal(lpBeforeTrades);
+    const info = await locker.poolInfo(state.dexPair);
+    expect(info.registered).to.equal(true);
+    expect(info.campaign).to.equal(created.campaign);
+    expect(info.creatorFeeRecipient).to.equal(await creator.getAddress()); // Keep coin
+    expect(info.memeToken).to.equal(tokenAddr);
+    expect(info.pairedToken).to.equal(wbnbAddr);
 
     await expect(
       locker.connect(owner).recoverUnregisteredToken(state.dexPair, await owner.getAddress(), 1n),
@@ -251,43 +270,25 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
     await expect(
       locker.connect(factorySigner).recoverUnregisteredToken(state.dexPair, await owner.getAddress(), 1n),
     ).to.be.revertedWithCustomError(locker, "RegisteredLpRecoveryBlocked");
+    await ethers.provider.send("hardhat_stopImpersonatingAccount", [await factory.getAddress()]);
 
-    const factoryAddr = await topazFactory.getAddress();
-    const buyRoute = [{ from: wbnbAddr, to: tokenAddr, stable: false, factory: factoryAddr }];
-    const sellRoute = [{ from: tokenAddr, to: wbnbAddr, stable: false, factory: factoryAddr }];
-
-    const buyTx = await router.connect(buyer).swapExactETHForTokens(
-      1n,
-      buyRoute,
-      await buyer.getAddress(),
-      (await latestTimestamp()) + 3600n,
-      { value: ethers.parseEther("0.05") },
-    );
-    const buyReceipt = await buyTx.wait();
-
-    const sellAmount = (await token.balanceOf(await buyer.getAddress())) / 10n;
-    const quotedSell = await router.getAmountsOut(sellAmount, sellRoute);
-    const wbnbNeeded = quotedSell[1];
-    await wbnb.deposit({ value: wbnbNeeded });
-    await wbnb.transfer(await router.getAddress(), wbnbNeeded);
-    await token.connect(buyer).approve(await router.getAddress(), sellAmount);
-    const sellTx = await router.connect(buyer).swapExactTokensForETH(
-      sellAmount,
-      1n,
-      sellRoute,
-      await buyer.getAddress(),
-      (await latestTimestamp()) + 3600n,
-    );
-    const sellReceipt = await sellTx.wait();
+    // LP fees accrue to the locker in both assets (the mock pool is funded directly: the test double builds
+    // the pool without reserves, so there is nothing to swap against).
+    const feeWbnb = ethers.parseEther("0.003");
+    const feeMeme = ethers.parseEther("1");
+    await wbnb.connect(buyer).deposit({ value: feeWbnb });
+    await wbnb.connect(buyer).approve(state.dexPair, feeWbnb);
+    await token.connect(buyer).approve(state.dexPair, feeMeme);
+    const tokenIs0 = token0.toLowerCase() === tokenAddr.toLowerCase();
+    await pool.connect(buyer).fundFees(lockerAddr, tokenIs0 ? feeMeme : feeWbnb, tokenIs0 ? feeWbnb : feeMeme);
 
     const claimable0 = await pool.claimable0(lockerAddr);
     const claimable1 = await pool.claimable1(lockerAddr);
-    expect(claimable0 + claimable1).to.be.gt(0n);
-
-    const tokenIs0 = token0.toLowerCase() === tokenAddr.toLowerCase();
     const claimedToken = tokenIs0 ? claimable0 : claimable1;
     const claimedWbnb = tokenIs0 ? claimable1 : claimable0;
-    // E9 (new locker source): the MEME side is never paid out; the local Topaz mock cannot swap, so it is carried.
+    expect(claimedToken).to.equal(feeMeme);
+    expect(claimedWbnb).to.equal(feeWbnb);
+    // E9: the MEME side is never paid out; the local Topaz mock cannot swap, so it is carried.
     const expectedCreatorToken = 0n;
     const expectedProtocolToken = 0n;
     const expectedCreatorWbnb = (claimedWbnb * CREATOR_SHARE_BPS) / BPS;
@@ -311,28 +312,29 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
     expect(protocolTokenReceived).to.equal(expectedProtocolToken);
     expect(creatorWbnbReceived).to.equal(expectedCreatorWbnb);
     expect(protocolWbnbReceived).to.equal(expectedProtocolWbnb);
+    expect(await locker.carriedMeme(state.dexPair)).to.equal(feeMeme);
     expect(lpAfterHarvest).to.equal(lpBeforeTrades);
     expect(await locker.lockedBalance(state.dexPair)).to.equal(lpBeforeTrades);
 
     const evidence = {
       kind: "bnb-source-head-topaz-v2-lifecycle",
-      claim: "local source-head future BNB generation; not current live BNB",
-      sourceFactoryGeneration: 4,
-      sourceCampaignGeneration: 3,
+      claim: "local source-head EVM launch generation on BNB; not current live BNB",
+      sourceFactoryGeneration: 6,
+      sourceCampaignGeneration: 5,
       liveBnbFactoryGeneration: 3,
       liveBnbCampaignGeneration: 2,
       sourceIsNotLiveBnb: true,
       liquidityKind: 1,
       requiredPoolFeeBps: 30,
-      treasuryRouterKind: "TreasuryRouterV3",
-      rejectedUniswapV3: true,
+      treasuryRouterKind: "TreasuryRouterV4",
+      coreRoutingImmutable: true,
+      graduationAdapter: "MockGraduationAdapterEvmGen (test double; no in-tree Topaz IGraduationAdapterV2 adapter yet)",
       campaign: created.campaign,
       token: created.token,
       creator: created.creator,
       graduatedPool: state.dexPair,
+      pendingTx: (await pendingTx.wait())!.hash,
       graduationTx: graduationReceipt!.hash,
-      buyTx: buyReceipt!.hash,
-      sellTx: sellReceipt!.hash,
       harvestTx: harvestReceipt!.hash,
       lockerLpBalanceBeforeTrades: lpBeforeTrades.toString(),
       lockerLpBalanceAfterHarvest: lpAfterHarvest.toString(),
@@ -342,15 +344,15 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
       creatorWbnbReceived: creatorWbnbReceived.toString(),
       protocolTokenReceived: protocolTokenReceived.toString(),
       protocolWbnbReceived: protocolWbnbReceived.toString(),
-      pendingCreatorTradeFees: (await creatorVault.pendingCreatorFees(created.campaign)).toString(),
+      pendingCreatorTradeFees: (await creatorVault.creatorBalance(created.campaign)).toString(),
       finalCurvePrice: state.finalCurvePrice.toString(),
       initialDexPrice: state.initialDexPrice.toString(),
       createTx: createReceipt!.hash,
       launchFactory: await factory.getAddress(),
       topazRouter: await router.getAddress(),
-      topazPoolFactory: factoryAddr,
+      topazPoolFactory: await topazFactory.getAddress(),
       topazWbnb: wbnbAddr,
-      treasuryRouterV3: await treasuryRouter.getAddress(),
+      treasuryRouterV4: await treasuryRouter.getAddress(),
       creatorRewardsVault: await creatorVault.getAddress(),
     };
 
@@ -369,25 +371,17 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
     expect(await topazFactory.feeBps()).to.equal(100n);
     await factory.enableLive();
 
-    await factory.connect(creator).createCampaign({
-      name: "BadFee",
-      symbol: "BADF",
-      logoURI: "ipfs://bad-fee",
-      xAccount: "",
-      website: "",
-      extraLink: "",
-      graduationTarget: 0n,
-      firstBuyTokens: 0n,
-      firstBuyMaxCost: 0n,
-      feeChoice: 1,
-      feeCreatorPct: 0,
-    });
+    await factory.connect(creator).createCampaign({ ...CERT_REQUEST, name: "BadFee", symbol: "BADF", logoURI: "ipfs://bad-fee" });
     const created = await factory.getCampaign(0n);
     const campaign = await ethers.getContractAt("LaunchCampaign", created.campaign);
-    const remaining = (await campaign.curveSupply()) - (await campaign.sold());
-    const crossingCost = await campaign.quoteBuyExactTokens(remaining);
-    await expect(
-      campaign.connect(buyer).buyExactTokens(remaining, crossingCost, { value: crossingCost }),
-    ).to.be.revertedWithCustomError(locker, "InvalidTradingFee");
+
+    // The crossing buy no longer graduates inline, so it lands; graduation is what refuses the pool,
+    // and the whole graduate() reverts, leaving the campaign Pending for a retry.
+    await sellOut(campaign, buyer);
+    await expect(campaign.connect(buyer).graduate()).to.be.revertedWithCustomError(locker, "InvalidTradingFee");
+    expect(await campaign.graduationPending()).to.equal(true);
+    expect(await campaign.launched()).to.equal(false);
+    expect(await factory.campaignGraduationRecorded(created.campaign)).to.equal(false);
+    expect((await campaign.getGraduationState()).dexPair).to.equal(ethers.ZeroAddress);
   });
 });

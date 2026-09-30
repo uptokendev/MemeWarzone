@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ethers, network } from "hardhat";
 import { resolveRobinhoodRouteAuthority } from "./robinhoodRouteAuthority";
+import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
 
 const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
 const LOCAL_CHAIN_ID = 31337;
@@ -182,12 +183,10 @@ async function main() {
   await campaignImplementation.waitForDeployment();
 
   const LaunchFactory = await ethers.getContractFactory("LaunchFactory");
-  const launchFactory = await LaunchFactory.deploy(
-    await adapter.getAddress(),
+  const launchFactory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await adapter.getAddress(),
     await treasuryRouter.getAddress(),
     await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress(),
-  );
+    await graduationOracle.getAddress()] })).factory;
   await launchFactory.waitForDeployment();
 
   const lockerAddress = await launchFactory.permanentLpLocker();

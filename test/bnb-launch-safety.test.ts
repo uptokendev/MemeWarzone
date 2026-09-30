@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers, network } from "hardhat";
 import { deployRoutedLaunchFactory } from "./helpers/deployRouting";
+import { signCreate } from "./helpers/legacy-B2";
 
 async function increaseTime(seconds: number) {
   await network.provider.send("evm_increaseTime", [seconds]);
@@ -24,10 +25,6 @@ function campaignRequest(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function signerHelpers() {
-  return import("../frontend/api/dev-fix/routeAuthorizationSigner.js");
-}
-
 async function deploySafetyFixture() {
   const [owner, creator, buyer, routeAuthority, attacker] = await ethers.getSigners();
   const CreatorRegistry = await ethers.getContractFactory("CreatorRegistry");
@@ -41,18 +38,15 @@ async function deploySafetyFixture() {
   await creatorRegistry.setLaunchRecorder(await factory.getAddress(), true);
   await factory.setRegistries(await creatorRegistry.getAddress(), await riskRegistry.getAddress());
   await factory.setRouteAuthority(routeAuthority.address);
+  // Generation 6 config (6 fields). The fixture oracle is $1/native, so the $1 target maps to 1 native and
+  // the whole curve raises ~1.25 native (C5 rule 3 refuses a target above 95% of that).
   await factory.setConfig({
     totalSupply: ethers.parseEther("1000"),
     curveBps: 5000,
     liquidityTokenBps: 4000,
-    basePrice: ethers.parseEther("0.00006"),
-    priceSlope: 1n,
-    graduationTarget: ethers.parseEther("100"),
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
-    liquidityBps: 8000,
+    basePrice: 10n ** 12n,
+    priceSlope: 10n ** 13n,
+    graduationTarget: ethers.parseEther("1"),
   });
   await factory.enableLive();
 
@@ -68,36 +62,12 @@ async function createCampaign(factory: any, creator: any, overrides: Record<stri
   return { info, campaign, token };
 }
 
+// Create authorizations are signed with the generation-6 11-field CampaignRequest layout. The backend
+// helper still hashes the old 7-field request (live mainnet factories are the old generation); see
+// RouteAuthorization.backend.integration.spec.ts for that gap.
 async function signCreateRoute(factory: any, creator: string, signer: any, req: ReturnType<typeof campaignRequest>, tradeProfile: number, finalizeProfile: number, deadline: bigint) {
-  const { signCreateAuthorization } = await signerHelpers();
-  const { chainId } = await ethers.provider.getNetwork();
-  return signCreateAuthorization({
-    signer,
-    chainId,
-    factoryAddress: await factory.getAddress(),
-    creator,
-    request: req,
-    tradeRouteProfileId: tradeProfile,
-    finalizeRouteProfileId: finalizeProfile,
-    deadline,
-  });
-}
-
-async function signTradeRoute(campaign: any, actor: string, signer: any, routeProfile: number, action: number, amount: bigint, limit: bigint, deadline: bigint, chainIdOverride?: bigint) {
-  const { signTradeAuthorization } = await signerHelpers();
-  const networkInfo = await ethers.provider.getNetwork();
-  const chainId = chainIdOverride ?? networkInfo.chainId;
-  return signTradeAuthorization({
-    signer,
-    chainId,
-    campaignAddress: await campaign.getAddress(),
-    actor,
-    routeProfileId: routeProfile,
-    action,
-    amount,
-    limit,
-    deadline,
-  });
+  const auth = await signCreate(signer, await factory.getAddress(), creator, req as any, [tradeProfile, finalizeProfile], Number(deadline));
+  return auth.signature;
 }
 
 describe("BNB launch safety simulations", function () {
@@ -144,52 +114,8 @@ describe("BNB launch safety simulations", function () {
     await expect(campaign.connect(buyer).buyExactTokens(amountOut, maxCost, { value: maxCost })).to.be.revertedWithCustomError(campaign, "AuthorizedTradingRequired");
   });
 
-  it("enforces protected launch blocks through authorized routes and early buy caps", async function () {
-    const { creator, buyer, routeAuthority, factory } = await deploySafetyFixture();
-    const maxBuyWei = ethers.parseEther("0.0001");
-    const maxWalletWei = ethers.parseEther("0.0001");
-    await factory.setLaunchProtectionConfig(8, maxBuyWei, maxWalletWei);
-
-    const { campaign } = await createCampaign(factory, creator);
-    expect(await campaign.launchProtectionEndBlock()).to.be.gt(0n);
-    expect(await campaign.launchProtectionMaxBuyWei()).to.equal(maxBuyWei);
-    expect(await campaign.launchProtectionMaxWalletWei()).to.equal(maxWalletWei);
-
-    const amountOut = ethers.parseEther("1");
-    const maxCost = await campaign.quoteBuyExactTokens(amountOut);
-    const latestBlock = await ethers.provider.getBlock("latest");
-    const deadline = BigInt((latestBlock?.timestamp ?? 0) + 3600);
-    const routeProfile = 1;
-
-    await expect(campaign.connect(buyer).buyExactTokens(amountOut, maxCost, { value: maxCost })).to.be.revertedWithCustomError(campaign, "AuthorizedTradingRequired");
-
-    const firstSignature = await signTradeRoute(campaign, buyer.address, routeAuthority, routeProfile, 0, amountOut, maxCost, deadline);
-    await expect(campaign.connect(buyer).buyExactTokensAuthorized(amountOut, maxCost, routeProfile, deadline, firstSignature, { value: maxCost })).to.emit(campaign, "TokensPurchased");
-
-    const capBreakerAmount = ethers.parseEther("3");
-    const capBreakerCost = await campaign.quoteBuyExactTokens(capBreakerAmount);
-    const capBreakerSignature = await signTradeRoute(campaign, buyer.address, routeAuthority, routeProfile, 0, capBreakerAmount, capBreakerCost, deadline);
-    await expect(
-      campaign.connect(buyer).buyExactTokensAuthorized(capBreakerAmount, capBreakerCost, routeProfile, deadline, capBreakerSignature, { value: capBreakerCost }),
-    ).to.be.revertedWithCustomError(campaign, "LaunchProtectionBuyLimit");
-  });
-
-  it("blocks restricted wallets, buy/sell pauses, and creator buy lock/cap paths", async function () {
+  it("blocks restricted wallets, buy/sell pauses, escrows creator buys and enforces the creator buy cap", async function () {
     const { owner, creator, buyer, factory, riskRegistry } = await deploySafetyFixture();
-
-    await factory.connect(owner).setConfig({
-      totalSupply: ethers.parseEther("1000"),
-      curveBps: 5000,
-      liquidityTokenBps: 4000,
-      basePrice: ethers.parseEther("0.001"),
-      priceSlope: 1n,
-      graduationTarget: ethers.parseEther("100"),
-      firstBuyTokens: 0n,
-      firstBuyMaxCost: 0n,
-      feeChoice: 1,
-      feeCreatorPct: 0,
-      liquidityBps: 8000,
-    });
 
     const { campaign, token } = await createCampaign(factory, creator);
     const amountOut = ethers.parseEther("1");
@@ -210,11 +136,17 @@ describe("BNB launch safety simulations", function () {
     await expect(campaign.connect(buyer).sellExactTokens(amountOut, 0)).to.be.revertedWithCustomError(campaign, "SellsPaused");
 
     await factory.setCampaignPauses(await campaign.getAddress(), false, false, false, false);
-    const creatorLockedCost = await campaign.quoteBuyExactTokens(amountOut);
-    await expect(campaign.connect(creator).buyExactTokens(amountOut, creatorLockedCost, { value: creatorLockedCost })).to.be.revertedWithCustomError(campaign, "CreatorBuyLocked");
+    // C4: the old creator buy lock (CreatorBuyLocked) is replaced by escrow -- a creator buy after the first
+    // buy is held by the campaign, never paid to the creator's wallet.
+    const creatorBuyCost = await campaign.quoteBuyExactTokens(amountOut);
+    await expect(campaign.connect(creator).buyExactTokens(amountOut, creatorBuyCost, { value: creatorBuyCost }))
+      .to.emit(campaign, "CreatorBuyEscrowed");
+    expect(await token.balanceOf(creator.address)).to.equal(0n);
+    expect(await campaign.creatorEscrowTotal()).to.equal(amountOut);
 
     await increaseTime(24 * 60 * 60 + 1);
 
+    // The tier cap (0.25 native on the default tier) still bounds the creator's cumulative buys.
     const capBreakerAmount = ethers.parseEther("251");
     const capBreakerCost = await campaign.quoteBuyExactTokens(capBreakerAmount);
     await expect(

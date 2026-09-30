@@ -1,15 +1,18 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
+import { wireEvmGenTestDoubles } from "./helpers/deployFactory";
 
 const MAX_BPS = 10_000n;
 const DEFAULT_TOTAL_SUPPLY = ethers.parseEther("1000000000");
-const DEFAULT_CURVE_BPS = 8_400n;
-const DEFAULT_LIQUIDITY_TOKEN_BPS = 1_400n;
+// Launch generation (C5 §2): supply-bound curve 70% / 28% liquidity / 2% creator reserve; the Topaz V2
+// (BNB) slope is 1080 (Robinhood V3: 850). liquidityBps no longer exists.
+const DEFAULT_CURVE_BPS = 7_000n;
+const DEFAULT_LIQUIDITY_TOKEN_BPS = 2_800n;
 const DEFAULT_CREATOR_BPS = 200n;
 const DEFAULT_BASE_PRICE = 1_000_000_000n;
-const DEFAULT_PRICE_SLOPE = 850n;
+const DEFAULT_PRICE_SLOPE = 1_080n;
 const DEFAULT_GRADUATION_TARGET = ethers.parseEther("30000");
-const DEFAULT_LIQUIDITY_BPS = 3_300n;
 
 const baseReq = () => ({
   name: "DefaultEconomics",
@@ -18,14 +21,11 @@ const baseReq = () => ({
   xAccount: "",
   website: "",
   extraLink: "",
-  basePrice: 0n,
-  priceSlope: 0n,
   graduationTarget: 0n,
   firstBuyTokens: 0n,
   firstBuyMaxCost: 0n,
   feeChoice: 1,
   feeCreatorPct: 0,
-  lpReceiver: ethers.ZeroAddress,
 });
 
 function hashCreateRouteRequest(req: ReturnType<typeof baseReq>) {
@@ -91,30 +91,24 @@ async function deployFactoryWithProductionDefaults() {
   const graduationOracle = await GraduationOracle.deploy(await priceFeed.getAddress(), 3600n);
   await graduationOracle.waitForDeployment();
 
-  const TreasuryVault = await ethers.getContractFactory("TreasuryVaultV2");
-  const treasuryVault = await TreasuryVault.deploy(await deployer.getAddress(), ethers.ZeroAddress, ethers.ZeroAddress);
-  await treasuryVault.waitForDeployment();
-
-  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouter");
-  const treasuryRouter = await TreasuryRouter.deploy(
-    await deployer.getAddress(),
-    await treasuryVault.getAddress(),
-    24 * 60 * 60
-  );
+  // Create registers the fee choice on the treasury router's creator vault: generation router/vault doubles.
+  const treasuryRouter = await (await ethers.getContractFactory("MockTreasuryRouterEvmGen")).deploy();
   await treasuryRouter.waitForDeployment();
+  const creatorVault = await (await ethers.getContractFactory("MockCreatorRewardsVaultEvmGen")).deploy();
+  await creatorVault.waitForDeployment();
+  await treasuryRouter.setCreatorRewardsVault(await creatorVault.getAddress());
 
   const Campaign = await ethers.getContractFactory("LaunchCampaign");
   const implementation = await Campaign.deploy();
   await implementation.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await router.getAddress(),
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
     await treasuryRouter.getAddress(),
     await implementation.getAddress(),
-    await graduationOracle.getAddress()
-  );
+    await graduationOracle.getAddress()] })).factory;
   await factory.waitForDeployment();
+  await wireEvmGenTestDoubles(factory, await router.getAddress(), await treasuryRouter.getAddress());
 
   return { deployer, factory };
 }
@@ -131,7 +125,9 @@ describe("LaunchFactory default economics", function () {
     expect(config.basePrice).to.eq(DEFAULT_BASE_PRICE);
     expect(config.priceSlope).to.eq(DEFAULT_PRICE_SLOPE);
     expect(config.graduationTarget).to.eq(DEFAULT_GRADUATION_TARGET);
-    expect(config.liquidityBps).to.eq(DEFAULT_LIQUIDITY_BPS);
+    expect(config.length).to.eq(6); // {totalSupply, curveBps, liquidityTokenBps, basePrice, priceSlope, graduationTarget}
+    expect(await factory.liquidityKind()).to.eq(1n);
+    expect(await factory.protocolFeeBps()).to.eq(200n);
     expect(await factory.requireAuthorizedTrading()).to.eq(true);
     expect(await factory.requireRouteAuthorization()).to.eq(true);
   });
@@ -162,7 +158,6 @@ describe("LaunchFactory default economics", function () {
     expect(await campaign.basePrice()).to.eq(DEFAULT_BASE_PRICE);
     expect(await campaign.priceSlope()).to.eq(DEFAULT_PRICE_SLOPE);
     expect(await campaign.graduationTarget()).to.eq(DEFAULT_GRADUATION_TARGET);
-    expect(await campaign.liquidityBps()).to.eq(DEFAULT_LIQUIDITY_BPS);
     expect(await campaign.requireAuthorizedTrading()).to.eq(true);
     expect(await campaign.owner()).to.eq(await deployer.getAddress());
   });

@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { ethers, network } from "hardhat";
-import { deployScheduledCreateFixture, signScheduledCreateAuthorization } from "./helpers/scheduledCreateAuth";
+import { deployScheduledCreateFixture, signScheduledCreateAuthorization } from "./helpers/legacy-B1";
 
 const baseCampaign = (overrides: Record<string, unknown> = {}) => ({
   name: "Scheduled Token",
@@ -40,23 +40,22 @@ async function signScheduledCreate(
 
 async function scheduledFixture() {
   const fixture = await deployScheduledCreateFixture();
-  const { factory, owner, creator } = fixture;
+  const { factory, owner, creator, priceFeed } = fixture;
   await factory.connect(owner).setRouteAuthority(await owner.getAddress());
 
-  const current = await factory.config();
+  // Launch generation: create refuses a USD target above 95% of what the full curve raises at the oracle
+  // price. The fixture's tiny curve raises ~1.25 native, i.e. $1.25 at the fixture's $1 oracle, so the $6
+  // test target runs on the generation's production V2 curve with native at $600 ($6 = 0.01 native).
   await factory.connect(owner).setConfig({
-    totalSupply: current.totalSupply,
-    curveBps: current.curveBps,
-    liquidityTokenBps: current.liquidityTokenBps,
-    basePrice: current.basePrice,
-    priceSlope: current.priceSlope,
+    totalSupply: ethers.parseEther("1000000000"),
+    curveBps: 7000n,
+    liquidityTokenBps: 2800n,
+    basePrice: 1_000_000_000n,
+    priceSlope: 1080n,
     graduationTarget: ethers.parseEther("6"),
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
-    liquidityBps: current.liquidityBps,
   });
+  const nowTs = BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
+  await priceFeed.setRoundData(2n, ethers.parseUnits("600", 8), nowTs, nowTs, 2n);
 
   const latest = await ethers.provider.getBlock("latest");
   const launchAt = BigInt(latest!.timestamp + 3600);
@@ -91,6 +90,9 @@ async function scheduledFixture() {
 
 describe("Scheduled LaunchFactory generation", function () {
   it("persists bound schedule evidence, fixed test graduation target, and launch-anchored creator lock", async () => {
+    // Launch generation: the creator buy lock (creatorBuyLockUntil) is replaced by C4 escrow and the C2
+    // anti-sniper fee; what stays launch-anchored is the fee clock (5000 bps at launchAt -> 200 at +60 s),
+    // never the deploy time.
     const { factory, creator, request, authorization, launchAt } = await scheduledFixture();
     const creatorAddress = await creator.getAddress();
 
@@ -119,9 +121,16 @@ describe("Scheduled LaunchFactory generation", function () {
 
     expect(await campaign.launchAt()).to.equal(launchAt);
     expect(await campaign.graduationTarget()).to.equal(ethers.parseEther("6"));
-    // The fixture has no CreatorRegistry, so creatorBuyLockSeconds=0. This makes
-    // the exact anchor observable: scheduled deploy time must not be used here.
-    expect(await campaign.creatorBuyLockUntil()).to.equal(launchAt);
+    // The fixture has no CreatorRegistry, so no tier cap is injected.
+    expect(await campaign.creatorBuyCapWei()).to.equal(0n);
+    // Before launchAt the view reports the start value; the window runs from launchAt, not from deploy.
+    expect(await campaign.currentTradeFeeBps()).to.equal(5000n);
+    await network.provider.send("evm_setNextBlockTimestamp", [Number(launchAt) + 30]);
+    await network.provider.send("evm_mine");
+    expect(await campaign.currentTradeFeeBps()).to.equal(5000n - 80n * 30n);
+    await network.provider.send("evm_setNextBlockTimestamp", [Number(launchAt) + 60]);
+    await network.provider.send("evm_mine");
+    expect(await campaign.currentTradeFeeBps()).to.equal(200n);
     expect(await factory.usedAuthorizationNonces(creatorAddress, 1n)).to.equal(true);
   });
 

@@ -1,8 +1,15 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { deployCoreFixture } from "./fixtures/core";
 import { quoteBuyExactTokens } from "./helpers/math";
+import { mineAt } from "./fixtures/evmgenCore";
+
+// Trades below land after the C2 anti-sniper window, so the fee is the flat protocolFeeBps.
+async function pastSniperWindow(campaign: any) {
+  await mineAt(Number(await campaign.launchAt()) + 61);
+}
 
 const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
   name: "AuditToken",
@@ -28,6 +35,7 @@ async function createCampaign(overrides: Record<string, unknown> = {}) {
   const info = await fx.factory.getCampaign(0n);
   const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
   const token = await ethers.getContractAt("LaunchToken", await campaign.token());
+  await pastSniperWindow(campaign);
   return { ...fx, info, campaign, token };
 }
 
@@ -44,12 +52,12 @@ async function createLowTargetCampaign() {
     firstBuyMaxCost: 0n,
     feeChoice: 1,
     feeCreatorPct: 0,
-    liquidityBps: 8000,
   });
   await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest() as any);
   const info = await fx.factory.getCampaign(0n);
   const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
   const token = await ethers.getContractAt("LaunchToken", await campaign.token());
+  await pastSniperWindow(campaign);
   return { ...fx, info, campaign, token };
 }
 
@@ -62,8 +70,16 @@ describe("LaunchCampaign audit hardening", function () {
 
     expect(await campaign.netRaisedWei()).to.eq(0n);
     expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(target);
-    await expect(campaign.connect(alice).graduateIfEligible(0, 0)).to.be.revertedWithCustomError(campaign, "ThresholdNotMet");
+    await expect(campaign.connect(alice).graduate()).to.be.revertedWithCustomError(campaign, "GraduationNotDue");
+    expect(await campaign.graduationPending()).to.eq(false);
     expect(await campaign.launched()).to.eq(false);
+
+    // a real buy still sees only its own cost as the raise
+    const oneToken = ethers.parseEther("1");
+    const quote = await campaign.quoteBuyExactTokens(oneToken);
+    await campaign.connect(alice).buyExactTokens(oneToken, quote, { value: quote });
+    expect(await campaign.graduationPending()).to.eq(false);
+    expect(await campaign.netRaisedWei()).to.be.lt(target);
   });
 
   it("leaves direct native surplus out of creator payout at graduation", async () => {
@@ -76,11 +92,34 @@ describe("LaunchCampaign audit hardening", function () {
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
     await expect(campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy })).to.emit(
       campaign,
-      "CampaignFinalized"
+      "GraduationPending"
     );
+    const raise = await campaign.netRaisedWei();
+    expect((await campaign.getGraduationState()).graduationBalance).to.eq(raise);
+    const protocolShare = (raise * 220n) / 10_000n;
+    const creatorShare = (raise * 1980n) / 10_000n;
+    const poolNative = raise - protocolShare - creatorShare;
+
+    await expect(campaign.connect(alice).graduate())
+      .to.emit(campaign, "Graduated")
+      .withArgs(
+        anyValue,
+        raise,
+        protocolShare,
+        creatorShare,
+        poolNative,
+        anyValue,
+        anyValue,
+        anyValue,
+        anyValue,
+        false
+      );
 
     expect(await campaign.launched()).to.eq(true);
-    expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(surplus);
+    // the surplus is neither in the creator's 19.8% nor in the pool: it stays as rescuable excess
+    expect(await campaign.pendingCreatorGraduation()).to.eq(creatorShare);
+    expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(surplus + creatorShare);
+    expect(await campaign.excessNativeBalance()).to.eq(surplus);
   });
 
   it("a paused treasury router halts trading rather than escrowing the fee in the campaign", async () => {
@@ -114,8 +153,6 @@ describe("LaunchCampaign audit hardening", function () {
     expect(await token.balanceOf(await alice.getAddress())).to.eq(0n);
     expect(await campaign.sold()).to.eq(sold0);
     expect(await campaign.netRaisedWei()).to.eq(0n);
-    expect(await campaign.pendingNative(await treasuryRouter.getAddress())).to.eq(0n);
-    expect(await campaign.pendingNativeTotal()).to.eq(0n);
     expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(0n);
 
     // Unpause and the same buy goes through, so the halt is the pause and

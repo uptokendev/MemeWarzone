@@ -9,6 +9,7 @@ import {
   snapshotLiveBnbTestnetFactory,
 } from "./lib/bnbLiveFactorySnapshot";
 import { LIVE_97_ROUTE_AUTHORITY, resolveBnb6cRouteAuthority, sameAddress } from "./bnb6cRouteAuthority";
+import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
 
 const {
   TOPAZ_DEPLOYMENT_AUTHORITY,
@@ -173,7 +174,7 @@ async function main() {
   await campaignImplementation.waitForDeployment();
   const campaignImplementationDeployment = await deploymentEvidence(campaignImplementation, "LaunchCampaign implementation");
   const LaunchFactory = await ethers.getContractFactory("LaunchFactory");
-  const launchFactory = await LaunchFactory.deploy(await adapter.getAddress(), await treasuryRouter.getAddress(), await campaignImplementation.getAddress(), await graduationOracle.getAddress());
+  const launchFactory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await adapter.getAddress(), await treasuryRouter.getAddress(), await campaignImplementation.getAddress(), await graduationOracle.getAddress()] })).factory;
   await launchFactory.waitForDeployment();
   const launchFactoryDeployment = await deploymentEvidence(launchFactory, "LaunchFactory");
   const lockerAddress = await launchFactory.permanentLpLocker();

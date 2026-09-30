@@ -116,8 +116,12 @@ library EvmGenPoolSwap {
             int256 dev = int256(maxTwapDevBps);
             if (has && (zeroForOne ? int256(tick) < avg - dev : int256(tick) > avg + dev)) return (false, 0);
         }
-        // sqrt(1 -/+ impact) with 9 decimals, rounded so the pool always stops at or before the bound.
-        uint256 r = Math.sqrt((zeroForOne ? BPS - maxImpactBps : BPS + maxImpactBps) * 1e14);
+        // The bought token's price may rise by at most `maxImpactBps` in either orientation (spec C6:
+        // `after <= before * (1e4 + maxImpactBps) / 1e4`). zeroForOne buys token1, whose price is 1/p, so
+        // p may fall to p / (1 + impact): sqrt(1e4 / (1e4 + impact)). Otherwise token0 is bought and p may
+        // rise to p * (1 + impact). (Was sqrt(1 - impact) for zeroForOne: 1/(1-0.005) = +0.5025%.)
+        // 9 decimals, rounded so the pool always stops at or before the bound.
+        uint256 r = Math.sqrt(zeroForOne ? (BPS * 1e18) / (BPS + maxImpactBps) : (BPS + maxImpactBps) * 1e14);
         uint256 l = zeroForOne ? (uint256(sqrtP) * (r + 1) + 1e9 - 1) / 1e9 : (uint256(sqrtP) * r) / 1e9;
         if (l < MIN_SQRT_RATIO_PLUS_ONE) l = MIN_SQRT_RATIO_PLUS_ONE;
         if (l > MAX_SQRT_RATIO_MINUS_ONE) l = MAX_SQRT_RATIO_MINUS_ONE;

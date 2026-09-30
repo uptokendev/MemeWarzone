@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { getBalance } from "./helpers/balances";
 import { quoteBuyExactTokens } from "./helpers/math";
 import { deployLaunchFactory } from "./helpers/deployFactory";
@@ -11,7 +11,6 @@ const ROUTE_KIND_FINALIZE = 1;
 const ROUTE_PROFILE_STANDARD_UNLINKED = 1;
 
 type RoutedSystem = Awaited<ReturnType<typeof deployRoutedSystem>>;
-type LegacySystem = Awaited<ReturnType<typeof deployLegacySystem>>;
 
 async function latestTimestamp() {
   const block = await ethers.provider.getBlock("latest");
@@ -68,50 +67,6 @@ async function deployRoutedSystem() {
     recruiterVault,
     communityVault,
     protocolVault,
-    factory,
-    priceFeed,
-  };
-}
-
-async function deployLegacySystem() {
-  const { owner, creator, alice, dexRouter } = await deployCommonDex();
-
-  const AcceptingReceiver = await ethers.getContractFactory("AcceptingReceiver");
-  const leagueVault = await AcceptingReceiver.deploy();
-  const legacyFeeRecipient = await AcceptingReceiver.deploy();
-  await Promise.all([leagueVault.waitForDeployment(), legacyFeeRecipient.waitForDeployment()]);
-
-  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouter");
-  const leagueRouter = await TreasuryRouter.deploy(await owner.getAddress(), await leagueVault.getAddress(), 3600);
-  await leagueRouter.waitForDeployment();
-
-  const { factory, priceFeed } = await deployLaunchFactory(await dexRouter.getAddress(), await leagueRouter.getAddress());
-  await factory.connect(owner).setRequireRouteAuthorization(false);
-  await factory.connect(owner).setRequireAuthorizedTrading(false);
-  await factory.connect(owner).setCoreRouting(await dexRouter.getAddress(), await legacyFeeRecipient.getAddress());
-  await factory.connect(owner).setConfig({
-    totalSupply: ethers.parseEther("1000"),
-    curveBps: 5000,
-    liquidityTokenBps: 4000,
-    basePrice: ethers.parseEther("0.005"),
-    priceSlope: 10n ** 9n,
-    graduationTarget: ethers.parseEther("2"),
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
-    liquidityBps: 8000,
-  });
-  await factory.connect(owner).enableLive();
-
-  return {
-    owner,
-    creator,
-    alice,
-    dexRouter,
-    leagueRouter,
-    leagueVault,
-    legacyFeeRecipient,
     factory,
     priceFeed,
   };
@@ -237,37 +192,69 @@ describe("Phase 1 fee envelope and economics invariants", function () {
   });
 
   it("migrating the treasury router keeps unified routing intact, so campaigns created after it still trade", async () => {
-    // LaunchCampaign only takes the unified path when feeRecipient equals
-    // leagueReceiver, and the factory stamps every campaign strictFeeRouting:
-    // true -- so if a router migration left those two apart, every campaign
-    // minted afterwards would revert FeeRoutingFailed on every buy and sell.
-    // leagueReceiver used to be immutable while feeRecipient was not, which made
-    // that the guaranteed outcome of a routine setCoreRouting. These three tests
-    // previously asserted behaviour in exactly that divergent state; it is now
-    // unreachable, so they assert the invariant that replaced it.
-    const { owner, creator, alice, dexRouter, factory } = await loadFixture(deployRoutedSystem);
+    // LaunchCampaign routes every fee to feeRecipient, and the factory keeps leagueReceiver equal to it. The
+    // setCoreRouting bug (leagueReceiver immutable while feeRecipient moved) bricked every campaign minted after a
+    // migration. EVM launch generation: setCoreRouting is removed; the DEX router, feeRecipient and leagueReceiver
+    // are fixed at construction, so a migration is a new factory generation on the new router. This asserts that the
+    // divergent state is unreachable (no setter), that both fields name the router, and that a campaign on the
+    // migrated generation routes the exact trade split to the new router's vaults and nothing to the old one's.
+    const { owner, creator, alice, dexRouter, factory, treasuryRouter } = await loadFixture(deployRoutedSystem);
 
-    const migrated = await deployConfiguredTreasuryRouterV3(await owner.getAddress());
-    await factory.connect(owner).setCoreRouting(await dexRouter.getAddress(), await migrated.treasuryRouter.getAddress());
-
-    expect(await factory.feeRecipient()).to.equal(await migrated.treasuryRouter.getAddress());
+    for (const removed of ["setCoreRouting", "setFeeRecipient", "setLeagueReceiver", "setRouter", "setTreasuryRouter"]) {
+      expect(factory.interface.getFunction(removed), `${removed} must not exist`).to.equal(null);
+    }
+    expect(await factory.feeRecipient()).to.equal(await treasuryRouter.getAddress());
     expect(await factory.leagueReceiver()).to.equal(await factory.feeRecipient());
 
-    const { campaign } = await createCampaign(factory, creator, "Migrated");
+    const migrated = await deployConfiguredTreasuryRouterV3(await owner.getAddress());
+    const { factory: migratedFactory } = await deployLaunchFactory(
+      await dexRouter.getAddress(),
+      await migrated.treasuryRouter.getAddress()
+    );
+    await migratedFactory.connect(owner).setRequireRouteAuthorization(false);
+    await migratedFactory.connect(owner).setRequireAuthorizedTrading(false);
+    await migratedFactory.connect(owner).setConfig({
+      totalSupply: ethers.parseEther("1000"),
+      curveBps: 5000,
+      liquidityTokenBps: 4000,
+      basePrice: ethers.parseEther("0.005"),
+      priceSlope: 10n ** 9n,
+      graduationTarget: ethers.parseEther("2"),
+    });
+    await migratedFactory.connect(owner).enableLive();
+
+    expect(await migratedFactory.feeRecipient()).to.equal(await migrated.treasuryRouter.getAddress());
+    expect(await migratedFactory.leagueReceiver()).to.equal(await migratedFactory.feeRecipient());
+
+    const { campaign } = await createCampaign(migratedFactory, creator, "Migrated");
+    expect(await campaign.feeRecipient()).to.equal(await migrated.treasuryRouter.getAddress());
+    // Past the C2 anti-sniper window: flat protocolFeeBps.
+    await time.increase(61);
+
     const amountOut = ethers.parseEther("10");
-    const quote = await campaign.quoteBuyExactTokens(amountOut);
+    const { fee, total } = quoteBuyExactTokens(
+      await campaign.sold(),
+      amountOut,
+      await campaign.basePrice(),
+      await campaign.priceSlope(),
+      await campaign.protocolFeeBps()
+    );
+    const expected = await migrated.treasuryRouter.previewRoute(fee, ROUTE_KIND_TRADE, await campaign.tradeRouteProfile());
 
-    const leagueBefore =
-      (await getBalance(await migrated.leagueVault.getAddress())) +
-      (await getBalance(await migrated.monthlyVault.getAddress()));
+    const vaults = async (sys: any) =>
+      (await getBalance(await sys.leagueVault.getAddress())) + (await getBalance(await sys.monthlyVault.getAddress()));
+    const oldRouterBalance = await getBalance(await treasuryRouter.getAddress());
+    const leagueBefore = await vaults(migrated);
     const creatorBefore = await getBalance(await migrated.creatorVault.getAddress());
+    const protocolBefore = await getBalance(await migrated.protocolVault.getAddress());
 
-    await campaign.connect(alice).buyExactTokens(amountOut, quote, { value: quote });
+    await campaign.connect(alice).buyExactTokens(amountOut, total, { value: total });
 
-    const leagueAfter =
-      (await getBalance(await migrated.leagueVault.getAddress())) +
-      (await getBalance(await migrated.monthlyVault.getAddress()));
-    expect(leagueAfter).to.be.gt(leagueBefore);
-    expect(await getBalance(await migrated.creatorVault.getAddress())).to.be.gt(creatorBefore);
+    expect((await vaults(migrated)) - leagueBefore).to.equal(expected.league);
+    expect((await getBalance(await migrated.creatorVault.getAddress())) - creatorBefore).to.equal(expected.creator);
+    expect((await getBalance(await migrated.protocolVault.getAddress())) - protocolBefore).to.equal(expected.protocol);
+    expect(expected.league).to.be.gt(0n);
+    expect(expected.creator).to.be.gt(0n);
+    expect(await getBalance(await treasuryRouter.getAddress())).to.equal(oldRouterBalance);
   });
 });

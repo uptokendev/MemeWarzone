@@ -1,11 +1,13 @@
 import { expect } from "chai";
 import { artifacts, ethers } from "hardhat";
 import { deployCoreFixture } from "./fixtures/core";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
+import { wireEvmGenTestDoubles } from "./helpers/deployFactory";
 
-const DEAD = "0x000000000000000000000000000000000000dEaD";
 const MAX_BPS = 10_000n;
 const MAX_BASE_PRICE = ethers.parseEther("1000");
-const MAX_PRICE_SLOPE = 10n ** 36n;
+// Launch generation: 1e22 (was 1e36) so the factory's supply-bound check stays in checked arithmetic.
+const MAX_PRICE_SLOPE = 10n ** 22n;
 const MAX_GRADUATION_TARGET = ethers.parseEther("1000000");
 
 const baseReq = (overrides: Record<string, unknown> = {}) => ({
@@ -151,67 +153,55 @@ async function deployFactoryPrereqs() {
   const graduationOracle = await GraduationOracle.deploy(await priceFeed.getAddress(), 3600n);
   await graduationOracle.waitForDeployment();
 
-  const TreasuryVault = await ethers.getContractFactory("TreasuryVaultV2");
-  const treasuryVault = await TreasuryVault.deploy(await deployer.getAddress(), ethers.ZeroAddress, ethers.ZeroAddress);
-  await treasuryVault.waitForDeployment();
-
-  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouter");
-  const treasuryRouter = await TreasuryRouter.deploy(
-    await deployer.getAddress(),
-    await treasuryVault.getAddress(),
-    24 * 60 * 60
-  );
+  // Launch generation: create registers the coin's fee choice on the treasury router's creator vault
+  // (ICreatorRewardsVaultV2.setCampaignChoice), so the prereqs use the generation's router/vault doubles.
+  const treasuryRouter = await (await ethers.getContractFactory("MockTreasuryRouterEvmGen")).deploy();
   await treasuryRouter.waitForDeployment();
+  const creatorVault = await (await ethers.getContractFactory("MockCreatorRewardsVaultEvmGen")).deploy();
+  await creatorVault.waitForDeployment();
+  await treasuryRouter.setCreatorRewardsVault(await creatorVault.getAddress());
 
   const Campaign = await ethers.getContractFactory("LaunchCampaign");
   const implementation = await Campaign.deploy();
   await implementation.waitForDeployment();
 
-  return { deployer, router, priceFeed, graduationOracle, treasuryRouter, treasuryVault, implementation };
+  const tokenDeployer = await (await ethers.getContractFactory("LaunchTokenDeployer")).deploy();
+  await tokenDeployer.waitForDeployment();
+
+  return { deployer, router, priceFeed, graduationOracle, treasuryRouter, creatorVault, implementation, tokenDeployer };
 }
 
 function validInitParams(addresses: {
   creator: string;
   factory: string;
-  router: string;
+  graduationAdapter: string;
   graduationOracle: string;
   treasuryRouter: string;
+  tokenDeployer: string;
 }) {
+  // LaunchCampaign.InitParams of the launch generation (factory 6 / campaign 5).
   return {
     name: "Init Token",
     symbol: "INIT",
     logoURI: "ipfs://logo",
-    xAccount: "",
-    website: "",
-    extraLink: "",
     totalSupply: ethers.parseEther("1000"),
     curveBps: 5000n,
     liquidityTokenBps: 4000n,
     basePrice: 1n,
     priceSlope: 1n,
     graduationTarget: 1n,
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
     graduationOracle: addresses.graduationOracle,
-    liquidityBps: 8000n,
     protocolFeeBps: 200n,
-    leagueFeeBps: 75n,
-    leagueReceiver: addresses.treasuryRouter,
-    router: addresses.router,
-    lpReceiver: DEAD,
+    graduationAdapter: addresses.graduationAdapter,
     feeRecipient: addresses.treasuryRouter,
     creator: addresses.creator,
     factory: addresses.factory,
-    creatorRegistry: ethers.ZeroAddress,
     riskRegistry: ethers.ZeroAddress,
-    creatorBuyLockUntil: 0n,
+    tokenDeployer: addresses.tokenDeployer,
     creatorBuyCapWei: 0n,
     requireAuthorizedTrading: false,
     tradeRouteProfile: 1,
     finalizeRouteProfile: 1,
-    strictFeeRouting: true,
   };
 }
 
@@ -219,45 +209,46 @@ describe("LaunchFactory", function () {
   it("constructor requires contract router, treasury router, campaign implementation, and graduation oracle", async () => {
     const Factory = await ethers.getContractFactory("LaunchFactory");
     const { deployer, router, treasuryRouter, implementation, graduationOracle } = await deployFactoryPrereqs();
+    // The factory binds a pre-deployed locker; for the argument checks any locker with code will do.
+    const anyLocker = await (await ethers.getContractFactory("PermanentLpLocker")).deploy(await deployer.getAddress());
+    const lockerAddress = await anyLocker.getAddress();
 
     await expect(
-      Factory.deploy(ethers.ZeroAddress, await treasuryRouter.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress())
+      Factory.deploy(ethers.ZeroAddress, await treasuryRouter.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "RouterZero");
 
     await expect(
-      Factory.deploy(await router.getAddress(), ethers.ZeroAddress, await implementation.getAddress(), await graduationOracle.getAddress())
+      Factory.deploy(await router.getAddress(), ethers.ZeroAddress, await implementation.getAddress(), await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "RecipientZero");
 
     await expect(
-      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), ethers.ZeroAddress, await graduationOracle.getAddress())
+      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), ethers.ZeroAddress, await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "ImplementationZero");
 
     await expect(
-      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), ethers.ZeroAddress)
+      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), ethers.ZeroAddress, lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "GraduationOracleZero");
 
     await expect(
-      Factory.deploy(await deployer.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress())
+      Factory.deploy(await deployer.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "ContractCodeMissing");
 
     await expect(
-      Factory.deploy(await router.getAddress(), await deployer.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress())
+      Factory.deploy(await router.getAddress(), await deployer.getAddress(), await implementation.getAddress(), await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "ContractCodeMissing");
 
     await expect(
-      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await deployer.getAddress(), await graduationOracle.getAddress())
+      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await deployer.getAddress(), await graduationOracle.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "ContractCodeMissing");
 
     await expect(
-      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), await deployer.getAddress())
+      Factory.deploy(await router.getAddress(), await treasuryRouter.getAddress(), await implementation.getAddress(), await deployer.getAddress(), lockerAddress)
     ).to.be.revertedWithCustomError(Factory, "ContractCodeMissing");
 
-    const factory = await Factory.deploy(
-      await router.getAddress(),
+    const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
       await treasuryRouter.getAddress(),
       await implementation.getAddress(),
-      await graduationOracle.getAddress()
-    );
+      await graduationOracle.getAddress()] })).factory;
     expect(await factory.router()).to.eq(await router.getAddress());
     expect(await factory.graduationOracle()).to.eq(await graduationOracle.getAddress());
     expect(await factory.leagueReceiver()).to.eq(await treasuryRouter.getAddress());
@@ -268,8 +259,8 @@ describe("LaunchFactory", function () {
     expect(await factory.protocolFeeBps()).to.eq(200n);
     expect(await factory.requireAuthorizedTrading()).to.eq(true);
     expect(await factory.requireRouteAuthorization()).to.eq(true);
-    expect(await factory.FACTORY_GENERATION()).to.eq(4n);
-    expect(await factory.CAMPAIGN_GENERATION()).to.eq(3n);
+    expect(await factory.FACTORY_GENERATION()).to.eq(6n);
+    expect(await factory.CAMPAIGN_GENERATION()).to.eq(5n);
     expect(await factory.live()).to.eq(false);
   });
 
@@ -280,31 +271,28 @@ describe("LaunchFactory", function () {
   });
 
   it("standalone implementation is locked and cannot be initialized directly", async () => {
-    const { deployer, router, treasuryRouter, implementation, graduationOracle } = await deployFactoryPrereqs();
+    const { deployer, router, treasuryRouter, implementation, graduationOracle, tokenDeployer } = await deployFactoryPrereqs();
 
-    await expect(
-      implementation.initialize(
-        validInitParams({
-          creator: await deployer.getAddress(),
-          factory: await deployer.getAddress(),
-          router: await router.getAddress(),
-          graduationOracle: await graduationOracle.getAddress(),
-          treasuryRouter: await treasuryRouter.getAddress(),
-        })
-      )
-    ).to.be.revertedWithCustomError(implementation, "AlreadyInitialized");
+    const params = validInitParams({
+      creator: await deployer.getAddress(),
+      factory: await deployer.getAddress(),
+      graduationAdapter: await router.getAddress(),
+      graduationOracle: await graduationOracle.getAddress(),
+      treasuryRouter: await treasuryRouter.getAddress(),
+      tokenDeployer: await tokenDeployer.getAddress(),
+    });
+    await expect(implementation.initialize(params)).to.be.revertedWithCustomError(implementation, "AlreadyInitialized");
+    await expect(implementation.initializeScheduled(params, 0n)).to.be.revertedWithCustomError(implementation, "AlreadyInitialized");
   });
 
   it("live latch: createCampaign blocked until enabled; onlyOwner; enableLive is one-way", async () => {
     const [owner, creator] = await ethers.getSigners();
     const { router, treasuryRouter, implementation, graduationOracle } = await deployFactoryPrereqs();
     const Factory = await ethers.getContractFactory("LaunchFactory");
-    const factory = await Factory.deploy(
-      await router.getAddress(),
+    const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
       await treasuryRouter.getAddress(),
       await implementation.getAddress(),
-      await graduationOracle.getAddress()
-    );
+      await graduationOracle.getAddress()] })).factory;
 
     await expect(factory.connect(creator).createCampaign(baseReq() as any)).to.be.revertedWithCustomError(factory, "RouteAuthorizationRequired");
     await factory.connect(owner).setRequireRouteAuthorization(false);
@@ -313,11 +301,26 @@ describe("LaunchFactory", function () {
     await expect(factory.connect(owner).enableLive()).to.emit(factory, "LiveEnabled");
     expect(await factory.live()).to.eq(true);
     await expect(factory.connect(owner).enableLive()).to.be.revertedWithCustomError(factory, "AlreadyLive");
+    // Launch generation: a live factory still refuses create until the native graduation adapter and the
+    // token deployer are wired; the $30k default target needs a curve that raises it at the $1 test oracle.
+    await expect(factory.connect(creator).createCampaign(baseReq() as any)).to.be.revertedWithCustomError(
+      factory,
+      "NativeGraduationAdapterUnavailable"
+    );
+    await wireEvmGenTestDoubles(factory, await router.getAddress(), await treasuryRouter.getAddress());
+    await factory.connect(owner).setConfig({
+      totalSupply: ethers.parseEther("1000"),
+      curveBps: 5000n,
+      liquidityTokenBps: 4000n,
+      basePrice: 10n ** 12n,
+      priceSlope: 10n ** 13n,
+      graduationTarget: ethers.parseEther("1"),
+    });
     await expect(factory.connect(creator).createCampaign(baseReq() as any)).to.emit(factory, "CampaignCreated");
   });
 
   it("factory clone initializes exactly once and stores creator, token, factory, and oracle", async () => {
-    const { factory, creator, router, treasuryRouter, graduationOracle } = await deployCoreFixture();
+    const { factory, creator, treasuryRouter, graduationOracle, tokenDeployer } = (await deployCoreFixture()) as any;
 
     await factory.connect(creator).createCampaign(baseReq({ name: "Clone", symbol: "CLN" }) as any);
     const info = await factory.getCampaign(0n);
@@ -328,19 +331,21 @@ describe("LaunchFactory", function () {
     expect(await campaign.graduationOracle()).to.eq(await graduationOracle.getAddress());
     expect(await campaign.token()).to.eq(info.token);
     expect(info.token).to.not.eq(ethers.ZeroAddress);
-    expect(await campaign.lpReceiver()).to.eq(await factory.permanentLpLocker());
+    // Launch generation: no lpReceiver; the LP always reaches the factory's permanent locker through the
+    // native graduation adapter the factory injects.
+    expect(await campaign.graduationAdapter()).to.eq(await factory.nativeGraduationAdapter());
+    expect(await campaign.feeRecipient()).to.eq(await treasuryRouter.getAddress());
 
-    await expect(
-      campaign.initialize(
-        validInitParams({
-          creator: await creator.getAddress(),
-          factory: await factory.getAddress(),
-          router: await router.getAddress(),
-          graduationOracle: await graduationOracle.getAddress(),
-          treasuryRouter: await treasuryRouter.getAddress(),
-        })
-      )
-    ).to.be.revertedWithCustomError(campaign, "AlreadyInitialized");
+    const params = validInitParams({
+      creator: await creator.getAddress(),
+      factory: await factory.getAddress(),
+      graduationAdapter: await factory.nativeGraduationAdapter(),
+      graduationOracle: await graduationOracle.getAddress(),
+      treasuryRouter: await treasuryRouter.getAddress(),
+      tokenDeployer: await tokenDeployer.getAddress(),
+    });
+    await expect(campaign.initialize(params)).to.be.revertedWithCustomError(campaign, "AlreadyInitialized");
+    await expect(campaign.initializeScheduled(params, 0n)).to.be.revertedWithCustomError(campaign, "AlreadyInitialized");
   });
 
   it("rejects graduation notifications from unknown campaigns", async () => {
@@ -392,7 +397,7 @@ describe("LaunchFactory", function () {
     expect(info.logoURI).to.eq("ipfs://logo");
 
     const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
-    expect(await campaign.lpReceiver()).to.eq(await factory.permanentLpLocker());
+    expect(await campaign.graduationAdapter()).to.eq(await factory.nativeGraduationAdapter());
 
     const page = await factory.getCampaignPage(0n, 10n);
     expect(page.length).to.eq(1);
@@ -450,7 +455,8 @@ describe("LaunchFactory", function () {
     const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
     const rules = await registry.getCreatorRules(await creator.getAddress());
     expect(await campaign.launchAt()).to.eq(launchAt);
-    expect(await campaign.creatorBuyLockUntil()).to.eq(launchAt + BigInt(rules.creatorBuyLockSeconds));
+    // C4: the tier buy lock is replaced by escrow of the creator's own buys; the tier buy cap is still injected.
+    expect(await campaign.creatorBuyCapWei()).to.eq(BigInt(rules.creatorBuyCapWei));
 
     const eligibility = await factory.creatorLaunchEligibility(await creator.getAddress());
     expect(eligibility.allowed).to.eq(false);
@@ -632,18 +638,37 @@ describe("LaunchFactory", function () {
   });
 
   it("owner-only setters with validation + events", async () => {
-    const { factory, owner, alice, treasuryRouter } = await deployCoreFixture();
+    const { factory, owner, alice, treasuryRouter, v2factory, router, graduationAdapter, tokenDeployer } = (await deployCoreFixture()) as any;
 
-    await expect(factory.connect(alice).setCoreRouting(await alice.getAddress(), await alice.getAddress())).to.be.revertedWithCustomError(
-      factory,
-      "OwnableUnauthorizedAccount"
-    );
-    await expect(factory.connect(owner).setCoreRouting(ethers.ZeroAddress, await alice.getAddress())).to.be.revertedWithCustomError(factory, "RouterZero");
+    // Launch generation: the DEX router, feeRecipient and leagueReceiver are fixed at construction (a new
+    // treasury router means a new factory generation), so there is no setCoreRouting to call at all.
+    expect(factory.interface.getFunction("setCoreRouting")).to.eq(null);
+    for (const [name, args] of [
+      ["setGraduationOracle", [await alice.getAddress()]],
+      ["setProtocolFee", [123n]],
+      ["setRouteProfiles", [1, 1]],
+      ["setRouteAuthority", [await alice.getAddress()]],
+      ["setRegistries", [ethers.ZeroAddress, ethers.ZeroAddress]],
+      ["setNativeGraduationAdapter", [await graduationAdapter.getAddress()]],
+      ["setLaunchTokenDeployer", [await tokenDeployer.getAddress()]],
+      ["setGlobalPaused", [true]],
+      ["setCreatePaused", [true]],
+      ["setRequireRouteAuthorization", [true]],
+      ["setRequireAuthorizedTrading", [true]],
+      ["enableLive", []],
+      ["lockSecurityDefaults", []],
+    ] as [string, unknown[]][]) {
+      await expect((factory.connect(alice) as any)[name](...args), name).to.be.revertedWithCustomError(
+        factory,
+        "OwnableUnauthorizedAccount"
+      );
+    }
     await expect(factory.connect(owner).setGraduationOracle(ethers.ZeroAddress)).to.be.revertedWithCustomError(factory, "GraduationOracleZero");
-    await expect(factory.connect(owner).setCoreRouting(await factory.router(), ethers.ZeroAddress)).to.be.revertedWithCustomError(
-      factory,
-      "RecipientZero"
-    );
+    await expect(factory.connect(owner).setGraduationOracle(await alice.getAddress())).to.be.revertedWithCustomError(factory, "ContractCodeMissing");
+    await expect(factory.connect(owner).setNativeGraduationAdapter(ethers.ZeroAddress)).to.be.revertedWithCustomError(factory, "ContractCodeMissing");
+    await expect(factory.connect(owner).setNativeGraduationAdapter(await alice.getAddress())).to.be.revertedWithCustomError(factory, "ContractCodeMissing");
+    await expect(factory.connect(owner).setLaunchTokenDeployer(await alice.getAddress())).to.be.revertedWithCustomError(factory, "ContractCodeMissing");
+    await expect(factory.connect(owner).setRouteProfiles(3, 1)).to.be.revertedWithCustomError(factory, "InvalidRouteProfile");
     await expect(factory.connect(owner).setProtocolFee(1001n)).to.be.revertedWithCustomError(factory, "FeeTooHigh");
     await expect(factory.connect(owner).setProtocolFee(24n)).to.be.revertedWithCustomError(factory, "FeeTooLowForLeague");
     await expect(factory.connect(owner).setRegistries(await alice.getAddress(), ethers.ZeroAddress)).to.be.revertedWithCustomError(
@@ -662,17 +687,13 @@ describe("LaunchFactory", function () {
       .withArgs(true);
     expect(await factory.requireRouteAuthorization()).to.eq(true);
 
-    const TopazFactory = await ethers.getContractFactory("MockTopazFactory");
-    const topazFactory = await TopazFactory.deploy();
-    await topazFactory.waitForDeployment();
-    const newRouter = await (await ethers.getContractFactory("MockRouter")).deploy(await topazFactory.getAddress(), await owner.getAddress());
-    await expect(factory.connect(owner).setCoreRouting(await newRouter.getAddress(), await treasuryRouter.getAddress()))
-      .to.emit(factory, "RouterUpdated")
-      .withArgs(await newRouter.getAddress());
+    // Construction-time routing, and the locker the constructor configured with it.
+    expect(await factory.router()).to.eq(await router.getAddress());
     expect(await factory.feeRecipient()).to.eq(await treasuryRouter.getAddress());
+    expect(await factory.leagueReceiver()).to.eq(await treasuryRouter.getAddress());
     const locker = await ethers.getContractAt("PermanentLpLocker", await factory.permanentLpLocker());
     expect(await locker.treasuryRouter()).to.eq(await treasuryRouter.getAddress());
-    expect(await locker.topazFactory()).to.eq(await topazFactory.getAddress());
+    expect(await locker.topazFactory()).to.eq(await v2factory.getAddress());
 
     const { graduationOracle: newOracle } = await deployFactoryPrereqs();
     await expect(factory.connect(owner).setGraduationOracle(await newOracle.getAddress()))
@@ -687,11 +708,6 @@ describe("LaunchFactory", function () {
         basePrice: 1n,
         priceSlope: 1n,
         graduationTarget: 1n,
-        firstBuyTokens: 0n,
-        firstBuyMaxCost: 0n,
-        feeChoice: 1,
-        feeCreatorPct: 0,
-        liquidityBps: 8000n,
       })
     ).to.be.revertedWithCustomError(factory, "SupplyZero");
 
@@ -703,11 +719,6 @@ describe("LaunchFactory", function () {
         basePrice: 1n,
         priceSlope: 1n,
         graduationTarget: 1n,
-        firstBuyTokens: 0n,
-        firstBuyMaxCost: 0n,
-        feeChoice: 1,
-        feeCreatorPct: 0,
-        liquidityBps: 8000n,
       })
     ).to.be.revertedWithCustomError(factory, "InvalidCurveBps");
   });
@@ -721,11 +732,6 @@ describe("LaunchFactory", function () {
       basePrice: 1n,
       priceSlope: 1n,
       graduationTarget: 1n,
-      firstBuyTokens: 0n,
-      firstBuyMaxCost: 0n,
-      feeChoice: 1,
-      feeCreatorPct: 0,
-      liquidityBps: 8000n,
     };
 
     await expect(factory.connect(owner).setConfig({ ...validConfig, curveBps: MAX_BPS, liquidityTokenBps: 1n })).to.be.revertedWithCustomError(
@@ -750,10 +756,37 @@ describe("LaunchFactory", function () {
       factory,
       "ParamTooHigh"
     );
-    await expect(factory.connect(owner).setConfig({ ...validConfig, liquidityBps: MAX_BPS + 1n })).to.be.revertedWithCustomError(
+    await expect(factory.connect(owner).setConfig({ ...validConfig, totalSupply: ethers.parseEther("1000000000") + 1n })).to.be.revertedWithCustomError(
       factory,
-      "LiquidityBps"
+      "ParamTooHigh"
     );
+    // Launch generation (C5 §2 rule 1): liquidityBps is gone; a curve whose sold-out graduation would not fit
+    // the liquidity allocation is refused instead -- no allocation at all, and the old 84/14 production split.
+    await expect(factory.connect(owner).setConfig({ ...validConfig, liquidityTokenBps: 0n })).to.be.revertedWithCustomError(
+      factory,
+      "SupplyBoundBroken"
+    );
+    await expect(
+      factory.connect(owner).setConfig({
+        totalSupply: ethers.parseEther("1000000000"),
+        curveBps: 8400n,
+        liquidityTokenBps: 1400n,
+        basePrice: 1_000_000_000n,
+        priceSlope: 1080n,
+        graduationTarget: ethers.parseEther("30000"),
+      })
+    ).to.be.revertedWithCustomError(factory, "SupplyBoundBroken");
+    // The generation's own defaults pass the same bound.
+    await expect(
+      factory.connect(owner).setConfig({
+        totalSupply: ethers.parseEther("1000000000"),
+        curveBps: 7000n,
+        liquidityTokenBps: 2800n,
+        basePrice: 1_000_000_000n,
+        priceSlope: 1080n,
+        graduationTarget: ethers.parseEther("30000"),
+      })
+    ).to.emit(factory, "ConfigUpdated");
   });
 
   it("setConfig accepts documented upper bounds and campaigns inherit the frozen economic snapshot", async () => {
@@ -765,11 +798,6 @@ describe("LaunchFactory", function () {
       basePrice: MAX_BASE_PRICE,
       priceSlope: MAX_PRICE_SLOPE,
       graduationTarget: MAX_GRADUATION_TARGET,
-      firstBuyTokens: 0n,
-      firstBuyMaxCost: 0n,
-      feeChoice: 1,
-      feeCreatorPct: 0,
-      liquidityBps: MAX_BPS,
     };
 
     await expect(factory.connect(owner).setConfig(boundedConfig)).to.emit(factory, "ConfigUpdated");
@@ -784,7 +812,9 @@ describe("LaunchFactory", function () {
     expect(await campaign.basePrice()).to.eq(MAX_BASE_PRICE);
     expect(await campaign.priceSlope()).to.eq(MAX_PRICE_SLOPE);
     expect(await campaign.graduationTarget()).to.eq(MAX_GRADUATION_TARGET);
-    expect(await campaign.liquidityBps()).to.eq(MAX_BPS);
+    const stored = await factory.config();
+    expect(stored.priceSlope).to.eq(MAX_PRICE_SLOPE);
+    expect(stored.basePrice).to.eq(MAX_BASE_PRICE);
   });
 
   it("always applies factory-configured economics to new campaigns", async () => {
@@ -801,7 +831,20 @@ describe("LaunchFactory", function () {
   });
 
   it("allows each campaign request to override the graduation target", async () => {
-    const { factory, creator } = await deployCoreFixture();
+    const { factory, creator, owner, priceFeed } = await deployCoreFixture();
+    // Launch generation: create refuses a target above 95% of what the full curve raises at the oracle
+    // price, so this uses the generation's production curve and a $600 native price (the fixture's tiny
+    // curve raises ~1.25 native, far below $15k at $1).
+    await factory.connect(owner).setConfig({
+      totalSupply: ethers.parseEther("1000000000"),
+      curveBps: 7000n,
+      liquidityTokenBps: 2800n,
+      basePrice: 1_000_000_000n,
+      priceSlope: 1080n,
+      graduationTarget: ethers.parseEther("30000"),
+    });
+    const now = await latestTimestamp();
+    await priceFeed.setRoundData(2n, ethers.parseUnits("600", 8), now, now, 2n);
     const configured = await factory.config();
     const fastTarget = ethers.parseEther("15000");
 
@@ -815,19 +858,22 @@ describe("LaunchFactory", function () {
   });
 
   it("locks economic and routing setters after the first campaign exists", async () => {
-    const { factory, owner, creator, alice, graduationOracle } = await deployCoreFixture();
+    const { factory, owner, creator, alice, graduationOracle, graduationAdapter, tokenDeployer } = (await deployCoreFixture()) as any;
 
     await factory.connect(creator).createCampaign(baseReq({ name: "Locked", symbol: "LCK" }) as any);
 
-    const TopazFactory = await ethers.getContractFactory("MockTopazFactory");
-    const topazFactory = await TopazFactory.deploy();
-    await topazFactory.waitForDeployment();
-    const newRouter = await (await ethers.getContractFactory("MockRouter")).deploy(await topazFactory.getAddress(), await owner.getAddress());
-    await expect(factory.connect(owner).setCoreRouting(await newRouter.getAddress(), await alice.getAddress())).to.be.revertedWithCustomError(factory, "FactoryLocked");
+    // setCoreRouting and setLaunchProtectionConfig no longer exist (routing fixed at construction; block
+    // protection replaced by the C2 anti-sniper fee). The generation's adapter/deployer setters lock too.
+    expect(factory.interface.getFunction("setCoreRouting")).to.eq(null);
+    expect(factory.interface.getFunction("setLaunchProtectionConfig")).to.eq(null);
+    await expect(factory.connect(owner).setNativeGraduationAdapter(await graduationAdapter.getAddress())).to.be.revertedWithCustomError(factory, "FactoryLocked");
+    await expect(factory.connect(owner).setLaunchTokenDeployer(await tokenDeployer.getAddress())).to.be.revertedWithCustomError(factory, "FactoryLocked");
+    await expect(factory.connect(owner).setStockGraduationAdapter(ethers.ZeroAddress)).to.be.revertedWithCustomError(factory, "FactoryLocked");
+    await expect(factory.connect(owner).setStockCampaignImplementation(ethers.ZeroAddress)).to.be.revertedWithCustomError(factory, "FactoryLocked");
+    await expect(factory.connect(alice).setProtocolFee(123n)).to.be.revertedWithCustomError(factory, "OwnableUnauthorizedAccount");
     await expect(factory.connect(owner).setGraduationOracle(await graduationOracle.getAddress())).to.be.revertedWithCustomError(factory, "FactoryLocked");
     await expect(factory.connect(owner).setProtocolFee(123n)).to.be.revertedWithCustomError(factory, "FactoryLocked");
     await expect(factory.connect(owner).setRouteProfiles(1, 1)).to.be.revertedWithCustomError(factory, "FactoryLocked");
-    await expect(factory.connect(owner).setLaunchProtectionConfig(1, 1, 1)).to.be.revertedWithCustomError(factory, "FactoryLocked");
     await expect(
       factory.connect(owner).setConfig({
         totalSupply: 1n,
@@ -836,11 +882,6 @@ describe("LaunchFactory", function () {
         basePrice: 1n,
         priceSlope: 1n,
         graduationTarget: 1n,
-        firstBuyTokens: 0n,
-        firstBuyMaxCost: 0n,
-        feeChoice: 1,
-        feeCreatorPct: 0,
-        liquidityBps: 8000n,
       })
     ).to.be.revertedWithCustomError(factory, "FactoryLocked");
   });

@@ -9,14 +9,11 @@ const baseReq = (overrides: Record<string, unknown> = {}) => ({
   xAccount: "",
   website: "",
   extraLink: "",
-  basePrice: 0n,
-  priceSlope: 0n,
   graduationTarget: 0n,
   firstBuyTokens: 0n,
   firstBuyMaxCost: 0n,
   feeChoice: 1,
   feeCreatorPct: 0,
-  lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
 
@@ -35,34 +32,6 @@ async function deployRegistries() {
   await riskRegistry.waitForDeployment();
 
   return { creatorRegistry, riskRegistry };
-}
-
-async function deployLifecycleFactoryWithUnifiedFeeRouter() {
-  const { owner, creator, alice, router, campaignImplementation, graduationOracle } =
-    await deployCoreFixture();
-  const MockPhase1TreasuryRouter = await ethers.getContractFactory("MockPhase1TreasuryRouter");
-  const strictFeeRouter = await MockPhase1TreasuryRouter.deploy();
-  await strictFeeRouter.waitForDeployment();
-
-  const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(
-    await router.getAddress(),
-    await strictFeeRouter.getAddress(),
-    await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress()
-  );
-  await factory.waitForDeployment();
-
-  const permanentLpLocker = await ethers.getContractAt(
-    "PermanentLpLocker",
-    await factory.permanentLpLocker()
-  );
-
-  await factory.connect(owner).setRequireRouteAuthorization(false);
-  await factory.connect(owner).setRequireAuthorizedTrading(false);
-  await factory.connect(owner).enableLive();
-
-  return { owner, creator, alice, factory, permanentLpLocker };
 }
 
 describe("LaunchFactory lifecycle integration", function () {
@@ -158,13 +127,27 @@ describe("LaunchFactory lifecycle integration", function () {
 
     expect(profile.liveBondingCount).to.eq(1n);
     expect(await campaign.creatorBuyCapWei()).to.eq(rules.creatorBuyCapWei);
-    expect(await campaign.creatorBuyLockUntil()).to.be.gt(0n);
+    expect(rules.creatorBuyCapWei).to.eq(ethers.parseEther("0.25"));
 
-    const amountOut = ethers.parseEther("1");
+    // C4 (launch generation): the tier buy lock is gone. A creator buy after create is held by the campaign
+    // (escrow, released 30d + 5 weekly tranches), never paid to the creator's wallet, and counts against
+    // the tier cap injected above.
+    const token = await ethers.getContractAt("LaunchToken", info.token);
+    const amountOut = ethers.parseEther("200");
     const total = await campaign.quoteBuyExactTokens(amountOut);
-    await expect(campaign.connect(creator).buyExactTokens(amountOut, total, { value: total })).to.be.revertedWithCustomError(
+    await expect(campaign.connect(creator).buyExactTokens(amountOut, total, { value: total }))
+      .to.emit(campaign, "CreatorBuyEscrowed")
+      .withArgs(await creator.getAddress(), amountOut, (v: bigint) => v > 0n);
+    expect(await token.balanceOf(await creator.getAddress())).to.eq(0n);
+    expect(await campaign.creatorEscrowTotal()).to.eq(amountOut);
+    expect(await campaign.creatorEscrowClaimable()).to.eq(0n);
+    // area(200e18) with base 1e12 / slope 1e13 = 0.2002 native; another 30 tokens brings it to 0.264523 > 0.25.
+    expect(await campaign.creatorBoughtWei()).to.eq(200_200_000_000_000_000n);
+    const more = ethers.parseEther("30");
+    const moreTotal = await campaign.quoteBuyExactTokens(more);
+    await expect(campaign.connect(creator).buyExactTokens(more, moreTotal, { value: moreTotal })).to.be.revertedWithCustomError(
       campaign,
-      "CreatorBuyLocked"
+      "CreatorBuyCapExceeded"
     );
   });
 
@@ -238,8 +221,9 @@ describe("LaunchFactory lifecycle integration", function () {
   });
 
   it("graduation notification decrements creator live count and registers the LP token", async () => {
-    const { factory, owner, creator, alice, permanentLpLocker } =
-      await deployLifecycleFactoryWithUnifiedFeeRouter();
+    // Launch generation: the core fixture carries the TreasuryRouterV3 + choice-aware creator vault and the
+    // native graduation adapter / token deployer every create needs.
+    const { factory, owner, creator, alice, permanentLpLocker } = await deployCoreFixture();
     const { creatorRegistry, riskRegistry } = await deployRegistries();
     const creatorAddress = await creator.getAddress();
 
@@ -252,11 +236,6 @@ describe("LaunchFactory lifecycle integration", function () {
       basePrice: 10n ** 12n,
       priceSlope: 10n ** 9n,
       graduationTarget: 1n,
-      firstBuyTokens: 0n,
-      firstBuyMaxCost: 0n,
-      feeChoice: 1,
-      feeCreatorPct: 0,
-      liquidityBps: 8000,
     });
 
     await factory.connect(creator).createCampaign(baseReq({ name: "Graduate Life", symbol: "GRAD" }) as any);
@@ -267,10 +246,14 @@ describe("LaunchFactory lifecycle integration", function () {
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
 
-    await expect(campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy })).to.emit(
-      factory,
-      "CampaignGraduated"
-    );
+    // C5: the sell-out only marks the campaign pending; anyone then graduates it.
+    await expect(campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy }))
+      .to.emit(campaign, "GraduationPending")
+      .and.not.to.emit(factory, "CampaignGraduated");
+    expect(await campaign.graduationPending()).to.eq(true);
+    expect((await creatorRegistry.getCreatorProfile(creatorAddress)).liveBondingCount).to.eq(1n);
+    await expect(campaign.connect(alice).graduate()).to.emit(factory, "CampaignGraduated");
+    expect(await factory.campaignGraduationRecorded(info.campaign)).to.eq(true);
 
     const state = await campaign.getGraduationState();
     expect(state.dexPair).to.not.eq(ethers.ZeroAddress);

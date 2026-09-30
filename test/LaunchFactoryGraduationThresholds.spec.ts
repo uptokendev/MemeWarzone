@@ -10,7 +10,30 @@ const req = (graduationTarget: bigint, name = "Threshold", symbol = "THR") => ({
   website: "",
   extraLink: "",
   graduationTarget,
+  firstBuyTokens: 0n,
+  firstBuyMaxCost: 0n,
+  feeChoice: 1,
+  feeCreatorPct: 0,
 });
+
+// Launch generation: create refuses a USD target above 95% of what the whole curve raises at the oracle
+// price (TargetOutOfRangeAtPrice). The core fixture's tiny curve raises ~1.25 native at $1, so the
+// explicit-threshold tests run on the generation's production V2 curve with native at $600
+// (full curve ~264.6 native = ~$158.8k).
+async function useProductionCurve(fixture: any, graduationTarget = ethers.parseEther("30000")) {
+  const { factory, owner, priceFeed } = fixture;
+  await factory.connect(owner).setConfig({
+    totalSupply: ethers.parseEther("1000000000"),
+    curveBps: 7000n,
+    liquidityTokenBps: 2800n,
+    basePrice: 1_000_000_000n,
+    priceSlope: 1080n,
+    graduationTarget,
+  });
+  const block = await ethers.provider.getBlock("latest");
+  const now = BigInt(block!.timestamp);
+  await priceFeed.setRoundData(2n, ethers.parseUnits("600", 8), now, now, 2n);
+}
 
 describe("LaunchFactory graduation threshold policy", function () {
   const six = ethers.parseEther("6");
@@ -53,7 +76,9 @@ describe("LaunchFactory graduation threshold policy", function () {
   });
 
   it("allows legacy fast-test targets only on the local Hardhat chain", async () => {
-    const { factory, creator } = await deployCoreFixture();
+    const fixture = await deployCoreFixture();
+    const { factory, creator } = fixture;
+    await useProductionCurve(fixture);
     const { chainId } = await ethers.provider.getNetwork();
 
     expect(chainId).to.eq(31337n);
@@ -66,7 +91,9 @@ describe("LaunchFactory graduation threshold policy", function () {
   });
 
   it("accepts each approved explicit threshold in the local test environment", async () => {
-    const { factory, creator } = await deployCoreFixture();
+    const fixture = await deployCoreFixture();
+    const { factory, creator } = fixture;
+    await useProductionCurve(fixture);
     const approved = [six, fifteenK, thirtyK, fiftyK];
 
     for (let index = 0; index < approved.length; index += 1) {
@@ -78,22 +105,10 @@ describe("LaunchFactory graduation threshold policy", function () {
   });
 
   it("keeps graduationTarget 0 as the factory-configured default", async () => {
-    const { factory, owner, creator } = await deployCoreFixture();
-    const current = await factory.config();
-
-    await factory.connect(owner).setConfig({
-      totalSupply: current.totalSupply,
-      curveBps: current.curveBps,
-      liquidityTokenBps: current.liquidityTokenBps,
-      basePrice: current.basePrice,
-      priceSlope: current.priceSlope,
-      graduationTarget: thirtyK,
-      firstBuyTokens: 0n,
-      firstBuyMaxCost: 0n,
-      feeChoice: 1,
-      feeCreatorPct: 0,
-      liquidityBps: current.liquidityBps,
-    });
+    const fixture = await deployCoreFixture();
+    const { factory, creator } = fixture;
+    await useProductionCurve(fixture, thirtyK);
+    expect((await factory.config()).graduationTarget).to.eq(thirtyK);
 
     await factory.connect(creator).createCampaign(req(0n, "Default", "DFLT") as any);
     const info = await factory.getCampaign(0n);

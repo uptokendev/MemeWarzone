@@ -34,7 +34,6 @@ async function createLowTargetCampaign() {
     firstBuyMaxCost: 0n,
     feeChoice: 1,
     feeCreatorPct: 0,
-    liquidityBps: 8000,
   });
   await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest() as any);
   const info = await fx.factory.getCampaign(0n);
@@ -59,8 +58,20 @@ describe("LaunchCampaign excess native rescue", function () {
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
     await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    // C5: the completion buy only marks Pending; nothing is rescuable until graduate() has run
+    expect(await campaign.graduationPending()).to.eq(true);
+    expect(await campaign.excessNativeBalance()).to.eq(0n);
+    await expect(campaign.connect(creator).rescueExcessNative(bobAddress, 1n)).to.be.revertedWithCustomError(
+      campaign,
+      "NotFinalized"
+    );
+    await campaign.connect(alice).graduate();
 
     expect(await campaign.launched()).to.eq(true);
+    // the creator's 19.8% pull balance stays in the campaign and is never excess
+    const creatorShare = await campaign.pendingCreatorGraduation();
+    expect(creatorShare).to.be.gt(0n);
+    expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(surplus + creatorShare);
     expect(await campaign.excessNativeBalance()).to.eq(surplus);
 
     await expect(campaign.connect(creator).rescueExcessNative(ethers.ZeroAddress, surplus)).to.be.revertedWithCustomError(
@@ -81,5 +92,6 @@ describe("LaunchCampaign excess native rescue", function () {
       [-surplus, surplus]
     );
     expect(await campaign.excessNativeBalance()).to.eq(0n);
+    expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(creatorShare);
   });
 });

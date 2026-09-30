@@ -293,6 +293,18 @@ plus (E10) per-campaign quote balances (`creatorQuoteBalance`, `holderQuoteBalan
   vault holds for a burn; `rescueExcessNative` moves only `balance - totalLiabilities`.
 - `receive()` accepts only the wrapped native (unwrap) and factory campaigns (buyback refunds).
 
+**Hardening (2026-09-30, branch `claude/evm-core`): the V3 price limit bounds the bought token.**
+`EvmGenPoolSwap.v3Limit` computed `sqrtP * sqrt(1 - i)` for `zeroForOne`. That swap buys token1, whose
+price is `1/p`, so the bought token could rise by `1/(1 - 0.005) = +0.5025%`, above the spec's
+`after <= before * (1e4 + maxImpactBps) / 1e4`. It surfaced as a nonce-dependent failure of the V3
+vault buyback test (which orientation the pool takes depends on the token addresses). Now
+`zeroForOne` uses `sqrt(1e4 / (1e4 + i))` and the other direction is unchanged (`sqrt(1 + i)`), so in
+both orientations the bought token's price rises by at most `i` (rounded inward, never beyond). Effect
+on the V3 locker's MEME sale when MEME is token0: MEME may fall by `1 - 1/1.005 = 0.4975%` instead of
+0.5% (slightly tighter, the rest carries to the next harvest). No state, guard or call order changed;
+pure arithmetic on `BPS <= 1e4` and `impact <= 50` (`1e4 * 1e18` fits easily). Pinned in both
+orientations by `test/evmgen-hardening-locker-binding.spec.ts` ("V3 impact bound").
+
 ## Audit notes per money path
 
 | Path | Guard | CEI | Reachable in | Overflow | Griefing |

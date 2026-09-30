@@ -10,6 +10,7 @@ import {
   snapshotLiveBnbTestnetFactory,
 } from "./lib/bnbLiveFactorySnapshot";
 import { LIVE_97_ROUTE_AUTHORITY, resolveBnb6cRouteAuthority, sameAddress } from "./bnb6cRouteAuthority";
+import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
 
 const BNB_TESTNET_CHAIN_ID = 97;
 const LOCAL_CHAIN_ID = 31337;
@@ -190,12 +191,10 @@ async function main() {
   await campaignImplementation.waitForDeployment();
 
   const LaunchFactory = await ethers.getContractFactory("LaunchFactory");
-  const launchFactory = await LaunchFactory.deploy(
-    await router.getAddress(),
+  const launchFactory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
     await treasuryRouter.getAddress(),
     await campaignImplementation.getAddress(),
-    await graduationOracle.getAddress(),
-  );
+    await graduationOracle.getAddress()] })).factory;
   await launchFactory.waitForDeployment();
 
   const lockerAddress = await launchFactory.permanentLpLocker();

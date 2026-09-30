@@ -1,18 +1,25 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
+// The generation's BNB (Topaz V2) production curve: 70% curve, 28% liquidity allocation, base 1e9,
+// slope 1080, $30k target -- the factory's constructor default, set explicitly as the deploy does.
 const PRODUCTION_CONFIG = {
   totalSupply: ethers.parseEther("1000000000"),
+  curveBps: 7000n,
+  liquidityTokenBps: 2800n,
+  basePrice: 1_000_000_000n,
+  priceSlope: 1080n,
+  graduationTarget: ethers.parseEther("30000"),
+};
+
+// The previous generation's curve. A sold-out graduation would need more tokens than its 14%
+// liquidity allocation holds, so the generation refuses it (C5 section 2).
+const PREVIOUS_GENERATION_CONFIG = {
+  ...PRODUCTION_CONFIG,
   curveBps: 8400n,
   liquidityTokenBps: 1400n,
-  basePrice: 1_000_000_000n,
   priceSlope: 850n,
-  graduationTarget: ethers.parseEther("30000"),
-  firstBuyTokens: 0n,
-  firstBuyMaxCost: 0n,
-  feeChoice: 1,
-  feeCreatorPct: 0,
-  liquidityBps: 3300n,
 };
 
 const campaignReq = {
@@ -112,12 +119,10 @@ describe("BNB factory replacement security sequence", function () {
     expect(await treasury.authorizedLpLocker(await oldLocker.getAddress())).to.equal(true);
 
     const Factory = await ethers.getContractFactory("LaunchFactory");
-    const factory = await Factory.connect(deployer).deploy(
-      await router.getAddress(),
+    const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await router.getAddress(),
       await treasury.getAddress(),
       await implementation.getAddress(),
-      await oracle.getAddress(),
-    );
+      await oracle.getAddress()] })).factory;
     await factory.waitForDeployment();
     const locker = await ethers.getContractAt("PermanentLpLocker", await factory.permanentLpLocker());
 
@@ -135,13 +140,18 @@ describe("BNB factory replacement security sequence", function () {
     await factory.connect(deployer).setRouteAuthority(await routeAuthority.getAddress());
     await factory.connect(deployer).setRouteProfiles(1, 1);
     await factory.connect(deployer).setProtocolFee(200);
+    await expect(factory.connect(deployer).setConfig(PREVIOUS_GENERATION_CONFIG)).to.be.revertedWithCustomError(
+      factory,
+      "SupplyBoundBroken",
+    );
     await factory.connect(deployer).setConfig(PRODUCTION_CONFIG);
-    await factory.connect(deployer).setLaunchProtectionConfig(0, 0, 0);
-
-    const protection = await factory.launchProtectionConfig();
-    expect(protection.blocks_).to.equal(0n);
-    expect(protection.maxBuyWei).to.equal(0n);
-    expect(protection.maxWalletWei).to.equal(0n);
+    const config = await factory.config();
+    expect(config.curveBps).to.equal(PRODUCTION_CONFIG.curveBps);
+    expect(config.liquidityTokenBps).to.equal(PRODUCTION_CONFIG.liquidityTokenBps);
+    expect(config.priceSlope).to.equal(PRODUCTION_CONFIG.priceSlope);
+    // Block-based launch protection (setLaunchProtectionConfig) is gone; the C2 anti-sniper fee replaced it
+    // (evmgen-core-antisniper).
+    expect(factory.interface.getFunction("setLaunchProtectionConfig")).to.equal(null);
     expect(await factory.requireRouteAuthorization()).to.equal(true);
     expect(await factory.requireAuthorizedTrading()).to.equal(true);
 

@@ -11,12 +11,11 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {LaunchCampaign} from "./LaunchCampaign.sol";
 import {CreatorRegistry} from "./CreatorRegistry.sol";
 import {RiskRegistry} from "./RiskRegistry.sol";
-import {PermanentLpLocker} from "./PermanentLpLocker.sol";
-import {PermanentV3PositionLocker} from "./PermanentV3PositionLocker.sol";
 import {ITopazRouter02} from "./interfaces/ITopazRouter02.sol";
 import {ICreatorRewardsVaultV2, ICreatorRewardsVaultSource} from "./interfaces/ICreatorRewardsVaultV2.sol";
 
 interface IPermanentLiquidityLocker {
+    function admin() external view returns (address);
     function configureRevenue(address treasuryRouter_, address integrationSource_) external;
     function setIntegrationSourceAuthorized(address sourceAddress, bool authorized) external;
     function registeredLpToken(address lpAsset) external view returns (bool);
@@ -29,6 +28,16 @@ interface IPermanentLiquidityLocker {
         address expectedTokenB,
         uint256 lockedLpAmount
     ) external;
+}
+
+/// @dev Kind probes: each selector exists on exactly one locker, and neither locker has a fallback,
+/// so calling the other kind's selector reverts the factory constructor.
+interface IPermanentV3LockerKind {
+    function REQUIRED_LIQUIDITY_KIND() external view returns (uint8);
+}
+
+interface IPermanentV2LockerKind {
+    function REQUIRED_POOL_FEE_BPS() external view returns (uint16);
 }
 
 interface IRobinhoodStockGraduationRouteRegistry {
@@ -79,7 +88,6 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
     error PriceZero();
     error SlopeZero();
     error TargetZero();
-    error LiquidityBps();
     error NotLive();
     error AlreadyLive();
     error FactoryLocked();
@@ -118,6 +126,8 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
     error InsufficientValue();
     error RefundFailed();
     error NativeGraduationAdapterUnavailable();
+    error LockerNotBoundToFactory();
+    error LockerKindMismatch();
 
     struct LaunchConfig {
         uint256 totalSupply;
@@ -309,7 +319,20 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
         _;
     }
 
-    constructor(address topazRouter_, address treasuryRouter_, address campaignImplementation_, address graduationOracle_) Ownable(msg.sender) {
+    /// @param permanentLpLocker_ The generation's locker, deployed immediately before this factory with
+    /// `admin` = this factory's CREATE address (the deployer's next nonce). The locker's `admin` is
+    /// immutable and every registration/configuration entry point on it is `onlyAdmin`, so the check
+    /// below proves that only this factory can ever register a pool on it, and that nobody configured
+    /// it before (its admin did not exist yet). Wrong kind or wrong admin reverts; the deploy then
+    /// simply redeploys both. Moving the `new` out of this constructor is what keeps the factory
+    /// initcode under EIP-3860 (see docs/evm-launch/spec/C5-graduation.md, "Locker binding").
+    constructor(
+        address topazRouter_,
+        address treasuryRouter_,
+        address campaignImplementation_,
+        address graduationOracle_,
+        address permanentLpLocker_
+    ) Ownable(msg.sender) {
         if (topazRouter_ == address(0)) revert RouterZero();
         if (treasuryRouter_ == address(0)) revert RecipientZero();
         if (campaignImplementation_ == address(0)) revert ImplementationZero();
@@ -318,8 +341,10 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
             topazRouter_.code.length == 0 ||
             treasuryRouter_.code.length == 0 ||
             campaignImplementation_.code.length == 0 ||
-            graduationOracle_.code.length == 0
+            graduationOracle_.code.length == 0 ||
+            permanentLpLocker_.code.length == 0
         ) revert ContractCodeMissing();
+        if (IPermanentLiquidityLocker(permanentLpLocker_).admin() != address(this)) revert LockerNotBoundToFactory();
 
         router = topazRouter_;
         leagueReceiver = treasuryRouter_;
@@ -329,15 +354,15 @@ contract LaunchFactory is Ownable, ReentrancyGuard {
 
         uint8 detectedLiquidityKind = _readLiquidityKind(topazRouter_);
         liquidityKind = detectedLiquidityKind;
+        permanentLpLocker = IPermanentLiquidityLocker(permanentLpLocker_);
         if (detectedLiquidityKind == LIQUIDITY_KIND_V3_NFT) {
-            PermanentV3PositionLocker locker = new PermanentV3PositionLocker(address(this));
-            permanentLpLocker = IPermanentLiquidityLocker(address(locker));
-            locker.configureRevenue(treasuryRouter_, topazRouter_);
+            if (IPermanentV3LockerKind(permanentLpLocker_).REQUIRED_LIQUIDITY_KIND() != LIQUIDITY_KIND_V3_NFT) {
+                revert LockerKindMismatch();
+            }
+            IPermanentLiquidityLocker(permanentLpLocker_).configureRevenue(treasuryRouter_, topazRouter_);
         } else {
-            address poolFactory = _v2PoolFactory(topazRouter_);
-            PermanentLpLocker locker = new PermanentLpLocker(address(this));
-            permanentLpLocker = IPermanentLiquidityLocker(address(locker));
-            locker.configureRevenue(treasuryRouter_, poolFactory);
+            if (IPermanentV2LockerKind(permanentLpLocker_).REQUIRED_POOL_FEE_BPS() == 0) revert LockerKindMismatch();
+            IPermanentLiquidityLocker(permanentLpLocker_).configureRevenue(treasuryRouter_, _v2PoolFactory(topazRouter_));
         }
 
         // C5 §2: supply-bound curve. 70% curve, 28% liquidity allocation, 2% creator reserve; BNB

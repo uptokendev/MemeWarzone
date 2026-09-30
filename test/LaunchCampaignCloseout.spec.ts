@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { deployCoreFixture } from "./fixtures/core";
 
 const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
@@ -10,14 +10,11 @@ const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
   xAccount: "",
   website: "",
   extraLink: "",
-  basePrice: 0n,
-  priceSlope: 0n,
   graduationTarget: 0n,
   firstBuyTokens: 0n,
   firstBuyMaxCost: 0n,
   feeChoice: 1,
   feeCreatorPct: 0,
-  lpReceiver: ethers.ZeroAddress,
   ...overrides,
 });
 
@@ -32,79 +29,34 @@ async function makeGraduationEligibleByOracle(campaign: any, priceFeed: any) {
   expect(await campaign.netRaisedWei()).to.be.gte(await campaign.graduationNativeTarget());
 }
 
+async function createCampaignWith(overrides: Record<string, unknown> = {}) {
+  const fx = await deployCoreFixture();
+  await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest(overrides) as any);
+  const info = await fx.factory.getCampaign(0n);
+  const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
+  const token = await ethers.getContractAt("LaunchToken", info.token);
+  return { ...fx, info, campaign, token };
+}
+
 async function createCampaignFixture() {
-  const fx = await deployCoreFixture();
-  await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest() as any);
-  const info = await fx.factory.getCampaign(0n);
-  const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
-  const token = await ethers.getContractAt("LaunchToken", info.token);
-  return { ...fx, info, campaign, token };
+  return createCampaignWith();
 }
 
+// EVM launch generation: the fixture's default target ($1 at a $1 oracle = 1 native, inside the 95%-of-curve
+// range) is not reached by the small buys below. The old $100k target is refused (TargetOutOfRangeAtPrice).
+// Time is moved past the 60 s anti-sniper window (C2) so the flat 2% fee applies and a quote taken in one block
+// executes identically in the next.
 async function createHighTargetCampaignFixture() {
-  const fx = await deployCoreFixture();
-  await fx.factory.connect(fx.owner).setConfig({
-    totalSupply: ethers.parseEther("1000"),
-    curveBps: 5000,
-    liquidityTokenBps: 4000,
-    basePrice: 10n ** 12n,
-    priceSlope: 10n ** 9n,
-    graduationTarget: ethers.parseEther("100000"),
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
-    liquidityBps: 8000,
-  });
-  await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest() as any);
-  const info = await fx.factory.getCampaign(0n);
-  const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
-  const token = await ethers.getContractAt("LaunchToken", info.token);
-  return { ...fx, info, campaign, token };
+  const fx = await createCampaignWith();
+  await time.increase(61);
+  return fx;
 }
 
+// A $1e-18 target: any buy crosses it. Uses the fixture curve (the old 1e9 slope breaks the C5 supply bound).
 async function createLowTargetCampaignFixture() {
-  const fx = await deployCoreFixture();
-  await fx.factory.connect(fx.owner).setConfig({
-    totalSupply: ethers.parseEther("1000"),
-    curveBps: 5000,
-    liquidityTokenBps: 4000,
-    basePrice: 10n ** 12n,
-    priceSlope: 10n ** 9n,
-    graduationTarget: 1n,
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
-    liquidityBps: 8000,
-  });
-  await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest() as any);
-  const info = await fx.factory.getCampaign(0n);
-  const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
-  const token = await ethers.getContractAt("LaunchToken", info.token);
-  return { ...fx, info, campaign, token };
-}
-
-async function createCappedLiquidityCampaignFixture() {
-  const fx = await deployCoreFixture();
-  await fx.factory.connect(fx.owner).setConfig({
-    totalSupply: ethers.parseEther("1000"),
-    curveBps: 8000,
-    liquidityTokenBps: 1000,
-    basePrice: 10n ** 12n,
-    priceSlope: 10n ** 9n,
-    graduationTarget: 1n,
-    firstBuyTokens: 0n,
-    firstBuyMaxCost: 0n,
-    feeChoice: 1,
-    feeCreatorPct: 0,
-    liquidityBps: 8000,
-  });
-  await fx.factory.connect(fx.creator).createCampaign(baseCampaignRequest() as any);
-  const info = await fx.factory.getCampaign(0n);
-  const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
-  const token = await ethers.getContractAt("LaunchToken", info.token);
-  return { ...fx, info, campaign, token };
+  const fx = await createCampaignWith({ graduationTarget: 1n });
+  await time.increase(61);
+  return fx;
 }
 
 describe("LaunchCampaign closeout integration", function () {
@@ -202,10 +154,15 @@ describe("LaunchCampaign closeout integration", function () {
     await makeGraduationEligibleByOracle(campaign, priceFeed);
     await factory.connect(owner).setCampaignPauses(await campaign.getAddress(), false, false, false, true);
 
-    await expect(campaign.connect(alice).graduateIfEligible(0, 0)).to.be.revertedWithCustomError(
-      campaign,
-      "GraduationPaused"
-    );
+    // EVM launch generation: graduate() replaces graduateIfEligible(); it marks the due campaign Pending and
+    // honours the graduation pause for 72 h after that, so the whole call reverts and nothing is marked.
+    await expect(campaign.connect(alice).graduate()).to.be.revertedWithCustomError(campaign, "GraduationPaused");
+    expect(await campaign.graduationPending()).to.eq(false);
+    expect(await campaign.launched()).to.eq(false);
+
+    await factory.connect(owner).setCampaignPauses(await campaign.getAddress(), false, false, false, false);
+    await expect(campaign.connect(alice).graduate()).to.emit(campaign, "Graduated");
+    expect(await campaign.launched()).to.eq(true);
   });
 
   it("authorized-trading toggle blocks direct buys and sells until disabled", async () => {
@@ -251,42 +208,64 @@ describe("LaunchCampaign closeout integration", function () {
   });
 
   it("finalization records state, uses Topaz liquidity, registers LP with the permanent locker, and is idempotent", async () => {
-    const { campaign, token, alice, permanentLpLocker, router } = await loadFixture(createLowTargetCampaignFixture);
+    const { campaign, token, alice, bob, factory, permanentLpLocker, v2factory, graduationAdapter, protocolVault } =
+      await loadFixture(createLowTargetCampaignFixture);
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
 
-    const tx = campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
-    await expect(tx).to.emit(campaign, "CampaignFinalized");
-    await expect(tx).to.emit(router, "TopazLiquidityAdded");
+    // EVM launch generation (C5): the crossing buy only marks Pending; graduate() is a separate permissionless call.
+    const buy = campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    await expect(buy).to.emit(campaign, "GraduationPending");
+    await expect(buy).to.not.emit(campaign, "Graduated");
+    expect(await campaign.graduationPending()).to.eq(true);
+    expect(await campaign.launched()).to.eq(false);
+
+    const pre = await campaign.getGraduationState();
+    const R: bigint = pre.graduationBalance;
+    const P: bigint = pre.finalCurvePrice;
+    const protocolShare = (R * 220n) / 10000n;
+    const creatorShare = (R * 1980n) / 10000n;
+    const poolNative = R - protocolShare - creatorShare;
+    const memeTarget = (poolNative * 10n ** 18n) / P;
+    const budget = (await campaign.totalSupply()) - (await campaign.creatorReserve()) - (await campaign.sold());
+    const protocolBefore = await ethers.provider.getBalance(await protocolVault.getAddress());
+
+    const tx = campaign.connect(bob).graduate();
+    await expect(tx)
+      .to.emit(campaign, "Graduated")
+      .withArgs(
+        (pool: string) => pool !== ethers.ZeroAddress,
+        R,
+        protocolShare,
+        creatorShare,
+        poolNative,
+        memeTarget,
+        budget - memeTarget,
+        P,
+        P,
+        false
+      );
+    await expect(tx).to.emit(factory, "CampaignGraduated");
 
     const state = await campaign.getGraduationState();
     expect(await campaign.launched()).to.eq(true);
+    expect(await campaign.graduationPending()).to.eq(false);
     expect(await campaign.finalizedAt()).to.be.gt(0n);
-    expect(state.dexPair).to.not.eq(ethers.ZeroAddress);
-    expect(state.graduatedLiquidityTokens).to.be.gt(0n);
-    expect(state.graduatedLiquidityBnb).to.be.gt(0n);
+    // the pool is the Topaz pool for MEME/wrapped native on the router's pool factory
+    expect(state.dexPair).to.eq(await v2factory.getPool(await token.getAddress(), await graduationAdapter.wrapped(), false));
+    expect(state.graduatedLiquidityTokens).to.eq(memeTarget);
+    expect(state.graduatedLiquidityBnb).to.eq(poolNative);
     expect(state.graduatedLiquidityLp).to.be.gt(0n);
+    expect(state.burnedUnsoldTokens).to.eq(budget - memeTarget);
     expect(state.postBurnTotalSupply).to.eq(await token.totalSupply());
+    expect(await token.balanceOf(state.dexPair)).to.eq(memeTarget);
     expect(await permanentLpLocker.registeredLpToken(state.dexPair)).to.eq(true);
+    expect(await campaign.pendingCreatorGraduation()).to.eq(creatorShare);
+    // the protocol 2.2% reached the protocol vault through routeFinalize (nothing escrowed)
+    expect(await campaign.pendingProtocolGraduationFee()).to.eq(0n);
+    expect(await ethers.provider.getBalance(await protocolVault.getAddress())).to.be.gt(protocolBefore);
 
-    await expect(campaign.connect(alice).graduateIfEligible(0, 0)).to.be.revertedWithCustomError(campaign, "Finalized");
-  });
-
-  it("caps graduation liquidity instead of reverting when desired LP tokens exceed the reserve", async () => {
-    const { campaign, alice } = await loadFixture(createCappedLiquidityCampaignFixture);
-    const liquiditySupply = await campaign.liquiditySupply();
-    const curveSupply = await campaign.curveSupply();
-    const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
-
-    const tx = campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
-    await expect(tx).to.emit(campaign, "GraduationLiquidityCapped");
-    await expect(tx).to.emit(campaign, "CampaignFinalized");
-
-    const state = await campaign.getGraduationState();
-    expect(await campaign.launched()).to.eq(true);
-    expect(state.graduatedLiquidityTokens).to.eq(liquiditySupply);
-    expect(state.burnedUnusedLpTokens).to.eq(0n);
-    expect(state.burnedUnsoldTokens).to.eq(0n);
+    await expect(campaign.connect(alice).graduate()).to.be.revertedWithCustomError(campaign, "Finalized");
   });
 
   it("quoteBuyExactBnb returns zeros after finalization", async () => {
@@ -295,6 +274,11 @@ describe("LaunchCampaign closeout integration", function () {
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
 
     await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    // EVM launch generation: sold out = Pending; zero while Pending and after graduate().
+    const pending = await campaign.quoteBuyExactBnb(ethers.parseEther("1"));
+    expect(pending.tokensOut).to.eq(0n);
+    await campaign.connect(alice).graduate();
+    expect(await campaign.launched()).to.eq(true);
 
     const quote = await campaign.quoteBuyExactBnb(ethers.parseEther("1"));
     expect(quote.tokensOut).to.eq(0n);

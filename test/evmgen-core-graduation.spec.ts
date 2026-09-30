@@ -19,6 +19,7 @@ import {
   FEE_KEEP,
   type Env,
 } from "./fixtures/evmgenCore";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const W = 10n ** 18n;
 
@@ -368,12 +369,10 @@ describe("evmgen core C5: graduation", function () {
       const [owner] = await ethers.getSigners();
       const env = await deployEvmGen({ nativeUsd: 100 });
       void owner;
-      const fresh = await (await ethers.getContractFactory("LaunchFactory")).deploy(
-        await env.topazRouter.getAddress(),
+      const fresh = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [await env.topazRouter.getAddress(),
         await env.evmRouter.getAddress(),
         await env.impl.getAddress(),
-        await env.oracle.getAddress(),
-      );
+        await env.oracle.getAddress()] })).factory;
       const cfg = await fresh.config();
       expect(cfg.curveBps).to.eq(7000n);
       expect(cfg.liquidityTokenBps).to.eq(2800n);

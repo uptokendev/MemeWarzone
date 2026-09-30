@@ -9,7 +9,7 @@
  *
  *   1. LaunchCampaign            native campaign implementation
  *   2. BnbQuoteLaunchCampaign    campaign implementation for non-native quotes
- *   3. BnbBasicLaunchFactory     the factory, which deploys its own locker
+ *   3. PermanentLpLocker + BnbBasicLaunchFactory  locker first (admin = factory's CREATE address), then the factory
  *   4. BnbQuoteGraduationAdapter needs the factory's locker, so it comes after
  *   5. PostGradLeagueTreasuryV2  the war pool's league receiver
  *   6. ArenaWarPoolTreasuryV2    the battle system
@@ -31,14 +31,21 @@
  * the quote path. Do not put both factories in front of users; only one can be
  * the active factory.
  *
+ * The generation's native graduation adapter (BnbNativeGraduationAdapter, an
+ * IGraduationAdapterV2) is an input too, BNB_NATIVE_GRADUATION_ADAPTER, and the
+ * script refuses to start without it: a factory without one, or without a
+ * LaunchTokenDeployer, cannot create, and both setters lock at the first
+ * campaign. The router's creator vault must be a CreatorRewardsVaultV2 that
+ * pays this router and is not pinned to another factory.
+ *
  *   BSC testnet first, against real Topaz:
  *     CONFIRM_BNB_QUOTE_GENERATION=I_UNDERSTAND_TESTNET \
- *     BNB_TREASURY_ROUTER=0x… BNB_NATIVE_USD_FEED=0x… \
+ *     BNB_TREASURY_ROUTER=0x… BNB_NATIVE_USD_FEED=0x… BNB_NATIVE_GRADUATION_ADAPTER=0x… \
  *       npx hardhat run scripts/deploy-bnb-quote-generation.ts --network bscTestnet
  *
  *   Then mainnet:
  *     CONFIRM_BNB_QUOTE_GENERATION=I_UNDERSTAND_MAINNET \
- *     BNB_TREASURY_ROUTER=0x… BNB_NATIVE_USD_FEED=0x… \
+ *     BNB_TREASURY_ROUTER=0x… BNB_NATIVE_USD_FEED=0x… BNB_NATIVE_GRADUATION_ADAPTER=0x… \
  *       npx hardhat run scripts/deploy-bnb-quote-generation.ts --network bscMainnet
  */
 import fs from "node:fs";
@@ -46,6 +53,13 @@ import path from "node:path";
 import { ethers, network } from "hardhat";
 
 import { wireLpLocker } from "./lib/evmLpLockerWiring";
+import { deployFactoryWithLocker } from "./lib/deployFactoryWithLocker";
+import {
+  assertCreatorVaultServesGeneration,
+  requireNativeGraduationAdapter,
+  VAULT_DEX_TOPAZ_V2,
+  wireGenerationCreatePath,
+} from "./lib/evmGenerationCreateWiring";
 
 type ChainProfile = {
   chainId: bigint;
@@ -119,13 +133,13 @@ const PROFILES: Record<string, ChainProfile> = {
   },
 };
 
-// Same curve the live 30bps generation runs.
+// EVM generation curve (spec C5 supply bound): 70% curve, 28% pool allocation, 2% creator reserve.
 const CONFIG = {
   totalSupply: ethers.parseEther("1000000000"),
-  curveBps: 8400n,
-  liquidityTokenBps: 1400n,
+  curveBps: 7000n,
+  liquidityTokenBps: 2800n,
   basePrice: 1_000_000_000n,
-  priceSlope: 850n,
+  priceSlope: 1080n,
   graduationTarget: ethers.parseEther("30000"),
   liquidityBps: 3300n,
 };
@@ -189,7 +203,7 @@ function eq(label: string, actual: unknown, expected: unknown) {
  * failed route reverts the trade rather than escrowing it. A router missing any
  * of this does not degrade -- it stops the launchpad.
  */
-async function assertRouterCanServeStrictRouting(routerAddress: string) {
+export async function assertRouterCanServeStrictRouting(routerAddress: string) {
   const router = await ethers.getContractAt(
     [
       "function creatorRewardsVault() view returns (address)",
@@ -218,7 +232,7 @@ async function assertRouterCanServeStrictRouting(routerAddress: string) {
       throw new Error(
         `treasury router ${routerAddress} has no ${name}(). It cannot serve strict unified routing, ` +
           `so every campaign this factory creates would revert FeeRoutingFailed on every trade. ` +
-          `Deploy TreasuryRouterV3 and pass it as BNB_TREASURY_ROUTER.`,
+          `Deploy TreasuryRouterV4 (with a CreatorRewardsVaultV2) and pass it as BNB_TREASURY_ROUTER.`,
       );
     }
     if (value === ethers.ZeroAddress) {
@@ -233,6 +247,12 @@ async function assertRouterCanServeStrictRouting(routerAddress: string) {
         "so the generation would deploy into a state where no campaign can trade.",
     );
   }
+
+  // Presence is not enough: the vault behind creatorRewardsVault() must take the generation's fee choice.
+  await assertCreatorVaultServesGeneration(routerAddress, {
+    dexKind: VAULT_DEX_TOPAZ_V2,
+    log: (line) => console.log(`[quote-gen]${line}`),
+  });
 }
 
 /**
@@ -407,7 +427,7 @@ export async function assertTopazRoutersFit(topazRouter: string, topazQuoteRoute
   console.log(`[quote-gen] ok topaz volatile fee = ${volatileFeeBps} bps (the locker requires ${REQUIRED_POOL_FEE_BPS})`);
 }
 
-async function main() {
+export async function main() {
   const profile = PROFILES[network.name];
   if (!profile) {
     throw new Error(`Unsupported network ${network.name}; expected bscTestnet or bscMainnet`);
@@ -459,6 +479,8 @@ async function main() {
   }
   await assertTopazRoutersFit(topazRouter, topazQuoteRouter);
   await assertRouterCanServeStrictRouting(treasuryRouter);
+  const nativeGraduationAdapter = await requireNativeGraduationAdapter("BNB_NATIVE_GRADUATION_ADAPTER");
+  console.log(`[quote-gen] nativeGraduationAdapter=${nativeGraduationAdapter}`);
 
   // After the read-only guards, so a rejected router never costs a deployment.
   const creatorRegistry = await supplyOrDeployRegistry("CreatorRegistry", "BNB_CREATOR_REGISTRY", profile.creatorRegistry, isMainnetChain);
@@ -478,19 +500,15 @@ async function main() {
     throw new Error("quote implementation does not self-identify; the factory constructor would reject it");
   }
 
-  // --- factory, which deploys its own permanent locker ---------------------
-  const factory = await (await ethers.getContractFactory("BnbBasicLaunchFactory")).deploy(
-    topazRouter,
-    treasuryRouter,
-    await nativeImpl.getAddress(),
-    graduationOracle,
-    quoteImplAddress,
-  );
-  await factory.waitForDeployment();
-  const factoryAddress = await factory.getAddress();
-  const lockerAddress = await (factory as any).permanentLpLocker();
-  console.log(`[quote-gen] BnbBasicLaunchFactory=${factoryAddress}`);
-  console.log(`[quote-gen] PermanentLpLocker=${lockerAddress}`);
+  // --- permanent locker, then the factory it is bound to ---------------------
+  // The locker is deployed with admin = the factory's CREATE address; the factory constructor refuses
+  // any locker whose admin() is not itself (EIP-3860: the factory no longer embeds the locker).
+  const { factory, factoryAddress, lockerAddress } = await deployFactoryWithLocker({
+    factoryName: "BnbBasicLaunchFactory",
+    args: [topazRouter, treasuryRouter, await nativeImpl.getAddress(), graduationOracle, quoteImplAddress],
+    lockerKind: "v2",
+    log: (line) => console.log(`[quote-gen] ${line}`),
+  });
 
   // The invariant whose absence bricked the previous generation.
   eq("factory.feeRecipient", await (factory as any).feeRecipient(), treasuryRouter);
@@ -554,6 +572,21 @@ async function main() {
     log: (message) => console.log(`[quote-gen]${message}`),
   });
   await waitTx((factory as any).setRouteAuthority(routeAuthority), "factory.setRouteAuthority");
+
+  // Without these the factory can create nothing: native adapter + token deployer (whenMutable) and
+  // the creator vault pinned to this factory (setCampaignChoice is onlyFactory).
+  const creatorVault = await (await ethers.getContractAt(
+    ["function creatorRewardsVault() view returns (address)"],
+    treasuryRouter,
+  ) as any).creatorRewardsVault();
+  const createPath = await wireGenerationCreatePath({
+    factoryAddress,
+    nativeGraduationAdapter,
+    creatorVault,
+    senderAddress: deployerAddress,
+    log: (line) => console.log(`[quote-gen]${line}`),
+  });
+
   await waitTx((factory as any).setCreatePaused(true), "factory.setCreatePaused(true)");
 
   await readBack(() => (factory as any).createPaused(), true, "factory.createPaused");
@@ -567,13 +600,14 @@ async function main() {
     deployer: deployerAddress,
     owner: safe,
     status: "deployed-paused",
-    inputs: { topazRouter, topazQuoteRouter, treasuryRouter, graduationOracle, creatorRegistry, riskRegistry, routeAuthority, nativeUsdFeed },
+    inputs: { topazRouter, topazQuoteRouter, treasuryRouter, graduationOracle, creatorRegistry, riskRegistry, routeAuthority, nativeUsdFeed, nativeGraduationAdapter, creatorVault },
     contracts: {
       BnbBasicLaunchFactory: factoryAddress,
       PermanentLpLocker: lockerAddress,
       LaunchCampaignImplementation: await nativeImpl.getAddress(),
       BnbQuoteLaunchCampaign: quoteImplAddress,
       BnbQuoteGraduationAdapter: adapterAddress,
+      LaunchTokenDeployer: createPath.tokenDeployer,
       PostGradLeagueTreasuryV2: leagueAddress,
       ArenaWarPoolTreasuryV2: warPoolAddress,
     },
@@ -581,12 +615,15 @@ async function main() {
     protocolFeeBps: PROTOCOL_FEE_BPS.toString(),
     launchRecorderWired: recorder.wired,
     lpLockerAuthorized: lpLocker.wired,
+    createPathWired: createPath.wired,
     pendingOwnerActions: [
       ...(recorder.ownerAction ? [{ ...recorder.ownerAction, why: "setLaunchRecorder(factory, true); CREATE reverts NotLaunchRecorder without it" }] : []),
+      ...createPath.ownerActions,
       ...lpLocker.ownerActions,
     ],
     next: [
       ...(recorder.wired ? [] : ["creatorRegistry.setLaunchRecorder(factory, true) from the registry owner -- CREATE is dead until this lands"]),
+      ...(createPath.wired ? [] : ["the create-path owner actions above (native adapter, token deployer, vault pin) -- CREATE is dead until they land, and before the first campaign"]),
       ...(lpLocker.wired ? [] : ["treasuryRouter.setAuthorizedLpLocker(locker, true) -- the protocol's 20% of every LP harvest strands until this lands"]),
       "configureQuoteRoute on the adapter for each approved quote token",
       "transfer factory, locker, league and war pool ownership to the Safe",
@@ -594,7 +631,8 @@ async function main() {
     ],
   };
 
-  const out = path.join(__dirname, "..", "deployments", profile.deploymentFile);
+  // QUOTE_GEN_OUT redirects the artifact (the in-process rehearsal writes to a temp dir, not the repo).
+  const out = String(process.env.QUOTE_GEN_OUT || "").trim() || path.join(__dirname, "..", "deployments", profile.deploymentFile);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`);
   console.log(`[quote-gen] wrote ${out}`);
@@ -602,10 +640,14 @@ async function main() {
   if (!recorder.wired) {
     console.log("[quote-gen] WARNING: the factory is not a launch recorder. CREATE reverts until the owner call above executes.");
   }
+  if (!createPath.wired) {
+    console.log("[quote-gen] WARNING: the create path is not wired. CREATE reverts until the owner actions above execute.");
+  }
   if (!lpLocker.wired) {
     console.log("[quote-gen] WARNING: the locker is not authorized on the treasury router. Harvests will pay the creator and strand the protocol share.");
   }
   console.log("[quote-gen] Quote routes, ownership transfer and going live are separate deliberate steps.");
+  return artifact;
 }
 
 // Only when run as a script. The guards above are imported by

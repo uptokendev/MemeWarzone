@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 
 import { assertV3PiecesAgree, deployPrerequisites, DEFAULT_MONTHLY_CAP_USD } from "../scripts/deploy-robinhood-prerequisites";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 /**
  * Rehearsal for scripts/deploy-robinhood-prerequisites.ts, the step Robinhood
@@ -62,7 +63,7 @@ describe("Robinhood prerequisites deployment", function () {
     const impl = await (await ethers.getContractFactory("LaunchCampaign")).deploy(); await impl.waitForDeployment();
     // A throwaway router for the factory build; its admin is whoever wires it.
     const routing = await (await import("./helpers/deployRouting")).deployConfiguredTreasuryRouterV3(await owner.getAddress());
-    const lf = await (await ethers.getContractFactory("LaunchFactory")).deploy(c.RobinhoodUniswapV3GraduationAdapter, await routing.treasuryRouter.getAddress(), await impl.getAddress(), c.GraduationOracle);
+    const lf = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [c.RobinhoodUniswapV3GraduationAdapter, await routing.treasuryRouter.getAddress(), await impl.getAddress(), c.GraduationOracle] })).factory;
     await lf.waitForDeployment();
     expect(await (lf as any).liquidityKind()).to.equal(2n);
   });

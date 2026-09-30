@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers, network } from "hardhat";
+import { deployFactoryWithLocker } from "../scripts/lib/deployFactoryWithLocker";
 
 const ADAPTER = "0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a";
 const TOPAZ_ROUTER = "0x1E98c8226e7d452e1888e3d3d2F929346321c6c3";
@@ -100,7 +101,7 @@ async function deploySourceHead() {
   await implementation.waitForDeployment();
 
   const Factory = await ethers.getContractFactory("LaunchFactory");
-  const factory = await Factory.deploy(ADAPTER, await treasury.getAddress(), await implementation.getAddress(), await oracle.getAddress());
+  const factory = await (await deployFactoryWithLocker({ factoryName: "LaunchFactory", args: [ADAPTER, await treasury.getAddress(), await implementation.getAddress(), await oracle.getAddress()] })).factory;
   await factory.waitForDeployment();
   const locker = await ethers.getContractAt("PermanentLpLocker", await factory.permanentLpLocker());
   await (await treasury.setAuthorizedLpLocker(await locker.getAddress(), true)).wait();
