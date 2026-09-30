@@ -105,18 +105,29 @@ describe("audit1: trading and create paths", function () {
     await expect(buyTokens(env, campaign, alice, E(1000))).to.be.revertedWithCustomError(vault2, "ChoiceUnset");
   });
 
-  it("EXPLOIT (admin power): a campaign paused before it is due can never graduate; the 72h honour window only protects coins already Pending", async () => {
+  it("HOLDS: a campaign paused before it is due graduates once the pause is 72h old; sells reopen then too, and re-pausing cannot extend the window (was EXPLOIT, fixed)", async () => {
     const { env, campaign, token } = await tradingCoin();
     await buyNative(env, campaign, env.alice, E(40)); // below the 50 BNB target
     await env.factory.setCampaignPauses(await campaign.getAddress(), true, true, true, true);
+    const pausedAt = Number(await campaign.pausedAt());
+    // Inside the 72h window the pause holds.
+    await expect(sellTokens(env, campaign, token, env.alice, E(1))).to.be.revertedWithCustomError(campaign, "CampaignPaused");
+    // The owner cycles the pause at 71h to try to restart the clock: the window keeps its start.
+    await mineAt(pausedAt + 71 * 3600);
+    await env.factory.setCampaignPauses(await campaign.getAddress(), false, false, false, false);
+    await env.factory.setCampaignPauses(await campaign.getAddress(), true, true, true, true);
+    expect(Number(await campaign.pausedAt())).to.eq(pausedAt);
     // Price moves so the coin is now due (BNB $600 -> $800: target 37.5 BNB < raise).
     const t = await now();
     await env.feed.setRoundData(2, 800n * 10n ** 8n, t, t, 2);
     await increaseTime(365 * DAY);
     const t2 = await now();
     await env.feed.setRoundData(3, 800n * 10n ** 8n, t2, t2, 3);
-    await expect(campaign.graduate()).to.be.revertedWithCustomError(campaign, "GraduationPaused");
-    await expect(sellTokens(env, campaign, token, env.alice, E(1))).to.be.revertedWithCustomError(campaign, "CampaignPaused");
+    // Past the window: sells ignore the pause (buys stay paused), and graduate() goes through.
+    await sellTokens(env, campaign, token, env.alice, E(1));
+    await expect(buyNative(env, campaign, env.bob, E(1))).to.be.revertedWithCustomError(campaign, "CampaignPaused");
+    await campaign.graduate();
+    expect(await campaign.launched()).to.eq(true);
   });
 
   it("EXPLOIT (info): dust buys cost 0 wei and pay 0 fee, and still count as a new buyer", async () => {

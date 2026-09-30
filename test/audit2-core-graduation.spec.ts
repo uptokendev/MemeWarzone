@@ -81,7 +81,7 @@ describe("audit2: LaunchCampaign graduation", function () {
     expect(await campaign.launched()).to.eq(true);
   });
 
-  it("EXPLOIT (Info, trust): a campaign paused while Trading that becomes due through the oracle can never enter Pending, so the 72 h cap never starts", async () => {
+  it("HOLDS: a campaign paused while Trading that becomes due through the oracle enters Pending anyway, so the 72 h cap starts (was EXPLOIT, fixed)", async () => {
     const env = await deployEvmGen();
     const { campaign } = await createCoin(env, req());
     await mineAt(Number(await campaign.launchAt()) + 61);
@@ -90,11 +90,16 @@ describe("audit2: LaunchCampaign graduation", function () {
     await env.factory.setCampaignPauses(await campaign.getAddress(), true, true, true, true);
     const t = await now();
     await env.feed.setRoundData(5, 100_000n * 10n ** 8n, t, t, 5); // native up: now due
+    // graduate() records Pending and returns (no revert, so the entry is kept); the pool is not built.
+    await expect(campaign.graduate()).to.emit(campaign, "GraduationPending");
+    expect(await campaign.graduationPending()).to.eq(true);
+    expect(await campaign.launched()).to.eq(false);
+    const since = Number(await campaign.pendingSince());
+    // While the pause is honoured a second call reverts as before.
     await expect(campaign.graduate()).to.be.revertedWithCustomError(campaign, "GraduationPaused");
-    await mineAt((await now()) + 30 * 86400);
-    const t2 = await now();
-    await env.feed.setRoundData(6, 100_000n * 10n ** 8n, t2, t2, 6);
-    await expect(campaign.graduate()).to.be.revertedWithCustomError(campaign, "GraduationPaused");
-    expect(await campaign.graduationPending()).to.eq(false);
+    await mineAt(since + 72 * 3600);
+    await env.owner.sendTransaction({ to: await env.adapter.getAddress(), value: E(10) });
+    await campaign.graduate();
+    expect(await campaign.launched()).to.eq(true);
   });
 });
