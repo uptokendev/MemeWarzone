@@ -124,10 +124,10 @@ describe("BNB quote generation deployment", function () {
     // --- configuration, all with CREATE closed -----------------------------
     await (await (factory as any).setConfig({
       totalSupply: ethers.parseEther("1000000000"),
-      curveBps: 8400n,
-      liquidityTokenBps: 1400n,
+      curveBps: 7000n,
+      liquidityTokenBps: 2800n,
       basePrice: 1_000_000_000n,
-      priceSlope: 850n,
+      priceSlope: 1080n,
       graduationTarget: ethers.parseEther("30000"),
       firstBuyTokens: 0n,
       firstBuyMaxCost: 0n,
@@ -214,10 +214,10 @@ describe("BNB quote generation deployment", function () {
 
     await (await (factory as any).setConfig({
       totalSupply: ethers.parseEther("1000000000"),
-      curveBps: 8400n,
-      liquidityTokenBps: 1400n,
+      curveBps: 7000n,
+      liquidityTokenBps: 2800n,
       basePrice: 1_000_000_000n,
-      priceSlope: 850n,
+      priceSlope: 1080n,
       graduationTarget: ethers.parseEther("30000"),
       firstBuyTokens: 0n,
       firstBuyMaxCost: 0n,

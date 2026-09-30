@@ -111,8 +111,8 @@ export function graduationTargetFor(chainId: bigint): bigint {
 export function configFor(chainId: bigint) {
   return {
     totalSupply: ethers.parseEther("1000000000"),
-    curveBps: 8400n,
-    liquidityTokenBps: 1400n,
+    curveBps: 7000n,
+    liquidityTokenBps: 2800n,
     basePrice: 1_000_000_000n,
     priceSlope: 850n,
     graduationTarget: graduationTargetFor(chainId),

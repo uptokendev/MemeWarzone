@@ -120,13 +120,13 @@ const PROFILES: Record<string, ChainProfile> = {
   },
 };
 
-// Same curve the live 30bps generation runs.
+// EVM generation curve (spec C5 supply bound): 70% curve, 28% pool allocation, 2% creator reserve.
 const CONFIG = {
   totalSupply: ethers.parseEther("1000000000"),
-  curveBps: 8400n,
-  liquidityTokenBps: 1400n,
+  curveBps: 7000n,
+  liquidityTokenBps: 2800n,
   basePrice: 1_000_000_000n,
-  priceSlope: 850n,
+  priceSlope: 1080n,
   graduationTarget: ethers.parseEther("30000"),
   liquidityBps: 3300n,
 };

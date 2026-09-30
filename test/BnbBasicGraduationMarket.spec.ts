@@ -78,10 +78,10 @@ async function deployCore() {
 
   await (await factory.setConfig({
     totalSupply: ethers.parseEther("1000000000"),
-    curveBps: 8400,
-    liquidityTokenBps: 1400,
+    curveBps: 7000,
+    liquidityTokenBps: 2800,
     basePrice: 1_000_000_000n,
-    priceSlope: 850n,
+    priceSlope: 1080n,
     graduationTarget: ethers.parseEther("60"),
     firstBuyTokens: 0n,
     firstBuyMaxCost: 0n,
