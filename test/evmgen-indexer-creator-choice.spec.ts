@@ -155,7 +155,11 @@ describe("indexer: EVM creator-choice operator against CreatorRewardsVaultV2 (on
     // The API's internal endpoint, in-process, signing with the factory's route authority.
     const api = await esmImport(path.join(ROOT, "frontend/api/evmCreatorChoice.js"));
     const SECRET = "e2e-secret";
+    // The API stamps deadlines from its clock; anchor it on the chain's, which earlier specs in a full
+    // `npx hardhat test` run have moved days ahead with evm_increaseTime (else RouteAuthExpired).
+    const chainOffsetMs = Number((await ethers.provider.getBlock("latest"))!.timestamp) * 1000 - Date.now();
     const handler = api.createEvmBuybackAuthorizationHandler({
+      nowMs: () => Date.now() + chainOffsetMs,
       env: { EVM_CREATOR_CHOICE_API_SECRET: SECRET, [`EVM_CREATOR_VAULT_V2_${op.chainId}`]: `${vaultAddr}@1` },
       getProvider: async () => ethers.provider,
       signer: authority,
