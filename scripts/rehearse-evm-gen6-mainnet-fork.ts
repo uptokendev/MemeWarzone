@@ -379,10 +379,16 @@ async function lifecycle(c: ChainSetup, fees: any, gen: any, authority: any) {
     const ROUTE = "(address from,address to,bool stable,address factory)[]";
     const topaz = new ethers.Contract("0x1E98c8226e7d452e1888e3d3d2F929346321c6c3", [`function swapExactETHForTokens(uint256,${ROUTE},address,uint256) payable returns (uint256[])`, `function swapExactTokensForETH(uint256,uint256,${ROUTE},address,uint256) returns (uint256[])`], third);
     const wbnb = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", topazFactory = "0x65E6cD0eF5D3467030103cf3d433034E570b5784";
-    await (await topaz.swapExactETHForTokens(1n, [{ from: wbnb, to: created.args.token, stable: false, factory: topazFactory }], third.address, dl, { value: dexIn })).wait();
+    const buyRoute = [{ from: wbnb, to: created.args.token, stable: false, factory: topazFactory }];
+    const sellRoute = [{ from: created.args.token, to: wbnb, stable: false, factory: topazFactory }];
+    const buyWhy = await revertReason(() => topaz.swapExactETHForTokens.staticCall(1n, buyRoute, third.address, dl, { value: dexIn }));
+    if (buyWhy) throw new Error(`Topaz pool buy would revert: ${buyWhy}`);
+    await (await topaz.swapExactETHForTokens(1n, buyRoute, third.address, dl, { value: dexIn })).wait();
     memeBought = await token.balanceOf(third.address);
     await (await (token.connect(third) as any).approve(await topaz.getAddress(), memeBought)).wait();
-    await (await topaz.swapExactTokensForETH(memeBought, 1n, [{ from: created.args.token, to: wbnb, stable: false, factory: topazFactory }], third.address, dl)).wait();
+    const sellWhy = await revertReason(() => topaz.swapExactTokensForETH.staticCall(memeBought, 1n, sellRoute, third.address, dl));
+    if (sellWhy) throw new Error(`Topaz pool sell would revert: ${sellWhy}`);
+    await (await topaz.swapExactTokensForETH(memeBought, 1n, sellRoute, third.address, dl)).wait();
   } else {
     const swap: any = await ethers.getContractAt("RobinhoodV3NativeSwapAdapter", deployed.RobinhoodV3NativeSwapAdapter, third);
     await (await swap.buyExactNativeIn(created.args.token, 3000, 1n, third.address, dl, { value: dexIn })).wait();
@@ -517,7 +523,7 @@ async function main() {
     // Gas and funding.
     const deployerTxs = phaseTxs.filter((t) => same(t.from, DEPLOYER));
     // The Safe's production batches only (A, B, R5, Q, H); the fork-only route-authority calls are left out.
-    const safeTxs = phaseTxs.filter((t) => same(t.from, SAFE) && /batch/.test(t.phase));
+    const safeTxs = phaseTxs.filter((t) => same(t.from, SAFE) && /^\d+ batch /.test(t.phase));
     const deployerGas = deployerTxs.reduce((s, t) => s + t.gasUsed, 0n);
     const safeGas = safeTxs.reduce((s, t) => s + t.gasUsed, 0n);
     const funding: any = { deployerTxs: deployerTxs.length, deployerGas: deployerGas.toString(), safeCalls: safeTxs.length, safeGas: safeGas.toString(), gasPriceGwei: ethers.formatUnits(mainnetGasPrice, "gwei") };

@@ -8,7 +8,9 @@ batch). Branch to release: `build/evm-launch-staging` (`4c4f00c5` when this was 
 
 Nothing in this document has been sent. Chain facts marked "read 2026-10-01" were read with `cast call`
 against `bsc-dataseed.bnbchain.org` and `rpc.mainnet.chain.robinhood.com`. Anything that could not be
-checked is marked **to verify** and collected in section 10.
+checked is marked **to verify** and collected in section 10. The whole of section 2 (plus batch H and one
+coin) was rehearsed on 2026-10-01 on anvil forks of both chains with the real Safe and the real deployer
+impersonated (section 0.7): accepted on both.
 
 Order, per chain, BNB first and Robinhood second:
 
@@ -81,13 +83,19 @@ Compile once before starting: `npx hardhat compile` (the Safe batch builder read
 
 ### 0.3 Deployer balance
 
-Measured on the testnet cuts (same contracts, same scripts; the deployer also sent batch A there because
-it was admin):
+Measured on the mainnet forks (0.7), 2026-10-01, every deployer transaction of section 2 (fees stack,
+generation, ownership handover; Robinhood also the stock campaign implementation), priced at the live gas
+price read from the upstream RPC the same minute:
 
-| | Testnet measurement | Mainnet estimate | Deployer now | Action |
-|---|---|---|---|---|
-| BNB | 0.0038332 BNB on chain 97 at 0.1 gwei = about 38.3M gas (`deployments/bscTestnet/testnet.gen6.json`, `bnbSpentOnDeploy`) | 38M x 0.05 gwei = about 0.0019 BNB | 0.0294 BNB | enough; keep at least 0.01 BNB after |
-| Robinhood | 42.9M gas in 40 transactions on 46630 (explorer, deployer txs from block 126843000; fees stack 11.0M incl. a community vault mainnet does not deploy, generation 31.9M) plus the stock campaign implementation | about 47M x 0.0223 gwei = about 0.0011 ETH of L2 execution; the L1 data part of a Nitro fee is **to verify** (the 2026-09-24 mainnet cut, 31.6M gas, cost about 0.0009 ETH in total) | 0.00406 ETH | top up to 0.01 ETH |
+| | Deployer transactions | Gas | Gas price | Cost | Deployer now | Action |
+|---|---|---|---|---|---|---|
+| BNB | 20 | 32.37M | 0.05 gwei | 0.00162 BNB | 0.0294 BNB | enough (18x); keep at least 0.01 BNB after |
+| Robinhood | 25 | 37.22M L2 + 70.6k L1-data gas units | 0.0220 gwei | 0.00082 ETH (L1 data part 0.0000015 ETH: the Nitro L1 base fee estimate was 0.00087 gwei) | 0.00406 ETH | enough (5x at today's price); top up to 0.01 ETH if the L2 price is above 0.05 gwei on the day |
+
+The Safe's own batches (A, B, R5, Q, H) cost the executing signer about 0.9M gas on BNB (under 0.0001 BNB)
+and 3.15M gas on Robinhood (0.00007 ETH; batch Q with nine routes is most of it). The fork numbers are in
+`deployments/fork-rehearsal/<network>/rehearsal-report.json` (`funding`, per-transaction L1 detail on
+Robinhood). Re-run the rehearsal on the day: the script reads the gas price live.
 
 Canary money (section 6) comes from your own wallet, not the deployer: about 0.05 BNB and 0.02 ETH.
 
@@ -121,29 +129,68 @@ openssl rand -hex 32   # EVM_BUYBACK_SEED_SECRET
 
 | # | Question | Recommendation |
 |---|---|---|
-| D1 | Batch A sets the vault operator to the existing payout operator `0xdcf07EB0…` (pinned in `PINS.payoutOperator`). The API already sends recruiter payouts and league roots from that key; the worker would send from it too, from another service, so nonces would collide. | A dedicated creator-choice operator key. Batch A still sets `0xdcf07EB0…`; batch B then calls `CreatorRewardsVaultV2.setOperator(<new key>, false)` (one slot, replaced). |
-| D2 | BNB factory `0xc378221E…` (1 campaign, create open, router V2) is not in batch A. | Add `setCreatePaused(true)` for it to batch H on BNB, if you agree it is retired. |
-| D3 | Both generation scripts also deploy a new `PostGradLeagueTreasuryV2` and `ArenaWarPoolTreasuryV2`, left paused. The live war pools stay in use. | Keep the API's arena env unchanged; the new pair stays paused and unused. Pass the live resolver and boost signer (section 2) so a later switch is possible without a redeploy. |
-| D4 | Robinhood stock coins. The campaign implementation must be bound before the first campaign (R5, section 2.9) or stock bindings are dead for this generation. Stock routes on the new V2 adapter need a Safe batch that no script writes yet (section 10). | Do R5 before H regardless. Open stock bindings later, once routes are configured. |
+| D1 | Batch A sets the vault operator to the existing payout operator `0xdcf07EB0…` (pinned in `PINS.payoutOperator`). The API already sends recruiter payouts and league roots from that key; the worker would send from it too, from another service, so nonces would collide. | A dedicated creator-choice operator key. Batch A still sets `0xdcf07EB0…`; pass `EVMGEN_VAULT_OPERATOR=<new key>` when building batch B (2.4 / 2.9) and B ends with `CreatorRewardsVaultV2.setOperator(<new key>, false)` (one slot, replaced). Rehearsed on both forks. |
+| D2 | BNB factory `0xc378221E…` (generation 3/2, router V2 `0xe157a6FD…`, 1 campaign `0xA2baB122…`, create open) is not in batch A. On the fork its coin bought and sold normally before **and after** batch A: it routes through V2, whose community vault is `0x5becb76c…` (router = V2), not the `0xB6ccAc81…` that batch A re-points. So batch A does not affect it; closing it is a separate choice. | Add `setCreatePaused(true)` for it to batch H on BNB, if you agree it is retired. Its existing coin keeps trading either way. |
+| D4 | Robinhood stock coins. The campaign implementation must be bound before the first campaign (R5, section 2.9) or stock bindings are dead for this generation. | Do R5 before H regardless. Stock routes are batch Q (`configure-robinhood-stock-routes.ts`, section 3); open stock bindings once Q is executed. |
+| E14 | Batch A closes the old factories at the start of each chain's session (the community vault serves one router), while E14 said the old factories stay open until the new generation replaces them. | See 10.13: creation on that chain is closed from batch A to batch H. Both old factories that batch A pauses hold 0 campaigns. |
 
-### 0.7 Rehearse on a mainnet fork (recommended, not yet done)
+D3 (a new war pool and league the generation scripts deployed but nothing used) is closed: the scripts no
+longer deploy them (2026-10-01). The live war pools and leagues stay; the API's arena env is unchanged.
 
-The testnet runs had the deployer as admin, so the Safe-owned path (pending owner actions, batches A and
-B from the Safe, ownership handover, R5) has not been run end to end. Run the whole section 2 against an
-anvil fork first, executing the Safe batches by impersonating the Safe:
+### 0.7 Rehearse on a mainnet fork (done 2026-10-01; re-run before the real deploy)
+
+`scripts/rehearse-evm-gen6-mainnet-fork.ts` runs section 2 end to end on a local anvil fork, through the
+production scripts (in-process, same code path), with the **real Safe** and the **real deployer**
+impersonated. No private key is involved: the fork networks in `hardhat.config.ts` (`bscForkRehearsal`,
+`robinhoodForkRehearsal`) use `accounts: "remote"`, and the deploy scripts accept them as aliases of
+`bscMainnet` / `robinhoodMainnet` only after `anvil_nodeInfo` proves a local fork. Records and batches land in
+`deployments/fork-rehearsal/<network>/` (gitignored, wiped at each start), never over the mainnet records.
 
 ```
-anvil --fork-url "$BSC_MAINNET_RPC" --port 8545 &            # chain id stays 56
-BSC_MAINNET_RPC=http://127.0.0.1:8545 ... (the commands of section 2, unchanged)
-cast rpc anvil_impersonateAccount 0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7 --rpc-url http://127.0.0.1:8545
-cast rpc anvil_setBalance 0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7 0xDE0B6B3A7640000 --rpc-url http://127.0.0.1:8545
-jq -c '.transactions[]' <batch>.safe-batch.json | while read -r tx; do
-  cast send --unlocked --from 0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7 "$(jq -r .to <<<"$tx")" "$(jq -r .data <<<"$tx")" --rpc-url http://127.0.0.1:8545
-done
+npx hardhat compile
+BSC_MAINNET_RPC=<paid BSC RPC> \
+  npx hardhat run scripts/rehearse-evm-gen6-mainnet-fork.ts --network bscForkRehearsal         # ~2 min
+ROBINHOOD_MAINNET_RPC_URL=<paid RH RPC> \
+  npx hardhat run scripts/rehearse-evm-gen6-mainnet-fork.ts --network robinhoodForkRehearsal   # ~5 min
 ```
 
-Same for Robinhood with `anvil --fork-url "$ROBINHOOD_MAINNET_RPC_URL"` and `ROBINHOOD_MAINNET_RPC_URL=http://127.0.0.1:8545`.
-Delete the records the fork run wrote under `deployments/` before the real run.
+(Without the env it forks the public endpoints, which also worked.) The script starts anvil itself on port
+8645 / 8646 (`REHEARSAL_KEEP_ANVIL=1` leaves it running) and refuses if something already listens there.
+It exits non-zero on the first failed check; the report is `deployments/fork-rehearsal/<network>/rehearsal-report.json`.
+
+What it runs, in the order of section 2:
+
+1. BNB only: the live generation-3 coin on `0xc378221E…` bought and sold (its factory's route authority
+   replaced on the fork by a throwaway key, a fork-only Safe call) **before** batch A;
+2. fees stack (deployer), batch A executed as the Safe, then the same old coin bought and sold again;
+3. generation script (deployer);
+4. `EVMGEN_BATCHES_ONLY=1` with a D1 operator, batch B executed as the Safe;
+5. ownership to the Safe (deployer);
+6. Robinhood: stock campaign implementation (deployer), batch R5 as the Safe;
+7. route script: plan, simulate every call as the Safe, write batch Q, execute it as the Safe;
+8. the read-backs of 2.1-2.9 and `check-evm-payout-bounds.mjs` against the fork;
+9. fork only: the Safe sets a throwaway route authority on the new factory so the rehearsal can sign like
+   the API (`frontend/api/dev-fix/routeAuthorizationSigner.js`); batch H as the Safe;
+10. one coin: create with a 1% creator first buy (BNB fee choice keep, Robinhood holders), a signed buy after
+    the 60 s window and a signed sell, buys to the $15,000 target (Pending), `graduate()` from a third wallet,
+    a DEX buy and sell on the locked pool, `harvest()`.
+
+Result 2026-10-01 (fork blocks BNB 124,989,815 and Robinhood 76,880,885): **accepted on both chains.**
+
+| | BNB | Robinhood |
+|---|---|---|
+| Old coin before / after batch A | buy + sell OK / buy + sell OK (V2 community vault `0x5becb76c…` untouched) | n/a (old factory 0 campaigns) |
+| Batch A / B / R5 / Q / H as the Safe | 10 / 6 / - / 0 (no BNB route clears the floor) / 2 calls, all executed | 10 / 6 / 1 / 18 (9 adapter routes + 9 vault routes) / 2 |
+| Read-backs 2.1-2.9, payout bounds | all pass (vault caps 0.65 / 6.5 / 21600 / 50 / 32 BNB) | all pass (0.19 / 1.9 / 21600 / 50 / 9.3 ETH) |
+| Coin: create, trade, graduate | $15,000 target = 19.53 BNB; 2.2 / 19.8 / 78 exact; start price = curve price | $15,000 = 5.59 ETH; same |
+| Harvest | WBNB 80/20 exact; MEME side carried (the new pool has no 30 min TWAP yet: fail closed, as designed) | WETH 80/20 exact; MEME side sold |
+| Deployer gas | 32.37M in 20 txs | 37.22M in 25 txs (+ 70.6k L1-data gas units) |
+
+BNB ran five times: four accepted; one stopped in step 10 at the post-graduation Topaz round trip with a
+reasonless router revert (public upstream RPC; not reproducible, deploy path unaffected). The script now
+simulates each DEX call first and prints the revert reason; re-run on a failure there.
+
+The manual anvil + `cast` route that used to be here is no longer needed.
 
 ### 0.8 Keep the old records
 
@@ -215,14 +262,15 @@ prints:
 [fees-v4] TreasuryRouterV4 0x…
 [fees-v4] CreatorRewardsVaultV2 0x…
 [fees-v4] holder RewardDistributor 0x…
-[fees-v4] batch B not written: set EVMGEN_NEW_FACTORY …
-[fees-v4] wrote deployments/bnb/mainnet.evmgen-fees.*.json
+[fees-v4] wrote deployments/bnb/mainnet.evmgen-fees.A.safe-batch.json (10 call(s))
+[fees-v4] wrote deployments/bnb/mainnet.evmgen-fees.json
+[fees-v4] batch B comes after the generation: EVMGEN_BATCHES_ONLY=1 …
 ```
 
-Files: `deployments/bnb/mainnet.evmgen-fees.json` (addresses, caps) and
-`deployments/bnb/mainnet.evmgen-fees.A.safe-batch.json`. **Do not run it a second time**: it has no
-resume and would deploy a second stack. Its "re-run with --batches-only" hint is not implemented; batch
-B is built in 2.4 instead.
+Files: `deployments/bnb/mainnet.evmgen-fees.json` (addresses, caps, deploy blocks) and
+`deployments/bnb/mainnet.evmgen-fees.A.safe-batch.json`. A second full run refuses while that record
+exists (no resume, it would deploy a second stack). `EVMGEN_BATCHES_ONLY=1` with the same command rebuilds
+the batches from the records without deploying anything (2.4).
 
 Verify on chain (`R`, `V`, `D` = the three printed addresses):
 
@@ -284,22 +332,20 @@ a `CreatorRewardsVaultV2` paying this router (`assertRouterCanServeStrictRouting
 CONFIRM_BNB_QUOTE_GENERATION=I_UNDERSTAND_MAINNET \
 BNB_TREASURY_ROUTER=<R> \
 BNB_NATIVE_USD_FEED=0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE \
-ARENA_RESOLVER=0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec \
-ARENA_BOOST_QUOTE_SIGNER=0xFCA7DF580eae01bfA7D3abc96c5075317742D421 \
   npx hardhat run scripts/deploy-bnb-quote-generation.ts --network bscMainnet
 ```
 
 Defaults from the script's `bscMainnet` profile (all re-checked on chain before any deployment): owner
 Safe, Topaz adapter `0x5c3135Df…` (factory side, answers `poolFactory()`), Topaz router `0x1E98c822…`
 (quote adapter side), oracle `0x9D204406…`, CreatorRegistry `0x8194FB37…` and RiskRegistry
-`0x92b1494C…` (both Safe-owned, reused), route authority `0xb989A998…`. Without `ARENA_RESOLVER` and
-`ARENA_BOOST_QUOTE_SIGNER` the new (unused, D3) war pool would take the deployer for both roles.
+`0x92b1494C…` (both Safe-owned, reused), route authority `0xb989A998…`. No war pool or league is deployed
+(D3 closed): the live ones stay in use.
 
 What it does, in order: read-only guards (Topaz routers agree, 30 bps, pinned implementation; router
 serves strict routing) -> `LaunchCampaign` and `BnbQuoteLaunchCampaign` implementations -> locker then
 factory (`scripts/lib/deployFactoryWithLocker.ts`: the locker's admin is the factory's predicted CREATE
 address, explicit nonces) -> `BnbNativeGraduationAdapter` (bound to the factory by the deployer) and
-`BnbQuoteGraduationAdapter` (admin Safe) -> league + war pool (deposits paused) -> `setConfig`,
+`BnbQuoteGraduationAdapter` (admin Safe) -> `setConfig`,
 `setProtocolFee(200)`, `setRegistries`, `setRouteAuthority` -> `LaunchTokenDeployer`,
 `setNativeGraduationAdapter`, `setLaunchTokenDeployer` (`scripts/lib/evmGenerationCreateWiring.ts`) ->
 `setCreatePaused(true)`.
@@ -336,37 +382,33 @@ cast call $F 'owner()(address)' --rpc-url $RPC                  # the deployer, 
 
 ### 2.4 BNB: Safe batch B (bind the generation)
 
-Build it with `scripts/make-safe-batch.ts` from a calls file (addresses from the two records):
-
-```json
-[
-  { "contract": "TreasuryRouterV4", "to": "<R>", "fn": "setAuthorizedLpLocker", "args": ["<L>", true] },
-  { "contract": "TreasuryRouterV4", "to": "<R>", "fn": "setPrimaryLpLocker", "args": ["<L>"] },
-  { "contract": "CreatorRewardsVaultV2", "to": "<V>", "fn": "setFactoryOnce", "args": ["<F>"] },
-  { "contract": "CreatorRegistry", "to": "0x8194FB3745d027102ce7Da562c7045f28B2f42fD", "fn": "setLaunchRecorder", "args": ["<F>", true] },
-  { "contract": "BnbQuoteGraduationAdapter", "to": "<Q>", "fn": "setCampaignFactoryOnce", "args": ["<F>"] }
-]
-```
-
-Add `{ "contract": "CreatorRewardsVaultV2", "to": "<V>", "fn": "setOperator", "args": ["<new operator>", false] }` if D1 is a dedicated key.
-No `setQuoteRoute` lines at launch: no BNB quote token has a Topaz WBNB pool worth routing (2026-09-24
-facts); quote routes are a later batch.
+Built from the two records and the chain, nothing deployed:
 
 ```
-npx ts-node scripts/make-safe-batch.ts deployments/bnb/mainnet.evmgen.B.safe-batch.json 56 \
-  "MWZ gen6 B: bind" "V4 locker, vault factory pin, launch recorder, quote adapter factory" calls-bnb-B.json
+EVMGEN_BATCHES_ONLY=1 \
+EVMGEN_VAULT_OPERATOR=<dedicated operator, D1; omit to keep 0xdcf07EB0…> \
+  npx hardhat run scripts/deploy-evm-treasury-router-v4.ts --network bscMainnet
 ```
+
+It re-checks the router/vault pair (admin Safe, vault pays this router), rewrites batch A (same calls, for
+re-review) and writes `deployments/bnb/mainnet.evmgen.B.safe-batch.json` with the calls still missing on
+chain, in this order: `TreasuryRouterV4.setAuthorizedLpLocker(L, true)`, `setPrimaryLpLocker(L)`,
+`CreatorRewardsVaultV2.setFactoryOnce(F)`, `CreatorRegistry 0x8194FB37….setLaunchRecorder(F, true)`,
+`BnbQuoteGraduationAdapter.setCampaignFactoryOnce(F)`, and `CreatorRewardsVaultV2.setOperator(<D1>, false)`
+when `EVMGEN_VAULT_OPERATOR` is set. It refuses unless every `pendingOwnerActions` entry of the generation
+record is in the batch byte for byte (or already done on chain). No `setQuoteRoute` in B: quote routes are
+batch Q (section 3); no BNB quote token has a Topaz WBNB pool above the floor (2026-09-24 scan).
 
 After execution: `cast call $R 'authorizedLpLocker(address)(bool)' $L` true, `permanentLpLocker()` = L,
 `cast call $V 'factory()(address)'` = F, `cast call 0x8194FB37… 'launchRecorder(address)(bool)' $F` true,
-`cast call $Q 'campaignFactory()(address)'` = F.
+`cast call $Q 'campaignFactory()(address)'` = F, `cast call $V 'operator()(address)'` = the D1 key.
 
 ### 2.5 BNB: ownership to the Safe (deployer)
 
 ```
 CONFIRM_OWNERSHIP_TRANSFER=I_UNDERSTAND_MAINNET \
 NEW_OWNER=0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7 \
-OWNABLE_CONTRACTS=<F>,<new PostGradLeagueTreasuryV2>,<new ArenaWarPoolTreasuryV2> \
+OWNABLE_CONTRACTS=<F> \
   npx hardhat run scripts/transfer-evm-ownership-to-safe.ts --network bscMainnet
 ```
 
@@ -374,7 +416,7 @@ It checks every owner before sending anything and reads each back after. What st
 by design: `BnbNativeGraduationAdapter.admin` (immutable; its only admin call, `setCampaignFactoryOnce`,
 is already spent). The locker's admin is the factory. `LaunchTokenDeployer` has no owner.
 
-Verify: `cast call $F 'owner()(address)'` = the Safe, same for the league and war pool.
+Verify: `cast call $F 'owner()(address)'` = the Safe.
 
 ### 2.6 Robinhood: fees stack (deployer)
 
@@ -415,8 +457,6 @@ RH_NATIVE_USD_FEED=0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9 \
 RH_GRADUATION_ORACLE=0xe635AA43fE5707561c8c3C655225da5C3e4C2239 \
 RH_ROUTE_AUTHORITY=0xb989A99823eA96552c3E3198A40CdBF682EDf1aA \
 RH_OWNER=0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7 \
-ARENA_RESOLVER=0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec \
-ARENA_BOOST_QUOTE_SIGNER=0xFCA7DF580eae01bfA7D3abc96c5075317742D421 \
   npx hardhat run scripts/deploy-robinhood-quote-generation.ts --network robinhoodMainnet
 ```
 
@@ -427,7 +467,7 @@ route authority and an owner equal to the deployer.
 What it deploys: `RobinhoodV3NativeGraduationAdapterV2` (admin Safe; also the factory's router),
 `LaunchCampaign` implementation, `PermanentV3PositionLocker` then `LaunchFactory`,
 `RobinhoodStockGraduationAdapterV2` (admin Safe, max oracle age 90000), `RobinhoodV3NativeSwapAdapter`,
-league + war pool (paused), and a **fresh** `CreatorRegistry` + `RiskRegistry` (deployer-owned; the
+and a **fresh** `CreatorRegistry` + `RiskRegistry` (deployer-owned; the
 factory is registered as launch recorder in the script). Creator cooldowns therefore start fresh on
 Robinhood. Then `setStockGraduationAdapter`, `setConfig` (target $30,000), `setProtocolFee(200)`,
 `setRouteAuthority`, `setRegistries`, the create path, `setCreatePaused(true)`. It appends both adapters
@@ -451,22 +491,13 @@ cast call <creator registry> 'launchRecorder(address)(bool)' $F --rpc-url $RPC  
 
 ### 2.9 Robinhood: Safe batch B, ownership, R5
 
-Batch B calls file (then `make-safe-batch.ts … 4663 …`):
+Batch B as in 2.4, `--network robinhoodMainnet` (`EVMGEN_VAULT_OPERATOR` per D1). On Robinhood it holds
+`setAuthorizedLpLocker`, `setPrimaryLpLocker`, `setFactoryOnce`, `setCampaignFactoryOnce(F)` on the native
+adapter and on the stock adapter (+ `setOperator`), written to `deployments/robinhood/mainnet.evmgen.B.safe-batch.json`.
+Verify: both adapters `campaignFactory()` = F and `campaignFactoryLocked()` true; locker authorized and
+primary on V4; vault `factory()` = F.
 
-```json
-[
-  { "contract": "TreasuryRouterV4", "to": "<R>", "fn": "setAuthorizedLpLocker", "args": ["<L>", true] },
-  { "contract": "TreasuryRouterV4", "to": "<R>", "fn": "setPrimaryLpLocker", "args": ["<L>"] },
-  { "contract": "CreatorRewardsVaultV2", "to": "<V>", "fn": "setFactoryOnce", "args": ["<F>"] },
-  { "contract": "RobinhoodV3NativeGraduationAdapterV2", "to": "<native adapter>", "fn": "setCampaignFactoryOnce", "args": ["<F>"] },
-  { "contract": "RobinhoodStockGraduationAdapterV2", "to": "<stock adapter>", "fn": "setCampaignFactoryOnce", "args": ["<F>"] }
-]
-```
-
-(+ `setOperator` per D1.) Verify: both adapters `campaignFactory()` = F and `campaignFactoryLocked()` true;
-locker authorized and primary on V4; vault `factory()` = F.
-
-Ownership (deployer): `OWNABLE_CONTRACTS=<F>,<league>,<war pool>,<CreatorRegistry>,<RiskRegistry>` with the
+Ownership (deployer): `OWNABLE_CONTRACTS=<F>,<CreatorRegistry>,<RiskRegistry>` with the
 same command as 2.5 and `--network robinhoodMainnet`.
 
 R5, the stock campaign implementation (deployer, then Safe). Requires the factory owned by the Safe and
@@ -487,17 +518,33 @@ before batch H, because the first campaign of any kind locks it forever. Verify
 | Order | Batch | Chain | Written by | Contents | Opens anything? |
 |---|---|---|---|---|---|
 | 1 | A | 56 | `deploy-evm-treasury-router-v4.ts` | old factory create paused, V4 vaults, community vault -> V4, holder distributor, operator, E15 caps | closes old creation |
-| 2 | B | 56 | `make-safe-batch.ts` (2.4) | locker on V4, vault factory pin, launch recorder, quote adapter factory (+ D1 operator) | no |
+| 2 | B | 56 | `deploy-evm-treasury-router-v4.ts` with `EVMGEN_BATCHES_ONLY=1` (2.4) | locker on V4, vault factory pin, launch recorder, quote adapter factory (+ D1 operator) | no |
 | 3 | H | 56 | `make-safe-batch.ts` (section 7) | `enableLive`, `setCreatePaused(false)` on the new factory (+ D2) | yes |
 | 4 | A | 4663 | `deploy-evm-treasury-router-v4.ts` | as 1 | closes old creation |
-| 5 | B | 4663 | `make-safe-batch.ts` (2.9) | locker on V4, vault factory pin, both adapter binds (+ D1) | no |
+| 5 | B | 4663 | `deploy-evm-treasury-router-v4.ts` with `EVMGEN_BATCHES_ONLY=1` (2.9) | locker on V4, vault factory pin, both adapter binds (+ D1) | no |
 | 6 | R5 | 4663 | `deploy-robinhood-stock-campaign-implementation.ts` | `setStockCampaignImplementation` | no |
 | 7 | H | 4663 | `make-safe-batch.ts` | as 3 | yes |
-| later | Q | both | not written yet (section 10) | BNB `configureQuoteRoute`, Robinhood `configureStockRoute`, vault `setQuoteRoute` | per route |
+| before or after H | Q | 4663 (56 when a route exists) | `configure-robinhood-stock-routes.ts` / `configure-bnb-quote-routes.ts` | per route: adapter `configureStockRoute` / `configureQuoteRoute` + vault `setQuoteRoute`; every call simulated as the Safe first | stock / quote bindings |
 | weekly | W | both | `evm-holder-batch-verify.mjs` | `approveHolderBatch` + `authorizeBatch` | pays holders |
 
 The ownership handover between B and H is sent by the deployer, not the Safe. Existing E15 caps are
 changed later with a one-call `setCaps` batch (section 9.4).
+
+Batch Q (stock / quote routes). Run from the release branch after batch B:
+
+```
+npx hardhat run scripts/configure-robinhood-stock-routes.ts --network robinhoodMainnet   # -> deployments/robinhood/mainnet.stock-routes.Q.safe-batch.json
+npx hardhat run scripts/configure-bnb-quote-routes.ts --network bscMainnet               # BNB: "no bindable route" until Topaz liquidity changes
+```
+
+Each re-derives every fact from chain (feed age, canonical pool, depth on the side the adapter measures: the
+STOCK side on Robinhood, WBNB x2 on BNB), checks the policy against the adapter's rules, simulates every call
+with `eth_call` from the Safe and only then writes the batch; the deployer sends nothing (`ROUTES_SEND=1` is
+refused when the admin is the Safe). The Robinhood file (`config/robinhood/mainnet-stock-routes.json`, rescanned
+2026-10-01) routes SPY, NVDA, META, COIN, SPCX, TSLA, QQQ, AAPL and USDG at slippage 100 bps, reserved fields 0,
+fee tiers 100/500/3000; MSTR, MU, GLD, SGOV, CRCL (only a 1% pool clears the $50k floor) and GME ($6.5k of
+stock in its 0.05% pool) are listed under `excluded`. A configured route's feed, pool and tier are fixed for
+the life of the adapter (`RouteFixed`), so check each row before signing.
 
 ### 3.1 Before signing any batch
 
@@ -513,7 +560,10 @@ jq -c '.transactions[]' <batch>.safe-batch.json | while read -r tx; do
 done
 ```
 
-   Every line must say `OK`. Then compare each `to` and each address argument with the deployment record
+   Every line must say `OK`. Batch Q carries a tuple argument (the route struct), which this loop cannot
+   rebuild; for it run `npx ts-node -e 'require("./scripts/make-safe-batch").verifyBatchFile("<batch>", <chainId>)'`
+   (re-encodes every call from its decoded values, tuples included) and read each tuple in the Builder.
+   Then compare each `to` and each address argument with the deployment record
    of **that chain** (the collisions in 0.1 are real) and with the tables in this document.
 2. `jq -r .chainId <batch>` is the chain you are signing on.
 3. In the Safe Transaction Builder the imported batch shows the same method names and values; the Safe
@@ -538,8 +588,6 @@ adapters; every other new contract is added by hand with its constructor argumen
 | BnbNativeGraduationAdapter | Topaz pool factory, WBNB, locker |
 | BnbQuoteGraduationAdapter | Safe, Topaz router `0x1E98c822…`, locker, BNB/USD feed, `3600` |
 | RobinhoodV3NativeSwapAdapter | SwapRouter02, WETH |
-| PostGradLeagueTreasuryV2 | deployer, Safe, Safe |
-| ArenaWarPoolTreasuryV2 | deployer, resolver, boost signer, protocol receiver (Safe), league |
 
 ```
 ONLY=<names> npx hardhat run scripts/verify-mainnet-contracts.ts --network bscMainnet   # BscScan (Etherscan v2 API key)
@@ -565,7 +613,7 @@ origin/build/evm-launch-staging` must succeed; it did on 2026-10-01).
 | `EVM_CREATOR_CHOICE_API_SECRET` | the secret from 0.5 |
 | `EVM_CAMPAIGN_STATE_CACHE_MS`, `EVM_FIRST_BUY_MAX_COST_SLACK_BPS` | optional (defaults 10000 ms and the built-in slack) |
 | route authority key | unchanged (`0xb989A998…`); the 6/5 pair is already in `ALLOWED_GENERATION_PAIRS` |
-| `ARENA_WAR_POOL_TREASURY_V2_ADDRESS_*` | unchanged (D3) |
+| `ARENA_WAR_POOL_TREASURY_V2_ADDRESS_*` | unchanged (the live war pools stay; D3 closed) |
 
 ### 5.2 Indexer (keeper and worker run inside it)
 
@@ -656,7 +704,7 @@ Per chain, after R5 (Robinhood) and the ownership handover:
 ```
 
    On BNB use contract name `BnbBasicLaunchFactory`; add `0xc378221E….setCreatePaused(true)` if D2 is
-   agreed. The new war pool's deposits stay paused (D3). `enableLive` has no inverse: after it, create is
+   agreed. `enableLive` has no inverse: after it, create is
    the only gate.
 2. Read back: `live()` true, `createPaused()` false; the old factory `createPaused()` true (batch A).
 3. Services already point at the new factory (section 5); run the canary (section 6).
@@ -704,14 +752,25 @@ calldata, each coin's choice, the vetoed/executed state and the cap, and only th
 batch with 3.1, sign, execute. After the vault's 24 h veto window the worker executes it and the Claim
 Center rows open. Nothing pays without this weekly Safe step.
 
-### 9.2 Unclaimed holder payouts (E19): pending
+### 9.2 Unclaimed holder payouts (E19, monthly from the first expired batch)
 
-No script exists on `build/evm-launch-staging` yet. The vault cannot take recovered native back into a
-coin's holder balance (`receive()` accepts only wrapped native and campaigns), so the path to build is:
-`RewardDistributor.recoverUnclaimed(batchId, Safe)` on the holder distributor after the 60-day deadline,
-then a Safe `createBatch` on the same distributor that pays the same coin's holders. The first holder
-claim window closes about 60 days after the first executed batch (early December 2026 at the earliest).
-Build and rehearse it before then.
+Built (`scripts/make-holder-recovery-batch.ts`, rehearsed by `test/HolderRecoveryBatch.spec.ts`). After a
+holder batch's 60-day claim deadline, one Safe transaction per batch, all or nothing:
+`RewardDistributor.recoverUnclaimed(batchId, Safe)` then `CreatorRewardsVaultV2.creditUnclaimedHolders{value}(campaigns, amounts)`,
+which puts each coin's unclaimed part back into that coin's holder balance (from the leaf file's per-campaign
+`parts`). The script refuses before the deadline, when already recovered, when the leaf file is not the batch
+on chain, or when the attribution does not sum exactly to the unclaimed amount.
+
+```
+HOLDER_RECOVERY_FILE="https://api.memewar.zone/api/evm/holder-batch?chainId=56&weekId=<Monday of the week>" \
+  npx hardhat run scripts/make-holder-recovery-batch.ts --network bscMainnet
+HOLDER_RECOVERY_FILE="https://api.memewar.zone/api/evm/holder-batch?chainId=4663&weekId=<week>" \
+  npx hardhat run scripts/make-holder-recovery-batch.ts --network robinhoodMainnet
+```
+
+Read-only; it writes the Safe batch under `deployments/<chain>/` when there is something to recover. Check it
+with 3.1, sign, execute. Run it monthly for every batch whose deadline has passed; the first deadline falls
+about 60 days after the first executed holder batch (early December 2026 at the earliest).
 
 ### 9.3 Airdrop recovery (existing, unchanged)
 
@@ -723,11 +782,13 @@ restores V4, not V3. It covers the airdrop distributor, not the holder distribut
 
 Monthly, or when BNB or ETH moves by more than 25% from $767 / $2,695:
 
-1. `node scripts/check-evm-payout-bounds.mjs` with `MONTHLY_LEAGUE_TREASURY_56=0x42D254A7451808Bb01df879d71BcAfDC5D605A38`
-   and `MONTHLY_LEAGUE_TREASURY_4663=0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A` (its built-in monthly
-   addresses are the replaced vaults). It does not yet read the creator vault caps (section 10).
-2. Read `limits()` on each vault and price it in dollars.
-3. To change: one-call batch `CreatorRewardsVaultV2.setCaps(maxBuyPerTx, maxBuybackPerCampaignWeek,
+1. `node scripts/check-evm-payout-bounds.mjs` (read-only; defaults to the current monthly vaults
+   `0x42D254A7…` / `0x576c1d6B…`). With `deployments/<chain>/mainnet.evmgen-fees.json` on disk it also prices
+   each `CreatorRewardsVaultV2.limits()` (buyback per tx, per coin per week, holder batches per week),
+   range-checks the interval (60 s..30 d) and the impact cap (1..50 bps), and prices every open holder
+   authorization on the distributor (none may exceed the weekly holder cap). Exit 1 means a bound is outside
+   $1..$1,000,000 or a rule is broken.
+2. To change: one-call batch `CreatorRewardsVaultV2.setCaps(maxBuyPerTx, maxBuybackPerCampaignWeek,
    minBuyInterval, maxImpactBps, maxHolderBatchPerWeek)` in wei; `maxImpactBps` above 50 is refused.
    The per-batch Safe maximum (`--auth-max`) is off chain; keep it equal to `maxHolderBatchPerWeek`.
 
@@ -739,30 +800,30 @@ block; a second harvest in the same parent block only carries it (seen on 46630,
 
 ## 10. Open items and "to verify"
 
-1. **Fork rehearsal of the Safe-owned sequence** (0.7) has not been run. Testnets ran with the deployer as
-   admin, so batches A/B, the ownership handover and R5 as Safe calls are unproven end to end.
-2. **Robinhood L1 data fee** in the deploy cost (0.3).
-3. **Batch B has no script**: `deploy-evm-treasury-router-v4.ts` prints a `--batches-only` hint that does
-   not exist. Built by hand in 2.4 / 2.9 from `batchBCalls` plus the adapter and recorder calls.
-4. **D1 operator key** (nonce collision with the API's payout sends if shared).
-5. **D2 BNB factory `0xc378221E…`** still open with 1 campaign.
-6. **D3 new war pool and league** deployed but unused.
-7. **Stock and quote routes on the new adapters**: `scripts/configure-robinhood-stock-routes.ts` and
-   `configure-bnb-quote-routes.ts` send from the deployer, but the new adapters' admin is the Safe; and the
-   Robinhood policy file (`config/robinhood/mainnet-stock-routes.json`: slippage 300 bps, oracle deviation
-   500, impact 500, fee tiers up to 10000) is refused by `RobinhoodStockGraduationAdapterV2` (slippage at
-   most 100 bps, deviation and impact must be 0, acquisition tier at most 3000, E11). A Safe-batch variant
-   and a new policy are needed before stock bindings open. No stock- or quote-bound coin ran on a gen 6
-   testnet.
-8. **E19 recovery** not built (9.2).
-9. **`check-evm-payout-bounds.mjs`** defaults to the replaced monthly vaults and does not cover V4 or the
-   creator vault caps.
-10. **BNB harvest MEME sale (E9)** was not observed on BSC testnet (its Topaz has no `quote()`, so the sale
-    fails closed and carries); proven on the BSC fork specs, and mainnet's implementation `0xdC942D8e…`
-    has `quote()`. Watch the first mainnet harvest: MEME sold, then exactly 80/20 in WBNB.
-11. **Migrations on staging**: whether all seven are applied (section 1).
-12. **App `VITE_*` completeness** for generation 6 pages (5.3).
-13. **E14 wording**: the founder decision keeps the old factories open until the new generation replaces
-    them; batch A closes them at the start of each chain's session because the community vault serves one
-    router. Both current factories hold 0 campaigns, so nothing existing is affected, but creation is
-    closed from batch A to batch H.
+Open decisions (founder):
+
+1. **D1 operator key** (0.6): a dedicated creator-choice operator avoids nonce collisions with the API's
+   payout sends; batch B carries it when `EVMGEN_VAULT_OPERATOR` is set.
+2. **D2 BNB factory `0xc378221E…`** (generation 3/2, 1 campaign, create open): batch A does not affect its
+   coin (fork, 0.7); pausing its create is optional, in batch H.
+3. **E14 vs batch A timing**: the founder decision keeps the old factories open until the new generation
+   replaces them; batch A closes them at the start of each chain's session because the community vault
+   serves one router. Both factories batch A pauses hold 0 campaigns, so nothing existing is affected, but
+   creation on that chain is closed from batch A to batch H.
+
+Still to verify or watch:
+
+4. **BNB harvest MEME sale (E9)** was not observed on BSC testnet (its Topaz has no `quote()`) nor on the BNB
+   fork rehearsal (the fresh pool had no 30 min TWAP at the harvest: fail closed, MEME carried, WBNB 80/20
+   exact). Proven on the BSC fork specs; on the Robinhood fork the MEME side was sold. Watch the first
+   mainnet BNB harvest: MEME sold, then exactly 80/20 in WBNB.
+5. **Migrations on staging**: whether all seven are applied (section 1).
+6. **App `VITE_*` completeness** for generation 6 pages (5.3).
+7. **Stock- or quote-bound coin end to end**: the fork configured all nine Robinhood routes as the Safe
+   (batch Q), but the coin it graduated was native. No stock-bound coin has graduated on a generation 6
+   deployment yet; the adapter specs and `test/evmgen-rh-graduation.fork.spec.ts` cover it.
+
+Closed 2026-10-01: the fork rehearsal (0.7); the Robinhood L1 data fee (0.3, negligible at today's L1
+price); batch B script (`EVMGEN_BATCHES_ONLY=1`, 2.4); D3 (no unused war pool and league); stock and quote
+routes as Safe batches with a policy the V2 adapter accepts (batch Q, section 3); E19 recovery (9.2);
+`check-evm-payout-bounds.mjs` (current monthly vaults, vault V2 limits, holder authorizations, 9.4).
