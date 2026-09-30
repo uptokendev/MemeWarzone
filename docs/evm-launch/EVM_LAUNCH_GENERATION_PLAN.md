@@ -19,6 +19,9 @@ Written 2026-09-30. Every "today" fact cites the code on `build/dbc-staging` (`c
   our site, as on Pons.
 - **E5. The creator first buy comes back** (it existed from `93ff720e` and was removed in `8995d7f0`,
   2026-06-27, for "protected launch v1").
+- **E6. Graduated pool fee 0.30% on both chains** (founder, 2026-09-30): Topaz V2 30 bps on BNB,
+  Uniswap V3 3000 on Robinhood, the DEXes and lockers already deployed. This is the one deliberate
+  difference from Solana's 0.25% (D8): 0.25% does not exist on either DEX we graduate into.
 
 ## Target economics, one table
 
@@ -33,7 +36,7 @@ Written 2026-09-30. Every "today" fact cites the code on `build/dbc-staging` (`c
 | Graduation target | $15K / $30K / $50K, live re-priced | unchanged (E3) |
 | Graduation split of the raise | 2% protocol, then pool 33% of the rest, **creator ~67%** (`LaunchCampaign.sol:702-781`) | **protocol 2.2%, creator 19.8%, pool 78%** |
 | Pool tokens | capped at the 14% liquidity allocation (`:719-730`), rest burned | exactly the tokens the pool's native buys at the curve's last price, no cap (D6) |
-| Graduated pool | BNB Topaz V2 30 bps; Robinhood Uniswap V3 0.30% | **0.25%** where the DEX offers it (see "DEX fee tier" below) |
+| Graduated pool | BNB Topaz V2 30 bps; Robinhood Uniswap V3 0.30% | unchanged, 0.30% (E6; Solana 0.25%) |
 | LP lock and LP fees | permanent, 80 creator / 20 protocol, permissionless harvest | unchanged |
 | Creator fee choice | none: always to the creator | keep / holders / split / buyback & burn, set at launch; LP fees follow the choice (D5, D19) |
 | Scheduled launch | on chain: trading opens at `launchAt` | unchanged (EVM can do it on chain; Solana could not) |
@@ -134,16 +137,13 @@ at create: `keep`, `holders`, `split(creatorPct 1..99)`, `buyback`.
 The Robinhood stock path also reverts on any residual (`RobinhoodStockLaunchCampaign.sol:163`);
 normal V3 rounding may leave dust. Handle dust explicitly (burn or add to the vault), never revert.
 
-### DEX fee tier (0.25%)
+### DEX fee tier: decided, 0.30% (E6)
 
 - **Robinhood:** the Uniswap V3 factory `0x1f7d7550…` has no 0.25% tier (read on chain 2026-09-30:
-  `feeAmountTickSpacing` 100 -> 1, 500 -> 10, 2500 -> 0, 3000 -> 60, 10000 -> 200). Uniswap v4 takes any
-  fee on a hook-less pool, and v4 is on Robinhood (PoolManager `0x8366a39C…`). **Open for the founder:
-  graduate into a hook-less v4 pool at 0.25%, or stay on V3 at 0.30%.** v4 needs a new locker (v4
-  positions) and the same pre-made-pool repair (C7.2) for v4.
-- **BNB:** Topaz is a V2 fork with a fixed fee per pool type; the locker requires 30 bps
-  (`PermanentLpLocker.sol:34`). A 0.25% pool needs another DEX (PancakeSwap V2 charges 0.25%, but to be verified before
-  choosing it: its LPs receive only part of that fee) and a locker for it. **Open for the founder: 0.30% on Topaz, or move graduation to PancakeSwap V2.**
+  `feeAmountTickSpacing` 100 -> 1, 500 -> 10, 2500 -> 0, 3000 -> 60, 10000 -> 200). Graduation stays on
+  V3 3000 with `PermanentV3PositionLocker`.
+- **BNB:** Topaz is a V2 fork with a fixed 30 bps volatile fee; `PermanentLpLocker` requires it
+  (`PermanentLpLocker.sol:34`). Graduation stays on Topaz.
 
 ## What does not change
 
@@ -154,7 +154,7 @@ with the C5 split and the C7 fixes.
 
 ## Order of work
 
-1. Founder: approve this design and answer the two DEX questions above.
+1. ~~Founder: approve this design and answer the two DEX questions.~~ Done 2026-09-30 (E6).
 2. Audit-level spec per change (C1-C7): state machine, invariants, griefing analysis.
 3. Build with tests: unit, then the full lifecycle on a local fork of each mainnet (real Topaz or
    PancakeSwap, real Uniswap, real Chainlink), including a griefer who pre-makes the pool.
