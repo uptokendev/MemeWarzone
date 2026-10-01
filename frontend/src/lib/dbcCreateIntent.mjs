@@ -106,9 +106,16 @@ export async function submitPreparedDbcCreate({
     config,
     mint: mintAddress,
   });
-  prepared.tx.partialSign(mint);
+  // The wallet signs first, the mint key after (2026-10-01). Phantom blocks a request that already
+  // carries another signature ("Request blocked: this dApp could be malicious"), because it can no
+  // longer add its own Lighthouse guard instructions. Signing the mint last also covers any
+  // instruction the wallet adds: the mint signs the message as the wallet returned it.
   const signed = await signTransaction(prepared.tx);
-  const raw = typeof signed?.serialize === "function" ? signed.serialize() : signed;
+  if (!signed || typeof signed.partialSign !== "function" || typeof signed.serialize !== "function") {
+    throw new Error("The wallet returned a transaction the mint key cannot co-sign.");
+  }
+  signed.partialSign(mint);
+  const raw = signed.serialize();
   const signature = await connection.sendRawTransaction(raw, {
     skipPreflight: false,
     maxRetries: 3,
@@ -131,6 +138,6 @@ export async function submitPreparedDbcCreate({
     blockhash: prepared.blockhash,
     lastValidBlockHeight: prepared.lastValidBlockHeight,
     serializedBytes: raw.length,
-    signerCount: prepared.tx.compileMessage().header.numRequiredSignatures,
+    signerCount: signed.compileMessage().header.numRequiredSignatures,
   };
 }

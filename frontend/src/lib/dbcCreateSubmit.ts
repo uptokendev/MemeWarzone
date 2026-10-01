@@ -1,5 +1,5 @@
 /**
- * Sign and send a DBC createPool transaction: mint key first, then the wallet.
+ * Sign and send a DBC createPool transaction: the wallet first, then the mint key (Phantom blocks pre-signed requests).
  * Fresh blockhash, simulate, then signTransaction + sendRawTransaction.
  * Confirms against this transaction's blockhash / lastValidBlockHeight.
  */

@@ -7,6 +7,7 @@ import {
   DBC_METAPLEX_METADATA_PROGRAM_ID,
   assertDbcCreateIntent,
   prepareDbcCreateTransaction,
+  submitPreparedDbcCreate,
 } from "./dbcCreateIntent.mjs";
 
 const creator = Keypair.generate();
@@ -93,4 +94,84 @@ test("prepare replaces the placeholder blockhash and simulates before sign", asy
   assert.equal(prepared.lastValidBlockHeight, 42);
   assert.equal(simulatedHash, "FreshBlockhash11111111111111111111");
   assert.notEqual(simulatedHash, "11111111111111111111111111111111");
+});
+
+function fakeConnection(sent) {
+  return {
+    async getLatestBlockhash() {
+      return { blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 42 };
+    },
+    async simulateTransaction() {
+      return { value: { err: null, unitsConsumed: 12 } };
+    },
+    async sendRawTransaction(raw) {
+      sent.push(raw);
+      return "sig";
+    },
+    async confirmTransaction() {
+      return { value: { err: null } };
+    },
+  };
+}
+
+const expected = () => ({
+  mintSecretKey: mint.secretKey,
+  mintAddress: mint.publicKey.toBase58(),
+  creatorAddress: creator.publicKey.toBase58(),
+  pool: pool.publicKey.toBase58(),
+  config: config.publicKey.toBase58(),
+  Keypair,
+});
+
+test("the wallet signs first: it receives a transaction with no signature on it", async () => {
+  // Phantom 2026-10-01: a request already signed by the mint key was blocked as malicious.
+  const sent = [];
+  let seenByWallet = null;
+  await submitPreparedDbcCreate({
+    ...expected(),
+    connection: fakeConnection(sent),
+    transaction: envelope(),
+    async signTransaction(tx) {
+      seenByWallet = tx.signatures.map((s) => s.signature);
+      tx.partialSign(creator);
+      return tx;
+    },
+  });
+  assert.ok(seenByWallet.every((s) => s === null), "no signature may be on the transaction the wallet sees");
+  const final = Transaction.from(sent[0]);
+  assert.equal(final.verifySignatures(), true);
+});
+
+test("an instruction the wallet adds is covered by the mint signature that follows", async () => {
+  const sent = [];
+  await submitPreparedDbcCreate({
+    ...expected(),
+    connection: fakeConnection(sent),
+    transaction: envelope(),
+    async signTransaction(tx) {
+      // Phantom's Lighthouse guard appends instructions before it signs.
+      tx.add(new TransactionInstruction({ keys: [], programId: SystemProgram.programId, data: Buffer.alloc(0) }));
+      tx.partialSign(creator);
+      return tx;
+    },
+  });
+  const final = Transaction.from(sent[0]);
+  assert.equal(final.instructions.length, 2);
+  assert.equal(final.verifySignatures(), true);
+});
+
+test("a wallet that returns something the mint cannot co-sign is refused, nothing is sent", async () => {
+  const sent = [];
+  await assert.rejects(
+    submitPreparedDbcCreate({
+      ...expected(),
+      connection: fakeConnection(sent),
+      transaction: envelope(),
+      async signTransaction() {
+        return new Uint8Array([1, 2, 3]);
+      },
+    }),
+    /cannot co-sign/,
+  );
+  assert.equal(sent.length, 0);
 });
