@@ -26,6 +26,7 @@ const ENTITIES: { value: AbuseEntityType | ""; label: string }[] = [
   { value: "campaign", label: "Campaign" },
   { value: "token", label: "Token" },
   { value: "wallet", label: "Wallet" },
+  { value: "post", label: "Feed post" },
   { value: "external_account", label: "External account" },
   { value: "external_website", label: "External website" },
   { value: "other", label: "Other" },

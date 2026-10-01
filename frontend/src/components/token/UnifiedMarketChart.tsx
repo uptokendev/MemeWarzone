@@ -86,6 +86,8 @@ export type UnifiedMarketChartProps = {
   serverTime?: string | null;
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
+  /** Hide the expand control (partner iframe fills a fixed box). */
+  showExpand?: boolean;
 };
 
 type CreatorTradePin = {
@@ -449,6 +451,7 @@ export function UnifiedMarketChart({
   serverTime = null,
   expanded,
   onExpandedChange,
+  showExpand = true,
 }: UnifiedMarketChartProps) {
   const solana = isSolanaChainId(chainId);
   const nativeSymbol = getNativeSymbol(chainId);
@@ -968,7 +971,9 @@ export function UnifiedMarketChart({
           <div className="flex flex-wrap justify-end gap-1">
             {TIMEFRAMES.map((item) => <button type="button" key={item.key} onClick={() => onResolutionChange(item.key)} className={`rounded border px-2 py-1 text-[10px] font-semibold transition-colors ${resolution === item.key ? "border-orange-400/50 bg-orange-500/25 text-orange-300" : "border-border/60 text-muted-foreground hover:text-orange-200"}`}>{item.key}</button>)}
           </div>
-          <button type="button" onClick={toggleExpanded} className="rounded border border-border/60 px-2 py-1 text-[10px] font-semibold text-muted-foreground transition-colors hover:border-orange-400/40 hover:text-orange-200" title={isExpanded ? "Collapse chart" : "Expand chart"}>{isExpanded ? "Collapse" : "Expand"}</button>
+          {showExpand ? (
+            <button type="button" onClick={toggleExpanded} className="rounded border border-border/60 px-2 py-1 text-[10px] font-semibold text-muted-foreground transition-colors hover:border-orange-400/40 hover:text-orange-200" title={isExpanded ? "Collapse chart" : "Expand chart"}>{isExpanded ? "Collapse" : "Expand"}</button>
+          ) : null}
         </div>
       </div>
 

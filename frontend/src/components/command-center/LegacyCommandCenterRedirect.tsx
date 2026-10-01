@@ -14,6 +14,7 @@ type CommandCenterSection =
   | "followers"
   | "following"
   | "coins"
+  | "feed"
   | "battles"
   | "support"
   | "support/report"
