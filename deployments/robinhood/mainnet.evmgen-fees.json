@@ -1,0 +1,22 @@
+{
+  "chainId": 4663,
+  "deployedAt": "2026-10-01T10:36:58.621Z",
+  "contracts": {
+    "router": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d",
+    "vault": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+    "holderDistributor": "0x0Bf17e4bF2Ef1f4737d1e8cF95170D814e36A023"
+  },
+  "deployBlocks": {
+    "router": 77307987,
+    "vault": 77308016,
+    "holderDistributor": 77308044
+  },
+  "caps": {
+    "maxBuyPerTx": "190000000000000000",
+    "maxBuybackPerCampaignWeek": "1900000000000000000",
+    "minBuyInterval": "21600",
+    "maxImpactBps": "50",
+    "maxHolderBatchPerWeek": "9300000000000000000",
+    "holderBatchAuthorizationMax": "9300000000000000000"
+  }
+}
