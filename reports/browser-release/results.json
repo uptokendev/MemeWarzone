@@ -1,0 +1,622 @@
+{
+ "steps": {
+  "E1": {
+   "status": "PASS",
+   "at": "2026-09-30T23:38:21.690Z",
+   "chainId": 46630,
+   "wallet": "0x0e49AD9CbAF91CFB6907983EF40db15cbE40Fe3f",
+   "shots": [
+    "E1-rh-1-path.png",
+    "E1-rh-2-identity.png",
+    "E1-rh-3-story.png",
+    "E1-rh-4a-bond-top.png",
+    "E1-rh-4b-bond-fee-firstbuy.png",
+    "E1-rh-5-market.png",
+    "E1-rh-6-review.png",
+    "E1-rh-7-token-page.png",
+    "E1-8-launchpad-list-rh.png"
+   ],
+   "ticker": "RBR3859",
+   "toasts": [],
+   "tokenUrl": "http://127.0.0.1:5173/token/0x5675e97ecb1791feffef492dbdf8aab555fca3fe",
+   "campaign": "0x5675e97ecb1791feffef492dbdf8aab555fca3fe",
+   "txs": [
+    "0xa03e75da0c1a7269553b59c105c7ef49c4e0b882a36c9a80ae43b0c9ef67bfe5"
+   ],
+   "checks": {
+    "limitLine": "Most you can buy now: 0.00102 ETH, half of the graduation target at today's price.",
+    "limitIsTargetHalf": true,
+    "limitAt30k": "Most you can buy now: 4.437 ETH, which is 10% of the supply.",
+    "limitIsSupply10": true,
+    "feeOptions": [
+     "Keep it",
+     "Give it to holders",
+     "Split",
+     "Buyback and burn"
+    ],
+    "splitPctInput": "40",
+    "firstBuyLine": "About 0.03% of supply for 0.0004 ETH, including the 2% fee.",
+    "review": "Mode\nDIRECT DEPLOY\nName\nRelease Browser RH 3859\nTicker\n$RBR3859\nGraduation threshold\n$6\nGraduation Market\n$RBR3859 / ETH\nQuote Asset\nETH\nProvider\nRobinhood\nBonding currency\nETH\nCreator fee\nSplit (40% to you)\nFirst buy\n0.0004 ETH (0.03% of supply)",
+    "reviewHasFee": true,
+    "reviewHasFirstBuy": true,
+    "coinInList": true
+   },
+   "campaignAddress": "0x53B80193b0B5beCB29078D2738351E398e489325"
+  },
+  "E1-bsc": {
+   "status": "PASS",
+   "at": "2026-09-30T23:45:29.159Z",
+   "chainId": 97,
+   "wallet": "0xB06E6014536D320F4500348B400836c705CC6eE1",
+   "shots": [
+    "E1-bsc-1-path.png",
+    "E1-bsc-2-identity.png",
+    "E1-bsc-3-story.png",
+    "E1-bsc-4a-bond-top.png",
+    "E1-bsc-4b-bond-fee-firstbuy.png",
+    "E1-bsc-5-market.png",
+    "E1-bsc-6-review.png",
+    "E1-bsc-7a-launch-fee-countdown.png",
+    "E1-bsc-7-token-page.png",
+    "E1-bsc-8-launchpad-list.png"
+   ],
+   "ticker": "RBB5517",
+   "toasts": [],
+   "feeLines": [
+    {
+     "t": "2026-09-30T23:44:57.082Z",
+     "line": null
+    },
+    {
+     "t": "2026-09-30T23:45:02.086Z",
+     "line": "Launch fee: 44% now, 2% from 11:45:53 PM."
+    },
+    {
+     "t": "2026-09-30T23:45:07.247Z",
+     "line": "Launch fee: 40% now, 2% from 11:45:53 PM."
+    },
+    {
+     "t": "2026-09-30T23:45:13.997Z",
+     "line": "Launch fee: 34% now, 2% from 11:45:53 PM."
+    },
+    {
+     "t": "2026-09-30T23:45:19.000Z",
+     "line": "Launch fee: 30% now, 2% from 11:45:53 PM."
+    },
+    {
+     "t": "2026-09-30T23:45:24.002Z",
+     "line": "Launch fee: 26% now, 2% from 11:45:53 PM."
+    }
+   ],
+   "tokenUrl": "http://127.0.0.1:5173/token/0xfd40df013557c15e6de37b67a62c65f444eeb853?chainId=97",
+   "campaign": "0xfd40df013557c15e6de37b67a62c65f444eeb853",
+   "txs": [
+    "0xf8415a57129d936904c1e91fc2de8471ef97dc7469403c90e59f8b2d5a667269"
+   ],
+   "checks": {
+    "limitLine": "Most you can buy now: 0.003974 BNB, half of the graduation target at today's price.",
+    "limitIsTargetHalf": true,
+    "limitAt30k": "Most you can buy now: 5.61 BNB, which is 10% of the supply.",
+    "limitIsSupply10": true,
+    "feeOptions": [
+     "Keep it",
+     "Give it to holders",
+     "Split",
+     "Buyback and burn"
+    ],
+    "firstBuyLine": "About 0.03% of supply for 0.0004 BNB, including the 2% fee.",
+    "review": "Mode\nDIRECT DEPLOY\nName\nRelease Browser BSC 5517\nTicker\n$RBB5517\nGraduation threshold\n$6\nGraduation Market\n$RBB5517 / BNB\nQuote Asset\nBNB\nProvider\nBNB\nBonding currency\nBNB\nCreator fee\nKeep it\nFirst buy\n0.0004 BNB (0.03% of supply)",
+    "reviewHasFee": true,
+    "reviewHasFirstBuy": true,
+    "coinInList": true
+   },
+   "campaignAddress": "0xc4eb9d900FeAf444Acd764742Df0840b9ABBb19A"
+  },
+  "E2": {
+   "status": "PASS",
+   "at": "2026-09-30T23:50:13.699Z",
+   "chainId": 46630,
+   "campaign": "0x53B80193b0B5beCB29078D2738351E398e489325",
+   "wallet": "0xFbaf5933F38a446d9eb82EE3dEEAb37E7648599a",
+   "shots": [
+    "E2-1-page.png",
+    "E2-2-buy-quote.png",
+    "E2-3-after-buy.png",
+    "E2-4-sell-quote.png",
+    "E2-5-after-sell.png"
+   ],
+   "buyTxs": [
+    "0x6db70b165273a8acf12672432dc90921dc0f4820b282c3e396218b8e15f5c8b5"
+   ],
+   "sellTxs": [
+    "0xdaba9f2d30f189b3c87c877e4765aae6b6336eb61299c8baa568290be2350df9"
+   ],
+   "checks": {
+    "launchFeeLine": "Launch fee: 2% now.",
+    "creatorBadge": "Creator holds 0.03% of supply.",
+    "isCreator": false,
+    "buyPay": "Pay: 0.0002 ETH",
+    "buyReceive": "Receive: 128445.5126 $RBR3859 (est.)",
+    "buy": {
+     "amountOut": "128445512583782000000000",
+     "cost": "199999999999999",
+     "quoteAtPrevBlock": "199999999999999",
+     "feeBpsAtPrevBlock": 200
+    },
+    "buyCostEqualsCampaignQuote": true,
+    "sellQuote": [
+     "Payout: 0.0002523 ETH"
+    ],
+    "sell": {
+     "amountIn": "170673165499049500000000",
+     "payout": "252328444135413",
+     "quoteAtPrevBlock": "252328444135413",
+     "feeBpsAtPrevBlock": 200
+    },
+    "sellPayoutEqualsCampaignQuote": true,
+    "creatorBadgeAfter": "Creator holds 0.03% of supply."
+   }
+  },
+  "E3": {
+   "status": "PASS",
+   "at": "2026-09-30T23:50:59.889Z",
+   "chainId": 46630,
+   "campaign": "0x53B80193b0B5beCB29078D2738351E398e489325",
+   "wallet": "0x0e49AD9CbAF91CFB6907983EF40db15cbE40Fe3f",
+   "shots": [
+    "E3-1-page.png",
+    "E3-2-buy-quote.png",
+    "E3-3-after-buy.png",
+    "E3-6-creator-panel-reload.png"
+   ],
+   "buyTxs": [
+    "0x7ee93a1af6d2869c6101cb1fd9c5d36e84fb0a07cdf16a39d482922f816e43ff"
+   ],
+   "checks": {
+    "launchFeeLine": "Launch fee: 2% now.",
+    "creatorBadge": "Creator holds 0.03% of supply.",
+    "isCreator": true,
+    "lockSentence": "As the creator, your buys are locked: 20% is released after 30 days, then 20% every 7 days.",
+    "buyPay": "Pay: 0.0002 ETH",
+    "buyReceive": "Receive: 131426.6461 $RBR3859 (est.)",
+    "buy": {
+     "amountOut": "131426646083285793248350",
+     "cost": "199999999999999",
+     "quoteAtPrevBlock": "199999999999999",
+     "feeBpsAtPrevBlock": 200
+    },
+    "buyCostEqualsCampaignQuote": true,
+    "creatorBuyEscrowed": "131426646083285793248350",
+    "walletTokenDelta": "0",
+    "landedInEscrow": true,
+    "creatorBadgeAfter": "Creator holds 0.03% of supply.",
+    "creatorPanel": "CREATOR REWARDS\n\nSplit: 40% to the creator, 60% to holders\n\nYour locked buys\n\nYour buys after launch are held here: 20% is released 30 days after each buy, then 20% every 7 days.\n\n0 tokens released\n\nClaim\n\nGraduation payout\n\n19.8% of what the curve raised, paid when the coin graduates.\n\n0 ETH\n\nClaim\n\nCreator fees\n\nYour 40% of the creator fees.\n\n0.000001 ETH\n\nClaim\n\nEnter a ETH amount to buy (switch to $RBR3859 only for exact token size).\n\nBUY\nWar Room\n\nLive campaign chat\n\nWar Room\n\nCampaign chat · polling fallback is active when realtime is unavailable\n\nRead only\n0x0e49...fe3f\nNo war room messages yet. Be the first to break the silence.\n\nSign once to join this War Room.\n\nYou only sign the ro",
+    "creatorPanelAfterReload": "Held 131,426, locked 131,426. Next release Oct 30, 2026, 11:50 PM.",
+    "creatorBadgeAfterReload": "Creator holds 0.04% of supply, 0.01% locked until Nov 27, 2026.",
+    "note": "Panel read 8 s after the buy still showed the empty-escrow text; a reload ~2 min later showed held/locked/next release (campaign-state cache + poll interval)."
+   }
+  },
+  "E4-push": {
+   "status": "INFO",
+   "at": "2026-09-30T23:53:12.529Z",
+   "chainId": 46630,
+   "campaign": "0x53B80193b0B5beCB29078D2738351E398e489325",
+   "wallet": "0xFbaf5933F38a446d9eb82EE3dEEAb37E7648599a",
+   "shots": [
+    "E4-push-1-page.png",
+    "E4-push-2-buy-quote.png",
+    "E4-push-3-after-buy.png"
+   ],
+   "buyTxs": [
+    "0x4b77533c1ab036dc813a768d99e89d60e4f0728f14a47b460c6b7bf17bd9ac40"
+   ],
+   "checks": {
+    "launchFeeLine": "Launch fee: 2% now.",
+    "creatorBadge": null,
+    "isCreator": false,
+    "buyPay": "Pay: 0.0016 ETH",
+    "buyReceive": "Receive: 826086.4293 $RBR3859 (est.)",
+    "buy": {
+     "amountOut": "826086429275955983927960",
+     "cost": "1600000000000000",
+     "quoteAtPrevBlock": "1600000000000000",
+     "feeBpsAtPrevBlock": 200
+    },
+    "buyCostEqualsCampaignQuote": true,
+    "creatorBadgeAfter": "Creator holds 0.04% of supply, 0.01% locked until Nov 27, 2026."
+   },
+   "note": "buyer push to the $6 target; GraduationPending(target) followed"
+  },
+  "E4": {
+   "status": "PASS",
+   "at": "2026-10-01T00:03:12.592Z",
+   "chainId": 46630,
+   "campaign": "0x53B80193b0B5beCB29078D2738351E398e489325",
+   "wallet": "0x0e49AD9CbAF91CFB6907983EF40db15cbE40Fe3f",
+   "shots": [
+    "E4-1-graduating.png",
+    "E4-2-graduated.png",
+    "E4-1-creator-panel-graduated.png",
+    "E4-2-after-claim.png"
+   ],
+   "claimTx": "0x1801e786e734f254cead0a996be2c5a480694089175f472e70f30f5bb78e2afe",
+   "checks": {
+    "graduatedTx": "0xc6f9a742492eb40e5cf6401dd225deddc7fc9aa94ec51a8a25205c924182db2d",
+    "pool": "0x4216B8c30432b3b47EBE7e0d38A8d522912d3AbD",
+    "raise": "2389580819309605",
+    "creatorShareEvent": "473137002223301",
+    "expected19_8": "473137002223301",
+    "graduatedLine": "Graduated. Pool 0x4216…3AbD",
+    "poolLink": "https://explorer.testnet.chain.robinhood.com/address/0x4216B8c30432b3b47EBE7e0d38A8d522912d3AbD",
+    "panelBefore": "CREATOR REWARDS\n\nSplit: 40% to the creator, 60% to holders\n\nYour locked buys\n\nHeld 131,426, locked 131,426. Next release Oct 30, 2026, 11:50 PM.\n\n0 tokens released\n\nClaim\n\nGraduation payout\n\n19.8% of what the curve raised, plus any refund from the pool.\n\n0.000473 ETH\n\nClaim\n\nCreator fees\n\nYour 40% of the creator fees.\n\n0.000001 ETH\n\nClaim\nWar Room\n\nLive campaign chat\n\nWar Room\n\nCampaign chat · polling fallback is active when realtime is unavailable\n\nRead only\n0x0e49...fe3f\nNo war room messages y",
+    "claimedNative": "473137002223301",
+    "claimEquals19_8": true,
+    "pushTx": "0x4b77533c1ab036dc813a768d99e89d60e4f0728f14a47b460c6b7bf17bd9ac40",
+    "graduateTxFromThirdWallet": "0xc6f9a742492eb40e5cf6401dd225deddc7fc9aa94ec51a8a25205c924182db2d",
+    "graduator": "0x9575D51f3A2Cf1ba7427f63FCA07265CAC1C34a8",
+    "graduatingLine": "Graduating: the pool is being created.",
+    "keeper": "local keeper EVM_GRADUATION_KEEPER_SEND=false; graduate() sent from the third wallet"
+   }
+  },
+  "E2-countdown": {
+   "status": "PASS",
+   "at": "2026-10-01T00:04:37.465Z",
+   "chainId": 46630,
+   "wallet": "0x3410Eaa7c721EC44756981e2e6174201Bc14ef04",
+   "shots": [
+    "E2-rh-countdown-1-path.png",
+    "E2-rh-countdown-2-identity.png",
+    "E2-rh-countdown-3-story.png",
+    "E2-rh-countdown-4a-bond-top.png",
+    "E2-rh-countdown-4b-bond-fee-firstbuy.png",
+    "E2-rh-countdown-5-market.png",
+    "E2-rh-countdown-6-review.png",
+    "E2-rh-countdown-7a-launch-fee-countdown.png",
+    "E2-rh-countdown-7-token-page.png"
+   ],
+   "ticker": "RBR5381",
+   "toasts": [],
+   "feeLines": [
+    {
+     "t": "2026-10-01T00:04:05.153Z",
+     "line": null
+    },
+    {
+     "t": "2026-10-01T00:04:10.157Z",
+     "line": "Launch fee: 46% now, 2% from 12:05:04 AM."
+    },
+    {
+     "t": "2026-10-01T00:04:17.261Z",
+     "line": "Launch fee: 40% now, 2% from 12:05:04 AM."
+    },
+    {
+     "t": "2026-10-01T00:04:22.264Z",
+     "line": "Launch fee: 36% now, 2% from 12:05:04 AM."
+    },
+    {
+     "t": "2026-10-01T00:04:27.267Z",
+     "line": "Launch fee: 32% now, 2% from 12:05:04 AM."
+    },
+    {
+     "t": "2026-10-01T00:04:32.271Z",
+     "line": "Launch fee: 28% now, 2% from 12:05:04 AM."
+    }
+   ],
+   "tokenUrl": "http://127.0.0.1:5173/token/0xf4f329d572e737d1d48ba6e34969a742a07bde51",
+   "campaign": "0xf4f329d572e737d1d48ba6e34969a742a07bde51",
+   "txs": [
+    "0x57a66597249aa5bbfe562c5106b88b35f7f07a9cebebdc4b8ee94ddf77ba72d4"
+   ],
+   "checks": {
+    "limitLine": "Most you can buy now: 0.00102 ETH, half of the graduation target at today's price.",
+    "limitIsTargetHalf": true,
+    "limitAt30k": "Most you can buy now: 4.437 ETH, which is 10% of the supply.",
+    "limitIsSupply10": true,
+    "feeOptions": [
+     "Keep it",
+     "Give it to holders",
+     "Split",
+     "Buyback and burn"
+    ],
+    "splitPctInput": "40",
+    "firstBuyLine": "About 0.03% of supply for 0.0004 ETH, including the 2% fee.",
+    "review": "Mode\nDIRECT DEPLOY\nName\nRelease Browser RH 5381\nTicker\n$RBR5381\nGraduation threshold\n$6\nGraduation Market\n$RBR5381 / ETH\nQuote Asset\nETH\nProvider\nRobinhood\nBonding currency\nETH\nCreator fee\nSplit (40% to you)\nFirst buy\n0.0004 ETH (0.03% of supply)",
+    "reviewHasFee": true,
+    "reviewHasFirstBuy": true
+   }
+  },
+  "E2-bsc": {
+   "status": "PASS",
+   "at": "2026-10-01T00:04:50.401Z",
+   "chainId": 97,
+   "campaign": "0xc4eb9d900FeAf444Acd764742Df0840b9ABBb19A",
+   "wallet": "0x2df60E7c17A6005e5d9D62171EF5E609243b30e8",
+   "shots": [
+    "E2-bsc-1-page.png",
+    "E2-bsc-2-buy-quote.png",
+    "E2-bsc-3-after-buy.png",
+    "E2-bsc-4-sell-quote.png",
+    "E2-bsc-5-after-sell.png"
+   ],
+   "buyTxs": [
+    "0xa029729daa57f4caae72906aa3e18f579ed4cfc2a558a83c9b09a9e9d5b35c37"
+   ],
+   "sellTxs": [
+    "0x1eb2ab6de62b59c759d6180e3e5d203455cd796dc9768eee1c26753bdbcec1f5",
+    "0x116e578b612c4ea251def383d4c7131cc06ebd3f3ae2a4525ea1bfb54dc7a412"
+   ],
+   "checks": {
+    "launchFeeLine": "Launch fee: 2% now.",
+    "creatorBadge": "Creator holds 0.03% of supply.",
+    "isCreator": false,
+    "buyPay": "Pay: 0.0005 BNB",
+    "buyReceive": "Receive: 319999.4973 $RBB5517 (est.)",
+    "buy": {
+     "amountOut": "319999497335936122789934",
+     "cost": "500000000000000",
+     "quoteAtPrevBlock": "500000000000000",
+     "feeBpsAtPrevBlock": 200
+    },
+    "buyCostEqualsCampaignQuote": true,
+    "sellQuote": [
+     "Payout: 0.0002537 BNB"
+    ],
+    "sell": {
+     "amountIn": "159999748667968061394967",
+     "payout": "253743555869835",
+     "quoteAtPrevBlock": "253743555869835",
+     "feeBpsAtPrevBlock": 200
+    },
+    "sellPayoutEqualsCampaignQuote": true,
+    "creatorBadgeAfter": "Creator holds 0.03% of supply."
+   }
+  },
+  "E5": {
+   "status": "PASS",
+   "at": "2026-10-01T00:06:12.278Z",
+   "chainId": 46630,
+   "campaign": "0xE0333A278F80ca22142aEFa582ddD44BA16A25B8",
+   "factory": "0xde9f7055f768A6A1AFBCD5263be64961241927a4",
+   "generations": [
+    4,
+    3
+   ],
+   "launched": true,
+   "shots": [
+    "E5-old-generation-page.png"
+   ],
+   "checks": {
+    "title": "ROBINHOOD ACCEPTANCE 1790186787595",
+    "hasGen5Badge": false,
+    "hasGen5Notes": false,
+    "hasLaunchFeeLine": false,
+    "hasTradeBox": true,
+    "stage": "Graduated · Uniswap",
+    "pageErrors": []
+   }
+  },
+  "E5-bonding": {
+   "status": "PASS",
+   "at": "2026-10-01T00:07:00.073Z",
+   "chainId": 46630,
+   "campaign": "0x0C1B3Adf9bfEA3f9Cb2D60512a8742876c45a984",
+   "factory": "0xde9f7055f768A6A1AFBCD5263be64961241927a4",
+   "generations": [
+    4,
+    3
+   ],
+   "launched": false,
+   "shots": [
+    "E5-bonding-old-generation-page.png"
+   ],
+   "checks": {
+    "title": "ROBINHOOD ACCEPTANCE 1790187006066 SCHEDULED",
+    "hasGen5Badge": false,
+    "hasGen5Notes": false,
+    "hasLaunchFeeLine": false,
+    "hasTradeBox": true,
+    "stage": "Bonding · Robinhood",
+    "pageErrors": []
+   }
+  },
+  "E5-bsc": {
+   "status": "PASS",
+   "at": "2026-10-01T00:08:32.219Z",
+   "chainId": 97,
+   "campaign": "0xf7Ba3BD6ffdA81F7247e4F5613550cc08d68a67C",
+   "factory": "0xFb8159f46BAB4e214F658c2c8f5CfF76C102E848",
+   "generations": [
+    4,
+    3
+   ],
+   "launched": true,
+   "shots": [
+    "E5-bsc-old-generation-page.png"
+   ],
+   "checks": {
+    "title": "\nSEARCH\n",
+    "hasGen5Badge": false,
+    "hasGen5Notes": false,
+    "hasLaunchFeeLine": false,
+    "hasTradeBox": true,
+    "stage": "Bonding",
+    "pageErrors": []
+   }
+  },
+  "E6": {
+   "status": "PASS",
+   "at": "2026-10-01T00:15:30.738Z",
+   "battleId": "arena-muos3tye-b9fcd9",
+   "shots": [
+    "E6-1-type.png",
+    "E6-2-opponent.png",
+    "E6-3-terms-durations.png",
+    "E6-4-review.png",
+    "E6-5-tab-upcoming.png",
+    "E6-5-tab-my-battles.png",
+    "E6-6-share-card.png",
+    "E6-6b-share-card-local-logo-fallback.png"
+   ],
+   "checks": {
+    "durationsOffered": [
+     "6 hours",
+     "12 hours",
+     "24 hours",
+     "48 hours"
+    ],
+    "challengeSent": "vote battle 6 h, buy-in 0.0001 ETH offered (signature only), stored duration_hours=6",
+    "cardText": "CHALLENGED | $RBR3859 VS $RHA87595 | OPEN WAR | MANUAL | ROBINHOOD | VOTE · 6H ... MCAP/HOLDERS/VOL/POINTS, SHARE, OPEN FIGHT; no coin description",
+    "shareCard": "/api/battle-share-card PNG 1002x531 with both coin images (left 2.75 MB og.png, right mw.png) after local fix",
+    "bugsFixed": [
+     "band label hard-coded VOTE · 24H for every vote battle (showed 24H for a 6 h battle)",
+     "share card drew an empty circle when a logo did not embed (raw URL handed to resvg) instead of the ticker"
+    ]
+   }
+  },
+  "S1": {
+   "status": "PASS",
+   "at": "2026-10-01T00:17:57.298Z",
+   "cluster": "devnet",
+   "wallet": "6gmFWiJvyHPvQujwR4nJ1PBeQw3pY57wF7snmEmB2caT",
+   "shots": [
+    "S1-1-path.png",
+    "S1-2-identity.png",
+    "S1-4a-bond-top.png",
+    "S1-4b-bond-fee-firstbuy.png",
+    "S1-5-graduation.png",
+    "S1-6-review.png",
+    "S1-7a-token-page-launch-fee.png",
+    "S1-7-token-page.png"
+   ],
+   "ticker": "RBS2038",
+   "toasts": [
+    "Preparing your launch…",
+    "Sign in your wallet to start the launch…",
+    "Checking that this wallet can launch…",
+    "Confirm the launch in your wallet…"
+   ],
+   "tokenUrl": "http://127.0.0.1:5173/token/8ARYyJYaDbisN52txxtT7NFidfV7iRX8aF8vXSfW5V6g",
+   "mint": "8ARYyJYaDbisN52txxtT7NFidfV7iRX8aF8vXSfW5V6g",
+   "signatures": [
+    "5bQZ8Hxz9viasB9TsbhvrZhwqeCAXaEGLYWSu4PXBnaKEu4ttarpPu2u6snea4ZpJZujGBijSjM2kCiho4dakzNy"
+   ],
+   "feeLines": [
+    {
+     "t": "2026-10-01T00:17:24.938Z",
+     "line": "Launch fee: 49% now, 2% from 12:18:23 AM."
+    },
+    {
+     "t": "2026-10-01T00:17:29.948Z",
+     "line": "Launch fee: 45% now, 2% from 12:18:23 AM."
+    },
+    {
+     "t": "2026-10-01T00:17:35.173Z",
+     "line": "Launch fee: 40% now, 2% from 12:18:23 AM."
+    },
+    {
+     "t": "2026-10-01T00:17:40.184Z",
+     "line": "Launch fee: 36% now, 2% from 12:18:23 AM."
+    },
+    {
+     "t": "2026-10-01T00:17:45.195Z",
+     "line": "Launch fee: 32% now, 2% from 12:18:23 AM."
+    },
+    {
+     "t": "2026-10-01T00:17:52.053Z",
+     "line": "Launch fee: 27% now, 2% from 12:18:23 AM."
+    }
+   ],
+   "checks": {
+    "firstBuyLine": "About 3.98% of supply.",
+    "review": "Mode\nDIRECT DEPLOY\nName\nRelease Browser SOL 2038\nTicker\n$RBS2038\nGraduation threshold\n$150\nGraduates into\nRBS2038/SOL on Meteora\nCreator fee\nKeep it\nFirst buy\n0.01 SOL"
+   },
+   "note": "create tx (config + pool + first buy) signed by the test wallet, sent by the page"
+  },
+  "S2": {
+   "status": "PASS",
+   "at": "2026-10-01T00:19:46.948Z",
+   "cluster": "devnet",
+   "mint": "8ARYyJYaDbisN52txxtT7NFidfV7iRX8aF8vXSfW5V6g",
+   "wallet": "2GSuuFyHMFaDDLzv1C1rrnwoWKQY34xxN81kE6ciCXLR",
+   "shots": [
+    "S2-1-page.png",
+    "S2-2-buy-quote.png",
+    "S2-3-after-buy.png",
+    "S2-4-sell-quote.png",
+    "S2-5-after-sell.png",
+    "S2-6-progress-reload.png"
+   ],
+   "buySig": "njiQznmzjZZj2vKSZ35YCU6o7Y9h2GRxGxsJxgp1sLZ2K46GjjSdhU5Mn3PdozwJ5uJ4PuQ3dgMGKrg3dWmbHME",
+   "sellSig": "2335yUs5N6XEjUG9NCBd5eKWrkf4TtYr7u6AUe7XRc6U8snFNAoHFfqDgpHnpxcCczL6Kq5g6RKkVgqkF6Q7B4Tn",
+   "checks": {
+    "antiSniperLine": "Launch fee: 2% now.",
+    "creatorBadge": "Creator holds 0.00% of supply.",
+    "lockSentence": null,
+    "buyPay": "Pay: 0.020000 SOL",
+    "buyReceive": "Receive: 3471519.8614 $RBS2038 (est.)",
+    "buyErr": null,
+    "walletTokenDeltaBuy": "3471519861442",
+    "sellQuote": [
+     "Payout: 0.010850 SOL"
+    ],
+    "sellErr": null,
+    "walletTokenDeltaSell": "-1735759000000",
+    "creatorBadgeAfter": "Creator holds 0.00% of supply.",
+    "afterFixes": {
+     "badge": "Creator holds 5.62% of supply, 1.63% locked until Nov 28, 2026.",
+     "progress": "2.22% (0.028 of 1.269 SOL)"
+    },
+    "antiSniperCountdown": "see S1 feeLines 49% -> 27% within the first minute"
+   }
+  },
+  "S3": {
+   "status": "PASS",
+   "at": "2026-10-01T00:20:28.410Z",
+   "cluster": "devnet",
+   "mint": "8ARYyJYaDbisN52txxtT7NFidfV7iRX8aF8vXSfW5V6g",
+   "wallet": "6gmFWiJvyHPvQujwR4nJ1PBeQw3pY57wF7snmEmB2caT",
+   "shots": [
+    "S3-1-page.png",
+    "S3-2-buy-quote.png",
+    "S3-3-after-buy.png",
+    "S3-4-creator-reload.png"
+   ],
+   "buySig": "5VqS4sE6Rbe45JxRSawcgSxnQiTPny1pWgYwPLL6NYFcMrYYbtrxoakA4qPCXmsn4cwE3ky1L3q9Z6J5UVPGcXAe",
+   "checks": {
+    "antiSniperLine": "Launch fee: 2% now.",
+    "creatorBadge": "Creator holds 0.00% of supply.",
+    "lockSentence": "As the creator, your buys are locked: 20% is released after 30 days, then 20% every 7 days.",
+    "buyPay": "Pay: 0.010000 SOL",
+    "buyReceive": "Receive: 1554503.6316 $RBS2038 (est.)",
+    "buyErr": null,
+    "walletTokenDeltaBuy": "0",
+    "creatorPanel": "CREATOR REWARDS\n\nGraduation payout\n\nYour share of the graduation fee, paid when the coin graduates\n\n0.251255 SOL\n\nClaim\n\nCreator reserve\n\n2% locked vesting, released at graduation\n\nNothing waiting\n\nClaim\n\nLP fees\n\n80% permanently locked position\n\n0 SOL\n\nClaim\n\nEnter a SOL amount to buy (switch to $RBS2038 only for exact token size).\n\nBUY\nWar Room\n\nLive campaign chat\n\nWar Room\n\nCampaign chat · polling fallback is active when realtime is unavailable\n\nRead only\n6gmFWi...2caT\nNo war room messages yet. Be the first to break the silence.\n\nSign once to join this War Room.\n\nYou only sign the room session. Messages themselves do not require new signatures.\n\nSign to join\nSAFETY\n© 2026 - MEMEWARZONE. ALL RIGHTS RESERVED.",
+    "creatorBadgeAfter": "Creator holds 0.00% of supply.",
+    "notes": "Creator buy 0.01 SOL went to the lock escrow (wallet delta 0; /api/dbc/locks shows 1554503631610 raw, cliff 30 d, 4 x 7 d). Panel rows: Graduation payout 0.251255 SOL (= 22% x 90% of the 1.269 SOL threshold, claim disabled before graduation), Creator reserve, LP fees; trade box shows Claim released tokens. No creator trading-fee row on the DBC panel (EVM panel has one)."
+   }
+  }
+ },
+ "notes": [],
+ "factories": {
+  "rh46630": {
+   "factory": "0x740587c402078029cB7C6f04049C0834215243A2",
+   "unpause": "0x524474cf3c33eddddd4d5edf9de603817a6a39d21353ba78484cbb248f9ac288",
+   "repause": "0x75c14ac040745f06861ebf3b1b7a6f03302cd79dd24a47fb60391e593d53ae8d",
+   "createPausedAfter": true
+  },
+  "bsc97": {
+   "factory": "0xE700e2016B0D54517D6D1119BC7147F11A0beCA6",
+   "unpause": "0x2b6d0f44293dd1900aea436bb20c2ffd806ee733cd9cd051696fae3aa1f98bd1",
+   "repause": "0x1624a15c0715c3bce8ced45eb4029ea13b36ab4ff39a6718df01caa43377019a",
+   "createPausedAfter": true
+  }
+ },
+ "spent": {
+  "bsc97_BNB": "0.000935685144130165",
+  "rh46630_ETH": "0.002499475773641284",
+  "devnet_SOL": "0.062385234"
+ },
+ "keeper": {
+  "note": "local indexer EVM keeper send=false; after graduation it logged a dry-run decision for 0x53b80193 (observations 1 -> 180 on pool 0x4216B8c3); graduate() itself was sent from the third wallet"
+ }
+}

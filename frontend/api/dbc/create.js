@@ -914,7 +914,22 @@ export function createDbcCreateHandler(deps = {}) {
           : client.state.getPool(new PublicKey(row.campaign_address)).then((r) => r?.poolState ?? r));
         if (onChain) {
           const quoteReserve = BigInt(onChain.quoteReserve?.toString?.() || onChain.quote_reserve || 0);
-          const threshold = BigInt(onChain.migrationQuoteThreshold?.toString?.() || onChain.migration_quote_threshold || payload.meta?.target || 0);
+          // The migration threshold lives on the pool's CONFIG, not on the pool. meta.target is the
+          // dollar target in USD micros and must never stand in for it (that put $150 = 150_000_000
+          // against a lamport reserve and showed 18.75% for a coin 2.2% of the way). Our ladder row
+          // records the config's threshold; the chain is read only when the row is missing.
+          let threshold = BigInt(onChain.migrationQuoteThreshold?.toString?.() || onChain.migration_quote_threshold || 0);
+          const configAddress = String(onChain.config?.toBase58?.() || onChain.config || payload.meta?.config || "");
+          if (threshold === 0n && configAddress) {
+            const cfg = await database
+              .query(`select threshold_lamports from public.dbc_launch_configs where config_address = $1 limit 1`, [configAddress])
+              .catch(() => ({ rows: [] }));
+            threshold = BigInt(String(cfg.rows?.[0]?.threshold_lamports || "0"));
+            if (threshold === 0n && !deps.readPool) {
+              const onChainConfig = await client.state.getPoolConfig(new PublicKey(configAddress)).catch(() => null);
+              threshold = BigInt(onChainConfig?.migrationQuoteThreshold?.toString?.() || 0);
+            }
+          }
           payload.poolLive = {
             quoteReserveLamports: quoteReserve.toString(),
             migrationQuoteThresholdLamports: threshold.toString(),

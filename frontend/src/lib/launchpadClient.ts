@@ -722,13 +722,13 @@ export function useLaunchpad(): LaunchpadAdapter {
       campaign.finalizedAt().catch(() => 0n),
     ]);
     const graduated = Boolean(launched) || BigInt(finalizedAt || 0n) > 0n;
-    const skipNativeTarget =
-      graduated || evmReadChainId === ROBINHOOD_CHAIN_ID || evmReadChainId === ROBINHOOD_TESTNET_CHAIN_ID;
-    // RH graduationTarget is USD (18 decimals), not native wei. Copying it into
-    // graduationNativeTarget made Remaining show ~$4.4K (6 ETH × ETH/USD).
-    const graduationNativeTarget = skipNativeTarget
+    const isRobinhoodRead = evmReadChainId === ROBINHOOD_CHAIN_ID || evmReadChainId === ROBINHOOD_TESTNET_CHAIN_ID;
+    // RH graduationTarget is USD (18 decimals), not native wei, so it must never be used as the
+    // native-target fallback (that made Remaining show ~$4.4K: 6 ETH × ETH/USD). The campaign's own
+    // graduationNativeTarget() is native wei and drives the progress bar and "ETH raised".
+    const graduationNativeTarget = graduated
       ? 0n
-      : await readBig("graduationNativeTarget", graduationTarget);
+      : await readBig("graduationNativeTarget", isRobinhoodRead ? 0n : graduationTarget);
 
     return { sold, curveSupply, liquiditySupply, creatorReserve, basePrice, priceSlope, graduationTarget, graduationNativeTarget, liquidityBps, protocolFeeBps, currentPrice, launched, finalizedAt };
   }, [evmReadChainId, getCampaignRead]);

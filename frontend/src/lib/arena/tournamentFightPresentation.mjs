@@ -2,11 +2,15 @@ export const TOURNAMENT_ROUND_HOURS = 24;
 
 export function presentTournamentFightMode(source = {}) {
   const raw = String(source?.battleMode || source?.battle_mode || source?.mode || "").trim().toLowerCase();
+  // A standalone vote battle can run 6/12/24/48 h; the band shows the battle's own length and falls
+  // back to the 24 h tournament round only when the source carries none.
+  const own = Number(source?.durationHours ?? source?.duration_hours);
+  const hours = Number.isFinite(own) && own > 0 ? own : TOURNAMENT_ROUND_HOURS;
   if (raw === "vote") {
-    return { key: "vote", label: "VOTE", durationHours: TOURNAMENT_ROUND_HOURS, bandLabel: "VOTE · 24H" };
+    return { key: "vote", label: "VOTE", durationHours: hours, bandLabel: `VOTE · ${hours}H` };
   }
   if (raw === "normal") {
-    return { key: "normal", label: "NORMAL", durationHours: TOURNAMENT_ROUND_HOURS, bandLabel: "NORMAL · 24H" };
+    return { key: "normal", label: "NORMAL", durationHours: hours, bandLabel: `NORMAL · ${hours}H` };
   }
   return null;
 }

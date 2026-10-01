@@ -37,6 +37,12 @@ export async function readOwnerMintBalanceRaw(connection, owner, mint) {
   return total;
 }
 
+/** Raw supply of a mint as the chain reports it now. */
+export async function readMintSupplyRaw(connection, mint) {
+  const res = await connection.getTokenSupply(new PublicKey(String(mint)), "confirmed");
+  return BigInt(res?.value?.amount || "0");
+}
+
 /** The issuer powers on a Token-2022 quote mint as they stand now; null for a classic mint. */
 export async function readStockPowers(connection, mint) {
   const pk = new PublicKey(String(mint));

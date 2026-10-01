@@ -23,7 +23,12 @@ export default async function handler(req, res) {
       embedShareCardImage(absoluteUrl(appBase, payload.battle.participants?.[1]?.imageUrl)),
       embedShareCardImage(`${appBase}/assets/logo.png`),
     ]);
-    const card = presentBattleShareCard(payload.battle, payload.metrics, {
+    // resvg cannot load a remote URL, so a logo that did not embed must not reach the SVG as its
+    // original URL (that draws an empty circle); with no image the card shows the ticker instead.
+    const participants = Array.isArray(payload.battle.participants)
+      ? payload.battle.participants.map((p, i) => ({ ...p, imageUrl: (i === 0 ? leftImageDataUrl : i === 1 ? rightImageDataUrl : "") || "" }))
+      : payload.battle.participants;
+    const card = presentBattleShareCard({ ...payload.battle, participants }, payload.metrics, {
       origin: appBase,
       requested: true,
       loaded: true,
