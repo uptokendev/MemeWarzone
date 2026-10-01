@@ -168,6 +168,22 @@ async function persistSolanaHistoryMeta(
   );
 }
 
+/**
+ * A Meteora DBC coin lives in public.campaigns as chain 101 too, but its trades are DBC swaps that
+ * dbcIndexer owns. This indexer cannot parse them, and its history rebuild deletes every candle the
+ * canonical materializer does not rewrite -- which it never does for DBC rows. Every trade-history
+ * view of MWZDNB kicked that rebuild, so its chart lost five of six trades' candles (2026-10-01).
+ */
+async function isDbcCampaign(campaign: string): Promise<boolean> {
+  const result = await sql(
+    `select 1 from public.campaigns
+      where chain_id=$1 and campaign_address=$2 and coalesce(launch_type, 'launchpad') = 'dbc'
+      limit 1`,
+    [SOLANA_CHAIN_ID, campaign],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 async function loadSolanaHistoryMeta(campaign: string): Promise<{
   historyComplete?: boolean;
   repairState?: string | null;
@@ -1672,6 +1688,7 @@ export async function ingestSolanaCampaignTip(
   const empty = { campaign, scanned: 0, unknown: 0, ingested: 0, trades: 0 };
   if (!isSolanaPublicKey(campaign)) return empty;
   throwIfAborted(signal);
+  if (await isDbcCampaign(campaign)) return empty;
   const last = campaignTipLastRunMs.get(campaign) || 0;
   if (!opts?.force && Date.now() - last < CAMPAIGN_TIP_COOLDOWN_MS) return empty;
   if (campaignTipInFlight.has(campaign)) return empty;
@@ -1781,6 +1798,7 @@ async function dedupeSolanaCurveTrades(campaign?: string): Promise<string[]> {
        ${campaignFilter}
        and a.campaign_address=b.campaign_address
        and a.tx_hash=b.tx_hash
+       and coalesce(a.venue,'') <> 'dbc'
        and a.side=b.side
        and a.sold_tokens_after_raw is not distinct from b.sold_tokens_after_raw
        and a.log_index < b.log_index
@@ -1797,6 +1815,7 @@ async function dedupeSolanaCurveTrades(campaign?: string): Promise<string[]> {
 
 export async function rebuildSolanaDerivedFromTrades(campaign: string) {
   const normalized = String(campaign || "").trim();
+  if (await isDbcCampaign(normalized)) return { trades: 0, candles: 0 };
   await dedupeSolanaCurveTrades(normalized);
   const started = await sql(`select clock_timestamp() as rebuild_started_at`);
   const rebuildStartedAt = started.rows[0]?.rebuild_started_at;
@@ -1904,6 +1923,12 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
     throw new Error("solana campaign PDA required");
   }
   throwIfAborted(signal);
+  if (await isDbcCampaign(campaign)) {
+    return {
+      campaign, createdSlot: 0, head: 0, scanned: 0, ingested: 0, failed: 0, trades: 0, candles: 0,
+      reachedCreationSlot: true, incomplete: false, pagesScanned: 0, skipped: true, dbc: true, runId: null,
+    };
+  }
   expireStaleCampaignLeases();
   const stored = await loadSolanaHistoryMeta(campaign);
   if (stored.historyComplete && stored.repairState === "complete") {
@@ -2115,6 +2140,7 @@ export async function repairKnownSolanaCampaignHistory() {
       `select campaign_address, meta
          from public.campaigns
         where chain_id=$1
+          and coalesce(launch_type, 'launchpad') <> 'dbc'
           and ${notPublicHiddenSql()}
         order by created_block asc nulls last, campaign_address asc`,
       [SOLANA_CHAIN_ID],
