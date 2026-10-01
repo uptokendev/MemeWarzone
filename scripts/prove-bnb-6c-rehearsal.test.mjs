@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(import.meta.url);
+const { reconcileCompletionReadAfterWrite } = require("./lib/bnb97CompletionReadReconciler.cjs");
+const { acceptedHarvestSplit, validateHarvestAssetRecord } = require("./lib/bnb97HarvestAccounting.cjs");
 
 function read(rel) {
   return fs.readFileSync(path.join(root, rel), "utf8");
@@ -51,4 +55,182 @@ test("6A live census and 6B math remain the source of truth", () => {
   assert.equal(census.factoryGeneration, 3);
   assert.equal(census.campaignGeneration, 2);
   assert.equal(census.uniswapV3Rejected, true);
+});
+
+test("native pending cert replaces raw-value crossing with quoted no-fee principal and preserves pending-first invariants", () => {
+  const prepare = read("scripts/prepare-bnb97-native-pending-graduation-cert.mjs");
+  assert.match(prepare, /source\.replace\(rawCrossingMath, principalAwareCrossing\)/);
+  assert.match(prepare, /raisedBeforeCrossing >= restoredTarget/);
+  assert.match(prepare, /remainingCurveSupply = curveSupply - soldBeforeCrossing/);
+  assert.match(prepare, /quoteBuyExactTokens\(remainingCurveSupply\)/);
+  assert.match(prepare, /maxCostNoFee = maxQuotedTotalCost - maxQuotedFee/);
+  assert.match(prepare, /raisedBeforeCrossing \+ midCostNoFee >= restoredTarget/);
+  assert.match(prepare, /authoritativeCostNoFee = healthyTotalCost - healthyFeeWei/);
+  assert.match(prepare, /raisedAfterCrossing < restoredTarget/);
+  assert.match(prepare, /parseEvent\(campaign, pendingReceipt, "CampaignFinalized"\)/);
+  assert.match(prepare, /!pendingAfterCrossing \|\| launchedAfterCrossing/);
+  assert.match(prepare, /topazFactory\.getPool\(info\.token, await wbnb\.getAddress\(\), false\)\) !== ethers\.ZeroAddress/);
+});
+
+test("completion harness anchors receipt-block state and does not replace canonical checks with sleeps", () => {
+  const prepare = read("scripts/prepare-bnb97-completion-read-reconciliation.mjs");
+  assert.match(prepare, /completeReceipt\.blockNumber/);
+  assert.match(prepare, /completeReceipt\.blockHash/);
+  assert.match(prepare, /CampaignFinalized: finalizedEvidence/);
+  assert.match(prepare, /campaign\.launched\(\{ blockTag \}\)/);
+  assert.match(prepare, /campaign\.graduationPending\(\{ blockTag \}\)/);
+  assert.match(prepare, /campaign\.getGraduationState\(\{ blockTag \}\)/);
+  assert.match(prepare, /factory\.campaignGraduationRecorded\(info\.campaign, \{ blockTag \}\)/);
+  assert.match(prepare, /maxConfirmations: 3/);
+  assert.doesNotMatch(prepare, /setTimeout|sleep\(/);
+});
+
+test("stale latest completion read reconciles only after canonical receipt-block state is finalized", async () => {
+  const finalized = {
+    launched: true,
+    graduationPending: false,
+    dexPair: "0x1111111111111111111111111111111111111111",
+    pool: "0x1111111111111111111111111111111111111111",
+    factoryGraduationRecorded: true,
+    lockerRegistered: true,
+  };
+  const stale = {
+    launched: false,
+    graduationPending: true,
+    dexPair: "0x0000000000000000000000000000000000000000",
+    pool: "0x0000000000000000000000000000000000000000",
+    factoryGraduationRecorded: false,
+    lockerRegistered: false,
+  };
+  const latest = [stale, finalized];
+  const waited = [];
+  const result = await reconcileCompletionReadAfterWrite({
+    receiptBlockNumber: 100,
+    receiptBlockHash: "0xabc",
+    finalizedEvent: { name: "CampaignFinalized" },
+    readAtBlock: async () => finalized,
+    readLatest: async () => latest.shift() ?? finalized,
+    getBlockHash: async () => "0xabc",
+    waitForConfirmations: async (confirmations) => waited.push(confirmations),
+    maxConfirmations: 3,
+  });
+  assert.equal(result.endpointLagObserved, true);
+  assert.equal(result.confirmationsObserved, 2);
+  assert.deepEqual(waited, [2]);
+  assert.equal(result.latestState.launched, true);
+  assert.equal(result.latestState.graduationPending, false);
+});
+
+test("completion reconciliation fails closed when canonical receipt-block state contradicts the event", async () => {
+  await assert.rejects(
+    reconcileCompletionReadAfterWrite({
+      receiptBlockNumber: 100,
+      receiptBlockHash: "0xabc",
+      finalizedEvent: { name: "CampaignFinalized" },
+      readAtBlock: async () => ({
+        launched: false,
+        graduationPending: true,
+        dexPair: "0x0000000000000000000000000000000000000000",
+        pool: "0x0000000000000000000000000000000000000000",
+        factoryGraduationRecorded: false,
+        lockerRegistered: false,
+      }),
+      readLatest: async () => ({}),
+      getBlockHash: async () => "0xabc",
+      waitForConfirmations: async () => {},
+    }),
+    /canonical receipt-block state contradicts CampaignFinalized/,
+  );
+});
+
+test("completion reconciliation fails closed if the receipt block ceases to be canonical", async () => {
+  const finalized = {
+    launched: true,
+    graduationPending: false,
+    dexPair: "0x1111111111111111111111111111111111111111",
+    pool: "0x1111111111111111111111111111111111111111",
+    factoryGraduationRecorded: true,
+    lockerRegistered: true,
+  };
+  let hashRead = 0;
+  await assert.rejects(
+    reconcileCompletionReadAfterWrite({
+      receiptBlockNumber: 100,
+      receiptBlockHash: "0xabc",
+      finalizedEvent: { name: "CampaignFinalized" },
+      readAtBlock: async () => finalized,
+      readLatest: async () => ({ ...finalized, launched: false }),
+      getBlockHash: async () => (++hashRead === 1 ? "0xabc" : "0xdef"),
+      waitForConfirmations: async () => {},
+      maxConfirmations: 2,
+    }),
+    /completion receipt block changed during confirmation reconciliation/,
+  );
+});
+
+test("harvest certification anchors claimables and recipient balances to explicit canonical blocks", () => {
+  const prepare = read("scripts/prepare-bnb97-harvest-accounting.mjs");
+  const runner = read("scripts/run-bnb97-native-pending-graduation-cert.ts");
+  assert.match(runner, /prepare-bnb97-harvest-accounting\.mjs/);
+  assert.match(prepare, /harvestPreBlock = postSellReceipt\?\.blockNumber/);
+  assert.match(prepare, /claimable0\(lockerAddr, \{ blockTag: harvestPreBlock \}\)/);
+  assert.match(prepare, /claimable1\(lockerAddr, \{ blockTag: harvestPreBlock \}\)/);
+  assert.match(prepare, /harvestReceipt\.blockNumber/);
+  assert.match(prepare, /harvestReceipt\.blockHash/);
+  assert.match(prepare, /FeesHarvested/);
+  assert.match(prepare, /creatorTokenAfter = await token\.balanceOf\(creator\.address, \{ blockTag: harvestBlock \}\)/);
+  assert.match(prepare, /protocolTokenAfter = await token\.balanceOf\(manifest\.contracts\.protocolRevenueVault, \{ blockTag: harvestBlock \}\)/);
+  assert.match(prepare, /assets: harvestAssetEvidence/);
+  assert.match(prepare, /all integer remainder routes to protocol; no dust tolerance/);
+  assert.doesNotMatch(prepare, /dustTolerance|toleranceWei|Math\.abs/);
+});
+
+test("accepted locker integer split sends the complete remainder to protocol", () => {
+  const split = acceptedHarvestSplit(7n);
+  assert.equal(split.creatorPaid, 5n);
+  assert.equal(split.protocolRouted, 2n);
+  assert.equal(split.creatorPaid + split.protocolRouted, 7n);
+
+  const record = validateHarvestAssetRecord({
+    token: "TOKEN",
+    collected: 7n,
+    creatorPaid: 5n,
+    protocolRouted: 2n,
+    creatorBefore: 10n,
+    creatorAfter: 15n,
+    protocolBefore: 20n,
+    protocolAfter: 22n,
+  });
+  assert.equal(record.creatorDelta, 5n);
+  assert.equal(record.protocolDelta, 2n);
+});
+
+test("harvest accounting rejects floor-floor dust and any non-conserving event", () => {
+  assert.throws(
+    () => validateHarvestAssetRecord({
+      token: "TOKEN",
+      collected: 7n,
+      creatorPaid: 5n,
+      protocolRouted: 1n,
+      creatorBefore: 10n,
+      creatorAfter: 15n,
+      protocolBefore: 20n,
+      protocolAfter: 21n,
+    }),
+    /does not conserve collected amount/,
+  );
+
+  assert.throws(
+    () => validateHarvestAssetRecord({
+      token: "TOKEN",
+      collected: 7n,
+      creatorPaid: 5n,
+      protocolRouted: 2n,
+      creatorBefore: 10n,
+      creatorAfter: 15n,
+      protocolBefore: 20n,
+      protocolAfter: 21n,
+    }),
+    /protocol balance delta does not match/,
+  );
 });

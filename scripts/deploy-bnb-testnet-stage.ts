@@ -76,16 +76,16 @@ async function main() {
   }
 
   const liveBefore = await snapshotLiveBnbTestnetFactory(ethers.provider);
-  const liveTopazFeeBps = chainId === BNB_TESTNET_CHAIN_ID ? await probeLiveTopazFeeBps() : null;
+  const externalTopazObservedFeeBps = chainId === BNB_TESTNET_CHAIN_ID ? await probeLiveTopazFeeBps() : null;
   if (chainId === BNB_TESTNET_CHAIN_ID) {
     if (liveBefore.factoryGeneration !== "3" || liveBefore.campaignGeneration !== "2") {
       throw new Error(`Gate 0: live 97 factory is ${liveBefore.factoryGeneration}/${liveBefore.campaignGeneration}, expected 3/2`);
     }
-    if (liveTopazFeeBps !== 100 && liveTopazFeeBps !== 30 && liveTopazFeeBps !== null) {
-      throw new Error(`Gate 0: unexpected live Topaz fee ${liveTopazFeeBps}`);
+    if (externalTopazObservedFeeBps !== 100 && externalTopazObservedFeeBps !== 30 && externalTopazObservedFeeBps !== null) {
+      throw new Error(`Gate 0: unexpected external Topaz fee ${externalTopazObservedFeeBps}`);
     }
-    if (liveTopazFeeBps !== 30 && !truthy(process.env.BNB_6C_ACK_CONTROLLED_TOPAZ)) {
-      throw new Error("Gate 0: live Topaz is not 30 bps. Set BNB_6C_ACK_CONTROLLED_TOPAZ=true to deploy an isolated 30 bps Topaz-compatible mock.");
+    if (externalTopazObservedFeeBps !== 30 && !truthy(process.env.BNB_6C_ACK_CONTROLLED_TOPAZ)) {
+      throw new Error("Gate 0: external Topaz is not 30 bps. Set BNB_6C_ACK_CONTROLLED_TOPAZ=true to deploy an isolated 30 bps Topaz-compatible mock.");
     }
   }
 
@@ -99,7 +99,7 @@ async function main() {
     chainId,
     deployer: deployerAddress,
     routeAuthority,
-    liveTopazFeeBps,
+    externalTopazObservedFeeBps,
     controlledTopaz: true,
   });
 
@@ -262,12 +262,27 @@ async function main() {
   if (factoryLive) throw new Error("Staged LaunchFactory unexpectedly became live");
   if (!securityLocked) throw new Error("LaunchFactory security defaults are not locked");
   if (!createPaused) throw new Error("Staged LaunchFactory must keep createPaused=true until explicit acceptance");
-  if ((await locker.REQUIRED_POOL_FEE_BPS()) !== REQUIRED_POOL_FEE_BPS) throw new Error("Locker required pool fee is not 30 bps");
-  if ((await topazFactory.feeBps()) !== REQUIRED_POOL_FEE_BPS) throw new Error("Controlled Topaz factory is not 30 bps");
+
+  const controlledTopazFeeBps = await topazFactory.feeBps();
+  const lockerRequiredFeeBps = await locker.REQUIRED_POOL_FEE_BPS();
+  const creatorEntitlementBps = await locker.CREATOR_FEE_BPS();
+  const protocolEntitlementBps = await locker.PROTOCOL_FEE_BPS();
+  if (lockerRequiredFeeBps !== REQUIRED_POOL_FEE_BPS) throw new Error("Locker required pool fee is not 30 bps");
+  if (controlledTopazFeeBps !== REQUIRED_POOL_FEE_BPS) throw new Error("Controlled Topaz factory is not 30 bps");
+  if (creatorEntitlementBps !== 8000n || protocolEntitlementBps !== 2000n) throw new Error("Locker entitlement is not 80/20");
   if (!(await treasuryRouter.authorizedLpLocker(lockerAddress))) throw new Error("TreasuryRouterV3 does not authorize the staged locker");
   if (!sameAddress(await creatorRewardsVault.router(), await treasuryRouter.getAddress())) throw new Error("CreatorRewardsVault router mismatch");
   if (sameAddress(await treasuryRouter.getAddress(), LIVE_97_TREASURY_V2)) throw new Error("6C reused live V2 treasury");
   if (sameAddress(await launchFactory.getAddress(), LIVE_97_FACTORY)) throw new Error("6C reused live 3/2 factory");
+
+  console.log("[bnb97-topaz-evidence] certification authority", {
+    externalTopazObservedFeeBps,
+    controlledTopazFeeBps: Number(controlledTopazFeeBps),
+    lockerRequiredFeeBps: Number(lockerRequiredFeeBps),
+    creatorEntitlementBps: Number(creatorEntitlementBps),
+    protocolEntitlementBps: Number(protocolEntitlementBps),
+    controlledTopaz: true,
+  });
 
   const standardTrade = await treasuryRouter.previewTrade(10_000n, 0);
   assertEq("standard trade creator", standardTrade.creator, 500n);
@@ -322,9 +337,16 @@ async function main() {
       generation: "3/2",
       treasuryRouterV2: LIVE_97_TREASURY_V2,
       snapshot: liveAfter,
-      liveTopazFeeBps,
+      externalTopazObservedFeeBps,
     },
-    note: "Isolated BNB 4/3 protocol staging. Controlled 30 bps Topaz-compatible mock does not certify real Topaz production compatibility.",
+    certificationAuthority: {
+      controlledTopaz: true,
+      controlledTopazFeeBps: Number(controlledTopazFeeBps),
+      lockerRequiredFeeBps: Number(lockerRequiredFeeBps),
+      creatorEntitlementBps: Number(creatorEntitlementBps),
+      protocolEntitlementBps: Number(protocolEntitlementBps),
+    },
+    note: "Isolated BNB 4/3 protocol staging. External Topaz fee is observation-only; controlled certification authority is the isolated 30 bps Topaz-compatible mock.",
   };
 
   const explicitOut = String(process.env.BNB_6C_STAGE_DEPLOYMENT_FILE || "").trim();
@@ -339,7 +361,7 @@ async function main() {
   console.log("[bnb-6c-stage] staged protocol self-verification passed");
   console.log(`[bnb-6c-stage] manifest=${outFile}`);
   console.log(`[bnb-6c-stage] launchFactory=${contracts.launchFactory}`);
-  console.log("[bnb-6c-stage] live=false createPaused=true; real Topaz compatibility remains a later gate");
+  console.log("[bnb-6c-stage] live=false createPaused=true; external Topaz is observation-only; controlled certification authority is 30 bps");
 }
 
 main().catch((error) => {

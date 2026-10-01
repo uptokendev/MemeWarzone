@@ -207,8 +207,10 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
     const curveSupply = await campaign.curveSupply();
     const remaining = curveSupply - (await campaign.sold());
     const crossingCost = await campaign.quoteBuyExactTokens(remaining);
-    const graduationTx = await campaign.connect(buyer).buyExactTokens(remaining, crossingCost, { value: crossingCost });
-    await expect(graduationTx).to.emit(treasuryRouter, "RouteExecuted");
+    const crossingTx = await campaign.connect(buyer).buyExactTokens(remaining, crossingCost, { value: crossingCost });
+    await expect(crossingTx).to.emit(treasuryRouter, "RouteExecuted");
+    expect(await campaign.graduationPending()).to.equal(true);
+    const graduationTx = await campaign.connect(buyer).graduateIfEligible(0, 0);
     const graduationReceipt = await graduationTx.wait();
     expect(await campaign.launched()).to.equal(true);
     expect(await creatorVault.pendingCreatorFees(created.campaign)).to.be.gt(0n);
@@ -373,8 +375,11 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
     const campaign = await ethers.getContractAt("LaunchCampaign", created.campaign);
     const remaining = (await campaign.curveSupply()) - (await campaign.sold());
     const crossingCost = await campaign.quoteBuyExactTokens(remaining);
-    await expect(
-      campaign.connect(buyer).buyExactTokens(remaining, crossingCost, { value: crossingCost }),
-    ).to.be.revertedWithCustomError(locker, "InvalidTradingFee");
+    await campaign.connect(buyer).buyExactTokens(remaining, crossingCost, { value: crossingCost });
+    expect(await campaign.graduationPending()).to.equal(true);
+    expect(await campaign.launched()).to.equal(false);
+    await expect(campaign.connect(buyer).graduateIfEligible(0, 0)).to.be.revertedWithCustomError(locker, "InvalidTradingFee");
+    expect(await campaign.graduationPending()).to.equal(true);
+    expect(await campaign.launched()).to.equal(false);
   });
 });

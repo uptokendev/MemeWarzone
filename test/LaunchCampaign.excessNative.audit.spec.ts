@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { deployCoreFixture } from "./fixtures/core";
+import { completeNativeGraduation, deployCoreFixture } from "./fixtures/core";
 
 const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
   name: "ExcessNativeToken",
@@ -51,6 +51,7 @@ describe("LaunchCampaign excess native rescue", function () {
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
     await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    await completeNativeGraduation(campaign, alice);
 
     expect(await campaign.launched()).to.eq(true);
     expect(await campaign.excessNativeBalance()).to.eq(surplus);

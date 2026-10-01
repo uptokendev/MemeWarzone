@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { deployCoreFixture } from "./fixtures/core";
+import { completeNativeGraduation, deployCoreFixture } from "./fixtures/core";
 
 const TOKEN_UNIT = ethers.parseEther("1");
 
@@ -122,6 +122,7 @@ describe("LaunchCampaign quote edge behavior", function () {
     const fullCurveCost = await campaign.quoteBuyExactTokens(curveSupply);
 
     await campaign.connect(fx.alice).buyExactTokens(curveSupply, fullCurveCost, { value: fullCurveCost });
+    await completeNativeGraduation(campaign, fx.alice);
     expect(await campaign.launched()).to.eq(true);
 
     const quote = await campaign.quoteBuyExactBnb(ethers.parseEther("1"));

@@ -375,6 +375,9 @@ async function main() {
     crossingAuth.signature,
     { value: crossingValue },
   )).wait();
+  if (await campaign.graduationPending()) {
+    await (await campaign.connect(buyer).graduateIfEligible(0, 0)).wait();
+  }
   if (!(await campaign.launched())) throw new Error("Campaign did not graduate");
   if ((await creatorVault.pendingCreatorFees(info.campaign)) <= 0n) throw new Error("Creator vault did not accrue trade fees");
   await (await creatorVault.connect(creator).claimCreatorFees(info.campaign)).wait();
