@@ -56,6 +56,9 @@ type CampaignFeedItemApi = {
   isDexTrading?: boolean;
   marketcapBnb?: string | null;
   athMarketcapBnb?: string | null;
+  /** Fully diluted coins (EVM gen 6/5): market cap = price x this supply (whole tokens). */
+  fullyDilutedSupply?: string | null;
+  lastPriceBnb?: string | null;
   raisedTotalBnb?: string | null;
   gradTargetBnb?: number | null;
   votes24h?: number;
@@ -598,7 +601,15 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
       const liveMcap = pickLiveNumeric(patch?.marketcapBnb, NaN);
       const onChainMcap = pickLiveNumeric(onChain?.marketcapBnb, NaN);
       const restMcap = pickLiveNumeric(it.marketcapBnb, NaN);
-      const mcapBnb = liveMcap > 0 ? liveMcap : onChainMcap > 0 ? onChainMcap : restMcap;
+      // Fully diluted coins take live price x total supply: the league patch and the on-chain hydrate
+      // value a coin at price x curve sold, which put a gen-6 card at a few dollars (or 0 after a
+      // buy was sold back) against the header's fully diluted market cap.
+      const fdSupply = pickLiveNumeric(it.fullyDilutedSupply, NaN);
+      const fdPrice = pickLiveNumeric(patch?.lastPriceBnb, NaN) > 0 ? pickLiveNumeric(patch?.lastPriceBnb, NaN) : pickLiveNumeric(it.lastPriceBnb, NaN);
+      const mcapBnb =
+        fdSupply > 0
+          ? fdPrice > 0 ? fdPrice * fdSupply : restMcap
+          : liveMcap > 0 ? liveMcap : onChainMcap > 0 ? onChainMcap : restMcap;
       const mcapUsd = Number.isFinite(mcapBnb) && nativeUsd ? mcapBnb * nativeUsd : NaN;
       const marketCapUsdLabel = Number.isFinite(mcapUsd) ? formatCompactUsd(mcapUsd) : null;
 

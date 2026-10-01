@@ -5,6 +5,18 @@ import { withSolanaBondingProgress } from "./lib/solanaCampaignProgress.js";
 import { withEvmBondingProgress } from "./lib/evmCampaignProgress.js";
 import { creatorMatchSql, normalizeCreatorQuery } from "./lib/campaignCreatorFilter.js";
 
+/**
+ * Market cap of EVM generation 6/5 coins is fully diluted (founder decision 2026-10-01): price x total
+ * supply, like DBC (whose token_stats already store spot x mint supply) and pump.fun. The gen-6
+ * factories mint 1,000,000,000 tokens per coin (token totalSupply read on BNB 0x5d5bea01 and Robinhood
+ * 0x3765d716, 2026-10-01). Older EVM generations keep the canonical price x curve sold.
+ */
+export const EVM_GEN6_TOTAL_SUPPLY_WHOLE = 1_000_000_000;
+const EVM_FULLY_DILUTED_SUPPLY_SQL = `(case
+  when c.chain_id in (56, 97, 4663, 46630) and coalesce(c.factory_generation, 0) >= 6
+    then ${EVM_GEN6_TOTAL_SUPPLY_WHOLE}::numeric
+  end)`;
+
 // LaunchFactory default graduation target is 50 BNB (see contracts/LaunchFactory.sol).
 // Campaigns can override this, but until we persist per-campaign targets in DB,
 // we treat this as the system default for progress/ETA on the homepage.
@@ -144,6 +156,8 @@ function mapCampaignRow(row, gradTargetBnb) {
     lastPriceBnb: row.last_price_bnb != null ? String(row.last_price_bnb) : null,
     soldTokens: row.sold_tokens != null ? String(row.sold_tokens) : null,
     marketcapBnb: row.marketcap_bnb != null ? String(row.marketcap_bnb) : null,
+    // Set for fully diluted coins: the card recomputes market cap as live price x this supply.
+    fullyDilutedSupply: row.fully_diluted_supply != null ? String(row.fully_diluted_supply) : null,
     vol24hBnb: row.vol_24h_bnb != null ? String(row.vol_24h_bnb) : null,
     holderCount: row.holder_count != null ? Number(row.holder_count) : 0,
     athMarketcapBnb: row.ath_marketcap_bnb != null ? String(row.ath_marketcap_bnb) : null,
@@ -375,7 +389,12 @@ export default async function handler(req, res) {
           ${DEX_POSITION_SQL} as dex_position,
           coalesce(cc.price_c, ts.last_price_bnb) as last_price_bnb,
           ts.sold_tokens,
-          coalesce(cc.mcap_c, ts.marketcap_bnb) as marketcap_bnb,
+          ${EVM_FULLY_DILUTED_SUPPLY_SQL} as fully_diluted_supply,
+          case
+            when ${EVM_FULLY_DILUTED_SUPPLY_SQL} is not null
+              then coalesce(cc.price_c, ts.last_price_bnb) * ${EVM_FULLY_DILUTED_SUPPLY_SQL}
+            else coalesce(cc.mcap_c, ts.marketcap_bnb)
+          end as marketcap_bnb,
           ts.vol_24h_bnb,
           va.votes_24h,
           va.votes_all_time
@@ -503,11 +522,15 @@ export default async function handler(req, res) {
           rt.raised_total_bnb,
           rt.raised_10m_bnb,
           rt.holder_count,
-          coalesce(
-            ath.ath_marketcap_bnb,
-            case when ath.ath_price_bnb is not null and b.sold_tokens is not null then ath.ath_price_bnb * b.sold_tokens end,
-            b.marketcap_bnb
-          ) as ath_marketcap_bnb,
+          case
+            when b.fully_diluted_supply is not null
+              then coalesce(ath.ath_price_bnb * b.fully_diluted_supply, b.marketcap_bnb)
+            else coalesce(
+              ath.ath_marketcap_bnb,
+              case when ath.ath_price_bnb is not null and b.sold_tokens is not null then ath.ath_price_bnb * b.sold_tokens end,
+              b.marketcap_bnb
+            )
+          end as ath_marketcap_bnb,
           case
             when $2::numeric is null or $2::numeric <= 0 then null
             else least(100, greatest(0, (rt.raised_total_bnb / $2::numeric) * 100))
