@@ -38,6 +38,14 @@
     Cross-Origin-Resource-Policy = "same-origin"
 
 [[headers]]
+  for = "/embed/chart/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self' https://crypticpump.com https://www.crypticpump.com; frame-src 'none'; img-src 'self' data: blob: https:; font-src 'self' data: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self'; connect-src 'self' https: wss:; media-src 'self' data: blob: https:; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; upgrade-insecure-requests"
+    X-Frame-Options = "ALLOWALL"
+    Cross-Origin-Opener-Policy = "unsafe-none"
+    Cross-Origin-Resource-Policy = "cross-origin"
+
+[[headers]]
   for = "/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"

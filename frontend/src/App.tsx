@@ -30,6 +30,7 @@ import ProjectImport from "./pages/ProjectImport";
 import SponsorshipApplication from "./pages/SponsorshipApplication";
 import ProfilePage from "./pages/ProfilePage";
 import TokenDetailsEntry from "./pages/TokenDetailsEntry";
+import EmbedChartPage from "./pages/EmbedChartPage";
 import StoryPage from "./pages/StoryPage";
 import { RouteErrorBoundary } from "@/components/app/RouteErrorBoundary";
 import Playbook from "@/pages/Playbook";
@@ -83,6 +84,7 @@ import { projectImportsEnabled } from "@/features/projectImports/config";
 import { isPostGradRouteEnabled, postGradFlags, warRoomEnabled } from "@/features/postgrad/config";
 import { DocumentTitleSync } from "@/hooks/useDocumentTitle";
 import { ProductAnalytics } from "@/lib/analytics/ProductAnalytics";
+import { isEmbedPath } from "@/lib/embedChart";
 
 const queryClient = new QueryClient();
 
@@ -278,7 +280,27 @@ function AppShellLayout({
   );
 }
 
-const App = () => {
+function EmbedAppShell() {
+  return (
+    <TooltipProvider>
+      <DocumentTitleSync />
+      <Routes>
+        <Route path="/embed/chart/:chainId/:token" element={<EmbedChartPage />} />
+        <Route
+          path="/embed/*"
+          element={
+            <div className="flex h-screen w-screen items-center justify-center bg-black px-4 text-center text-xs text-muted-foreground">
+              Unknown token.
+            </div>
+          }
+        />
+      </Routes>
+    </TooltipProvider>
+  );
+}
+
+function AppRoot() {
+  const location = useLocation();
   const [isLoading, setIsLoading] = useState(true);
   const [showContent, setShowContent] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -288,23 +310,33 @@ const App = () => {
     setTimeout(() => setShowContent(true), 100);
   };
 
+  if (isEmbedPath(location.pathname)) {
+    return <EmbedAppShell />;
+  }
+
+  return (
+    <WalletProvider>
+      <SolanaWalletProvider>
+        <FeedChainWalletLatch />
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          {isLoading && <LoadingScreen onLoadComplete={handleLoadComplete} />}
+          {showContent && (
+            <AppShellLayout mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
+          )}
+        </TooltipProvider>
+      </SolanaWalletProvider>
+    </WalletProvider>
+  );
+}
+
+const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
-      <WalletProvider>
-        <SolanaWalletProvider>
-          <FeedChainWalletLatch />
-          <TooltipProvider>
-            <Toaster />
-            <Sonner />
-            {isLoading && <LoadingScreen onLoadComplete={handleLoadComplete} />}
-            {showContent && (
-              <BrowserRouter future={{ v7_relativeSplatPath: true }}>
-                <AppShellLayout mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
-              </BrowserRouter>
-            )}
-          </TooltipProvider>
-        </SolanaWalletProvider>
-      </WalletProvider>
+      <BrowserRouter future={{ v7_relativeSplatPath: true }}>
+        <AppRoot />
+      </BrowserRouter>
     </QueryClientProvider>
   );
 };
