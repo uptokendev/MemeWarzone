@@ -246,32 +246,26 @@ export function ProfileShell({
               </a>
             </div>
 
-            <div className="mt-3 grid gap-1 text-sm" data-profile-identity="true">
-              <div className="flex flex-wrap items-baseline gap-x-2" data-profile-recruiter="true">
-                <span className="text-muted-foreground">Recruiter</span>
-                {recruiterLoading ? (
-                  <span className="text-muted-foreground">…</span>
-                ) : isRecruiter && recruiterCode ? (
-                  <Link to={`/recruiters/${encodeURIComponent(recruiterCode)}`} className="text-accent hover:underline">
-                    {identityValue(recruiterCode, recruiterName)}
-                  </Link>
-                ) : (
-                  <span className="text-foreground">Not a recruiter</span>
-                )}
+            {!recruiterLoading && (isRecruiter && recruiterCode || squadCode) ? (
+              <div className="mt-3 grid gap-1 text-sm" data-profile-identity="true">
+                {isRecruiter && recruiterCode ? (
+                  <div className="flex flex-wrap items-baseline gap-x-2" data-profile-recruiter="true">
+                    <span className="text-muted-foreground">Recruiter</span>
+                    <Link to={`/recruiters/${encodeURIComponent(recruiterCode)}`} className="text-accent hover:underline">
+                      {identityValue(recruiterCode, recruiterName)}
+                    </Link>
+                  </div>
+                ) : null}
+                {squadCode ? (
+                  <div className="flex flex-wrap items-baseline gap-x-2" data-profile-squad="true">
+                    <span className="text-muted-foreground">Squad</span>
+                    <Link to={`/recruiters/${encodeURIComponent(squadCode)}`} className="text-accent hover:underline">
+                      {identityValue(squadCode, squadName)}
+                    </Link>
+                  </div>
+                ) : null}
               </div>
-              <div className="flex flex-wrap items-baseline gap-x-2" data-profile-squad="true">
-                <span className="text-muted-foreground">Squad</span>
-                {recruiterLoading ? (
-                  <span className="text-muted-foreground">…</span>
-                ) : squadCode ? (
-                  <Link to={`/recruiters/${encodeURIComponent(squadCode)}`} className="text-accent hover:underline">
-                    {identityValue(squadCode, squadName)}
-                  </Link>
-                ) : (
-                  <span className="text-foreground">No squad</span>
-                )}
-              </div>
-            </div>
+            ) : null}
 
             <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-sm">
               <span data-profile-total-value="true">

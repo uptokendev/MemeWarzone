@@ -81,12 +81,14 @@ test("edit profile can change cover and square photo", () => {
   assert.match(hook, /bannerUrl/);
 });
 
-test("public and command profiles always show recruiter and squad identity", () => {
+test("recruiter and squad identity only render when the profile has them", () => {
   const shell = readRepo("frontend/src/components/profile/ProfileShell.tsx");
   assert.match(shell, /data-profile-recruiter="true"/);
   assert.match(shell, /data-profile-squad="true"/);
-  assert.match(shell, /Not a recruiter/);
-  assert.match(shell, /No squad/);
+  assert.match(shell, /isRecruiter && recruiterCode/);
+  assert.match(shell, /squadCode \? \(/);
+  assert.doesNotMatch(shell, /Not a recruiter/);
+  assert.doesNotMatch(shell, /No squad/);
   assert.match(shell, /\/recruiters\/\$\{encodeURIComponent\(recruiterCode\)\}/);
   const page = readRepo("frontend/src/pages/PublicProfile.tsx");
   assert.match(page, /useProfileRecruiterIdentity/);
