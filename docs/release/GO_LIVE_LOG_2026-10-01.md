@@ -106,6 +106,8 @@ Bundle re-checked: no 64-byte key arrays. **Open:** move the remaining 0.039 SOL
 | `153c792f`, `1986d774`, `aac9f213` | live chart without reload on every chain; DBC candles at pool spot; old Solana indexer no longer deletes DBC candles; render loop fixed |
 | `1694840d` | Solana card bonding % fell to 0% when the first RPC refused (K88) |
 | `958590b3` | Safety pill removed from the token page |
+| `59b09972` | EVM create/buy/sell refuse when the wallet is on another chain (value would be lost) |
+| `ee695e76`, `4625bd72` | gen-6 market cap fully diluted on page, cards, ticker; chart opens at start price |
 
 ## 6. Decisions taken today
 
@@ -118,7 +120,8 @@ Bundle re-checked: no 64-byte key arrays. **Open:** move the remaining 0.039 SOL
 
 ## 7. Open items
 
-- [ ] EVM gen-6 chart starts at $0 and market cap uses sold tokens: agent fixing (branch fix/evm-gen6-chart).
+- [x] EVM gen-6 token page: fully diluted market cap, chart from start price (`ee695e76`, `4625bd72`), founder-checked on both chains.
+- [ ] War Trade Room: gen-6 rows/chart still old values (BNB "—", Robinhood $2.91) and the Robinhood coin gets the BNB trade panel ("Connect BNB wallet"): agent fixing (fix/warroom-gen6).
 - [ ] Create page: BNB/Robinhood switch in MetaMask can make the page use the other chain's factory (must-fix).
 - [ ] `VITE_SUPPORTED_FACTORY_ADDRESSES_56/_4663` on the app hold only the new factories; append the old ones.
 - [ ] BNB and Robinhood test coins to hide after the chart fix (MWZBNB `0x49ac80f9…`, MWZRH `0x404d723d…`).
