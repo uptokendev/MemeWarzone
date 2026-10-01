@@ -128,6 +128,28 @@ Bundle re-checked: no 64-byte key arrays. **Open:** move the remaining 0.039 SOL
 - Test coins hidden on all chains (MWZTC, MWZDNB, DNB, MWZBNB, MWZRH).
 - **Public opening: `CREATE_CANARY_WALLETS` removed, `/api/launch-status` = `{"canary":false}`.** Live and API at `16d6d405`.
 
+## 6c. Robinhood stock routes (batch Q)
+
+- Safe tx `0x3b71783d359647ff0175c2b35b669d41898f713887fe97b31978433895fa03a0`, block 77631362, status 1
+  (ExecutionSuccess). 9 `configureStockRoute` on stock adapter V2 `0xfF64Bd69…` + 9 `setQuoteRoute` on
+  CreatorRewardsVaultV2 `0xEDCC2667…`.
+- Read back from chain: SPY, NVDA, META, COIN, SPCX, TSLA, QQQ, AAPL, USDG enabled, oracle and pool equal
+  to the registry env, vault route pool equal. MSTR, MU, GLD, SGOV, GME, CRCL have no route (below the
+  liquidity floor when Q was built) and cannot be offered.
+- Factory `0xc673B116…` -> adapter `0xfF64Bd69…` (locked to the factory), stock impl `0x1e463947…`,
+  same locker `0x615b1AbE…` on factory and adapter.
+- App side: the registry rows still carried "route disabled" from the 19:00 UTC health check. Needs a
+  rescan in the API container, then a 10-minute `--routed-only` scheduled task (certification is valid
+  900 s). `ROBINHOOD_STOCK_TOKEN_REGISTRY_4663` is read only by the indexer, not by the API.
+- First rescan: all 8 registry stocks `review`, "launch-size price impact exceeds policy (19 > 0 bps)".
+  Cause: adapter V2 requires `maxPriceImpactBps`/`maxOracleDeviationBps` = 0 (reserved), the API
+  certification still read them as limits. Fix: for V2 routes the certification compares the
+  launch-size QuoterV2 output with the adapter's own `oracleMinimumStockOut` (what `graduate` enforces,
+  100 bps slippage cap). Checked against mainnet at 11.2 ETH: SPY, NVDA, META, COIN, SPCX, QQQ, AAPL,
+  USDG pass; TSLA fails (pool 187 bps under the oracle, a graduation would revert), correctly.
+- USDG has a route but no row in `robinhood_stock_token_registry` (the sync pulls Robinhood's stock
+  list only), so the app does not offer it yet. Open.
+
 ## 7. Open items
 
 - [x] EVM gen-6 token page: fully diluted market cap, chart from start price (`ee695e76`, `4625bd72`), founder-checked on both chains.

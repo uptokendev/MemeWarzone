@@ -25,6 +25,7 @@ const ADAPTER_ABI = [
   "function campaignFactory() view returns (address)",
   "function campaignFactoryLocked() view returns (bool)",
   "function stockRoutes(address stockToken) view returns (address oracleFeed,address acquisitionPool,uint24 acquisitionFeeTier,uint256 minimumRouteLiquidityUsdWad,uint16 maxSwapSlippageBps,uint16 maxOracleDeviationBps,uint16 maxPriceImpactBps,bool enabled)",
+  "function oracleMinimumStockOut(address stockToken, uint256 nativeIn) view returns (uint256 oracleOut, uint256 minimumOut)",
 ];
 const V3_FACTORY_ABI = [
   "function getPool(address tokenA,address tokenB,uint24 fee) view returns (address)",
@@ -245,11 +246,21 @@ export async function certifyRobinhoodStockRuntime({ row, provider, factoryAddre
   const probeOut = BigInt(probeOutRaw);
   if (quotedOut <= 0n || probeOut <= 0n) throw new Error("launch-size acquisition quote returned zero");
   const impactBps = priceImpactBps(probeNativeWei, quotedOut, probeIn, probeOut);
-  if (impactBps > maxPriceImpactBps) throw new Error(`launch-size price impact exceeds policy (${impactBps} > ${maxPriceImpactBps} bps)`);
   const stockUsdValueWad = (quotedOut * stockOracle.priceWad) / pow10(tokenDecimals);
   const impliedNativeUsdWad = (stockUsdValueWad * WAD) / probeNativeWei;
   const oracleDeviation = deviationBps(impliedNativeUsdWad, nativeOracle.priceWad);
-  if (oracleDeviation > maxOracleDeviationBps) throw new Error(`route execution price deviates from oracle policy (${oracleDeviation} > ${maxOracleDeviationBps} bps)`);
+  // Adapter V2 (gen 6/5) keeps maxPriceImpactBps / maxOracleDeviationBps as reserved fields that must
+  // be 0 and enforces one bound instead: the acquisition must return >= oracleOut * (1 - maxSwapSlippageBps).
+  // Certify against that same minimum, read from the adapter, so a stock is offered exactly when its
+  // launch-size acquisition would clear graduation. V1 routes keep their stored limits.
+  if (maxPriceImpactBps === 0n && maxOracleDeviationBps === 0n) {
+    const [, oracleMinimumOutRaw] = await adapter.oracleMinimumStockOut(tokenAddress, probeNativeWei);
+    const oracleMinimumOut = BigInt(oracleMinimumOutRaw);
+    if (quotedOut < oracleMinimumOut) throw new Error(`launch-size acquisition below the adapter oracle minimum (${quotedOut} < ${oracleMinimumOut}; impact ${impactBps} bps, oracle gap ${oracleDeviation} bps, slippage cap ${maxSwapSlippageBps} bps)`);
+  } else {
+    if (impactBps > maxPriceImpactBps) throw new Error(`launch-size price impact exceeds policy (${impactBps} > ${maxPriceImpactBps} bps)`);
+    if (oracleDeviation > maxOracleDeviationBps) throw new Error(`route execution price deviates from oracle policy (${oracleDeviation} > ${maxOracleDeviationBps} bps)`);
+  }
   const minimumOutAtPolicy = (quotedOut * (BPS - maxSwapSlippageBps)) / BPS;
   if (minimumOutAtPolicy <= 0n) throw new Error("slippage policy produces zero minimum output");
 
