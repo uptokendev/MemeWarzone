@@ -148,7 +148,6 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
   const navLinks = useMemo<NavLinkItem[]>(
     () => [
       { label: "Launchpad", path: "/", priority: "primary" },
-      { label: "Feed", path: "/feed", priority: "primary" },
       ...(warRoomEnabled ? [{ label: "Trade War Room", path: "/war-room", priority: "primary" as const }] : []),
       { label: "Profile", path: "/profile?tab=balances", priority: "secondary" },
       { label: "Docs", path: "https://docs.memewar.zone", priority: "secondary" },
