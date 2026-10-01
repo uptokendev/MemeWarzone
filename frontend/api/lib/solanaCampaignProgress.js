@@ -9,23 +9,46 @@ import { decodeSolanaCampaignCurve, solanaBondingProgressPct, solanaCurveCloseLa
 const CACHE_MS = 15_000;
 const cache = new Map(); // address -> { at, curve }
 
-function rpcUrl() {
-  return String(process.env.SOLANA_RPC_URL || process.env.SOLANA_RPC_HTTP || "").split(",")[0].trim();
+// Same mainnet RPC list as /api/solana/campaign-account, tried in order. Reading only the first
+// configured URL with no fallback left every Solana card at 0% whenever that one endpoint refused
+// (2026-10-01: KAIJU88 read 0% on the front page while its coin page, which falls back, read 21%).
+export function solanaProgressRpcUrls(env = process.env) {
+  return [
+    ...String(env.SOLANA_RPC_URL || "").split(","),
+    ...String(env.SOLANA_RPC_HTTP || "").split(","),
+    env.SOLANA_MAINNET_RPC,
+    env.VITE_SOLANA_MAINNET_RPC,
+    env.VITE_SOLANA_RPC,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter((value, index, all) => /^https?:\/\//i.test(value) && all.indexOf(value) === index);
 }
 
-async function readAccounts(addresses) {
-  const url = rpcUrl();
-  if (!url || !addresses.length) return new Map();
+async function readBatch(urls, batch, fetchImpl) {
+  let lastError = null;
+  for (const url of urls) {
+    try {
+      const response = await fetchImpl(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getMultipleAccounts", params: [batch, { encoding: "base64", commitment: "confirmed" }] }),
+      });
+      const body = await response.json().catch(() => null);
+      if (response.ok && Array.isArray(body?.result?.value)) return body.result.value;
+      lastError = new Error(body?.error?.message || `HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("no Solana RPC configured");
+}
+
+export async function readAccounts(addresses, { urls = solanaProgressRpcUrls(), fetchImpl = fetch } = {}) {
+  if (!urls.length || !addresses.length) return new Map();
   const out = new Map();
   for (let i = 0; i < addresses.length; i += 100) {
     const batch = addresses.slice(i, i + 100);
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getMultipleAccounts", params: [batch, { encoding: "base64", commitment: "confirmed" }] }),
-    });
-    const body = await response.json().catch(() => null);
-    const values = body?.result?.value || [];
+    const values = await readBatch(urls, batch, fetchImpl);
     batch.forEach((address, index) => {
       const data = values[index]?.data?.[0];
       out.set(address, data ? decodeSolanaCampaignCurve(Buffer.from(data, "base64")) : null);

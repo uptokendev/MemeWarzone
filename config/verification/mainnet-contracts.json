@@ -179,6 +179,67 @@
           "args": [
             "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
           ]
+        },
+        {
+          "name": "LaunchCampaign",
+          "address": "0x1abD944215B9a2632E0A33BBa9e259548D9bbDFB",
+          "contract": "contracts/LaunchCampaign.sol:LaunchCampaign",
+          "args": []
+        },
+        {
+          "name": "BnbQuoteLaunchCampaign",
+          "address": "0xbC46EC1687Da43FEe36498d88d60cC4605bb9960",
+          "contract": "contracts/BnbQuoteLaunchCampaign.sol:BnbQuoteLaunchCampaign",
+          "args": []
+        },
+        {
+          "name": "PermanentLpLocker",
+          "address": "0xEEEfa12B14ea922B21bAf05Ad4aa79B2643c8eA6",
+          "contract": "contracts/PermanentLpLocker.sol:PermanentLpLocker",
+          "args": [
+            "0x1948411B84424f6f67fDf83ce4A9b8ED49c8bF4F"
+          ]
+        },
+        {
+          "name": "BnbBasicLaunchFactory",
+          "address": "0x1948411B84424f6f67fDf83ce4A9b8ED49c8bF4F",
+          "contract": "contracts/BnbBasicLaunchFactory.sol:BnbBasicLaunchFactory",
+          "args": [
+            "0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a",
+            "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+            "0x1abD944215B9a2632E0A33BBa9e259548D9bbDFB",
+            "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B",
+            "0xbC46EC1687Da43FEe36498d88d60cC4605bb9960",
+            "0xEEEfa12B14ea922B21bAf05Ad4aa79B2643c8eA6"
+          ]
+        },
+        {
+          "name": "BnbNativeGraduationAdapter",
+          "address": "0x1f71f2833a305eFa8902705e6131342261D32A63",
+          "contract": "contracts/integrations/BnbNativeGraduationAdapter.sol:BnbNativeGraduationAdapter",
+          "args": [
+            "0x65E6cD0eF5D3467030103cf3d433034E570b5784",
+            "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+            "0xEEEfa12B14ea922B21bAf05Ad4aa79B2643c8eA6"
+          ]
+        },
+        {
+          "name": "BnbQuoteGraduationAdapter",
+          "address": "0x15404d5e37cda82C421e25B5429417EC22C5329d",
+          "contract": "contracts/integrations/BnbQuoteGraduationAdapter.sol:BnbQuoteGraduationAdapter",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x1E98c8226e7d452e1888e3d3d2F929346321c6c3",
+            "0xEEEfa12B14ea922B21bAf05Ad4aa79B2643c8eA6",
+            "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE",
+            "3600"
+          ]
+        },
+        {
+          "name": "LaunchTokenDeployer",
+          "address": "0xA590A8c3051dBd5E83B250191eBaCD07C10eCFeF",
+          "contract": "contracts/token/LaunchTokenDeployer.sol:LaunchTokenDeployer",
+          "args": []
         }
       ]
     },
@@ -455,6 +516,65 @@
             "90000",
             "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
           ]
+        },
+        {
+          "name": "LaunchCampaign",
+          "address": "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+          "contract": "contracts/LaunchCampaign.sol:LaunchCampaign",
+          "args": []
+        },
+        {
+          "name": "PermanentV3PositionLocker",
+          "address": "0x615b1AbE348edA2e5a44eCe32fb50fbC45d2AF07",
+          "contract": "contracts/PermanentV3PositionLocker.sol:PermanentV3PositionLocker",
+          "args": [
+            "0xc673B116b4eA8E8923Aad1fa60F0452966F2437F"
+          ]
+        },
+        {
+          "name": "LaunchFactory",
+          "address": "0xc673B116b4eA8E8923Aad1fa60F0452966F2437F",
+          "contract": "contracts/LaunchFactory.sol:LaunchFactory",
+          "args": [
+            "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+            "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d",
+            "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+            "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+            "0x615b1AbE348edA2e5a44eCe32fb50fbC45d2AF07"
+          ]
+        },
+        {
+          "name": "RobinhoodV3NativeSwapAdapter",
+          "address": "0xDfd381ECfA6D4CcD4248e319C6fecD76A6bf3296",
+          "contract": "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol:RobinhoodV3NativeSwapAdapter",
+          "args": [
+            "0xCaf681a66D020601342297493863E78C959E5cb2",
+            "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+          ]
+        },
+        {
+          "name": "CreatorRegistry",
+          "address": "0xAE3D6d8cde4daD5D835D7B487298F09Ec5b41589",
+          "contract": "contracts/CreatorRegistry.sol:CreatorRegistry",
+          "args": []
+        },
+        {
+          "name": "RiskRegistry",
+          "address": "0x174E4d5AF15dF8e600E2025acbd33B52485cEcA4",
+          "contract": "contracts/RiskRegistry.sol:RiskRegistry",
+          "args": []
+        },
+        {
+          "name": "LaunchTokenDeployer",
+          "address": "0x1030aD424D7D7bDa569035F6BAf40642AEBF3AC8",
+          "contract": "contracts/token/LaunchTokenDeployer.sol:LaunchTokenDeployer",
+          "args": []
+        },
+        {
+          "name": "RobinhoodStockLaunchCampaign",
+          "address": "0x1e463947d28f2c878312139b87aD482a614F1cDC",
+          "contract": "contracts/RobinhoodStockLaunchCampaign.sol:RobinhoodStockLaunchCampaign",
+          "args": []
         }
       ]
     }
