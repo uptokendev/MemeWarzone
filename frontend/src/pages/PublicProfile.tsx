@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import {
@@ -9,49 +7,31 @@ import {
   isEvmChainId,
   SOLANA_CHAIN_ID,
 } from "@/lib/chainConfig";
-import { fetchUserProfile, fetchPublicPortfolioMetrics, type UserProfile } from "@/lib/profileApi";
 import { fetchOwnerCampaignDrafts, fetchPublicCampaignDrafts, type CampaignDraft } from "@/lib/draftApi";
 import { isSolanaAddress } from "@/lib/address";
-import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
-import { PortfolioMetricsGrid } from "@/components/profile/PortfolioMetricsGrid";
-import type { PortfolioMetrics } from "@/lib/profile/portfolioCalculations";
 import { useCreatedCampaignsQuery } from "@/hooks/profile/useCreatedCampaigns";
-import { FeedComposer } from "@/components/feed/FeedComposer";
-import { FeedItemView } from "@/components/feed/FeedCards";
-import { fetchActivityTimeline, type FeedItem } from "@/lib/feedApi";
-import {
-  fetchRecruiterSummaryByWallet,
-  fetchSquadSummary,
-  fetchWalletAttributionState,
-  type RecruiterSummary,
-  type SquadSummary,
-  type WalletAttributionPublicState,
-} from "@/lib/recruiterApi";
-import { followUser, isFollowingUser, unfollowUser } from "@/lib/followApi";
-import { RankBadgeCard } from "@/components/rank/RankBadgeCard";
-import { normalizeRank, type RankName } from "@/lib/ranks";
-import { Copy, ExternalLink, Flag } from "lucide-react";
-import { buildAbuseReportPath } from "@/lib/abuseReportLink";
+import { useEditableProfile } from "@/hooks/profile/useEditableProfile";
+import { EditProfileDialog } from "@/components/profile/EditProfileDialog";
+import { ProfileShell, type ProfileTabKey } from "@/components/profile/ProfileShell";
+import { ProfileTimeline, authorsFromFeed, type ProfileCoin } from "@/components/profile/ProfileTimeline";
+import { fetchActivityTimeline, fetchFeedPosts, type FeedItem } from "@/lib/feedApi";
+import { useProfileRecruiterIdentity } from "@/hooks/profile/useProfileRecruiterIdentity";
+import { usePublicPortfolio } from "@/hooks/profile/usePublicPortfolio";
+import { followUser, getFollowersCount, getFollowingCount, isFollowingUser, unfollowUser } from "@/lib/followApi";
 import { toast } from "sonner";
 
-type PublicCoin = {
-  id: number;
-  image: string;
-  name: string;
-  ticker: string;
-  campaignAddress: string;
-  tokenAddress?: string | null;
-  chainId?: number;
-  marketCap: string;
-  progress?: string | null;
-  status?: string | null;
-  timeAgo?: string | null;
-};
+function walletsEqual(a?: string | null, b?: string | null) {
+  const left = String(a || "").trim();
+  const right = String(b || "").trim();
+  if (!left || !right) return false;
+  if (isSolanaAddress(left) && isSolanaAddress(right)) return left === right;
+  return left.toLowerCase() === right.toLowerCase();
+}
 
-function shorten(addr?: string | null) {
-  if (!addr) return "";
-  if (addr.length <= 10) return addr;
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+function isDraftVisibleOnPublicProfile(draft: CampaignDraft) {
+  if (draft.visibility !== "public") return false;
+  if (draft.status === "archived") return false;
+  return true;
 }
 
 function getExplorerBase(chainId?: number): string {
@@ -63,55 +43,6 @@ function getExplorerBase(chainId?: number): string {
   return "https://bscscan.com";
 }
 
-function formatTimeAgo(createdAt?: number | string | null): string {
-  if (!createdAt) return "";
-  const seconds = typeof createdAt === "number" ? createdAt : Math.floor(new Date(createdAt).getTime() / 1000);
-  if (!Number.isFinite(seconds)) return "";
-  const now = Math.floor(Date.now() / 1000);
-  const diff = Math.max(0, now - seconds);
-  if (diff < 60) return "now";
-  const mins = Math.floor(diff / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  const weeks = Math.floor(days / 7);
-  return `${weeks}w`;
-}
-
-function formatCompactNumber(value?: number | null) {
-  if (value == null || !Number.isFinite(value)) return "0";
-  return Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 });
-}
-
-function safeRank(profile: UserProfile | null): RankName {
-  const raw = (profile as any)?.rank;
-  return raw ? normalizeRank(raw) : "Recruit";
-}
-
-function isDraftVisibleOnPublicProfile(draft: CampaignDraft) {
-  if (draft.visibility !== "public") return false;
-  if (draft.status === "archived") return false;
-  return true;
-}
-
-function draftHref(draft: CampaignDraft) {
-  // Deployed drafts should open the token page when we have on-chain ids.
-  if (draft.status === "deployed" && (draft.tokenAddress || draft.campaignAddress)) {
-    return `/token/${draft.tokenAddress || draft.campaignAddress}`;
-  }
-  return draft.slug ? `/prepare/${draft.slug}` : `/drafts/${draft.id}`;
-}
-
-function walletsEqual(a?: string | null, b?: string | null) {
-  const left = String(a || "").trim();
-  const right = String(b || "").trim();
-  if (!left || !right) return false;
-  if (isSolanaAddress(left) && isSolanaAddress(right)) return left === right;
-  return left.toLowerCase() === right.toLowerCase();
-}
-
 export default function PublicProfile({
   profileWallet,
   isOwnProfile,
@@ -119,7 +50,6 @@ export default function PublicProfile({
   profileWallet: string;
   isOwnProfile: boolean;
 }) {
-  const navigate = useNavigate();
   const wallet = useWallet();
   const { fetchCampaigns, fetchCampaignSummary } = useLaunchpad();
   const anyWallet: any = wallet as any;
@@ -130,18 +60,30 @@ export default function PublicProfile({
       ? Number(evmWalletChainId)
       : getActiveChainId(evmWalletChainId) || BNB_TESTNET_CHAIN_ID;
 
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loadingProfile, setLoadingProfile] = useState(false);
+  const viewerAccount = wallet.account || null;
+  const [tab, setTab] = useState<ProfileTabKey>("posts");
   const [visibleDrafts, setVisibleDrafts] = useState<CampaignDraft[]>([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [draftsError, setDraftsError] = useState<string | null>(null);
-  const [recruiter, setRecruiter] = useState<RecruiterSummary | null>(null);
-  const [walletAttribution, setWalletAttribution] = useState<WalletAttributionPublicState | null>(null);
-  const [squad, setSquad] = useState<SquadSummary | null>(null);
-  const [loadingBadges, setLoadingBadges] = useState(false);
   const [publicActivity, setPublicActivity] = useState<FeedItem[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
   const [activityError, setActivityError] = useState<string | null>(null);
+  const [followSuggestions, setFollowSuggestions] = useState<Array<{ wallet: string; name?: string | null; avatar?: string | null }>>([]);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followBusy, setFollowBusy] = useState(false);
+  const [followersCount, setFollowersCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [loadingFollows, setLoadingFollows] = useState(true);
+
+  const editable = useEditableProfile({
+    chainId: activeChainId,
+    account: viewerAccount,
+    viewedAddress: profileWallet,
+    wallet,
+  });
+
+  const identity = useProfileRecruiterIdentity(profileWallet);
+  const portfolio = usePublicPortfolio(activeChainId, profileWallet);
 
   const { created, loading: loadingCoins } = useCreatedCampaignsQuery({
     viewedAddress: profileWallet,
@@ -150,7 +92,8 @@ export default function PublicProfile({
     fetchCampaigns,
     fetchCampaignSummary,
   });
-  const createdCoins: PublicCoin[] = useMemo(
+
+  const createdCoins: ProfileCoin[] = useMemo(
     () =>
       created.map((card, index) => ({
         id: card.id ?? index + 1,
@@ -167,6 +110,7 @@ export default function PublicProfile({
       })),
     [created],
   );
+
   const publicPosts = useMemo(
     () => publicActivity.filter((item) => item.type === "post"),
     [publicActivity],
@@ -175,28 +119,11 @@ export default function PublicProfile({
     () => publicActivity.filter((item) => item.type !== "post"),
     [publicActivity],
   );
-  const publicTrades = useMemo(
-    () => publicActivity.filter((item) => item.type === "trade"),
-    [publicActivity],
+
+  const explorerUrl = useMemo(
+    () => `${getExplorerBase(activeChainId)}/address/${profileWallet}`,
+    [activeChainId, profileWallet],
   );
-
-  const [portfolioMetrics, setPortfolioMetrics] = useState<PortfolioMetrics | null>(null);
-  const [loadingPortfolio, setLoadingPortfolio] = useState(true);
-  const [portfolioError, setPortfolioError] = useState<string | null>(null);
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [followBusy, setFollowBusy] = useState(false);
-
-  const effectivePortfolioMetrics = portfolioMetrics;
-  const effectiveLoadingPortfolio = loadingPortfolio;
-
-  const displayName = useMemo(() => {
-    const name = (profile?.displayName ?? "").trim();
-    return name ? `@${name}` : shorten(profileWallet);
-  }, [profile?.displayName, profileWallet]);
-
-  const explorerUrl = useMemo(() => `${getExplorerBase(activeChainId)}/address/${profileWallet}`, [activeChainId, profileWallet]);
-  const rank = useMemo(() => safeRank(profile), [profile]);
-  const viewerAccount = wallet.account || null;
 
   useEffect(() => {
     let cancelled = false;
@@ -215,6 +142,34 @@ export default function PublicProfile({
       cancelled = true;
     };
   }, [isOwnProfile, viewerAccount, profileWallet]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!profileWallet) {
+      setFollowersCount(0);
+      setFollowingCount(0);
+      setLoadingFollows(false);
+      return;
+    }
+    setLoadingFollows(true);
+    void Promise.all([getFollowersCount(profileWallet, 0), getFollowingCount(profileWallet, 0)])
+      .then(([followers, following]) => {
+        if (cancelled) return;
+        setFollowersCount(followers);
+        setFollowingCount(following);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFollowersCount(0);
+        setFollowingCount(0);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingFollows(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profileWallet]);
 
   const handleToggleFollow = useCallback(async () => {
     if (isOwnProfile || !profileWallet) return;
@@ -242,116 +197,20 @@ export default function PublicProfile({
     } finally {
       setFollowBusy(false);
     }
-  }, [followBusy, isFollowing, isOwnProfile, profileWallet, viewerAccount]);
-
-  const profileCompleteness = useMemo(() => {
-    let score = 0;
-    if ((profile?.displayName ?? "").trim()) score += 25;
-    if ((profile?.bio ?? "").trim()) score += 25;
-    if ((profile?.avatarUrl ?? "").trim()) score += 25;
-    if (createdCoins.length > 0 || visibleDrafts.length > 0 || publicActivity.length > 0) score += 25;
-    return score;
-  }, [profile?.avatarUrl, profile?.bio, profile?.displayName, createdCoins.length, visibleDrafts.length, publicActivity.length]);
-
-  const reputationSignals = useMemo(
-    () => [
-      { label: "Rank", value: rank, detail: "Current public progression" },
-      { label: "Created", value: formatCompactNumber(createdCoins.length), detail: "Public launched coins" },
-      { label: "Drafts", value: formatCompactNumber(visibleDrafts.length), detail: "Public Prepare drafts" },
-      { label: "Activity", value: formatCompactNumber(publicActivity.length), detail: "Posts, deploys, and trades" },
-    ],
-    [rank, createdCoins.length, visibleDrafts.length, publicActivity.length]
-  );
-
-  const publicTrustTags = useMemo(() => {
-    const tags: string[] = [];
-    if (recruiter?.code) tags.push("Recruiter verified");
-    if (recruiter?.isOg) tags.push("OG recruiter");
-    if (squad?.recruiterCode || walletAttribution?.recruiterCode) tags.push("Squad-linked");
-    if (createdCoins.length > 0) tags.push("Creator activity");
-    if (publicTrades.length > 0) tags.push("Trader activity");
-    if (publicPosts.length > 0) tags.push("Public posts");
-    if (visibleDrafts.length > 0) tags.push("Public drafts");
-    return tags;
-  }, [createdCoins.length, publicPosts.length, publicTrades.length, recruiter?.code, recruiter?.isOg, squad?.recruiterCode, visibleDrafts.length, walletAttribution?.recruiterCode]);
+  }, [followBusy, isFollowing, isOwnProfile, profileWallet, viewerAccount, wallet.signer]);
 
   useEffect(() => {
     let cancelled = false;
-
-    const load = async () => {
-      setLoadingProfile(true);
-      try {
-        const p = await fetchUserProfile(activeChainId, profileWallet);
-        if (!cancelled) setProfile(p);
-      } catch (e) {
-        console.warn("Failed to load public profile", e);
-        if (!cancelled) setProfile(null);
-      } finally {
-        if (!cancelled) setLoadingProfile(false);
-      }
-    };
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeChainId, profileWallet]);
-
-  useEffect(() => {
-    if (!profileWallet || !activeChainId) {
-      setPortfolioMetrics(null);
-      setLoadingPortfolio(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadPortfolio = async () => {
-      setLoadingPortfolio(true);
-      setPortfolioError(null);
-      try {
-        const data = await fetchPublicPortfolioMetrics(activeChainId, profileWallet);
-        if (!cancelled) {
-          setPortfolioMetrics(data ?? null);
-        }
-      } catch (e: any) {
-        if (!cancelled) {
-          console.warn("Failed to load public portfolio metrics", e);
-          setPortfolioError(String(e?.message || "Failed to load portfolio metrics."));
-          setPortfolioMetrics(null);
-        }
-      } finally {
-        if (!cancelled) setLoadingPortfolio(false);
-      }
-    };
-
-    loadPortfolio();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeChainId, profileWallet]);
-
-  useEffect(() => {
-    let cancelled = false;
-
     const loadDrafts = async () => {
       setLoadingDrafts(true);
       setDraftsError(null);
       try {
         const profileIsSolana = isSolanaAddress(profileWallet);
         const preferredChainId = profileIsSolana ? SOLANA_CHAIN_ID : activeChainId;
-
-        // Own profile: show ALL owner drafts (including private / deployed).
-        // Public profile: only public discoverable drafts.
         const drafts = isOwnProfile
-          ? await fetchOwnerCampaignDrafts(profileWallet, {
-              chainId: preferredChainId,
-              limit: 100,
-            })
+          ? await fetchOwnerCampaignDrafts(profileWallet, { chainId: preferredChainId, limit: 100 })
           : await fetchPublicCampaignDrafts({ chainId: preferredChainId, limit: 100 });
-
         if (cancelled) return;
-
         const mine = drafts.filter((draft) => walletsEqual(draft.creatorWallet, profileWallet));
         setVisibleDrafts(
           isOwnProfile
@@ -359,7 +218,6 @@ export default function PublicProfile({
             : mine.filter(isDraftVisibleOnPublicProfile),
         );
       } catch (e: any) {
-        console.warn("Failed to load public profile drafts", e);
         if (!cancelled) {
           setDraftsError(String(e?.message || "Failed to load visible drafts."));
           setVisibleDrafts([]);
@@ -368,61 +226,11 @@ export default function PublicProfile({
         if (!cancelled) setLoadingDrafts(false);
       }
     };
-
-    loadDrafts();
+    void loadDrafts();
     return () => {
       cancelled = true;
     };
   }, [activeChainId, profileWallet, isOwnProfile]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadBadges = async () => {
-      setLoadingBadges(true);
-      try {
-        const [recruiterResult, attributionResult] = await Promise.allSettled([
-          fetchRecruiterSummaryByWallet(profileWallet),
-          fetchWalletAttributionState(profileWallet),
-        ]);
-
-        if (cancelled) return;
-
-        const nextRecruiter = recruiterResult.status === "fulfilled" ? recruiterResult.value : null;
-        const nextAttribution = attributionResult.status === "fulfilled" ? attributionResult.value : null;
-        setRecruiter(nextRecruiter);
-        setWalletAttribution(nextAttribution);
-
-        const squadCode = nextRecruiter?.code || nextAttribution?.recruiterCode || null;
-        if (!squadCode) {
-          setSquad(null);
-          return;
-        }
-
-        try {
-          const nextSquad = await fetchSquadSummary(squadCode);
-          if (!cancelled) setSquad(nextSquad);
-        } catch (e) {
-          console.warn("Failed to load public squad badge", e);
-          if (!cancelled) setSquad(null);
-        }
-      } catch (e) {
-        console.warn("Failed to load public profile badges", e);
-        if (!cancelled) {
-          setRecruiter(null);
-          setWalletAttribution(null);
-          setSquad(null);
-        }
-      } finally {
-        if (!cancelled) setLoadingBadges(false);
-      }
-    };
-
-    loadBadges();
-    return () => {
-      cancelled = true;
-    };
-  }, [profileWallet]);
 
   const loadActivity = useCallback(async () => {
     if (!profileWallet) return;
@@ -432,7 +240,6 @@ export default function PublicProfile({
       const items = await fetchActivityTimeline(profileWallet, 40);
       setPublicActivity(items);
     } catch (e: any) {
-      console.warn("Failed to load public profile activity", e);
       setActivityError(String(e?.message || "Failed to load public activity."));
       setPublicActivity([]);
     } finally {
@@ -444,402 +251,114 @@ export default function PublicProfile({
     void loadActivity();
   }, [loadActivity]);
 
-  const copyAddress = () => {
-    navigator.clipboard.writeText(profileWallet);
-    toast.success("Address copied!");
-  };
-
-  const handlePortfolioRefresh = async () => {
-    if (!profileWallet || !activeChainId) return;
-    setLoadingPortfolio(true);
-    try {
-      const data = await fetchPublicPortfolioMetrics(activeChainId, profileWallet, { forceRefresh: true });
-      setPortfolioMetrics(data ?? null);
-      setPortfolioError(null);
-    } catch (e: any) {
-      setPortfolioError(String(e?.message || "Failed to refresh portfolio metrics."));
-      setPortfolioMetrics(null);
-    } finally {
-      setLoadingPortfolio(false);
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    void fetchFeedPosts({ tab: "for-you", chainId: activeChainId, limit: 40 })
+      .then((items) => {
+        if (!cancelled) setFollowSuggestions(authorsFromFeed(items, profileWallet));
+      })
+      .catch(() => {
+        if (!cancelled) setFollowSuggestions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeChainId, profileWallet]);
 
   return (
-    <div className="w-full pb-10 pt-4 md:pt-6">
-      <div className="mx-auto max-w-6xl space-y-5">
-        <section className="rounded-3xl border border-border/50 bg-card/35 p-5 shadow-2xl backdrop-blur-md md:p-7">
-          <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-            <div className="flex min-w-0 flex-col gap-5 sm:flex-row">
-              <div className="h-24 w-24 shrink-0 overflow-hidden rounded-full border-4 border-accent/30 bg-accent/10">
-                {profile?.avatarUrl ? (
-                  <img src={profile.avatarUrl} alt={displayName} className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center font-retro text-3xl text-accent">
-                    {profileWallet.slice(2, 4).toUpperCase()}
-                  </div>
-                )}
-              </div>
-
-              <div className="min-w-0">
-                <div className="mb-2 inline-flex rounded-full border border-accent/30 bg-accent/10 px-3 py-1 font-retro text-[10px] uppercase tracking-[0.18em] text-accent">
-                  Public Profile
-                </div>
-                <h1 className="truncate font-retro text-2xl text-foreground md:text-4xl">
-                  {loadingProfile ? "Loading profile..." : displayName}
-                </h1>
-
-                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span className="font-mono">{profileWallet}</span>
-                  <button onClick={copyAddress} className="rounded p-1 hover:bg-muted" title="Copy address">
-                    <Copy className="h-4 w-4" />
-                  </button>
-                  <a href={explorerUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
-                    Explorer <ExternalLink className="h-3 w-3" />
-                  </a>
-                </div>
-
-                {profile?.bio ? (
-                  <p className="mt-4 max-w-2xl whitespace-pre-wrap text-sm text-muted-foreground">{profile.bio}</p>
-                ) : (
-                  <p className="mt-4 max-w-2xl text-sm text-muted-foreground">No public bio yet.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="flex w-full flex-col gap-3 md:w-[280px]">
-              <RankBadgeCard rank={rank} subtitle="Public rank" className="w-full" />
-              {isOwnProfile ? (
-                <Button onClick={() => navigate("/profile")} className="w-full font-retro">
-                  Open Command Center
-                </Button>
-              ) : (
-                <>
-                  <Button
-                    onClick={() => void handleToggleFollow()}
-                    disabled={followBusy}
-                    variant={isFollowing ? "outline" : "default"}
-                    className="w-full font-retro"
-                  >
-                    {followBusy ? "Updating…" : isFollowing ? "Unfollow" : "Follow"}
-                  </Button>
-                  <Link
-                    to={buildAbuseReportPath({
-                      entityType: "profile",
-                      reportedWallet: profileWallet,
-                      reportedUrl: typeof window !== "undefined" ? window.location.href : `/profile/${profileWallet}`,
-                    })}
-                    className="inline-flex h-10 w-full items-center justify-center rounded-md px-4 font-retro text-xs text-muted-foreground hover:bg-card/70 hover:text-foreground"
-                  >
-                    <Flag className="mr-2 h-3.5 w-3.5" />
-                    Report abuse
-                  </Link>
-                </>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <PortfolioMetricsGrid
-          metrics={effectivePortfolioMetrics}
-          loading={effectiveLoadingPortfolio}
-          onRefresh={isOwnProfile ? handlePortfolioRefresh : undefined}
-          variant="public"
+    <div data-profile-page="public">
+      <ProfileShell
+        walletAddress={profileWallet}
+        displayName={editable.profile?.displayName}
+        handle={editable.profile?.displayName}
+        bio={editable.profile?.bio}
+        avatarUrl={editable.profile?.avatarUrl}
+        bannerUrl={editable.profile?.bannerUrl}
+        rank={editable.profile?.rank}
+        createdAt={editable.profile?.createdAt}
+        explorerUrl={explorerUrl}
+        followersCount={followersCount}
+        followingCount={followingCount}
+        coinsCount={createdCoins.length}
+        loadingFollows={loadingFollows}
+        recruiterLoading={identity.loading}
+        isRecruiter={identity.isRecruiter}
+        recruiterCode={identity.recruiterCode}
+        recruiterName={identity.recruiterName}
+        squadCode={identity.squadCode}
+        squadName={identity.squadName}
+        totalValueUsd={portfolio.metrics?.totalValueUsd ?? null}
+        loadingTotalValue={portfolio.loading}
+        isOwner={isOwnProfile}
+        isFollowing={isFollowing}
+        followBusy={followBusy}
+        onFollow={() => void handleToggleFollow()}
+        onEdit={editable.handleEdit}
+        commandBasePath={`/profile/${profileWallet}/command`}
+        tab={tab}
+        onTabChange={setTab}
+        followSuggestions={followSuggestions}
+      >
+        <ProfileTimeline
+          tab={tab}
+          isOwner={isOwnProfile}
+          chainId={activeChainId}
+          posts={publicPosts}
+          events={publicEvents}
+          coins={createdCoins}
+          drafts={visibleDrafts}
+          holdings={portfolio.holdings}
+          loadingPosts={loadingActivity}
+          loadingCoins={loadingCoins}
+          loadingDrafts={loadingDrafts}
+          loadingHoldings={portfolio.loading}
+          loadingActivity={loadingActivity}
+          activityError={activityError}
+          draftsError={draftsError}
+          onPosted={() => void loadActivity()}
         />
-        {portfolioError ? (
-          <div className="text-xs text-muted-foreground">Portfolio metrics temporarily unavailable.</div>
-        ) : null}
+      </ProfileShell>
 
-        <section className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-2xl border border-border/50 bg-card/35 p-5 backdrop-blur-md">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <h2 className="font-retro text-lg text-foreground">Badges</h2>
-              {loadingBadges ? <div className="text-xs text-muted-foreground">Loading...</div> : null}
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => recruiter?.code && navigate(`/recruiters/${recruiter.code}`)}
-                disabled={!recruiter?.code}
-                className="rounded-xl border border-border/40 bg-background/30 p-4 text-left transition enabled:hover:border-accent/50 enabled:hover:bg-background/50 disabled:cursor-default"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="font-retro text-sm text-foreground">Recruiter</div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {recruiter ? `/${recruiter.code}` : "No recruiter badge yet."}
-                    </div>
-                  </div>
-                  {recruiter?.isOg ? (
-                    <span className="rounded-full border border-accent/40 px-2 py-0.5 text-[10px] font-retro text-accent">OG</span>
-                  ) : null}
-                </div>
-                {recruiter ? (
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <div className="text-muted-foreground">Status</div>
-                      <div className="capitalize text-foreground">{recruiter.status || "active"}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Linked wallets</div>
-                      <div className="text-foreground">{formatCompactNumber(recruiter.linkedWalletCount)}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Creators</div>
-                      <div className="text-foreground">{formatCompactNumber(recruiter.linkedCreatorsCount)}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Traders</div>
-                      <div className="text-foreground">{formatCompactNumber(recruiter.linkedTradersCount)}</div>
-                    </div>
-                  </div>
-                ) : null}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const code = recruiter?.code || walletAttribution?.recruiterCode;
-                  if (code) navigate(`/squads?recruiter=${encodeURIComponent(code)}`);
-                }}
-                disabled={!squad && !walletAttribution?.recruiterCode}
-                className="rounded-xl border border-border/40 bg-background/30 p-4 text-left transition enabled:hover:border-accent/50 enabled:hover:bg-background/50 disabled:cursor-default"
-              >
-                <div className="font-retro text-sm text-foreground">Squad</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {squad?.recruiterCode
-                    ? `Squad /${squad.recruiterCode}`
-                    : walletAttribution?.recruiterCode
-                      ? `Linked via /${walletAttribution.recruiterCode}`
-                      : "No squad badge yet."}
-                </div>
-                {squad || walletAttribution ? (
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <div className="text-muted-foreground">State</div>
-                      <div className="capitalize text-foreground">{walletAttribution?.squadState || squad?.recruiterStatus || "—"}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Members</div>
-                      <div className="text-foreground">{formatCompactNumber(squad?.activeMemberCount)}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Eligible</div>
-                      <div className="text-foreground">{formatCompactNumber(squad?.eligibleMemberCount)}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Last routed</div>
-                      <div className="text-foreground">{formatTimeAgo(squad?.lastRoutedAt) || "—"}</div>
-                    </div>
-                  </div>
-                ) : null}
-              </button>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-border/50 bg-card/35 p-5 backdrop-blur-md">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-retro text-lg text-foreground">Reputation</h2>
-                   </div>
-              <div className="rounded-full border border-accent/35 bg-accent/10 px-3 py-1 text-xs font-retro text-accent">
-                {profileCompleteness}% complete
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              {reputationSignals.map((signal) => (
-                <div key={signal.label} className="rounded-xl border border-border/40 bg-background/30 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{signal.label}</div>
-                  <div className="mt-1 font-retro text-base text-foreground">{signal.value}</div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">{signal.detail}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              {publicTrustTags.length ? (
-                publicTrustTags.map((tag) => (
-                  <span key={tag} className="rounded-full border border-border/40 bg-background/30 px-3 py-1 text-[11px] text-muted-foreground">
-                    {tag}
-                  </span>
-                ))
-              ) : (
-                <span className="rounded-full border border-border/40 bg-background/30 px-3 py-1 text-[11px] text-muted-foreground">
-                  Building public history
-                </span>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section id="created-coins" className="rounded-2xl border border-border/50 bg-card/35 p-5 backdrop-blur-md">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-retro text-lg text-foreground">Created Coins</h2>
-            </div>
-            <div className="text-xs text-muted-foreground">{createdCoins.length} visible</div>
-          </div>
-
-          {loadingCoins ? (
-            <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">Loading created coins...</div>
-          ) : createdCoins.length ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {createdCoins.map((coin) => (
-                <button
-                  key={coin.campaignAddress}
-                  onClick={() =>
-                    navigate(
-                      tokenDetailsPath({
-                        tokenAddress: coin.tokenAddress,
-                        campaignAddress: coin.campaignAddress,
-                        chainId: coin.chainId,
-                      }),
-                    )
-                  }
-                  className="rounded-xl border border-border/40 bg-background/30 p-4 text-left transition hover:border-accent/50 hover:bg-background/50"
-                >
-                  <div className="flex items-center gap-3">
-                    <img src={coin.image} alt={coin.name} className="h-11 w-11 rounded-full object-cover" />
-                    <div className="min-w-0">
-                      <div className="truncate font-retro text-sm text-foreground">{coin.name}</div>
-                      <div className="text-xs text-muted-foreground">${coin.ticker}</div>
-                    </div>
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <div className="text-muted-foreground">Status</div>
-                      <div className="capitalize text-foreground">{coin.status ?? "live"}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Market cap</div>
-                      <div className="text-foreground">{coin.marketCap}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Progress</div>
-                      <div className="text-foreground">{coin.progress ?? "—"}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Created</div>
-                      <div className="text-foreground">{coin.timeAgo ?? "—"}</div>
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">No public created coins yet.</div>
-          )}
-        </section>
-
-        <section className="rounded-2xl border border-border/50 bg-card/35 p-5 backdrop-blur-md">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-retro text-lg text-foreground">Visible Drafts</h2>
-            </div>
-            <div className="text-xs text-muted-foreground">{visibleDrafts.length} visible</div>
-          </div>
-
-          {loadingDrafts ? (
-            <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">Loading visible drafts...</div>
-          ) : draftsError ? (
-            <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">{draftsError}</div>
-          ) : visibleDrafts.length ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {visibleDrafts.map((draft) => (
-                <button
-                  key={draft.id}
-                  onClick={() => navigate(draftHref(draft))}
-                  className="rounded-xl border border-border/40 bg-background/30 p-4 text-left transition hover:border-accent/50 hover:bg-background/50"
-                >
-                  <div className="flex items-center gap-3">
-                    <img src={draft.logoUrl || "/placeholder.svg"} alt={draft.name} className="h-11 w-11 rounded-full object-cover" />
-                    <div className="min-w-0">
-                      <div className="truncate font-retro text-sm text-foreground">{draft.name}</div>
-                      <div className="text-xs text-muted-foreground">${draft.ticker}</div>
-                    </div>
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <div className="text-muted-foreground">Visibility</div>
-                      <div className="capitalize text-foreground">{draft.visibility}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Status</div>
-                      <div className="capitalize text-foreground">{draft.status.replace(/_/g, " ")}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Category</div>
-                      <div className="capitalize text-foreground">{draft.category || "—"}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Updated</div>
-                      <div className="text-foreground">{formatTimeAgo(draft.updatedAt) || "—"}</div>
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">
-              No public drafts yet.
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-2xl border border-border/50 bg-card/35 p-5 backdrop-blur-md">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-retro text-lg text-foreground">Posts</h2>
-            </div>
-            <div className="text-xs text-muted-foreground">{publicPosts.length} visible</div>
-          </div>
-
-          {isOwnProfile ? (
-            <div className="mb-4">
-              <FeedComposer chainId={activeChainId} onPosted={() => void loadActivity()} compact />
-            </div>
-          ) : null}
-
-          {loadingActivity && !publicPosts.length ? (
-            <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">Loading posts...</div>
-          ) : publicPosts.length ? (
-            <div className="space-y-3">
-              {publicPosts.map((item) => (
-                <FeedItemView key={item.id} item={item} />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">
-              {isOwnProfile ? "No posts yet. Say what's moving." : "No public posts yet."}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-2xl border border-border/50 bg-card/35 p-5 backdrop-blur-md">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-retro text-lg text-foreground">Public Activity</h2>
-            </div>
-            <div className="text-xs text-muted-foreground">{publicEvents.length} recent</div>
-          </div>
-
-          {loadingActivity ? (
-            <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">Loading public activity...</div>
-          ) : activityError ? (
-            <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">{activityError}</div>
-          ) : publicEvents.length ? (
-            <div className="space-y-3">
-              {publicEvents.map((item) => (
-                <FeedItemView key={item.id} item={item} />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">
-              No public drafts, deploys, or trades yet.
-            </div>
-          )}
-        </section>
-      </div>
+      {isOwnProfile ? (
+        <>
+          <input
+            ref={editable.avatarInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/jpg,image/webp"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void editable.handleAvatarSelected(file);
+              event.currentTarget.value = "";
+            }}
+          />
+          <input
+            ref={editable.bannerInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/jpg,image/webp"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void editable.handleBannerSelected(file);
+              event.currentTarget.value = "";
+            }}
+          />
+          <EditProfileDialog
+            open={editable.editOpen}
+            onOpenChange={editable.setEditOpen}
+            initialUsername={editable.profile?.displayName ?? ""}
+            initialBio={editable.profile?.bio ?? ""}
+            avatarUrl={editable.profile?.avatarUrl}
+            bannerUrl={editable.profile?.bannerUrl}
+            saving={editable.savingProfile}
+            savingAvatar={editable.savingAvatar}
+            savingBanner={editable.savingBanner}
+            onPickAvatar={editable.handlePickAvatar}
+            onPickBanner={editable.handlePickBanner}
+            onSave={editable.handleSaveProfile}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

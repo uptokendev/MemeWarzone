@@ -7,6 +7,7 @@ export type UserProfile = {
   displayName: string | null;
   bio: string | null;
   avatarUrl: string | null;
+  bannerUrl: string | null;
   updatedAt?: string | null;
   createdAt?: string | null;
   rank?: string | null;
@@ -80,6 +81,7 @@ export async function fetchUserProfile(chainId: number, address: string): Promis
     address: String(p.address ?? addr),
     displayName: (p.displayName ?? null) as string | null,
     avatarUrl: (p.avatarUrl ?? null) as string | null,
+    bannerUrl: (p.bannerUrl ?? null) as string | null,
     bio: (p.bio ?? null) as string | null,
     updatedAt: (p.updatedAt ?? null) as string | null,
     createdAt: (p.createdAt ?? null) as string | null,
@@ -108,6 +110,7 @@ export type SaveProfileInput = {
   displayName: string | null;
   bio: string | null;
   avatarUrl: string | null;
+  bannerUrl?: string | null;
   nonce: string;
   signature: string;
 };
@@ -121,6 +124,7 @@ export async function saveUserProfile(input: SaveProfileInput): Promise<void> {
       address: normalizeAddress(input.address, input.chainId),
       displayName: input.displayName,
       avatarUrl: input.avatarUrl,
+      bannerUrl: input.bannerUrl ?? null,
       bio: input.bio,
       nonce: input.nonce,
       signature: input.signature,
@@ -133,17 +137,31 @@ export async function saveUserProfile(input: SaveProfileInput): Promise<void> {
   }
 }
 
+export type PublicPortfolioHolding = {
+  ticker: string;
+  name?: string | null;
+  image?: string | null;
+  campaignAddress?: string | null;
+  tokenAddress?: string | null;
+  balanceFormatted?: string;
+  valueUsd?: number | null;
+  isNative?: boolean;
+};
+
+export type PublicPortfolioPayload = {
+  metrics: PortfolioMetrics | null;
+  holdings: PublicPortfolioHolding[];
+};
+
 /**
- * Thin wrapper for the public portfolio metrics endpoint (Phase 6).
- * Always uses apiJson (central apiBase layer) for consistency with AGENTS.md.
- * Supports optional forceRefresh for owner "Refresh" action.
- * Unwraps `{ metrics }` so callers receive the four-card payload, never the envelope.
+ * Public portfolio endpoint: metrics (total value / top holding) plus the holdings list
+ * used by the Coins tab. Unwraps `{ metrics, holdings }` so callers never see the envelope.
  */
-export async function fetchPublicPortfolioMetrics(
+export async function fetchPublicPortfolio(
   chainId: number,
   address: string,
-  { forceRefresh = false }: { forceRefresh?: boolean } = {}
-): Promise<PortfolioMetrics | null> {
+  { forceRefresh = false }: { forceRefresh?: boolean } = {},
+): Promise<PublicPortfolioPayload | null> {
   const addr = normalizeAddress(address, chainId);
   const params = new URLSearchParams({
     chainId: String(chainId),
@@ -153,10 +171,20 @@ export async function fetchPublicPortfolioMetrics(
 
   const json = await apiJson<any>(`/api/profile/portfolio?${params.toString()}`);
   if (!json) return null;
-  if (json.metrics) return json.metrics as PortfolioMetrics;
-  if (json.metrics === null) return null;
+  const holdings = Array.isArray(json.holdings) ? (json.holdings as PublicPortfolioHolding[]) : [];
+  if (json.metrics) return { metrics: json.metrics as PortfolioMetrics, holdings };
+  if (json.metrics === null) return { metrics: null, holdings };
   if (typeof json.totalValueUsd !== "undefined" || typeof json.coinsCount !== "undefined") {
-    return json as PortfolioMetrics;
+    return { metrics: json as PortfolioMetrics, holdings };
   }
-  return null;
+  return holdings.length ? { metrics: null, holdings } : null;
+}
+
+export async function fetchPublicPortfolioMetrics(
+  chainId: number,
+  address: string,
+  opts: { forceRefresh?: boolean } = {},
+): Promise<PortfolioMetrics | null> {
+  const payload = await fetchPublicPortfolio(chainId, address, opts);
+  return payload?.metrics ?? null;
 }

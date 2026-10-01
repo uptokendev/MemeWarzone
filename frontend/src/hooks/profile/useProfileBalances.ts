@@ -371,6 +371,7 @@ export function useProfileBalances({
             tokenHoldingsWithValues,
             bnbUsd: nativeUsdPrice ?? 0,
             firstActivityTimestamp: effectiveTimestamp,
+            nativeTicker: nativeSymbol,
           });
 
           if (!cancelled) setPortfolioMetrics(metrics);

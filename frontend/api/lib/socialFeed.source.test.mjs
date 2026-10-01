@@ -56,9 +56,11 @@ test("FeedComposer is mounted on Feed, Command Center, and Public Profile", () =
   const feed = readRepo("frontend/src/pages/Feed.tsx");
   const command = readRepo("frontend/src/pages/command-center/CommandCenterFeed.tsx");
   const profile = readRepo("frontend/src/pages/PublicProfile.tsx");
+  const timeline = readRepo("frontend/src/components/profile/ProfileTimeline.tsx");
   assert.match(feed, /<FeedComposer /);
   assert.match(command, /<FeedComposer /);
-  assert.match(profile, /<FeedComposer /);
+  assert.match(profile, /ProfileTimeline/);
+  assert.match(timeline, /<FeedComposer/);
   assert.match(feed, /For you/);
   assert.match(feed, /Following/);
 });

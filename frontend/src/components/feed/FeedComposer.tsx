@@ -11,9 +11,15 @@ type FeedComposerProps = {
   chainId: number;
   onPosted?: () => void;
   compact?: boolean;
+  placeholder?: string;
 };
 
-export function FeedComposer({ chainId, onPosted, compact = false }: FeedComposerProps) {
+export function FeedComposer({
+  chainId,
+  onPosted,
+  compact = false,
+  placeholder = "What's moving?",
+}: FeedComposerProps) {
   const wallet = useWallet();
   const solanaWallet = useSolanaWallet();
   const solana = isSolanaChainId(chainId) || isSolanaAddress(solanaWallet.solanaAccount);
@@ -68,7 +74,7 @@ export function FeedComposer({ chainId, onPosted, compact = false }: FeedCompose
       <textarea
         value={body}
         onChange={(e) => setBody(e.target.value.slice(0, FEED_MAX_CHARS))}
-        placeholder="What's moving?"
+        placeholder={placeholder}
         rows={compact ? 3 : 4}
         className="w-full resize-none bg-transparent font-retro text-sm text-foreground outline-none placeholder:text-muted-foreground"
       />

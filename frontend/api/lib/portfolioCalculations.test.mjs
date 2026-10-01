@@ -18,14 +18,29 @@ test("coinsCount uses holdingsCount even when holdings are unpriced", () => {
 
 test("Solana-shaped input is accepted and unpriced totals stay null", () => {
   const metrics = derivePortfolioMetrics({
-    nativeBnb: 1.5,
+    nativeBnb: 0,
     tokenHoldingsWithValues: [{ ticker: "K88", valueUsd: 12.5 }],
     bnbUsd: 200,
     createdAt: "2026-01-01T00:00:00.000Z",
     holdingsCount: 1,
+    nativeTicker: "SOL",
   });
   assert.equal(metrics.coinsCount, 1);
   assert.equal(metrics.topHolding?.ticker, "K88");
   assert.ok(metrics.totalValueUsd > 0);
   assert.notEqual(metrics.walletAge, "on-chain");
+});
+
+test("native can be the top holding when it dominates token value", () => {
+  const metrics = derivePortfolioMetrics({
+    nativeBnb: 2,
+    tokenHoldingsWithValues: [{ ticker: "K88", valueUsd: 12.5 }],
+    bnbUsd: 200,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    holdingsCount: 1,
+    nativeTicker: "SOL",
+  });
+  assert.equal(metrics.topHolding?.ticker, "SOL");
+  assert.equal(metrics.coinsCount, 1);
+  assert.ok(metrics.totalValueUsd > 400);
 });

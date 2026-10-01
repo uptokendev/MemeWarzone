@@ -43,6 +43,8 @@ export function useEditableProfile({
   const [savingProfile, setSavingProfile] = useState(false);
   const [awaitingWallet, setAwaitingWallet] = useState(false);
   const [savingAvatar, setSavingAvatar] = useState(false);
+  const [savingBanner, setSavingBanner] = useState(false);
+  const bannerInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -102,12 +104,12 @@ export function useEditableProfile({
     setEditOpen(true);
   };
 
-  const uploadAvatarFile = async (file: File): Promise<string> => {
+  const uploadImageFile = async (file: File, kind: "avatar" | "banner"): Promise<string> => {
     if (!chainId) throw new Error("ChainId is not available.");
     if (!account) throw new Error("Wallet not connected.");
 
     const maxBytes = 3 * 1024 * 1024; // 3 MB
-    if (file.size > maxBytes) throw new Error("Avatar must be <= 3 MB.");
+    if (file.size > maxBytes) throw new Error(`${kind === "banner" ? "Cover" : "Avatar"} must be <= 3 MB.`);
 
     const typeOk = /^(image\/png|image\/jpeg|image\/jpg|image\/webp)$/.test(file.type);
     if (!typeOk) throw new Error("Unsupported image type. Use png/jpg/webp.");
@@ -117,10 +119,11 @@ export function useEditableProfile({
 
     const addr = normalizeAddress(account);
     const qs = new URLSearchParams({
-      kind: "avatar",
+      kind,
       chainId: String(chainId),
       address: addr,
     });
+    const action = kind === "banner" ? "upload_banner" : "upload_avatar";
     // Put signature auth in form fields (not query string) — long message/sig in URL
     // can break proxies and message equality checks.
     try {
@@ -136,7 +139,7 @@ export function useEditableProfile({
       };
       if (isSolanaChain(chainId)) {
         auth = await signWalletAction({
-          action: "upload_avatar",
+          action,
           walletAddress: addr,
           chainId: Number(chainId),
           walletType: "solana",
@@ -144,7 +147,7 @@ export function useEditableProfile({
         });
       } else if (wallet?.signer) {
         auth = await signWalletAction({
-          action: "upload_avatar",
+          action,
           walletAddress: addr,
           chainId: Number(chainId),
           signer: wallet.signer,
@@ -171,6 +174,45 @@ export function useEditableProfile({
     return String(j.url);
   };
 
+  const persistProfile = async (next: {
+    displayName: string | null;
+    bio: string | null;
+    avatarUrl: string | null;
+    bannerUrl: string | null;
+  }) => {
+    if (!chainId) throw new Error("ChainId is not available.");
+    if (!account) throw new Error("Wallet not connected.");
+    const addr = normalizeAddress(account);
+    const nonce = await requestNonce(chainId, addr);
+    setAwaitingWallet(true);
+    try {
+      const msg = buildProfileMessage({
+        chainId,
+        address: addr,
+        nonce,
+        displayName: next.displayName,
+        avatarUrl: next.avatarUrl,
+      });
+      const signature = await signProfileMessage({ chainId, account: addr, wallet, message: msg });
+      await saveUserProfile({
+        chainId,
+        address: addr,
+        displayName: next.displayName,
+        bio: next.bio,
+        avatarUrl: next.avatarUrl,
+        bannerUrl: next.bannerUrl,
+        nonce,
+        signature,
+      });
+    } finally {
+      setAwaitingWallet(false);
+    }
+    const refreshed = await fetchUserProfile(chainId, addr);
+    setProfile(refreshed);
+  };
+
+  const uploadAvatarFile = async (file: File): Promise<string> => uploadImageFile(file, "avatar");
+
   const handlePickAvatar = () => {
     if (!account) {
       handleConnect();
@@ -178,6 +220,14 @@ export function useEditableProfile({
     }
 
     avatarInputRef.current?.click();
+  };
+
+  const handlePickBanner = () => {
+    if (!account) {
+      handleConnect();
+      return;
+    }
+    bannerInputRef.current?.click();
   };
 
   const handleAvatarSelected = async (file: File) => {
@@ -201,57 +251,62 @@ export function useEditableProfile({
 
     try {
       const uploadedUrl = await uploadAvatarFile(file);
-
-      // Sign and persist the new avatar url.
-      const addr = normalizeAddress(account);
-      const nonce = await requestNonce(chainId, addr);
-      const displayName = (profile?.displayName ?? "").trim() || null;
-      const bio = (profile?.bio ?? "").trim() || null;
-
-      setAwaitingWallet(true);
       toast.dismiss(toastId);
-
       const toastId2 = toast.loading("Confirm the signature in your wallet…");
-      let signature = "";
-
       try {
-        const msg = buildProfileMessage({
-          chainId,
-          address: addr,
-          nonce,
-          displayName,
+        await persistProfile({
+          displayName: (profile?.displayName ?? "").trim() || null,
+          bio: (profile?.bio ?? "").trim() || null,
           avatarUrl: uploadedUrl,
+          bannerUrl: profile?.bannerUrl ?? null,
         });
-
-        signature = await signProfileMessage({ chainId, account: addr, wallet, message: msg });
       } finally {
-        setAwaitingWallet(false);
         toast.dismiss(toastId2);
       }
-
-      const toastId3 = toast.loading("Saving profile…");
-
-      try {
-        await saveUserProfile({
-          chainId,
-          address: addr,
-          displayName,
-          bio,
-          avatarUrl: uploadedUrl,
-          nonce,
-          signature,
-        });
-      } finally {
-        toast.dismiss(toastId3);
-      }
-
-      const refreshed = await fetchUserProfile(chainId, addr);
-      setProfile(refreshed);
       toast.success("Avatar updated.");
     } catch (e: any) {
       toast.error(e?.message ?? "Failed to update avatar.");
     } finally {
       setSavingAvatar(false);
+      toast.dismiss(toastId);
+    }
+  };
+
+  const handleBannerSelected = async (file: File) => {
+    if (!account) {
+      toast.error("Connect your wallet to change your cover.");
+      return;
+    }
+    if (!chainId) {
+      toast.error("ChainId is not available. Reconnect your wallet and try again.");
+      return;
+    }
+    if (!isSolanaChain(chainId) && !wallet.signer) {
+      toast.error("Wallet signer is not available. Reconnect your wallet and try again.");
+      return;
+    }
+
+    setSavingBanner(true);
+    const toastId = toast.loading("Uploading cover…");
+    try {
+      const uploadedUrl = await uploadImageFile(file, "banner");
+      toast.dismiss(toastId);
+      const toastId2 = toast.loading("Confirm the signature in your wallet…");
+      try {
+        await persistProfile({
+          displayName: (profile?.displayName ?? "").trim() || null,
+          bio: (profile?.bio ?? "").trim() || null,
+          avatarUrl: profile?.avatarUrl ?? null,
+          bannerUrl: uploadedUrl,
+        });
+      } finally {
+        toast.dismiss(toastId2);
+      }
+      toast.success("Cover updated.");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to update cover.");
+    } finally {
+      setSavingBanner(false);
       toast.dismiss(toastId);
     }
   };
@@ -277,50 +332,19 @@ export function useEditableProfile({
     const toastId = toast.loading("Preparing signature…");
 
     try {
-      const addr = normalizeAddress(account);
-      const nonce = await requestNonce(chainId, addr);
       const displayName = values.username.trim();
-      const avatarUrl = profile?.avatarUrl ?? null;
-
-      setAwaitingWallet(true);
       toast.dismiss(toastId);
-
       const toastId2 = toast.loading("Confirm the signature in your wallet…");
-      let signature = "";
-
       try {
-        const msg = buildProfileMessage({
-          chainId,
-          address: addr,
-          nonce,
-          displayName: displayName || null,
-          avatarUrl: avatarUrl ?? null,
-        });
-
-        signature = await signProfileMessage({ chainId, account: addr, wallet, message: msg });
-      } finally {
-        setAwaitingWallet(false);
-        toast.dismiss(toastId2);
-      }
-
-      const toastId3 = toast.loading("Saving profile…");
-
-      try {
-        await saveUserProfile({
-          chainId,
-          address: addr,
+        await persistProfile({
           displayName: displayName || null,
           bio: values.bio.trim() || null,
-          avatarUrl,
-          nonce,
-          signature,
+          avatarUrl: profile?.avatarUrl ?? null,
+          bannerUrl: profile?.bannerUrl ?? null,
         });
       } finally {
-        toast.dismiss(toastId3);
+        toast.dismiss(toastId2);
       }
-
-      const refreshed = await fetchUserProfile(chainId, addr);
-      setProfile(refreshed);
       setEditOpen(false);
       toast.success("Profile updated.");
     } catch (e: any) {
@@ -339,10 +363,14 @@ export function useEditableProfile({
     savingProfile,
     awaitingWallet,
     savingAvatar,
+    savingBanner,
     avatarInputRef,
+    bannerInputRef,
     handleEdit,
     handlePickAvatar,
+    handlePickBanner,
     handleAvatarSelected,
+    handleBannerSelected,
     handleSaveProfile,
   };
 }

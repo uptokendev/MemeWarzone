@@ -30,14 +30,19 @@ type CommandCenterData = {
   setEditOpen: ReturnType<typeof useEditableProfile>["setEditOpen"];
   savingProfile: boolean;
   savingAvatar: boolean;
+  savingBanner: boolean;
   awaitingWallet: boolean;
   avatarInputRef: ReturnType<typeof useEditableProfile>["avatarInputRef"];
+  bannerInputRef: ReturnType<typeof useEditableProfile>["bannerInputRef"];
   handleEdit: ReturnType<typeof useEditableProfile>["handleEdit"];
   handlePickAvatar: ReturnType<typeof useEditableProfile>["handlePickAvatar"];
+  handlePickBanner: ReturnType<typeof useEditableProfile>["handlePickBanner"];
   handleAvatarSelected: ReturnType<typeof useEditableProfile>["handleAvatarSelected"];
+  handleBannerSelected: ReturnType<typeof useEditableProfile>["handleBannerSelected"];
   handleSaveProfile: ReturnType<typeof useEditableProfile>["handleSaveProfile"];
   displayName: string;
   avatarUrl: string;
+  bannerUrl: string | null;
   attribution: WalletAttributionPublicState | null;
   loadingAttribution: boolean;
   followersCount: number;
@@ -118,11 +123,15 @@ export function CommandCenterDataProvider({
     setEditOpen,
     savingProfile,
     savingAvatar,
+    savingBanner,
     awaitingWallet,
     avatarInputRef,
+    bannerInputRef,
     handleEdit,
     handlePickAvatar,
+    handlePickBanner,
     handleAvatarSelected,
+    handleBannerSelected,
     handleSaveProfile,
   } = editableProfile;
 
@@ -218,9 +227,8 @@ export function CommandCenterDataProvider({
     return name ? `@${name}` : shortenWallet(walletAddress) || "Command Center";
   }, [profile?.displayName, walletAddress]);
 
-  const avatarUrl =
-    profile?.avatarUrl ||
-    "https://images.unsplash.com/photo-1621504450181-5d356f61d307?w=200&h=200&fit=crop";
+  const avatarUrl = profile?.avatarUrl || "";
+  const bannerUrl = profile?.bannerUrl || null;
 
   const value = useMemo<CommandCenterData>(() => ({
     walletAddress,
@@ -232,14 +240,19 @@ export function CommandCenterDataProvider({
     setEditOpen,
     savingProfile,
     savingAvatar,
+    savingBanner,
     awaitingWallet,
     avatarInputRef,
+    bannerInputRef,
     handleEdit,
     handlePickAvatar,
+    handlePickBanner,
     handleAvatarSelected,
+    handleBannerSelected,
     handleSaveProfile,
     displayName,
     avatarUrl,
+    bannerUrl,
     attribution,
     loadingAttribution,
     followersCount,
@@ -267,14 +280,19 @@ export function CommandCenterDataProvider({
     setEditOpen,
     savingProfile,
     savingAvatar,
+    savingBanner,
     awaitingWallet,
     avatarInputRef,
+    bannerInputRef,
     handleEdit,
     handlePickAvatar,
+    handlePickBanner,
     handleAvatarSelected,
+    handleBannerSelected,
     handleSaveProfile,
     displayName,
     avatarUrl,
+    bannerUrl,
     attribution,
     loadingAttribution,
     followersCount,

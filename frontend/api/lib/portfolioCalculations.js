@@ -88,7 +88,14 @@ export function selectTopHolding(holdings) {
  * This is the single source of truth for the four cards.
  */
 export function derivePortfolioMetrics(params) {
-  const { nativeBnb = 0, tokenHoldingsWithValues = [], bnbUsd = 0, createdAt, holdingsCount } = params || {};
+  const {
+    nativeBnb = 0,
+    tokenHoldingsWithValues = [],
+    bnbUsd = 0,
+    createdAt,
+    holdingsCount,
+    nativeTicker,
+  } = params || {};
 
   const nativeUsd = (Number.isFinite(nativeBnb) ? nativeBnb : 0) *
     (Number.isFinite(bnbUsd) && bnbUsd > 0 ? bnbUsd : 0);
@@ -102,6 +109,10 @@ export function derivePortfolioMetrics(params) {
       tokenTotalUsd += v;
       positiveHoldings.push({ ticker: h.ticker || "?", valueUsd: v });
     }
+  }
+
+  if (nativeUsd > 0) {
+    positiveHoldings.push({ ticker: String(nativeTicker || "BNB").trim() || "BNB", valueUsd: nativeUsd });
   }
 
   const totalValueUsd = nativeUsd + tokenTotalUsd;
