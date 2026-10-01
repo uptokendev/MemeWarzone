@@ -72,6 +72,12 @@ export type UnifiedMarketChartProps = {
   solanaGraduated?: boolean;
   livePriceNative?: number | null;
   liveSupplyWhole?: number | null;
+  /**
+   * Supply that never changes over the coin's life (a Meteora DBC mint). Historical trades are valued
+   * on it when they carry no curve sold amount; without it they fell back to net traded tokens, which
+   * put a DBC chart's market cap at a few hundred dollars against a ~$1K coin.
+   */
+  fixedSupplyWhole?: number | null;
   /** Header current mcap in native units. Chart live close must use this, not a second formula. */
   liveMcapNative?: number | null;
   nativeUsdPrice?: number | null;
@@ -222,6 +228,7 @@ function tradeSeriesPoints(
   solanaCurvePricing?: SolanaCurvePricingState | null,
   solanaGraduated?: boolean,
   liveSupplyWhole?: number | null,
+  fixedSupplyWhole?: number | null,
 ): ChartPoint[] {
   const solana = isSolanaChainId(chainId);
   const tokenDecimals = solana ? Number(solanaCurvePricing?.tokenDecimals ?? 6) : 18;
@@ -231,6 +238,8 @@ function tradeSeriesPoints(
   const marketAlreadyGraduated = isGraduatedStage(marketState) || Boolean(solana && solanaGraduated);
   void liveSupplyWhole;
   void currentBondingSoldRaw;
+  const fixedSupply = Number(fixedSupplyWhole);
+  const hasFixedSupply = Number.isFinite(fixedSupply) && fixedSupply > 0;
   let circulating = 0;
   let peakCirc = 0;
   const points: ChartPoint[] = [];
@@ -261,7 +270,9 @@ function tradeSeriesPoints(
         ? authoritative.supplyWhole
         : soldAfter > 0
           ? soldAfter
-          : Math.max(circulating, 0)
+          : hasFixedSupply
+            ? fixedSupply
+            : Math.max(circulating, 0)
       : soldAfter > 0
         ? soldAfter
         : afterGrad && fixedGradSupply > 0
@@ -439,6 +450,7 @@ export function UnifiedMarketChart({
   solanaGraduated = false,
   livePriceNative = null,
   liveSupplyWhole = null,
+  fixedSupplyWhole = null,
   liveMcapNative = null,
   nativeUsdPrice,
   resolution,
@@ -544,8 +556,8 @@ export function UnifiedMarketChart({
     const usdRate = nativeUsd > 0 ? nativeUsd : 0;
     const chartDenomination = denomination === "USD" && usdRate <= 0 ? "BNB" : denomination;
     const chartUsd = usdRate > 0 ? usdRate : 1;
-    return tradeSeriesPoints(curvePoints, metric, chartDenomination, chartUsd, marketState, graduationTimeSec, chainId, currentBondingSoldRaw, solanaCurvePricing, solanaGraduated, liveSupplyWhole);
-  }, [chainId, currentBondingSoldRaw, solanaCurvePricing, solanaGraduated, liveSupplyWhole, curvePoints, denomination, graduationTimeSec, marketState, metric, nativeUsd]);
+    return tradeSeriesPoints(curvePoints, metric, chartDenomination, chartUsd, marketState, graduationTimeSec, chainId, currentBondingSoldRaw, solanaCurvePricing, solanaGraduated, liveSupplyWhole, fixedSupplyWhole);
+  }, [chainId, currentBondingSoldRaw, solanaCurvePricing, solanaGraduated, liveSupplyWhole, fixedSupplyWhole, curvePoints, denomination, graduationTimeSec, marketState, metric, nativeUsd]);
 
   const waitingForUsd = denomination === "USD" && nativeUsd <= 0;
 

@@ -548,6 +548,7 @@ import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import { quoteDbcExactIn, loadDbcPool, loadReferralTokenAccount } from "@/lib/dbcTrade.mjs";
 import { submitDbcBondingTrade, submitDbcLockClaim } from "@/lib/dbcTradeSubmit";
 import { readMintSupplyRaw, readOwnerMintBalanceRaw, readQuoteUiMultiplier } from "@/lib/dbcQuoteMultiplier.mjs";
+import { dbcDeployedAtSec, dbcFlywheel, dbcSpotSolFromSqrt, dbcSupplyWhole } from "@/lib/dbcPageMetrics.mjs";
 import { WSOL_MINT, formatScaledQuote, quoteUiToRaw } from "../../shared/dbcQuotes.mjs";
 import DbcCreatorRewardsPanel from "@/components/dbc/DbcCreatorRewardsPanel";
 import DbcFeeChoiceLine from "@/components/dbc/DbcFeeChoiceLine";
@@ -1114,6 +1115,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
               extraLink: "",
               telegram: String(dbcLive.telegram || ""),
               discord: String(dbcLive.discord || ""),
+              // "Deployed" read createdAt, which a DBC record never set.
+              createdAt: dbcDeployedAtSec(dbcLive) ?? undefined,
             } as CampaignInfo;
             setCampaign(match);
             setError(null);
@@ -2140,10 +2143,26 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     return null;
   }, [isSolanaPage, lastMarketTradePrice, rtStats?.lastPriceBnb, solanaCurve?.graduated, solanaMeteora.spot?.priceSol]);
 
-  const solanaLivePrice = solanaDexPrice ?? solanaSpotNative ?? lastMarketTradePrice;
+  // DBC bonding: pool spot (indexer token_stats after each swap, else the sqrt price the page loaded
+  // with). A fill price carries the fee, which the anti-sniper minute raised to 50-90%.
+  const dbcSpotNative = useMemo(() => {
+    if (!isDbcPage || dbcMigrated) return null;
+    const fromRt = rtStats?.lastPriceBnb;
+    if (fromRt != null && Number.isFinite(fromRt) && fromRt > 0) return Number(fromRt);
+    return dbcSpotSolFromSqrt(dbcLive?.poolLive?.sqrtPrice, dbcQuoteMint);
+  }, [dbcLive?.poolLive?.sqrtPrice, dbcMigrated, dbcQuoteMint, isDbcPage, rtStats?.lastPriceBnb]);
+
+  const solanaLivePrice = solanaDexPrice ?? solanaSpotNative ?? dbcSpotNative ?? lastMarketTradePrice;
+
+  // A DBC coin has no curve "sold": its mint holds the whole supply from create (MWZDNB 785.26M).
+  const dbcMintSupplyWhole = useMemo(
+    () => (isDbcPage ? dbcSupplyWhole(dbcSupplyRaw, 6) : null),
+    [dbcSupplyRaw, isDbcPage],
+  );
 
   const solanaSoldWhole = useMemo(() => {
     if (!isSolanaPage) return null;
+    if (isDbcPage) return dbcMintSupplyWhole;
     const sold =
       (solanaCurve?.soldTokens && solanaCurve.soldTokens > 0n
         ? solanaCurve.soldTokens
@@ -2155,7 +2174,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     const decimals = Number(solanaCurve?.tokenDecimals || tokenDecimals || 6);
     const whole = Number(ethers.formatUnits(sold, decimals));
     return Number.isFinite(whole) && whole > 0 ? whole : null;
-  }, [isSolanaPage, latestSoldFromTrades, metrics?.sold, solanaCurve?.soldTokens, solanaCurve?.tokenDecimals, tokenDecimals]);
+  }, [dbcMintSupplyWhole, isDbcPage, isSolanaPage, latestSoldFromTrades, metrics?.sold, solanaCurve?.soldTokens, solanaCurve?.tokenDecimals, tokenDecimals]);
 
   const pageLivePriceNative = useMemo(() => {
     if (isSolanaPage) return solanaLivePrice;
@@ -2362,7 +2381,9 @@ const toSeconds = (ts: number): number => {
           latestSoldFromTrades ??
           0n;
         const decimals = Number(solanaCurve?.tokenDecimals || tokenDecimals || 6);
-        const supplyWhole = sold > 0n ? Number(ethers.formatUnits(sold, decimals)) : 0;
+        const supplyWhole = isDbcPage
+          ? dbcMintSupplyWhole ?? 0
+          : sold > 0n ? Number(ethers.formatUnits(sold, decimals)) : 0;
         const mcapNative = supplyWhole * solanaLivePrice;
         const label = Number.isFinite(mcapNative) && mcapNative > 0
           ? `${formatCompact(mcapNative)} ${nativeUnit}`
@@ -2466,7 +2487,7 @@ const toSeconds = (ts: number): number => {
       // Timeframe analytics (native volume + price change)
       metrics: timeframeTiles,
     };
-  }, [campaign, contractGraduatedEarly, curveReserveWei, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
+  }, [campaign, contractGraduatedEarly, curveReserveWei, dbcMintSupplyWhole, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
   // Native/USD reference for TokenDetails conversions: BNB on BNB Chain, SOL on
   // Solana, ETH on Robinhood. Treating every non-Solana chain as BNB priced a
   // Robinhood page in BNB/USD, so the header read about six times lower than the
@@ -2649,6 +2670,19 @@ const toSeconds = (ts: number): number => {
   }, [campaign?.campaign, campaign?.token, pageChainId]);
 
   const flywheel = useMemo(() => {
+    if (isDbcPage) {
+      // No Campaign account and zeroed metrics: count the indexed pool trades instead.
+      const dbc = dbcFlywheel(marketTradePoints, 9);
+      return {
+        buyVolume: formatBnbOrUsd(dbc.buyVolume),
+        sellVolume: formatBnbOrUsd(dbc.sellVolume),
+        netFlow: formatBnbOrUsd(dbc.netFlow),
+        feesEstimated: formatBnbOrUsd(dbc.feesEstimated),
+        buyers: String(dbc.buyers),
+        feeRate: `${(dbc.feeBps / 100).toFixed(2)}%`,
+        lpRate: "—",
+      };
+    }
     if (isSolanaPage && solanaCurve) {
       const buyVol = Number(ethers.formatUnits(solanaCurve.totalBuyVolumeLamports, 9));
       const sellVol = Number(ethers.formatUnits(solanaCurve.totalSellVolumeLamports, 9));
@@ -2689,7 +2723,7 @@ const toSeconds = (ts: number): number => {
       feeRate: metrics ? `${(Number(metrics.protocolFeeBps) / 100).toFixed(2)}%` : "—",
       lpRate: metrics ? `${(Number(metrics.liquidityBps) / 100).toFixed(2)}%` : "—",
     };
-  }, [activity, metrics, formatBnbOrUsd, isSolanaPage, marketTradePoints, solanaCurve]);
+  }, [activity, metrics, formatBnbOrUsd, isDbcPage, isSolanaPage, marketTradePoints, solanaCurve]);
 
   const holderDistribution = useMemo(() => {
     if (isSolanaPage && solanaCurve?.graduated && solanaMeteora.holders) {
@@ -5308,6 +5342,7 @@ const toSeconds = (ts: number): number => {
                   solanaGraduated={Boolean(isSolanaPage && solanaCurve?.graduated)}
                   livePriceNative={pageLivePriceNative}
                   liveSupplyWhole={pageLiveSupplyWhole}
+                  fixedSupplyWhole={dbcMintSupplyWhole}
                   liveMcapNative={liveMarketCapNative}
                   nativeUsdPrice={nativeUsd}
                   marketKey={`${chainIdForStorage}:${resolvedCampaignAddress || localTradeStorageAddress || ""}`}

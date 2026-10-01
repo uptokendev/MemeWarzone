@@ -300,8 +300,21 @@ function rpcUrl(): string {
   return String(import.meta.env.VITE_SOLANA_RPC || "").trim() || getPublicRpcUrl(SOLANA_CHAIN_ID);
 }
 
+/** Anchor discriminator of the launchpad `Campaign` account: sha256("account:Campaign")[0..8]. */
+const CAMPAIGN_ACCOUNT_DISCRIMINATOR = [0x32, 0x28, 0x31, 0x0b, 0x9d, 0xdc, 0xe5, 0xc0];
+
+/** True only for a launchpad Campaign account. A Meteora DBC pool (VirtualPool) is not one. */
+export function isSolanaCampaignAccount(raw: Uint8Array): boolean {
+  if (!raw || raw.length < 8) return false;
+  return CAMPAIGN_ACCOUNT_DISCRIMINATOR.every((byte, i) => raw[i] === byte);
+}
+
 function decodeAccountBytes(raw: Uint8Array, addr: string): SolanaCampaignCurveState | null {
   if (raw.length < 200) return null;
+  // A DBC pool address reaches this reader from shared Solana paths (War Room chart, profile).
+  // Its 424-byte VirtualPool passed the length check and the Campaign layout read past the end:
+  // "RangeError: Offset is outside the bounds of the DataView", then an RPC re-read failing the same way.
+  if (!isSolanaCampaignAccount(raw)) return null;
   return decodeSolanaCampaignAccount(raw, addr);
 }
 
@@ -319,6 +332,8 @@ export async function fetchSolanaCampaignCurveState(
       const bin = Uint8Array.from(atob(String(json.dataBase64)), (c) => c.charCodeAt(0));
       const decoded = decodeAccountBytes(bin, addr);
       if (decoded) return decoded;
+      // The account exists and is something else (a DBC pool): a second read returns the same bytes.
+      if (bin.length >= 8 && !isSolanaCampaignAccount(bin)) return null;
     }
   } catch (e) {
     console.warn("[solanaCampaignRead] API read failed", addr, e);
