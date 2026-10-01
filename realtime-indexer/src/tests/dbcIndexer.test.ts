@@ -16,10 +16,13 @@ const {
   dbcMarketStatsInputs,
   decodeEvtSwap2Data,
   dbcPriceFromSqrt,
+  decodeEvtSwap2FromTransaction,
   freshSolUsdMicros,
+  getTransaction,
   indexDbcPool,
   loadDbcPools,
   quoteRawToSolLamports,
+  swapPayerFromTransaction,
 } = await import("../dbcIndexer.js");
 const { skipCanonicalSpotForVenue: skipSpot } = await import("../canonicalCandleMaterializer.js");
 
@@ -435,4 +438,40 @@ test("DBC market stats read the price and reserve in the quote's own decimals", 
   assert.ok(Math.abs(row.priceQuote - 1e-6) / 1e-6 < 1e-6);
   assert.equal(row.quoteReserveWhole, 2.5);
   assert.equal(row.progress, 0.25);
+});
+
+const fixture = (name: string) =>
+  JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", name), "utf8"));
+
+test("a version 1 swap transaction decodes like a legacy one (mainnet MWZDNB, 2026-10-01)", () => {
+  for (const [name, payer] of [
+    ["dbc-swap-v1.json", "HccagANGGyAVEVEsuofLANy5cZQLxTyLMcusfqkJknUe"],
+    ["dbc-swap-legacy.json", "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H"],
+  ] as const) {
+    const tx = fixture(name).result;
+    const events = decodeEvtSwap2FromTransaction(tx);
+    assert.equal(events.length, 1, name);
+    assert.equal(events[0].pool, "4xPQpjFNXj7Q3ny7JbpCQsiHwkcko6ghLA5cnLTSaqFC");
+    assert.equal(swapPayerFromTransaction(tx), payer);
+  }
+});
+
+test("getTransaction asks for version 1 and falls back to 0 only when the RPC refuses the parameter", async () => {
+  const asked: number[] = [];
+  const ok = (async (_m: string, params: any[]) => { asked.push(params[1].maxSupportedTransactionVersion); return { slot: 1 }; }) as any;
+  assert.deepEqual(await getTransaction("sig", ok), { slot: 1 });
+  assert.deepEqual(asked, [1]);
+
+  const seen: number[] = [];
+  const old = (async (_m: string, params: any[]) => {
+    const v = params[1].maxSupportedTransactionVersion;
+    seen.push(v);
+    if (v === 1) throw new Error("Invalid param: maxSupportedTransactionVersion");
+    return { slot: 2 };
+  }) as any;
+  assert.deepEqual(await getTransaction("sig", old), { slot: 2 });
+  assert.deepEqual(seen, [1, 0]);
+
+  const down = (async () => { throw new Error("Solana RPC getTransaction HTTP 503"); }) as any;
+  await assert.rejects(getTransaction("sig", down), /HTTP 503/);
 });

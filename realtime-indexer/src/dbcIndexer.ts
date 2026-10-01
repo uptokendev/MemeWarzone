@@ -552,11 +552,22 @@ async function getSignatures(address: string, fromSlot: number, currentState: nu
   return signatures;
 }
 
-async function getTransaction(signature: string) {
-  return rpc<any>("getTransaction", [
+// Version 1 transactions exist on mainnet (2026-10-01: a third-party swap on our first DBC coin).
+// Asked with maxSupportedTransactionVersion 0 the RPC refuses them, the pool cursor stops below
+// that slot and every later trade on the coin is never indexed. Ask for 1; an RPC that does not
+// know version 1 is asked again with 0, which is what it served before.
+export async function getTransaction(signature: string, call: typeof rpc = rpc) {
+  const params = (version: number) => [
     signature,
-    { commitment: "confirmed", encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
-  ]);
+    { commitment: "confirmed", encoding: "jsonParsed", maxSupportedTransactionVersion: version },
+  ];
+  try {
+    return await call<any>("getTransaction", params(1));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/maxSupportedTransactionVersion|invalid param|unsupported/i.test(message)) throw error;
+    return call<any>("getTransaction", params(0));
+  }
 }
 
 let leagueFeed: ReturnType<typeof createLeagueFeedPublisher> | null = null;
