@@ -1,0 +1,116 @@
+{
+ "txs": [
+  {
+   "kind": "fund",
+   "chainId": 97,
+   "to": "0xB06E6014536D320F4500348B400836c705CC6eE1",
+   "amount": "0.012",
+   "hash": "0x1db7687999131406744dfc7230a72b70e34cfb295d13f5bae5518c8c1ff19517"
+  },
+  {
+   "kind": "fund",
+   "chainId": 97,
+   "to": "0x2df60E7c17A6005e5d9D62171EF5E609243b30e8",
+   "amount": "0.008",
+   "hash": "0x8614278725479a2aefed48434005d0a956def1dfeefdf05e51828231dc8b4cf2"
+  },
+  {
+   "kind": "fund",
+   "chainId": 46630,
+   "to": "0x0e49AD9CbAF91CFB6907983EF40db15cbE40Fe3f",
+   "amount": "0.02",
+   "hash": "0xae505b0b2f8f5be658feedd43bde3620a8bd510b471aa9cad33d72f49c2e2b3b"
+  },
+  {
+   "kind": "fund",
+   "chainId": 46630,
+   "to": "0xFbaf5933F38a446d9eb82EE3dEEAb37E7648599a",
+   "amount": "0.02",
+   "hash": "0xddcde22dcae085c5bd7c9d43de07cd3391c0599a9c2893db980af5ceb4d3f4cc"
+  },
+  {
+   "kind": "fund",
+   "chainId": 46630,
+   "to": "0x9575D51f3A2Cf1ba7427f63FCA07265CAC1C34a8",
+   "amount": "0.004",
+   "hash": "0xf04d160f2326e73d80d0ae5178e869a7374a36e629875419200f73e0ad8970ea"
+  },
+  {
+   "kind": "fund",
+   "chain": "devnet",
+   "to": "6gmFWiJvyHPvQujwR4nJ1PBeQw3pY57wF7snmEmB2caT",
+   "amount": 0.4,
+   "sig": "2XJmkshmd63fP6F4cSmcEusLHN7BEFRYPvaLjZpSgAoExB1DfV5a1cGfcv3wKgDyt7sRLo35X7ZD9XSMgtpxcgzW"
+  },
+  {
+   "kind": "fund",
+   "chain": "devnet",
+   "to": "2GSuuFyHMFaDDLzv1C1rrnwoWKQY34xxN81kE6ciCXLR",
+   "amount": 0.3,
+   "sig": "2yZtJhrZwzwXpLsTT89x2KzArkezpTCSVQPzGGby1PvUiBQZokF1b2efWJKw6FrFtnhLZWqZCwJVcUiZRZ2nNAvH"
+  },
+  {
+   "kind": "fund",
+   "chainId": 46630,
+   "to": "0x3410Eaa7c721EC44756981e2e6174201Bc14ef04",
+   "amount": "0.003",
+   "hash": "0xf5dc47e8a92fa42fb57b1934f779de94ddb87445b5be815542d32eb1e8e5ceab"
+  },
+  {
+   "kind": "sweep",
+   "chainId": 97,
+   "from": "0xB06E6014536D320F4500348B400836c705CC6eE1",
+   "amount": "0.0113893992",
+   "hash": "0xb74abbe6957e1543c1bde7611dc5869dafb9eb09ee2b91adeb4893c4628e3467"
+  },
+  {
+   "kind": "sweep",
+   "chainId": 97,
+   "from": "0x2df60E7c17A6005e5d9D62171EF5E609243b30e8",
+   "amount": "0.007685277255869835",
+   "hash": "0x7089bf9bc27f22d067a6dd5eb35b38f3745c5c0260e4ebb475476cb006e1d7e5"
+  },
+  {
+   "kind": "sweep",
+   "chainId": 46630,
+   "from": "0x0e49AD9CbAF91CFB6907983EF40db15cbE40Fe3f",
+   "amount": "0.019847388462223302",
+   "hash": "0x4e67c647f61014f84d280b6ce1873ebe986f6bc446967f061129640ec707bfbe"
+  },
+  {
+   "kind": "sweep",
+   "chainId": 46630,
+   "from": "0xFbaf5933F38a446d9eb82EE3dEEAb37E7648599a",
+   "amount": "0.018138271294135414",
+   "hash": "0x40e22db4e9c3943edba5069b8bee244974896df0e3c536d1d775a2881d48d811"
+  },
+  {
+   "kind": "sweep",
+   "chainId": 46630,
+   "from": "0x9575D51f3A2Cf1ba7427f63FCA07265CAC1C34a8",
+   "amount": "0.00393848204",
+   "hash": "0x125a6eb6eb32c35a7e7623ad34091bd0dadb5da06cfe8ca65170d23711cbb25b"
+  },
+  {
+   "kind": "sweep",
+   "chainId": 46630,
+   "from": "0x3410Eaa7c721EC44756981e2e6174201Bc14ef04",
+   "amount": "0.00257816908",
+   "hash": "0x345d8d07f9d38bed2f79fef77b9913b0e15f3604923bb8b43711d2fdbb6a9e75"
+  },
+  {
+   "kind": "sweep",
+   "chain": "devnet",
+   "from": "6gmFWiJvyHPvQujwR4nJ1PBeQw3pY57wF7snmEmB2caT",
+   "lamports": 354262560,
+   "sig": "5Xo7GhNvhUcEnDTYZKFwgNMHij4mZChCozkFSSUmTqYQE2GPTzt7BNMeUHJejEMzjac38UTcajJ2GC5UrPNd6Ss3"
+  },
+  {
+   "kind": "sweep",
+   "chain": "devnet",
+   "from": "2GSuuFyHMFaDDLzv1C1rrnwoWKQY34xxN81kE6ciCXLR",
+   "lamports": 289346286,
+   "sig": "2asKLUuURL15wTrxKKU999T8wKPrB1a6FyAkVCmyTPzPp3f6EePBBBpyK88sy7dFkecsGgMW1A8BbS5QXoQksC1Z"
+  }
+ ]
+}
