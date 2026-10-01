@@ -87,6 +87,12 @@ function mapPost(row) {
     tokenName: row.token_name || null,
     tokenTicker: row.token_ticker || null,
     tokenLogoUri: row.token_logo_uri || null,
+    parentId: row.parent_id == null ? null : Number(row.parent_id),
+    fireCount: Number(row.fire_count || 0),
+    replyCount: Number(row.reply_count || 0),
+    repostCount: Number(row.repost_count || 0),
+    firedByMe: Boolean(row.fired_by_me),
+    repostedByMe: Boolean(row.reposted_by_me),
   };
 }
 
@@ -190,12 +196,19 @@ export async function loadTradeEvents(wallets, { limit = 50 } = {}) {
   return rows.map(mapTrade);
 }
 
-export async function loadPostEvents(wallets, { limit = 50 } = {}) {
+export async function loadPostEvents(wallets, { limit = 50, all = false } = {}) {
   const list = (wallets || []).map((w) => String(w || "").trim()).filter(Boolean);
-  if (!list.length) return [];
-  try {
-    const { rows } = await pool.query(
-      `select
+  if (!all && !list.length) return [];
+  const params = all ? [limit] : [list, list.map((w) => w.toLowerCase()), limit];
+  const authorFilter = all
+    ? ""
+    : `and (
+        p.author_address = any($1::text[])
+        or lower(p.author_address) = any($2::text[])
+      )`;
+  const limitPlaceholder = all ? "$1" : "$3";
+  const sql = (topLevelOnly) => `
+      select
          p.id,
          p.author_address,
          p.body,
@@ -210,8 +223,16 @@ export async function loadPostEvents(wallets, { limit = 50 } = {}) {
          c.symbol as token_ticker,
          c.logo_uri as token_logo_uri
        from public.social_posts p
-       left join public.user_profiles up
-         on lower(up.address) = lower(p.author_address)
+       left join lateral (
+         select display_name, avatar_url
+           from public.user_profiles up
+          where lower(up.address) = lower(p.author_address)
+          order by
+            (up.display_name is not null and length(btrim(up.display_name)) > 0) desc,
+            (up.avatar_url is not null and length(btrim(up.avatar_url)) > 0) desc,
+            up.updated_at desc nulls last
+          limit 1
+       ) up on true
        left join public.campaigns c
          on p.mentioned_chain_id is not null
         and c.chain_id = p.mentioned_chain_id
@@ -222,17 +243,19 @@ export async function loadPostEvents(wallets, { limit = 50 } = {}) {
           or lower(c.token_address) = lower(coalesce(p.mentioned_token, ''))
         )
       where p.status = 0
-        and (
-          p.author_address = any($1::text[])
-          or lower(p.author_address) = any($2::text[])
-        )
+        ${topLevelOnly ? "and p.parent_id is null" : ""}
+        ${authorFilter}
       order by p.created_at desc, p.id desc
-      limit $3`,
-      [list, list.map((w) => w.toLowerCase()), limit],
-    );
+      limit ${limitPlaceholder}`;
+  try {
+    const { rows } = await pool.query(sql(true), params);
     return rows.map(mapPost);
   } catch (e) {
-    if (e?.code === "42P01" || e?.code === "42703") return [];
+    if (e?.code === "42703") {
+      const { rows } = await pool.query(sql(false), params);
+      return rows.map(mapPost);
+    }
+    if (e?.code === "42P01") return [];
     throw e;
   }
 }

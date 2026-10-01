@@ -3,27 +3,46 @@ import { pool } from "../../server/db.js";
 import { badMethod, getQuery, json, readJson } from "../../server/http.js";
 import { verifySolanaSignature } from "../lib/walletActionAuth.js";
 import {
+  FEED_RANK_CANDIDATES,
+  FIRE_RATE_LIMIT,
   POST_MAX_CHARS,
   POST_RATE_LIMIT,
   POST_RATE_WINDOW_MINUTES,
+  REPLY_RATE_LIMIT,
+  REPOST_RATE_LIMIT,
   buildPostCreateMessage,
   buildPostDeleteMessage,
   canonPostWallet,
 } from "../lib/postsCanon.js";
-import {
-  loadCoinDeployedEvents,
-  loadDraftCreatedEvents,
-  loadFollowingAddresses,
-  loadPostEvents,
-  loadPublicFeedSystemEvents,
-  mergeTimelineItems,
-} from "../lib/socialTimeline.js";
+import { AUTHOR_PROFILE_LATERAL, REPOSTER_PROFILE_LATERAL } from "../lib/feedProfileJoin.js";
+import { rankFeedPosts } from "../lib/feedRanking.js";
+import { createFeedSessionAuth } from "../lib/feedSessionAuth.js";
+import { loadFollowingAddresses, loadPostEvents } from "../lib/socialTimeline.js";
 import { isSolanaAddress, isSolanaChain } from "../../server/http.js";
+
+const feedSession = createFeedSessionAuth({ pool });
 
 function clampInt(value, min, max, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, Math.trunc(n)));
+}
+
+function missingTable(e) {
+  return e?.code === "42P01" || e?.code === "42703";
+}
+
+function requestPath(req) {
+  return String(req.path || req.url || "").split("?")[0];
+}
+
+function postIdFromReq(req, body = {}) {
+  const fromParams = Number(req.params?.id);
+  if (Number.isFinite(fromParams) && fromParams > 0) return fromParams;
+  const fromBody = Number(body.postId ?? body.id);
+  if (Number.isFinite(fromBody) && fromBody > 0) return fromBody;
+  const m = String(req.url || "").match(/\/posts\/(\d+)/);
+  return m ? Number(m[1]) : 0;
 }
 
 async function consumeNonce(chainId, address, nonce) {
@@ -47,10 +66,6 @@ async function consumeNonce(chainId, address, nonce) {
      WHERE chain_id = $1 AND address = $2`,
     [chainId, address],
   );
-}
-
-function missingTable(e) {
-  return e?.code === "42P01" || e?.code === "42703";
 }
 
 async function resolveMention(body, mentioned) {
@@ -99,28 +114,41 @@ async function resolveMention(body, mentioned) {
   }
 }
 
-async function loadRecentPosts({ limit, author, authors }) {
-  if (author) return loadPostEvents([author], { limit });
-  if (Array.isArray(authors) && authors.length) return loadPostEvents(authors, { limit });
-  try {
-    const { rows } = await pool.query(
-      `select
-         p.id,
-         p.author_address,
-         p.body,
-         p.media_url,
-         p.mentioned_chain_id,
-         p.mentioned_campaign,
-         p.mentioned_token,
-         p.created_at,
-         up.display_name as author_display_name,
-         up.avatar_url as author_avatar_url,
-         c.name as token_name,
-         c.symbol as token_ticker,
-         c.logo_uri as token_logo_uri
+function mapPostRow(row, extras = {}) {
+  return {
+    type: "post",
+    id: extras.id || `post:${row.id}`,
+    postId: Number(row.id),
+    createdAt: row.sort_at
+      ? new Date(row.sort_at).toISOString()
+      : row.created_at
+        ? new Date(row.created_at).toISOString()
+        : null,
+    wallet: row.author_address,
+    body: row.body,
+    mediaUrl: row.media_url || null,
+    mentionedChainId: row.mentioned_chain_id == null ? null : Number(row.mentioned_chain_id),
+    mentionedCampaign: row.mentioned_campaign || null,
+    mentionedToken: row.mentioned_token || null,
+    authorDisplayName: row.author_display_name || null,
+    authorAvatarUrl: row.author_avatar_url || null,
+    tokenName: row.token_name || null,
+    tokenTicker: row.token_ticker || null,
+    tokenLogoUri: row.token_logo_uri || null,
+    parentId: row.parent_id == null ? null : Number(row.parent_id),
+    fireCount: Number(row.fire_count || 0),
+    replyCount: Number(row.reply_count || 0),
+    repostCount: Number(row.repost_count || 0),
+    firedByMe: Boolean(row.fired_by_me),
+    repostedByMe: Boolean(row.reposted_by_me),
+    repostedByWallet: extras.repostedByWallet || row.reposted_by || null,
+    repostedByDisplayName: extras.repostedByDisplayName || row.reposted_by_display_name || null,
+  };
+}
+
+const POST_FROM = `
        from public.social_posts p
-       left join public.user_profiles up
-         on lower(up.address) = lower(p.author_address)
+       ${AUTHOR_PROFILE_LATERAL}
        left join public.campaigns c
          on p.mentioned_chain_id is not null
         and c.chain_id = p.mentioned_chain_id
@@ -130,30 +158,133 @@ async function loadRecentPosts({ limit, author, authors }) {
           or lower(c.campaign_address) = lower(coalesce(p.mentioned_campaign, ''))
           or lower(c.token_address) = lower(coalesce(p.mentioned_token, ''))
         )
-      where p.status = 0
-      order by p.created_at desc, p.id desc
-      limit $1`,
-      [limit],
-    );
-    return rows.map((row) => ({
-      type: "post",
-      id: `post:${row.id}`,
-      postId: Number(row.id),
-      createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
-      wallet: row.author_address,
-      body: row.body,
-      mediaUrl: row.media_url || null,
-      mentionedChainId: row.mentioned_chain_id == null ? null : Number(row.mentioned_chain_id),
-      mentionedCampaign: row.mentioned_campaign || null,
-      mentionedToken: row.mentioned_token || null,
-      authorDisplayName: row.author_display_name || null,
-      authorAvatarUrl: row.author_avatar_url || null,
-      tokenName: row.token_name || null,
-      tokenTicker: row.token_ticker || null,
-      tokenLogoUri: row.token_logo_uri || null,
+`;
+
+function postSelect(viewerPlaceholder) {
+  const viewer = viewerPlaceholder || "null";
+  return `
+select
+  p.id,
+  p.author_address,
+  p.body,
+  p.media_url,
+  p.mentioned_chain_id,
+  p.mentioned_campaign,
+  p.mentioned_token,
+  p.created_at,
+  p.parent_id,
+  up.display_name as author_display_name,
+  up.avatar_url as author_avatar_url,
+  c.name as token_name,
+  c.symbol as token_ticker,
+  c.logo_uri as token_logo_uri,
+  coalesce((select count(*)::int from public.social_post_fires f where f.post_id = p.id), 0) as fire_count,
+  coalesce((select count(*)::int from public.social_posts r where r.parent_id = p.id and r.status = 0), 0) as reply_count,
+  coalesce((select count(*)::int from public.social_post_reposts rp where rp.post_id = p.id), 0) as repost_count,
+  exists(
+    select 1 from public.social_post_fires f
+     where f.post_id = p.id
+       and ${viewer}::text is not null
+       and (f.author_address = ${viewer} or lower(f.author_address) = lower(${viewer}))
+  ) as fired_by_me,
+  exists(
+    select 1 from public.social_post_reposts rp
+     where rp.post_id = p.id
+       and ${viewer}::text is not null
+       and (rp.author_address = ${viewer} or lower(rp.author_address) = lower(${viewer}))
+  ) as reposted_by_me
+`;
+}
+
+async function queryPosts({ limit, authors, viewer, parentId, ranked }) {
+  const params = [];
+  const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
+  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0`;
+  if (parentId) {
+    sql += ` and p.parent_id = $${params.push(parentId)}`;
+  } else {
+    sql += " and p.parent_id is null";
+  }
+  if (Array.isArray(authors) && authors.length) {
+    sql += ` and (p.author_address = any($${params.push(authors)}::text[]) or lower(p.author_address) = any($${params.push(authors.map((w) => w.toLowerCase()))}::text[]))`;
+  }
+  sql += " order by p.created_at desc, p.id desc";
+  sql += ` limit $${params.push(limit)}`;
+  const { rows } = await pool.query(sql, params);
+  const items = rows.map((row) => mapPostRow(row));
+  if (ranked) return rankFeedPosts(items, { following: ranked.following || [], limit: ranked.limit || items.length });
+  return items;
+}
+
+async function queryFollowing(viewer, following, limit) {
+  const params = [viewer, following, following.map((w) => w.toLowerCase()), limit];
+  const sql = `
+with own_posts as (
+  ${postSelect("$1")}
+  ${POST_FROM}
+  where p.status = 0
+    and p.parent_id is null
+    and (p.author_address = any($2::text[]) or lower(p.author_address) = any($3::text[]))
+),
+reposted as (
+  ${postSelect("$1")}
+    , rp.author_address as reposted_by
+    , rup.display_name as reposted_by_display_name
+    , rp.created_at as sort_at
+  ${POST_FROM}
+  join public.social_post_reposts rp on rp.post_id = p.id
+  ${REPOSTER_PROFILE_LATERAL}
+  where p.status = 0
+    and p.parent_id is null
+    and (rp.author_address = any($2::text[]) or lower(rp.author_address) = any($3::text[]))
+)
+select * from (
+  select id, author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token,
+         created_at, parent_id, author_display_name, author_avatar_url, token_name, token_ticker, token_logo_uri,
+         fire_count, reply_count, repost_count, fired_by_me, reposted_by_me,
+         null::text as reposted_by, null::text as reposted_by_display_name, created_at as sort_at
+    from own_posts
+  union all
+  select id, author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token,
+         created_at, parent_id, author_display_name, author_avatar_url, token_name, token_ticker, token_logo_uri,
+         fire_count, reply_count, repost_count, fired_by_me, reposted_by_me,
+         reposted_by, reposted_by_display_name, sort_at
+    from reposted
+) feed
+order by sort_at desc, id desc
+limit $4
+`;
+  const { rows } = await pool.query(sql, params);
+  const seen = new Set();
+  const items = [];
+  for (const row of rows) {
+    const key = String(row.id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(mapPostRow(row, {
+      id: row.reposted_by ? `repost:${row.reposted_by}:${row.id}` : `post:${row.id}`,
+      repostedByWallet: row.reposted_by || null,
+      repostedByDisplayName: row.reposted_by_display_name || null,
     }));
+  }
+  return items;
+}
+
+async function loadRecentPosts({ limit, author, authors, viewer, ranked }) {
+  if (author) return loadPostEvents([author], { limit, viewer });
+  try {
+    return await queryPosts({
+      limit: ranked ? Math.max(limit, FEED_RANK_CANDIDATES) : limit,
+      authors,
+      viewer,
+      ranked: ranked ? { following: ranked.following || [], limit } : null,
+    });
   } catch (e) {
-    if (missingTable(e)) return [];
+    if (missingTable(e)) {
+      if (author) return loadPostEvents([author], { limit });
+      if (Array.isArray(authors) && authors.length) return loadPostEvents(authors, { limit });
+      return loadPostEvents([], { limit, all: true });
+    }
     throw e;
   }
 }
@@ -166,7 +297,7 @@ async function handleGet(req, res) {
   const viewer = String(q.viewer || q.wallet || "").trim();
 
   if (author && !tab) {
-    const items = await loadRecentPosts({ limit, author });
+    const items = await loadRecentPosts({ limit, author, viewer });
     return json(res, 200, { items, tab: "author", author });
   }
 
@@ -174,25 +305,39 @@ async function handleGet(req, res) {
     if (!viewer) return json(res, 200, { items: [], tab: "following", warning: "Connect a wallet to load Following." });
     const following = await loadFollowingAddresses(viewer);
     if (!following.length) return json(res, 200, { items: [], tab: "following" });
-    const [posts, drafts, deploys] = await Promise.all([
-      loadRecentPosts({ limit, authors: following }),
-      loadDraftCreatedEvents(following, { limit }),
-      loadCoinDeployedEvents(following, { limit }),
-    ]);
-    return json(res, 200, {
-      items: mergeTimelineItems([posts, drafts, deploys], limit),
-      tab: "following",
-    });
+    try {
+      const items = await queryFollowing(viewer, following, limit);
+      return json(res, 200, { items, tab: "following" });
+    } catch (e) {
+      if (!missingTable(e)) throw e;
+      const items = await loadRecentPosts({ limit, authors: following, viewer });
+      return json(res, 200, { items, tab: "following" });
+    }
   }
 
-  const [posts, system] = await Promise.all([
-    loadRecentPosts({ limit }),
-    loadPublicFeedSystemEvents({ limit }),
-  ]);
-  return json(res, 200, {
-    items: mergeTimelineItems([posts, system.drafts, system.deploys], limit),
-    tab: "for-you",
+  const following = viewer ? await loadFollowingAddresses(viewer) : [];
+  const items = await loadRecentPosts({
+    limit,
+    viewer,
+    ranked: { following },
   });
+  return json(res, 200, { items, tab: "for-you" });
+}
+
+async function handleGetReplies(req, res) {
+  const postId = postIdFromReq(req);
+  if (!Number.isFinite(postId) || postId <= 0) return json(res, 400, { error: "Invalid post id" });
+  const q = getQuery(req);
+  const viewer = String(q.viewer || q.wallet || "").trim();
+  const limit = clampInt(q.limit, 1, 100, 50);
+  try {
+    const items = await queryPosts({ limit, viewer, parentId: postId });
+    items.sort((a, b) => Date.parse(String(a.createdAt || "")) - Date.parse(String(b.createdAt || "")));
+    return json(res, 200, { items, postId });
+  } catch (e) {
+    if (missingTable(e)) return json(res, 200, { items: [], postId });
+    throw e;
+  }
 }
 
 async function handleCreate(req, res) {
@@ -222,25 +367,50 @@ async function handleCreate(req, res) {
     if (recovered !== address) return json(res, 401, { error: "Invalid signature" });
   }
 
-  const recent = await pool.query(
-    `select count(*)::int as n
-       from public.social_posts
-      where (author_address = $1 or lower(author_address) = lower($1))
-        and created_at > now() - ($2::int * interval '1 minute')`,
-    [address, POST_RATE_WINDOW_MINUTES],
-  );
+  let recent;
+  try {
+    recent = await pool.query(
+      `select count(*)::int as n
+         from public.social_posts
+        where (author_address = $1 or lower(author_address) = lower($1))
+          and parent_id is null
+          and created_at > now() - ($2::int * interval '1 minute')`,
+      [address, POST_RATE_WINDOW_MINUTES],
+    );
+  } catch (e) {
+    if (!missingTable(e)) throw e;
+    recent = await pool.query(
+      `select count(*)::int as n
+         from public.social_posts
+        where (author_address = $1 or lower(author_address) = lower($1))
+          and created_at > now() - ($2::int * interval '1 minute')`,
+      [address, POST_RATE_WINDOW_MINUTES],
+    );
+  }
   if (Number(recent.rows[0]?.n || 0) >= POST_RATE_LIMIT) {
     return json(res, 429, { error: "Too many posts. Wait a few minutes." });
   }
 
   const mention = await resolveMention(trimmed, b.mentioned || b);
-  const { rows } = await pool.query(
-    `insert into public.social_posts (
-       author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token, status
-     ) values ($1, $2, $3, $4, $5, $6, 0)
-     returning id, created_at`,
-    [address, trimmed, null, mention.chainId, mention.campaign, mention.token],
-  );
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `insert into public.social_posts (
+         author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token, status, parent_id
+       ) values ($1, $2, $3, $4, $5, $6, 0, null)
+       returning id, created_at`,
+      [address, trimmed, null, mention.chainId, mention.campaign, mention.token],
+    ));
+  } catch (e) {
+    if (!missingTable(e)) throw e;
+    ({ rows } = await pool.query(
+      `insert into public.social_posts (
+         author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token, status
+       ) values ($1, $2, $3, $4, $5, $6, 0)
+       returning id, created_at`,
+      [address, trimmed, null, mention.chainId, mention.campaign, mention.token],
+    ));
+  }
 
   return json(res, 200, {
     id: rows[0]?.id ?? null,
@@ -254,7 +424,7 @@ async function handleDelete(req, res) {
   const address = canonPostWallet(chainId, b.address);
   const nonce = String(b.nonce ?? "");
   const signature = String(b.signature ?? "");
-  const postId = Number(req.params?.id ?? b.postId ?? b.id);
+  const postId = postIdFromReq(req, b);
 
   if (!Number.isFinite(chainId)) return json(res, 400, { error: "Invalid chainId" });
   if (!address) return json(res, 400, { error: "Invalid address" });
@@ -284,12 +454,155 @@ async function handleDelete(req, res) {
   return json(res, 200, { ok: true, id: postId });
 }
 
+async function requireLivePost(postId) {
+  const { rows } = await pool.query(
+    `select id, status, parent_id from public.social_posts where id = $1`,
+    [postId],
+  );
+  const row = rows[0];
+  if (!row || Number(row.status) !== 0) return null;
+  return row;
+}
+
+async function countRecent(table, address) {
+  const { rows } = await pool.query(
+    `select count(*)::int as n
+       from ${table}
+      where (author_address = $1 or lower(author_address) = lower($1))
+        and created_at > now() - ($2::int * interval '1 minute')`,
+    [address, POST_RATE_WINDOW_MINUTES],
+  );
+  return Number(rows[0]?.n || 0);
+}
+
+async function handleFire(req, res) {
+  const session = await feedSession.requireSession(req, res);
+  if (!session) return;
+  const postId = postIdFromReq(req);
+  if (!Number.isFinite(postId) || postId <= 0) return json(res, 400, { error: "Invalid post id" });
+  const live = await requireLivePost(postId);
+  if (!live) return json(res, 404, { error: "Post not found" });
+
+  const address = session.walletAddress;
+  const existing = await pool.query(
+    `select 1 from public.social_post_fires
+      where post_id = $1 and (author_address = $2 or lower(author_address) = lower($2))
+      limit 1`,
+    [postId, address],
+  );
+  if (existing.rows.length) {
+    await pool.query(
+      `delete from public.social_post_fires
+        where post_id = $1 and (author_address = $2 or lower(author_address) = lower($2))`,
+      [postId, address],
+    );
+    const { rows } = await pool.query(`select count(*)::int as n from public.social_post_fires where post_id = $1`, [postId]);
+    return json(res, 200, { ok: true, on: false, fireCount: Number(rows[0]?.n || 0) });
+  }
+
+  if ((await countRecent("public.social_post_fires", address)) >= FIRE_RATE_LIMIT) {
+    return json(res, 429, { error: "Too many fires. Wait a few minutes." });
+  }
+  await pool.query(
+    `insert into public.social_post_fires (post_id, author_address) values ($1, $2)
+     on conflict do nothing`,
+    [postId, address],
+  );
+  const { rows } = await pool.query(`select count(*)::int as n from public.social_post_fires where post_id = $1`, [postId]);
+  return json(res, 200, { ok: true, on: true, fireCount: Number(rows[0]?.n || 0) });
+}
+
+async function handleRepost(req, res) {
+  const session = await feedSession.requireSession(req, res);
+  if (!session) return;
+  const postId = postIdFromReq(req);
+  if (!Number.isFinite(postId) || postId <= 0) return json(res, 400, { error: "Invalid post id" });
+  const live = await requireLivePost(postId);
+  if (!live || live.parent_id) return json(res, 404, { error: "Post not found" });
+
+  const address = session.walletAddress;
+  const existing = await pool.query(
+    `select 1 from public.social_post_reposts
+      where post_id = $1 and (author_address = $2 or lower(author_address) = lower($2))
+      limit 1`,
+    [postId, address],
+  );
+  if (existing.rows.length) {
+    await pool.query(
+      `delete from public.social_post_reposts
+        where post_id = $1 and (author_address = $2 or lower(author_address) = lower($2))`,
+      [postId, address],
+    );
+    const { rows } = await pool.query(`select count(*)::int as n from public.social_post_reposts where post_id = $1`, [postId]);
+    return json(res, 200, { ok: true, on: false, repostCount: Number(rows[0]?.n || 0) });
+  }
+
+  if ((await countRecent("public.social_post_reposts", address)) >= REPOST_RATE_LIMIT) {
+    return json(res, 429, { error: "Too many reposts. Wait a few minutes." });
+  }
+  await pool.query(
+    `insert into public.social_post_reposts (post_id, author_address) values ($1, $2)
+     on conflict do nothing`,
+    [postId, address],
+  );
+  const { rows } = await pool.query(`select count(*)::int as n from public.social_post_reposts where post_id = $1`, [postId]);
+  return json(res, 200, { ok: true, on: true, repostCount: Number(rows[0]?.n || 0) });
+}
+
+async function handleReply(req, res) {
+  const session = await feedSession.requireSession(req, res);
+  if (!session) return;
+  const b = req.body && typeof req.body === "object" && Object.keys(req.body).length ? req.body : await readJson(req);
+  const postId = postIdFromReq(req, b);
+  if (!Number.isFinite(postId) || postId <= 0) return json(res, 400, { error: "Invalid post id" });
+  const live = await requireLivePost(postId);
+  if (!live || live.parent_id) return json(res, 404, { error: "Post not found" });
+
+  const trimmed = String(b.body ?? "").trim();
+  if (!trimmed) return json(res, 400, { error: "Reply is empty" });
+  if (trimmed.length > POST_MAX_CHARS) return json(res, 400, { error: `Reply too long (max ${POST_MAX_CHARS})` });
+
+  const address = session.walletAddress;
+  const recent = await pool.query(
+    `select count(*)::int as n
+       from public.social_posts
+      where (author_address = $1 or lower(author_address) = lower($1))
+        and parent_id is not null
+        and created_at > now() - ($2::int * interval '1 minute')`,
+    [address, POST_RATE_WINDOW_MINUTES],
+  );
+  if (Number(recent.rows[0]?.n || 0) >= REPLY_RATE_LIMIT) {
+    return json(res, 429, { error: "Too many replies. Wait a few minutes." });
+  }
+
+  const mention = await resolveMention(trimmed, b.mentioned || b);
+  const { rows } = await pool.query(
+    `insert into public.social_posts (
+       author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token, status, parent_id
+     ) values ($1, $2, $3, $4, $5, $6, 0, $7)
+     returning id, created_at`,
+    [address, trimmed, null, mention.chainId, mention.campaign, mention.token, postId],
+  );
+  const { rows: counts } = await pool.query(
+    `select count(*)::int as n from public.social_posts where parent_id = $1 and status = 0`,
+    [postId],
+  );
+  return json(res, 200, {
+    id: rows[0]?.id ?? null,
+    createdAt: rows[0]?.created_at ? new Date(rows[0].created_at).toISOString() : null,
+    replyCount: Number(counts[0]?.n || 0),
+  });
+}
+
 export default async function handler(req, res) {
   try {
+    const path = requestPath(req);
+    if (req.method === "GET" && /\/posts\/\d+\/replies\/?$/i.test(path)) return await handleGetReplies(req, res);
     if (req.method === "GET") return await handleGet(req, res);
-    if (req.method === "POST" && (req.params?.id || /\/posts\/\d+\/delete/i.test(String(req.url || "")))) {
-      return await handleDelete(req, res);
-    }
+    if (req.method === "POST" && /\/posts\/\d+\/fire\/?$/i.test(path)) return await handleFire(req, res);
+    if (req.method === "POST" && /\/posts\/\d+\/repost\/?$/i.test(path)) return await handleRepost(req, res);
+    if (req.method === "POST" && /\/posts\/\d+\/replies\/?$/i.test(path)) return await handleReply(req, res);
+    if (req.method === "POST" && /\/posts\/\d+\/delete/i.test(path)) return await handleDelete(req, res);
     if (req.method === "POST") return await handleCreate(req, res);
     return badMethod(res);
   } catch (e) {

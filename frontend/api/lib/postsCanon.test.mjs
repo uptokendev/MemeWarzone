@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildPostCreateMessage, buildPostDeleteMessage, canonPostWallet } from "./postsCanon.js";
+import { POST_MAX_CHARS, buildPostCreateMessage, buildPostDeleteMessage, canonPostWallet } from "./postsCanon.js";
+
+test("posts allow 1000 characters", () => {
+  assert.equal(POST_MAX_CHARS, 1000);
+});
 
 const SOLANA_CHAIN = 101;
 const EVM_CHAIN = 97;
