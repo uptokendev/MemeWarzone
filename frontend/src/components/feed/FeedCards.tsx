@@ -1,7 +1,20 @@
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { MessageCircle, Repeat2, Rocket } from "lucide-react";
+import { toast } from "sonner";
 import { isSolanaAddress } from "@/lib/address";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
-import type { FeedItem } from "@/lib/feedApi";
+import {
+  FEED_MAX_CHARS,
+  FEED_PREVIEW_CHARS,
+  createFeedReply,
+  fetchPostReplies,
+  toggleFeedFire,
+  toggleFeedRepost,
+  type FeedItem,
+  type FeedSuggestion,
+} from "@/lib/feedApi";
+import { useFeedSession } from "@/hooks/useFeedSession";
 
 function shorten(addr?: string | null) {
   if (!addr) return "";
@@ -37,14 +50,191 @@ function tokenHref(item: FeedItem) {
   });
 }
 
-export function FeedPostCard({ item }: { item: FeedItem }) {
+function FeedBody({ body }: { body?: string | null }) {
+  const [open, setOpen] = useState(false);
+  const text = String(body || "");
+  const collapsed = text.length > FEED_PREVIEW_CHARS;
+  const shown = open || !collapsed ? text : `${text.slice(0, FEED_PREVIEW_CHARS).trimEnd()}…`;
+  return (
+    <>
+      <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">{shown}</p>
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="mt-1 text-xs text-accent hover:underline"
+        >
+          {open ? "Show less" : "Read more"}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+function countLabel(n?: number) {
+  const value = Number(n || 0);
+  return value > 0 ? String(value) : "";
+}
+
+function FeedPostActions({
+  item,
+  onChanged,
+}: {
+  item: FeedItem;
+  onChanged?: () => void;
+}) {
+  const { account, withSession, busy } = useFeedSession();
+  const [fireCount, setFireCount] = useState(Number(item.fireCount || 0));
+  const [replyCount, setReplyCount] = useState(Number(item.replyCount || 0));
+  const [repostCount, setRepostCount] = useState(Number(item.repostCount || 0));
+  const [fired, setFired] = useState(Boolean(item.firedByMe));
+  const [reposted, setReposted] = useState(Boolean(item.repostedByMe));
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [replies, setReplies] = useState<FeedItem[] | null>(null);
+  const [replyBody, setReplyBody] = useState("");
+  const [working, setWorking] = useState(false);
+  const postId = Number(item.postId || 0);
+
+  const loadReplies = async () => {
+    if (!postId) return;
+    const next = await fetchPostReplies(postId, account);
+    setReplies(next);
+  };
+
+  const run = async (fn: () => Promise<void>) => {
+    if (!postId || working || busy) return;
+    setWorking(true);
+    try {
+      await fn();
+    } catch (err: unknown) {
+      toast.error(String((err as Error)?.message || "Action failed"));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-center gap-5 text-muted-foreground">
+        <button
+          type="button"
+          disabled={working || busy}
+          onClick={() =>
+            void run(async () => {
+              setReplyOpen((open) => !open);
+              if (replies == null) await loadReplies();
+            })
+          }
+          className="inline-flex items-center gap-1.5 text-xs hover:text-accent"
+        >
+          <MessageCircle className="h-4 w-4" />
+          {countLabel(replyCount)}
+        </button>
+        <button
+          type="button"
+          disabled={working || busy}
+          onClick={() =>
+            void run(async () => {
+              const result = await withSession((token) => toggleFeedRepost(postId, token));
+              setReposted(result.on);
+              setRepostCount(result.repostCount);
+              onChanged?.();
+            })
+          }
+          className={`inline-flex items-center gap-1.5 text-xs hover:text-emerald-400 ${reposted ? "text-emerald-400" : ""}`}
+        >
+          <Repeat2 className="h-4 w-4" />
+          {countLabel(repostCount)}
+        </button>
+        <button
+          type="button"
+          disabled={working || busy}
+          onClick={() =>
+            void run(async () => {
+              const result = await withSession((token) => toggleFeedFire(postId, token));
+              setFired(result.on);
+              setFireCount(result.fireCount);
+            })
+          }
+          className={`inline-flex items-center gap-1.5 text-xs hover:text-orange-400 ${fired ? "text-orange-400" : ""}`}
+        >
+          <Rocket className="h-4 w-4" />
+          {countLabel(fireCount)}
+        </button>
+      </div>
+
+      {replyOpen ? (
+        <div className="mt-3 space-y-3">
+          <div className="rounded-xl border border-border/40 bg-background/40 p-3">
+            <textarea
+              value={replyBody}
+              onChange={(e) => setReplyBody(e.target.value.slice(0, FEED_MAX_CHARS))}
+              placeholder="Reply"
+              rows={2}
+              className="w-full resize-none bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            />
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                disabled={working || busy || !replyBody.trim()}
+                onClick={() =>
+                  void run(async () => {
+                    const result = await withSession((token) => createFeedReply(postId, token, replyBody.trim()));
+                    setReplyBody("");
+                    setReplyCount(result.replyCount);
+                    await loadReplies();
+                    toast.success("Replied.");
+                  })
+                }
+                className="rounded-full bg-accent px-3 py-1 font-retro text-[10px] uppercase tracking-[0.14em] text-black disabled:opacity-40"
+              >
+                Reply
+              </button>
+            </div>
+          </div>
+          {replies?.length ? (
+            <div className="space-y-2 pl-2">
+              {replies.map((reply) => (
+                <div key={reply.id} className="rounded-xl border border-border/30 bg-background/20 p-3">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Link to={profileHref(reply.wallet)} className="font-retro text-foreground hover:text-accent">
+                      {reply.authorDisplayName ? `@${reply.authorDisplayName}` : shorten(reply.wallet)}
+                    </Link>
+                    <span>{timeAgo(reply.createdAt)}</span>
+                  </div>
+                  <FeedBody body={reply.body} />
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: () => void }) {
   const ticker = item.tokenTicker || item.ticker;
   const tokenName = item.tokenName || item.name;
   const logo = item.tokenLogoUri || item.logoUri || "/placeholder.svg";
   const path = tokenHref(item);
+  const reposter = item.repostedByDisplayName
+    ? `@${item.repostedByDisplayName}`
+    : item.repostedByWallet
+      ? shorten(item.repostedByWallet)
+      : null;
 
   return (
     <article className="rounded-2xl border border-border/40 bg-background/30 p-4">
+      {reposter ? (
+        <div className="mb-2 flex items-center gap-1 text-[11px] text-muted-foreground">
+          <Repeat2 className="h-3 w-3" />
+          <Link to={profileHref(item.repostedByWallet)} className="hover:text-accent">
+            {reposter}
+          </Link>
+          <span>reposted</span>
+        </div>
+      ) : null}
       <div className="flex items-start gap-3">
         <Link to={profileHref(item.wallet)} className="shrink-0">
           <img
@@ -60,7 +250,7 @@ export function FeedPostCard({ item }: { item: FeedItem }) {
             </Link>
             <span>{timeAgo(item.createdAt)}</span>
           </div>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">{item.body}</p>
+          <FeedBody body={item.body} />
           {(item.mentionedCampaign || item.mentionedToken || ticker) && (
             <Link
               to={path && path !== "/" ? path : profileHref(item.wallet)}
@@ -73,6 +263,7 @@ export function FeedPostCard({ item }: { item: FeedItem }) {
               </div>
             </Link>
           )}
+          {item.postId ? <FeedPostActions item={item} onChanged={onChanged} /> : null}
         </div>
       </div>
     </article>
@@ -101,7 +292,7 @@ export function FeedSystemCard({ item }: { item: FeedItem }) {
       <div className="min-w-0 flex-1">
         <div className="text-xs text-muted-foreground">
           <Link to={profileHref(item.wallet)} className="text-foreground hover:text-accent" onClick={(e) => e.stopPropagation()}>
-            {shorten(item.wallet)}
+            {item.authorDisplayName ? `@${item.authorDisplayName}` : shorten(item.wallet)}
           </Link>
           {" "}{verb}{" "}
           <span className="font-retro text-foreground">{name}</span>
@@ -156,13 +347,13 @@ export function FeedTradeCard({ item }: { item: FeedItem }) {
   );
 }
 
-export function FeedItemView({ item }: { item: FeedItem }) {
-  if (item.type === "post") return <FeedPostCard item={item} />;
+export function FeedItemView({ item, onChanged }: { item: FeedItem; onChanged?: () => void }) {
+  if (item.type === "post") return <FeedPostCard item={item} onChanged={onChanged} />;
   if (item.type === "trade") return <FeedTradeCard item={item} />;
   return <FeedSystemCard item={item} />;
 }
 
-export function FeedWhoToFollow({ authors }: { authors: Array<{ wallet: string; name?: string | null; avatar?: string | null }> }) {
+export function FeedWhoToFollow({ authors }: { authors: FeedSuggestion[] }) {
   if (!authors.length) return null;
   return (
     <aside className="rounded-2xl border border-border/50 bg-card/35 p-4">

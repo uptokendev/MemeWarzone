@@ -19,6 +19,15 @@ test("social_posts migration keeps Solana case and caps body at 280", () => {
   assert.doesNotMatch(sql, /CHECK \(author_address = lower/i);
 });
 
+test("engagement migration raises body max to 1000 and adds fire/repost/session tables", () => {
+  const sql = readRepo("db/migrations/20261001_000003_social_feed_engagement.sql");
+  assert.match(sql, /char_length\(body\) <= 1000/);
+  assert.match(sql, /social_post_fires/);
+  assert.match(sql, /social_post_reposts/);
+  assert.match(sql, /social_feed_sessions/);
+  assert.match(sql, /parent_id/);
+});
+
 test("timeline omits private drafts and mixes deploy plus trades", () => {
   const src = readRepo("frontend/api/lib/socialTimeline.js");
   assert.match(src, /d\.visibility = 'public'/);
@@ -50,6 +59,17 @@ test("unsigned posts are rejected and deleted posts stay out of For you", () => 
   assert.match(src, /where p\.status = 0/);
   assert.match(src, /tab === "following"/);
   assert.match(src, /loadFollowingAddresses\(viewer\)/);
+  assert.doesNotMatch(src, /loadPublicFeedSystemEvents/);
+  assert.match(src, /rankFeedPosts/);
+  assert.match(src, /FEED_SESSION_REQUIRED|requireSession/);
+});
+
+test("For you is a centered post column and Who to follow uses the suggestions API", () => {
+  const feed = readRepo("frontend/src/pages/Feed.tsx");
+  assert.match(feed, /max-w-\[600px\]/);
+  assert.match(feed, /fetchFeedSuggestions/);
+  assert.doesNotMatch(feed, /drafts, and deploys/);
+  assert.doesNotMatch(readRepo("frontend/src/App.tsx"), /feedSession|useFeedSession/);
 });
 
 test("FeedComposer is mounted on Feed, Command Center, and Public Profile", () => {

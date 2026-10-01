@@ -1,8 +1,12 @@
 import { isAddress, isSolanaAddress, isSolanaChain } from "../../server/http.js";
 
-export const POST_MAX_CHARS = 280;
+export const POST_MAX_CHARS = 1000;
 export const POST_RATE_LIMIT = 5;
+export const REPLY_RATE_LIMIT = 8;
+export const FIRE_RATE_LIMIT = 40;
+export const REPOST_RATE_LIMIT = 20;
 export const POST_RATE_WINDOW_MINUTES = 10;
+export const FEED_RANK_CANDIDATES = 120;
 
 export function canonPostWallet(chainId, value) {
   const raw = String(value ?? "").trim();

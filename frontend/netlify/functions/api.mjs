@@ -6,6 +6,8 @@ import { createRailwayProxyMiddleware } from "../../server/railwayProxy.js";
 import activityTrades from "../../api/activity/trades.js";
 import activityTimeline from "../../api/activity/timeline.js";
 import feedPosts from "../../api/feed/posts.js";
+import feedSession from "../../api/feed/session.js";
+import feedSuggestions from "../../api/feed/suggestions.js";
 import ablyToken from "../../api/ably/token.js";
 import authNonce from "../../api/auth/nonce.js";
 import arenaBattles from "../../api/arenaBattles.js";
@@ -192,6 +194,11 @@ function wrap(fn) {
 
 app.all("/activity/trades", wrap(activityTrades));
 app.all("/activity/timeline", wrap(activityTimeline));
+app.all("/feed/session", wrap(feedSession));
+app.all("/feed/suggestions", wrap(feedSuggestions));
+app.all("/feed/posts/:id/fire", wrap(feedPosts));
+app.all("/feed/posts/:id/repost", wrap(feedPosts));
+app.all("/feed/posts/:id/replies", wrap(feedPosts));
 app.all("/feed/posts/:id/delete", wrap(feedPosts));
 app.all("/feed/posts", wrap(feedPosts));
 app.all("/ably/token", wrap(ablyToken));
