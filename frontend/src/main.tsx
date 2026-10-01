@@ -6,6 +6,7 @@
 import "./polyfills";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
+import { shouldRefuseFramed } from "./lib/frameGuard.mjs";
 import "./index.css";
 import "./styles/mwz-hud.css";
 import "./styles/tactical-command-ui.css";
@@ -56,4 +57,13 @@ try {
   /* ignore */
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+// Clickjacking guard: never render the wallet app inside another site's frame (only /embed/chart/*).
+if (shouldRefuseFramed(window)) {
+  const root = document.getElementById("root");
+  if (root) {
+    root.textContent = "Open MemeWarzone at app.memewar.zone.";
+    root.setAttribute("style", "font:14px sans-serif;color:#ccc;background:#000;padding:16px");
+  }
+} else {
+  createRoot(document.getElementById("root")!).render(<App />);
+}
