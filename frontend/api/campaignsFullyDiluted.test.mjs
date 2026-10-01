@@ -14,3 +14,8 @@ test("gen-6 EVM coins list, sort and filter at price x total supply; older coins
   assert.match(source, /calc\.marketcap_bnb \* \$6::numeric\) >= \$7::numeric/);
   assert.match(source, /fullyDilutedSupply: row\.fully_diluted_supply != null/);
 });
+
+test("gen-6 raise is the curve reserve: buys net of fee, sells plus fee; older rows unchanged", () => {
+  assert.match(source, /when t\.chain_id in \(56, 97, 4663, 46630\) and t\.fee_raw is not null then t\.fee_raw::numeric \/ 1e18/);
+  assert.match(source, /when t\.side = 'buy' then t\.bnb_amount - \$\{EVM_TRADE_FEE_NATIVE_SQL\}\s+else -\(t\.bnb_amount \+ \$\{EVM_TRADE_FEE_NATIVE_SQL\}\)/);
+});

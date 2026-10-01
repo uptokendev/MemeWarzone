@@ -12,6 +12,10 @@ import { creatorMatchSql, normalizeCreatorQuery } from "./lib/campaignCreatorFil
  * 0x3765d716, 2026-10-01). Older EVM generations keep the canonical price x curve sold.
  */
 export const EVM_GEN6_TOTAL_SUPPLY_WHOLE = 1_000_000_000;
+const EVM_TRADE_FEE_NATIVE_SQL = `(case
+  when t.chain_id in (56, 97, 4663, 46630) and t.fee_raw is not null then t.fee_raw::numeric / 1e18
+  else 0
+end)`;
 const EVM_FULLY_DILUTED_SUPPLY_SQL = `(case
   when c.chain_id in (56, 97, 4663, 46630) and coalesce(c.factory_generation, 0) >= 6
     then ${EVM_GEN6_TOTAL_SUPPLY_WHOLE}::numeric
@@ -488,8 +492,17 @@ export default async function handler(req, res) {
         select
           b.chain_id,
           b.campaign_address,
+          -- The curve keeps a buy minus its fee and pays a sell out plus its fee. Generation 6/5 rows
+          -- carry fee_raw (wei), so their raise is the reserve itself: BNB 0x49ac80f9 holds 0 after its
+          -- buy was sold back (gross fills said 0.00039), Robinhood 0x404d723d 0.000878351 ETH (0.0009).
+          -- Rows without fee_raw (older generations, Solana) keep the gross figure.
           coalesce(
-            sum(case when t.side = 'buy' then t.bnb_amount else -t.bnb_amount end)
+            sum(
+              case
+                when t.side = 'buy' then t.bnb_amount - ${EVM_TRADE_FEE_NATIVE_SQL}
+                else -(t.bnb_amount + ${EVM_TRADE_FEE_NATIVE_SQL})
+              end
+            )
             ,0
           ) as raised_total_bnb,
           coalesce(
