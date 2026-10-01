@@ -547,7 +547,7 @@ import { creatorLockBadge, lockAmountDivisible } from "../../shared/dbcLockSched
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import { quoteDbcExactIn, loadDbcPool, loadReferralTokenAccount } from "@/lib/dbcTrade.mjs";
 import { submitDbcBondingTrade, submitDbcLockClaim } from "@/lib/dbcTradeSubmit";
-import { readOwnerMintBalanceRaw, readQuoteUiMultiplier } from "@/lib/dbcQuoteMultiplier.mjs";
+import { readMintSupplyRaw, readOwnerMintBalanceRaw, readQuoteUiMultiplier } from "@/lib/dbcQuoteMultiplier.mjs";
 import { WSOL_MINT, formatScaledQuote, quoteUiToRaw } from "../../shared/dbcQuotes.mjs";
 import DbcCreatorRewardsPanel from "@/components/dbc/DbcCreatorRewardsPanel";
 import DbcFeeChoiceLine from "@/components/dbc/DbcFeeChoiceLine";
@@ -1449,6 +1449,39 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
 
     load();
   }, [campaignAddress, pageChainId, fetchCampaignLogoURI, fetchCampaigns, fetchCampaignSummary, location.search, navigate, dbcLive]);
+
+  // The creator's own wallet balance for the badge ("Creator holds X%"): the first buy at launch is
+  // unlocked and sits in the wallet, so a fixed 0 understated what the creator holds.
+  const [dbcCreatorHeldRaw, setDbcCreatorHeldRaw] = useState<bigint>(0n);
+  // The badge's denominator is the mint's own supply: a DBC config sets it (a devnet test config
+  // mints 95M, not 1B), so a fixed 1B understated every percentage on such a coin.
+  const [dbcSupplyRaw, setDbcSupplyRaw] = useState<bigint>(0n);
+  useEffect(() => {
+    if (!isDbcPage || !dbcMint || !dbcCreator) {
+      setDbcCreatorHeldRaw(0n);
+      setDbcSupplyRaw(0n);
+      return;
+    }
+    let cancelled = false;
+    const connection = getSolanaReadConnection();
+    void readOwnerMintBalanceRaw(connection, dbcCreator, dbcMint)
+      .then((raw: bigint) => {
+        if (!cancelled) setDbcCreatorHeldRaw(raw);
+      })
+      .catch(() => {
+        if (!cancelled) setDbcCreatorHeldRaw(0n);
+      });
+    void readMintSupplyRaw(connection, dbcMint)
+      .then((raw: bigint) => {
+        if (!cancelled) setDbcSupplyRaw(raw);
+      })
+      .catch(() => {
+        if (!cancelled) setDbcSupplyRaw(0n);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDbcPage, dbcMint, dbcCreator, solanaBalanceTick]);
 
   useEffect(() => {
     if (!isDbcPage || !dbcMint) {
@@ -3186,8 +3219,14 @@ const toSeconds = (ts: number): number => {
     const curveSupply = isSolanaPage
       ? (solanaCurve?.curveTokenSupply ?? metrics?.curveSupply ?? 0n)
       : (metrics?.curveSupply ?? 0n);
-    const targetWei = metrics?.graduationNativeTarget ?? 0n;
-    const reserveWei = isSolanaPage
+    // A DBC coin has no launchpad curve account and zeroed metrics; its progress is the pool's quote
+    // reserve against the config's migration threshold (both in quote raw units).
+    const dbcThreshold = isDbcPage ? BigInt(String(dbcLive?.poolLive?.migrationQuoteThresholdLamports || "0")) : 0n;
+    const dbcReserve = isDbcPage ? BigInt(String(dbcLive?.poolLive?.quoteReserveLamports || "0")) : 0n;
+    const targetWei = dbcThreshold > 0n ? dbcThreshold : (metrics?.graduationNativeTarget ?? 0n);
+    const reserveWei = dbcThreshold > 0n
+      ? dbcReserve
+      : isSolanaPage
       ? ((solanaCurve?.netRaisedLamports && solanaCurve.netRaisedLamports > 0n
           ? solanaCurve.netRaisedLamports
           : null) ??
@@ -3256,6 +3295,9 @@ const toSeconds = (ts: number): number => {
     curveReserveWei,
     latestSoldFromTrades,
     solanaCurve,
+    isDbcPage,
+    dbcLive?.poolLive?.migrationQuoteThresholdLamports,
+    dbcLive?.poolLive?.quoteReserveLamports,
   ]);
 
     const remainingCurveWei = useMemo(() => {
@@ -4855,9 +4897,10 @@ const toSeconds = (ts: number): number => {
                 {isDbcPage ? (
                   <span className="text-[10px] px-2 py-0.5 rounded-full border border-orange-400/40 text-orange-200 whitespace-nowrap">
                     {creatorLockBadge({
-                      creatorHeldRaw: 0,
+                      // Same basis as the EVM badge: wallet balance plus the locked (escrowed) buys.
+                      creatorHeldRaw: dbcCreatorHeldRaw + BigInt(dbcLockSummary?.lockedAmount || 0),
                       lockedRaw: dbcLockSummary?.lockedAmount || 0,
-                      supplyRaw: 1_000_000_000_000_000n,
+                      supplyRaw: dbcSupplyRaw > 0n ? dbcSupplyRaw : 1_000_000_000_000_000n,
                       fullyFreeUnix: dbcLockSummary?.fullyFreeUnix,
                     })}
                   </span>
