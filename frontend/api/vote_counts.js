@@ -14,6 +14,20 @@ import { badMethod, getQuery, isAddress, json } from "../server/http.js";
  *   }
  * }
  */
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * vote_aggregates is recomputed only when a vote lands, so a window count goes stale once the
+ * campaign stops receiving votes (a Solana coin last voted 5 days ago still read votes24h=1).
+ * If the last vote is older than the window, the window is empty for certain.
+ */
+export function windowCount(stored, lastVoteAt, windowMs, nowMs = Date.now()) {
+  const value = Number(stored ?? 0) || 0;
+  const last = lastVoteAt ? new Date(lastVoteAt).getTime() : NaN;
+  if (!Number.isFinite(last)) return value;
+  return nowMs - last > windowMs ? 0 : value;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") return badMethod(res);
 
@@ -54,11 +68,12 @@ export default async function handler(req, res) {
     );
 
     const counts = {};
+    const nowMs = Date.now();
     for (const r of rows ?? []) {
       counts[solana ? String(r.campaignAddress) : String(r.campaignAddress).toLowerCase()] = {
-        votes1h: r.votes1h ?? 0,
-        votes24h: r.votes24h ?? 0,
-        votes7d: r.votes7d ?? 0,
+        votes1h: windowCount(r.votes1h, r.lastVoteAt, HOUR_MS, nowMs),
+        votes24h: windowCount(r.votes24h, r.lastVoteAt, 24 * HOUR_MS, nowMs),
+        votes7d: windowCount(r.votes7d, r.lastVoteAt, 7 * 24 * HOUR_MS, nowMs),
         votesAllTime: r.votesAllTime ?? 0,
         trendingScore: r.trendingScore ?? null,
         lastVoteAt: r.lastVoteAt ?? null,

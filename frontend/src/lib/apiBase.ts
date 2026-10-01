@@ -86,7 +86,8 @@ const REALTIME_INDEXER_API_PREFIXES = [
   "/api/token/",
   "/api/market/",
   "/api/votes",
-  "/api/vote_counts",
+  // /api/vote_counts is served by the frontend API (api/vote_counts.js); the indexer has no such
+  // route, so the token page Upvotes tile read a 404 (fixed 2026-10-01).
 ];
 
 const FRONTEND_API_PREFIXES = [
