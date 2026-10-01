@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { assertWalletOnChain } from "@/lib/walletChainGuard.mjs";
 import { Contract, ethers } from "ethers";
 import type { CampaignInfo, CampaignMetrics } from "@/lib/launchpadClient";
 import { isUnsupportedContractMethod } from "@/lib/launchpadClient";
@@ -1076,6 +1077,7 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
           description: `Buying ~${formatTokenFromWei(amountWei)} ${campaign.symbol} for up to ${formatBnbFromWei(maxCostWei)}.`,
         });
 
+        await assertWalletOnChain(wallet.signer, chainId, campaign.campaign);
         const campaignWrite = new Contract(campaign.campaign, CAMPAIGN_ABI, wallet.signer) as any;
         const overrides = { value: maxCostWei, gasLimit: LEGACY_TRADE_GAS_LIMIT };
         let tx;
@@ -1134,6 +1136,7 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
           description: `Selling ${ethers.formatUnits(amountWei, TOKEN_DECIMALS)} ${campaign.symbol} (min ${formatBnbFromWei(minPayoutWei)}).`,
         });
 
+        await assertWalletOnChain(wallet.signer, chainId, campaign.campaign);
         const campaignWrite = new Contract(campaign.campaign, CAMPAIGN_ABI, wallet.signer) as any;
         const overrides = { gasLimit: LEGACY_TRADE_GAS_LIMIT };
         let tx;

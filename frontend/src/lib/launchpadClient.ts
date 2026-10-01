@@ -29,6 +29,7 @@ import {
   gen6SignedRequest,
   isGen6Factory,
 } from "@/lib/evmGen6Client";
+import { assertWalletOnChain } from "@/lib/walletChainGuard.mjs";
 import { apiFetch } from "@/lib/apiBase";
 import { notifyIndexerFills } from "@/lib/indexerTradeIngest";
 import { resolveImageUri } from "@/lib/media";
@@ -849,6 +850,7 @@ export function useLaunchpad(): LaunchpadAdapter {
     if (!writer) throw new Error("Wallet not connected");
     if (!wallet.account) throw new Error("Wallet not connected");
     if (!factoryAddress) throw new Error(`Factory address missing for chain ${evmReadChainId}`);
+    await assertWalletOnChain(signer, evmReadChainId, factoryAddress);
 
     const campaignRequest: CampaignRequestPayload = {
       name: params.name,
@@ -1022,6 +1024,7 @@ export function useLaunchpad(): LaunchpadAdapter {
       targetChainId,
       readProvider,
     );
+    await assertWalletOnChain(tradeSigner, targetChainId, normalizedCampaign);
     const campaign = new Contract(normalizedCampaign, CAMPAIGN_ABI, tradeSigner) as any;
     await fetchLaunchpadBuyPreflight(tradeAccount, normalizedCampaign, activeChainId);
     const authResponse = await requestTradeAuthorization({
@@ -1089,6 +1092,7 @@ export function useLaunchpad(): LaunchpadAdapter {
       Number(activeChainId),
       readProvider,
     );
+    await assertWalletOnChain(signer, Number(activeChainId), normalizedCampaign);
     const campaign = new Contract(normalizedCampaign, CAMPAIGN_ABI, signer) as any;
     await fetchLaunchpadSellPreflight(wallet.account, normalizedCampaign, activeChainId);
     const authResponse = await requestTradeAuthorization({
