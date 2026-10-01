@@ -88,7 +88,7 @@ export function selectTopHolding(holdings) {
  * This is the single source of truth for the four cards.
  */
 export function derivePortfolioMetrics(params) {
-  const { nativeBnb = 0, tokenHoldingsWithValues = [], bnbUsd = 0, createdAt } = params || {};
+  const { nativeBnb = 0, tokenHoldingsWithValues = [], bnbUsd = 0, createdAt, holdingsCount } = params || {};
 
   const nativeUsd = (Number.isFinite(nativeBnb) ? nativeBnb : 0) *
     (Number.isFinite(bnbUsd) && bnbUsd > 0 ? bnbUsd : 0);
@@ -117,7 +117,9 @@ export function derivePortfolioMetrics(params) {
     };
   }
 
-  const coinsCount = positiveHoldings.length;
+  const coinsCount = Number.isFinite(Number(holdingsCount)) && Number(holdingsCount) >= 0
+    ? Math.trunc(Number(holdingsCount))
+    : positiveHoldings.length;
   const walletAge = formatWalletAge(createdAt);
 
   return {

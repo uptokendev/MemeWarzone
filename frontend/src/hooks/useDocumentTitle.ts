@@ -8,6 +8,7 @@ export function titleForPath(pathname: string): string {
   const path = String(pathname || "/").replace(/\/+$/, "") || "/";
 
   if (path === "/") return "Launchpad";
+  if (path === "/feed") return "Feed";
   if (path === "/create") return "Create Coin";
   if (path === "/league" || path === "/leagues") return "Leagues";
   if (path === "/war-room") return "Trade War Room";

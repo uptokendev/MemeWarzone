@@ -14,6 +14,8 @@ import { pool } from "../server/db.js";
 import { createRailwayProxyMiddleware } from "../server/railwayProxy.js";
 
 import activityTrades from "./activity/trades.js";
+import activityTimeline from "./activity/timeline.js";
+import feedPosts from "./feed/posts.js";
 import ablyToken from "./ably/token.js";
 import bnbUsdPrice from "./price/bnb-usd.js";
 import solUsdPrice from "./price/sol-usd.js";
@@ -392,6 +394,9 @@ app.use(createRailwayProxyMiddleware({ serviceName: "local-api-gateway" }));
 const router = express.Router();
 
 router.all("/activity/trades", wrap(activityTrades));
+router.all("/activity/timeline", wrap(activityTimeline));
+router.all("/feed/posts/:id/delete", wrap(feedPosts));
+router.all("/feed/posts", wrap(feedPosts));
 router.all("/ably/token", wrap(ablyToken));
 router.get("/price/bnb-usd", wrap(bnbUsdPrice));
 router.get("/price/sol-usd", wrap(solUsdPrice));

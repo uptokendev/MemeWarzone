@@ -19,6 +19,8 @@ const requiredRoutes = [
   ["/prepare/:slug", "signedPrepareBySlug"],
   ["/prepare-notifications", "prepareNotifications"],
   ["/campaigns", "campaigns"],
+  ["/activity/timeline", "activityTimeline"],
+  ["/feed/posts", "feedPosts"],
   ["/comments", "comments"],
   ["/follows/campaign", "followsCampaign"],
   ["/follows/user", "followsUser"],

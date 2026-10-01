@@ -5,6 +5,7 @@ import { getQuery } from "../server/http.js";
 import { loadPublicHiddenCampaignKeys } from "./lib/publicHiddenCampaigns.js";
 import { runJsonTransform } from "./dev-fix/json-transform.js";
 import { reconcileScheduledDraftLifecycle } from "./dev-fix/scheduled-lifecycle.js";
+import { normalizeCreatorQuery, walletsEqual } from "./lib/campaignCreatorFilter.js";
 
 function iso(value) {
   if (!value) return null;
@@ -155,6 +156,7 @@ export default async function handler(req, res) {
   const status = String(query.status || "all").toLowerCase();
   const sort = String(query.sort || "default").toLowerCase();
   const includeTestnet = ["1", "true", "yes", "on"].includes(String(query.includeTestnet || query.testnet || "").toLowerCase());
+  const creator = normalizeCreatorQuery(query.creator);
 
   return runJsonTransform(baseHandler, req, res, async (payload) => {
     if (!payload || !Array.isArray(payload.items)) return payload;
@@ -176,6 +178,7 @@ export default async function handler(req, res) {
     for (const item of visiblePayloadItems) {
       const key = lifecycleKey(item.chainId ?? chainId, item.campaignAddress);
       if (publicHidden.has(key)) continue;
+      if (creator && !walletsEqual(item.creatorAddress || item.creator, creator)) continue;
       const row = byCampaign.get(key);
       const scheduledMs = row?.scheduled_launch_at ? new Date(row.scheduled_launch_at).getTime() : NaN;
       if (Number.isFinite(scheduledMs) && scheduledMs > now) continue;
@@ -203,6 +206,7 @@ export default async function handler(req, res) {
         const isPastSchedule = Number.isFinite(scheduledMs) && scheduledMs <= now;
         if (!isDeployedLiveSolana && !isPastSchedule) continue;
         if (!matchesSearch(row, query.search)) continue;
+        if (creator && !walletsEqual(row.creator_wallet, creator)) continue;
         if (seen.has(key)) continue;
         seen.add(key);
         items.push(itemFromDraft(row));
