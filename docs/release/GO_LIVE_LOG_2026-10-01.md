@@ -121,7 +121,9 @@ Bundle re-checked: no 64-byte key arrays. **Open:** move the remaining 0.039 SOL
 ## 7. Open items
 
 - [x] EVM gen-6 token page: fully diluted market cap, chart from start price (`ee695e76`, `4625bd72`), founder-checked on both chains.
-- [ ] War Trade Room: gen-6 rows/chart still old values (BNB "—", Robinhood $2.91) and the Robinhood coin gets the BNB trade panel ("Connect BNB wallet"): agent fixing (fix/warroom-gen6).
+- [x] War Trade Room gen-6: fully diluted rows/ATH/chart, liquidity = curve reserve, Robinhood bonding coin no longer on the BNB panel (`5a590f68`, `22a652ad`).
+- [ ] War Trade Room: trading a Robinhood bonding coin inside the row (today a link to its token page; needs a new panel).
+- [ ] Holder count on cards/War Room = distinct buyers (BNB test coin shows 1, chain 0).
 - [ ] Create page: BNB/Robinhood switch in MetaMask can make the page use the other chain's factory (must-fix).
 - [ ] `VITE_SUPPORTED_FACTORY_ADDRESSES_56/_4663` on the app hold only the new factories; append the old ones.
 - [ ] BNB and Robinhood test coins to hide after the chart fix (MWZBNB `0x49ac80f9…`, MWZRH `0x404d723d…`).
