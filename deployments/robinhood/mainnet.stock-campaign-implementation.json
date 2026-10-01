@@ -1,0 +1,20 @@
+{
+  "network": "robinhoodMainnet",
+  "chainId": 4663,
+  "deployedAt": "2026-10-01T16:34:13.233Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "block": 77521388,
+  "contracts": {
+    "RobinhoodStockLaunchCampaign": "0x1e463947d28f2c878312139b87aD482a614F1cDC"
+  },
+  "factory": "0xc673B116b4eA8E8923Aad1fa60F0452966F2437F",
+  "safe": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "bound": false,
+  "safeBatch": "mainnet.R5-stock-campaign-implementation.safe-batch.json",
+  "verification": {
+    "name": "RobinhoodStockLaunchCampaign",
+    "address": "0x1e463947d28f2c878312139b87aD482a614F1cDC",
+    "contract": "contracts/RobinhoodStockLaunchCampaign.sol:RobinhoodStockLaunchCampaign",
+    "args": []
+  }
+}
