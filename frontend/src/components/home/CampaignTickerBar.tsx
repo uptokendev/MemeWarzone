@@ -47,6 +47,16 @@ function normalizeAddress(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+// Solana addresses are case-sensitive base58; lowercasing them and testing for 0x dropped every
+// Solana coin from the ticker (2026-10-01).
+function normalizeCampaignAddress(value: unknown, chainId: number) {
+  return isSolanaChainId(chainId) ? String(value ?? "").trim() : normalizeAddress(value);
+}
+
+function isCampaignAddress(value: string, chainId: number) {
+  return isSolanaChainId(chainId) ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value) : isAddress(value);
+}
+
 function isAddress(value: unknown) {
   return /^0x[a-f0-9]{40}$/.test(normalizeAddress(value));
 }
@@ -134,13 +144,12 @@ async function fetchIndexedTickerItems(chainId: number): Promise<CampaignTickerI
     const payload = await response.json().catch(() => null);
     if (!response.ok || !Array.isArray(payload?.items)) return [];
     return payload.items.map((row: any): CampaignTickerItem | null => {
-      const campaignAddress = normalizeAddress(row?.campaignAddress ?? row?.campaign_address);
-      if (!isAddress(campaignAddress)) return null;
+      const campaignAddress = normalizeCampaignAddress(row?.campaignAddress ?? row?.campaign_address, chainId);
+      if (!isCampaignAddress(campaignAddress, chainId)) return null;
+      const tokenAddress = normalizeCampaignAddress(row?.tokenAddress ?? row?.token_address, chainId);
       return {
         campaignAddress,
-        tokenAddress: isAddress(row?.tokenAddress ?? row?.token_address)
-          ? normalizeAddress(row?.tokenAddress ?? row?.token_address)
-          : undefined,
+        tokenAddress: isCampaignAddress(tokenAddress, chainId) ? tokenAddress : undefined,
         symbol: String(row?.symbol ?? row?.ticker ?? "").trim() || "???",
         name: String(row?.name ?? "").trim() || "Unknown",
         marketcapBnb: asNumber(row?.marketcapBnb ?? row?.marketcap_bnb),
