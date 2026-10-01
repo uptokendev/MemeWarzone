@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch --import ./src/tokenSidePreload.ts --import ./src/wtrPreload.ts src/main.ts",
     "start": "node --enable-source-maps --import ./dist/tokenSidePreload.js --import ./dist/wtrPreload.js dist/main.js",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-build-assets.mjs",
     "cron:daily-repair": "node --enable-source-maps dist/jobs/dailyRepair.js",
     "cron:sweep-expired-claims": "node --enable-source-maps dist/jobs/sweepExpiredClaims.js",
     "cron:finalize-epoch-winners": "node --enable-source-maps dist/jobs/finalizeEpochWinners.js",
