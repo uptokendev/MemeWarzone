@@ -57,7 +57,6 @@ import { RankPromotionListener } from "@/components/rank/RankPromotionListener";
 import { LiveStreamOverlay } from "@/components/live/LiveStreamOverlay";
 import { Footer } from "@/components/layout/Footer";
 import { ScreenFrame } from "@/components/layout/ScreenFrame";
-import { TokenSafetyRouteOverlay } from "@/components/token/TokenSafetyRouteOverlay";
 import { ScheduledTokenAccessRoute } from "@/components/token/ScheduledTokenAccessRoute";
 import { CreatorProtectionDialog } from "@/components/token/CreatorProtectionDialog";
 import { CreatorArmEligibilityDialog } from "@/components/prepare/CreatorArmEligibilityDialog";
@@ -269,7 +268,7 @@ function AppShellLayout({
           <Route path="/squads" element={<SquadLeaderboard />} />
           <Route path="/squad-dashboard" element={<LegacyCommandCenterRedirect section="squad" />} />
           <Route path="/r/:code" element={<RecruiterReferral />} />
-          <Route path="/token/:campaignAddress" element={<ScheduledTokenAccessRoute><TokenDetailsEntry /><TokenSafetyRouteOverlay /></ScheduledTokenAccessRoute>} />
+          <Route path="/token/:campaignAddress" element={<ScheduledTokenAccessRoute><TokenDetailsEntry /></ScheduledTokenAccessRoute>} />
           <Route path="/story/:chainId/:token" element={<StoryPage />} />
           <Route path="/playbook" element={<Playbook />} />
           <Route path="/docs" element={<Playbook />} />
