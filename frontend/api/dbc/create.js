@@ -877,6 +877,7 @@ export function createDbcCreateHandler(deps = {}) {
     const database = await db();
     const found = await database.query(
       `select c.campaign_address, c.token_address, c.name, c.symbol, c.logo_uri, c.creator_address, c.meta, c.launch_type,
+              coalesce(c.created_at_chain, c.created_at) as created_at,
               m.description, m.website, m.x_account, m.telegram, m.discord, m.logo_uri as metadata_logo
          from public.campaigns c
          left join public.token_metadata_registry m
@@ -904,6 +905,8 @@ export function createDbcCreateHandler(deps = {}) {
       telegram: row.telegram || null,
       discord: row.discord || null,
       meta: row.meta?.dbc || null,
+      // The token page's "Deployed" tile; without it a DBC coin showed "—".
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     };
     if (url.searchParams.get("live") === "1") {
       try {

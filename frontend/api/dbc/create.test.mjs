@@ -737,3 +737,22 @@ test("canary: unset or empty CREATE_CANARY_WALLETS leaves DBC create unchanged",
     assert.equal(fin.body.ok, true);
   }
 });
+
+test("lookup returns the coin's created time for the token page's Deployed tile", async () => {
+  const db = memoryDb();
+  const createdAt = new Date("2026-10-01T14:11:33.116Z");
+  db.campaigns.push({
+    chain_id: 101, campaign_address: POOL.publicKey.toBase58(), token_address: MINT.publicKey.toBase58(),
+    creator_address: SIGNER.publicKey.toBase58(), name: "MWZDONOTBUY", symbol: "MWZDNB", launch_type: "dbc",
+    meta: { dbc: { config: CONFIG.publicKey.toBase58() } }, is_active: true, created_at: createdAt,
+  });
+  const res = fakeRes();
+  await handlerFor(db)(getReq({ token: MINT.publicKey.toBase58() }), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pool, POOL.publicKey.toBase58());
+  assert.equal(res.body.createdAt, "2026-10-01T14:11:33.116Z");
+
+  const { readFileSync: read } = await import("node:fs");
+  const source = read(new URL("./create.js", import.meta.url), "utf8");
+  assert.match(source, /coalesce\(c\.created_at_chain, c\.created_at\) as created_at/);
+});
