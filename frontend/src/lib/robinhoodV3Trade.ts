@@ -206,16 +206,18 @@ async function resolveCommonRoute(input: {
   routeDescriptor: RobinhoodRouteDescriptor;
 }) {
   const poolAddress = normalizeAddress(input.market.pair, "Robinhood V3 pool");
+  // The indexer records 0x0 for an unknown router (ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_<id> unset there);
+  // a zero address is "not known", so fall back to this build's configured address instead of failing.
   const routerAddress = normalizeAddress(
-    input.market.router || envAddress("VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS", input.chainId),
+    normalizeOptionalAddress(input.market.router) || envAddress("VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS", input.chainId),
     "Robinhood V3 router",
   );
   const factoryAddress = normalizeAddress(
-    input.market.factory || envAddress("VITE_ROBINHOOD_V3_FACTORY_ADDRESS", input.chainId),
+    normalizeOptionalAddress(input.market.factory) || envAddress("VITE_ROBINHOOD_V3_FACTORY_ADDRESS", input.chainId),
     "Robinhood V3 factory",
   );
   const wrappedNativeAddress = normalizeAddress(
-    input.market.wrappedNative || envAddress("VITE_WRAPPED_NATIVE_ADDRESS", input.chainId),
+    normalizeOptionalAddress(input.market.wrappedNative) || envAddress("VITE_WRAPPED_NATIVE_ADDRESS", input.chainId),
     "Robinhood wrapped native",
   );
 

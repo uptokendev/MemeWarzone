@@ -1838,8 +1838,11 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
         ]);
         if (cancelled) return;
         const pair = String(graduation?.[0] ?? graduation?.dexPair ?? "").toLowerCase();
-        setOnChainLaunched(Boolean(launched) || (ethers.isAddress(pair) && pair !== ethers.ZeroAddress.toLowerCase()));
-        setOnChainPair(ethers.isAddress(pair) ? pair : "");
+        // A bonding campaign reports dexPair = 0x0; that must stay "" or the Robinhood page
+        // treats the zero-address string as a live pool and swaps the curve trade box for V3.
+        const livePair = ethers.isAddress(pair) && pair !== ethers.ZeroAddress.toLowerCase() ? pair : "";
+        setOnChainLaunched(Boolean(launched) || Boolean(livePair));
+        setOnChainPair(livePair);
       } catch {
         if (!cancelled) {
           setOnChainLaunched(false);
@@ -5675,7 +5678,32 @@ const toSeconds = (ts: number): number => {
               </div>
 
               {isRobinhoodPage && (contractGraduated || isUniswapTradingActive) ? (
-                isXlUp ? <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} /> : null
+                isXlUp ? (
+                  <>
+                    <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} />
+                    {/* A graduated generation-5 coin keeps its graduation line (pool link) and the
+                        creator panel (graduation payout, escrow, fees) next to the DEX trade box. */}
+                    {gen5.state ? (
+                      <EvmGen5TradeNotes
+                        state={gen5.state}
+                        viewerIsCreator={gen5ViewerIsCreator}
+                        tradeTab={tradeTab}
+                        nativeSymbol={nativeUnit}
+                        explorerBase={getExplorerBase(chainIdForStorage)}
+                      />
+                    ) : null}
+                    {gen5.state && gen5.creator && gen5ViewerIsCreator ? (
+                      <EvmGen5CreatorPanel
+                        state={gen5.state}
+                        creator={gen5.creator}
+                        signer={(wallet.signer as any) || null}
+                        account={String(wallet.account || "")}
+                        nativeSymbol={nativeUnit}
+                        onClaimed={() => void gen5.refresh()}
+                      />
+                    ) : null}
+                  </>
+                ) : null
               ) : (
               <div className="hidden xl:block">
               <Tabs value={tradeTab} onValueChange={handleTradeTabChange}>
