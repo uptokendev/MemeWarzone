@@ -10,6 +10,7 @@ import {
   assertDbcTradeIntent,
   loadReferralTokenAccount,
   quoteDbcExactIn,
+  submitPreparedDbcTrade,
 } from "./dbcTrade.mjs";
 
 const trader = Keypair.generate();
@@ -147,4 +148,31 @@ test("a buy larger than what the curve needs is quoted as a partial fill, never 
   assert.equal(q.amountOut, 900n);
   const sell = { pool: { swapQuote2() { throw new Error("Insufficient Liquidity"); } } };
   assert.throws(() => quoteDbcExactIn({ client: sell, pool: {}, config: {}, side: "sell", amountIn: 1n, nowUnix: 200, activationUnix: 100 }), /Insufficient/);
+});
+
+test("locked buy: the wallet signs before the extra signer (Phantom blocks pre-signed requests)", async () => {
+  const base = Keypair.generate();
+  const tx = envelope();
+  tx.instructions[0].keys.push({ pubkey: base.publicKey, isSigner: true, isWritable: true });
+  const sent = [];
+  let seenByWallet = null;
+  await submitPreparedDbcTrade({
+    connection: {
+      async getLatestBlockhash() { return { blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 7 }; },
+      async simulateTransaction() { return { value: { err: null } }; },
+      async sendRawTransaction(raw) { sent.push(raw); return "sig"; },
+      async confirmTransaction() { return { value: { err: null } }; },
+    },
+    transaction: tx,
+    trader: trader.publicKey.toBase58(),
+    pool: pool.publicKey.toBase58(),
+    extraSigners: [base],
+    async signTransaction(unsigned) {
+      seenByWallet = unsigned.signatures.map((s) => s.signature);
+      unsigned.partialSign(trader);
+      return unsigned;
+    },
+  });
+  assert.ok(seenByWallet.every((s) => s === null));
+  assert.equal(Transaction.from(sent[0]).verifySignatures(), true);
 });

@@ -111,9 +111,19 @@ export async function submitPreparedDbcTrade({
     requirePool,
     extraPrograms,
   });
-  for (const signer of extraSigners) prepared.tx.partialSign(signer);
+  // Wallet first, extra signers after: Phantom blocks a request that already carries another
+  // signature (see dbcCreateIntent.mjs, 2026-10-01). Only the creator's locked buy has one.
   const signed = await signTransaction(prepared.tx);
-  const raw = typeof signed?.serialize === "function" ? signed.serialize() : signed;
+  let raw;
+  if (extraSigners.length) {
+    if (!signed || typeof signed.partialSign !== "function" || typeof signed.serialize !== "function") {
+      throw new Error("The wallet returned a transaction the extra signer cannot co-sign.");
+    }
+    for (const signer of extraSigners) signed.partialSign(signer);
+    raw = signed.serialize();
+  } else {
+    raw = typeof signed?.serialize === "function" ? signed.serialize() : signed;
+  }
   const signature = await connection.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 3 });
   const confirmation = await connection.confirmTransaction(
     { signature, blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight },
