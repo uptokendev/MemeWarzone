@@ -196,7 +196,7 @@ Add each contract with its constructor arguments to `config/verification/mainnet
 ### 1.8 Signers and the day
 
 - [ ] Two of the three Safe owners booked for the whole opening session (BNB then Robinhood, several hours)
-- [ ] `docs/release/all-chains-migrations.sql` reviewed (it is being prepared separately; section 2.1)
+- [x] `docs/release/all-chains-migrations.sql` applied on staging and production (2026-10-01, see 2.1)
 - [ ] Coolify: know which resources auto-deploy on a push to the live branch (section 6, item 2)
 
 ## 2. Go-live day, in order
@@ -204,6 +204,10 @@ Add each contract with its constructor arguments to `config/verification/mainnet
 Each step can stop without harm until 2.7. Tick the box only after the check under it passes.
 
 ### 2.1 Production database
+
+**Done 2026-10-01.** The founder ran the bundle on staging and production; read back the same day on both:
+20 new `dbc_*`/`evm_*` tables, keeper action check with `harvest`, vote battles 1/6/12/24/48 h,
+`campaign_drafts.dbc_quote_mint` present. Skip this step on the day.
 
 Run `docs/release/all-chains-migrations.sql` once in the Supabase SQL editor on production
 (`ellkfgoxnzykxqybajtn`). It holds, in order:
@@ -642,7 +646,7 @@ config payer pays ~0.006 SOL for each new target and SOL price step).
    Solana graduation keeper and resolve-due worker built from the repo root), and whether the indexer-API-app
    order can be held.
 3. **Redeploy time** per service, which sets how fast an env stop switch takes effect.
-4. **The migration bundle.** `docs/release/all-chains-migrations.sql` is being prepared separately; check
+4. **The migration bundle.** Done: applied on staging and production on 2026-10-01 (2.1). Previously: check
    it holds the 11 DBC and 7 EVM files in order and not `20261001_000001`. None of them is on staging either
    (read 2026-10-01), so staging cannot serve as a dry run unless it is applied there first.
 5. **Stock-paired coin end to end** on generation 6: routes configured on the fork, but no stock-bound coin has
