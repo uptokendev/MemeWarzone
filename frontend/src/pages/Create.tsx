@@ -1337,48 +1337,8 @@ const Create = () => {
                     </div>
                     {dbcLaunch ? (
                       <div className="space-y-3 rounded-xl border border-border/50 bg-background/25 p-3">
-                        <div>
-                          <div className="font-retro text-sm text-foreground">Quote</div>
-                          <p className="mt-0.5 text-xs text-muted-foreground">The coin is bought and sold in this token. SOL is the default.</p>
-                          <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
-                            {dbcQuoteOptions.map((q) => (
-                              <button
-                                key={q.mint}
-                                type="button"
-                                onClick={() => (q.kind === "stock" && q.mint !== dbcQuoteMint ? setPendingStockMint(q.mint) : chooseDbcQuote(q.mint))}
-                                className={cn("rounded-lg border px-2.5 py-2 text-left", dbcQuoteMint === q.mint ? "border-accent bg-accent/15" : "border-border bg-muted/30")}
-                              >
-                                <div className="font-retro text-sm">{q.symbol}</div>
-                                <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">{q.kind === "native" ? "Chain coin" : q.kind === "stable" ? "1:1 USD" : "Stock token"}</p>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
                         <CreatorFeeChoicePicker value={dbcFeeChoice} onChange={setDbcFeeChoice} sharePct={dbcCreatorSharePct} onSharePctChange={setDbcCreatorSharePct} />
-                        <div>
-                          <div className="font-retro text-sm text-foreground">Your first buy (optional)</div>
-                          <p className="mt-0.5 text-xs text-muted-foreground">Buys in the same transaction as the launch, at the normal 2% fee.</p>
-                          <Input type="number" min={0} step="0.01" value={dbcFirstBuySol} onChange={(e) => setDbcFirstBuySol(e.target.value)} placeholder={`${dbcQuote?.symbol || "SOL"} amount`} className="mt-2 max-w-[12rem]" />
-                          {dbcFirstBuyQuote ? (
-                            <p className={cn("mt-1 text-xs", dbcFirstBuyQuote.exceedsCap ? "text-orange-300" : "text-muted-foreground")}>
-                              About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
-                              {dbcFirstBuyQuote.exceedsCap ? " (over the 10% cap)" : ""}.
-                            </p>
-                          ) : null}
-                        </div>
                         <p className="text-xs text-muted-foreground">{LAUNCH_FEE_NOTE}</p>
-                        {pendingStock ? (
-                          <DbcStockRiskDialog
-                            mint={pendingStock.mint}
-                            symbol={pendingStock.symbol}
-                            ticker={normalizedTicker}
-                            onConfirm={() => {
-                              chooseDbcQuote(pendingStock.mint);
-                              setPendingStockMint(null);
-                            }}
-                            onCancel={() => setPendingStockMint(null)}
-                          />
-                        ) : null}
                       </div>
                     ) : null}
                     {evmGen6 ? (
@@ -1410,18 +1370,57 @@ const Create = () => {
 
             {step === 5 && dbcLaunch ? (
               <CreateFullPane>
-                <div className="flex h-full flex-col gap-4 p-4">
+                <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4">
                   <div>
-                    <div className="font-retro text-lg text-foreground">Graduation</div>
+                    <div className="font-retro text-lg text-foreground">Market</div>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      When the curve fills, your coin moves into a Meteora pool paired with {dbcQuote?.symbol || "SOL"}. The pool's liquidity is locked for good, and the coin keeps trading there and on Jupiter.
+                      Your coin trades in this token on the curve and pairs with it in its Meteora pool after graduation. SOL is the default; a stock or stablecoin is your call and shows its risks before you confirm.
                     </p>
                   </div>
+                  <div>
+                    <div className="font-retro text-sm text-foreground">Quote</div>
+                    <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+                      {dbcQuoteOptions.map((q) => (
+                        <button
+                          key={q.mint}
+                          type="button"
+                          onClick={() => (q.kind === "stock" && q.mint !== dbcQuoteMint ? setPendingStockMint(q.mint) : chooseDbcQuote(q.mint))}
+                          className={cn("rounded-lg border px-2.5 py-2 text-left", dbcQuoteMint === q.mint ? "border-accent bg-accent/15" : "border-border bg-muted/30")}
+                        >
+                          <div className="font-retro text-sm">{q.symbol}</div>
+                          <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">{q.kind === "native" ? "Chain coin" : q.kind === "stable" ? "1:1 USD" : "Stock token"}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-retro text-sm text-foreground">Your first buy (optional)</div>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Buys in the same transaction as the launch, at the normal 2% fee.</p>
+                    <Input type="number" min={0} step="0.01" value={dbcFirstBuySol} onChange={(e) => setDbcFirstBuySol(e.target.value)} placeholder={`${dbcQuote?.symbol || "SOL"} amount`} className="mt-2 max-w-[12rem]" />
+                    {dbcFirstBuyQuote ? (
+                      <p className={cn("mt-1 text-xs", dbcFirstBuyQuote.exceedsCap ? "text-orange-300" : "text-muted-foreground")}>
+                        About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
+                        {dbcFirstBuyQuote.exceedsCap ? " (over the 10% cap)" : ""}.
+                      </p>
+                    ) : null}
+                  </div>
+                  {pendingStock ? (
+                    <DbcStockRiskDialog
+                      mint={pendingStock.mint}
+                      symbol={pendingStock.symbol}
+                      ticker={normalizedTicker}
+                      onConfirm={() => {
+                        chooseDbcQuote(pendingStock.mint);
+                        setPendingStockMint(null);
+                      }}
+                      onCancel={() => setPendingStockMint(null)}
+                    />
+                  ) : null}
                   <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Pool</span><span className="text-foreground">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Pool after graduation</span><span className="text-foreground">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora, liquidity locked</span></div>
                     <div className="flex justify-between gap-3"><span className="text-muted-foreground">Your share at graduation</span><span className="text-foreground">19.8% of what the curve raised</span></div>
                   </div>
-                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" onClick={goNext}>Next</Button>
+                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 shrink-0 font-retro" onClick={goNext}>Next</Button>
                 </div>
               </CreateFullPane>
             ) : null}

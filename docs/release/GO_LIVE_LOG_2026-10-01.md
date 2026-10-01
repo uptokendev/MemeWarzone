@@ -163,6 +163,15 @@ Bundle re-checked: no 64-byte key arrays. **Open:** move the remaining 0.039 SOL
   route above ~100 SOL), and on Robinhood the adapter's oracle minimum (TSLA) or no route at all (all
   stocks outside batch Q). JUP was already ACTIVE and bindable.
 
+## 6e. Solana create: the quote gets its own Market step
+
+Founder: the DBC step 5 was an info page while the quote choice sat hidden in step 4. Step 5 on DBC is
+now Market: the quote picker (stock risk dialog unchanged), the first buy (entered in that quote, so it
+follows the choice) and the pool summary. Step 4 keeps threshold + creator fee choice. The DBC quote
+list is `shared/dbcQuotes.mjs` (SOL, NVDAx, TSLAx, SPYx, QQQx, USDC, USDT), not the Graduation Markets
+catalog: approving a Solana catalog row does not add it to the DBC picker. Open: decide whether the DBC
+list should follow the catalog. Pre-existing failure, unrelated: `src/lib/dbcPageMetrics.test.mjs` #5.
+
 ## 7. Open items
 
 - [x] EVM gen-6 token page: fully diluted market cap, chart from start price (`ee695e76`, `4625bd72`), founder-checked on both chains.
