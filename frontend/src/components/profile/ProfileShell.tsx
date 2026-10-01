@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { FeedWhoToFollow } from "@/components/feed/FeedCards";
 import { ProfileMoreSheet } from "@/components/profile/ProfileMoreSheet";
+import { formatCompactUsd } from "@/features/postgrad/warRoomMetrics";
 import { normalizeRank, type RankName } from "@/lib/ranks";
 
 export type ProfileTabKey = "posts" | "coins" | "activity";
@@ -30,8 +31,14 @@ type Props = {
   followingCount: number;
   coinsCount: number;
   loadingFollows?: boolean;
-  recruiterLabel?: string | null;
-  squadLabel?: string | null;
+  recruiterLoading?: boolean;
+  isRecruiter?: boolean;
+  recruiterCode?: string | null;
+  recruiterName?: string | null;
+  squadCode?: string | null;
+  squadName?: string | null;
+  totalValueUsd?: number | null;
+  loadingTotalValue?: boolean;
   isOwner: boolean;
   isFollowing?: boolean;
   followBusy?: boolean;
@@ -64,6 +71,20 @@ function formatCount(value: number) {
   return value.toLocaleString();
 }
 
+function formatCode(value?: string | null) {
+  const raw = String(value || "").trim().replace(/^\/+/, "");
+  return raw ? `/${raw}` : null;
+}
+
+function identityValue(code?: string | null, name?: string | null) {
+  const formatted = formatCode(code);
+  const label = String(name || "").trim();
+  if (formatted && label && label.toLowerCase() !== formatted.slice(1).toLowerCase()) {
+    return `${formatted} · ${label}`;
+  }
+  return formatted || label || null;
+}
+
 const TABS: Array<{ key: ProfileTabKey; label: string }> = [
   { key: "posts", label: "Posts" },
   { key: "coins", label: "Coins" },
@@ -84,8 +105,14 @@ export function ProfileShell({
   followingCount,
   coinsCount,
   loadingFollows,
-  recruiterLabel,
-  squadLabel,
+  recruiterLoading,
+  isRecruiter,
+  recruiterCode,
+  recruiterName,
+  squadCode,
+  squadName,
+  totalValueUsd,
+  loadingTotalValue,
   isOwner,
   isFollowing,
   followBusy,
@@ -219,22 +246,40 @@ export function ProfileShell({
               </a>
             </div>
 
-            {(recruiterLabel || squadLabel) && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {recruiterLabel ? (
-                  <span className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground">
-                    Recruiter {recruiterLabel}
-                  </span>
-                ) : null}
-                {squadLabel ? (
-                  <span className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground">
-                    Squad {squadLabel}
-                  </span>
-                ) : null}
+            <div className="mt-3 grid gap-1 text-sm" data-profile-identity="true">
+              <div className="flex flex-wrap items-baseline gap-x-2" data-profile-recruiter="true">
+                <span className="text-muted-foreground">Recruiter</span>
+                {recruiterLoading ? (
+                  <span className="text-muted-foreground">…</span>
+                ) : isRecruiter && recruiterCode ? (
+                  <Link to={`/recruiters/${encodeURIComponent(recruiterCode)}`} className="text-accent hover:underline">
+                    {identityValue(recruiterCode, recruiterName)}
+                  </Link>
+                ) : (
+                  <span className="text-foreground">Not a recruiter</span>
+                )}
               </div>
-            )}
+              <div className="flex flex-wrap items-baseline gap-x-2" data-profile-squad="true">
+                <span className="text-muted-foreground">Squad</span>
+                {recruiterLoading ? (
+                  <span className="text-muted-foreground">…</span>
+                ) : squadCode ? (
+                  <Link to={`/recruiters/${encodeURIComponent(squadCode)}`} className="text-accent hover:underline">
+                    {identityValue(squadCode, squadName)}
+                  </Link>
+                ) : (
+                  <span className="text-foreground">No squad</span>
+                )}
+              </div>
+            </div>
 
             <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-sm">
+              <span data-profile-total-value="true">
+                <b className="text-foreground">
+                  {loadingTotalValue ? "…" : totalValueUsd != null && totalValueUsd > 0 ? formatCompactUsd(totalValueUsd) : "—"}
+                </b>{" "}
+                <span className="text-muted-foreground">Total value</span>
+              </span>
               <Link to={followingHref || "#"} className="hover:underline">
                 <b className="text-foreground">{loadingFollows ? "…" : formatCount(followingCount)}</b>{" "}
                 <span className="text-muted-foreground">Following</span>

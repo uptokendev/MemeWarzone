@@ -15,11 +15,8 @@ import { EditProfileDialog } from "@/components/profile/EditProfileDialog";
 import { ProfileShell, type ProfileTabKey } from "@/components/profile/ProfileShell";
 import { ProfileTimeline, authorsFromFeed, type ProfileCoin } from "@/components/profile/ProfileTimeline";
 import { fetchActivityTimeline, fetchFeedPosts, type FeedItem } from "@/lib/feedApi";
-import {
-  fetchRecruiterSummaryByWallet,
-  fetchSquadSummary,
-  fetchWalletAttributionState,
-} from "@/lib/recruiterApi";
+import { useProfileRecruiterIdentity } from "@/hooks/profile/useProfileRecruiterIdentity";
+import { usePublicPortfolio } from "@/hooks/profile/usePublicPortfolio";
 import { followUser, getFollowersCount, getFollowingCount, isFollowingUser, unfollowUser } from "@/lib/followApi";
 import { toast } from "sonner";
 
@@ -68,8 +65,6 @@ export default function PublicProfile({
   const [visibleDrafts, setVisibleDrafts] = useState<CampaignDraft[]>([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [draftsError, setDraftsError] = useState<string | null>(null);
-  const [recruiterLabel, setRecruiterLabel] = useState<string | null>(null);
-  const [squadLabel, setSquadLabel] = useState<string | null>(null);
   const [publicActivity, setPublicActivity] = useState<FeedItem[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
   const [activityError, setActivityError] = useState<string | null>(null);
@@ -86,6 +81,9 @@ export default function PublicProfile({
     viewedAddress: profileWallet,
     wallet,
   });
+
+  const identity = useProfileRecruiterIdentity(profileWallet);
+  const portfolio = usePublicPortfolio(activeChainId, profileWallet);
 
   const { created, loading: loadingCoins } = useCreatedCampaignsQuery({
     viewedAddress: profileWallet,
@@ -234,41 +232,6 @@ export default function PublicProfile({
     };
   }, [activeChainId, profileWallet, isOwnProfile]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [recruiterResult, attributionResult] = await Promise.allSettled([
-          fetchRecruiterSummaryByWallet(profileWallet),
-          fetchWalletAttributionState(profileWallet),
-        ]);
-        if (cancelled) return;
-        const nextRecruiter = recruiterResult.status === "fulfilled" ? recruiterResult.value : null;
-        const nextAttribution = attributionResult.status === "fulfilled" ? attributionResult.value : null;
-        setRecruiterLabel(nextRecruiter?.code ? `/${nextRecruiter.code}` : null);
-        const squadCode = nextRecruiter?.code || nextAttribution?.recruiterCode || null;
-        if (!squadCode) {
-          setSquadLabel(null);
-          return;
-        }
-        try {
-          const nextSquad = await fetchSquadSummary(squadCode);
-          if (!cancelled) setSquadLabel(nextSquad?.recruiterCode ? `/${nextSquad.recruiterCode}` : `/${squadCode}`);
-        } catch {
-          if (!cancelled) setSquadLabel(`/${squadCode}`);
-        }
-      } catch {
-        if (!cancelled) {
-          setRecruiterLabel(null);
-          setSquadLabel(null);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [profileWallet]);
-
   const loadActivity = useCallback(async () => {
     if (!profileWallet) return;
     setLoadingActivity(true);
@@ -318,8 +281,14 @@ export default function PublicProfile({
         followingCount={followingCount}
         coinsCount={createdCoins.length}
         loadingFollows={loadingFollows}
-        recruiterLabel={recruiterLabel}
-        squadLabel={squadLabel}
+        recruiterLoading={identity.loading}
+        isRecruiter={identity.isRecruiter}
+        recruiterCode={identity.recruiterCode}
+        recruiterName={identity.recruiterName}
+        squadCode={identity.squadCode}
+        squadName={identity.squadName}
+        totalValueUsd={portfolio.metrics?.totalValueUsd ?? null}
+        loadingTotalValue={portfolio.loading}
         isOwner={isOwnProfile}
         isFollowing={isFollowing}
         followBusy={followBusy}
@@ -338,9 +307,11 @@ export default function PublicProfile({
           events={publicEvents}
           coins={createdCoins}
           drafts={visibleDrafts}
+          holdings={portfolio.holdings}
           loadingPosts={loadingActivity}
           loadingCoins={loadingCoins}
           loadingDrafts={loadingDrafts}
+          loadingHoldings={portfolio.loading}
           loadingActivity={loadingActivity}
           activityError={activityError}
           draftsError={draftsError}

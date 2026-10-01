@@ -10,6 +10,8 @@ import { ProfileShell, type ProfileTabKey } from "@/components/profile/ProfileSh
 import { ProfileTimeline, authorsFromFeed, type ProfileCoin } from "@/components/profile/ProfileTimeline";
 import { fetchOwnerCampaignDrafts, type CampaignDraft } from "@/lib/draftApi";
 import { fetchActivityTimeline, fetchFeedPosts, type FeedItem } from "@/lib/feedApi";
+import { useProfileRecruiterIdentity } from "@/hooks/profile/useProfileRecruiterIdentity";
+import { usePublicPortfolio } from "@/hooks/profile/usePublicPortfolio";
 import { isSolanaAddress } from "@/lib/address";
 import { SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 
@@ -104,7 +106,6 @@ function CommandCenterProfileHome({ basePath }: { basePath: string }) {
     loadingFollows,
     created,
     liveRank,
-    attribution,
     handleEdit,
     editOpen,
     setEditOpen,
@@ -125,6 +126,8 @@ function CommandCenterProfileHome({ basePath }: { basePath: string }) {
   const [followSuggestions, setFollowSuggestions] = useState<Array<{ wallet: string; name?: string | null; avatar?: string | null }>>([]);
 
   const resolvedChainId = isSolanaAddress(walletAddress) ? SOLANA_CHAIN_ID : Number(chainId || 56);
+  const identity = useProfileRecruiterIdentity(walletAddress);
+  const portfolio = usePublicPortfolio(resolvedChainId, walletAddress);
 
   const coins: ProfileCoin[] = useMemo(
     () =>
@@ -216,8 +219,14 @@ function CommandCenterProfileHome({ basePath }: { basePath: string }) {
         followingCount={followingCount}
         coinsCount={coins.length}
         loadingFollows={loadingFollows}
-        recruiterLabel={attribution?.recruiterCode ? `/${attribution.recruiterCode}` : null}
-        squadLabel={attribution?.squadState ? attribution.squadState : null}
+        recruiterLoading={identity.loading}
+        isRecruiter={identity.isRecruiter}
+        recruiterCode={identity.recruiterCode}
+        recruiterName={identity.recruiterName}
+        squadCode={identity.squadCode}
+        squadName={identity.squadName}
+        totalValueUsd={portfolio.metrics?.totalValueUsd ?? null}
+        loadingTotalValue={portfolio.loading}
         isOwner
         onEdit={handleEdit}
         commandBasePath={basePath}
@@ -235,9 +244,11 @@ function CommandCenterProfileHome({ basePath }: { basePath: string }) {
           events={events}
           coins={coins}
           drafts={drafts}
+          holdings={portfolio.holdings}
           loadingPosts={loadingActivity}
           loadingCoins={false}
           loadingDrafts={loadingDrafts}
+          loadingHoldings={portfolio.loading}
           loadingActivity={loadingActivity}
           activityError={activityError}
           onPosted={() => void loadActivity()}

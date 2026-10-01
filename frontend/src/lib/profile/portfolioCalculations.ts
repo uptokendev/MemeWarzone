@@ -113,8 +113,16 @@ export function derivePortfolioMetrics(params: {
   bnbUsd: number;
   firstActivityTimestamp?: number | null; // preferred: on-chain first activity
   holdingsCount?: number;
+  nativeTicker?: string | null;
 }): PortfolioMetrics {
-  const { nativeBnb = 0, tokenHoldingsWithValues = [], bnbUsd = 0, firstActivityTimestamp, holdingsCount } = params;
+  const {
+    nativeBnb = 0,
+    tokenHoldingsWithValues = [],
+    bnbUsd = 0,
+    firstActivityTimestamp,
+    holdingsCount,
+    nativeTicker,
+  } = params;
 
   // Native contribution
   const nativeUsd = (Number.isFinite(nativeBnb) ? nativeBnb : 0) * (Number.isFinite(bnbUsd) && bnbUsd > 0 ? bnbUsd : 0);
@@ -129,6 +137,10 @@ export function derivePortfolioMetrics(params: {
       tokenTotalUsd += v;
       positiveHoldings.push({ ticker: h.ticker || "?", valueUsd: v });
     }
+  }
+
+  if (nativeUsd > 0) {
+    positiveHoldings.push({ ticker: String(nativeTicker || "BNB").trim() || "BNB", valueUsd: nativeUsd });
   }
 
   const totalValueUsd = nativeUsd + tokenTotalUsd;

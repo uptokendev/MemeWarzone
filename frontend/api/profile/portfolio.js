@@ -145,15 +145,19 @@ async function scanSolana(address, nativeUsd) {
   const holdings = owned.map((h) => {
     const campaign = byMint.get(h.mint);
     const ticker = campaign?.symbol || h.ticker;
-    const valued = {
+    return {
       ticker,
+      name: campaign?.name || ticker,
+      image: campaign?.logo_uri || null,
+      campaignAddress: campaign?.campaign_address || null,
+      tokenAddress: h.mint,
       balanceFormatted: h.balanceFormatted,
       valueUsd: holdingValue(
         { ...campaign, balanceFormatted: h.balanceFormatted, marketcap_bnb: campaign?.marketcap_bnb },
         nativeUsd,
       ),
+      isNative: false,
     };
-    return valued;
   });
   return { native, holdings };
 }
@@ -170,10 +174,16 @@ async function scanEvm(chainId, address, nativeUsd) {
       const raw = BigInt(String(row.balance_raw || "0").split(".")[0] || "0");
       const formatted = Number(raw) / 1e18;
       const balanceFormatted = Number.isFinite(formatted) ? String(formatted) : "0";
+      const ticker = row.symbol || String(row.token_address || "?").slice(0, 6);
       return {
-        ticker: row.symbol || String(row.token_address || "?").slice(0, 6),
+        ticker,
+        name: row.name || ticker,
+        image: row.logo_uri || null,
+        campaignAddress: row.campaign_address || null,
+        tokenAddress: row.token_address || null,
         balanceFormatted,
         valueUsd: holdingValue({ ...row, balanceFormatted }, nativeUsd),
+        isNative: false,
       };
     }).filter((h) => Number(h.balanceFormatted) > 0);
     return { native, holdings };
@@ -199,10 +209,16 @@ async function scanEvm(chainId, address, nativeUsd) {
       const decimals = Number(await erc20.decimals().catch(() => 18));
       const symbol = String(await erc20.symbol().catch(() => row.symbol || "???"));
       const formatted = ethers.formatUnits(rawBal, Number.isFinite(decimals) ? decimals : 18);
+      const ticker = symbol || row.symbol || "???";
       holdings.push({
-        ticker: symbol || row.symbol || "???",
+        ticker,
+        name: row.name || ticker,
+        image: row.logo_uri || null,
+        campaignAddress: row.campaign_address || null,
+        tokenAddress: token,
         balanceFormatted: formatted,
         valueUsd: holdingValue({ ...row, balanceFormatted: formatted }, nativeUsd),
+        isNative: false,
       });
     } catch {
       // skip tokens that cannot be read
@@ -219,6 +235,27 @@ async function nativeUsdForChain(chainId) {
   return (await resolveBnbUsdPrice().catch(() => null))?.price || 0;
 }
 
+function nativeTickerForChain(chainId, address) {
+  if (isSolanaChain(chainId) || isSolanaAddress(address)) return "SOL";
+  if (Number(chainId) === 4663 || Number(chainId) === 46630) return "ETH";
+  return "BNB";
+}
+
+function nativeName(ticker) {
+  if (ticker === "SOL") return "Solana";
+  if (ticker === "ETH") return "Ether";
+  return "BNB";
+}
+
+function sortHoldings(rows) {
+  return [...rows].sort((a, b) => {
+    const av = Number(a.valueUsd) || 0;
+    const bv = Number(b.valueUsd) || 0;
+    if (bv !== av) return bv - av;
+    return (Number.parseFloat(b.balanceFormatted || "0") || 0) - (Number.parseFloat(a.balanceFormatted || "0") || 0);
+  });
+}
+
 async function computePortfolio(chainId, address) {
   const [createdAt, nativeUsd] = await Promise.all([
     loadWalletAge(address),
@@ -228,15 +265,37 @@ async function computePortfolio(chainId, address) {
     ? await scanSolana(address, nativeUsd)
     : await scanEvm(chainId, address, nativeUsd);
 
-  const positiveBalanceCount = scan.holdings.filter((h) => Number.parseFloat(h.balanceFormatted || "0") > 0).length;
+  const ticker = nativeTickerForChain(chainId, address);
+  const nativeUsdValue = (Number.isFinite(scan.native) ? scan.native : 0) * (Number.isFinite(nativeUsd) ? nativeUsd : 0);
+  const nativeHolding = scan.native > 0
+    ? {
+        ticker,
+        name: nativeName(ticker),
+        image: "/assets/ticker.png",
+        campaignAddress: null,
+        tokenAddress: null,
+        balanceFormatted: String(scan.native),
+        valueUsd: nativeUsdValue,
+        isNative: true,
+      }
+    : null;
+
+  const tokenHoldings = scan.holdings.filter((h) => Number.parseFloat(h.balanceFormatted || "0") > 0);
+  const holdings = sortHoldings([
+    ...(nativeHolding ? [nativeHolding] : []),
+    ...tokenHoldings,
+  ]);
+
+  const positiveBalanceCount = tokenHoldings.length;
   const metrics = derivePortfolioMetrics({
     nativeBnb: scan.native,
     tokenHoldingsWithValues: scan.holdings,
     bnbUsd: nativeUsd,
     createdAt,
     holdingsCount: positiveBalanceCount,
+    nativeTicker: ticker,
   });
-  return { metrics, createdAt };
+  return { metrics, holdings, createdAt };
 }
 
 export default async function handler(req, res) {
@@ -268,7 +327,7 @@ export default async function handler(req, res) {
     if (!pending) {
       pending = computePortfolio(chainId, addr)
         .then((payload) => {
-          const body = { metrics: payload.metrics, warning: null };
+          const body = { metrics: payload.metrics, holdings: payload.holdings || [], warning: null };
           cache.set(key, { at: Date.now(), payload: body });
           if (cache.size > 2_000) cache.delete(cache.keys().next().value);
           return body;
@@ -283,6 +342,7 @@ export default async function handler(req, res) {
     console.error("[api/profile/portfolio]", e);
     return json(res, 200, {
       metrics: null,
+      holdings: [],
       warning: "portfolio scan failed",
     });
   }

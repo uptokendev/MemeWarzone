@@ -80,3 +80,42 @@ test("edit profile can change cover and square photo", () => {
   assert.match(hook, /handleBannerSelected/);
   assert.match(hook, /bannerUrl/);
 });
+
+test("public and command profiles always show recruiter and squad identity", () => {
+  const shell = readRepo("frontend/src/components/profile/ProfileShell.tsx");
+  assert.match(shell, /data-profile-recruiter="true"/);
+  assert.match(shell, /data-profile-squad="true"/);
+  assert.match(shell, /Not a recruiter/);
+  assert.match(shell, /No squad/);
+  assert.match(shell, /\/recruiters\/\$\{encodeURIComponent\(recruiterCode\)\}/);
+  const page = readRepo("frontend/src/pages/PublicProfile.tsx");
+  assert.match(page, /useProfileRecruiterIdentity/);
+  const layout = readRepo("frontend/src/components/command-center/CommandCenterLayout.tsx");
+  assert.match(layout, /useProfileRecruiterIdentity/);
+  assert.doesNotMatch(layout, /attribution\?\.squadState/);
+});
+
+test("total value sits above following and followers", () => {
+  const shell = readRepo("frontend/src/components/profile/ProfileShell.tsx");
+  const totalIdx = shell.indexOf('data-profile-total-value="true"');
+  const followingIdx = shell.indexOf(">Following</span>");
+  assert.ok(totalIdx > 0, "missing total value");
+  assert.ok(followingIdx > totalIdx, "total value must render before Following");
+  assert.match(shell, /Total value/);
+});
+
+test("coins tab has created holdings drafts selector and top holdings", () => {
+  const timeline = readRepo("frontend/src/components/profile/ProfileTimeline.tsx");
+  assert.match(timeline, /data-profile-coins-filter="true"/);
+  assert.match(timeline, /data-coins-filter=\{item\.key\}/);
+  assert.match(timeline, /key: "created"/);
+  assert.match(timeline, /key: "holdings"/);
+  assert.match(timeline, /key: "drafts"/);
+  assert.match(timeline, /data-profile-top-holdings="true"/);
+  assert.match(timeline, /holdings\?: PublicPortfolioHolding/);
+  const page = readRepo("frontend/src/pages/PublicProfile.tsx");
+  assert.match(page, /holdings=\{portfolio\.holdings\}/);
+  const api = readRepo("frontend/api/profile/portfolio.js");
+  assert.match(api, /holdings: payload\.holdings/);
+  assert.match(api, /nativeTicker: ticker/);
+});
