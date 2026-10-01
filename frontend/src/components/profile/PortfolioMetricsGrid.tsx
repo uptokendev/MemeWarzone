@@ -96,9 +96,9 @@ export function PortfolioMetricsGrid({
 }: PortfolioMetricsGridProps) {
   const isLoading = loading || !metrics;
 
-  const totalValue = isLoading || metrics == null || metrics.totalValueUsd == null || !(metrics.totalValueUsd > 0)
+  const totalValue = isLoading
     ? "—"
-    : formatCompactUsd(metrics.totalValueUsd);
+    : formatCompactUsd(metrics.totalValueUsd ?? 0);
 
   const topHolding = metrics?.topHolding;
   // Top Holding: main value = ticker only (no dollar value per user request)

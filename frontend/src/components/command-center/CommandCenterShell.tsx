@@ -35,7 +35,6 @@ function getCommandSection(pathname: string): string {
     "followers",
     "following",
     "coins",
-    "feed",
     "battles",
     "support",
   ]);

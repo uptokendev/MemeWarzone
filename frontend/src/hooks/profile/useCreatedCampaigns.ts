@@ -32,8 +32,6 @@ export interface CreatedCampaignCard {
   marketCap: string;
   timeAgo: string;
   buyersCount?: number;
-  progress?: string | null;
-  status?: string | null;
 }
 
 interface UseCreatedCampaignsArgs {
@@ -163,57 +161,43 @@ async function solanaMarketCapLabel(item: any, solUsd: number | null): Promise<s
   return `${(spot * soldWhole).toFixed(2)} SOL`;
 }
 
-function mapRegistryCampaign(item: any, creator: string, idx: number, chainId: number) {
-  return {
-    id: 200000 + idx,
-    campaign: String(item.campaignAddress || item.campaign || "").trim(),
-    token: String(item.tokenAddress || item.token || item.campaignAddress || "").trim(),
-    creator: String(item.creatorAddress || item.creator || creator).trim(),
-    name: String(item.name || "Campaign"),
-    symbol: String(item.symbol || item.ticker || ""),
-    logoURI: String(item.logoUri || item.logoURI || "/placeholder.svg"),
-    xAccount: String(item.xAccount || ""),
-    website: String(item.website || ""),
-    extraLink: String(item.extraLink || ""),
-    createdAt: item.createdAtChain ? Math.floor(new Date(item.createdAtChain).getTime() / 1000) : undefined,
-    chainId,
-    marketcapBnb: item.marketcapBnb,
-    lastPriceBnb: item.lastPriceBnb,
-    soldTokens: item.soldTokens,
-    holderCount: item.holderCount,
-    progressPct: item.progressPct,
-    isDexTrading: item.isDexTrading,
-    status: item.status,
-  };
-}
-
-/** Load campaigns from the shared registry by creator wallet (Solana case preserved). */
-async function fetchRegistryCreatedCampaigns(creator: string, chainId: number): Promise<any[]> {
+/** Load Solana campaigns from the shared registry by creator wallet. */
+async function fetchSolanaCreatedCampaigns(creator: string): Promise<any[]> {
   try {
-    const params = new URLSearchParams({
-      chainId: String(chainId),
-      creator,
-      limit: "200",
-      tab: "new",
-      sort: "created_desc",
-      status: "all",
-    });
-    const res = await apiFetch(`/api/campaigns?${params.toString()}`, {
-      cache: "no-store" as RequestCache,
-    });
+    const res = await apiFetch(
+      `/api/campaigns?chainId=101&limit=200&tab=trending&sort=default&status=all`,
+      { cache: "no-store" as RequestCache },
+    );
     const json = await res.json().catch(() => ({}));
     if (!res.ok) return [];
     const items = Array.isArray(json?.items) ? json.items : [];
     return items
       .filter((item: any) => sameWallet(item?.creatorAddress ?? item?.creator, creator))
-      .map((item: any, idx: number) => mapRegistryCampaign(item, creator, idx, chainId));
+      .map((item: any, idx: number) => ({
+        id: 200000 + idx,
+        campaign: String(item.campaignAddress || item.campaign || "").trim(),
+        token: String(item.tokenAddress || item.token || item.campaignAddress || "").trim(),
+        creator: String(item.creatorAddress || item.creator || creator).trim(),
+        name: String(item.name || "Solana campaign"),
+        symbol: String(item.symbol || item.ticker || ""),
+        logoURI: String(item.logoUri || item.logoURI || "/placeholder.svg"),
+        xAccount: String(item.xAccount || ""),
+        website: String(item.website || ""),
+        extraLink: String(item.extraLink || ""),
+        createdAt: item.createdAtChain ? Math.floor(new Date(item.createdAtChain).getTime() / 1000) : undefined,
+        chainId: 101,
+        marketcapBnb: item.marketcapBnb,
+        lastPriceBnb: item.lastPriceBnb,
+        soldTokens: item.soldTokens,
+        holderCount: item.holderCount,
+      }));
   } catch (error) {
-    console.warn("[Profile] Created campaigns fetch failed", error);
+    console.warn("[Profile] Solana campaigns fetch failed", error);
     return [];
   }
 }
 
-export function useCreatedCampaignsQuery({
+export function useCreatedCampaigns({
   viewedAddress,
   account,
   chainId,
@@ -221,7 +205,6 @@ export function useCreatedCampaignsQuery({
   fetchCampaignSummary,
 }: UseCreatedCampaignsArgs) {
   const [created, setCreated] = useState<CreatedCampaignCard[]>([]);
-  const [loading, setLoading] = useState(false);
   const { price: solUsd } = useSolUsdPrice(
     isSolanaChainId(Number(chainId)) || isSolanaAddress(viewedAddress) || isSolanaAddress(account),
   );
@@ -234,19 +217,17 @@ export function useCreatedCampaignsQuery({
         const ownerRaw = String(viewedAddress || account || "").trim();
         if (!ownerRaw) {
           setCreated([]);
-          setLoading(false);
           return;
         }
 
-        setLoading(true);
         const owner = normalizeAddress(ownerRaw);
         const solanaOwner = isSolanaAddress(ownerRaw) || isSolanaChainId(Number(chainId));
-        const registryChainId = solanaOwner ? 101 : Number(chainId || 56);
 
         let mine: any[] = [];
-        mine = await fetchRegistryCreatedCampaigns(ownerRaw, registryChainId);
 
-        if (!mine.length && isEvmAddress(ownerRaw)) {
+        if (solanaOwner) {
+          mine = await fetchSolanaCreatedCampaigns(ownerRaw);
+        } else if (isEvmAddress(ownerRaw)) {
           const campaigns = (await fetchCampaigns().catch(() => [])) ?? [];
           mine = campaigns.filter((c) => sameWallet(c?.creator, owner));
           if (!mine.length) {
@@ -269,8 +250,6 @@ export function useCreatedCampaignsQuery({
               marketCap: await solanaMarketCapLabel(c, solUsd),
               timeAgo: c.createdAt ? formatTimeAgo(c.createdAt) : "",
               buyersCount: Number(c.holderCount || 0) || undefined,
-              progress: c.progressPct == null ? null : `${Number(c.progressPct).toFixed(0)}%`,
-              status: c.isDexTrading ? "graduated" : "live",
             })),
           );
           if (!cancelled) setCreated(cards);
@@ -295,8 +274,6 @@ export function useCreatedCampaignsQuery({
               marketCap: normalizeNativeMarketCapLabel(s.stats.marketCap, chainId),
               timeAgo: (s.campaign as any).timeAgo || formatTimeAgo(s.campaign.createdAt),
               buyersCount: (s.stats as any)?.buyersCount ?? undefined,
-              progress: (s.stats as any)?.progressPct == null ? null : `${Number((s.stats as any).progressPct).toFixed(0)}%`,
-              status: (s.campaign as any)?.graduated || (s.campaign as any)?.isDexTrading ? "graduated" : "live",
             };
           });
 
@@ -304,8 +281,6 @@ export function useCreatedCampaignsQuery({
       } catch (e) {
         console.error("[Profile] Failed to load created campaigns", e);
         if (!cancelled) setCreated([]);
-      } finally {
-        if (!cancelled) setLoading(false);
       }
     };
 
@@ -315,9 +290,5 @@ export function useCreatedCampaignsQuery({
     };
   }, [viewedAddress, account, chainId, fetchCampaigns, fetchCampaignSummary, solUsd]);
 
-  return { created, loading };
-}
-
-export function useCreatedCampaigns(args: UseCreatedCampaignsArgs) {
-  return useCreatedCampaignsQuery(args).created;
+  return created;
 }

@@ -112,9 +112,8 @@ export function derivePortfolioMetrics(params: {
   tokenHoldingsWithValues: Array<{ ticker: string; valueUsd: number }>;
   bnbUsd: number;
   firstActivityTimestamp?: number | null; // preferred: on-chain first activity
-  holdingsCount?: number;
 }): PortfolioMetrics {
-  const { nativeBnb = 0, tokenHoldingsWithValues = [], bnbUsd = 0, firstActivityTimestamp, holdingsCount } = params;
+  const { nativeBnb = 0, tokenHoldingsWithValues = [], bnbUsd = 0, firstActivityTimestamp } = params;
 
   // Native contribution
   const nativeUsd = (Number.isFinite(nativeBnb) ? nativeBnb : 0) * (Number.isFinite(bnbUsd) && bnbUsd > 0 ? bnbUsd : 0);
@@ -145,9 +144,7 @@ export function derivePortfolioMetrics(params: {
     };
   }
 
-  const coinsCount = Number.isFinite(Number(holdingsCount)) && Number(holdingsCount) >= 0
-    ? Math.trunc(Number(holdingsCount))
-    : positiveHoldings.length;
+  const coinsCount = positiveHoldings.length;
 
   const walletAge = formatWalletAge(firstActivityTimestamp);
   const walletAgeSince = formatWalletAgeSince(firstActivityTimestamp);

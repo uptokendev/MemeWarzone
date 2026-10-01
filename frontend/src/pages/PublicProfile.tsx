@@ -3,10 +3,13 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { useLaunchpad } from "@/lib/launchpadClient";
+import type { CampaignSummary } from "@/lib/launchpadClient";
 import {
   BNB_TESTNET_CHAIN_ID,
   getActiveChainId,
   isEvmChainId,
+  isRobinhoodChainId,
+  isSolanaChainId,
   SOLANA_CHAIN_ID,
 } from "@/lib/chainConfig";
 import { fetchUserProfile, fetchPublicPortfolioMetrics, type UserProfile } from "@/lib/profileApi";
@@ -15,10 +18,7 @@ import { isSolanaAddress } from "@/lib/address";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { PortfolioMetricsGrid } from "@/components/profile/PortfolioMetricsGrid";
 import type { PortfolioMetrics } from "@/lib/profile/portfolioCalculations";
-import { useCreatedCampaignsQuery } from "@/hooks/profile/useCreatedCampaigns";
-import { FeedComposer } from "@/components/feed/FeedComposer";
-import { FeedItemView } from "@/components/feed/FeedCards";
-import { fetchActivityTimeline, type FeedItem } from "@/lib/feedApi";
+import { useProfileBalances } from "@/hooks/profile/useProfileBalances";
 import {
   fetchRecruiterSummaryByWallet,
   fetchSquadSummary,
@@ -28,6 +28,8 @@ import {
   type WalletAttributionPublicState,
 } from "@/lib/recruiterApi";
 import { followUser, isFollowingUser, unfollowUser } from "@/lib/followApi";
+import { buildRealtimeApiUrl } from "@/lib/realtimeApi";
+import type { ActivityTradeRow } from "@/types/profilePage";
 import { RankBadgeCard } from "@/components/rank/RankBadgeCard";
 import { normalizeRank, type RankName } from "@/lib/ranks";
 import { Copy, ExternalLink, Flag } from "lucide-react";
@@ -85,9 +87,54 @@ function formatCompactNumber(value?: number | null) {
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
+function nativeSymbol(chainId?: number) {
+  if (isSolanaChainId(Number(chainId))) return "SOL";
+  if (isRobinhoodChainId(Number(chainId))) return "ETH";
+  return "BNB";
+}
+
+function formatNative(value?: number | null, chainId?: number) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 5 })} ${nativeSymbol(chainId)}`;
+}
+
+function normalizeMarketCapLabel(value: unknown, chainId?: number): string {
+  const label = String(value ?? "—").trim() || "—";
+  if (isRobinhoodChainId(Number(chainId))) return label.replace(/\s+BNB$/i, " ETH");
+  if (isSolanaChainId(Number(chainId))) return label.replace(/\s+BNB$/i, " SOL");
+  return label;
+}
+
+function formatTokenAmount(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 function safeRank(profile: UserProfile | null): RankName {
   const raw = (profile as any)?.rank;
   return raw ? normalizeRank(raw) : "Recruit";
+}
+
+function coinFromSummary(summary: CampaignSummary, index: number, fallbackChainId: number): PublicCoin {
+  const stats: any = summary.stats as any;
+  const campaign: any = summary.campaign as any;
+  const progress = stats?.progressPct ?? stats?.progress ?? campaign?.progressPct ?? null;
+  const graduated = Boolean(campaign?.graduated || campaign?.isDexTrading || campaign?.graduatedAt);
+  const chainId = Number(campaign?.chainId ?? fallbackChainId);
+
+  return {
+    id: typeof summary.campaign.id === "number" ? summary.campaign.id : index + 1,
+    image: summary.campaign.logoURI || "/placeholder.svg",
+    name: summary.campaign.name || "Unnamed coin",
+    ticker: summary.campaign.symbol || "???",
+    campaignAddress: summary.campaign.campaign,
+    tokenAddress: summary.campaign.token || null,
+    chainId,
+    marketCap: normalizeMarketCapLabel(summary.stats.marketCap, chainId),
+    progress: progress == null ? null : `${Number(progress).toFixed(0)}%`,
+    status: graduated ? "graduated" : "live",
+    timeAgo: campaign?.timeAgo || formatTimeAgo(summary.campaign.createdAt),
+  };
 }
 
 function isDraftVisibleOnPublicProfile(draft: CampaignDraft) {
@@ -112,6 +159,27 @@ function walletsEqual(a?: string | null, b?: string | null) {
   return left.toLowerCase() === right.toLowerCase();
 }
 
+function tradeFromApiItem(item: any, fallbackChainId: number): ActivityTradeRow {
+  return {
+    id: String(item?.id ?? `${item?.txHash ?? ""}:${item?.logIndex ?? 0}`),
+    txHash: String(item?.txHash ?? ""),
+    logIndex: Number(item?.logIndex ?? 0),
+    blockNumber: Number(item?.blockNumber ?? 0),
+    blockTime: String(item?.blockTime ?? ""),
+    side: String(item?.side ?? "buy") === "sell" ? "sell" : "buy",
+    wallet: String(item?.wallet ?? ""),
+    tokenAmount: item?.tokenAmount == null ? null : Number(item.tokenAmount),
+    bnbAmount: item?.bnbAmount == null ? null : Number(item.bnbAmount),
+    priceBnb: item?.priceBnb == null ? null : Number(item.priceBnb),
+    campaignAddress: String(item?.campaignAddress ?? ""),
+    tokenAddress: item?.tokenAddress ? String(item.tokenAddress) : null,
+    campaignName: item?.campaignName ?? null,
+    campaignSymbol: item?.campaignSymbol ?? null,
+    logoUri: item?.logoUri ?? null,
+    chainId: Number(item?.chainId ?? fallbackChainId) || fallbackChainId,
+  };
+}
+
 export default function PublicProfile({
   profileWallet,
   isOwnProfile,
@@ -132,6 +200,8 @@ export default function PublicProfile({
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const [createdCoins, setCreatedCoins] = useState<PublicCoin[]>([]);
+  const [loadingCoins, setLoadingCoins] = useState(false);
   const [visibleDrafts, setVisibleDrafts] = useState<CampaignDraft[]>([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [draftsError, setDraftsError] = useState<string | null>(null);
@@ -139,55 +209,32 @@ export default function PublicProfile({
   const [walletAttribution, setWalletAttribution] = useState<WalletAttributionPublicState | null>(null);
   const [squad, setSquad] = useState<SquadSummary | null>(null);
   const [loadingBadges, setLoadingBadges] = useState(false);
-  const [publicActivity, setPublicActivity] = useState<FeedItem[]>([]);
+  const [publicTrades, setPublicTrades] = useState<ActivityTradeRow[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
   const [activityError, setActivityError] = useState<string | null>(null);
 
-  const { created, loading: loadingCoins } = useCreatedCampaignsQuery({
-    viewedAddress: profileWallet,
-    account: isOwnProfile ? (wallet.account || null) : null,
-    chainId: activeChainId,
-    fetchCampaigns,
-    fetchCampaignSummary,
-  });
-  const createdCoins: PublicCoin[] = useMemo(
-    () =>
-      created.map((card, index) => ({
-        id: card.id ?? index + 1,
-        image: card.image,
-        name: card.name,
-        ticker: card.ticker,
-        campaignAddress: card.campaignAddress,
-        tokenAddress: card.tokenAddress,
-        chainId: card.chainId,
-        marketCap: card.marketCap,
-        progress: card.progress ?? null,
-        status: card.status ?? null,
-        timeAgo: card.timeAgo,
-      })),
-    [created],
-  );
-  const publicPosts = useMemo(
-    () => publicActivity.filter((item) => item.type === "post"),
-    [publicActivity],
-  );
-  const publicEvents = useMemo(
-    () => publicActivity.filter((item) => item.type !== "post"),
-    [publicActivity],
-  );
-  const publicTrades = useMemo(
-    () => publicActivity.filter((item) => item.type === "trade"),
-    [publicActivity],
-  );
-
+  // Phase 6: cached portfolio metrics from backend
   const [portfolioMetrics, setPortfolioMetrics] = useState<PortfolioMetrics | null>(null);
-  const [loadingPortfolio, setLoadingPortfolio] = useState(true);
+  const [loadingPortfolio, setLoadingPortfolio] = useState(false);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
 
-  const effectivePortfolioMetrics = portfolioMetrics;
-  const effectiveLoadingPortfolio = loadingPortfolio;
+  // Rich client-side portfolio metrics (same as Command Center).
+  // Used when viewing your own public profile for accurate live TOTAL VALUE, TOP HOLDING, COINS, and on-chain WALLET AGE.
+  const ownerBalances = useProfileBalances({
+    viewedAddress: profileWallet,
+    account: isOwnProfile ? (wallet.account || null) : null,
+    wallet,
+    fetchCampaigns,
+    fetchCampaignSummary,
+    profileCreatedAt: profile?.createdAt,
+  });
+
+  // When the viewer is the owner of this profile, we use the rich client-side metrics
+  // (identical to Command Center) for accurate live data instead of the backend cache.
+  const effectivePortfolioMetrics = isOwnProfile ? ownerBalances.portfolioMetrics : portfolioMetrics;
+  const effectiveLoadingPortfolio = isOwnProfile ? ownerBalances.loadingPortfolioMetrics : loadingPortfolio;
 
   const displayName = useMemo(() => {
     const name = (profile?.displayName ?? "").trim();
@@ -249,18 +296,18 @@ export default function PublicProfile({
     if ((profile?.displayName ?? "").trim()) score += 25;
     if ((profile?.bio ?? "").trim()) score += 25;
     if ((profile?.avatarUrl ?? "").trim()) score += 25;
-    if (createdCoins.length > 0 || visibleDrafts.length > 0 || publicActivity.length > 0) score += 25;
+    if (createdCoins.length > 0 || visibleDrafts.length > 0 || publicTrades.length > 0) score += 25;
     return score;
-  }, [profile?.avatarUrl, profile?.bio, profile?.displayName, createdCoins.length, visibleDrafts.length, publicActivity.length]);
+  }, [profile?.avatarUrl, profile?.bio, profile?.displayName, createdCoins.length, visibleDrafts.length, publicTrades.length]);
 
   const reputationSignals = useMemo(
     () => [
       { label: "Rank", value: rank, detail: "Current public progression" },
       { label: "Created", value: formatCompactNumber(createdCoins.length), detail: "Public launched coins" },
       { label: "Drafts", value: formatCompactNumber(visibleDrafts.length), detail: "Public Prepare drafts" },
-      { label: "Activity", value: formatCompactNumber(publicActivity.length), detail: "Posts, deploys, and trades" },
+      { label: "Trades", value: formatCompactNumber(publicTrades.length), detail: "Recent public activity" },
     ],
-    [rank, createdCoins.length, visibleDrafts.length, publicActivity.length]
+    [rank, createdCoins.length, visibleDrafts.length, publicTrades.length]
   );
 
   const publicTrustTags = useMemo(() => {
@@ -270,10 +317,9 @@ export default function PublicProfile({
     if (squad?.recruiterCode || walletAttribution?.recruiterCode) tags.push("Squad-linked");
     if (createdCoins.length > 0) tags.push("Creator activity");
     if (publicTrades.length > 0) tags.push("Trader activity");
-    if (publicPosts.length > 0) tags.push("Public posts");
     if (visibleDrafts.length > 0) tags.push("Public drafts");
     return tags;
-  }, [createdCoins.length, publicPosts.length, publicTrades.length, recruiter?.code, recruiter?.isOg, squad?.recruiterCode, visibleDrafts.length, walletAttribution?.recruiterCode]);
+  }, [createdCoins.length, publicTrades.length, recruiter?.code, recruiter?.isOg, squad?.recruiterCode, visibleDrafts.length, walletAttribution?.recruiterCode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -297,7 +343,18 @@ export default function PublicProfile({
     };
   }, [activeChainId, profileWallet]);
 
+  // Portfolio metrics on public profile — only for the owner for now
+  // (uses client-side data when isOwnProfile so we don't depend on new backend routes on dev branch)
   useEffect(() => {
+    // For non-owners viewing a public profile, load via the cached backend endpoint
+    // (avoids putting heavy on-chain work on every visitor).
+    if (isOwnProfile) {
+      // Owners use the rich client-side path below (via ownerBalances).
+      setPortfolioError(null);
+      setLoadingPortfolio(false);
+      return;
+    }
+
     if (!profileWallet || !activeChainId) {
       setPortfolioMetrics(null);
       setLoadingPortfolio(false);
@@ -329,7 +386,41 @@ export default function PublicProfile({
     return () => {
       cancelled = true;
     };
-  }, [activeChainId, profileWallet]);
+  }, [activeChainId, profileWallet, isOwnProfile]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCoins = async () => {
+      setLoadingCoins(true);
+      try {
+        const campaigns = (await fetchCampaigns()) ?? [];
+        const mine = campaigns.filter((campaign: any) => {
+          const creator = String(campaign?.creator ?? campaign?.creatorAddress ?? "").toLowerCase();
+          return creator === profileWallet.toLowerCase();
+        });
+
+        const settled = await Promise.allSettled(mine.map((campaign) => fetchCampaignSummary(campaign)));
+        if (cancelled) return;
+
+        const coins = settled
+          .filter((item): item is PromiseFulfilledResult<CampaignSummary> => item.status === "fulfilled")
+          .map((item, index) => coinFromSummary(item.value, index, activeChainId));
+
+        setCreatedCoins(coins);
+      } catch (e) {
+        console.warn("Failed to load public created coins", e);
+        if (!cancelled) setCreatedCoins([]);
+      } finally {
+        if (!cancelled) setLoadingCoins(false);
+      }
+    };
+
+    loadCoins();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeChainId, fetchCampaigns, fetchCampaignSummary, profileWallet]);
 
   useEffect(() => {
     let cancelled = false;
@@ -424,43 +515,69 @@ export default function PublicProfile({
     };
   }, [profileWallet]);
 
-  const loadActivity = useCallback(async () => {
-    if (!profileWallet) return;
-    setLoadingActivity(true);
-    setActivityError(null);
-    try {
-      const items = await fetchActivityTimeline(profileWallet, 40);
-      setPublicActivity(items);
-    } catch (e: any) {
-      console.warn("Failed to load public profile activity", e);
-      setActivityError(String(e?.message || "Failed to load public activity."));
-      setPublicActivity([]);
-    } finally {
-      setLoadingActivity(false);
-    }
-  }, [profileWallet]);
-
   useEffect(() => {
-    void loadActivity();
-  }, [loadActivity]);
+    let cancelled = false;
+    const ac = new AbortController();
+
+    const loadActivity = async () => {
+      setLoadingActivity(true);
+      setActivityError(null);
+      try {
+        const qs = new URLSearchParams({
+          chainId: String(activeChainId),
+          wallet: profileWallet,
+          limit: "12",
+        });
+        const res = await fetch(buildRealtimeApiUrl(`/api/activity/trades?${qs.toString()}`), {
+          method: "GET",
+          signal: ac.signal,
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(String(json?.error || `HTTP ${res.status}`));
+        if (cancelled) return;
+
+        const items = Array.isArray(json?.items) ? json.items : [];
+        setPublicTrades(items.map((item: any) => tradeFromApiItem(item, activeChainId)));
+      } catch (e: any) {
+        if (cancelled || ac.signal.aborted) return;
+        console.warn("Failed to load public profile activity", e);
+        setActivityError(String(e?.message || "Failed to load public activity."));
+        setPublicTrades([]);
+      } finally {
+        if (!cancelled) setLoadingActivity(false);
+      }
+    };
+
+    loadActivity();
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
+  }, [activeChainId, profileWallet]);
 
   const copyAddress = () => {
     navigator.clipboard.writeText(profileWallet);
     toast.success("Address copied!");
   };
 
+  // No refresh handler for portfolio on Public Profile for now
+  // (we avoid calling the route that isn't on the dev branch yet).
   const handlePortfolioRefresh = async () => {
     if (!profileWallet || !activeChainId) return;
-    setLoadingPortfolio(true);
+
+    // For owners we rely on the rich client-side calculation (refreshes on page load or wallet actions).
+    // The button is shown for owners for future parity; currently a hard refresh gives fresh data.
+    if (isOwnProfile) {
+      // Future: we could add a way to force the useProfileBalances hook to re-run.
+      return;
+    }
+
     try {
       const data = await fetchPublicPortfolioMetrics(activeChainId, profileWallet, { forceRefresh: true });
       setPortfolioMetrics(data ?? null);
       setPortfolioError(null);
     } catch (e: any) {
       setPortfolioError(String(e?.message || "Failed to refresh portfolio metrics."));
-      setPortfolioMetrics(null);
-    } finally {
-      setLoadingPortfolio(false);
     }
   };
 
@@ -539,13 +656,16 @@ export default function PublicProfile({
           </div>
         </section>
 
+        {/* Portfolio metrics grid — shown on all public profiles.
+            Uses the cached /api/profile/portfolio backend endpoint.
+            Owners see a Refresh button that forces a fresh server-side calculation. */}
         <PortfolioMetricsGrid
           metrics={effectivePortfolioMetrics}
           loading={effectiveLoadingPortfolio}
           onRefresh={isOwnProfile ? handlePortfolioRefresh : undefined}
           variant="public"
         />
-        {portfolioError ? (
+        {portfolioError && !isOwnProfile ? (
           <div className="text-xs text-muted-foreground">Portfolio metrics temporarily unavailable.</div>
         ) : null}
 
@@ -672,7 +792,7 @@ export default function PublicProfile({
           </div>
         </section>
 
-        <section id="created-coins" className="rounded-2xl border border-border/50 bg-card/35 p-5 backdrop-blur-md">
+        <section className="rounded-2xl border border-border/50 bg-card/35 p-5 backdrop-blur-md">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="font-retro text-lg text-foreground">Created Coins</h2>
@@ -789,53 +909,53 @@ export default function PublicProfile({
         <section className="rounded-2xl border border-border/50 bg-card/35 p-5 backdrop-blur-md">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="font-retro text-lg text-foreground">Posts</h2>
-            </div>
-            <div className="text-xs text-muted-foreground">{publicPosts.length} visible</div>
-          </div>
-
-          {isOwnProfile ? (
-            <div className="mb-4">
-              <FeedComposer chainId={activeChainId} onPosted={() => void loadActivity()} compact />
-            </div>
-          ) : null}
-
-          {loadingActivity && !publicPosts.length ? (
-            <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">Loading posts...</div>
-          ) : publicPosts.length ? (
-            <div className="space-y-3">
-              {publicPosts.map((item) => (
-                <FeedItemView key={item.id} item={item} />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">
-              {isOwnProfile ? "No posts yet. Say what's moving." : "No public posts yet."}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-2xl border border-border/50 bg-card/35 p-5 backdrop-blur-md">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
               <h2 className="font-retro text-lg text-foreground">Public Activity</h2>
             </div>
-            <div className="text-xs text-muted-foreground">{publicEvents.length} recent</div>
+            <div className="text-xs text-muted-foreground">{publicTrades.length} recent</div>
           </div>
 
           {loadingActivity ? (
             <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">Loading public activity...</div>
           ) : activityError ? (
             <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">{activityError}</div>
-          ) : publicEvents.length ? (
+          ) : publicTrades.length ? (
             <div className="space-y-3">
-              {publicEvents.map((item) => (
-                <FeedItemView key={item.id} item={item} />
+              {publicTrades.map((trade) => (
+                <button
+                  key={trade.id}
+                  onClick={() => {
+                    const path = tokenDetailsPath({
+                      tokenAddress: trade.tokenAddress,
+                      campaignAddress: trade.campaignAddress,
+                      chainId: (trade as any).chainId,
+                    });
+                    if (path && path !== "/") navigate(path);
+                  }}
+                  className="flex w-full items-center justify-between gap-3 rounded-xl border border-border/40 bg-background/30 p-4 text-left transition hover:border-accent/50 hover:bg-background/50"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <img src={trade.logoUri || "/placeholder.svg"} alt={trade.campaignName || "Token"} className="h-10 w-10 rounded-full object-cover" />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={trade.side === "buy" ? "text-emerald-400" : "text-orange-400"}>{trade.side.toUpperCase()}</span>
+                        <span className="truncate font-retro text-sm text-foreground">{trade.campaignName || shorten(trade.campaignAddress)}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {trade.campaignSymbol ? `$${trade.campaignSymbol}` : "Token"} · {formatTimeAgo(trade.blockTime) || "—"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 text-right text-xs">
+                    <div className="text-foreground">{formatNative(trade.bnbAmount, trade.chainId ?? activeChainId)}</div>
+                    <div className="text-muted-foreground">{formatTokenAmount(trade.tokenAmount)} tokens</div>
+                  </div>
+                </button>
               ))}
             </div>
           ) : (
             <div className="rounded-xl border border-border/40 bg-background/30 p-4 text-sm text-muted-foreground">
-              No public drafts, deploys, or trades yet.
+              No public trade activity yet.
             </div>
           )}
         </section>

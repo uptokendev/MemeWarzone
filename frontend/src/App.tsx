@@ -29,9 +29,7 @@ import Create from "./pages/Create";
 import ProjectImport from "./pages/ProjectImport";
 import SponsorshipApplication from "./pages/SponsorshipApplication";
 import ProfilePage from "./pages/ProfilePage";
-import Feed from "./pages/Feed";
 import TokenDetailsEntry from "./pages/TokenDetailsEntry";
-import EmbedChartPage from "./pages/EmbedChartPage";
 import StoryPage from "./pages/StoryPage";
 import { RouteErrorBoundary } from "@/components/app/RouteErrorBoundary";
 import Playbook from "@/pages/Playbook";
@@ -75,7 +73,6 @@ import CommandCenterClaims from "@/pages/command-center/CommandCenterClaims";
 import CommandCenterSettings from "@/pages/command-center/CommandCenterSettings";
 import CommandCenterSocial from "@/pages/command-center/CommandCenterSocial";
 import CommandCenterCoins from "@/pages/command-center/CommandCenterCoins";
-import CommandCenterFeed from "@/pages/command-center/CommandCenterFeed";
 import CommandCenterBattles from "@/pages/command-center/CommandCenterBattles";
 import CommandCenterSupport from "@/pages/command-center/CommandCenterSupport";
 import CommandCenterReportAbuse from "@/pages/command-center/CommandCenterReportAbuse";
@@ -85,7 +82,6 @@ import { projectImportsEnabled } from "@/features/projectImports/config";
 import { isPostGradRouteEnabled, postGradFlags, warRoomEnabled } from "@/features/postgrad/config";
 import { DocumentTitleSync } from "@/hooks/useDocumentTitle";
 import { ProductAnalytics } from "@/lib/analytics/ProductAnalytics";
-import { isEmbedPath } from "@/lib/embedChart";
 
 const queryClient = new QueryClient();
 
@@ -220,7 +216,6 @@ function AppShellLayout({
           <Route path="/drafts/:draftId/push-live" element={<DraftOwnerRoute><PushDraftLive /></DraftOwnerRoute>} />
           <Route path="/prepare/:slug" element={<Prepare />} />
           <Route path="/live" element={<Live />} />
-          <Route path="/feed" element={<Feed />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/command" element={<LegacyCommandCenterRedirect section="overview" />} />
           <Route path="/command/overview" element={<LegacyCommandCenterRedirect section="overview" />} />
@@ -232,7 +227,6 @@ function AppShellLayout({
           <Route path="/command/followers" element={<LegacyCommandCenterRedirect section="followers" />} />
           <Route path="/command/following" element={<LegacyCommandCenterRedirect section="following" />} />
           <Route path="/command/coins" element={<LegacyCommandCenterRedirect section="coins" />} />
-          <Route path="/command/feed" element={<LegacyCommandCenterRedirect section="feed" />} />
           <Route path="/command/battles" element={<LegacyCommandCenterRedirect section="battles" />} />
           <Route path="/command/support" element={<LegacyCommandCenterRedirect section="support" />} />
           <Route path="/command/support/report" element={<LegacyCommandCenterRedirect section="support/report" />} />
@@ -249,7 +243,6 @@ function AppShellLayout({
           <Route path="/profile/:wallet/command/followers" element={<CommandCenterShell><CommandCenterSocial mode="followers" /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/following" element={<CommandCenterShell><CommandCenterSocial mode="following" /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/coins" element={<CommandCenterShell><CommandCenterCoins /></CommandCenterShell>} />
-          <Route path="/profile/:wallet/command/feed" element={<CommandCenterShell><CommandCenterFeed /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/battles" element={<CommandCenterShell><CommandCenterBattles /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/support" element={<CommandCenterShell><CommandCenterSupport /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/support/report" element={<CommandCenterShell><CommandCenterReportAbuse /></CommandCenterShell>} />
@@ -283,27 +276,7 @@ function AppShellLayout({
   );
 }
 
-function EmbedAppShell() {
-  return (
-    <TooltipProvider>
-      <DocumentTitleSync />
-      <Routes>
-        <Route path="/embed/chart/:chainId/:token" element={<EmbedChartPage />} />
-        <Route
-          path="/embed/*"
-          element={
-            <div className="flex h-screen w-screen items-center justify-center bg-black px-4 text-center text-xs text-muted-foreground">
-              Unknown token.
-            </div>
-          }
-        />
-      </Routes>
-    </TooltipProvider>
-  );
-}
-
-function AppRoot() {
-  const location = useLocation();
+const App = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [showContent, setShowContent] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -313,33 +286,23 @@ function AppRoot() {
     setTimeout(() => setShowContent(true), 100);
   };
 
-  if (isEmbedPath(location.pathname)) {
-    return <EmbedAppShell />;
-  }
-
-  return (
-    <WalletProvider>
-      <SolanaWalletProvider>
-        <FeedChainWalletLatch />
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          {isLoading && <LoadingScreen onLoadComplete={handleLoadComplete} />}
-          {showContent && (
-            <AppShellLayout mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
-          )}
-        </TooltipProvider>
-      </SolanaWalletProvider>
-    </WalletProvider>
-  );
-}
-
-const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter future={{ v7_relativeSplatPath: true }}>
-        <AppRoot />
-      </BrowserRouter>
+      <WalletProvider>
+        <SolanaWalletProvider>
+          <FeedChainWalletLatch />
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            {isLoading && <LoadingScreen onLoadComplete={handleLoadComplete} />}
+            {showContent && (
+              <BrowserRouter future={{ v7_relativeSplatPath: true }}>
+                <AppShellLayout mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
+              </BrowserRouter>
+            )}
+          </TooltipProvider>
+        </SolanaWalletProvider>
+      </WalletProvider>
     </QueryClientProvider>
   );
 };

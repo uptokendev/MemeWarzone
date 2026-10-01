@@ -1,5 +1,4 @@
 import { apiFetch, apiJson, apiUrl } from "@/lib/apiBase";
-import type { PortfolioMetrics } from "@/lib/profile/portfolioCalculations";
 
 export type UserProfile = {
   chainId: number;
@@ -137,13 +136,14 @@ export async function saveUserProfile(input: SaveProfileInput): Promise<void> {
  * Thin wrapper for the public portfolio metrics endpoint (Phase 6).
  * Always uses apiJson (central apiBase layer) for consistency with AGENTS.md.
  * Supports optional forceRefresh for owner "Refresh" action.
- * Unwraps `{ metrics }` so callers receive the four-card payload, never the envelope.
  */
 export async function fetchPublicPortfolioMetrics(
   chainId: number,
   address: string,
   { forceRefresh = false }: { forceRefresh?: boolean } = {}
-): Promise<PortfolioMetrics | null> {
+): Promise<any> {
+  if (isSolanaChain(chainId)) return null;
+
   const addr = normalizeAddress(address, chainId);
   const params = new URLSearchParams({
     chainId: String(chainId),
@@ -151,12 +151,5 @@ export async function fetchPublicPortfolioMetrics(
   });
   if (forceRefresh) params.set("forceRefresh", "1");
 
-  const json = await apiJson<any>(`/api/profile/portfolio?${params.toString()}`);
-  if (!json) return null;
-  if (json.metrics) return json.metrics as PortfolioMetrics;
-  if (json.metrics === null) return null;
-  if (typeof json.totalValueUsd !== "undefined" || typeof json.coinsCount !== "undefined") {
-    return json as PortfolioMetrics;
-  }
-  return null;
+  return apiJson(`/api/profile/portfolio?${params.toString()}`);
 }
