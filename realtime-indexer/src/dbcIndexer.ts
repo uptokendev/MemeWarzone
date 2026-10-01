@@ -59,6 +59,8 @@ export type DecodedEvtSwap2 = {
   tradingFee: bigint;
   protocolFee: bigint;
   referralFee: bigint;
+  /** Pool sqrt price after this swap (Q64.64): the curve's spot once the trade settled. */
+  nextSqrtPrice?: bigint;
   quoteReserveAmount: bigint;
   migrationThreshold: bigint;
   currentTimestamp: bigint;
@@ -168,6 +170,7 @@ export function decodeEvtSwap2Data(raw: Buffer): DecodedEvtSwap2 | null {
     tradingFee: bigintValue(result.tradingFee ?? result.trading_fee),
     protocolFee: bigintValue(result.protocolFee ?? result.protocol_fee),
     referralFee: bigintValue(result.referralFee ?? result.referral_fee),
+    nextSqrtPrice: bigintValue(result.nextSqrtPrice ?? result.next_sqrt_price),
     quoteReserveAmount: bigintValue(data.quoteReserveAmount ?? data.quote_reserve_amount),
     migrationThreshold: bigintValue(data.migrationThreshold ?? data.migration_threshold),
     currentTimestamp: bigintValue(data.currentTimestamp ?? data.current_timestamp),
@@ -642,7 +645,62 @@ async function upsertCandle(db: Queryable, campaign: string, tf: TF, bucketSec: 
   void publishCandle(SOLANA_CHAIN_ID, campaign, candleUpsertPayload(tf, bucketSec, row)).catch(() => undefined);
 }
 
-async function patchStats(db: Queryable, campaign: string) {
+const WSOL_MINT = "So11111111111111111111111111111111111111112";
+
+/**
+ * Header/card valuation of a DBC coin: spot x mint supply, in SOL. The launchpad's own coins use
+ * spot x curve-sold; a DBC mint holds curve + migration supply from create (MWZDNB: 785,258,348.56,
+ * not 1B), so its market cap is spot x mint supply, the basis market_stats and Jupiter use. Spot is the pool price after the latest swap; a fill price
+ * includes the fee (up to 90% in the anti-sniper minute) and is only the fallback.
+ */
+export function dbcTokenStatsValues(input: {
+  spotSol?: number | null;
+  lastFillSol?: number | null;
+  supplyWhole?: number | null;
+}): { lastPrice: number | null; marketcap: number | null } {
+  const spot = Number(input.spotSol);
+  const fill = Number(input.lastFillSol);
+  const lastPrice = Number.isFinite(spot) && spot > 0 ? spot : Number.isFinite(fill) && fill > 0 ? fill : null;
+  const supply = Number(input.supplyWhole);
+  const marketcap = lastPrice != null && Number.isFinite(supply) && supply > 0 ? lastPrice * supply : null;
+  return { lastPrice, marketcap: marketcap != null && Number.isFinite(marketcap) ? marketcap : null };
+}
+
+/** SOL spot after a swap, only for a SOL-quoted pool (a bound pool's sqrt price is in quote units). */
+export function dbcSpotSolAfterSwap(event: Pick<DecodedEvtSwap2, "nextSqrtPrice"> | null | undefined, quoteMint?: string, quoteDecimals = 9): number | null {
+  if (!event?.nextSqrtPrice || event.nextSqrtPrice <= 0n) return null;
+  if (String(quoteMint || WSOL_MINT) !== WSOL_MINT || Number(quoteDecimals) !== 9) return null;
+  const spot = dbcPriceFromSqrt(event.nextSqrtPrice, TOKEN_DECIMALS, 9);
+  return Number.isFinite(spot) && spot > 0 ? spot : null;
+}
+
+const mintSupplyCache = new Map<string, number>();
+
+/** Whole-token mint supply (a DBC mint is minted once at create, so one read per mint). */
+export async function dbcMintSupplyWhole(mint: string, call: typeof rpc = rpc): Promise<number | null> {
+  const key = String(mint || "").trim();
+  if (!key) return null;
+  const cached = mintSupplyCache.get(key);
+  if (cached != null) return cached;
+  try {
+    const result = await call<{ value?: { amount?: string; decimals?: number } }>("getTokenSupply", [key, { commitment: "confirmed" }]);
+    const amount = result?.value?.amount;
+    const decimals = Number(result?.value?.decimals ?? TOKEN_DECIMALS);
+    if (amount == null || !/^\d+$/.test(String(amount))) return null;
+    const whole = Number(BigInt(String(amount))) / 10 ** decimals;
+    if (!Number.isFinite(whole) || whole <= 0) return null;
+    mintSupplyCache.set(key, whole);
+    return whole;
+  } catch {
+    return null;
+  }
+}
+
+export async function patchStats(
+  db: Queryable,
+  campaign: string,
+  opts: { spotSol?: number | null; supplyWhole?: number | null } = {},
+) {
   const latest = await db.query(
     `select price_bnb from public.curve_trades
       where chain_id=$1 and campaign_address=$2
@@ -654,18 +712,27 @@ async function patchStats(db: Queryable, campaign: string) {
       where chain_id=$1 and campaign_address=$2 and block_time >= now() - interval '24 hours'`,
     [SOLANA_CHAIN_ID, campaign],
   );
-  const lastPrice = latest.rows[0]?.price_bnb != null ? Number(latest.rows[0].price_bnb) : null;
+  const lastFill = latest.rows[0]?.price_bnb != null ? Number(latest.rows[0].price_bnb) : null;
+  const { lastPrice, marketcap } = dbcTokenStatsValues({ spotSol: opts.spotSol, lastFillSol: lastFill, supplyWhole: opts.supplyWhole });
   const vol24h = Number(vol.rows[0]?.vol24h ?? 0);
+  // The column is vol_24h_bnb. This statement named it vol24h_bnb, failed on every trade and the catch
+  // hid it, so no DBC coin ever had a price or market cap in token_stats (cards showed "—").
   await db.query(
-    `insert into public.token_stats(chain_id,campaign_address,last_price_bnb,vol24h_bnb,updated_at)
-     values ($1,$2,$3,$4,now())
+    `insert into public.token_stats(chain_id,campaign_address,last_price_bnb,marketcap_bnb,vol_24h_bnb,updated_at)
+     values ($1,$2,$3,$4,$5,now())
      on conflict (chain_id,campaign_address) do update set
-       last_price_bnb=excluded.last_price_bnb, vol24h_bnb=excluded.vol24h_bnb, updated_at=now()`,
-    [SOLANA_CHAIN_ID, campaign, lastPrice, vol24h],
-  ).catch(() => undefined);
+       last_price_bnb=excluded.last_price_bnb,
+       marketcap_bnb=coalesce(excluded.marketcap_bnb, public.token_stats.marketcap_bnb),
+       vol_24h_bnb=excluded.vol_24h_bnb,
+       updated_at=now()`,
+    [SOLANA_CHAIN_ID, campaign, lastPrice, marketcap, vol24h],
+  ).catch((error: unknown) => {
+    console.warn("[dbcIndexer] token_stats update failed", error instanceof Error ? error.message : String(error));
+  });
   void publishStats(SOLANA_CHAIN_ID, campaign, {
     type: "stats_patch",
     lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
+    ...(marketcap !== null ? { marketcapBnb: String(marketcap) } : {}),
     vol24hBnb: String(vol24h),
   }).catch(() => undefined);
 }
@@ -674,6 +741,7 @@ export async function insertDbcSwap(
   db: Queryable,
   row: DbcCurveTradeRow,
   event: DecodedEvtSwap2,
+  stats: { mint?: string; quoteDecimals?: number } = {},
 ) {
   const inserted = await db.query(
     `insert into public.curve_trades(
@@ -701,7 +769,10 @@ export async function insertDbcSwap(
       await upsertCandle(db, row.campaign_address, tf, bucketStart(tsSec, tf), row.price_bnb, row.bnb_amount);
     }
   }
-  await patchStats(db, row.campaign_address);
+  await patchStats(db, row.campaign_address, {
+    spotSol: dbcSpotSolAfterSwap(event, row.quote_mint, stats.quoteDecimals ?? 9),
+    supplyWhole: stats.mint ? await dbcMintSupplyWhole(stats.mint) : null,
+  });
   return true;
 }
 
@@ -764,7 +835,7 @@ export async function indexDbcPool(
         ...(solUsd ? { solUsdMicros: solUsd.micros, priceSource: solUsd.source } : {}),
         ...(quoteUsd ? { quoteUsdMicros: quoteUsd.micros, quoteUsdSource: quoteUsd.source } : {}),
       });
-      if (await insertDbcSwap(db, trade, event)) ingested += 1;
+      if (await insertDbcSwap(db, trade, event, { mint: row.token, quoteDecimals })) ingested += 1;
     }
     maxSlot = Math.max(maxSlot, item.slot);
   }
@@ -773,12 +844,33 @@ export async function indexDbcPool(
   return { scanned: signatures.length, ingested, skippedMigrated: false, skippedNoPrice: false };
 }
 
+const statsPrimed = new Set<string>();
+
+/**
+ * token_stats is otherwise written only when a swap is ingested, so a coin whose trades were indexed
+ * before the token_stats fix keeps a blank card until its next trade. Write it once per pool per process.
+ */
+export async function primeDbcTokenStats(db: Queryable, row: DbcPoolRow, fetchImpl: typeof fetch = fetch) {
+  const quoteDecimals = Number(row.quoteDecimals ?? 9);
+  let spotSol: number | null = null;
+  if (String(row.quoteMint || WSOL_MINT) === WSOL_MINT && quoteDecimals === 9) {
+    const live = await dbcMarketStatsFromAccounts(solanaRpcUrls()[0], row.campaign, fetchImpl, 9).catch(() => null);
+    spotSol = live && live.priceQuote > 0 ? live.priceQuote : null;
+  }
+  await patchStats(db, row.campaign, { spotSol, supplyWhole: await dbcMintSupplyWhole(row.token) });
+}
+
 export async function runDbcIndexerOnce(db: Queryable = defaultPool) {
   const pools = await loadDbcPools(db);
   const results = [];
   for (const row of pools) {
     try {
-      results.push({ pool: row.campaign, ...(await indexDbcPool(db, row)) });
+      const result = await indexDbcPool(db, row);
+      results.push({ pool: row.campaign, ...result });
+      if (!result.skippedMigrated && !statsPrimed.has(row.campaign)) {
+        statsPrimed.add(row.campaign);
+        if (result.ingested === 0) await primeDbcTokenStats(db, row);
+      }
     } catch (error) {
       console.error("[dbcIndexer] pool failed", {
         pool: row.campaign,

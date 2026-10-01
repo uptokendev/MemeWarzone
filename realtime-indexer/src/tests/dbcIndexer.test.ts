@@ -475,3 +475,48 @@ test("getTransaction asks for version 1 and falls back to 0 only when the RPC re
   const down = (async () => { throw new Error("Solana RPC getTransaction HTTP 503"); }) as any;
   await assert.rejects(getTransaction("sig", down), /HTTP 503/);
 });
+
+test("DBC token_stats: spot after the swap x mint supply, written to vol_24h_bnb (mainnet MWZDNB, 2026-10-01)", async () => {
+  const { dbcSpotSolAfterSwap, dbcTokenStatsValues, dbcMintSupplyWhole, patchStats } = await import("../dbcIndexer.js");
+  const [event] = decodeEvtSwap2FromTransaction(fixture("dbc-swap-v1.json").result);
+  assert.ok(event.nextSqrtPrice && event.nextSqrtPrice > 0n, "EvtSwap2 carries next_sqrt_price");
+  const spot = dbcSpotSolAfterSwap(event, "So11111111111111111111111111111111111111112", 9);
+  assert.equal(spot, dbcPriceFromSqrt(event.nextSqrtPrice!, 6, 9));
+  // A bound pool's sqrt price is in quote units, never SOL.
+  assert.equal(dbcSpotSolAfterSwap(event, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", 6), null);
+
+  // Mainnet: spot 1.1669e-8 SOL x mint supply 785,258,348.563332 = 9.163 SOL (~$1.08K at $117.7),
+  // not the "—" the card showed.
+  const values = dbcTokenStatsValues({ spotSol: 1.1669099513e-8, lastFillSol: 1.0927e-8, supplyWhole: 785_258_348.563332 });
+  assert.equal(values.lastPrice, 1.1669099513e-8);
+  assert.ok(Math.abs(values.marketcap! - 9.1632578128) < 1e-8);
+  assert.deepEqual(dbcTokenStatsValues({ spotSol: null, lastFillSol: 2e-8, supplyWhole: 1e9 }), { lastPrice: 2e-8, marketcap: 20 });
+  assert.deepEqual(dbcTokenStatsValues({ spotSol: 2e-8, supplyWhole: null }), { lastPrice: 2e-8, marketcap: null });
+
+  const calls: string[] = [];
+  const supply = await dbcMintSupplyWhole("MintSupplyTest", (async (method: string) => {
+    calls.push(method);
+    return { value: { amount: "1000000000000000", decimals: 6 } };
+  }) as any);
+  assert.equal(supply, 1_000_000_000);
+  assert.equal(await dbcMintSupplyWhole("MintSupplyTest", (async () => { throw new Error("cached"); }) as any), 1_000_000_000);
+  assert.deepEqual(calls, ["getTokenSupply"]);
+
+  const writes: Array<{ sql: string; params: unknown[] }> = [];
+  const db = {
+    async query(sql: string, params: unknown[] = []) {
+      if (/select price_bnb/.test(sql)) return { rows: [{ price_bnb: "0.000000010927" }], rowCount: 1 };
+      if (/as vol24h/.test(sql)) return { rows: [{ vol24h: "2.687" }], rowCount: 1 };
+      writes.push({ sql, params });
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  await patchStats(db, "4xPQpjFNXj7Q3ny7JbpCQsiHwkcko6ghLA5cnLTSaqFC", { spotSol: 1.1669099513e-8, supplyWhole: 1_000_000_000 });
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].sql, /vol_24h_bnb/);
+  assert.doesNotMatch(writes[0].sql, /vol24h_bnb/);
+  assert.match(writes[0].sql, /marketcap_bnb=coalesce\(excluded\.marketcap_bnb/);
+  assert.equal(writes[0].params[2], 1.1669099513e-8);
+  assert.ok(Math.abs(Number(writes[0].params[3]) - 11.669099513) < 1e-9);
+  assert.equal(writes[0].params[4], 2.687);
+});
