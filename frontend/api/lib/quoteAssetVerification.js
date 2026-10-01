@@ -458,7 +458,11 @@ async function jupiterRouteSource(item, amountLamports, { fetchImpl = fetch } = 
       hops: Array.isArray(body?.routePlan) ? body.routePlan.length : null,
     };
   } catch (error) {
-    return { available: false, error: String(error?.message || error).slice(0, 160) };
+    const message = String(error?.message || error);
+    // Jupiter answers HTTP 400 NO_ROUTES_FOUND when nothing can fill the amount: that is an answer
+    // (no graduation-sized route), not an outage, so it must not read as "did not answer".
+    if (error?.status === 400 && error?.body?.errorCode === "NO_ROUTES_FOUND") return { available: false, noRoute: true };
+    return { available: false, error: message.slice(0, 160) };
   }
 }
 
@@ -674,13 +678,25 @@ export function evaluateVerification(item, facts, thresholds = verificationThres
     }
   }
 
-  // market floors (natives and stables are exempt; testnets have no market data)
+  // Market floors are warnings (founder, 2026-10-01: "if people want to bond with it, it's their own
+  // risk; we show the warning"). What still blocks is what the chain enforces at graduation: a route
+  // that can fill a graduation-sized buy within the impact cap. Natives, stables and testnets are exempt.
   if (!native && !stable && !testnet && gates.identity === "VERIFIED") {
     if (metrics.volume24hUsd != null && metrics.volume24hUsd < thresholds.minVolume24hUsd) {
-      flag("LOW_VOLUME", `24h volume $${Math.round(metrics.volume24hUsd).toLocaleString("en-US")} is under the floor of $${thresholds.minVolume24hUsd.toLocaleString("en-US")}.`);
+      flag("LOW_VOLUME", `24h volume $${Math.round(metrics.volume24hUsd).toLocaleString("en-US")} is under $${thresholds.minVolume24hUsd.toLocaleString("en-US")}; the creator is warned, the binding is their call.`, false);
+      metrics.bindingRisks = [
+        ...(Array.isArray(metrics.bindingRisks) ? metrics.bindingRisks : []),
+        {
+          code: "THIN_MARKET",
+          armed: true,
+          severity: "medium",
+          title: "This token trades thinly",
+          detail: `About $${Math.round(metrics.volume24hUsd).toLocaleString("en-US")} traded in the last 24 hours. Your graduated pool's price follows this token, and a thin market can move a lot on small trades.`,
+        },
+      ];
     }
     if (metrics.marketCapUsd != null && metrics.marketCapUsd > 0 && metrics.marketCapUsd < thresholds.minMarketCapUsd) {
-      flag("LOW_MARKET_CAP", `Market cap $${Math.round(metrics.marketCapUsd).toLocaleString("en-US")} is under the floor of $${thresholds.minMarketCapUsd.toLocaleString("en-US")}.`);
+      flag("LOW_MARKET_CAP", `Market cap $${Math.round(metrics.marketCapUsd).toLocaleString("en-US")} is under $${thresholds.minMarketCapUsd.toLocaleString("en-US")}; the creator is warned, the binding is their call.`, false);
     }
   }
 

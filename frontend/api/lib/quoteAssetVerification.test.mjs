@@ -215,3 +215,31 @@ test("Robinhood non-native assets stay pending until the generic route exists; t
   assert.equal(testnetStable.gates.price, "VERIFIED");
   assert.equal(testnetStable.autoActivate, true);
 });
+
+// Founder 2026-10-01: thin markets are the creator's risk, shown as a warning. Only what the chain
+// enforces at graduation (a route that fills a graduation-sized buy) still blocks.
+test("low volume and low market cap warn but do not block a token whose route fills", () => {
+  const thin = evaluateVerification(solItem(), {
+    token: { exists: true, tokenProgram: "spl-token", decimals: 6, supply: "1", mintAuthorityPresent: false, freezeAuthorityPresent: false },
+    market: { id: "x", priceUsd: 1, volume24hUsd: 4_000, marketCapUsd: 1_000 },
+    nativeMarket: { id: "solana", priceUsd: 150 },
+    jupiterRoute: { available: true, outAmount: "1", priceImpactBps: 58, hops: 1 },
+  }, THRESHOLDS);
+  const byCode = Object.fromEntries(thin.flags.map((f) => [f.code, f.blocking]));
+  assert.equal(byCode.LOW_VOLUME, false);
+  assert.equal(byCode.LOW_MARKET_CAP, false);
+  assert.equal(thin.state, "passed");
+  assert.ok(thin.metrics.bindingRisks.some((r) => r.code === "THIN_MARKET" && r.armed));
+});
+
+test("Jupiter NO_ROUTES_FOUND is a missing route, not an outage", () => {
+  const none = evaluateVerification(solItem(), {
+    token: { exists: true, tokenProgram: "spl-token", decimals: 6, supply: "1", mintAuthorityPresent: false, freezeAuthorityPresent: false },
+    market: { id: "x", priceUsd: 1, volume24hUsd: 60_000_000, marketCapUsd: 2_000_000_000 },
+    nativeMarket: { id: "solana", priceUsd: 150 },
+    jupiterRoute: { available: false, noRoute: true },
+  }, THRESHOLDS);
+  assert.equal(none.gates.route, "UNAVAILABLE");
+  assert.ok(none.flags.some((f) => f.code === "NO_JUPITER_ROUTE" && f.blocking));
+  assert.ok(!none.flags.some((f) => f.code === "ROUTE_SOURCE_UNAVAILABLE"));
+});

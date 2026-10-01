@@ -150,6 +150,19 @@ Bundle re-checked: no 64-byte key arrays. **Open:** move the remaining 0.039 SOL
 - USDG has a route but no row in `robinhood_stock_token_registry` (the sync pulls Robinhood's stock
   list only), so the app does not offer it yet. Open.
 
+## 6d. Graduation Markets: thin markets warn, they do not block (founder, 2026-10-01)
+
+"If people want to bond with it, it's their own risk. We show the warning and that's it."
+- `LOW_VOLUME` / `LOW_MARKET_CAP` are non-blocking now; low volume adds a `THIN_MARKET` entry to the
+  creator's binding-risk dialog. Before, an admin APPROVE set market health to healthy and the next
+  hourly verifier run set it back to review (bindable NO): that is why COINx could not stay approved.
+- Jupiter `HTTP 400 NO_ROUTES_FOUND` was reported as "did not answer, verify again later". It is a
+  real answer: nothing fills a graduation-sized buy. Now `NO_JUPITER_ROUTE`.
+- Still blocking, because the chain refuses it at graduation: no route / impact over the cap
+  (Solana graduation buys the quote in the same tx, 1.5% cap; NFLXx moves 17.6% on 85 SOL and has no
+  route above ~100 SOL), and on Robinhood the adapter's oracle minimum (TSLA) or no route at all (all
+  stocks outside batch Q). JUP was already ACTIVE and bindable.
+
 ## 7. Open items
 
 - [x] EVM gen-6 token page: fully diluted market cap, chart from start price (`ee695e76`, `4625bd72`), founder-checked on both chains.
