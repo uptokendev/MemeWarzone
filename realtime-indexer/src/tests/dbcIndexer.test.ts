@@ -520,3 +520,29 @@ test("DBC token_stats: spot after the swap x mint supply, written to vol_24h_bnb
   assert.ok(Math.abs(Number(writes[0].params[3]) - 11.669099513) < 1e-9);
   assert.equal(writes[0].params[4], 2.687);
 });
+
+test("a new DBC coin is announced once on the league channel, only while young and unindexed", async () => {
+  const { shouldAnnounceDbcPool, dbcCampaignCreatedMessage } = await import("../dbcIndexer.js");
+  const now = Date.parse("2026-10-01T16:00:00Z");
+  const row = {
+    campaign: "GkFyugaj6ZjcFZ32Dg41cDHrWe7mSy5FrqJv1eJs2HQh",
+    token: "12a4EsfncZXFxopvyqkZ4U6WjZyCjNzFZuE1JrpagFoD",
+    creator: "CSdCWyq5N3kpkmNJnyV5niGAmF7RkJkNQJ9bagqbNiEf",
+    migrated: false,
+    name: "DONOTBUY",
+    symbol: "DNB",
+    createdAt: new Date(now - 30_000),
+  };
+  const seen = new Set<string>();
+  assert.equal(shouldAnnounceDbcPool(row, 0, now, seen), true);
+  assert.equal(shouldAnnounceDbcPool(row, 452_000_000, now, seen), false, "already indexed");
+  assert.equal(shouldAnnounceDbcPool({ ...row, createdAt: new Date(now - 60 * 60 * 1000) }, 0, now, seen), false, "old coin after a restart");
+  seen.add(row.campaign);
+  assert.equal(shouldAnnounceDbcPool(row, 0, now, seen), false, "once per process");
+  const msg = dbcCampaignCreatedMessage(row, now);
+  assert.equal(msg.type, "campaign_created");
+  assert.equal(msg.chainId, 101);
+  assert.equal(msg.item.campaignAddress, row.campaign);
+  assert.equal(msg.item.symbol, "DNB");
+  assert.equal(msg.item.createdAtChain, new Date(now - 30_000).toISOString());
+});

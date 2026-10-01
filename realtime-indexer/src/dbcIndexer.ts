@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { publishCandle, publishStats, publishTrade } from "./ably.js";
+import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably.js";
 import { candleUpsertPayload } from "./candlePublish.js";
 import { pool as defaultPool } from "./db.js";
 import { ENV } from "./env.js";
@@ -43,6 +43,9 @@ export type DbcPoolRow = {
   quoteDecimals?: number;
   /** "stock" for an xStock quote (7b): valued by its live USD price, not $1 per whole token. */
   quoteKind?: string;
+  name?: string;
+  symbol?: string;
+  createdAt?: Date | null;
 };
 
 export type FreshSolUsd = { micros: bigint; source: string };
@@ -490,7 +493,8 @@ export async function loadDbcPools(db: Queryable): Promise<DbcPoolRow[]> {
             coalesce(meta #>> '{dbc,migration,pool}','') as dbc_migrated_pool,
             coalesce(meta #>> '{dbc,quoteMint}','So11111111111111111111111111111111111111112') as quote_mint,
             coalesce(meta #>> '{dbc,quoteDecimals}','9') as quote_decimals,
-            coalesce(meta #>> '{dbc,quoteKind}','') as quote_kind
+            coalesce(meta #>> '{dbc,quoteKind}','') as quote_kind,
+            name, symbol, coalesce(created_at_chain, created_at) as created_at
        from public.campaigns
       where chain_id=$1
         and coalesce(launch_type,'launchpad') = 'dbc'
@@ -510,7 +514,44 @@ export async function loadDbcPools(db: Queryable): Promise<DbcPoolRow[]> {
     quoteMint: String(row.quote_mint || "So11111111111111111111111111111111111111112"),
     quoteDecimals: Number(row.quote_decimals || 9),
     quoteKind: String(row.quote_kind || ""),
+    name: row.name ? String(row.name) : undefined,
+    symbol: row.symbol ? String(row.symbol) : undefined,
+    createdAt: row.created_at ? new Date(row.created_at) : null,
   }));
+}
+
+const NEW_COIN_ANNOUNCE_WINDOW_MS = 15 * 60 * 1000;
+const announced = new Set<string>();
+
+/**
+ * The front page shows a new coin the moment `campaign_created` arrives on the league channel (EVM and
+ * the launchpad's Solana coins send it from their indexers). DBC sent none, so a new DBC coin only
+ * appeared at the page's next periodic refresh (2026-10-01). Announce a pool the first time it is seen
+ * with no indexed slot yet, once per process, and only while it is young so a restart is not a replay.
+ */
+export function dbcCampaignCreatedMessage(row: DbcPoolRow, nowMs = Date.now()) {
+  const created = row.createdAt && Number.isFinite(row.createdAt.getTime()) ? row.createdAt : new Date(nowMs);
+  return {
+    type: "campaign_created" as const,
+    chainId: SOLANA_CHAIN_ID,
+    ts: Math.floor(nowMs / 1000),
+    item: {
+      campaignAddress: row.campaign,
+      tokenAddress: row.token,
+      creatorAddress: row.creator,
+      name: row.name || row.symbol || row.token.slice(0, 4),
+      symbol: row.symbol || row.token.slice(0, 4),
+      createdAtChain: created.toISOString(),
+      blockNumber: 0,
+    },
+  };
+}
+
+export function shouldAnnounceDbcPool(row: DbcPoolRow, indexedSlot: number, nowMs = Date.now(), seen: Set<string> = announced) {
+  if (seen.has(row.campaign) || row.migrated || indexedSlot > 0) return false;
+  const created = row.createdAt?.getTime();
+  if (!Number.isFinite(created) || nowMs - Number(created) > NEW_COIN_ANNOUNCE_WINDOW_MS) return false;
+  return true;
 }
 
 async function getState(db: Queryable, poolAddress: string): Promise<number> {
@@ -865,6 +906,10 @@ export async function runDbcIndexerOnce(db: Queryable = defaultPool) {
   const results = [];
   for (const row of pools) {
     try {
+      if (shouldAnnounceDbcPool(row, await getState(db, row.campaign))) {
+        announced.add(row.campaign);
+        void publishLeague(SOLANA_CHAIN_ID, "campaign_created", dbcCampaignCreatedMessage(row)).catch(() => undefined);
+      }
       const result = await indexDbcPool(db, row);
       results.push({ pool: row.campaign, ...result });
       if (!result.skippedMigrated && !statsPrimed.has(row.campaign)) {
