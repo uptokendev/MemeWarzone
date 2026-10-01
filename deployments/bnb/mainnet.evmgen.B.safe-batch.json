@@ -1,0 +1,144 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1790870895957,
+  "meta": {
+    "name": "MWZ gen6 B: bind",
+    "description": "bind generation factory 0x1948411B84424f6f67fDf83ce4A9b8ED49c8bF4F: V4 locker, vault factory pin, launch recorder, quote adapter, D1 operator",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+      "value": "0",
+      "data": "0xacb9fef6000000000000000000000000eeefa12b14ea922b21baf05ad4aa79b2643c8ea60000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "locker",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setAuthorizedLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "locker": "0xEEEfa12B14ea922B21bAf05Ad4aa79B2643c8eA6",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+      "value": "0",
+      "data": "0x86afb2f6000000000000000000000000eeefa12b14ea922b21baf05ad4aa79b2643c8ea6",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newLocker",
+            "type": "address"
+          }
+        ],
+        "name": "setPrimaryLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newLocker": "0xEEEfa12B14ea922B21bAf05Ad4aa79B2643c8eA6"
+      }
+    },
+    {
+      "to": "0x6Cb44e3dB907801a04FA7A056Fbe79799298AF66",
+      "value": "0",
+      "data": "0xd45f23f30000000000000000000000001948411b84424f6f67fdf83ce4a9b8ed49c8bf4f",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "factory_",
+            "type": "address"
+          }
+        ],
+        "name": "setFactoryOnce",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "factory_": "0x1948411B84424f6f67fDf83ce4A9b8ED49c8bF4F"
+      }
+    },
+    {
+      "to": "0x8194FB3745d027102ce7Da562c7045f28B2f42fD",
+      "value": "0",
+      "data": "0x422b76f50000000000000000000000001948411b84424f6f67fdf83ce4a9b8ed49c8bf4f0000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "recorder",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setLaunchRecorder",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "recorder": "0x1948411B84424f6f67fDf83ce4A9b8ED49c8bF4F",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0x15404d5e37cda82C421e25B5429417EC22C5329d",
+      "value": "0",
+      "data": "0xcdaf25070000000000000000000000001948411b84424f6f67fdf83ce4a9b8ed49c8bf4f",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "campaignFactory_",
+            "type": "address"
+          }
+        ],
+        "name": "setCampaignFactoryOnce",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "campaignFactory_": "0x1948411B84424f6f67fDf83ce4A9b8ED49c8bF4F"
+      }
+    },
+    {
+      "to": "0x6Cb44e3dB907801a04FA7A056Fbe79799298AF66",
+      "value": "0",
+      "data": "0x558a729700000000000000000000000020652bdb1d986220fec30f4733587f279403e7730000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "operator_",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "paused_",
+            "type": "bool"
+          }
+        ],
+        "name": "setOperator",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "operator_": "0x20652bdb1d986220fEc30f4733587F279403E773",
+        "paused_": "false"
+      }
+    }
+  ]
+}

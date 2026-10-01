@@ -1,0 +1,138 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1790870900959,
+  "meta": {
+    "name": "MWZ gen6 B: bind",
+    "description": "bind generation factory 0xc673B116b4eA8E8923Aad1fa60F0452966F2437F: V4 locker, vault factory pin, native + stock adapters, D1 operator",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d",
+      "value": "0",
+      "data": "0xacb9fef6000000000000000000000000615b1abe348eda2e5a44ece32fb50fbc45d2af070000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "locker",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setAuthorizedLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "locker": "0x615b1AbE348edA2e5a44eCe32fb50fbC45d2AF07",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d",
+      "value": "0",
+      "data": "0x86afb2f6000000000000000000000000615b1abe348eda2e5a44ece32fb50fbc45d2af07",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newLocker",
+            "type": "address"
+          }
+        ],
+        "name": "setPrimaryLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newLocker": "0x615b1AbE348edA2e5a44eCe32fb50fbC45d2AF07"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xd45f23f3000000000000000000000000c673b116b4ea8e8923aad1fa60f0452966f2437f",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "factory_",
+            "type": "address"
+          }
+        ],
+        "name": "setFactoryOnce",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "factory_": "0xc673B116b4eA8E8923Aad1fa60F0452966F2437F"
+      }
+    },
+    {
+      "to": "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+      "value": "0",
+      "data": "0xcdaf2507000000000000000000000000c673b116b4ea8e8923aad1fa60f0452966f2437f",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "campaignFactory_",
+            "type": "address"
+          }
+        ],
+        "name": "setCampaignFactoryOnce",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "campaignFactory_": "0xc673B116b4eA8E8923Aad1fa60F0452966F2437F"
+      }
+    },
+    {
+      "to": "0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4",
+      "value": "0",
+      "data": "0xcdaf2507000000000000000000000000c673b116b4ea8e8923aad1fa60f0452966f2437f",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "campaignFactory_",
+            "type": "address"
+          }
+        ],
+        "name": "setCampaignFactoryOnce",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "campaignFactory_": "0xc673B116b4eA8E8923Aad1fa60F0452966F2437F"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0x558a729700000000000000000000000020652bdb1d986220fec30f4733587f279403e7730000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "operator_",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "paused_",
+            "type": "bool"
+          }
+        ],
+        "name": "setOperator",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "operator_": "0x20652bdb1d986220fEc30f4733587F279403E773",
+        "paused_": "false"
+      }
+    }
+  ]
+}
