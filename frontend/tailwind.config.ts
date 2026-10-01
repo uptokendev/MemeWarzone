@@ -15,8 +15,31 @@ export default {
     extend: {
       fontFamily: {
         'retro': ['Pixeboy', 'monospace', 'sans-serif'],
+        // UI redesign (docs/build_plans/ui-redesign): brand, body, labels, numbers.
+        'mw-brand': ['Bungee', 'sans-serif'],
+        'mw-body': ['Barlow', 'system-ui', 'sans-serif'],
+        'mw-cond': ['"Barlow Condensed"', 'sans-serif'],
+        'mw-mono': ['"JetBrains Mono"', 'monospace'],
       },
       colors: {
+        mw: {
+          ground: "var(--mw-ground)",
+          surface: "var(--mw-surface)",
+          raised: "var(--mw-raised)",
+          border: "var(--mw-border)",
+          edge: "var(--mw-edge)",
+          input: "var(--mw-input)",
+          text: "var(--mw-text)",
+          muted: "var(--mw-muted)",
+          accent: "var(--mw-accent)",
+          "accent-soft": "var(--mw-accent-soft)",
+          "accent-fill": "var(--mw-accent-fill)",
+          "accent-edge": "var(--mw-accent-edge)",
+          buy: "var(--mw-buy)",
+          sell: "var(--mw-sell)",
+          up: "var(--mw-up)",
+          down: "var(--mw-down)",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

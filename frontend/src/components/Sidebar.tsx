@@ -1,81 +1,118 @@
 /**
  * Sidebar Component
- * Responsive navigation sidebar that becomes a drawer on mobile/tablet
+ * Phone/tablet drawer with the full menu (the bottom bar only has room for four items).
+ * Same items as the desktop menu (components/shell/AppSideNav), from lib/shellNav.mjs.
  */
 
-import { X } from "lucide-react";
+import { BookOpen, Plus, X } from "lucide-react";
 import { Link } from "react-router-dom";
-import AnimatedNav from "./ui/animated-nav";
-import { SocialTooltip } from "./ui/social-media";
-import { navItems, socialLinks } from "@/constants/navigation";
-import { isPostGradNavEnabled } from "@/features/postgrad/config";
-import { ArenaMobileNav } from "@/components/postgrad/ArenaMobileNav";
-
-const brandMark = "/images/mw.png";
-const primaryPaths = new Set(["/", "/feed", "/league", "/war-room", "/create", "/import"]);
+import { socialLinks } from "@/constants/navigation";
+import { cn } from "@/lib/utils";
+import { NAV_ICONS } from "@/components/shell/navIcons";
+import { useShellNav } from "@/components/shell/useShellNav";
 
 interface SidebarProps {
   mobileMenuOpen: boolean;
   setMobileMenuOpen: (open: boolean) => void;
 }
 
+const rowClass = (on: boolean) =>
+  cn(
+    "mw-focus flex min-h-[46px] items-center gap-3.5 rounded-[10px] px-3 text-base font-semibold transition-colors",
+    on ? "bg-[#171B20] font-bold text-mw-text [&>svg]:text-mw-accent" : "text-mw-muted hover:bg-[#171B20] hover:text-mw-text",
+  );
+
 export const Sidebar = ({ mobileMenuOpen, setMobileMenuOpen }: SidebarProps) => {
-  const launchpadNavItems = navItems.filter((item) => item.path === "/");
-  const remainingPrimaryNavItems = navItems.filter((item) => primaryPaths.has(item.path) && item.path !== "/");
-  const utilityNavItems = navItems.filter((item) => !primaryPaths.has(item.path));
+  const { items, activeKey, activeChild } = useShellNav();
+  const close = () => setMobileMenuOpen(false);
 
   return (
     <>
-      {mobileMenuOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/70 backdrop-blur-md lg:hidden"
-          onClick={() => setMobileMenuOpen(false)}
-        />
-      )}
+      {mobileMenuOpen && <div className="fixed inset-0 z-[74] bg-[rgba(5,6,8,0.7)] lg:hidden" onClick={close} />}
 
       <aside
-        className={`
-        fixed top-16 bottom-4 z-50 flex w-[calc(100vw-2rem)] max-w-72 flex-col rounded-3xl border border-accent/55 bg-[linear-gradient(180deg,rgba(23,26,31,0.96),rgba(11,13,16,0.99))] shadow-[0_28px_80px_-36px_rgba(0,0,0,0.98),0_0_0_1px_rgba(245,132,32,0.22),0_0_24px_rgba(245,132,32,0.1)] backdrop-blur-xl transition-transform duration-300 ease-in-out
-        ${mobileMenuOpen ? "left-4" : "-left-80"}
-        lg:hidden
-      `}
+        aria-label="Menu"
+        aria-hidden={!mobileMenuOpen}
+        className={cn(
+          "fixed inset-y-0 z-[75] flex w-[min(300px,calc(100vw-3rem))] flex-col border-r border-mw-border bg-mw-ground font-mw-body text-mw-text transition-[left,visibility] duration-200 lg:hidden",
+          mobileMenuOpen ? "visible left-0" : "invisible -left-[320px]",
+        )}
       >
-        <button
-          onClick={() => setMobileMenuOpen(false)}
-          className="absolute right-4 top-4 rounded-lg p-2 text-accent transition-colors hover:bg-accent/10 hover:text-orange-200 lg:hidden"
-          aria-label="Close menu"
-        >
-          <X className="h-5 w-5" />
-        </button>
-
-        <div className="flex items-center gap-3 border-b border-accent/20 px-4 pb-4 pt-5">
-          <Link to="/" onClick={() => setMobileMenuOpen(false)} className="flex items-center gap-3">
-            <img src={brandMark} alt="MemeWarzone" className="h-10 w-10 object-contain" draggable={false} />
-            <div className="space-y-1">
-              <span className="block font-retro text-sm text-foreground">MemeWarzone</span>
-              <span className="block text-[10px] uppercase tracking-[0.18em] text-accent/70">Launch Control</span>
-            </div>
+        <div className="flex h-14 items-center gap-2 border-b border-[#1E2329] pl-4 pr-2">
+          <Link to="/" onClick={close} className="mw-focus flex-1 font-mw-brand text-[17px] text-mw-accent hover:text-mw-accent">
+            MEMEWARZONE
           </Link>
+          <button
+            onClick={close}
+            className="mw-focus inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-mw-muted hover:bg-mw-raised hover:text-mw-text"
+            aria-label="Close menu"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
         </div>
 
-        <nav className="flex-1 space-y-5 overflow-y-auto px-4 pb-4 pt-3">
-          <div className="space-y-2">
-            {launchpadNavItems.length ? <AnimatedNav options={launchpadNavItems} onNavigate={() => setMobileMenuOpen(false)} /> : null}
-            {remainingPrimaryNavItems.length ? <AnimatedNav options={remainingPrimaryNavItems} onNavigate={() => setMobileMenuOpen(false)} /> : null}
-            {isPostGradNavEnabled() ? <ArenaMobileNav onNavigate={() => setMobileMenuOpen(false)} /> : null}
-          </div>
+        <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-3">
+          {items.map((item) => {
+            const Icon = NAV_ICONS[item.icon];
+            return (
+              <div key={item.key}>
+                <Link to={item.path} onClick={close} aria-current={activeKey === item.key && !item.children ? "page" : undefined} className={rowClass(activeKey === item.key)}>
+                  <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+                  {item.label}
+                </Link>
+                {item.children ? (
+                  <div className="flex flex-col gap-0.5 pb-1 pl-[34px]">
+                    {item.children.map((child) => (
+                      <Link
+                        key={child.key}
+                        to={child.path}
+                        onClick={close}
+                        aria-current={activeChild === child.key ? "page" : undefined}
+                        className={cn(
+                          "mw-focus flex min-h-11 items-center rounded-[10px] px-3 text-[15px] font-semibold",
+                          activeChild === child.key ? "bg-[#171B20] text-mw-text" : "text-mw-muted hover:bg-[#171B20] hover:text-mw-text",
+                        )}
+                      >
+                        {child.label}
+                      </Link>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
 
-          {utilityNavItems.length ? (
-            <div className="space-y-2">
-              <div className="px-3 text-[10px] uppercase tracking-[0.22em] text-accent/65">Account</div>
-              <AnimatedNav options={utilityNavItems} onNavigate={() => setMobileMenuOpen(false)} />
-            </div>
-          ) : null}
+          <Link
+            to="/create"
+            onClick={close}
+            className="mw-focus mt-3 inline-flex min-h-[50px] items-center justify-center gap-2 rounded-[10px] bg-mw-accent text-base font-semibold text-[#140A02] hover:text-[#140A02]"
+          >
+            <Plus className="h-5 w-5" aria-hidden="true" />
+            Launch a coin
+          </Link>
+
+          <a href="https://docs.memewar.zone" target="_blank" rel="noopener noreferrer" className={cn(rowClass(false), "mt-2")}>
+            <BookOpen className="h-5 w-5 shrink-0" aria-hidden="true" />
+            Docs
+          </a>
         </nav>
 
-        <div className="space-y-3 border-t border-accent/20 px-4 py-4">
-          <SocialTooltip items={socialLinks} className="justify-start gap-2 [&_a]:!h-9 [&_a]:!w-9" />
-          <p className="hidden text-[11px] text-muted-foreground md:block">(c) 2026 MemeWarzone. All rights reserved.</p>
+        <div className="border-t border-[#1E2329] px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]">
+          <div className="flex gap-1">
+            {socialLinks.map((social) => (
+              <a
+                key={social.href}
+                href={social.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={social.ariaLabel}
+                className="mw-focus inline-flex h-11 w-11 items-center justify-center rounded-[10px] opacity-70 hover:bg-[#171B20] hover:opacity-100"
+              >
+                <img src={social.svgUrl} alt="" className="h-4 w-4" />
+              </a>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-mw-muted">© 2026 MemeWarzone. All rights reserved.</p>
         </div>
       </aside>
     </>

@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { buildMainNav } from "./lib/shellNav.mjs";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
+const shellNavHook = await read("./components/shell/useShellNav.ts");
 const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, client, coinsPage, navigation, leftSidebar, mobileSidebar, claimDialog, api, core, resolverAdapters, reviewCore, imageApi, riskCore] = await Promise.all([
   read("./App.tsx"), read("./features/projectImports/config.ts"), read("./pages/ProjectImport.tsx"), read("./pages/ImportedTokenPage.tsx"),
   read("./pages/TokenDetailsEntry.tsx"), read("./pages/TokenDetailsLiveEntry.tsx"), read("./lib/projectImports.ts"), read("./pages/command-center/CommandCenterCoins.tsx"),
-  read("./constants/navigation.ts"), read("./components/LeftBattleSidebar.tsx"), read("./components/Sidebar.tsx"), read("./components/imports/ProjectXClaimDialog.tsx"), read("../api/projectImports.js"),
+  read("./constants/navigation.ts"), read("./components/shell/AppSideNav.tsx"), read("./components/Sidebar.tsx"), read("./components/imports/ProjectXClaimDialog.tsx"), read("../api/projectImports.js"),
   read("../api/lib/projectImportCore.js"), read("../api/lib/projectImportResolverAdapters.js"), read("../api/lib/projectOwnershipReview.js"),
   read("../api/projectImportImage.js"), read("../api/lib/projectImportRiskSecurity.js"),
 ]);
@@ -89,10 +91,14 @@ test("manual ownership review is retry-safe and cannot self-approve", () => {
 
 test("clear Import navigation is available on desktop and mobile without replacing Warzone navigation", () => {
   assert.match(navigation, /Import your memecoin/i);
-  assert.match(leftSidebar, /Import your memecoin/i);
-  assert.match(leftSidebar, /Warzone/);
-  assert.match(mobileSidebar, /"\/import"/);
-  assert.match(mobileSidebar, /ArenaMobileNav/);
+  // UI redesign: desktop menu and mobile drawer both render the shared shell nav list.
+  const nav = buildMainNav({ warzone: true, imports: true });
+  assert.ok(nav.some((item) => item.path === "/import" && /Import/i.test(item.label)));
+  assert.ok(nav.some((item) => item.key === "warzone" && item.children?.length === 4));
+  assert.equal(buildMainNav({ warzone: true, imports: false }).some((item) => item.path === "/import"), false);
+  assert.match(shellNavHook, /imports: projectImportsEnabled/);
+  assert.match(leftSidebar, /useShellNav\(\)/);
+  assert.match(mobileSidebar, /useShellNav\(\)/);
 });
 
 test("imported project route mounts owner-manageable surface and refreshes manual approval before live token runtime", () => {

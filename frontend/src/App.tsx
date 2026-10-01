@@ -50,13 +50,13 @@ import Status from "./pages/Status";
 import NotFound from "./pages/NotFound";
 import { Sidebar } from "@/components/Sidebar";
 import { TopBar } from "@/components/TopBar";
-import { LeftBattleSidebar } from "@/components/LeftBattleSidebar";
+import { AppSideNav } from "@/components/shell/AppSideNav";
+import { MobileTabBar } from "@/components/shell/MobileTabBar";
+import { ShellBackBar, useHasBackBar } from "@/components/shell/ShellBackBar";
 import { IncomingChallengeListener } from "@/components/arena/IncomingChallengeListener";
 import { DbcScheduledLaunchListener } from "@/components/dbc/DbcScheduledLaunchListener";
 import { RankPromotionListener } from "@/components/rank/RankPromotionListener";
 import { LiveStreamOverlay } from "@/components/live/LiveStreamOverlay";
-import { Footer } from "@/components/layout/Footer";
-import { ScreenFrame } from "@/components/layout/ScreenFrame";
 import { ScheduledTokenAccessRoute } from "@/components/token/ScheduledTokenAccessRoute";
 import { CreatorProtectionDialog } from "@/components/token/CreatorProtectionDialog";
 import { CreatorArmEligibilityDialog } from "@/components/prepare/CreatorArmEligibilityDialog";
@@ -134,7 +134,7 @@ function AppShellLayout({
 }) {
   const postGradEnabled = isPostGradRouteEnabled();
   const location = useLocation();
-  const isShowcaseRoute = location.pathname === "/";
+  const hasBackBar = useHasBackBar();
   const mainRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -154,25 +154,28 @@ function AppShellLayout({
     } catch {}
   };
 
-  const sidebarExpanded = 224;
-  const sidebarCollapsed = 64;
+  const sidebarExpanded = 236;
+  const sidebarCollapsed = 72;
   const currentSidebarWidth = leftSidebarCollapsed ? sidebarCollapsed : sidebarExpanded;
   const mainStyle = { "--mwz-left-sidebar-width": `${currentSidebarWidth}px` } as CSSProperties;
 
   return (
     <div
-      className="mwz-app-shell flex h-screen flex-col overflow-x-hidden overflow-y-hidden"
+      className="mwz-app-shell mw-shell flex h-screen flex-col overflow-x-hidden overflow-y-hidden"
+      data-backbar={hasBackBar ? "true" : undefined}
       style={mainStyle}
     >
       <DocumentTitleSync />
       <ProductAnalytics />
       <OwnWalletRouteSync />
       <div className="hidden lg:block">
-        <LeftBattleSidebar collapsed={leftSidebarCollapsed} onToggleCollapse={toggleLeftSidebar} />
+        <AppSideNav collapsed={leftSidebarCollapsed} onToggleCollapse={toggleLeftSidebar} />
       </div>
 
       <Sidebar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
       <TopBar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} leftSidebarWidth={currentSidebarWidth} />
+      <ShellBackBar />
+      <MobileTabBar />
       <RankPromotionListener />
       <IncomingChallengeListener />
       <DbcScheduledLaunchListener />
@@ -186,14 +189,14 @@ function AppShellLayout({
         ref={mainRef}
         className={[
           "flex-1 overflow-x-hidden overflow-y-auto pb-[calc(var(--mwz-footer-offset)+1.25rem+env(safe-area-inset-bottom,0px))] lg:pl-[calc(var(--mwz-left-sidebar-width)+0.75rem)]",
-          isShowcaseRoute
-            ? "scroll-pt-2 pt-2 md:scroll-pt-3 md:pt-3"
-            : "scroll-pt-[var(--mwz-topbar-offset)] pt-[var(--mwz-topbar-offset)] [&>:first-child]:!pt-0",
+          "scroll-pt-[var(--mwz-topbar-offset)] pt-[var(--mwz-topbar-offset)] [&>:first-child]:!pt-0",
         ].join(" ")}
       >
         <RouteErrorBoundary routeKey={location.pathname}>
         <Routes>
           <Route path="/" element={<Showcase />} />
+          {/* Coins gets its own route (founder D1, 2026-10-02); "/" becomes Home when the feed ships. */}
+          <Route path="/coins" element={<Showcase />} />
           {postGradEnabled && postGradFlags.arena ? <Route path="/warzone" element={<Arena />} /> : null}
           {postGradEnabled && postGradFlags.arena ? <Route path="/warzone/verify-email" element={<ArenaVerifyEmail />} /> : null}
           {postGradEnabled && postGradFlags.battle ? <Route path="/warzone/battles" element={<ArenaBattles />} /> : null}
@@ -277,8 +280,6 @@ function AppShellLayout({
         </Routes>
         </RouteErrorBoundary>
       </main>
-      <Footer />
-      <ScreenFrame />
     </div>
   );
 }

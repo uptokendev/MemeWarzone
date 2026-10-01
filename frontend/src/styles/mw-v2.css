@@ -1,0 +1,85 @@
+/* UI redesign tokens and app shell (docs/build_plans/ui-redesign/BUILD_PLAN.md, phase 0).
+   Values come from the artboards' design/generator/shared.mjs. Loaded last so the shell
+   offsets below win over tactical-command-ui.css. */
+
+:root {
+  --mw-ground: #0b0d10;
+  --mw-surface: #13171c;
+  --mw-raised: #1a1f25;
+  --mw-border: #242a31;
+  --mw-edge: #2e353d;
+  --mw-input: #0e1114;
+  --mw-text: #eceef0;
+  --mw-muted: #9aa3ad;
+  --mw-accent: #ff7a1a;
+  --mw-accent-soft: #ffb27a;
+  --mw-accent-fill: #1a130d;
+  --mw-accent-edge: #5a3416;
+  --mw-buy: #16a34a;
+  --mw-sell: #e11d48;
+  --mw-up: #4ade80;
+  --mw-down: #fb7185;
+
+  --mw-topbar-h: 68px;
+  --mw-backbar-h: 56px;
+  --mw-tabbar-h: 64px;
+}
+
+/* Shell geometry. The top bar is opaque and full width; pages start below it. */
+.mwz-app-shell.mw-shell {
+  --mwz-topbar-offset: var(--mw-topbar-h);
+  --mwz-footer-offset: 0px;
+  background: var(--mw-ground) !important;
+}
+
+.mwz-app-shell.mw-shell main {
+  background: var(--mw-ground) !important;
+}
+
+/* The old HUD frame layers (tactical-command-ui.css) were hidden by ScreenFrame's CSS; the new
+   shell has no frame, so they stay hidden. */
+.mwz-app-shell.mw-shell::before,
+.mwz-app-shell.mw-shell::after {
+  display: none !important;
+}
+
+/* Pages without a menu item carry a back bar under the top bar; the page starts below both. */
+.mwz-app-shell.mw-shell[data-backbar="true"] {
+  --mwz-topbar-offset: calc(var(--mw-topbar-h) + var(--mw-backbar-h));
+}
+
+@media (max-width: 1023px) {
+  .mwz-app-shell.mw-shell {
+    --mw-topbar-h: 56px;
+    /* The bottom tab bar takes the footer's place on phones and tablets. */
+    --mwz-footer-offset: var(--mw-tabbar-h);
+  }
+
+  .mwz-app-shell.mw-shell main {
+    padding-top: var(--mwz-topbar-offset) !important;
+  }
+}
+
+.mw-focus:focus-visible {
+  outline: 2px solid var(--mw-accent);
+  outline-offset: 2px;
+}
+
+@keyframes mw-sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.mw-sheet-in {
+  animation: mw-sheet-up 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mw-sheet-in { animation: none; }
+}
+
+/* The toast viewport (components/ui/toast) is an empty `ol.fixed.top-0` most of the time, and the
+   legacy `.fixed.top-0` rule paints it as a dark band. The old footer used to cover it. */
+ol.fixed.top-0 {
+  background: none !important;
+}

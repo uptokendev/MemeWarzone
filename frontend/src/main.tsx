@@ -14,6 +14,7 @@ import "./styles/page-density-fixes.css";
 import "./styles/card-cleanup.css";
 import "./styles/prepare-title-fix.css";
 import "./styles/prepare-auth-ux.css";
+import "./styles/mw-v2.css";
 
 /**
  * After a Netlify deploy, open tabs may still hold an old main bundle that

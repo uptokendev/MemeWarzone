@@ -5,13 +5,10 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { Bell, Menu, Plus, Search } from "lucide-react";
+import { Bell, Menu, Search } from "lucide-react";
 import { SearchPopup } from "@/components/search/SearchPopup";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { SocialTooltip } from "@/components/ui/social-media";
-import { socialLinks } from "@/constants/navigation";
 import { warRoomEnabled } from "@/features/postgrad/config";
 import { useWallet } from "@/contexts/WalletContext";
 import { ConnectWalletModal } from "@/components/wallet/ConnectWalletModal";
@@ -138,9 +135,6 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
 
   const shortAddress = account && account.length > 8 ? `${account.slice(0, 4)}...${account.slice(-4)}` : account;
 
-  const topbarButtonClass =
-    "mwz-button !h-[12px] !min-h-0 !gap-0.5 !px-1.5 sm:!px-2 !py-0 text-[10px] leading-none font-retro";
-
   const openWalletModal = () => {
     setWalletModalOpen(true);
   };
@@ -182,173 +176,161 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
     navigate("/profile?tab=settings");
   };
 
+  const iconButtonClass =
+    "mw-focus relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] text-mw-text hover:bg-mw-raised";
+  const popoverItemClass = "mw-focus w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-mw-muted hover:bg-mw-raised hover:text-mw-text";
+
+  // top-[0px], not top-0: tactical-command-ui.css restyles every `.fixed.top-0` as the old
+  // transparent HUD bar. z-[70] keeps the stacking that rule gave the bar before.
   return (
     <div
       data-mwz-topbar="true"
-      className="fixed left-0 right-0 top-0 z-40 bg-transparent transition-[left] lg:left-[var(--mwz-left-sidebar-width)]"
+      className="fixed inset-x-0 top-[0px] z-[70] h-[var(--mw-topbar-h)] border-b border-[#1E2329] bg-mw-ground font-mw-body text-mw-text"
       style={topbarStyle}
     >
-      {/* Minimal top action bar - no borders, no menu items, compact mobile logo */}
-      <div className="mx-1.5 mt-2 flex min-h-11 items-center gap-1 px-1.5 sm:mx-3 sm:mt-3 sm:gap-1.5 sm:px-3">
-        {/* Mobile menu trigger only */}
+      <div className="flex h-full items-center gap-1 px-2 sm:gap-2 sm:px-3 lg:gap-5 lg:px-6">
+        {/* Phones and tablets: the drawer holds the menu items the bottom bar has no room for. */}
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="mwz-button inline-flex h-11 w-11 shrink-0 items-center justify-center p-0 lg:hidden"
+          className={cn(iconButtonClass, "lg:hidden")}
           aria-label="Toggle menu"
         >
-          <Menu className="h-4 w-4 shrink-0" />
+          <Menu className="h-5 w-5" aria-hidden="true" />
         </button>
 
-        {/* Compact mark only on mobile (desktop logo is in the left sidebar) */}
-        <Link to="/" className="flex h-11 w-11 shrink-0 items-center justify-center lg:hidden" aria-label="MemeWarzone home">
-          <img
-            src={brandMark}
-            alt="MemeWarzone"
-            className="h-8 w-8 object-contain"
-            draggable={false}
-          />
+        <Link
+          to="/"
+          aria-label="MemeWarzone home"
+          className="mw-focus shrink-0 font-mw-brand text-[15px] tracking-[0.02em] text-mw-accent hover:text-mw-accent sm:text-[17px] lg:w-[188px] lg:text-xl"
+        >
+          MEMEWARZONE
         </Link>
 
-        {/* Right cluster: Socials -> Search -> Create -> Bell -> Wallet (pushed right) */}
-        <div className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-1.5">
-          {/* Social icons first */}
-          <div className="hidden items-center xl:flex">
-            <SocialTooltip
-              items={socialLinks}
-              className="gap-1 [&_a]:!h-5 [&_a]:!w-5 [&_img]:!h-3.5 [&_img]:!w-3.5"
-            />
-          </div>
+        {/* Same search as before: opens the search palette (also on Ctrl/Cmd+K and "/"). */}
+        <div className="hidden min-w-0 flex-1 lg:flex">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            aria-label="Open search"
+            className="mw-focus flex h-11 w-full max-w-[420px] items-center gap-2.5 rounded-[10px] border border-mw-edge bg-mw-input px-3 text-left text-[15px] text-[#7C858F] hover:border-[#3A424C]"
+          >
+            <Search className="h-5 w-5 shrink-0" aria-hidden="true" />
+            <span className="flex-1 truncate">Search coins, creators, battles, or paste a CA</span>
+            <kbd className="rounded border border-mw-edge px-1.5 font-mw-mono text-xs text-mw-muted">/</kbd>
+          </button>
+        </div>
 
-          {/* Compact Search (after socials) - icon-only on the narrowest phones */}
-          <div className="w-11 shrink-0 sm:w-[92px] lg:w-[110px] xl:w-28">
-            <button
-              type="button"
-              onClick={() => setPaletteOpen(true)}
-              aria-label="Open search"
-              className="mwz-button search-button group flex h-11 w-full items-center justify-center gap-1 px-1.5 text-[11px] leading-none sm:px-2"
-            >
-              <Search className="h-3.5 w-3.5 shrink-0 sm:h-2 sm:w-2" />
-              <span className="hidden truncate text-[11px] uppercase tracking-[0.12em] text-success/70 sm:inline">Search</span>
-            </button>
-          </div>
+        <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2 lg:ml-0">
+          <button type="button" onClick={() => setPaletteOpen(true)} aria-label="Open search" className={cn(iconButtonClass, "lg:hidden")}>
+            <Search className="h-5 w-5" aria-hidden="true" />
+          </button>
 
-          <div className="relative flex min-w-0 shrink-0 items-center gap-1 sm:-ml-1 sm:mb-2 sm:self-end">
-            <Button onClick={() => { setMobileMenuOpen(false); navigate("/create"); }} className={topbarButtonClass}>
-              <Plus className="h-2.5 w-2.5 shrink-0" />
-              <span className="hidden sm:inline">Create Coin</span>
-              <span className="sm:hidden">Create</span>
-            </Button>
-
-            {connected && (
-              <div className="relative" data-topbar-popover>
-                <Button
-                  ref={bellRef}
-                  type="button"
-                  onClick={() => {
-                    setDisconnectOpen(false);
-                    setNotificationOpen((prev) => !prev);
-                  }}
-                  className={cn(topbarButtonClass, "relative w-12 justify-center px-1.5")}
-                  aria-label="Notifications"
-                >
-                  <Bell className="h-2.5 w-2.5" />
-                  {unreadNotifications > 0 && (
-                    <span className="absolute -right-0.5 top-0 grid h-4 min-w-4 place-items-center border border-accent bg-background px-0.5 text-[9px] text-accent">
-                      {unreadNotifications}
-                    </span>
-                  )}
-                </Button>
-
-                {notificationOpen && popoverAnchor && createPortal(
-                  <div
-                    data-topbar-popover
-                    className="mwz-panel w-80 max-w-[calc(100vw-2rem)] overflow-hidden p-2"
-                    style={{ position: "fixed", top: popoverAnchor.top, right: popoverAnchor.right, zIndex: 80 }}
-                  >
-                    <div className="flex items-center justify-between gap-3 border-b border-border/70 px-2 pb-2">
-                      <span className="font-retro text-xs uppercase tracking-[0.16em] text-foreground">Notifications</span>
-                      <button type="button" onClick={() => void markAllRead()} className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground">
-                        Mark read
-                      </button>
-                    </div>
-                    <div className="max-h-80 overflow-y-auto py-1">
-                      {draftNotifications.slice(0, 5).map((notification) => (
-                        <button
-                          key={notification.id}
-                          type="button"
-                          onClick={() => void openNotificationTarget(notification)}
-                          className="block w-full border-b border-border/40 px-2 py-3 text-left hover:bg-success/10"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="truncate font-retro text-xs text-foreground">{notification.title}</span>
-                            {!notification.read && <span className="h-2 w-2 shrink-0 bg-accent" />}
-                          </div>
-                          <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{notification.body}</p>
-                        </button>
-                      ))}
-                      {draftNotifications.length === 0 && (
-                        <div className="px-2 py-4 text-xs text-muted-foreground">No notifications yet.</div>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={openNotificationSettings}
-                      className="mt-1 w-full border border-border/70 px-3 py-2 text-center font-retro text-xs uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground"
-                    >
-                      View all
-                    </button>
-                  </div>,
-                  document.body,
-                )}
-              </div>
-            )}
-
+          {connected && (
             <div className="relative" data-topbar-popover>
-              <Button
-                ref={walletRef}
-                className={topbarButtonClass}
+              <button
+                ref={bellRef}
+                type="button"
                 onClick={() => {
-                  if (!connected) {
-                    openWalletModal();
-                    return;
-                  }
-                  setNotificationOpen(false);
-                  setDisconnectOpen((prev) => !prev);
+                  setDisconnectOpen(false);
+                  setNotificationOpen((prev) => !prev);
                 }}
+                className={cn(iconButtonClass, "lg:border lg:border-mw-edge lg:bg-mw-raised")}
+                aria-label={unreadNotifications > 0 ? `Notifications, ${unreadNotifications} unread` : "Notifications"}
               >
-                <span className="hidden sm:inline">{connected ? shortAddress : "Connect Wallet"}</span>
-                <span className="sm:hidden">{connected ? "Wallet" : "Connect"}</span>
-              </Button>
+                <Bell className="h-5 w-5" aria-hidden="true" />
+                {unreadNotifications > 0 && (
+                  <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-mw-accent px-1 font-mw-mono text-[11px] font-bold text-[#140A02]">
+                    {unreadNotifications}
+                  </span>
+                )}
+              </button>
 
-              {disconnectOpen && popoverAnchor && createPortal(
+              {notificationOpen && popoverAnchor && createPortal(
                 <div
                   data-topbar-popover
-                  className="mwz-panel w-56 p-2"
+                  className="w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-[14px] border border-mw-edge bg-mw-surface p-2 font-mw-body text-mw-text shadow-2xl"
                   style={{ position: "fixed", top: popoverAnchor.top, right: popoverAnchor.right, zIndex: 80 }}
                 >
-                  <div className="border border-success/15 bg-success/5 px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-foreground">
-                    {shortAddress}
+                  <div className="flex items-center justify-between gap-3 border-b border-mw-border px-2 pb-2">
+                    <span className="font-mw-cond text-sm font-bold uppercase tracking-[0.08em]">Notifications</span>
+                    <button type="button" onClick={() => void markAllRead()} className="mw-focus rounded px-1 text-xs font-semibold text-mw-muted hover:text-mw-text">
+                      Mark read
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await Promise.all([
-                          wallet.isConnected ? wallet.disconnect() : Promise.resolve(),
-                          isSolanaConnected ? disconnectSolana() : Promise.resolve(),
-                        ]);
-                      } finally {
-                        setDisconnectOpen(false);
-                      }
-                    }}
-                    className="mt-2 w-full border border-border/70 px-3 py-2 text-left font-retro text-xs uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground"
-                  >
-                    Disconnect wallet
+                  <div className="max-h-80 overflow-y-auto py-1">
+                    {draftNotifications.slice(0, 5).map((notification) => (
+                      <button
+                        key={notification.id}
+                        type="button"
+                        onClick={() => void openNotificationTarget(notification)}
+                        className="mw-focus block w-full rounded-lg border-b border-mw-border/60 px-2 py-3 text-left hover:bg-mw-raised"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-sm font-semibold">{notification.title}</span>
+                          {!notification.read && <span className="h-2 w-2 shrink-0 rounded-full bg-mw-accent" aria-label="Unread" />}
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-mw-muted">{notification.body}</p>
+                      </button>
+                    ))}
+                    {draftNotifications.length === 0 && (
+                      <div className="px-2 py-4 text-sm text-mw-muted">No notifications yet.</div>
+                    )}
+                  </div>
+                  <button type="button" onClick={openNotificationSettings} className={cn(popoverItemClass, "mt-1 text-center")}>
+                    View all
                   </button>
                 </div>,
                 document.body,
               )}
             </div>
+          )}
+
+          <div className="relative" data-topbar-popover>
+            <button
+              ref={walletRef}
+              type="button"
+              className="mw-focus inline-flex h-11 items-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] sm:px-4 sm:text-[15px]"
+              onClick={() => {
+                if (!connected) {
+                  openWalletModal();
+                  return;
+                }
+                setNotificationOpen(false);
+                setDisconnectOpen((prev) => !prev);
+              }}
+            >
+              <span className="hidden font-mw-mono text-[13px] sm:inline">{connected ? shortAddress : "Connect Wallet"}</span>
+              <span className="sm:hidden">{connected ? "Wallet" : "Connect"}</span>
+            </button>
+
+            {disconnectOpen && popoverAnchor && createPortal(
+              <div
+                data-topbar-popover
+                className="w-56 rounded-[14px] border border-mw-edge bg-mw-surface p-2 font-mw-body text-mw-text shadow-2xl"
+                style={{ position: "fixed", top: popoverAnchor.top, right: popoverAnchor.right, zIndex: 80 }}
+              >
+                <div className="rounded-lg bg-mw-input px-3 py-2 font-mw-mono text-[13px]">
+                  {shortAddress}
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await Promise.all([
+                        wallet.isConnected ? wallet.disconnect() : Promise.resolve(),
+                        isSolanaConnected ? disconnectSolana() : Promise.resolve(),
+                      ]);
+                    } finally {
+                      setDisconnectOpen(false);
+                    }
+                  }}
+                  className={cn(popoverItemClass, "mt-2")}
+                >
+                  Disconnect wallet
+                </button>
+              </div>,
+              document.body,
+            )}
           </div>
         </div>
       </div>
