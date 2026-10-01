@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { Coins, Gift, Home, LifeBuoy, Menu, Settings, Shield, Swords, Trophy, Users, X } from "lucide-react";
+import { Coins, Gift, Home, LifeBuoy, Menu, Rss, Settings, Shield, Swords, Trophy, Users, X } from "lucide-react";
 
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { postGradFlags } from "@/features/postgrad/config";
@@ -15,6 +15,7 @@ const menuItems: Array<{
   requiresArena?: boolean;
 }> = [
   { label: "Overview", path: "", icon: Home, end: true },
+  { label: "Feed", path: "feed", icon: Rss },
   { label: "Coins", path: "coins", icon: Coins },
   { label: "Battles", path: "battles", icon: Swords, requiresArena: true },
   { label: "Recruiter", path: "recruiter", icon: Shield },

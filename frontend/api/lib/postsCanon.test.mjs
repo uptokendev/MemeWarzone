@@ -1,0 +1,39 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { buildPostCreateMessage, buildPostDeleteMessage, canonPostWallet } from "./postsCanon.js";
+
+const SOLANA_CHAIN = 101;
+const EVM_CHAIN = 97;
+const SOL_WALLET = "2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB";
+
+test("post wallet keeps Solana base58 case", () => {
+  assert.equal(canonPostWallet(SOLANA_CHAIN, SOL_WALLET), SOL_WALLET);
+  assert.equal(
+    canonPostWallet(EVM_CHAIN, "0x52D3c9E6E4E6C5D4C3B2A1908877665544332211"),
+    "0x52d3c9e6e4e6c5d4c3b2a1908877665544332211",
+  );
+});
+
+test("create message does not lowercase Solana identities", () => {
+  const msg = buildPostCreateMessage({
+    chainId: SOLANA_CHAIN,
+    address: SOL_WALLET,
+    nonce: "abc",
+    body: "K88 is moving.",
+  });
+  assert.match(msg, /POST_CREATE/);
+  assert.match(msg, new RegExp(SOL_WALLET));
+  assert.match(msg, /K88 is moving/);
+});
+
+test("delete message binds the post id", () => {
+  const msg = buildPostDeleteMessage({
+    chainId: SOLANA_CHAIN,
+    address: SOL_WALLET,
+    nonce: "abc",
+    postId: 42,
+  });
+  assert.match(msg, /POST_DELETE/);
+  assert.match(msg, /PostId: 42/);
+});

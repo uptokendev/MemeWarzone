@@ -4,7 +4,7 @@ import { signWalletAction, type WalletActionAuthPayload } from "@/lib/walletActi
 export const ABUSE_SESSION_ACTION = "abuse_open_session";
 
 export type AbuseCategory = "impersonation" | "stolen_content" | "fake_project" | "phishing" | "other";
-export type AbuseEntityType = "profile" | "campaign" | "token" | "wallet" | "external_account" | "external_website" | "other";
+export type AbuseEntityType = "profile" | "campaign" | "token" | "wallet" | "post" | "external_account" | "external_website" | "other";
 
 export type AbuseReportSummary = {
   id: string;

@@ -30,6 +30,7 @@ const RAILWAY_PATH_PREFIXES = [
   "/api/epochPools",
   "/api/featured",
   "/api/follows",
+  "/api/feed",
   "/api/prepare",
   "/api/prepare-notifications",
   "/api/profile",

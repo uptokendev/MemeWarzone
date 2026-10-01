@@ -4,7 +4,8 @@ import { Users, UserPlus, Coins } from "lucide-react";
 
 import { useWallet } from "@/contexts/WalletContext";
 import { useLaunchpad } from "@/lib/launchpadClient";
-import { getActiveChainId } from "@/lib/chainConfig";
+import { getActiveChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { isSolanaAddress } from "@/lib/address";
 import { useCreatedCampaigns } from "@/hooks/profile/useCreatedCampaigns";
 import { useProfileFollows } from "@/hooks/profile/useProfileFollows";
 import type { ProfileTab } from "@/types/profile";
@@ -39,13 +40,16 @@ export function PublicProfileStatsBar({ profileWallet, isOwnProfile }: PublicPro
   const wallet = useWallet();
   const anyWallet: any = wallet as any;
   const { fetchCampaigns, fetchCampaignSummary } = useLaunchpad();
-  const chainId = getActiveChainId(anyWallet?.chainId ?? null);
+  const chainId = isSolanaAddress(profileWallet)
+    ? SOLANA_CHAIN_ID
+    : getActiveChainId(anyWallet?.chainId ?? null);
   const account = wallet.account ?? null;
   const [activeTab, setActiveTab] = useState<ProfileTab>("balances");
 
   const created = useCreatedCampaigns({
     viewedAddress: profileWallet,
     account,
+    chainId,
     fetchCampaigns,
     fetchCampaignSummary,
   });

@@ -3,6 +3,7 @@ import { badMethod, getQuery, json, defaultPublicChainId} from "../server/http.j
 import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
 import { withSolanaBondingProgress } from "./lib/solanaCampaignProgress.js";
 import { withEvmBondingProgress } from "./lib/evmCampaignProgress.js";
+import { creatorMatchSql, normalizeCreatorQuery } from "./lib/campaignCreatorFilter.js";
 
 // LaunchFactory default graduation target is 50 BNB (see contracts/LaunchFactory.sol).
 // Campaigns can override this, but until we persist per-campaign targets in DB,
@@ -179,13 +180,18 @@ function campaignPayload(rows, { limit, cursor, gradTargetBnb, warning = null })
   };
 }
 
-async function fetchBasicCampaignRows({ chainId, limit, cursor, effectiveStatus, searchRaw, tab, sort }) {
+async function fetchBasicCampaignRows({ chainId, limit, cursor, effectiveStatus, searchRaw, tab, sort, creator }) {
   const params = [chainId];
   let where = "where c.chain_id = $1 and c.campaign_address is not null";
 
   if (searchRaw) {
     params.push(`%${searchRaw}%`);
     where += ` and (c.name ilike $${params.length} or c.symbol ilike $${params.length} or c.campaign_address::text ilike $${params.length} or c.token_address::text ilike $${params.length} or c.creator_address::text ilike $${params.length})`;
+  }
+
+  if (creator) {
+    params.push(creator);
+    where += ` and (c.creator_address = $${params.length} or lower(c.creator_address) = lower($${params.length}))`;
   }
 
   if (effectiveStatus === "live") {
@@ -298,6 +304,7 @@ export default async function handler(req, res) {
   const effectiveStatus = tab === "ending" ? "live" : tab === "dex" ? "graduated" : status;
   const searchRaw = String(q.search || "").trim();
   const search = searchRaw ? `%${searchRaw}%` : null;
+  const creator = normalizeCreatorQuery(q.creator);
 
   // Optional filters
   const bnbUsd = Number.isFinite(Number(q.bnbUsd)) ? toFloat(q.bnbUsd, NaN) : null;
@@ -456,6 +463,7 @@ export default async function handler(req, res) {
             $5::text <> 'dex'
             or ${DEX_TRADING_SQL}
           )
+          and ${creatorMatchSql("c.creator_address", 13)}
       ),
       rt as (
         select
@@ -562,6 +570,7 @@ export default async function handler(req, res) {
       progressMaxPct,
       cursor,
       limit,
+      creator,
     ]);
 
     const payload = campaignPayload(r.rows, { limit, cursor, gradTargetBnb });
@@ -582,6 +591,7 @@ export default async function handler(req, res) {
         searchRaw,
         tab,
         sort,
+        creator,
       });
 
       return json(

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Rocket, Swords, Target, Trophy, Upload, User } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Rocket, Rss, Swords, Target, Trophy, Upload, User } from "lucide-react";
 import { socialLinks } from "@/constants/navigation";
 import { SocialTooltip } from "@/components/ui/social-media";
 import { cn } from "@/lib/utils";
@@ -38,6 +38,7 @@ export function LeftBattleSidebar({ collapsed, onToggleCollapse }: LeftBattleSid
   const navItems = useMemo<SidebarNavItem[]>(
     () => [
       { icon: Rocket, label: "Launchpad", path: "/" },
+      { icon: Rss, label: "Feed", path: "/feed" },
       { icon: Trophy, label: "Leagues", path: "/league" },
       ...(projectImportsEnabled ? [{ icon: Upload, label: "Import your memecoin", path: "/import" }] : []),
       ...(showArenaNav ? [{ icon: Swords, label: "Warzone", path: "/warzone", hasSubmenu: true }] : []),

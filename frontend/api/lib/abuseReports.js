@@ -11,6 +11,7 @@ export const ABUSE_ENTITY_TYPES = Object.freeze({
   campaign: "Campaign",
   token: "Token",
   wallet: "Wallet",
+  post: "Feed post",
   external_account: "External account",
   external_website: "External website",
   other: "Other",

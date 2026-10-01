@@ -4,6 +4,8 @@ import serverless from "serverless-http";
 import { createRailwayProxyMiddleware } from "../../server/railwayProxy.js";
 
 import activityTrades from "../../api/activity/trades.js";
+import activityTimeline from "../../api/activity/timeline.js";
+import feedPosts from "../../api/feed/posts.js";
 import ablyToken from "../../api/ably/token.js";
 import authNonce from "../../api/auth/nonce.js";
 import arenaBattles from "../../api/arenaBattles.js";
@@ -37,6 +39,7 @@ import leaguePayouts from "../../api/leaguePayouts.js";
 import leagueRoot from "../../api/leagueRoot.js";
 import profile from "../../api/profile.js";
 import profileCabinet from "../../api/profileCabinet.js";
+import profilePortfolio from "../../api/profile/portfolio.js";
 import rewards from "../../api/rewards.js";
 import shareCard from "../../api/shareCard.js";
 import prepareShareCard from "../../api/prepare-share-card.js";
@@ -188,6 +191,9 @@ function wrap(fn) {
 }
 
 app.all("/activity/trades", wrap(activityTrades));
+app.all("/activity/timeline", wrap(activityTimeline));
+app.all("/feed/posts/:id/delete", wrap(feedPosts));
+app.all("/feed/posts", wrap(feedPosts));
 app.all("/ably/token", wrap(ablyToken));
 app.all("/auth/nonce", wrap(authNonce));
 app.all("/arena/ops/health", wrap(arenaOps));
@@ -259,6 +265,7 @@ app.all("/leaguePayouts", wrap(leaguePayouts));
 app.all("/leagueRoot", wrap(leagueRoot));
 app.all("/profile", wrap(profile));
 app.all("/profileCabinet", wrap(profileCabinet));
+app.all("/profile/portfolio", wrap(profilePortfolio));
 app.all("/shareCard", wrap(shareCard));
 app.all("/prepare-share-card", wrap(prepareShareCard));
 app.all("/token-share-card", wrap(tokenShareCard));
