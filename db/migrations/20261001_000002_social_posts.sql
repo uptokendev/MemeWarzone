@@ -29,4 +29,8 @@ CREATE INDEX IF NOT EXISTS social_posts_status_created_idx
 
 COMMENT ON TABLE public.social_posts IS 'Free-form wallet posts for the MemeWarzone social feed. status: 0 active, 1 hidden, 2 deleted.';
 
+-- Second layer next to the default privileges: no policies, so the Supabase REST roles (anon,
+-- authenticated) read and write nothing. The API connects as the table owner and is not affected.
+ALTER TABLE public.social_posts ENABLE ROW LEVEL SECURITY;
+
 COMMIT;
