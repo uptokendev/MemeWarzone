@@ -272,6 +272,10 @@ export function useUnifiedMarket(input: { campaignAddress?: string; chainId: num
     const onTrade = (message: any) => { const trade = realtimeTrade(message?.data, input.chainId); if (trade) setTrades((current) => mergeTrades(current, [trade], input.chainId)); revealLiveTradeFallback(); };
     const onLegacyTrade = () => revealLiveTradeFallback();
     const onCandle = (message: any) => {
+      // Every trade publishes all nine timeframes. Another timeframe's bucket is not this chart's
+      // business; treating it as unreadable refetched the whole market (four requests) per trade.
+      const tf = String(message?.data?.resolution || message?.data?.timeframe || message?.data?.tf || "").trim();
+      if (tf && tf !== resolution) return;
       const candle = realtimeCandle(message?.data, resolution);
       if (!candle) { scheduleRefresh(80); return; }
       setCandles((current) => {

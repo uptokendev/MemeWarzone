@@ -313,3 +313,30 @@ test("cold-load fits only after the first complete history snapshot", () => {
     { paint: true, fit: false },
   );
 });
+
+test("a live candle without a market-cap series is drawn from price x supply, not dropped as zero", () => {
+  // The trade indexers' candle_upsert (and DBC rows) carry no mcap_*: realtimeCandle stores null.
+  // Number(null) is 0, so the bucket counted as a canonical all-zero candle and vanished from the
+  // market-cap chart until a reload (BNB 0xa2bab122 and Solana Hsa3rJRQ replays, 2026-10-01).
+  const live = candle({
+    bucket_start: "2026-10-01T15:55:00.000Z",
+    o: "2", h: "3", l: "2", c: "3",
+    mcap_o: null, mcap_h: null, mcap_l: null, mcap_c: null,
+    price_o: null, price_h: null, price_l: null, price_c: null,
+  });
+  const mcap = marketCandlesForChart([live], "marketcap", "BNB", 0, 100);
+  assert.deepEqual(mcap.map((row) => [row.open, row.high, row.low, row.close]), [[200, 300, 200, 300]]);
+  const price = marketCandlesForChart([live], "price", "BNB", 0, 100);
+  assert.deepEqual(price.map((row) => [row.open, row.close]), [[2, 3]]);
+  // Without a supply there is nothing honest to draw.
+  assert.deepEqual(marketCandlesForChart([live], "marketcap", "BNB", 0, null), []);
+  // A stored canonical series still wins over the derivation.
+  const canonical = candle({ ...live, mcap_o: "7", mcap_h: "9", mcap_l: "6", mcap_c: "8" });
+  assert.deepEqual(marketCandlesForChart([canonical], "marketcap", "BNB", 0, 100).map((row) => row.close), [8]);
+  const assembled = assembleMarketCapCandles({
+    marketCandles: [live], denomination: "BNB", nativeUsd: 0, historyReady: true,
+    liveMcapNative: 300, intervalSeconds: 60, nowSec: Date.parse("2026-10-01T15:55:30Z") / 1000, supplyWhole: 100,
+  });
+  assert.equal(assembled.length, 1, "the live bucket is the candle; no bridge bar");
+  assert.equal(assembled[0].close, 300);
+});

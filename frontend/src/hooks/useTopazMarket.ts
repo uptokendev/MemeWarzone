@@ -5,6 +5,8 @@ import { getReadProvider } from "@/lib/readProvider";
 import { fetchTopazMarketSnapshot, type TopazMarketSnapshot } from "@/lib/topazMarketData";
 import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, type SupportedChainId } from "@/lib/chainConfig";
 
+const NO_TRADES: CurveTradePoint[] = [];
+
 function isBnbTopazChain(chainId: number): boolean {
   return chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID;
 }
@@ -81,7 +83,10 @@ export function useTopazMarket(input: {
     return () => window.clearInterval(timer);
   }, [enabled, input.pollMs, refresh]);
 
-  const trades: CurveTradePoint[] = snapshot?.trades || [];
+  // A fresh [] on every render made TokenDetails' trade points, and with them the chart's candles,
+  // a new value each render; an effect downstream fed that back into state and the page re-rendered
+  // in a loop (~60/s, React "Maximum update depth exceeded") on every non-graduated token page.
+  const trades: CurveTradePoint[] = snapshot?.trades || NO_TRADES;
 
   return useMemo(
     () => ({

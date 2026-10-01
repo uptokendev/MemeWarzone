@@ -12,6 +12,10 @@ export type CanonicalCandleRow = {
 };
 
 function finiteNonNeg(value: unknown): number | null {
+  // Number(null) and Number("") are 0. A candle without a market-cap series (a live `candle_upsert`
+  // from the trade indexers, a DBC row) then counted as a canonical all-zero candle and was dropped,
+  // so the live bucket vanished from the chart until a reload refetched the materialized row.
+  if (value == null || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
