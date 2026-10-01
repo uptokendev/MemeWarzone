@@ -155,9 +155,9 @@ test("price path, supply, graduation and anti-sniper tables", () => {
 
   const sample = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], stepForSol(118).step, "creator");
   const fees = [0, 5, 30, 60, 120].map((s) => ({ s, bps: feeBpsAtSeconds(sample.configParams, s) }));
-  assert.equal(fees[0].bps, 5000);
-  assert.equal(fees[1].bps, 4600);
-  assert.equal(fees[2].bps, 2600);
+  assert.equal(fees[0].bps, 9000);
+  assert.equal(fees[1].bps, 8266);
+  assert.equal(fees[2].bps, 4600);
   assert.equal(fees[3].bps, 200);
   assert.equal(fees[4].bps, 200);
 
@@ -174,7 +174,7 @@ test("price path, supply, graduation and anti-sniper tables", () => {
   console.table(supplyRows);
   console.log("\ngraduation split");
   console.table(gradRows);
-  console.log("\nanti-sniper fee (linear 50% -> 2% over 60s)");
+  console.log("\nanti-sniper fee (linear 90% -> 2% over 60s)");
   console.table(fees);
   console.log("\nsteepened configs", steepened);
   for (const row of priceRows) {
@@ -397,4 +397,10 @@ test("SOL params are unchanged when quote is omitted or native; USDC keeps D6/re
   assert.equal(usdcBuilt.expected.reserveTokens, solDefault.expected.reserveTokens);
   assert.notEqual(usdcBuilt.paramsHash, solDefault.paramsHash);
   validateConfigParameters({ ...usdcBuilt.configParams, leftoverReceiver: DBC_VALIDATE_LEFTOVER_RECEIVER });
+});
+
+test("the trade box fee equals the chain's fee every second of the anti-sniper window", async () => {
+  const { antiSniperFeeBps } = await import("../../../shared/dbcAntiSniper.mjs");
+  const sample = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], stepForSol(118).step, "creator");
+  for (let s = 0; s <= 61; s += 1) assert.equal(antiSniperFeeBps(s), feeBpsAtSeconds(sample.configParams, s), `t=${s}`);
 });

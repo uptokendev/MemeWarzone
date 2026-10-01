@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { antiSniperFeeBps, antiSniperFeeLine, shouldUseLaunchpadBondingQuote } from "./dbcAntiSniper.mjs";
 
-test("anti-sniper fee is 50% at t=0 and 2% at 60s and after", () => {
-  assert.equal(antiSniperFeeBps(0), 5000);
-  assert.equal(antiSniperFeeBps(5), 4600);
-  assert.equal(antiSniperFeeBps(30), 2600);
+test("anti-sniper fee is 90% at t=0 and 2% at 60s and after (founder 2026-10-01, was 50%)", () => {
+  assert.equal(antiSniperFeeBps(0), 9000);
+  assert.equal(antiSniperFeeBps(5), 8266);
+  assert.equal(antiSniperFeeBps(30), 4600);
   assert.equal(antiSniperFeeBps(60), 200);
   assert.equal(antiSniperFeeBps(120), 200);
 });
@@ -16,7 +16,7 @@ test("anti-sniper line names the live percent and the 2% time", () => {
     nowUnix: 1_000 + 15,
     timeZone: "UTC",
   });
-  assert.match(line, /Launch fee: 38% now/);
+  assert.match(line, /Launch fee: 68% now/);
   assert.match(line, /2% from /);
 });
 

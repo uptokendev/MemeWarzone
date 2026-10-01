@@ -52,11 +52,13 @@ export const DBC_ECONOMICS_VERSION = 3;
 export const DBC_TRADE_FEE_BPS = 200;
 
 /**
- * D14: anti-sniper starts at 50% and falls to 2% over 60 seconds.
+ * D14: anti-sniper starts at 90% and falls to 2% over 60 seconds (founder 2026-10-01: was 50%; a
+ * sniper one slot after the first mainnet DBC launch still moved the chart with half his buy).
  * BaseFeeMode.FeeSchedulerLinear, 60 periods of 1 second.
- * Fee at 0s = 50%, 5s = 46%, 30s = 26%, 60s = 2%, 120s = 2%.
+ * Fee at 0s = 90%, 5s = 82.67%, 30s = 46%, 60s = 2%, 120s = 2%. Applies to configs created after
+ * the change (the params hash covers the fee); existing pools keep the fee they were born with.
  */
-export const DBC_ANTI_SNIPER_START_FEE_BPS = 5000;
+export const DBC_ANTI_SNIPER_START_FEE_BPS = 9000;
 export const DBC_ANTI_SNIPER_END_FEE_BPS = DBC_TRADE_FEE_BPS;
 export const DBC_ANTI_SNIPER_DURATION_SECONDS = 60;
 export const DBC_ANTI_SNIPER_PERIODS = 60;
