@@ -58,7 +58,29 @@ export default async function handler(req, res) {
         limit 50`,
       [SOLANA_CHAIN_ID, creator],
     );
-    if (!rows.length) return json(res, 200, { chainId: SOLANA_CHAIN_ID, creator, programId: pid, items: [] });
+    // Meteora DBC coins claim on their own coin page (DbcCreatorRewardsPanel); the profile lists them
+    // so a creator sees every coin they launched (2026-10-01: MWZDNB was missing here).
+    const dbc = await pool.query(
+      `select campaign_address, token_address, name, symbol, logo_uri, meta->>'feeChoice' as fee_choice
+         from public.campaigns
+        where chain_id = $1
+          and creator_address = $2
+          and campaign_address is not null
+          and launch_type = 'dbc'
+        order by created_at_chain desc nulls last, created_at desc
+        limit 50`,
+      [SOLANA_CHAIN_ID, creator],
+    );
+    const dbcItems = dbc.rows.map((row) => ({
+      chainId: SOLANA_CHAIN_ID,
+      campaignAddress: String(row.campaign_address),
+      tokenAddress: row.token_address ? String(row.token_address) : null,
+      name: row.name ?? null,
+      symbol: row.symbol ?? null,
+      logoUri: row.logo_uri ?? null,
+      feeChoice: row.fee_choice ? String(row.fee_choice) : null,
+    }));
+    if (!rows.length) return json(res, 200, { chainId: SOLANA_CHAIN_ID, creator, programId: pid, items: [], dbcItems });
     if (!rpcUrl()) return json(res, 503, { error: "SOLANA_RPC_URL is not configured" });
 
     const derived = rows.map((row) => deriveCampaignFeeAccounts(row.campaign_address, pid));
@@ -98,7 +120,7 @@ export default async function handler(req, res) {
       };
     });
 
-    return json(res, 200, { chainId: SOLANA_CHAIN_ID, creator, programId: pid, items });
+    return json(res, 200, { chainId: SOLANA_CHAIN_ID, creator, programId: pid, items, dbcItems });
   } catch (error) {
     console.error("[api/solana/creator-fees]", error);
     return json(res, 500, { error: "Creator fee lookup failed." });

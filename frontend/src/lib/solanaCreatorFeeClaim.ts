@@ -33,6 +33,29 @@ export type CreatorFeeItem = {
   claimableSol: string;
 };
 
+export type DbcCreatorCoin = {
+  chainId: number;
+  campaignAddress: string;
+  tokenAddress: string | null;
+  name: string | null;
+  symbol: string | null;
+  logoUri: string | null;
+  feeChoice: string | null;
+};
+
+/** Both lists: launchpad coins (claim here) and Meteora DBC coins (claim on the coin page). */
+export async function fetchCreatorFeesWithDbc(creator: string): Promise<{ items: CreatorFeeItem[]; dbcItems: DbcCreatorCoin[] }> {
+  const wallet = String(creator || "").trim();
+  if (!wallet) return { items: [], dbcItems: [] };
+  const res = await apiFetch(`/api/solana/creator-fees?creator=${encodeURIComponent(wallet)}`, { cache: "no-store" });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(String(payload?.error || `Creator fee lookup failed (${res.status})`));
+  return {
+    items: Array.isArray(payload?.items) ? (payload.items as CreatorFeeItem[]) : [],
+    dbcItems: Array.isArray(payload?.dbcItems) ? (payload.dbcItems as DbcCreatorCoin[]) : [],
+  };
+}
+
 export async function fetchCreatorFees(creator: string): Promise<CreatorFeeItem[]> {
   const wallet = String(creator || "").trim();
   if (!wallet) return [];

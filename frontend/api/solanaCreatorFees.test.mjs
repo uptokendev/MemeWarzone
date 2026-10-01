@@ -65,3 +65,14 @@ test("a missing escrow (campaign before the backfill) reports uninitialized and 
   assert.equal(out.escrowInitialized, false);
   assert.equal(out.claimableLamports, 0n);
 });
+
+test("DBC coins are listed for the profile but never enter the launchpad claim list", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("./solanaCreatorFees.js", import.meta.url), "utf8");
+  // The claimable list keeps excluding DBC (its claim is a different program).
+  assert.match(src, /coalesce\(launch_type, 'launchpad'\) <> 'dbc'/);
+  // DBC coins come back separately, with the fee choice, on both return paths.
+  assert.match(src, /launch_type = 'dbc'/);
+  assert.match(src, /meta->>'feeChoice' as fee_choice/);
+  assert.equal((src.match(/dbcItems \}\)/g) || []).length, 2);
+});
