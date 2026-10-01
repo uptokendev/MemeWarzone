@@ -37,3 +37,11 @@ test("delete message binds the post id", () => {
   assert.match(msg, /POST_DELETE/);
   assert.match(msg, /PostId: 42/);
 });
+
+test("the signed post message carries the whole body, not a preview (no unsigned tail)", async () => {
+  const { buildPostCreateMessage, POST_MAX_CHARS } = await import("./postsCanon.js");
+  const body = "a".repeat(200) + " tail-that-must-be-signed " + "b".repeat(POST_MAX_CHARS - 226);
+  const msg = buildPostCreateMessage({ chainId: 56, address: "0x" + "1".repeat(40), nonce: "n1", body });
+  assert.ok(msg.endsWith(body.trim()), "message must end with the full trimmed body");
+  assert.ok(msg.includes("tail-that-must-be-signed"));
+});

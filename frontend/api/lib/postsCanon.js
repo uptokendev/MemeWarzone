@@ -19,8 +19,10 @@ export function canonPostAddress(value) {
   return isAddress(lower) ? lower : "";
 }
 
-function bodyPreview(body) {
-  return String(body ?? "").replace(/\s+/g, " ").trim().slice(0, 180);
+// The wallet signs the whole post (trimmed, at most POST_MAX_CHARS), so no character of the stored
+// body can be changed by someone who intercepts a signature.
+function signedBody(body) {
+  return String(body ?? "").trim();
 }
 
 export function buildPostCreateMessage({ chainId, address, nonce, body }) {
@@ -32,7 +34,7 @@ export function buildPostCreateMessage({ chainId, address, nonce, body }) {
     `Address: ${solana ? address : String(address).toLowerCase()}`,
     `Nonce: ${nonce}`,
     "",
-    bodyPreview(body),
+    signedBody(body),
   ].join("\n");
 }
 

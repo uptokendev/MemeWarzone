@@ -43,7 +43,8 @@ function buildPostMessage(args: {
   nonce: string;
   body: string;
 }) {
-  const bodyPreview = args.body.replace(/\s+/g, " ").trim().slice(0, 180);
+  // Must match api/lib/postsCanon.js: the whole trimmed post is signed.
+  const bodyPreview = args.body.trim();
   const address = isSolanaAddress(args.address) ? args.address : args.address.toLowerCase();
   return [
     "MemeWarzone Post",
