@@ -290,7 +290,10 @@ Checked against the Coolify env files on 2026-10-01 (names only): none of the `D
 are also missing on the app.
 
 - [ ] API env set
-- [ ] Indexer env set
+- [ ] Indexer env set, including `ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_4663` (SwapRouter02
+  `0xCaf681a66D020601342297493863E78C959E5cb2`). Without it the indexer records router 0x0 for graduated
+  Robinhood pools; the app now ignores a 0x0 router, but set it so every reader gets the right one
+  (found by the release browser test, 2026-10-01).
 - [ ] App env set
 
 ### 2.3 Fast-forward the live branch
