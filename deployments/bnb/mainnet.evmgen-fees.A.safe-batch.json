@@ -1,0 +1,232 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1790850836675,
+  "meta": {
+    "name": "MWZ fees V4: A wiring",
+    "description": "Router V4 vaults, community vault -> V4, holder distributor, vault operator/caps (no holder batch pre-authorized)",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+      "value": "0",
+      "data": "0x83bcec850000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setCreatePaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "true"
+      }
+    },
+    {
+      "to": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+      "value": "0",
+      "data": "0x4d6a75af00000000000000000000000040ac5cd71bdb42ccf542b7f96c2083cdaba41e78",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setRecruiterRewardsVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0x40ac5cD71bdB42cCF542b7f96C2083cDABa41e78"
+      }
+    },
+    {
+      "to": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+      "value": "0",
+      "data": "0x1ab904b2000000000000000000000000b6ccac81f84f125ecdc8dfab2e019c42eac5486e",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setCommunityRewardsVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e"
+      }
+    },
+    {
+      "to": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+      "value": "0",
+      "data": "0x33485e22000000000000000000000000c2d4e6f846446f3921a34a34e007295dbc19bc4c",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setProtocolRevenueVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c"
+      }
+    },
+    {
+      "to": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+      "value": "0",
+      "data": "0xc5a2064b0000000000000000000000006cb44e3db907801a04fa7a056fbe79799298af66",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setCreatorRewardsVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0x6Cb44e3dB907801a04FA7A056Fbe79799298AF66"
+      }
+    },
+    {
+      "to": "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e",
+      "value": "0",
+      "data": "0xc0d786550000000000000000000000008c8141b84cdb4634829cf1936f1e8cc14c61ceaa",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newRouter",
+            "type": "address"
+          }
+        ],
+        "name": "setRouter",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newRouter": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa"
+      }
+    },
+    {
+      "to": "0xD106198Ca83c26f4B43c9DF7368F134f0Cd46cc1",
+      "value": "0",
+      "data": "0xe5d7cd8b0000000000000000000000006cb44e3db907801a04fa7a056fbe79799298af66",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newOperator",
+            "type": "address"
+          }
+        ],
+        "name": "setBatchOperator",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newOperator": "0x6Cb44e3dB907801a04FA7A056Fbe79799298AF66"
+      }
+    },
+    {
+      "to": "0x6Cb44e3dB907801a04FA7A056Fbe79799298AF66",
+      "value": "0",
+      "data": "0x107caa51000000000000000000000000d106198ca83c26f4b43c9df7368f134f0cd46cc1",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "distributor",
+            "type": "address"
+          }
+        ],
+        "name": "setHolderDistributorOnce",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "distributor": "0xD106198Ca83c26f4B43c9DF7368F134f0Cd46cc1"
+      }
+    },
+    {
+      "to": "0x6Cb44e3dB907801a04FA7A056Fbe79799298AF66",
+      "value": "0",
+      "data": "0x558a7297000000000000000000000000dcf07eb07e6d6722c246161e7530dc905f9eaa500000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "operator_",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "paused_",
+            "type": "bool"
+          }
+        ],
+        "name": "setOperator",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "operator_": "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50",
+        "paused_": "false"
+      }
+    },
+    {
+      "to": "0x6Cb44e3dB907801a04FA7A056Fbe79799298AF66",
+      "value": "0",
+      "data": "0xca35bff20000000000000000000000000000000000000000000000000905438e600100000000000000000000000000000000000000000000000000005a34a38fc00a000000000000000000000000000000000000000000000000000000000000000054600000000000000000000000000000000000000000000000000000000000000032000000000000000000000000000000000000000000000001bc16d674ec800000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "maxBuyPerTx_",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxBuybackPerCampaignWeek_",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "minBuyInterval_",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxImpactBps_",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxHolderBatchPerWeek_",
+            "type": "uint256"
+          }
+        ],
+        "name": "setCaps",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "maxBuyPerTx_": "650000000000000000",
+        "maxBuybackPerCampaignWeek_": "6500000000000000000",
+        "minBuyInterval_": "21600",
+        "maxImpactBps_": "50",
+        "maxHolderBatchPerWeek_": "32000000000000000000"
+      }
+    }
+  ]
+}
