@@ -239,6 +239,12 @@ export type Gen5CampaignState = {
   feeVault: string;
   feeChoice: string | null;
   feeCreatorPct: number | null;
+  /**
+   * The token's totalSupply (raw, 18 decimals). Generation 6/5 values market cap fully diluted, price x
+   * this (founder decision 2026-10-01, like DBC and pump.fun); read from the token so a graduation burn
+   * is reflected. Null when the read failed.
+   */
+  tokenTotalSupplyRaw: bigint | null;
 };
 
 const ZERO = ethers.ZeroAddress;
@@ -290,6 +296,10 @@ export async function readGen5Campaign(provider: AbstractProvider, campaignAddre
     quoteSymbol = symbol == null ? null : String(symbol);
     quoteDecimals = Number(decimals);
   }
+  const tokenTotalSupplyRaw = await (new Contract(String(token), ERC20_ABI, provider) as any)
+    .totalSupply()
+    .then((value: bigint) => BigInt(value))
+    .catch(() => null);
   const decoded = feeChoice ? decodeEvmFeeChoice(Number(feeChoice.choice ?? feeChoice[1]), Number(feeChoice.creatorPct ?? feeChoice[2])) : { choice: null, creatorSharePct: null };
   return {
     campaign: campaignAddress,
@@ -310,6 +320,7 @@ export async function readGen5Campaign(provider: AbstractProvider, campaignAddre
     feeVault: feeChoice ? String(feeChoice.vault ?? feeChoice[0] ?? "") : "",
     feeChoice: decoded.choice,
     feeCreatorPct: decoded.creatorSharePct,
+    tokenTotalSupplyRaw,
   };
 }
 

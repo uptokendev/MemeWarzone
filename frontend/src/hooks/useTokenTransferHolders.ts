@@ -95,7 +95,8 @@ export function useTokenTransferHolders(args: {
           highestBlockScanned = maxBlockInBatch;
         }
 
-        setComplete(sawMint);
+        // A delta scan never sees the mint; it extends a history that is already complete or not.
+        setComplete((prev) => (isDelta ? prev : sawMint));
         setHolders((prev) => {
           // If doing a delta scan, we need to merge with existing balances
           const mergedBalances = new Map(balances);

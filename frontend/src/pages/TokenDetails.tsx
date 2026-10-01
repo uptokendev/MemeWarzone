@@ -64,6 +64,7 @@ import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { AthBar } from "@/components/token/AthBar";
 import { canonicalAthUsd } from "@/lib/canonicalMarket";
 import { canonicalAthNativeFromCandles } from "@/lib/chart/canonicalChartCandles";
+import { evmCurveSpotChanges, fullyDilutedSupplyWhole } from "@/lib/fullyDilutedMarketCap.mjs";
 import { ArenaUpvoteDialog, UpvoteDialog } from "@/components/token/UpvoteDialog";
 import { postGradFlags } from "@/features/postgrad/config";
 import { useWallet } from "@/contexts/WalletContext";
@@ -807,6 +808,12 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   );
   // EVM generation-5 coins only; every older campaign reads as null and renders nothing new (E14).
   const gen5 = useGen5Campaign(isSolanaPage ? null : readProvider, Number(chainIdForStorage), isSolanaPage ? "" : resolvedCampaignAddress);
+  // Generation 6/5 is valued fully diluted: price x the token's total supply (founder 2026-10-01, the
+  // DBC and pump.fun basis). Null for every older EVM coin, which keeps price x curve sold.
+  const evmFullyDilutedSupply = useMemo(
+    () => (isSolanaPage ? null : fullyDilutedSupplyWhole(gen5.state?.tokenTotalSupplyRaw ?? null, 18)),
+    [gen5.state?.tokenTotalSupplyRaw, isSolanaPage],
+  );
   const gen5ViewerIsCreator = Boolean(
     gen5.state && wallet.account && gen5.state.creator.toLowerCase() === String(wallet.account).toLowerCase(),
   );
@@ -2219,6 +2226,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
    */
   const pageLiveSupplyWhole = useMemo(() => {
     if (isSolanaPage) return solanaSoldWhole;
+    if (evmFullyDilutedSupply != null) return evmFullyDilutedSupply;
 
     const graduatedSupplyRaw = unifiedMarket.state?.graduation?.postBurnTotalSupplyRaw;
     if (contractGraduatedEarly && graduatedSupplyRaw && /^\d+$/.test(graduatedSupplyRaw)) {
@@ -2235,6 +2243,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     const whole = Number(ethers.formatUnits(sold, tokenDecimals));
     return Number.isFinite(whole) && whole > 0 ? whole : null;
   }, [
+    evmFullyDilutedSupply,
     contractGraduatedEarly,
     isSolanaPage,
     metrics?.sold,
@@ -2350,8 +2359,34 @@ const toSeconds = (ts: number): number => {
       out[k].volume = volumeWei > 0n ? formatBnbFromWei(volumeWei) : "—";
     }
 
+    // Generation 6/5 bonding: change of the curve spot, not of fills (see evmCurveSpotChanges).
+    if (
+      evmFullyDilutedSupply != null &&
+      !contractGraduatedEarly &&
+      metrics?.basePrice != null &&
+      metrics.basePrice > 0n &&
+      metrics.sold != null
+    ) {
+      const spotChanges = evmCurveSpotChanges({
+        trades: marketTradePoints.map((p: any) => ({
+          timestamp: tsOf(Number(p.timestamp ?? 0)),
+          type: p.type === "sell" ? "sell" : "buy",
+          tokensWei: BigInt(p.tokensWei ?? 0n),
+        })),
+        soldNowRaw: metrics.sold,
+        basePriceWei: metrics.basePrice,
+        priceSlopeWei: metrics.priceSlope ?? 0n,
+        nowSec: now,
+        windows,
+      });
+      for (const k of Object.keys(windows) as TimeframeKey[]) {
+        const pct = spotChanges[k];
+        out[k].change = pct == null || !Number.isFinite(pct) ? null : Math.abs(pct) < 0.005 ? 0 : Number(pct.toFixed(2));
+      }
+    }
+
     return out;
-  }, [contractGraduatedEarly, isSolanaPage, marketTradePoints, metrics, rtStats?.lastPriceBnb, solanaLivePrice, topazMarket.priceBnb]);
+  }, [contractGraduatedEarly, evmFullyDilutedSupply, isSolanaPage, marketTradePoints, metrics, rtStats?.lastPriceBnb, solanaLivePrice, topazMarket.priceBnb]);
 
   // Token view-model used throughout the page
   const tokenData = useMemo(() => {
@@ -2390,6 +2425,9 @@ const toSeconds = (ts: number): number => {
           : null;
         if (solanaCurve?.graduated) solanaDexMcapLabel = label;
         else bondingMcapLabel = label;
+      } else if (!contractGraduatedEarly && evmFullyDilutedSupply != null && metrics?.currentPrice != null && metrics.currentPrice > 0n) {
+        const mcapNative = Number(ethers.formatUnits(metrics.currentPrice, 18)) * evmFullyDilutedSupply;
+        bondingMcapLabel = Number.isFinite(mcapNative) && mcapNative > 0 ? `${formatCompact(mcapNative)} ${nativeUnit}` : null;
       } else if (!contractGraduatedEarly && metrics?.sold != null && metrics.currentPrice != null) {
         const mcWei = (metrics.currentPrice * metrics.sold) / 10n ** 18n;
         bondingMcapLabel = formatBnbFromWei(mcWei);
@@ -2415,10 +2453,11 @@ const toSeconds = (ts: number): number => {
       return [...balances.values()].filter((bal) => bal > 0n).length;
     })();
     const transferHolderCount = transferHolders.holders.length;
+    // A scan that saw the mint is the whole history: its count stands even when it is 0 (BNB gen-6 coin
+    // whose only buyer sold everything back). The fallbacks below count buyers, not holders.
     const useTransferHolders =
       !isSolanaPage &&
-      transferHolderCount > 0 &&
-      (transferHolders.complete || transferHolderCount >= tradeHolderCount);
+      (transferHolders.complete || (transferHolderCount > 0 && transferHolderCount >= tradeHolderCount));
     const buyerCount = Number(solanaCurve?.buyerCount ?? 0);
 
     return {
@@ -2487,7 +2526,7 @@ const toSeconds = (ts: number): number => {
       // Timeframe analytics (native volume + price change)
       metrics: timeframeTiles,
     };
-  }, [campaign, contractGraduatedEarly, curveReserveWei, dbcMintSupplyWhole, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
+  }, [campaign, contractGraduatedEarly, evmFullyDilutedSupply, curveReserveWei, dbcMintSupplyWhole, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
   // Native/USD reference for TokenDetails conversions: BNB on BNB Chain, SOL on
   // Solana, ETH on Robinhood. Treating every non-Solana chain as BNB priced a
   // Robinhood page in BNB/USD, so the header read about six times lower than the
@@ -2514,6 +2553,7 @@ const toSeconds = (ts: number): number => {
   const liveMarketCapNative = useMemo(() => {
     if (
       !isSolanaPage &&
+      evmFullyDilutedSupply == null &&
       !contractGraduatedEarly &&
       metrics?.currentPrice != null &&
       metrics.currentPrice > 0n &&
@@ -2537,6 +2577,7 @@ const toSeconds = (ts: number): number => {
     }
     return parseBnbLabel(tokenData.marketCap);
   }, [
+    evmFullyDilutedSupply,
     contractGraduatedEarly,
     isSolanaPage,
     metrics?.currentPrice,
@@ -3444,10 +3485,12 @@ const toSeconds = (ts: number): number => {
     if (displayDenom === "BNB") return bnbLabel;
 
     const liqBnb = parseBnbLabel(bnbLabel);
-    if (liqBnb == null || liqBnb <= 0) return "—";
+    if (liqBnb == null || liqBnb < 0) return "—";
 
     if (!nativeUsd) return nativeUsdLoading ? "…" : "—";
 
+    // An emptied curve holds exactly 0 (BNB gen-6 coin after its buy was sold back): say so, not "—".
+    if (liqBnb === 0) return "$0.00";
     return formatCompactUsd(liqBnb * nativeUsd);
   }, [displayDenom, liquidityValue, nativeUsd, nativeUsdLoading]);
 ;
@@ -5251,7 +5294,7 @@ const toSeconds = (ts: number): number => {
                 canonicalAthUsd={canonicalAthUsd(
                   liveMarketCapNative != null && nativeUsd ? liveMarketCapNative * nativeUsd : 0,
                   nativeUsd
-                    ? canonicalAthNativeFromCandles(unifiedMarket.candles, liveMarketCapNative ?? 0) * nativeUsd
+                    ? canonicalAthNativeFromCandles(unifiedMarket.candles, liveMarketCapNative ?? 0, isDbcPage ? null : evmFullyDilutedSupply) * nativeUsd
                     : 0,
                 )}
                 storageKey={`ath:${String(chainIdForStorage)}:${isSolanaPage ? String((campaignAddress ?? campaign?.campaign ?? "")) : String((campaignAddress ?? campaign?.campaign ?? "")).toLowerCase()}`}
@@ -5342,7 +5385,7 @@ const toSeconds = (ts: number): number => {
                   solanaGraduated={Boolean(isSolanaPage && solanaCurve?.graduated)}
                   livePriceNative={pageLivePriceNative}
                   liveSupplyWhole={pageLiveSupplyWhole}
-                  fixedSupplyWhole={dbcMintSupplyWhole}
+                  fixedSupplyWhole={isDbcPage ? dbcMintSupplyWhole : evmFullyDilutedSupply}
                   liveMcapNative={liveMarketCapNative}
                   nativeUsdPrice={nativeUsd}
                   marketKey={`${chainIdForStorage}:${resolvedCampaignAddress || localTradeStorageAddress || ""}`}

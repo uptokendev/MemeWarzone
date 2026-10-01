@@ -33,8 +33,16 @@ export function marketCandlesForChart(
    * candles far above the market cap the header reports.
    */
   supplyWhole?: number | null,
+  /**
+   * Fully diluted coins (EVM generation 6/5, Meteora DBC): market cap is price x this total supply,
+   * whatever mcap_* the server stored. The canonical materializer stores price x curve sold, the old
+   * launchpad basis, which is 0 before the first buy and drew a new coin's first candle from $0.
+   */
+  fixedSupplyWhole?: number | null,
 ): CanonicalCandleRow[] {
   if (denomination === "USD" && nativeUsd <= 0) return [];
+  const fixedSupply = Number(fixedSupplyWhole);
+  const fullyDiluted = metric === "marketcap" && Number.isFinite(fixedSupply) && fixedSupply > 0;
   const denomMul = denomination === "USD" ? nativeUsd : 1;
 
   return (rows || [])
@@ -53,6 +61,15 @@ export function marketCandlesForChart(
       const hasCanonical = canonicalValues.every((value) => finiteNonNeg(value) != null);
 
       const priceValues = [row.o, row.h, row.l, row.c].map((value) => Number(value));
+      if (fullyDiluted) {
+        const prices = [row.price_o, row.price_h, row.price_l, row.price_c].every((value) => finiteNonNeg(value) != null)
+          ? [row.price_o, row.price_h, row.price_l, row.price_c].map((value) => Number(value))
+          : priceValues;
+        if (!prices.every((value) => Number.isFinite(value) && value > 0)) return null;
+        const [open, high, low, close] = prices.map((value) => value * fixedSupply * denomMul);
+        if (![open, high, low, close].every(Number.isFinite) || !Number.isFinite(timestamp) || timestamp <= 0) return null;
+        return { time: timestamp, open, high, low, close };
+      }
       const derivableSupply = Number(supplyWhole);
       let values: number[];
       if (hasCanonical) {
@@ -144,6 +161,8 @@ export function assembleMarketCapCandles(input: {
   nowSec?: number;
   fallbackRows?: CanonicalCandleRow[];
   supplyWhole?: number | null;
+  /** Fully diluted coins: see marketCandlesForChart. */
+  fixedSupplyWhole?: number | null;
 }): CanonicalCandleRow[] {
   if (!input.historyReady) return [];
   const canonical = marketCandlesForChart(
@@ -152,6 +171,7 @@ export function assembleMarketCapCandles(input: {
     input.denomination,
     input.nativeUsd,
     input.supplyWhole,
+    input.fixedSupplyWhole,
   );
   const rows = canonical.length ? canonical : input.fallbackRows || [];
   if (!rows.length) return [];
@@ -168,12 +188,16 @@ export function assembleMarketCapCandles(input: {
 
 /** ATH native = max(all canonical mcap_h, current mcap). Never below a visible high. */
 export function canonicalAthNativeFromCandles(
-  rows: Array<Pick<MarketCandle, "mcap_h">> | null | undefined,
+  rows: Array<Partial<Pick<MarketCandle, "mcap_h" | "price_h" | "h">>> | null | undefined,
   currentNative = 0,
+  /** Fully diluted coins: the peak is the highest price x this supply, not the stored mcap_h. */
+  fixedSupplyWhole?: number | null,
 ): number {
   let peak = Number(currentNative) > 0 ? Number(currentNative) : 0;
+  const fixedSupply = Number(fixedSupplyWhole);
+  const fullyDiluted = Number.isFinite(fixedSupply) && fixedSupply > 0;
   for (const row of rows || []) {
-    const high = Number(row.mcap_h);
+    const high = fullyDiluted ? Number(finiteNonNeg(row.price_h) ?? row.h) * fixedSupply : Number(row.mcap_h);
     if (Number.isFinite(high) && high > peak) peak = high;
   }
   return peak;

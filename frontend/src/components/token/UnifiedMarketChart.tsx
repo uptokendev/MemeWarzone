@@ -273,7 +273,9 @@ function tradeSeriesPoints(
           : hasFixedSupply
             ? fixedSupply
             : Math.max(circulating, 0)
-      : soldAfter > 0
+      : hasFixedSupply
+        ? fixedSupply
+        : soldAfter > 0
         ? soldAfter
         : afterGrad && fixedGradSupply > 0
           ? fixedGradSupply
@@ -586,7 +588,8 @@ export function UnifiedMarketChart({
     const tradeFallback = buildCandles(seriesPoints, intervalSeconds, {
       extendToNow: false,
       maxGapFillBuckets: 0,
-      genesisFromZero: metric === "marketcap",
+      // A fully diluted coin opens at its start price x supply; only price x sold starts at 0.
+      genesisFromZero: metric === "marketcap" && !(Number(fixedSupplyWhole) > 0),
     }).candles.map((row) => ({
       time: Number(row.time),
       open: row.open,
@@ -606,6 +609,7 @@ export function UnifiedMarketChart({
           intervalSeconds,
           fallbackRows: tradeFallback,
           supplyWhole: postBurnSupply(marketState, tokenDecimals) || liveSupplyWhole || null,
+          fixedSupplyWhole,
         }),
       );
     }
@@ -633,6 +637,7 @@ export function UnifiedMarketChart({
     );
   }, [
     denomination,
+    fixedSupplyWhole,
     historyReady,
     intervalSeconds,
     liveMcapNative,

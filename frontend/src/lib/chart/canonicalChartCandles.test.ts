@@ -340,3 +340,40 @@ test("a live candle without a market-cap series is drawn from price x supply, no
   assert.equal(assembled.length, 1, "the live bucket is the candle; no bridge bar");
   assert.equal(assembled[0].close, 300);
 });
+
+test("a fully diluted coin's first candle opens at start price x supply, not at the sold-based $0", () => {
+  // Robinhood gen-6 0x404d723d, canonical 1m rows as stored 2026-10-01: mcap_* is price x curve sold,
+  // so mcap_o of the first candle is 0 and the chart drew one bar from $0.
+  const rows = [
+    candle({
+      bucket_start: "2026-10-01T17:40:00.000Z",
+      o: "0.000000001", h: "0.000000001632993161", l: "0.000000001", c: "0.000000001632993161",
+      price_o: "0.000000001", price_h: "0.000000001632993161", price_l: "0.000000001", price_c: "0.000000001632993161",
+      mcap_o: "0", mcap_h: "0.001216086475611437", mcap_l: "0", mcap_c: "0.001216086475611437",
+    }),
+    candle({
+      bucket_start: "2026-10-01T17:45:00.000Z",
+      o: "0.000000001632993161", h: "0.000000001632993161", l: "0.000000001578986154", c: "0.000000001578986154",
+      price_o: "0.000000001632993161", price_h: "0.000000001632993161", price_l: "0.000000001578986154", price_c: "0.000000001578986154",
+      mcap_o: "0.001216086475611437", mcap_h: "0.001216086475611437", mcap_l: "0.0010755424963696668", mcap_c: "0.0010755424963696668",
+    }),
+  ];
+  const supply = 1_000_000_000;
+  const out = marketCandlesForChart(rows, "marketcap", "BNB", 0, 681_160, supply);
+  assert.equal(out.length, 2);
+  assert.ok(Math.abs(out[0].open - 1) < 1e-12, "opens at 1e-9 ETH x 1B = 1 ETH");
+  assert.ok(Math.abs(out[0].close - 1.632993161) < 1e-12);
+  assert.equal(out[1].open, out[0].close, "no gap");
+  assert.ok(Math.abs(out[1].close - 1.578986154) < 1e-12);
+  // Without a fixed supply (old launchpad coins) the stored price x sold series is kept.
+  assert.equal(marketCandlesForChart(rows, "marketcap", "BNB", 0, 681_160)[0].open, 0);
+  // ATH on the same basis as the header.
+  assert.ok(Math.abs(canonicalAthNativeFromCandles(rows, 1.578986154, supply) - 1.632993161) < 1e-12);
+  assert.equal(canonicalAthNativeFromCandles(rows, 0), 0.001216086475611437);
+  const assembled = assembleMarketCapCandles({
+    marketCandles: rows, denomination: "BNB", nativeUsd: 0, historyReady: true,
+    liveMcapNative: 1.578986154, intervalSeconds: 60, nowSec: Date.parse("2026-10-01T17:45:30Z") / 1000,
+    supplyWhole: 681_160, fixedSupplyWhole: supply,
+  });
+  assert.equal(assembled.length, 2, "the live value agrees with the last close: no bridge candle");
+});
