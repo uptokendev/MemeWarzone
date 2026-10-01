@@ -430,6 +430,31 @@
           "args": [
             "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
           ]
+        },
+        {
+          "name": "RobinhoodV3NativeGraduationAdapterV2",
+          "address": "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+          "contract": "contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol:RobinhoodV3NativeGraduationAdapterV2",
+          "args": [
+            "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+            "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3",
+            "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "RobinhoodStockGraduationAdapterV2",
+          "address": "0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4",
+          "contract": "contracts/integrations/RobinhoodStockGraduationAdapterV2.sol:RobinhoodStockGraduationAdapterV2",
+          "args": [
+            "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+            "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3",
+            "0xCaf681a66D020601342297493863E78C959E5cb2",
+            "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+            "0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9",
+            "90000",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
         }
       ]
     }
