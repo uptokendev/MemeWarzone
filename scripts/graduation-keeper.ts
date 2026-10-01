@@ -32,10 +32,7 @@ async function quoteBinding(campaignAddress: string): Promise<string> {
 
 async function retryPendingQuoteGraduation(id: number, symbol: string, campaignAddress: string, dryRun: boolean) {
   const binding = await quoteBinding(campaignAddress);
-  if (binding === ethers.ZeroHash) {
-    console.log(`[graduation-keeper] #${id} ${symbol} pending but not a BNB BASIC catalog-bound quote campaign`);
-    return false;
-  }
+  if (binding === ethers.ZeroHash) return false;
 
   console.log(`[graduation-keeper] #${id} ${symbol} BNB BASIC pending catalogBinding=${binding}`);
   if (dryRun) return false;
@@ -50,6 +47,27 @@ async function retryPendingQuoteGraduation(id: number, symbol: string, campaignA
     // Unsafe/unavailable routes are expected to remain PENDING. The keeper is restart-safe:
     // a later run retries from current on-chain state without an operator-specific payload.
     console.warn(`[graduation-keeper] retry pending #${id}: ${String(error.message).split("\n")[0]}`);
+    return false;
+  }
+}
+
+async function retryPendingNativeGraduation(
+  id: number,
+  symbol: string,
+  campaign: { graduateIfEligible: (minTokens: bigint, minNative: bigint) => Promise<{ hash: string; wait: () => Promise<unknown> }> },
+  dryRun: boolean,
+  minTokens: bigint,
+  minNative: bigint,
+) {
+  console.log(`[graduation-keeper] #${id} ${symbol} native pending`);
+  if (dryRun) return false;
+  try {
+    const tx = await campaign.graduateIfEligible(minTokens, minNative);
+    console.log(`[graduation-keeper] native complete submitted #${id} tx=${tx.hash}`);
+    await tx.wait();
+    return true;
+  } catch (error: any) {
+    console.warn(`[graduation-keeper] native pending #${id}: ${String(error.message).split("\n")[0]}`);
     return false;
   }
 }
@@ -80,7 +98,11 @@ async function main() {
     if (await campaign.graduationPaused()) continue;
 
     if (await campaign.graduationPending()) {
-      if (await retryPendingQuoteGraduation(id, info.symbol, info.campaign, dryRun)) submitted += 1;
+      if ((await quoteBinding(info.campaign)) !== ethers.ZeroHash) {
+        if (await retryPendingQuoteGraduation(id, info.symbol, info.campaign, dryRun)) submitted += 1;
+      } else if (await retryPendingNativeGraduation(id, info.symbol, campaign, dryRun, minTokens, minNative)) {
+        submitted += 1;
+      }
       continue;
     }
 
@@ -108,7 +130,11 @@ async function main() {
     // cannot revert the user's threshold-crossing trade. Immediately retry in a separate atomic
     // transaction; if unsafe, the catch above leaves PENDING for the next keeper restart/run.
     if (await campaign.graduationPending()) {
-      if (await retryPendingQuoteGraduation(id, info.symbol, info.campaign, false)) submitted += 1;
+      if ((await quoteBinding(info.campaign)) !== ethers.ZeroHash) {
+        if (await retryPendingQuoteGraduation(id, info.symbol, info.campaign, false)) submitted += 1;
+      } else if (await retryPendingNativeGraduation(id, info.symbol, campaign, false, minTokens, minNative)) {
+        submitted += 1;
+      }
     }
   }
 

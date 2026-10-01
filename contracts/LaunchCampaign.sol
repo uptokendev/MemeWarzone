@@ -373,7 +373,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     }
 
     function quoteBuyExactBnb(uint256 totalInWei) public view returns (uint256 tokensOut, uint256 totalCostWei, uint256 feeWei) {
-        if (totalInWei == 0 || launched) return (0, 0, 0);
+        if (totalInWei == 0 || launched || graduationPending) return (0, 0, 0);
         uint256 remaining = curveSupply - sold;
         if (remaining == 0) return (0, 0, 0);
 
@@ -519,14 +519,21 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     }
 
     function graduateIfEligible(uint256 minTokens, uint256 minBnb) external virtual nonReentrant returns (uint256 usedTokens, uint256 usedBnb) {
-        uint256 nativeTarget = graduationNativeTarget();
+        if (launched) revert Finalized();
         if (stockGraduationEnabled) {
             if (graduationPending) revert GraduationPending();
-            if (netRaisedWei < nativeTarget) revert ThresholdNotMet();
-            _markStockGraduationPending(msg.sender, nativeTarget);
+            uint256 stockTarget = graduationNativeTarget();
+            if (netRaisedWei < stockTarget) revert ThresholdNotMet();
+            _markStockGraduationPending(msg.sender, stockTarget);
             return (0, 0);
         }
-        return _finalizeWithTarget(minTokens, minBnb, msg.sender, nativeTarget);
+        if (graduationPending) {
+            return _finalizeWithTarget(minTokens, minBnb, msg.sender, pendingGraduationNativeTarget);
+        }
+        uint256 liveTarget = graduationNativeTarget();
+        if (netRaisedWei < liveTarget) revert ThresholdNotMet();
+        _markStockGraduationPending(msg.sender, liveTarget);
+        return (0, 0);
     }
 
     function _buyExactTokens(address buyer, uint256 amountOut, uint256 maxCost, bool useAuthorizedRoute, uint8 routeProfile) internal returns (uint256 cost) {
@@ -679,12 +686,11 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     }
 
     function _autoFinalizeIfEligible(address caller) internal virtual {
-        try graduationOracle.nativeTargetForUsd(graduationTarget) returns (uint256 nativeTarget) {
-            if (netRaisedWei >= nativeTarget) {
-                if (stockGraduationEnabled) _markStockGraduationPending(caller, nativeTarget);
-                else _finalizeWithTarget(0, 0, caller, nativeTarget);
-            }
-        } catch {}
+        if (graduationPending || launched) return;
+        uint256 nativeTarget = graduationOracle.nativeTargetForUsd(graduationTarget);
+        if (netRaisedWei >= nativeTarget) {
+            _markStockGraduationPending(caller, nativeTarget);
+        }
     }
 
     function _markStockGraduationPending(address caller, uint256 nativeTarget) internal {
@@ -703,15 +709,22 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         if (paused) revert CampaignPaused();
         if (graduationPaused) revert GraduationPaused();
         if (launched) revert Finalized();
-        if (graduationPending) revert GraduationPending();
-        if (netRaisedWei < nativeTarget) revert ThresholdNotMet();
-        launched = true;
-        finalizedAt = block.timestamp;
 
         GraduationState storage g = graduation;
-        g.graduationBalance = netRaisedWei;
-        g.graduationOvershoot = g.graduationBalance > nativeTarget ? g.graduationBalance - nativeTarget : 0;
-        g.finalCurvePrice = _currentPrice();
+        if (graduationPending) {
+            if (stockGraduationEnabled) revert GraduationPending();
+            if (pendingGraduationNativeTarget == 0 || g.graduationBalance == 0) revert ThresholdNotMet();
+            if (nativeTarget != pendingGraduationNativeTarget) revert ThresholdNotMet();
+            if (netRaisedWei != g.graduationBalance) revert ThresholdNotMet();
+        } else {
+            if (netRaisedWei < nativeTarget) revert ThresholdNotMet();
+            g.graduationBalance = netRaisedWei;
+            g.graduationOvershoot = g.graduationBalance > nativeTarget ? g.graduationBalance - nativeTarget : 0;
+            g.finalCurvePrice = _currentPrice();
+        }
+
+        launched = true;
+        finalizedAt = block.timestamp;
 
         uint256 protocolFee = (g.graduationBalance * protocolFeeBps) / MAX_BPS;
         if (protocolFee > 0 && feeRecipient != address(0)) _routeFeeOrSendLegacy(protocolFee, ROUTE_KIND_FINALIZE, g.graduationBalance);
@@ -762,6 +775,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         g.postBurnTotalSupply = token.totalSupply();
 
         if (factory != address(0)) ILaunchFactoryGraduationNotify(factory).notifyCampaignGraduated(creator, g.dexPair);
+        graduationPending = false;
         emit CampaignFinalized(
             caller,
             g.dexPair,

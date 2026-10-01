@@ -97,7 +97,9 @@ describe("LaunchCampaign TopazRouterAdapter integration", function () {
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
 
-    await expect(campaign.connect(buyer).buyExactTokens(curveSupply, totalBuy, { value: totalBuy })).to.emit(campaign, "CampaignFinalized");
+    await campaign.connect(buyer).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    expect(await campaign.graduationPending()).to.equal(true);
+    await expect(campaign.connect(buyer).graduateIfEligible(0, 0)).to.emit(campaign, "CampaignFinalized");
 
     const poolAddress = await topazFactory.getPool(await token.getAddress(), await wbnb.getAddress(), false);
     const pool = await ethers.getContractAt("MockTopazPool", poolAddress);

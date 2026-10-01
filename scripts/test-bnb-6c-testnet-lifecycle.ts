@@ -285,6 +285,9 @@ async function main() {
     )
   ).wait();
   if (!graduationReceipt) throw new Error("Graduation crossing transaction did not return a receipt");
+  if (await campaign.graduationPending()) {
+    await (await campaign.connect(buyer).graduateIfEligible(0, 0)).wait();
+  }
   await waitForRpcState("Campaign launched=true", () => campaign.launched(), (value) => value === true);
 
   const state = await waitForRpcState(
