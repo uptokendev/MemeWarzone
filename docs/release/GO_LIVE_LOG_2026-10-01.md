@@ -48,6 +48,9 @@ Several addresses repeat across chains (same deployer, same nonces): always pair
 | R5: stock campaign implementation | n/a | `0x471ba0a7…` (nonce 11) |
 | H: enableLive + create open; old factories paused | `0x6771494a…` (nonce 16) | `0xa9293de3…` (nonce 12) |
 
+EVM test coins (founder wallet `0x1A36…`): BNB MWZBNB campaign `0x49ac80f9…` / token `0x5d5bea01…`;
+Robinhood MWZRH campaign `0x404d723d…` / token `0x3765d716…`. Create + first buy + sell work on both; fee 2%.
+
 Ownership to the Safe (deployer txs): BNB factory `0xb4f6a72a…`; Robinhood factory `0x7a0228a9…`,
 CreatorRegistry `0x3e9f10c4…`, RiskRegistry `0xcdd78f3a…`.
 
@@ -59,7 +62,7 @@ CreatorRegistry `0x3e9f10c4…`, RiskRegistry `0xcdd78f3a…`.
 
 ### Explorer verification
 - Fees stack: BscScan 3/3, Sourcify 3/3.
-- Gen-6 contracts: BscScan 7/7 Pass; Robinhood submitted to Sourcify (result: section 7).
+- Gen-6 contracts: BscScan 7/7 Pass; Sourcify 10/10 match on Robinhood.
 - Every gen-6 contract's creation input equals our artifact bytecode + constructor args (checked from chain).
 
 ## 2. Key incident: DBC referral owner key exposed
@@ -102,18 +105,26 @@ Bundle re-checked: no 64-byte key arrays. **Open:** move the remaining 0.039 SOL
 | `904e504c` | new DBC coins announced live to the front page |
 | `153c792f`, `1986d774`, `aac9f213` | live chart without reload on every chain; DBC candles at pool spot; old Solana indexer no longer deletes DBC candles; render loop fixed |
 | `1694840d` | Solana card bonding % fell to 0% when the first RPC refused (K88) |
+| `958590b3` | Safety pill removed from the token page |
 
 ## 6. Decisions taken today
 
 - Boosts: unlimited per wallet, state the rule clearly on the site (more boosts = bigger prize pool).
 - DBC anti-sniper 90% start on Solana; EVM keeps 50% until its next contract.
 - DBC test coins hidden, not deleted.
+- Market cap for the new generations (EVM gen 6/5, Meteora DBC) = price x total supply (fully diluted, like
+  pump.fun). Old coins (K88, BNB/Robinhood gen <= 5) keep price x sold. Battle scoring (percentages) unchanged.
+- Safety pill removed from the token page (`958590b3`).
 
 ## 7. Open items
 
+- [ ] EVM gen-6 chart starts at $0 and market cap uses sold tokens: agent fixing (branch fix/evm-gen6-chart).
+- [ ] Create page: BNB/Robinhood switch in MetaMask can make the page use the other chain's factory (must-fix).
+- [ ] `VITE_SUPPORTED_FACTORY_ADDRESSES_56/_4663` on the app hold only the new factories; append the old ones.
+- [ ] BNB and Robinhood test coins to hide after the chart fix (MWZBNB `0x49ac80f9…`, MWZRH `0x404d723d…`).
+
 - [ ] EVM canary coins on BNB and Robinhood (B16), then public opening (B18: remove `CREATE_CANARY_WALLETS`).
 - [ ] Workers to sending, one at a time (B19).
-- [ ] Robinhood gen-6 Sourcify result; record here.
 - [ ] Move 0.039 SOL off the leaked referral owner `C1UCui…`; rotate the Helius key pasted in chat.
 - [ ] League pot: check whether DBC trades are counted in the chain-101 pot before Monday's settlement.
 - [ ] Site copy: state the boost rule; mask RPC keys in indexer logs; front-page cards for Solana/DBC get live market cap.
