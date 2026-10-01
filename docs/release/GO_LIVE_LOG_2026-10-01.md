@@ -118,6 +118,16 @@ Bundle re-checked: no 64-byte key arrays. **Open:** move the remaining 0.039 SOL
   pump.fun). Old coins (K88, BNB/Robinhood gen <= 5) keep price x sold. Battle scoring (percentages) unchanged.
 - Safety pill removed from the token page (`958590b3`).
 
+## 6b. Opening (2026-10-01 evening)
+
+- DBC fee routing live (`DBC_FEE_ROUTING_SEND=true`): first run 19:07 UTC claimed MWZDNB 0.715 SOL and DNB's partner fee,
+  routed 0.6715 SOL: monthly league 0.2369, weekly league 0.1015, airdrop 0.1353, protocol 0.1977 (D4 split, checked);
+  MWZDNB's 7% creator pool (~0.05 SOL) stays with the collector for its buyback.
+- `DBC_GRADUATION_SEND=true`, `EVM_GRADUATION_KEEPER_SEND=true` (founder). Creator-choice `_SEND` flags stay false this week.
+- All worker keys funded (collector 0.5 SOL, config payer 0.29 SOL, keeper 0.0199 BNB / 0.0051 ETH, operators funded).
+- Test coins hidden on all chains (MWZTC, MWZDNB, DNB, MWZBNB, MWZRH).
+- **Public opening: `CREATE_CANARY_WALLETS` removed, `/api/launch-status` = `{"canary":false}`.** Live and API at `16d6d405`.
+
 ## 7. Open items
 
 - [x] EVM gen-6 token page: fully diluted market cap, chart from start price (`ee695e76`, `4625bd72`), founder-checked on both chains.
@@ -126,10 +136,9 @@ Bundle re-checked: no 64-byte key arrays. **Open:** move the remaining 0.039 SOL
 - [ ] Holder count on cards/War Room = distinct buyers (BNB test coin shows 1, chain 0).
 - [ ] Create page: BNB/Robinhood switch in MetaMask can make the page use the other chain's factory (must-fix).
 - [ ] `VITE_SUPPORTED_FACTORY_ADDRESSES_56/_4663` on the app hold only the new factories; append the old ones.
-- [ ] BNB and Robinhood test coins to hide after the chart fix (MWZBNB `0x49ac80f9…`, MWZRH `0x404d723d…`).
 
-- [ ] EVM canary coins on BNB and Robinhood (B16), then public opening (B18: remove `CREATE_CANARY_WALLETS`).
-- [ ] Workers to sending, one at a time (B19).
+- [x] EVM canary coins on BNB and Robinhood (B16) and public opening (B18).
+- [ ] Creator-choice workers to sending (`DBC_CREATOR_CHOICE_SEND`, `EVM_CREATOR_CHOICE_SEND`) after the first week commitment.
 - [ ] Move 0.039 SOL off the leaked referral owner `C1UCui…`; rotate the Helius key pasted in chat.
 - [ ] League pot: check whether DBC trades are counted in the chain-101 pot before Monday's settlement.
 - [ ] Site copy: state the boost rule; mask RPC keys in indexer logs; front-page cards for Solana/DBC get live market cap.
