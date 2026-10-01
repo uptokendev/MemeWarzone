@@ -235,6 +235,7 @@ export function BattleWallModule({
                   leaderIndex={preLive ? null : presented.leaderIndex}
                   gapLabel={preLive ? null : presented.gapLabel}
                   clockLabel={preLive ? null : battleClockLabel(displayBattle)}
+                  endsAt={preLive ? null : displayBattle.endsAt || null}
                   remaining={presented.tab === "live"}
                   statusLabel={preLive ? null : presented.statusLabel}
                   scoreKind={preLive ? null : presented.scoreKind}

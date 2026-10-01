@@ -1,4 +1,5 @@
 import { DATA_DELAY_LABEL, formatBattleWallGapText } from "@/lib/arena/battleWallPresentation.mjs";
+import { BattleCountdown } from "@/components/arena/BattleCountdown";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -9,6 +10,7 @@ type Props = {
   leaderIndex?: 0 | 1 | null;
   gapLabel?: string | null;
   clockLabel?: string | null;
+  endsAt?: string | null;
   remaining?: boolean;
   statusLabel?: string | null;
   scoreKind?: string | null;
@@ -64,6 +66,7 @@ export function BattleWallVs({
   leaderIndex,
   gapLabel,
   clockLabel,
+  endsAt,
   remaining = false,
   statusLabel,
   scoreKind,
@@ -98,10 +101,11 @@ export function BattleWallVs({
     <div
       data-battle-wall-vs
       data-battle-wall-vs-mode={deploymentPending ? "upcoming" : delay ? "delay" : "combat"}
-      className="relative z-20 flex min-w-0 max-w-full flex-col items-center justify-center bg-transparent px-1 py-1 text-center md:min-w-[5.5rem] md:max-w-[7.5rem] md:px-0 md:py-1"
+      className="relative z-20 flex min-w-0 max-w-full flex-col items-center justify-center bg-transparent px-1 py-1 text-center md:min-w-[5.5rem] md:max-w-[10.5rem] md:px-0 md:py-1"
     >
       <p className="sr-only">{spoken || "Versus"}</p>
       <BattleVsMark />
+      {remaining && endsAt ? <BattleCountdown endsAt={endsAt} /> : null}
     </div>
   );
 }
