@@ -7,6 +7,7 @@ export type UserProfile = {
   displayName: string | null;
   bio: string | null;
   avatarUrl: string | null;
+  bannerUrl: string | null;
   updatedAt?: string | null;
   createdAt?: string | null;
   rank?: string | null;
@@ -80,6 +81,7 @@ export async function fetchUserProfile(chainId: number, address: string): Promis
     address: String(p.address ?? addr),
     displayName: (p.displayName ?? null) as string | null,
     avatarUrl: (p.avatarUrl ?? null) as string | null,
+    bannerUrl: (p.bannerUrl ?? null) as string | null,
     bio: (p.bio ?? null) as string | null,
     updatedAt: (p.updatedAt ?? null) as string | null,
     createdAt: (p.createdAt ?? null) as string | null,
@@ -108,6 +110,7 @@ export type SaveProfileInput = {
   displayName: string | null;
   bio: string | null;
   avatarUrl: string | null;
+  bannerUrl?: string | null;
   nonce: string;
   signature: string;
 };
@@ -121,6 +124,7 @@ export async function saveUserProfile(input: SaveProfileInput): Promise<void> {
       address: normalizeAddress(input.address, input.chainId),
       displayName: input.displayName,
       avatarUrl: input.avatarUrl,
+      bannerUrl: input.bannerUrl ?? null,
       bio: input.bio,
       nonce: input.nonce,
       signature: input.signature,

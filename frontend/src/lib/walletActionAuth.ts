@@ -15,6 +15,7 @@ export type WalletApiAction =
   | "follow_campaign"
   | "unfollow_campaign"
   | "upload_avatar"
+  | "upload_banner"
   | "upload_logo"
   | "campaign_upsert"
   | "arena_open_battle"

@@ -164,7 +164,9 @@ export default async function handler(req, res) {
       ? "upload_logo"
       : kind === "arena_import"
         ? "arena_import_image"
-        : "upload_avatar";
+        : kind === "banner"
+          ? "upload_banner"
+          : "upload_avatar";
     const authAction = firstField(fields, "action") || String(q.action || defaultAction);
     const authNonce = firstField(fields, "nonce") || String(q.nonce || "").trim();
     const authMessageRaw = firstField(fields, "message") || String(q.message || "");
@@ -297,6 +299,8 @@ export default async function handler(req, res) {
       name = `sponsors/${uuid}.${ext}`;
     } else if (kind === "avatar" && address) {
       name = `avatars/${chainId}/${address}/${uuid}.${ext}`;
+    } else if (kind === "banner" && address) {
+      name = `banners/${chainId}/${address}/${uuid}.${ext}`;
     } else if (kind === "arena_import") {
       name = `arena-imports/${chainId}/${importId}/${uuid}.${ext}`;
     } else {
@@ -310,7 +314,7 @@ export default async function handler(req, res) {
       const attempt = await supabase.storage.from(candidate).upload(name, buf, {
         contentType,
         upsert: kind === "arena_import" ? false : true,
-        cacheControl: kind === "avatar" ? "60" : isPublicSponsorKind ? "3600" : "3600",
+        cacheControl: kind === "avatar" || kind === "banner" ? "60" : isPublicSponsorKind ? "3600" : "3600",
       });
       if (!attempt.error) {
         upErr = null;

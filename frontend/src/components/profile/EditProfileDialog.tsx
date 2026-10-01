@@ -15,7 +15,13 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   initialUsername?: string | null;
   initialBio?: string | null;
+  avatarUrl?: string | null;
+  bannerUrl?: string | null;
   saving?: boolean;
+  savingAvatar?: boolean;
+  savingBanner?: boolean;
+  onPickAvatar?: () => void;
+  onPickBanner?: () => void;
   onSave: (values: EditProfileValues) => Promise<void> | void;
 };
 
@@ -37,7 +43,13 @@ export function EditProfileDialog({
   onOpenChange,
   initialUsername,
   initialBio,
+  avatarUrl,
+  bannerUrl,
   saving,
+  savingAvatar,
+  savingBanner,
+  onPickAvatar,
+  onPickBanner,
   onSave,
 }: Props) {
   const [username, setUsername] = useState(initialUsername ?? "");
@@ -71,6 +83,50 @@ export function EditProfileDialog({
         </DialogHeader>
 
         <div className="space-y-4">
+          {onPickBanner || onPickAvatar ? (
+            <div className="space-y-2">
+              <Label className="font-retro">Cover and photo</Label>
+              <button
+                type="button"
+                onClick={onPickBanner}
+                disabled={!!saving || !!savingBanner || !onPickBanner}
+                className="relative h-24 w-full overflow-hidden bg-background/40"
+                style={
+                  bannerUrl
+                    ? undefined
+                    : {
+                        background:
+                          "radial-gradient(120% 80% at 70% 20%, hsl(var(--accent) / 0.35), transparent 55%), linear-gradient(180deg, #1a1208 0%, #050505 100%)",
+                      }
+                }
+              >
+                {bannerUrl ? <img src={bannerUrl} alt="" className="h-full w-full object-cover" /> : null}
+                <span className="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 font-retro text-[10px] uppercase tracking-[0.14em] text-accent">
+                  {savingBanner ? "Uploading…" : "Change cover"}
+                </span>
+              </button>
+              <div className="flex items-end gap-3">
+                <button
+                  type="button"
+                  onClick={onPickAvatar}
+                  disabled={!!saving || !!savingAvatar || !onPickAvatar}
+                  className="h-16 w-16 shrink-0 overflow-hidden rounded-none bg-background/50"
+                >
+                  {avatarUrl ? (
+                    <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center font-retro text-xs text-muted-foreground">
+                      Photo
+                    </span>
+                  )}
+                </button>
+                <div className="text-xs text-muted-foreground">
+                  {savingAvatar ? "Uploading photo…" : "Square photo."}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <div className="space-y-2">
             <Label className="font-retro" htmlFor="username">
               Username (optional)

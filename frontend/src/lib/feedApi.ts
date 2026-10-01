@@ -35,6 +35,10 @@ export type FeedItem = {
   campaignSymbol?: string | null;
   txHash?: string | null;
   blockTime?: string | null;
+  likeCount?: number | null;
+  repostCount?: number | null;
+  replyCount?: number | null;
+  viewCount?: number | null;
 };
 
 function buildPostMessage(args: {

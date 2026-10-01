@@ -37,11 +37,11 @@ export default function CommandCenterSettings() {
     setEditOpen,
     savingProfile,
     savingAvatar,
+    savingBanner,
     awaitingWallet,
-    avatarInputRef,
     handleEdit,
     handlePickAvatar,
-    handleAvatarSelected,
+    handlePickBanner,
     handleSaveProfile,
   } = useCommandCenterData();
 
@@ -115,9 +115,9 @@ export default function CommandCenterSettings() {
         <CommandCenterCard title="Profile settings">
           <div className="flex flex-col gap-4 rounded-2xl border border-border/50 bg-background/25 p-4 sm:flex-row sm:items-center">
             <img
-              src={avatarUrl}
+              src={avatarUrl || "/placeholder.svg"}
               alt={displayName}
-              className="h-20 w-20 rounded-2xl border border-border/60 object-cover"
+              className="h-20 w-20 rounded-none border border-border/60 object-cover"
             />
             <div className="min-w-0 flex-1">
               <div className="font-retro text-lg text-foreground">{displayName}</div>
@@ -135,24 +135,18 @@ export default function CommandCenterSettings() {
             </div>
           </div>
 
-          <input
-            ref={avatarInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/jpg,image/webp"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void handleAvatarSelected(file);
-              event.currentTarget.value = "";
-            }}
-          />
-
           <EditProfileDialog
             open={editOpen}
             onOpenChange={setEditOpen}
             initialUsername={profile?.displayName ?? ""}
             initialBio={profile?.bio ?? ""}
+            avatarUrl={profile?.avatarUrl}
+            bannerUrl={profile?.bannerUrl}
             saving={savingProfile}
+            savingAvatar={savingAvatar}
+            savingBanner={savingBanner}
+            onPickAvatar={handlePickAvatar}
+            onPickBanner={handlePickBanner}
             onSave={handleSaveProfile}
           />
 

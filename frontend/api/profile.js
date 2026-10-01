@@ -10,6 +10,7 @@ function buildProfileMessage({ chainId, address, nonce, displayName, avatarUrl }
   const name = String(displayName ?? "").trim().slice(0, 32);
   const avatar = String(avatarUrl ?? "").trim().slice(0, 200);
   // address here is already normalized (raw base58 for Solana, lower 0x for EVM)
+  // BannerUrl is NOT signed — same contract as bio — so existing wallets keep verifying.
   return [
     "MemeWarzone Profile",
     "Action: PROFILE_UPSERT",
@@ -73,8 +74,19 @@ async function dropLegacyLowercaseAddressCheck() {
   `);
 }
 
-async function upsertUserProfile(chainId, address, displayName, avatarUrl, bio) {
-  const sql = `
+async function upsertUserProfile(chainId, address, displayName, avatarUrl, bio, bannerUrl) {
+  const withBanner = `
+    INSERT INTO user_profiles (chain_id, address, display_name, avatar_url, bio, banner_url)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (chain_id, address)
+    DO UPDATE SET
+      display_name = EXCLUDED.display_name,
+      avatar_url = EXCLUDED.avatar_url,
+      bio = EXCLUDED.bio,
+      banner_url = EXCLUDED.banner_url,
+      updated_at = NOW()
+  `;
+  const withoutBanner = `
     INSERT INTO user_profiles (chain_id, address, display_name, avatar_url, bio)
     VALUES ($1, $2, $3, $4, $5)
     ON CONFLICT (chain_id, address)
@@ -84,14 +96,28 @@ async function upsertUserProfile(chainId, address, displayName, avatarUrl, bio) 
       bio = EXCLUDED.bio,
       updated_at = NOW()
   `;
-  const params = [chainId, address, displayName || null, avatarUrl, bio];
+  const bannerParams = [chainId, address, displayName || null, avatarUrl, bio, bannerUrl];
+  const legacyParams = [chainId, address, displayName || null, avatarUrl, bio];
   try {
-    await pool.query(sql, params);
+    await pool.query(withBanner, bannerParams);
   } catch (e) {
     // Old BNB schema rejected mixed-case Solana pubkeys. Drop that check and retry once.
     if (e?.code === "23514" && /lower\s*\(/i.test(String(e?.message || ""))) {
       await dropLegacyLowercaseAddressCheck();
-      await pool.query(sql, params);
+      try {
+        await pool.query(withBanner, bannerParams);
+        return;
+      } catch (retryErr) {
+        if (retryErr?.code === "42703") {
+          await pool.query(withoutBanner, legacyParams);
+          return;
+        }
+        throw retryErr;
+      }
+    }
+    // banner_url migration not applied yet — keep username/avatar/bio saves working.
+    if (e?.code === "42703") {
+      await pool.query(withoutBanner, legacyParams);
       return;
     }
     throw e;
@@ -165,6 +191,7 @@ export default async function handler(req, res) {
                   chain_id AS "chainId",
                   display_name AS "displayName",
                   avatar_url AS "avatarUrl",
+                  banner_url AS "bannerUrl",
                   bio
              FROM user_profiles
             WHERE chain_id = $1
@@ -195,8 +222,10 @@ export default async function handler(req, res) {
                 chain_id AS "chainId",
                 display_name AS "displayName",
                 avatar_url AS "avatarUrl",
+                banner_url AS "bannerUrl",
                 bio,
-                updated_at AS "updatedAt"
+                updated_at AS "updatedAt",
+                created_at AS "createdAt"
            FROM user_profiles
           WHERE chain_id = $1 AND address = $2
           LIMIT 1`,
@@ -228,6 +257,7 @@ export default async function handler(req, res) {
       const raw = String(b.address ?? "").trim();
       const displayName = String(b.displayName ?? "").trim().slice(0, 32);
       const avatarUrl = String(b.avatarUrl ?? "").trim().slice(0, 200) || null;
+      const bannerUrl = String(b.bannerUrl ?? "").trim().slice(0, 200) || null;
       const bio = String(b.bio ?? "").trim().slice(0, 280) || null;
       const nonce = String(b.nonce ?? "");
       const signature = String(b.signature ?? "");
@@ -247,7 +277,7 @@ export default async function handler(req, res) {
       const msg = buildProfileMessage({ chainId, address, nonce, displayName, avatarUrl: avatarUrl ?? "" });
       if (!verifyProfileSignature({ chainId, address, message: msg, signature })) return json(res, 401, { error: "Invalid signature" });
 
-      await upsertUserProfile(chainId, address, displayName, avatarUrl, bio);
+      await upsertUserProfile(chainId, address, displayName, avatarUrl, bio, bannerUrl);
 
       return json(res, 200, { ok: true });
     } catch (e) {
