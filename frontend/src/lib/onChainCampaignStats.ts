@@ -23,6 +23,8 @@ export type OnChainCampaignStats = {
   status?: "live" | "graduated";
   priceBnb?: number;
   liquidityBnb?: number;
+  /** Native held by a bonding campaign right now, 0 included (an emptied curve holds exactly 0). */
+  bondingReserveBnb?: number;
   dexPairAddress?: string;
 };
 
@@ -147,6 +149,7 @@ export async function fetchOnChainCampaignStats(input: {
     status: launched ? "graduated" : "live",
     priceBnb: priceBnb && priceBnb > 0 ? priceBnb : undefined,
     liquidityBnb: liquidityBnb && liquidityBnb > 0 ? liquidityBnb : undefined,
+    bondingReserveBnb: launched ? undefined : toNumberFromWei(BigInt(String(reserveWei ?? 0n))),
     dexPairAddress: dexPairAddress || undefined,
   };
 }

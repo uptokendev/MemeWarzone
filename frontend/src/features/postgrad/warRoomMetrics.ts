@@ -99,9 +99,16 @@ export function getWarRoomCampaignMetrics(campaign: CampaignInfo, nativeUsd = 0)
   const priceBnb = toNumber(rich.priceBnb ?? rich.price_bnb ?? rich.lastPriceBnb ?? rich.last_price_bnb);
   const soldTokens = toNumber(rich.soldTokens ?? rich.sold_tokens ?? rich.currentSoldTokens);
   const indexedMcapBnb = toNumber(rich.rtMarketcapBnb ?? rich.marketCapBnb ?? rich.marketcapBnb ?? rich.marketcap_bnb);
+  // Fully diluted coins (EVM gen 6/5, founder decision 2026-10-01): price x total supply, the token
+  // page's basis. The live league patch and the sold fields value them at price x sold.
+  const fullyDilutedSupply = toNumber(rich.fullyDilutedSupply ?? rich.fully_diluted_supply);
   // Same definition as Token Details: live spot × circulating sold, then indexer mcap.
   const derivedMcapBnb =
-    priceBnb > 0 && soldTokens > 0
+    fullyDilutedSupply > 0
+      ? priceBnb > 0
+        ? priceBnb * fullyDilutedSupply
+        : toNumber(rich.marketCapBnb ?? rich.marketcapBnb ?? rich.marketcap_bnb)
+      : priceBnb > 0 && soldTokens > 0
       ? priceBnb * soldTokens
       : indexedMcapBnb > 0
         ? indexedMcapBnb

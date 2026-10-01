@@ -236,6 +236,8 @@ function normalizeApiCampaign(item: any, index: number): WarRoomCampaign {
     raisedTotalBnb: toNumber(item?.raisedTotalBnb ?? item?.raised_total_bnb ?? item?.liquidityBnb),
     priceBnb: toNumber(item?.lastPriceBnb ?? item?.last_price_bnb ?? item?.priceBnb ?? item?.price_bnb),
     soldTokens: toNumber(item?.soldTokens ?? item?.sold_tokens),
+    // Fully diluted coins (EVM gen 6/5): /api/campaigns sends the total supply market cap is valued on.
+    fullyDilutedSupply: toNumber(item?.fullyDilutedSupply ?? item?.fully_diluted_supply),
     raised10mBnb: toNumber(item?.raised10mBnb ?? item?.raised_10m_bnb),
     progressPct: toNumber(item?.progressPct ?? item?.progress_pct) ?? null,
     etaSec: toNumber(item?.etaSec ?? item?.eta_sec) ?? null,
@@ -419,6 +421,8 @@ function mergeWarRoomCampaign(base: WarRoomCampaign, incoming: WarRoomCampaign):
   merged.holdersCount = toNumber((base as any).holdersCount) || toNumber((incoming as any).holdersCount);
   merged.athMarketCapBnb = toNumber((base as any).athMarketCapBnb) || toNumber((incoming as any).athMarketCapBnb);
   (merged as any).priceBnb = toNumber((base as any).priceBnb) || toNumber((incoming as any).priceBnb);
+  (merged as any).fullyDilutedSupply =
+    toNumber((base as any).fullyDilutedSupply) || toNumber((incoming as any).fullyDilutedSupply);
   return merged;
 }
 
@@ -484,7 +488,12 @@ async function hydrateCampaignMarketStats(campaign: WarRoomCampaign, chainId: nu
       marketCapBnb,
       athMarketCapBnb,
       volumeBnb: stats.volumeBnb ?? (campaign as any).volumeBnb,
-      raisedTotalBnb: stats.raisedTotalBnb ?? stats.liquidityBnb ?? (campaign as any).raisedTotalBnb,
+      // The Liquidity column of a bonding coin is the curve's reserve. stats.raisedTotalBnb is cumulative
+      // buy volume: the BNB gen-6 coin showed $7.55 while its curve held 0 after the buy was sold back.
+      raisedTotalBnb:
+        stats.bondingReserveBnb != null
+          ? stats.bondingReserveBnb
+          : stats.raisedTotalBnb ?? stats.liquidityBnb ?? (campaign as any).raisedTotalBnb,
       holdersCount: stats.holdersCount ?? (campaign as any).holdersCount,
       priceBnb: stats.priceBnb ?? (campaign as any).priceBnb,
       dexPairAddress: stats.dexPairAddress ?? (campaign as any).dexPairAddress,

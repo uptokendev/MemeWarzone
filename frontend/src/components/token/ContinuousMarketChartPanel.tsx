@@ -29,6 +29,8 @@ type ContinuousMarketChartPanelProps = {
   showDenomToggle?: boolean;
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
+  /** Fully diluted coins (EVM gen 6/5): market-cap candles are price x this supply, as on Token Details. */
+  fixedSupplyWhole?: number | null;
 };
 
 /**
@@ -48,6 +50,7 @@ export function ContinuousMarketChartPanel({
   showDenomToggle = true,
   expanded: controlledExpanded,
   onExpandedChange,
+  fixedSupplyWhole = null,
 }: ContinuousMarketChartPanelProps) {
   const [resolution, setResolution] = useState<UnifiedChartResolution>("1m");
   const [denomination, setDenomination] = useState<UnifiedChartDenomination>("USD");
@@ -157,6 +160,7 @@ export function ContinuousMarketChartPanel({
           solanaGraduated={Boolean(solana && solanaCurve?.graduated)}
           livePriceNative={solana ? livePriceNative : null}
           liveSupplyWhole={solana ? liveSupplyWhole : null}
+          fixedSupplyWhole={solana ? null : fixedSupplyWhole}
           nativeUsdPrice={nativeUsd}
           resolution={resolution}
           onResolutionChange={setResolution}

@@ -344,6 +344,7 @@ export function WarRoomCampaignRow({
                 tokenAddress={campaign.token}
                 creatorAddress={(campaign as any).creator || (campaign as any).creatorAddress}
                 chainId={rowChainId}
+                fixedSupplyWhole={Number(rich.fullyDilutedSupply) > 0 ? Number(rich.fullyDilutedSupply) : null}
                 compact
                 expanded={chartExpanded}
                 onExpandedChange={setChartExpanded}
@@ -398,6 +399,33 @@ export function WarRoomCampaignRow({
 
               {isRobinhoodRow && metrics.status === "graduated" ? (
                 <RobinhoodWarRoomTradePanel campaign={campaign} />
+              ) : isRobinhoodRow ? (
+                // WarRoomTradePanel trades on BNB only: for a Robinhood coin it showed "Connect BNB wallet",
+                // priced in BNB and resolved the campaign on chain 97. Robinhood bonding trades run on the
+                // token page, which already uses ETH and the Robinhood chain.
+                <div
+                  className="rounded-[18px] border border-white/10 bg-white/[0.04] p-3 md:rounded-[20px] md:p-4"
+                  data-testid="war-room-robinhood-bonding-trade"
+                >
+                  <div className="text-[10px] uppercase tracking-[0.24em] text-accent/80">Trade</div>
+                  <p className="mt-2 text-xs text-white/75 md:text-sm">
+                    This coin trades in ETH on Robinhood Chain. Buy and sell it on its token page.
+                  </p>
+                  {tokenRoute && tokenRoute !== "/" ? (
+                    <Button asChild size="sm" className="mt-3 w-full justify-between text-[11px] md:text-sm">
+                      <Link
+                        to={tokenRoute}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedFeedChainId(rowChainId);
+                        }}
+                      >
+                        Trade {campaign.symbol ? `$${String(campaign.symbol).replace(/^\$/, "")}` : "this coin"} with ETH
+                        <ShoppingCart className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                  ) : null}
+                </div>
               ) : (
                 <WarRoomTradePanel campaign={campaign} />
               )}
