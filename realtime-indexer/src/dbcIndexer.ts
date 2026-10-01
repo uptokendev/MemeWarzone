@@ -667,22 +667,60 @@ async function insertActivity(db: Queryable, row: DbcCurveTradeRow, event: Decod
   });
 }
 
-async function upsertCandle(db: Queryable, campaign: string, tf: TF, bucketSec: number, priceSol: number, volumeSol: number) {
+/**
+ * One trade into a DBC candle. `priceNative` is the pool's spot after the swap (see
+ * dbcSpotNativeAfterSwap), never the fill: a fill includes the fee, which is 50-90% in the
+ * anti-sniper window, and drew MWZDNB's first buy at ~2x the pool price (a $4K spike on a ~$1K coin).
+ * A new bucket opens at the previous bucket's close (the spot before this trade), so a trade moves
+ * inside its candle instead of showing as a flat bar after a gap. Market cap is spot x mint supply,
+ * the header's basis, so the chart and the header agree and the chart never needs a live bridge bar.
+ */
+async function upsertCandle(
+  db: Queryable,
+  campaign: string,
+  tf: TF,
+  bucketSec: number,
+  priceNative: number,
+  volumeSol: number,
+  supplyWhole: number | null = null,
+) {
+  const supply = supplyWhole != null && Number.isFinite(supplyWhole) && supplyWhole > 0 ? supplyWhole : null;
   const written = await db.query(
-    `insert into public.token_candles(
-       chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count
-     ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1)
+    `with prev as (
+       select p.c from public.token_candles p
+        where p.chain_id=$1 and p.campaign_address=$2 and p.timeframe=$3 and p.bucket_start < $4
+        order by p.bucket_start desc limit 1
+     ), opening as (
+       select coalesce((select c from prev), $5::numeric) as o
+     )
+     insert into public.token_candles(
+       chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
+       mcap_o,mcap_h,mcap_l,mcap_c
+     )
+     select $1,$2,$3,$4,
+            opening.o, greatest(opening.o,$5::numeric), least(opening.o,$5::numeric), $5::numeric, $6, 1,
+            opening.o*$7::numeric, greatest(opening.o,$5::numeric)*$7::numeric,
+            least(opening.o,$5::numeric)*$7::numeric, $5::numeric*$7::numeric
+       from opening
      on conflict (chain_id,campaign_address,timeframe,bucket_start) do update set
-       h=greatest(public.token_candles.h, excluded.h),
-       l=least(public.token_candles.l, excluded.l),
+       h=greatest(public.token_candles.h, excluded.c),
+       l=least(public.token_candles.l, excluded.c),
        c=excluded.c,
        volume_bnb=public.token_candles.volume_bnb + excluded.volume_bnb,
        trades_count=public.token_candles.trades_count + 1,
+       mcap_o=coalesce(public.token_candles.o*$7::numeric, public.token_candles.mcap_o),
+       mcap_h=coalesce(greatest(public.token_candles.h, excluded.c)*$7::numeric, public.token_candles.mcap_h),
+       mcap_l=coalesce(least(public.token_candles.l, excluded.c)*$7::numeric, public.token_candles.mcap_l),
+       mcap_c=coalesce(excluded.c*$7::numeric, public.token_candles.mcap_c),
        updated_at=now()
-     returning o,h,l,c,volume_bnb,trades_count`,
-    [SOLANA_CHAIN_ID, campaign, tf, new Date(bucketSec * 1000), priceSol, volumeSol],
+     returning o,h,l,c,volume_bnb,trades_count,mcap_o,mcap_h,mcap_l,mcap_c`,
+    [SOLANA_CHAIN_ID, campaign, tf, new Date(bucketSec * 1000), priceNative, volumeSol, supply],
   );
-  const row = written.rows[0] || { o: priceSol, h: priceSol, l: priceSol, c: priceSol, volume_bnb: volumeSol, trades_count: 1 };
+  const mcap = supply != null ? priceNative * supply : null;
+  const row = written.rows[0] || {
+    o: priceNative, h: priceNative, l: priceNative, c: priceNative, volume_bnb: volumeSol, trades_count: 1,
+    mcap_o: mcap, mcap_h: mcap, mcap_l: mcap, mcap_c: mcap,
+  };
   void publishCandle(SOLANA_CHAIN_ID, campaign, candleUpsertPayload(tf, bucketSec, row)).catch(() => undefined);
 }
 
@@ -713,6 +751,93 @@ export function dbcSpotSolAfterSwap(event: Pick<DecodedEvtSwap2, "nextSqrtPrice"
   if (String(quoteMint || WSOL_MINT) !== WSOL_MINT || Number(quoteDecimals) !== 9) return null;
   const spot = dbcPriceFromSqrt(event.nextSqrtPrice, TOKEN_DECIMALS, 9);
   return Number.isFinite(spot) && spot > 0 ? spot : null;
+}
+
+/**
+ * Pool spot after a swap in SOL per token, for every quote. A SOL pool reads it straight off
+ * next_sqrt_price. A bound pool's sqrt price is in quote units; it is turned into SOL with the same
+ * SOL/USD and quote/USD the trade itself was valued at (curveTradeFromSwap), or, for a row read back
+ * from curve_trades without them, with the trade's own SOL-per-quote ratio. Null when neither exists:
+ * the caller then falls back to the fill.
+ */
+export function dbcSpotNativeAfterSwap(
+  event: Pick<DecodedEvtSwap2, "nextSqrtPrice"> | null | undefined,
+  trade: Pick<DbcCurveTradeRow, "bnb_amount_raw" | "quote_amount_raw" | "sol_usd_micros" | "quote_usd_micros">,
+  quoteDecimals = 9,
+): number | null {
+  if (!event?.nextSqrtPrice || event.nextSqrtPrice <= 0n) return null;
+  const decimals = Number(quoteDecimals ?? 9);
+  const spotQuote = dbcPriceFromSqrt(event.nextSqrtPrice, TOKEN_DECIMALS, decimals);
+  if (!Number.isFinite(spotQuote) || spotQuote <= 0) return null;
+  // Same rule as curveTradeFromSwap: a 9-decimal quote is valued 1:1 as SOL.
+  if (!boundQuoteNeedsSolUsd(decimals)) return spotQuote;
+  let solPerQuoteWhole: number | null = null;
+  const solUsd = Number(trade.sol_usd_micros ?? NaN);
+  if (Number.isFinite(solUsd) && solUsd > 0) {
+    const quoteUsd = trade.quote_usd_micros != null ? Number(trade.quote_usd_micros) : 1_000_000;
+    if (Number.isFinite(quoteUsd) && quoteUsd > 0) solPerQuoteWhole = quoteUsd / solUsd;
+  } else {
+    const nativeRaw = Number(trade.bnb_amount_raw ?? NaN);
+    const quoteRaw = Number(trade.quote_amount_raw ?? NaN);
+    if (Number.isFinite(nativeRaw) && Number.isFinite(quoteRaw) && nativeRaw > 0 && quoteRaw > 0) {
+      solPerQuoteWhole = (nativeRaw / LAMPORTS_PER_SOL) / (quoteRaw / 10 ** decimals);
+    }
+  }
+  if (solPerQuoteWhole == null || !Number.isFinite(solPerQuoteWhole) || solPerQuoteWhole <= 0) return null;
+  const spot = spotQuote * solPerQuoteWhole;
+  return Number.isFinite(spot) && spot > 0 ? spot : null;
+}
+
+/** The price a DBC candle is drawn at: spot after the swap, the fill only when spot is unknown. */
+export function dbcCandlePrice(spotNative: number | null | undefined, fillNative: number | null | undefined): number | null {
+  const spot = Number(spotNative);
+  if (Number.isFinite(spot) && spot > 0) return spot;
+  const fill = Number(fillNative);
+  return Number.isFinite(fill) && fill > 0 ? fill : null;
+}
+
+export type DbcCandleRow = {
+  timeframe: TF;
+  bucketSec: number;
+  o: number; h: number; l: number; c: number;
+  volume: number;
+  trades: number;
+  mcap: [number, number, number, number] | null;
+};
+
+/**
+ * The candles insertDbcSwap builds trade by trade, in one pass over a pool's history (used to rebuild
+ * a pool whose candles were drawn at fill prices or deleted). Same rules: price = spot after each swap,
+ * a bucket opens at the previous bucket's close, market cap = price x mint supply.
+ */
+export function dbcCandlesFromTrades(
+  trades: Array<{ tsSec: number; price: number; volume: number }>,
+  supplyWhole: number | null,
+  timeframes: TF[] = TIMEFRAMES,
+): DbcCandleRow[] {
+  const supply = supplyWhole != null && Number.isFinite(supplyWhole) && supplyWhole > 0 ? supplyWhole : null;
+  const ordered = trades.filter((t) => Number.isFinite(t.price) && t.price > 0 && t.tsSec > 0);
+  const out: DbcCandleRow[] = [];
+  for (const tf of timeframes) {
+    let current: DbcCandleRow | null = null;
+    for (const trade of ordered) {
+      const bucket = bucketStart(trade.tsSec, tf);
+      if (!current || current.bucketSec !== bucket) {
+        const open: number = current ? current.c : trade.price;
+        current = { timeframe: tf, bucketSec: bucket, o: open, h: open, l: open, c: open, volume: 0, trades: 0, mcap: null };
+        out.push(current);
+      }
+      current.h = Math.max(current.h, trade.price);
+      current.l = Math.min(current.l, trade.price);
+      current.c = trade.price;
+      current.volume += Number.isFinite(trade.volume) ? trade.volume : 0;
+      current.trades += 1;
+    }
+  }
+  for (const row of out) {
+    row.mcap = supply != null ? [row.o * supply, row.h * supply, row.l * supply, row.c * supply] : null;
+  }
+  return out;
 }
 
 const mintSupplyCache = new Map<string, number>();
@@ -804,16 +929,16 @@ export async function insertDbcSwap(
   void publishTrade(SOLANA_CHAIN_ID, row.campaign_address, row).catch(() => undefined);
   await insertActivity(db, row, event);
   feed().queueActivity(SOLANA_CHAIN_ID, row.campaign_address, Math.floor(row.block_time.getTime() / 1000));
-  if (row.price_bnb && row.price_bnb > 0) {
+  const spotNative = dbcSpotNativeAfterSwap(event, row, stats.quoteDecimals ?? 9);
+  const supplyWhole = stats.mint ? await dbcMintSupplyWhole(stats.mint) : null;
+  const candlePrice = dbcCandlePrice(spotNative, row.price_bnb);
+  if (candlePrice != null) {
     const tsSec = Math.floor(row.block_time.getTime() / 1000);
     for (const tf of TIMEFRAMES) {
-      await upsertCandle(db, row.campaign_address, tf, bucketStart(tsSec, tf), row.price_bnb, row.bnb_amount);
+      await upsertCandle(db, row.campaign_address, tf, bucketStart(tsSec, tf), candlePrice, row.bnb_amount, supplyWhole);
     }
   }
-  await patchStats(db, row.campaign_address, {
-    spotSol: dbcSpotSolAfterSwap(event, row.quote_mint, stats.quoteDecimals ?? 9),
-    supplyWhole: stats.mint ? await dbcMintSupplyWhole(stats.mint) : null,
-  });
+  await patchStats(db, row.campaign_address, { spotSol: spotNative, supplyWhole });
   return true;
 }
 
