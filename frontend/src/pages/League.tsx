@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ethers } from "ethers";
-import { AlertTriangle, TrendingUp, Trophy, Users, Zap } from "lucide-react";
+import { AlertTriangle, Share2, Users } from "lucide-react";
+import { toast } from "sonner";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -225,100 +226,40 @@ function getEpochOptions(period: Period) {
   }));
 }
 
-function SegmentedControl<T extends string | number>({
-  value,
-  options,
-  disabled,
-  onChange,
-}: {
-  value: T;
-  options: { value: T; label: string; disabled?: boolean }[];
-  disabled?: boolean;
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="inline-flex min-h-10 flex-wrap items-center gap-1 rounded-md border border-border/60 bg-background/45 p-1">
-      {options.map((item) => (
-        <button
-          key={item.value}
-          type="button"
-          disabled={disabled || item.disabled}
-          onClick={() => onChange(item.value)}
-          className={`rounded px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] transition disabled:cursor-not-allowed disabled:opacity-40 ${value === item.value ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-        >
-          {item.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+/** Short descriptions on the category cards (artboard League). */
+const LEAGUE_CARD_COPY: Record<string, string> = {
+  perfect_run: "Graduated with zero curve sells",
+  fastest_finish: "Launch to graduation time",
+  biggest_hit: "Largest single curve buy",
+  top_earner: "Trader PnL inside the curve",
+  crowd_favorite: "UpVotes from unique voters",
+  recruiter_league: "Referral score, all chains",
+};
 
-function TacticalSwitch<T extends string>({
-  label,
-  value,
-  left,
-  right,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  left: { value: T; label: string };
-  right: { value: T; label: string };
-  disabled?: boolean;
-  onChange: (value: T) => void;
-}) {
-  const checked = value === right.value;
-  const activeLabel = checked ? right.label : left.label;
-
-  return (
-    <div className="rounded-md border border-border/60 bg-background/45 px-3 py-2">
-      <div className="mb-1 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-        <span>{label}</span>
-        <span className="text-accent">{activeLabel}</span>
-      </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        disabled={disabled}
-        onClick={() => onChange(checked ? left.value : right.value)}
-        className="group flex min-h-10 w-full min-w-[190px] items-center justify-between gap-3 rounded border border-accent/35 bg-black/45 px-3 py-2 text-xs uppercase tracking-[0.18em] shadow-[inset_0_0_18px_rgba(0,0,0,0.65)] transition hover:border-accent/70 disabled:cursor-not-allowed disabled:opacity-55"
-      >
-        <span className={checked ? "text-muted-foreground" : "text-foreground"}>{left.label}</span>
-        <span className="relative h-5 w-11 shrink-0 rounded-full border border-accent/45 bg-card/80 shadow-[0_0_14px_rgba(245,132,32,0.18)]">
-          <span className={`absolute left-1 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-sm border border-white/30 bg-accent shadow-[0_0_12px_rgba(245,132,32,0.45)] transition-transform ${checked ? "translate-x-6" : "translate-x-0"}`} />
-        </span>
-        <span className={checked ? "text-foreground" : "text-muted-foreground"}>{right.label}</span>
-      </button>
-    </div>
-  );
-}
+const card = "rounded-[14px] border border-mw-border bg-mw-surface";
+const cardTitle = "font-mw-cond text-xl font-bold tracking-[0.02em] text-mw-text";
+const lbl = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
 
 function LeagueSwitch({ selected, period, onSelect }: { selected: LeagueKey; period: Period; onSelect: (key: LeagueKey) => void }) {
   return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+    <section className="-mx-3 flex gap-2 overflow-x-auto px-3 [scrollbar-width:none] lg:mx-0 lg:grid lg:grid-cols-6 lg:gap-2.5 lg:overflow-visible lg:px-0 [&::-webkit-scrollbar]:hidden" aria-label="League categories">
       {LEAGUES.map((league) => {
         const active = league.key === selected;
+        // Perfect Run is monthly only: picking it while on weekly switches to monthly (unchanged behaviour).
+        const monthlyOnly = period === "weekly" && !league.supports.includes("weekly");
         return (
           <button
             key={league.key}
             type="button"
-            data-selected={active ? "true" : "false"}
+            aria-pressed={active}
             onClick={() => onSelect(league.key)}
             className={[
-              "mwz-hud-frame min-h-[118px] p-4 text-left transition focus-visible:outline-none",
-              active ? "is-selected" : "",
+              "mw-focus min-h-[74px] w-[176px] shrink-0 rounded-[14px] border px-3.5 py-3 text-left text-mw-text transition-colors lg:w-auto",
+              active ? "border-mw-accent bg-mw-accent-fill" : "border-mw-border bg-mw-surface hover:border-[#3A424C]",
             ].join(" ")}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="font-retro text-sm text-foreground">{league.title}</div>
-                <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{league.metricLabel}</div>
-              </div>
-              <img src={league.image} alt="" className="h-9 w-9 shrink-0 object-contain opacity-80" draggable={false} />
-            </div>
-            <p className="mt-3 line-clamp-2 text-xs leading-5 text-muted-foreground">{league.ruleSummary}</p>
+            <div className="font-bold">{league.title}</div>
+            <div className="mt-0.5 text-xs text-mw-muted">{monthlyOnly ? "Monthly only" : LEAGUE_CARD_COPY[league.key] || league.metricLabel}</div>
           </button>
         );
       })}
@@ -328,9 +269,9 @@ function LeagueSwitch({ selected, period, onSelect }: { selected: LeagueKey; per
 
 function RecruiterLinks({ wallet, code }: { wallet?: string; code?: string }) {
   return (
-    <div className="flex flex-wrap gap-2">
-      {code ? <Link to={`/recruiters/${code}`} className="text-xs font-semibold text-accent transition hover:text-foreground">Profile</Link> : null}
-      {wallet ? <Link to={`/profile/${wallet}/command/recruiter`} className="text-xs font-semibold text-accent transition hover:text-foreground">Command</Link> : null}
+    <div className="flex flex-wrap justify-end gap-2">
+      {code ? <Link to={`/recruiters/${code}`} className="text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">Profile</Link> : null}
+      {wallet ? <Link to={`/profile/${wallet}/command/recruiter`} className="text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">Command</Link> : null}
     </div>
   );
 }
@@ -338,8 +279,18 @@ function RecruiterLinks({ wallet, code }: { wallet?: string; code?: string }) {
 function RecruiterEmptyActions() {
   return (
     <div className="mt-4 flex flex-wrap gap-2">
-      <Button asChild size="sm" variant="outline" className="font-retro"><Link to="/recruiters">Recruiter leaderboard</Link></Button>
-      <Button asChild size="sm" variant="outline" className="font-retro"><Link to="/recruiter">Recruiter hub</Link></Button>
+      <Link to="/recruiters" className="mw-focus inline-flex min-h-10 items-center rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:text-mw-text">Recruiter leaderboard</Link>
+      <Link to="/recruiter" className="mw-focus inline-flex min-h-10 items-center rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:text-mw-text">Recruiter hub</Link>
+    </div>
+  );
+}
+
+function StandingsNotice({ title, body, recruiter }: { title?: string; body: string; recruiter?: boolean }) {
+  return (
+    <div className="px-4 pb-5 text-sm text-mw-muted">
+      {title ? <div className="font-mw-cond text-lg font-bold text-mw-text">{title}</div> : null}
+      <p className="m-0 mt-1 max-w-2xl">{body}</p>
+      {recruiter ? <RecruiterEmptyActions /> : null}
     </div>
   );
 }
@@ -351,6 +302,8 @@ function StandingsTable({
   pendingCopy,
   warningCopy,
   native,
+  payoutForRank,
+  paidPlaces,
 }: {
   league: LeagueDef;
   rows: unknown[];
@@ -358,101 +311,133 @@ function StandingsTable({
   pendingCopy?: string;
   warningCopy?: string;
   native?: { decimals: number; symbol: string };
+  payoutForRank: (rank: number) => string;
+  paidPlaces: number;
 }) {
-  if (status === "pending") {
-    return <div className="mwz-hud-frame p-5 text-sm text-muted-foreground"><div className="font-retro text-base text-foreground">{league.title} pending</div><p className="mt-2 max-w-2xl">{pendingCopy || league.emptyStateCopy}</p></div>;
-  }
-  if (status === "error") {
-    return <div className="mwz-hud-frame p-5 text-sm text-muted-foreground"><div className="font-retro text-base text-foreground">{league.title} feed warning</div><p className="mt-2 max-w-2xl">{warningCopy || "This league feed returned a warning. Standings will appear when the API response is healthy."}</p>{league.key === "recruiter_league" ? <RecruiterEmptyActions /> : null}</div>;
-  }
-  if (!rows.length) {
-    return (
-      <div className="mwz-hud-frame p-5 text-sm text-muted-foreground">
-        <p className="max-w-2xl">{warningCopy || pendingCopy || league.emptyStateCopy}</p>
-        {league.key === "recruiter_league" ? <RecruiterEmptyActions /> : null}
-      </div>
-    );
-  }
+  const [expanded, setExpanded] = useState(false);
+  if (status === "pending") return <StandingsNotice title={`${league.title} pending`} body={pendingCopy || league.emptyStateCopy} />;
+  if (status === "error") return <StandingsNotice title={`${league.title} feed warning`} body={warningCopy || "This league feed returned a warning. Standings will appear when the API response is healthy."} recruiter={league.key === "recruiter_league"} />;
+  if (!rows.length) return <StandingsNotice body={warningCopy || pendingCopy || league.emptyStateCopy} recruiter={league.key === "recruiter_league"} />;
+
+  const limit = expanded ? 25 : 5;
+  const visible = rows.slice(0, limit);
+  const th = "whitespace-nowrap border-b border-mw-border px-3.5 py-2.5 text-left font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+  const td = "border-b border-[#1E2329] px-3.5 py-3 align-middle";
+  const footer = rows.length > 5 || paidPlaces > 5 ? (
+    <div className="flex min-h-[52px] flex-wrap items-center justify-center gap-1.5 px-4 text-sm text-mw-muted">
+      {paidPlaces > 5 ? <span>Ranks 6 to {paidPlaces} are paid too</span> : null}
+      {rows.length > 5 ? (
+        <>
+          {paidPlaces > 5 ? <span aria-hidden="true">·</span> : null}
+          <button type="button" onClick={() => setExpanded((v) => !v)} className="mw-focus font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">
+            {expanded ? "Show top 5" : `Show top ${Math.min(25, rows.length)}`}
+          </button>
+        </>
+      ) : null}
+    </div>
+  ) : null;
 
   if (league.rowType === "recruiter") {
     return (
+      <>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-sm">
+            <thead><tr><th className={th}>#</th><th className={th}>Recruiter</th><th className={`${th} text-right`}>Score</th><th className={`${th} text-right`}>Payout now</th><th className={th}>Claim</th><th className={th}><span className="sr-only">Links</span></th></tr></thead>
+            <tbody>
+              {(visible as RecruiterRow[]).map((row, index) => (
+                <tr key={`${row.wallet ?? row.recruiterCode ?? row.code ?? index}`}>
+                  <td className={`${td} w-10 font-mw-mono font-bold text-mw-muted`}>{row.rank ?? index + 1}</td>
+                  <td className={td}><div className="font-bold text-mw-text">{row.displayName || "Recruiter"}</div><div className="font-mw-mono text-[13px] text-mw-muted">{row.recruiterCode || row.code || shortAddr(row.wallet) || "Code pending"}</div></td>
+                  <td className={`${td} text-right font-mw-mono`}>{Number(row.weightedScore ?? 0).toLocaleString()}</td>
+                  <td className={`${td} text-right font-mw-mono font-bold text-mw-accent-soft`}>{formatUsd(Number(row.estimatedPayoutUsd ?? 0))}</td>
+                  <td className={`${td} text-mw-muted`}>{row.claimStatus || "Pending"}</td>
+                  <td className={td}><RecruiterLinks wallet={row.wallet} code={row.recruiterCode} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {footer}
+      </>
+    );
+  }
+
+  return (
+    <>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[940px] text-left text-sm">
-          <thead className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            <tr className="border-b border-border/50"><th className="py-3 pr-3">Rank</th><th className="py-3 pr-3">Recruiter</th><th className="py-3 pr-3">Wallet</th><th className="py-3 pr-3">Network</th><th className="py-3 pr-3">Volume</th><th className="py-3 pr-3">Score</th><th className="py-3 pr-3">Payout</th><th className="py-3 pr-3">Claim</th><th className="py-3">Actions</th></tr>
-          </thead>
+        <table className="w-full border-collapse text-sm">
+          <thead><tr><th className={th}>#</th><th className={th}>{league.rowType === "wallet" ? "Trader" : "Coin"}</th><th className={`${th} hidden text-right sm:table-cell`}>{league.metricLabel}</th><th className={`${th} text-right`}>Payout now</th></tr></thead>
           <tbody>
-            {(rows as RecruiterRow[]).map((row, index) => {
-              const volumes = [
-                Number(row.referredVolumeBnb || 0) > 0 ? `${Number(row.referredVolumeBnb).toFixed(4)} BNB` : "",
-                Number(row.referredVolumeSol || 0) > 0 ? `${Number(row.referredVolumeSol).toFixed(4)} SOL` : "",
-                Number(row.referredVolumeEth || 0) > 0 ? `${Number(row.referredVolumeEth).toFixed(4)} ETH` : "",
-              ].filter(Boolean);
+            {visible.map((row: any, index) => {
+              const rank = index + 1;
+              const href = league.rowType === "token" ? tokenHref(row) : league.rowType === "wallet" && row?.wallet ? `/profile/${row.wallet}` : null;
+              const label = rowLabel(league, row);
+              const ident = (
+                <span className="flex min-w-0 items-center gap-2.5">
+                  <Avatar className="h-[38px] w-[38px] shrink-0 rounded-[10px]">
+                    {league.rowType === "token" && row?.logo_uri ? <AvatarImage src={row.logo_uri} alt="" className="object-cover" /> : null}
+                    <AvatarFallback className="rounded-[10px] bg-[#2A1609] font-mw-brand text-[10px] text-[#FF9A4D]">{String(label || "?").slice(0, 3).toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <span className="min-w-0">
+                    <span className="block truncate font-bold text-mw-text">{label}</span>
+                    <span className="block truncate font-mw-mono text-[13px] text-mw-muted">
+                      {row?.symbol && league.rowType === "token" ? `$${String(row.symbol).replace(/^\$/, "")}` : rowTimeline(league, row) || (league.rowType === "wallet" ? shortAddr(row?.wallet) : "")}
+                    </span>
+                    <span className={`block font-mw-mono text-xs sm:hidden ${metricToneClass(league, row, native)}`}>{rowMetric(league, row, native)}</span>
+                  </span>
+                </span>
+              );
+              const key = `${league.key}-${rank}-${row?.campaign_address ?? row?.campaignAddress ?? row?.wallet ?? row?.tx_hash ?? index}`;
               return (
-                <tr key={`${row.wallet ?? row.recruiterCode ?? row.code ?? index}`} className="border-b border-border/30 align-top">
-                  <td className="py-3 pr-3 font-retro">#{row.rank ?? index + 1}</td>
-                  <td className="py-3 pr-3"><div className="font-semibold text-foreground">{row.displayName || "Recruiter"}</div><div className="text-xs text-muted-foreground">{row.recruiterCode || row.code || "Code pending"}</div></td>
-                  <td className="py-3 pr-3 text-muted-foreground">{shortAddr(row.wallet)}</td>
-                  <td className="py-3 pr-3 text-muted-foreground"><div>{row.linkedWallets ?? row.linkedWalletCount ?? 0} wallets</div><div className="text-xs">{row.activeSquadMembers ?? row.activeSquadMemberCount ?? 0} squad / {row.linkedCreators ?? row.linkedCreatorsCount ?? 0} creators / {row.linkedTraders ?? row.linkedTradersCount ?? 0} traders</div></td>
-                  <td className="py-3 pr-3"><div>{formatUsd(Number(row.referredVolumeUsd ?? 0))}</div>{volumes.length ? <div className="text-xs text-muted-foreground">{volumes.join(" · ")}</div> : null}</td>
-                  <td className="py-3 pr-3">{Number(row.weightedScore ?? 0).toLocaleString()}</td>
-                  <td className="py-3 pr-3">{formatUsd(Number(row.estimatedPayoutUsd ?? 0))}</td>
-                  <td className="py-3 pr-3 text-muted-foreground">{row.claimStatus || "Pending"}</td>
-                  <td className="py-3"><RecruiterLinks wallet={row.wallet} code={row.recruiterCode} /></td>
+                <tr key={key} className="hover:bg-[#171B20]">
+                  <td className={`${td} w-10 font-mw-mono font-bold text-mw-muted`}>{rank}</td>
+                  <td className={td}>{href ? <Link to={href} className="mw-focus block text-mw-text hover:text-mw-text">{ident}</Link> : ident}</td>
+                  <td className={`${td} hidden text-right font-mw-mono sm:table-cell ${metricToneClass(league, row, native)}`}>{rowMetric(league, row, native)}</td>
+                  <td className={`${td} text-right font-mw-mono font-bold text-mw-accent-soft`}>{rank <= paidPlaces ? payoutForRank(rank) : "—"}</td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
-    );
-  }
+      {footer}
+    </>
+  );
+}
 
+/** Days / hours / minutes / seconds to the epoch end (artboard "Ends in"). */
+function EndsIn({ end }: { end?: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const target = end ? Date.parse(end) : NaN;
+  const left = Number.isFinite(target) ? Math.max(0, Math.floor((target - now) / 1000)) : 0;
+  const parts: Array<[string, number]> = [["days", Math.floor(left / 86400)], ["hrs", Math.floor((left % 86400) / 3600)], ["min", Math.floor((left % 3600) / 60)], ["sec", left % 60]];
   return (
-    <div className="space-y-2">
-      {rows.slice(0, 25).map((row: any, index) => {
-        const rank = index + 1;
-        const href = league.rowType === "token" ? tokenHref(row) : league.rowType === "wallet" && row?.wallet ? `/profile/${row.wallet}` : null;
-        const body = (
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="font-retro text-sm text-foreground">#{rank}</span>
-                <Avatar className="h-10 w-10 shrink-0 border border-border/60">
-                  {league.rowType === "token" && row?.logo_uri ? <AvatarImage src={row.logo_uri} alt="" className="object-cover" /> : null}
-                  <AvatarFallback className="font-retro text-xs">{String(rowLabel(league, row) || "?").slice(0, 2).toUpperCase()}</AvatarFallback>
-                </Avatar>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate font-semibold text-foreground">{rowLabel(league, row)}</span>
-                    {row?.symbol && league.rowType === "token" ? (
-                      <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{row.symbol}</span>
-                    ) : null}
-                  </div>
-                  <div className="mt-1 truncate text-xs text-muted-foreground">
-                    {rowTimeline(league, row) ||
-                      (league.rowType === "wallet"
-                        ? row?.wallet || "Trader wallet"
-                        : row?.campaign_address || row?.campaignAddress || "Campaign")}
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className={`text-sm font-semibold ${metricToneClass(league, row, native)}`}>{rowMetric(league, row, native)}</div>
-          </div>
-        );
-        const key = `${league.key}-${rank}-${row?.campaign_address ?? row?.campaignAddress ?? row?.wallet ?? row?.tx_hash ?? index}`;
-        if (href) {
-          return (
-            <Link key={key} to={href} className="mwz-hud-frame block p-4 transition hover:border-accent/50 hover:bg-accent/5">
-              {body}
-            </Link>
-          );
-        }
-        return <div key={key} className="mwz-hud-frame p-4">{body}</div>;
-      })}
+    <div className="grid grid-cols-4 gap-2 text-center">
+      {parts.map(([unit, value]) => (
+        <div key={unit} className="rounded-[10px] border border-mw-border bg-mw-input py-2">
+          <div className="font-mw-mono text-xl font-bold lg:text-2xl">{String(value).padStart(unit === "days" ? 1 : 2, "0")}</div>
+          <div className={lbl}>{unit}</div>
+        </div>
+      ))}
     </div>
   );
+}
+
+function utcWindow(start?: string | null, end?: string | null) {
+  const fmt = (v?: string | null) => {
+    const d = v ? new Date(v) : null;
+    if (!d || !Number.isFinite(d.getTime())) return null;
+    const day = d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).replace(",", "");
+    const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+    return `${day} ${time} UTC`;
+  };
+  const a = fmt(start);
+  const b = fmt(end);
+  return a && b ? `${a} to ${b}` : a || b || null;
 }
 
 function leagueChainForFeed(chainId: SupportedChainId): LeagueChain {
@@ -592,158 +577,214 @@ export default function League() {
     setSelectedLeagueKey(key);
   };
 
+  const epochStart = summary?.epoch?.epochStart || null;
+  const epochEnd = summary?.epoch?.epochEnd || summary?.epoch?.rangeEnd || null;
+  const windowLabel = utcWindow(epochStart, epochEnd);
+  const startDate = epochStart ? new Date(epochStart) : null;
+  const dateMon = startDate && Number.isFinite(startDate.getTime()) ? startDate.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }).slice(0, 3).toUpperCase() : "—";
+  const dateDay = startDate && Number.isFinite(startDate.getTime()) ? startDate.toLocaleDateString("en-GB", { day: "2-digit", timeZone: "UTC" }) : "—";
+  const title = `${period === "weekly" ? "Weekly" : "Monthly"} League · ${selectedLeague.title}`;
+  const potLabel = displayPrizeNative > 0 ? formatNative(displayPrizeNative, nativeSymbol) : "No fees yet";
+  const payoutByRank = new Map(payoutCurve.map((row) => [row.rank, row]));
+  const payoutForRank = (rank: number) => {
+    const row = payoutByRank.get(rank);
+    return row ? formatUsd(row.payoutUsd) : "—";
+  };
+  const breakdownBars = payoutCurve.slice(0, 5);
+  const topShare = breakdownBars[0]?.percentage || 0;
+  const fieldCopy =
+    selectedLeague.rowType === "recruiter"
+      ? "recruiters in"
+      : selectedLeague.rowType === "wallet"
+        ? "traders in"
+        : "coins in";
+  const autoCopy =
+    selectedLeague.rowType === "recruiter"
+      ? "Every recruiter with referred trading is in automatically"
+      : selectedLeague.rowType === "wallet"
+        ? "Every trader on the curve is in automatically"
+        : "Every coin on the curve is in automatically";
+
+  const share = async () => {
+    const url = typeof window !== "undefined" ? window.location.href : "";
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      toast.success("League link copied.");
+    } catch (error: any) {
+      if (String(error?.name || "") !== "AbortError") toast.error("Could not share the league link.");
+    }
+  };
+
+  const tiles: Array<{ label: string; value: string; mobile?: boolean }> = [
+    { label: "Prize pool", value: potLabel, mobile: false },
+    { label: "Player prize cap", value: period === "monthly" ? formatUsd(policy.monthlyPlayerPrizeCapUsd) : "No weekly cap" },
+    { label: "Player prize pool", value: rawGeneratedUsd > 0 ? formatUsd(cappedPlayerPoolUsd) : displayPrizeNative > 0 ? formatNative(displayPrizeNative, nativeSymbol) : "—" },
+    { label: "Charity reserve", value: period === "monthly" ? formatUsd(charityReserveUsd) : formatUsd(0) },
+    { label: "Active paid places", value: String(activePaidPlaces) },
+  ];
+
   return (
-    <div className="relative min-h-[100dvh] overflow-x-hidden bg-[radial-gradient(circle_at_top_left,rgba(245,120,32,0.16),transparent_28%),linear-gradient(180deg,rgba(10,12,16,0.98),rgba(5,6,8,1))] pt-14 text-foreground">
-      <ContentContainer className="space-y-5 px-2 pb-10">
-        <section className="mwz-hud-frame p-4">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-            <div className="min-w-0">
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <span className="font-retro text-xl text-foreground">Warzone Leagues</span>
-                <TacticalTag label={`${period === "weekly" ? "Weekly" : "Monthly"} ends ${epochLabel}`} tone="default" />
-                {summary?.epoch?.status ? <TacticalTag label={String(summary.epoch.status).toUpperCase()} tone="success" /> : null}
+    <div className="min-w-0 overflow-x-hidden font-mw-body text-mw-text">
+      <ContentContainer className="flex flex-col gap-4 px-1 pb-16 md:px-2">
+        <section className="flex flex-col" aria-label={title}>
+          <div className="mw-banner h-[110px] rounded-2xl border border-[#1E2329] lg:h-[200px]" aria-hidden="true" />
+          <div className={`${card} relative mx-3 -mt-[50px] flex flex-col gap-2 p-3.5 lg:mx-5 lg:-mt-[84px] lg:flex-row lg:items-end lg:gap-[22px] lg:p-[22px]`}>
+            <div className="flex min-w-0 flex-1 items-center gap-3 lg:items-end lg:gap-[22px]">
+              <div className="w-[60px] shrink-0 overflow-hidden rounded-[10px] border border-mw-edge text-center lg:w-[92px] lg:rounded-[14px]" aria-label={`Starts ${dateDay} ${dateMon}`}>
+                <div className="bg-mw-accent py-[3px] font-mw-cond text-xs font-bold tracking-[0.1em] text-[#140A02] lg:py-1.5 lg:text-sm">{dateMon}</div>
+                <div className="bg-mw-input pb-1 pt-0.5 font-mw-mono text-2xl font-bold lg:pb-2.5 lg:pt-1.5 lg:text-[38px]">{dateDay}</div>
               </div>
-              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                {summary?.epoch?.epochStart ? (
-                  <div>
-                    Epoch window: {new Date(summary.epoch.epochStart).toLocaleString()} →{" "}
-                    {summary.epoch.epochEnd ? new Date(summary.epoch.epochEnd).toLocaleString() : "open"}
-                  </div>
-                ) : null}
-                {epochId ? <div className="truncate">Epoch ID: {epochId}</div> : null}
-                {seasonId && seasonId !== epochId ? <div className="truncate">Season ID: {seasonId}</div> : null}
+              <div className="min-w-0">
+                <div className={`${lbl} text-[11px] text-mw-accent-soft lg:text-xs`}>{windowLabel || (loading ? "Loading epoch…" : "Awaiting epoch")}</div>
+                <h1 className="m-0 mt-0.5 font-mw-cond text-2xl font-bold leading-tight lg:mt-1 lg:text-[38px]">{title}</h1>
+                <div className="mt-2 hidden flex-wrap items-center gap-4 text-[15px] text-mw-muted lg:flex">
+                  <span className="inline-flex items-center gap-1.5"><Users className="h-[18px] w-[18px]" aria-hidden="true" /><span><span className="font-bold text-mw-text">{selectedEntrants}</span> {fieldCopy}</span></span>
+                  <span>{autoCopy}</span>
+                </div>
               </div>
             </div>
-            <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-end">
-              <div className="rounded-md border border-border/60 bg-background/45 px-3 py-2">
-                <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Chain</div>
-                <ChainFeedSwitch value={feedChainId} />
+            <div className="flex items-center justify-between gap-3 lg:block lg:shrink-0 lg:text-right">
+              <span className="text-[13px] text-mw-muted lg:hidden">{selectedEntrants} {fieldCopy} automatically</span>
+              <div>
+                <div className={`${lbl} hidden lg:block`}>Prize pool</div>
+                <div className="font-mw-mono text-xl font-bold lg:text-[32px]">{potLabel}</div>
               </div>
-              <TacticalSwitch<Period>
-                label="Epoch"
-                value={period}
-                left={{ value: "weekly", label: "Weekly" }}
-                right={{ value: "monthly", label: "Monthly" }}
-                disabled={selectedLeague.supports.length === 1}
-                onChange={(next) => {
-                  if (!selectedLeague.supports.includes(next)) return;
-                  setPeriod(next);
-                  setEpochOffset(0);
-                }}
-              />
-              <div className="rounded-md border border-border/60 bg-background/45 px-3 py-2">
-                <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Season</div>
-                <SegmentedControl<number> value={epochOffset} options={epochOptions.map((item) => ({ value: item.offset, label: item.label }))} onChange={setEpochOffset} />
-              </div>
+              <button type="button" onClick={() => void share()} className="mw-focus mt-2 hidden min-h-9 items-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] lg:inline-flex">
+                <Share2 className="h-4 w-4" aria-hidden="true" />Share
+              </button>
             </div>
           </div>
         </section>
 
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <div className="mwz-hud-frame p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              <Zap className="h-3.5 w-3.5" /> Prize pool
+        <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+          <div role="tablist" aria-label="Epoch" className="flex gap-1 rounded-xl border border-[#2A3038] bg-mw-input p-1">
+            {(["weekly", "monthly"] as Period[]).map((value) => {
+              const on = period === value;
+              const disabled = !selectedLeague.supports.includes(value);
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={on}
+                  disabled={disabled}
+                  onClick={() => {
+                    if (!selectedLeague.supports.includes(value)) return;
+                    setPeriod(value);
+                    setEpochOffset(0);
+                  }}
+                  className={`mw-focus min-h-10 rounded-lg border px-4 font-mw-cond text-sm font-bold uppercase tracking-[0.08em] disabled:cursor-not-allowed disabled:opacity-45 ${on ? "border-[#3A424C] bg-[#1F252C] text-mw-text" : "border-transparent text-mw-muted hover:text-mw-text"}`}
+                >
+                  {value === "weekly" ? "Weekly" : "Monthly"}
+                </button>
+              );
+            })}
+          </div>
+          <select
+            aria-label="Season"
+            value={epochOffset}
+            onChange={(e) => setEpochOffset(Number(e.target.value))}
+            className="mw-focus h-11 min-w-0 flex-1 rounded-[10px] border border-mw-edge bg-mw-input px-3 text-[15px] text-mw-text lg:flex-none"
+          >
+            {epochOptions.map((item) => (
+              <option key={item.offset} value={item.offset}>{item.label}</option>
+            ))}
+          </select>
+          <span className="hidden flex-1 lg:block" />
+          <ChainFeedSwitch value={feedChainId} className="w-full lg:w-auto" />
+        </div>
+
+        <LeagueSwitch selected={selectedLeagueKey} period={period} onSelect={handleSelectLeague} />
+
+        <section className="grid grid-cols-2 gap-2 lg:grid-cols-5 lg:gap-2.5">
+          {tiles.map((tile) => (
+            <div key={tile.label} className={`${card} p-3 ${tile.mobile === false ? "hidden lg:block" : ""}`}>
+              <div className={lbl}>{tile.label}</div>
+              <div className="break-words font-mw-mono text-[19px] font-bold lg:text-xl">{tile.value}</div>
             </div>
-            <div className="mt-2 font-retro text-xl">{displayPrizeNative > 0 ? formatNative(displayPrizeNative, nativeSymbol) : "No fees yet"}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {displayPrizeNative > 0
-                ? rawGeneratedUsd > 0
-                  ? `≈ ${formatUsd(rawGeneratedUsd)} · league fee share this epoch${isSolana ? " · claims closed" : ""}`
-                  : `${nativeSymbol} pot live · USD estimate unavailable${isSolana ? " · claims closed" : ""}`
-                : "Waiting for bonding-curve volume in this epoch."}
-            </div>
-          </div>
-          <div className="mwz-hud-frame p-4">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Player prize cap</div>
-            <div className="mt-2 font-retro text-xl">{period === "monthly" ? formatUsd(policy.monthlyPlayerPrizeCapUsd) : "No weekly cap"}</div>
-            <div className="mt-1 text-xs text-muted-foreground">{period === "monthly" ? (capReached ? "Monthly cap reached." : "Monthly hard cap before charity overflow.") : "Weekly pools pay without the monthly cap."}</div>
-          </div>
-          <div className="mwz-hud-frame p-4">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Player prize pool</div>
-            <div className="mt-2 font-retro text-xl">{rawGeneratedUsd > 0 ? formatUsd(cappedPlayerPoolUsd) : displayPrizeNative > 0 ? formatNative(displayPrizeNative, nativeSymbol) : "—"}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {categoryPrizeNative > 0
-                ? `This board: ${formatNative(categoryPrizeNative, nativeSymbol)}`
-                : displayPrizeNative > 0 && rawGeneratedUsd <= 0
-                  ? `Shown in ${nativeSymbol} until USD price is available.`
-                  : "Shared across live boards this epoch."}
-            </div>
-          </div>
-          <div className="mwz-hud-frame p-4">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Charity reserve</div>
-            <div className="mt-2 font-retro text-xl">{period === "monthly" ? formatUsd(charityReserveUsd) : formatUsd(0)}</div>
-            <div className="mt-1 text-xs text-muted-foreground">Overflow past monthly player cap (monthly only).</div>
-          </div>
-          <div className="mwz-hud-frame p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground"><Users className="h-3.5 w-3.5" /> Active paid places</div>
-            <div className="mt-2 font-retro text-xl">{activePaidPlaces}</div>
-            <div className="mt-1 text-xs text-muted-foreground">Field size {paidFieldEntrants} · min winners {policy.minWinners} · 15% rule</div>
-          </div>
+          ))}
         </section>
 
         {showCapNotification ? (
-          <section role="status" className="mwz-hud-frame border-accent/70 bg-accent/10 p-4 shadow-[0_0_24px_rgba(245,132,32,0.12)]">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="flex min-w-0 gap-3">
-                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/50 bg-background/70 text-accent"><AlertTriangle className="h-5 w-5" /></div>
-                <div>
-                  <div className="font-retro text-base text-foreground">Monthly player prize cap reached</div>
-                  <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Player payouts are locked at {formatUsd(policy.monthlyPlayerPrizeCapUsd)}. The overflow is routed to the charity reserve and cannot be claimed by players.</p>
-                </div>
+          <section role="status" className="flex flex-col gap-3 rounded-[14px] border border-[#5A3416] bg-mw-accent-fill p-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex min-w-0 gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[#FF9A4D]" aria-hidden="true" />
+              <div>
+                <div className="font-bold">Monthly player prize cap reached</div>
+                <p className="m-0 mt-1 max-w-3xl text-sm text-mw-muted">Player payouts are locked at {formatUsd(policy.monthlyPlayerPrizeCapUsd)}. The overflow is routed to the charity reserve and cannot be claimed by players.</p>
               </div>
-              <div className="grid shrink-0 grid-cols-2 gap-2 text-right text-xs md:min-w-[260px]">
-                <div className="rounded-lg border border-border/40 bg-background/45 px-3 py-2"><div className="text-muted-foreground">Player pool</div><div className="font-retro text-foreground">{formatUsd(cappedPlayerPoolUsd)}</div></div>
-                <div className="rounded-lg border border-border/40 bg-background/45 px-3 py-2"><div className="text-muted-foreground">Reserve</div><div className="font-retro text-accent">{formatUsd(charityReserveUsd)}</div></div>
-              </div>
+            </div>
+            <div className="grid shrink-0 grid-cols-2 gap-2 text-right text-sm md:min-w-[260px]">
+              <div className="rounded-[10px] border border-mw-border bg-mw-input px-3 py-2"><div className="text-mw-muted">Player pool</div><div className="font-mw-mono font-bold">{formatUsd(cappedPlayerPoolUsd)}</div></div>
+              <div className="rounded-[10px] border border-mw-border bg-mw-input px-3 py-2"><div className="text-mw-muted">Reserve</div><div className="font-mw-mono font-bold text-mw-accent-soft">{formatUsd(charityReserveUsd)}</div></div>
             </div>
           </section>
         ) : null}
 
-        <LeagueSwitch selected={selectedLeagueKey} period={period} onSelect={handleSelectLeague} />
+        <section className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-6">
+          <section className={`${card} overflow-hidden`} aria-label="Standings">
+            <div className="flex items-center gap-2 px-4 py-3.5">
+              <span className={`${cardTitle} flex-1`}>Standings</span>
+              <span className="text-[13px] text-mw-muted">Top 25 · {epochOffset === 0 ? "live" : "final"}</span>
+            </div>
+            {error ? (
+              <StandingsNotice body={error} />
+            ) : loading ? (
+              <div className="flex min-h-[240px] items-center justify-center py-10"><RadarLoader label="Scanning league standings…" size="md" /></div>
+            ) : (
+              <StandingsTable
+                league={selectedLeague}
+                rows={rows}
+                status={selectedStatus}
+                pendingCopy={selectedCard?.warning || selectedLeague.emptyStateCopy}
+                warningCopy={selectedCard?.warning}
+                native={{ decimals: nativeDecimals, symbol: nativeSymbol }}
+                payoutForRank={payoutForRank}
+                paidPlaces={activePaidPlaces}
+              />
+            )}
+          </section>
 
-        <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="space-y-5">
-            <section className="mwz-hud-frame p-5">
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div><div className="text-[10px] uppercase tracking-[0.28em] text-accent/80">Standings</div><h2 className="mt-1 font-retro text-2xl text-foreground">{selectedLeague.title}</h2><p className="mt-2 max-w-2xl text-sm text-muted-foreground">{selectedLeague.ruleSummary}</p></div>
-                <TacticalTag label={`${selectedEntrants} qualified`} tone="success" />
-              </div>
-              <div className="mt-5">
-                {error ? <div className="mwz-hud-frame p-5 text-sm text-muted-foreground">{error}</div> : loading ? (
-                  <div className="flex min-h-[280px] items-center justify-center bg-black py-12"><RadarLoader label="Scanning league standings…" size="md" /></div>
-                ) : (
-                  <StandingsTable league={selectedLeague} rows={rows} status={selectedStatus} pendingCopy={selectedCard?.warning || selectedLeague.emptyStateCopy} warningCopy={selectedCard?.warning} native={{ decimals: nativeDecimals, symbol: nativeSymbol }} />
-                )}
-              </div>
+          <aside className="flex flex-col gap-4 lg:sticky lg:top-[calc(var(--mwz-topbar-offset)+16px)]">
+            <section className={`${card} flex flex-col gap-3 p-4`} aria-label="Ends in">
+              <span className={cardTitle}>{epochOffset === 0 ? "Ends in" : "Ended"}</span>
+              <EndsIn end={epochOffset === 0 ? epochEnd : null} />
             </section>
 
-            <section className="grid gap-5 lg:grid-cols-2">
-              <div className="mwz-hud-frame p-5"><div className="text-[10px] uppercase tracking-[0.28em] text-accent/80">Prize breakdown</div><h3 className="mt-1 font-retro text-xl"></h3><div className="mt-4 space-y-2 text-sm"><div className="flex justify-between gap-3"><span className="text-muted-foreground">Minimum winners</span><span>{policy.minWinners}</span></div><div className="flex justify-between gap-3"><span className="text-muted-foreground">Paid field</span><span>{Math.round(policy.paidFieldPct * 100)}%</span></div><div className="flex justify-between gap-3"><span className="text-muted-foreground">Curve alpha</span><span>{policy.alpha}</span></div><div className="flex justify-between gap-3"><span className="text-muted-foreground">Future option</span><span>20% paid field ready</span></div></div></div>
-              <div className="mwz-hud-frame p-5"><div className="text-[10px] uppercase tracking-[0.28em] text-accent/80">Payout curve preview</div><h3 className="mt-1 font-retro text-xl">Top / mid / min paid</h3><div className="mt-4 space-y-3">{previewRanks.length ? previewRanks.map((row) => <div key={row.rank} className="rounded-xl border border-border/40 bg-card/55 px-3 py-2"><div className="flex items-center justify-between gap-3"><span className="font-retro text-sm">Rank #{row.rank}</span><span className="text-sm font-semibold">{formatUsd(row.payoutUsd)}</span></div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-background/70"><div className="h-full bg-accent" style={{ width: `${Math.max(4, row.percentage * 100)}%` }} /></div></div>) : <div className="text-sm text-muted-foreground">Preview appears when qualified entrants and prize data are available.</div>}</div></div>
+            <section className={`${card} flex flex-col gap-2.5 p-4`} aria-label="Prize breakdown">
+              <span className={cardTitle}>Prize breakdown</span>
+              <p className="m-0 text-sm text-mw-muted">Top {Math.round(policy.paidFieldPct * 100)}% of the field is paid, at least {policy.minWinners}. A higher rank gets a bigger share; every paid place gets something.</p>
+              {breakdownBars.length ? breakdownBars.map((row) => (
+                <div key={row.rank} className="flex items-center gap-2.5 text-sm">
+                  <span className="w-[22px] font-mw-mono font-bold text-mw-muted">{row.rank}</span>
+                  <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-mw-border"><div className="h-full rounded-full bg-mw-accent" style={{ width: `${topShare > 0 ? Math.max(4, (row.percentage / topShare) * 100) : 0}%` }} /></div>
+                </div>
+              )) : <div className="text-sm text-mw-muted">Bars appear when the field and prize data are in.</div>}
             </section>
-          </div>
 
-          <aside className="space-y-4">
-            <div className="mwz-hud-frame p-5">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-accent/80"><TrendingUp className="h-4 w-4" /> Season intel</div>
-              <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-lg border border-border/40 bg-card/55 px-3 py-2"><div className="text-muted-foreground">Entrants delta</div><div className="font-retro text-foreground">{formatDelta(trendMetrics?.changeVsPreviousEpoch?.entrants ?? 0)}</div><div className="mt-1 text-muted-foreground">{formatDelta(trendMetrics?.entrantsGrowthPct ?? 0, "%")}</div></div>
-                <div className="rounded-lg border border-border/40 bg-card/55 px-3 py-2"><div className="text-muted-foreground">Prize delta</div><div className="font-retro text-foreground">{formatUsd(Number(trendMetrics?.changeVsPreviousEpoch?.playerPrizePoolUsd || 0))}</div><div className="mt-1 text-muted-foreground">{formatDelta(trendMetrics?.prizePoolGrowthPct ?? 0, "%")}</div></div>
-              </div>
-              <div className="mt-3 text-[11px] text-muted-foreground">Compared to previous {period} epoch · {trendBasis.replace(/_/g, " ")}</div>
-            </div>
-            <div className="mwz-hud-frame p-5">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-accent/80"><Trophy className="h-4 w-4" /> Current #1s</div>
-              <div className="mt-4 space-y-2">
-                {summary?.currentLeaders.length ? summary.currentLeaders.map((leader) => (
-                  <button key={leader.leagueKey} type="button" onClick={() => handleSelectLeague(leader.leagueKey)} className="w-full border border-border/40 bg-card/55 px-3 py-2 text-left transition">
-                    <div className="text-[11px] text-muted-foreground">{leader.leagueTitle}</div><div className="truncate text-sm font-semibold">{leader.label}</div><div className="truncate text-[11px] text-accent">{leader.metric}</div>
-                  </button>
-                )) : <div className="text-sm text-muted-foreground">No {chain === "robinhood" ? "Robinhood" : chain === "solana" ? "Solana" : "BNB"} leaders in this epoch yet.</div>}
-              </div>
-            </div>
-            <div className="mwz-hud-frame p-5"><div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-accent/80"><Trophy className="h-4 w-4" />Hall of Fame</div><div className="mt-4 space-y-3 text-sm"><div className="rounded-lg border border-border/40 bg-card/55 px-3 py-2"><div className="text-[11px] text-muted-foreground">Most wins</div><div className="truncate font-semibold text-foreground">{topWinner?.name || topWinner?.symbol || shortAddr(topWinner?.wallet) || "Awaiting history"}</div><div className="text-[11px] text-accent">{topWinner?.wins ? `${topWinner.wins} wins` : hallOfFame?.basis || "summary_history_scaffold"}</div></div><div className="rounded-lg border border-border/40 bg-card/55 px-3 py-2"><div className="text-[11px] text-muted-foreground">Biggest pool</div><div className="font-semibold text-foreground">{biggestPrizePool ? formatUsd(Number(biggestPrizePool.playerPrizePoolUsd || biggestPrizePool.generatedUsd || 0)) : "Awaiting history"}</div><div className="text-[11px] text-accent">{biggestPrizePool?.period || "No finalized pool yet"}</div></div></div></div>
-            <div className="mwz-hud-frame p-5"><div className="text-[10px] uppercase tracking-[0.24em] text-accent/80">Recent winners</div><div className="mt-4 space-y-2">{!isSolana && summary?.history.length ? summary.history.slice(0, 5).map((item) => <div key={item.id} className="rounded-xl border border-border/40 bg-card/55 px-3 py-2"><div className="text-sm font-semibold text-foreground">{item.winnerLabel || item.label}</div><div className="mt-1 text-[11px] text-muted-foreground">{item.completedAt || "Finalized epoch"}</div></div>) : <div className="text-sm text-muted-foreground">{isSolana ? "Solana winner history pending." : "Winner history will appear once finalized league epochs are published."}</div>}</div></div>
+            <section className={`${card} flex flex-col gap-1 p-4`} aria-label="Current number ones">
+              <span className={`${cardTitle} mb-1`}>Current #1s</span>
+              {summary?.currentLeaders.length ? summary.currentLeaders.map((leader) => (
+                <button key={leader.leagueKey} type="button" onClick={() => handleSelectLeague(leader.leagueKey)} className="mw-focus flex min-h-[30px] items-center justify-between gap-3 text-left text-sm hover:text-mw-text">
+                  <span className="text-mw-muted">{leader.leagueTitle}</span>
+                  <span className="truncate font-bold">{leader.label}</span>
+                </button>
+              )) : <div className="text-sm text-mw-muted">No {chain === "robinhood" ? "Robinhood" : chain === "solana" ? "Solana" : "BNB"} leaders in this epoch yet.</div>}
+            </section>
+
+            <section className={`${card} flex flex-col gap-2 p-4`} aria-label="Hall of fame">
+              <span className={cardTitle}>Hall of fame</span>
+              <div className="flex justify-between gap-3 text-sm"><span className="text-mw-muted">Most wins</span><span className="truncate font-bold">{topWinner ? `${topWinner.name || topWinner.symbol || shortAddr(topWinner.wallet)}${topWinner.wins ? ` · ${topWinner.wins}` : ""}` : "Awaiting history"}</span></div>
+              <div className="flex justify-between gap-3 text-sm"><span className="text-mw-muted">Biggest pool</span><span className="font-mw-mono font-bold">{biggestPrizePool ? formatUsd(Number(biggestPrizePool.playerPrizePoolUsd || biggestPrizePool.generatedUsd || 0)) : "Awaiting history"}</span></div>
+              <span className={`${lbl} mt-1.5`}>Recent winners</span>
+              {!isSolana && summary?.history.length ? summary.history.slice(0, 5).map((item) => (
+                <div key={item.id} className="text-sm">{item.label}{item.winnerLabel ? ` · ${item.winnerLabel}` : ""}</div>
+              )) : <div className="text-sm text-mw-muted">{isSolana ? "Solana winner history pending." : "Winner history appears once finalized epochs are published."}</div>}
+            </section>
           </aside>
         </section>
       </ContentContainer>

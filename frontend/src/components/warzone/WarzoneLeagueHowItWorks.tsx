@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-export function WarzoneLeagueHowItWorks() {
+export function WarzoneLeagueHowItWorks({ className }: { className?: string } = {}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -10,7 +10,7 @@ export function WarzoneLeagueHowItWorks() {
         type="button"
         onClick={() => setOpen(true)}
         data-warzone-mwl-how-it-works="true"
-        className="text-[10px] uppercase tracking-[0.16em] text-accent hover:underline"
+        className={className || "text-[10px] uppercase tracking-[0.16em] text-accent hover:underline"}
       >
         How it works
       </button>

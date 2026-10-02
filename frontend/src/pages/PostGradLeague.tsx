@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { Crown } from "lucide-react";
+import { BattleVsMark } from "@/components/arena/BattleWallVs";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { WarzoneLeagueHowItWorks } from "@/components/warzone/WarzoneLeagueHowItWorks";
-import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
 import { ChainFeedSwitch } from "@/components/common/ChainFeedSwitch";
 import { WarzoneRankCard } from "@/components/warzone/WarzoneRankCard";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
@@ -44,10 +44,13 @@ function TokenLink({
   );
 }
 
+const STANDING_GRID = "grid grid-cols-[2.25rem_minmax(0,1fr)_3.5rem_4.5rem] items-center gap-2 px-3.5 md:grid-cols-[2.5rem_minmax(0,1fr)_4rem_3rem_3rem_4rem_6.5rem]";
+
 function StandingRow({
   entry,
   yours = false,
   chainId,
+  qualified,
 }: {
   entry: {
     tokenId: string;
@@ -63,54 +66,46 @@ function StandingRow({
   };
   yours?: boolean;
   chainId?: number | null;
+  /** "Qualified" / "In" / "Out" against the quarter-final field, shown when there is no movement status. */
+  qualified: string;
 }) {
   const status = presentWarzoneLeagueStatus(entry);
   const ticker = String(entry.symbol || "").replace(/^\$/, "");
+  const label = status ? status.charAt(0) + status.slice(1).toLowerCase() : qualified;
+  const tone = label === "—" ? "border-transparent text-mw-muted" : label === "Qualified" || label === "Promoted" ? "border-[#1F5133] text-[#6EE7A0]" : label === "Out" || label === "Relegated" ? "border-mw-edge text-[#7C858F]" : "border-mw-edge text-mw-text";
   return (
-    <>
-      <div
-        className="hidden items-center gap-2 border-b px-1 py-2.5 text-sm md:grid md:grid-cols-[3.5rem_minmax(0,1.4fr)_5rem_3rem_3rem_5rem_7rem]"
-        style={{ borderColor: "var(--mwz-flat-card-border)" }}
-        data-mwl-standing-rank={entry.rank}
-        data-mwl-your-token={yours ? "true" : undefined}
-      >
-        <span className="font-retro text-white/60">#{entry.rank}</span>
-        <span className="flex min-w-0 items-center gap-2">
-          <WarzoneTokenMark imageUrl={entry.imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" chainId={chainId} tokenAddress={entry.tokenId} />
-          <span className="min-w-0 truncate">
-            <span className="font-retro text-foreground">${ticker}</span>
-            <span className="ml-2 text-xs text-white/45">{entry.tokenName}</span>
-            {yours ? <span className="ml-2 text-[10px] uppercase tracking-[0.14em] text-orange-300">Your token</span> : null}
+    <div
+      className={`${STANDING_GRID} border-b border-[#1E2329] py-3 text-sm ${yours ? "bg-mw-accent-fill" : "hover:bg-[#171B20]"}`}
+      data-mwl-standing-rank={entry.rank}
+      data-mwl-your-token={yours ? "true" : undefined}
+    >
+      <span className="font-mw-mono font-bold text-mw-muted">{entry.rank}</span>
+      <span className="flex min-w-0 items-center gap-2.5">
+        <WarzoneTokenMark imageUrl={entry.imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" chainId={chainId} tokenAddress={entry.tokenId} />
+        <span className="min-w-0">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-bold text-mw-text">${ticker}</span>
+            {yours ? <span className="inline-flex h-5 shrink-0 items-center rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2 text-[11px] font-semibold text-mw-accent-soft">Your token</span> : null}
           </span>
+          <span className="block truncate text-[13px] text-mw-muted">{entry.tokenName}</span>
         </span>
-        <span>{Number(entry.points || 0).toLocaleString()}</span>
-        <span>{entry.wins}</span>
-        <span>{entry.losses}</span>
-        <span>{Number.isFinite(Number(entry.finishedFights)) ? Number(entry.finishedFights) : "—"}</span>
-        <span className="text-[10px] uppercase tracking-[0.12em] text-white/50">{status || "—"}</span>
-      </div>
-      <div
-        className="flex items-center justify-between gap-2 border-b py-3 md:hidden"
-        style={{ borderColor: "var(--mwz-flat-card-border)" }}
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          <WarzoneTokenMark imageUrl={entry.imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" chainId={chainId} tokenAddress={entry.tokenId} />
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">#{entry.rank}{yours ? " · Your token" : ""}</div>
-            <div className="truncate font-retro text-foreground">${ticker}</div>
-            <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="font-retro text-sm">{Number(entry.points || 0).toLocaleString()} PTS</div>
-          <div className="text-xs text-white/50">
-            {entry.wins}W / {entry.losses}L
-          </div>
-        </div>
-      </div>
-    </>
+      </span>
+      <span className="text-right font-mw-mono font-bold">{Number(entry.points || 0).toLocaleString()}</span>
+      <span className="hidden text-right font-mw-mono md:block">{entry.wins}</span>
+      <span className="hidden text-right font-mw-mono md:block">{entry.losses}</span>
+      <span className="hidden text-right font-mw-mono md:block">{Number.isFinite(Number(entry.finishedFights)) ? Number(entry.finishedFights) : "—"}</span>
+      <span className="text-right md:pl-3 md:text-left">
+        <span className={`inline-flex h-[22px] items-center rounded-full border px-2 text-xs font-semibold ${tone}`}>{label}</span>
+      </span>
+    </div>
   );
 }
+
+const card = "rounded-[14px] border border-mw-border bg-mw-surface";
+const cardTitle = "font-mw-cond text-xl font-bold tracking-[0.02em] text-mw-text";
+const lbl = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+const chip = "inline-flex h-7 items-center rounded-full border px-3 text-[13px] font-semibold";
+const button = "mw-focus inline-flex min-h-10 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60";
 
 const PostGradLeague = () => {
   const { season, source, ownedTokenIds, chainId: leagueChainId } = useArenaLeagueFeed();
@@ -147,122 +142,140 @@ const PostGradLeague = () => {
     }
   }
 
-  return (
-    <WarzoneContent className="space-y-6">
-      <WarzonePageHeader title="Major War League" copy={headerMeta || "The monthly fight for Warzone supremacy"}>
-        {season.label ? <TacticalTag label={season.label} tone="default" /> : null}
-        <TacticalTag label={`Week ${season.week || 1}`} tone="default" />
-        <TacticalTag label={phase.label} tone={phase.live ? "success" : "default"} />
-        <WarzoneLeagueHowItWorks />
-        <ChainFeedSwitch />
-      </WarzonePageHeader>
+  const fieldKeys = new Set(quarterFinals.field.map((entry) => tokenIdentityKey(entry.tokenId)));
+  const qualifiedLabel = (tokenId: string) => (!fieldKeys.size ? "—" : fieldKeys.has(tokenIdentityKey(tokenId)) ? (quarterFinals.phase.projected ? "In" : "Qualified") : "Out");
+  // Artboard: one table from #1 down (podium plus the public table), cut line after the last seed.
+  const standings = [...board.podium, ...board.table];
+  const cutRank = quarterFinals.cut?.inside.rank ?? null;
+  const seedAt = (seed: number) => quarterFinals.field.find((entry) => entry.rank === seed) || quarterFinals.field[seed - 1] || null;
+  const matchups = quarterFinals.field.length >= 8 ? ([[1, 8], [4, 5], [3, 6], [2, 7]] as const).map(([a, b]) => [seedAt(a), seedAt(b)] as const) : [];
+  const tickerOf = (entry?: { symbol?: string } | null) => `$${String(entry?.symbol || "").replace(/^\$/, "")}`;
 
-      <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]">
-        <button
-          type="button"
-          onClick={() => setTab("regular")}
-          data-selected={tab === "regular" ? "true" : undefined}
-          className={`px-1 py-1 ${tab === "regular" ? "text-accent" : "text-muted-foreground hover:text-foreground"}`}
-        >
-          Regular season
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("quarter_finals")}
-          data-selected={tab === "quarter_finals" ? "true" : undefined}
-          className={`px-1 py-1 ${tab === "quarter_finals" ? "text-accent" : "text-muted-foreground hover:text-foreground"}`}
-        >
-          Quarter Finals
-        </button>
+  return (
+    <WarzoneContent className="space-y-4 font-mw-body text-mw-text">
+      <section className="mw-banner flex flex-col gap-3 rounded-[18px] border border-[#2A3038] p-4 lg:flex-row lg:items-end lg:gap-[22px] lg:p-[26px]">
+        <Crown className="hidden h-10 w-10 shrink-0 text-[#F2C14E] lg:block" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap gap-2">
+            {season.label ? <span className={`${chip} border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft`}>{season.label}</span> : null}
+            <span className={`${chip} border-mw-edge bg-mw-raised text-mw-text`}>{`Week ${season.week || 1}`}</span>
+            <span className={`${chip} ${phase.live ? "border-[#1F5133] text-[#6EE7A0]" : "border-mw-edge text-mw-text"} bg-mw-raised`}>{phase.label}</span>
+          </div>
+          <h1 className="m-0 mt-2 font-mw-cond text-[32px] font-bold leading-none lg:text-[44px]">Major War League</h1>
+          <p className="m-0 mt-1.5 text-sm text-mw-muted lg:text-[15px]">
+            {headerMeta ? "Graduated coins earn points in ranked battles. The top 8 play the quarterly finals." : "The monthly fight for Warzone supremacy"}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <WarzoneLeagueHowItWorks className={`${button} min-h-9 px-3`} />
+          <ChainFeedSwitch />
+        </div>
+      </section>
+
+      <div role="tablist" aria-label="League phase" className="flex w-max gap-1 rounded-xl border border-[#2A3038] bg-mw-input p-1">
+        {([["regular", "Regular season"], ["quarter_finals", "Quarter Finals"]] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={tab === value}
+            onClick={() => setTab(value)}
+            className={`mw-focus min-h-10 rounded-lg border px-4 font-mw-cond text-sm font-bold uppercase tracking-[0.08em] ${tab === value ? "border-[#3A424C] bg-[#1F252C] text-mw-text" : "border-transparent text-mw-muted hover:text-mw-text"}`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {tab === "quarter_finals" ? (
-        <section data-warzone-mwl-quarter-finals="true" className="space-y-6">
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Quarter Finals</div>
-            <h2 className="mt-1 font-retro text-lg text-foreground" data-mwl-qf-label={quarterFinals.statusLabel}>
-              {quarterFinals.label}
-            </h2>
-            <p className="mt-1 text-xs uppercase tracking-[0.14em] text-white/50">
-              {quarterFinals.field.length} {quarterFinals.phase.projected ? "projected" : "qualified"}
-            </p>
-          </div>
-          {quarterFinals.field.length ? (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" data-mwl-qf-field={quarterFinals.field.length}>
-              {quarterFinals.field.map((entry) => {
-                const yoursToken = ownedKeys.has(tokenIdentityKey(entry.tokenId));
-                return (
-                  <TokenLink key={entry.tokenId} tokenId={entry.tokenId}>
-                    <div
-                      className="flex items-center gap-3 border px-3 py-3"
-                      style={{ borderColor: "var(--mwz-flat-card-border)" }}
-                      data-mwl-qf-seed={entry.rank}
-                      data-mwl-your-token={yoursToken ? "true" : undefined}
-                    >
-                      <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} chainId={leagueChainId} tokenAddress={entry.tokenId} />
-                      <div className="min-w-0">
-                        <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">#{entry.rank}</div>
-                        <div className="truncate font-black text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
-                        <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
-                        {yoursToken ? <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-orange-300">Your token</div> : null}
-                      </div>
-                    </div>
-                  </TokenLink>
-                );
-              })}
+        <section data-warzone-mwl-quarter-finals="true" className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-6">
+          <section className={`${card} flex flex-col gap-3 p-4`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <span className={cardTitle}>Field · {quarterFinals.phase.projected ? "projected" : "qualified"}</span>
+                <h2 className={`${lbl} m-0 mt-0.5`} data-mwl-qf-label={quarterFinals.statusLabel}>{quarterFinals.label}</h2>
+              </div>
+              {quarterFinalsId ? (
+                <button type="button" onClick={() => void handleViewBracket()} disabled={bracketBusy} className={`${button} min-h-9 px-3`}>
+                  {bracketBusy ? "Loading bracket" : "View bracket"}
+                </button>
+              ) : null}
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No projected Quarter Finalists yet.</p>
-          )}
-          {quarterFinals.cut ? (
-            <section data-mwl-qualification-cut="true" className="space-y-2">
-              <div className="text-[10px] uppercase tracking-[0.22em] text-white/45">Qualification cut</div>
-              <TokenLink tokenId={quarterFinals.cut.inside.tokenId}>
-                <div className="flex items-center justify-between gap-3 py-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <WarzoneTokenMark imageUrl={(quarterFinals.cut.inside as { imageUrl?: string }).imageUrl} symbol={quarterFinals.cut.inside.symbol} name={quarterFinals.cut.inside.tokenName} chainId={leagueChainId} tokenAddress={quarterFinals.cut.inside.tokenId} size="sm" />
-                    <div className="min-w-0">
-                      <div className="font-retro text-foreground">#{quarterFinals.cut.inside.rank} ${String(quarterFinals.cut.inside.symbol || "").replace(/^\$/, "")}</div>
-                    </div>
+            {quarterFinals.field.length ? (
+              <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4" data-mwl-qf-field={quarterFinals.field.length}>
+                {quarterFinals.field.map((entry) => {
+                  const yoursToken = ownedKeys.has(tokenIdentityKey(entry.tokenId));
+                  return (
+                    <TokenLink key={entry.tokenId} tokenId={entry.tokenId} className="block text-mw-text hover:text-mw-text">
+                      <div
+                        className={`flex min-w-0 items-center gap-2.5 rounded-[14px] border p-3 ${yoursToken ? "border-[#7A3A0C] bg-mw-accent-fill" : "border-mw-border bg-mw-input hover:border-[#3A424C]"}`}
+                        data-mwl-qf-seed={entry.rank}
+                        data-mwl-your-token={yoursToken ? "true" : undefined}
+                      >
+                        <span className="font-mw-mono font-bold text-mw-muted">{entry.rank}</span>
+                        <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" chainId={leagueChainId} tokenAddress={entry.tokenId} />
+                        <span className="min-w-0">
+                          <span className="block truncate font-bold">{tickerOf(entry)}</span>
+                          {yoursToken ? <span className="block text-[11px] font-semibold text-mw-accent-soft">Your token</span> : null}
+                        </span>
+                      </div>
+                    </TokenLink>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="m-0 text-sm text-mw-muted">No projected Quarter Finalists yet.</p>
+            )}
+            {matchups.length ? (
+              <>
+                <div className={`${lbl} mt-1.5`}>Matchups{quarterFinals.phase.projected ? " · projected" : ""}</div>
+                {matchups.map(([a, b]) => (
+                  <div key={`${a?.tokenId}-${b?.tokenId}`} className="flex items-center gap-3 rounded-[10px] border border-[#242A31] px-3 py-2.5 text-sm">
+                    <span className="w-5 font-mw-mono font-bold text-mw-muted">{a?.rank}</span>
+                    <span className="min-w-0 flex-1 truncate font-bold">{tickerOf(a)}</span>
+                    <BattleVsMark size="sm" />
+                    <span className="min-w-0 flex-1 truncate text-right font-bold">{tickerOf(b)}</span>
+                    <span className="w-5 text-right font-mw-mono font-bold text-mw-muted">{b?.rank}</span>
                   </div>
-                  <div className="font-retro">{Number(quarterFinals.cut.inside.points || 0).toLocaleString()} PTS</div>
-                </div>
-              </TokenLink>
-              <div className="border-t" style={{ borderColor: "rgba(240,106,26,0.55)" }} />
-              <TokenLink tokenId={quarterFinals.cut.outside.tokenId}>
-                <div className="flex items-center justify-between gap-3 py-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <WarzoneTokenMark imageUrl={(quarterFinals.cut.outside as { imageUrl?: string }).imageUrl} symbol={quarterFinals.cut.outside.symbol} name={quarterFinals.cut.outside.tokenName} chainId={leagueChainId} tokenAddress={quarterFinals.cut.outside.tokenId} size="sm" />
-                    <div className="min-w-0">
-                      <div className="font-retro text-foreground">#{quarterFinals.cut.outside.rank} ${String(quarterFinals.cut.outside.symbol || "").replace(/^\$/, "")}</div>
-                    </div>
+                ))}
+              </>
+            ) : null}
+          </section>
+
+          <aside className="flex flex-col gap-4">
+            {quarterFinals.cut ? (
+              <section data-mwl-qualification-cut="true" className={`${card} flex flex-col gap-2.5 p-4`}>
+                <span className={cardTitle}>Qualification cut</span>
+                <TokenLink tokenId={quarterFinals.cut.inside.tokenId} className="block text-mw-text hover:text-mw-text">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="flex min-w-0 items-center gap-2 text-mw-muted">
+                      <WarzoneTokenMark imageUrl={(quarterFinals.cut.inside as { imageUrl?: string }).imageUrl} symbol={quarterFinals.cut.inside.symbol} name={quarterFinals.cut.inside.tokenName} chainId={leagueChainId} tokenAddress={quarterFinals.cut.inside.tokenId} size="sm" />
+                      Last inside · #{quarterFinals.cut.inside.rank}
+                    </span>
+                    <span className="font-bold">{tickerOf(quarterFinals.cut.inside)} · {Number(quarterFinals.cut.inside.points || 0).toLocaleString()} pts</span>
                   </div>
-                  <div className="font-retro">{Number(quarterFinals.cut.outside.points || 0).toLocaleString()} PTS</div>
-                </div>
-              </TokenLink>
-            </section>
-          ) : null}
-          <div className="flex flex-wrap gap-3">
+                </TokenLink>
+                <TokenLink tokenId={quarterFinals.cut.outside.tokenId} className="block text-mw-text hover:text-mw-text">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="flex min-w-0 items-center gap-2 text-mw-muted">
+                      <WarzoneTokenMark imageUrl={(quarterFinals.cut.outside as { imageUrl?: string }).imageUrl} symbol={quarterFinals.cut.outside.symbol} name={quarterFinals.cut.outside.tokenName} chainId={leagueChainId} tokenAddress={quarterFinals.cut.outside.tokenId} size="sm" />
+                      First outside · #{quarterFinals.cut.outside.rank}
+                    </span>
+                    <span className="font-bold">{tickerOf(quarterFinals.cut.outside)} · {Number(quarterFinals.cut.outside.points || 0).toLocaleString()} pts</span>
+                  </div>
+                </TokenLink>
+              </section>
+            ) : null}
             {quarterFinalsId ? (
               <Link
                 to={tournamentHref(quarterFinalsId)}
                 data-mwl-view-quarter-finals="true"
-                className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
+                className={button}
               >
                 View Quarter Finals
               </Link>
             ) : null}
-            {quarterFinalsId ? (
-              <button
-                type="button"
-                onClick={() => void handleViewBracket()}
-                disabled={bracketBusy}
-                className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline disabled:opacity-60"
-              >
-                {bracketBusy ? "Loading bracket" : "View bracket"}
-              </button>
-            ) : null}
-          </div>
+          </aside>
           <TournamentBracketModal
             open={bracketOpen}
             onOpenChange={setBracketOpen}
@@ -274,10 +287,10 @@ const PostGradLeague = () => {
       ) : season.entries.length ? (
         <>
           <section data-warzone-mwl-podium="true">
-            <div className="mb-3 text-[10px] uppercase tracking-[0.22em] text-white/45">Top command</div>
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className={`${lbl} mb-2`}>Top command</div>
+            <div className="grid gap-3 lg:grid-cols-3">
               {first ? (
-                <TokenLink tokenId={first.tokenId}>
+                <TokenLink tokenId={first.tokenId} className="block text-mw-text hover:text-mw-text">
                   <WarzoneRankCard
                     rank={1}
                     imageUrl={(first as { imageUrl?: string }).imageUrl}
@@ -292,7 +305,7 @@ const PostGradLeague = () => {
                 </TokenLink>
               ) : null}
               {second ? (
-                <TokenLink tokenId={second.tokenId}>
+                <TokenLink tokenId={second.tokenId} className="block text-mw-text hover:text-mw-text">
                   <WarzoneRankCard
                     rank={2}
                     imageUrl={(second as { imageUrl?: string }).imageUrl}
@@ -307,7 +320,7 @@ const PostGradLeague = () => {
                 </TokenLink>
               ) : null}
               {third ? (
-                <TokenLink tokenId={third.tokenId}>
+                <TokenLink tokenId={third.tokenId} className="block text-mw-text hover:text-mw-text">
                   <WarzoneRankCard
                     rank={3}
                     imageUrl={(third as { imageUrl?: string }).imageUrl}
@@ -324,63 +337,59 @@ const PostGradLeague = () => {
             </div>
           </section>
 
-          {board.table.length ? (
-            <section data-warzone-mwl-table="true">
-              <div className="mb-2 text-[10px] uppercase tracking-[0.22em] text-white/45">Standings</div>
-              <div
-                className="hidden grid-cols-[3.5rem_minmax(0,1.4fr)_5rem_3rem_3rem_5rem_7rem] gap-2 border-b px-1 py-2 text-[10px] uppercase tracking-[0.16em] text-white/42 md:grid"
-                style={{ borderColor: "var(--mwz-flat-card-border)" }}
-              >
-                <span>Rank</span>
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-6">
+            <section data-warzone-mwl-table="true" className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3.5"><span className={cardTitle}>Standings</span></div>
+              <div className={`${STANDING_GRID} border-b border-mw-border py-2.5 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted`}>
+                <span>#</span>
                 <span>Token</span>
-                <span>Pts</span>
-                <span>W</span>
-                <span>L</span>
-                <span>Fights</span>
-                <span>Status</span>
+                <span className="text-right">Pts</span>
+                <span className="hidden text-right md:block">W</span>
+                <span className="hidden text-right md:block">L</span>
+                <span className="hidden text-right md:block">Fights</span>
+                <span className="text-right md:pl-3 md:text-left">Status</span>
               </div>
-              {board.table.map((entry) => (
-                <TokenLink key={entry.tokenId} tokenId={entry.tokenId}>
-                  <StandingRow entry={entry} yours={ownedKeys.has(tokenIdentityKey(entry.tokenId))} chainId={leagueChainId} />
-                </TokenLink>
+              {standings.map((entry) => (
+                <div key={entry.tokenId}>
+                  <TokenLink tokenId={entry.tokenId} className="block text-mw-text hover:text-mw-text">
+                    <StandingRow entry={entry} yours={ownedKeys.has(tokenIdentityKey(entry.tokenId))} chainId={leagueChainId} qualified={qualifiedLabel(entry.tokenId)} />
+                  </TokenLink>
+                  {cutRank != null && entry.rank === cutRank && standings.some((row) => row.rank > cutRank) ? (
+                    <div className="bg-[#1A130D] px-3.5 py-1 font-mw-cond text-xs uppercase tracking-[0.08em] text-[#FFB27A]">Quarterly finals cut</div>
+                  ) : null}
+                </div>
               ))}
             </section>
-          ) : null}
 
-          {yours.length ? (
-            <section data-warzone-mwl-your-tokens="true">
-              <div className="mb-2 text-[10px] uppercase tracking-[0.22em] text-white/45">Your tokens</div>
-              {yours.map((entry) => (
-                <TokenLink key={`yours-${entry.tokenId}`} tokenId={entry.tokenId}>
-                  <div
-                    className="flex items-center justify-between gap-3 border-b py-3"
-                    style={{ borderColor: "var(--mwz-flat-card-border)" }}
-                    data-mwl-your-rank={entry.rank}
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="w-10 shrink-0 font-retro text-white/60">#{entry.rank}</div>
-                      <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} chainId={leagueChainId} tokenAddress={entry.tokenId} />
-                      <div className="min-w-0">
-                        <div className="truncate font-black text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
-                        <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
+            <aside className="flex flex-col gap-4">
+              {yours.length ? (
+                <section data-warzone-mwl-your-tokens="true" className={`${card} flex flex-col gap-2.5 p-4`}>
+                  <span className={cardTitle}>Your tokens</span>
+                  {yours.map((entry) => (
+                    <TokenLink key={`yours-${entry.tokenId}`} tokenId={entry.tokenId} className="block text-mw-text hover:text-mw-text">
+                      <div className="flex items-center justify-between gap-3 text-sm" data-mwl-your-rank={entry.rank}>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" chainId={leagueChainId} tokenAddress={entry.tokenId} />
+                          <span className="truncate font-bold">{tickerOf(entry)}</span>
+                        </span>
+                        <span className="shrink-0 font-mw-mono">#{entry.rank} · {Number(entry.points || 0).toLocaleString()} pts · {entry.wins}-{entry.losses}</span>
                       </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-retro">{Number(entry.points || 0).toLocaleString()} PTS</div>
-                      <div className="text-xs text-white/50">
-                        {entry.wins}W / {entry.losses}L
-                      </div>
-                    </div>
-                  </div>
-                </TokenLink>
-              ))}
-            </section>
-          ) : null}
+                    </TokenLink>
+                  ))}
+                  <p className="m-0 text-[13px] text-mw-muted">Shown only for coins your wallet created.</p>
+                </section>
+              ) : null}
+              <section className={`${card} flex flex-col gap-1.5 p-4`}>
+                <span className={cardTitle}>Points</span>
+                <p className="m-0 text-sm text-mw-muted">Ranked win 3, loss 1. Open War counts half. Points reset each season.</p>
+              </section>
+            </aside>
+          </div>
         </>
       ) : (
-        <div className="py-4 text-sm text-muted-foreground" data-warzone-mwl-empty={empty.kind}>
-          <div className="font-retro text-foreground">{empty.title}</div>
-          <p className="mt-1">{empty.body}</p>
+        <div className={`${card} p-4 text-sm text-mw-muted`} data-warzone-mwl-empty={empty.kind}>
+          <div className="font-mw-cond text-lg font-bold text-mw-text">{empty.title}</div>
+          <p className="m-0 mt-1">{empty.body}</p>
         </div>
       )}
     </WarzoneContent>
