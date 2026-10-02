@@ -244,7 +244,8 @@ export default function PublicProfile({
 
   const explorerUrl = useMemo(() => `${getExplorerBase(activeChainId)}/address/${profileWallet}`, [activeChainId, profileWallet]);
   const rank = useMemo(() => safeRank(profile), [profile]);
-  const viewerAccount = wallet.account || null;
+  // Follow works for Solana and EVM wallets (followApi needs no signature): use the active wallet, not only EVM.
+  const viewerAccount = feedViewer || wallet.account || null;
 
   useEffect(() => {
     let cancelled = false;

@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import { detectWalletStandardSolanaWallets } from "@/lib/solanaWalletStandard";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -91,6 +92,23 @@ function walletPriority(option: UnifiedWalletOption) {
   if (id.includes("okx") || name.includes("okx")) return 920;
   if (option.kind === "evm") return 800 + option.sortScore;
   return 700 + option.sortScore;
+}
+
+/**
+ * Phantom / Solflare are detected with emoji placeholders; the same wallets register their real logo
+ * (an image data URI) through wallet-standard. Use that logo when names match (display only).
+ */
+function standardIconFor(name: string, fallback?: string) {
+  const current = String(fallback || "");
+  if (/^(data:image\/|https?:\/\/|\/)/.test(current)) return current;
+  try {
+    const key = String(name || "").toLowerCase().replace(/\s+/g, "");
+    const match = detectWalletStandardSolanaWallets().find((w) => String(w.name || "").toLowerCase().replace(/\s+/g, "") === key);
+    if (match && /^(data:image\/|https?:\/\/)/.test(String(match.icon || ""))) return match.icon;
+  } catch {
+    // wallet-standard not available
+  }
+  return current;
 }
 
 function WalletIcon({ option }: { option: UnifiedWalletOption }) {
@@ -227,7 +245,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
         id: wallet.id,
         name: wallet.name,
         description: "Solana mainnet wallet.",
-        icon: wallet.icon,
+        icon: standardIconFor(wallet.name, wallet.icon),
         detected: true,
         sortScore: 90 - index,
       }))

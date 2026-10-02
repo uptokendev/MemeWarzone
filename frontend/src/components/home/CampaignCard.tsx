@@ -1,4 +1,6 @@
 import { AthBar } from "@/components/token/AthBar";
+import { isSolanaChainId } from "@/lib/chainConfig";
+import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { UpvoteDialog } from "@/components/token/UpvoteDialog";
 import { Button } from "@/components/ui/button";
@@ -72,6 +74,11 @@ export function CampaignCard({
 }) {
   const navigate = useNavigate();
   const wallet = useWallet();
+  const { solanaAccount, isSolanaConnected } = useSolanaWallet();
+  // Follow uses the wallet that matches the coin's chain: Phantom/Solflare on Solana, the EVM wallet elsewhere.
+  const followerAccount = isSolanaChainId(chainIdForStorage)
+    ? (isSolanaConnected && solanaAccount ? String(solanaAccount) : null)
+    : wallet.account || null;
   const { toast } = useToast();
   const { fetchCampaignLogoURI } = useLaunchpad();
   const [followBusy, setFollowBusy] = useState(false);
@@ -146,15 +153,15 @@ export function CampaignCard({
     let alive = true;
     (async () => {
       try {
-        if (!wallet.account) {
+        if (!followerAccount) {
           if (alive) setFollowed(false);
           return;
         }
-        if (!isChainAddressCompatible(chainIdForStorage, wallet.account, addr)) {
+        if (!isChainAddressCompatible(chainIdForStorage, followerAccount, addr)) {
           if (alive) setFollowed(false);
           return;
         }
-        const v = await isFollowingCampaign(wallet.account, addr, chainIdForStorage);
+        const v = await isFollowingCampaign(followerAccount, addr, chainIdForStorage);
         if (alive) setFollowed(v);
       } catch {
         if (alive) setFollowed(false);
@@ -163,13 +170,13 @@ export function CampaignCard({
     return () => {
       alive = false;
     };
-  }, [wallet.account, addr, chainIdForStorage]);
+  }, [followerAccount, addr, chainIdForStorage]);
 
   const toggleFollow = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!addr) return;
 
-    if (!wallet.account) {
+    if (!followerAccount) {
       toast({ title: "Connect wallet", description: "Connect your wallet to follow campaigns." });
       try {
         window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal"));
@@ -180,7 +187,7 @@ export function CampaignCard({
       return;
     }
 
-    if (!isChainAddressCompatible(chainIdForStorage, wallet.account, addr)) {
+    if (!isChainAddressCompatible(chainIdForStorage, followerAccount, addr)) {
       toast({
         title: "Follow unavailable",
         description: chainAddressCompatibilityMessage(chainIdForStorage),
@@ -194,8 +201,8 @@ export function CampaignCard({
     setFollowed(next);
     try {
       const signOpts = { signer: wallet.signer };
-      if (next) await followCampaign(wallet.account, addr, chainIdForStorage, signOpts);
-      else await unfollowCampaign(wallet.account, addr, chainIdForStorage, signOpts);
+      if (next) await followCampaign(followerAccount, addr, chainIdForStorage, signOpts);
+      else await unfollowCampaign(followerAccount, addr, chainIdForStorage, signOpts);
     } catch (err: unknown) {
       setFollowed(!next);
       toast({

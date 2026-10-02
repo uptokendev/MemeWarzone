@@ -1,4 +1,5 @@
 /** Home (the feed on "/"), UI redesign phase 2 (artboard Home + HomeMobile). */
+import { AdRow } from "@/components/home-feed/AdRow";
 import { isPostGradRouteEnabled, postGradFlags } from "@/features/postgrad/config";
 import { useStickyRail } from "@/hooks/useStickyRail";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -13,7 +14,6 @@ import {
   MwlCard,
   LiveBattlesCard,
   RecruiterCard,
-  StoryRow,
   TrendingCard,
 } from "@/components/home-feed/HomeParts";
 import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
@@ -130,7 +130,8 @@ export default function Feed() {
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-4">
           <h1 className="sr-only">Home</h1>
-          <StoryRow chainId={coinChainId} liveBattles={liveBattles} />
+          {/* CO-21 (founder, 2026-10-03): the story row became the ad row (slot home-top-row). */}
+          <AdRow chainId={coinChainId} />
           <div className="hidden lg:block"><HomeComposer onPosted={() => void load()} /></div>
           <nav role="tablist" aria-label="Feed filter" className="flex gap-5 overflow-x-auto border-b border-[#242A31] px-3 [scrollbar-width:none] lg:gap-6 lg:px-1 [&::-webkit-scrollbar]:hidden">
             {TABS.map((t) => (
