@@ -21,6 +21,10 @@ export async function loadSolanaV0Module() {
   return loadFrontendTsModule("../src/lib/solanaV0Transaction.ts");
 }
 
+export async function loadSolanaUserV0Module() {
+  return loadFrontendTsModule("../src/lib/solanaUserV0Transaction.ts");
+}
+
 export async function loadSolanaLaunchpadInstructions() {
   return loadFrontendTsModule("../src/lib/solanaLaunchpadInstructions.ts");
 }

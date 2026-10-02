@@ -64,6 +64,7 @@ export type TradeTokensInstructionAccounts = {
   tokenProgram?: string;
   systemProgram?: string;
   feeEscrow: string;
+  creatorFeeVault: string;
 };
 
 function u64le(value: string | number | bigint): Uint8Array {
@@ -258,6 +259,7 @@ export function buildTradeTokensInstruction(
       { pubkey: new PublicKey(a.tokenProgram || SOLANA_TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
       { pubkey: new PublicKey(a.systemProgram || SOLANA_SYSTEM_PROGRAM_ID), isSigner: false, isWritable: false },
       { pubkey: new PublicKey(a.feeEscrow), isSigner: false, isWritable: true },
+      { pubkey: new PublicKey(a.creatorFeeVault), isSigner: false, isWritable: true },
     ],
     data: encodeTradeTokensData(input),
   });

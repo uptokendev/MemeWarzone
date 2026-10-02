@@ -1,4 +1,4 @@
-//! Canonical fee envelope — same numbers as TreasuryRouterV2.previewRoute.
+//! Canonical fee envelope — same numbers as TreasuryRouterV3.previewTrade/previewFinalize.
 //! Router bps are of the 2% fee, not of trade volume.
 
 use anchor_lang::prelude::*;
@@ -20,6 +20,7 @@ pub const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
 pub struct RouteAmounts {
     pub weekly_league: u64,
     pub monthly_league: u64,
+    pub creator: u64,
     pub recruiter: u64,
     pub airdrop: u64,
     pub squad: u64,
@@ -39,21 +40,23 @@ pub fn preview_route(kind: u8, profile: u8, fee_amount: u64) -> Result<RouteAmou
         crate::TreasuryError::InvalidPeriod
     );
 
-    let (league_bps, recruiter_bps, airdrop_bps, squad_bps) = if kind == ROUTE_KIND_TRADE {
-        match profile {
-            PROFILE_STANDARD_LINKED => (3750, 1250, 0, 250),
-            PROFILE_STANDARD_UNLINKED => (3750, 0, 1500, 0),
-            _ => (3750, 1500, 0, 250),
-        }
-    } else {
-        match profile {
-            PROFILE_STANDARD_LINKED => (0, 1500, 0, 250),
-            PROFILE_STANDARD_UNLINKED => (0, 0, 1750, 0),
-            _ => (0, 1750, 0, 250),
-        }
-    };
+    let (league_bps, creator_bps, recruiter_bps, airdrop_bps, squad_bps) =
+        if kind == ROUTE_KIND_TRADE {
+            match profile {
+                PROFILE_STANDARD_LINKED => (3750, 500, 1250, 0, 250),
+                PROFILE_STANDARD_UNLINKED => (3750, 500, 0, 1500, 0),
+                _ => (3750, 500, 1500, 0, 250),
+            }
+        } else {
+            match profile {
+                PROFILE_STANDARD_LINKED => (0, 0, 1500, 0, 250),
+                PROFILE_STANDARD_UNLINKED => (0, 0, 0, 1750, 0),
+                _ => (0, 0, 1750, 0, 250),
+            }
+        };
 
     let league = bps(fee_amount, league_bps)?;
+    let creator = bps(fee_amount, creator_bps)?;
     let recruiter = bps(fee_amount, recruiter_bps)?;
     let airdrop = bps(fee_amount, airdrop_bps)?;
     let squad = bps(fee_amount, squad_bps)?;
@@ -61,6 +64,7 @@ pub fn preview_route(kind: u8, profile: u8, fee_amount: u64) -> Result<RouteAmou
     let monthly = league.saturating_sub(weekly);
     let used = weekly
         .checked_add(monthly)
+        .and_then(|v| v.checked_add(creator))
         .and_then(|v| v.checked_add(recruiter))
         .and_then(|v| v.checked_add(airdrop))
         .and_then(|v| v.checked_add(squad))
@@ -69,6 +73,7 @@ pub fn preview_route(kind: u8, profile: u8, fee_amount: u64) -> Result<RouteAmou
     Ok(RouteAmounts {
         weekly_league: weekly,
         monthly_league: monthly,
+        creator,
         recruiter,
         airdrop,
         squad,
