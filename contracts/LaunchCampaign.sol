@@ -13,7 +13,9 @@ import {LaunchToken} from "./token/LaunchToken.sol";
 import {ITopazRouter02} from "./interfaces/ITopazRouter02.sol";
 import {ITopazV2Factory} from "./interfaces/ITopazV2Factory.sol";
 
-interface IPhase1TreasuryRouter {
+interface IPhase1TreasuryRouterV3 {
+    function routeTrade(uint8 profile) external payable;
+    function routeFinalize(uint8 profile) external payable;
     function route(uint8 kind, uint8 profile) external payable;
 }
 
@@ -37,7 +39,6 @@ interface ILaunchProtectionConfigSource {
     function launchProtectionConfig() external view returns (uint256 blocks_, uint256 maxBuyWei, uint256 maxWalletWei);
 }
 
-/// @notice Pump.fun inspired bonding curve launch campaign that targets a Topaz v2 volatile pool for final liquidity.
 contract LaunchCampaign is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
     using ECDSA for bytes32;
@@ -68,9 +69,9 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         bool requireAuthorizedTrading;
         uint8 tradeRouteProfile;
         uint8 finalizeRouteProfile;
+        bool strictFeeRouting;
     }
 
-    /// @dev Reservation evidence is verified and stored by LaunchFactory. The campaign only needs launchAt to enforce trading.
     struct ScheduleParams {
         uint64 launchAt;
         bytes32 draftReferenceHash;
@@ -119,10 +120,10 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     address public lpReceiver;
     uint8 public tradeRouteProfile;
     uint8 public finalizeRouteProfile;
+    bool public strictFeeRouting;
 
     uint256 public basePrice;
     uint256 public priceSlope;
-    /// @notice USD-denominated graduation threshold, scaled to 18 decimals.
     uint256 public graduationTarget;
     uint256 public liquidityBps;
     uint256 public protocolFeeBps;
@@ -133,7 +134,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 public creatorReserve;
 
     uint256 public sold;
-    /// @notice Net bonding-curve principal from buys minus sell gross, excluding fees and direct native transfers.
     uint256 public netRaisedWei;
     bool public launched;
     uint256 public finalizedAt;
@@ -246,6 +246,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error ExceedsSold();
     error Slippage();
     error InsufficientValue();
+    error FeeRoutingFailed();
 
     bool private _initialized;
 
@@ -257,7 +258,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         _initialize(params, uint64(block.timestamp));
     }
 
-function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt) external {
+    function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt) external {
         _initialize(params, scheduledLaunchAt);
     }
 
@@ -297,6 +298,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
         router = ITopazRouter02(params.router);
         tradeRouteProfile = params.tradeRouteProfile;
         finalizeRouteProfile = params.finalizeRouteProfile;
+        strictFeeRouting = params.strictFeeRouting;
         creator = params.creator;
         riskRegistry = params.riskRegistry;
         creatorBuyLockUntil = params.creatorBuyLockUntil;
@@ -425,15 +427,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
         uint64 routeDeadline,
         bytes calldata routeSignature
     ) external payable nonReentrant returns (uint256 cost) {
-        _verifyTradeRouteAuthorization(
-            msg.sender,
-            routeProfile,
-            TRADE_AUTH_BUY_EXACT_TOKENS,
-            amountOut,
-            maxCost,
-            routeDeadline,
-            routeSignature
-        );
+        _verifyTradeRouteAuthorization(msg.sender, routeProfile, TRADE_AUTH_BUY_EXACT_TOKENS, amountOut, maxCost, routeDeadline, routeSignature);
         return _buyExactTokens(msg.sender, amountOut, maxCost, true, routeProfile);
     }
 
@@ -448,15 +442,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
         uint64 routeDeadline,
         bytes calldata routeSignature
     ) external payable nonReentrant returns (uint256 tokensOut, uint256 totalSpent) {
-        _verifyTradeRouteAuthorization(
-            msg.sender,
-            routeProfile,
-            TRADE_AUTH_BUY_EXACT_BNB,
-            msg.value,
-            minTokensOut,
-            routeDeadline,
-            routeSignature
-        );
+        _verifyTradeRouteAuthorization(msg.sender, routeProfile, TRADE_AUTH_BUY_EXACT_BNB, msg.value, minTokensOut, routeDeadline, routeSignature);
         return _buyExactBnb(msg.sender, minTokensOut, true, routeProfile);
     }
 
@@ -472,15 +458,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
         uint64 routeDeadline,
         bytes calldata routeSignature
     ) external nonReentrant returns (uint256 payout) {
-        _verifyTradeRouteAuthorization(
-            msg.sender,
-            routeProfile,
-            TRADE_AUTH_SELL_EXACT_TOKENS,
-            amountIn,
-            minPayout,
-            routeDeadline,
-            routeSignature
-        );
+        _verifyTradeRouteAuthorization(msg.sender, routeProfile, TRADE_AUTH_SELL_EXACT_TOKENS, amountIn, minPayout, routeDeadline, routeSignature);
         return _sellExactTokens(msg.sender, amountIn, minPayout, true, routeProfile);
     }
 
@@ -695,7 +673,6 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
             emit GraduationLiquidityCapped(desiredLiquidityTokens, lpTokensDesired, desiredLiquidityValue, liquidityValue);
         }
 
-        // Production Topaz pulls from the adapter, so the launch token must allow the adapter-to-pool transfer during this atomic handoff.
         token.enableTrading();
         tokenInterface.forceApprove(address(router), lpTokensDesired);
         (usedTokens, usedBnb, g.graduatedLiquidityLp) = router.addLiquidityETH{value: liquidityValue}(
@@ -764,11 +741,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
     function _useUnifiedRewardRouter() internal view returns (bool) {
         address receiver = feeRecipient;
         if (receiver == address(0) || receiver != leagueReceiver) return false;
-        uint256 size;
-        assembly {
-            size := extcodesize(receiver)
-        }
-        return size > 0;
+        return receiver.code.length > 0;
     }
 
     function _routeFeeOrSendLegacy(uint256 feeAmount, uint8 routeKind, uint256 feeBaseAmount) internal {
@@ -777,14 +750,26 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
 
     function _routeFeeOrSendLegacyWithProfile(uint256 feeAmount, uint8 routeKind, uint256 feeBaseAmount, uint8 routeProfile) internal {
         if (feeAmount == 0) return;
+
         if (_useUnifiedRewardRouter()) {
-            try IPhase1TreasuryRouter(payable(feeRecipient)).route{value: feeAmount}(routeKind, routeProfile) {
+            if (strictFeeRouting) {
+                if (routeKind == ROUTE_KIND_TRADE) {
+                    IPhase1TreasuryRouterV3(payable(feeRecipient)).routeTrade{value: feeAmount}(routeProfile);
+                } else {
+                    IPhase1TreasuryRouterV3(payable(feeRecipient)).routeFinalize{value: feeAmount}(routeProfile);
+                }
+                return;
+            }
+
+            try IPhase1TreasuryRouterV3(payable(feeRecipient)).route(routeKind, routeProfile) {
                 return;
             } catch {
                 _escrowNativeFee(feeRecipient, feeAmount);
                 return;
             }
         }
+
+        if (strictFeeRouting) revert FeeRoutingFailed();
         if (routeKind == ROUTE_KIND_FINALIZE) {
             if (feeRecipient != address(0)) _sendNativeFee(payable(feeRecipient), feeAmount);
             return;
