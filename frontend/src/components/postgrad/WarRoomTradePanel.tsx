@@ -276,15 +276,15 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
     return getReadProvider(chainId);
   }, [chainId, isSolanaCampaign]);
 
-  const topbarButtonClass =
-    "bg-transparent border border-orange-400/50 text-orange-300 hover:bg-orange-500 hover:text-white hover:border-orange-500 " +
-    "font-retro text-[11px] md:text-sm px-3 py-2 rounded-lg md:rounded-xl shadow-lg transition-colors";
-  const ctaTabsListClass = "grid w-full grid-cols-2 mb-2 bg-transparent p-0 h-auto gap-1.5 md:mb-3 md:gap-2";
-  const ctaTabsTriggerClass =
-    "rounded-lg md:rounded-xl border px-3 py-2 font-retro text-[11px] md:text-sm transition-colors " +
-    "bg-transparent border-orange-400/40 text-orange-300 hover:bg-orange-500 hover:text-white hover:border-orange-500 " +
-    "data-[state=active]:bg-orange-500 data-[state=active]:text-white data-[state=active]:border-orange-500 data-[state=active]:shadow-lg";
-
+  // UI redesign: artboard trade panel classes (presentation only).
+  const segListClass = "grid h-auto w-full grid-cols-2 gap-1 rounded-[10px] border border-[#242A31] bg-[#13171C] p-1";
+  const segTriggerClass =
+    "min-h-10 rounded-lg border-0 bg-transparent font-mw-body text-[15px] font-bold text-mw-muted shadow-none hover:text-mw-text";
+  const chipClass =
+    "mw-focus inline-flex min-h-[30px] items-center justify-center rounded-lg border border-[#2E353D] bg-[#171B20] px-2.5 font-mw-mono text-[13px] text-[#C9CED4] hover:border-[#3A424C]";
+  const chipOnClass = "border-mw-accent bg-[#2A1609] text-mw-accent-soft hover:border-mw-accent";
+  const amountClass =
+    "mw-focus h-12 w-full rounded-[10px] border border-[#2E353D] bg-mw-input pl-3.5 pr-20 font-mw-mono text-lg text-mw-text placeholder:text-[#5C6670] focus:border-mw-accent focus:outline-none";
   const isDexStage = useMemo(() => {
     if (isSolanaCampaign) return solanaDex;
     const hasLaunchFlag = (metrics as any)?.launched !== undefined || (metrics as any)?.finalizedAt !== undefined;
@@ -1182,209 +1182,190 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
     }
   };
 
+  const balanceLabel = tradeInputDenom === "BNB" ? formatAmount(bnbBalanceWei, isSolanaCampaign ? 9 : 18, nativeUnit) : `${formatAmount(tokenBalanceWei, tokenDecimals)} ${campaign.symbol}`;
+  const denomChips = (label: string) => (
+    <div className="flex items-center justify-between gap-2 text-[13px]">
+      <span className="text-mw-muted">{label}</span>
+      <span className="flex gap-1">
+        <button type="button" aria-pressed={tradeInputDenom === "BNB"} onClick={tradeInputDenom === "BNB" ? undefined : toggleTradeInputDenom} className={`${chipClass} ${tradeInputDenom === "BNB" ? chipOnClass : ""}`}>{nativeUnit}</button>
+        <button type="button" aria-pressed={tradeInputDenom !== "BNB"} onClick={tradeInputDenom === "BNB" ? toggleTradeInputDenom : undefined} className={`${chipClass} ${tradeInputDenom !== "BNB" ? chipOnClass : ""}`}>{campaign.symbol || "TOKEN"}</button>
+      </span>
+    </div>
+  );
+  const amountInput = (
+    <div className="relative">
+      <input
+        type="text"
+        inputMode="decimal"
+        aria-label="Amount"
+        value={tradeAmount}
+        onChange={(event) => setTradeAmount(event.target.value)}
+        className={amountClass}
+        placeholder="0"
+      />
+      <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 font-mw-mono text-[13px] text-mw-muted">{tradeInputDenom === "BNB" ? nativeUnit : campaign.symbol}</span>
+    </div>
+  );
+  const slipChip = <span className={`${chipClass} cursor-default hover:border-[#2E353D]`}>Slip {SLIPPAGE_PCT}%</span>;
+  // Buy: 25% / 50% of the native balance, only while the amount is entered in native units (fills the field only).
+  const setBuyPercent = (pct: bigint) => {
+    if (bnbBalanceWei == null) return;
+    setTradeAmount(ethers.formatUnits((bnbBalanceWei * pct) / 100n, isSolanaCampaign ? 9 : 18));
+  };
+
   return (
-    <div className="rounded-[14px] border border-mw-border bg-mw-input p-3 md:p-3.5">
-      <div className="text-[10px] uppercase tracking-[0.24em] text-accent/80">Trade</div>
-      <div className="mt-3 rounded-xl border border-white/10 bg-black/25 p-2.5 md:mt-4 md:rounded-2xl md:p-3">
-        <Tabs value={tradeTab} onValueChange={(value) => setTradeTab(value as "buy" | "sell")}>
-          <TabsList className={ctaTabsListClass}>
-            <TabsTrigger value="buy" className={ctaTabsTriggerClass}>Buy</TabsTrigger>
-            <TabsTrigger value="sell" className={ctaTabsTriggerClass}>Sell</TabsTrigger>
-          </TabsList>
+    <div className="flex flex-col gap-2.5 rounded-[14px] border border-mw-border bg-mw-input p-3.5 font-mw-body text-mw-text">
+      <Tabs value={tradeTab} onValueChange={(value) => setTradeTab(value as "buy" | "sell")}>
+        <TabsList className={segListClass}>
+          <TabsTrigger value="buy" className={`${segTriggerClass} data-[state=active]:bg-mw-buy data-[state=active]:text-[#04140A]`}>Buy</TabsTrigger>
+          <TabsTrigger value="sell" className={`${segTriggerClass} data-[state=active]:bg-mw-sell data-[state=active]:text-[#FFF1F3]`}>Sell</TabsTrigger>
+        </TabsList>
 
-          <TabsContent value="buy" className="space-y-2.5 mt-0 md:space-y-3">
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-[10px] text-muted-foreground hover:bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
-                  onClick={toggleTradeInputDenom}
-                >
-                  {tradeInputDenom === "BNB" ? `Switch to ${campaign.symbol}` : `Switch to ${nativeUnit}`}
-                </Button>
-                <span className="text-[11px] text-muted-foreground">Slip {SLIPPAGE_PCT}%</span>
-              </div>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={tradeAmount}
-                  onChange={(event) => setTradeAmount(event.target.value)}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-16 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-primary md:pr-20 md:text-base"
-                  placeholder="0"
-                />
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                  <span className="text-[11px] font-mono text-muted-foreground md:text-xs">{tradeInputDenom === "BNB" ? nativeUnit : campaign.symbol}</span>
-                </div>
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
-                <span className="truncate">Bal: {tradeInputDenom === "BNB" ? formatAmount(bnbBalanceWei, isSolanaCampaign ? 9 : 18, nativeUnit) : `${formatAmount(tokenBalanceWei, tokenDecimals)} ${campaign.symbol}`}</span>
-                <span className="truncate text-right">Pay: {quoteLoading ? "…" : quoteWei != null ? formatAmount(quoteWei, isSolanaCampaign ? 9 : 18, nativeUnit) : "—"}</span>
-              </div>
-              {effectiveTokenWei > 0n ? (
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Receive: {formatAmount(effectiveTokenWei, tokenDecimals)} {campaign.symbol}
-                  {tradeInputDenom === "TOKEN" ? " (exact)" : " (est.)"}
-                </p>
-              ) : null}
-              {quoteError ? <p className="mt-2 text-center text-xs text-destructive">{quoteError}</p> : null}
-            </div>
+        <TabsContent value="buy" className="mt-2.5 flex flex-col gap-2.5">
+          {denomChips("Pay in")}
+          {amountInput}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate font-mw-mono text-[13px] text-mw-muted">Bal {balanceLabel}</span>
+            {tradeInputDenom === "BNB" ? (
+              <>
+                <button type="button" className={chipClass} onClick={() => setBuyPercent(25n)}>25%</button>
+                <button type="button" className={chipClass} onClick={() => setBuyPercent(50n)}>50%</button>
+              </>
+            ) : null}
+            {slipChip}
+          </div>
+          <div className="flex items-center justify-between gap-2 font-mw-mono text-[13px]">
+            <span className="truncate text-mw-muted">Pay {quoteLoading ? "…" : quoteWei != null ? `~${formatAmount(quoteWei, isSolanaCampaign ? 9 : 18, nativeUnit)}` : "—"}</span>
+            <span className="truncate">
+              {effectiveTokenWei > 0n ? `get ~${formatAmount(effectiveTokenWei, tokenDecimals)} ${campaign.symbol}${tradeInputDenom === "TOKEN" ? " (exact)" : ""}` : ""}
+            </span>
+          </div>
+          {quoteError ? <p className="m-0 text-center text-xs text-mw-down">{quoteError}</p> : null}
 
-            <div className="text-center text-[11px] text-muted-foreground md:text-xs">
-              {isDexStage && !isSolanaCampaign ? (
-                isTopazTradingActive && quoteWei != null ? (
-                  <p>Topaz execution · slippage {(topazSlippageBps / 100).toFixed(2)}%.</p>
-                ) : (
-                  <p>Topaz market verification is in progress.</p>
-                )
-              ) : quoteWei != null && effectiveTokenWei > 0n ? (
-                <p>
-                  Pay ~{formatAmount(quoteWei, isSolanaCampaign ? 9 : 18, nativeUnit)} → get {formatAmount(effectiveTokenWei, tokenDecimals)} {campaign.symbol}
-                  {" "}(max {formatAmount((quoteWei * BigInt(100 + SLIPPAGE_PCT)) / 100n, isSolanaCampaign ? 9 : 18, nativeUnit)})
-                </p>
+          <div className="text-center text-xs text-mw-muted">
+            {isDexStage && !isSolanaCampaign ? (
+              isTopazTradingActive && quoteWei != null ? (
+                <p className="m-0">Topaz execution · slippage {(topazSlippageBps / 100).toFixed(2)}%.</p>
               ) : (
-                <p>Enter a {nativeUnit} amount to buy (switch to {campaign.symbol || "TOKEN"} for exact size).</p>
-              )}
-            </div>
+                <p className="m-0">Topaz market verification is in progress.</p>
+              )
+            ) : quoteWei != null && effectiveTokenWei > 0n ? (
+              <p className="m-0">
+                Max {formatAmount((quoteWei * BigInt(100 + SLIPPAGE_PCT)) / 100n, isSolanaCampaign ? 9 : 18, nativeUnit)} with {SLIPPAGE_PCT}% slippage
+              </p>
+            ) : (
+              <p className="m-0">Enter a {nativeUnit} amount to buy (switch to {campaign.symbol || "TOKEN"} for exact size).</p>
+            )}
+          </div>
 
-            <Button
-              onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
-              disabled={
-                walletMatchesCampaign &&
-                (tradePending ||
-                  approvePending ||
-                  quoteLoading ||
-                  (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
-                  (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n))
-              }
-              className={`w-full ${topbarButtonClass}`}
+          <Button
+            onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
+            disabled={
+              walletMatchesCampaign &&
+              (tradePending ||
+                approvePending ||
+                quoteLoading ||
+                (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
+                (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n))
+            }
+            className="min-h-12 w-full rounded-[10px] border border-mw-buy bg-mw-buy font-mw-body text-base font-bold text-[#04140A] hover:bg-[#15913F] disabled:opacity-50"
+          >
+            {!walletMatchesCampaign
+              ? connectTradeWalletLabel
+              : tradePending
+                ? "Processing..."
+                : isSolanaCampaign && isDexStage
+                  ? "Buy on Meteora"
+                  : isDexStage
+                    ? "Buy on Topaz"
+                    : "Buy"}
+          </Button>
+        </TabsContent>
+
+        <TabsContent value="sell" className="mt-2.5 flex flex-col gap-2.5">
+          {denomChips("Amount in")}
+          {amountInput}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate font-mw-mono text-[13px] text-mw-muted">Bal {balanceLabel}</span>
+            <button
+              type="button"
+              className={chipClass}
+              onClick={() => {
+                if (tokenBalanceWei == null) return;
+                const amount = (tokenBalanceWei * 25n) / 100n;
+                setTradeAmount(ethers.formatUnits(amount, tokenDecimals));
+              }}
             >
-              {!walletMatchesCampaign
-                ? connectTradeWalletLabel
-                : tradePending
-                  ? "Processing..."
-                  : isSolanaCampaign && isDexStage
-                    ? "Buy on Meteora"
-                    : isDexStage
-                      ? "Buy on Topaz"
-                      : "Buy"}
-            </Button>
-          </TabsContent>
+              25%
+            </button>
+            <button
+              type="button"
+              className={chipClass}
+              onClick={() => {
+                if (tokenBalanceWei == null) return;
+                const amount = (tokenBalanceWei * 50n) / 100n;
+                setTradeAmount(ethers.formatUnits(amount, tokenDecimals));
+              }}
+            >
+              50%
+            </button>
+            <button
+              type="button"
+              className={chipClass}
+              onClick={() => {
+                if (tokenBalanceWei == null) return;
+                setTradeAmount(ethers.formatUnits(tokenBalanceWei, tokenDecimals));
+              }}
+            >
+              100%
+            </button>
+            {slipChip}
+          </div>
+          <div className="flex items-center justify-between gap-2 font-mw-mono text-[13px]">
+            <span className="truncate text-mw-muted">{tradeInputDenom === "BNB" && effectiveTokenWei > 0n ? `Sell ~${formatAmount(effectiveTokenWei, tokenDecimals)} ${campaign.symbol}` : ""}</span>
+            <span className="truncate">Get ~{tradeInputDenom === "BNB" ? formatAmount(effectiveBnbWei, isSolanaCampaign ? 9 : 18, nativeUnit) : (quoteLoading ? "…" : quoteWei != null ? formatAmount(quoteWei, isSolanaCampaign ? 9 : 18, nativeUnit) : "—")}</span>
+          </div>
+          {approvePending ? <p className="m-0 text-center text-xs text-mw-muted">Approval in progress...</p> : null}
+          {quoteError ? <p className="m-0 text-center text-xs text-mw-down">{quoteError}</p> : null}
 
-          <TabsContent value="sell" className="space-y-2.5 mt-0 md:space-y-3">
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-[11px] text-muted-foreground">Amt ({tradeInputDenom === "BNB" ? nativeUnit : campaign.symbol})</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground"
-                  onClick={toggleTradeInputDenom}
-                >
-                  {tradeInputDenom === "BNB" ? `Switch to ${campaign.symbol}` : `Switch to ${nativeUnit}`}
-                </Button>
-              </div>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={tradeAmount}
-                  onChange={(event) => setTradeAmount(event.target.value)}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-16 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-primary md:pr-20 md:text-base"
-                  placeholder="0"
-                />
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                  <span className="text-[11px] font-mono text-muted-foreground md:text-xs">{tradeInputDenom === "BNB" ? nativeUnit : campaign.symbol}</span>
-                </div>
-              </div>
-
-              <div className="mt-2 grid grid-cols-3 gap-1.5">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-0 text-[11px]"
-                  onClick={() => {
-                    if (tokenBalanceWei == null) return;
-                    const amount = (tokenBalanceWei * 25n) / 100n;
-                    setTradeAmount(ethers.formatUnits(amount, tokenDecimals));
-                  }}
-                >
-                  25%
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-0 text-[11px]"
-                  onClick={() => {
-                    if (tokenBalanceWei == null) return;
-                    const amount = (tokenBalanceWei * 50n) / 100n;
-                    setTradeAmount(ethers.formatUnits(amount, tokenDecimals));
-                  }}
-                >
-                  50%
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-0 text-[11px]"
-                  onClick={() => {
-                    if (tokenBalanceWei == null) return;
-                    setTradeAmount(ethers.formatUnits(tokenBalanceWei, tokenDecimals));
-                  }}
-                >
-                  100%
-                </Button>
-              </div>
-
-              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
-                <span className="truncate">Bal: {tradeInputDenom === "BNB" ? formatAmount(bnbBalanceWei, isSolanaCampaign ? 9 : 18, nativeUnit) : `${formatAmount(tokenBalanceWei, tokenDecimals)} ${campaign.symbol}`}</span>
-                <span className="truncate text-right">Out: {tradeInputDenom === "BNB" ? formatAmount(effectiveBnbWei, isSolanaCampaign ? 9 : 18, nativeUnit) : (quoteLoading ? "…" : quoteWei != null ? formatAmount(quoteWei, isSolanaCampaign ? 9 : 18, nativeUnit) : "—")}</span>
-              </div>
-              {tradeInputDenom === "BNB" && effectiveTokenWei > 0n ? (
-                <p className="mt-1 text-[11px] text-muted-foreground">Est. sell: {formatAmount(effectiveTokenWei, tokenDecimals)} {campaign.symbol}</p>
-              ) : null}
-              {approvePending ? <p className="mt-2 text-center text-xs text-muted-foreground">Approval in progress...</p> : null}
-              {quoteError ? <p className="mt-2 text-center text-xs text-destructive">{quoteError}</p> : null}
-            </div>
-
-            <div className="text-center text-[11px] text-muted-foreground md:text-xs">
-              {isDexStage && !isSolanaCampaign ? (
-                isTopazTradingActive && quoteWei != null ? (
-                  <p>Topaz execution · slippage {(topazSlippageBps / 100).toFixed(2)}%.</p>
-                ) : (
-                  <p>Topaz market verification is in progress.</p>
-                )
-              ) : quoteWei != null ? (
-                <p>You will receive ~{formatAmount(quoteWei, isSolanaCampaign ? 9 : 18, nativeUnit)} (min {formatAmount((quoteWei * BigInt(100 - SLIPPAGE_PCT)) / 100n, isSolanaCampaign ? 9 : 18, nativeUnit)})</p>
+          <div className="text-center text-xs text-mw-muted">
+            {isDexStage && !isSolanaCampaign ? (
+              isTopazTradingActive && quoteWei != null ? (
+                <p className="m-0">Topaz execution · slippage {(topazSlippageBps / 100).toFixed(2)}%.</p>
               ) : (
-                <p>Enter an amount to see the sell quote.</p>
-              )}
-            </div>
+                <p className="m-0">Topaz market verification is in progress.</p>
+              )
+            ) : quoteWei != null ? (
+              <p className="m-0">Min {formatAmount((quoteWei * BigInt(100 - SLIPPAGE_PCT)) / 100n, isSolanaCampaign ? 9 : 18, nativeUnit)} with {SLIPPAGE_PCT}% slippage</p>
+            ) : (
+              <p className="m-0">Enter an amount to see the sell quote.</p>
+            )}
+          </div>
 
-            <Button
-              onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
-              disabled={
-                walletMatchesCampaign &&
-                (tradePending ||
-                  approvePending ||
-                  quoteLoading ||
-                  (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
-                  (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n))
-              }
-              className={`w-full ${topbarButtonClass}`}
-            >
-              {!walletMatchesCampaign
-                ? connectTradeWalletLabel
-                : tradePending
-                  ? "Processing..."
-                  : isSolanaCampaign && isDexStage
-                    ? "Sell on Meteora"
-                    : isDexStage
-                      ? "Sell on Topaz"
-                      : "Sell"}
-            </Button>
-          </TabsContent>
-        </Tabs>
-      </div>
+          <Button
+            onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
+            disabled={
+              walletMatchesCampaign &&
+              (tradePending ||
+                approvePending ||
+                quoteLoading ||
+                (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
+                (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n))
+            }
+            className="min-h-12 w-full rounded-[10px] border border-mw-sell bg-mw-sell font-mw-body text-base font-bold text-[#FFF1F3] hover:bg-[#C81A40] disabled:opacity-50"
+          >
+            {!walletMatchesCampaign
+              ? connectTradeWalletLabel
+              : tradePending
+                ? "Processing..."
+                : isSolanaCampaign && isDexStage
+                  ? "Sell on Meteora"
+                  : isDexStage
+                    ? "Sell on Topaz"
+                    : "Sell"}
+          </Button>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

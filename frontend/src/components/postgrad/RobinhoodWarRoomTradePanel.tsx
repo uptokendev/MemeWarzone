@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Contract, ethers } from "ethers";
 import type { CampaignInfo } from "@/lib/launchpadClient";
 import { Button } from "@/components/ui/button";
@@ -260,55 +260,88 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
     ? route?.stockRoute ? "Healthy · both V3 hops verified" : "Unavailable"
     : route ? "Healthy · direct V3 route verified" : "Unavailable";
 
+  // UI redesign: artboard trade panel (presentation only; handlers below are the panel's own).
+  const lblClass = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+  const chipClass =
+    "mw-focus inline-flex min-h-[30px] items-center justify-center rounded-lg border border-[#2E353D] bg-[#171B20] px-2.5 font-mw-mono text-[13px] text-[#C9CED4] hover:border-[#3A424C]";
+  const chipOnClass = "border-mw-accent bg-[#2A1609] text-mw-accent-soft hover:border-mw-accent";
+  const segTriggerClass =
+    "min-h-10 rounded-lg border-0 bg-transparent font-mw-body text-[15px] font-bold text-mw-muted shadow-none hover:text-mw-text";
+  const switchDenom = () => {
+    setTradeInputDenom((value) => (value === "ETH" ? "TOKEN" : "ETH"));
+    setAmount("0");
+    setQuoteDetails(null);
+  };
+  const tokenSymbol = campaign.symbol || "TOKEN";
+  const denomChips = (label: string) => (
+    <div className="flex items-center justify-between gap-2 text-[13px]">
+      <span className="text-mw-muted">{label}</span>
+      <span className="flex gap-1">
+        <button type="button" aria-pressed={tradeInputDenom === "ETH"} onClick={tradeInputDenom === "ETH" ? undefined : switchDenom} className={`${chipClass} ${tradeInputDenom === "ETH" ? chipOnClass : ""}`}>ETH</button>
+        <button type="button" aria-pressed={tradeInputDenom === "TOKEN"} onClick={tradeInputDenom === "TOKEN" ? undefined : switchDenom} className={`${chipClass} ${tradeInputDenom === "TOKEN" ? chipOnClass : ""}`}>{tokenSymbol}</button>
+      </span>
+    </div>
+  );
+  const amountInput = (
+    <div className="relative">
+      <input
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        inputMode="decimal"
+        aria-label={tradeInputDenom === "ETH" ? "ETH amount" : `${campaign.symbol || "Token"} amount`}
+        className="mw-focus h-12 w-full rounded-[10px] border border-[#2E353D] bg-mw-input pl-3.5 pr-20 font-mw-mono text-lg text-mw-text focus:border-mw-accent focus:outline-none"
+      />
+      <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 font-mw-mono text-[13px] text-mw-muted">{tradeInputDenom === "ETH" ? "ETH" : tokenSymbol}</span>
+    </div>
+  );
+  // 25% / 50% fill the field from the balance of the unit being entered (buy in ETH, sell in the token).
+  const percentBalance = tab === "buy" ? (tradeInputDenom === "ETH" ? nativeBalance : null) : tradeInputDenom === "TOKEN" ? tokenBalance : null;
+  const percentDecimals = tab === "buy" ? 18 : TOKEN_DECIMALS;
+  const balanceRow = (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="min-w-0 flex-1 truncate font-mw-mono text-[13px] text-mw-muted">
+        Bal {tradeInputDenom === "ETH" ? formatAmount(nativeBalance, 18, "ETH") : formatAmount(tokenBalance, TOKEN_DECIMALS, tokenSymbol)}
+      </span>
+      {percentBalance != null ? (
+        <>
+          <button type="button" className={chipClass} onClick={() => setAmount(ethers.formatUnits((percentBalance * 25n) / 100n, percentDecimals))}>25%</button>
+          <button type="button" className={chipClass} onClick={() => setAmount(ethers.formatUnits((percentBalance * 50n) / 100n, percentDecimals))}>50%</button>
+        </>
+      ) : null}
+      <span className={`${chipClass} cursor-default hover:border-[#2E353D]`}>Slip 1%</span>
+    </div>
+  );
+  const infoCell = (label: string, value: ReactNode, tone = "text-mw-text") => (
+    <div className="min-w-0">
+      <div className={`${lblClass} text-[11px]`}>{label}</div>
+      <div className={`mt-0.5 truncate text-[13px] font-semibold ${tone}`}>{value}</div>
+    </div>
+  );
+
   return (
-    <div className="rounded-[14px] border border-mw-border bg-mw-input p-3 md:p-3.5">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.22em] text-orange-300">
-            {isStockRoute ? "Robinhood Stock Battlefield" : "Robinhood V3"}
-          </div>
-          <div className="mt-1 text-xs text-white/55">
-            {isStockRoute
-              ? `Native ETH in/out. Permanent liquidity market: ${pairLabel}.`
-              : "Native ETH in/out. Liquidity remains WETH/token underneath."}
-          </div>
-        </div>
-        <div className="text-right text-[10px] text-white/45">
-          <div>{formatAmount(nativeBalance, 18, "ETH")}</div>
-          <div>{formatAmount(tokenBalance, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}</div>
-        </div>
+    <div className="flex flex-col gap-2.5 rounded-[14px] border border-mw-border bg-mw-input p-3.5 font-mw-body text-mw-text">
+      <div>
+        <div className={`${lblClass} text-mw-accent-soft`}>{isStockRoute ? "Robinhood Stock Battlefield" : "Robinhood V3"}</div>
+        <p className="m-0 mt-0.5 text-[13px] text-mw-muted">
+          {isStockRoute
+            ? `Native ETH in/out. Permanent liquidity market: ${pairLabel}.`
+            : "Native ETH in/out. Liquidity remains WETH/token underneath."}
+        </p>
       </div>
 
       {route ? (
-        <div className="mb-3 grid gap-2 rounded-xl border border-white/10 bg-black/25 p-3 text-[11px] text-white/55 sm:grid-cols-2">
-          <div>
-            <div className="text-[9px] uppercase tracking-[0.16em] text-white/35">Permanent pair</div>
-            <div className="mt-1 font-medium text-white/85">{pairLabel}</div>
-          </div>
-          <div>
-            <div className="text-[9px] uppercase tracking-[0.16em] text-white/35">Route health</div>
-            <div className="mt-1 font-medium text-green-300">{routeHealthLabel}</div>
-          </div>
+        <div className="grid gap-2 rounded-[10px] border border-[#242A31] bg-[#13171C] p-3 sm:grid-cols-2">
+          {infoCell("Permanent pair", pairLabel)}
+          {infoCell("Route health", routeHealthLabel, "text-[#6EE7A0]")}
           {isStockRoute ? (
             <>
-              <div>
-                <div className="text-[9px] uppercase tracking-[0.16em] text-white/35">Stock quote asset</div>
-                <div className="mt-1 text-white/85">
-                  {stockToken?.displayName || stockSymbol} · {shortAddress(route.quoteTokenAddress)}
-                </div>
-              </div>
-              <div>
-                <div className="text-[9px] uppercase tracking-[0.16em] text-white/35">Reference price</div>
-                <div className="mt-1 text-white/85">
-                  {formatUsd(stockToken?.price?.priceUsd)} {stockToken?.price?.healthy === false ? "· delayed" : stockToken?.price?.healthy ? "· healthy" : ""}
-                </div>
-              </div>
+              {infoCell("Stock quote asset", `${stockToken?.displayName || stockSymbol} · ${shortAddress(route.quoteTokenAddress)}`)}
+              {infoCell("Reference price", `${formatUsd(stockToken?.price?.priceUsd)} ${stockToken?.price?.healthy === false ? "· delayed" : stockToken?.price?.healthy ? "· healthy" : ""}`)}
               <div className="sm:col-span-2">
-                <div className="text-[9px] uppercase tracking-[0.16em] text-white/35">Execution route</div>
-                <div className="mt-1 font-medium text-orange-200">{routeSummary}</div>
-                <div className="mt-1 text-[10px] leading-relaxed text-white/35">
+                {infoCell("Execution route", routeSummary, "text-mw-accent-soft")}
+                <p className="m-0 mt-1 text-[11px] leading-relaxed text-mw-muted">
                   {stockSymbol} is an intermediate execution asset only. Your wallet supplies or receives ETH; the route is completed atomically inside MemeWarzone.
-                </div>
+                </p>
               </div>
             </>
           ) : null}
@@ -316,101 +349,63 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
       ) : null}
 
       {isStockRoute ? (
-        <div className="mb-3">
-          <RobinhoodBeatTheMarketCard
-            chainId={chainId}
-            campaignAddress={campaign.campaign}
-            memeSymbol={campaign.symbol || "MEME"}
-            quoteSymbol={stockSymbol}
-          />
-        </div>
+        <RobinhoodBeatTheMarketCard
+          chainId={chainId}
+          campaignAddress={campaign.campaign}
+          memeSymbol={campaign.symbol || "MEME"}
+          quoteSymbol={stockSymbol}
+        />
       ) : null}
 
       <Tabs value={tab} onValueChange={(value) => { setTab(value as "buy" | "sell"); setAmount("0"); setQuoteDetails(null); setError(null); }}>
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-2 bg-transparent p-0">
-          <TabsTrigger value="buy" className="border border-orange-400/35 data-[state=active]:bg-orange-500 data-[state=active]:text-white">Buy</TabsTrigger>
-          <TabsTrigger value="sell" className="border border-orange-400/35 data-[state=active]:bg-orange-500 data-[state=active]:text-white">Sell</TabsTrigger>
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-[10px] border border-[#242A31] bg-[#13171C] p-1">
+          <TabsTrigger value="buy" className={`${segTriggerClass} data-[state=active]:bg-mw-buy data-[state=active]:text-[#04140A]`}>Buy</TabsTrigger>
+          <TabsTrigger value="sell" className={`${segTriggerClass} data-[state=active]:bg-mw-sell data-[state=active]:text-[#FFF1F3]`}>Sell</TabsTrigger>
         </TabsList>
-        <TabsContent value="buy" className="mt-3 space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="block text-[10px] uppercase tracking-[0.18em] text-white/45">
-              {tradeInputDenom === "ETH" ? "ETH amount" : `${campaign.symbol || "Token"} amount`}
-            </label>
-            <button
-              type="button"
-              className="text-[10px] uppercase tracking-[0.16em] text-orange-300"
-              onClick={() => {
-                setTradeInputDenom((value) => (value === "ETH" ? "TOKEN" : "ETH"));
-                setAmount("0");
-                setQuoteDetails(null);
-              }}
-            >
-              Switch to {tradeInputDenom === "ETH" ? campaign.symbol || "TOKEN" : "ETH"}
-            </button>
+        <TabsContent value="buy" className="mt-2.5 flex flex-col gap-2.5">
+          {denomChips("Pay in")}
+          {amountInput}
+          {balanceRow}
+          <div className="flex items-center justify-between gap-2 font-mw-mono text-[13px]">
+            <span className="truncate text-mw-muted">Min {formatAmount(minimumOut, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}</span>
+            <span className="truncate">
+              {tradeInputDenom === "ETH"
+                ? `get ~${formatAmount(quoteOut, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}`
+                : `pay ~${formatAmount(quoteOut, 18, "ETH")}`}
+            </span>
           </div>
-          <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className="w-full rounded-lg border border-white/10 bg-black/35 px-3 py-3 text-sm text-white outline-none focus:border-orange-400/60" />
-          <div className="text-xs text-white/55">
-            {tradeInputDenom === "ETH"
-              ? `Estimated receive: ${formatAmount(quoteOut, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}`
-              : `Estimated pay: ${formatAmount(quoteOut, 18, "ETH")}`}
-          </div>
-          <div className="text-[10px] text-white/35">Minimum after 1.00% slippage: {formatAmount(minimumOut, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}</div>
+          <p className="m-0 text-center text-xs text-mw-muted">Minimum after 1.00% slippage: {formatAmount(minimumOut, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}</p>
         </TabsContent>
-        <TabsContent value="sell" className="mt-3 space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="block text-[10px] uppercase tracking-[0.18em] text-white/45">
-              {tradeInputDenom === "TOKEN" ? `${campaign.symbol || "Token"} amount` : "ETH amount"}
-            </label>
-            <button
-              type="button"
-              className="text-[10px] uppercase tracking-[0.16em] text-orange-300"
-              onClick={() => {
-                setTradeInputDenom((value) => (value === "ETH" ? "TOKEN" : "ETH"));
-                setAmount("0");
-                setQuoteDetails(null);
-              }}
-            >
-              Switch to {tradeInputDenom === "TOKEN" ? "ETH" : campaign.symbol || "TOKEN"}
-            </button>
+        <TabsContent value="sell" className="mt-2.5 flex flex-col gap-2.5">
+          {denomChips("Amount in")}
+          {amountInput}
+          {balanceRow}
+          <div className="flex items-center justify-between gap-2 font-mw-mono text-[13px]">
+            <span className="truncate text-mw-muted">Min {formatAmount(minimumOut, 18, "ETH")}</span>
+            <span className="truncate">get ~{formatAmount(quoteOut, 18, "ETH")}</span>
           </div>
-          <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className="w-full rounded-lg border border-white/10 bg-black/35 px-3 py-3 text-sm text-white outline-none focus:border-orange-400/60" />
-          <div className="text-xs text-white/55">Estimated receive: {formatAmount(quoteOut, 18, "ETH")}</div>
-          <div className="text-[10px] text-white/35">Minimum after 1.00% slippage: {formatAmount(minimumOut, 18, "ETH")}</div>
+          <p className="m-0 text-center text-xs text-mw-muted">Minimum after 1.00% slippage: {formatAmount(minimumOut, 18, "ETH")}</p>
         </TabsContent>
       </Tabs>
 
       {isStockRoute && quoteDetails ? (
-        <div className="mt-3 grid gap-2 rounded-xl border border-orange-400/20 bg-orange-500/5 p-3 text-[11px] sm:grid-cols-2">
-          <div>
-            <div className="text-[9px] uppercase tracking-[0.16em] text-white/35">Intermediate {stockSymbol}</div>
-            <div className="mt-1 text-white/80">
-              {formatAmount(quoteDetails.intermediateAmountOutRaw, stockDecimals, stockSymbol)}
-            </div>
-          </div>
-          <div>
-            <div className="text-[9px] uppercase tracking-[0.16em] text-white/35">Route summary</div>
-            <div className="mt-1 font-medium text-orange-200">{routeSummary}</div>
-          </div>
-          <div>
-            <div className="text-[9px] uppercase tracking-[0.16em] text-white/35">Hop 1 impact</div>
-            <div className="mt-1 text-white/80">{formatBps(quoteDetails.firstLegPriceImpactBps)}</div>
-          </div>
-          <div>
-            <div className="text-[9px] uppercase tracking-[0.16em] text-white/35">Hop 2 impact</div>
-            <div className="mt-1 text-white/80">{formatBps(quoteDetails.secondLegPriceImpactBps)}</div>
-          </div>
-          <div className="sm:col-span-2 text-[10px] text-white/35">
+        <div className="grid gap-2 rounded-[10px] border border-[#5A3416] bg-mw-accent-fill p-3 sm:grid-cols-2">
+          {infoCell(`Intermediate ${stockSymbol}`, formatAmount(quoteDetails.intermediateAmountOutRaw, stockDecimals, stockSymbol))}
+          {infoCell("Route summary", routeSummary, "text-mw-accent-soft")}
+          {infoCell("Hop 1 impact", formatBps(quoteDetails.firstLegPriceImpactBps))}
+          {infoCell("Hop 2 impact", formatBps(quoteDetails.secondLegPriceImpactBps))}
+          <p className="m-0 text-[11px] text-mw-muted sm:col-span-2">
             Route impact is measured per hop by the on-chain Stock execution adapter. Execution still enforces your 1.00% minimum outputs and the route's configured maximum impact policy.
-          </div>
+          </p>
         </div>
       ) : null}
 
-      {error ? <div className="mt-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-200">{error}</div> : null}
-      {insufficient ? <div className="mt-3 text-xs text-red-300">Insufficient {tab === "buy" ? "ETH" : campaign.symbol || "token"} balance.</div> : null}
+      {error ? <div role="alert" className="rounded-[10px] border border-[#5A1A26] bg-[#2A0E14] px-3 py-2 text-xs text-[#FFB4C0]">{error}</div> : null}
+      {insufficient ? <div className="text-xs text-[#FFB4C0]">Insufficient {tab === "buy" ? "ETH" : campaign.symbol || "token"} balance.</div> : null}
 
       <Button
         type="button"
-        className="mt-3 w-full font-retro"
+        className={`min-h-12 w-full rounded-[10px] font-mw-body text-base font-bold disabled:opacity-50 ${tab === "buy" ? "border border-mw-buy bg-mw-buy text-[#04140A] hover:bg-[#15913F]" : "border border-mw-sell bg-mw-sell text-[#FFF1F3] hover:bg-[#C81A40]"}`}
         disabled={loading || insufficient || amountIn <= 0n}
         onClick={() => void executeTrade()}
       >
