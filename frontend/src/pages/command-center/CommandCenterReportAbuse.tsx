@@ -89,10 +89,10 @@ export default function CommandCenterReportAbuse({ embedded = false }: { embedde
   if (embedded && filedId) {
     return (
       <CommandCenterCard eyebrow="Report submitted" title={filedId}>
-        <p className="text-sm leading-6 text-muted-foreground">
+        <p className="text-sm leading-6 text-mw-muted">
           Your report has been submitted. Updates and staff replies will appear here. Email is only used to notify you when something changes.
         </p>
-        <Button asChild className="mt-4 font-retro">
+        <Button asChild className="mt-4 font-semibold">
           <Link to={`${base}/reports/${filedId}?filed=1`}>View case file</Link>
         </Button>
       </CommandCenterCard>
@@ -110,7 +110,7 @@ export default function CommandCenterReportAbuse({ embedded = false }: { embedde
       )}
 
       <CommandCenterCard title="This is not Discord support">
-        <p className="text-sm leading-6 text-muted-foreground">
+        <p className="text-sm leading-6 text-mw-muted">
           Wallet problems, failed transactions, rewards, product questions and feature requests stay in Discord.
           Abuse reports stay inside Command Center. Email is only used to tell you when staff replies.
         </p>
@@ -191,7 +191,7 @@ export default function CommandCenterReportAbuse({ embedded = false }: { embedde
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-mw-muted">
                 MemeWarzone uses this address only to notify you when your report is updated. The conversation stays inside Command Center.
               </p>
             </div>
@@ -206,17 +206,17 @@ export default function CommandCenterReportAbuse({ embedded = false }: { embedde
                 className={fieldClass}
                 onChange={(event) => setFiles(Array.from(event.target.files || []).slice(0, 5))}
               />
-              <p className="text-xs text-muted-foreground">JPG, PNG, WEBP or PDF. Max 5 files, 10 MB each.</p>
+              <p className="text-xs text-mw-muted">JPG, PNG, WEBP or PDF. Max 5 files, 10 MB each.</p>
             </div>
           </div>
         </CommandCenterCard>
 
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" className="font-retro" disabled={submitting || busy}>
+          <Button type="submit" className="font-semibold" disabled={submitting || busy}>
             {submitting || busy ? "Signing / filing..." : "Submit abuse report"}
           </Button>
           {embedded ? null : (
-            <Button type="button" variant="outline" className="font-retro" asChild>
+            <Button type="button" variant="outline" className="font-semibold" asChild>
               <Link to={base}>Back to Help</Link>
             </Button>
           )}

@@ -154,24 +154,24 @@ export default function CommandCenterAirdrops() {
           <CommandCenterCard className="min-h-[180px]">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="font-retro text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Current Prize Pool</p>
-                <div className="mt-5 font-retro text-4xl text-foreground md:text-5xl">
+                <p className="font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Current Prize Pool</p>
+                <div className="mt-5 font-semibold text-4xl text-mw-text md:text-5xl">
                   {loading ? "..." : formatNativeAmount(currentPrizePoolRaw, chainId)} {symbol}
                 </div>
-                <p className="mt-3 text-xs uppercase tracking-[0.16em] text-muted-foreground">{poolStatus}</p>
+                <p className="mt-3 text-xs uppercase tracking-[0.16em] text-mw-muted">{poolStatus}</p>
               </div>
-              <div className="rounded-2xl border border-accent/30 bg-accent/10 p-3 text-accent">
+              <div className="rounded-2xl border border-[#7A3A0C] bg-[#2A1609] p-3 text-mw-accent-soft">
                 <Gift className="h-5 w-5" />
               </div>
             </div>
           </CommandCenterCard>
 
           <CommandCenterCard>
-            <p className="font-retro text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Next drop in</p>
-            <div className="mt-4 font-retro text-3xl text-foreground md:text-4xl">{countdown}</div>
-            {current?.currentEpochId ? <p className="mt-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">Epoch {current.currentEpochId}</p> : null}
+            <p className="font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Next drop in</p>
+            <div className="mt-4 font-semibold text-3xl text-mw-text md:text-4xl">{countdown}</div>
+            {current?.currentEpochId ? <p className="mt-2 text-xs uppercase tracking-[0.16em] text-mw-muted">Epoch {current.currentEpochId}</p> : null}
             {preview ? (
-              <p className="mt-2 text-xs text-muted-foreground">
+              <p className="mt-2 text-xs text-mw-muted">
                 {preview.traderCount} traders / {preview.creatorCount} creators qualify this epoch. Claims closed.
               </p>
             ) : null}
@@ -180,15 +180,15 @@ export default function CommandCenterAirdrops() {
 
         <CommandCenterCard className="min-h-[376px]" title="Previous winners">
           {loading ? (
-            <div className="rounded-2xl border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">
+            <div className="rounded-[14px] border border-mw-border bg-mw-input p-4 text-sm text-mw-muted">
               Loading previous winners...
             </div>
           ) : error ? (
-            <div className="rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-100">
+            <div className="rounded-2xl border border-[#5A1A26] bg-[#2A0E14] p-4 text-sm text-[#FFB4C0]">
               {error}
             </div>
           ) : winners.length === 0 ? (
-            <div className="rounded-2xl border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">
+            <div className="rounded-[14px] border border-mw-border bg-mw-input p-4 text-sm text-mw-muted">
               {isSolanaAirdrop(chainId)
                 ? "No published Solana winners yet. Estimates can appear from bonding volume; claims stay closed."
                 : isRobinhoodAirdrop(chainId)
@@ -205,14 +205,14 @@ export default function CommandCenterAirdrops() {
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <Trophy className="h-4 w-4 shrink-0 text-accent" />
-                        <p className="truncate font-retro text-sm text-foreground">{shortenAddress(winner.walletAddress)}</p>
+                        <Trophy className="h-4 w-4 shrink-0 text-mw-accent-soft" />
+                        <p className="truncate font-semibold text-sm text-mw-text">{shortenAddress(winner.walletAddress)}</p>
                       </div>
-                      <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                      <p className="mt-1 text-xs uppercase tracking-[0.16em] text-mw-muted">
                         {isHolderPayoutProgram(winner.program) ? "Holder payout" : `${winnerType(winner.program)} winner`} #{winner.winnerRank}
                       </p>
                     </div>
-                    <p className="shrink-0 font-retro text-sm text-foreground">
+                    <p className="shrink-0 font-semibold text-sm text-mw-text">
                       {formatNativeAmount(winner.payoutAmount, chainId)} {symbol}
                     </p>
                   </div>
@@ -225,7 +225,7 @@ export default function CommandCenterAirdrops() {
 
       {previewRows.length ? (
         <CommandCenterCard title="Eligible this epoch (preview)">
-          <p className="mb-3 text-xs text-muted-foreground">{preview?.note}</p>
+          <p className="mb-3 text-xs text-mw-muted">{preview?.note}</p>
           <div className="space-y-2">
             {previewRows.map((row) => (
               <div
@@ -233,14 +233,14 @@ export default function CommandCenterAirdrops() {
                 className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-background/35 px-4 py-3"
               >
                 <div className="min-w-0">
-                  <p className="truncate font-retro text-sm text-foreground">{shortenAddress(row.walletAddress)}</p>
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                  <p className="truncate font-semibold text-sm text-mw-text">{shortenAddress(row.walletAddress)}</p>
+                  <p className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
                     {row.kind}
                     {row.tradeCount ? ` · ${row.tradeCount} trades` : ""}
                     {row.uniqueBuyers ? ` · ${row.uniqueBuyers} buyers` : ""}
                   </p>
                 </div>
-                <p className="shrink-0 font-retro text-sm text-foreground">
+                <p className="shrink-0 font-semibold text-sm text-mw-text">
                   {formatNativeAmount(row.estimatedShareRaw || ZERO_RAW, chainId)} {symbol}
                 </p>
               </div>

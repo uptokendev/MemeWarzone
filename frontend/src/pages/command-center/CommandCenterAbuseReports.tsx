@@ -49,15 +49,15 @@ export default function CommandCenterAbuseReports({ embedded = false }: { embedd
           title="My Abuse Reports"
           description="Private cases filed from this wallet. Staff replies appear here, not in email or Discord."
         >
-          <Button asChild className="font-retro">
+          <Button asChild className="font-semibold">
             <Link to={`${base}/report`}>New report</Link>
           </Button>
         </CommandCenterPageHeader>
       )}
 
       <div className="rounded-2xl border border-accent/40 bg-accent/5 p-4">
-        <div className="font-retro text-[10px] uppercase tracking-[0.16em] text-accent">Abuse department</div>
-        <p className="mt-2 text-sm leading-6 text-foreground">
+        <div className="font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-accent-soft">Abuse department</div>
+        <p className="mt-2 text-sm leading-6 text-mw-text">
           After you file a report, its case number appears here. Open a report to view updates and staff replies.
           Email only notifies you when something changes; the conversation stays in Command Center.
         </p>
@@ -65,13 +65,13 @@ export default function CommandCenterAbuseReports({ embedded = false }: { embedd
 
       <CommandCenterCard>
         {loading || busy ? (
-          <p className="text-sm text-muted-foreground">Loading your abuse file...</p>
+          <p className="text-sm text-mw-muted">Loading your abuse file...</p>
         ) : reports.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No abuse reports from this wallet yet.</p>
+          <p className="text-sm text-mw-muted">No abuse reports from this wallet yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+              <thead className="font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
                 <tr>
                   <th className="pb-3 pr-4">ID</th>
                   <th className="pb-3 pr-4">Type</th>
@@ -84,14 +84,14 @@ export default function CommandCenterAbuseReports({ embedded = false }: { embedd
                 {reports.map((report) => (
                   <tr key={report.id} className="border-t border-border/40">
                     <td className="py-3 pr-4">
-                      <Link to={`${base}/reports/${report.id}`} className="font-retro text-accent hover:underline">
+                      <Link to={`${base}/reports/${report.id}`} className="font-semibold text-mw-accent-soft hover:underline">
                         {report.id}
                       </Link>
                     </td>
-                    <td className="py-3 pr-4 text-foreground">{report.categoryLabel}</td>
-                    <td className="py-3 pr-4 text-muted-foreground">{formatWhen(report.createdAt)}</td>
-                    <td className="py-3 pr-4 text-foreground">{report.statusLabel}</td>
-                    <td className="py-3 text-muted-foreground">{formatWhen(report.updatedAt)}</td>
+                    <td className="py-3 pr-4 text-mw-text">{report.categoryLabel}</td>
+                    <td className="py-3 pr-4 text-mw-muted">{formatWhen(report.createdAt)}</td>
+                    <td className="py-3 pr-4 text-mw-text">{report.statusLabel}</td>
+                    <td className="py-3 text-mw-muted">{formatWhen(report.updatedAt)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -87,18 +87,18 @@ export default function CommandCenterAbuseReportDetail() {
         title={report?.id || "Abuse report"}
         description={report ? `${report.categoryLabel} · ${report.statusLabel}` : "Private abuse conversation"}
       >
-        <Button asChild variant="outline" className="font-retro">
+        <Button asChild variant="outline" className="font-semibold">
           <Link to={`${base}/reports`}>All reports</Link>
         </Button>
       </CommandCenterPageHeader>
 
       {loading ? (
         <CommandCenterCard>
-          <p className="text-sm text-muted-foreground">Opening the case file...</p>
+          <p className="text-sm text-mw-muted">Opening the case file...</p>
         </CommandCenterCard>
       ) : !report ? (
         <CommandCenterCard>
-          <p className="text-sm text-muted-foreground">This report is not visible to this wallet.</p>
+          <p className="text-sm text-mw-muted">This report is not visible to this wallet.</p>
         </CommandCenterCard>
       ) : (
         <>
@@ -107,15 +107,15 @@ export default function CommandCenterAbuseReportDetail() {
           <CommandCenterCard title="Case facts">
             <dl className="grid gap-3 text-sm md:grid-cols-2">
               <div>
-                <dt className="text-muted-foreground">Reported wallet</dt>
+                <dt className="text-mw-muted">Reported wallet</dt>
                 <dd className="break-all font-mono text-xs">{report.reportedWallet || "—"}</dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Campaign / token</dt>
+                <dt className="text-mw-muted">Campaign / token</dt>
                 <dd className="break-all font-mono text-xs">{report.reportedCampaignAddress || report.reportedTokenAddress || "—"}</dd>
               </div>
               <div className="md:col-span-2">
-                <dt className="text-muted-foreground">URL</dt>
+                <dt className="text-mw-muted">URL</dt>
                 <dd className="break-all">{report.reportedUrl || "—"}</dd>
               </div>
             </dl>
@@ -132,12 +132,12 @@ export default function CommandCenterAbuseReportDetail() {
                       : "border-border/50 bg-background/25"
                   }`}
                 >
-                  <div className="mb-2 font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                  <div className="mb-2 font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
                     {message.senderType === "admin" ? "Abuse desk" : "You"} · {formatWhen(message.createdAt)}
                   </div>
-                  <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">{message.message}</p>
+                  <p className="whitespace-pre-wrap text-sm leading-6 text-mw-text">{message.message}</p>
                   {report.evidence.filter((item) => item.messageId === message.id).map((item) => (
-                    <div key={item.id} className="mt-2 text-xs text-muted-foreground">
+                    <div key={item.id} className="mt-2 text-xs text-mw-muted">
                       Evidence: {item.originalFilename}
                     </div>
                   ))}
@@ -148,7 +148,7 @@ export default function CommandCenterAbuseReportDetail() {
 
           <CommandCenterCard title={closed ? "Case closed" : "Reply"}>
             {closed ? (
-              <p className="text-sm text-muted-foreground">This case is administratively finished.</p>
+              <p className="text-sm text-mw-muted">This case is administratively finished.</p>
             ) : (
               <form onSubmit={handleReply} className="space-y-3">
                 <Textarea
@@ -163,7 +163,7 @@ export default function CommandCenterAbuseReportDetail() {
                   accept="image/jpeg,image/png,image/webp,application/pdf"
                   onChange={(event) => setFiles(Array.from(event.target.files || []).slice(0, 5))}
                 />
-                <Button type="submit" className="font-retro" disabled={sending || (!reply.trim() && files.length === 0)}>
+                <Button type="submit" className="font-semibold" disabled={sending || (!reply.trim() && files.length === 0)}>
                   {sending ? "Sending..." : "Send reply"}
                 </Button>
               </form>

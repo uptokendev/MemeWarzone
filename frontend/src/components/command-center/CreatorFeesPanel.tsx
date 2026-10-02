@@ -101,13 +101,13 @@ export function CreatorFeesPanel() {
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <Coins className="h-4 w-4 shrink-0 text-accent" />
-                  <p className="truncate font-retro text-sm text-foreground">
+                  <Coins className="h-4 w-4 shrink-0 text-mw-accent-soft" />
+                  <p className="truncate font-semibold text-sm text-mw-text">
                     {item.name || item.symbol || item.campaignAddress}
-                    {item.symbol ? <span className="ml-2 text-xs text-muted-foreground">{item.symbol}</span> : null}
+                    {item.symbol ? <span className="ml-2 text-xs text-mw-muted">{item.symbol}</span> : null}
                   </p>
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-xs text-mw-muted">
                   {!item.escrowInitialized
                     ? "Fee collector not initialized yet — nothing to claim."
                     : !item.vaultInitialized
@@ -133,13 +133,13 @@ export function CreatorFeesPanel() {
           >
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <Coins className="h-4 w-4 shrink-0 text-accent" />
-                <p className="truncate font-retro text-sm text-foreground">
+                <Coins className="h-4 w-4 shrink-0 text-mw-accent-soft" />
+                <p className="truncate font-semibold text-sm text-mw-text">
                   {item.name || item.symbol || item.campaignAddress}
-                  {item.symbol ? <span className="ml-2 text-xs text-muted-foreground">{item.symbol}</span> : null}
+                  {item.symbol ? <span className="ml-2 text-xs text-mw-muted">{item.symbol}</span> : null}
                 </p>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="mt-1 text-xs text-mw-muted">
                 {DBC_FEE_CHOICE_NOTE[String(item.feeChoice || "")] || "Fee choice set at launch."} Your graduation payout is claimable on the coin page once the coin graduates.
               </p>
             </div>
@@ -258,13 +258,13 @@ export function EvmCreatorFeesPanel() {
             <div key={key} className="flex flex-col gap-3 rounded-2xl border border-border bg-muted/10 p-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <Coins className="h-4 w-4 shrink-0 text-accent" />
-                  <p className="truncate font-retro text-sm text-foreground">
+                  <Coins className="h-4 w-4 shrink-0 text-mw-accent-soft" />
+                  <p className="truncate font-semibold text-sm text-mw-text">
                     {item.name || item.symbol || item.campaignAddress}
-                    <span className="ml-2 text-xs text-muted-foreground">{chain.label}</span>
+                    <span className="ml-2 text-xs text-mw-muted">{chain.label}</span>
                   </p>
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-xs text-mw-muted">
                   Claimable: {formatWei(item.pendingWei, chain.symbol)} · earned {formatWei(item.lifetimeWei, chain.symbol)} · claimed {formatWei(item.claimedWei, chain.symbol)}
                 </p>
               </div>

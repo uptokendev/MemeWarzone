@@ -735,34 +735,34 @@ export default function CommandCenterClaims() {
   return (
     <div className="space-y-4">
       <CommandCenterCard title={`Your ${rewardChainLabel(rewardChainId)} Rewards`}>
-        {message ? <div className="mb-3 rounded-xl border border-border/60 bg-background/30 p-3 text-sm text-muted-foreground">{message}</div> : null}
+        {message ? <div className="mb-3 rounded-xl border border-border/60 bg-background/30 p-3 text-sm text-mw-muted">{message}</div> : null}
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
           {rewardCards.map((card) => {
             const Icon = card.icon;
             const stateCopy = getRewardStateCopy(card.state);
             return (
-              <div key={card.rewardType} className="rounded-2xl border border-border/50 bg-background/25 p-4">
+              <div key={card.rewardType} className="rounded-[14px] border border-mw-border bg-mw-input p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="flex items-center gap-2 font-retro text-sm text-foreground">
-                      <Icon className="h-4 w-4 text-accent" />
+                    <div className="flex items-center gap-2 font-semibold text-sm text-mw-text">
+                      <Icon className="h-4 w-4 text-mw-accent-soft" />
                       {card.title}
                     </div>
-                    <p className="mt-2 text-sm text-muted-foreground">{card.description}</p>
+                    <p className="mt-2 text-sm text-mw-muted">{card.description}</p>
                   </div>
-                  <span className="rounded-full border border-border/40 bg-card/25 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                  <span className="rounded-full border border-border/40 bg-card/25 px-2.5 py-1 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
                     {stateCopy.label}
                   </span>
                 </div>
 
                 <div className="mt-5 flex items-end justify-between gap-3">
                   <div>
-                    <div className="font-retro text-2xl text-foreground">{loading ? "..." : card.amountLabel}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{stateCopy.amountCaption}</div>
+                    <div className="font-semibold text-2xl text-mw-text">{loading ? "..." : card.amountLabel}</div>
+                    <div className="mt-1 text-xs text-mw-muted">{stateCopy.amountCaption}</div>
                   </div>
                   <Button
                     disabled={stateCopy.disabled || claimingType === card.rewardType}
-                    className="font-retro"
+                    className="font-semibold"
                     onClick={() => void claimRewards(card)}
                   >
                     {claimingType === card.rewardType ? "Claiming..." : card.buttonLabel}
@@ -776,13 +776,13 @@ export default function CommandCenterClaims() {
 
       {battleClaims.length ? (
         <CommandCenterCard title="Arena war pool">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-mw-muted">
             Winning campaign owners pull 85% of stakes plus Support. Protocol does not send. Supporters are not paid.
           </p>
           <div className="mt-3 space-y-2">
             {battleClaims.map((item) => (
               <div key={item.battleId} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/50 p-3">
-                <div className="font-mono text-xs text-muted-foreground">{item.battleId}</div>
+                <div className="font-mono text-xs text-mw-muted">{item.battleId}</div>
                 <ArenaWarPoolClaimButton battleId={item.battleId} chainId={item.chainId} />
               </div>
             ))}

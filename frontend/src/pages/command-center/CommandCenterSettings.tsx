@@ -113,21 +113,21 @@ export default function CommandCenterSettings() {
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
         <CommandCenterCard title="Profile settings">
-          <div className="flex flex-col gap-4 rounded-2xl border border-border/50 bg-background/25 p-4 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-4 rounded-[14px] border border-mw-border bg-mw-input p-4 sm:flex-row sm:items-center">
             <img
               src={avatarUrl}
               alt={displayName}
               className="h-20 w-20 rounded-2xl border border-border/60 object-cover"
             />
             <div className="min-w-0 flex-1">
-              <div className="font-retro text-lg text-foreground">{displayName}</div>
-              <div className="mt-1 break-all font-mono text-xs text-muted-foreground">{walletAddress}</div>
+              <div className="font-semibold text-lg text-mw-text">{displayName}</div>
+              <div className="mt-1 break-all font-mono text-xs text-mw-muted">{walletAddress}</div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button onClick={handleEdit} className="font-retro" disabled={savingProfile || savingAvatar}>
+                <Button onClick={handleEdit} className="font-semibold" disabled={savingProfile || savingAvatar}>
                   <Settings className="mr-2 h-4 w-4" />
                   Edit profile
                 </Button>
-                <Button onClick={handlePickAvatar} variant="outline" className="font-retro" disabled={savingProfile || savingAvatar}>
+                <Button onClick={handlePickAvatar} variant="outline" className="font-semibold" disabled={savingProfile || savingAvatar}>
                   <Image className="mr-2 h-4 w-4" />
                   {savingAvatar ? (awaitingWallet ? "Confirm wallet..." : "Uploading...") : "Change avatar"}
                 </Button>
@@ -156,37 +156,37 @@ export default function CommandCenterSettings() {
             onSave={handleSaveProfile}
           />
 
-          <div className="mt-4 rounded-2xl border border-border/50 bg-card/25 p-4 text-sm text-muted-foreground">
+          <div className="mt-4 rounded-2xl border border-border/50 bg-card/25 p-4 text-sm text-mw-muted">
             {loadingProfile ? "Loading profile..." : profile?.bio ? profile.bio : "No public bio set yet."}
           </div>
         </CommandCenterCard>
 
         <CommandCenterCard title="Wallet / linked address">
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4">
-              <div className="mb-2 flex items-center gap-2 font-retro text-sm text-foreground">
-                <Wallet className="h-4 w-4 text-accent" />
+            <div className="rounded-[14px] border border-mw-border bg-mw-input p-4">
+              <div className="mb-2 flex items-center gap-2 font-semibold text-sm text-mw-text">
+                <Wallet className="h-4 w-4 text-mw-accent-soft" />
                 Owner wallet
               </div>
-              <div className="break-all font-mono text-xs text-muted-foreground">{walletAddress}</div>
+              <div className="break-all font-mono text-xs text-mw-muted">{walletAddress}</div>
             </div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4">
-              <div className="mb-2 flex items-center gap-2 font-retro text-sm text-foreground">
-                <ShieldCheck className="h-4 w-4 text-accent" />
+            <div className="rounded-[14px] border border-mw-border bg-mw-input p-4">
+              <div className="mb-2 flex items-center gap-2 font-semibold text-sm text-mw-text">
+                <ShieldCheck className="h-4 w-4 text-mw-accent-soft" />
                 Chain
               </div>
-              <div className="font-retro text-sm text-muted-foreground">
+              <div className="font-semibold text-sm text-mw-muted">
                 {getChainLabel(walletChainId) ?? "Not detected"}
               </div>
               {walletChainId && !isAllowedChainId(walletChainId) ? (
                 <div className="mt-2 space-y-2">
-                  <div className="text-[11px] uppercase tracking-[0.14em] text-amber-300">
+                  <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-amber-300">
                     Unsupported network - switch your wallet to BNB Smart Chain to interact.
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="font-retro"
+                    className="font-semibold"
                     disabled={switchingChain || !wallet.provider}
                     onClick={handleSwitchChain}
                   >
@@ -198,13 +198,13 @@ export default function CommandCenterSettings() {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <Button asChild variant="outline" className="font-retro">
+            <Button asChild variant="outline" className="font-semibold">
               <Link to={`/profile/${encodeURIComponent(walletAddress)}`}>
                 Public profile
                 <ExternalLink className="ml-2 h-4 w-4" />
               </Link>
             </Button>
-            <Button asChild variant="outline" className="font-retro">
+            <Button asChild variant="outline" className="font-semibold">
               <Link to="/create">Create coin</Link>
             </Button>
           </div>
@@ -213,30 +213,30 @@ export default function CommandCenterSettings() {
 
       {postGradFlags.arena ? (
         <CommandCenterCard title="Arena challenge email">
-          <div className="rounded-2xl border border-border/50 bg-background/25 p-4">
-            <div className="mb-2 flex items-center gap-2 font-retro text-sm text-foreground">
-              <Mail className="h-4 w-4 text-accent" />
+          <div className="rounded-[14px] border border-mw-border bg-mw-input p-4">
+            <div className="mb-2 flex items-center gap-2 font-semibold text-sm text-mw-text">
+              <Mail className="h-4 w-4 text-mw-accent-soft" />
               Notify this wallet
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-mw-muted">
               Challenges also show in Command Center Battles. Add an email if you want a copy when someone challenges your coin.
             </p>
-            <label className="mt-3 block text-xs uppercase tracking-[0.14em] text-muted-foreground">
+            <label className="mt-3 block text-xs uppercase tracking-[0.14em] text-mw-muted">
               Email
               <input
                 type="email"
                 value={arenaEmail}
                 onChange={(event) => setArenaEmail(event.target.value)}
-                className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-mw-text"
                 placeholder="you@example.com"
               />
             </label>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button size="sm" className="font-retro" disabled={savingEmail || !arenaEmail.trim()} onClick={() => void handleSaveArenaEmail()}>
+              <Button size="sm" className="font-semibold" disabled={savingEmail || !arenaEmail.trim()} onClick={() => void handleSaveArenaEmail()}>
                 {savingEmail ? "Saving..." : "Save and verify"}
               </Button>
               {arenaEmailStatus?.configured ? (
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                <span className="text-xs uppercase tracking-[0.14em] text-mw-muted">
                   {arenaEmailStatus.verified ? "Verified" : "Awaiting verification"}
                 </span>
               ) : null}
@@ -247,30 +247,30 @@ export default function CommandCenterSettings() {
 
       <div id="notifications" className="scroll-mt-24">
         <CommandCenterCard title="Notifications">
-          <div className="flex flex-col gap-3 rounded-2xl border border-border/50 bg-background/25 p-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-3 rounded-[14px] border border-mw-border bg-mw-input p-4 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3">
-              <Bell className="h-5 w-5 text-accent" />
+              <Bell className="h-5 w-5 text-mw-accent-soft" />
               <div>
-                <div className="font-retro text-sm text-foreground">Profile notifications</div>
-                <p className="text-sm text-muted-foreground">
+                <div className="font-semibold text-sm text-mw-text">Profile notifications</div>
+                <p className="text-sm text-mw-muted">
                   Launch alerts, Prepare Mode updates, and community activity for this wallet.
                 </p>
               </div>
             </div>
-            <Button onClick={() => void markAllRead()} variant="outline" className="font-retro" disabled={!notifications.length || unreadCount === 0}>
+            <Button onClick={() => void markAllRead()} variant="outline" className="font-semibold" disabled={!notifications.length || unreadCount === 0}>
               Mark all read{unreadCount ? ` (${unreadCount})` : ""}
             </Button>
           </div>
 
           <div className="mt-4 space-y-3">
             {loadingNotifications && !notifications.length ? (
-              <div className="rounded-2xl border border-border/50 bg-background/25 p-4 text-sm text-muted-foreground">
+              <div className="rounded-[14px] border border-mw-border bg-mw-input p-4 text-sm text-mw-muted">
                 Loading notifications...
               </div>
             ) : null}
 
             {!loadingNotifications && notifications.length === 0 ? (
-              <div className="rounded-2xl border border-border/50 bg-background/25 p-6 text-center text-sm text-muted-foreground">
+              <div className="rounded-[14px] border border-mw-border bg-mw-input p-6 text-center text-sm text-mw-muted">
                 No notifications yet.
               </div>
             ) : null}
@@ -280,19 +280,19 @@ export default function CommandCenterSettings() {
                 key={notification.id}
                 type="button"
                 onClick={() => void handleOpenNotification(notification)}
-                className="flex w-full items-start gap-3 rounded-2xl border border-border/50 bg-background/25 p-4 text-left transition hover:border-accent/60 hover:bg-success/10"
+                className="flex w-full items-start gap-3 rounded-[14px] border border-mw-border bg-mw-input p-4 text-left transition hover:border-accent/60 hover:bg-success/10"
               >
                 <span className={`mt-1 h-2.5 w-2.5 shrink-0 ${notification.read ? "bg-muted" : "bg-accent"}`} />
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-                    <span className="font-retro text-sm text-foreground">{notification.title}</span>
-                    <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                    <span className="font-semibold text-sm text-mw-text">{notification.title}</span>
+                    <span className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
                       {formatNotificationDate(notification.createdAt)}
                     </span>
                   </span>
-                  <span className="mt-1 block text-sm leading-6 text-muted-foreground">{notification.body}</span>
+                  <span className="mt-1 block text-sm leading-6 text-mw-muted">{notification.body}</span>
                 </span>
-                <span className="hidden rounded-full border border-border/50 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground md:block">
+                <span className="hidden rounded-full border border-border/50 px-2.5 py-1 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted md:block">
                   {notification.kind}
                 </span>
               </button>

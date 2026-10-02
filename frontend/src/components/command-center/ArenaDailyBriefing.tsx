@@ -136,18 +136,18 @@ export function ArenaDailyBriefing() {
   }
 
   return (
-    <section className="mwz-hud-frame p-4">
+    <section className="rounded-[14px] border border-mw-border bg-mw-input p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Daily briefing</div>
-          <h2 className="mt-1 font-retro text-sm text-foreground">Check in and dispatch</h2>
-          <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-accent-soft">Daily briefing</div>
+          <h2 className="mt-1 font-semibold text-sm text-mw-text">Check in and dispatch</h2>
+          <p className="mt-1 max-w-2xl text-xs text-mw-muted">
             Streak {status.streak} day{status.streak === 1 ? "" : "s"}. Check-in 0.1 pts, 7-day streak +0.5, War Dispatch 0.25. One of each per UTC day.
           </p>
         </div>
         {coins.length > 1 ? (
           <select
-            className="rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+            className="rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-mw-text"
             value={tokenKey(current)}
             onChange={(event) => setSelected(event.target.value)}
           >
@@ -162,7 +162,7 @@ export function ArenaDailyBriefing() {
       <div className="mt-3 flex flex-wrap gap-2">
         <Button
           size="sm"
-          className="font-retro"
+          className="font-semibold"
           disabled={Boolean(busy) || status.alreadyCheckedIn}
           onClick={() => void handleCheckin()}
         >
@@ -171,7 +171,7 @@ export function ArenaDailyBriefing() {
         <Button
           size="sm"
           variant="outline"
-          className="font-retro"
+          className="font-semibold"
           disabled={Boolean(busy) || status.alreadyDispatched}
           onClick={() => void handleDispatch()}
         >

@@ -25,7 +25,7 @@ export default function CommandCenterSquad() {
         title="Squad"
         description="View your squad status, contribution, estimated rewards, and public squad standings."
       >
-        <Button asChild variant="outline" className="font-retro">
+        <Button asChild variant="outline" className="font-semibold">
           <Link to="/squads">
             Public squads
             <ArrowRight className="ml-2 h-4 w-4" />
@@ -40,7 +40,7 @@ export default function CommandCenterSquad() {
         >
           <div className="grid gap-3 sm:grid-cols-2">
             {squadRules.map((rule) => (
-              <div key={rule} className="rounded-2xl border border-border/50 bg-background/25 p-3 text-sm text-muted-foreground">
+              <div key={rule} className="rounded-[14px] border border-mw-border bg-mw-input p-3 text-sm text-mw-muted">
                 {rule}
               </div>
             ))}
@@ -49,23 +49,23 @@ export default function CommandCenterSquad() {
 
         <CommandCenterCard title="Reward model" description="Squad rewards are based on weekly squad activity.">
           <div className="space-y-3">
-            <div className="rounded-2xl border border-accent/30 bg-accent/10 p-4">
+            <div className="rounded-2xl border border-[#7A3A0C] bg-[#2A1609] p-4">
               <div className="flex items-start gap-3">
-                <Users className="mt-1 h-4 w-4 shrink-0 text-accent" />
+                <Users className="mt-1 h-4 w-4 shrink-0 text-mw-accent-soft" />
                 <div>
-                  <div className="font-retro text-sm text-foreground">When your wallet is part of a squad, your contribution and estimated reward will appear here.</div>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <div className="font-semibold text-sm text-mw-text">When your wallet is part of a squad, your contribution and estimated reward will appear here.</div>
+                  <p className="mt-1 text-sm text-mw-muted">
                     When you’re an active squad member, you’ll see your score and estimated weekly reward here.
                   </p>
                 </div>
               </div>
             </div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4">
+            <div className="rounded-[14px] border border-mw-border bg-mw-input p-4">
               <div className="flex items-start gap-3">
-                <Trophy className="mt-1 h-4 w-4 shrink-0 text-accent" />
+                <Trophy className="mt-1 h-4 w-4 shrink-0 text-mw-accent-soft" />
                 <div>
-                  <div className="font-retro text-sm text-foreground">Leaderboard visibility</div>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <div className="font-semibold text-sm text-mw-text">Leaderboard visibility</div>
+                  <p className="mt-1 text-sm text-mw-muted">
                     Public squad standings stay on the squad leaderboard, while wallet-specific reward details remain inside your Command Center.
                   </p>
                 </div>
@@ -75,8 +75,8 @@ export default function CommandCenterSquad() {
               <div className="flex items-start gap-3">
                 <ShieldAlert className="mt-1 h-4 w-4 shrink-0 text-amber-100" />
                 <div>
-                  <div className="font-retro text-sm text-foreground">Fair reward rules</div>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <div className="font-semibold text-sm text-mw-text">Fair reward rules</div>
+                  <p className="mt-1 text-sm text-mw-muted">
                     MemeWarzone applies fair-play rules automatically before weekly squad rewards are shown.
                   </p>
                 </div>

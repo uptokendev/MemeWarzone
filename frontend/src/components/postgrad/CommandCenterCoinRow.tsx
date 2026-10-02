@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, ChevronUp, Swords } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { getPostGradTokenDetailRoute } from "@/features/postgrad/identityRoutes";
 
 interface CoinRowItem {
@@ -58,41 +56,35 @@ export function CommandCenterCoinRow({
   const displayedTicker = isImported
     ? (item.ticker && item.ticker !== "???" ? `$${item.ticker}` : item.name)
     : (item.ticker || item.name);
-  const identityClassName = "min-w-0 rounded-xl text-left transition-colors hover:bg-white/[0.03]";
+  const identityClassName = "mw-focus min-w-0 flex-1 rounded-[10px] text-left text-mw-text hover:text-mw-text";
+  const chip = "inline-flex h-[22px] shrink-0 items-center rounded-full border px-2 text-xs font-semibold";
+  const toneClass = (tone?: string) =>
+    tone === "success" ? "border-[#1F5133] text-[#6EE7A0]" : tone === "hot" || tone === "sponsored" ? "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft" : "border-mw-edge text-[#C9CED4]";
+  const actionButton = "mw-focus inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-50";
+  const primaryButton = "mw-focus inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-3 text-sm font-bold text-[#140A02] hover:bg-[#FF8A3D] hover:text-[#140A02] disabled:opacity-50";
   const identity = (
-          <div className="flex items-center gap-2.5">
+          <div className="flex min-w-0 items-center gap-3">
             <img
               src={item.image}
               alt={item.name}
               onError={(e) => { (e.currentTarget as HTMLImageElement).src = "/placeholder.svg"; }}
-              className="h-9 w-9 rounded-lg border border-white/10 object-cover lg:h-10 lg:w-10"
+              className="h-12 w-12 shrink-0 rounded-[10px] border border-mw-border object-cover"
             />
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <div className="truncate text-[13px] font-semibold text-white lg:text-[15px]">{displayedTicker}</div>
-                <div className="truncate text-[11px] font-semibold text-white/45 lg:text-sm">{item.name}</div>
-                {isImported && (
-                  <TacticalTag label="IMPORTED" tone="sponsored" />
-                )}
-                {item.statusLabel && (
-                  <TacticalTag label={item.statusLabel} tone={(item.statusTone as any) || "default"} />
-                )}
-                {showBattleInfo && (
-                  <TacticalTag label={item.battleInfo || ""} tone="hot" />
-                )}
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="truncate font-bold">{displayedTicker}</div>
+                {item.name && item.name !== displayedTicker ? <span className="hidden truncate text-sm text-mw-muted sm:inline">{item.name}</span> : null}
               </div>
-              <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[10px] text-white/55">
-                {item.marketCap && <span>MC {item.marketCap}</span>}
-                {isDraft && item.visibility && <span>{item.visibility}</span>}
-                {item.category && <span>{item.category}</span>}
+              <div className="truncate font-mw-mono text-xs text-mw-muted">
+                {[item.marketCap ? `mcap ${item.marketCap}` : null, isDraft ? item.visibility : null, item.category].filter(Boolean).join(" · ") || (isDraft ? "Draft" : "—")}
               </div>
             </div>
           </div>
   );
 
   return (
-    <div className="border-b border-white/8 last:border-b-0">
-      <div className="grid grid-cols-1 gap-2 px-2.5 py-2.5 transition-colors hover:bg-white/[0.025] lg:grid-cols-[minmax(280px,1.4fr)_100px_100px_100px_28px] lg:items-center lg:gap-3 lg:px-4 lg:py-2.5">
+    <div className="rounded-[14px] border border-mw-border bg-mw-surface font-mw-body text-mw-text">
+      <div className="flex flex-wrap items-center gap-3 p-3">
         {isImported && tokenRoute ? (
           <Link to={tokenRoute} className={identityClassName} data-imported-project-row="true">
             {identity}
@@ -107,88 +99,80 @@ export function CommandCenterCoinRow({
           </button>
         )}
 
-        <div className="hidden lg:block text-sm font-semibold text-white">
-          {item.marketCap || "—"}
-        </div>
-        <div className="hidden lg:block text-sm font-semibold text-white">
-          {item.marketCap || "—"}
-        </div>
-        <div className="hidden lg:block text-sm font-semibold text-white">
-          {item.marketCap || "—"}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {isImported && <span className={`${chip} ${toneClass("sponsored")}`}>Imported</span>}
+          {item.statusLabel && <span className={`${chip} ${toneClass(item.statusTone)}`}>{item.statusLabel}</span>}
+          {showBattleInfo && <span className={`${chip} ${toneClass("hot")}`}>{item.battleInfo}</span>}
         </div>
 
-        <Button
-          size="sm"
-          variant="ghost"
+        {item.type === "coin" ? (
+          <Link to={`/token/${encodeURIComponent(item.id)}/edit`} className={actionButton}>
+            Edit page
+          </Link>
+        ) : null}
+
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={expanded ? `Collapse ${item.name}` : `Expand ${item.name}`}
           onClick={(e) => {
             e.stopPropagation();
             setExpanded((v) => !v);
           }}
-          className="ml-auto h-8 px-2 lg:col-start-5 lg:ml-0 lg:justify-self-end"
+          className="mw-focus inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-text"
         >
           {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        </Button>
+        </button>
       </div>
 
       {expanded && (
-        <div className="mx-2.5 mb-2.5 rounded-[18px] border border-white/10 bg-white/[0.04] p-3 md:mx-3 md:mb-3 md:p-4">
-          <div className="space-y-3 text-sm">
+        <div className="border-t border-[#1E2329] px-3 pb-3 pt-2.5 text-sm">
+          <div className="flex flex-col gap-2.5">
             {isDraft ? (
               <>
-                <div>
-                  <div className="text-[10px] uppercase tracking-[0.2em] text-accent/80">Draft Info</div>
-                  <div className="mt-1 text-white/80">Status: {item.status} • Visibility: {item.visibility} • Updated: {item.updatedAt}</div>
-                </div>
+                <div className="text-mw-muted">Status: {item.status} • Visibility: {item.visibility} • Updated: {item.updatedAt}</div>
                 {item.href && (
-                  <Button asChild size="sm" variant="outline" className="w-full justify-between">
-                    <Link to={item.href}>Edit Draft</Link>
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Link to={item.href} className={actionButton}>Edit Draft</Link>
+                  </div>
                 )}
               </>
             ) : isImported ? (
               <>
-                <div>
-                  <div className="text-[10px] uppercase tracking-[0.2em] text-accent/80">Imported project</div>
-                  <div className="mt-1 text-white/80">{item.statusLabel || "IMPORTED"}{item.battleInfo ? ` · ${item.battleInfo}` : ""}</div>
-                </div>
-                <div className="flex flex-wrap gap-2 pt-2">
+                <div className="text-mw-muted">{item.statusLabel || "IMPORTED"}{item.battleInfo ? ` · ${item.battleInfo}` : ""}</div>
+                <div className="flex flex-wrap gap-2">
                   {tokenRoute ? (
-                    <Button asChild size="sm" variant="outline">
-                      <Link to={tokenRoute}>Open imported project</Link>
-                    </Button>
+                    <Link to={tokenRoute} className={actionButton}>Open imported project</Link>
                   ) : null}
                   {item.creatorState === "eligible" && onOpenForBattle ? (
-                    <Button size="sm" disabled={item.isOpening || battleBusyToken === item.id} onClick={() => onOpenForBattle(item.raw?.tokenAddress || item.id, item.name)}>
+                    <button type="button" className={primaryButton} disabled={item.isOpening || battleBusyToken === item.id} onClick={() => onOpenForBattle(item.raw?.tokenAddress || item.id, item.name)}>
                       {item.isOpening || battleBusyToken === item.id ? "Opening..." : "Open for Battle"}
-                    </Button>
+                    </button>
                   ) : null}
                   {onChallenge ? (
-                    <Button size="sm" onClick={() => onChallenge(String(item.raw?.tokenAddress || item.tokenRoute || item.id))}>
-                      <Swords className="mr-2 h-4 w-4" />
+                    <button type="button" className={primaryButton} onClick={() => onChallenge(String(item.raw?.tokenAddress || item.tokenRoute || item.id))}>
+                      <Swords className="h-4 w-4" aria-hidden="true" />
                       Challenge
-                    </Button>
+                    </button>
                   ) : null}
                 </div>
               </>
             ) : (
               <>
-                <div>
-                  <div className="text-[10px] uppercase tracking-[0.2em] text-accent/80">Coin Info</div>
-                  <div className="mt-1 text-white/80">Market Cap: {item.marketCap || "—"}</div>
-                  {showBattleInfo && <div className="text-accent">Current: {item.battleInfo}</div>}
+                <div className="text-mw-muted">
+                  Market cap: <span className="font-mw-mono text-mw-text">{item.marketCap || "—"}</span>
+                  {showBattleInfo && <span className="ml-2 text-mw-accent-soft">Current: {item.battleInfo}</span>}
                 </div>
 
-                <div className="flex flex-wrap gap-2 pt-2">
+                <div className="flex flex-wrap gap-2">
                   {item.tokenRoute && (
-                    <Button asChild size="sm" variant="outline">
-                      <Link to={item.tokenRoute}>Token Details</Link>
-                    </Button>
+                    <Link to={item.tokenRoute} className={actionButton}>Token Details</Link>
                   )}
 
                   {item.canClaimLpFees && onClaimLpFees ? (
-                    <Button
-                      size="sm"
-                      className="bg-accent text-white hover:bg-accent/90 hover:text-white"
+                    <button
+                      type="button"
+                      className={primaryButton}
                       disabled={item.claimingLpFees}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -196,37 +180,36 @@ export function CommandCenterCoinRow({
                       }}
                     >
                       {item.claimingLpFees ? "Claiming LP fees…" : "Claim LP fees"}
-                    </Button>
-                  ) : null}
-                  {item.lpFeeSummary ? (
-                    <div className="w-full text-[11px] text-white/55">{item.lpFeeSummary}</div>
+                    </button>
                   ) : null}
 
                   {battleFeaturesEnabled && item.creatorState === "eligible" && onOpenForBattle && (
-                    <Button
-                      size="sm"
+                    <button
+                      type="button"
+                      className={primaryButton}
                       disabled={item.isOpening || battleBusyToken === item.id}
                       onClick={() => onOpenForBattle(item.id, item.name)}
                     >
                       {item.isOpening || battleBusyToken === item.id ? "Opening..." : "Open for Battle"}
-                    </Button>
+                    </button>
                   )}
 
                   {battleFeaturesEnabled && item.battleRouteId && (
-                    <Button asChild size="sm" variant="outline">
-                      <Link to={`/battle/${item.battleRouteId}`}>
-                        {item.creatorState?.includes("battle") ? "View Battle" : "Battle Details"}
-                      </Link>
-                    </Button>
+                    <Link to={`/battle/${item.battleRouteId}`} className={actionButton}>
+                      {item.creatorState?.includes("battle") ? "View Battle" : "Battle Details"}
+                    </Link>
                   )}
 
                   {battleFeaturesEnabled && item.battleInfo === "Open for Battle" && (
-                    <Button size="sm" variant="default">
-                      <Swords className="mr-2 h-4 w-4" />
+                    <button type="button" className={primaryButton}>
+                      <Swords className="h-4 w-4" aria-hidden="true" />
                       Challenge
-                    </Button>
+                    </button>
                   )}
                 </div>
+                {item.lpFeeSummary ? (
+                  <div className="text-xs text-mw-muted">{item.lpFeeSummary}</div>
+                ) : null}
               </>
             )}
           </div>

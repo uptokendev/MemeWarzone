@@ -8,7 +8,6 @@ import { CreatorChallengeCarousel } from "@/components/arena/CreatorChallengeCar
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { FindMatchPanel } from "@/components/command-center/FindMatchPanel";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
@@ -206,15 +205,19 @@ export default function CommandCenterBattles() {
     );
   }
 
+  const chip = "inline-flex h-[22px] items-center rounded-full border px-2 text-xs font-semibold";
+  const chipOrange = "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft";
+  const fieldLabel = "flex flex-col gap-1.5 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+  const fieldInput = "mw-focus h-11 w-full rounded-[10px] border border-[#2E353D] bg-mw-input px-3 font-mw-body text-[15px] normal-case tracking-normal text-mw-text";
+  const smallButton = "mw-focus inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-3 font-mw-body text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-50";
+  const primaryButton = "mw-focus inline-flex min-h-10 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 font-mw-body text-sm font-bold text-[#140A02] hover:bg-[#FF8A3D] hover:text-[#140A02] disabled:opacity-50";
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Swords className="h-4 w-4 text-accent" />
-        <span className="font-retro text-[10px] uppercase tracking-[0.16em]">Warzone battles</span>
-      </div>
+    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
+      <h2 className="sr-only">Battles</h2>
 
       {incoming.length ? (
-        <CommandCenterCard title="Incoming offers" description="Accept, decline, or counter-offer a different stake. Add an email in Settings to get challenge and counter-offer mail.">
+        <CommandCenterCard className="border-[#5A3416]" title="Incoming offers" description="Accept, decline, or counter-offer a different stake. Add an email in Settings to get challenge and counter-offer mail.">
           <CreatorChallengeCarousel
             challenges={incoming}
             chainId={chainId}
@@ -226,120 +229,38 @@ export default function CommandCenterBattles() {
         </CommandCenterCard>
       ) : null}
 
-      <CommandCenterCard
-        title="AUTO DEPLOY"
-        description="Opt this coin into automatic matchmaking. Compatible AUTO DEPLOY opponents can be paired without ACCEPT. If escrow is required, each owner still funds on-chain. The backend never signs wallet transactions. Stake and duration stay under your control."
-      >
-        {!qualified.length ? (
-          <p className="text-sm text-muted-foreground">
-            {feed.loading
-              ? "Loading your graduated and imported coins..."
-              : "No eligible coins yet. Graduate a MemeWarzone coin or import a passed token first."}
-          </p>
-        ) : (
-          <div className="space-y-3">
-            <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
-              Coin
-              <select
-                className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-                value={tokenKey(selected)}
-                onChange={(event) => {
-                  setSelectedToken(event.target.value);
-                  setChallengeTarget("");
-                  setMatchCandidates([]);
-                }}
-              >
-                {qualified.map((item) => (
-                  <option key={tokenKey(item)} value={tokenKey(item)}>
-                    {item.symbol || item.tokenName} ({item.origin === "import" ? "imported" : "graduated"})
-                  </option>
-                ))}
-              </select>
-            </label>
-            {autoDeployMode === "searching" ? (
-              <>
-                <TacticalTag label="AUTO DEPLOY: SEARCHING" tone="sponsored" />
-                <p className="text-sm text-muted-foreground">
-                  Stake {selectedBattle?.stakeNative ?? "—"} {nativeLabel(chainId, selectedBattle?.nativeSymbol)} ·{" "}
-                  {battleDurationLabel((selectedBattle as { durationHours?: number } | null)?.durationHours || durationHours)}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  Looking for a ranked compatible opponent. No ACCEPT step after an automatic pair.
-                </p>
-                <Button className="font-retro" variant="outline" disabled={busy === "cancel-open"} onClick={() => void handleDisableAutoDeploy()}>
-                  {busy === "cancel-open" ? "Disabling..." : "DISABLE AUTO DEPLOY"}
-                </Button>
-              </>
-            ) : autoDeployMode === "funding" ? (
-              <>
-                <TacticalTag label="OPPONENT FOUND / FUNDING REQUIRED" tone="hot" />
-                <p className="text-sm text-muted-foreground">AUTO DEPLOY cannot be disabled after a pair. Both owners fund the on-chain stake.</p>
-                {selected?.battleId ? (
-                  <ArenaStakeButton
-                    battleId={selected.battleId}
-                    chainId={chainId}
-                    walletAddress={walletAddress}
-                    battleState={selected.currentState}
-                  />
-                ) : null}
-              </>
-            ) : autoDeployMode === "live" ? (
-              <>
-                <TacticalTag label="LIVE" tone="hot" />
-                <p className="text-sm text-muted-foreground">This coin is already in a live fight.</p>
-              </>
-            ) : (
-              <>
-                <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  Battle type
-                  <select
-                    data-battle-mode-select="true"
-                    className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-                    value={battleMode}
-                    onChange={(event) => {
-                      const nextMode = parseBattleMode(event.target.value);
-                      setBattleMode(nextMode);
-                      setDurationHours(parseBattleDurationHoursForMode(nextMode, durationHours, 24));
-                    }}
-                  >
-                    <option value="normal">Metrics battle (market cap, holders, volume, boosts)</option>
-                    <option value="vote">Vote Battle (free votes + boosts, 6 to 48 hours)</option>
-                  </select>
-                </label>
-                <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  Fight length
-                  <select
-                    className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-                    value={durationHours}
-                    onChange={(event) => setDurationHours(parseBattleDurationHoursForMode(battleMode, event.target.value, 24))}
-                  >
-                    {battleDurationOptions(battleMode).map((item) => (
-                      <option key={item.hours} value={item.hours}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  Stake ({nativeLabel(chainId)})
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={stake}
-                    onChange={(event) => setStake(event.target.value)}
-                    className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-                    placeholder={`Amount in ${nativeLabel(chainId)}`}
-                  />
-                </label>
-                <Button className="font-retro" disabled={!canAct} onClick={() => void handleOpen()}>
-                  {busy === "open" ? "Enabling..." : "ENABLE AUTO DEPLOY"}
-                </Button>
-              </>
-            )}
+      <CommandCenterCard title="Your match status" description="Live, waiting, and finished fights for coins you own.">
+        {qualified.length ? (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 lg:grid-cols-[repeat(auto-fill,minmax(200px,1fr))]">
+            {qualified.map((item) => (
+              <div key={tokenKey(item)} className="flex flex-col gap-1.5 rounded-[14px] border border-mw-border bg-mw-input p-3">
+                <div>
+                  <b>{item.symbol || item.tokenName}</b>
+                  <div className="text-[13px] text-mw-muted">{item.unavailableReason || item.currentState}</div>
+                </div>
+                {item.battleId ? (
+                  <div className="flex flex-wrap gap-2">
+                    {item.currentState === "matched" ? (
+                      <ArenaStakeButton
+                        battleId={item.battleId}
+                        chainId={chainId}
+                        walletAddress={walletAddress}
+                        battleState={item.currentState}
+                      />
+                    ) : null}
+                    <Link to={`/battle/${encodeURIComponent(item.battleId)}`} className={smallButton}>Open battle</Link>
+                  </div>
+                ) : (
+                  <span className={`${chip} w-max ${item.eligibility ? "border-[#1F5133] text-[#6EE7A0]" : "border-mw-edge text-mw-muted"}`}>{item.eligibility ? "Ready" : "Unavailable"}</span>
+                )}
+              </div>
+            ))}
           </div>
+        ) : (
+          <p className="m-0 text-sm text-mw-muted">{feed.loading ? "Loading..." : "No battle activity yet."}</p>
         )}
       </CommandCenterCard>
+
 
       {selected?.eligibility ? (
         <FindMatchPanel
@@ -358,7 +279,7 @@ export default function CommandCenterBattles() {
 
       <div id="command-center-challenge">
         <CommandCenterCard title="Challenge a coin" description="Pick a waiting rival or paste a token address. They must accept before the fight goes live.">
-          <Button className="font-retro" onClick={() => setChallengeOpen(true)}>
+          <Button className={`${primaryButton} w-max`} onClick={() => setChallengeOpen(true)}>
             <Swords className="h-4 w-4" />
             Challenge a coin
           </Button>
@@ -374,37 +295,119 @@ export default function CommandCenterBattles() {
         onSent={() => void feed.refreshFeed()}
       />
 
-      <CommandCenterCard title="Your match status" description="Live, waiting, and finished fights for coins you own.">
-        {qualified.length ? (
-          <div className="space-y-2">
-            {qualified.map((item) => (
-              <div key={tokenKey(item)} className="mwz-hud-frame flex flex-wrap items-center justify-between gap-2 p-3">
-                <div>
-                  <div className="font-retro text-sm text-foreground">{item.symbol || item.tokenName}</div>
-                  <div className="text-xs text-muted-foreground">{item.unavailableReason || item.currentState}</div>
-                </div>
-                {item.battleId ? (
-                  <div className="flex flex-wrap gap-2">
-                    {item.currentState === "matched" ? (
-                      <ArenaStakeButton
-                        battleId={item.battleId}
-                        chainId={chainId}
-                        walletAddress={walletAddress}
-                        battleState={item.currentState}
-                      />
-                    ) : null}
-                    <Button asChild size="sm" variant="outline" className="font-retro">
-                      <Link to={`/battle/${encodeURIComponent(item.battleId)}`}>Open battle</Link>
-                    </Button>
-                  </div>
-                ) : (
-                  <TacticalTag label={item.eligibility ? "Ready" : "Unavailable"} tone={item.eligibility ? "success" : "default"} />
-                )}
-              </div>
-            ))}
-          </div>
+
+      <CommandCenterCard
+        title="Auto deploy"
+        description="Opt this coin into automatic matchmaking. Compatible AUTO DEPLOY opponents can be paired without ACCEPT. If escrow is required, each owner still funds on-chain. The backend never signs wallet transactions. Stake and duration stay under your control."
+      >
+        {!qualified.length ? (
+          <p className="m-0 text-sm text-mw-muted">
+            {feed.loading
+              ? "Loading your graduated and imported coins..."
+              : "No eligible coins yet. Graduate a MemeWarzone coin or import a passed token first."}
+          </p>
         ) : (
-          <p className="text-sm text-muted-foreground">{feed.loading ? "Loading..." : "No battle activity yet."}</p>
+          <div className="flex flex-col gap-3">
+            <label className={fieldLabel}>
+              Coin
+              <select
+                className={fieldInput}
+                value={tokenKey(selected)}
+                onChange={(event) => {
+                  setSelectedToken(event.target.value);
+                  setChallengeTarget("");
+                  setMatchCandidates([]);
+                }}
+              >
+                {qualified.map((item) => (
+                  <option key={tokenKey(item)} value={tokenKey(item)}>
+                    {item.symbol || item.tokenName} ({item.origin === "import" ? "imported" : "graduated"})
+                  </option>
+                ))}
+              </select>
+            </label>
+            {autoDeployMode === "searching" ? (
+              <>
+                <span className={`${chip} w-max ${chipOrange}`}>Auto deploy: searching</span>
+                <p className="m-0 text-sm text-mw-muted">
+                  Stake {selectedBattle?.stakeNative ?? "—"} {nativeLabel(chainId, selectedBattle?.nativeSymbol)} ·{" "}
+                  {battleDurationLabel((selectedBattle as { durationHours?: number } | null)?.durationHours || durationHours)}
+                </p>
+                <p className="m-0 text-sm text-mw-muted">
+                  Looking for a ranked compatible opponent. No ACCEPT step after an automatic pair.
+                </p>
+                <Button className={smallButton} disabled={busy === "cancel-open"} onClick={() => void handleDisableAutoDeploy()}>
+                  {busy === "cancel-open" ? "Disabling..." : "DISABLE AUTO DEPLOY"}
+                </Button>
+              </>
+            ) : autoDeployMode === "funding" ? (
+              <>
+                <span className={`${chip} w-max ${chipOrange}`}>Opponent found · funding required</span>
+                <p className="m-0 text-sm text-mw-muted">AUTO DEPLOY cannot be disabled after a pair. Both owners fund the on-chain stake.</p>
+                {selected?.battleId ? (
+                  <ArenaStakeButton
+                    battleId={selected.battleId}
+                    chainId={chainId}
+                    walletAddress={walletAddress}
+                    battleState={selected.currentState}
+                  />
+                ) : null}
+              </>
+            ) : autoDeployMode === "live" ? (
+              <>
+                <span className={`${chip} w-max ${chipOrange}`}>Live</span>
+                <p className="m-0 text-sm text-mw-muted">This coin is already in a live fight.</p>
+              </>
+            ) : (
+              <>
+                <label className={fieldLabel}>
+                  Battle type
+                  <select
+                    data-battle-mode-select="true"
+                    className={fieldInput}
+                    value={battleMode}
+                    onChange={(event) => {
+                      const nextMode = parseBattleMode(event.target.value);
+                      setBattleMode(nextMode);
+                      setDurationHours(parseBattleDurationHoursForMode(nextMode, durationHours, 24));
+                    }}
+                  >
+                    <option value="normal">Metrics battle (market cap, holders, volume, boosts)</option>
+                    <option value="vote">Vote Battle (free votes + boosts, 6 to 48 hours)</option>
+                  </select>
+                </label>
+                <label className={fieldLabel}>
+                  Fight length
+                  <select
+                    className={fieldInput}
+                    value={durationHours}
+                    onChange={(event) => setDurationHours(parseBattleDurationHoursForMode(battleMode, event.target.value, 24))}
+                  >
+                    {battleDurationOptions(battleMode).map((item) => (
+                      <option key={item.hours} value={item.hours}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={fieldLabel}>
+                  Stake ({nativeLabel(chainId)})
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={stake}
+                    onChange={(event) => setStake(event.target.value)}
+                    className={fieldInput}
+                    placeholder={`Amount in ${nativeLabel(chainId)}`}
+                  />
+                </label>
+                <Button className={primaryButton} disabled={!canAct} onClick={() => void handleOpen()}>
+                  {busy === "open" ? "Enabling..." : "ENABLE AUTO DEPLOY"}
+                </Button>
+              </>
+            )}
+          </div>
         )}
       </CommandCenterCard>
     </div>

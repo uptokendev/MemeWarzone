@@ -132,7 +132,7 @@ function balanceBadgeClass(copy: BalanceStateCopy) {
   if (copy.tone === "ready") return "border-emerald-400/30 bg-emerald-400/10 text-emerald-100";
   if (copy.tone === "warning") return "border-amber-400/30 bg-amber-400/10 text-amber-100";
   if (copy.tone === "pending") return "border-sky-400/30 bg-sky-400/10 text-sky-100";
-  return "border-border/40 bg-card/25 text-muted-foreground";
+  return "border-border/40 bg-card/25 text-mw-muted";
 }
 
 export function RecruiterNativePayoutsPanel() {
@@ -278,13 +278,13 @@ export function RecruiterNativePayoutsPanel() {
   if (identityLoading || identityError || !isRecruiterWallet) return null;
 
   return (
-    <CommandCenterCard title="Recruiter Rewards" description="Verify your BNB, Robinhood, and Solana wallets, then claim available recruiter rewards." action={<WalletCards className="h-5 w-5 text-accent" />}>
+    <CommandCenterCard title="Recruiter Rewards" description="Verify your BNB, Robinhood, and Solana wallets, then claim available recruiter rewards." action={<WalletCards className="h-5 w-5 text-mw-accent-soft" />}>
       {error ? <div className="mb-4 rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm text-amber-100">{error}</div> : null}
       {!state?.recruiterId ? (
-        <div className="mb-4 rounded-2xl border border-border/50 bg-background/25 p-4">
+        <div className="mb-4 rounded-[14px] border border-mw-border bg-mw-input p-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div><div className="font-retro text-sm text-foreground">Unlock recruiter rewards</div><p className="mt-1 text-sm text-muted-foreground">Sign once with your approved recruiter wallet to view and claim rewards.</p></div>
-            <Button onClick={signInRecruiter} disabled={pendingAction === "signin" || loading} className="font-retro">{pendingAction === "signin" || loading ? "Unlocking..." : "Unlock Rewards"}</Button>
+            <div><div className="font-semibold text-sm text-mw-text">Unlock recruiter rewards</div><p className="mt-1 text-sm text-mw-muted">Sign once with your approved recruiter wallet to view and claim rewards.</p></div>
+            <Button onClick={signInRecruiter} disabled={pendingAction === "signin" || loading} className="font-semibold">{pendingAction === "signin" || loading ? "Unlocking..." : "Unlock Rewards"}</Button>
           </div>
         </div>
       ) : null}
@@ -300,23 +300,23 @@ export function RecruiterNativePayoutsPanel() {
           const claimPending = pendingAction === `claim-${chain}`;
           const stateCopy = balanceStateCopy(balance);
           return (
-            <div key={chain} className="rounded-2xl border border-border/50 bg-background/25 p-4">
+            <div key={chain} className="rounded-[14px] border border-mw-border bg-mw-input p-4">
               <div className="flex items-start justify-between gap-3">
-                <div><div className="font-retro text-sm text-foreground">{chainLabel(chain)} Rewards</div><div className="mt-1 text-xs text-muted-foreground">Paid in {balance.token}</div></div>
-                <span className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] ${balanceBadgeClass(stateCopy)}`}>{stateCopy.badge}</span>
+                <div><div className="font-semibold text-sm text-mw-text">{chainLabel(chain)} Rewards</div><div className="mt-1 text-xs text-mw-muted">Paid in {balance.token}</div></div>
+                <span className={`rounded-full border px-2.5 py-1 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] ${balanceBadgeClass(stateCopy)}`}>{stateCopy.badge}</span>
               </div>
-              <div className="mt-5 rounded-xl border border-border/40 bg-card/25 p-4 text-center"><div className="font-retro text-2xl text-foreground">{formatNative(stateCopy.amountRaw, balance.token)}</div><div className="mt-1 text-xs text-muted-foreground">{stateCopy.caption}</div></div>
-              <div className="mt-4 rounded-xl border border-border/40 bg-card/25 p-3 text-xs text-muted-foreground"><div className="flex items-center gap-2 font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{verified ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : <ShieldAlert className="h-4 w-4 text-amber-200" />}{chainLabel(chain)} wallet verification</div><div className="mt-2 font-mono text-sm text-foreground">{shortAddress(balance.payoutWallet)}</div></div>
-              <div className="mt-4 space-y-2"><label className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{chainLabel(chain)} wallet</label><input value={inputValue} onChange={(event) => setInputValue(event.target.value)} placeholder={walletPlaceholder(chain)} className="min-h-10 w-full rounded-xl border border-border/50 bg-background/60 px-3 font-mono text-sm text-foreground outline-none transition focus:border-accent/60" /></div>
+              <div className="mt-5 rounded-[10px] border border-mw-border bg-mw-input p-4 text-center"><div className="font-semibold text-2xl text-mw-text">{formatNative(stateCopy.amountRaw, balance.token)}</div><div className="mt-1 text-xs text-mw-muted">{stateCopy.caption}</div></div>
+              <div className="mt-4 rounded-[10px] border border-mw-border bg-mw-input p-3 text-xs text-mw-muted"><div className="flex items-center gap-2 font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{verified ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : <ShieldAlert className="h-4 w-4 text-amber-200" />}{chainLabel(chain)} wallet verification</div><div className="mt-2 font-mono text-sm text-mw-text">{shortAddress(balance.payoutWallet)}</div></div>
+              <div className="mt-4 space-y-2"><label className="font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{chainLabel(chain)} wallet</label><input value={inputValue} onChange={(event) => setInputValue(event.target.value)} placeholder={walletPlaceholder(chain)} className="min-h-10 w-full rounded-xl border border-border/50 bg-background/60 px-3 font-mono text-sm text-mw-text outline-none transition focus:border-accent/60" /></div>
               <div className="mt-4 flex flex-wrap gap-2">
                 {verified && String(balance.status || "") === "pending_batch_publication" ? (
                   <p className="w-full text-xs text-sky-100">Wallet verified. {formatNative(stateCopy.amountRaw, balance.token)} {balance.token} is earned. Batch awaiting on-chain publication — you cannot claim until the Merkle root is live.</p>
                 ) : isSol ? (
-                  <Button onClick={linkSolanaWallet} disabled={verifyPending || recruiterWallet.connecting} variant="outline" className="font-retro">{verifyPending || recruiterWallet.connecting ? "Waiting..." : verified ? "Update Solana Wallet" : "Verify Solana Wallet"}</Button>
+                  <Button onClick={linkSolanaWallet} disabled={verifyPending || recruiterWallet.connecting} variant="outline" className="font-semibold">{verifyPending || recruiterWallet.connecting ? "Waiting..." : verified ? "Update Solana Wallet" : "Verify Solana Wallet"}</Button>
                 ) : (
-                  <Button onClick={linkBnbWallet} disabled={verifyPending} variant="outline" className="font-retro">{verifyPending ? "Waiting..." : verified ? "Update EVM Wallet" : "Verify EVM Wallet"}</Button>
+                  <Button onClick={linkBnbWallet} disabled={verifyPending} variant="outline" className="font-semibold">{verifyPending ? "Waiting..." : verified ? "Update EVM Wallet" : "Verify EVM Wallet"}</Button>
                 )}
-                <Button onClick={() => createClaim(chain)} disabled={!canClaim || claimPending} className="font-retro">{claimPending ? "Claiming..." : `Claim ${balance.token}`}</Button>
+                <Button onClick={() => createClaim(chain)} disabled={!canClaim || claimPending} className="font-semibold">{claimPending ? "Claiming..." : `Claim ${balance.token}`}</Button>
               </div>
             </div>
           );

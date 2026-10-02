@@ -35,7 +35,7 @@ export default function CommandCenterSupport() {
       <CommandCenterCard>
         <label className="sr-only" htmlFor="mwz-help-search">Search MemeWarzone Help</label>
         <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-mw-muted" />
           <Input
             id="mwz-help-search"
             value={query}
@@ -59,10 +59,10 @@ export default function CommandCenterSupport() {
                   setQuery("");
                   setPanel("help");
                 }}
-                className={`shrink-0 rounded-full border px-3 py-1.5 font-retro text-[10px] uppercase tracking-[0.14em] transition-colors ${
+                className={`shrink-0 rounded-full border px-3 py-1.5 font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] transition-colors ${
                   active
-                    ? "border-accent/60 bg-accent/15 text-accent"
-                    : "border-border/50 bg-background/30 text-muted-foreground hover:text-foreground"
+                    ? "border-accent/60 bg-accent/15 text-mw-accent-soft"
+                    : "border-border/50 bg-background/30 text-mw-muted hover:text-mw-text"
                 }`}
               >
                 {item.label}
@@ -78,7 +78,7 @@ export default function CommandCenterSupport() {
           title={searching ? `Results for “${query.trim()}”` : "Help questions"}
         >
           {articles.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-mw-muted">
               Nothing in Help matches that. Product questions go to Discord. Targeted abuse stays in Report Abuse.
             </p>
           ) : (
@@ -88,7 +88,7 @@ export default function CommandCenterSupport() {
                   <AccordionTrigger className="gap-4 py-3.5 text-left text-sm font-medium hover:no-underline">
                     <span className="min-w-0 flex-1 pr-2">{article.title}</span>
                   </AccordionTrigger>
-                  <AccordionContent className="pr-8 text-sm leading-6 text-muted-foreground">
+                  <AccordionContent className="pr-8 text-sm leading-6 text-mw-muted">
                     {article.body}
                   </AccordionContent>
                 </AccordionItem>
@@ -107,7 +107,7 @@ export default function CommandCenterSupport() {
           title="Still need help?"
           description="Wallets, trading, launches, rewards and product questions stay in Discord."
         >
-          <Button asChild className="font-retro">
+          <Button asChild className="font-semibold">
             <a href={DISCORD_SUPPORT_URL} target="_blank" rel="noreferrer">
               <LifeBuoy className="mr-2 h-4 w-4" />
               Open Discord Support
@@ -123,7 +123,7 @@ export default function CommandCenterSupport() {
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
-              className="font-retro"
+              className="font-semibold"
               onClick={() => setPanel((current) => (current === "report" ? "help" : "report"))}
             >
               <ShieldAlert className="mr-2 h-4 w-4" />
@@ -132,7 +132,7 @@ export default function CommandCenterSupport() {
             <Button
               type="button"
               variant="outline"
-              className="font-retro"
+              className="font-semibold"
               onClick={() => setPanel((current) => (current === "reports" ? "help" : "reports"))}
             >
               <Flag className="mr-2 h-4 w-4" />

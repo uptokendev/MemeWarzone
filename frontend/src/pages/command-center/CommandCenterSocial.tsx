@@ -28,7 +28,7 @@ function resolveWallet(item: any, mode: "followers" | "following") {
 
 function EmptyState({ children }: { children: string }) {
   return (
-    <div className="rounded-2xl border border-border/50 bg-background/25 p-4 text-sm text-muted-foreground">
+    <div className="rounded-[14px] border border-mw-border bg-mw-input p-4 text-sm text-mw-muted">
       {children}
     </div>
   );
@@ -113,11 +113,11 @@ export default function CommandCenterSocial({ mode }: CommandCenterSocialProps) 
                 stat.active ? "border-accent/60 bg-accent/10" : "border-border/50 bg-card/25"
               }`}
             >
-              <div className="mb-3 flex items-center gap-2 text-muted-foreground">
-                <Icon className="h-4 w-4 text-accent" />
-                <span className="font-retro text-[10px] uppercase tracking-[0.16em]">{stat.label}</span>
+              <div className="mb-3 flex items-center gap-2 text-mw-muted">
+                <Icon className="h-4 w-4 text-mw-accent-soft" />
+                <span className="font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em]">{stat.label}</span>
               </div>
-              <div className="font-retro text-2xl text-foreground">{stat.value}</div>
+              <div className="font-semibold text-2xl text-mw-text">{stat.value}</div>
             </Link>
           );
         })}
@@ -135,10 +135,10 @@ export default function CommandCenterSocial({ mode }: CommandCenterSocialProps) 
                   <Link
                     key={`${rowWallet}-${index}`}
                     to={rowWallet ? `/profile/${rowWallet}` : `/profile/${walletAddress}/command/followers`}
-                    className="rounded-2xl border border-border/50 bg-background/25 p-4 transition hover:border-accent/50 hover:bg-card/35"
+                    className="rounded-[14px] border border-mw-border bg-mw-input p-4 transition hover:border-accent/50 hover:bg-card/35"
                   >
-                    <div className="font-retro text-sm text-foreground">{shortenWallet(rowWallet) || "Unknown wallet"}</div>
-                    <div className="mt-2 break-all font-mono text-xs text-muted-foreground">{rowWallet || "No wallet address returned"}</div>
+                    <div className="font-semibold text-sm text-mw-text">{shortenWallet(rowWallet) || "Unknown wallet"}</div>
+                    <div className="mt-2 break-all font-mono text-xs text-mw-muted">{rowWallet || "No wallet address returned"}</div>
                   </Link>
                 );
               })}
@@ -160,10 +160,10 @@ export default function CommandCenterSocial({ mode }: CommandCenterSocialProps) 
                     <Link
                       key={`${rowWallet}-${index}`}
                       to={rowWallet ? `/profile/${rowWallet}` : `/profile/${walletAddress}/command/following`}
-                      className="rounded-2xl border border-border/50 bg-background/25 p-4 transition hover:border-accent/50 hover:bg-card/35"
+                      className="rounded-[14px] border border-mw-border bg-mw-input p-4 transition hover:border-accent/50 hover:bg-card/35"
                     >
-                      <div className="font-retro text-sm text-foreground">{shortenWallet(rowWallet) || "Unknown wallet"}</div>
-                      <div className="mt-2 break-all font-mono text-xs text-muted-foreground">{rowWallet || "No wallet address returned"}</div>
+                      <div className="font-semibold text-sm text-mw-text">{shortenWallet(rowWallet) || "Unknown wallet"}</div>
+                      <div className="mt-2 break-all font-mono text-xs text-mw-muted">{rowWallet || "No wallet address returned"}</div>
                     </Link>
                   );
                 })}
@@ -182,16 +182,16 @@ export default function CommandCenterSocial({ mode }: CommandCenterSocialProps) 
                   <Link
                     key={`${card.kind}-${card.id}`}
                     to={card.href || `/profile/${walletAddress}/command/following`}
-                    className="rounded-2xl border border-border/50 bg-background/25 p-4 transition hover:border-accent/50 hover:bg-card/35"
+                    className="rounded-[14px] border border-mw-border bg-mw-input p-4 transition hover:border-accent/50 hover:bg-card/35"
                   >
                     <div className="flex items-center gap-3">
                       <img src={card.image || "/placeholder.svg"} alt={card.name} className="h-12 w-12 shrink-0 rounded-2xl object-cover" />
                       <div className="min-w-0">
-                        <div className="truncate font-retro text-sm text-foreground">{card.name}</div>
-                        <div className="text-xs text-muted-foreground">${card.ticker}</div>
+                        <div className="truncate font-semibold text-sm text-mw-text">{card.name}</div>
+                        <div className="text-xs text-mw-muted">${card.ticker}</div>
                       </div>
                     </div>
-                    <div className="mt-3 text-xs text-muted-foreground">Market cap: {card.marketCap || "—"}</div>
+                    <div className="mt-3 text-xs text-mw-muted">Market cap: {card.marketCap || "—"}</div>
                   </Link>
                 ))}
               </div>
@@ -209,23 +209,23 @@ export default function CommandCenterSocial({ mode }: CommandCenterSocialProps) 
                   <Link
                     key={`${card.kind}-${card.id}`}
                     to={card.href || `/profile/${walletAddress}/command/following`}
-                    className="rounded-2xl border border-border/50 bg-background/25 p-4 transition hover:border-accent/50 hover:bg-card/35"
+                    className="rounded-[14px] border border-mw-border bg-mw-input p-4 transition hover:border-accent/50 hover:bg-card/35"
                   >
                     <div className="flex items-center gap-3">
                       <img src={card.image || "/placeholder.svg"} alt={card.name} className="h-12 w-12 shrink-0 rounded-2xl object-cover" />
                       <div className="min-w-0">
                         <div className="flex min-w-0 items-center gap-2">
-                          <div className="truncate font-retro text-sm text-foreground">{card.name}</div>
+                          <div className="truncate font-semibold text-sm text-mw-text">{card.name}</div>
                           {Number(card.chainId) === 101 || Number(card.chainId) === 102 ? (
                             <span className="shrink-0 rounded-full border border-purple-400/40 px-2 py-0.5 text-[10px] text-purple-300">SOL</span>
                           ) : Number(card.chainId) === 56 || Number(card.chainId) === 97 ? (
                             <span className="shrink-0 rounded-full border border-amber-400/40 px-2 py-0.5 text-[10px] text-amber-300">BNB</span>
                           ) : null}
                         </div>
-                        <div className="text-xs text-muted-foreground">${card.ticker}</div>
+                        <div className="text-xs text-mw-muted">${card.ticker}</div>
                       </div>
                     </div>
-                    <div className="mt-3 text-xs text-muted-foreground">Status: {card.status || "Prepare Mode"}</div>
+                    <div className="mt-3 text-xs text-mw-muted">Status: {card.status || "Prepare Mode"}</div>
                   </Link>
                 ))}
               </div>

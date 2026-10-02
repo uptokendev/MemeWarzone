@@ -345,12 +345,33 @@ export default function CommandCenterRecruiter() {
     shareToX();
   };
 
+  // UI redesign (artboard Recruiter section): presentation only, every handler above is unchanged.
+  const lbl = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+  const tile = "rounded-[14px] border border-mw-border bg-mw-surface p-3";
+  const tileValue = "break-all font-mw-mono text-[19px] font-bold text-mw-text";
+  const smallButton = "mw-focus inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-3 font-mw-body text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-50";
+  const primaryButton = "mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 font-mw-body text-[15px] font-bold text-[#140A02] hover:bg-[#FF8A3D] hover:text-[#140A02] disabled:opacity-50";
+  const inputClass = "mw-focus h-11 min-w-0 flex-1 rounded-[10px] border border-[#2E353D] bg-mw-input px-3.5 font-mw-mono text-[13px] text-mw-text outline-none focus:border-mw-accent";
+  const errorBox = "rounded-[10px] border border-[#5A1A26] bg-[#2A0E14] p-3 text-sm text-[#FFB4C0]";
+  const copyRow = (label: string, value: string, copyLabel: string) => (
+    <div className="flex flex-col gap-1">
+      <span className={lbl}>{label}</span>
+      <div className="flex gap-1.5">
+        <input readOnly value={value} aria-label={label} className={inputClass} />
+        <button type="button" onClick={() => copyText(value, copyLabel)} className={`${smallButton} min-h-11`}>
+          <Copy className="h-4 w-4" aria-hidden="true" />
+          Copy
+        </button>
+      </div>
+    </div>
+  );
+
   if (loadingStatus) {
     return (
-      <div className="space-y-4">
-        <CommandCenterPageHeader title="Recruiter" description="Loading recruiter status for this wallet." />
-        <CommandCenterCard title="Recruiter status" description="Checking whether this wallet already has a recruiter account.">
-          <div className="rounded-2xl border border-border/50 bg-background/25 p-6 text-sm text-muted-foreground">Loading recruiter program state...</div>
+      <div className="flex flex-col gap-3.5">
+        <CommandCenterPageHeader title="Recruiter" />
+        <CommandCenterCard title="Recruiter status">
+          <div className="text-sm text-mw-muted">Loading recruiter program state...</div>
         </CommandCenterCard>
       </div>
     );
@@ -358,10 +379,10 @@ export default function CommandCenterRecruiter() {
 
   if (statusError) {
     return (
-      <div className="space-y-4">
-        <CommandCenterPageHeader title="Recruiter" description="Recruiter status could not be loaded." />
+      <div className="flex flex-col gap-3.5">
+        <CommandCenterPageHeader title="Recruiter" />
         <CommandCenterCard title="Recruiter status unavailable" description="Try again after refreshing.">
-          <div className="rounded-2xl border border-rose-400/30 bg-rose-400/10 p-6 text-sm text-rose-100">{statusError}</div>
+          <div className={errorBox}>{statusError}</div>
         </CommandCenterCard>
       </div>
     );
@@ -369,145 +390,170 @@ export default function CommandCenterRecruiter() {
 
   if (!isRecruiter) {
     return (
-      <div className="space-y-4">
-        <CommandCenterPageHeader title="Recruiter Program" description="This wallet is not a recruiter yet. Learn how the program works and apply from here.">
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline" className="font-retro"><Link to="/recruiters">Public leaderboard<ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
-            <Button asChild className="font-retro"><Link to="/recruiter/signup">Sign up</Link></Button>
-          </div>
+      <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
+        <CommandCenterPageHeader title="Recruiter Program">
+          <Link to="/recruiters" className={smallButton}>Public leaderboard<ArrowRight className="h-4 w-4" aria-hidden="true" /></Link>
         </CommandCenterPageHeader>
 
-        <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-          <CommandCenterCard title="Become a MemeWarzone Recruiter" description="Recruiters help grow the arena by bringing in creators, traders, and squads.">
-            <div className="grid gap-3 sm:grid-cols-2">
-              {benefits.map((benefit) => <div key={benefit} className="rounded-2xl border border-border/50 bg-background/25 p-3 text-sm text-muted-foreground">{benefit}</div>)}
-            </div>
-            <div className="mt-5 rounded-2xl border border-accent/30 bg-accent/10 p-4">
-              <div className="flex items-start gap-3"><ShieldCheck className="mt-1 h-4 w-4 shrink-0 text-accent" /><div><div className="font-retro text-sm text-foreground">Program rule</div><p className="mt-1 text-sm text-muted-foreground">Your recruiter link is tracked automatically. When creators and traders join through you, MemeWarzone keeps the squad and reward records updated.</p></div></div>
-            </div>
-          </CommandCenterCard>
-          <CommandCenterCard title="How it works" description="The short path from wallet to recruiter dashboard.">
-            <div className="space-y-3">
-              {programSteps.map((step, index) => <div key={step} className="flex gap-3 rounded-2xl border border-border/50 bg-background/25 p-4"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-accent/40 bg-accent/10 font-retro text-xs text-accent">{index + 1}</div><div className="text-sm text-muted-foreground">{step}</div></div>)}
-            </div>
-          </CommandCenterCard>
-        </div>
+        <section className="grid overflow-hidden rounded-[14px] border border-[#5A3416] bg-mw-surface lg:grid-cols-2">
+          <RecruiterSignupImage />
+          <div className="flex flex-col gap-3 p-3.5 lg:p-[22px]">
+            <h3 className="m-0 font-mw-cond text-2xl font-bold">Become a MemeWarzone Recruiter</h3>
+            <p className="m-0 text-sm text-mw-muted">Recruiters help grow the arena by bringing in creators, traders, and squads.</p>
+            <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+              {benefits.map((benefit) => (
+                <li key={benefit} className="flex gap-2 text-sm">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-mw-accent" aria-hidden="true" />
+                  <span>{benefit}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="m-0 text-[13px] text-mw-muted">Your recruiter link is tracked automatically. When creators and traders join through you, MemeWarzone keeps the squad and reward records updated.</p>
+            <Link to="/recruiter/signup" className={`${primaryButton} mt-auto min-h-[50px]`}>Become a recruiter</Link>
+          </div>
+        </section>
+
+        <CommandCenterCard title="How it works">
+          <ol className="m-0 flex list-none flex-col p-0">
+            {programSteps.map((step, index) => (
+              <li key={step} className="flex min-h-11 items-center gap-3 border-b border-[#1E2329] text-sm last:border-b-0">
+                <span className="w-5 font-mw-mono font-bold text-mw-accent-soft">{index + 1}</span>
+                <span>{step}</span>
+              </li>
+            ))}
+          </ol>
+        </CommandCenterCard>
       </div>
     );
   }
 
   const portalLocked = !portal;
   const linkedWalletCount = safeCount(portal?.squad?.counts?.total ?? recruiter?.linkedWalletCount);
+  const tiles: Array<[string, string]> = [
+    ["Linked wallets", linkedWalletCount.toLocaleString()],
+    ...(portal ? ([["Creators", String(safeCount(portal.squad?.counts?.creators))], ["Traders", String(safeCount(portal.squad?.counts?.traders))]] as Array<[string, string]>) : []),
+    ["Code", activeCode],
+    ["Status", String(portal?.recruiter?.status || recruiter?.status || "unknown")],
+  ];
 
   return (
-    <div className="space-y-4">
-      <CommandCenterPageHeader title="Recruiter Management" description="Manage your recruiter link, public recruiter profile, squad growth, and account settings from Command Center.">
-        <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" className="font-retro"><Link to="/recruiters">Public leaderboard<ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
-          <Button asChild className="font-retro"><Link to={`/recruiters/${encodeURIComponent(activeCode)}`}>Public page</Link></Button>
-        </div>
+    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
+      <CommandCenterPageHeader title="Recruiter Management">
+        <Link to="/recruiters" className={smallButton}>Public leaderboard<ArrowRight className="h-4 w-4" aria-hidden="true" /></Link>
       </CommandCenterPageHeader>
 
-      <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-        <CommandCenterCard title="Recruiter account" description="Your active recruiter identity and public referral link.">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Code</div><div className="mt-2 break-all font-retro text-lg text-foreground">{activeCode}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Status</div><div className="mt-2 font-retro text-lg capitalize text-foreground">{portal?.recruiter?.status || recruiter?.status || "unknown"}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Linked wallets</div><div className="mt-2 font-retro text-lg text-foreground">{linkedWalletCount.toLocaleString()}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Wallet</div><div className="mt-2 font-retro text-lg text-foreground">{shortAddress(walletAddress)}</div></div>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 lg:grid-cols-[repeat(auto-fill,minmax(150px,1fr))]">
+        {tiles.map(([label, value]) => (
+          <div key={label} className={tile}>
+            <div className={lbl}>{label}</div>
+            <div className={`${tileValue} ${label === "Status" ? "capitalize" : ""}`}>{value}</div>
           </div>
+        ))}
+      </div>
 
-          {activeSquadImage && <div className="mt-4 flex justify-center"><img src={activeSquadImage} alt={`${activeCode} squad`} className="h-40 w-40 rounded-2xl border border-accent/30 bg-accent/10 object-cover" /></div>}
+      <CommandCenterCard title="Your links">
+        {copyRow("Referral link", canonicalLink, "Canonical link")}
+        {copyRow("Home link", queryLink, "Universal link")}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={shareToX} className={smallButton}><ExternalLink className="h-4 w-4" aria-hidden="true" />Share on X</button>
+          <button type="button" onClick={() => void nativeShare()} className={smallButton}><Gift className="h-4 w-4" aria-hidden="true" />Share squad</button>
+          <Link to={`/recruiters/${encodeURIComponent(activeCode)}`} className={smallButton}>Public recruiter page</Link>
+          <Link to="/command/claims" className={smallButton}><WalletCards className="h-4 w-4" aria-hidden="true" />Rewards and claims</Link>
+        </div>
+      </CommandCenterCard>
 
-          <div className="mt-4 rounded-2xl border border-border/50 bg-background/25 p-4">
-            <div className="font-retro text-sm text-foreground">Referral links</div>
-            <div className="mt-3 space-y-2">
-              <div className="rounded-xl border border-border/40 bg-card/25 p-3"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Main invite link</div><div className="mt-1 break-all font-mono text-xs text-muted-foreground">{canonicalLink}</div></div>
-              <div className="rounded-xl border border-border/40 bg-card/25 p-3"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Home-page referral link</div><div className="mt-1 break-all font-mono text-xs text-muted-foreground">{queryLink}</div></div>
+      <CommandCenterCard title="Recruiter tools">
+        {portalLocked ? (
+          <div className="flex flex-col gap-2.5">
+            <p className="m-0 text-sm text-mw-muted">Sign with the approved recruiter wallet to edit your recruiter code, squad image, and sharing links.</p>
+            {!activeRecruiterWallet && <div className={errorBox}>The connected wallet does not match this command-center wallet. Switch to {shortAddress(walletAddress)} first.</div>}
+            {portalError && <div className={errorBox}>{portalError}</div>}
+            <button type="button" onClick={signIntoPortal} disabled={authing || loadingPortal || !activeRecruiterWallet} className={`${primaryButton} w-max`}>{authing ? "Waiting for signature..." : loadingPortal ? "Loading tools..." : "Sign in to manage"}</button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3.5">
+            <div className="flex flex-col gap-1">
+              <label htmlFor="recruiter-code" className={lbl}>Recruiter code</label>
+              <div className="flex flex-col gap-1.5 sm:flex-row">
+                <input id="recruiter-code" value={preferredCode} onChange={(event) => setPreferredCode(normalizeCode(event.target.value))} className={inputClass} placeholder="YOURCODE" />
+                <button type="button" onClick={saveCode} disabled={savingCode} className={`${primaryButton} min-h-11`}>{savingCode ? "Saving..." : "Save code"}</button>
+              </div>
+              {portalError && <div className={`${errorBox} mt-1.5`}>{portalError}</div>}
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button onClick={() => copyText(canonicalLink, "Canonical link")} variant="outline" className="font-retro"><Copy className="mr-2 h-4 w-4" />Copy invite link</Button>
-              <Button onClick={() => copyText(queryLink, "Universal link")} variant="outline" className="font-retro"><Copy className="mr-2 h-4 w-4" />Copy home link</Button>
+
+            <div className="flex flex-col gap-1.5">
+              <span className={`${lbl} flex items-center gap-1.5`}><Image className="h-4 w-4 text-mw-accent" aria-hidden="true" />Squad image</span>
+              <p className="m-0 text-[13px] text-mw-muted">Upload a PNG, JPG, or WebP image. The uploaded image is saved to your public recruiter squad profile.</p>
+              <input
+                ref={squadImageInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void uploadSquadImage(file);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                {activeSquadImage ? <img src={activeSquadImage} alt="Squad preview" className="h-16 w-16 rounded-[10px] border border-mw-border object-cover" /> : <div className="flex h-16 w-16 items-center justify-center rounded-[10px] border border-dashed border-mw-edge bg-mw-input"><Image className="h-5 w-5 text-mw-muted" aria-hidden="true" /></div>}
+                <div className="min-w-0 flex-1 text-xs text-mw-muted">
+                  {activeSquadImage ? <div className="truncate font-mw-mono">{activeSquadImage}</div> : "No squad image uploaded yet."}
+                </div>
+                <button type="button" onClick={() => squadImageInputRef.current?.click()} disabled={savingSquadImage || uploadingSquadImage} className={smallButton}>
+                  {uploadingSquadImage ? <><UploadCloud className="h-4 w-4 animate-pulse" aria-hidden="true" />Uploading...</> : <><UploadCloud className="h-4 w-4" aria-hidden="true" />Upload image</>}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => copyText(canonicalLink, "Referral link")} className={smallButton}><Link2 className="h-4 w-4" aria-hidden="true" />Copy referral link</button>
+              <button type="button" onClick={() => void disconnectPortal()} className={smallButton}><LogOut className="h-4 w-4" aria-hidden="true" />Disconnect session</button>
+              <Link to="/recruiters" className={smallButton}><Trophy className="h-4 w-4" aria-hidden="true" />Leaderboard</Link>
             </div>
           </div>
-        </CommandCenterCard>
+        )}
+      </CommandCenterCard>
 
-        <CommandCenterCard title="Management actions" description="Recruiter tools and sharing controls.">
-          {portalLocked ? (
-            <div className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4">
-              <div className="font-retro text-sm text-foreground">Unlock recruiter tools</div>
-              <p className="mt-2 text-sm text-muted-foreground">Sign with the approved recruiter wallet to edit your recruiter code, squad image, and sharing links.</p>
-              {!activeRecruiterWallet && <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-400/10 p-3 text-sm text-rose-100">The connected wallet does not match this command-center wallet. Switch to {shortAddress(walletAddress)} first.</div>}
-              {portalError && <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-400/10 p-3 text-sm text-rose-100">{portalError}</div>}
-              <Button onClick={signIntoPortal} disabled={authing || loadingPortal || !activeRecruiterWallet} className="mt-4 font-retro">{authing ? "Waiting for signature..." : loadingPortal ? "Loading tools..." : "Sign in to manage"}</Button>
-            </div>
+      {portal && (
+        <CommandCenterCard title="Recent referrals">
+          {!Array.isArray(portal.squad?.rows) || portal.squad.rows.length === 0 ? (
+            <div className="text-sm text-mw-muted">No squad members yet. Share your code and start onboarding creators or traders.</div>
           ) : (
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-border/50 bg-background/25 p-4">
-                <label className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Recruiter code</label>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <input value={preferredCode} onChange={(event) => setPreferredCode(normalizeCode(event.target.value))} className="min-h-10 flex-1 rounded-xl border border-border/50 bg-background/60 px-3 font-mono text-sm text-foreground outline-none transition focus:border-accent/60" placeholder="YOURCODE" />
-                  <Button onClick={saveCode} disabled={savingCode} className="font-retro">{savingCode ? "Saving..." : "Save code"}</Button>
+            <div className="flex flex-col">
+              {portal.squad.rows.map((row) => (
+                <div key={`${row.wallet_address}-${row.bound_at}`} className="flex min-h-[44px] flex-wrap items-center gap-2.5 border-b border-[#1E2329] py-1.5 text-sm last:border-b-0">
+                  <span className="font-mw-mono">{shortAddress(row.wallet_address)}</span>
+                  <span className="text-mw-muted">· {row.role}</span>
+                  <span className="flex-1 text-right text-[13px] text-mw-muted">Joined {formatDate(row.bound_at)}</span>
+                  <button type="button" onClick={() => copyText(row.wallet_address, "Wallet")} className={smallButton}>Copy</button>
                 </div>
-                {portalError && <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-400/10 p-3 text-sm text-rose-100">{portalError}</div>}
-              </div>
-
-              <div className="rounded-2xl border border-border/50 bg-background/25 p-4">
-                <label className="flex items-center gap-2 font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground"><Image className="h-4 w-4 text-accent" />Squad image</label>
-                <p className="mt-2 text-xs text-muted-foreground">Upload a PNG, JPG, or WebP image. The uploaded image is saved to your public recruiter squad profile.</p>
-                <input
-                  ref={squadImageInputRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg,image/webp"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) void uploadSquadImage(file);
-                    event.currentTarget.value = "";
-                  }}
-                />
-                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
-                  {activeSquadImage ? <img src={activeSquadImage} alt="Squad preview" className="h-16 w-16 rounded-xl border border-accent/30 bg-accent/10 object-cover" /> : <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-dashed border-border/70 bg-background/40"><Image className="h-5 w-5 text-muted-foreground" /></div>}
-                  <div className="min-w-0 flex-1 text-xs text-muted-foreground">
-                    {activeSquadImage ? <div className="truncate font-mono">{activeSquadImage}</div> : "No squad image uploaded yet."}
-                  </div>
-                  <Button onClick={() => squadImageInputRef.current?.click()} disabled={savingSquadImage || uploadingSquadImage} className="font-retro">
-                    {uploadingSquadImage ? <><UploadCloud className="mr-2 h-4 w-4 animate-pulse" />Uploading...</> : <><UploadCloud className="mr-2 h-4 w-4" />Upload image</>}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Button onClick={() => copyText(canonicalLink, "Referral link")} variant="outline" className="h-auto justify-start rounded-2xl p-4 text-left font-retro"><Link2 className="mr-3 h-4 w-4" />Copy referral link</Button>
-                <Button onClick={shareToX} variant="outline" className="h-auto justify-start rounded-2xl p-4 text-left font-retro"><ExternalLink className="mr-3 h-4 w-4" />Share on X</Button>
-                <Button onClick={() => void nativeShare()} variant="outline" className="h-auto justify-start rounded-2xl p-4 text-left font-retro"><Gift className="mr-3 h-4 w-4" />Share squad</Button>
-                <Button onClick={() => void disconnectPortal()} variant="outline" className="h-auto justify-start rounded-2xl p-4 text-left font-retro"><LogOut className="mr-3 h-4 w-4" />Disconnect session</Button>
-                <Button asChild variant="outline" className="h-auto justify-start rounded-2xl p-4 text-left font-retro"><Link to="/command/claims"><WalletCards className="mr-3 h-4 w-4" />Rewards / Claims</Link></Button>
-                <Button asChild variant="outline" className="h-auto justify-start rounded-2xl p-4 text-left font-retro"><Link to="/recruiters"><Trophy className="mr-3 h-4 w-4" />Leaderboard</Link></Button>
-              </div>
+              ))}
+              {safeCount(portal.squad?.counts?.unknown) > 0 ? <div className="pt-2 text-[13px] text-mw-muted">Role pending: {safeCount(portal.squad?.counts?.unknown)}</div> : null}
             </div>
           )}
         </CommandCenterCard>
-      </div>
-
-      {portal && (
-        <CommandCenterCard title="Squad roster" description="Creators and traders connected through your recruiter link.">
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Squad size</div><div className="mt-2 font-retro text-2xl text-foreground">{safeCount(portal.squad?.counts?.total)}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Creators</div><div className="mt-2 font-retro text-2xl text-foreground">{safeCount(portal.squad?.counts?.creators)}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Traders</div><div className="mt-2 font-retro text-2xl text-foreground">{safeCount(portal.squad?.counts?.traders)}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Role pending</div><div className="mt-2 font-retro text-2xl text-foreground">{safeCount(portal.squad?.counts?.unknown)}</div></div>
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {!Array.isArray(portal.squad?.rows) || portal.squad.rows.length === 0 ? <div className="rounded-2xl border border-border/50 bg-background/25 p-4 text-sm text-muted-foreground">No squad members yet. Share your code and start onboarding creators or traders.</div> : portal.squad.rows.map((row) => (
-              <div key={`${row.wallet_address}-${row.bound_at}`} className="rounded-2xl border border-border/50 bg-background/25 p-4">
-                <div className="flex items-center justify-between gap-3"><div><div className="font-retro text-sm text-foreground">{shortAddress(row.wallet_address)}</div><div className="mt-1 text-xs text-muted-foreground">Joined {formatDate(row.bound_at)}</div></div><span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-accent">{row.role}</span></div>
-                <Button onClick={() => copyText(row.wallet_address, "Wallet")} variant="outline" className="mt-3 w-full font-retro">Copy wallet</Button>
-              </div>
-            ))}
-          </div>
-        </CommandCenterCard>
       )}
     </div>
+  );
+}
+
+/** Founder's recruiter image (680 x 400). Drop the file at public/assets/recruiter-signup.png; a placeholder shows until then. */
+function RecruiterSignupImage() {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div className="flex min-h-[190px] items-center justify-center border-b border-mw-border bg-mw-input p-4 text-center text-sm text-mw-muted lg:min-h-[340px] lg:border-b-0 lg:border-r">
+        Recruiter image · 680 × 400
+      </div>
+    );
+  }
+  return (
+    <img
+      src="/assets/recruiter-signup.png"
+      alt="Become a MemeWarzone recruiter"
+      onError={() => setFailed(true)}
+      className="h-full min-h-[190px] w-full object-cover lg:min-h-[340px]"
+    />
   );
 }

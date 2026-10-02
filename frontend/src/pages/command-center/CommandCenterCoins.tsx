@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronDown, Coins, FileText, Rocket } from "lucide-react";
+import { Plus, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { resolveImageUri } from "@/lib/media";
 
@@ -9,7 +9,7 @@ import { CommandCenterCard } from "@/components/command-center/CommandCenterCard
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { CommandCenterCoinRow } from "@/components/postgrad/CommandCenterCoinRow";
 
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { projectImportsEnabled, projectImportRobinhoodEnabled } from "@/features/projectImports/config";
 import { fetchOwnerCampaignDrafts, type CampaignDraft } from "@/lib/draftApi";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
@@ -49,8 +49,8 @@ const baseFilters: Array<{ key: CoinFilter; label: string }> = [
 ];
 
 const battleFilters: Array<{ key: CoinFilter; label: string }> = [
-  { key: "open_for_battle", label: "Open for Battle" },
-  { key: "in_battle", label: "In Battles / Challenged" },
+  { key: "open_for_battle", label: "Open for battle" },
+  { key: "in_battle", label: "In battles / challenged" },
 ];
 
 function isRobinhoodChainId(chainId: number) {
@@ -451,70 +451,41 @@ export default function CommandCenterCoins() {
     });
   }, [unifiedItems, activeFilter]);
 
+  const toolbarButton = "mw-focus inline-flex min-h-9 items-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text";
+  const groupLabel = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+  const liveItems = filteredItems.filter((item) => item.type !== "draft");
+  const draftItems = filteredItems.filter((item) => item.type === "draft");
+  const renderRow = (item: (typeof filteredItems)[number]) => (
+    <CommandCenterCoinRow
+      key={item.id}
+      item={item}
+      battleFeaturesEnabled={BATTLE_FEATURES_ENABLED || item.type === "imported"}
+      onClaimLpFees={item.type === "coin" ? handleClaimLpFees : undefined}
+      onChallenge={item.type === "imported" ? (tokenId) => {
+        setChallengeTokenId(String(item.raw?.tokenAddress || tokenId));
+        setChallengeOpen(true);
+      } : undefined}
+      onOpenForBattle={item.type === "imported" ? () => {
+        if (walletAddress) navigate(`/profile/${encodeURIComponent(walletAddress)}/command/battles`);
+      } : undefined}
+    />
+  );
+
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
-        <div className="mwz-hud-frame p-4">
-          <div className="mb-3 flex items-center gap-2 text-muted-foreground">
-            <Coins className="h-4 w-4 text-accent" />
-            <span className="font-retro text-[10px] uppercase tracking-[0.16em]">Live coins</span>
-          </div>
-          <div className="font-retro text-2xl text-foreground">{created.length.toLocaleString()}</div>
-        </div>
-        <div className="mwz-hud-frame p-4">
-          <div className="mb-3 flex items-center gap-2 text-muted-foreground">
-            <FileText className="h-4 w-4 text-accent" />
-            <span className="font-retro text-[10px] uppercase tracking-[0.16em]">Prepare drafts</span>
-          </div>
-          <div className="font-retro text-2xl text-foreground">{loadingDrafts ? "..." : drafts.length.toLocaleString()}</div>
-        </div>
-        <Link to="/create" className="mwz-hud-frame p-4 transition hover:border-accent/50 hover:bg-card/45">
-          <div className="mb-3 flex items-center gap-2 text-muted-foreground">
-            <Rocket className="h-4 w-4 text-accent" />
-            <span className="font-retro text-[10px] uppercase tracking-[0.16em]">Create</span>
-          </div>
-          <div className="font-retro text-2xl text-foreground">New coin</div>
-        </Link>
-      </div>
-
-      {projectImportsEnabled ? (
-        <Collapsible open={importOpen} onOpenChange={handleImportOpenChange}>
-          <section className="mwz-hud-frame" data-command-center-import-card="true" data-import-open={importOpen ? "true" : "false"}>
-            <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left">
-              <span className="font-retro text-[11px] uppercase tracking-[0.16em] text-foreground">IMPORT EXISTING MEMECOIN</span>
-              <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${importOpen ? "rotate-180" : ""}`} />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="border-t border-white/10 px-4 py-4">
-                <ProjectImportPanel embedded onProjectChange={() => void refreshImportedProjects()} />
-              </div>
-            </CollapsibleContent>
-          </section>
-        </Collapsible>
-      ) : null}
-
-      <CommandCenterCard
-        title="My Coins"
-        description="All your coins in one place: prepare drafts, bonding coins, graduated coins, and imported projects."
-      >
-        {draftsError ? <div className="mb-3 mwz-hud-frame p-3 text-sm text-muted-foreground">{draftsError}</div> : null}
-        {lpFeeError ? (
-          <div className="mb-3 mwz-hud-frame p-3 text-sm text-muted-foreground">
-            LP fee status unavailable: {lpFeeError}
-          </div>
-        ) : null}
-
-        <div className="mb-4 flex flex-wrap gap-2">
+    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
+      <h2 className="sr-only">My coins</h2>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="-mx-3 flex gap-1.5 overflow-x-auto px-3 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
           {visibleFilters.map((filter) => {
             const isActive = activeFilter === filter.key;
             return (
               <button
                 key={filter.key}
+                type="button"
+                aria-pressed={isActive}
                 onClick={() => setActiveFilter(filter.key)}
-                className={`rounded border px-3 py-1 font-retro text-xs uppercase tracking-wider transition ${
-                  isActive
-                    ? "border-accent bg-accent/10 text-accent shadow-[0_0_14px_rgba(255,122,26,0.20)]"
-                    : "border-success/25 text-success/70 hover:border-accent/60 hover:text-accent"
+                className={`mw-focus inline-flex min-h-10 shrink-0 items-center rounded-lg border px-3 font-mw-mono text-[13px] ${
+                  isActive ? "border-mw-accent bg-[#2A1609] text-mw-accent-soft" : "border-[#2E353D] bg-[#171B20] text-[#C9CED4] hover:border-[#3A424C]"
                 }`}
               >
                 {filter.label}
@@ -522,39 +493,56 @@ export default function CommandCenterCoins() {
             );
           })}
         </div>
+        <span className="flex-1" />
+        {projectImportsEnabled ? (
+          <button type="button" className={toolbarButton} aria-expanded={importOpen} onClick={() => handleImportOpenChange(!importOpen)}>
+            <Upload className="h-4 w-4" aria-hidden="true" />
+            Import memecoin
+          </button>
+        ) : null}
+        <Link to="/create" className="mw-focus inline-flex min-h-9 items-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-3 text-sm font-bold text-[#140A02] hover:bg-[#FF8A3D] hover:text-[#140A02]">
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          New coin
+        </Link>
+      </div>
 
-        <div className="hidden lg:grid grid-cols-[minmax(280px,1.4fr)_100px_100px_100px_28px] gap-3 border-b border-white/10 px-4 py-2 text-[10px] uppercase tracking-[0.18em] text-white/50">
-          <div>Coin info</div>
-          <div>Market Cap</div>
-          <div>Liquidity</div>
-          <div>Volume / Holders</div>
-          <div />
+      {projectImportsEnabled ? (
+        <Collapsible open={importOpen} onOpenChange={handleImportOpenChange}>
+          <CollapsibleContent>
+            <section className="rounded-[14px] border border-mw-border bg-mw-surface p-3.5" data-command-center-import-card="true" data-import-open={importOpen ? "true" : "false"}>
+              <ProjectImportPanel embedded onProjectChange={() => void refreshImportedProjects()} />
+            </section>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : null}
+
+      {draftsError ? <div className="rounded-[14px] border border-mw-border bg-mw-surface p-3 text-sm text-mw-muted">{draftsError}</div> : null}
+      {lpFeeError ? (
+        <div className="rounded-[14px] border border-mw-border bg-mw-surface p-3 text-sm text-mw-muted">
+          LP fee status unavailable: {lpFeeError}
         </div>
+      ) : null}
 
-        {filteredItems.length > 0 ? (
-          <div className="border-t border-white/8">
-            {filteredItems.map((item) => (
-              <CommandCenterCoinRow
-                key={item.id}
-                item={item}
-                battleFeaturesEnabled={BATTLE_FEATURES_ENABLED || item.type === "imported"}
-                onClaimLpFees={item.type === "coin" ? handleClaimLpFees : undefined}
-                onChallenge={item.type === "imported" ? (tokenId) => {
-                  setChallengeTokenId(String(item.raw?.tokenAddress || tokenId));
-                  setChallengeOpen(true);
-                } : undefined}
-                onOpenForBattle={item.type === "imported" ? () => {
-                  if (walletAddress) navigate(`/profile/${encodeURIComponent(walletAddress)}/command/battles`);
-                } : undefined}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="mwz-hud-frame p-4 text-sm text-muted-foreground">
-            Nothing matches the current filter.
-          </div>
-        )}
-      </CommandCenterCard>
+      {filteredItems.length > 0 ? (
+        <>
+          {liveItems.length ? (
+            <>
+              <div className={groupLabel}>Live coins</div>
+              <div className="flex flex-col gap-2">{liveItems.map(renderRow)}</div>
+            </>
+          ) : null}
+          {draftItems.length ? (
+            <>
+              <div className={groupLabel}>Drafts (prepare mode)</div>
+              <div className="flex flex-col gap-2">{draftItems.map(renderRow)}</div>
+            </>
+          ) : null}
+        </>
+      ) : (
+        <div className="rounded-[14px] border border-mw-border bg-mw-surface p-4 text-sm text-mw-muted">
+          Nothing matches the current filter.
+        </div>
+      )}
       <ChallengeCoinModal
         open={challengeOpen}
         onOpenChange={setChallengeOpen}

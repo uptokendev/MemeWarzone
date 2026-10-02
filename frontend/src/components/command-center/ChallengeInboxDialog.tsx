@@ -180,17 +180,17 @@ export function ChallengeInboxDialog() {
     <Dialog open={open} onOpenChange={(next) => { if (!next && current) dismiss(current); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="font-retro">{isCounter ? "Counter-offer received" : "Incoming Warzone challenge"}</DialogTitle>
+          <DialogTitle className="font-semibold">{isCounter ? "Counter-offer received" : "Incoming Warzone challenge"}</DialogTitle>
           <DialogDescription>
             {isCounter
               ? `${fromSymbol || "A rival"} offered ${offered} ${unit} / ${length} instead of ${previous} ${unit}. Accept, decline, or counter again.`
               : `${challenger?.symbol || "A rival"} challenged ${defender?.symbol || "your coin"} for ${offered} ${unit} over ${length}. Accept, decline, or counter-offer stake or length.`}
           </DialogDescription>
         </DialogHeader>
-        <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
+        <label className="block text-xs uppercase tracking-[0.14em] text-mw-muted">
           Fight length
           <select
-            className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+            className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-mw-text"
             value={counterDurationHours}
             onChange={(event) => setCounterDurationHours(parseBattleDurationHoursForMode((current as { battleMode?: string }).battleMode, event.target.value, 24))}
           >
@@ -199,7 +199,7 @@ export function ChallengeInboxDialog() {
             ))}
           </select>
         </label>
-        <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
+        <label className="block text-xs uppercase tracking-[0.14em] text-mw-muted">
           Counter-offer ({unit})
           <input
             type="number"
@@ -207,21 +207,21 @@ export function ChallengeInboxDialog() {
             step="any"
             value={counterStake}
             onChange={(event) => setCounterStake(event.target.value)}
-            className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+            className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-mw-text"
             placeholder={`e.g. ${offered ? offered / 2 : 0.5}`}
           />
         </label>
         <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
-          <Button asChild size="sm" variant="outline" className="font-retro">
+          <Button asChild size="sm" variant="outline" className="font-semibold">
             <Link to={`/battle/${encodeURIComponent(current.id)}`}>View battle</Link>
           </Button>
-          <Button size="sm" variant="outline" className="font-retro" disabled={busy} onClick={() => void handleIncoming(false)}>
+          <Button size="sm" variant="outline" className="font-semibold" disabled={busy} onClick={() => void handleIncoming(false)}>
             Decline
           </Button>
-          <Button size="sm" variant="outline" className="font-retro" disabled={busy || !counterStake} onClick={() => void handleCounter()}>
+          <Button size="sm" variant="outline" className="font-semibold" disabled={busy || !counterStake} onClick={() => void handleCounter()}>
             Counter
           </Button>
-          <Button size="sm" className="font-retro" disabled={busy} onClick={() => void handleIncoming(true)}>
+          <Button size="sm" className="font-semibold" disabled={busy} onClick={() => void handleIncoming(true)}>
             Accept {offered} {unit}
           </Button>
         </DialogFooter>
