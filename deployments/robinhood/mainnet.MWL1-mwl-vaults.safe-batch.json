@@ -1,0 +1,1309 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1790974031885,
+  "meta": {
+    "name": "MWL1 Major War League vaults (ETH)",
+    "description": "Point PostGradLeagueTreasuryV2 at the MWL vaults, open claims with caps 3/6 ETH, authorize 24 months + 8 quarters.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x5D5CC19B5BE86BA28b8164f85883F17843B69810",
+      "value": "0",
+      "data": "0xce0fc88f000000000000000000000000a20388579323e22076b07e89ac916ae6ff91a0e0000000000000000000000000a2f8e9c7aaeeecaa78d070fee64cb54427d5291e",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "monthlyReceiver_",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "quarterlyReceiver_",
+            "type": "address"
+          }
+        ],
+        "name": "setReceivers",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "monthlyReceiver_": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+        "quarterlyReceiver_": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x3afc221a00000000000000000000000000000000000000000000000029a2241af62c000000000000000000000000000000000000000000000000000029a2241af62c0000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "_maxClaimPerTx",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "_maxEpochTotal",
+            "type": "uint256"
+          }
+        ],
+        "name": "setClaimCaps",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "_maxClaimPerTx": "3000000000000000000",
+        "_maxEpochTotal": "3000000000000000000"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0xcc6d1ede0000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setClaimsPaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "false"
+      }
+    },
+    {
+      "to": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+      "value": "0",
+      "data": "0x3afc221a00000000000000000000000000000000000000000000000053444835ec58000000000000000000000000000000000000000000000000000053444835ec580000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "_maxClaimPerTx",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "_maxEpochTotal",
+            "type": "uint256"
+          }
+        ],
+        "name": "setClaimCaps",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "_maxClaimPerTx": "6000000000000000000",
+        "_maxEpochTotal": "6000000000000000000"
+      }
+    },
+    {
+      "to": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+      "value": "0",
+      "data": "0xcc6d1ede0000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setClaimsPaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "false"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba89a2d178f19d4787c316ff31e3d151ac1620af13ff8fa1777ee16d7cf74ccb0900000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006ae68100000000000000000000000000000000000000000000000000000000006ea8e800",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "62254535206026636045236858110668649037852562848531589185194447420562665687817",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1793491200",
+        "publishDeadline": "1856563200"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874babc6bc93c495bd3dcbdef7aa68fcfe08ac82fffb4d00400df30c7725cfe8f238f00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006b0e0e00000000000000000000000000000000000000000000000000000000006ed07500",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "85225257045923446039840673569478409014966957273097589805201201951397785838479",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1796083200",
+        "publishDeadline": "1859155200"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba5a049d0cb8159ef4c7eb5695bea564e9b036cb37f7a63fcb29e749636454b0ed00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006b36ec80000000000000000000000000000000000000000000000000000000006ef95380",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "40716307677835250613906094164391891471153334135705785523281486334787010736365",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1798761600",
+        "publishDeadline": "1861833600"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba74bdb9dd07d43be8de3719b3891c256e2ce7ca88ff81ea79de235c2f87e9d89a00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006b5fcb00000000000000000000000000000000000000000000000000000000006f223200",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "52803507312948879438487755708782204207642774092241355566117154170987061303450",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1801440000",
+        "publishDeadline": "1864512000"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba17d80a6b3e6f0f70630d242432ef47a5be0ed98f35afca09595e73687d0a8fef00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006b84b500000000000000000000000000000000000000000000000000000000006f471c00",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "10784906392160068882983779224029564222075302078292240541140451197680710488047",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1803859200",
+        "publishDeadline": "1866931200"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874bac47027fc7c87e144dd101879ea85e370e70c1f6255d4be5ac187f33bf6140c7400000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006bad9380000000000000000000000000000000000000000000000000000000006f6ffa80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "88851481168704098059067806948186468004375072501204314447721341651326248160372",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1806537600",
+        "publishDeadline": "1869609600"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba2a191fa3d9b0a5f2697861cb22f3108147a6d0525a8c9af53d79bbe328e4414a00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006bd52080000000000000000000000000000000000000000000000000000000006f978780",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "19041529188650141331971982264041066773170666585388826938035839281243844002122",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1809129600",
+        "publishDeadline": "1872201600"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874baf845b0389644d6f5ae1764d4bdc62ff1d3137828c81f15d6ac921a5cfb6de26200000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006bfdff00000000000000000000000000000000000000000000000000000000006fc06600",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "112296715129058984089646199647636680550307277726638970979891349776507134141026",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1811808000",
+        "publishDeadline": "1874880000"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba22fc6cc55adb0f3e52873daf0111e7e5f3034b60907cfa2525ac1b5c2d5cd4e200000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006c258c00000000000000000000000000000000000000000000000000000000006fe7f300",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "15824633021438378985271136891458189347214198249244361563389319332935063360738",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1814400000",
+        "publishDeadline": "1877472000"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874bac912f8fb3976b73036620751a6be74972ba4e21abc0e4549e6945cf832f7e5f700000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006c4e6a80000000000000000000000000000000000000000000000000000000007010d180",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "90948404218494809877445711168762057269649379392139240542280604785421114140151",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1817078400",
+        "publishDeadline": "1880150400"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba01776dcefc8e810edfe403f6548331a382ea9aa7500f0d0cb2d8bc979579638e00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006c774900000000000000000000000000000000000000000000000000000000007039b000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "663325519990028028716595853815582117232253189871272331514657568989153682318",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1819756800",
+        "publishDeadline": "1882828800"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874babe50d3bd676026626f02fd75608ced2a14b89be6040190e020898aa037efd7ae00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006c9ed6000000000000000000000000000000000000000000000000000000000070613d00",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "86082250370798697270489073718775614494907601320336220286275342810630845355950",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1822348800",
+        "publishDeadline": "1885420800"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba666d812f5660a7e11c64ffb3730dba8ea53ce15cd489eded84fda7ac070beb2600000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006cc7b48000000000000000000000000000000000000000000000000000000000708a1b80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "46329388487046863809381433682778714398858180315071166102416069404497491520294",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1825027200",
+        "publishDeadline": "1888099200"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874bafadeb65ede2e825840c94b62215889decf5e71405400b10cc6eb99c278b9758a00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006cef41800000000000000000000000000000000000000000000000000000000070b1a880",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "113471710869665962518016137229492143788668765007705234141878440249562202994058",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1827619200",
+        "publishDeadline": "1890691200"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874bab6af04ba7fa154a2e3bd11ede1e17ed803191413daded366dd35ed329e4cd12d00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006d1820000000000000000000000000000000000000000000000000000000000070da8700",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "82630169313467195799505499022112033813063311837833630796737784842717680685357",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1830297600",
+        "publishDeadline": "1893369600"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874baa636ff10358a0a41ad7778a5d1f0ee85274a9b423474aba7442026bf2f1d908900000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006d40fe800000000000000000000000000000000000000000000000000000000071036580",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "75181102988636169339251899859887903256484140186824170311498678156918953709705",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1832976000",
+        "publishDeadline": "1896048000"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874bae0e3b4803e9d5b3c5d6ece8dde0d3169e6538370ccc8f25c4879a96729fd0d0a00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006d673a00000000000000000000000000000000000000000000000000000000007129a100",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "101720398138166054682808153545186786201939282491032438003269483789116782742794",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1835481600",
+        "publishDeadline": "1898553600"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874baa2569c6ab8c43fe061f0d3f31bb90feafecb756effb7b07755d1a410cc7b903a00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006d9018800000000000000000000000000000000000000000000000000000000071527f80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "73427709867702736050633673896291140501211311180722493183762327763239611109434",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1838160000",
+        "publishDeadline": "1901232000"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874bab014cbdf2731da80e4db85e832ef4c807f0e9aa696e5417bc73ad19abdc2d2db00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006db7a58000000000000000000000000000000000000000000000000000000000717a0c80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "79643805362654645226813397120643887225145271091327778925790408871937562563291",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1840752000",
+        "publishDeadline": "1903824000"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874baf4ea6e2e7c11b54aa054faa440afbd205ab2a444b9782834eea932b35343b1db00000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006de084000000000000000000000000000000000000000000000000000000000071a2eb00",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "110778537712796843232652208613848866860775196236200505091102034553688983581147",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1843430400",
+        "publishDeadline": "1906502400"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874bae702ee6aac7f7e8204beb2655fc536abc530b62ff10df8c2a5c6a0318c71aa8600000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006e0811000000000000000000000000000000000000000000000000000000000071ca7800",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "104489447208415137582066206787485301678837569915248944233865305447637923768966",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1846022400",
+        "publishDeadline": "1909094400"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba5a34af5ef9424f53fba4715b2a42cdb053f1ae2360e282155638f78fb5d8041700000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006e30ef800000000000000000000000000000000000000000000000000000000071f35680",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "40801242785958164925502180135902774225924347161442758703324242092591848883223",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1848700800",
+        "publishDeadline": "1911772800"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba57ed1fdf966d48c2b89f4e4e7b375721ec5e5e618a318be2e6bfdcfdc642aa2100000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006e59ce0000000000000000000000000000000000000000000000000000000000721c3500",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "39770180563143310827954957658762575635042992002373568354781535084594315045409",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1851379200",
+        "publishDeadline": "1914451200"
+      }
+    },
+    {
+      "to": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+      "value": "0",
+      "data": "0x8b1874ba258f564d0e711a43e51f1d948e4a114288fe1f552984e76eb31e38e022669aa000000000000000000000000000000000000000000000000029a2241af62c0000000000000000000000000000000000000000000000000000000000006e815b00000000000000000000000000000000000000000000000000000000007243c200",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "16988830155466782481705524676269755343808871227998271595026795933177760619168",
+        "maxAmount": "3000000000000000000",
+        "publishAfter": "1853971200",
+        "publishDeadline": "1917043200"
+      }
+    },
+    {
+      "to": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+      "value": "0",
+      "data": "0x8b1874ba23fa20154861b6ae52464b10fd74c36ce863b8e1243655528e943d954a1ff6f900000000000000000000000000000000000000000000000053444835ec580000000000000000000000000000000000000000000000000000000000006b36ec80000000000000000000000000000000000000000000000000000000006ef95380",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "16272882896273579026275084267591922735395859103235080217483274146447083173625",
+        "maxAmount": "6000000000000000000",
+        "publishAfter": "1798761600",
+        "publishDeadline": "1861833600"
+      }
+    },
+    {
+      "to": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+      "value": "0",
+      "data": "0x8b1874ba1f165d794c3807676378e5839a1dac22cf80efa5ffbd00e6a2c71d09fe2ed41f00000000000000000000000000000000000000000000000053444835ec580000000000000000000000000000000000000000000000000000000000006bad9380000000000000000000000000000000000000000000000000000000006f6ffa80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "14061214074096963870643212254004759773787716490261168989598320064412737524767",
+        "maxAmount": "6000000000000000000",
+        "publishAfter": "1806537600",
+        "publishDeadline": "1869609600"
+      }
+    },
+    {
+      "to": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+      "value": "0",
+      "data": "0x8b1874ba68bb63621b6b34813fe4e46918a4a090e581eb6bfed2cad83c2e69462a5aa7b000000000000000000000000000000000000000000000000053444835ec580000000000000000000000000000000000000000000000000000000000006c258c00000000000000000000000000000000000000000000000000000000006fe7f300",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "47371622571623901401085935870639892794559382822074440246659985055340895578032",
+        "maxAmount": "6000000000000000000",
+        "publishAfter": "1814400000",
+        "publishDeadline": "1877472000"
+      }
+    },
+    {
+      "to": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+      "value": "0",
+      "data": "0x8b1874ba45fac94deeddd08f4c5e4d6ea370a88c05f4fff568f5373c001154f283c27a1a00000000000000000000000000000000000000000000000053444835ec580000000000000000000000000000000000000000000000000000000000006c9ed6000000000000000000000000000000000000000000000000000000000070613d00",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "31652687670527149840595638061617377251426259395413268601150725589100119882266",
+        "maxAmount": "6000000000000000000",
+        "publishAfter": "1822348800",
+        "publishDeadline": "1885420800"
+      }
+    },
+    {
+      "to": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+      "value": "0",
+      "data": "0x8b1874bab4571b4bb5c90ab1a7baf086e9cbc88d9f9c8f5672e7b8475160f44a36105dae00000000000000000000000000000000000000000000000053444835ec580000000000000000000000000000000000000000000000000000000000006d1820000000000000000000000000000000000000000000000000000000000070da8700",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "81570216827915261305946765542212210329145093286608491228758274986543888227758",
+        "maxAmount": "6000000000000000000",
+        "publishAfter": "1830297600",
+        "publishDeadline": "1893369600"
+      }
+    },
+    {
+      "to": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+      "value": "0",
+      "data": "0x8b1874baced33aa5bfda68d187f2979586e2691d9a8d8a1971b33e39db03b8aebe01050200000000000000000000000000000000000000000000000053444835ec580000000000000000000000000000000000000000000000000000000000006d9018800000000000000000000000000000000000000000000000000000000071527f80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "93549656308704925174874810204804540214294464699293018003843468043671612491010",
+        "maxAmount": "6000000000000000000",
+        "publishAfter": "1838160000",
+        "publishDeadline": "1901232000"
+      }
+    },
+    {
+      "to": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+      "value": "0",
+      "data": "0x8b1874ba957e1e3e91c8bccac525cf2487a9096bc8267115ad3b480af7c224941c76d23700000000000000000000000000000000000000000000000053444835ec580000000000000000000000000000000000000000000000000000000000006e0811000000000000000000000000000000000000000000000000000000000071ca7800",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "67617445908328726270373856619080315796998399739818567672526394532191687594551",
+        "maxAmount": "6000000000000000000",
+        "publishAfter": "1846022400",
+        "publishDeadline": "1909094400"
+      }
+    },
+    {
+      "to": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+      "value": "0",
+      "data": "0x8b1874bae9b4bd878b393b08af9a5d2b0c4844f326ea6c538ad716cb1303008a65d73cd700000000000000000000000000000000000000000000000053444835ec580000000000000000000000000000000000000000000000000000000000006e815b00000000000000000000000000000000000000000000000000000000007243c200",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "epochId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeEpoch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "epochId": "105708234275875472997940194266334347828029296135471877698402703126576586243287",
+        "maxAmount": "6000000000000000000",
+        "publishAfter": "1853971200",
+        "publishDeadline": "1917043200"
+      }
+    }
+  ]
+}

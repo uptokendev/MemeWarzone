@@ -10,10 +10,13 @@ export const MWL_PAYOUT_CATEGORIES = Object.freeze({ mwl_monthly: "mwl", quarter
 // weekly vault; codes 3 and 4 never collide with pre-grad weekly (1) / monthly (2).
 export const MWL_EVM_PERIOD_CODES = Object.freeze({ mwl_monthly: 3, quarterly: 4 });
 
-// Filled in once the vaults are deployed (scripts/deploy-mwl-payout-vaults.ts); env always wins.
+// Deployed 2026-10-02 by scripts/deploy-mwl-payout-vaults.ts, read back from chain (code == artifact
+// with the immutable multisig = Safe; operator 0; rootPoster = payout operator). Env always wins.
+// Note: 0xC46D33FC... on BNB is NOT the Robinhood stock campaign implementation at the same address
+// (same deployer nonce on another chain): always pair an address with its chain.
 export const MWL_VAULT_MAINNET_DEFAULTS = Object.freeze({
-  mwl_monthly: Object.freeze({}),
-  quarterly: Object.freeze({}),
+  mwl_monthly: Object.freeze({ 56: "0xC46D33FCce7030627254278716d4AEb536Cf46FF", 4663: "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0" }),
+  quarterly: Object.freeze({ 56: "0xa83d8194C367f2d3eA7B3963f50d579efD8a2218", 4663: "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e" }),
 });
 
 export function isMwlPayoutPeriod(period) {
