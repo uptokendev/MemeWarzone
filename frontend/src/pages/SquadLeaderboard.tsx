@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatEther } from "ethers";
 import { Link } from "react-router-dom";
-import { ArrowRight, Shield, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { ArrowRight, Users } from "lucide-react";
+import { ContentContainer } from "@/components/layout/ContentContainer";
 import { fetchSquadLeaderboard, fetchSquadMembers, type SquadLeaderboardItem, type SquadMemberItem } from "@/lib/rewardProgramsApi";
 
 function formatBnb(raw: string): string {
@@ -84,134 +83,110 @@ export default function SquadLeaderboard() {
     eligibleMembers: squads.reduce((acc, squad) => acc + squad.eligibleMemberCount, 0),
   }), [squads]);
 
+  // UI redesign (artboard Squads): presentation only; data loading and selection above are unchanged.
+  const th = "whitespace-nowrap border-b border-mw-border px-3.5 py-2.5 text-left font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+  const td = "border-b border-[#1E2329] px-3.5 py-3 align-middle";
+  const shortWallet = (value: string) => (value.length > 12 ? `${value.slice(0, 4)}…${value.slice(-4)}` : value);
+  const memberCap = members.find((member) => member.memberCapAmount && member.memberCapAmount !== "0")?.memberCapAmount;
+  const selected = squads.find((squad) => squad.recruiterCode === selectedRecruiterCode);
+  const selectedName = selected ? selected.recruiterDisplayName || selected.recruiterCode || `Recruiter ${selected.recruiterId}` : "";
+
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 py-8">
-      <Card className="overflow-hidden border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.18),transparent_40%),linear-gradient(180deg,rgba(18,22,28,0.94),rgba(9,12,16,0.98))] p-6 md:p-8">
-        <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-          <div className="max-w-3xl space-y-3">
-            <p className="font-retro text-xs uppercase tracking-[0.24em] text-sky-100/70">Squad Pool</p>
-            <h1 className="font-retro text-3xl text-foreground md:text-5xl">
-              See how squads and members rank this week.
-            </h1>
-            <p className="text-sm text-muted-foreground md:text-base">
-              See how squads rank this week, how much of the Squad Pool each squad is estimated to receive, and how members rank by contribution.
-            </p>
-          </div>
-
-          <Button asChild className="font-retro">
-            <Link to="/profile?tab=squad">
-              Squad dashboard
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
-          </Button>
+    <ContentContainer className="flex flex-col gap-4 px-1 pb-16 font-mw-body text-mw-text md:px-2">
+      <section className="mw-banner flex flex-col gap-3 rounded-[18px] border border-[#2A3038] p-4 lg:flex-row lg:items-end lg:gap-[18px] lg:p-[26px]">
+        <Users className="hidden h-10 w-10 shrink-0 text-[#FF9A4D] lg:block" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Recruiter squads</div>
+          <h1 className="m-0 mt-1 font-mw-cond text-[32px] font-bold leading-none lg:text-[44px]">Squad Pool</h1>
+          <p className="m-0 mt-1.5 text-sm text-mw-muted lg:text-[15px]">How squads rank this week, how much of the Squad Pool each squad is estimated to receive, and how members rank by contribution.</p>
         </div>
-      </Card>
+        <Link to="/profile?tab=squad" className="mw-focus inline-flex min-h-11 w-max items-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-[18px] text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text">
+          Squad dashboard
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </section>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Epoch</p>
-          <p className="mt-4 font-retro text-sm text-foreground">{epochLabel || "Current week"}</p>
-        </Card>
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Global squad pool</p>
-          <p className="mt-4 font-retro text-3xl text-foreground">{formatBnb(globalPoolAmount)} BNB</p>
-        </Card>
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Squads ranked</p>
-          <p className="mt-4 font-retro text-3xl text-foreground">{totals.squadCount}</p>
-        </Card>
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Carryover</p>
-          <p className="mt-4 font-retro text-3xl text-foreground">{formatBnb(carryoverAmount)} BNB</p>
-        </Card>
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4 lg:gap-3">
+        {([
+          ["Epoch", epochLabel || "Current week"],
+          ["Global squad pool", `${formatBnb(globalPoolAmount)} BNB`],
+          ["Squads ranked", String(totals.squadCount)],
+          ["Carryover", `${formatBnb(carryoverAmount)} BNB`],
+        ] as Array<[string, string]>).map(([label, value]) => (
+          <div key={label} className="rounded-[14px] border border-mw-border bg-mw-surface p-3.5">
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{label}</div>
+            <div className={`break-words font-mw-mono font-bold ${label === "Epoch" ? "text-base" : "text-xl lg:text-[22px]"}`}>{value}</div>
+          </div>
+        ))}
       </div>
 
       {loading ? (
-        <Card className="border-border/60 bg-card/65 px-6 py-12 text-center text-sm text-muted-foreground">
-          Loading squad leaderboard...
-        </Card>
+        <div className="rounded-[14px] border border-mw-border bg-mw-surface px-6 py-12 text-center text-sm text-mw-muted">Loading squad leaderboard...</div>
       ) : error ? (
-        <Card className="border-rose-400/30 bg-rose-400/10 px-6 py-12 text-center text-sm text-rose-100">
-          {error}
-        </Card>
+        <div className="rounded-[14px] border border-[#5A1A26] bg-[#2A0E14] px-6 py-12 text-center text-sm text-[#FFB4C0]">{error}</div>
       ) : (
-        <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-          <Card className="border-border/60 bg-card/65 p-6">
-            <div className="flex items-center gap-3">
-              <Shield className="h-4 w-4 text-sky-200" />
-              <div>
-                <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Squad leaderboard</p>
-                <h2 className="mt-1 font-retro text-xl text-foreground">Estimated weekly squad allocations</h2>
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-6">
+          <section className="overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface">
+            <div className="px-4 py-3.5 font-mw-cond text-xl font-bold tracking-[0.02em]">Squad leaderboard</div>
+            {squads.length === 0 ? (
+              <p className="m-0 px-4 pb-4 text-sm text-mw-muted">No squad allocations are published yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-sm">
+                  <thead><tr><th className={th}>#</th><th className={th}>Recruiter</th><th className={`${th} text-right`}>Allocation</th><th className={`${th} text-right`}>Eligible members</th></tr></thead>
+                  <tbody>
+                    {squads.map((squad, index) => {
+                      const active = selectedRecruiterCode === squad.recruiterCode;
+                      return (
+                        <tr key={`${squad.recruiterId}-${squad.recruiterCode}`} className={active ? "bg-mw-accent-fill" : "hover:bg-[#171B20]"}>
+                          <td className={`${td} w-10 font-mw-mono font-bold text-mw-muted`}>{index + 1}</td>
+                          <td className={td}>
+                            <button
+                              type="button"
+                              aria-pressed={active}
+                              onClick={() => setSelectedRecruiterCode(squad.recruiterCode ?? null)}
+                              className="mw-focus rounded-md text-left font-bold text-mw-text"
+                            >
+                              {squad.recruiterDisplayName || squad.recruiterCode || `Recruiter ${squad.recruiterId}`}
+                            </button>
+                            <div className="text-xs text-mw-muted">Effective score {formatBnb(squad.effectiveScore)} · raw {formatBnb(squad.rawScore)}</div>
+                          </td>
+                          <td className={`${td} text-right font-mw-mono`}>{formatBnb(squad.estimatedAllocationAmount)} BNB</td>
+                          <td className={`${td} text-right font-mw-mono`}>{squad.eligibleMemberCount}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            </div>
+            )}
+          </section>
 
-            <div className="mt-5 space-y-3">
-              {squads.length === 0 ? (
-                <div className="rounded-2xl border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">
-                  No squad allocations are published yet.
-                </div>
-              ) : (
-                squads.map((squad, index) => (
-                  <button
-                    key={`${squad.recruiterId}-${squad.recruiterCode}`}
-                    type="button"
-                    onClick={() => setSelectedRecruiterCode(squad.recruiterCode ?? null)}
-                    className={`w-full rounded-2xl border p-4 text-left transition-colors ${selectedRecruiterCode === squad.recruiterCode ? "border-sky-300/40 bg-sky-300/10" : "border-border/60 bg-background/35 hover:border-sky-300/30 hover:bg-background/50"}`}
-                  >
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <p className="font-retro text-sm text-foreground">#{index + 1} {squad.recruiterDisplayName || squad.recruiterCode || `Recruiter ${squad.recruiterId}`}</p>
-                        <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                          Effective score {formatBnb(squad.effectiveScore)} · raw {formatBnb(squad.rawScore)}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-retro text-sm text-foreground">{formatBnb(squad.estimatedAllocationAmount)} BNB</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{squad.eligibleMemberCount} eligible members</p>
-                      </div>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          </Card>
-
-          <Card className="border-border/60 bg-card/65 p-6">
-            <div className="flex items-center gap-3">
-              <Users className="h-4 w-4 text-amber-200" />
-              <div>
-                <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Member ranking</p>
-                <h2 className="mt-1 font-retro text-xl text-foreground">Member score and estimated reward</h2>
-              </div>
-            </div>
-
-            <div className="mt-5 space-y-3">
-              {members.length === 0 ? (
-                <div className="rounded-2xl border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">
-                  Select a squad to inspect its ranked members.
-                </div>
-              ) : (
-                members.map((member, index) => (
-                  <div key={`${member.walletAddress}-${index}`} className="rounded-2xl border border-border/60 bg-background/35 p-4">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <p className="font-retro text-sm text-foreground">#{index + 1} {member.walletAddress}</p>
-                        <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                          Score {formatBnb(member.rawScore)} · {member.isEligible ? "eligible" : "ineligible"}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-retro text-sm text-foreground">{formatBnb(member.estimatedPayoutAmount)} BNB</p>
-                        <p className="mt-1 text-xs text-muted-foreground">Member cap {formatBnb(member.memberCapAmount)} BNB</p>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </Card>
+          <section className="overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface">
+            <div className="px-4 py-3.5 font-mw-cond text-xl font-bold tracking-[0.02em]">Member ranking{selectedName ? ` · ${selectedName}` : ""}</div>
+            {members.length === 0 ? (
+              <p className="m-0 px-4 pb-4 text-sm text-mw-muted">Select a squad to inspect its ranked members.</p>
+            ) : (
+              <table className="w-full border-collapse text-sm">
+                <thead><tr><th className={th}>#</th><th className={th}>Wallet</th><th className={`${th} text-right`}>Est. payout</th></tr></thead>
+                <tbody>
+                  {members.map((member, index) => (
+                    <tr key={`${member.walletAddress}-${index}`}>
+                      <td className={`${td} w-10 font-mw-mono font-bold text-mw-muted`}>{index + 1}</td>
+                      <td className={td}>
+                        <span className="font-mw-mono" title={member.walletAddress}>{shortWallet(member.walletAddress)}</span>
+                        <div className="text-xs text-mw-muted">Score {formatBnb(member.rawScore)} · {member.isEligible ? "eligible" : "ineligible"}</div>
+                      </td>
+                      <td className={`${td} text-right font-mw-mono`}>{formatBnb(member.estimatedPayoutAmount)} BNB</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {memberCap ? <p className="m-0 px-4 py-3 text-[13px] text-mw-muted">Member cap {formatBnb(memberCap)} BNB per epoch.</p> : null}
+          </section>
         </div>
       )}
-    </div>
+    </ContentContainer>
   );
 }

@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { formatEther } from "ethers";
-import { ArrowRight, Copy, ShieldCheck, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { ArrowRight, Copy } from "lucide-react";
+import { toast } from "sonner";
+import { ContentContainer } from "@/components/layout/ContentContainer";
 import {
   fetchRecruiterReplacements,
   fetchRecruiterSummary,
@@ -97,181 +97,153 @@ export default function RecruiterProfile() {
     window.setTimeout(() => setCopied(false), 1500);
   };
 
+  // UI redesign (artboard Recruiter): presentation only; data loading above is unchanged.
+  const card = "flex flex-col gap-1 rounded-[14px] border border-mw-border bg-mw-surface p-4 font-mw-body text-mw-text lg:p-[18px]";
+  const title = "mb-1.5 font-mw-cond text-xl font-bold tracking-[0.02em]";
+  const kvRow = "flex min-h-[34px] items-center justify-between gap-2.5 border-b border-[#1E2329] text-sm";
+  const kv = (label: string, value: React.ReactNode) => (
+    <div className={kvRow}>
+      <span className="text-mw-muted">{label}</span>
+      <span className="text-right font-semibold">{value}</span>
+    </div>
+  );
+  const chip = "inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-[13px] font-semibold";
+  const button = "mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-[18px] text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text";
+
   if (loading) {
     return (
-      <div className="mx-auto max-w-5xl py-10">
-        <Card className="border-border/60 bg-card/65 px-6 py-16 text-center text-sm text-muted-foreground">
-          Loading recruiter profile...
-        </Card>
+      <div className="flex flex-col gap-4 font-mw-body">
+        <div className="mw-banner h-[120px] rounded-2xl border border-[#1E2329] lg:h-[220px]" aria-hidden="true" />
+        <div className="rounded-[14px] border border-mw-border bg-mw-surface px-6 py-12 text-center text-sm text-mw-muted">Loading recruiter profile...</div>
       </div>
     );
   }
 
   if (error || !summary) {
     return (
-      <div className="mx-auto max-w-5xl py-10">
-        <Card className="border-rose-400/30 bg-rose-400/10 px-6 py-16 text-center text-sm text-rose-100">
+      <div className="font-mw-body">
+        <div className="rounded-[14px] border border-[#5A1A26] bg-[#2A0E14] px-6 py-12 text-center text-sm text-[#FFB4C0]">
           {error || "Recruiter profile not found."}
-        </Card>
+        </div>
       </div>
     );
   }
 
+  const name = summary.displayName || summary.code;
+  const squadImage = String(squad?.squadImageUrl || squad?.squad_image_url || "").trim();
+  const wallet = summary.walletAddress || "";
+  const shortWallet = wallet.length > 10 ? `${wallet.slice(0, 4)}…${wallet.slice(-3)}` : wallet;
+  const statusClass =
+    summary.status === "active" ? "border-[#1F5133] text-[#6EE7A0]" : summary.status === "closed" ? "border-[#5A1A26] text-[#FB7185]" : "border-mw-edge text-[#FFB27A]";
+  const copyWallet = async () => {
+    try {
+      await navigator.clipboard.writeText(wallet);
+      toast.success("Wallet copied");
+    } catch {
+      toast.error("Could not copy wallet");
+    }
+  };
+
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6 py-8">
-      <Card className="overflow-hidden border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(115,205,255,0.14),transparent_38%),radial-gradient(circle_at_bottom_right,rgba(240,106,26,0.18),transparent_38%),linear-gradient(180deg,rgba(16,19,25,0.94),rgba(8,10,14,0.98))] p-6 md:p-8">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] ${statusTone(summary.status)}`}>
-                {summary.status}
-              </span>
-              {summary.isOg ? (
-                <span className="rounded-full border border-sky-300/30 bg-sky-300/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-100">
-                  OG recruiter
-                </span>
+    <ContentContainer className="flex flex-col px-1 pb-16 font-mw-body text-mw-text md:px-2">
+      <div className="mw-banner h-[120px] rounded-2xl border border-[#1E2329] lg:h-[220px]" aria-hidden="true" />
+      <div className="px-2">
+        <div className="relative -mt-11 flex flex-wrap items-end gap-3 lg:-mt-16 lg:gap-5">
+          {squadImage ? (
+            <img src={squadImage} alt="" className="h-[88px] w-[88px] shrink-0 rounded-full border-4 border-mw-ground object-cover lg:h-[136px] lg:w-[136px]" />
+          ) : (
+            <span className="flex h-[88px] w-[88px] shrink-0 items-center justify-center rounded-full border-4 border-mw-ground bg-[#2B3440] font-mw-cond text-3xl font-bold lg:h-[136px] lg:w-[136px] lg:text-[44px]" aria-hidden="true">
+              {name.slice(0, 2).toUpperCase()}
+            </span>
+          )}
+          <div className="min-w-0 flex-1 pb-1.5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="m-0 font-mw-cond text-[28px] font-bold leading-tight lg:text-4xl">{name}</h1>
+              <span className={`${chip} ${statusClass} capitalize`}>{summary.status}</span>
+              {summary.isOg ? <span className={`${chip} border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft`}>OG recruiter</span> : null}
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2.5 text-sm text-mw-muted">
+              <span>memewar.zone/r/{summary.code}</span>
+              {wallet ? (
+                <button type="button" onClick={() => void copyWallet()} className={`mw-focus ${chip} border-mw-edge bg-[#171B20] text-[#C9CED4]`}>
+                  <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span className="font-mw-mono">{shortWallet}</span>
+                </button>
+              ) : null}
+              {wallet ? (
+                <Link to={`/profile/${encodeURIComponent(wallet)}`} className={`mw-focus ${chip} border-mw-edge bg-[#171B20] text-[#C9CED4] hover:text-mw-text`}>
+                  Profile
+                </Link>
               ) : null}
             </div>
-            <h1 className="font-retro text-3xl text-foreground md:text-5xl">
-              {summary.displayName || summary.code}
-            </h1>
-            <p className="font-retro text-xs uppercase tracking-[0.24em] text-muted-foreground">
-              /r/{summary.code}
-            </p>
-            <p className="max-w-2xl text-sm text-muted-foreground md:text-base">
-              This profile is powered by the recruiter summary read model, so linked users, routed events, and earnings
-              stay tied to attribution state instead of frontend-only counters.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Button onClick={handleCopyLink} variant="outline" className="font-retro">
-              <Copy className="mr-2 h-4 w-4" />
-              {copied ? "Copied" : "Copy referral link"}
-            </Button>
-            <Button asChild className="font-retro">
-              <Link to={referralLink.replace(typeof window !== "undefined" ? window.location.origin : "", "") || `/r/${summary.code}`}>
-                Open referral page
-              </Link>
-            </Button>
           </div>
         </div>
-      </Card>
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Linked wallets</p>
-          <p className="mt-4 font-retro text-3xl text-foreground">{summary.linkedWalletCount}</p>
-        </Card>
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Claimable</p>
-          <p className="mt-4 font-retro text-3xl text-foreground">{formatBnb(summary.claimableEarningsRaw)} BNB</p>
-        </Card>
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Claimed lifetime</p>
-          <p className="mt-4 font-retro text-3xl text-foreground">{formatBnb(summary.claimedLifetimeRaw)} BNB</p>
-        </Card>
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Routed volume</p>
-          <p className="mt-4 font-retro text-3xl text-foreground">{formatBnb(summary.referredVolumeRaw)} BNB</p>
-        </Card>
+        <p className="m-0 mt-3.5 max-w-[70ch] text-base">
+          {summary.linkedWalletCount.toLocaleString()} wallets linked through /r/{summary.code}: {summary.linkedCreatorsCount.toLocaleString()} {summary.linkedCreatorsCount === 1 ? "creator" : "creators"} and {summary.linkedTradersCount.toLocaleString()} {summary.linkedTradersCount === 1 ? "trader" : "traders"}.
+        </p>
+        <div className="mt-3.5 flex flex-wrap gap-2">
+          <button type="button" onClick={() => void handleCopyLink()} className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-accent bg-mw-accent px-[18px] text-[15px] font-bold text-[#140A02] hover:bg-[#FF8A3D] hover:text-[#140A02]">
+            <Copy className="h-4 w-4" aria-hidden="true" />
+            {copied ? "Copied" : "Copy referral link"}
+          </button>
+          <Link to={referralLink.replace(typeof window !== "undefined" ? window.location.origin : "", "") || `/r/${summary.code}`} className={button}>
+            Open referral page
+          </Link>
+        </div>
       </div>
 
-      <div className={`grid gap-6 ${summary.status === "closed" && replacements.length > 0 ? "xl:grid-cols-[1.35fr_0.85fr]" : ""}`}>
-        <Card className="border-border/60 bg-card/65 p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="font-retro text-xs uppercase tracking-[0.22em] text-muted-foreground">Profile stats</p>
-              <h2 className="mt-1 font-retro text-xl text-foreground">Recruiter performance</h2>
-            </div>
-            <Users className="h-5 w-5 text-amber-200" />
+      <div className="mt-[18px] grid grid-cols-2 gap-2 lg:grid-cols-4 lg:gap-3">
+        {([
+          ["Linked wallets", String(summary.linkedWalletCount)],
+          ["Claimable", `${formatBnb(summary.claimableEarningsRaw)} BNB`],
+          ["Claimed lifetime", `${formatBnb(summary.claimedLifetimeRaw)} BNB`],
+          ["Routed volume", `${formatBnb(summary.referredVolumeRaw)} BNB`],
+        ] as Array<[string, string]>).map(([label, value]) => (
+          <div key={label} className="rounded-[14px] border border-mw-border bg-mw-surface p-3.5">
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{label}</div>
+            <div className="break-words font-mw-mono text-xl font-bold lg:text-[22px]">{value}</div>
           </div>
+        ))}
+      </div>
 
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Linked creators</p>
-              <p className="mt-2 font-retro text-2xl text-foreground">{summary.linkedCreatorsCount}</p>
-            </div>
-            <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Linked traders</p>
-              <p className="mt-2 font-retro text-2xl text-foreground">{summary.linkedTradersCount}</p>
-            </div>
-            <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Last referred event</p>
-              <p className="mt-2 font-retro text-sm text-foreground">{formatDate(summary.lastReferredEventAt)}</p>
-            </div>
-            <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Last claim</p>
-              <p className="mt-2 font-retro text-sm text-foreground">{formatDate(summary.lastClaimedAt)}</p>
-            </div>
-          </div>
-
-          {squad ? (
-            <div className="mt-6 rounded-2xl border border-border/60 bg-background/35 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Squad snapshot</p>
-                  <h3 className="mt-1 font-retro text-lg text-foreground">Current squad posture</h3>
-                </div>
-                <ShieldCheck className="h-4 w-4 text-sky-200" />
-              </div>
-
-              <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Active members</p>
-                  <p className="mt-1 font-retro text-xl text-foreground">{squad.activeMemberCount}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Eligible members</p>
-                  <p className="mt-1 font-retro text-xl text-foreground">{squad.eligibleMemberCount}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Pending squad pool</p>
-                  <p className="mt-1 font-retro text-xl text-foreground">{formatBnb(squad.estimatedPendingPoolAmount)} BNB</p>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </Card>
-
-        {summary.status === "closed" && replacements.length > 0 ? (
-          <Card className="border-border/60 bg-card/65 p-6">
-            <div>
-              <p className="font-retro text-xs uppercase tracking-[0.22em] text-muted-foreground">Pick a new recruiter</p>
-              <h2 className="mt-1 font-retro text-xl text-foreground">This recruiter is closed</h2>
-            </div>
-
-            <p className="mt-3 text-sm text-muted-foreground">
-              Anyone who was in their squad is back to solo and can join a new recruiter below.
-            </p>
-
-            <div className="mt-5 space-y-3">
-              {replacements.map((replacement) => (
-                <Link
-                  key={replacement.code}
-                  to={`/recruiters/${encodeURIComponent(replacement.code)}`}
-                  className="block rounded-2xl border border-border/60 bg-background/35 p-4 transition-colors hover:border-sky-300/35 hover:bg-background/55"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="font-retro text-sm text-foreground">
-                        {replacement.displayName || replacement.code}
-                      </p>
-                      <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                        /r/{replacement.code}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-sky-100">
-                      View
-                      <ArrowRight className="h-4 w-4" />
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </Card>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <section className={card}>
+          <span className={title}>Recruiter performance</span>
+          {kv("Linked creators", summary.linkedCreatorsCount)}
+          {kv("Linked traders", summary.linkedTradersCount)}
+          {kv("Last referred event", formatDate(summary.lastReferredEventAt))}
+          {kv("Last claim", formatDate(summary.lastClaimedAt))}
+        </section>
+        {squad ? (
+          <section className={card}>
+            <span className={title}>Squad snapshot</span>
+            {kv("Active members", squad.activeMemberCount ?? "—")}
+            {kv("Eligible members", squad.eligibleMemberCount ?? "—")}
+            {kv("Pending squad pool", `${formatBnb(squad.estimatedPendingPoolAmount)} BNB`)}
+            <Link to="/squads" className="mt-1.5 text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">Squad pool leaderboard</Link>
+          </section>
         ) : null}
       </div>
-    </div>
+
+      {summary.status === "closed" && replacements.length > 0 ? (
+        <section className={`${card} mt-4 gap-2.5`}>
+          <span className={title}>This recruiter is closed</span>
+          <p className="m-0 text-sm text-mw-muted">Anyone who was in their squad is back to solo and can join a new recruiter below.</p>
+          {replacements.map((replacement) => (
+            <Link
+              key={replacement.code}
+              to={`/recruiters/${encodeURIComponent(replacement.code)}`}
+              className="mw-focus flex items-center justify-between gap-3 rounded-[10px] border border-mw-border bg-mw-input p-3 text-mw-text hover:border-[#3A424C] hover:text-mw-text"
+            >
+              <span>
+                <b className="block text-sm">{replacement.displayName || replacement.code}</b>
+                <span className="text-xs text-mw-muted">/r/{replacement.code}</span>
+              </span>
+              <span className="flex items-center gap-1.5 text-sm text-mw-accent-soft">View<ArrowRight className="h-4 w-4" aria-hidden="true" /></span>
+            </Link>
+          ))}
+        </section>
+      ) : null}
+    </ContentContainer>
   );
 }
