@@ -4,7 +4,7 @@ import { isSolanaAddress } from "@/lib/address";
 export const FEED_MAX_CHARS = 1000;
 export const FEED_PREVIEW_CHARS = 280;
 
-export type FeedItemType = "post" | "draft_created" | "coin_deployed" | "trade";
+export type FeedItemType = "post" | "coin_post" | "draft_created" | "coin_deployed" | "trade";
 
 export type FeedItem = {
   type: FeedItemType;
@@ -44,6 +44,19 @@ export type FeedItem = {
   repostedByMe?: boolean;
   repostedByWallet?: string | null;
   repostedByDisplayName?: string | null;
+  /** UI redesign phase 2. */
+  mediaUrl?: string | null;
+  quoteOfId?: number | null;
+  quoted?: {
+    postId: number;
+    wallet: string | null;
+    body: string;
+    mediaUrl: string | null;
+    createdAt: string | null;
+    authorDisplayName: string | null;
+    authorAvatarUrl: string | null;
+  } | null;
+  coinPostId?: number;
 };
 
 export type FeedSuggestion = {
@@ -52,20 +65,27 @@ export type FeedSuggestion = {
   avatar?: string | null;
 };
 
+/** Mirrors api/lib/postsCanon.js buildPostCreateMessage: optional Media / Quote lines, none for a plain post. */
 function buildPostMessage(args: {
   chainId: number;
   address: string;
   nonce: string;
   body: string;
+  mediaUrl?: string | null;
+  quoteOf?: number | null;
 }) {
   const bodyPreview = args.body.trim();
   const address = isSolanaAddress(args.address) ? args.address : args.address.toLowerCase();
+  const extra: string[] = [];
+  if (args.mediaUrl) extra.push(`Media: ${String(args.mediaUrl).trim()}`);
+  if (args.quoteOf) extra.push(`Quote: ${Number(args.quoteOf)}`);
   return [
     "MemeWarzone Post",
     "Action: POST_CREATE",
     `ChainId: ${args.chainId}`,
     `Address: ${address}`,
     `Nonce: ${args.nonce}`,
+    ...extra,
     "",
     bodyPreview,
   ].join("\n");
@@ -113,6 +133,8 @@ export async function createFeedPost(input: {
   body: string;
   nonce: string;
   signature: string;
+  mediaUrl?: string | null;
+  quoteOf?: number | null;
 }): Promise<{ id: number | null }> {
   const res = await apiFetch("/api/feed/posts", {
     method: "POST",
@@ -175,4 +197,43 @@ export async function createFeedReply(postId: number, token: string, body: strin
   const json = await readJson(res);
   if (!res.ok) throw sessionError(json, `Failed to reply (${res.status})`, res.status);
   return { id: (json.id as number | null) ?? null, replyCount: Number(json.replyCount || 0) };
+}
+
+/** Single post for the thread page (UI redesign phase 2). Null when it does not exist. */
+export async function fetchFeedPost(postId: number, viewer?: string): Promise<FeedItem | null> {
+  const qs = new URLSearchParams();
+  if (viewer) qs.set("viewer", viewer);
+  const res = await apiFetch(`/api/feed/posts/${postId}?${qs.toString()}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  const json = await readJson(res);
+  if (!res.ok) throw new Error(String(json?.error || `Failed to load post (${res.status})`));
+  return (json?.item as FeedItem) || null;
+}
+
+/** Image for a post: signed by the posting wallet (`feed_post_image`), stored in its own folder. */
+export async function uploadFeedImage(input: {
+  file: File;
+  chainId: number;
+  address: string;
+  walletType: "evm" | "solana";
+  signMessage: (message: string) => Promise<string>;
+}): Promise<string> {
+  const { signWalletAction, appendAuthToSearchParams } = await import("@/lib/walletActionAuth");
+  const auth = await signWalletAction({
+    action: "feed_post_image",
+    walletAddress: input.address,
+    chainId: input.chainId,
+    walletType: input.walletType,
+    signMessage: input.signMessage,
+  });
+  const qs = new URLSearchParams({ chainId: String(input.chainId), address: input.address });
+  appendAuthToSearchParams(qs, auth);
+  const fd = new FormData();
+  fd.append("file", input.file);
+  const res = await apiFetch(`/api/feed/image?${qs.toString()}`, { method: "POST", body: fd });
+  const json = await readJson(res);
+  if (!res.ok) throw new Error(String(json?.error || `Upload failed (${res.status})`));
+  const url = String(json?.url || "").trim();
+  if (!url) throw new Error("Upload succeeded but no image URL was returned.");
+  return url;
 }

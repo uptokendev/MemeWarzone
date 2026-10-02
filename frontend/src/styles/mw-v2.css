@@ -158,3 +158,13 @@ ol.fixed.top-0 {
   font-size: 19px !important;
   font-weight: 700 !important;
 }
+
+/* UI redesign phase 2: Home story row slides left like the ticker; hover/focus pauses; no motion when reduced. */
+@keyframes mw-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.mw-marquee-track { animation: mw-marquee 45s linear infinite; }
+.mw-marquee:hover .mw-marquee-track, .mw-marquee:focus-within .mw-marquee-track { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .mw-marquee { overflow-x: auto; }
+  .mw-marquee-track { animation: none; }
+  .mw-marquee [data-marquee-dup] { display: none; }
+}

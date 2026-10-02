@@ -1,20 +1,21 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { MessageCircle, Repeat2, Rocket } from "lucide-react";
+import { ImagePlus, MessageCircle, PenLine, Repeat2, Rocket, Share2, X } from "lucide-react";
 import { toast } from "sonner";
 import { isSolanaAddress } from "@/lib/address";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import {
-  FEED_MAX_CHARS,
   FEED_PREVIEW_CHARS,
-  createFeedReply,
-  fetchPostReplies,
   toggleFeedFire,
   toggleFeedRepost,
   type FeedItem,
   type FeedSuggestion,
 } from "@/lib/feedApi";
 import { useFeedSession } from "@/hooks/useFeedSession";
+import { usePostComposer } from "@/components/feed/usePostComposer";
+
+/* UI redesign phase 2: cards in the artboard style. Fire / repost / session behaviour is unchanged;
+   the reply button opens the thread page (/post/:id), where replies are written. */
 
 function shorten(addr?: string | null) {
   if (!addr) return "";
@@ -22,7 +23,7 @@ function shorten(addr?: string | null) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-function timeAgo(createdAt?: string | null) {
+export function timeAgo(createdAt?: string | null) {
   if (!createdAt) return "";
   const ts = new Date(createdAt).getTime();
   if (!Number.isFinite(ts)) return "";
@@ -42,6 +43,10 @@ function profileHref(wallet?: string | null) {
   return `/profile/${wallet}`;
 }
 
+export function postHref(postId?: number | null) {
+  return postId ? `/post/${postId}` : "/";
+}
+
 function tokenHref(item: FeedItem) {
   return tokenDetailsPath({
     tokenAddress: item.tokenAddress || item.mentionedToken,
@@ -50,19 +55,49 @@ function tokenHref(item: FeedItem) {
   });
 }
 
-function FeedBody({ body }: { body?: string | null }) {
+function chainLabel(chainId?: number | null) {
+  const id = Number(chainId);
+  if (id === 101 || id === 102) return "Solana";
+  if (id === 4663 || id === 46630) return "Robinhood";
+  if (id === 56 || id === 97) return "BNB";
+  return null;
+}
+
+const card = "rounded-[14px] border border-mw-border bg-mw-surface font-mw-body text-mw-text";
+const act =
+  "mw-focus inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 text-sm text-mw-muted transition-colors hover:bg-[#171B20] hover:text-mw-text disabled:opacity-50";
+const chip = "inline-flex h-[22px] items-center rounded-full border px-2 text-xs font-semibold";
+
+export function FeedAvatar({ url, label, square = false, size = 44 }: { url?: string | null; label: string; square?: boolean; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  const shape = square ? "rounded-[12px]" : "rounded-full";
+  const style = { width: size, height: size };
+  if (url && !failed) {
+    return <img src={url} alt="" style={style} onError={() => setFailed(true)} className={`${shape} shrink-0 border border-mw-border object-cover`} />;
+  }
+  return (
+    <span style={style} className={`${shape} flex shrink-0 items-center justify-center bg-[#2B3440] font-mw-cond text-sm font-bold text-mw-text`} aria-hidden="true">
+      {label.replace(/^[@$]/, "").slice(0, 2).toUpperCase() || "MW"}
+    </span>
+  );
+}
+
+export function FeedBody({ body, big = false }: { body?: string | null; big?: boolean }) {
   const [open, setOpen] = useState(false);
   const text = String(body || "");
-  const collapsed = text.length > FEED_PREVIEW_CHARS;
+  const collapsed = !big && text.length > FEED_PREVIEW_CHARS;
   const shown = open || !collapsed ? text : `${text.slice(0, FEED_PREVIEW_CHARS).trimEnd()}…`;
   return (
     <>
-      <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">{shown}</p>
+      <p className={`m-0 mt-1 whitespace-pre-wrap break-words ${big ? "text-lg leading-relaxed" : "text-[15px]"}`}>{shown}</p>
       {collapsed ? (
         <button
           type="button"
-          onClick={() => setOpen((value) => !value)}
-          className="mt-1 text-xs text-accent hover:underline"
+          onClick={(event) => {
+            event.preventDefault();
+            setOpen((value) => !value);
+          }}
+          className="mw-focus mt-1 text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]"
         >
           {open ? "Show less" : "Read more"}
         </button>
@@ -71,35 +106,108 @@ function FeedBody({ body }: { body?: string | null }) {
   );
 }
 
+/** Coin card attached to a post (artboard): logo, name, ticker, chain, Buy (opens the coin page). */
+export function FeedCoinCard({ item }: { item: FeedItem }) {
+  const ticker = item.tokenTicker || item.ticker;
+  const name = item.tokenName || item.name || (ticker ? `$${ticker}` : "Coin");
+  const path = tokenHref(item);
+  const chain = chainLabel(item.chainId || item.mentionedChainId);
+  const href = path && path !== "/" ? path : null;
+  return (
+    <div className="mt-3 flex items-center gap-3.5 rounded-[14px] border border-mw-border bg-mw-input p-3.5">
+      <FeedAvatar url={item.tokenLogoUri || item.logoUri} label={ticker || name} square size={56} />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="truncate font-bold">{name}</span>
+          {ticker ? <span className={`${chip} border-mw-edge font-mw-mono text-[#C9CED4]`}>${String(ticker).replace(/^\$/, "")}</span> : null}
+          {chain ? <span className={`${chip} border-mw-edge text-[#C9CED4]`}>{chain}</span> : null}
+        </div>
+      </div>
+      {href ? (
+        <Link to={href} className="mw-focus inline-flex min-h-11 shrink-0 items-center rounded-[10px] border border-mw-buy bg-mw-buy px-4 text-sm font-bold text-[#04140A] hover:bg-[#15913F] hover:text-[#04140A]">
+          Buy
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+function QuotedPost({ quoted }: { quoted: NonNullable<FeedItem["quoted"]> }) {
+  const label = quoted.authorDisplayName ? `@${quoted.authorDisplayName}` : shorten(quoted.wallet);
+  return (
+    <Link to={postHref(quoted.postId)} className="mw-focus mt-3 flex gap-2.5 rounded-[14px] border border-mw-border bg-mw-input p-3 text-mw-text hover:border-[#3A424C] hover:text-mw-text">
+      <FeedAvatar url={quoted.authorAvatarUrl} label={label} size={32} />
+      <div className="min-w-0">
+        <div className="flex gap-1.5 text-[13px]">
+          <b className="truncate">{label}</b>
+          <span className="text-mw-muted">· {timeAgo(quoted.createdAt)}</span>
+        </div>
+        <p className="m-0 mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm">{quoted.body}</p>
+      </div>
+    </Link>
+  );
+}
+
+/** Quote dialog (artboard repost popup → Quote post): your take on top, the original below. */
+function QuoteDialog({ item, onClose, onPosted }: { item: FeedItem; onClose: () => void; onPosted?: () => void }) {
+  const composer = usePostComposer({ quoteOf: item.postId, onPosted });
+  const label = item.authorDisplayName ? `@${item.authorDisplayName}` : shorten(item.wallet);
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-[rgba(5,6,8,0.75)] sm:items-center" role="dialog" aria-modal="true" aria-label="Quote post">
+      <div className="flex w-full flex-col gap-3 rounded-t-[20px] border border-[#2E353D] bg-mw-surface p-4 font-mw-body text-mw-text sm:w-[560px] sm:rounded-[18px]">
+        <div className="flex items-center gap-2.5">
+          <button type="button" onClick={onClose} aria-label="Close" className="mw-focus inline-flex h-10 w-10 items-center justify-center rounded-[10px] text-mw-text hover:bg-[#171B20]">
+            <X className="h-5 w-5" />
+          </button>
+          <span className="flex-1 font-mw-cond text-xl font-bold">Quote post</span>
+          <button
+            type="button"
+            disabled={!composer.canPost}
+            onClick={() => void composer.submit().then((ok) => ok && onClose())}
+            className="mw-focus inline-flex min-h-9 items-center rounded-[10px] border border-mw-accent bg-mw-accent px-3 text-sm font-bold text-[#140A02] disabled:opacity-50"
+          >
+            {composer.posting ? "Posting..." : "Post"}
+          </button>
+        </div>
+        <textarea
+          value={composer.body}
+          onChange={(e) => composer.setBody(e.target.value)}
+          rows={3}
+          placeholder="Add your take"
+          aria-label="Your comment"
+          className="mw-focus w-full resize-none rounded-[10px] border border-[#2E353D] bg-mw-input p-3 text-[15px] text-mw-text placeholder:text-[#5C6670]"
+        />
+        <div className="flex gap-2.5 rounded-[14px] border border-mw-border bg-mw-input p-3">
+          <FeedAvatar url={item.authorAvatarUrl} label={label} size={32} />
+          <div className="min-w-0">
+            <div className="flex gap-1.5 text-[13px]"><b className="truncate">{label}</b><span className="text-mw-muted">· {timeAgo(item.createdAt)}</span></div>
+            <p className="m-0 mt-0.5 line-clamp-3 whitespace-pre-wrap text-sm">{item.body}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-[13px] text-mw-muted">
+          <ImagePickButton onPick={composer.setFile} disabled={composer.posting} />
+          <span>{composer.file ? composer.file.name : "A contract address in your text adds a coin card."}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function countLabel(n?: number) {
   const value = Number(n || 0);
   return value > 0 ? String(value) : "";
 }
 
-function FeedPostActions({
-  item,
-  onChanged,
-}: {
-  item: FeedItem;
-  onChanged?: () => void;
-}) {
-  const { account, withSession, busy } = useFeedSession();
+export function FeedPostActions({ item, onChanged, big = false }: { item: FeedItem; onChanged?: () => void; big?: boolean }) {
+  const { withSession, busy } = useFeedSession();
   const [fireCount, setFireCount] = useState(Number(item.fireCount || 0));
-  const [replyCount, setReplyCount] = useState(Number(item.replyCount || 0));
   const [repostCount, setRepostCount] = useState(Number(item.repostCount || 0));
   const [fired, setFired] = useState(Boolean(item.firedByMe));
   const [reposted, setReposted] = useState(Boolean(item.repostedByMe));
-  const [replyOpen, setReplyOpen] = useState(false);
-  const [replies, setReplies] = useState<FeedItem[] | null>(null);
-  const [replyBody, setReplyBody] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [quoteOpen, setQuoteOpen] = useState(false);
   const [working, setWorking] = useState(false);
   const postId = Number(item.postId || 0);
-
-  const loadReplies = async () => {
-    if (!postId) return;
-    const next = await fetchPostReplies(postId, account);
-    setReplies(next);
-  };
 
   const run = async (fn: () => Promise<void>) => {
     if (!postId || working || busy) return;
@@ -113,42 +221,89 @@ function FeedPostActions({
     }
   };
 
+  const share = async () => {
+    const url = `${window.location.origin}${postHref(postId)}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      toast.success("Link copied.");
+    } catch (err: unknown) {
+      if (String((err as Error)?.name || "") !== "AbortError") toast.error("Could not share this post.");
+    }
+  };
+
   return (
-    <div className="mt-3">
-      <div className="flex items-center gap-5 text-muted-foreground">
+    <>
+      {big ? (
+        <div className="mt-3 flex gap-5 border-y border-[#1E2329] py-3 text-[15px]">
+          <span><b>{repostCount}</b> <span className="text-mw-muted">reposts</span></span>
+          <span><b>{fireCount}</b> <span className="text-mw-muted">rockets</span></span>
+          <span><b>{Number(item.replyCount || 0)}</b> <span className="text-mw-muted">replies</span></span>
+        </div>
+      ) : null}
+      <div className={big ? "flex items-center justify-around pt-1.5" : "-ml-2.5 mt-2 flex items-center gap-1"}>
+        <Link to={postHref(postId)} className={act} aria-label={`${Number(item.replyCount || 0)} replies, open the thread`}>
+          <MessageCircle className="h-[18px] w-[18px]" />
+          {big ? null : <span>{countLabel(item.replyCount)}</span>}
+        </Link>
+        <div className="relative">
+          <button
+            type="button"
+            disabled={working || busy}
+            aria-label="Repost or quote"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+            className={`${act} ${reposted ? "text-[#6EE7A0]" : ""}`}
+          >
+            <Repeat2 className="h-[18px] w-[18px]" />
+            {big ? null : <span>{countLabel(repostCount)}</span>}
+          </button>
+          {menuOpen ? (
+            <>
+              <button type="button" aria-label="Close menu" className="fixed inset-0 z-[60] cursor-default" onClick={() => setMenuOpen(false)} />
+              <div role="menu" aria-label="Repost" className="absolute left-0 top-11 z-[61] flex w-[220px] flex-col gap-1 rounded-[16px] border border-[#2E353D] bg-mw-surface p-2 shadow-xl">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() =>
+                    void run(async () => {
+                      setMenuOpen(false);
+                      const result = await withSession((token) => toggleFeedRepost(postId, token));
+                      setReposted(result.on);
+                      setRepostCount(result.repostCount);
+                      onChanged?.();
+                    })
+                  }
+                  className="mw-focus flex min-h-12 items-center gap-3 rounded-[10px] px-3 text-left font-bold text-mw-text hover:bg-[#171B20]"
+                >
+                  <Repeat2 className="h-[18px] w-[18px]" />
+                  {reposted ? "Undo repost" : "Repost"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setQuoteOpen(true);
+                  }}
+                  className="mw-focus flex min-h-12 items-center gap-3 rounded-[10px] px-3 text-left font-bold text-mw-text hover:bg-[#171B20]"
+                >
+                  <PenLine className="h-[18px] w-[18px]" />
+                  Quote post
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
         <button
           type="button"
           disabled={working || busy}
-          onClick={() =>
-            void run(async () => {
-              setReplyOpen((open) => !open);
-              if (replies == null) await loadReplies();
-            })
-          }
-          className="inline-flex items-center gap-1.5 text-xs hover:text-accent"
-        >
-          <MessageCircle className="h-4 w-4" />
-          {countLabel(replyCount)}
-        </button>
-        <button
-          type="button"
-          disabled={working || busy}
-          onClick={() =>
-            void run(async () => {
-              const result = await withSession((token) => toggleFeedRepost(postId, token));
-              setReposted(result.on);
-              setRepostCount(result.repostCount);
-              onChanged?.();
-            })
-          }
-          className={`inline-flex items-center gap-1.5 text-xs hover:text-emerald-400 ${reposted ? "text-emerald-400" : ""}`}
-        >
-          <Repeat2 className="h-4 w-4" />
-          {countLabel(repostCount)}
-        </button>
-        <button
-          type="button"
-          disabled={working || busy}
+          aria-label="Rocket this post"
+          aria-pressed={fired}
           onClick={() =>
             void run(async () => {
               const result = await withSession((token) => toggleFeedFire(postId, token));
@@ -156,115 +311,80 @@ function FeedPostActions({
               setFireCount(result.fireCount);
             })
           }
-          className={`inline-flex items-center gap-1.5 text-xs hover:text-orange-400 ${fired ? "text-orange-400" : ""}`}
+          className={`${act} ${fired ? "text-[#FF9A4D]" : ""}`}
         >
-          <Rocket className="h-4 w-4" />
-          {countLabel(fireCount)}
+          <Rocket className="h-[18px] w-[18px]" />
+          {big ? null : <span>{countLabel(fireCount)}</span>}
         </button>
+        {big ? null : <span className="flex-1" />}
+        <button type="button" aria-label="Share" onClick={() => void share()} className={act}>
+          <Share2 className="h-[18px] w-[18px]" />
+        </button>
+        {quoteOpen ? <QuoteDialog item={item} onClose={() => setQuoteOpen(false)} onPosted={onChanged} /> : null}
       </div>
-
-      {replyOpen ? (
-        <div className="mt-3 space-y-3">
-          <div className="rounded-xl border border-border/40 bg-background/40 p-3">
-            <textarea
-              value={replyBody}
-              onChange={(e) => setReplyBody(e.target.value.slice(0, FEED_MAX_CHARS))}
-              placeholder="Reply"
-              rows={2}
-              className="w-full resize-none bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-            />
-            <div className="mt-2 flex justify-end">
-              <button
-                type="button"
-                disabled={working || busy || !replyBody.trim()}
-                onClick={() =>
-                  void run(async () => {
-                    const result = await withSession((token) => createFeedReply(postId, token, replyBody.trim()));
-                    setReplyBody("");
-                    setReplyCount(result.replyCount);
-                    await loadReplies();
-                    toast.success("Replied.");
-                  })
-                }
-                className="rounded-full bg-accent px-3 py-1 font-retro text-[10px] uppercase tracking-[0.14em] text-black disabled:opacity-40"
-              >
-                Reply
-              </button>
-            </div>
-          </div>
-          {replies?.length ? (
-            <div className="space-y-2 pl-2">
-              {replies.map((reply) => (
-                <div key={reply.id} className="rounded-xl border border-border/30 bg-background/20 p-3">
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Link to={profileHref(reply.wallet)} className="font-retro text-foreground hover:text-accent">
-                      {reply.authorDisplayName ? `@${reply.authorDisplayName}` : shorten(reply.wallet)}
-                    </Link>
-                    <span>{timeAgo(reply.createdAt)}</span>
-                  </div>
-                  <FeedBody body={reply.body} />
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
+    </>
   );
 }
 
 export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: () => void }) {
   const ticker = item.tokenTicker || item.ticker;
-  const tokenName = item.tokenName || item.name;
-  const logo = item.tokenLogoUri || item.logoUri || "/placeholder.svg";
-  const path = tokenHref(item);
   const reposter = item.repostedByDisplayName
     ? `@${item.repostedByDisplayName}`
     : item.repostedByWallet
       ? shorten(item.repostedByWallet)
       : null;
+  const author = item.authorDisplayName ? item.authorDisplayName : shorten(item.wallet);
+  const handle = item.authorDisplayName ? `@${item.authorDisplayName}` : "";
 
   return (
-    <article className="rounded-2xl border border-border/40 bg-background/30 p-4">
+    <article className={`${card} px-[18px] pb-2 pt-4`}>
       {reposter ? (
-        <div className="mb-2 flex items-center gap-1 text-[11px] text-muted-foreground">
-          <Repeat2 className="h-3 w-3" />
-          <Link to={profileHref(item.repostedByWallet)} className="hover:text-accent">
-            {reposter}
-          </Link>
+        <div className="mb-2 flex items-center gap-1.5 pl-[58px] text-[13px] text-mw-muted">
+          <Repeat2 className="h-3.5 w-3.5" aria-hidden="true" />
+          <Link to={profileHref(item.repostedByWallet)} className="hover:text-mw-text">{reposter}</Link>
           <span>reposted</span>
         </div>
       ) : null}
-      <div className="flex items-start gap-3">
-        <Link to={profileHref(item.wallet)} className="shrink-0">
-          <img
-            src={item.authorAvatarUrl || "/placeholder.svg"}
-            alt=""
-            className="h-10 w-10 rounded-full object-cover"
-          />
+      <div className="flex gap-3.5">
+        <Link to={profileHref(item.wallet)} className="mw-focus shrink-0 rounded-full">
+          <FeedAvatar url={item.authorAvatarUrl} label={author} />
         </Link>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Link to={profileHref(item.wallet)} className="truncate font-retro text-sm text-foreground hover:text-accent">
-              {item.authorDisplayName ? `@${item.authorDisplayName}` : shorten(item.wallet)}
-            </Link>
-            <span>{timeAgo(item.createdAt)}</span>
+          <div className="flex flex-wrap items-center gap-x-2">
+            <Link to={profileHref(item.wallet)} className="truncate font-bold text-mw-text hover:text-mw-text">{author}</Link>
+            <span className="text-sm text-mw-muted">{handle ? `${handle} · ` : ""}{timeAgo(item.createdAt)}</span>
           </div>
-          <FeedBody body={item.body} />
-          {(item.mentionedCampaign || item.mentionedToken || ticker) && (
-            <Link
-              to={path && path !== "/" ? path : profileHref(item.wallet)}
-              className="mt-3 flex items-center gap-3 rounded-xl border border-border/40 bg-card/40 p-3 hover:border-accent/50"
-            >
-              <img src={logo} alt="" className="h-10 w-10 rounded-full object-cover" />
-              <div className="min-w-0">
-                <div className="truncate font-retro text-sm text-foreground">{tokenName || "Token"}</div>
-                <div className="text-xs text-muted-foreground">{ticker ? `$${ticker}` : "Market card"}</div>
-              </div>
-            </Link>
-          )}
+          <Link to={postHref(item.postId)} className="block text-mw-text hover:text-mw-text">
+            <FeedBody body={item.body} />
+          </Link>
+          {item.mediaUrl ? <img src={item.mediaUrl} alt="" className="mt-3 max-h-[420px] w-full rounded-[14px] border border-mw-border object-cover" /> : null}
+          {item.quoted ? <QuotedPost quoted={item.quoted} /> : null}
+          {(item.mentionedCampaign || item.mentionedToken || ticker) ? <FeedCoinCard item={item} /> : null}
           {item.postId ? <FeedPostActions item={item} onChanged={onChanged} /> : null}
         </div>
+      </div>
+    </article>
+  );
+}
+
+/** A creator post written as the coin, shared to the feed from its coin page (artboard "Creator update"). */
+export function FeedCoinPostCard({ item }: { item: FeedItem }) {
+  const ticker = item.tokenTicker ? `$${String(item.tokenTicker).replace(/^\$/, "")}` : "";
+  const name = item.tokenName || ticker || "Coin";
+  const path = tokenHref(item);
+  const href = path && path !== "/" ? path : null;
+  const avatar = <FeedAvatar url={item.tokenLogoUri} label={ticker || name} square />;
+  return (
+    <article className={`${card} flex gap-3.5 px-[18px] py-4`}>
+      {href ? <Link to={href} className="mw-focus shrink-0 rounded-[12px]">{avatar}</Link> : avatar}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {href ? <Link to={href} className="font-bold text-mw-text hover:text-mw-text">{name}</Link> : <b>{name}</b>}
+          <span className={`${chip} border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft`}>Creator update</span>
+          <span className="text-sm text-mw-muted">{ticker ? `${ticker} · ` : ""}{timeAgo(item.createdAt)}</span>
+        </div>
+        <FeedBody body={item.body} />
+        {item.mediaUrl ? <img src={item.mediaUrl} alt="" className="mt-3 max-h-[420px] w-full rounded-[14px] border border-mw-border object-cover" /> : null}
       </div>
     </article>
   );
@@ -274,11 +394,8 @@ export function FeedSystemCard({ item }: { item: FeedItem }) {
   const navigate = useNavigate();
   const ticker = item.ticker || item.campaignSymbol;
   const name = item.name || item.campaignName || shorten(item.campaignAddress);
-  const logo = item.logoUri || "/placeholder.svg";
   const verb = item.type === "draft_created" ? "opened a draft" : "deployed";
-  const href = item.type === "draft_created" && item.slug
-    ? `/prepare/${item.slug}`
-    : tokenHref(item);
+  const href = item.type === "draft_created" && item.slug ? `/prepare/${item.slug}` : tokenHref(item);
 
   return (
     <button
@@ -286,19 +403,18 @@ export function FeedSystemCard({ item }: { item: FeedItem }) {
       onClick={() => {
         if (href && href !== "/") navigate(href);
       }}
-      className="flex w-full items-center gap-3 rounded-2xl border border-border/40 bg-background/30 p-4 text-left hover:border-accent/50"
+      className={`${card} mw-focus flex w-full items-center gap-3 p-4 text-left hover:border-[#3A424C]`}
     >
-      <img src={logo} alt="" className="h-11 w-11 rounded-full object-cover" />
+      <FeedAvatar url={item.logoUri} label={ticker || name || "?"} square />
       <div className="min-w-0 flex-1">
-        <div className="text-xs text-muted-foreground">
-          <Link to={profileHref(item.wallet)} className="text-foreground hover:text-accent" onClick={(e) => e.stopPropagation()}>
+        <div className="text-sm text-mw-muted">
+          <Link to={profileHref(item.wallet)} className="text-mw-text hover:text-mw-text" onClick={(e) => e.stopPropagation()}>
             {item.authorDisplayName ? `@${item.authorDisplayName}` : shorten(item.wallet)}
-          </Link>
-          {" "}{verb}{" "}
-          <span className="font-retro text-foreground">{name}</span>
+          </Link>{" "}
+          {verb} <b className="text-mw-text">{name}</b>
           {ticker ? ` $${ticker}` : ""}
         </div>
-        <div className="mt-1 text-xs text-muted-foreground">{timeAgo(item.createdAt)}</div>
+        <div className="mt-0.5 text-xs text-mw-muted">{timeAgo(item.createdAt)}</div>
       </div>
     </button>
   );
@@ -322,33 +438,28 @@ export function FeedTradeCard({ item }: { item: FeedItem }) {
       onClick={() => {
         if (path && path !== "/") navigate(path);
       }}
-      className="flex w-full items-center justify-between gap-3 rounded-2xl border border-border/40 bg-background/30 p-4 text-left hover:border-accent/50"
+      className={`${card} mw-focus flex w-full items-center justify-between gap-3 p-4 text-left hover:border-[#3A424C]`}
     >
       <div className="flex min-w-0 items-center gap-3">
-        <img src={item.logoUri || "/placeholder.svg"} alt="" className="h-10 w-10 rounded-full object-cover" />
+        <FeedAvatar url={item.logoUri} label={item.campaignSymbol || "?"} square size={40} />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className={item.side === "sell" ? "text-orange-400" : "text-emerald-400"}>
-              {String(item.side || "buy").toUpperCase()}
-            </span>
-            <span className="truncate font-retro text-sm text-foreground">
-              {item.campaignName || shorten(item.campaignAddress)}
-            </span>
+            <span className={`font-bold ${item.side === "sell" ? "text-mw-down" : "text-mw-up"}`}>{String(item.side || "buy").toUpperCase()}</span>
+            <span className="truncate font-bold">{item.campaignName || shorten(item.campaignAddress)}</span>
           </div>
-          <div className="text-xs text-muted-foreground">
+          <div className="text-xs text-mw-muted">
             {item.campaignSymbol ? `$${item.campaignSymbol}` : "Token"} · {timeAgo(item.createdAt || item.blockTime)}
           </div>
         </div>
       </div>
-      {amount ? (
-        <div className="shrink-0 text-right text-xs text-foreground">{amount}</div>
-      ) : null}
+      {amount ? <div className="shrink-0 text-right font-mw-mono text-sm">{amount}</div> : null}
     </button>
   );
 }
 
 export function FeedItemView({ item, onChanged }: { item: FeedItem; onChanged?: () => void }) {
   if (item.type === "post") return <FeedPostCard item={item} onChanged={onChanged} />;
+  if (item.type === "coin_post") return <FeedCoinPostCard item={item} />;
   if (item.type === "trade") return <FeedTradeCard item={item} />;
   return <FeedSystemCard item={item} />;
 }
@@ -356,27 +467,36 @@ export function FeedItemView({ item, onChanged }: { item: FeedItem; onChanged?: 
 export function FeedWhoToFollow({ authors }: { authors: FeedSuggestion[] }) {
   if (!authors.length) return null;
   return (
-    <aside className="rounded-2xl border border-border/50 bg-card/35 p-4">
-      <div className="mb-3 font-retro text-sm text-foreground">Who to follow</div>
-      <div className="space-y-3">
-        {authors.slice(0, 5).map((author) => (
-          <Link
-            key={author.wallet}
-            to={profileHref(author.wallet)}
-            className="flex items-center gap-3 rounded-xl p-2 hover:bg-background/40"
-          >
-            <img src={author.avatar || "/placeholder.svg"} alt="" className="h-9 w-9 rounded-full object-cover" />
-            <div className="min-w-0">
-              <div className="truncate text-sm text-foreground">
-                {author.name ? `@${author.name}` : shorten(author.wallet)}
-              </div>
-              <div className="truncate text-[11px] text-muted-foreground">
-                {isSolanaAddress(author.wallet) ? "Solana" : "Wallet"}
-              </div>
-            </div>
-          </Link>
-        ))}
-      </div>
-    </aside>
+    <section className={`${card} flex flex-col gap-1 p-4`}>
+      <span className="mb-1 font-mw-cond text-xl font-bold">Who to follow</span>
+      {authors.slice(0, 5).map((author) => (
+        <Link key={author.wallet} to={profileHref(author.wallet)} className="mw-focus flex min-h-12 items-center gap-3 rounded-[10px] px-1 text-mw-text hover:bg-[#171B20] hover:text-mw-text">
+          <FeedAvatar url={author.avatar} label={author.name || author.wallet} size={36} />
+          <div className="min-w-0">
+            <div className="truncate text-sm font-bold">{author.name ? `@${author.name}` : shorten(author.wallet)}</div>
+            <div className="truncate text-xs text-mw-muted">{isSolanaAddress(author.wallet) ? "Solana" : "Wallet"}</div>
+          </div>
+        </Link>
+      ))}
+    </section>
+  );
+}
+
+/** Image picker button for the composers (artboard "Add image"). */
+export function ImagePickButton({ onPick, disabled }: { onPick: (file: File) => void; disabled?: boolean }) {
+  return (
+    <label className={`mw-focus inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-text hover:bg-[#222830] ${disabled ? "pointer-events-none opacity-50" : ""}`} aria-label="Add image">
+      <ImagePlus className="h-5 w-5" aria-hidden="true" />
+      <input
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="sr-only"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) onPick(file);
+          event.currentTarget.value = "";
+        }}
+      />
+    </label>
   );
 }

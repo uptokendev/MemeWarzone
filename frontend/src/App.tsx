@@ -25,6 +25,7 @@ import BattleDetails from "./pages/BattleDetails";
 import ArenaTournaments from "./pages/ArenaTournaments";
 import PostGradLeague from "./pages/PostGradLeague";
 import Feed from "./pages/Feed";
+import PostThread from "./pages/PostThread";
 import { HOME_FEED_READY } from "@/components/shell/useShellNav";
 import League from "./pages/League";
 import ArenaVerifyEmail from "./pages/ArenaVerifyEmail";
@@ -229,6 +230,7 @@ function AppShellLayout({
           <Route path="/live" element={<Live />} />
           {/* The feed lives on "/" (Home). */}
           <Route path="/feed" element={<Navigate to="/" replace />} />
+          <Route path="/post/:postId" element={<PostThread />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/command" element={<LegacyCommandCenterRedirect section="overview" />} />
           <Route path="/command/overview" element={<LegacyCommandCenterRedirect section="overview" />} />
