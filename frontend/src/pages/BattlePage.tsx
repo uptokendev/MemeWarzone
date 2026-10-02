@@ -17,7 +17,10 @@ import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
 import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { getActiveWalletKind } from "@/lib/activeWalletChain";
-import { BOOST_SPLIT_LABEL, battleRules, entrySplitLabel } from "@/lib/arena/battlePageRules.mjs";
+import { battleRules } from "@/lib/arena/battlePageRules.mjs";
+import { formatPrizePool, useBattlePrizePool } from "@/components/arena/useBattlePrizePool";
+import { fetchBattleBoostState } from "@/lib/arena/battleBoostClient";
+import { useQuery } from "@tanstack/react-query";
 import { useBattleActivity, useBattleComments, useBattleEntries, usePostBattleComment, normalizeBattleCommentText, type BattleComment } from "@/lib/arena/battlePageApi";
 import { creatorOwnedIdentityKeys } from "@/lib/arena/creatorChallengePresentation.mjs";
 import { collectWallBattles, findBattleInFeed, presentBattleWallModule, wallPhaseForBattle } from "@/lib/arena/battleWallPresentation.mjs";
@@ -141,6 +144,16 @@ export default function BattlePage() {
   const activity = useBattleActivity(battle ? id : null);
   const comments = useBattleComments(battle ? id : null);
   const entries = useBattleEntries(battle ? id : null);
+  // Pool total and boost totals come from the same existing reads as the battle card's band, so the page
+  // and the card always show the same number.
+  const prizePool = useBattlePrizePool(battle ? id : "", Number((battle as (Battle & { chainId?: number }) | null)?.chainId || 0), Boolean(battle));
+  const boostState = useQuery({
+    queryKey: ["battle-boost-state", id],
+    enabled: Boolean(battle),
+    queryFn: () => fetchBattleBoostState(id),
+    refetchInterval: 20_000,
+    retry: 1,
+  });
   const postComment = usePostBattleComment(id);
   const signer = useCommentSigner();
   const [tab, setTab] = useState<PageTab>("live");
@@ -192,8 +205,15 @@ export default function BattlePage() {
   })();
   const decimals = chainId === 101 || chainId === 102 ? 9 : 18;
   const entriesNative = Number(entryRaw) / 10 ** decimals;
-  const boosts = activity.data?.boosts;
-  const poolTotal = entriesNative * 0.75 + (boosts?.total.poolNative || 0);
+  const boostTotal = (boostState.data as { summary?: { total?: { boostUnits?: string; grossNativeRaw?: string } } } | undefined)?.summary?.total;
+  const boostCount = Number(boostTotal?.boostUnits || 0);
+  const boostGross = (() => {
+    try {
+      return Number(BigInt(String(boostTotal?.grossNativeRaw || "0").split(".")[0] || "0")) / 10 ** decimals;
+    } catch {
+      return 0;
+    }
+  })();
   const supporters = activity.data?.supporters || [];
   const items = activity.data?.activity || [];
   const commentList = comments.data?.comments || [];
@@ -249,13 +269,11 @@ export default function BattlePage() {
   const poolCard = (
     <section className={`${card} flex flex-col gap-3 p-4`} aria-label="Prize pool">
       <span className={label}>Prize pool</span>
-      <span className="-mt-2 font-mw-mono text-[28px] font-bold lg:text-[34px]">{amount(poolTotal)} {native}</span>
+      <span className="-mt-2 font-mw-mono text-[28px] font-bold lg:text-[34px]">{prizePool ? formatPrizePool(prizePool) : `0 ${native}`}</span>
       {voteMode ? <p className="m-0 text-[15px]">The more boosts, the more money there is to win. There is no limit on boosts.</p> : null}
       <div className="flex flex-col gap-1.5 rounded-[10px] border border-mw-border bg-mw-input p-3 text-sm">
         <div className="flex justify-between gap-2"><span className="text-mw-muted">Entries</span><span className="font-mw-mono">{amount(entriesNative)} {native}</span></div>
-        <div className="flex justify-between gap-2"><span className="text-mw-muted">{boosts?.total.boosts || 0} boosts</span><span className="font-mw-mono">{amount(boosts?.total.grossNative || 0)} {native}</span></div>
-        <div className="flex justify-between gap-2 border-t border-[#1E2329] pt-1.5"><span className="text-mw-muted">Entry split</span><span className="font-mw-mono">{entrySplitLabel(battle as any)}</span></div>
-        <div className="flex justify-between gap-2"><span className="text-mw-muted">Boost split</span><span className="font-mw-mono">{BOOST_SPLIT_LABEL}</span></div>
+        <div className="flex justify-between gap-2"><span className="text-mw-muted">{boostCount} boost{boostCount === 1 ? "" : "s"}</span><span className="font-mw-mono">{amount(boostGross)} {native}</span></div>
       </div>
     </section>
   );
