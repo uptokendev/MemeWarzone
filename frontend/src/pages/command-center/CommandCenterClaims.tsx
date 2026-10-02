@@ -805,6 +805,24 @@ export default function CommandCenterClaims() {
     }
   }
 
+  // CO-4 (founder, 2026-10-03): "Claim all ready" runs the same per-reward claim for each ready row in
+  // turn (one wallet signature each). No batching, no contract change.
+  const readyCards = rewardCards.filter((card) => !getRewardStateCopy(card.state).disabled && card.items.some((item) => item.status === "claimable" || item.status === "failed"));
+  const [claimAll, setClaimAll] = useState<{ done: number; total: number } | null>(null);
+  async function claimAllReady() {
+    if (claimAll || claimingType) return;
+    const queue = [...readyCards];
+    setClaimAll({ done: 0, total: queue.length });
+    try {
+      for (let i = 0; i < queue.length; i += 1) {
+        await claimRewards(queue[i]);
+        setClaimAll({ done: i + 1, total: queue.length });
+      }
+    } finally {
+      setClaimAll(null);
+    }
+  }
+
   // UI redesign (artboard Rewards and claims): one row per reward; same claim handler and button rules.
   const chip = "inline-flex h-[22px] shrink-0 items-center rounded-full border px-2 text-xs font-semibold";
   const chipTone = (label: string) =>
@@ -817,6 +835,16 @@ export default function CommandCenterClaims() {
       <div className="flex flex-wrap items-center gap-2">
         <span className="inline-flex min-h-10 items-center rounded-lg border border-mw-accent bg-[#2A1609] px-3 font-mw-mono text-[13px] text-mw-accent-soft">{rewardChainLabel(rewardChainId)}</span>
         <span className="text-[13px] text-mw-muted">Rewards for the connected wallet on this chain.</span>
+        {readyCards.length > 1 || claimAll ? (
+          <Button
+            disabled={Boolean(claimAll) || Boolean(claimingType)}
+            className="ml-auto min-h-10 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-sm font-bold text-[#140A02] hover:bg-[#FF8A3D] disabled:opacity-60"
+            onClick={() => void claimAllReady()}
+            data-claim-all="true"
+          >
+            {claimAll ? `Claiming ${Math.min(claimAll.done + 1, claimAll.total)} of ${claimAll.total}...` : `Claim all ready (${readyCards.length})`}
+          </Button>
+        ) : null}
       </div>
       {message ? <div className="rounded-[10px] border border-mw-border bg-mw-input p-3 text-sm text-mw-muted">{message}</div> : null}
 
