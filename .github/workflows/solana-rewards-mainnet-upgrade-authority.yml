@@ -1,0 +1,42 @@
+name: Solana Rewards Mainnet Upgrade Authority
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "scripts/solana/upgrade-mainnet-rewards-treasury.cjs"
+      - "scripts/solana/upgrade-mainnet-rewards-treasury.test.mjs"
+      - "scripts/solana/preflight-rewards-treasury-upgrade.sh"
+      - ".github/workflows/solana-rewards-mainnet-upgrade-authority.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solana-rewards-mainnet-upgrade-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Syntax checks
+        run: |
+          node --check scripts/solana/upgrade-mainnet-rewards-treasury.cjs
+          bash -n scripts/solana/preflight-rewards-treasury-upgrade.sh
+
+      - name: Guarded executor certification
+        run: node --test scripts/solana/upgrade-mainnet-rewards-treasury.test.mjs
