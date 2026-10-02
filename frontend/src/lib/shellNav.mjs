@@ -84,6 +84,7 @@ export function activeWarzoneChild(pathname) {
 export function resolveBackBar(pathname) {
   const path = String(pathname || "").replace(/\/+$/, "");
   if (/^\/token\/[^/]+$/.test(path)) return { title: "Coin", fallback: COINS_PATH };
+  if (/^\/token\/[^/]+\/edit$/.test(path)) return { title: "Edit coin page", fallback: COINS_PATH };
   if (/^\/warzone\/battles\/[^/]+$/.test(path) || /^\/battle\/[^/]+$/.test(path)) {
     return { title: "Battle", fallback: "/warzone/battles" };
   }

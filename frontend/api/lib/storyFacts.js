@@ -198,19 +198,42 @@ async function storyProfile(chainId, token) {
   }
 }
 
+/**
+ * Coin page edits that the Story reads (founder D3 + D4, 2026-10-02): the bio and the founder note set
+ * after launch. Separate from storyProfile so a database without those columns reads as "not set".
+ */
+async function coinPageStoryOverrides(chainId, token) {
+  try {
+    const row = await one(`select bio, founder_note from public.token_story_profiles where chain_id = $1 and ${addrClause(chainId, "token_address", "$2")} limit 1`, [chainId, token]);
+    return row ? { bio: row.bio || null, founderNote: row.founder_note || null } : null;
+  } catch (error) {
+    if (error?.code === "42703" || error?.code === "42P01") return null;
+    throw error;
+  }
+}
+
 /** Facts for buildStory, or null when the coin is neither a MemeWarzone launch nor an import. */
 export async function storyFacts(chainId, token, { shareBase } = {}) {
   const id = Number(chainId);
   if (!CHAIN_LABEL[id] || !token) return null;
   const base = (await importedFacts(id, token)) || (await launchedFacts(id, token));
   if (!base || !base.name || !base.ticker || !base.logoUrl) return null;
-  const [assets, battles, standing, profile] = await Promise.all([
+  const [assets, battles, standing, profile, overrides] = await Promise.all([
     logoAssets(base.logoUrl),
     battleFacts(id, base.ids),
     standingFacts(id, base.ids),
     storyProfile(id, base.token),
+    base.origin === "launched" ? coinPageStoryOverrides(id, base.token) : null,
   ]);
   const { ids, ...rest } = base;
+  // Launched coins only, and only when set: otherwise the Story reads exactly what it did before.
+  if (overrides && rest.creator) {
+    rest.creator = {
+      ...rest.creator,
+      description: overrides.bio || rest.creator.description,
+      note: overrides.founderNote || rest.creator.note,
+    };
+  }
   return {
     ...rest, chainId: id, chainLabel: CHAIN_LABEL[id],
     accent: assets.accent, accent2: assets.accent2, logoAnimated: assets.animated,

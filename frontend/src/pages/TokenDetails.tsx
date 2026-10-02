@@ -59,6 +59,7 @@ import { StoryEnterButton } from "@/components/story/StoryEnterButton";
 import { CoinTabs } from "@/components/token/CoinTabs";
 import { ChallengeCoinButton } from "@/components/arena/ChallengeCoinButton";
 import { cp } from "@/components/token/coinPageStyles";
+import { CoinBanner, CoinBio, CoinFounderNote, CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
 import { useStory } from "@/lib/story/storyApi";
 import { MobileTradeDock, MobileTradeSheet, useXlUp } from "@/components/token/MobileTradeSheet";
@@ -4936,7 +4937,11 @@ const toSeconds = (ts: number): number => {
 
       {/* Header: banner, logo, name, chips, creator line, actions (UI redesign phase 1). */}
       <section aria-label={tokenData.name || "Coin"} className="flex flex-col">
-        <div className="mw-banner h-[120px] rounded-2xl border border-[#1E2329] md:h-[200px] xl:h-[240px]" aria-hidden="true" />
+        <CoinBanner
+          chainId={chainIdForStorage}
+          token={String(campaign?.token || campaignAddr || "")}
+          editPath={`/token/${encodeURIComponent(String(campaignAddress ?? campaignAddr ?? ""))}/edit?chainId=${chainIdForStorage}`}
+        />
         <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-6 md:px-2">
           <div className="relative -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-[18px] border-4 border-mw-ground bg-[#2A1609] md:-mt-16 md:h-[140px] md:w-[140px] md:rounded-3xl">
             <img
@@ -5145,72 +5150,100 @@ const toSeconds = (ts: number): number => {
         <div className="min-w-0 flex flex-col gap-4">
           {/* About + metrics card, fixed above the tabs. */}
           <section aria-label={`About ${tokenData.name || tokenData.ticker || "this token"}`} className={`${cp.card} flex flex-col gap-4 p-4 md:p-5`}>
-            {campaignDescription ? (
-              <p className="m-0 max-w-[70ch] whitespace-pre-line break-words text-base leading-relaxed text-mw-text">{campaignDescription}</p>
-            ) : null}
+            <CoinBio chainId={chainIdForStorage} token={String(campaign?.token || campaignAddr || "")} fallback={campaignDescription} />
+            <CoinFounderNote chainId={chainIdForStorage} token={String(campaign?.token || campaignAddr || "")} />
+            <CoinTags chainId={chainIdForStorage} token={String(campaign?.token || campaignAddr || "")} />
 
             <div className="flex flex-wrap items-center gap-2">
-              {tokenData.hasWebsite && (
-                <button
-                  type="button"
-                  className={cp.chipButton}
-                  onClick={() => {
-                    const url = normalizeSocialUrl(campaign?.website, "website");
-                    if (url) window.open(url, "_blank", "noopener,noreferrer");
-                  }}
-                  title="Website"
-                  aria-label="Open website"
-                >
-                  <Globe className="h-4 w-4" aria-hidden="true" />
-                  Website
-                </button>
-              )}
+              <CoinLinkSwap
+                kind="website"
+                chainId={chainIdForStorage}
+                token={String(campaign?.token || campaignAddr || "")}
+                fallback={
+                  tokenData.hasWebsite && (
+                    <button
+                      type="button"
+                      className={cp.chipButton}
+                      onClick={() => {
+                        const url = normalizeSocialUrl(campaign?.website, "website");
+                        if (url) window.open(url, "_blank", "noopener,noreferrer");
+                      }}
+                      title="Website"
+                      aria-label="Open website"
+                    >
+                      <Globe className="h-4 w-4" aria-hidden="true" />
+                      Website
+                    </button>
+                  )
+                }
+              />
 
-              {tokenData.hasTwitter && (
-                <button
-                  type="button"
-                  className={cp.chipButton}
-                  onClick={() => {
-                    const url = normalizeSocialUrl(campaign?.xAccount, "x");
-                    if (url) window.open(url, "_blank", "noopener,noreferrer");
-                  }}
-                  title="X"
-                  aria-label="Open X profile"
-                >
-                  <img
-                    src={twitterIcon}
-                    alt=""
-                    className="h-3.5 w-3.5"
-                  />
-                  X
-                </button>
-              )}
+              <CoinLinkSwap
+                kind="x"
+                chainId={chainIdForStorage}
+                token={String(campaign?.token || campaignAddr || "")}
+                fallback={
+                  tokenData.hasTwitter && (
+                    <button
+                      type="button"
+                      className={cp.chipButton}
+                      onClick={() => {
+                        const url = normalizeSocialUrl(campaign?.xAccount, "x");
+                        if (url) window.open(url, "_blank", "noopener,noreferrer");
+                      }}
+                      title="X"
+                      aria-label="Open X profile"
+                    >
+                      <img
+                        src={twitterIcon}
+                        alt=""
+                        className="h-3.5 w-3.5"
+                      />
+                      X
+                    </button>
+                  )
+                }
+              />
 
-              {tokenData.hasTelegram && (
-                <button
-                  type="button"
-                  className={cp.chipButton}
-                  onClick={() => {
-                    const url = normalizeSocialUrl(campaign?.telegram, "telegram");
-                    if (url) window.open(url, "_blank", "noopener,noreferrer");
-                  }}
-                >
-                  Telegram
-                </button>
-              )}
+              <CoinLinkSwap
+                kind="telegram"
+                chainId={chainIdForStorage}
+                token={String(campaign?.token || campaignAddr || "")}
+                fallback={
+                  tokenData.hasTelegram && (
+                    <button
+                      type="button"
+                      className={cp.chipButton}
+                      onClick={() => {
+                        const url = normalizeSocialUrl(campaign?.telegram, "telegram");
+                        if (url) window.open(url, "_blank", "noopener,noreferrer");
+                      }}
+                    >
+                      Telegram
+                    </button>
+                  )
+                }
+              />
 
-              {tokenData.hasDiscord && (
-                <button
-                  type="button"
-                  className={cp.chipButton}
-                  onClick={() => {
-                    const url = normalizeSocialUrl(campaign?.discord, "discord");
-                    if (url) window.open(url, "_blank", "noopener,noreferrer");
-                  }}
-                >
-                  Discord
-                </button>
-              )}
+              <CoinLinkSwap
+                kind="discord"
+                chainId={chainIdForStorage}
+                token={String(campaign?.token || campaignAddr || "")}
+                fallback={
+                  tokenData.hasDiscord && (
+                    <button
+                      type="button"
+                      className={cp.chipButton}
+                      onClick={() => {
+                        const url = normalizeSocialUrl(campaign?.discord, "discord");
+                        if (url) window.open(url, "_blank", "noopener,noreferrer");
+                      }}
+                    >
+                      Discord
+                    </button>
+                  )
+                }
+              />
 
               {tokenData.hasOtherLink && (
                 <button
@@ -5456,6 +5489,13 @@ const toSeconds = (ts: number): number => {
                 value: "posts",
                 label: "Posts",
                 content: (
+                  <CoinPostsPanel
+                    chainId={chainIdForStorage}
+                    token={String(campaign?.token || campaignAddr || "")}
+                    name={tokenData.name}
+                    ticker={String(tokenData.ticker || "").replace(/^\$/, "")}
+                    logoUrl={tokenData.image}
+                  >
                   <Tabs value={communityTab} onValueChange={(v) => setCommunityTab(v as any)} className="flex flex-col gap-3">
                     <TabsList className={cp.segSmallList}>
                       <TabsTrigger value="comments" className={cp.segSmall}>Comments</TabsTrigger>
@@ -5490,6 +5530,7 @@ const toSeconds = (ts: number): number => {
                       )}
                     </TabsContent>
                   </Tabs>
+                  </CoinPostsPanel>
                 ),
               },
               {

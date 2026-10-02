@@ -45,6 +45,8 @@ import profileCabinet from "./profileCabinet.js";
 import profilePortfolio from "./profile/portfolio.js";
 import postgrad from "./postgrad.js";
 import upload from "./upload.js";
+import coinPage from "./coinPage.js";
+import coinPageImage from "./coinPageImage.js";
 import projectImports from "./projectImports.js";
 import projectImportImage from "./projectImportImage.js";
 import rewards from "./rewards.js";
@@ -333,6 +335,7 @@ async function recruiterSignupCodeAvailabilityAlias(req, res) {
 // Multipart routes must be mounted before any body parser/proxy touches the stream.
 app.use("/api/project-imports/image", wrap(projectImportImage));
 app.use("/api/upload", wrap(upload));
+app.use("/api/coin-page/image", wrap(coinPageImage));
 app.get("/", (_req, res) => res.json({ ok: true, service: "MemeWarzone API", healthz: "/healthz", api: "/api" }));
 app.get("/healthz", (_req, res) => res.status(200).json({ ok: true, service: "frontend-api" }));
 app.get("/health", async (_req, res) => {
@@ -408,6 +411,7 @@ router.all("/dashboard/lp-fees", wrap(dashboardLpFees));
 router.all("/analytics/ingest", wrap(analyticsIngest));
 router.all(/^\/admin\/analytics(?:\/.*)?$/, wrap(analyticsAdmin));
 router.all("/comments", wrap(comments));
+router.all(/^\/coin-page(?:\/.*)?$/, wrap(coinPage));
 router.all("/crypticpump-listings", wrap(crypticpumpListings));
 router.all("/chat/history", wrap(chatHistory));
 router.all("/chat/join", wrap(chatJoin));

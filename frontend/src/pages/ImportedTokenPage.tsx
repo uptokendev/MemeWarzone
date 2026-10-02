@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { StoryEnterButton } from "@/components/story/StoryEnterButton";
 import { CoinTabs } from "@/components/token/CoinTabs";
 import { cp } from "@/components/token/coinPageStyles";
+import { CoinBanner, CoinFounderNote, CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
 import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { ImportedTradesTable } from "@/components/arena/ImportedTradesTable";
@@ -383,7 +384,7 @@ export default function ImportedTokenPage({
     <ContentContainer className="flex flex-col gap-4 px-1 pb-12 pt-2 font-mw-body text-mw-text" data-imported-project-page="true" data-imported-token-page="true">
       {/* Header: banner, logo, name, chips, owner line, actions (UI redesign phase 1). */}
       <section aria-label={item.name || item.symbol || "Imported project"} className="flex flex-col">
-        <div className="mw-banner h-[120px] rounded-2xl border border-[#1E2329] md:h-[200px] xl:h-[240px]" aria-hidden="true" />
+        <CoinBanner chainId={item.chainId} token={item.tokenAddress} editPath={`/token/${encodeURIComponent(item.tokenAddress)}/edit?chainId=${item.chainId}`} />
         <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-6 md:px-2">
           <div className="relative -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-[18px] border-4 border-mw-ground bg-[#2A1609] md:-mt-16 md:h-[140px] md:w-[140px] md:rounded-3xl">
             {item.imageUrl ? (
@@ -493,10 +494,13 @@ export default function ImportedTokenPage({
             ) : (
             <p className="m-0 max-w-[70ch] whitespace-pre-wrap break-words text-base leading-relaxed text-mw-text" data-project-description="true">{item.description || "No description added yet."}</p>
             )}
+            <CoinFounderNote chainId={item.chainId} token={item.tokenAddress} />
+            <CoinTags chainId={item.chainId} token={item.tokenAddress} />
             <div className="flex flex-wrap items-center gap-2" data-project-socials="true">
-              {websiteHref ? <a href={websiteHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Website</a> : <span className={`${cp.chip} text-mw-muted`}>Website —</span>}
-              {xHref ? <a href={xHref} target="_blank" rel="noreferrer" className={cp.chipButton}>X</a> : <span className={`${cp.chip} text-mw-muted`}>X —</span>}
-              {telegramHref ? <a href={telegramHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Telegram</a> : <span className={`${cp.chip} text-mw-muted`}>Telegram —</span>}
+              <CoinLinkSwap kind="website" chainId={item.chainId} token={item.tokenAddress} fallback={websiteHref ? <a href={websiteHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Website</a> : <span className={`${cp.chip} text-mw-muted`}>Website —</span>} />
+              <CoinLinkSwap kind="x" chainId={item.chainId} token={item.tokenAddress} fallback={xHref ? <a href={xHref} target="_blank" rel="noreferrer" className={cp.chipButton}>X</a> : <span className={`${cp.chip} text-mw-muted`}>X —</span>} />
+              <CoinLinkSwap kind="telegram" chainId={item.chainId} token={item.tokenAddress} fallback={telegramHref ? <a href={telegramHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Telegram</a> : <span className={`${cp.chip} text-mw-muted`}>Telegram —</span>} />
+              <CoinLinkSwap kind="discord" chainId={item.chainId} token={item.tokenAddress} fallback={null} />
               <button type="button" onClick={() => void copyIdentity()} className={`${cp.chipButton} max-w-full`} data-project-address="true" title={`Copy ${identityLabel}`}>
                 <Copy className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span className="text-mw-muted">{identityLabel}</span>
@@ -546,11 +550,14 @@ export default function ImportedTokenPage({
             tabs={[
               {
                 value: "posts",
-                label: "Comments",
+                label: "Posts",
                 content: (
-                  <div className={`${cp.card} p-4`}>
-                    <TokenComments chainId={item.chainId} campaignAddress={item.tokenAddress} tokenAddress={item.tokenAddress} mode="comments" />
-                  </div>
+                  <CoinPostsPanel chainId={item.chainId} token={item.tokenAddress} name={item.name || item.symbol || "Imported project"} ticker={item.symbol || ""} logoUrl={item.imageUrl}>
+                    <section aria-label="Comments" className={`${cp.card} p-4`}>
+                      <h2 className={`${cp.title} m-0 mb-3`}>Comments</h2>
+                      <TokenComments chainId={item.chainId} campaignAddress={item.tokenAddress} tokenAddress={item.tokenAddress} mode="comments" />
+                    </section>
+                  </CoinPostsPanel>
                 ),
               },
               {

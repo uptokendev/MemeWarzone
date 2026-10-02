@@ -61,6 +61,7 @@ test("back bar only on pages without a menu item", () => {
   assert.deepEqual(resolveBackBar("/token/0xabc"), { title: "Coin", fallback: COINS_PATH });
   assert.equal(resolveBackBar("/warzone/battles/arena-1").title, "Battle");
   assert.equal(resolveBackBar("/battle/9").title, "Battle");
+  assert.equal(resolveBackBar("/token/0xabc/edit").title, "Edit coin page");
   assert.equal(resolveBackBar("/profile/someone").title, "Profile");
   assert.equal(resolveBackBar("/recruiters/OG1").title, "Recruiter");
   assert.equal(resolveBackBar("/squads").title, "Squads");
