@@ -127,17 +127,38 @@ export function TournamentEventCard({
     </button>
   );
 
+  // Warzone overview: the artboard's compact card (banner, status, name, one info line). The full card
+  // with entrants, progress, Enter and bracket stays on the Tournaments page (founder, 2026-10-02).
+  if (embedded) {
+    const info = [
+      card.participantCount != null ? `${card.participantCount} coins` : null,
+      card.buyIn ? `${card.buyIn.label} entry` : null,
+      card.dateTimeLabel || card.dateLabel || null,
+    ].filter(Boolean).join(" · ");
+    return (
+      <Link
+        to={card.href}
+        data-tournament-card={card.id}
+        data-tournament-enter={card.id}
+        className="mw-focus block overflow-hidden rounded-[14px] border border-mw-border bg-mw-input font-mw-body text-mw-text hover:border-[#3A424C] hover:text-mw-text"
+      >
+        <div className="mw-banner h-20 lg:h-[90px]" aria-hidden="true" />
+        <div className="flex flex-col gap-1.5 p-3">
+          <span className="inline-flex h-[22px] w-max items-center rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2 text-xs font-semibold text-mw-accent-soft">
+            {card.status.label}{stageLabel(card.bracketStage) ? ` · ${stageLabel(card.bracketStage)}` : ""}
+          </span>
+          <span className="text-[17px] font-bold leading-tight">{card.title}</span>
+          {info ? <span className="text-[13px] text-mw-muted lg:text-sm">{info}</span> : null}
+        </div>
+      </Link>
+    );
+  }
+
   return (
     <article
       data-tournament-card={card.id}
-      className={cn(
-        !embedded && "mwz-flat-card relative overflow-hidden p-4",
-        embedded && "overflow-hidden rounded-[14px] border border-mw-border bg-mw-input px-3 pb-3 font-mw-body text-mw-text",
-        focused && !embedded && "ring-1 ring-accent/60",
-      )}
+      className={cn(!embedded && "mwz-flat-card relative overflow-hidden p-4", focused && !embedded && "ring-1 ring-accent/60")}
     >
-      {/* UI redesign: the overview card opens with the artboard's banner strip. */}
-      {embedded ? <div className="mw-banner -mx-3 mb-3 h-20 lg:h-[90px]" aria-hidden="true" /> : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <TacticalTag label={card.status.label} tone={card.status.key === "live" ? "success" : "default"} />
@@ -147,7 +168,7 @@ export function TournamentEventCard({
         </div>
         {card.chain ? <TacticalTag label={card.chain.label} tone="default" /> : null}
       </div>
-      <h2 className={embedded ? "m-0 mt-2 text-[17px] font-bold leading-tight text-mw-text" : "mt-3 font-black text-xl leading-tight text-foreground md:text-2xl"}>{card.title}</h2>
+      <h2 className="mt-3 font-black text-xl leading-tight text-foreground md:text-2xl">{card.title}</h2>
 
       {finished && champion ? (
         <div className="mt-3 flex items-center gap-3" data-tournament-champion="true">

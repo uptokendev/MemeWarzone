@@ -32,7 +32,7 @@
   background: var(--mw-ground) !important;
 }
 
-.mwz-app-shell.mw-shell main {
+.mwz-app-shell.mw-shell > main {
   background: var(--mw-ground) !important;
 }
 
@@ -55,7 +55,7 @@
     --mwz-footer-offset: var(--mw-tabbar-h);
   }
 
-  .mwz-app-shell.mw-shell main {
+  .mwz-app-shell.mw-shell > main {
     padding-top: var(--mwz-topbar-offset) !important;
   }
 }
@@ -128,11 +128,11 @@ ol.fixed.top-0 {
 
 /* Page top spacing per the artboards (14px phone, 24px desktop). The legacy shell strips the first
    child's padding-top, so this uses margin. */
-.mwz-app-shell.mw-shell main > :first-child {
+.mwz-app-shell.mw-shell > main > :first-child {
   margin-top: 14px;
 }
 @media (min-width: 1024px) {
-  .mwz-app-shell.mw-shell main > :first-child {
+  .mwz-app-shell.mw-shell > main > :first-child {
     margin-top: 24px;
   }
 }

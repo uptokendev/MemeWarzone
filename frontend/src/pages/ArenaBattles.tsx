@@ -83,7 +83,11 @@ export default function ArenaBattles() {
   const { solanaAccount } = useSolanaWallet();
   const feedWallet = useActiveFeedWallet();
   const feed = useArenaBattleFeed(feedWallet.address, feedWallet.chainId);
-  const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("live");
+  // `?tab=` lets the battle page's list tabs open the right list (UI redesign phase 4b).
+  const [tab, setTab] = useState<(typeof TABS)[number]["key"]>(() => {
+    const requested = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("tab");
+    return (TABS.find((item) => item.key === requested)?.key || "live") as (typeof TABS)[number]["key"];
+  });
   const [chain, setChain] = useState("all");
   const [type, setType] = useState("all");
   const [sort, setSort] = useState("default");

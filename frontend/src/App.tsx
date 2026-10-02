@@ -19,6 +19,7 @@ import { normalizeRouteWallet, routeWalletsMatch } from "@/lib/address";
 import Showcase from "./pages/Showcase";
 import Arena from "./pages/Arena";
 import ArenaBattles from "./pages/ArenaBattles";
+import BattlePage from "./pages/BattlePage";
 import WarRoom from "./pages/WarRoom";
 import BattleDetails from "./pages/BattleDetails";
 import ArenaTournaments from "./pages/ArenaTournaments";
@@ -201,7 +202,8 @@ function AppShellLayout({
           {postGradEnabled && postGradFlags.arena ? <Route path="/warzone" element={<Arena />} /> : null}
           {postGradEnabled && postGradFlags.arena ? <Route path="/warzone/verify-email" element={<ArenaVerifyEmail />} /> : null}
           {postGradEnabled && postGradFlags.battle ? <Route path="/warzone/battles" element={<ArenaBattles />} /> : null}
-          {postGradEnabled && postGradFlags.battle ? <Route path="/warzone/battles/:battleId" element={<ArenaBattles />} /> : null}
+          {/* Dedicated battle page (UI redesign phase 4b, founder-approved); the list stays on /warzone/battles. */}
+          {postGradEnabled && postGradFlags.battle ? <Route path="/warzone/battles/:battleId" element={<BattlePage />} /> : null}
           {postGradEnabled && postGradFlags.league ? <Route path="/warzone/major-war-league" element={<PostGradLeague />} /> : null}
           {postGradEnabled && postGradFlags.league ? <Route path="/warzone/leagues" element={<Navigate to="/warzone/major-war-league" replace />} /> : null}
           {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournaments" element={<ArenaTournaments />} /> : null}

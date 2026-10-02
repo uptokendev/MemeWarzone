@@ -331,12 +331,15 @@ export function BattleWallModule({
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {showClaim ? <ArenaWarPoolClaimButton battleId={battle.id} chainId={chainId} className={SMALL_BUTTON} /> : null}
-          <Link
-            to={presented.href}
-            className={SMALL_BUTTON}
-          >
-            Open fight
-          </Link>
+          {/* On the battle page itself "Open fight" would link to the same page. */}
+          {variant === "page" ? null : (
+            <Link
+              to={presented.href}
+              className={SMALL_BUTTON}
+            >
+              Open fight
+            </Link>
+          )}
         </div>
       </div>
 
