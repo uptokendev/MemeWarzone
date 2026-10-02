@@ -15,6 +15,7 @@ import { presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs"
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { loadLeagueSummary } from "@/lib/leagueApi";
 import { fetchAirdropPreview } from "@/lib/rewardProgramsApi";
+import { formatPotNative, useMwlPrizePool } from "@/lib/arena/mwlPrizePoolApi";
 import {
   agoLabel,
   chainNameFor,
@@ -341,6 +342,22 @@ export function AirdropCard({ chainId, className = "" }: { chainId: number; clas
       <span className={lbl}>Weekly Airdrop</span>
       <span className="font-mw-mono text-[28px] font-bold">{pool}</span>
       <span className="text-sm text-mw-muted">{[next ? `next drop in ${next}` : null, players ? `${players} eligible` : null].filter(Boolean).join(" · ") || "Open airdrops"}</span>
+    </Link>
+  );
+}
+
+/** Monthly Major War League card (founder, 2026-10-03): this month's prize pool and when the month ends. Same read as the MWL page. */
+export function MwlCard({ chainId, className = "" }: { chainId: number; className?: string }) {
+  const now = new Date();
+  const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  const pot = useMwlPrizePool(chainId, month).data;
+  const value = pot?.available ? (pot.split ? pot.monthlyNative : pot.combinedNative) : null;
+  const ends = useCountdownTo(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString());
+  return (
+    <Link to="/warzone/major-war-league" className={`${card} mw-focus flex flex-col gap-1.5 p-4 text-mw-text hover:border-[#3A424C] hover:text-mw-text ${className}`}>
+      <span className={lbl}>Monthly MWL</span>
+      <span className="font-mw-mono text-[28px] font-bold">{formatPotNative(value, chainId)}</span>
+      <span className="text-sm text-mw-muted">{ends ? `month ends in ${ends}` : "Open standings"}</span>
     </Link>
   );
 }

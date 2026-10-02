@@ -1,4 +1,5 @@
 /** Home (the feed on "/"), UI redesign phase 2 (artboard Home + HomeMobile). */
+import { isPostGradRouteEnabled, postGradFlags } from "@/features/postgrad/config";
 import { useStickyRail } from "@/hooks/useStickyRail";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FeedItemView, FeedWhoToFollow } from "@/components/feed/FeedCards";
@@ -9,6 +10,7 @@ import {
   LaunchCard,
   LeagueCard,
   AirdropCard,
+  MwlCard,
   LiveBattlesCard,
   RecruiterCard,
   StoryRow,
@@ -190,12 +192,14 @@ export default function Feed() {
         </div>
 
         <aside ref={railRef} className="hidden flex-col gap-4 lg:sticky lg:top-[calc(var(--mwz-topbar-offset)+16px)] lg:flex">
-          <LiveBattlesCard battles={liveBattles} />
+          {/* Rail order (founder, 2026-10-03). */}
+          <FeedWhoToFollow authors={suggestions} />
           <TrendingCard chainIds={TREND_CHAINS} />
           <LeagueCard chainId={coinChainId} />
           <AirdropCard chainId={coinChainId} />
+          {isPostGradRouteEnabled() && postGradFlags.league ? <MwlCard chainId={coinChainId} /> : null}
+          <LiveBattlesCard battles={liveBattles} />
           <RecruiterCard />
-          <FeedWhoToFollow authors={suggestions} />
         </aside>
       </div>
     </ContentContainer>
