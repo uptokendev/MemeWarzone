@@ -70,7 +70,7 @@ export function SponsoredFeaturedSlotCard({
 
   return (
     <div
-      className={`${plainBorder ? "h-[150px] w-full rounded-none border-orange-400/25 bg-black hover:border-orange-300/70 ![clip-path:none] before:!hidden after:!hidden" : "mw-focus h-full min-h-[230px] w-[300px] shrink-0 rounded-[14px] border-[#6B5320] bg-mw-surface hover:border-[#8A6B2A]"} group relative flex snap-start overflow-hidden border transition ${clickable ? "cursor-pointer" : ""} ${className}`}
+      className={`${plainBorder ? "h-[150px] w-full rounded-none border-orange-400/25 bg-black hover:border-orange-300/70 ![clip-path:none] before:!hidden after:!hidden" : "mw-focus h-[244px] w-[300px] shrink-0 rounded-[14px] border-[#6B5320] bg-mw-surface hover:border-[#8A6B2A]"} group relative flex snap-start overflow-hidden border transition ${clickable ? "cursor-pointer" : ""} ${className}`}
       style={plainBorder ? { clipPath: "none" } : undefined}
       role={clickable ? "button" : "article"}
       tabIndex={clickable ? 0 : undefined}

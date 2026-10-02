@@ -638,7 +638,7 @@ export default function ImportedTokenPage({
           </section>
           {postGradFlags.arena ? (
             <section aria-label="UpVote" className={`${cp.card} p-4`}>
-              <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" className="h-11 rounded-[10px] px-4 text-[15px]" />
+              <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" className="h-11 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:border-mw-accent hover:bg-mw-accent hover:text-[#140A02]" />
               {crypticPumpListing?.listingUrl ? (
                 <CrypticPumpBadge listingUrl={crypticPumpListing.listingUrl} className="mt-3" />
               ) : canEdit ? (

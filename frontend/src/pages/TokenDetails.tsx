@@ -5067,7 +5067,7 @@ const toSeconds = (ts: number): number => {
                   chainId={chainIdForStorage}
                   buttonVariant="secondary"
                   buttonSize="sm"
-                  className="h-11 rounded-[10px] px-4 text-[15px] flex-shrink-0"
+                  className="h-11 flex-shrink-0 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:border-mw-accent hover:bg-mw-accent hover:text-[#140A02]"
                 />
               ) : (
                 <UpvoteDialog
@@ -5075,7 +5075,7 @@ const toSeconds = (ts: number): number => {
                   chainId={chainIdForStorage}
                   buttonVariant="secondary"
                   buttonSize="sm"
-                  className="h-11 rounded-[10px] px-4 text-[15px] flex-shrink-0"
+                  className="h-11 flex-shrink-0 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:border-mw-accent hover:bg-mw-accent hover:text-[#140A02]"
                 />
               )}
               {/* Challenge is a post-graduation function: only graduated coins get it here. */}

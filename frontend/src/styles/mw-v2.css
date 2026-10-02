@@ -94,3 +94,25 @@ ol.fixed.top-0 {
 @media (prefers-reduced-motion: reduce) {
   .mwz-campaign-ticker-track { animation: none; }
 }
+
+/* Legacy styles (mwz-hud.css, card-cleanup.css, tactical-command-ui.css) force border-radius: 0 !important
+   on buttons, inputs, [role=button] and .rounded-* classes. The redesign marks its elements with mw-
+   tokens; on those, each radius class gets its real value back. Old pages keep square corners. */
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-sm { border-radius: 2px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded { border-radius: 4px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-md { border-radius: 6px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-lg { border-radius: 8px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-xl { border-radius: 12px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-2xl { border-radius: 16px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-3xl { border-radius: 24px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-full { border-radius: 9999px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-\[2px\] { border-radius: 2px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-\[10px\] { border-radius: 10px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-\[14px\] { border-radius: 14px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-\[16px\] { border-radius: 16px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-\[18px\] { border-radius: 18px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-\[20px\] { border-radius: 20px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-\[28px\] { border-radius: 28px !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-t-\[20px\] { border-radius: 20px 20px 0 0 !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-t-\[10px\] { border-radius: 10px 10px 0 0 !important; }
+[class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-t-2xl { border-radius: 16px 16px 0 0 !important; }

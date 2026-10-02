@@ -312,7 +312,7 @@ export function CampaignCard({
           <UpvoteDialog
             campaignAddress={addr}
             chainId={chainIdForStorage}
-            className="h-10 w-full rounded-[10px] border border-mw-edge bg-mw-raised text-sm font-semibold text-mw-text hover:bg-[#222830]"
+            className="h-10 w-full rounded-[10px] border border-mw-edge bg-mw-raised text-sm font-semibold text-mw-text hover:border-mw-accent hover:bg-mw-accent hover:text-[#140A02]"
             buttonVariant="ghost"
             buttonSize="sm"
           />

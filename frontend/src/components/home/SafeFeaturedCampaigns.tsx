@@ -765,7 +765,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
       <div
         ref={railRef}
         data-featured-campaign-rail="true"
-        className="flex items-stretch gap-3 overflow-x-auto snap-x snap-proximity pb-1 [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex items-start gap-3 overflow-x-auto snap-x snap-proximity pb-1 [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {loading && !cards.length ? (
           <>
@@ -776,10 +776,10 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
                 onAdvertisementClick={() => setAdNoticeOpen(true)}
               />
             ) : (
-              <div className="h-[230px] w-[300px] shrink-0 animate-pulse rounded-[14px] border border-[#6B5320] bg-mw-surface" />
+              <div className="h-[244px] w-[300px] shrink-0 animate-pulse rounded-[14px] border border-[#6B5320] bg-mw-surface" />
             )}
             {Array.from({ length: 7 }).map((_, index) => (
-              <div key={index} className="h-[230px] w-[220px] shrink-0 animate-pulse rounded-[14px] border border-mw-border bg-mw-surface" />
+              <div key={index} className="h-[244px] w-[220px] shrink-0 animate-pulse rounded-[14px] border border-mw-border bg-mw-surface" />
             ))}
           </>
         ) : (
@@ -794,7 +794,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
               />
             ) : null}
             {!cards.length ? (
-              <div className="flex min-h-[230px] w-[220px] shrink-0 items-center px-4 text-sm text-mw-muted md:w-auto md:max-w-[420px]">No live featured campaigns yet — organic ranks appear after UpVotes.</div>
+              <div className="flex h-[244px] w-[220px] shrink-0 items-center px-4 text-sm text-mw-muted md:w-auto md:max-w-[420px]">No live featured campaigns yet — organic ranks appear after UpVotes.</div>
             ) : null}
             {cards.map((item, index) => {
               const image = usefulImage(item.logoUri) ? resolveImageUri(item.logoUri) : null;
@@ -816,7 +816,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
                   athUsdLabel={item.athUsdLabel}
                   onOpen={() => navigate(targetRoute)}
                   actions={
-                    <UpvoteDialog campaignAddress={item.campaignAddress} chainId={item.chainId} className="h-9 w-full rounded-[10px] border border-mw-edge bg-mw-raised text-sm font-semibold text-mw-text hover:bg-[#222830]" buttonVariant="ghost" buttonSize="sm" />
+                    <UpvoteDialog campaignAddress={item.campaignAddress} chainId={item.chainId} className="h-8 w-full rounded-lg border border-mw-edge bg-mw-raised text-[13px] font-semibold text-mw-text hover:border-mw-accent hover:bg-mw-accent hover:text-[#140A02]" buttonVariant="ghost" buttonSize="sm" />
                   }
                 />
               );

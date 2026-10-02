@@ -34,7 +34,7 @@ export function FeaturedCampaignCard({
     <div
       data-featured-campaign-card="true"
       data-live-id={liveId}
-      className="mw-focus group flex w-[220px] shrink-0 snap-start cursor-pointer flex-col overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface font-mw-body text-mw-text transition-colors hover:border-[#3A424C]"
+      className="mw-focus group flex h-[244px] w-[220px] shrink-0 snap-start cursor-pointer flex-col overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface font-mw-body text-mw-text transition-colors hover:border-[#3A424C]"
       role="button"
       tabIndex={0}
       aria-label={`#${rank} ${name || "Campaign"}`}
@@ -59,7 +59,7 @@ export function FeaturedCampaignCard({
         <div className="absolute left-2 top-2 inline-flex h-[22px] items-center rounded-full bg-[rgba(0,0,0,0.55)] px-2 font-mw-mono text-xs font-semibold text-[#C9CED4]">#{rank}</div>
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5 p-2.5">
+      <div className="flex min-w-0 flex-1 flex-col gap-1 px-2.5 pb-3 pt-2.5">
         <div className="flex items-center justify-between gap-2">
           <span className="min-w-0 truncate font-bold">{symbol ? `$${String(symbol).replace(/^\$/, "")}` : "—"}</span>
           <span className="shrink-0 font-mw-mono text-xs text-mw-muted">{Number(votes24h || 0)} votes / 24h</span>
