@@ -1170,8 +1170,8 @@ const Create = () => {
       />
     );
 
-  const modeSelectedClass = "border-orange-400/70 bg-orange-500/10 shadow-lg shadow-orange-500/10";
-  const modeIdleClass = "border-border bg-background/40 hover:border-orange-400/40";
+  const modeSelectedClass = "border-mw-accent bg-mw-accent-fill text-mw-text";
+  const modeIdleClass = "border-mw-border bg-mw-input text-mw-text hover:border-[#3A424C]";
 
   const tickerStatusLine = !normalizedTicker
     ? "Enter a ticker to check availability."
@@ -1186,17 +1186,17 @@ const Create = () => {
   return (
     <ContentContainer className="flex flex-col px-1 pb-3 pt-2 sm:px-2 md:px-3">
       <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2 px-1">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-mw-muted">
           <span>
             Wallet{" "}
-            <span className="text-foreground">{creatorWallet ? `${creatorWallet.slice(0, 4)}…${creatorWallet.slice(-4)}` : "not connected"}</span>
+            <span className="text-mw-text">{creatorWallet ? `${creatorWallet.slice(0, 4)}…${creatorWallet.slice(-4)}` : "not connected"}</span>
             {" · "}
             {isSolanaCreator ? "Solana" : getChainLabel(chainId)}
           </span>
           {/* No wallet yet: the chain is a choice, so show it as one. Connected: the wallet's network is the chain. */}
           {noWalletConnected ? <ChainFeedSwitch /> : null}
         </div>
-        <Button asChild size="sm" variant="outline" className="font-retro text-xs">
+        <Button asChild size="sm" variant="outline" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-50 min-h-9 text-sm">
           <Link to="/playbook"><BookOpen className="mr-1.5 h-3.5 w-3.5" />Playbook</Link>
         </Button>
       </div>
@@ -1204,6 +1204,7 @@ const Create = () => {
       <LaunchCanaryBanner />
 
       <CreateWizardShell
+        v2
         step={step}
         totalSteps={TOTAL_STEPS}
         canBack={step > 1 && !isDrafting && !isDeploying}
@@ -1225,23 +1226,24 @@ const Create = () => {
           >
             {step === 1 ? (
               <CreateSplitPane
+                v2
                 left={
-                  <div className="max-w-md space-y-3 text-sm leading-relaxed text-muted-foreground">
-                    <p className="font-retro text-xs uppercase tracking-[0.2em] text-orange-300">// Choose your path</p>
-                    <h2 className="font-retro text-xl text-foreground sm:text-2xl">Draft first — or go live now</h2>
-                    <p><span className="font-semibold text-orange-200">Draft mode</span> saves your coin with a wallet signature only (no gas). You get a promotion page, can build heat, then push live when ready.</p>
-                    <p><span className="font-semibold text-orange-200">Direct deploy</span> uploads the creative, asks your {isSolanaCreator ? "Solana" : evmChainLabel} wallet to sign the deployment transaction, pays gas, and lands you on Token Details when the contract is live.</p>
+                  <div className="max-w-md space-y-3 text-sm leading-relaxed text-mw-muted">
+                    <p className="m-0 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Choose your path</p>
+                    <h2 className="m-0 font-mw-cond text-2xl font-bold text-mw-text sm:text-[28px]">Draft first — or go live now</h2>
+                    <p><span className="font-semibold text-mw-accent-soft">Draft mode</span> saves your coin with a wallet signature only (no gas). You get a promotion page, can build heat, then push live when ready.</p>
+                    <p><span className="font-semibold text-mw-accent-soft">Direct deploy</span> uploads the creative, asks your {isSolanaCreator ? "Solana" : evmChainLabel} wallet to sign the deployment transaction, pays gas, and lands you on Token Details when the contract is live.</p>
                   </div>
                 }
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3">
-                    <button type="button" onClick={() => setMode("draft")} className={cn("rounded-xl border p-4 text-left transition", mode === "draft" ? modeSelectedClass : modeIdleClass)}>
-                      <div className="flex items-center gap-2 font-retro text-lg text-foreground"><FileText className="h-5 w-5 text-orange-300" />Draft mode</div>
-                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Free to save. Sign once, open the promotion setup page, launch later.</p>
+                    <button type="button" onClick={() => setMode("draft")} className={cn("mw-focus rounded-xl border p-4 text-left transition", mode === "draft" ? modeSelectedClass : modeIdleClass)}>
+                      <div className="flex items-center gap-2 font-mw-cond text-xl font-bold text-mw-text"><FileText className="h-5 w-5 text-mw-accent-soft" />Draft mode</div>
+                      <p className="mt-2 text-xs leading-relaxed text-mw-muted">Free to save. Sign once, open the promotion setup page, launch later.</p>
                     </button>
-                    <button type="button" onClick={() => setMode("deploy")} className={cn("rounded-xl border p-4 text-left transition", mode === "deploy" ? modeSelectedClass : modeIdleClass)}>
-                      <div className="flex items-center gap-2 font-retro text-lg text-foreground"><Rocket className="h-5 w-5 text-orange-300" />Direct deploy</div>
-                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    <button type="button" onClick={() => setMode("deploy")} className={cn("mw-focus rounded-xl border p-4 text-left transition", mode === "deploy" ? modeSelectedClass : modeIdleClass)}>
+                      <div className="flex items-center gap-2 font-mw-cond text-xl font-bold text-mw-text"><Rocket className="h-5 w-5 text-mw-accent-soft" />Direct deploy</div>
+                      <p className="mt-2 text-xs leading-relaxed text-mw-muted">
                         {directDeployRouteReady
                           ? isSolanaCreator
                             ? "Sign once in your wallet and go straight to your coin's page. No promotion page."
@@ -1257,7 +1259,7 @@ const Create = () => {
                                   : "Direct deploy is not ready — pick Draft for now."}
                       </p>
                     </button>
-                    <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" disabled={!mode} onClick={goNext}>Next</Button>
+                    <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11" disabled={!mode} onClick={goNext}>Next</Button>
                   </div>
                 }
               />
@@ -1265,33 +1267,34 @@ const Create = () => {
 
             {step === 2 ? (
               <CreateSplitPane
-                left={<div className="flex w-full flex-col items-center gap-2"><p className="font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{mode === "deploy" ? "Live card preview" : "Draft card preview"}</p>{preview}</div>}
+                v2
+                left={<div className="flex w-full flex-col items-center gap-2"><p className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{mode === "deploy" ? "Live card preview" : "Draft card preview"}</p>{preview}</div>}
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3">
-                    <div><label className="font-retro text-sm text-foreground">Token image</label><p className="mt-0.5 text-xs text-muted-foreground">PNG / JPG / WebP · max 5 MB</p></div>
+                    <div><label className="text-sm font-semibold text-mw-text">Token image</label><p className="mt-0.5 text-xs text-mw-muted">PNG / JPG / WebP · max 5 MB</p></div>
                     <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/jpg,image/webp,image/gif" className="hidden" onChange={handleImageChange} />
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button type="button" variant="outline" className="font-retro" onClick={() => fileRef.current?.click()}><ImageIcon className="mr-2 h-4 w-4" />{formData.imagePreview ? "Replace image" : "Upload image"}</Button>
+                      <Button type="button" variant="outline" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-50" onClick={() => fileRef.current?.click()}><ImageIcon className="mr-2 h-4 w-4" />{formData.imagePreview ? "Replace image" : "Upload image"}</Button>
                       {formData.imagePreview ? <Button type="button" variant="ghost" size="sm" onClick={handleRemoveImage}>Remove</Button> : null}
                     </div>
                     <div>
-                      <label className="mb-1 flex items-baseline justify-between font-retro text-sm">
+                      <label className="mb-1.5 flex items-baseline justify-between font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
                         <span>Name</span>
                         {/* Metaplex caps the on-chain name at 32 bytes. Showing the
                             count means a creator sees the limit rather than
                             discovering it when the field stops accepting input. */}
-                        <span className={`font-sans text-xs ${tokenNameByteLength(formData.name) > TOKEN_VALIDATION_LIMITS.NAME_MAX_LENGTH ? "text-red-400" : "text-muted-foreground"}`}>
+                        <span className={`font-sans text-xs ${tokenNameByteLength(formData.name) > TOKEN_VALIDATION_LIMITS.NAME_MAX_LENGTH ? "text-red-400" : "text-mw-muted"}`}>
                           {tokenNameByteLength(formData.name)}/{TOKEN_VALIDATION_LIMITS.NAME_MAX_LENGTH}
                         </span>
                       </label>
                       <Input value={formData.name} onChange={(e) => setTokenName(e.target.value)} placeholder="WhatIsThisForACoin" maxLength={TOKEN_VALIDATION_LIMITS.NAME_MAX_LENGTH} className="font-sans normal-case tracking-normal" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
                     </div>
                     <div>
-                      <label className="mb-1 block font-retro text-sm">Ticker</label>
-                      <Input value={formData.ticker} onChange={(e) => setTicker(e.target.value)} placeholder="TICKER" maxLength={TOKEN_VALIDATION_LIMITS.TICKER_MAX_LENGTH} className="font-retro uppercase" />
-                      <p className={cn("mt-1 text-xs", tickerConfirmedAvailable ? "text-green-300" : tickerCheckError || tickerAvailability ? "text-orange-300" : "text-muted-foreground")}>{tickerStatusLine}</p>
+                      <label className="mb-1.5 block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Ticker</label>
+                      <Input value={formData.ticker} onChange={(e) => setTicker(e.target.value)} placeholder="TICKER" maxLength={TOKEN_VALIDATION_LIMITS.TICKER_MAX_LENGTH} className="font-mw-cond font-bold uppercase" />
+                      <p className={cn("mt-1 text-xs", tickerConfirmedAvailable ? "text-green-300" : tickerCheckError || tickerAvailability ? "text-mw-accent-soft" : "text-mw-muted")}>{tickerStatusLine}</p>
                     </div>
-                    <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" disabled={!canGoNext(2)} onClick={goNext}>Next</Button>
+                    <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11" disabled={!canGoNext(2)} onClick={goNext}>Next</Button>
                   </div>
                 }
               />
@@ -1299,10 +1302,11 @@ const Create = () => {
 
             {step === 3 ? (
               <CreateSplitPane
-                left={<div className="flex w-full flex-col items-center gap-2"><p className="font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Preview updates live</p>{preview}</div>}
+                v2
+                left={<div className="flex w-full flex-col items-center gap-2"><p className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Preview updates live</p>{preview}</div>}
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3">
-                    <div><label className="mb-1 block font-retro text-sm">Short description <span className="text-orange-300">*</span></label><Textarea value={formData.description} onChange={(e) => setDescription(e.target.value)} placeholder="What should visitors know?" className="min-h-20 font-sans text-sm normal-case tracking-normal" maxLength={TOKEN_VALIDATION_LIMITS.DESCRIPTION_MAX_LENGTH} /></div>
+                    <div><label className="mb-1.5 block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Short description <span className="text-mw-accent-soft">*</span></label><Textarea value={formData.description} onChange={(e) => setDescription(e.target.value)} placeholder="What should visitors know?" className="min-h-20 font-sans text-sm normal-case tracking-normal" maxLength={TOKEN_VALIDATION_LIMITS.DESCRIPTION_MAX_LENGTH} /></div>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <Input value={formData.website} onChange={(e) => setWebsite(e.target.value)} placeholder="Website" className="font-sans text-sm normal-case" />
                       <Input value={formData.twitter} onChange={(e) => setTwitter(e.target.value)} placeholder="X / @handle / url" className="font-sans text-sm normal-case" />
@@ -1310,8 +1314,8 @@ const Create = () => {
                       <Input value={formData.discord} onChange={(e) => setDiscord(e.target.value)} placeholder="Discord" className="font-sans text-sm normal-case" />
                       <Input value={formData.otherLink} onChange={(e) => setOtherLink(e.target.value)} placeholder="Other link" className="font-sans text-sm normal-case sm:col-span-2" />
                     </div>
-                    <p className="text-[11px] text-muted-foreground">Socials optional. Use @memewarzone, https://x.com/memewarzone, or bare memewarzone.</p>
-                    <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" disabled={!canGoNext(3)} onClick={goNext}>Next</Button>
+                    <p className="text-[11px] text-mw-muted">Socials optional. Use @memewarzone, https://x.com/memewarzone, or bare memewarzone.</p>
+                    <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11" disabled={!canGoNext(3)} onClick={goNext}>Next</Button>
                   </div>
                 }
               />
@@ -1319,17 +1323,18 @@ const Create = () => {
 
             {step === 4 ? (
               <CreateSplitPane
-                left={<div className="flex w-full flex-col items-center gap-2">{preview}{selectedGraduation ? <p className="text-center text-xs text-muted-foreground">Graduation: <span className="text-accent">{selectedGraduation.label}</span> · {selectedGraduation.title}</p> : null}</div>}
+                v2
+                left={<div className="flex w-full flex-col items-center gap-2">{preview}{selectedGraduation ? <p className="text-center text-xs text-mw-muted">Graduation: <span className="text-accent">{selectedGraduation.label}</span> · {selectedGraduation.title}</p> : null}</div>}
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1">
-                    <div><div className="font-retro text-sm text-foreground">Graduation threshold</div><p className="mt-0.5 text-xs text-muted-foreground">Bonding volume before DEX graduation.</p></div>
+                    <div><div className="text-sm font-semibold text-mw-text">Graduation threshold</div><p className="mt-0.5 text-xs text-mw-muted">Bonding volume before DEX graduation.</p></div>
                     <div className="grid grid-cols-2 gap-1.5">
                       {graduationOptions.map((option) => {
                         const selected = graduationTargetWei === option.targetWei;
                         const isTest = option.id === "test";
                         return (
-                          <button key={option.id} type="button" onClick={() => { graduationTouchedRef.current = true; setGraduationTargetWei(option.targetWei); }} className={cn("rounded-lg border px-2.5 py-2 text-left transition", isTest && "col-span-2 border-dashed", selected ? isTest ? "border-orange-300 bg-orange-400/15 text-orange-100" : "border-accent bg-accent/15 text-foreground" : "border-border bg-muted/30 text-muted-foreground hover:border-accent/60") }>
-                            <div className="flex items-center justify-between gap-2"><span className="font-retro text-sm">{option.label}</span><span className="font-retro text-[10px] uppercase tracking-[0.12em]">{option.title}</span></div>
+                          <button key={option.id} type="button" onClick={() => { graduationTouchedRef.current = true; setGraduationTargetWei(option.targetWei); }} className={cn("rounded-lg border px-2.5 py-2 text-left transition", isTest && "col-span-2 border-dashed", selected ? isTest ? "border-orange-300 bg-orange-400/15 text-orange-100" : "border-accent bg-accent/15 text-mw-text" : "border-border bg-muted/30 text-mw-muted hover:border-accent/60") }>
+                            <div className="flex items-center justify-between gap-2"><span className="font-mw-cond font-bold text-sm">{option.label}</span><span className="font-mw-cond font-bold text-[10px] uppercase tracking-[0.12em]">{option.title}</span></div>
                             <p className="mt-0.5 line-clamp-2 text-[0.65rem] leading-4 opacity-90">{option.description}</p>
                           </button>
                         );
@@ -1338,7 +1343,7 @@ const Create = () => {
                     {dbcLaunch ? (
                       <div className="space-y-3 rounded-xl border border-border/50 bg-background/25 p-3">
                         <CreatorFeeChoicePicker value={dbcFeeChoice} onChange={setDbcFeeChoice} sharePct={dbcCreatorSharePct} onSharePctChange={setDbcCreatorSharePct} />
-                        <p className="text-xs text-muted-foreground">{LAUNCH_FEE_NOTE}</p>
+                        <p className="text-xs text-mw-muted">{LAUNCH_FEE_NOTE}</p>
                       </div>
                     ) : null}
                     {evmGen6 ? (
@@ -1357,12 +1362,12 @@ const Create = () => {
                     ) : null}
                     <Collapsible open={safetyOpen} onOpenChange={setSafetyOpen} className="rounded-xl border border-border/50 bg-background/25">
                       <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 p-3 text-left">
-                        <div><div className="font-retro text-sm text-foreground">Launch Safety</div><p className="mt-0.5 text-xs text-muted-foreground">{launchpadSafetyStatus.protocolLabel ?? (launchpadSafetyStatus.protocolStatus === "ready" ? "Live" : launchpadSafetyStatus.protocolStatus)}{" · "}{launchpadSafetyStatus.chainLabel}</p></div>
-                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+                        <div><div className="text-sm font-semibold text-mw-text">Launch Safety</div><p className="mt-0.5 text-xs text-mw-muted">{launchpadSafetyStatus.protocolLabel ?? (launchpadSafetyStatus.protocolStatus === "ready" ? "Live" : launchpadSafetyStatus.protocolStatus)}{" · "}{launchpadSafetyStatus.chainLabel}</p></div>
+                        <ChevronDown className="h-4 w-4 shrink-0 text-mw-muted transition-transform group-data-[state=open]:rotate-180" />
                       </CollapsibleTrigger>
                       <CollapsibleContent className="px-3 pb-3"><LaunchpadSafetyStatus status={launchpadSafetyStatus} compact embedded /></CollapsibleContent>
                     </Collapsible>
-                    <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 shrink-0 font-retro" disabled={!canGoNext(4)} onClick={goNext}>Next</Button>
+                    <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11 shrink-0" disabled={!canGoNext(4)} onClick={goNext}>Next</Button>
                   </div>
                 }
               />
@@ -1372,13 +1377,13 @@ const Create = () => {
               <CreateFullPane>
                 <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4">
                   <div>
-                    <div className="font-retro text-lg text-foreground">Market</div>
-                    <p className="mt-1 text-sm text-muted-foreground">
+                    <div className="font-mw-cond text-xl font-bold text-mw-text">Market</div>
+                    <p className="mt-1 text-sm text-mw-muted">
                       Your coin trades in this token on the curve and pairs with it in its Meteora pool after graduation. SOL is the default; a stock or stablecoin is your call and shows its risks before you confirm.
                     </p>
                   </div>
                   <div>
-                    <div className="font-retro text-sm text-foreground">Quote</div>
+                    <div className="text-sm font-semibold text-mw-text">Quote</div>
                     <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
                       {dbcQuoteOptions.map((q) => (
                         <button
@@ -1387,18 +1392,18 @@ const Create = () => {
                           onClick={() => (q.kind === "stock" && q.mint !== dbcQuoteMint ? setPendingStockMint(q.mint) : chooseDbcQuote(q.mint))}
                           className={cn("rounded-lg border px-2.5 py-2 text-left", dbcQuoteMint === q.mint ? "border-accent bg-accent/15" : "border-border bg-muted/30")}
                         >
-                          <div className="font-retro text-sm">{q.symbol}</div>
-                          <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">{q.kind === "native" ? "Chain coin" : q.kind === "stable" ? "1:1 USD" : "Stock token"}</p>
+                          <div className="font-mw-cond font-bold text-sm">{q.symbol}</div>
+                          <p className="mt-0.5 text-[0.65rem] leading-4 text-mw-muted">{q.kind === "native" ? "Chain coin" : q.kind === "stable" ? "1:1 USD" : "Stock token"}</p>
                         </button>
                       ))}
                     </div>
                   </div>
                   <div>
-                    <div className="font-retro text-sm text-foreground">Your first buy (optional)</div>
-                    <p className="mt-0.5 text-xs text-muted-foreground">Buys in the same transaction as the launch, at the normal 2% fee.</p>
+                    <div className="text-sm font-semibold text-mw-text">Your first buy (optional)</div>
+                    <p className="mt-0.5 text-xs text-mw-muted">Buys in the same transaction as the launch, at the normal 2% fee.</p>
                     <Input type="number" min={0} step="0.01" value={dbcFirstBuySol} onChange={(e) => setDbcFirstBuySol(e.target.value)} placeholder={`${dbcQuote?.symbol || "SOL"} amount`} className="mt-2 max-w-[12rem]" />
                     {dbcFirstBuyQuote ? (
-                      <p className={cn("mt-1 text-xs", dbcFirstBuyQuote.exceedsCap ? "text-orange-300" : "text-muted-foreground")}>
+                      <p className={cn("mt-1 text-xs", dbcFirstBuyQuote.exceedsCap ? "text-mw-accent-soft" : "text-mw-muted")}>
                         About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
                         {dbcFirstBuyQuote.exceedsCap ? " (over the 10% cap)" : ""}.
                       </p>
@@ -1417,10 +1422,10 @@ const Create = () => {
                     />
                   ) : null}
                   <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Pool after graduation</span><span className="text-foreground">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora, liquidity locked</span></div>
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Your share at graduation</span><span className="text-foreground">19.8% of what the curve raised</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-mw-muted">Pool after graduation</span><span className="text-mw-text">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora, liquidity locked</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-mw-muted">Your share at graduation</span><span className="text-mw-text">19.8% of what the curve raised</span></div>
                   </div>
-                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 shrink-0 font-retro" onClick={goNext}>Next</Button>
+                  <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11 shrink-0" onClick={goNext}>Next</Button>
                 </div>
               </CreateFullPane>
             ) : null}
@@ -1441,39 +1446,40 @@ const Create = () => {
 
             {step === 6 ? (
               <CreateSplitPane
-                left={<div className="flex w-full flex-col items-center gap-2"><p className="font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Final preview</p>{preview}</div>}
+                v2
+                left={<div className="flex w-full flex-col items-center gap-2"><p className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Final preview</p>{preview}</div>}
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3">
                     <div className="space-y-2 rounded-xl border border-border/50 bg-background/30 p-3 text-sm" data-testid="create-review">
-                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Mode</span><span className="font-retro text-foreground">{mode === "deploy" ? "Direct deploy" : "Draft"}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Name</span><span className="truncate font-medium text-foreground">{formData.name || "—"}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Ticker</span><span className="font-medium text-foreground">{normalizedTicker ? `$${normalizedTicker}` : "—"}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation threshold</span><span className="text-foreground">{selectedGraduation?.label || "—"}</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-mw-muted">Mode</span><span className="font-mw-cond font-bold text-mw-text">{mode === "deploy" ? "Direct deploy" : "Draft"}</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-mw-muted">Name</span><span className="truncate font-medium text-mw-text">{formData.name || "—"}</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-mw-muted">Ticker</span><span className="font-medium text-mw-text">{normalizedTicker ? `$${normalizedTicker}` : "—"}</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-mw-muted">Graduation threshold</span><span className="text-mw-text">{selectedGraduation?.label || "—"}</span></div>
                       {dbcLaunch ? (
-                        <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduates into</span><span className="text-right text-foreground">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora</span></div>
+                        <div className="flex justify-between gap-3"><span className="text-mw-muted">Graduates into</span><span className="text-right text-mw-text">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora</span></div>
                       ) : (
                         <>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation Market</span><span className="text-right text-foreground">{graduationSummary.pair}</span></div>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Quote Asset</span><span className="text-foreground">{graduationSummary.quoteAsset}</span></div>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Provider</span><span className="text-foreground">{graduationSummary.provider}</span></div>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Bonding currency</span><span className="text-foreground">{graduationSummary.bonding}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-mw-muted">Graduation Market</span><span className="text-right text-mw-text">{graduationSummary.pair}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-mw-muted">Quote Asset</span><span className="text-mw-text">{graduationSummary.quoteAsset}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-mw-muted">Provider</span><span className="text-mw-text">{graduationSummary.provider}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-mw-muted">Bonding currency</span><span className="text-mw-text">{graduationSummary.bonding}</span></div>
                         </>
                       )}
                       {dbcLaunch ? (
                         <>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Creator fee</span><span className="text-foreground">{DBC_FEE_CHOICE_LABEL[dbcFeeChoice] || dbcFeeChoice}</span></div>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">First buy</span><span className="text-foreground">{dbcFirstBuySol ? `${dbcFirstBuySol} ${dbcQuote?.symbol || "SOL"}` : "None"}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-mw-muted">Creator fee</span><span className="text-mw-text">{DBC_FEE_CHOICE_LABEL[dbcFeeChoice] || dbcFeeChoice}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-mw-muted">First buy</span><span className="text-mw-text">{dbcFirstBuySol ? `${dbcFirstBuySol} ${dbcQuote?.symbol || "SOL"}` : "None"}</span></div>
                         </>
                       ) : null}
                       {evmGen6 ? (
                         <>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Creator fee</span><span className="text-foreground">{DBC_FEE_CHOICE_LABEL[evmFeeChoice] || evmFeeChoice}{evmFeeChoice === "split" ? ` (${evmCreatorSharePct}% to you)` : ""}</span></div>
-                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">First buy</span><span className="text-foreground">{evmFirstBuyPlan && evmFirstBuyPlan.tokens > 0n ? `${evmFirstBuyInput} ${getNativeSymbol(chainId)} (${(evmFirstBuyPlan.supplyBps / 100).toFixed(2)}% of supply)` : "None"}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-mw-muted">Creator fee</span><span className="text-mw-text">{DBC_FEE_CHOICE_LABEL[evmFeeChoice] || evmFeeChoice}{evmFeeChoice === "split" ? ` (${evmCreatorSharePct}% to you)` : ""}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-mw-muted">First buy</span><span className="text-mw-text">{evmFirstBuyPlan && evmFirstBuyPlan.tokens > 0n ? `${evmFirstBuyInput} ${getNativeSymbol(chainId)} (${(evmFirstBuyPlan.supplyBps / 100).toFixed(2)}% of supply)` : "None"}</span></div>
                         </>
                       ) : null}
-                      {!creatorWallet ? <p className="pt-1 text-xs text-orange-300">Connect your wallet before launching.</p> : null}
+                      {!creatorWallet ? <p className="pt-1 text-xs text-mw-accent-soft">Connect your wallet before launching.</p> : null}
                       {mode === "deploy" && !directDeployRouteReady ? (
-                        <p className="pt-1 text-xs text-orange-300">
+                        <p className="pt-1 text-xs text-mw-accent-soft">
                           {isSolanaCreator
                             ? "Connect Solana wallet to Direct deploy (draft → Push Live)."
                             : !evmDirectDeployEnabled
@@ -1485,15 +1491,15 @@ const Create = () => {
                                   : "Direct deploy is not ready — go back and choose Draft."}
                         </p>
                       ) : null}
-                      {creatorEligibilityError ? <p className="pt-1 text-xs text-orange-300">{creatorEligibilityError}</p> : null}
+                      {creatorEligibilityError ? <p className="pt-1 text-xs text-mw-accent-soft">{creatorEligibilityError}</p> : null}
                     </div>
 
                     {mode === "deploy" ? (
-                      <Button type="button" className="mwz-button mwz-button-orange mt-auto h-12 w-full font-retro text-base" disabled={isDeploying || isDrafting || !directDeployRouteReady || !(dbcLaunch || graduationMarketReady)} onClick={() => void handleDeployNow()}><Rocket className="mr-2 h-5 w-5" />{isDeploying ? "Deploying… waiting for confirmation" : "Deploy now"}</Button>
+                      <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-12 w-full text-base" disabled={isDeploying || isDrafting || !directDeployRouteReady || !(dbcLaunch || graduationMarketReady)} onClick={() => void handleDeployNow()}><Rocket className="mr-2 h-5 w-5" />{isDeploying ? "Deploying… waiting for confirmation" : "Deploy now"}</Button>
                     ) : (
-                      <Button type="button" className="mwz-button mt-auto h-12 w-full font-retro text-base" disabled={isDrafting || isDeploying || !(dbcLaunch || graduationMarketReady)} onClick={() => void handleCreateDraft()}><FileText className="mr-2 h-5 w-5" />{isDrafting ? "Signing & saving draft…" : "Save Draft"}</Button>
+                      <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-50 mt-auto h-12 w-full" disabled={isDrafting || isDeploying || !(dbcLaunch || graduationMarketReady)} onClick={() => void handleCreateDraft()}><FileText className="mr-2 h-5 w-5" />{isDrafting ? "Signing & saving draft…" : "Save Draft"}</Button>
                     )}
-                    <p className="text-[11px] text-muted-foreground">{mode === "deploy" ? "Wallet signs + gas. Stay here until deploy confirms — then Token Details." : "One signature to save. No gas. Next: promotion setup / edit page."}</p>
+                    <p className="text-[11px] text-mw-muted">{mode === "deploy" ? "Wallet signs + gas. Stay here until deploy confirms — then Token Details." : "One signature to save. No gas. Next: promotion setup / edit page."}</p>
                   </div>
                 }
               />

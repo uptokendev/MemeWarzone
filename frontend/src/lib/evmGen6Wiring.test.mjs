@@ -66,7 +66,8 @@ test("the create pages only show and send gen-6 fields for a generation-6 factor
 
 test("the DBC create form uses the same fee-choice component and launch-fee sentence", () => {
   assert.match(create, /<CreatorFeeChoicePicker value=\{dbcFeeChoice\} onChange=\{setDbcFeeChoice\}/);
-  assert.match(create, /<p className="text-xs text-muted-foreground">\{LAUNCH_FEE_NOTE\}<\/p>/);
+  // Founder 2026-10-03: the Create page is in the redesign; the sentence keeps its place, new muted colour.
+  assert.match(create, /<p className="text-xs text-mw-muted">\{LAUNCH_FEE_NOTE\}<\/p>/);
 });
 
 test("the coin page renders gen-5 lines only when the campaign reads as generation 5", () => {

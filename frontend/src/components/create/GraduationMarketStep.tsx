@@ -85,12 +85,12 @@ function BindingRiskDialog({
     >
       <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg border border-orange-400/40 bg-background p-5 shadow-xl">
         <div className="flex items-start gap-3">
-          <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-orange-300" aria-hidden />
+          <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-mw-accent-soft" aria-hidden />
           <div className="min-w-0">
-            <h2 id="binding-risk-title" className="font-retro text-base text-foreground">
+            <h2 id="binding-risk-title" className="font-mw-cond font-bold text-base text-mw-text">
               Graduate {ticker ? `$${ticker}` : "your token"} against {symbol}?
             </h2>
-            <p className="mt-1 text-[13px] text-muted-foreground">{headline}</p>
+            <p className="mt-1 text-[13px] text-mw-muted">{headline}</p>
           </div>
         </div>
 
@@ -107,21 +107,21 @@ function BindingRiskDialog({
               )}
             >
               <div className="flex items-center gap-2">
-                <span className="text-[13px] text-foreground">{risk.title}</span>
+                <span className="text-[13px] text-mw-text">{risk.title}</span>
                 {risk.armed === false ? (
-                  <span className="rounded-sm border border-border/60 px-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+                  <span className="rounded-sm border border-border/60 px-1 text-[9px] uppercase tracking-wider text-mw-muted">
                     not currently set
                   </span>
                 ) : null}
               </div>
               {risk.detail ? (
-                <p className="mt-1 text-[11.5px] leading-relaxed text-muted-foreground">{risk.detail}</p>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-mw-muted">{risk.detail}</p>
               ) : null}
             </li>
           ))}
         </ul>
 
-        <p className="mt-4 text-[11.5px] leading-relaxed text-muted-foreground">
+        <p className="mt-4 text-[11.5px] leading-relaxed text-mw-muted">
           {armedCount > 0
             ? "These are powers the issuer holds today. Choosing this asset accepts them."
             : "Choosing this asset accepts these terms for the life of the pool."}
@@ -132,7 +132,7 @@ function BindingRiskDialog({
             type="button"
             onClick={onCancel}
             data-testid="binding-risk-cancel"
-            className="rounded-md border border-border/70 px-3 py-2 text-[13px] text-muted-foreground transition hover:border-border"
+            className="rounded-md border border-border/70 px-3 py-2 text-[13px] text-mw-muted transition hover:border-border"
           >
             Pick another asset
           </button>
@@ -140,7 +140,7 @@ function BindingRiskDialog({
             type="button"
             onClick={onConfirm}
             data-testid="binding-risk-confirm"
-            className="rounded-md border border-orange-300 bg-orange-400/20 px-3 py-2 text-[13px] text-foreground transition hover:bg-orange-400/30"
+            className="rounded-md border border-orange-300 bg-orange-400/20 px-3 py-2 text-[13px] text-mw-text transition hover:bg-orange-400/30"
           >
             I understand, use {symbol}
           </button>
@@ -184,20 +184,20 @@ function QuoteAssetCard({
         {asset.logoUrl ? (
           <img src={asset.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-sm object-cover" />
         ) : (
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border/60 bg-background/40 font-retro text-[10px] text-muted-foreground">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border/60 bg-background/40 font-mw-cond font-bold text-[10px] text-mw-muted">
             {symbol.slice(0, 2)}
           </div>
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1">
-            <span className="truncate font-retro text-sm text-foreground">{symbol}</span>
+            <span className="truncate text-sm font-semibold text-mw-text">{symbol}</span>
             {verified ? <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-emerald-300/80" aria-label="Canonical asset" /> : null}
           </div>
-          <div className="truncate text-[11px] text-muted-foreground">
+          <div className="truncate text-[11px] text-mw-muted">
             {asset.displayName && asset.displayName !== symbol ? asset.displayName : `${ticker ? `$${ticker}` : "$TOKEN"} / ${symbol}`}
           </div>
           {!compact ? (
-            <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">{provider}</div>
+            <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-mw-muted/80">{provider}</div>
           ) : null}
         </div>
       </div>
@@ -323,9 +323,9 @@ export function GraduationMarketStep({
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2.5 sm:p-3">
         <div className="space-y-3">
           <div>
-            <h2 className="font-retro text-base text-foreground sm:text-xl">{copy.title}</h2>
+            <h2 className="font-mw-cond font-bold text-base text-mw-text sm:text-xl">{copy.title}</h2>
             {copy.lines.map((line) => (
-              <p key={line} className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground sm:text-sm">{line}</p>
+              <p key={line} className="mt-0.5 text-[11px] leading-relaxed text-mw-muted sm:text-sm">{line}</p>
             ))}
           </div>
 
@@ -334,20 +334,20 @@ export function GraduationMarketStep({
               className="rounded-xl border border-orange-400/25 bg-orange-500/5 p-2.5 sm:p-3"
               data-testid="graduation-market-selected"
             >
-              <div className="font-retro text-[10px] uppercase tracking-[0.18em] text-orange-300">Selected Graduation Market</div>
-              <div className="mt-1 font-retro text-base text-foreground sm:text-lg">{summary.pair}</div>
+              <div className="font-mw-cond font-bold text-[10px] uppercase tracking-[0.18em] text-mw-accent-soft">Selected Graduation Market</div>
+              <div className="mt-1 font-mw-cond font-bold text-base text-mw-text sm:text-lg">{summary.pair}</div>
               <dl className="mt-2 grid grid-cols-1 gap-1.5 text-[11px] sm:grid-cols-3 sm:gap-3 sm:text-xs">
                 <div>
-                  <dt className="text-muted-foreground">Bonding</dt>
-                  <dd className="text-foreground">{summary.bonding}</dd>
+                  <dt className="text-mw-muted">Bonding</dt>
+                  <dd className="text-mw-text">{summary.bonding}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Post-graduation market</dt>
-                  <dd className="text-foreground">{summary.postGraduationMarket}</dd>
+                  <dt className="text-mw-muted">Post-graduation market</dt>
+                  <dd className="text-mw-text">{summary.postGraduationMarket}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Provider</dt>
-                  <dd className="text-foreground">{summary.provider}</dd>
+                  <dt className="text-mw-muted">Provider</dt>
+                  <dd className="text-mw-text">{summary.provider}</dd>
                 </div>
               </dl>
               {isMovingQuoteAsset(selected) ? (
@@ -357,7 +357,7 @@ export function GraduationMarketStep({
           ) : null}
 
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-mw-muted" />
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -367,7 +367,7 @@ export function GraduationMarketStep({
             />
           </div>
 
-          {loading ? <div className="text-xs text-muted-foreground">Loading approved Graduation Markets…</div> : null}
+          {loading ? <div className="text-xs text-mw-muted">Loading approved Graduation Markets…</div> : null}
           {error ? (
             <div className="flex items-start gap-2 rounded-lg border border-orange-400/25 bg-orange-500/10 p-2.5 text-xs text-orange-100">
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -377,7 +377,7 @@ export function GraduationMarketStep({
 
           {showPopularRow ? (
             <div className="space-y-1.5" data-testid="graduation-market-popular">
-              <div className="font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Popular</div>
+              <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Popular</div>
               <div className="flex gap-1.5 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
                 {popular.map((asset) => (
                   <QuoteAssetCard key={`popular-${asset.id}`} asset={asset} ticker={ticker} selected={selected?.id === asset.id} onSelect={requestSelect} compact />
@@ -395,19 +395,19 @@ export function GraduationMarketStep({
                   data-testid={`graduation-category-${category.id}`}
                   onClick={() => setActiveCategory(category.id)}
                   className={cn(
-                    "shrink-0 rounded-md border px-2 py-1 font-retro text-[10px] uppercase tracking-[0.12em] transition sm:text-[11px]",
+                    "shrink-0 rounded-md border px-2 py-1 font-mw-cond font-bold text-[10px] uppercase tracking-[0.12em] transition sm:text-[11px]",
                     activeCategory === category.id
                       ? "border-orange-300 bg-orange-400/15 text-orange-100"
-                      : "border-border bg-background/30 text-muted-foreground hover:border-orange-400/40",
+                      : "border-border bg-background/30 text-mw-muted hover:border-orange-400/40",
                   )}
                 >
                   {category.label}
-                  <span className="ml-1 text-muted-foreground/70">{category.items.length}</span>
+                  <span className="ml-1 text-mw-muted/70">{category.items.length}</span>
                 </button>
               ))}
             </div>
           ) : (
-            <div className="rounded-lg border border-border/60 bg-background/25 p-3 text-xs text-muted-foreground" data-testid="graduation-market-empty">
+            <div className="rounded-lg border border-border/60 bg-background/25 p-3 text-xs text-mw-muted" data-testid="graduation-market-empty">
               {loading
                 ? "Loading approved Graduation Markets…"
                 : items.length
@@ -428,10 +428,10 @@ export function GraduationMarketStep({
                     "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] transition",
                     activeProvider === facet.key
                       ? "border-orange-300/70 bg-orange-400/10 text-orange-100"
-                      : "border-border/60 text-muted-foreground hover:border-orange-400/40",
+                      : "border-border/60 text-mw-muted hover:border-orange-400/40",
                   )}
                 >
-                  {facet.label} <span className="text-muted-foreground/70">{facet.count}</span>
+                  {facet.label} <span className="text-mw-muted/70">{facet.count}</span>
                 </button>
               ))}
             </div>
@@ -454,7 +454,7 @@ export function GraduationMarketStep({
         />
       ) : null}
       <div className="hidden shrink-0 border-t border-border/50 p-2.5 sm:block sm:p-3">
-        <Button type="button" className="mwz-button mwz-button-orange h-11 w-full font-retro" disabled={!canNext} onClick={onNext}>
+        <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 h-11 w-full" disabled={!canNext} onClick={onNext}>
           Next
         </Button>
       </div>
