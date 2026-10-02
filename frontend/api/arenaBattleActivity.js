@@ -10,6 +10,9 @@
 import { pool } from "../server/db.js";
 import { json, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
+import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
+
+const feedSession = createFeedSessionAuth({ pool });
 import {
   BATTLE_COMMENT_RATE,
   buildActivity,
@@ -114,12 +117,16 @@ async function handleCommentCreate(req, res, battleId) {
   const body = await readJson(req);
   const checked = normalizeBattleComment(body.body);
   if (!checked.ok) return json(res, 400, { error: checked.error, code: checked.code });
-  const chainId = Number(body.chainId || body.auth?.chainId || 0);
+  // With a feed session (one signature per 12 h, founder 2026-10-02) the wallet comes from the session.
+  const bearer = /^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""));
+  const session = bearer ? await feedSession.requireSession(req, res) : null;
+  if (bearer && !session) return;
+  const chainId = session ? Number(session.chainId) : Number(body.chainId || body.auth?.chainId || 0);
   if (!COMMENT_CHAINS.has(chainId)) return json(res, 400, { error: "Unsupported wallet chain", code: "BATTLE_COMMENT_CHAIN" });
   const battle = await loadBattle(battleId);
   if (!battle) return json(res, 404, { error: "Battle not found", code: "BATTLE_NOT_FOUND" });
 
-  const verified = await requireWalletActionAuth({
+  const verified = session ? { walletAddress: session.walletAddress } : await requireWalletActionAuth({
     res,
     pool,
     auth: body.auth,

@@ -2,7 +2,7 @@ import { apiFetch } from "@/lib/apiBase";
 import { signWalletAction, type WalletActionAuthPayload } from "@/lib/walletActionAuth";
 
 export const FEED_SESSION_ACTION = "feed_open_session";
-export const FEED_SESSION_SCOPE = "Scope: fire,repost,reply";
+export const FEED_SESSION_SCOPE = "Scope: post,fire,repost,reply,comment";
 
 
 function sessionKey(walletAddress: string, chainId: number) {

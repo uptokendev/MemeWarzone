@@ -410,8 +410,8 @@ async function handleGet(req, res) {
 
   if (tab === "following") {
     if (!viewer) return json(res, 200, { items: [], tab: "following", warning: "Connect a wallet to load Following." });
-    const following = await loadFollowingAddresses(viewer);
-    if (!following.length) return json(res, 200, { items: [], tab: "following" });
+    // Following includes the viewer's own posts and reposts (founder, 2026-10-02: "I do not see the repost").
+    const following = Array.from(new Set([...(await loadFollowingAddresses(viewer)), viewer]));
     try {
       const items = await queryFollowing(viewer, following, limit);
       return json(res, 200, { items, tab: "following" });
@@ -469,10 +469,18 @@ async function handleGetReplies(req, res) {
   }
 }
 
+function hasSessionToken(req) {
+  return /^Bearer\s+\S+/i.test(String(req.headers?.authorization || "")) || Boolean(String(req.headers?.["x-feed-session"] || "").trim());
+}
+
 async function handleCreate(req, res) {
-  const b = await readJson(req);
-  const chainId = Number(b.chainId);
-  const address = canonPostWallet(chainId, b.address);
+  const b = req.body && typeof req.body === "object" && Object.keys(req.body).length ? req.body : await readJson(req);
+  // UI redesign (founder, 2026-10-02): a connected wallet signs once per 12 h session instead of every
+  // post. With a session the wallet comes from the session; without one the signed path below is unchanged.
+  const session = hasSessionToken(req) ? await feedSession.requireSession(req, res) : null;
+  if (hasSessionToken(req) && !session) return;
+  const chainId = session ? Number(session.chainId) : Number(b.chainId);
+  const address = session ? canonPostWallet(chainId, session.walletAddress) : canonPostWallet(chainId, b.address);
   const body = String(b.body ?? "");
   const nonce = String(b.nonce ?? "");
   const signature = String(b.signature ?? "");
@@ -487,18 +495,20 @@ async function handleCreate(req, res) {
   const trimmed = body.trim();
   if (!trimmed) return json(res, 400, { error: "Post is empty" });
   if (trimmed.length > POST_MAX_CHARS) return json(res, 400, { error: `Post too long (max ${POST_MAX_CHARS})` });
-  if (!nonce) return json(res, 400, { error: "Nonce missing" });
-  if (!signature) return json(res, 400, { error: "Signature missing" });
+  if (!session) {
+    if (!nonce) return json(res, 400, { error: "Nonce missing" });
+    if (!signature) return json(res, 400, { error: "Signature missing" });
 
-  await consumeNonce(chainId, address, nonce);
+    await consumeNonce(chainId, address, nonce);
 
-  const msg = buildPostCreateMessage({ chainId, address, nonce, body: trimmed, mediaUrl, quoteOf });
-  const solana = isSolanaChain(chainId) || isSolanaAddress(address);
-  if (solana) {
-    if (!verifySolanaSignature(msg, signature, address)) return json(res, 401, { error: "Invalid signature" });
-  } else {
-    const recovered = ethers.verifyMessage(msg, signature).toLowerCase();
-    if (recovered !== address) return json(res, 401, { error: "Invalid signature" });
+    const msg = buildPostCreateMessage({ chainId, address, nonce, body: trimmed, mediaUrl, quoteOf });
+    const solana = isSolanaChain(chainId) || isSolanaAddress(address);
+    if (solana) {
+      if (!verifySolanaSignature(msg, signature, address)) return json(res, 401, { error: "Invalid signature" });
+    } else {
+      const recovered = ethers.verifyMessage(msg, signature).toLowerCase();
+      if (recovered !== address) return json(res, 401, { error: "Invalid signature" });
+    }
   }
 
   if (quoteOf) {

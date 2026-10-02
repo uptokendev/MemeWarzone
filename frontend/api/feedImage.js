@@ -13,6 +13,9 @@ import { inspectImageFile, PROJECT_IMPORT_IMAGE_LIMITS } from "./lib/imageFileVa
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { canonPostWallet } from "./lib/postsCanon.js";
 import { feedImagePath } from "./lib/feedPostMedia.js";
+import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
+
+const feedSession = createFeedSessionAuth({ pool });
 
 let storageClient = null;
 function getStorageClient() {
@@ -47,7 +50,14 @@ export default async function handler(req, res) {
   try {
     const [fields, files] = await form.parse(req);
     const field = (key) => first(fields, key) || String(q[key] || "").trim();
-    const verified = await requireWalletActionAuth({
+    // With a feed session (one signature per 12 h) the session's wallet must be the uploader.
+    const bearer = /^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""));
+    if (bearer) {
+      const session = await feedSession.requireSession(req, res);
+      if (!session) return;
+      if (canonPostWallet(Number(session.chainId), session.walletAddress) !== address) return bad(res, 403, "Session wallet does not match", "FEED_IMAGE_WALLET");
+    }
+    const verified = bearer ? { walletAddress: address } : await requireWalletActionAuth({
       res,
       pool,
       auth: {

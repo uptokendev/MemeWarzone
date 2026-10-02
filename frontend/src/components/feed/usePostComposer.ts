@@ -1,16 +1,15 @@
 /**
- * One posting path for the Home composer and the quote dialog (UI redesign phase 2): optional
- * image upload (signed `feed_post_image`), then the existing nonce + signed POST_CREATE, now with
- * the optional Media / Quote lines. A text-only post signs exactly what it signed before.
+ * One posting path for the Home composer and the quote dialog (UI redesign phase 2). Uses the feed
+ * session (one wallet signature per 12 h, founder 2026-10-02) for the image upload and the post.
  */
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { isSolanaAddress } from "@/lib/address";
-import { getActiveChainId, isSolanaChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
-import { signSolanaMessage } from "@/lib/solanaWallet";
-import { FEED_MAX_CHARS, buildPostMessage, createFeedPost, fetchFeedNonce, uploadFeedImage } from "@/lib/feedApi";
+import { getActiveChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { FEED_MAX_CHARS, createFeedPost, uploadFeedImage } from "@/lib/feedApi";
+import { useFeedSession } from "@/hooks/useFeedSession";
 
 export function usePostComposer({ quoteOf, onPosted }: { quoteOf?: number | null; onPosted?: () => void } = {}) {
   const wallet = useWallet();
@@ -28,10 +27,7 @@ export function usePostComposer({ quoteOf, onPosted }: { quoteOf?: number | null
   const remaining = FEED_MAX_CHARS - body.length;
   const canPost = body.trim().length > 0 && body.trim().length <= FEED_MAX_CHARS && !posting;
 
-  const signMessage = async (message: string) =>
-    solana || isSolanaChainId(chainId)
-      ? (await signSolanaMessage(message, account)).signature
-      : await wallet.signer!.signMessage(message);
+  const { withSession } = useFeedSession();
 
   const submit = async () => {
     if (!canPost) return false;
@@ -45,14 +41,14 @@ export function usePostComposer({ quoteOf, onPosted }: { quoteOf?: number | null
     }
     try {
       setPosting(true);
-      const mediaUrl = file
-        ? await uploadFeedImage({ file, chainId, address: account, walletType: solana ? "solana" : "evm", signMessage })
-        : null;
-      const nonce = await fetchFeedNonce(chainId, account);
       const trimmed = body.trim();
-      const msg = buildPostMessage({ chainId, address: account, nonce, body: trimmed, mediaUrl, quoteOf: quoteOf || null });
-      const signature = await signMessage(msg);
-      await createFeedPost({ chainId, address: account, body: trimmed, nonce, signature, mediaUrl, quoteOf: quoteOf || null });
+      // One wallet signature opens a 12 h feed session; posts and images then go through without prompts.
+      await withSession(async (token) => {
+        const mediaUrl = file
+          ? await uploadFeedImage({ file, chainId, address: account, walletType: solana ? "solana" : "evm", token })
+          : null;
+        await createFeedPost({ chainId, address: account, body: trimmed, nonce: "", signature: "", mediaUrl, quoteOf: quoteOf || null, token });
+      });
       setBody("");
       setFile(null);
       toast.success("Posted.");

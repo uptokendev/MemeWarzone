@@ -71,16 +71,38 @@ export function normalizeBattleCommentText(value: string) {
 export function usePostBattleComment(battleId: string) {
   const client = useQueryClient();
   return useCallback(
-    async (input: { text: string; chainId: number; walletAddress: string; sign: (action: string, lines: string[]) => Promise<WalletActionAuthPayload> }) => {
+    async (input: {
+      text: string;
+      chainId: number;
+      walletAddress: string;
+      sign: (action: string, lines: string[]) => Promise<WalletActionAuthPayload>;
+      /** Feed session (one signature per 12 h): when given, the comment needs no signature of its own. */
+      withSession?: <T>(fn: (token: string) => Promise<T>) => Promise<T>;
+    }) => {
       const text = normalizeBattleCommentText(input.text);
-      const auth = await input.sign("arena_battle_comment", [`Battle: ${battleId}`, `Comment: ${text}`]);
-      const data = await readJson(
-        await apiFetch(`/api/arena/battles/${encodeURIComponent(battleId)}/comments`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chainId: input.chainId, walletAddress: input.walletAddress, body: text, auth }),
-        }),
-      );
+      const url = `/api/arena/battles/${encodeURIComponent(battleId)}/comments`;
+      const data = input.withSession
+        ? await input.withSession(async (token) =>
+            readJson(
+              await apiFetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ body: text }),
+              }),
+            ),
+          )
+        : await readJson(
+            await apiFetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chainId: input.chainId,
+                walletAddress: input.walletAddress,
+                body: text,
+                auth: await input.sign("arena_battle_comment", [`Battle: ${battleId}`, `Comment: ${text}`]),
+              }),
+            }),
+          );
       await client.invalidateQueries({ queryKey: ["battle-comments", battleId] });
       return data.comment as BattleComment;
     },

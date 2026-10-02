@@ -21,6 +21,7 @@ import { battleRules } from "@/lib/arena/battlePageRules.mjs";
 import { formatPrizePool, useBattlePrizePool } from "@/components/arena/useBattlePrizePool";
 import { fetchBattleBoostState } from "@/lib/arena/battleBoostClient";
 import { useQuery } from "@tanstack/react-query";
+import { useFeedSession } from "@/hooks/useFeedSession";
 import { useBattleActivity, useBattleComments, useBattleEntries, usePostBattleComment, normalizeBattleCommentText, type BattleComment } from "@/lib/arena/battlePageApi";
 import { creatorOwnedIdentityKeys } from "@/lib/arena/creatorChallengePresentation.mjs";
 import { collectWallBattles, findBattleInFeed, presentBattleWallModule, wallPhaseForBattle } from "@/lib/arena/battleWallPresentation.mjs";
@@ -156,6 +157,7 @@ export default function BattlePage() {
   });
   const postComment = usePostBattleComment(id);
   const signer = useCommentSigner();
+  const { withSession } = useFeedSession();
   const [tab, setTab] = useState<PageTab>("live");
   const [draft, setDraft] = useState("");
   const [posting, setPosting] = useState(false);
@@ -169,7 +171,7 @@ export default function BattlePage() {
     if (!text || posting) return;
     setPosting(true);
     try {
-      await postComment({ text, chainId: signer.chainId, walletAddress: signer.address, sign: signer.sign });
+      await postComment({ text, chainId: signer.chainId, walletAddress: signer.address, sign: signer.sign, withSession });
       setDraft("");
     } catch (error: any) {
       toast.error(String(error?.message || "Could not post the comment."));
@@ -253,8 +255,7 @@ export default function BattlePage() {
     </section>
   );
 
-  const activityRows = (limit?: number) =>
-    (limit ? items.slice(0, limit) : items).map((item) => (
+  const activityRow = (item: (typeof items)[number]) => (
       <div key={item.id} className="flex items-center gap-3 rounded-xl border border-mw-border bg-mw-input px-3 py-2.5 text-[13px] lg:px-4 lg:text-sm">
         {item.kind === "boost" ? <Zap className="h-[18px] w-[18px] shrink-0 text-[#FF9A4D]" aria-hidden="true" /> : <BarChart3 className="h-[18px] w-[18px] shrink-0 text-mw-muted" aria-hidden="true" />}
         <span className="min-w-0 flex-1">
@@ -264,7 +265,12 @@ export default function BattlePage() {
         </span>
         <span className="shrink-0 text-mw-muted"><time dateTime={item.at}>{relativeTime(item.at)}</time></span>
       </div>
-    ));
+    );
+  // Live tab: comments and activity in one timeline, newest first (founder, 2026-10-02).
+  const liveTimeline = [
+    ...items.slice(0, 8).map((item) => ({ at: Date.parse(item.at) || 0, node: activityRow(item) })),
+    ...commentList.map((c) => ({ at: Date.parse(c.at) || 0, node: <CommentCard key={c.id} comment={c} tickers={tickers} /> })),
+  ].sort((a, b) => b.at - a.at);
 
   const poolCard = (
     <section className={`${card} flex flex-col gap-3 p-4`} aria-label="Prize pool">
@@ -306,8 +312,7 @@ export default function BattlePage() {
     main = (
       <>
         {composer}
-        {activityRows(8)}
-        {commentList.map((c) => <CommentCard key={c.id} comment={c} tickers={tickers} />)}
+        {liveTimeline.map((entry) => entry.node)}
         {!items.length && !commentList.length ? <p className="m-0 text-sm text-mw-muted">No activity yet.</p> : null}
       </>
     );

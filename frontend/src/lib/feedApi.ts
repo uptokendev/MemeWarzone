@@ -135,14 +135,17 @@ export async function createFeedPost(input: {
   signature: string;
   mediaUrl?: string | null;
   quoteOf?: number | null;
+  /** Feed session token: the post then needs no nonce or signature (one signature per 12 h). */
+  token?: string;
 }): Promise<{ id: number | null }> {
+  const { token, ...payload } = input;
   const res = await apiFetch("/api/feed/posts", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
+    headers: token ? { "content-type": "application/json", Authorization: `Bearer ${token}` } : { "content-type": "application/json" },
+    body: JSON.stringify(payload),
   });
   const json = await readJson(res);
-  if (!res.ok) throw new Error(String(json?.error || `Failed to post (${res.status})`));
+  if (!res.ok) throw Object.assign(new Error(String(json?.error || `Failed to post (${res.status})`)), { status: res.status, code: json?.code });
   return { id: (json?.id as number | null) ?? null };
 }
 
@@ -216,23 +219,31 @@ export async function uploadFeedImage(input: {
   chainId: number;
   address: string;
   walletType: "evm" | "solana";
-  signMessage: (message: string) => Promise<string>;
+  signMessage?: (message: string) => Promise<string>;
+  /** Feed session token: the upload then needs no signature of its own. */
+  token?: string;
 }): Promise<string> {
-  const { signWalletAction, appendAuthToSearchParams } = await import("@/lib/walletActionAuth");
-  const auth = await signWalletAction({
-    action: "feed_post_image",
-    walletAddress: input.address,
-    chainId: input.chainId,
-    walletType: input.walletType,
-    signMessage: input.signMessage,
-  });
   const qs = new URLSearchParams({ chainId: String(input.chainId), address: input.address });
-  appendAuthToSearchParams(qs, auth);
+  if (!input.token) {
+    const { signWalletAction, appendAuthToSearchParams } = await import("@/lib/walletActionAuth");
+    const auth = await signWalletAction({
+      action: "feed_post_image",
+      walletAddress: input.address,
+      chainId: input.chainId,
+      walletType: input.walletType,
+      signMessage: input.signMessage!,
+    });
+    appendAuthToSearchParams(qs, auth);
+  }
   const fd = new FormData();
   fd.append("file", input.file);
-  const res = await apiFetch(`/api/feed/image?${qs.toString()}`, { method: "POST", body: fd });
+  const res = await apiFetch(`/api/feed/image?${qs.toString()}`, {
+    method: "POST",
+    body: fd,
+    headers: input.token ? { Authorization: `Bearer ${input.token}` } : undefined,
+  });
   const json = await readJson(res);
-  if (!res.ok) throw new Error(String(json?.error || `Upload failed (${res.status})`));
+  if (!res.ok) throw Object.assign(new Error(String(json?.error || `Upload failed (${res.status})`)), { status: res.status, code: json?.code });
   const url = String(json?.url || "").trim();
   if (!url) throw new Error("Upload succeeded but no image URL was returned.");
   return url;

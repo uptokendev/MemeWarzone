@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ImagePlus, MessageCircle, PenLine, Repeat2, Rocket, Share2, X } from "lucide-react";
+import { ImagePlus, Link2, MessageCircle, PenLine, Repeat2, Rocket, Share2, X } from "lucide-react";
 import { toast } from "sonner";
 import { isSolanaAddress } from "@/lib/address";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
@@ -64,8 +64,11 @@ function chainLabel(chainId?: number | null) {
 }
 
 const card = "rounded-[14px] border border-mw-border bg-mw-surface font-mw-body text-mw-text";
-const act =
-  "mw-focus inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 text-sm text-mw-muted transition-colors hover:bg-[#171B20] hover:text-mw-text disabled:opacity-50";
+const actBase =
+  "mw-focus inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 text-sm transition-colors hover:bg-[#171B20] disabled:opacity-50";
+const act = `${actBase} text-mw-muted hover:text-mw-text`;
+/** Active state replaces the grey (rocket orange, repost green) instead of competing with it. */
+const actOn = (on: boolean, color: string) => (on ? `${actBase} ${color}` : act);
 const chip = "inline-flex h-[22px] items-center rounded-full border px-2 text-xs font-semibold";
 
 export function FeedAvatar({ url, label, square = false, size = 44 }: { url?: string | null; label: string; square?: boolean; size?: number }) {
@@ -221,18 +224,21 @@ export function FeedPostActions({ item, onChanged, big = false }: { item: FeedIt
     }
   };
 
-  const share = async () => {
-    const url = `${window.location.origin}${postHref(postId)}`;
+  const [shareOpen, setShareOpen] = useState(false);
+  const shareUrl = typeof window !== "undefined" ? `${window.location.origin}${postHref(postId)}` : postHref(postId);
+  const copyLink = async () => {
+    setShareOpen(false);
     try {
-      if (navigator.share) {
-        await navigator.share({ url });
-        return;
-      }
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(shareUrl);
       toast.success("Link copied.");
-    } catch (err: unknown) {
-      if (String((err as Error)?.name || "") !== "AbortError") toast.error("Could not share this post.");
+    } catch {
+      toast.error("Could not copy the link.");
     }
+  };
+  const shareOnX = () => {
+    setShareOpen(false);
+    const text = String(item.body || "").slice(0, 200);
+    window.open(`https://x.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -257,7 +263,7 @@ export function FeedPostActions({ item, onChanged, big = false }: { item: FeedIt
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((open) => !open)}
-            className={`${act} ${reposted ? "text-[#6EE7A0]" : ""}`}
+            className={actOn(reposted, "text-[#4ADE80]")}
           >
             <Repeat2 className="h-[18px] w-[18px]" />
             {big ? null : <span>{countLabel(repostCount)}</span>}
@@ -311,15 +317,32 @@ export function FeedPostActions({ item, onChanged, big = false }: { item: FeedIt
               setFireCount(result.fireCount);
             })
           }
-          className={`${act} ${fired ? "text-[#FF9A4D]" : ""}`}
+          className={actOn(fired, "text-[#FF9A4D]")}
         >
           <Rocket className="h-[18px] w-[18px]" />
           {big ? null : <span>{countLabel(fireCount)}</span>}
         </button>
         {big ? null : <span className="flex-1" />}
-        <button type="button" aria-label="Share" onClick={() => void share()} className={act}>
-          <Share2 className="h-[18px] w-[18px]" />
-        </button>
+        <div className="relative">
+          <button type="button" aria-label="Share" aria-haspopup="menu" aria-expanded={shareOpen} onClick={() => setShareOpen((open) => !open)} className={act}>
+            <Share2 className="h-[18px] w-[18px]" />
+          </button>
+          {shareOpen ? (
+            <>
+              <button type="button" aria-label="Close menu" className="fixed inset-0 z-[60] cursor-default" onClick={() => setShareOpen(false)} />
+              <div role="menu" aria-label="Share" className="absolute right-0 top-11 z-[61] flex w-[200px] flex-col gap-1 rounded-[16px] border border-[#2E353D] bg-mw-surface p-2 shadow-xl">
+                <button type="button" role="menuitem" onClick={() => void copyLink()} className="mw-focus flex min-h-12 items-center gap-3 rounded-[10px] px-3 text-left font-bold text-mw-text hover:bg-[#171B20]">
+                  <Link2 className="h-[18px] w-[18px]" />
+                  Copy link
+                </button>
+                <button type="button" role="menuitem" onClick={shareOnX} className="mw-focus flex min-h-12 items-center gap-3 rounded-[10px] px-3 text-left font-bold text-mw-text hover:bg-[#171B20]">
+                  <span className="w-[18px] text-center font-black" aria-hidden="true">𝕏</span>
+                  Share on X
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
         {quoteOpen ? <QuoteDialog item={item} onClose={() => setQuoteOpen(false)} onPosted={onChanged} /> : null}
       </div>
     </>
