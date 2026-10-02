@@ -4,7 +4,7 @@ import { isSolanaAddress } from "@/lib/address";
 export const FEED_MAX_CHARS = 1000;
 export const FEED_PREVIEW_CHARS = 280;
 
-export type FeedItemType = "post" | "coin_post" | "draft_created" | "coin_deployed" | "trade";
+export type FeedItemType = "post" | "coin_post" | "draft_created" | "coin_deployed" | "coin_graduated" | "battle_started" | "battle_finished" | "trade";
 
 export type FeedItem = {
   type: FeedItemType;
@@ -57,6 +57,14 @@ export type FeedItem = {
     authorAvatarUrl: string | null;
   } | null;
   coinPostId?: number;
+  viewCount?: number;
+  /** Battle updates (founder, 2026-10-02: For you shows battles too). */
+  battleId?: string;
+  battleMode?: string | null;
+  sides?: Array<{ symbol: string | null; name: string | null; tokenAddress: string | null; ownerWallet: string | null; imageUrl: string | null }>;
+  winnerToken?: string | null;
+  stakeNative?: number | null;
+  nativeSymbol?: string | null;
 };
 
 export type FeedSuggestion = {
@@ -247,4 +255,53 @@ export async function uploadFeedImage(input: {
   const url = String(json?.url || "").trim();
   if (!url) throw new Error("Upload succeeded but no image URL was returned.");
   return url;
+}
+
+/** One page of For you / Following (infinite scroll). `before` = createdAt of the last item shown. */
+export async function fetchFeedPage(params: { tab: "for-you" | "following"; viewer?: string; before?: string | null; limit?: number }): Promise<{ items: FeedItem[]; nextCursor: string | null }> {
+  const qs = new URLSearchParams({ tab: params.tab, limit: String(params.limit ?? 30) });
+  if (params.viewer) qs.set("viewer", params.viewer);
+  if (params.before) qs.set("before", params.before);
+  const json = await apiJson<{ items?: FeedItem[]; nextCursor?: string | null }>(`/api/feed/posts?${qs.toString()}`);
+  return { items: Array.isArray(json?.items) ? json.items : [], nextCursor: json?.nextCursor || null };
+}
+
+const ANON_KEY = "mwz:feed:viewer";
+
+/** Who is viewing: the wallet when connected, otherwise one anonymous id per browser. */
+export function feedViewerKey(account?: string | null) {
+  if (account) return account;
+  try {
+    let id = window.localStorage.getItem(ANON_KEY);
+    if (!id) {
+      id = `anon:${(window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9-]/g, "")}`;
+      window.localStorage.setItem(ANON_KEY, id);
+    }
+    return id;
+  } catch {
+    return "";
+  }
+}
+
+let pendingViews = new Set<number>();
+let viewTimer: number | null = null;
+let viewViewer = "";
+
+/** Queue a view; sent in small batches (one view per viewer per post is kept server side). */
+export function queueFeedView(postId: number, viewer: string) {
+  if (!postId || !viewer) return;
+  viewViewer = viewer;
+  pendingViews.add(postId);
+  if (viewTimer != null) return;
+  viewTimer = window.setTimeout(() => {
+    const ids = [...pendingViews].slice(0, 40);
+    pendingViews = new Set([...pendingViews].slice(40));
+    viewTimer = null;
+    void apiFetch("/api/feed/views", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ postIds: ids, viewer: viewViewer }),
+      keepalive: true,
+    }).catch(() => {});
+  }, 2500);
 }

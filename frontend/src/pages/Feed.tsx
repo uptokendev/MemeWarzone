@@ -1,5 +1,5 @@
 /** Home (the feed on "/"), UI redesign phase 2 (artboard Home + HomeMobile). */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FeedItemView, FeedWhoToFollow } from "@/components/feed/FeedCards";
 import {
   BattleFeedCard,
@@ -19,7 +19,7 @@ import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { getActiveChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { isSolanaAddress } from "@/lib/address";
-import { fetchFeedPosts, fetchFeedSuggestions, type FeedItem, type FeedSuggestion } from "@/lib/feedApi";
+import { fetchFeedPage, fetchFeedSuggestions, type FeedItem, type FeedSuggestion } from "@/lib/feedApi";
 import { useHomeCoins } from "@/lib/homeFeedData";
 
 type HomeTab = "for-you" | "following" | "launches" | "battles" | "graduations" | "trending" | "league" | "recruiters";
@@ -52,29 +52,64 @@ export default function Feed() {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [suggestions, setSuggestions] = useState<FeedSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
   const postsTab = tab === "for-you" || tab === "following";
   const { liveBattles = [] } = useArenaBattleFeed();
   const launches = useHomeCoins(coinChainId, "launches", 12, tab === "launches");
   const graduations = useHomeCoins(coinChainId, "graduations", 12, tab === "graduations");
 
+  // First page (and reload after posting).
   const load = useCallback(async () => {
     if (!postsTab) return;
     setLoading(true);
     setError(null);
     try {
-      setItems(await fetchFeedPosts({ tab: tab as "for-you" | "following", viewer: account || undefined, chainId, limit: 40 }));
+      const page = await fetchFeedPage({ tab: tab as "for-you" | "following", viewer: account || undefined });
+      setItems(page.items);
+      setCursor(page.nextCursor);
     } catch (e: unknown) {
       setError(String((e as Error)?.message || "Failed to load feed"));
       setItems([]);
+      setCursor(null);
     } finally {
       setLoading(false);
     }
-  }, [account, chainId, postsTab, tab]);
+  }, [account, postsTab, tab]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Infinite scroll: the next page loads when the bottom of the list comes into view.
+  const loadMore = useCallback(async () => {
+    if (!postsTab || !cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await fetchFeedPage({ tab: tab as "for-you" | "following", viewer: account || undefined, before: cursor });
+      setItems((prev) => {
+        const seen = new Set(prev.map((i) => i.id));
+        return [...prev, ...page.items.filter((i) => !seen.has(i.id))];
+      });
+      setCursor(page.nextCursor);
+    } catch {
+      // Keep what is shown; the next scroll retries.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [account, cursor, loadingMore, postsTab, tab]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !cursor || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) void loadMore();
+    }, { rootMargin: "600px 0px" });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [cursor, loadMore]);
 
   // Who to follow is optional: an API without it must not take the feed down.
   useEffect(() => {
@@ -111,7 +146,7 @@ export default function Feed() {
             {tab === "for-you" ? (
               <div className="flex items-center gap-2.5 rounded-[14px] border border-mw-border bg-mw-surface px-3.5 py-2.5 text-[13px] text-[#C9CED4]">
                 <span className="text-[#FF9A4D]" aria-hidden="true">●</span>
-                <span>Ranked for you: posts taking off right now, people you follow, and creator updates from coins.</span>
+                <span>Everything on MemeWarzone, newest first: posts, reposts, creator updates, launches, graduations and battles.</span>
               </div>
             ) : null}
             {tab === "for-you" ? <div className="lg:hidden"><HomeComposer onPosted={() => void load()} /></div> : null}
@@ -122,9 +157,14 @@ export default function Feed() {
               ) : error ? (
                 <div className="rounded-[14px] border border-[#5A1A26] bg-[#2A0E14] p-4 text-sm text-[#FFB4C0]">{error}</div>
               ) : items.length ? (
-                items.map((item) => <FeedItemView key={item.id} item={item} onChanged={() => void load()} />)
+                <>
+                  {items.map((item) => <FeedItemView key={item.id} item={item} onChanged={() => void load()} />)}
+                  <div ref={sentinelRef} aria-hidden="true" />
+                  {loadingMore ? <div className={empty}>Loading more...</div> : null}
+                  {!cursor ? <p className="m-0 py-2 text-center text-[13px] text-mw-muted">You are all caught up.</p> : null}
+                </>
               ) : (
-                <div className={empty}>{tab === "following" ? "Follow people to see their posts here." : "The feed is quiet. Be first to post."}</div>
+                <div className={empty}>{tab === "following" ? "Follow people to see their posts, reposts and coin updates here." : "The feed is quiet. Be first to post."}</div>
               )
             ) : null}
 

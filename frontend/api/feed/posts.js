@@ -20,6 +20,17 @@ import { createFeedSessionAuth } from "../lib/feedSessionAuth.js";
 import { loadFollowingAddresses, loadPostEvents } from "../lib/socialTimeline.js";
 import { isSolanaAddress, isSolanaChain } from "../../server/http.js";
 import { contractAddressInBody, isOwnFeedImage } from "../lib/feedPostMedia.js";
+import {
+  FEED_PAGE_SIZE,
+  loadBattleEvents,
+  loadDeployEvents,
+  loadDraftEvents,
+  loadGraduationEvents,
+  loadViewCounts,
+  mergeTimelinePage,
+  parseCursor,
+  recordViews,
+} from "../lib/feedTimeline.js";
 
 const feedSession = createFeedSessionAuth({ pool });
 
@@ -355,8 +366,15 @@ async function loadRecentPosts({ limit, author, authors, viewer, ranked }) {
   }
 }
 
-async function loadSharedCoinPosts(limit) {
+async function loadSharedCoinPosts(limit, { before = null, authors = null } = {}) {
   try {
+    const params = [limit];
+    const extra = [
+      before ? `and cp.created_at < $${params.push(before)}` : "",
+      Array.isArray(authors)
+        ? `and lower(cp.author_wallet) = any($${params.push(authors.map((w) => String(w).toLowerCase()))}::text[])`
+        : "",
+    ].join(" ");
     const { rows } = await pool.query(
       `select cp.id, cp.chain_id, cp.token_address, cp.author_wallet, cp.body, cp.media_url, cp.created_at,
               c.campaign_address, c.name as token_name, c.symbol as token_ticker, c.logo_uri as token_logo_uri
@@ -367,10 +385,10 @@ async function loadSharedCoinPosts(limit) {
               and (c.token_address = cp.token_address or lower(c.token_address) = lower(cp.token_address))
             limit 1
          ) c on true
-        where cp.status = 0 and cp.share_to_feed = true
+        where cp.status = 0 and cp.share_to_feed = true ${extra}
         order by cp.created_at desc, cp.id desc
         limit $1`,
-      [limit],
+      params,
     );
     return rows.map((row) => ({
       type: "coin_post",
@@ -396,6 +414,76 @@ async function loadSharedCoinPosts(limit) {
   }
 }
 
+/** Top-level posts older than `before`, optionally only from `authors`. */
+async function queryPostsPage({ before, limit, authors, viewer }) {
+  const params = [];
+  const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
+  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.parent_id is null`;
+  if (before) sql += ` and p.created_at < $${params.push(before)}`;
+  if (Array.isArray(authors)) {
+    sql += ` and lower(p.author_address) = any($${params.push(authors.map((w) => String(w).toLowerCase()))}::text[])`;
+  }
+  sql += ` order by p.created_at desc, p.id desc limit $${params.push(limit)}`;
+  const { rows } = await pool.query(sql, params);
+  return rows.map((row) => mapPostRow(row));
+}
+
+/** Reposts (at the moment of reposting) older than `before`, optionally only by `reposters`. */
+async function queryRepostsPage({ before, limit, reposters, viewer }) {
+  const params = [];
+  const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
+  let sql = `${postSelect(viewerSql)}
+    , rp.author_address as reposted_by
+    , rup.display_name as reposted_by_display_name
+    , rp.created_at as sort_at
+    ${POST_FROM}
+    join public.social_post_reposts rp on rp.post_id = p.id
+    ${REPOSTER_PROFILE_LATERAL}
+    where p.status = 0 and p.parent_id is null`;
+  if (before) sql += ` and rp.created_at < $${params.push(before)}`;
+  if (Array.isArray(reposters)) {
+    sql += ` and lower(rp.author_address) = any($${params.push(reposters.map((w) => String(w).toLowerCase()))}::text[])`;
+  }
+  sql += ` order by rp.created_at desc limit $${params.push(limit)}`;
+  const { rows } = await pool.query(sql, params);
+  return rows.map((row) =>
+    mapPostRow(row, {
+      id: `repost:${row.reposted_by}:${row.id}`,
+      repostedByWallet: row.reposted_by || null,
+      repostedByDisplayName: row.reposted_by_display_name || null,
+    }),
+  );
+}
+
+/**
+ * For you (authors = null): everything. Following (authors = followed wallets): only their posts,
+ * reposts, coin posts, launches, drafts, graduations and battles. One page, newest first.
+ */
+async function loadTimelinePage({ before, limit, authors, viewer }) {
+  const take = limit + 5;
+  const guard = async (fn) => {
+    try {
+      return await fn();
+    } catch (e) {
+      if (missingTable(e)) return [];
+      throw e;
+    }
+  };
+  const sources = await Promise.all([
+    guard(() => queryPostsPage({ before, limit: take, authors, viewer })),
+    guard(() => queryRepostsPage({ before, limit: take, reposters: authors, viewer })),
+    loadSharedCoinPosts(take, { before, authors }),
+    loadDeployEvents({ before, limit: take, authors }),
+    loadDraftEvents({ before, limit: take, authors }),
+    loadGraduationEvents({ before, limit: take, authors }),
+    loadBattleEvents({ before, limit: take, authors }),
+  ]);
+  const page = mergeTimelinePage(sources, limit);
+  const views = await loadViewCounts(page.items.map((item) => item.postId).filter(Boolean));
+  page.items = page.items.map((item) => (item.postId ? { ...item, viewCount: views.get(Number(item.postId)) || 0 } : item));
+  return page;
+}
+
 async function handleGet(req, res) {
   const q = getQuery(req);
   const limit = clampInt(q.limit, 1, 100, 40);
@@ -408,31 +496,31 @@ async function handleGet(req, res) {
     return json(res, 200, { items, tab: "author", author });
   }
 
+  const before = parseCursor(q.before);
+  const pageSize = clampInt(q.limit, 1, 60, FEED_PAGE_SIZE);
   if (tab === "following") {
-    if (!viewer) return json(res, 200, { items: [], tab: "following", warning: "Connect a wallet to load Following." });
-    // Following includes the viewer's own posts and reposts (founder, 2026-10-02: "I do not see the repost").
-    const following = Array.from(new Set([...(await loadFollowingAddresses(viewer)), viewer]));
-    try {
-      const items = await queryFollowing(viewer, following, limit);
-      return json(res, 200, { items, tab: "following" });
-    } catch (e) {
-      if (!missingTable(e)) throw e;
-      const items = await loadRecentPosts({ limit, authors: following, viewer });
-      return json(res, 200, { items, tab: "following" });
-    }
+    if (!viewer) return json(res, 200, { items: [], nextCursor: null, tab: "following", warning: "Connect a wallet to load Following." });
+    // Following = only the wallets you follow (founder, 2026-10-02). Your own posts and reposts are in For you.
+    const following = await loadFollowingAddresses(viewer);
+    if (!following.length) return json(res, 200, { items: [], nextCursor: null, tab: "following" });
+    const page = await loadTimelinePage({ before, limit: pageSize, authors: following, viewer });
+    return json(res, 200, { ...page, tab: "following" });
   }
 
-  const following = viewer ? await loadFollowingAddresses(viewer) : [];
-  const items = await loadRecentPosts({
-    limit,
-    viewer,
-    ranked: { following },
-  });
-  // UI redesign phase 2: creator posts written as a coin (coin page, "share to feed") join For you,
-  // ranked with the same recency-first score as wallet posts.
-  const coinPosts = await loadSharedCoinPosts(limit);
-  if (!coinPosts.length) return json(res, 200, { items, tab: "for-you" });
-  return json(res, 200, { items: rankFeedPosts([...items, ...coinPosts], { following, limit }), tab: "for-you" });
+  // For you = everything, newest first, infinite scroll (founder, 2026-10-02).
+  const page = await loadTimelinePage({ before, limit: pageSize, authors: null, viewer });
+  return json(res, 200, { ...page, tab: "for-you" });
+}
+
+async function handleViews(req, res) {
+  const b = req.body && typeof req.body === "object" && Object.keys(req.body).length ? req.body : await readJson(req);
+  try {
+    const added = await recordViews(Array.isArray(b.postIds) ? b.postIds : [], b.viewer);
+    return json(res, 200, { ok: true, added });
+  } catch (e) {
+    if (missingTable(e)) return json(res, 200, { ok: true, added: 0, warning: "views not set up yet" });
+    throw e;
+  }
 }
 
 async function handleGetOne(req, res) {
@@ -446,7 +534,8 @@ async function handleGetOne(req, res) {
   try {
     const { rows } = await pool.query(sql, params);
     if (!rows[0]) return json(res, 404, { error: "Post not found" });
-    return json(res, 200, { item: mapPostRow(rows[0]) });
+    const views = await loadViewCounts([postId]);
+    return json(res, 200, { item: { ...mapPostRow(rows[0]), viewCount: views.get(postId) || 0 } });
   } catch (e) {
     if (missingTable(e)) return json(res, 404, { error: "Post not found" });
     throw e;
@@ -758,6 +847,7 @@ export default async function handler(req, res) {
     if (req.method === "GET" && /\/posts\/\d+\/replies\/?$/i.test(path)) return await handleGetReplies(req, res);
     if (req.method === "GET" && /\/posts\/\d+\/?$/i.test(path)) return await handleGetOne(req, res);
     if (req.method === "GET") return await handleGet(req, res);
+    if (req.method === "POST" && /\/feed\/views\/?$/i.test(path)) return await handleViews(req, res);
     if (req.method === "POST" && /\/posts\/\d+\/fire\/?$/i.test(path)) return await handleFire(req, res);
     if (req.method === "POST" && /\/posts\/\d+\/repost\/?$/i.test(path)) return await handleRepost(req, res);
     if (req.method === "POST" && /\/posts\/\d+\/replies\/?$/i.test(path)) return await handleReply(req, res);

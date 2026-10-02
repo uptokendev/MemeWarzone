@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { FeedAvatar, FeedBody, FeedCoinCard, FeedPostActions, timeAgo } from "@/components/feed/FeedCards";
 import { useFeedSession } from "@/hooks/useFeedSession";
-import { FEED_MAX_CHARS, createFeedReply, fetchFeedPost, fetchPostReplies, type FeedItem } from "@/lib/feedApi";
+import { FEED_MAX_CHARS, createFeedReply, feedViewerKey, fetchFeedPost, fetchPostReplies, queueFeedView, type FeedItem } from "@/lib/feedApi";
 
 function shortWallet(value?: string | null) {
   const v = String(value || "");
@@ -40,6 +40,7 @@ export default function PostThread() {
       setPost(item);
       setReplies(list);
       setState("ready");
+      queueFeedView(postId, feedViewerKey(account));
     } catch {
       setState("error");
     }

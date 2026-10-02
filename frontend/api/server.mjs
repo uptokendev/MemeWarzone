@@ -411,6 +411,7 @@ router.all("/feed/posts/:id/repost", wrap(feedPosts));
 router.all("/feed/posts/:id/replies", wrap(feedPosts));
 router.all("/feed/posts/:id/delete", wrap(feedPosts));
 router.get("/feed/posts/:id", wrap(feedPosts));
+router.post("/feed/views", wrap(feedPosts));
 router.all("/feed/posts", wrap(feedPosts));
 router.all("/ably/token", wrap(ablyToken));
 router.get("/price/bnb-usd", wrap(bnbUsdPrice));

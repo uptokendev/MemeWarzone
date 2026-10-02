@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ImagePlus, Link2, MessageCircle, PenLine, Repeat2, Rocket, Share2, X } from "lucide-react";
+import { BarChart2, GraduationCap, ImagePlus, Link2, MessageCircle, PenLine, Repeat2, Rocket, Rocket as LaunchIcon, Share2, Swords, Trophy, X } from "lucide-react";
 import { toast } from "sonner";
 import { isSolanaAddress } from "@/lib/address";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import {
   FEED_PREVIEW_CHARS,
+  feedViewerKey,
+  queueFeedView,
   toggleFeedFire,
   toggleFeedRepost,
   type FeedItem,
@@ -83,6 +85,44 @@ export function FeedAvatar({ url, label, square = false, size = 44 }: { url?: st
       {label.replace(/^[@$]/, "").slice(0, 2).toUpperCase() || "MW"}
     </span>
   );
+}
+
+/** Counts a view once a post card has been on screen for about a second (one view per viewer per post). */
+function useViewTracking(postId?: number | null) {
+  const ref = useRef<HTMLElement | null>(null);
+  const { account } = useFeedSession();
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !postId || typeof IntersectionObserver === "undefined") return;
+    let timer: number | null = null;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+          timer = window.setTimeout(() => {
+            queueFeedView(Number(postId), feedViewerKey(account));
+            observer.disconnect();
+          }, 1000);
+        } else if (timer != null) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+      },
+      { threshold: [0, 0.5] },
+    );
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [postId, account]);
+  return ref;
+}
+
+function compactCount(n?: number | null) {
+  const v = Number(n || 0);
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  return String(v);
 }
 
 export function FeedBody({ body, big = false }: { body?: string | null; big?: boolean }) {
@@ -248,6 +288,7 @@ export function FeedPostActions({ item, onChanged, big = false }: { item: FeedIt
           <span><b>{repostCount}</b> <span className="text-mw-muted">reposts</span></span>
           <span><b>{fireCount}</b> <span className="text-mw-muted">rockets</span></span>
           <span><b>{Number(item.replyCount || 0)}</b> <span className="text-mw-muted">replies</span></span>
+          <span><b>{compactCount(item.viewCount)}</b> <span className="text-mw-muted">views</span></span>
         </div>
       ) : null}
       <div className={big ? "flex items-center justify-around pt-1.5" : "-ml-2.5 mt-2 flex items-center gap-1"}>
@@ -322,6 +363,12 @@ export function FeedPostActions({ item, onChanged, big = false }: { item: FeedIt
           <Rocket className="h-[18px] w-[18px]" />
           {big ? null : <span>{countLabel(fireCount)}</span>}
         </button>
+        {big ? null : (
+          <span className="inline-flex min-h-10 items-center gap-1.5 px-2.5 text-sm text-mw-muted" aria-label={`${Number(item.viewCount || 0)} views`}>
+            <BarChart2 className="h-[18px] w-[18px]" aria-hidden="true" />
+            <span>{item.viewCount ? compactCount(item.viewCount) : ""}</span>
+          </span>
+        )}
         {big ? null : <span className="flex-1" />}
         <div className="relative">
           <button type="button" aria-label="Share" aria-haspopup="menu" aria-expanded={shareOpen} onClick={() => setShareOpen((open) => !open)} className={act}>
@@ -358,9 +405,10 @@ export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: 
       : null;
   const author = item.authorDisplayName ? item.authorDisplayName : shorten(item.wallet);
   const handle = item.authorDisplayName ? `@${item.authorDisplayName}` : "";
+  const viewRef = useViewTracking(item.postId);
 
   return (
-    <article className={`${card} px-[18px] pb-2 pt-4`}>
+    <article ref={viewRef as React.RefObject<HTMLElement>} className={`${card} px-[18px] pb-2 pt-4`}>
       {reposter ? (
         <div className="mb-2 flex items-center gap-1.5 pl-[58px] text-[13px] text-mw-muted">
           <Repeat2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -413,33 +461,100 @@ export function FeedCoinPostCard({ item }: { item: FeedItem }) {
   );
 }
 
+const updateChip = `${chip} border-[#1E3A5F] bg-[#0F1C2B] text-[#8CC4F0]`;
+
+/** Auto update card (artboard "Auto update"): launches, public drafts and graduations. */
 export function FeedSystemCard({ item }: { item: FeedItem }) {
-  const navigate = useNavigate();
   const ticker = item.ticker || item.campaignSymbol;
   const name = item.name || item.campaignName || shorten(item.campaignAddress);
-  const verb = item.type === "draft_created" ? "opened a draft" : "deployed";
   const href = item.type === "draft_created" && item.slug ? `/prepare/${item.slug}` : tokenHref(item);
-
+  const chain = chainLabel(item.chainId);
+  const kind =
+    item.type === "coin_graduated"
+      ? { icon: <GraduationCap className="h-4 w-4" aria-hidden="true" />, verb: "graduated", line: "The curve is full. It now trades on its DEX with liquidity locked." }
+      : item.type === "draft_created"
+        ? { icon: <PenLine className="h-4 w-4" aria-hidden="true" />, verb: "is being prepared", line: "A new coin in prepare mode. Follow it before launch." }
+        : { icon: <LaunchIcon className="h-4 w-4" aria-hidden="true" />, verb: "launched", line: "New on the curve." };
+  const target = href && href !== "/" ? href : null;
   return (
-    <button
-      type="button"
-      onClick={() => {
-        if (href && href !== "/") navigate(href);
-      }}
-      className={`${card} mw-focus flex w-full items-center gap-3 p-4 text-left hover:border-[#3A424C]`}
-    >
-      <FeedAvatar url={item.logoUri} label={ticker || name || "?"} square />
+    <article className={`${card} flex gap-3.5 px-[18px] py-4`}>
+      {target ? <Link to={target} className="mw-focus shrink-0 rounded-[12px]"><FeedAvatar url={item.logoUri} label={ticker || name || "?"} square /></Link> : <FeedAvatar url={item.logoUri} label={ticker || name || "?"} square />}
       <div className="min-w-0 flex-1">
-        <div className="text-sm text-mw-muted">
-          <Link to={profileHref(item.wallet)} className="text-mw-text hover:text-mw-text" onClick={(e) => e.stopPropagation()}>
-            {item.authorDisplayName ? `@${item.authorDisplayName}` : shorten(item.wallet)}
-          </Link>{" "}
-          {verb} <b className="text-mw-text">{name}</b>
-          {ticker ? ` $${ticker}` : ""}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <b>{name}</b>
+          <span className={updateChip}>Auto update</span>
+          <span className="text-sm text-mw-muted">{ticker ? `$${ticker} · ` : ""}{chain ? `${chain} · ` : ""}{timeAgo(item.createdAt)}</span>
         </div>
-        <div className="mt-0.5 text-xs text-mw-muted">{timeAgo(item.createdAt)}</div>
+        <p className="m-0 mt-1 flex items-center gap-1.5 text-[15px]">
+          <span className={item.type === "coin_graduated" ? "text-[#6EE7A0]" : "text-mw-accent-soft"}>{kind.icon}</span>
+          <span>
+            {ticker ? `$${ticker}` : name} {kind.verb}
+            {item.wallet ? (
+              <>
+                {" "}by{" "}
+                <Link to={profileHref(item.wallet)} className="text-mw-accent-soft hover:text-[#FFD0A8]">
+                  {item.authorDisplayName ? `@${item.authorDisplayName}` : shorten(item.wallet)}
+                </Link>
+              </>
+            ) : null}
+            .
+          </span>
+        </p>
+        <p className="m-0 mt-0.5 text-sm text-mw-muted">{kind.line}</p>
+        {target ? (
+          <div className="mt-2.5 flex gap-2">
+            <Link to={target} className="mw-focus inline-flex min-h-10 items-center rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text">
+              {item.type === "draft_created" ? "Open promotion" : "Coin page"}
+            </Link>
+            {item.type !== "draft_created" ? (
+              <Link to={target} className="mw-focus inline-flex min-h-10 items-center rounded-[10px] border border-mw-buy bg-mw-buy px-4 text-sm font-bold text-[#04140A] hover:bg-[#15913F] hover:text-[#04140A]">Buy</Link>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-    </button>
+    </article>
+  );
+}
+
+/** Battle update: a fight went live, or a fight has a winner. */
+export function FeedBattleCard({ item }: { item: FeedItem }) {
+  const sides = item.sides || [];
+  const [a, b] = [sides[0], sides[1]];
+  const tick = (side?: (typeof sides)[number]) => (side?.symbol ? `$${String(side.symbol).replace(/^\$/, "")}` : "?");
+  const winner = item.type === "battle_finished" ? sides.find((side) => String(side.tokenAddress || "").toLowerCase() === String(item.winnerToken || "").toLowerCase()) : null;
+  const href = item.battleId ? `/warzone/battles/${encodeURIComponent(item.battleId)}` : "/warzone/battles";
+  const mode = item.battleMode === "vote" ? "Vote battle" : item.battleMode ? "Metrics battle" : "Battle";
+  return (
+    <article className={`${card} flex flex-col gap-3 px-[18px] py-4 ${item.type === "battle_finished" ? "" : "border-[#5A3416]"}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className={item.type === "battle_finished" ? updateChip : `${chip} border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft`}>{item.type === "battle_finished" ? "Battle result" : "Battle live"}</span>
+        <span className="text-sm text-mw-muted">{mode}{chainLabel(item.chainId) ? ` · ${chainLabel(item.chainId)}` : ""} · {timeAgo(item.createdAt)}</span>
+      </div>
+      <div className="flex items-center gap-3">
+        <FeedAvatar url={a?.imageUrl} label={a?.symbol || "?"} square size={52} />
+        <div className="min-w-0 flex-1 text-center">
+          <div className="truncate font-bold">{tick(a)} <span className="font-medium text-mw-muted">vs</span> {tick(b)}</div>
+          <div className="mt-0.5 flex items-center justify-center gap-1.5 text-sm text-mw-muted">
+            {winner ? (
+              <>
+                <Trophy className="h-4 w-4 text-[#F2C14E]" aria-hidden="true" />
+                {tick(winner)} won
+              </>
+            ) : (
+              <>
+                <Swords className="h-4 w-4 text-[#FF9A4D]" aria-hidden="true" />
+                {item.stakeNative ? `Stake ${item.stakeNative} ${item.nativeSymbol || ""}` : "Vote or boost your side"}
+              </>
+            )}
+          </div>
+        </div>
+        <FeedAvatar url={b?.imageUrl} label={b?.symbol || "?"} square size={52} />
+      </div>
+      <Link to={href} className="mw-focus inline-flex min-h-10 w-max items-center gap-2 self-end rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text">
+        <Swords className="h-4 w-4" aria-hidden="true" />
+        {item.type === "battle_finished" ? "See the result" : "Open fight"}
+      </Link>
+    </article>
   );
 }
 
@@ -484,6 +599,7 @@ export function FeedItemView({ item, onChanged }: { item: FeedItem; onChanged?: 
   if (item.type === "post") return <FeedPostCard item={item} onChanged={onChanged} />;
   if (item.type === "coin_post") return <FeedCoinPostCard item={item} />;
   if (item.type === "trade") return <FeedTradeCard item={item} />;
+  if (item.type === "battle_started" || item.type === "battle_finished") return <FeedBattleCard item={item} />;
   return <FeedSystemCard item={item} />;
 }
 
