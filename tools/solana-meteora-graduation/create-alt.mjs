@@ -7,7 +7,6 @@ import {
   Keypair,
   PublicKey,
   SystemProgram,
-  Transaction,
   TransactionMessage,
   VersionedTransaction,
 } from "@solana/web3.js";
@@ -32,15 +31,36 @@ function loadKeypair(filePath) {
 }
 
 async function send(connection, payer, ixs) {
-  const latest = await connection.getLatestBlockhash("confirmed");
-  const tx = new Transaction({
-    feePayer: payer.publicKey,
-    recentBlockhash: latest.blockhash,
-  }).add(...ixs);
-  tx.sign(payer);
-  const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
+  const compile = async () => {
+    const latest = await connection.getLatestBlockhash("confirmed");
+    const message = new TransactionMessage({
+      payerKey: payer.publicKey,
+      recentBlockhash: latest.blockhash,
+      instructions: ixs,
+    }).compileToV0Message();
+    const transaction = new VersionedTransaction(message);
+    transaction.sign([payer]);
+    return { transaction, latest };
+  };
+
+  const simulated = await compile();
+  const simulation = await connection.simulateTransaction(simulated.transaction, {
+    commitment: "confirmed",
+    sigVerify: true,
+    replaceRecentBlockhash: false,
+  });
+  if (simulation.value.err) {
+    const logs = simulation.value.logs?.slice(-12).join("\n") || "";
+    throw new Error(`ALT update simulation failed: ${JSON.stringify(simulation.value.err)}${logs ? `\n${logs}` : ""}`);
+  }
+
+  const final = await compile();
+  const sig = await connection.sendRawTransaction(final.transaction.serialize(), {
+    skipPreflight: false,
+    maxRetries: 3,
+  });
   const confirmation = await connection.confirmTransaction(
-    { signature: sig, ...latest },
+    { signature: sig, ...final.latest },
     "confirmed",
   );
   if (confirmation.value.err) throw new Error(JSON.stringify(confirmation.value.err));
