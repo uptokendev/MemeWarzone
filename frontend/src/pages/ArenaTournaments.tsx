@@ -5,7 +5,6 @@ import { TournamentLiveOverviewModal } from "@/components/arena/TournamentLiveOv
 import { TournamentRegistrationModal } from "@/components/arena/TournamentRegistrationModal";
 import { TournamentResultsModal } from "@/components/arena/TournamentResultsModal";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
-import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
 import { useArenaEventFeed, type ArenaEventSummary } from "@/hooks/useArenaEventFeed";
 import { presentTournamentEmpty } from "@/lib/arena/tournamentCommandPresentation.mjs";
 
@@ -65,11 +64,23 @@ const ArenaTournaments = () => {
   }
 
   return (
-    <WarzoneContent className="space-y-5">
-      <div data-warzone-tournaments="true">
-        <WarzonePageHeader title="Tournaments" />
+    <WarzoneContent className="flex flex-col gap-4 font-mw-body text-mw-text">
+      <div data-warzone-tournaments="true" className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-3.5">
+          <div>
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Warzone</div>
+            <h1 className="m-0 font-mw-cond text-[32px] font-bold leading-none lg:text-[40px]">Tournaments</h1>
+          </div>
+          <span className="hidden flex-1 lg:block" />
+          <span
+            className={`hidden h-[26px] items-center gap-1.5 rounded-full border px-2.5 text-[13px] font-semibold lg:inline-flex ${source === "api" ? "border-[#1F5133] bg-[#171B20] text-[#6EE7A0]" : "border-mw-edge bg-[#171B20] text-[#C9CED4]"}`}
+          >
+            {source === "api" ? <span className="h-2 w-2 rounded-full bg-mw-up" aria-hidden="true" /> : null}
+            {source === "api" ? "Live data" : source === "empty" ? "Feed unavailable" : "Awaiting data"}
+          </span>
+        </div>
 
-        <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]" role="tablist" aria-label="Tournament status">
+        <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl border border-[#2A3038] bg-mw-input p-1 [scrollbar-width:none] lg:w-max [&::-webkit-scrollbar]:hidden" role="tablist" aria-label="Tournament status">
           {TABS.map((item) => (
             <button
               key={item.key}
@@ -78,14 +89,14 @@ const ArenaTournaments = () => {
               aria-selected={tab === item.key}
               onClick={() => setTab(item.key)}
               data-selected={tab === item.key ? "true" : undefined}
-              className={`px-1 py-1 ${tab === item.key ? "text-accent" : "text-muted-foreground hover:text-foreground"}`}
+              className={`mw-focus min-h-10 shrink-0 rounded-lg border px-4 font-mw-cond text-sm font-bold uppercase tracking-[0.08em] transition-colors ${tab === item.key ? "border-[#3A424C] bg-[#1F252C] text-mw-text" : "border-transparent text-mw-muted hover:text-mw-text"}`}
             >
               {item.label}
             </button>
           ))}
         </div>
 
-        <section className="space-y-3" data-tournament-list={tab}>
+        <section className="flex flex-col gap-3" data-tournament-list={tab}>
           {rows.length ? (
             rows.map((event) => (
               <TournamentEventCard
@@ -99,9 +110,9 @@ const ArenaTournaments = () => {
               />
             ))
           ) : (
-            <div className="py-4 text-sm text-muted-foreground" data-tournament-empty={empty.kind}>
-              <div className="font-black text-foreground">{empty.title}</div>
-              <p className="mt-1">{empty.body}</p>
+            <div className="rounded-[14px] border border-mw-border bg-mw-surface px-4 py-10 text-center" data-tournament-empty={empty.kind}>
+              <div className="font-mw-cond text-xl font-bold text-mw-text">{empty.title}</div>
+              <p className="mx-auto mt-1 max-w-md text-[15px] text-mw-muted">{empty.body}</p>
             </div>
           )}
         </section>

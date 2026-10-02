@@ -3,12 +3,12 @@ import { Link } from "react-router-dom";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TournamentLiveRoundPanel } from "@/components/arena/TournamentLiveRoundBattles";
 import { TournamentProgressionBar } from "@/components/arena/TournamentProgressionBar";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 import { fetchPostGradTournamentDetails } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
 import { getMockTournamentDetails } from "@/features/postgrad/mockTournamentFixtures.mjs";
 import { presentTournamentCard, presentTournamentChampion, readBracketRounds } from "@/lib/arena/tournamentCommandPresentation.mjs";
+import { cp } from "@/components/token/coinPageStyles";
 import { cn } from "@/lib/utils";
 
 type Entrant = {
@@ -121,7 +121,7 @@ export function TournamentEventCard({
       type="button"
       data-tournament-enter={card.id}
       onClick={handlePrimary}
-      className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
+      className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D]"
     >
       {card.primaryCta}
     </button>
@@ -157,26 +157,26 @@ export function TournamentEventCard({
   return (
     <article
       data-tournament-card={card.id}
-      className={cn(!embedded && "mwz-flat-card relative overflow-hidden p-4", focused && !embedded && "ring-1 ring-accent/60")}
+      className={cn(!embedded && "relative overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface p-4 font-mw-body text-mw-text", focused && !embedded && "ring-1 ring-mw-accent/60")}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <TacticalTag label={card.status.label} tone={card.status.key === "live" ? "success" : "default"} />
+          <span className={card.status.key === "live" ? cp.chipGood : cp.chipAccent}>{card.status.label}</span>
           {card.registration && !live && !finished ? (
-            <TacticalTag label={card.registration.label} tone={card.registration.key === "open" ? "success" : "default"} />
+            <span className={card.registration.key === "open" ? cp.chipGood : cp.chip}>{card.registration.label}</span>
           ) : null}
         </div>
-        {card.chain ? <TacticalTag label={card.chain.label} tone="default" /> : null}
+        {card.chain ? <span className={cp.chip}>{card.chain.label}</span> : null}
       </div>
-      <h2 className="mt-3 font-black text-xl leading-tight text-foreground md:text-2xl">{card.title}</h2>
+      <h2 className="m-0 mt-3 font-mw-cond text-2xl font-bold leading-tight text-mw-text md:text-[28px]">{card.title}</h2>
 
       {finished && champion ? (
         <div className="mt-3 flex items-center gap-3" data-tournament-champion="true">
           <WarzoneTokenMark imageUrl={champion.imageUrl} symbol={champion.symbol} name={champion.tokenName} chainId={card.chain?.chainId} tokenAddress={champion.tokenAddress} />
           <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-orange-200">Champion</div>
-            <div className="font-black text-foreground">{champion.symbol ? `$${champion.symbol}` : "TOKEN"}</div>
-            {champion.tokenName ? <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{champion.tokenName}</div> : null}
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Champion</div>
+            <div className="font-bold text-mw-text">{champion.symbol ? `$${champion.symbol}` : "TOKEN"}</div>
+            {champion.tokenName ? <div className="truncate text-[13px] text-mw-muted">{champion.tokenName}</div> : null}
           </div>
         </div>
       ) : preview.length ? (
@@ -196,16 +196,16 @@ export function TournamentEventCard({
                     size="sm"
                   />
                 </div>
-                {ticker ? <div className="mt-1 truncate text-[10px] font-black text-foreground">${ticker}</div> : null}
-                {name ? <div className="truncate text-[9px] uppercase tracking-[0.08em] text-white/50">{name}</div> : null}
+                {ticker ? <div className="mt-1 truncate text-xs font-bold text-mw-text">${ticker}</div> : null}
+                {name ? <div className="truncate text-[11px] text-mw-muted">{name}</div> : null}
               </div>
             );
           })}
-          {extra > 0 ? <span className="self-center text-xs uppercase tracking-[0.14em] text-white/50">+{extra}</span> : null}
+          {extra > 0 ? <span className="self-center font-mw-mono text-sm text-mw-muted">+{extra}</span> : null}
         </div>
       ) : null}
 
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.14em] text-white/55">
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
         {live && card.participantCount != null ? <span>{card.participantCount} STARTED</span> : null}
         {live && card.remaining != null ? <span>{card.remaining} REMAINING</span> : null}
         {!live && card.participantCount != null ? <span>{card.participantCount} CONTENDERS</span> : null}
@@ -225,7 +225,7 @@ export function TournamentEventCard({
             aria-expanded={roundOpen}
             aria-controls={`tournament-live-round-${card.id}`}
             onClick={() => setRoundOpen((open) => !open)}
-            className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
+            className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D]"
           >
             {card.liveRoundCta || "Watch live round"}
             <span className="ml-2 text-[10px]" aria-hidden="true">{roundOpen ? "↑" : "↓"}</span>
@@ -234,7 +234,7 @@ export function TournamentEventCard({
           <Link
             to={card.href}
             data-tournament-enter={card.id}
-            className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
+            className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D]"
           >
             {card.primaryCta}
           </Link>
@@ -246,7 +246,7 @@ export function TournamentEventCard({
           data-tournament-view-bracket={card.id}
           onClick={() => void handleViewBracket()}
           disabled={bracketBusy}
-          className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline disabled:opacity-60"
+          className={cp.btn}
         >
           {bracketBusy ? "Loading bracket" : card.bracketCta}
         </button>
@@ -255,7 +255,7 @@ export function TournamentEventCard({
             type="button"
             data-tournament-enter={card.id}
             onClick={handlePrimary}
-            className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline"
+            className="mw-focus inline-flex min-h-11 items-center px-3 text-[15px] font-semibold text-mw-muted hover:text-mw-text"
           >
             {card.primaryCta}
           </button>

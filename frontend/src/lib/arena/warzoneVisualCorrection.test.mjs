@@ -39,11 +39,12 @@ test("Battle combatant has no backdrop layer; the decorative layer stays absolut
   assert.doesNotMatch(combatant, /100vh|min-h-screen|h-screen/);
 });
 
-test("WarzoneContent emits a static 1280px max width Tailwind can scan", () => {
+// Founder 2026-10-02: every page uses the Home/Coins width (1480px).
+test("WarzoneContent emits a static 1480px max width Tailwind can scan", () => {
   const frame = readSrc("../../components/warzone/WarzoneContent.tsx");
   const css = readSrc("../../styles/card-cleanup.css");
-  assert.match(frame, /max-w-\[1280px\]/);
-  assert.match(frame, /maxWidth:\s*1280/);
+  assert.match(frame, /max-w-\[1480px\]/);
+  assert.match(frame, /maxWidth:\s*1480/);
   assert.doesNotMatch(frame, /WARZONE_CONTENT_MAX_CLASS/);
   assert.match(css, /data-mwz-decorative-layer/);
 });
