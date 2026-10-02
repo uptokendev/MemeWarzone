@@ -162,9 +162,13 @@ function shareText(facts, chart) {
 /** The creator's full story: only filled boxes, in our order, under our headings, within each box's limit. */
 export function fullStoryFrom(profile) {
   const answers = profile?.sections || {};
+  const images = profile?.sectionImages || {};
   const sections = STORY_FULL_SECTIONS.map((def) => {
     const body = clip(cleanText(answers[def.key]).replace(/\*/g, ""), def.max);
-    return body ? { key: def.key, heading: def.heading, body } : null;
+    if (!body) return null;
+    // One image per box, uploaded on the coin page (founder B1, 2026-10-02); https only.
+    const image = String(images[def.key] || "");
+    return /^https:\/\/[^\s<>"']+$/.test(image) ? { key: def.key, heading: def.heading, body, imageUrl: image } : { key: def.key, heading: def.heading, body };
   }).filter(Boolean);
   return sections.length ? { updatedAt: toDate(profile.updatedAt || Date.now()).toISOString(), sections } : null;
 }

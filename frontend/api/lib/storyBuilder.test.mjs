@@ -101,3 +101,12 @@ test("time offsets read like people talk", () => {
   assert.equal(offsetLabel("2026-09-25T13:57:27Z", "2026-09-27T09:00:00Z"), "ON 27 SEP");
   assert.equal(offsetLabel("2026-09-25T13:57:27Z", "2026-09-26T09:00:00Z"), "19 HOURS IN");
 });
+
+test("owner images attach to their full-story box; non-https images are dropped (founder B1)", () => {
+  const img = "https://abc.supabase.co/storage/v1/object/public/MEMEBATTLES/coin-pages/56/x/section-origin-u.png";
+  const withProfile = { ...derpy, storyProfile: { shortStory: null, sections: { origin: "Made in March.", next: "Rematch with ASK." }, sectionImages: { origin: img, next: "http://evil.example/x.png" }, updatedAt: "2026-09-28T10:00:00Z" } };
+  const { story, problems } = buildStory(withProfile, { now: NOW });
+  assert.deepEqual(problems, []);
+  assert.equal(story.fullStory.sections.find((s) => s.key === "origin").imageUrl, img);
+  assert.equal("imageUrl" in story.fullStory.sections.find((s) => s.key === "next"), false);
+});

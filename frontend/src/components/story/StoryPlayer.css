@@ -699,3 +699,14 @@
   .mwz-story .track b { width: var(--pct, 0%) !important; }
   .mwz-story .chart .line { stroke-dasharray: none !important; stroke-dashoffset: 0 !important; }
 }
+
+/* One owner image per full-story box (founder B1, 2026-10-02). */
+.mwz-story .full-image {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: cover;
+  border-radius: 12px;
+  margin: 0 0 12px;
+  border: 1px solid rgba(238, 236, 226, 0.15);
+}

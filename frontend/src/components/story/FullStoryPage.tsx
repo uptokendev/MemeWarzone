@@ -32,11 +32,12 @@ export function FullStoryPage({
       <div className="full-inner">
         <img className="full-logo" src={coin.logoUrl} alt="" width={96} height={96} />
         <h1 className="full-name">{coin.name}</h1>
-        {sections.map((section: { key: string; heading: string; body: string }) => (
+        {sections.map((section: { key: string; heading: string; body: string; imageUrl?: string }) => (
           <section key={section.key} className="full-section">
             <h2 className="full-heading">
               <EmText text={section.heading} />
             </h2>
+            {section.imageUrl ? <img className="full-image" src={section.imageUrl} alt="" loading="lazy" /> : null}
             <p className="full-body">
               <EmText text={section.body} />
             </p>

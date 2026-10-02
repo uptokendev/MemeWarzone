@@ -60,8 +60,9 @@ export const STORY_FULL_SECTIONS = Object.freeze([
  * @typedef {{ url: string, text: string, imageUrl: string }} StoryShare
  *   url: the public share link (served by the API with Open Graph tags, then redirects to the story),
  *   text: the post text for X / Telegram (plain, no URL in it), imageUrl: the 1200x630 preview card.
- * @typedef {{ updatedAt: string, sections: Array<{ key: string, heading: string, body: string }> }} StoryFull
- *   Only filled sections, in STORY_FULL_SECTIONS order; null when the creator filled none.
+ * @typedef {{ updatedAt: string, sections: Array<{ key: string, heading: string, body: string, imageUrl?: string }> }} StoryFull
+ *   Only filled sections, in STORY_FULL_SECTIONS order; null when the creator filled none. imageUrl (optional,
+ *   https): the one image the owner uploaded for that box on the coin page (founder B1, 2026-10-02).
  * @typedef {{ version: 1, chainId: number, token: string, generatedAt: string, coin: StoryCoin, share: StoryShare, fullStory: StoryFull | null, chapters: Array<ChapterBase & Record<string, unknown>> }} StoryResponse
  */
 
@@ -98,6 +99,7 @@ export function validateStory(story) {
       need(Boolean(def), `fullStory.sections[${i}]: unknown key`);
       need(def && sec.heading === def.heading, `fullStory.sections[${i}]: heading is ours, not the creator's`);
       need(isText(sec?.body) && sec.body.trim().length > 0 && sec.body.length <= (def?.max || 0), `fullStory.sections[${i}]: body plain text within max`);
+      need(sec?.imageUrl == null || (typeof sec.imageUrl === "string" && /^https:\/\/[^\s<>"']+$/.test(sec.imageUrl)), `fullStory.sections[${i}]: imageUrl must be https`);
       need(pos > last, "fullStory sections in our order");
       last = pos;
     });

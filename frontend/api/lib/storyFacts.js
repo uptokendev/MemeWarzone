@@ -204,8 +204,10 @@ async function storyProfile(chainId, token) {
  */
 async function coinPageStoryOverrides(chainId, token) {
   try {
-    const row = await one(`select bio, founder_note from public.token_story_profiles where chain_id = $1 and ${addrClause(chainId, "token_address", "$2")} limit 1`, [chainId, token]);
-    return row ? { bio: row.bio || null, founderNote: row.founder_note || null } : null;
+    const row = await one(`select bio, founder_note, section_images from public.token_story_profiles where chain_id = $1 and ${addrClause(chainId, "token_address", "$2")} limit 1`, [chainId, token]);
+    return row
+      ? { bio: row.bio || null, founderNote: row.founder_note || null, sectionImages: row.section_images && typeof row.section_images === "object" ? row.section_images : {} }
+      : null;
   } catch (error) {
     if (error?.code === "42703" || error?.code === "42P01") return null;
     throw error;
@@ -223,11 +225,11 @@ export async function storyFacts(chainId, token, { shareBase } = {}) {
     battleFacts(id, base.ids),
     standingFacts(id, base.ids),
     storyProfile(id, base.token),
-    base.origin === "launched" ? coinPageStoryOverrides(id, base.token) : null,
+    coinPageStoryOverrides(id, base.token),
   ]);
   const { ids, ...rest } = base;
-  // Launched coins only, and only when set: otherwise the Story reads exactly what it did before.
-  if (overrides && rest.creator) {
+  // Bio and founder note: launched coins only, and only when set (D3/D4).
+  if (overrides && rest.creator && base.origin === "launched") {
     rest.creator = {
       ...rest.creator,
       description: overrides.bio || rest.creator.description,
@@ -238,6 +240,7 @@ export async function storyFacts(chainId, token, { shareBase } = {}) {
     ...rest, chainId: id, chainLabel: CHAIN_LABEL[id],
     accent: assets.accent, accent2: assets.accent2, logoAnimated: assets.animated,
     shareBase: String(shareBase || process.env.STORY_SHARE_BASE || "https://api.memewar.zone").replace(/\/+$/, ""),
-    battles, standing, storyProfile: profile,
+    battles, standing,
+    storyProfile: profile && overrides?.sectionImages ? { ...profile, sectionImages: overrides.sectionImages } : profile,
   };
 }

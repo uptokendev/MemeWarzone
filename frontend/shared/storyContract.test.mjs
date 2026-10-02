@@ -56,3 +56,13 @@ test("emphasis becomes text parts, never HTML", () => {
   assert.deepEqual(emphasisParts("Today *$61.4K*, down."), [{ em: false, text: "Today " }, { em: true, text: "$61.4K" }, { em: false, text: ", down." }]);
   assert.deepEqual(emphasisParts("<b>x</b>"), [{ em: false, text: "<b>x</b>" }]);
 });
+
+test("full-story sections may carry one https image (founder B1); anything else is refused", () => {
+  const story = fixture("story-k88.json");
+  story.fullStory.sections[0].imageUrl = "https://abc.supabase.co/storage/v1/object/public/MEMEBATTLES/coin-pages/101/x/section-origin-u.png";
+  assert.deepEqual(validateStory(story), []);
+  story.fullStory.sections[0].imageUrl = "http://evil.example/x.png";
+  assert.ok(validateStory(story).some((p) => /imageUrl must be https/.test(p)));
+  story.fullStory.sections[0].imageUrl = 'https://x.y/a.png" onerror="alert(1)';
+  assert.ok(validateStory(story).some((p) => /imageUrl must be https/.test(p)));
+});
