@@ -81,7 +81,8 @@ test("FeedComposer is mounted on Feed, Command Center, and Public Profile", () =
   assert.match(feed, /<HomeComposer /);
   assert.match(readRepo("frontend/src/components/home-feed/HomeParts.tsx"), /usePostComposer/);
   assert.match(command, /<FeedComposer /);
-  assert.match(profile, /<FeedComposer /);
+  // UI redesign phase 8: the public profile mounts the same composer as Home (own profile only).
+  assert.match(profile, /isOwnProfile \? <HomeComposer /);
   assert.match(feed, /For you/);
   assert.match(feed, /Following/);
 });

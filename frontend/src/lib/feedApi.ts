@@ -268,6 +268,17 @@ export async function fetchFeedPage(params: { tab: "for-you" | "following"; view
   return { items: Array.isArray(json?.items) ? json.items : [], nextCursor: json?.nextCursor || null };
 }
 
+/** One page of a public profile's posts, reposts, coin posts and auto updates (newest first). */
+export async function fetchProfileFeedPage(params: { author: string; chainId?: number; viewer?: string; before?: string | null; limit?: number }): Promise<{ items: FeedItem[]; nextCursor: string | null; supported: boolean }> {
+  const qs = new URLSearchParams({ tab: "profile", author: params.author, limit: String(params.limit ?? 30) });
+  if (params.chainId) qs.set("chainId", String(params.chainId));
+  if (params.viewer) qs.set("viewer", params.viewer);
+  if (params.before) qs.set("before", params.before);
+  const json = await apiJson<{ items?: FeedItem[]; nextCursor?: string | null; tab?: string }>(`/api/feed/posts?${qs.toString()}`);
+  // An API without the profile tab answers with For you; the caller then falls back.
+  return { items: Array.isArray(json?.items) ? json.items : [], nextCursor: json?.nextCursor || null, supported: json?.tab === "profile" };
+}
+
 const ANON_KEY = "mwz:feed:viewer";
 
 /** Who is viewing: the wallet when connected, otherwise one anonymous id per browser. */

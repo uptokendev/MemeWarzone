@@ -542,6 +542,13 @@ async function handleGet(req, res) {
   }
 
   const pageSize = clampInt(q.limit, 1, 60, FEED_PAGE_SIZE);
+  // Public profile Posts tab (UI redesign phase 8): one wallet's posts, reposts, coin posts and
+  // auto updates, newest first, infinite scroll. Same sources as For you, no ranking.
+  if (tab === "profile") {
+    if (!author) return json(res, 400, { error: "author is required", code: "FEED_PROFILE_AUTHOR" });
+    const page = await loadTimelinePage({ before: parseCursor(q.before), limit: pageSize, authors: [author], viewer });
+    return json(res, 200, { ...page, tab: "profile", author });
+  }
   if (tab === "following") {
     if (!viewer) return json(res, 200, { items: [], nextCursor: null, tab: "following", warning: "Connect a wallet to load Following." });
     // Following = only the wallets you follow (founder, 2026-10-02). Your own posts and reposts are in For you.
