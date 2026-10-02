@@ -41,12 +41,15 @@ export function ArenaWarPoolClaimButton({
   chainId,
   label,
   className,
+  onClaimed,
 }: {
   battleId: string;
   chainId?: number;
   label?: string;
   /** Optional restyle of the button (UI redesign); claim behaviour is unchanged. */
   className?: string;
+  /** Called after a successful claim (Command Center refreshes the row). */
+  onClaimed?: () => void;
 }) {
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
@@ -88,6 +91,7 @@ export function ArenaWarPoolClaimButton({
               }),
           });
           toast.success(`Place ${place.place} claimed. Protocol stays out of the send loop.`);
+          onClaimed?.();
           return;
         }
         if (json.winnerWallet && json.winnerWallet !== walletAddress) {
@@ -104,6 +108,7 @@ export function ArenaWarPoolClaimButton({
             }),
         });
         toast.success("War pool claimed. Protocol stays out of the send loop.");
+        onClaimed?.();
         return;
       }
 
@@ -131,6 +136,7 @@ export function ArenaWarPoolClaimButton({
         const claimTx = await contract.claimPlace(json.poolId, place.place);
         await claimTx.wait();
         toast.success(`Place ${place.place} claimed. Protocol stays out of the send loop.`);
+        onClaimed?.();
         return;
       }
       if (Number(onchain.state) !== 2) {
@@ -140,6 +146,7 @@ export function ArenaWarPoolClaimButton({
       const claimTx = await contract.claimWinner(json.poolId);
       await claimTx.wait();
       toast.success("War pool claimed. Protocol stays out of the send loop.");
+      onClaimed?.();
     } catch (error) {
       toast.error(String((error as Error)?.message || "Claim failed."));
     } finally {

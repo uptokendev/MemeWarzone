@@ -442,6 +442,79 @@ async function recordLeagueRewardClaim(
   return parseApiJson(res);
 }
 
+type BattleClaimItem = {
+  battleId: string;
+  chainId: number;
+  kind?: "battle" | "tournament";
+  nativeSymbol?: string;
+  title?: string | null;
+  settledAt?: string | null;
+};
+
+type BattleClaimStatus =
+  | { kind: "loading" }
+  | { kind: "claimable"; amount: string | null }
+  | { kind: "claimed" }
+  | { kind: "waiting" }
+  | { kind: "unknown" };
+
+// Reads the same claim-intent the Claim button uses, only to show the amount and whether the prize
+// was already collected. The claim itself is still the button's unchanged flow.
+function readBattleClaimStatus(json: any, chainId: number): BattleClaimStatus {
+  if (!json || json.ok === false) return { kind: "unknown" };
+  if (json.chain === "solana" && json.resolved === false) return { kind: "waiting" };
+  if (json.claimMethod === "claimPlace") return { kind: "claimable", amount: null };
+  if (json.claimedWinner === true) return { kind: "claimed" };
+  const raw = String(json.pendingWinner ?? "");
+  if (!/^\d+$/.test(raw)) return { kind: "claimable", amount: null };
+  if (BigInt(raw) === 0n) return { kind: "claimed" };
+  const decimals = isSolana(chainId) ? 9 : 18;
+  const whole = Number(BigInt(raw)) / 10 ** decimals;
+  return { kind: "claimable", amount: whole.toLocaleString(undefined, { maximumFractionDigits: 4 }) };
+}
+
+function BattleClaimRow({ item }: { item: BattleClaimItem }) {
+  const [status, setStatus] = useState<BattleClaimStatus>({ kind: "loading" });
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setStatus({ kind: "loading" });
+    apiFetch(`/api/arena/war-pools/${encodeURIComponent(item.battleId)}/claim-intent`, { cache: "no-store" })
+      .then(async (res) => {
+        const json = await res.json().catch(() => null);
+        if (res.status === 409) return { kind: "waiting" } as BattleClaimStatus;
+        return readBattleClaimStatus(json, item.chainId);
+      })
+      .catch(() => ({ kind: "unknown" }) as BattleClaimStatus)
+      .then((next) => { if (!cancelled) setStatus(next); });
+    return () => { cancelled = true; };
+  }, [item.battleId, item.chainId, nonce]);
+
+  const symbol = item.nativeSymbol || "";
+  const when = item.settledAt ? new Date(item.settledAt).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : null;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-[14px] border border-mw-border bg-mw-surface p-3 font-mw-body text-mw-text" data-battle-claim={item.battleId}>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-bold">
+          {item.title || (item.kind === "tournament" ? "Tournament prize" : "Battle win")}
+        </div>
+        <div className="text-xs text-mw-muted">
+          {[when, status.kind === "claimable" && status.amount ? `${status.amount} ${symbol}` : null].filter(Boolean).join(" · ") || item.battleId}
+        </div>
+      </div>
+      {status.kind === "claimed" ? (
+        <span className="inline-flex h-[22px] items-center rounded-full border border-[#1F5133] px-2 text-xs font-semibold text-[#6EE7A0]">Claimed</span>
+      ) : status.kind === "waiting" ? (
+        <span className="text-xs text-mw-muted">Waiting for on-chain result</span>
+      ) : status.kind === "loading" ? (
+        <span className="text-xs text-mw-muted">Checking</span>
+      ) : (
+        <ArenaWarPoolClaimButton battleId={item.battleId} chainId={item.chainId} onClaimed={() => setNonce((n) => n + 1)} />
+      )}
+    </div>
+  );
+}
+
 export default function CommandCenterClaims() {
   const { attribution, chainId, walletAddress } = useCommandCenterData();
   const wallet = useWallet();
@@ -451,7 +524,7 @@ export default function CommandCenterClaims() {
   const [claimingType, setClaimingType] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isRecruiterFlag, setIsRecruiterFlag] = useState(false);
-  const [battleClaims, setBattleClaims] = useState<Array<{ battleId: string; chainId: number }>>([]);
+  const [battleClaims, setBattleClaims] = useState<BattleClaimItem[]>([]);
   const rewardChainId = isSolana(chainId) ? getConfiguredSolanaRewardChainId() : chainId;
 
   const loadClaims = () => {
@@ -772,18 +845,12 @@ export default function CommandCenterClaims() {
         })}
 
         {battleClaims.map((item) => (
-          <div key={item.battleId} className={rowClass}>
-            <span className="min-w-[160px] flex-1">
-              <b className="block text-sm">Arena war pool</b>
-              <span className="font-mw-mono text-xs text-mw-muted">{item.battleId}</span>
-            </span>
-            <ArenaWarPoolClaimButton battleId={item.battleId} chainId={item.chainId} />
-          </div>
+          <BattleClaimRow key={item.battleId} item={item} />
         ))}
       </div>
       {battleClaims.length ? (
         <p className="m-0 text-[13px] text-mw-muted">
-          The winner claims 75% of the entry pot plus 90% of boosts. 20% of entries goes to the Major War League, 5% to the protocol. Nothing is sent automatically.
+          The winning coin's owner collects 75% of both stakes and 90% of the boosts. Connect the wallet that owns the winning coin.
         </p>
       ) : null}
 

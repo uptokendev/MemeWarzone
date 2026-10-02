@@ -116,7 +116,8 @@ test("Championship runtime refuses mutation after closure and close requires all
   const runtime = readApi("lib/arenaQuarterlyChampionship.js");
   assert.match(runtime, /transfer\.epoch_state !== CHAMPIONSHIP_STATE\.OPEN/);
   assert.match(runtime, /CHAMPIONSHIP_EPOCH_CLOSED/);
-  assert.match(runtime, /status<>'applied'/);
+  // 'waived' (founder decision: a month with no bonus) closes like 'applied'; only pending_policy blocks.
+  assert.match(runtime, /status not in \('applied','waived'\)/);
   assert.match(runtime, /CHAMPIONSHIP_BONUS_TRANSFERS_PENDING/);
   assert.match(runtime, /arena_championship_final_standings/);
   assert.match(runtime, /payoutPolicy:\s*"NOT_AUTHORITATIVE"/);

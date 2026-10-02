@@ -8,7 +8,19 @@ import { useMockLeagueSeason } from "@/hooks/useMockLeagueRuntime";
 export type ArenaLeagueFeedSource = "qa-runtime" | "api" | "empty";
 
 export type ArenaLeagueSeason = ReturnType<typeof useMockLeagueSeason>["season"];
-export type ArenaLeagueHistoryEntry = ReturnType<typeof useMockLeagueSeason>["history"][number];
+export type ArenaLeagueHistoryStanding = {
+  rank: number;
+  tokenId: string;
+  tokenName: string;
+  symbol: string;
+  points: number;
+  wins: number;
+  losses: number;
+};
+// A finished month; `standings` is its frozen final table (absent in the mock runtime).
+export type ArenaLeagueHistoryEntry = ReturnType<typeof useMockLeagueSeason>["history"][number] & {
+  standings?: ArenaLeagueHistoryStanding[];
+};
 
 export type ArenaQuarterlyChampionshipEntry = {
   tokenAddress: string;
@@ -145,6 +157,17 @@ function normalizeHistory(value: unknown): ArenaLeagueHistoryEntry[] {
       rewardPoolUsd: Number.isFinite(Number(entry.rewardPoolUsd)) ? Number(entry.rewardPoolUsd) : 0,
       topTokenName: String(entry.topTokenName),
       topTokenSymbol: String(entry.topTokenSymbol),
+      standings: Array.isArray(entry.standings)
+        ? entry.standings.map((row: any) => ({
+            rank: Number(row?.rank) || 0,
+            tokenId: String(row?.tokenId || ""),
+            tokenName: String(row?.tokenName || ""),
+            symbol: String(row?.symbol || ""),
+            points: Number(row?.points) || 0,
+            wins: Number(row?.wins) || 0,
+            losses: Number(row?.losses) || 0,
+          })).filter((row: { tokenId: string }) => row.tokenId)
+        : [],
     }));
 }
 
@@ -274,7 +297,7 @@ export function useArenaLeagueFeed() {
     chainId,
     season: apiPayload?.season ?? (allowMockFallback ? runtime.season : EMPTY_SEASON),
     championship: apiPayload?.championship ?? null,
-    history: apiPayload?.history ?? (allowMockFallback ? runtime.history : []),
+    history: (apiPayload?.history ?? (allowMockFallback ? runtime.history : [])) as ArenaLeagueHistoryEntry[],
     ownedTokenIds: apiPayload?.owned?.length
       ? apiPayload.owned
       : source === "qa-runtime"

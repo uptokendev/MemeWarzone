@@ -16,6 +16,7 @@ import {
   ensureActiveSeason,
 } from "./lib/arenaLeagueScore.js";
 import { utcDay } from "./lib/arenaLeagueScoreMath.js";
+import { recordMwlFinalization } from "./lib/arenaMwlRollover.js";
 import {
   MwlIdentityError,
   assertMwlSeasonIdentity,
@@ -143,6 +144,55 @@ async function currentChampionshipFor(chainId, season = null) {
   return readChampionshipStanding(pool, { chainId: chain, year: now.year, quarter: now.quarter });
 }
 
+// Finished months, newest first, from the frozen result snapshot finalization writes
+// (arena_championship_mwl_results), so the page can still show a month after it rolls over.
+async function finishedMonths(chainId, limit = 6) {
+  const seasons = await pool.query(
+    `select id, label, week, finalized_at
+       from public.arena_league_seasons
+      where chain_id = $1 and month is not null and finalized_at is not null
+      order by year desc, month desc
+      limit $2`,
+    [chainId, limit],
+  );
+  const ids = seasons.rows.map((row) => row.id);
+  if (!ids.length) return [];
+  const results = await pool.query(
+    `select season_id, token_address, token_name, symbol, final_rank, mwl_points, wins, losses, finished_fights
+       from public.arena_championship_mwl_results
+      where season_id = any($1::text[])
+      order by season_id, final_rank asc`,
+    [ids],
+  );
+  const bySeason = new Map();
+  for (const row of results.rows) {
+    if (!bySeason.has(row.season_id)) bySeason.set(row.season_id, []);
+    bySeason.get(row.season_id).push({
+      rank: Number(row.final_rank),
+      tokenId: String(row.token_address),
+      tokenName: String(row.token_name || row.symbol || "Unknown token"),
+      symbol: String(row.symbol || "---"),
+      points: Math.max(0, Number(row.mwl_points || 0)),
+      wins: Math.max(0, Number(row.wins || 0)),
+      losses: Math.max(0, Number(row.losses || 0)),
+      finishedFights: Math.max(0, Number(row.finished_fights || 0)),
+    });
+  }
+  return seasons.rows.map((row) => {
+    const standings = bySeason.get(row.id) || [];
+    return {
+      seasonId: String(row.id),
+      label: String(row.label || "Major War League"),
+      completedAt: new Date(row.finalized_at).toISOString(),
+      week: Number(row.week || 1),
+      rewardPoolUsd: 0,
+      topTokenName: standings[0]?.tokenName || "",
+      topTokenSymbol: standings[0]?.symbol || "",
+      standings,
+    };
+  });
+}
+
 async function feed(chainId, wallet) {
   const id = requiredMwlChainId(chainId);
   const season = await activeSeason(id);
@@ -152,7 +202,7 @@ async function feed(chainId, wallet) {
     chainIdentity: mwlChainIdentity(id),
     season,
     championship,
-    history: [],
+    history: await finishedMonths(id),
     owned,
   };
 }
@@ -275,31 +325,6 @@ async function handleAdvanceWeek(req, res) {
   return json(res, 200, { ok: true, ...(await feed(chainId)) });
 }
 
-async function recordMwlFinalization(season, treasury) {
-  const period = seasonPeriod(season);
-  if (!treasury.configured || !treasury.treasuryId || !treasury.configKey) {
-    throw new MwlIdentityError("MWL_TREASURY_NOT_CONFIGURED", "Chain-scoped Major War League Treasury is not configured", 503);
-  }
-  await pool.query(
-    `insert into public.arena_mwl_finalizations (
-       season_id, chain_id, year, month, month_id, treasury_id, treasury_config_key,
-       reserve_share_bps, result_version, entitlement_identity_version, finalized_at
-     ) values ($1,$2,$3,$4,$5,$6,$7,6000,'mwl_result_v1','mwl_entitlement_v1',now())
-     on conflict (season_id) do nothing`,
-    [season.id, Number(season.chain_id), Number(season.year), Number(season.month), period.monthId, treasury.treasuryId, treasury.configKey],
-  );
-  const result = await pool.query(`select * from public.arena_mwl_finalizations where season_id = $1 limit 1`, [season.id]);
-  const authority = result.rows[0];
-  if (!authority
-      || Number(authority.chain_id) !== Number(season.chain_id)
-      || String(authority.month_id) !== period.monthId
-      || String(authority.treasury_id) !== treasury.treasuryId
-      || Number(authority.reserve_share_bps) !== 6000) {
-    throw new MwlIdentityError("MWL_FINALIZATION_IDENTITY_MISMATCH", "Persisted Major War League finalization identity does not match request", 409);
-  }
-  return authority;
-}
-
 async function handleFinalizeMwl(req, res, routeLabel = "arena/league/finalize") {
   const admin = await requireAdminOrOps(req, res, { routeLabel, allowOps: true });
   if (!admin) return;
@@ -328,7 +353,7 @@ async function handleFinalizeMwl(req, res, routeLabel = "arena/league/finalize")
   if (Number(result.chainId) !== chainId) {
     return json(res, 409, { ok: false, error: "Finalized Major War League result returned wrong chain", code: "MWL_FINALIZATION_CHAIN_MISMATCH" });
   }
-  const finalizationIdentity = await recordMwlFinalization(seasonRow, treasury);
+  const finalizationIdentity = await recordMwlFinalization(pool, seasonRow, treasury);
   return json(res, 200, {
     ...result,
     finalizationIdentity,

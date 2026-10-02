@@ -6,6 +6,8 @@ import { settleDueNormalBattles } from "../api/lib/arenaBattleSettlementRuntime.
 import { advanceDueFinalSalvo, finalizeDueVoteTournamentBattle, voteTournamentRuntimeEnabled } from "../api/lib/arenaVoteTournamentFinalizationService.js";
 import { advanceTournamentFromBattle } from "../api/arenaTournaments.js";
 import { IMPORT_FEED_INTERVAL_MS, refreshImportMarketStats } from "../api/lib/arenaImportMarketFeed.js";
+import { closeEndedChampionships, rolloverEndedMwlSeasons } from "../api/lib/arenaMwlRollover.js";
+import { crankLeagueShares, leagueCrankMode } from "../api/lib/arenaEvmLeagueCrank.js";
 
 // Vote Battles (challenge, queue and tournament) settle only through this runtime, so it defaults
 // on: with ARENA_VOTE_TOURNAMENT_RUNTIME unset no Vote Battle ever finished. Set it to false to stop it.
@@ -135,11 +137,62 @@ async function refreshImportMarkets() {
 }
 if (importFeedEnabled) console.log(`[arena-battle-realtime-worker] import market feed active intervalMs=${IMPORT_FEED_INTERVAL_MS}`);
 const importFeedTimer = setInterval(() => void refreshImportMarkets(), IMPORT_FEED_INTERVAL_MS); importFeedTimer.unref?.(); void refreshImportMarkets();
+// Major War League month rollover. Nothing else closes a month: until this runs, battle settlement
+// refuses to score into the ended month (MWL_ROLLOVER_PENDING) and retries. On unless disabled.
+const mwlRolloverEnabled = !/^(0|false|no|off)$/i.test(String(process.env.ARENA_MWL_ROLLOVER_ENABLED ?? "").trim());
+const mwlRolloverMs = Math.max(15_000, Number(process.env.ARENA_MWL_ROLLOVER_SCAN_MS || 60_000));
+let mwlRolloverRunning = false;
+const championshipCloseLogged = new Map();
+async function rolloverMwl() {
+  if (!mwlRolloverEnabled || mwlRolloverRunning) return;
+  mwlRolloverRunning = true;
+  try {
+    for (const outcome of await rolloverEndedMwlSeasons({ pool })) {
+      if (outcome.finalized) {
+        console.log(`[arena-battle-realtime-worker] MWL rollover finalized ${outcome.seasonId} winner=${outcome.winner || "none"} opened=${outcome.openedSeasonId || "none"} treasuryRecorded=${outcome.treasuryRecorded}`);
+      } else {
+        console.warn(`[arena-battle-realtime-worker] MWL rollover pending ${outcome.seasonId}: ${outcome.reason}`);
+      }
+    }
+    // Quarters close after their months. A blocked quarter is logged when its reason changes, not every minute.
+    for (const outcome of await closeEndedChampionships({ pool })) {
+      const said = championshipCloseLogged.get(outcome.epochId);
+      const now = outcome.closed ? "closed" : outcome.reason;
+      if (said === now) continue;
+      championshipCloseLogged.set(outcome.epochId, now);
+      if (outcome.closed) console.log(`[arena-battle-realtime-worker] Quarterly Championship closed ${outcome.epochId}`);
+      else console.warn(`[arena-battle-realtime-worker] Quarterly Championship ${outcome.epochId} not closed: ${outcome.reason}`);
+    }
+  } catch (error) { console.warn("[arena-battle-realtime-worker] MWL rollover scan failed", error?.message || error); }
+  finally { mwlRolloverRunning = false; }
+}
+if (mwlRolloverEnabled) console.log(`[arena-battle-realtime-worker] MWL month rollover active intervalMs=${mwlRolloverMs}`);
+const mwlRolloverTimer = setInterval(() => void rolloverMwl(), mwlRolloverMs); mwlRolloverTimer.unref?.(); void rolloverMwl();
+// BNB / Robinhood league share: claimLeague for every resolved pool (arenaEvmLeagueCrank.js).
+// Off unless ARENA_EVM_LEAGUE_CRANK=dry|send. One instance only.
+const leagueCrank = leagueCrankMode();
+const leagueCrankMs = Math.max(60_000, Number(process.env.ARENA_EVM_LEAGUE_CRANK_SCAN_MS || 300_000));
+const leagueCrankTerminal = new Set();
+let leagueCrankRunning = false;
+async function crankLeague() {
+  if (leagueCrank === "off" || leagueCrankRunning) return;
+  leagueCrankRunning = true;
+  try {
+    const outcomes = await crankLeagueShares({ db: pool, mode: leagueCrank, terminal: leagueCrankTerminal });
+    for (const o of outcomes) {
+      const line = `[arena-battle-realtime-worker] league crank ${o.status} chain=${o.chainId} ${o.kind || ""} ${o.subject} pool=${o.poolId} wei=${o.amountWei || ""} month=${o.month || ""} quarter=${o.quarter || ""} tx=${o.txHash || ""} ${o.reason || ""}`;
+      if (o.status === "claimed" || o.status === "dry-run") console.log(line); else console.warn(line);
+    }
+  } catch (error) { console.warn("[arena-battle-realtime-worker] league crank pass failed", error?.message || error); }
+  finally { leagueCrankRunning = false; }
+}
+if (leagueCrank !== "off") console.log(`[arena-battle-realtime-worker] EVM league crank active mode=${leagueCrank} intervalMs=${leagueCrankMs}`);
+const leagueCrankTimer = setInterval(() => void crankLeague(), leagueCrankMs); leagueCrankTimer.unref?.(); void crankLeague();
 const keepAlive = setInterval(() => {}, 60_000);
 
 async function shutdown(signal) {
   console.log(`[arena-battle-realtime-worker] shutting down on ${signal}`);
-  clearInterval(keepAlive); clearInterval(finishedTimer); clearInterval(settlementTimer); clearInterval(voteTimer); clearInterval(importFeedTimer);
+  clearInterval(keepAlive); clearInterval(finishedTimer); clearInterval(settlementTimer); clearInterval(voteTimer); clearInterval(importFeedTimer); clearInterval(mwlRolloverTimer); clearInterval(leagueCrankTimer);
   stopArenaBattleRealtimeWorker();
   try { await pool.end(); } catch {}
   process.exit(0);

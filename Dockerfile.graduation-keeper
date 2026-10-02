@@ -10,7 +10,10 @@
 # Env: DATABASE_URL, SOLANA_RPC_URL (paid, websocket-capable), PG_SSL_ALLOW_SELF_SIGNED=1,
 #      SOLANA_TREASURY_OPERATOR_KEYPAIR (keeper key, JSON array; must equal GlobalConfig.treasury_operator),
 #      SOLANA_ROUTE_SIGNER_KEYPAIR (route signer, JSON array; must equal GlobalConfig.route_signer).
-FROM node:22-slim
+# Pinned: rpc-websockets 9.3.9 (under @solana/web3.js) require()s the ESM-only uuid 14, which needs
+# require(esm) -- Node >= 22.12. A floating node:22-slim served a cached 22.11 and crash-looped
+# with ERR_REQUIRE_ESM (2026-10-02).
+FROM node:22.20-slim
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json ./

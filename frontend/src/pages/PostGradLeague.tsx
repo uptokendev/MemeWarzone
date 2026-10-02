@@ -145,7 +145,8 @@ function SeasonCountdown({ end }: { end: number }) {
 }
 
 const PostGradLeague = () => {
-  const { season, source, ownedTokenIds, chainId: leagueChainId } = useArenaLeagueFeed();
+  const { season, source, ownedTokenIds, chainId: leagueChainId, history } = useArenaLeagueFeed();
+  const finishedMonths = (history || []).filter((month) => month.standings?.length);
   const [tab, setTab] = useState<LeagueTab>("regular");
   const [bracketOpen, setBracketOpen] = useState(false);
   const [bracketRounds, setBracketRounds] = useState<unknown[]>([]);
@@ -456,6 +457,35 @@ const PostGradLeague = () => {
           <p className="m-0 mt-1">{empty.body}</p>
         </div>
       )}
+
+      {tab === "regular" && finishedMonths.length ? (
+        <section data-warzone-mwl-history="true" className={`${card} flex flex-col gap-3 p-4`}>
+          <span className={cardTitle}>Previous months</span>
+          {finishedMonths.map((month) => (
+            <div key={month.seasonId} data-mwl-history-season={month.seasonId} className="flex flex-col">
+              <div className={`${lbl} mb-1`}>{month.label} · Final</div>
+              {(month.standings || []).map((entry) => (
+                <TokenLink key={`${month.seasonId}-${entry.tokenId}`} tokenId={entry.tokenId} className="block text-mw-text hover:text-mw-text">
+                  <div className="flex items-center justify-between gap-3 border-b border-[#1E2329] py-2 text-sm">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span className="w-8 shrink-0 font-mw-mono font-bold text-mw-muted">{entry.rank}</span>
+                      <WarzoneTokenMark symbol={entry.symbol} name={entry.tokenName} chainId={leagueChainId} tokenAddress={entry.tokenId} size="sm" />
+                      <span className="min-w-0">
+                        <span className="block truncate font-bold">${String(entry.symbol || "").replace(/^\$/, "")}</span>
+                        <span className="block truncate text-[13px] text-mw-muted">{entry.tokenName}</span>
+                      </span>
+                    </div>
+                    <div className="shrink-0 text-right font-mw-mono">
+                      <b>{Number(entry.points || 0).toLocaleString()}</b> <span className="text-mw-muted">pts</span>
+                      <div className="text-xs text-mw-muted">{entry.wins}-{entry.losses}</div>
+                    </div>
+                  </div>
+                </TokenLink>
+              ))}
+            </div>
+          ))}
+        </section>
+      ) : null}
     </WarzoneContent>
   );
 };

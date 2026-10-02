@@ -30,6 +30,10 @@ import { arenaEnvironmentIdentity } from "../../frontend/api/lib/arenaChainEnvir
 import {
   DEFAULT_INTERVAL_MS,
   buildDueResolveQuery,
+  classifyResolveOutcome,
+  operatorClaimsMode,
+  operatorClaimsSettled,
+  runOperatorClaims,
   runResolveDuePass,
   runResolveDueWatch,
 } from "./arena-operator-scan.mjs";
@@ -362,13 +366,15 @@ async function runResolveDueCli({ send, watch, intervalMs, lookbackDays, limit, 
     const result = await pool.query(text, params);
     return result.rows || [];
   };
+  const claimsMode = operatorClaimsMode();
+  const claimLogged = new Map();
   const resolveBattle = async (row) => {
     const settlement = settlementFromBattleRow(row);
     const { connection, loadPool, loadConfig } = await defaultChainReaders({
       chainId: settlement.chain_id,
       poolId: canonicalBattlePoolIdBytes(settlement.id),
     });
-    return runOperatorJob({
+    const result = await runOperatorJob({
       command: "resolve",
       battleId: settlement.id,
       send,
@@ -380,8 +386,33 @@ async function runResolveDueCli({ send, watch, intervalMs, lookbackDays, limit, 
       sendResolve: async (plan, resolverKey, payerKey) =>
         sendPlannedResolve(connection, payerKey, plan, resolverKey),
     });
+    // Once the pool is resolved on chain, move its MWL and protocol shares to their receivers.
+    const resolvedState = classifyResolveOutcome(result).state;
+    if (claimsMode === "off" || (resolvedState !== "resolved" && resolvedState !== "already-resolved")) return result;
+    const claims = await runOperatorClaims({
+      mode: claimsMode,
+      runClaim: (command, sendClaim) => runOperatorJob({
+        command,
+        battleId: settlement.id,
+        send: sendClaim,
+        loadSettlement: async () => row,
+        loadPool,
+        loadConfig,
+        payer,
+        sendClaim: async (plan, payerKey) => sendPlannedClaim(connection, payerKey, plan, payerKey.publicKey),
+      }),
+    });
+    for (const claim of claims) {
+      const key = `${settlement.id}:${claim.command}`;
+      const line = `${claim.state} ${claim.reason}${claim.signature ? ` ${claim.signature}` : ""}`;
+      if (claimLogged.get(key) === line) continue;
+      claimLogged.set(key, line);
+      const log = claim.state === "blocked" ? console.warn : console.log;
+      log(`[arena-operator-scan] ${settlement.id} ${claim.command} ${line}`);
+    }
+    return { ...result, claims, claimsPending: !operatorClaimsSettled(claims) };
   };
-  console.log(`[arena-operator-scan] resolve-due ${send ? "SEND" : "dry-run"}${watch ? ` watch every ${intervalMs}ms` : " single pass"}`);
+  console.log(`[arena-operator-scan] resolve-due ${send ? "SEND" : "dry-run"}${watch ? ` watch every ${intervalMs}ms` : " single pass"} lookbackDays=${lookbackDays || "default"} claims=${claimsMode}`);
   try {
     let stopping = false;
     if (watch) {
@@ -426,6 +457,9 @@ Usage:
 resolve-due scans the database for settled chain-101 battles whose arena pool
 is still unresolved and runs the resolve above for each one. Without --watch it
 makes a single pass and exits, which is the shape a scheduled task wants.
+With ARENA_OPERATOR_CLAIMS=dry|send it also runs claim-mwl and claim-protocol for
+every resolved pool (permissionless; they pay arena_config's fixed receivers).
+ARENA_RESOLVE_DUE_LOOKBACK_DAYS widens the window when --lookback-days is absent.
 `);
 }
 
@@ -454,7 +488,7 @@ if (runningAsCli()) {
         send,
         watch: argv.includes("--watch"),
         intervalMs: Number(argValue(argv, "--interval-ms")) || DEFAULT_INTERVAL_MS,
-        lookbackDays: Number(argValue(argv, "--lookback-days")) || undefined,
+        lookbackDays: Number(argValue(argv, "--lookback-days")) || Number(process.env.ARENA_RESOLVE_DUE_LOOKBACK_DAYS) || undefined,
         limit: Number(argValue(argv, "--limit")) || undefined,
         resolver,
         payer,

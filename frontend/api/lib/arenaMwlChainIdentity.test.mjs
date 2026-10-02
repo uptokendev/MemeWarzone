@@ -17,7 +17,11 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
-const apiSource = fs.readFileSync(path.join(repoRoot, "frontend", "api", "arenaLeague.js"), "utf8");
+// The finalization recorder moved to lib/arenaMwlRollover.js (shared with the month rollover); the
+// guards below read both files.
+const apiSource = ["arenaLeague.js", "lib/arenaMwlRollover.js"]
+  .map((file) => fs.readFileSync(path.join(repoRoot, "frontend", "api", file), "utf8"))
+  .join("\n");
 const scoreSource = fs.readFileSync(path.join(here, "arenaLeagueScore.js"), "utf8");
 const migrationSource = fs.readFileSync(path.join(repoRoot, "db", "migrations", "20260909_000002_arena_mwl_three_chain_identity.sql"), "utf8");
 
@@ -93,18 +97,34 @@ test("MWL scoring source derives season from the Battle chain and persistence re
 
 test("Treasury association is exact-chain only with 60 percent Monthly MWL reserve authority", () => {
   const env = {
-    MONTHLY_LEAGUE_TREASURY_ADDRESS_56: "bnb-treasury",
-    MONTHLY_LEAGUE_TREASURY_ADDRESS_101: "sol-treasury",
-    MONTHLY_LEAGUE_TREASURY_ADDRESS_4663: "rh-treasury",
-    MONTHLY_LEAGUE_TREASURY_ADDRESS: "must-not-be-used",
+    MWL_TREASURY_ADDRESS_56: "bnb-treasury",
+    MWL_TREASURY_ADDRESS_101: "sol-treasury",
+    MWL_TREASURY_ADDRESS_4663: "rh-treasury",
+    MWL_TREASURY_ADDRESS: "must-not-be-used",
   };
   assert.equal(resolveMwlTreasuryAssociation(56, env).treasuryId, "bnb-treasury");
   assert.equal(resolveMwlTreasuryAssociation(101, env).treasuryId, "sol-treasury");
   assert.equal(resolveMwlTreasuryAssociation(4663, env).treasuryId, "rh-treasury");
+  assert.equal(resolveMwlTreasuryAssociation(56, env).configKey, "MWL_TREASURY_ADDRESS_56");
   assert.equal(resolveMwlTreasuryAssociation(97, env).configured, false);
   assert.equal(resolveMwlTreasuryAssociation(56, env).reserveShareBps, 6000);
   assert.match(apiSource, /MWL_TREASURY_NOT_CONFIGURED/);
   assert.match(migrationSource, /reserve_share_bps integer NOT NULL DEFAULT 6000 CHECK \(reserve_share_bps = 6000\)/);
+});
+
+test("mainnet MWL treasuries default to the vaults the money reaches; testnets need the env", () => {
+  assert.equal(resolveMwlTreasuryAssociation(56, {}).treasuryId, "0xD9E381408A4e361C66D8b1e657583bdE6c52402d");
+  assert.equal(resolveMwlTreasuryAssociation(101, {}).treasuryId, "PCDQmFBrYTV2kfdGtiGWJ2Au9TfaR5ZzBkXdtymV1Bd");
+  assert.equal(resolveMwlTreasuryAssociation(4663, {}).treasuryId, "0x5D5CC19B5BE86BA28b8164f85883F17843B69810");
+  assert.equal(resolveMwlTreasuryAssociation(4663, {}).configKey, "default:4663");
+  assert.equal(resolveMwlTreasuryAssociation(97, {}).configured, false);
+  assert.equal(resolveMwlTreasuryAssociation(46630, {}).configured, false);
+});
+
+test("the pre-grad monthly league env never binds the MWL", () => {
+  const env = { MONTHLY_LEAGUE_TREASURY_ADDRESS_56: "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8", MONTHLY_LEAGUE_TREASURY_ADDRESS_97: "0xpregrad" };
+  assert.equal(resolveMwlTreasuryAssociation(56, env).treasuryId, "0xD9E381408A4e361C66D8b1e657583bdE6c52402d");
+  assert.equal(resolveMwlTreasuryAssociation(97, env).configured, false);
 });
 
 test("result/finalization identity is immutable by season+chain+period+Treasury authority", () => {

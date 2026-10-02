@@ -266,6 +266,16 @@ function ownerWallets(row) {
   };
 }
 
+function battleClaimTitle(row) {
+  const parts = Array.isArray(row.participants) ? row.participants : [];
+  const winner = String(row.winner_token || "").toLowerCase();
+  const label = (part) => String(part?.tokenName || part?.symbol || "").trim();
+  const won = parts.find((part) => String(part.tokenAddress || part.tokenId || "").toLowerCase() === winner);
+  const lost = parts.find((part) => part !== won);
+  if (!label(won)) return null;
+  return label(lost) ? `${label(won)} vs ${label(lost)}` : label(won);
+}
+
 function ownerOfWinner(row) {
   const parts = Array.isArray(row.participants) ? row.participants : [];
   const winner = String(row.winner_token || "").toLowerCase();
@@ -935,7 +945,8 @@ async function handleClaimable(req, res) {
   if (!wallet) return json(res, 400, { ok: false, error: "wallet is required" });
   const items = [];
   const battles = await pool.query(
-    `select id, chain_id, winner_token, participants, stake_native, native_symbol, source
+    `select id, chain_id, winner_token, participants, stake_native, native_symbol, source,
+            coalesce(settled_at, finished_at) as settled_at
        from public.arena_battles
       where state = 'finished' and winner_token is not null and coalesce(source, '') <> 'tournament'
       order by finished_at desc nulls last
@@ -950,6 +961,9 @@ async function handleClaimable(req, res) {
       poolId: battlePoolId(row.id),
       nativeSymbol: row.native_symbol || nativeSymbolFor(row.chain_id),
       treasury: warPoolTreasuryAddress(row.chain_id) || null,
+      // Display only (Command Center): "Winner vs Loser" and when it ended.
+      title: battleClaimTitle(row),
+      settledAt: row.settled_at ? new Date(row.settled_at).toISOString() : null,
     });
   }
   const tournaments = await pool.query(
