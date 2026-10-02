@@ -783,7 +783,7 @@ export default function CommandCenterClaims() {
       </div>
       {battleClaims.length ? (
         <p className="m-0 text-[13px] text-mw-muted">
-          Winning campaign owners pull 85% of stakes plus Support. Protocol does not send. Supporters are not paid.
+          The winner claims 75% of the entry pot plus 90% of boosts. 20% of entries goes to the Major War League, 5% to the protocol. Nothing is sent automatically.
         </p>
       ) : null}
 
