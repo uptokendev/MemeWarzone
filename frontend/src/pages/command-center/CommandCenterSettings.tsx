@@ -109,192 +109,147 @@ export default function CommandCenterSettings() {
     }
   }
 
+  // UI redesign (artboard Settings): presentation only; every handler above is unchanged.
+  const lbl = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+  const smallButton = "mw-focus inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-3 font-mw-body text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-50";
+  const primaryButton = "mw-focus inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-3 font-mw-body text-sm font-bold text-[#140A02] hover:bg-[#FF8A3D] hover:text-[#140A02] disabled:opacity-50";
+  const field = "flex min-h-11 items-center rounded-[10px] border border-[#2E353D] bg-mw-input px-3.5 text-[15px]";
+  const kvRow = "flex min-h-[34px] flex-wrap items-center justify-between gap-2.5 border-b border-[#1E2329] py-1 text-sm";
+
   return (
-    <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-        <CommandCenterCard title="Profile settings">
-          <div className="flex flex-col gap-4 rounded-[14px] border border-mw-border bg-mw-input p-4 sm:flex-row sm:items-center">
-            <img
-              src={avatarUrl}
-              alt={displayName}
-              className="h-20 w-20 rounded-2xl border border-border/60 object-cover"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="font-semibold text-lg text-mw-text">{displayName}</div>
-              <div className="mt-1 break-all font-mono text-xs text-mw-muted">{walletAddress}</div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button onClick={handleEdit} className="font-semibold" disabled={savingProfile || savingAvatar}>
-                  <Settings className="mr-2 h-4 w-4" />
-                  Edit profile
-                </Button>
-                <Button onClick={handlePickAvatar} variant="outline" className="font-semibold" disabled={savingProfile || savingAvatar}>
-                  <Image className="mr-2 h-4 w-4" />
-                  {savingAvatar ? (awaitingWallet ? "Confirm wallet..." : "Uploading...") : "Change avatar"}
-                </Button>
-              </div>
-            </div>
-          </div>
+    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
+      <h2 className="sr-only">Settings</h2>
+      <CommandCenterCard title="Profile">
+        <div className="flex flex-wrap items-center gap-3">
+          <img src={avatarUrl} alt={displayName} className="h-16 w-16 rounded-full border border-mw-border object-cover" />
+          <Button onClick={handlePickAvatar} className={smallButton} disabled={savingProfile || savingAvatar}>
+            <Image className="h-4 w-4" aria-hidden="true" />
+            {savingAvatar ? (awaitingWallet ? "Confirm wallet..." : "Uploading...") : "Change picture"}
+          </Button>
+          <Button onClick={handleEdit} className={primaryButton} disabled={savingProfile || savingAvatar}>
+            <Settings className="h-4 w-4" aria-hidden="true" />
+            Edit profile
+          </Button>
+        </div>
 
-          <input
-            ref={avatarInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/jpg,image/webp"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void handleAvatarSelected(file);
-              event.currentTarget.value = "";
-            }}
-          />
+        <input
+          ref={avatarInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/jpg,image/webp"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void handleAvatarSelected(file);
+            event.currentTarget.value = "";
+          }}
+        />
 
-          <EditProfileDialog
-            open={editOpen}
-            onOpenChange={setEditOpen}
-            initialUsername={profile?.displayName ?? ""}
-            initialBio={profile?.bio ?? ""}
-            saving={savingProfile}
-            onSave={handleSaveProfile}
-          />
+        <EditProfileDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          initialUsername={profile?.displayName ?? ""}
+          initialBio={profile?.bio ?? ""}
+          saving={savingProfile}
+          onSave={handleSaveProfile}
+        />
 
-          <div className="mt-4 rounded-2xl border border-border/50 bg-card/25 p-4 text-sm text-mw-muted">
-            {loadingProfile ? "Loading profile..." : profile?.bio ? profile.bio : "No public bio set yet."}
-          </div>
-        </CommandCenterCard>
+        <div className="flex flex-col gap-1.5">
+          <span className={lbl}>Display name</span>
+          <div className={field}>{displayName}</div>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className={lbl}>Bio</span>
+          <div className={`${field} min-h-[72px] py-3 text-mw-muted`}>{loadingProfile ? "Loading profile..." : profile?.bio ? profile.bio : "No public bio set yet."}</div>
+        </div>
+      </CommandCenterCard>
 
-        <CommandCenterCard title="Wallet / linked address">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-[14px] border border-mw-border bg-mw-input p-4">
-              <div className="mb-2 flex items-center gap-2 font-semibold text-sm text-mw-text">
-                <Wallet className="h-4 w-4 text-mw-accent-soft" />
-                Owner wallet
-              </div>
-              <div className="break-all font-mono text-xs text-mw-muted">{walletAddress}</div>
-            </div>
-            <div className="rounded-[14px] border border-mw-border bg-mw-input p-4">
-              <div className="mb-2 flex items-center gap-2 font-semibold text-sm text-mw-text">
-                <ShieldCheck className="h-4 w-4 text-mw-accent-soft" />
-                Chain
-              </div>
-              <div className="font-semibold text-sm text-mw-muted">
-                {getChainLabel(walletChainId) ?? "Not detected"}
-              </div>
-              {walletChainId && !isAllowedChainId(walletChainId) ? (
-                <div className="mt-2 space-y-2">
-                  <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-amber-300">
-                    Unsupported network - switch your wallet to BNB Smart Chain to interact.
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="font-semibold"
-                    disabled={switchingChain || !wallet.provider}
-                    onClick={handleSwitchChain}
-                  >
-                    {switchingChain ? "Switching..." : "Switch network"}
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button asChild variant="outline" className="font-semibold">
-              <Link to={`/profile/${encodeURIComponent(walletAddress)}`}>
-                Public profile
-                <ExternalLink className="ml-2 h-4 w-4" />
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="font-semibold">
-              <Link to="/create">Create coin</Link>
+      <CommandCenterCard title="Wallets">
+        <div className={kvRow}>
+          <span className="flex items-center gap-2 text-mw-muted"><Wallet className="h-4 w-4 text-mw-accent-soft" aria-hidden="true" />Owner wallet</span>
+          <span className="break-all text-right font-mw-mono">{walletAddress}</span>
+        </div>
+        <div className={kvRow}>
+          <span className="flex items-center gap-2 text-mw-muted"><ShieldCheck className="h-4 w-4 text-mw-accent-soft" aria-hidden="true" />Chain</span>
+          <span className="font-semibold">{getChainLabel(walletChainId) ?? "Not detected"}</span>
+        </div>
+        {walletChainId && !isAllowedChainId(walletChainId) ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-[10px] border border-[#5A3416] bg-mw-accent-fill p-3 text-sm">
+            <span className="flex-1">Unsupported network - switch your wallet to BNB Smart Chain to interact.</span>
+            <Button size="sm" className={smallButton} disabled={switchingChain || !wallet.provider} onClick={handleSwitchChain}>
+              {switchingChain ? "Switching..." : "Switch network"}
             </Button>
           </div>
-        </CommandCenterCard>
-      </div>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Link to={`/profile/${encodeURIComponent(walletAddress)}`} className={smallButton}>
+            Public profile
+            <ExternalLink className="h-4 w-4" aria-hidden="true" />
+          </Link>
+          <Link to="/create" className={smallButton}>Create coin</Link>
+        </div>
+      </CommandCenterCard>
 
       {postGradFlags.arena ? (
         <CommandCenterCard title="Arena challenge email">
-          <div className="rounded-[14px] border border-mw-border bg-mw-input p-4">
-            <div className="mb-2 flex items-center gap-2 font-semibold text-sm text-mw-text">
-              <Mail className="h-4 w-4 text-mw-accent-soft" />
-              Notify this wallet
-            </div>
-            <p className="text-sm text-mw-muted">
-              Challenges also show in Command Center Battles. Add an email if you want a copy when someone challenges your coin.
-            </p>
-            <label className="mt-3 block text-xs uppercase tracking-[0.14em] text-mw-muted">
-              Email
-              <input
-                type="email"
-                value={arenaEmail}
-                onChange={(event) => setArenaEmail(event.target.value)}
-                className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-mw-text"
-                placeholder="you@example.com"
-              />
-            </label>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button size="sm" className="font-semibold" disabled={savingEmail || !arenaEmail.trim()} onClick={() => void handleSaveArenaEmail()}>
-                {savingEmail ? "Saving..." : "Save and verify"}
-              </Button>
-              {arenaEmailStatus?.configured ? (
-                <span className="text-xs uppercase tracking-[0.14em] text-mw-muted">
-                  {arenaEmailStatus.verified ? "Verified" : "Awaiting verification"}
-                </span>
-              ) : null}
-            </div>
+          <p className="m-0 flex items-center gap-2 text-sm text-mw-muted">
+            <Mail className="h-4 w-4 shrink-0 text-mw-accent-soft" aria-hidden="true" />
+            Challenges also show in Command Center Battles. Add an email if you want a copy when someone challenges your coin.
+          </p>
+          <label className="flex flex-col gap-1.5">
+            <span className={lbl}>Email</span>
+            <input
+              type="email"
+              value={arenaEmail}
+              onChange={(event) => setArenaEmail(event.target.value)}
+              className="mw-focus h-11 w-full rounded-[10px] border border-[#2E353D] bg-mw-input px-3.5 text-[15px] tracking-normal text-mw-text placeholder:text-[#5C6670]"
+              placeholder="you@example.com"
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" className={primaryButton} disabled={savingEmail || !arenaEmail.trim()} onClick={() => void handleSaveArenaEmail()}>
+              {savingEmail ? "Saving..." : "Save and verify"}
+            </Button>
+            {arenaEmailStatus?.configured ? (
+              <span className={`inline-flex h-[22px] items-center rounded-full border px-2 text-xs font-semibold ${arenaEmailStatus.verified ? "border-[#1F5133] text-[#6EE7A0]" : "border-mw-edge text-[#FFB27A]"}`}>
+                {arenaEmailStatus.verified ? "Verified" : "Awaiting verification"}
+              </span>
+            ) : null}
           </div>
         </CommandCenterCard>
       ) : null}
 
       <div id="notifications" className="scroll-mt-24">
-        <CommandCenterCard title="Notifications">
-          <div className="flex flex-col gap-3 rounded-[14px] border border-mw-border bg-mw-input p-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-3">
-              <Bell className="h-5 w-5 text-mw-accent-soft" />
-              <div>
-                <div className="font-semibold text-sm text-mw-text">Profile notifications</div>
-                <p className="text-sm text-mw-muted">
-                  Launch alerts, Prepare Mode updates, and community activity for this wallet.
-                </p>
-              </div>
-            </div>
-            <Button onClick={() => void markAllRead()} variant="outline" className="font-semibold" disabled={!notifications.length || unreadCount === 0}>
+        <CommandCenterCard
+          title="Notifications"
+          action={
+            <Button onClick={() => void markAllRead()} className={smallButton} disabled={!notifications.length || unreadCount === 0}>
               Mark all read{unreadCount ? ` (${unreadCount})` : ""}
             </Button>
-          </div>
-
-          <div className="mt-4 space-y-3">
-            {loadingNotifications && !notifications.length ? (
-              <div className="rounded-[14px] border border-mw-border bg-mw-input p-4 text-sm text-mw-muted">
-                Loading notifications...
-              </div>
-            ) : null}
-
-            {!loadingNotifications && notifications.length === 0 ? (
-              <div className="rounded-[14px] border border-mw-border bg-mw-input p-6 text-center text-sm text-mw-muted">
-                No notifications yet.
-              </div>
-            ) : null}
-
+          }
+        >
+          <p className="m-0 flex items-center gap-2 text-sm text-mw-muted">
+            <Bell className="h-4 w-4 shrink-0 text-mw-accent-soft" aria-hidden="true" />
+            Launch alerts, Prepare Mode updates, and community activity for this wallet.
+          </p>
+          {loadingNotifications && !notifications.length ? <div className="text-sm text-mw-muted">Loading notifications...</div> : null}
+          {!loadingNotifications && notifications.length === 0 ? <div className="text-sm text-mw-muted">No notifications yet.</div> : null}
+          <div className="flex flex-col">
             {notifications.map((notification) => (
               <button
                 key={notification.id}
                 type="button"
                 onClick={() => void handleOpenNotification(notification)}
-                className="flex w-full items-start gap-3 rounded-[14px] border border-mw-border bg-mw-input p-4 text-left transition hover:border-accent/60 hover:bg-success/10"
+                className="mw-focus flex min-h-12 w-full items-start gap-3 border-b border-[#1E2329] py-2.5 text-left last:border-b-0 hover:bg-[#171B20]"
               >
-                <span className={`mt-1 h-2.5 w-2.5 shrink-0 ${notification.read ? "bg-muted" : "bg-accent"}`} />
+                <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${notification.read ? "bg-mw-edge" : "bg-mw-accent"}`} aria-hidden="true" />
                 <span className="min-w-0 flex-1">
-                  <span className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-                    <span className="font-semibold text-sm text-mw-text">{notification.title}</span>
-                    <span className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
-                      {formatNotificationDate(notification.createdAt)}
-                    </span>
+                  <span className="flex flex-col gap-0.5 md:flex-row md:items-center md:justify-between">
+                    <span className="text-sm font-semibold">{notification.title}</span>
+                    <span className="text-xs text-mw-muted">{formatNotificationDate(notification.createdAt)}</span>
                   </span>
-                  <span className="mt-1 block text-sm leading-6 text-mw-muted">{notification.body}</span>
+                  <span className="mt-0.5 block text-sm text-mw-muted">{notification.body}</span>
                 </span>
-                <span className="hidden rounded-full border border-border/50 px-2.5 py-1 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted md:block">
-                  {notification.kind}
-                </span>
+                <span className="hidden h-[22px] items-center rounded-full border border-mw-edge px-2 text-xs font-semibold text-mw-muted md:inline-flex">{notification.kind}</span>
               </button>
             ))}
           </div>

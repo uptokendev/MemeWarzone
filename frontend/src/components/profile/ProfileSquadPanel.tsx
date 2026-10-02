@@ -3,7 +3,6 @@ import { formatEther } from "ethers";
 import { Link } from "react-router-dom";
 import { ArrowRight, ShieldAlert, Users, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { ConnectWalletButton } from "@/components/ConnectWalletButton";
 import {
   fetchSquadSummary,
@@ -30,33 +29,39 @@ function formatBnb(raw: string): string {
   }
 }
 
+const sectionClass = "flex flex-col gap-3 rounded-[14px] border border-mw-border bg-mw-surface p-3.5 font-mw-body text-mw-text md:p-[18px]";
+const tileClass = "rounded-[14px] border border-mw-border bg-mw-surface p-3";
+const lblClass = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+const titleClass = "font-mw-cond text-xl font-bold tracking-[0.02em]";
+const smallButtonClass = "mw-focus inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text";
+
 function LockedSquadState() {
   return (
-    <Card className="border-border/60 bg-card/65 p-6">
+    <section className={sectionClass}>
       <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
         <div>
-          <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Squad locked</p>
-          <h3 className="mt-2 font-retro text-2xl text-foreground">You are not in a squad yet.</h3>
-          <p className="mt-3 text-sm text-muted-foreground">
+          <p className={`m-0 ${lblClass}`}>Squad locked</p>
+          <h3 className="m-0 font-mw-cond text-2xl font-bold">You are not in a squad yet.</h3>
+          <p className="mt-3 text-sm text-mw-muted">
             Squad rewards and squad stats unlock once you join a recruiter squad.
           </p>
-          <p className="mt-2 text-sm text-muted-foreground">
+          <p className="mt-2 text-sm text-mw-muted">
             Until then, your unassigned reward path can still flow into Warzone Airdrops.
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <Button asChild variant="outline" className="font-retro">
+          <Button asChild variant="outline" className={smallButtonClass}>
             <Link to="/recruiters">
               Browse recruiters
               <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </Button>
-          <Button asChild variant="outline" className="font-retro">
+          <Button asChild variant="outline" className={smallButtonClass}>
             <Link to="/airdrops">Warzone Airdrops</Link>
           </Button>
         </div>
       </div>
-    </Card>
+    </section>
   );
 }
 
@@ -119,54 +124,54 @@ export function ProfileSquadPanel({ account, isConnected, isOwnProfile }: Profil
 
   if (!isOwnProfile) {
     return (
-      <Card className="border-border/60 bg-card/65 p-6">
-        <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Squad</p>
-        <h3 className="mt-2 font-retro text-2xl text-foreground">Squad membership and payout posture are private to your profile.</h3>
-        <p className="mt-3 text-sm text-muted-foreground">
+      <section className={sectionClass}>
+        <p className={`m-0 ${lblClass}`}>Squad</p>
+        <h3 className="m-0 font-mw-cond text-2xl font-bold">Squad membership and payout posture are private to your profile.</h3>
+        <p className="mt-3 text-sm text-mw-muted">
           Public standings remain available on the squad leaderboard, but your current link state, detached state, and estimated reward surface only render on your own profile.
         </p>
         <div className="mt-5">
-          <Button asChild variant="outline" className="font-retro">
+          <Button asChild variant="outline" className={smallButtonClass}>
             <Link to="/squads">
               Open public squads
               <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </Button>
         </div>
-      </Card>
+      </section>
     );
   }
 
   if (!isConnected || !account) {
     return (
-      <Card className="border-border/60 bg-card/65 p-6">
+      <section className={sectionClass}>
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Squad</p>
-            <h3 className="mt-2 font-retro text-2xl text-foreground">Connect to inspect your squad posture.</h3>
-            <p className="mt-3 text-sm text-muted-foreground">
+            <p className={`m-0 ${lblClass}`}>Squad</p>
+            <h3 className="m-0 font-mw-cond text-2xl font-bold">Connect to inspect your squad posture.</h3>
+            <p className="mt-3 text-sm text-mw-muted">
               Your exact member score, estimated payout, and detached or solo state will appear here once the wallet is connected.
             </p>
           </div>
           <ConnectWalletButton />
         </div>
-      </Card>
+      </section>
     );
   }
 
   if (loading) {
     return (
-      <Card className="border-border/60 bg-card/65 px-6 py-12 text-center text-sm text-muted-foreground">
+      <section className={`${sectionClass} items-center py-12 text-sm text-mw-muted`}>
         Loading squad state...
-      </Card>
+      </section>
     );
   }
 
   if (error) {
     return (
-      <Card className="border-rose-400/30 bg-rose-400/10 px-6 py-12 text-center text-sm text-rose-100">
+      <section className="rounded-[14px] border border-[#5A1A26] bg-[#2A0E14] px-6 py-12 text-center text-sm text-[#FFB4C0]">
         {error}
-      </Card>
+      </section>
     );
   }
 
@@ -176,185 +181,105 @@ export function ProfileSquadPanel({ account, isConnected, isOwnProfile }: Profil
 
   const squadImageUrl = String((squad as any)?.squadImageUrl || (squad as any)?.squad_image_url || "").trim();
   const recruiterCode = squad?.recruiterCode || member?.recruiterCode || attribution?.recruiterCode || "";
+  const shortWallet = (value: string) => (value.length > 10 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value);
+  const tiles: Array<[string, string]> = [
+    ["Squad status", String(attribution?.squadState ?? "unknown").replace(/_/g, " ")],
+    ["Members", String(squad?.activeMemberCount ?? members.length)],
+    ["Eligible", String(squad?.eligibleMemberCount ?? members.filter((row) => row.isEligible).length)],
+    ["Pending pool", `${formatBnb(squad?.estimatedPendingPoolAmount ?? "0")} BNB`],
+  ];
+  const kv = (label: string, value: string) => (
+    <div className="flex min-h-[34px] items-center justify-between gap-2.5 border-b border-[#1E2329] text-sm">
+      <span className="text-mw-muted">{label}</span>
+      <span className="text-right font-semibold">{value}</span>
+    </div>
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Squad reward claimable</p>
-          <p className="mt-4 font-retro text-3xl text-foreground">{formatBnb(summary?.claimableByProgram?.squad ?? "0")} BNB</p>
-        </Card>
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Exact member score</p>
-          <p className="mt-4 font-retro text-3xl text-foreground">{formatBnb(member?.rawScore ?? "0")} BNB</p>
-        </Card>
-        <Card className="border-border/60 bg-card/70 p-5">
-          <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Estimated payout</p>
-          <p className="mt-4 font-retro text-3xl text-foreground">{formatBnb(member?.estimatedPayoutAmount ?? "0")} BNB</p>
-        </Card>
+    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 lg:grid-cols-[repeat(auto-fill,minmax(150px,1fr))]">
+        {tiles.map(([label, value]) => (
+          <div key={label} className={tileClass}>
+            <div className={lblClass}>{label}</div>
+            <div className="truncate font-mw-mono text-[19px] font-bold capitalize">{value}</div>
+          </div>
+        ))}
       </div>
 
-      <Card className="border-border/60 bg-card/70 p-5">
-        <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-          <div className="flex min-w-0 items-center gap-4">
-            {squadImageUrl ? (
-              <img src={squadImageUrl} alt={`${recruiterCode || "Squad"} squad`} className="h-20 w-20 rounded-2xl border border-accent/35 bg-accent/10 object-cover" />
-            ) : (
-              <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-accent/35 bg-accent/10">
-                <Users className="h-8 w-8 text-accent" />
-              </div>
-            )}
-            <div className="min-w-0">
-              <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Your squad</p>
-              <h3 className="mt-1 truncate font-retro text-2xl text-foreground">
-                {squad?.recruiterDisplayName || member?.recruiterDisplayName || recruiterCode || "Recruiter squad"}
-              </h3>
-              <p className="mt-2 text-sm text-muted-foreground">
-                You are linked as {member?.memberRole || "member"} in recruiter code {recruiterCode || "unknown"}.
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {recruiterCode ? (
-              <>
-                <Button asChild variant="outline" className="font-retro">
-                  <Link to={`/recruiters/${encodeURIComponent(recruiterCode)}`}>Squad page</Link>
-                </Button>
-                <Button asChild variant="outline" className="font-retro">
-                  <Link to={`/r/${encodeURIComponent(recruiterCode)}`}>Invite link</Link>
-                </Button>
-              </>
-            ) : null}
-          </div>
-        </div>
-      </Card>
-
-      <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-        <Card className="border-border/60 bg-card/65 p-6">
-          <div className="flex items-center gap-3">
-            <Wallet className="h-4 w-4 text-sky-200" />
-            <div>
-              <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Attribution</p>
-              <h3 className="mt-1 font-retro text-xl text-foreground">Current wallet posture</h3>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Recruiter link</p>
-              <p className="mt-2 font-retro text-lg text-foreground">{attribution?.recruiterLinkState ?? "unknown"}</p>
-            </div>
-            <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Squad state</p>
-              <p className="mt-2 font-retro text-lg text-foreground">{attribution?.squadState ?? "unknown"}</p>
-            </div>
-          </div>
-
-          {member ? (
-            <div className="mt-4 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-sm text-emerald-100">
-              Squad member row found: {member.memberRole || "member"} under recruiter {member.recruiterDisplayName || member.recruiterCode || "unknown"}.
-            </div>
-          ) : null}
-
-          {attribution?.squadState?.includes("solo") ? (
-            <div className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm text-amber-100">
-              This wallet is currently solo, so it does not share the Squad Pool. Unassigned paths continue through the airdrop engine instead.
-            </div>
-          ) : null}
-
-          {attribution?.squadState === "solo_detached" ? (
-            <div className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-100">
-              This wallet is detached from its previous squad. The profile tab is reading that state directly from attribution instead of requiring backend table inspection.
-            </div>
-          ) : null}
-        </Card>
-
-        <Card className="border-border/60 bg-card/65 p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <Users className="h-4 w-4 text-amber-200" />
-              <div>
-                <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Squad preview</p>
-                <h3 className="mt-1 font-retro text-xl text-foreground">Estimated reward surface</h3>
-              </div>
-            </div>
-            <Button asChild variant="outline" className="font-retro">
-              <Link to="/squads">
-                Public squads
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Link>
-            </Button>
-          </div>
-
-          {!squad ? (
-            <div className="mt-5 rounded-2xl border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">
-              No active squad summary found for this wallet right now.
-            </div>
+      <section className={sectionClass}>
+        <div className="flex flex-wrap items-center gap-3">
+          {squadImageUrl ? (
+            <img src={squadImageUrl} alt={`${recruiterCode || "Squad"} squad`} className="h-14 w-14 rounded-[10px] border border-mw-border object-cover" />
           ) : (
-            <div className="mt-5 space-y-3">
-              <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-                <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Squad recruiter</p>
-                <p className="mt-2 font-retro text-lg text-foreground">{squad.recruiterDisplayName || squad.recruiterCode}</p>
-              </div>
-              <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-                <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Eligible members</p>
-                <p className="mt-2 font-retro text-lg text-foreground">{squad.eligibleMemberCount}</p>
-              </div>
-              <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-                <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Active members</p>
-                <p className="mt-2 font-retro text-lg text-foreground">{squad.activeMemberCount}</p>
-              </div>
-              <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-                <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Estimated pending pool</p>
-                <p className="mt-2 font-retro text-lg text-foreground">{formatBnb(squad.estimatedPendingPoolAmount)} BNB</p>
-              </div>
-              {member?.memberCapApplied ? (
-                <div className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm text-amber-100">
-                  <ShieldAlert className="mb-2 h-4 w-4" />
-                  Your current estimated payout is sitting on the member cap, so redistribution would flow to other eligible squad members first.
-                </div>
-              ) : null}
+            <div className="flex h-14 w-14 items-center justify-center rounded-[10px] border border-mw-border bg-mw-input">
+              <Users className="h-6 w-6 text-mw-accent-soft" aria-hidden="true" />
             </div>
           )}
-        </Card>
-      </div>
-
-      <Card className="border-border/60 bg-card/65 p-6">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Squad roster</p>
-            <h3 className="mt-1 font-retro text-xl text-foreground">Wallets in this squad</h3>
+          <div className="min-w-0 flex-1">
+            <div className={lblClass}>Your squad</div>
+            <div className="truncate font-mw-cond text-xl font-bold">
+              {squad?.recruiterDisplayName || member?.recruiterDisplayName || recruiterCode || "Recruiter squad"}
+            </div>
+            <p className="m-0 text-sm text-mw-muted">You are linked as {member?.memberRole || "member"} in recruiter code {recruiterCode || "unknown"}.</p>
           </div>
-          <span className="rounded-full border border-border/40 bg-card/25 px-3 py-1 text-xs text-muted-foreground">
-            {members.length} shown
-          </span>
+          {recruiterCode ? (
+            <div className="flex flex-wrap gap-2">
+              <Link to={`/recruiters/${encodeURIComponent(recruiterCode)}`} className={smallButtonClass}>Squad page</Link>
+              <Link to={`/r/${encodeURIComponent(recruiterCode)}`} className={smallButtonClass}>Invite link</Link>
+            </div>
+          ) : null}
         </div>
+      </section>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {members.length === 0 ? (
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4 text-sm text-muted-foreground">
-              No roster rows returned yet, but this wallet membership is active.
-            </div>
-          ) : members.map((row) => (
-            <div key={`${row.walletAddress}-${row.createdAt || ""}`} className="rounded-2xl border border-border/50 bg-background/25 p-4">
-              <div className="font-retro text-sm text-foreground">
-                {row.walletAddress.length > 10 ? `${row.walletAddress.slice(0, 6)}...${row.walletAddress.slice(-4)}` : row.walletAddress}
-              </div>
-              <div className="mt-1 text-xs capitalize text-muted-foreground">{row.memberRole || "member"}</div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-xl border border-border/40 bg-card/25 p-2">
-                  <div className="text-muted-foreground">Score</div>
-                  <div className="mt-1 font-retro text-foreground">{formatBnb(row.rawScore ?? "0")}</div>
-                </div>
-                <div className="rounded-xl border border-border/40 bg-card/25 p-2">
-                  <div className="text-muted-foreground">Est. payout</div>
-                  <div className="mt-1 font-retro text-foreground">{formatBnb(row.estimatedPayoutAmount ?? "0")}</div>
-                </div>
-              </div>
-            </div>
-          ))}
+      <section className={sectionClass}>
+        <span className={titleClass}>Reward model</span>
+        <p className="m-0 text-sm text-mw-muted">Squad rewards are based on weekly squad activity and your contribution. Fair-play rules apply before rewards are shown; public standings stay on the squad leaderboard.</p>
+        {kv("Squad reward claimable", `${formatBnb(summary?.claimableByProgram?.squad ?? "0")} BNB`)}
+        {kv("Your member score", `${formatBnb(member?.rawScore ?? "0")} BNB`)}
+        {kv("Your estimated payout", `${formatBnb(member?.estimatedPayoutAmount ?? "0")} BNB`)}
+        {kv("Recruiter link", String(attribution?.recruiterLinkState ?? "unknown"))}
+        {member?.memberCapApplied ? (
+          <div className="flex gap-2 rounded-[10px] border border-[#5A3416] bg-mw-accent-fill p-3 text-sm">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-[#FF9A4D]" aria-hidden="true" />
+            Your current estimated payout is sitting on the member cap, so redistribution would flow to other eligible squad members first.
+          </div>
+        ) : null}
+        {attribution?.squadState?.includes("solo") ? (
+          <div className="rounded-[10px] border border-[#5A3416] bg-mw-accent-fill p-3 text-sm">
+            This wallet is currently solo, so it does not share the Squad Pool. Unassigned paths continue through the airdrop engine instead.
+          </div>
+        ) : null}
+        {attribution?.squadState === "solo_detached" ? (
+          <div className="rounded-[10px] border border-[#5A1A26] bg-[#2A0E14] p-3 text-sm text-[#FFB4C0]">
+            This wallet is detached from its previous squad. The profile tab is reading that state directly from attribution instead of requiring backend table inspection.
+          </div>
+        ) : null}
+      </section>
+
+      <section className={sectionClass}>
+        <div className="flex items-center justify-between gap-2">
+          <span className={titleClass}>Members</span>
+          <span className="text-[13px] text-mw-muted">{members.length} shown</span>
         </div>
-      </Card>
+        {members.length === 0 ? (
+          <div className="text-sm text-mw-muted">No roster rows returned yet, but this wallet membership is active.</div>
+        ) : (
+          <div className="flex flex-col">
+            {members.map((row) => (
+              <div key={`${row.walletAddress}-${row.createdAt || ""}`} className="flex min-h-11 items-center gap-2.5 border-b border-[#1E2329] text-sm last:border-b-0">
+                <span className="min-w-0 flex-1 truncate font-mw-mono">{shortWallet(row.walletAddress)}</span>
+                <span className="hidden capitalize text-mw-muted sm:inline">{row.memberRole || "member"}</span>
+                <span className={`inline-flex h-[22px] items-center rounded-full border px-2 text-xs font-semibold ${row.isEligible ? "border-[#1F5133] text-[#6EE7A0]" : "border-mw-edge text-[#FFB27A]"}`}>{row.isEligible ? "Eligible" : "Not yet"}</span>
+                <span className="w-[90px] text-right font-mw-mono">{formatBnb(row.estimatedPayoutAmount ?? "0")}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <Link to="/squads" className={`${smallButtonClass} w-max`}>
+          Squad Pool leaderboard
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </section>
     </div>
   );
 }

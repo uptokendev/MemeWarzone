@@ -732,62 +732,59 @@ export default function CommandCenterClaims() {
     }
   }
 
+  // UI redesign (artboard Rewards and claims): one row per reward; same claim handler and button rules.
+  const chip = "inline-flex h-[22px] shrink-0 items-center rounded-full border px-2 text-xs font-semibold";
+  const chipTone = (label: string) =>
+    /ready|claimable|available/i.test(label) ? "border-[#1F5133] text-[#6EE7A0]" : /fail|error/i.test(label) ? "border-mw-edge text-[#FB7185]" : /expired|closed|no reward/i.test(label) ? "border-mw-edge text-[#7C858F]" : "border-mw-edge text-[#FFB27A]";
+  const rowClass = "flex flex-wrap items-center gap-2.5 rounded-[14px] border border-mw-border bg-mw-surface p-3";
+
   return (
-    <div className="space-y-4">
-      <CommandCenterCard title={`Your ${rewardChainLabel(rewardChainId)} Rewards`}>
-        {message ? <div className="mb-3 rounded-xl border border-border/60 bg-background/30 p-3 text-sm text-mw-muted">{message}</div> : null}
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {rewardCards.map((card) => {
-            const Icon = card.icon;
-            const stateCopy = getRewardStateCopy(card.state);
-            return (
-              <div key={card.rewardType} className="rounded-[14px] border border-mw-border bg-mw-input p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2 font-semibold text-sm text-mw-text">
-                      <Icon className="h-4 w-4 text-mw-accent-soft" />
-                      {card.title}
-                    </div>
-                    <p className="mt-2 text-sm text-mw-muted">{card.description}</p>
-                  </div>
-                  <span className="rounded-full border border-border/40 bg-card/25 px-2.5 py-1 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
-                    {stateCopy.label}
-                  </span>
-                </div>
+    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
+      <h2 className="sr-only">{`Your ${rewardChainLabel(rewardChainId)} Rewards`}</h2>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex min-h-10 items-center rounded-lg border border-mw-accent bg-[#2A1609] px-3 font-mw-mono text-[13px] text-mw-accent-soft">{rewardChainLabel(rewardChainId)}</span>
+        <span className="text-[13px] text-mw-muted">Rewards for the connected wallet on this chain.</span>
+      </div>
+      {message ? <div className="rounded-[10px] border border-mw-border bg-mw-input p-3 text-sm text-mw-muted">{message}</div> : null}
 
-                <div className="mt-5 flex items-end justify-between gap-3">
-                  <div>
-                    <div className="font-semibold text-2xl text-mw-text">{loading ? "..." : card.amountLabel}</div>
-                    <div className="mt-1 text-xs text-mw-muted">{stateCopy.amountCaption}</div>
-                  </div>
-                  <Button
-                    disabled={stateCopy.disabled || claimingType === card.rewardType}
-                    className="font-semibold"
-                    onClick={() => void claimRewards(card)}
-                  >
-                    {claimingType === card.rewardType ? "Claiming..." : card.buttonLabel}
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </CommandCenterCard>
+      <div className="flex flex-col gap-2">
+        {rewardCards.map((card) => {
+          const Icon = card.icon;
+          const stateCopy = getRewardStateCopy(card.state);
+          return (
+            <div key={card.rewardType} className={rowClass} title={card.description}>
+              <Icon className="h-4 w-4 shrink-0 text-mw-accent-soft" aria-hidden="true" />
+              <span className="min-w-[160px] flex-1">
+                <b className="block text-sm">{card.title}</b>
+                <span className="text-xs text-mw-muted">{rewardChainLabel(rewardChainId)} · {stateCopy.amountCaption}</span>
+              </span>
+              <span className="font-mw-mono font-bold">{loading ? "..." : card.amountLabel}</span>
+              <span className={`${chip} ${chipTone(stateCopy.label)}`}>{stateCopy.label}</span>
+              <Button
+                disabled={stateCopy.disabled || claimingType === card.rewardType}
+                className="min-h-9 rounded-[10px] border border-mw-accent bg-mw-accent px-3 text-sm font-bold text-[#140A02] hover:bg-[#FF8A3D] disabled:border-mw-edge disabled:bg-mw-raised disabled:text-mw-muted"
+                onClick={() => void claimRewards(card)}
+              >
+                {claimingType === card.rewardType ? "Claiming..." : card.buttonLabel}
+              </Button>
+            </div>
+          );
+        })}
 
-      {battleClaims.length ? (
-        <CommandCenterCard title="Arena war pool">
-          <p className="text-sm text-mw-muted">
-            Winning campaign owners pull 85% of stakes plus Support. Protocol does not send. Supporters are not paid.
-          </p>
-          <div className="mt-3 space-y-2">
-            {battleClaims.map((item) => (
-              <div key={item.battleId} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/50 p-3">
-                <div className="font-mono text-xs text-mw-muted">{item.battleId}</div>
-                <ArenaWarPoolClaimButton battleId={item.battleId} chainId={item.chainId} />
-              </div>
-            ))}
+        {battleClaims.map((item) => (
+          <div key={item.battleId} className={rowClass}>
+            <span className="min-w-[160px] flex-1">
+              <b className="block text-sm">Arena war pool</b>
+              <span className="font-mw-mono text-xs text-mw-muted">{item.battleId}</span>
+            </span>
+            <ArenaWarPoolClaimButton battleId={item.battleId} chainId={item.chainId} />
           </div>
-        </CommandCenterCard>
+        ))}
+      </div>
+      {battleClaims.length ? (
+        <p className="m-0 text-[13px] text-mw-muted">
+          Winning campaign owners pull 85% of stakes plus Support. Protocol does not send. Supporters are not paid.
+        </p>
       ) : null}
 
       {showRecruiterRewards ? <RecruiterNativePayoutsPanel /> : null}

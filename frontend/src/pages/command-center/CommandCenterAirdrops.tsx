@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatEther } from "ethers";
-import { Gift, Trophy } from "lucide-react";
 
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { CommandCenterPageHeader } from "@/components/command-center/CommandCenterPageHeader";
@@ -89,7 +88,7 @@ function winnerType(program: string): string {
 }
 
 export default function CommandCenterAirdrops() {
-  const { chainId } = useCommandCenterData();
+  const { chainId, walletAddress } = useCommandCenterData();
   const [winners, setWinners] = useState<AirdropWinner[]>([]);
   const [current, setCurrent] = useState<AirdropCurrent | null>(null);
   const [preview, setPreview] = useState<AirdropPreview | null>(null);
@@ -145,109 +144,95 @@ export default function CommandCenterAirdrops() {
     ...(preview?.creators || []).map((row) => ({ ...row, kind: "Creator" })),
   ].slice(0, 12);
 
+  // "You this epoch" reads the existing preview: is this wallet in today's qualifying list?
+  const myPreviewRow = previewRows.find((row) => String(row.walletAddress || "").toLowerCase() === String(walletAddress || "").toLowerCase()) ||
+    [...(preview?.traders || []), ...(preview?.creators || [])].find((row) => String(row.walletAddress || "").toLowerCase() === String(walletAddress || "").toLowerCase()) ||
+    null;
+  const lbl = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+  const big = "font-mw-mono text-[30px] font-bold leading-tight text-mw-text";
+  const rowClass = "flex min-h-[34px] items-center justify-between gap-2.5 border-b border-[#1E2329] py-1 text-sm last:border-b-0";
+
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
       <CommandCenterPageHeader title={pageTitle(chainId)} />
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <div className="space-y-4">
-          <CommandCenterCard className="min-h-[180px]">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Current Prize Pool</p>
-                <div className="mt-5 font-semibold text-4xl text-mw-text md:text-5xl">
-                  {loading ? "..." : formatNativeAmount(currentPrizePoolRaw, chainId)} {symbol}
-                </div>
-                <p className="mt-3 text-xs uppercase tracking-[0.16em] text-mw-muted">{poolStatus}</p>
-              </div>
-              <div className="rounded-2xl border border-[#7A3A0C] bg-[#2A1609] p-3 text-mw-accent-soft">
-                <Gift className="h-5 w-5" />
-              </div>
-            </div>
-          </CommandCenterCard>
-
-          <CommandCenterCard>
-            <p className="font-semibold font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Next drop in</p>
-            <div className="mt-4 font-semibold text-3xl text-mw-text md:text-4xl">{countdown}</div>
-            {current?.currentEpochId ? <p className="mt-2 text-xs uppercase tracking-[0.16em] text-mw-muted">Epoch {current.currentEpochId}</p> : null}
-            {preview ? (
-              <p className="mt-2 text-xs text-mw-muted">
-                {preview.traderCount} traders / {preview.creatorCount} creators qualify this epoch. Claims closed.
-              </p>
-            ) : null}
-          </CommandCenterCard>
+      <section className="grid gap-3.5 rounded-[14px] border border-[#5A3416] bg-[#1A130D] p-3.5 lg:grid-cols-3 lg:p-[22px]">
+        <div>
+          <div className={lbl}>Current prize pool</div>
+          <div className={big}>{loading ? "..." : formatNativeAmount(currentPrizePoolRaw, chainId)} {symbol}</div>
+          <div className="text-[13px] text-mw-muted">{poolStatus}</div>
         </div>
+        <div>
+          <div className={lbl}>Next drop in</div>
+          <div className={big}>{countdown}</div>
+          <div className="text-[13px] text-mw-muted">
+            {current?.currentEpochId ? `Epoch ${current.currentEpochId}` : "Mondays, UTC"}
+          </div>
+        </div>
+        <div>
+          <div className={lbl}>You this epoch</div>
+          <div className="mt-1.5">
+            {preview ? (
+              <span className={`inline-flex h-[22px] items-center rounded-full border px-2 text-xs font-semibold ${myPreviewRow ? "border-[#1F5133] text-[#6EE7A0]" : "border-mw-edge text-[#FFB27A]"}`}>
+                {myPreviewRow ? "Eligible" : "Not in the preview yet"}
+              </span>
+            ) : (
+              <span className="text-sm text-mw-muted">Preview unavailable</span>
+            )}
+          </div>
+          <div className="mt-1.5 text-[13px] text-mw-muted">
+            {preview ? `${preview.traderCount} traders / ${preview.creatorCount} creators qualify this epoch. Preview, final at the drop.` : "Final at the drop."}
+          </div>
+        </div>
+      </section>
 
-        <CommandCenterCard className="min-h-[376px]" title="Previous winners">
-          {loading ? (
-            <div className="rounded-[14px] border border-mw-border bg-mw-input p-4 text-sm text-mw-muted">
-              Loading previous winners...
-            </div>
-          ) : error ? (
-            <div className="rounded-2xl border border-[#5A1A26] bg-[#2A0E14] p-4 text-sm text-[#FFB4C0]">
-              {error}
-            </div>
-          ) : winners.length === 0 ? (
-            <div className="rounded-[14px] border border-mw-border bg-mw-input p-4 text-sm text-mw-muted">
-              {isSolanaAirdrop(chainId)
-                ? "No published Solana winners yet. Estimates can appear from bonding volume; claims stay closed."
-                : isRobinhoodAirdrop(chainId)
-                  ? "No published Robinhood winners yet. Estimates can appear from Robinhood bonding volume; claims stay closed."
-                  : "No previous winners yet."}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {winners.map((winner) => (
-                <div
-                  key={`${winner.drawId}-${winner.walletAddress}-${winner.program}`}
-                  className="rounded-2xl border border-border/60 bg-background/35 p-4"
-                >
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Trophy className="h-4 w-4 shrink-0 text-mw-accent-soft" />
-                        <p className="truncate font-semibold text-sm text-mw-text">{shortenAddress(winner.walletAddress)}</p>
-                      </div>
-                      <p className="mt-1 text-xs uppercase tracking-[0.16em] text-mw-muted">
-                        {isHolderPayoutProgram(winner.program) ? "Holder payout" : `${winnerType(winner.program)} winner`} #{winner.winnerRank}
-                      </p>
-                    </div>
-                    <p className="shrink-0 font-semibold text-sm text-mw-text">
-                      {formatNativeAmount(winner.payoutAmount, chainId)} {symbol}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CommandCenterCard>
-      </div>
+      <CommandCenterCard title="Previous winners">
+        {loading ? (
+          <div className="text-sm text-mw-muted">Loading previous winners...</div>
+        ) : error ? (
+          <div className="rounded-[10px] border border-[#5A1A26] bg-[#2A0E14] p-3 text-sm text-[#FFB4C0]">{error}</div>
+        ) : winners.length === 0 ? (
+          <div className="text-sm text-mw-muted">
+            {isSolanaAirdrop(chainId)
+              ? "No published Solana winners yet. Estimates can appear from bonding volume; claims stay closed."
+              : isRobinhoodAirdrop(chainId)
+                ? "No published Robinhood winners yet. Estimates can appear from Robinhood bonding volume; claims stay closed."
+                : "No previous winners yet."}
+          </div>
+        ) : (
+          <div className="flex flex-col">
+            {winners.map((winner) => (
+              <div key={`${winner.drawId}-${winner.walletAddress}-${winner.program}`} className={rowClass}>
+                <span className="min-w-0 truncate text-mw-muted">
+                  {isHolderPayoutProgram(winner.program) ? "Holder payout" : `${winnerType(winner.program)} winner`} #{winner.winnerRank} ·{" "}
+                  <span className="font-mw-mono text-mw-text">{shortenAddress(winner.walletAddress)}</span>
+                </span>
+                <span className="shrink-0 font-mw-mono font-semibold">{formatNativeAmount(winner.payoutAmount, chainId)} {symbol}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CommandCenterCard>
 
       {previewRows.length ? (
         <CommandCenterCard title="Eligible this epoch (preview)">
-          <p className="mb-3 text-xs text-mw-muted">{preview?.note}</p>
-          <div className="space-y-2">
+          {preview?.note ? <p className="m-0 text-[13px] text-mw-muted">{preview.note}</p> : null}
+          <div className="flex flex-col">
             {previewRows.map((row) => (
-              <div
-                key={`${row.program}-${row.walletAddress}`}
-                className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-background/35 px-4 py-3"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-semibold text-sm text-mw-text">{shortenAddress(row.walletAddress)}</p>
-                  <p className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
-                    {row.kind}
-                    {row.tradeCount ? ` · ${row.tradeCount} trades` : ""}
-                    {row.uniqueBuyers ? ` · ${row.uniqueBuyers} buyers` : ""}
-                  </p>
-                </div>
-                <p className="shrink-0 font-semibold text-sm text-mw-text">
-                  {formatNativeAmount(row.estimatedShareRaw || ZERO_RAW, chainId)} {symbol}
-                </p>
+              <div key={`${row.program}-${row.walletAddress}`} className={rowClass}>
+                <span className="min-w-0 truncate text-mw-muted">
+                  <span className="font-mw-mono text-mw-text">{shortenAddress(row.walletAddress)}</span> · {row.kind}
+                  {row.tradeCount ? ` · ${row.tradeCount} trades` : ""}
+                  {row.uniqueBuyers ? ` · ${row.uniqueBuyers} buyers` : ""}
+                </span>
+                <span className="shrink-0 font-mw-mono font-semibold">{formatNativeAmount(row.estimatedShareRaw || ZERO_RAW, chainId)} {symbol}</span>
               </div>
             ))}
           </div>
         </CommandCenterCard>
       ) : null}
+
+      <p className="m-0 text-[13px] text-mw-muted">Unclaimed drops roll back into the pot after 60 days. Claim in Rewards and claims.</p>
     </div>
   );
 }
