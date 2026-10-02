@@ -63,3 +63,27 @@ test("a resolved battle with an unclaimed share stays in the loop until both are
   await runResolveDuePass({ loadDueRows: async () => [row], resolveBattle, settled, logger: quiet });
   assert.ok(settled.has(row.id));
 });
+
+import { buildDueTournamentQuery, selectDueBattles } from "./arena-operator-scan.mjs";
+
+test("finished Solana tournaments are scanned too, as kind 'tournament'", () => {
+  const q = buildDueTournamentQuery({ lookbackDays: 30, limit: 10 });
+  assert.match(q.text, /'tournament' as kind/);
+  assert.match(q.text, /t\.status = 'finished'/);
+  assert.deepEqual(q.params, [101, "30", 10]);
+  const rows = selectDueBattles([
+    { id: "tour-1", chain_id: 101, state: "finished", kind: "tournament" },
+    { id: "arena-1", chain_id: 101, state: "finished" },
+    { id: "tour-1", chain_id: 101, state: "finished", kind: "tournament" },
+  ]);
+  assert.deepEqual(rows.map((r) => [r.id, r.kind || "battle"]), [["tour-1", "tournament"], ["arena-1", "battle"]]);
+});
+
+test("the worker dispatches tournaments to resolve-tournament and records their share as kind 'tournament'", async () => {
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("./arena-operator-worker.mjs", import.meta.url), "utf8");
+  assert.match(src, /if \(row\.kind === "tournament"\) return resolveTournament\(row\)/);
+  assert.match(src, /command: "resolve-tournament"/);
+  assert.match(src, /sweepShares\(\{ kind: "tournament"/);
+  assert.match(src, /buildDueTournamentQuery\(\{ lookbackDays, limit \}\)/);
+});

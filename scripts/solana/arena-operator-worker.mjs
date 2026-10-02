@@ -31,6 +31,7 @@ import { recordLeagueShare } from "../../frontend/api/lib/arenaLeagueShareLedger
 import {
   DEFAULT_INTERVAL_MS,
   buildDueResolveQuery,
+  buildDueTournamentQuery,
   classifyResolveOutcome,
   operatorClaimsMode,
   operatorClaimsSettled,
@@ -363,13 +364,104 @@ async function runResolveDueCli({ send, watch, intervalMs, lookbackDays, limit, 
   const { default: pg } = await import("pg");
   const pool = new pg.Pool({ connectionString: requiredEnv("DATABASE_URL") });
   const loadDueRows = async () => {
-    const { text, params } = buildDueResolveQuery({ lookbackDays, limit });
-    const result = await pool.query(text, params);
-    return result.rows || [];
+    const battles = buildDueResolveQuery({ lookbackDays, limit });
+    const tournaments = buildDueTournamentQuery({ lookbackDays, limit });
+    const [b, t] = await Promise.all([pool.query(battles.text, battles.params), pool.query(tournaments.text, tournaments.params)]);
+    return [...(b.rows || []), ...(t.rows || [])];
   };
   const claimsMode = operatorClaimsMode();
   const claimLogged = new Map();
+  // A finished tournament with its paid entries, from the shared pool (the single-id CLI path opens one per call).
+  const loadTournamentRows = async (tournamentId) => {
+    const tournament = (await pool.query(
+      `select id, chain_id, status, bracket, winner_token from public.arena_tournaments where id = $1 limit 1`,
+      [tournamentId],
+    )).rows[0] || null;
+    if (!tournament) return { tournament: null, entries: [] };
+    const entries = (await pool.query(
+      `select token_address, owner_wallet, buy_in_paid from public.arena_tournament_entries
+        where tournament_id = $1 and buy_in_paid = true order by created_at asc`,
+      [tournamentId],
+    )).rows;
+    return { tournament, entries };
+  };
+
+  // After a pool is resolved on chain: record its MWL share, then move the MWL and protocol shares
+  // to their receivers. Same for battles and tournaments; `scope` names the subject for runOperatorJob.
+  const sweepShares = async ({ kind, id, chainId, settledAt, result, connection, loadPool, loadConfig, scope }) => {
+    const resolvedState = classifyResolveOutcome(result).state;
+    if (claimsMode === "off" || (resolvedState !== "resolved" && resolvedState !== "already-resolved")) return result;
+    // Record the MWL share before claim_mwl moves it (the amount is only readable now). If the claim
+    // then fails, this loop retries it until it lands, and the MWL payout never posts a root the
+    // vault cannot cover, so it waits for the money instead of losing the row.
+    if (claimsMode === "send") {
+      const before = await loadPool();
+      const pendingMwl = BigInt(before?.pendingMwl ?? 0);
+      if (pendingMwl > 0n && !before?.claimedMwl) {
+        try {
+          await recordLeagueShare(pool, {
+            chainId,
+            subjectKind: kind,
+            subjectId: id,
+            grossRaw: pendingMwl,
+            settledAt: settledAt || new Date(),
+            source: "solana_claim_mwl",
+          });
+        } catch (error) {
+          // Never claim a share the ledger has not recorded: it would reach mwl_vault unassigned.
+          console.warn(`[arena-operator-scan] ${id} league share ledger write failed, claims held: ${String(error?.message || error)}`);
+          return { ...result, claimsPending: true };
+        }
+      }
+    }
+    const claims = await runOperatorClaims({
+      mode: claimsMode,
+      runClaim: (command, sendClaim) => runOperatorJob({
+        command,
+        ...scope,
+        send: sendClaim,
+        loadPool,
+        loadConfig,
+        payer,
+        sendClaim: async (plan, payerKey) => sendPlannedClaim(connection, payerKey, plan, payerKey.publicKey),
+      }),
+    });
+    for (const claim of claims) {
+      const key = `${id}:${claim.command}`;
+      const line = `${claim.state} ${claim.reason}${claim.signature ? ` ${claim.signature}` : ""}`;
+      if (claimLogged.get(key) === line) continue;
+      claimLogged.set(key, line);
+      const log = claim.state === "blocked" ? console.warn : console.log;
+      log(`[arena-operator-scan] ${id} ${claim.command} ${line}`);
+    }
+    return { ...result, claims, claimsPending: !operatorClaimsSettled(claims) };
+  };
+
+  const resolveTournament = async (row) => {
+    const loaded = await loadTournamentRows(row.id);
+    if (!loaded?.tournament) return fail("tournament-not-found");
+    const { connection, loadPool, loadConfig, loadReceipts } = await defaultChainReaders({
+      chainId: loaded.tournament.chain_id,
+      poolId: canonicalTournamentPoolIdBytes(row.id),
+    });
+    const scope = { tournamentId: row.id, loadTournament: async () => loaded };
+    const result = await runOperatorJob({
+      command: "resolve-tournament",
+      ...scope,
+      send,
+      loadPool,
+      loadConfig,
+      loadReceipts,
+      resolver,
+      payer,
+      sendResolvePlaces: async (plan, resolverKey, payerKey) =>
+        sendPlannedPlacesResolve(connection, payerKey, plan, resolverKey),
+    });
+    return sweepShares({ kind: "tournament", id: row.id, chainId: Number(loaded.tournament.chain_id), settledAt: row.resolved_ordering, result, connection, loadPool, loadConfig, scope });
+  };
+
   const resolveBattle = async (row) => {
+    if (row.kind === "tournament") return resolveTournament(row);
     const settlement = settlementFromBattleRow(row);
     const { connection, loadPool, loadConfig } = await defaultChainReaders({
       chainId: settlement.chain_id,
@@ -387,54 +479,10 @@ async function runResolveDueCli({ send, watch, intervalMs, lookbackDays, limit, 
       sendResolve: async (plan, resolverKey, payerKey) =>
         sendPlannedResolve(connection, payerKey, plan, resolverKey),
     });
-    // Once the pool is resolved on chain, move its MWL and protocol shares to their receivers.
-    const resolvedState = classifyResolveOutcome(result).state;
-    if (claimsMode === "off" || (resolvedState !== "resolved" && resolvedState !== "already-resolved")) return result;
-    // Record the MWL share before claim_mwl moves it (the amount is only readable now). If the claim
-    // then fails, this loop retries it until it lands, and the MWL payout never posts a root the
-    // vault cannot cover, so it waits for the money instead of losing the row.
-    if (claimsMode === "send") {
-      const before = await loadPool();
-      const pendingMwl = BigInt(before?.pendingMwl ?? 0);
-      if (pendingMwl > 0n && !before?.claimedMwl) {
-        try {
-          await recordLeagueShare(pool, {
-            chainId: settlement.chain_id,
-            subjectKind: "battle",
-            subjectId: settlement.id,
-            grossRaw: pendingMwl,
-            settledAt: row.resolved_ordering || new Date(),
-            source: "solana_claim_mwl",
-          });
-        } catch (error) {
-          // Never claim a share the ledger has not recorded: it would reach mwl_vault unassigned.
-          console.warn(`[arena-operator-scan] ${settlement.id} league share ledger write failed, claims held: ${String(error?.message || error)}`);
-          return { ...result, claimsPending: true };
-        }
-      }
-    }
-    const claims = await runOperatorClaims({
-      mode: claimsMode,
-      runClaim: (command, sendClaim) => runOperatorJob({
-        command,
-        battleId: settlement.id,
-        send: sendClaim,
-        loadSettlement: async () => row,
-        loadPool,
-        loadConfig,
-        payer,
-        sendClaim: async (plan, payerKey) => sendPlannedClaim(connection, payerKey, plan, payerKey.publicKey),
-      }),
+    return sweepShares({
+      kind: "battle", id: settlement.id, chainId: settlement.chain_id, settledAt: row.resolved_ordering, result,
+      connection, loadPool, loadConfig, scope: { battleId: settlement.id, loadSettlement: async () => row },
     });
-    for (const claim of claims) {
-      const key = `${settlement.id}:${claim.command}`;
-      const line = `${claim.state} ${claim.reason}${claim.signature ? ` ${claim.signature}` : ""}`;
-      if (claimLogged.get(key) === line) continue;
-      claimLogged.set(key, line);
-      const log = claim.state === "blocked" ? console.warn : console.log;
-      log(`[arena-operator-scan] ${settlement.id} ${claim.command} ${line}`);
-    }
-    return { ...result, claims, claimsPending: !operatorClaimsSettled(claims) };
   };
   console.log(`[arena-operator-scan] resolve-due ${send ? "SEND" : "dry-run"}${watch ? ` watch every ${intervalMs}ms` : " single pass"} lookbackDays=${lookbackDays || "default"} claims=${claimsMode}`);
   try {

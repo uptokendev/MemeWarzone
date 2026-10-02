@@ -53,6 +53,33 @@ export function buildDueResolveQuery({ lookbackDays = DEFAULT_LOOKBACK_DAYS, lim
 }
 
 /**
+ * Finished Solana tournaments, oldest last-match settlement first, inside the same lookback window.
+ * Rows carry kind 'tournament' and state 'finished' so the same selection and loop handle them; the
+ * worker then runs resolve-tournament (places from the bracket) instead of resolve.
+ */
+export function buildDueTournamentQuery({ lookbackDays = DEFAULT_LOOKBACK_DAYS, limit = DEFAULT_SCAN_LIMIT } = {}) {
+  const positive = (value, fallback) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+  };
+  const days = positive(lookbackDays, DEFAULT_LOOKBACK_DAYS);
+  const rows = positive(limit, DEFAULT_SCAN_LIMIT);
+  return {
+    text: `select t.id, t.chain_id, 'finished' as state, 'tournament' as kind,
+                  max(coalesce(b.settled_at, b.finished_at, b.updated_at)) as resolved_ordering
+             from public.arena_tournaments t
+             join public.arena_battles b on b.tournament_id = t.id
+            where t.chain_id = $1
+              and t.status = 'finished'
+            group by t.id, t.chain_id
+           having max(coalesce(b.settled_at, b.finished_at, b.updated_at)) >= now() - ($2 || ' days')::interval
+            order by max(coalesce(b.settled_at, b.finished_at, b.updated_at)) asc
+            limit $3`,
+    params: [SOLANA_ARENA_CHAIN_ID, String(days), rows],
+  };
+}
+
+/**
  * A pass never re-reads a battle the previous pass proved is already resolved
  * on chain. `settled` holds those ids; everything else is retried, because a
  * block is usually a transient RPC read rather than a verdict.
