@@ -826,7 +826,7 @@ export async function getCurrentAirdropSnapshot(chainId: number) {
   let tradeCount = 0;
   try {
     const { rows } = await pool.query(
-      `select coalesce(sum(bnb_amount_raw), 0)::numeric as volume_raw, count(*)::int as trade_count
+      `select coalesce(sum(bnb_amount_raw::numeric), 0)::numeric as volume_raw, count(*)::int as trade_count
          from public.curve_trades
         where chain_id = $1
           and block_time >= now() - interval '7 days'`,
@@ -869,10 +869,18 @@ function epochWindowUtc(now = new Date()) {
   };
 }
 
-export async function getAirdropPreview(chainId: number) {
+/** The week that is running now (Monday 00:00 UTC to next Monday), for the Home Weekly Airdrop card. */
+function currentEpochWindowUtc(now = new Date()) {
+  const last = epochWindowUtc(now);
+  return { start: last.end, end: new Date(last.end.getTime() + 7 * 86_400_000), epochId: last.end.toISOString().slice(0, 10) };
+}
+
+// curve_trades.bnb_amount_raw is text on production: every sum casts to numeric, or the query fails
+// and the preview silently returns 0 (found 2026-10-03).
+export async function getAirdropPreview(chainId: number, opts: { window?: "last" | "current" } = {}) {
   const solana = Number(chainId) === 101 || Number(chainId) === 102;
   const tokenSymbol = solana ? "SOL" : "BNB";
-  const window = epochWindowUtc();
+  const window = opts.window === "current" ? currentEpochWindowUtc() : epochWindowUtc();
   const wallet = solana ? "t.wallet" : "lower(t.wallet)";
   const creator = solana ? "c.creator_address" : "lower(c.creator_address)";
   const walletNeq = solana
@@ -899,14 +907,14 @@ export async function getAirdropPreview(chainId: number) {
   try {
     const [volume, traders, creators] = await Promise.all([
       pool.query(
-        `select coalesce(sum(bnb_amount_raw), 0)::numeric as volume_raw, count(*)::int as trade_count
+        `select coalesce(sum(bnb_amount_raw::numeric), 0)::numeric as volume_raw, count(*)::int as trade_count
            from public.curve_trades
           where chain_id = $1 and block_time >= $2 and block_time < $3`,
         [chainId, window.start, window.end],
       ),
       pool.query(
         `select ${wallet} as "walletAddress",
-                sum(t.bnb_amount_raw)::text as "volumeRaw",
+                sum(t.bnb_amount_raw::numeric)::text as "volumeRaw",
                 count(*)::int as "tradeCount",
                 count(distinct (t.block_time at time zone 'utc')::date)::int as "activeDays"
            from public.curve_trades t
@@ -914,14 +922,14 @@ export async function getAirdropPreview(chainId: number) {
           where t.chain_id = $1 and t.block_time >= $2 and t.block_time < $3
             and t.side in ('buy','sell') and ${walletNeq}
           group by ${wallet}
-         having sum(t.bnb_amount_raw) >= $4::numeric and count(*) >= 3
-         order by sum(t.bnb_amount_raw) desc
+         having sum(t.bnb_amount_raw::numeric) >= $4::numeric and count(*) >= 3
+         order by sum(t.bnb_amount_raw::numeric) desc
          limit 20`,
         [chainId, window.start, window.end, minTrader],
       ),
       pool.query(
         `select ${creator} as "walletAddress",
-                sum(t.bnb_amount_raw)::text as "volumeRaw",
+                sum(t.bnb_amount_raw::numeric)::text as "volumeRaw",
                 count(distinct ${wallet})::int as "uniqueBuyers",
                 count(distinct t.campaign_address)::int as "eligibleCampaignCount"
            from public.curve_trades t
@@ -929,8 +937,8 @@ export async function getAirdropPreview(chainId: number) {
           where t.chain_id = $1 and t.block_time >= $2 and t.block_time < $3
             and t.side = 'buy' and ${walletNeq}
           group by ${creator}
-         having sum(t.bnb_amount_raw) >= $4::numeric
-         order by sum(t.bnb_amount_raw) desc
+         having sum(t.bnb_amount_raw::numeric) >= $4::numeric
+         order by sum(t.bnb_amount_raw::numeric) desc
          limit 20`,
         [chainId, window.start, window.end, minCreator],
       ),

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useStickyRail } from "@/hooks/useStickyRail";
 import { Link } from "react-router-dom";
 import { ethers } from "ethers";
 import { AlertTriangle, Share2, Users } from "lucide-react";
@@ -466,6 +467,7 @@ function normalizedLeagueChainId(feedChainId: SupportedChainId, chain: LeagueCha
 }
 
 export default function League() {
+  const railRef = useStickyRail<HTMLElement>();
   const { price: bnbUsd } = useBnbUsdPrice(true);
   const [feedChainId] = useSelectedFeedChainId();
   const chain = leagueChainForFeed(feedChainId);
@@ -749,7 +751,7 @@ export default function League() {
             )}
           </section>
 
-          <aside className="flex flex-col gap-4 lg:sticky lg:top-[calc(var(--mwz-topbar-offset)+16px)]">
+          <aside ref={railRef} className="flex flex-col gap-4 lg:sticky lg:top-[calc(var(--mwz-topbar-offset)+16px)]">
             <section className={`${card} flex flex-col gap-3 p-4`} aria-label="Ends in">
               <span className={cardTitle}>{epochOffset === 0 ? "Ends in" : "Ended"}</span>
               <EndsIn end={epochOffset === 0 ? epochEnd : null} />

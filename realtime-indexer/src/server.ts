@@ -1783,7 +1783,7 @@ app.get("/api/airdrops/preview", wrap(async (req, res) => {
   if (!Number.isFinite(chainId) || chainId <= 0) {
     return res.status(400).json({ error: "Invalid chainId" });
   }
-  res.json(await getAirdropPreview(chainId));
+  res.json(await getAirdropPreview(chainId, { window: String(req.query.window || "") === "current" ? "current" : "last" }));
 }));
 
 app.get("/api/airdrops/winners", wrap(async (req, res) => {

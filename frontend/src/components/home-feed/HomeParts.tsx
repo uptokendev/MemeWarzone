@@ -323,8 +323,8 @@ function nextWeeklyDrop(epochEnd?: string | null) {
 /** Weekly airdrop card (CO-11): this week's pool for the chain and the next drop. Same preview the Airdrops page reads. */
 export function AirdropCard({ chainId, className = "" }: { chainId: number; className?: string }) {
   const preview = useQuery({
-    queryKey: ["home-airdrop", chainId],
-    queryFn: () => fetchAirdropPreview(chainId),
+    queryKey: ["home-airdrop", chainId, "current"],
+    queryFn: () => fetchAirdropPreview(chainId, "current"),
     staleTime: 60_000,
     retry: 1,
   }).data;
@@ -333,6 +333,7 @@ export function AirdropCard({ chainId, className = "" }: { chainId: number; clas
     if (preview?.estimatedPoolRaw != null && String(preview.estimatedPoolRaw) === "0") pool = `0 ${preview.tokenSymbol || ""}`.trim();
     else if (preview?.estimatedPoolRaw != null) pool = formatNative(Number(ethers.formatUnits(BigInt(String(preview.estimatedPoolRaw)), chainId === 101 ? 9 : 18)), chainId);
   } catch {}
+  // The preview window is the running week, so its end is the next drop.
   const next = useCountdownTo(nextWeeklyDrop(preview?.epoch?.end));
   const players = preview ? Number(preview.traderCount || 0) + Number(preview.creatorCount || 0) : 0;
   return (

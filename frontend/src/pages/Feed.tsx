@@ -1,4 +1,5 @@
 /** Home (the feed on "/"), UI redesign phase 2 (artboard Home + HomeMobile). */
+import { useStickyRail } from "@/hooks/useStickyRail";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FeedItemView, FeedWhoToFollow } from "@/components/feed/FeedCards";
 import {
@@ -41,6 +42,7 @@ const TREND_CHAINS = [101, 56, 4663];
 const empty = "rounded-[14px] border border-mw-border bg-mw-surface p-4 text-sm text-mw-muted";
 
 export default function Feed() {
+  const railRef = useStickyRail<HTMLElement>();
   const wallet = useWallet();
   const solanaWallet = useSolanaWallet();
   const [feedChainId] = useSelectedFeedChainId();
@@ -187,7 +189,7 @@ export default function Feed() {
           </div>
         </div>
 
-        <aside className="hidden flex-col gap-4 lg:sticky lg:top-[calc(var(--mwz-topbar-offset)+16px)] lg:flex">
+        <aside ref={railRef} className="hidden flex-col gap-4 lg:sticky lg:top-[calc(var(--mwz-topbar-offset)+16px)] lg:flex">
           <LiveBattlesCard battles={liveBattles} />
           <TrendingCard chainIds={TREND_CHAINS} />
           <LeagueCard chainId={coinChainId} />

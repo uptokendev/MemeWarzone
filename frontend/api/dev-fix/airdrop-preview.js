@@ -52,7 +52,11 @@ export async function airdropPreview(req, res) {
   const solana = isSolana(chainId);
   const robinhood = isRobinhood(chainId);
   const tokenSymbol = solana ? "SOL" : robinhood ? "ETH" : "BNB";
-  const window = epochWindow();
+  // ?window=current: the week running now (Home Weekly Airdrop card). Default: the last completed week.
+  const last = epochWindow();
+  const window = String(q.window || "") === "current"
+    ? { start: last.end, end: new Date(last.end.getTime() + 7 * 24 * 60 * 60 * 1000), epochId: last.end.toISOString().slice(0, 10) }
+    : last;
   const empty = {
     ok: true,
     claimsOpen: false,
@@ -85,7 +89,7 @@ export async function airdropPreview(req, res) {
       creatorCandidates(pool, { chainId, start: window.start, end: window.end, exclusions }).catch(() => []),
       pool
         .query(
-          `select coalesce(sum(bnb_amount_raw), 0)::numeric as volume_raw, count(*)::int as trade_count
+          `select coalesce(sum(bnb_amount_raw::numeric), 0)::numeric as volume_raw, count(*)::int as trade_count
              from public.curve_trades
             where chain_id = $1 and block_time >= $2 and block_time < $3`,
           [chainId, window.start, window.end],

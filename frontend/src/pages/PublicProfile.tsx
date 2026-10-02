@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useStickyRail } from "@/hooks/useStickyRail";
 import { useWalletHandle } from "@/lib/handlesApi";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -154,6 +155,7 @@ export default function PublicProfile({
   profileWallet: string;
   isOwnProfile: boolean;
 }) {
+  const railRef = useStickyRail<HTMLElement>();
   const navigate = useNavigate();
   const wallet = useWallet();
   const { fetchCampaigns, fetchCampaignSummary } = useLaunchpad();
@@ -883,7 +885,7 @@ export default function PublicProfile({
           {tabs.find((t) => t.value === currentTab)?.content}
         </div>
 
-        <aside className="hidden flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)] xl:flex">
+        <aside ref={railRef} className="hidden flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)] xl:flex">
           <RailCard title="Portfolio">
             <KeyRows rows={portfolioRows} />
           </RailCard>

@@ -359,8 +359,8 @@ export type AirdropPreview = {
   note?: string;
 };
 
-export async function fetchAirdropPreview(chainId?: number | null): Promise<AirdropPreview | null> {
-  const res = await fetch(buildRealtimeApiUrl(`/api/airdrops/preview${buildQuery({ chainId })}`));
+export async function fetchAirdropPreview(chainId?: number | null, window?: "current"): Promise<AirdropPreview | null> {
+  const res = await fetch(buildRealtimeApiUrl(`/api/airdrops/preview${buildQuery({ chainId, window })}`));
   if (!res.ok) return null;
   const json = await res.json().catch(() => null);
   if (!json || json.ok === false) return null;

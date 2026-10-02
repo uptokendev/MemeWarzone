@@ -1,4 +1,5 @@
 /** Single post with its replies (UI redesign phase 2, artboard PostThread). Route /post/:postId. */
+import { useStickyRail } from "@/hooks/useStickyRail";
 import { MentionField } from "@/components/feed/MentionField";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -17,6 +18,7 @@ function shortWallet(value?: string | null) {
 const card = "rounded-[14px] border border-mw-border bg-mw-surface";
 
 export default function PostThread() {
+  const railRef = useStickyRail<HTMLElement>();
   const { postId: raw } = useParams<{ postId: string }>();
   const postId = Number(raw);
   const navigate = useNavigate();
@@ -140,7 +142,7 @@ export default function PostThread() {
           ) : null}
         </main>
 
-        <aside className="flex flex-col gap-4 lg:sticky lg:top-[calc(var(--mwz-topbar-offset)+16px)]">
+        <aside ref={railRef} className="flex flex-col gap-4 lg:sticky lg:top-[calc(var(--mwz-topbar-offset)+16px)]">
           {post && hasCoin ? (
             <section className={`${card} flex flex-col gap-1 p-4`}>
               <span className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Coin in this post</span>
