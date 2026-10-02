@@ -16,6 +16,7 @@ import {
   ensureActiveSeason,
 } from "./lib/arenaLeagueScore.js";
 import { utcDay } from "./lib/arenaLeagueScoreMath.js";
+import { recordMwlFinalization } from "./lib/arenaMwlRollover.js";
 import {
   MwlIdentityError,
   assertMwlSeasonIdentity,
@@ -275,31 +276,6 @@ async function handleAdvanceWeek(req, res) {
   return json(res, 200, { ok: true, ...(await feed(chainId)) });
 }
 
-async function recordMwlFinalization(season, treasury) {
-  const period = seasonPeriod(season);
-  if (!treasury.configured || !treasury.treasuryId || !treasury.configKey) {
-    throw new MwlIdentityError("MWL_TREASURY_NOT_CONFIGURED", "Chain-scoped Major War League Treasury is not configured", 503);
-  }
-  await pool.query(
-    `insert into public.arena_mwl_finalizations (
-       season_id, chain_id, year, month, month_id, treasury_id, treasury_config_key,
-       reserve_share_bps, result_version, entitlement_identity_version, finalized_at
-     ) values ($1,$2,$3,$4,$5,$6,$7,6000,'mwl_result_v1','mwl_entitlement_v1',now())
-     on conflict (season_id) do nothing`,
-    [season.id, Number(season.chain_id), Number(season.year), Number(season.month), period.monthId, treasury.treasuryId, treasury.configKey],
-  );
-  const result = await pool.query(`select * from public.arena_mwl_finalizations where season_id = $1 limit 1`, [season.id]);
-  const authority = result.rows[0];
-  if (!authority
-      || Number(authority.chain_id) !== Number(season.chain_id)
-      || String(authority.month_id) !== period.monthId
-      || String(authority.treasury_id) !== treasury.treasuryId
-      || Number(authority.reserve_share_bps) !== 6000) {
-    throw new MwlIdentityError("MWL_FINALIZATION_IDENTITY_MISMATCH", "Persisted Major War League finalization identity does not match request", 409);
-  }
-  return authority;
-}
-
 async function handleFinalizeMwl(req, res, routeLabel = "arena/league/finalize") {
   const admin = await requireAdminOrOps(req, res, { routeLabel, allowOps: true });
   if (!admin) return;
@@ -328,7 +304,7 @@ async function handleFinalizeMwl(req, res, routeLabel = "arena/league/finalize")
   if (Number(result.chainId) !== chainId) {
     return json(res, 409, { ok: false, error: "Finalized Major War League result returned wrong chain", code: "MWL_FINALIZATION_CHAIN_MISMATCH" });
   }
-  const finalizationIdentity = await recordMwlFinalization(seasonRow, treasury);
+  const finalizationIdentity = await recordMwlFinalization(pool, seasonRow, treasury);
   return json(res, 200, {
     ...result,
     finalizationIdentity,

@@ -2,6 +2,7 @@ import { pool } from "../../server/db.js";
 import { normalizeWalletFlexible } from "../../server/http.js";
 import { ensureChampionshipEpoch } from "./arenaQuarterlyChampionship.js";
 import { canonicalMonthlyMwlId, currentMwlEpoch } from "./arenaQuarterlyChampionshipMath.mjs";
+import { MwlIdentityError } from "./arenaMwlChainIdentity.mjs";
 import {
   CHECKIN_POINTS,
   DISPATCH_POINTS,
@@ -9,6 +10,7 @@ import {
   STREAK_BONUS_POINTS,
   identToken,
   mwlLedgerPlan,
+  mwlSeasonMonthEnded,
   nextCheckinStreak,
   pairKey,
   pairScoringLockKey,
@@ -31,9 +33,21 @@ export async function ensureActiveSeason(chainId, db = pool) {
       order by year desc, month desc limit 1`,
     [idNum],
   );
-  if (existing.rows[0]) return existing.rows[0];
-
   const now = new Date();
+  if (existing.rows[0]) {
+    // The rollover (arenaMwlRollover.js) finalizes a month that has ended and opens the next one.
+    // Until it has, refuse: a battle settlement rolls back and retries, instead of writing October's
+    // points into September (2026-10-02).
+    if (mwlSeasonMonthEnded(existing.rows[0], now)) {
+      throw new MwlIdentityError(
+        "MWL_ROLLOVER_PENDING",
+        `Major War League ${existing.rows[0].id} has ended and is not finalized yet`,
+        503,
+      );
+    }
+    return existing.rows[0];
+  }
+
   const { year, month, quarter } = currentMwlEpoch(now);
   const id = canonicalMonthlyMwlId({ chainId: idNum, year, month });
   const epoch = await ensureChampionshipEpoch(db, { chainId: idNum, year, quarter });

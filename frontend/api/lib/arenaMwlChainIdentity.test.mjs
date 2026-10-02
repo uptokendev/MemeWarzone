@@ -17,7 +17,11 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
-const apiSource = fs.readFileSync(path.join(repoRoot, "frontend", "api", "arenaLeague.js"), "utf8");
+// The finalization recorder moved to lib/arenaMwlRollover.js (shared with the month rollover); the
+// guards below read both files.
+const apiSource = ["arenaLeague.js", "lib/arenaMwlRollover.js"]
+  .map((file) => fs.readFileSync(path.join(repoRoot, "frontend", "api", file), "utf8"))
+  .join("\n");
 const scoreSource = fs.readFileSync(path.join(here, "arenaLeagueScore.js"), "utf8");
 const migrationSource = fs.readFileSync(path.join(repoRoot, "db", "migrations", "20260909_000002_arena_mwl_three_chain_identity.sql"), "utf8");
 

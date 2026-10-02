@@ -298,6 +298,17 @@ export function seasonAcceptsRegularPoints(season) {
   return state !== "quarter_finals" && state !== "completed";
 }
 
+// A monthly MWL row whose calendar month (UTC) is over. Such a row must be finalized and replaced
+// before it takes another point; until then it would silently collect the next month's points.
+export function mwlSeasonMonthEnded(season, now = new Date()) {
+  if (!season || season.month == null) return false;
+  const year = Number(season.year);
+  const month = Number(season.month);
+  if (!Number.isInteger(year) || !Number.isInteger(month)) return false;
+  const date = now instanceof Date ? now : new Date(now);
+  return year * 12 + month < date.getUTCFullYear() * 12 + (date.getUTCMonth() + 1);
+}
+
 export function battlePointPlan({
   winner,
   left,
