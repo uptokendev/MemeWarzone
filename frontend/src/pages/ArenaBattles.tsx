@@ -245,31 +245,37 @@ export default function ArenaBattles() {
     walletConnected: Boolean(feedWallet.address),
   });
   const controlClass =
-    "mt-1 w-full min-w-0 rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
+    "mw-focus h-11 w-full min-w-0 rounded-[10px] border border-mw-edge bg-mw-input px-3 font-mw-body text-[15px] normal-case tracking-normal text-mw-text placeholder:text-[#7C858F] focus-visible:outline-none";
+  const filterLabel = "flex min-w-0 flex-col gap-1.5 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+  const heroFirst = tab === "live" && !focusedId;
 
   return (
-    <WarzoneContent className="space-y-4">
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3" style={{ borderColor: "var(--mwz-flat-card-border)" }}>
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone</div>
-              <h1 className="font-retro text-xl text-foreground md:text-2xl">Battles</h1>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              className="mwz-button mb-0.5 h-8 font-retro text-[10px] uppercase tracking-[0.14em]"
-              data-challenge-coin-cta="true"
-              onClick={() => setChallengeOpen(true)}
-            >
-              <Swords className="h-3.5 w-3.5" />
-              Challenge a coin
-            </Button>
+    <WarzoneContent className="flex flex-col gap-4 font-mw-body text-mw-text">
+      <section className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-3.5">
+          <div>
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Warzone</div>
+            <h1 className="m-0 font-mw-cond text-[32px] font-bold leading-none lg:text-[40px]">Battles</h1>
           </div>
-          <TacticalTag label={feed.source === "api" ? "Live data" : feed.source === "empty" ? "Feed unavailable" : "Awaiting data"} tone={feed.source === "api" ? "success" : "default"} />
+          <Button
+            type="button"
+            className="mw-focus ml-auto inline-flex min-h-11 items-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] lg:ml-0"
+            data-challenge-coin-cta="true"
+            onClick={() => setChallengeOpen(true)}
+          >
+            <Swords className="h-5 w-5" aria-hidden="true" />
+            <span className="lg:hidden">Challenge</span>
+            <span className="hidden lg:inline">Challenge a coin</span>
+          </Button>
+          <span className="hidden flex-1 lg:block" />
+          <span
+            className={`hidden h-[26px] items-center gap-1.5 rounded-full border px-2.5 text-[13px] font-semibold lg:inline-flex ${feed.source === "api" ? "border-[#1F5133] bg-[#171B20] text-[#6EE7A0]" : "border-mw-edge bg-[#171B20] text-[#C9CED4]"}`}
+          >
+            {feed.source === "api" ? <span className="h-2 w-2 rounded-full bg-mw-up" aria-hidden="true" /> : null}
+            {feed.source === "api" ? "Live data" : feed.source === "empty" ? "Feed unavailable" : "Awaiting data"}
+          </span>
         </div>
-        <div className="inline-flex max-w-full flex-wrap gap-1 rounded-md border border-border/60 bg-background/45 p-1" role="tablist" aria-label="Battle state">
+        <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl border border-[#2A3038] bg-mw-input p-1 [scrollbar-width:none] lg:w-max [&::-webkit-scrollbar]:hidden" role="tablist" aria-label="Battle state">
           {TABS.map((item) => (
             <button
               key={item.key}
@@ -277,15 +283,15 @@ export default function ArenaBattles() {
               role="tab"
               aria-selected={tab === item.key}
               onClick={() => setTab(item.key)}
-              className={`rounded px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${tab === item.key ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              className={`mw-focus min-h-10 shrink-0 rounded-lg border px-4 font-mw-cond text-sm font-bold uppercase tracking-[0.08em] transition-colors ${tab === item.key ? "border-[#3A424C] bg-[#1F252C] text-mw-text" : "border-transparent text-mw-muted hover:text-mw-text"}`}
             >
               {item.label}
             </button>
           ))}
         </div>
-        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-          <label className="min-w-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-            All chains
+        <div className="grid grid-cols-2 items-end gap-2 lg:grid-cols-[1fr_1fr_1fr_1.2fr] lg:gap-3">
+          <label className={filterLabel}>
+            <span className="hidden lg:inline">All chains</span>
             <select className={controlClass} value={chain} onChange={(event) => setChain(event.target.value)} aria-label="Filter by chain">
               <option value="all">All</option>
               <option value="bnb">BNB</option>
@@ -293,8 +299,8 @@ export default function ArenaBattles() {
               {robinhood ? <option value="robinhood">Robinhood</option> : null}
             </select>
           </label>
-          <label className="min-w-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-            All types
+          <label className={filterLabel}>
+            <span className="hidden lg:inline">All types</span>
             <select className={controlClass} value={type} onChange={(event) => setType(event.target.value)} aria-label="Filter by battle type">
               {TYPES.map((item) => (
                 <option key={item.key} value={item.key}>
@@ -303,8 +309,8 @@ export default function ArenaBattles() {
               ))}
             </select>
           </label>
-          <label className="min-w-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-            Sort
+          <label className={filterLabel}>
+            <span className="hidden lg:inline">Sort</span>
             <select className={controlClass} value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Sort battles">
               {SORTS.map((item) => (
                 <option key={item.key} value={item.key}>
@@ -313,9 +319,10 @@ export default function ArenaBattles() {
               ))}
             </select>
           </label>
-          <label className="min-w-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-            Search
+          <label className={filterLabel}>
+            <span className="hidden lg:inline">Search</span>
             <input
+              type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               className={controlClass}
@@ -343,47 +350,55 @@ export default function ArenaBattles() {
       />
 
       {focusedId && focusStatus === "unavailable" ? (
-        <div className="py-4 text-sm text-muted-foreground" data-battle-unavailable="true" role="status">
-          <div className="font-retro text-base text-foreground">Battle unavailable.</div>
+        <div className="rounded-[14px] border border-mw-border bg-mw-surface p-4 text-sm text-mw-muted" data-battle-unavailable="true" role="status">
+          <div className="font-mw-cond text-xl font-bold text-mw-text">Battle unavailable.</div>
           <p className="mt-1">This fight is private, missing, or not a public Battle Wall battle.</p>
         </div>
       ) : null}
 
-      <section className="min-w-0 space-y-4" data-battle-wall>
+      <section className="flex min-w-0 flex-col gap-4" data-battle-wall>
         {rows.length ? (
           rows.map((battle, index) => (
-            <BattleWallModule
-              key={battle.id}
-              battle={battle}
-              metrics={feedMetrics.metricsById[battle.id]}
-              metricsRequested={feedMetrics.requestedIds.includes(battle.id)}
-              metricsLoaded={feedMetrics.loaded}
-              realtimeActive={activeRealtimeIds.includes(battle.id)}
-              viewportIndex={index}
-              onViewportReport={reportViewport}
-              showBuyIn={tab === "mine" && wallPhaseForBattle(battle) === "matched"}
-            />
+            <div key={battle.id} className="contents">
+              {heroFirst && index === 1 ? (
+                <div className="mt-1.5 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
+                  More live battles · {rows.length - 1}
+                </div>
+              ) : null}
+              <BattleWallModule
+                key={battle.id}
+                battle={battle}
+                metrics={feedMetrics.metricsById[battle.id]}
+                metricsRequested={feedMetrics.requestedIds.includes(battle.id)}
+                metricsLoaded={feedMetrics.loaded}
+                realtimeActive={activeRealtimeIds.includes(battle.id)}
+                viewportIndex={index}
+                onViewportReport={reportViewport}
+                showBuyIn={tab === "mine" && wallPhaseForBattle(battle) === "matched"}
+                variant={heroFirst && index === 0 ? "hero" : "list"}
+              />
+            </div>
           ))
         ) : empty.kind === "loading" || empty.kind === "loading-focus" ? (
-          <div className="space-y-3" data-battle-wall-empty={empty.kind} role="status">
-            <div className="text-sm text-muted-foreground">{empty.title}</div>
-            <div className="space-y-3" data-battle-wall-skeleton="true" aria-hidden="true">
+          <div className="flex flex-col gap-3" data-battle-wall-empty={empty.kind} role="status">
+            <div className="text-sm text-mw-muted">{empty.title}</div>
+            <div className="flex flex-col gap-3" data-battle-wall-skeleton="true" aria-hidden="true">
               {[0, 1].map((slot) => (
-                <div key={slot} className="mwz-flat-card animate-pulse p-4">
-                  <div className="h-3 w-16 rounded bg-white/10" />
-                  <div className="mt-4 grid gap-3 md:grid-cols-3">
-                    <div className="h-24 rounded bg-white/5" />
-                    <div className="h-16 rounded bg-white/5" />
-                    <div className="h-24 rounded bg-white/5" />
+                <div key={slot} className="animate-pulse rounded-[14px] border border-mw-border bg-mw-surface p-4">
+                  <div className="h-3 w-16 rounded bg-mw-border" />
+                  <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                    <div className="h-24 rounded bg-mw-input" />
+                    <div className="h-16 rounded bg-mw-input" />
+                    <div className="h-24 rounded bg-mw-input" />
                   </div>
                 </div>
               ))}
             </div>
           </div>
         ) : (
-          <div className="py-5" data-battle-wall-empty={empty.kind} role="status">
-            <div className="font-retro text-base text-foreground">{empty.title}</div>
-            <p className="mt-1 text-sm text-muted-foreground">{empty.body}</p>
+          <div className="rounded-[14px] border border-mw-border bg-mw-surface p-5" data-battle-wall-empty={empty.kind} role="status">
+            <div className="font-mw-cond text-xl font-bold text-mw-text">{empty.title}</div>
+            <p className="mt-1 text-sm text-mw-muted">{empty.body}</p>
           </div>
         )}
       </section>

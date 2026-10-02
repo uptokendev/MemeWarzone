@@ -116,3 +116,23 @@ ol.fixed.top-0 {
 [class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-t-\[20px\] { border-radius: 20px 20px 0 0 !important; }
 [class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-t-\[10px\] { border-radius: 10px 10px 0 0 !important; }
 [class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"][class*="mw-"].rounded-t-2xl { border-radius: 16px 16px 0 0 !important; }
+
+/* Banner look on phones only (battle list cards are banners on 390, plain cards on desktop). */
+@media (max-width: 1023px) {
+  .mw-banner-sm {
+    background-color: #17120e;
+    background-image: linear-gradient(#ffffff0a 1px, transparent 1px), linear-gradient(90deg, #ffffff0a 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+}
+
+/* Page top spacing per the artboards (14px phone, 24px desktop). The legacy shell strips the first
+   child's padding-top, so this uses margin. */
+.mwz-app-shell.mw-shell main > :first-child {
+  margin-top: 14px;
+}
+@media (min-width: 1024px) {
+  .mwz-app-shell.mw-shell main > :first-child {
+    margin-top: 24px;
+  }
+}

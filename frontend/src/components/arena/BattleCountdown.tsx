@@ -18,21 +18,21 @@ export function BattleCountdown({ endsAt }: { endsAt: string }) {
     <div
       data-battle-countdown={view.urgency}
       aria-hidden="true"
-      className="mt-1 flex w-full flex-col items-center leading-none md:mt-2"
+      className="flex flex-col items-start leading-none lg:w-full lg:items-center"
     >
       <span
         className={cn(
-          "whitespace-nowrap font-retro text-[2rem] tabular-nums tracking-[0.06em] md:text-[1.7rem]",
-          view.urgency === "normal" && "text-white",
+          "whitespace-nowrap font-mw-mono text-[28px] font-bold tabular-nums lg:text-4xl",
+          view.urgency === "normal" && "text-mw-text",
           view.urgency === "hour" && "text-orange-300",
           view.urgency === "final" && "text-red-400 motion-safe:animate-pulse",
-          view.urgency === "settling" && "text-[1.25rem] uppercase tracking-[0.16em] text-orange-200 md:text-[1.1rem]",
+          view.urgency === "settling" && "font-mw-cond text-xl uppercase tracking-[0.08em] text-mw-accent-soft lg:text-xl",
         )}
       >
         {view.text}
       </span>
       {view.urgency === "settling" ? null : (
-        <span className="mt-1 text-[10px] uppercase tracking-[0.3em] text-white/50">Left</span>
+        <span className="mt-1 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">left</span>
       )}
     </div>
   );

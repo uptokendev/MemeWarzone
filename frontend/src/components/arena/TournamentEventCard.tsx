@@ -130,8 +130,14 @@ export function TournamentEventCard({
   return (
     <article
       data-tournament-card={card.id}
-      className={cn(!embedded && "mwz-flat-card relative overflow-hidden p-4", focused && !embedded && "ring-1 ring-accent/60")}
+      className={cn(
+        !embedded && "mwz-flat-card relative overflow-hidden p-4",
+        embedded && "overflow-hidden rounded-[14px] border border-mw-border bg-mw-input px-3 pb-3 font-mw-body text-mw-text",
+        focused && !embedded && "ring-1 ring-accent/60",
+      )}
     >
+      {/* UI redesign: the overview card opens with the artboard's banner strip. */}
+      {embedded ? <div className="mw-banner -mx-3 mb-3 h-20 lg:h-[90px]" aria-hidden="true" /> : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <TacticalTag label={card.status.label} tone={card.status.key === "live" ? "success" : "default"} />
@@ -141,7 +147,7 @@ export function TournamentEventCard({
         </div>
         {card.chain ? <TacticalTag label={card.chain.label} tone="default" /> : null}
       </div>
-      <h2 className="mt-3 font-black text-xl leading-tight text-foreground md:text-2xl">{card.title}</h2>
+      <h2 className={embedded ? "m-0 mt-2 text-[17px] font-bold leading-tight text-mw-text" : "mt-3 font-black text-xl leading-tight text-foreground md:text-2xl"}>{card.title}</h2>
 
       {finished && champion ? (
         <div className="mt-3 flex items-center gap-3" data-tournament-champion="true">

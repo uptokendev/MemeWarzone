@@ -655,7 +655,7 @@ test("Battle Wall polish keeps stacked mobile combat layout and DATA DELAY copy"
   const effects = readSrc("../../components/arena/BattleCombatEffects.tsx");
 
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /lg:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(moduleSrc, /remaining=\{presented\.tab === "live"\}/);
   assert.match(moduleSrc, /motion-reduce:shadow-none/);
   assert.match(vs, /Score updates temporarily paused/);
@@ -723,16 +723,16 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(combatant, /data-battle-combatant-art/);
   assert.match(combatant, /object-cover/);
   assert.match(combatant, /data-battle-combatant-layout="split"/);
-  assert.match(combatant, /mwz-flat-card/);
-  assert.match(combatant, /data-battle-combatant-bleed/);
-  assert.match(combatant, /data-battle-combatant-readability/);
+  assert.match(combatant, /rounded-\[14px\] border border-\[#2A3038\]/); // UI redesign artboard card
+  // UI redesign: the artboard combatant has no blurred backdrop layer.
+  assert.doesNotMatch(combatant, /data-battle-combatant-bleed/);
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
   assert.doesNotMatch(combatant, /mockTokenArtForTicker/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
-  assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
+  assert.match(combatant, /grid-cols-\[130px_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /h-\[130px\] w-\[130px\] shrink-0/);
   assert.doesNotMatch(combatant, /grid-cols-1/);
-  assert.match(combatant, /aspect-square/);
+  assert.match(combatant, /lg:h-\[150px\] lg:w-\[150px\]/);
   assert.doesNotMatch(combatant, /h-44 sm:h-52 md:h-64 lg:h-72/);
   assert.match(combatant, /data-battle-metric-grid/);
   assert.match(combatant, /grid-cols-2/);
@@ -748,8 +748,8 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(moduleSrc, /data-battle-wall-actions/);
   assert.match(moduleSrc, /data-battle-wall-actions-reserved/);
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:items-center/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /lg:items-center/);
+  assert.match(moduleSrc, /lg:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(moduleSrc, /useBattleWallRealtime\(battle\.id, realtimeActive && live\)/);
   assert.equal(moduleSrc.split("useBattleWallRealtime(").length - 1, 1);
   assert.match(effects, /pointer-events-none/);
@@ -774,16 +774,16 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE (no MORE), an
 
   assert.equal((moduleSrc.match(/<BattleWallCombatant/g) || []).length, 2);
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /lg:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(combatant, /data-battle-combatant-layout="split"/);
-  assert.match(combatant, /mwz-flat-card/);
-  assert.match(combatant, /data-battle-combatant-bleed/);
-  assert.match(combatant, /data-battle-combatant-readability/);
+  assert.match(combatant, /rounded-\[14px\] border border-\[#2A3038\]/); // UI redesign artboard card
+  // UI redesign: the artboard combatant has no blurred backdrop layer.
+  assert.doesNotMatch(combatant, /data-battle-combatant-bleed/);
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
   assert.doesNotMatch(combatant, /mockTokenArtForTicker/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
-  assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
+  assert.match(combatant, /grid-cols-\[130px_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /h-\[130px\] w-\[130px\] shrink-0/);
   assert.doesNotMatch(combatant, /grid-cols-1/);
   // Founder, 2026-10-01: battle cards show no description (a long one grew the card and the art).
   assert.doesNotMatch(combatant, /profile\?\.description/);
@@ -872,18 +872,17 @@ test("Battle Wall combatant keeps art-left split on mobile instead of stacking i
 
   assert.doesNotMatch(combatant, /grid-cols-1/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
-  assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /aspect-square/);
-  assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
+  assert.match(combatant, /grid-cols-\[130px_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /lg:h-\[150px\] lg:w-\[150px\]/);
+  assert.match(combatant, /h-\[130px\] w-\[130px\] shrink-0/);
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
-  assert.match(combatant, /h-auto max-h-\[22rem\]/);
   assert.doesNotMatch(combatant, /100vh|min-h-screen/);
   // Founder, 2026-10-01: battle cards show no description (a long one grew the card and the art).
   assert.doesNotMatch(combatant, /profile\?\.description/);
   assert.match(combatant, /grid-cols-2/);
   assert.match(combatant, /data-battle-combatant-actions/);
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /lg:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(vs, /py-1/);
   assert.match(vs, /data-battle-vs-reticle="true"/);
   assert.match(effects, /max-width: 767px/);

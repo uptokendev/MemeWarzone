@@ -130,9 +130,10 @@ test("Warzone pages share the same centered content width", () => {
   assert.match(details, /data-tournament-command/);
   assert.doesNotMatch(battles, /max-w-full space-y-4/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
-  assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /aspect-square/);
-  assert.match(combatant, /self-stretch/);
+  assert.match(combatant, /grid-cols-\[130px_minmax\(0,1fr\)\]/);
+  // UI redesign: fixed square art per artboard (130 phone, 150 / 230 / 270 desktop).
+  assert.match(combatant, /h-\[130px\] w-\[130px\] shrink-0/);
+  assert.match(combatant, /lg:h-\[150px\] lg:w-\[150px\]/);
 });
 
 test("Overview still reads existing feeds and does not add battle realtime", () => {
@@ -262,14 +263,13 @@ test("Warzone composition keeps cards floating without outer frames", () => {
   assert.doesNotMatch(header, /mwz-hud-frame/);
   assert.doesNotMatch(moduleSrc, /mwz-hud-frame/);
   assert.match(moduleSrc, /data-battle-wall-open="true"/);
-  assert.match(combatant, /mwz-flat-card/);
-  assert.match(combatant, /data-battle-combatant-bleed/);
-  assert.match(combatant, /data-battle-combatant-readability/);
+  assert.match(combatant, /rounded-\[14px\] border border-\[#2A3038\]/); // UI redesign artboard card
+  assert.doesNotMatch(combatant, /data-battle-combatant-bleed/);
   assert.match(vs, /data-battle-vs-reticle="true"/);
   assert.match(vs, /bg-transparent/);
   assert.doesNotMatch(vs, /data-battle-deployment-hud/);
   assert.doesNotMatch(overview, /mwz-hud-frame/);
-  assert.match(overview, /mwz-flat-card/);
+  assert.match(overview, /rounded-\[14px\] border border-mw-border bg-mw-surface/); // UI redesign artboard cards
   assert.doesNotMatch(league, /mwz-hud-frame/);
   assert.match(league, /data-warzone-mwl-table/);
   assert.doesNotMatch(battles, /section className="mwz-hud-frame/);

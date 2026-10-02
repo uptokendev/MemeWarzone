@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { Battle, BattleParticipant } from "@/features/postgrad/contracts";
-import { WarzoneDecorativeLayer } from "@/components/warzone/WarzoneDecorativeLayer";
 import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import type { BattleRealtimeSide } from "@/lib/arena/battleRealtime";
 import { formatCompactUsd } from "@/lib/arena/battlePresentation";
@@ -24,6 +23,8 @@ type Props = {
   accent?: "ember" | "cyan";
   compact?: boolean;
   combatSide?: "left" | "right";
+  /** Art size per the artboards: list card 150px, featured hero 230px, battle page 270px (desktop). */
+  variant?: "list" | "hero" | "page";
   actions?: ReactNode;
 };
 
@@ -41,14 +42,13 @@ function MetricBox({
   return (
     <div
       data-battle-metric={label}
-      className="min-w-0 border px-1.5 py-1 md:px-2.5 md:py-1.5"
-      style={{ borderColor: "var(--mwz-flat-card-border)" }}
+      className="min-w-0 rounded-lg border border-[#2A3038] bg-mw-input px-1.5 py-1 lg:rounded-[10px] lg:px-2.5 lg:py-2"
     >
-      <div className="text-[7px] uppercase tracking-[0.14em] text-white/42 md:text-[8px] md:tracking-[0.16em]">{label}</div>
+      <div className="font-mw-cond text-[10px] font-semibold uppercase tracking-[0.08em] text-mw-muted lg:text-[11px]">{label}</div>
       <div
         className={cn(
-          "mt-0.5 truncate font-retro text-xs leading-none tabular-nums md:text-base",
-          ready ? (accent === "cyan" ? "text-cyan-100" : "text-foreground") : "text-white/34",
+          "truncate font-mw-mono text-xs font-bold leading-tight tabular-nums lg:text-xl",
+          ready ? "text-mw-text" : "text-mw-muted",
         )}
       >
         {ready ? value : "—"}
@@ -85,12 +85,9 @@ function CombatantArtwork({
   const fallback = (
     <div
       data-battle-combatant-art-fallback="true"
-      className={cn(
-        "flex h-full w-full items-center justify-center bg-black/40",
-        accent === "cyan" ? "text-cyan-200/70" : "text-orange-200/70",
-      )}
+      className="flex h-full w-full items-center justify-center bg-[#2A1609] text-[#FF9A4D]"
     >
-      <span className="font-retro text-2xl tracking-[0.18em] md:text-3xl">{artInitials(ticker, name)}</span>
+      <span className="font-mw-brand text-xl lg:text-3xl">{artInitials(ticker, name)}</span>
     </div>
   );
 
@@ -121,6 +118,7 @@ export function BattleWallCombatant({
   accent = "ember",
   compact = false,
   combatSide,
+  variant = "list",
   actions,
 }: Props) {
   const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
@@ -133,8 +131,6 @@ export function BattleWallCombatant({
     : null;
   const displaySymbol = String(profile?.symbol || participant?.symbol || "TBD").replace(/^\$/, "");
   const imageUrl = profile?.imageUrl || participant?.imageUrl || participant?.logoUri || null;
-  const bleedSrc = resolveImageUri(imageUrl);
-  const bleed = bleedSrc && bleedSrc !== "/placeholder.svg" ? bleedSrc : null;
   const currentMcap = firstFiniteBattleMetric(
     metricsSide?.current?.marketCapUsd,
     profile?.marketCapUsd,
@@ -161,6 +157,10 @@ export function BattleWallCombatant({
   const trailerLive = isTrailer && !finished;
   const trailerDone = isTrailer && finished;
 
+  const artSize = variant === "page" ? "lg:h-[270px] lg:w-[270px]" : variant === "hero" ? "lg:h-[230px] lg:w-[230px]" : "lg:h-[150px] lg:w-[150px]";
+  const artCol = variant === "page" ? "lg:grid-cols-[270px_minmax(0,1fr)]" : variant === "hero" ? "lg:grid-cols-[230px_minmax(0,1fr)]" : "lg:grid-cols-[150px_minmax(0,1fr)]";
+  const roomy = variant !== "list";
+
   return (
     <div
       data-battle-wall-combatant={accent}
@@ -170,113 +170,94 @@ export function BattleWallCombatant({
       data-battle-leader={isLeader ? "true" : undefined}
       data-battle-winner={isWinner ? "true" : undefined}
       className={cn(
-        "mwz-flat-card relative flex h-auto max-h-[22rem] min-w-0 overflow-hidden",
-        isLeader && !isWinner && "border-orange-400/45",
-        isWinner && "!border-[3px] !border-emerald-400 shadow-[0_0_22px_rgba(52,211,153,0.35)]",
+        "relative flex min-w-0 overflow-hidden rounded-[14px] border border-[#2A3038] bg-[#101418] font-mw-body text-mw-text",
+        isLeader && !isWinner && "border-[#5A3416]",
+        isWinner && "!border-[3px] !border-emerald-400",
         trailerLive && "opacity-95",
         trailerDone && "opacity-90 saturate-[0.85]",
       )}
     >
-      {bleed ? (
-        <WarzoneDecorativeLayer data-battle-combatant-bleed-host="true">
-          <img
-            src={bleed}
-            alt=""
-            aria-hidden="true"
-            data-battle-combatant-bleed="true"
-            className="absolute inset-0 z-0 h-full w-full scale-110 object-cover object-left opacity-[0.16] blur-[12px]"
-          />
-          <div
-            data-battle-combatant-readability="true"
-            className="absolute inset-0 z-0 bg-[linear-gradient(90deg,rgba(5,5,5,0.28)_0%,rgba(5,5,5,0.72)_48%,rgba(5,5,5,0.92)_100%)]"
-          />
-        </WarzoneDecorativeLayer>
-      ) : null}
       <div
         data-battle-combatant-split="true"
-        className="relative z-10 grid min-h-0 min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-stretch"
+        className={cn("grid min-w-0 flex-1 grid-cols-[130px_minmax(0,1fr)] items-start lg:grid-rows-[1fr_auto]", artCol)}
       >
         <div
           data-battle-combatant-art="true"
-          className="relative aspect-square h-0 min-h-full w-auto shrink-0 self-stretch overflow-hidden md:max-w-[15rem]"
+          className={cn("relative h-[130px] w-[130px] shrink-0 overflow-hidden lg:row-span-2", artSize)}
         >
           <CombatantArtwork imageUrl={imageUrl} ticker={displaySymbol} name={displayName} accent={accent} />
-          <div className="absolute left-1 top-1 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">
+          <div className="absolute left-1.5 top-1.5 inline-flex h-5 items-center rounded-full bg-[rgba(0,0,0,0.55)] px-2 font-mw-mono text-[11px] font-semibold text-[#C9CED4] lg:left-2.5 lg:top-2.5 lg:h-[22px] lg:text-xs">
             #{sideIndex}
           </div>
         </div>
 
-        <div className="relative z-10 flex min-w-0 flex-col">
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5 p-2 md:gap-2 md:p-3">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-1.5">
-                {tokenHref ? (
-                  <Link
-                    to={tokenHref}
-                    className="truncate font-retro text-base leading-none text-foreground underline-offset-4 hover:text-accent hover:underline sm:text-xl md:text-2xl lg:text-[1.65rem]"
-                    data-battle-combatant-token-link="ticker"
-                  >
-                    ${displaySymbol}
-                  </Link>
-                ) : (
-                  <div className="truncate font-retro text-base leading-none text-foreground sm:text-xl md:text-2xl lg:text-[1.65rem]">
-                    ${displaySymbol}
-                  </div>
-                )}
-                {String(profile?.origin || (participant as { origin?: string } | undefined)?.origin || "").toLowerCase() === "import" ? (
-                  <span className="shrink-0 rounded border border-orange-400/40 bg-orange-500/10 px-1.5 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-orange-200" data-imported-origin="true">IMPORTED</span>
-                ) : null}
-              </div>
+        <div className={cn("flex min-w-0 flex-col gap-1.5 p-2.5", roomy ? "lg:gap-2.5 lg:p-4" : "lg:gap-2.5 lg:p-3")}>
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               {tokenHref ? (
                 <Link
                   to={tokenHref}
-                  className="mt-0.5 block truncate text-[10px] uppercase tracking-[0.14em] text-white/58 underline-offset-4 hover:text-accent hover:underline md:mt-1 md:text-[11px] md:tracking-[0.16em]"
-                  data-battle-combatant-token-link="name"
+                  className={cn("truncate font-mw-cond text-2xl font-bold leading-none text-mw-text hover:text-mw-accent-soft", roomy ? "lg:text-[32px]" : "lg:text-2xl")}
+                  data-battle-combatant-token-link="ticker"
                 >
-                  {displayName}
+                  ${displaySymbol}
                 </Link>
               ) : (
-                <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-white/58 md:mt-1 md:text-[11px] md:tracking-[0.16em]">{displayName}</div>
+                <div className={cn("truncate font-mw-cond text-2xl font-bold leading-none text-mw-text", roomy ? "lg:text-[32px]" : "lg:text-2xl")}>
+                  ${displaySymbol}
+                </div>
               )}
-
+              {String(profile?.origin || (participant as { origin?: string } | undefined)?.origin || "").toLowerCase() === "import" ? (
+                <span className="inline-flex h-5 shrink-0 items-center rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2 text-[11px] font-semibold text-mw-accent-soft" data-imported-origin="true">IMPORTED</span>
+              ) : null}
             </div>
-
-            <div className="grid w-full grid-cols-2 gap-1 sm:gap-1.5" data-battle-metric-grid="true">
-              <MetricBox
-                label="MCAP"
-                value={currentMcap === null ? "—" : formatCompactUsd(currentMcap)}
-                ready={currentMcap !== null}
-                accent={accent}
-              />
-              <MetricBox
-                label="HOLDERS"
-                value={currentHolders === null ? "—" : Number(currentHolders).toLocaleString()}
-                ready={currentHolders !== null}
-                accent={accent}
-              />
-              <MetricBox
-                label={voteBattle ? "VOL 24H" : "VOL"}
-                value={battleVolume === null ? "—" : formatCompactUsd(battleVolume)}
-                ready={battleVolume !== null}
-                accent={accent}
-              />
-              <MetricBox
-                label={pointsBoxLabel}
-                value={pointsLabel || "—"}
-                ready={pointsReady}
-                accent={accent}
-              />
-            </div>
+            {tokenHref ? (
+              <Link
+                to={tokenHref}
+                className="mt-1 block truncate font-mw-cond text-[11px] font-semibold uppercase tracking-[0.08em] text-mw-muted hover:text-mw-text lg:text-xs"
+                data-battle-combatant-token-link="name"
+              >
+                {displayName}
+              </Link>
+            ) : (
+              <div className="mt-1 truncate font-mw-cond text-[11px] font-semibold uppercase tracking-[0.08em] text-mw-muted lg:text-xs">{displayName}</div>
+            )}
           </div>
 
-          <div
-            data-battle-combatant-actions="true"
-            className="relative z-10 min-h-11 border-t px-2 sm:px-3"
-            style={{ borderColor: "var(--mwz-flat-card-border)" }}
-            aria-hidden={!actions}
-          >
-            {actions}
+          <div className="grid w-full grid-cols-2 gap-1 lg:gap-2" data-battle-metric-grid="true">
+            <MetricBox
+              label="MCAP"
+              value={currentMcap === null ? "—" : formatCompactUsd(currentMcap)}
+              ready={currentMcap !== null}
+              accent={accent}
+            />
+            <MetricBox
+              label="HOLDERS"
+              value={currentHolders === null ? "—" : Number(currentHolders).toLocaleString()}
+              ready={currentHolders !== null}
+              accent={accent}
+            />
+            <MetricBox
+              label={voteBattle ? "VOL 24H" : "VOL"}
+              value={battleVolume === null ? "—" : formatCompactUsd(battleVolume)}
+              ready={battleVolume !== null}
+              accent={accent}
+            />
+            <MetricBox
+              label={pointsBoxLabel}
+              value={pointsLabel || "—"}
+              ready={pointsReady}
+              accent={accent}
+            />
           </div>
+        </div>
+
+        <div
+          data-battle-combatant-actions="true"
+          className={cn("col-span-2 min-w-0 px-2 pb-2 lg:col-span-1 lg:col-start-2 lg:self-end", roomy ? "lg:px-4 lg:pb-4" : "lg:px-3 lg:pb-3", !actions && "hidden")}
+          aria-hidden={!actions}
+        >
+          {actions}
         </div>
       </div>
     </div>

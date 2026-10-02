@@ -23,7 +23,7 @@ export function BattleVsMark({ size = "md" }: { size?: "sm" | "md" }) {
   const compact = size === "sm";
   return (
     <div
-      className={cn("relative", compact ? "h-10 w-10" : "h-16 w-16 md:h-[4.5rem] md:w-[4.75rem]")}
+      className={cn("relative shrink-0", compact ? "h-10 w-10" : "h-[60px] w-[64px] lg:h-[90px] lg:w-[96px]")}
       aria-hidden="true"
       data-battle-vs-reticle="true"
     >
@@ -37,7 +37,7 @@ export function BattleVsMark({ size = "md" }: { size?: "sm" | "md" }) {
           data-battle-vs-letter="v"
           className={cn(
             "absolute left-1/2 top-1/2 font-sans font-black leading-none text-orange-400 drop-shadow-[0_0_10px_rgba(240,106,26,0.45)]",
-            compact ? "text-[1.65rem]" : "text-[2.5rem] md:text-[3.75rem]",
+            compact ? "text-[1.65rem]" : "text-[50px] lg:text-[76px]",
           )}
           style={{ transform: "translate(-72%, -62%) skewX(-8deg)" }}
         >
@@ -47,7 +47,7 @@ export function BattleVsMark({ size = "md" }: { size?: "sm" | "md" }) {
           data-battle-vs-letter="s"
           className={cn(
             "absolute left-1/2 top-1/2 font-sans font-black leading-none text-orange-400 drop-shadow-[0_0_10px_rgba(240,106,26,0.45)]",
-            compact ? "text-[1.65rem]" : "text-[2.5rem] md:text-[3.75rem]",
+            compact ? "text-[1.65rem]" : "text-[50px] lg:text-[76px]",
           )}
           style={{ transform: "translate(-28%, -38%) skewX(-8deg)" }}
         >
@@ -101,7 +101,7 @@ export function BattleWallVs({
     <div
       data-battle-wall-vs
       data-battle-wall-vs-mode={deploymentPending ? "upcoming" : delay ? "delay" : "combat"}
-      className="relative z-20 flex min-w-0 max-w-full flex-col items-center justify-center bg-transparent px-1 py-1 text-center md:min-w-[5.5rem] md:max-w-[10.5rem] md:px-0 md:py-1"
+      className="relative z-20 flex min-w-0 max-w-full flex-row items-center justify-center gap-3.5 bg-transparent py-1 text-center lg:w-[150px] lg:flex-col lg:gap-1.5"
     >
       <p className="sr-only">{spoken || "Versus"}</p>
       <BattleVsMark />

@@ -1,3 +1,4 @@
+import { Share2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
@@ -65,19 +66,20 @@ export function BattleShareMenu({
           data-battle-share-toggle={share.battleId}
           aria-expanded={open}
           aria-haspopup="menu"
-          className="min-h-11 text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="mw-focus inline-flex min-h-9 items-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-3 font-mw-body text-sm font-semibold text-mw-text hover:bg-[#222830]"
         >
-          SHARE
+          <Share2 className="h-4 w-4" aria-hidden="true" />
+          Share
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-44" data-battle-share-menu={share.battleId}>
-        <DropdownMenuItem className="min-h-11 cursor-pointer font-retro text-xs uppercase tracking-[0.14em]" onSelect={() => void copyLink()}>
+      <DropdownMenuContent align="start" className="min-w-44 rounded-[14px] border-mw-edge bg-mw-surface text-mw-text" data-battle-share-menu={share.battleId}>
+        <DropdownMenuItem className="min-h-11 cursor-pointer font-mw-body text-sm font-semibold" onSelect={() => void copyLink()}>
           Copy battle link
         </DropdownMenuItem>
-        <DropdownMenuItem className="min-h-11 cursor-pointer font-retro text-xs uppercase tracking-[0.14em]" onSelect={() => openShareCard()}>
+        <DropdownMenuItem className="min-h-11 cursor-pointer font-mw-body text-sm font-semibold" onSelect={() => openShareCard()}>
           Share on X
         </DropdownMenuItem>
-        <DropdownMenuItem className="min-h-11 cursor-pointer font-retro text-xs uppercase tracking-[0.14em]" onSelect={() => openShareCard()}>
+        <DropdownMenuItem className="min-h-11 cursor-pointer font-mw-body text-sm font-semibold" onSelect={() => openShareCard()}>
           Download share image
         </DropdownMenuItem>
       </DropdownMenuContent>

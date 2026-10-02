@@ -220,9 +220,10 @@ test("accept/counter/decline behavior stays on the existing handlers", () => {
   assert.match(battles, /await declinePostGradBattle\(battleId, auth\)/);
   assert.match(battles, /await counterPostGradBattle\(battleId, amount, auth, hours\)/);
   assert.match(battles, /CreatorChallengeCarousel/);
-  assert.match(carousel, />\s*ACCEPT\s*</);
-  assert.match(carousel, />\s*DECLINE\s*</);
-  assert.match(carousel, />\s*COUNTER\s*</);
+  // UI redesign: mockup wording; the counter form opens on the first press.
+  assert.match(carousel, />\s*Accept\s*</i);
+  assert.match(carousel, />\s*Decline\s*</i);
+  assert.match(carousel, /"Counter"/);
 });
 
 test("imported and native eligible tokens share the same Find Match panel", () => {

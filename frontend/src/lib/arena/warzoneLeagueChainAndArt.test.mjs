@@ -14,7 +14,7 @@ test("the league feed follows the selected chain, not the wallet's alone", () =>
 });
 
 test("both league surfaces carry the chain switch, so a visitor without a wallet can pick one", () => {
-  assert.match(read("pages/Arena.tsx"), /<ChainFeedSwitch \/>/);
+  assert.match(read("pages/Arena.tsx"), /<ChainFeedSwitch\b[^>]*\/>/);
   assert.match(read("pages/PostGradLeague.tsx"), /<ChainFeedSwitch \/>/);
 });
 

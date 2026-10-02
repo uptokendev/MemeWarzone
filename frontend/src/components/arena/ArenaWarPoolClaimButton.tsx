@@ -40,10 +40,13 @@ export function ArenaWarPoolClaimButton({
   battleId,
   chainId,
   label,
+  className,
 }: {
   battleId: string;
   chainId?: number;
   label?: string;
+  /** Optional restyle of the button (UI redesign); claim behaviour is unchanged. */
+  className?: string;
 }) {
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
@@ -145,7 +148,7 @@ export function ArenaWarPoolClaimButton({
   }
 
   return (
-    <Button className="font-retro" disabled={busy} onClick={() => void claim()}>
+    <Button className={className || "font-retro"} disabled={busy} onClick={() => void claim()}>
       {busy ? "Claiming..." : label || `Claim ${symbol} battle rewards`}
     </Button>
   );

@@ -172,9 +172,13 @@ test("ACCEPT COUNTER and DECLINE use the existing API paths", () => {
   assert.match(command, /await acceptPostGradBattle\(battleId, auth\)/);
   assert.match(command, /await declinePostGradBattle\(battleId, auth\)/);
   assert.match(command, /await counterPostGradBattle\(battleId, amount, auth, hours\)/);
-  assert.match(carousel, />\s*ACCEPT\s*</);
-  assert.match(carousel, />\s*COUNTER\s*</);
-  assert.match(carousel, />\s*DECLINE\s*</);
+  // UI redesign: mockup wording (Accept / Counter / Decline); the counter form opens on the first press.
+  assert.match(carousel, />\s*Accept\s*</i);
+  assert.match(carousel, /"Counter"/);
+  assert.match(carousel, />\s*Decline\s*</i);
+  assert.match(carousel, /onAccept\(battle\.id\)/);
+  assert.match(carousel, /onDecline\(battle\.id\)/);
+  assert.match(carousel, /onCounter\(battle\.id, draft\.counterStake, draft\.counterDurationHours\)/);
   assert.match(client, /\/accept/);
   assert.match(client, /\/decline/);
   assert.match(client, /\/counter/);

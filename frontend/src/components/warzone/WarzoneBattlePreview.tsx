@@ -1,55 +1,17 @@
 import { Link } from "react-router-dom";
 import { BattleVsMark } from "@/components/arena/BattleWallVs";
-import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
-import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import type { Battle } from "@/features/postgrad/contracts";
 import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { battleClockLabel } from "@/lib/arena/battlePresentation";
 import { DATA_DELAY_LABEL, presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
 
-function participantArt(battle: Battle, index: number) {
-  const participant = battle.participants?.[index] as { imageUrl?: string; logoUri?: string } | undefined;
-  return participant?.imageUrl || participant?.logoUri || null;
-}
-
-function SideIdentity({
-  battle,
-  index,
-  ticker,
-  pointsLabel,
-  scoreKind,
-  align = "left",
-  showScores,
-}: {
-  battle: Battle;
-  index: number;
-  ticker: string;
-  pointsLabel?: string | null;
-  scoreKind?: string | null;
-  align?: "left" | "right";
-  showScores: boolean;
-}) {
+/** Coin name for the accessible label (the row shows tickers only, as in the artboard). */
+function sideName(battle: Battle, index: number) {
   const participant = battle.participants?.[index];
-  // The battle feed carries no images; resolve art from the token profile like the battle card.
-  const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
-  const profile = useArenaTokenProfile(chainId, participant?.tokenAddress || participant?.tokenId || participant?.campaignAddress || null);
-  const name = String(participant?.tokenName || profile?.name || "").trim();
-  return (
-    <div className={`flex min-w-0 items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
-      <WarzoneTokenMark imageUrl={participantArt(battle, index) || profile?.imageUrl || null} symbol={participant?.symbol} name={participant?.tokenName} size="sm" />
-      <div className="min-w-0">
-        <div className="truncate font-black text-sm leading-none text-foreground">{ticker}</div>
-        {name ? <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.12em] text-white/55">{name}</div> : null}
-        {showScores ? (
-          <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-white/50">
-            {pointsLabel} {scoreKind === "legacy" ? "SCORE" : "BP"}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
+  return String(participant?.tokenName || "").trim();
 }
 
+/** Warzone overview "Active battles" row (artboard: tickers with the VS mark, status chip, score and time). */
 export function WarzoneBattlePreview({
   battle,
   metrics,
@@ -67,42 +29,33 @@ export function WarzoneBattlePreview({
   });
   const delayed = presented.scoreKind === "delay" || presented.statusLabel === DATA_DELAY_LABEL;
   const showScores = !delayed && Boolean(presented.leftPointsLabel && presented.rightPointsLabel);
-  const stateLabel = presented.tab === "live" ? "LIVE" : presented.tab === "upcoming" ? "UPCOMING" : "FINISHED";
+  const stateLabel = presented.tab === "live" ? "Live" : presented.tab === "upcoming" ? "Upcoming" : "Finished";
   const clock = presented.tab === "upcoming" ? null : battleClockLabel(battle);
+  const names = [sideName(battle, 0), sideName(battle, 1)].filter(Boolean).join(" versus ");
 
   return (
     <Link
       to={presented.href}
       data-warzone-battle-preview={battle.id}
-      className="block min-w-0 py-3 first:pt-0 last:pb-0"
+      aria-label={`${presented.leftTicker} versus ${presented.rightTicker}${names ? ` (${names})` : ""}, ${stateLabel}`}
+      className="mw-focus flex min-w-0 flex-col gap-2 rounded-[14px] border border-mw-border bg-mw-input p-3 font-mw-body text-mw-text hover:border-[#3A424C] hover:text-mw-text"
     >
-      <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.16em] text-white/50">
-        <span className={presented.tab === "live" ? "text-orange-200" : "text-white/70"}>{stateLabel}</span>
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1 text-sm font-bold lg:text-[15px]">
+          <span className="truncate">{presented.leftTicker}</span>
+          <BattleVsMark size="sm" />
+          <span className="truncate">{presented.rightTicker}</span>
+        </span>
+        <span className="hidden h-[22px] shrink-0 items-center rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2 text-xs font-semibold text-mw-accent-soft lg:inline-flex">
+          {stateLabel}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-2 font-mw-mono text-[13px] text-mw-muted">
+        <span>
+          {showScores ? `${presented.leftPointsLabel} · ${presented.rightPointsLabel} ${presented.scoreKind === "legacy" ? "score" : "pts"}` : delayed ? DATA_DELAY_LABEL : "—"}
+        </span>
         {clock ? <span>{clock}</span> : null}
       </div>
-      <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-        <SideIdentity
-          battle={battle}
-          index={0}
-          ticker={presented.leftTicker}
-          pointsLabel={presented.leftPointsLabel}
-          scoreKind={presented.scoreKind}
-          showScores={showScores}
-        />
-        <BattleVsMark size="sm" />
-        <SideIdentity
-          battle={battle}
-          index={1}
-          ticker={presented.rightTicker}
-          pointsLabel={presented.rightPointsLabel}
-          scoreKind={presented.scoreKind}
-          align="right"
-          showScores={showScores}
-        />
-      </div>
-      {delayed ? (
-        <div className="mt-2 text-center font-black text-[10px] uppercase tracking-[0.16em] text-orange-200">{DATA_DELAY_LABEL}</div>
-      ) : null}
     </Link>
   );
 }

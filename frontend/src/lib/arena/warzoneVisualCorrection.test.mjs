@@ -19,32 +19,24 @@ test("production artwork never ticker-matches mock portraits", () => {
   assert.doesNotMatch(combatant, /mockTokenArtForTicker|MOCK_TOKEN_ART/);
   assert.doesNotMatch(preview, /mockTokenArtForTicker|MOCK_TOKEN_ART/);
   assert.match(combatant, /participant\?\.imageUrl \|\| participant\?\.logoUri/);
-  assert.match(preview, /participant\?\.imageUrl \|\| participant\?\.logoUri/);
+  // UI redesign: the overview battle row is text only (artboard), so it resolves no art at all.
+  assert.doesNotMatch(preview, /imageUrl|logoUri/);
 });
 
-test("Battle combatant bleed is an absolute decorative layer outside card flow", () => {
+test("Battle combatant has no backdrop layer; the decorative layer stays absolute where used", () => {
   const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
   const layer = readSrc("../../components/warzone/WarzoneDecorativeLayer.tsx");
   const css = readSrc("../../styles/card-cleanup.css");
-  const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
   assert.match(layer, /data-mwz-decorative-layer="true"/);
   assert.match(layer, /position: "absolute"/);
   assert.match(layer, /inset: 0/);
   assert.match(layer, /zIndex: 0/);
   assert.match(css, /\.mwz-app-shell \.mwz-flat-card > \[data-mwz-decorative-layer\]/);
-  assert.match(css, /position: absolute !important/);
-  assert.match(css, /z-index: 0 !important/);
-  assert.match(combatant, /WarzoneDecorativeLayer/);
+  // UI redesign: the artboard combatant is a plain card with fixed-size art and no blurred backdrop.
+  assert.doesNotMatch(combatant, /WarzoneDecorativeLayer|data-battle-combatant-bleed/);
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
-  assert.match(combatant, /h-auto max-h-\[22rem\]/);
-  assert.match(combatant, /aspect-square/);
-  assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
-  assert.match(combatant, /data-battle-combatant-bleed="true"/);
-  assert.match(combatant, /absolute inset-0 z-0/);
-  assert.match(combatant, /<WarzoneDecorativeLayer[\s\S]*data-battle-combatant-bleed="true"/);
+  assert.match(combatant, /h-\[130px\] w-\[130px\] shrink-0/);
   assert.doesNotMatch(combatant, /100vh|min-h-screen|h-screen/);
-  assert.doesNotMatch(combatant, /data-selected=\{isLeader/);
-  assert.match(moduleSrc, /md:items-center/);
 });
 
 test("WarzoneContent emits a static 1280px max width Tailwind can scan", () => {
@@ -128,7 +120,7 @@ test("Battle VS mark is a close overlapping pair, not opposite-corner Pixeboy", 
   assert.match(vs, /data-battle-vs-mark="true"/);
   assert.match(vs, /font-black/);
   assert.match(vs, /font-sans/);
-  assert.match(vs, /md:text-\[3\.75rem\]/);
+  assert.match(vs, /lg:text-\[76px\]/);
   assert.doesNotMatch(vs, /font-retro/);
   assert.doesNotMatch(vs, /left-0\.5 top-0/);
   assert.doesNotMatch(vs, /bottom-0 right-0\.5/);

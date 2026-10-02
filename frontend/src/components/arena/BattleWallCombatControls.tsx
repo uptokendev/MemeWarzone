@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ThumbsUp, Zap } from "lucide-react";
+import { Check, Zap } from "lucide-react";
 
 import { boostPaymentLabel, useBattleBoost } from "@/components/arena/BattleBoostPanel";
 import type { useBattleVote } from "@/components/arena/BattleVoteControls";
@@ -27,11 +27,12 @@ type Props = {
 
 const EMPTY_SLOTS: BattleCombatSlots = { left: null, right: null, note: null };
 
-// Compact, side by side in the strip under MCAP / HOLDERS / VOL / VOTES (founder design, 2026-09-25).
+// Side by side under the metric boxes (UI redesign artboard: Vote warm outline, Boost solid orange).
 const BUTTON_BASE =
-  "flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 border px-2 font-retro text-xs uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-45";
-const VOTE_CLASS = `${BUTTON_BASE} border-orange-400/70 bg-gradient-to-b from-orange-500 to-orange-700 text-white shadow-[0_0_12px_rgba(249,115,22,0.3)] hover:from-orange-400 hover:to-orange-600 focus-visible:ring-orange-300`;
-const BOOST_CLASS = `${BUTTON_BASE} border-amber-300/60 bg-gradient-to-b from-amber-400 to-amber-600 text-black shadow-[0_0_12px_rgba(245,158,11,0.3)] hover:from-amber-300 hover:to-amber-500 focus-visible:ring-amber-200`;
+  "mw-focus inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-[10px] border px-3 font-mw-body text-[15px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45";
+const VOTE_CLASS = `${BUTTON_BASE} border-[#5A3416] bg-[#2A1A10] text-mw-accent-soft hover:bg-[#3A2412]`;
+const VOTED_CLASS = "bg-[#3A2412] text-[#C79A72]";
+const BOOST_CLASS = `${BUTTON_BASE} border-mw-accent bg-mw-accent text-[#140A02] hover:bg-[#FF8F3D]`;
 
 /**
  * Vote and Boost buttons under each combatant on the battle card. They used to sit in the collapsed
@@ -143,11 +144,11 @@ function CombatControls({
     const payment = boost.isSolana ? boostPaymentLabel(boost.paymentStates[side.key]) : null;
     const boosts = boost.totals[side.key];
     return (
-      <div data-battle-combat-buttons={side.key} className="py-1.5">
-        <div className="flex min-w-0 gap-2">
+      <div data-battle-combat-buttons={side.key}>
+        <div className="grid min-w-0 grid-cols-2 gap-2">
           {showVote ? (
-            <button type="button" className={VOTE_CLASS} disabled={voteDisabled} onClick={() => void vote.vote(side.voteToken)}>
-              <ThumbsUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <button type="button" className={votedHere ? `${VOTE_CLASS} ${VOTED_CLASS}` : VOTE_CLASS} disabled={voteDisabled} onClick={() => void vote.vote(side.voteToken)}>
+              <Check className="h-4 w-4 shrink-0" aria-hidden />
               <span className="truncate">{vote.busyToken === side.voteToken ? "Confirming…" : votedHere ? "Voted" : "Vote"}</span>
             </button>
           ) : null}
@@ -161,12 +162,12 @@ function CombatControls({
               onClick={() => void boost.boost(side.key, side.boostToken).finally(() => void vote.refresh())}
               title={`${boosts} boost${boosts === 1 ? "" : "s"} on this side`}
             >
-              <Zap className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <Zap className="h-4 w-4 shrink-0" aria-hidden />
               <span className="truncate">{boost.busySide === side.key ? "Boosting…" : boosts > 0 ? `Boost · ${boosts}` : "Boost"}</span>
             </button>
           ) : null}
         </div>
-        {payment ? <div className="mt-1 text-center text-[10px] uppercase tracking-[0.12em] text-white/42">{payment}</div> : null}
+        {payment ? <div className="mt-1 text-center text-xs text-mw-muted">{payment}</div> : null}
       </div>
     );
   };
@@ -176,7 +177,7 @@ function CombatControls({
       {children({
         left: renderSide(sides[0]),
         right: renderSide(sides[1]),
-        note: note ? <p data-battle-combat-note="true" className="relative z-20 mt-2 text-center text-xs text-white/48">{note}</p> : null,
+        note: note ? <p data-battle-combat-note="true" className="relative z-20 m-0 text-center font-mw-body text-sm text-[#C9CED4]">{note}</p> : null,
       })}
     </>
   );
