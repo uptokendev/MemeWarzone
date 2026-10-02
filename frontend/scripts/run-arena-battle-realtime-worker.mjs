@@ -8,6 +8,7 @@ import { advanceTournamentFromBattle } from "../api/arenaTournaments.js";
 import { IMPORT_FEED_INTERVAL_MS, refreshImportMarketStats } from "../api/lib/arenaImportMarketFeed.js";
 import { closeEndedChampionships, rolloverEndedMwlSeasons } from "../api/lib/arenaMwlRollover.js";
 import { crankLeagueShares, leagueCrankMode } from "../api/lib/arenaEvmLeagueCrank.js";
+import { harvestLpFees, lpHarvestMode } from "../api/lib/evmLpHarvestCrank.js";
 
 // Vote Battles (challenge, queue and tournament) settle only through this runtime, so it defaults
 // on: with ARENA_VOTE_TOURNAMENT_RUNTIME unset no Vote Battle ever finished. Set it to false to stop it.
@@ -188,11 +189,30 @@ async function crankLeague() {
 }
 if (leagueCrank !== "off") console.log(`[arena-battle-realtime-worker] EVM league crank active mode=${leagueCrank} intervalMs=${leagueCrankMs}`);
 const leagueCrankTimer = setInterval(() => void crankLeague(), leagueCrankMs); leagueCrankTimer.unref?.(); void crankLeague();
+// BNB / Robinhood LP fees of graduated coins: locker.harvest(pool), 80% creator / 20% protocol
+// (evmLpHarvestCrank.js). Off unless EVM_LP_HARVEST=dry|send. One instance only.
+const lpHarvest = lpHarvestMode();
+const lpHarvestMs = Math.max(5 * 60_000, Number(process.env.EVM_LP_HARVEST_SCAN_MS || 3_600_000));
+const lpHarvestSkip = new Map();
+let lpHarvestRunning = false;
+async function runLpHarvest() {
+  if (lpHarvest === "off" || lpHarvestRunning) return;
+  lpHarvestRunning = true;
+  try {
+    for (const o of await harvestLpFees({ db: pool, mode: lpHarvest, skip: lpHarvestSkip })) {
+      const line = `[arena-battle-realtime-worker] lp harvest ${o.step} ${o.status} chain=${o.chainId} ${o.symbol || ""} pool=${o.pool}${o.amount0 ? ` amount0=${o.amount0} amount1=${o.amount1}` : ""}${o.token ? ` token=${o.token} amount=${o.amount}` : ""}${o.txHash ? ` tx=${o.txHash}` : ""}${o.reason ? ` ${o.reason}` : ""}`;
+      if (o.status === "sent" || o.status === "dry-run") console.log(line); else console.warn(line);
+    }
+  } catch (error) { console.warn("[arena-battle-realtime-worker] lp harvest pass failed", error?.message || error); }
+  finally { lpHarvestRunning = false; }
+}
+if (lpHarvest !== "off") console.log(`[arena-battle-realtime-worker] EVM LP harvest active mode=${lpHarvest} intervalMs=${lpHarvestMs}`);
+const lpHarvestTimer = setInterval(() => void runLpHarvest(), lpHarvestMs); lpHarvestTimer.unref?.(); void runLpHarvest();
 const keepAlive = setInterval(() => {}, 60_000);
 
 async function shutdown(signal) {
   console.log(`[arena-battle-realtime-worker] shutting down on ${signal}`);
-  clearInterval(keepAlive); clearInterval(finishedTimer); clearInterval(settlementTimer); clearInterval(voteTimer); clearInterval(importFeedTimer); clearInterval(mwlRolloverTimer); clearInterval(leagueCrankTimer);
+  clearInterval(keepAlive); clearInterval(finishedTimer); clearInterval(settlementTimer); clearInterval(voteTimer); clearInterval(importFeedTimer); clearInterval(mwlRolloverTimer); clearInterval(leagueCrankTimer); clearInterval(lpHarvestTimer);
   stopArenaBattleRealtimeWorker();
   try { await pool.end(); } catch {}
   process.exit(0);
