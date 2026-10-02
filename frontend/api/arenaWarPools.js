@@ -939,6 +939,21 @@ async function handleClaimIntent(req, res, subjectId) {
   });
 }
 
+/**
+ * The claim-intent payload for a battle or tournament, exactly as the Claim button receives it
+ * (same handler, same signature path), for the server-side EVM war pool crank. Returns
+ * { status, body }; body.resolve carries the resolver-signed result the crank submits.
+ */
+export async function claimIntentFor(subjectId) {
+  let status = 0;
+  let raw = "";
+  const res = { statusCode: 0, setHeader() {}, end(body) { raw = String(body || ""); status = this.statusCode; } };
+  await handleClaimIntent({}, res, String(subjectId));
+  let body = null;
+  try { body = raw ? JSON.parse(raw) : null; } catch { body = null; }
+  return { status, body };
+}
+
 async function handleClaimable(req, res) {
   const query = getQuery(req);
   const wallet = normalizeWalletFlexible(query.wallet || query.walletAddress || "");

@@ -168,7 +168,7 @@ async function rolloverMwl() {
 }
 if (mwlRolloverEnabled) console.log(`[arena-battle-realtime-worker] MWL month rollover active intervalMs=${mwlRolloverMs}`);
 const mwlRolloverTimer = setInterval(() => void rolloverMwl(), mwlRolloverMs); mwlRolloverTimer.unref?.(); void rolloverMwl();
-// BNB / Robinhood league share: claimLeague for every resolved pool (arenaEvmLeagueCrank.js).
+// BNB / Robinhood war pools: resolve finished pools, then claimProtocol + claimLeague (arenaEvmLeagueCrank.js).
 // Off unless ARENA_EVM_LEAGUE_CRANK=dry|send. One instance only.
 const leagueCrank = leagueCrankMode();
 const leagueCrankMs = Math.max(60_000, Number(process.env.ARENA_EVM_LEAGUE_CRANK_SCAN_MS || 300_000));
@@ -180,8 +180,8 @@ async function crankLeague() {
   try {
     const outcomes = await crankLeagueShares({ db: pool, mode: leagueCrank, terminal: leagueCrankTerminal });
     for (const o of outcomes) {
-      const line = `[arena-battle-realtime-worker] league crank ${o.status} chain=${o.chainId} ${o.kind || ""} ${o.subject} pool=${o.poolId} wei=${o.amountWei || ""} month=${o.month || ""} quarter=${o.quarter || ""} tx=${o.txHash || ""} ${o.reason || ""}`;
-      if (o.status === "claimed" || o.status === "dry-run") console.log(line); else console.warn(line);
+      const line = `[arena-battle-realtime-worker] war pool crank ${o.step || ""} ${o.status} chain=${o.chainId} ${o.kind || ""} ${o.subject} pool=${o.poolId}${o.amountWei ? ` wei=${o.amountWei}` : ""}${o.month ? ` month=${o.month} quarter=${o.quarter}` : ""}${o.winner ? ` winner=${o.winner}` : ""}${o.txHash ? ` tx=${o.txHash}` : ""}${o.reason ? ` ${o.reason}` : ""}`;
+      if (o.status === "sent" || o.status === "dry-run") console.log(line); else console.warn(line);
     }
   } catch (error) { console.warn("[arena-battle-realtime-worker] league crank pass failed", error?.message || error); }
   finally { leagueCrankRunning = false; }

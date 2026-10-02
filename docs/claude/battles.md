@@ -104,3 +104,33 @@ removed `buildArenaCancelInstructions`.
   `ARENA_EVM_LEAGUE_CRANK=dry|send`; key `ARENA_LEAGUE_CRANK_PK` else `RECRUITER_PAYOUT_OPERATOR_PK`.
   Money then waits in `PostGradLeagueTreasuryV2` until `claimMonthly(epoch)` -- not cranked yet.
 - The Q3 championship epochs are still `open` on all chains; nothing closes a quarter automatically either.
+
+### Q3 close + MWL payout decisions (2026-10-02)
+
+- Q3 2026 closes without placement bonuses: transfer status `waived`
+  (`db/migrations/20261002_000001_championship_mwl_transfer_waived.sql`), then
+  `database/prod_close_q3_2026_without_bonus.sql`; the realtime worker closes the quarter.
+- MWL treasuries (defaults in `arenaMwlChainIdentity.mjs`): Solana `mwl_vault`
+  `PCDQmFBrYTV2kfdGtiGWJ2Au9TfaR5ZzBkXdtymV1Bd`; BNB `PostGradLeagueTreasuryV2` `0xD9E38140…`; Robinhood
+  `0x5D5CC19B…`. Both EVM league treasuries' `monthlyReceiver`/`quarterlyReceiver` are the Safe and
+  held 0 on 2026-10-02. `MONTHLY_LEAGUE_TREASURY_ADDRESS_*` is the PRE-GRAD vault, never the MWL.
+- Nothing pays MWL winners yet. Decided: poker split, recipient = coin creator / import owner, 60%
+  month / 40% quarter, new fixed-cap `MonthlyLeagueTreasury` per EVM chain for the MWL.
+
+### Who moves the money (2026-10-02)
+
+- **Solana battles:** resolve-due worker (Coolify "arena-resolve-due", `Dockerfile.resolve-due`) resolves
+  each finished pool and, with `ARENA_OPERATOR_CLAIMS=send`, claims its MWL share (-> `mwl_vault`) and
+  protocol share (-> `protocol_vault`). First sweep 2026-10-02: 0.1 SOL MWL, 0.1555 SOL protocol.
+- **Solana protocol_vault -> wallets:** the indexer's fee-escrow worker calls `flush_operator_fill`
+  hourly (>= 0.05 SOL): operator `2AMfRaxS…` up to $10k, rest to multisig `fk5YYWb…`. Key is
+  `SOLANA_FEE_ESCROW_PAYER_SECRET` (inline JSON; `_KEYPAIR` is a file path and stays unset). Payer
+  `Crmw8dwU…`. `route_state` SOL price is cap bookkeeping only (`set-route-sol-price.mjs`).
+- **EVM trading fees:** `TreasuryRouterV3` -> `ProtocolRevenueVault`, which forwards on receive. No crank.
+- **EVM battles:** the API realtime worker's war pool crank (`arenaEvmLeagueCrank.js`,
+  `ARENA_EVM_LEAGUE_CRANK=dry|send`): resolves a finished Live pool with the server-signed result
+  (`claimIntentFor` in `arenaWarPools.js`, the Claim button's own path), then `claimProtocol` and
+  `claimLeague`. The winner still collects with the Claim button.
+- **Graduation keeper** = Coolify "Graduation Operator" (`Dockerfile.graduation-keeper`).
+- resolve-due crash loop root cause: Coolify built it with Nixpacks (Node 22.11). Fixed twice:
+  Dockerfile build pack, and root `overrides` pinning rpc-websockets' uuid to 11.1.0 (CJS).
