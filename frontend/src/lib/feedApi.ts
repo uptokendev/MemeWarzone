@@ -299,10 +299,12 @@ export function feedViewerKey(account?: string | null) {
 let pendingViews = new Set<number>();
 let viewTimer: number | null = null;
 let viewViewer = "";
+/** Set when the API answers 404: it has no views route (older deploy), so stop posting for this page load. */
+let viewsUnsupported = false;
 
 /** Queue a view; sent in small batches (one view per viewer per post is kept server side). */
 export function queueFeedView(postId: number, viewer: string) {
-  if (!postId || !viewer) return;
+  if (!postId || !viewer || viewsUnsupported) return;
   viewViewer = viewer;
   pendingViews.add(postId);
   if (viewTimer != null) return;
@@ -315,6 +317,13 @@ export function queueFeedView(postId: number, viewer: string) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ postIds: ids, viewer: viewViewer }),
       keepalive: true,
-    }).catch(() => {});
+    })
+      .then((res) => {
+        if (res.status === 404) {
+          viewsUnsupported = true;
+          pendingViews.clear();
+        }
+      })
+      .catch(() => {});
   }, 2500);
 }

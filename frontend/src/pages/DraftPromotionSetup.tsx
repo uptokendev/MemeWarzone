@@ -435,7 +435,7 @@ export default function DraftPromotionSetup() {
             </div>
           </div>
 
-          <div className="mx-auto grid h-auto max-w-6xl gap-3 px-3 py-3 md:px-4 lg:h-[calc(100%-4.25rem)] lg:grid-rows-[auto_1fr_1fr_auto] lg:overflow-hidden">
+          <div className="mx-auto grid h-auto max-w-[1480px] gap-3 px-3 py-3 md:px-4 lg:h-[calc(100%-4.25rem)] lg:grid-rows-[auto_1fr_1fr_auto] lg:overflow-hidden">
             <section className="mwz-card p-3">
               <div className="grid gap-3 md:grid-cols-[auto_1fr_1fr] md:items-center">
                 <div className="flex flex-col items-start gap-2">

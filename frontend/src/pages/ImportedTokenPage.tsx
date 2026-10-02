@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { StoryEnterButton } from "@/components/story/StoryEnterButton";
 import { CoinTabs } from "@/components/token/CoinTabs";
 import { cp } from "@/components/token/coinPageStyles";
-import { CoinBanner, CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
+import { CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
 import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { ImportedTradesTable } from "@/components/arena/ImportedTradesTable";
@@ -382,12 +382,11 @@ export default function ImportedTokenPage({
   };
 
   return (
-    <div className="w-full flex flex-col gap-4 px-3 md:px-6 pb-24 xl:pb-0 font-mw-body text-mw-text" data-imported-project-page="true" data-imported-token-page="true">
-      {/* Header: banner, logo, name, chips, owner line, actions (UI redesign phase 1). */}
+    <div className="mx-auto w-full max-w-[1480px] flex flex-col gap-4 px-3 md:px-2 pb-24 xl:pb-0 font-mw-body text-mw-text" data-imported-project-page="true" data-imported-token-page="true">
+      {/* Header: logo, name, chips, owner line, actions (UI redesign phase 1). Founder 2026-10-02: no banner on the coin page. */}
       <section aria-label={item.name || item.symbol || "Imported project"} className="flex flex-col">
-        <CoinBanner chainId={item.chainId} token={item.tokenAddress} editPath={`/token/${encodeURIComponent(item.tokenAddress)}/edit?chainId=${item.chainId}`} />
-        <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-6 md:px-2">
-          <div className="relative -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-[18px] border-4 border-mw-ground bg-[#2A1609] md:-mt-16 md:h-[140px] md:w-[140px] md:rounded-3xl">
+        <div className="flex flex-col gap-3 px-1 pt-2 md:flex-row md:items-end md:gap-6 md:px-2">
+          <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-[18px] border-4 border-mw-ground bg-[#2A1609] md:h-[140px] md:w-[140px] md:rounded-3xl">
             {item.imageUrl ? (
               <img ref={logoRef} src={item.imageUrl} alt={`${item.name || item.symbol || "Imported project"} logo`} className="h-full w-full object-cover" data-project-image="true" />
             ) : (
@@ -446,12 +445,6 @@ export default function ImportedTokenPage({
             <button type="button" className={cp.btn} onClick={() => setShareCardOpen(true)} data-project-share="true">
               <Share2 className="h-[18px] w-[18px]" aria-hidden="true" />Share card
             </button>
-            <Link
-              className="mw-focus inline-flex min-h-11 items-center gap-1.5 rounded-[10px] px-2.5 text-sm font-semibold text-mw-muted hover:bg-mw-raised hover:text-mw-text"
-              to={buildAbuseReportPath({ entityType: "token", reportedTokenAddress: item.tokenAddress, reportedWallet: ownerWallet, reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${item.tokenAddress}` })}
-            >
-              <Flag className="h-4 w-4" aria-hidden="true" />Report
-            </Link>
             {!postGradFlags.arena ? null : crypticPumpListing?.listingUrl ? (
               <CrypticPumpBadge listingUrl={crypticPumpListing.listingUrl} className="flex-shrink-0 self-center" />
             ) : canEdit ? (
@@ -539,7 +532,7 @@ export default function ImportedTokenPage({
             </div>
           </section>
 
-          <section aria-label="Chart" className={`${cp.card} flex flex-col gap-2 p-3`}>
+          <section aria-label="Chart" className={`${cp.card} -order-1 flex flex-col gap-2 p-3`}>
             {chart.emptyNote ? <p className="m-0 px-1 text-xs text-mw-muted">{chart.emptyNote}</p> : null}
             <div className="h-[320px] md:h-[420px]">
               <UnifiedMarketChart
@@ -657,6 +650,15 @@ export default function ImportedTokenPage({
         </aside>
       </div>
       <p className="m-0 text-xs text-mw-muted">{nativeUnit} quotes use the chain native. Project verification is separate from financial and competition eligibility.</p>
+      {/* Founder 2026-10-02: Report sits at the bottom of the page, out of the header actions. */}
+      <div className="flex justify-end">
+        <Link
+          className="mw-focus inline-flex min-h-11 items-center gap-1.5 rounded-[10px] px-2.5 text-sm font-semibold text-mw-muted hover:bg-mw-raised hover:text-mw-text"
+          to={buildAbuseReportPath({ entityType: "token", reportedTokenAddress: item.tokenAddress, reportedWallet: ownerWallet, reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${item.tokenAddress}` })}
+        >
+          <Flag className="h-4 w-4" aria-hidden="true" />Report
+        </Link>
+      </div>
       <MobileTradeDock
         connected={Boolean(connectedWallet)}
         connectLabel={solana ? "Connect SOL wallet" : item.chainId === 4663 ? "Connect Robinhood wallet" : "Connect BNB wallet"}

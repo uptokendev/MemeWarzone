@@ -108,7 +108,7 @@ const Live = () => {
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl py-4">
+    <div className="mx-auto w-full max-w-[1480px] px-1 py-4 md:px-2">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_360px]">
         <div className="flex flex-col gap-3">
           <LivestreamPlayer playbackId={PLAYBACK_ID} />

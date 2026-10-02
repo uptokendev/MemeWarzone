@@ -59,7 +59,7 @@ import { StoryEnterButton } from "@/components/story/StoryEnterButton";
 import { CoinTabs } from "@/components/token/CoinTabs";
 import { ChallengeCoinButton } from "@/components/arena/ChallengeCoinButton";
 import { cp } from "@/components/token/coinPageStyles";
-import { CoinBanner, CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
+import { CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
 import { useStory } from "@/lib/story/storyApi";
 import { MobileTradeDock, MobileTradeSheet, useXlUp } from "@/components/token/MobileTradeSheet";
@@ -4921,7 +4921,7 @@ const toSeconds = (ts: number): number => {
   }
 
   return (
-    <div className="w-full flex flex-col gap-4 px-3 md:px-6 pb-24 xl:pb-0 font-mw-body text-mw-text">
+    <div className="mx-auto w-full max-w-[1480px] flex flex-col gap-4 px-3 md:px-2 pb-24 xl:pb-0 font-mw-body text-mw-text">
       <GraduationExplosion
         campaignAddress={campaign?.campaign}
         active={isSolanaPage ? false : isTopazTradingActive || isUniswapTradingActive}
@@ -4935,15 +4935,10 @@ const toSeconds = (ts: number): number => {
         venueLabel={isSolanaPage ? "Meteora DAMM v2" : isRobinhoodPage ? "Uniswap" : "Topaz"}
       />
 
-      {/* Header: banner, logo, name, chips, creator line, actions (UI redesign phase 1). */}
+      {/* Header: logo, name, chips, creator line, actions (UI redesign phase 1). Founder 2026-10-02: no banner on the coin page. */}
       <section aria-label={tokenData.name || "Coin"} className="flex flex-col">
-        <CoinBanner
-          chainId={chainIdForStorage}
-          token={String(campaign?.token || campaignAddr || "")}
-          editPath={`/token/${encodeURIComponent(String(campaignAddress ?? campaignAddr ?? ""))}/edit?chainId=${chainIdForStorage}`}
-        />
-        <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-6 md:px-2">
-          <div className="relative -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-[18px] border-4 border-mw-ground bg-[#2A1609] md:-mt-16 md:h-[140px] md:w-[140px] md:rounded-3xl">
+        <div className="flex flex-col gap-3 px-1 pt-2 md:flex-row md:items-end md:gap-6 md:px-2">
+          <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-[18px] border-4 border-mw-ground bg-[#2A1609] md:h-[140px] md:w-[140px] md:rounded-3xl">
             <img
               ref={tokenArtRef}
               src={tokenData.image}
@@ -5097,19 +5092,6 @@ const toSeconds = (ts: number): number => {
                 <Share2 className="h-[18px] w-[18px]" aria-hidden="true" />
                 Share card
               </button>
-              <Link
-                className="mw-focus inline-flex min-h-11 items-center gap-1.5 rounded-[10px] px-2.5 text-sm font-semibold text-mw-muted hover:bg-mw-raised hover:text-mw-text"
-                to={buildAbuseReportPath({
-                  entityType: "campaign",
-                  reportedCampaignAddress: campaignAddr,
-                  reportedTokenAddress: String(campaign?.token || ""),
-                  reportedWallet: String(campaign?.creator || ""),
-                  reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${campaignAddr}`,
-                })}
-              >
-                <Flag className="h-4 w-4" aria-hidden="true" />
-                Report
-              </Link>
 
               {/* CrypticPump badge / list CTA sits to the right of upvote */}
               {crypticPumpListing?.listingUrl ? (
@@ -5324,7 +5306,7 @@ const toSeconds = (ts: number): number => {
 
           <section
             aria-label="Chart"
-            className={`${cp.card} p-0 overflow-hidden flex flex-col ${chartExpanded ? "h-auto min-h-[640px] md:min-h-[720px] xl:min-h-[760px]" : "min-h-[360px] h-[360px] md:min-h-[420px] md:h-[420px] xl:min-h-[520px] xl:h-[520px]"}`}
+            className={`${cp.card} -order-1 p-0 overflow-hidden flex flex-col ${chartExpanded ? "h-auto min-h-[640px] md:min-h-[720px] xl:min-h-[760px]" : "min-h-[360px] h-[360px] md:min-h-[420px] md:h-[420px] xl:min-h-[520px] xl:h-[520px]"}`}
           >
             <div className="flex flex-col gap-2 border-b border-[#1E2329] px-3 py-2.5 md:px-4">
               <AthBar
@@ -6196,6 +6178,24 @@ const toSeconds = (ts: number): number => {
           </section>
         </aside>
       </div>
+      {/* Founder 2026-10-02: Report sits at the bottom of the page, out of the header actions. */}
+      {campaignAddr ? (
+      <div className="flex justify-end">
+        <Link
+          className="mw-focus inline-flex min-h-11 items-center gap-1.5 rounded-[10px] px-2.5 text-sm font-semibold text-mw-muted hover:bg-mw-raised hover:text-mw-text"
+          to={buildAbuseReportPath({
+            entityType: "campaign",
+            reportedCampaignAddress: campaignAddr,
+            reportedTokenAddress: String(campaign?.token || ""),
+            reportedWallet: String(campaign?.creator || ""),
+            reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${campaignAddr}`,
+          })}
+        >
+          <Flag className="h-4 w-4" aria-hidden="true" />
+          Report
+        </Link>
+      </div>
+      ) : null}
       <MobileTradeDock
         connected={walletMatchesCampaign}
         connectLabel={connectTradeWalletLabel}

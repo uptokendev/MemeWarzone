@@ -74,3 +74,14 @@ test("mobile tabs put create in the middle when Home is present", () => {
   assert.deepEqual(buildMobileTabs({ warzone: true, homeFeed: true }).map((t) => t.key), ["home", "coins", "create", "warzone", "profile"]);
   assert.deepEqual(buildMobileTabs({ warzone: true }).map((t) => t.key), ["coins", "create", "warzone", "profile"]);
 });
+
+test("menu Profile opens the connected wallet's public profile (founder, 2026-10-02)", () => {
+  const w = "0xAbC0000000000000000000000000000000000001";
+  assert.equal(buildMainNav({ ownWallet: w }).find((i) => i.key === "profile").path, `/profile/${w}`);
+  assert.equal(buildMobileTabs({ ownWallet: w }).find((t) => t.key === "profile").path, `/profile/${w}`);
+  assert.equal(buildMainNav({}).find((i) => i.key === "profile").path, "/profile");
+  assert.equal(activeNavKey(`/profile/${w.toLowerCase()}`, { ownWallet: w }), "profile");
+  assert.equal(activeNavKey("/profile/0xother", { ownWallet: w }), null);
+  assert.equal(resolveBackBar(`/profile/${w}`, { ownWallet: w }), null);
+  assert.equal(resolveBackBar("/profile/0xother", { ownWallet: w }).title, "Profile");
+});

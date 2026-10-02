@@ -171,7 +171,7 @@ const PromotionSetup = () => {
   };
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-2 py-4 md:px-4 md:py-6">
+    <div className="mx-auto w-full max-w-[1480px] px-1 py-4 md:px-2 md:py-6">
       <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
           <Link to="/create" className="mb-2 inline-flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-muted-foreground hover:text-foreground">

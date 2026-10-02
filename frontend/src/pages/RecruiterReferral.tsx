@@ -204,7 +204,7 @@ export default function RecruiterReferral() {
   };
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 py-10">
+    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-6 px-1 py-10 md:px-2">
       <Card className="overflow-hidden border-border/50 bg-card/70 p-6 md:p-8">
         <div className="space-y-4">
           <p className="font-retro text-xs uppercase tracking-[0.25em] text-muted-foreground">

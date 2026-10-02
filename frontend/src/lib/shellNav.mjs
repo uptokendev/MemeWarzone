@@ -9,10 +9,24 @@
 
 export const COINS_PATH = "/coins";
 
+/** Menu Profile goes to the connected wallet's public profile (founder, 2026-10-02); `/profile` without one. */
+export function profilePath(ownWallet) {
+  const w = String(ownWallet || "").trim();
+  return w ? `/profile/${encodeURIComponent(w)}` : "/profile";
+}
+
+function isOwnProfilePath(path, ownWallet) {
+  const w = String(ownWallet || "").trim();
+  const m = /^\/profile\/([^/]+)$/.exec(path);
+  if (!w || !m) return false;
+  const seg = decodeURIComponent(m[1]);
+  return /^0x/i.test(w) ? seg.toLowerCase() === w.toLowerCase() : seg === w;
+}
+
 /**
- * @param {{ warzone?: boolean, warRoom?: boolean, imports?: boolean, homeFeed?: boolean }} flags
+ * @param {{ warzone?: boolean, warRoom?: boolean, imports?: boolean, homeFeed?: boolean, ownWallet?: string | null }} flags
  */
-export function buildMainNav({ warzone = false, warRoom = false, imports = false, homeFeed = false } = {}) {
+export function buildMainNav({ warzone = false, warRoom = false, imports = false, homeFeed = false, ownWallet = null } = {}) {
   const items = [];
   if (homeFeed) items.push({ key: "home", label: "Home", path: "/", icon: "home" });
   items.push({ key: "coins", label: "Coins", path: COINS_PATH, icon: "coins" });
@@ -32,7 +46,7 @@ export function buildMainNav({ warzone = false, warRoom = false, imports = false
   }
   items.push({ key: "leagues", label: "Leagues", path: "/league", icon: "leagues" });
   if (warRoom) items.push({ key: "war-room", label: "War Trade Room", path: "/war-room", icon: "warRoom" });
-  items.push({ key: "profile", label: "Profile", path: "/profile", icon: "profile" });
+  items.push({ key: "profile", label: "Profile", path: profilePath(ownWallet), icon: "profile" });
   if (imports) items.push({ key: "import", label: "Import memecoin", path: "/import", icon: "import" });
   return items;
 }
@@ -44,7 +58,7 @@ export function buildMobileTabs(flags = {}) {
   tabs.push({ key: "coins", label: "Coins", path: COINS_PATH, icon: "coins" });
   tabs.push({ key: "create", label: "Create", icon: "plus" });
   if (flags.warzone) tabs.push({ key: "warzone", label: "Warzone", path: "/warzone", icon: "warzone" });
-  tabs.push({ key: "profile", label: "Profile", path: "/profile", icon: "profile" });
+  tabs.push({ key: "profile", label: "Profile", path: profilePath(flags.ownWallet), icon: "profile" });
   return tabs;
 }
 
@@ -53,7 +67,7 @@ function under(pathname, base) {
 }
 
 /** Which top-level item is lit for a path. `homeFeed` decides who owns `/`. */
-export function activeNavKey(pathname, { homeFeed = false } = {}) {
+export function activeNavKey(pathname, { homeFeed = false, ownWallet = null } = {}) {
   const path = String(pathname || "/").replace(/\/+$/, "") || "/";
   if (path === "/") return homeFeed ? "home" : "coins";
   if (path === "/feed") return homeFeed ? "home" : null;
@@ -62,6 +76,7 @@ export function activeNavKey(pathname, { homeFeed = false } = {}) {
   if (path === "/league" || path === "/leagues") return "leagues";
   if (under(path, "/war-room")) return "war-room";
   if (under(path, "/import")) return "import";
+  if (isOwnProfilePath(path, ownWallet)) return "profile";
   if (path === "/profile" || /^\/profile\/[^/]+\/command(\/|$)/.test(path) || under(path, "/command")) return "profile";
   return null;
 }
@@ -79,10 +94,12 @@ export function activeWarzoneChild(pathname) {
 /**
  * Pages without a menu item get a back bar (BUILD_PLAN §3): coin page, battle, public profile,
  * recruiter, squads. `fallback` is where Back goes when there is no in-app history.
+ * Your own public profile is the menu Profile page, so it has no back bar.
  * @returns {{ title: string, fallback: string } | null}
  */
-export function resolveBackBar(pathname) {
+export function resolveBackBar(pathname, { ownWallet = null } = {}) {
   const path = String(pathname || "").replace(/\/+$/, "");
+  if (isOwnProfilePath(path, ownWallet)) return null;
   if (/^\/token\/[^/]+$/.test(path)) return { title: "Coin", fallback: COINS_PATH };
   if (/^\/token\/[^/]+\/edit$/.test(path)) return { title: "Edit coin page", fallback: COINS_PATH };
   if (/^\/warzone\/battles\/[^/]+$/.test(path) || /^\/battle\/[^/]+$/.test(path)) {

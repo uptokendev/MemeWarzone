@@ -38,7 +38,7 @@ export default function Recruiter() {
   }, [account]);
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6 py-8">
+    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-6 px-1 py-8 md:px-2">
       <Card className="overflow-hidden border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(240,106,26,0.18),transparent_38%),linear-gradient(180deg,rgba(18,22,28,0.94),rgba(9,12,16,0.98))] p-6 md:p-8">
         <div className="max-w-3xl space-y-4">
           <p className="font-retro text-xs uppercase tracking-[0.24em] text-amber-100/70">Recruiter Program</p>

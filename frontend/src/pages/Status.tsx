@@ -94,7 +94,7 @@ export default function Status() {
 
   return (
     <div className="w-full h-full overflow-auto">
-      <div className="max-w-5xl mx-auto">
+      <div className="mx-auto w-full max-w-[1480px] px-1 md:px-2">
         <Card className="bg-card/60 backdrop-blur border-border">
           <CardHeader>
             <CardTitle className="font-retro text-lg">MemeWarzone Status (Private)</CardTitle>

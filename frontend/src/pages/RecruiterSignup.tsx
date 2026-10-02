@@ -42,7 +42,7 @@ const initialForm: SignupFormState = {
   acceptTerms: false,
 };
 
-const pageShellClass = "mx-auto flex max-w-4xl flex-col gap-6 px-4 pt-24 pb-8 md:pt-28";
+const pageShellClass = "mx-auto flex w-full max-w-[1480px] flex-col gap-6 px-1 pt-24 pb-8 md:px-2 md:pt-28";
 
 export default function RecruiterSignup() {
   const navigate = useNavigate();

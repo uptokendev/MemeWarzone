@@ -763,7 +763,7 @@ function TransmissionList({
   };
 
   return (
-    <section className="mx-auto max-w-7xl px-4 py-10 md:px-8 md:py-14">
+    <section className="mx-auto w-full max-w-[1480px] px-4 py-10 md:px-8 md:py-14">
       {replyingTo && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
           <div className="mwz-card w-full max-w-lg border-orange-400/50 bg-black/95 p-5">
@@ -1252,7 +1252,7 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
           </div>
         </section>
 
-        <section className="mx-auto max-w-7xl px-4 py-10 md:px-8 md:py-14">
+        <section className="mx-auto w-full max-w-[1480px] px-4 py-10 md:px-8 md:py-14">
           <div className="mb-6 flex items-center gap-4">
             <div className="h-px w-16 bg-orange-400/70" />
             <h2 className="font-retro text-3xl uppercase tracking-[0.12em] text-foreground md:text-4xl">
@@ -1335,7 +1335,7 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
           </div>
         </section>
 
-        <section className="mx-auto max-w-7xl px-4 py-10 md:px-8 md:py-14">
+        <section className="mx-auto w-full max-w-[1480px] px-4 py-10 md:px-8 md:py-14">
           <div className="mb-6 flex items-center gap-4">
             <div className="h-px w-16 bg-orange-400/70" />
             <h2 className="font-retro text-3xl uppercase tracking-[0.12em] text-foreground md:text-4xl">
@@ -1404,7 +1404,7 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
           }}
         />
 
-        <section className="mx-auto max-w-7xl px-4 py-10 pb-20 md:px-8 md:py-14 md:pb-24">
+        <section className="mx-auto w-full max-w-[1480px] px-4 py-10 pb-20 md:px-8 md:py-14 md:pb-24">
           <div className="mwz-card border-orange-400/50 bg-[radial-gradient(ellipse_at_top,rgba(255,153,0,0.18),rgba(2,17,4,0.92)_70%)] p-8 text-center md:p-12">
             <div className="text-xs uppercase tracking-[0.22em] text-orange-300">
               // Prepare Mode active

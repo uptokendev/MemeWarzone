@@ -788,7 +788,7 @@ export default function PublicProfile({
   const currentTab = tabs.some((t) => t.value === tab) ? tab : "posts";
 
   return (
-    <div className="w-full flex flex-col gap-4 px-3 pb-24 font-mw-body text-mw-text md:px-6 xl:pb-10" data-public-profile="true">
+    <div className="mx-auto w-full max-w-[1480px] flex flex-col gap-4 px-3 pb-24 font-mw-body text-mw-text md:px-2 xl:pb-10" data-public-profile="true">
       {/* Hero: banner, round avatar, name, rank chips, wallet, bio, counts, actions. */}
       <section aria-label={nameText} className="flex flex-col">
         <div className="relative h-[120px] overflow-hidden rounded-2xl border border-[#1E2329] md:h-[200px] xl:h-[220px]">

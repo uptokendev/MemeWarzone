@@ -1,5 +1,5 @@
-export const WARZONE_CONTENT_MAX_WIDTH_PX = 1280;
-export const WARZONE_CONTENT_MAX_CLASS = "max-w-[1280px]";
+export const WARZONE_CONTENT_MAX_WIDTH_PX = 1480;
+export const WARZONE_CONTENT_MAX_CLASS = "max-w-[1480px]";
 
 // Keep QF presentation rules in the client bundle. Importing frontend/api/lib
 // becomes `/api/lib/...` in Vite dev, which the API proxy 404s and blanks Warzone.

@@ -592,7 +592,7 @@ const PublicPromotion = () => {
     : "/profile?tab=balances";
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-2 py-4 md:px-4 md:py-6">
+    <div className="mx-auto w-full max-w-[1480px] px-1 py-4 md:px-2 md:py-6">
       <div className="mb-4 flex flex-wrap items-center gap-3 border border-border/70 bg-background/70 px-3 py-2">
         <DraftStatusPill draft={draft} />
         <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">

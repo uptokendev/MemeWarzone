@@ -791,7 +791,7 @@ export default function PushDraftLive() {
   const blocked = submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: dbcDraft, due: dbcDue }) || (draftIsSolana ? !ownerConnected : false) || (dbcDraft && mode === "now" && dbcLocked);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8">
+    <div className="mx-auto w-full max-w-[1480px] px-1 py-8 md:px-2">
       <div className="mwz-card p-5 md:p-7">
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>

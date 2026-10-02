@@ -78,7 +78,7 @@ const Playbook = () => {
       ref={scrollRef}
       className="h-full w-full overflow-y-auto scrollbar-thin scrollbar-thumb-accent/40 scrollbar-track-muted/20"
     >
-      <div className="mx-auto max-w-5xl px-4 pb-12 md:px-6">
+      <div className="mx-auto w-full max-w-[1480px] px-1 pb-12 md:px-2">
         <div className="pb-6 pt-4 md:pb-8 md:pt-6">
           <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
             <div className="min-w-0">

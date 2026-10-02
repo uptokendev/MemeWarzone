@@ -145,7 +145,7 @@ export default function AirdropOverview() {
   }), [summary]);
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 py-8">
+    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-6 px-1 py-8 md:px-2">
       <Card className="overflow-hidden border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(253,224,71,0.18),transparent_40%),linear-gradient(180deg,rgba(18,22,28,0.94),rgba(9,12,16,0.98))] p-6 md:p-8">
         <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div className="max-w-3xl space-y-3">

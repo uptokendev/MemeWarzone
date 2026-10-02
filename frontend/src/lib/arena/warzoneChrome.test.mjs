@@ -114,11 +114,12 @@ test("Warzone pages share the same centered content width", () => {
   const details = readSrc("../../components/arena/TournamentCommand.tsx");
   const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
 
-  assert.equal(WARZONE_CONTENT_MAX_WIDTH_PX, 1280);
-  assert.equal(WARZONE_CONTENT_MAX_CLASS, "max-w-[1280px]");
+  // Founder 2026-10-02: every page uses the Home/Coins width (1480px).
+  assert.equal(WARZONE_CONTENT_MAX_WIDTH_PX, 1480);
+  assert.equal(WARZONE_CONTENT_MAX_CLASS, "max-w-[1480px]");
   assert.match(frame, /data-warzone-content="true"/);
-  assert.match(frame, /max-w-\[1280px\]/);
-  assert.match(frame, /maxWidth:\s*1280/);
+  assert.match(frame, /max-w-\[1480px\]/);
+  assert.match(frame, /maxWidth:\s*1480/);
   assert.doesNotMatch(frame, /WARZONE_CONTENT_MAX_CLASS/);
   assert.match(frame, /px-3/);
   assert.match(frame, /md:px-4/);

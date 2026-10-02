@@ -199,7 +199,7 @@ const SponsorshipApplication = () => {
   };
 
   return (
-    <div className="space-y-6 px-1 pb-10">
+    <div className="mx-auto w-full max-w-[1480px] space-y-6 px-1 pb-10 md:px-2">
       <section className="mwz-hud-frame p-5 md:p-7">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
