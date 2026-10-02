@@ -267,11 +267,11 @@ function LeagueSwitch({ selected, period, onSelect }: { selected: LeagueKey; per
   );
 }
 
-function RecruiterLinks({ wallet, code }: { wallet?: string; code?: string }) {
+function RecruiterLinks({ code }: { wallet?: string; code?: string }) {
   return (
     <div className="flex flex-wrap justify-end gap-2">
       {code ? <Link to={`/recruiters/${code}`} className="text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">Profile</Link> : null}
-      {wallet ? <Link to={`/profile/${wallet}/command/recruiter`} className="text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">Command</Link> : null}
+      {/* Founder 2026-10-03: no Command Center link in the league rows. */}
     </div>
   );
 }

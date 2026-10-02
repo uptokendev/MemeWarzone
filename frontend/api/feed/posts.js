@@ -108,6 +108,26 @@ async function lookupMentionedCoin(campaign, token, ticker, chainHint) {
   }
 }
 
+/** CO-18: a listed imported coin (status passed). Its card links to the imported coin page by token address. */
+async function lookupMentionedImport(token, chainHint) {
+  try {
+    const { rows } = await pool.query(
+      `select chain_id, token_address
+         from public.arena_token_imports
+        where status = 'passed'
+          and (token_address = $1 or lower(token_address) = lower($1))
+          and ($2::int is null or chain_id = $2)
+        order by updated_at desc nulls last
+        limit 1`,
+      [token, Number.isFinite(chainHint) ? chainHint : null],
+    );
+    const row = rows[0];
+    return row ? { chainId: Number(row.chain_id) || null, campaign: null, token: row.token_address || null } : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveMention(body, mentioned) {
   const chainHint = Number(mentioned?.chainId);
   const campaign = String(mentioned?.campaign || mentioned?.campaignAddress || "").trim();
@@ -117,7 +137,7 @@ async function resolveMention(body, mentioned) {
   // UI redesign phase 2: a contract address written in the post becomes its coin card.
   const bodyAddress = !campaign && !token ? contractAddressInBody(body) : "";
   if (bodyAddress) {
-    const found = await lookupMentionedCoin(bodyAddress, "", "", chainHint);
+    const found = (await lookupMentionedCoin(bodyAddress, "", "", chainHint)) || (await lookupMentionedImport(bodyAddress, chainHint));
     if (found) return found;
   }
 
@@ -231,6 +251,18 @@ const POST_FROM = `
           or lower(c.campaign_address) = lower(coalesce(p.mentioned_campaign, ''))
           or lower(c.token_address) = lower(coalesce(p.mentioned_token, ''))
         )
+       -- CO-18: a listed imported coin (no campaign row) still gets its coin card.
+       left join lateral (
+         select ai.name, ai.symbol, ai.image_url
+           from public.arena_token_imports ai
+          where c.campaign_address is null
+            and p.mentioned_chain_id is not null
+            and p.mentioned_token is not null
+            and ai.chain_id = p.mentioned_chain_id
+            and ai.status = 'passed'
+            and (ai.token_address = p.mentioned_token or lower(ai.token_address) = lower(p.mentioned_token))
+          limit 1
+       ) ai on true
 `;
 
 function postSelect(viewerPlaceholder) {
@@ -255,9 +287,9 @@ select
   qp.avatar_url as quoted_avatar_url,
   up.display_name as author_display_name,
   up.avatar_url as author_avatar_url,
-  c.name as token_name,
-  c.symbol as token_ticker,
-  c.logo_uri as token_logo_uri,
+  coalesce(c.name, ai.name) as token_name,
+  coalesce(c.symbol, ai.symbol) as token_ticker,
+  coalesce(c.logo_uri, ai.image_url) as token_logo_uri,
   coalesce((select count(*)::int from public.social_post_fires f where f.post_id = p.id), 0) as fire_count,
   coalesce((select count(*)::int from public.social_posts r where r.parent_id = p.id and r.status = 0), 0) as reply_count,
   coalesce((select count(*)::int from public.social_post_reposts rp where rp.post_id = p.id), 0) as repost_count,

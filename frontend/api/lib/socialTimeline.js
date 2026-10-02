@@ -219,9 +219,9 @@ export async function loadPostEvents(wallets, { limit = 50, all = false } = {}) 
          p.created_at,
          up.display_name as author_display_name,
          up.avatar_url as author_avatar_url,
-         c.name as token_name,
-         c.symbol as token_ticker,
-         c.logo_uri as token_logo_uri
+         coalesce(c.name, ai.name) as token_name,
+         coalesce(c.symbol, ai.symbol) as token_ticker,
+         coalesce(c.logo_uri, ai.image_url) as token_logo_uri
        from public.social_posts p
        left join lateral (
          select display_name, avatar_url
@@ -242,6 +242,18 @@ export async function loadPostEvents(wallets, { limit = 50, all = false } = {}) 
           or lower(c.campaign_address) = lower(coalesce(p.mentioned_campaign, ''))
           or lower(c.token_address) = lower(coalesce(p.mentioned_token, ''))
         )
+       -- CO-18: a listed imported coin (no campaign row) still gets its coin card.
+       left join lateral (
+         select ai.name, ai.symbol, ai.image_url
+           from public.arena_token_imports ai
+          where c.campaign_address is null
+            and p.mentioned_chain_id is not null
+            and p.mentioned_token is not null
+            and ai.chain_id = p.mentioned_chain_id
+            and ai.status = 'passed'
+            and (ai.token_address = p.mentioned_token or lower(ai.token_address) = lower(p.mentioned_token))
+          limit 1
+       ) ai on true
       where p.status = 0
         ${topLevelOnly ? "and p.parent_id is null" : ""}
         ${authorFilter}
