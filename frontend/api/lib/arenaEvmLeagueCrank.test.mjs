@@ -73,8 +73,14 @@ test("send: a live pool is resolved with the server-signed result, then both sha
   const bnb = fakeChain({ [id]: livePool() });
   const db = { query: async () => ({ rows: [{ kind: "battle", id: "b-live", chain_id: 56, settled_at: new Date("2026-10-02T11:35:00Z") }] }) };
   const terminal = new Set();
-  const out = await crankLeagueShares({ db, mode: "send", terminal, contractFor: (c) => (c === 56 ? bnb.c : null), resolutionFor: signedFor(id) });
+  const recorded = [];
+  const recordShare = async (_db, share) => { recorded.push({ ...share, sentBefore: bnb.sent.map((s) => s.name).join(",") }); return true; };
+  const out = await crankLeagueShares({ db, mode: "send", terminal, contractFor: (c) => (c === 56 ? bnb.c : null), resolutionFor: signedFor(id), recordShare });
   assert.deepEqual(bnb.sent.map((s) => s.name), ["resolve", "claimProtocol", "claimLeague"]);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].grossRaw, 400n, "the pool's pendingLeague at claim time");
+  assert.equal(recorded[0].sentBefore, "resolve,claimProtocol", "recorded before claimLeague is sent");
+  assert.equal(recorded[0].source, "evm_claim_league");
   assert.deepEqual(bnb.sent[0].args, [id, "0xWinner", 9, "0xsig"]);
   assert.deepEqual(bnb.sent[2].args, [id, ethers.id("2026-10"), ethers.id("2026-Q4")]);
   assert.ok(out.every((o) => o.status === "sent"));
@@ -89,7 +95,7 @@ test("a tournament resolves through resolvePlaces", async () => {
   const id = tournamentPoolId("t-1");
   const rh = fakeChain({ [id]: livePool() });
   const db = { query: async () => ({ rows: [{ kind: "tournament", id: "t-1", chain_id: 4663, settled_at: new Date("2026-10-01T09:00:00Z") }] }) };
-  await crankLeagueShares({ db, mode: "send", contractFor: (c) => (c === 4663 ? rh.c : null), resolutionFor: signedFor(id, "2-places") });
+  await crankLeagueShares({ db, mode: "send", contractFor: (c) => (c === 4663 ? rh.c : null), resolutionFor: signedFor(id, "2-places"), recordShare: async () => true });
   assert.deepEqual(rh.sent.map((s) => s.name), ["resolvePlaces", "claimProtocol", "claimLeague"]);
 });
 
@@ -116,11 +122,20 @@ test("a missing or mismatched resolution blocks; no gas or a failed simulation n
   assert.match(wrong.reason, /different pool/);
 
   const poor = fakeChain({ [id]: resolvedPool() }, { balance: 0n });
-  const [noGas] = await crankLeagueShares({ db, mode: "send", contractFor: (c) => (c === 56 ? poor.c : null) });
+  const [noGas] = await crankLeagueShares({ db, mode: "send", contractFor: (c) => (c === 56 ? poor.c : null), recordShare: async () => true });
   assert.equal(noGas.status, "no-gas");
 
   const raced = fakeChain({ [id]: resolvedPool() }, { failStatic: true });
-  const [failed] = await crankLeagueShares({ db, mode: "send", contractFor: (c) => (c === 56 ? raced.c : null) });
+  const [failed] = await crankLeagueShares({ db, mode: "send", contractFor: (c) => (c === 56 ? raced.c : null), recordShare: async () => true });
   assert.equal(failed.status, "send-failed");
   assert.equal(a.sent.length + b.sent.length + poor.sent.length + raced.sent.length, 0);
+});
+
+test("a failed ledger write holds claimLeague", async () => {
+  const id = battlePoolId("b-res");
+  const chain = fakeChain({ [id]: resolvedPool({ claimedProtocol: true }) });
+  const db = { query: async () => ({ rows: [{ kind: "battle", id: "b-res", chain_id: 56, settled_at: new Date("2026-10-02T11:35:00Z") }] }) };
+  const [o] = await crankLeagueShares({ db, mode: "send", contractFor: (c) => (c === 56 ? chain.c : null), recordShare: async () => { throw new Error("db down"); } });
+  assert.equal(o.status, "blocked");
+  assert.equal(chain.sent.length, 0);
 });

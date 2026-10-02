@@ -27,6 +27,7 @@ import {
 } from "./arena-operator-resolve.mjs";
 import { buildTournamentPlaces } from "../../frontend/api/lib/arenaTournamentPlaces.js";
 import { arenaEnvironmentIdentity } from "../../frontend/api/lib/arenaChainEnvironment.js";
+import { recordLeagueShare } from "../../frontend/api/lib/arenaLeagueShareLedger.js";
 import {
   DEFAULT_INTERVAL_MS,
   buildDueResolveQuery,
@@ -389,6 +390,29 @@ async function runResolveDueCli({ send, watch, intervalMs, lookbackDays, limit, 
     // Once the pool is resolved on chain, move its MWL and protocol shares to their receivers.
     const resolvedState = classifyResolveOutcome(result).state;
     if (claimsMode === "off" || (resolvedState !== "resolved" && resolvedState !== "already-resolved")) return result;
+    // Record the MWL share before claim_mwl moves it (the amount is only readable now). If the claim
+    // then fails, this loop retries it until it lands, and the MWL payout never posts a root the
+    // vault cannot cover, so it waits for the money instead of losing the row.
+    if (claimsMode === "send") {
+      const before = await loadPool();
+      const pendingMwl = BigInt(before?.pendingMwl ?? 0);
+      if (pendingMwl > 0n && !before?.claimedMwl) {
+        try {
+          await recordLeagueShare(pool, {
+            chainId: settlement.chain_id,
+            subjectKind: "battle",
+            subjectId: settlement.id,
+            grossRaw: pendingMwl,
+            settledAt: row.resolved_ordering || new Date(),
+            source: "solana_claim_mwl",
+          });
+        } catch (error) {
+          // Never claim a share the ledger has not recorded: it would reach mwl_vault unassigned.
+          console.warn(`[arena-operator-scan] ${settlement.id} league share ledger write failed, claims held: ${String(error?.message || error)}`);
+          return { ...result, claimsPending: true };
+        }
+      }
+    }
     const claims = await runOperatorClaims({
       mode: claimsMode,
       runClaim: (command, sendClaim) => runOperatorJob({

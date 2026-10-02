@@ -20,6 +20,7 @@
 // Run one instance: sends are sequential and nonces are not coordinated across processes.
 import { ethers } from "ethers";
 
+import { recordLeagueShare } from "./arenaLeagueShareLedger.js";
 import { WAR_POOL_GENERATION_V2, WAR_POOL_V2_ABI, battlePoolId, tournamentPoolId, warPoolGeneration, warPoolTreasuryAddress } from "./arenaWarPoolEscrow.js";
 
 export const LEAGUE_CRANK_CHAIN_IDS = Object.freeze([56, 4663, 97, 46630]);
@@ -124,6 +125,7 @@ export async function crankLeagueShares({
   terminal = new Set(),
   contractFor = (chainId) => defaultContractFor(chainId, env),
   resolutionFor = defaultResolutionFor,
+  recordShare = recordLeagueShare,
   log = () => {},
 } = {}) {
   if (mode === "off") return [];
@@ -171,6 +173,18 @@ export async function crankLeagueShares({
       Object.assign(outcome, call.describe);
       if (mode !== "send") { outcome.status = "dry-run"; log(outcome); break; }
       if (!c.wallet) { outcome.status = "no-key"; log(outcome); break; }
+      if (step === "claimLeague") {
+        // Record the share for the MWL payout before it moves (see arenaLeagueShareLedger.js). A
+        // failed write holds the claim: a share must never reach the vault unrecorded.
+        try {
+          await recordShare(db, { chainId, subjectKind: row.kind, subjectId: row.id, grossRaw: BigInt(pool.pendingLeague), settledAt: row.settled_at, source: "evm_claim_league" });
+        } catch (error) {
+          outcome.status = "blocked";
+          outcome.reason = `ledger write failed: ${error?.message || error}`;
+          log(outcome);
+          break;
+        }
+      }
       try {
         const balance = await c.provider.getBalance(c.wallet.address);
         if (balance === 0n) { outcome.status = "no-gas"; outcome.sender = c.wallet.address; log(outcome); break; }
