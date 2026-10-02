@@ -56,6 +56,9 @@ import {
   stashPendingSolanaDexTrade,
 } from "@/lib/solanaGraduationHandoff";
 import { StoryEnterButton } from "@/components/story/StoryEnterButton";
+import { CoinTabs } from "@/components/token/CoinTabs";
+import { ChallengeCoinButton } from "@/components/arena/ChallengeCoinButton";
+import { cp } from "@/components/token/coinPageStyles";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
 import { useStory } from "@/lib/story/storyApi";
 import { MobileTradeDock, MobileTradeSheet, useXlUp } from "@/components/token/MobileTradeSheet";
@@ -4917,24 +4920,7 @@ const toSeconds = (ts: number): number => {
   }
 
   return (
-    <div className="w-full flex flex-col px-3 md:px-6 gap-3 md:gap-4 pb-24 xl:pb-0">
-      <div className="lg:hidden sticky top-[4.5rem] z-20 -mx-3 px-3 py-2 bg-background/95 backdrop-blur border-b border-border/40 flex items-center gap-2 shrink-0">
-        <img
-          src={tokenData.image}
-          alt={tokenData.ticker}
-          onError={(event) => {
-            event.currentTarget.src = "/placeholder.svg";
-          }}
-          className="h-9 w-9 rounded-lg object-cover bg-muted/30 shrink-0"
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-1.5 min-w-0">
-            <span className="font-retro text-sm text-foreground truncate">{tokenData.name}</span>
-            <span className="text-[11px] text-muted-foreground font-mono shrink-0">{tokenData.ticker}</span>
-          </div>
-          <div className="text-[11px] text-muted-foreground truncate">{marketCapDisplay}</div>
-        </div>
-      </div>
+    <div className="w-full flex flex-col gap-4 px-3 md:px-6 pb-24 xl:pb-0 font-mw-body text-mw-text">
       <GraduationExplosion
         campaignAddress={campaign?.campaign}
         active={isSolanaPage ? false : isTopazTradingActive || isUniswapTradingActive}
@@ -4947,9 +4933,12 @@ const toSeconds = (ts: number): number => {
         }
         venueLabel={isSolanaPage ? "Meteora DAMM v2" : isRobinhoodPage ? "Uniswap" : "Topaz"}
       />
-      <Card className="overflow-hidden bg-card/30 backdrop-blur-md rounded-2xl border border-border p-0 xl:min-h-[220px] shrink-0">
-        <div className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)] items-stretch xl:min-h-[220px]">
-          <div className="relative min-h-[180px] bg-muted/20 xl:min-h-[220px] overflow-hidden shrink-0">
+
+      {/* Header: banner, logo, name, chips, creator line, actions (UI redesign phase 1). */}
+      <section aria-label={tokenData.name || "Coin"} className="flex flex-col">
+        <div className="mw-banner h-[120px] rounded-2xl border border-[#1E2329] md:h-[200px] xl:h-[240px]" aria-hidden="true" />
+        <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-6 md:px-2">
+          <div className="relative -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-[18px] border-4 border-mw-ground bg-[#2A1609] md:-mt-16 md:h-[140px] md:w-[140px] md:rounded-3xl">
             <img
               ref={tokenArtRef}
               src={tokenData.image}
@@ -4961,72 +4950,64 @@ const toSeconds = (ts: number): number => {
             />
           </div>
 
-          <div className="min-w-0 flex flex-col justify-start gap-2 p-3 md:p-4 xl:p-5">
-            <div className="rounded-2xl border border-border/60 bg-muted/15 px-4 py-2.5 md:px-4 md:py-2.5 min-h-0">
-              <div className="flex flex-wrap items-center gap-2 md:gap-2.5 xl:flex-nowrap xl:justify-start xl:gap-2 xl:overflow-x-auto">
-                <h1 className="text-lg md:text-2xl font-retro text-foreground whitespace-nowrap">
-                  {tokenData.name}
-                </h1>
-
-                <span className="text-xs md:text-sm text-muted-foreground font-mono whitespace-nowrap">
-                  {tokenData.ticker}
+          <div className="min-w-0 flex-1 md:pb-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="m-0 font-mw-cond text-3xl font-bold leading-tight text-mw-text md:text-[40px]">
+                {tokenData.name}
+              </h1>
+              <span className={`${cp.chip} font-mw-mono`}>{tokenData.ticker}</span>
+              <span className={cp.chip}>{isSolanaPage ? "Solana" : isRobinhoodPage ? "Robinhood" : "BNB Chain"}</span>
+              <span className={isDexStage ? cp.chipGood : cp.chipAccent}>{stagePill}</span>
+              {isDbcPage ? (
+                <span className={cp.chipAccent}>
+                  {creatorLockBadge({
+                    // Same basis as the EVM badge: wallet balance plus the locked (escrowed) buys.
+                    creatorHeldRaw: dbcCreatorHeldRaw + BigInt(dbcLockSummary?.lockedAmount || 0),
+                    lockedRaw: dbcLockSummary?.lockedAmount || 0,
+                    supplyRaw: dbcSupplyRaw > 0n ? dbcSupplyRaw : 1_000_000_000_000_000n,
+                    fullyFreeUnix: dbcLockSummary?.fullyFreeUnix,
+                  })}
                 </span>
-                {isDbcPage ? (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full border border-orange-400/40 text-orange-200 whitespace-nowrap">
-                    {creatorLockBadge({
-                      // Same basis as the EVM badge: wallet balance plus the locked (escrowed) buys.
-                      creatorHeldRaw: dbcCreatorHeldRaw + BigInt(dbcLockSummary?.lockedAmount || 0),
-                      lockedRaw: dbcLockSummary?.lockedAmount || 0,
-                      supplyRaw: dbcSupplyRaw > 0n ? dbcSupplyRaw : 1_000_000_000_000_000n,
-                      fullyFreeUnix: dbcLockSummary?.fullyFreeUnix,
-                    })}
-                  </span>
-                ) : null}
+              ) : null}
 
-                {gen5.state && gen5.creator ? (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full border border-orange-400/40 text-orange-200 whitespace-nowrap" data-testid="evm-gen5-creator-badge">
-                    {evmCreatorBadge({
-                      walletBalance: gen5.creator.walletBalance,
-                      escrowHeld: gen5.creator.escrowHeld,
-                      locked: gen5.creator.escrowLocked,
-                      totalSupply: gen5.creator.totalSupply,
-                      fullyFreeUnix: gen5.creator.fullyFreeAt,
-                    })}
-                  </span>
-                ) : null}
-
-                <span
-                  className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold whitespace-nowrap ${
-                    isDexStage
-                      ? "bg-emerald-500/25 text-emerald-200 border-emerald-500/40"
-                      : "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
-                  }`}
-                >
-                  {stagePill}
+              {gen5.state && gen5.creator ? (
+                <span className={cp.chipAccent} data-testid="evm-gen5-creator-badge">
+                  {evmCreatorBadge({
+                    walletBalance: gen5.creator.walletBalance,
+                    escrowHeld: gen5.creator.escrowHeld,
+                    locked: gen5.creator.escrowLocked,
+                    totalSupply: gen5.creator.totalSupply,
+                    fullyFreeUnix: gen5.creator.fullyFreeAt,
+                  })}
                 </span>
+              ) : null}
+            </div>
 
-                {(() => {
-                  const creator = String(campaign?.creator ?? "").trim();
-                  if (!creator) return null;
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-sm text-mw-muted">
+              {(() => {
+                const creator = String(campaign?.creator ?? "").trim();
+                if (!creator) return null;
 
-                  const display =
-                    (creatorProfile?.displayName
-                      ? String(creatorProfile.displayName).trim()
-                      : "") || shortenAddress(creator);
+                const display =
+                  (creatorProfile?.displayName
+                    ? String(creatorProfile.displayName).trim()
+                    : "") || shortenAddress(creator);
 
-                  const createdLabel = campaign?.createdAt
-                    ? formatTimeAgo(campaign.createdAt)
-                    : campaign?.timeAgo
-                    ? `${campaign.timeAgo}${String(campaign.timeAgo).includes("ago") ? "" : " ago"}`
-                    : "—";
+                const createdLabel = campaign?.createdAt
+                  ? formatTimeAgo(campaign.createdAt)
+                  : campaign?.timeAgo
+                  ? `${campaign.timeAgo}${String(campaign.timeAgo).includes("ago") ? "" : " ago"}`
+                  : "—";
 
-                  const initial = display ? display.slice(0, 1).toUpperCase() : "C";
+                const initial = display ? display.slice(0, 1).toUpperCase() : "C";
 
-                  return (
-                    <>
+                return (
+                  <>
+                    <span className="inline-flex min-w-0 items-center gap-1.5">
+                      by
                       <Link
                         to={`/profile?address=${creator}`}
-                        className="inline-flex items-center gap-2 hover:opacity-90 transition-opacity max-w-[220px] flex-shrink-0"
+                        className="inline-flex max-w-[220px] flex-shrink-0 items-center gap-1.5 text-mw-accent-soft hover:text-[#FFD0A8]"
                       >
                         <Avatar className="h-6 w-6">
                           <AvatarImage
@@ -5037,258 +5018,326 @@ const toSeconds = (ts: number): number => {
                             {initial}
                           </AvatarFallback>
                         </Avatar>
-                        <span className="text-[11px] md:text-xs text-foreground/90 truncate">{display}</span>
+                        <span className="truncate">{display}</span>
                       </Link>
+                    </span>
 
-                      {tokenData.hasWebsite && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 p-0 hover:bg-muted/50 flex-shrink-0"
-                          onClick={() => {
-                            const url = normalizeSocialUrl(campaign?.website, "website");
-                            if (url) window.open(url, "_blank", "noopener,noreferrer");
-                          }}
-                          title="Website"
-                          aria-label="Open website"
-                        >
-                          <Globe className="h-4 w-4" />
-                        </Button>
-                      )}
+                    <span className="whitespace-nowrap">
+                      {createdLabel}
+                    </span>
+                  </>
+                );
+              })()}
+              <span className="whitespace-nowrap">
+                <span className="font-bold text-mw-text">{tokenData.holders}</span> holders
+              </span>
+            </div>
+          </div>
 
-                      {tokenData.hasTwitter && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 p-0 hover:bg-muted/50 flex-shrink-0"
-                          onClick={() => {
-                            const url = normalizeSocialUrl(campaign?.xAccount, "x");
-                            if (url) window.open(url, "_blank", "noopener,noreferrer");
-                          }}
-                          title="X"
-                          aria-label="Open X profile"
-                        >
-                          <img
-                            src={twitterIcon}
-                            alt="X"
-                            className="h-4 w-4"
-                          />
-                        </Button>
-                      )}
+          {campaignAddr ? (
+            <div className="flex flex-wrap items-center gap-2 md:justify-end md:pb-2">
+              <button
+                type="button"
+                className={cp.btn}
+                onClick={toggleFollow}
+                disabled={followBusy}
+                aria-label={isFollowing ? "Unfollow campaign" : "Follow campaign"}
+                aria-pressed={isFollowing}
+                title={isFollowing ? "Unfollow" : "Follow"}
+              >
+                <Star
+                  className={
+                    isFollowing
+                      ? "h-[18px] w-[18px] text-mw-accent fill-mw-accent"
+                      : "h-[18px] w-[18px] text-mw-muted"
+                  }
+                />
+                {isFollowing ? "Following" : "Follow"}
+              </button>
 
-                      {tokenData.hasTelegram && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 font-retro text-[10px] hover:bg-muted/50 flex-shrink-0"
-                          onClick={() => {
-                            const url = normalizeSocialUrl(campaign?.telegram, "telegram");
-                            if (url) window.open(url, "_blank", "noopener,noreferrer");
-                          }}
-                        >
-                          TG
-                        </Button>
-                      )}
+              {/* Graduated coins rank on Arena, not Showcase. Bonding keeps launchpad UP Vote. */}
+              {postGradFlags.arena && contractGraduatedEarly ? (
+                <ArenaUpvoteDialog
+                  tokenAddress={String(campaign?.token || campaignAddr)}
+                  chainId={chainIdForStorage}
+                  buttonVariant="secondary"
+                  buttonSize="sm"
+                  className="h-11 rounded-[10px] px-4 text-[15px] flex-shrink-0"
+                />
+              ) : (
+                <UpvoteDialog
+                  campaignAddress={campaignAddr}
+                  chainId={chainIdForStorage}
+                  buttonVariant="secondary"
+                  buttonSize="sm"
+                  className="h-11 rounded-[10px] px-4 text-[15px] flex-shrink-0"
+                />
+              )}
+              {/* Challenge is a post-graduation function: only graduated coins get it here. */}
+              {postGradFlags.arena && contractGraduatedEarly ? (
+                <ChallengeCoinButton
+                  className={cp.btn}
+                  walletAddress={isSolanaPage ? solanaAccount : wallet.account}
+                  chainId={chainIdForStorage}
+                  targetId={String(campaign?.token || campaignAddr)}
+                />
+              ) : null}
+              <button
+                type="button"
+                className={cp.btn}
+                onClick={() => setShareCardOpen(true)}
+                data-token-share-card-cta="true"
+              >
+                <Share2 className="h-[18px] w-[18px]" aria-hidden="true" />
+                Share card
+              </button>
+              <Link
+                className="mw-focus inline-flex min-h-11 items-center gap-1.5 rounded-[10px] px-2.5 text-sm font-semibold text-mw-muted hover:bg-mw-raised hover:text-mw-text"
+                to={buildAbuseReportPath({
+                  entityType: "campaign",
+                  reportedCampaignAddress: campaignAddr,
+                  reportedTokenAddress: String(campaign?.token || ""),
+                  reportedWallet: String(campaign?.creator || ""),
+                  reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${campaignAddr}`,
+                })}
+              >
+                <Flag className="h-4 w-4" aria-hidden="true" />
+                Report
+              </Link>
 
-                      {tokenData.hasDiscord && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 font-retro text-[10px] hover:bg-muted/50 flex-shrink-0"
-                          onClick={() => {
-                            const url = normalizeSocialUrl(campaign?.discord, "discord");
-                            if (url) window.open(url, "_blank", "noopener,noreferrer");
-                          }}
-                        >
-                          DC
-                        </Button>
-                      )}
-
-                      {tokenData.hasOtherLink && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 p-0 hover:bg-muted/50 flex-shrink-0"
-                          onClick={() => {
-                            const url = normalizeSocialUrl(campaign?.extraLink, "other");
-                            if (url) window.open(url, "_blank", "noopener,noreferrer");
-                          }}
-                          title="External link"
-                          aria-label="Open external link"
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                        </Button>
-                      )}
-
-                      <span className="text-[11px] md:text-xs text-muted-foreground whitespace-nowrap">
-                        {createdLabel}
-                      </span>
-                    </>
+              {/* CrypticPump badge / list CTA sits to the right of upvote */}
+              {crypticPumpListing?.listingUrl ? (
+                <CrypticPumpBadge
+                  listingUrl={crypticPumpListing.listingUrl}
+                  className="flex-shrink-0 self-center"
+                />
+              ) : (() => {
+                  const creator = String(campaign?.creator ?? "").trim();
+                  const evmMe = String(wallet.account ?? "").trim();
+                  const solMe = String(solanaAccount ?? "").trim();
+                  const isCreator = Boolean(
+                    creator &&
+                      ((solMe && creator === solMe) ||
+                        (evmMe && creator.toLowerCase() === evmMe.toLowerCase())),
+                  );
+                  if (!isCreator) return null;
+                  return (
+                    <CrypticPumpListButton
+                      className="flex-shrink-0 self-center"
+                      chainId={Number(chainIdForStorage || (isSolanaPage ? 101 : 56))}
+                      campaignAddress={campaignAddr}
+                      tokenAddress={campaign?.token || campaignAddr}
+                      name={tokenData.name}
+                      ticker={tokenData.ticker}
+                      website={campaign?.website || null}
+                      creatorWallet={String(solanaAccount || wallet.account || "")}
+                      listing={crypticPumpListing}
+                      onListed={setCrypticPumpListing}
+                    />
                   );
                 })()}
+            </div>
+          ) : null}
+        </div>
+      </section>
 
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px] xl:gap-6">
+        <div className="min-w-0 flex flex-col gap-4">
+          {/* About + metrics card, fixed above the tabs. */}
+          <section aria-label={`About ${tokenData.name || tokenData.ticker || "this token"}`} className={`${cp.card} flex flex-col gap-4 p-4 md:p-5`}>
+            {campaignDescription ? (
+              <p className="m-0 max-w-[70ch] whitespace-pre-line break-words text-base leading-relaxed text-mw-text">{campaignDescription}</p>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-2">
+              {tokenData.hasWebsite && (
                 <button
                   type="button"
-                  onClick={() => copyAddress(campaign?.token, "Token contract address")}
-                  className="inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/20 px-2 py-1 hover:bg-muted/35 transition-colors flex-shrink-0"
-                  title="Copy ERC-20 token contract address"
+                  className={cp.chipButton}
+                  onClick={() => {
+                    const url = normalizeSocialUrl(campaign?.website, "website");
+                    if (url) window.open(url, "_blank", "noopener,noreferrer");
+                  }}
+                  title="Website"
+                  aria-label="Open website"
                 >
-                  <span className="font-mono text-[11px] md:text-xs whitespace-nowrap">
-                    {shortenAddress(campaign?.token ?? "") || "—"}
-                  </span>
-                  <Copy className="h-3 w-3" />
+                  <Globe className="h-4 w-4" aria-hidden="true" />
+                  Website
                 </button>
+              )}
 
-                {campaignAddr ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="icon"
-                      className="h-8 w-8 rounded-xl flex-shrink-0"
-                      onClick={toggleFollow}
-                      disabled={followBusy}
-                      aria-label={isFollowing ? "Unfollow campaign" : "Follow campaign"}
-                      title={isFollowing ? "Unfollow" : "Follow"}
-                    >
-                      <Star
-                        className={
-                          isFollowing
-                            ? "text-accent fill-accent scale-110 drop-shadow-[0_0_10px_rgba(240,106,26,0.38)]"
-                            : "text-muted-foreground/70"
-                        }
-                      />
-                    </Button>
+              {tokenData.hasTwitter && (
+                <button
+                  type="button"
+                  className={cp.chipButton}
+                  onClick={() => {
+                    const url = normalizeSocialUrl(campaign?.xAccount, "x");
+                    if (url) window.open(url, "_blank", "noopener,noreferrer");
+                  }}
+                  title="X"
+                  aria-label="Open X profile"
+                >
+                  <img
+                    src={twitterIcon}
+                    alt=""
+                    className="h-3.5 w-3.5"
+                  />
+                  X
+                </button>
+              )}
 
-                    {/* Graduated coins rank on Arena, not Showcase. Bonding keeps launchpad UP Vote. */}
-                    {postGradFlags.arena && contractGraduatedEarly ? (
-                      <ArenaUpvoteDialog
-                        tokenAddress={String(campaign?.token || campaignAddr)}
-                        chainId={chainIdForStorage}
-                        buttonVariant="secondary"
-                        buttonSize="sm"
-                        className="h-8 px-3 text-xs flex-shrink-0"
-                      />
-                    ) : (
-                      <UpvoteDialog
-                        campaignAddress={campaignAddr}
-                        chainId={chainIdForStorage}
-                        buttonVariant="secondary"
-                        buttonSize="sm"
-                        className="h-8 px-3 text-xs flex-shrink-0"
-                      />
-                    )}
-                    {story ? <StoryEnterButton story={story} /> : null}
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      className="h-8 px-3 text-xs flex-shrink-0 font-retro"
-                      onClick={() => setShareCardOpen(true)}
-                      data-token-share-card-cta="true"
-                    >
-                      <Share2 className="mr-1.5 h-3.5 w-3.5" />
-                      Share card
-                    </Button>
-                    <Button
-                      asChild
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-2 text-[11px] text-muted-foreground flex-shrink-0"
-                    >
-                      <Link
-                        to={buildAbuseReportPath({
-                          entityType: "campaign",
-                          reportedCampaignAddress: campaignAddr,
-                          reportedTokenAddress: String(campaign?.token || ""),
-                          reportedWallet: String(campaign?.creator || ""),
-                          reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${campaignAddr}`,
-                        })}
-                      >
-                        <Flag className="mr-1 h-3.5 w-3.5" />
-                        Report
-                      </Link>
-                    </Button>
+              {tokenData.hasTelegram && (
+                <button
+                  type="button"
+                  className={cp.chipButton}
+                  onClick={() => {
+                    const url = normalizeSocialUrl(campaign?.telegram, "telegram");
+                    if (url) window.open(url, "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  Telegram
+                </button>
+              )}
 
-                    {/* CrypticPump badge / list CTA sits to the right of upvote */}
-                    {crypticPumpListing?.listingUrl ? (
-                      <CrypticPumpBadge
-                        listingUrl={crypticPumpListing.listingUrl}
-                        className="flex-shrink-0 self-center"
-                      />
-                    ) : (() => {
-                        const creator = String(campaign?.creator ?? "").trim();
-                        const evmMe = String(wallet.account ?? "").trim();
-                        const solMe = String(solanaAccount ?? "").trim();
-                        const isCreator = Boolean(
-                          creator &&
-                            ((solMe && creator === solMe) ||
-                              (evmMe && creator.toLowerCase() === evmMe.toLowerCase())),
-                        );
-                        if (!isCreator) return null;
-                        return (
-                          <CrypticPumpListButton
-                            className="flex-shrink-0 self-center"
-                            chainId={Number(chainIdForStorage || (isSolanaPage ? 101 : 56))}
-                            campaignAddress={campaignAddr}
-                            tokenAddress={campaign?.token || campaignAddr}
-                            name={tokenData.name}
-                            ticker={tokenData.ticker}
-                            website={campaign?.website || null}
-                            creatorWallet={String(solanaAccount || wallet.account || "")}
-                            listing={crypticPumpListing}
-                            onListed={setCrypticPumpListing}
-                          />
-                        );
-                      })()}
-                  </>
-                ) : null}
-              </div>
+              {tokenData.hasDiscord && (
+                <button
+                  type="button"
+                  className={cp.chipButton}
+                  onClick={() => {
+                    const url = normalizeSocialUrl(campaign?.discord, "discord");
+                    if (url) window.open(url, "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  Discord
+                </button>
+              )}
+
+              {tokenData.hasOtherLink && (
+                <button
+                  type="button"
+                  className={cp.chipButton}
+                  onClick={() => {
+                    const url = normalizeSocialUrl(campaign?.extraLink, "other");
+                    if (url) window.open(url, "_blank", "noopener,noreferrer");
+                  }}
+                  title="External link"
+                  aria-label="Open external link"
+                >
+                  <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                  Link
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => copyAddress(campaign?.token, "Token contract address")}
+                className={cp.chipButton}
+                title="Copy ERC-20 token contract address"
+              >
+                <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="font-mw-mono">
+                  CA {shortenAddress(campaign?.token ?? "") || "—"}
+                </span>
+              </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:w-full xl:max-w-[920px] xl:grid-cols-5">
-              <div className="rounded-xl border border-border bg-muted/20 px-3 py-2">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Market cap</p>
-                <p className="mt-0.5 text-sm md:text-[15px] font-retro text-foreground break-words">{marketCapDisplay}</p>
+            <div className="grid grid-cols-2 gap-4 border-t border-mw-border pt-4 md:grid-cols-3 xl:grid-cols-5">
+              <div className="min-w-0">
+                <p className={cp.label}>Market cap</p>
+                <p className={cp.metricValue}>{marketCapDisplay}</p>
               </div>
 
-              <div className="rounded-xl border border-border bg-muted/20 px-3 py-2">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Price</p>
-                <p className="mt-0.5 text-sm md:text-[15px] font-retro text-foreground break-words">{priceDisplay}</p>
-                <p className="mt-0.5 text-[10px] md:text-[11px] text-muted-foreground">Spot</p>
+              <div className="min-w-0">
+                <p className={cp.label}>Price</p>
+                <p className={cp.metricValue}>{priceDisplay}</p>
+                <p className={cp.metricSub}>Spot</p>
               </div>
 
-              <div className="rounded-xl border border-border bg-muted/20 px-3 py-2">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Volume</p>
-                <p className="mt-0.5 text-sm md:text-[15px] font-retro text-foreground break-words">{volumeDisplay}</p>
-                <p className="mt-0.5 text-[10px] md:text-[11px] text-muted-foreground">Window {selectedTimeframe}</p>
+              <div className="min-w-0">
+                <p className={cp.label}>Volume</p>
+                <p className={cp.metricValue}>{volumeDisplay}</p>
+                <p className={cp.metricSub}>Window {selectedTimeframe}</p>
               </div>
 
-              <div className="rounded-xl border border-border bg-muted/20 px-3 py-2">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{liquidityLabel}</p>
-                <p className="mt-0.5 text-sm md:text-[15px] font-retro text-foreground break-words">{liquidityDisplay}</p>
+              <div className="min-w-0">
+                <p className={cp.label}>{liquidityLabel}</p>
+                <p className={cp.metricValue}>{liquidityDisplay}</p>
                 {!isDexStage ? (
-                  <p className="mt-0.5 text-[10px] md:text-[11px] text-muted-foreground">Remaining {remainingCurveLabel.primary}</p>
+                  <p className={cp.metricSub}>Remaining {remainingCurveLabel.primary}</p>
                 ) : (
-                  <p className="mt-0.5 text-[10px] md:text-[11px] text-muted-foreground">Stage {stagePill}</p>
+                  <p className={cp.metricSub}>Stage {stagePill}</p>
                 )}
               </div>
 
-              <div className="rounded-xl border border-border bg-muted/20 px-3 py-2 col-span-2 md:col-span-1">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Holders</p>
-                <p className="mt-0.5 text-sm md:text-[15px] font-retro text-foreground">{tokenData.holders}</p>
+              <div className="min-w-0">
+                <p className={cp.label}>Holders</p>
+                <p className={cp.metricValue}>{tokenData.holders}</p>
               </div>
             </div>
-          </div>
-        </div>
-      </Card>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-3 md:gap-4 items-start">
-        <div className="min-w-0 flex flex-col gap-3 md:gap-4">
-          <Card
-            className={`bg-card/30 backdrop-blur-md rounded-2xl border border-border p-0 overflow-hidden flex flex-col ${chartExpanded ? "h-auto min-h-[640px] md:min-h-[720px] xl:min-h-[760px]" : "min-h-[360px] h-[360px] md:min-h-[420px] md:h-[420px] xl:min-h-[520px] xl:h-[520px]"}`}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <h3 className="m-0 text-sm font-normal text-mw-muted">Graduation progress</h3>
+                <span className="font-mw-mono text-mw-text">
+                  {contractGraduated
+                    ? "Graduated"
+                    : solanaCurveClosed || curveProgress.matured
+                      ? "Eligible"
+                    : curveProgress.pct > 0 && curveProgress.pct < 0.01
+                      ? `${curveProgress.pct.toFixed(6)}%`
+                      : `${curveProgress.pct.toFixed(2)}%`}
+                </span>
+              </div>
+              {contractGraduated ? (
+                <p className="m-0 text-xs leading-snug text-mw-muted">
+                  This token has graduated. Bonding is closed. Trading continues on the same page
+                  {isSolanaPage ? " via Meteora" : isRobinhoodPage ? " via Uniswap" : " via Topaz"}.
+                </p>
+              ) : null}
+
+              <div className="h-2 w-full overflow-hidden rounded-full bg-mw-border">
+                <div
+                  className="h-full rounded-full bg-mw-accent"
+                  style={{ width: `${Math.max(0, Math.min(100, curveProgress.pct))}%`, minWidth: curveProgress.pct > 0 ? "1px" : undefined }}
+                />
+              </div>
+
+              {contractGraduated ? null : (
+              <div className="mt-1 grid grid-cols-2 gap-3 text-xs md:grid-cols-4">
+                <div>
+                  <p className="text-mw-muted">Tokens sold</p>
+                  <p className="mt-1 font-mw-mono text-mw-text">
+                    {curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01
+                      ? `${curveProgress.soldPct.toFixed(6)}%`
+                      : `${curveProgress.soldPct.toFixed(2)}%`}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-mw-muted">{nativeUnit} raised</p>
+                  <p className="mt-1 font-mw-mono text-mw-text">
+                    {curveProgress.raisedPct > 0 && curveProgress.raisedPct < 0.01
+                      ? `${curveProgress.raisedPct.toFixed(6)}%`
+                      : `${curveProgress.raisedPct.toFixed(2)}%`}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-mw-muted">In curve</p>
+                  <p className="mt-1 font-mw-mono text-mw-text">{formatBnbFromWei(curveProgress.reserveWei ?? undefined)}</p>
+                </div>
+                <div>
+                  <p className="text-mw-muted">{nativeUnit} to target</p>
+                  <p className="mt-1 font-mw-mono text-mw-text">{remainingCurveLabel.primary}</p>
+                </div>
+              </div>
+              )}
+            </div>
+          </section>
+
+          <section
+            aria-label="Chart"
+            className={`${cp.card} p-0 overflow-hidden flex flex-col ${chartExpanded ? "h-auto min-h-[640px] md:min-h-[720px] xl:min-h-[760px]" : "min-h-[360px] h-[360px] md:min-h-[420px] md:h-[420px] xl:min-h-[520px] xl:h-[520px]"}`}
           >
-            <div className="flex flex-col gap-2 px-4 py-2 border-b border-border/40 bg-card/20">
+            <div className="flex flex-col gap-2 border-b border-[#1E2329] px-3 py-2.5 md:px-4">
               <AthBar
                 currentLabel={marketCapUsdLabel ?? undefined}
                 canonicalAthUsd={canonicalAthUsd(
@@ -5300,69 +5349,59 @@ const toSeconds = (ts: number): number => {
                 storageKey={`ath:${String(chainIdForStorage)}:${isSolanaPage ? String((campaignAddress ?? campaign?.campaign ?? "")) : String((campaignAddress ?? campaign?.campaign ?? "")).toLowerCase()}`}
                 className="w-full min-w-0"
               />
-              <div className="flex min-w-0 flex-col gap-2 w-full xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex items-center gap-2 min-w-0 shrink-0">
-                <span
-                  className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${
-                    isDexStage
-                      ? "bg-emerald-500/25 text-emerald-200 border-emerald-500/40"
-                      : "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
-                  }`}
-                >
-                  {stagePill}
-                </span>
-              </div>
-                <div className="flex flex-wrap items-center gap-1.5 xl:flex-nowrap xl:justify-end">
-                  {Object.entries(tokenData.metrics).map(([key, data]) => {
-                    const ch = (data as any).change as number | null;
-                    return (
-                      <Button
-                        key={key}
-                        type="button"
-                        variant={selectedTimeframe === key ? "secondary" : "ghost"}
-                        size="sm"
-                        className="h-7 rounded-lg px-2.5 text-[10px] md:text-[11px]"
-                        onClick={() => setSelectedTimeframe(key as "5m" | "1h" | "4h" | "24h")}
+              <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
+                {Object.entries(tokenData.metrics).map(([key, data]) => {
+                  const ch = (data as any).change as number | null;
+                  return (
+                    <Button
+                      key={key}
+                      type="button"
+                      variant={selectedTimeframe === key ? "secondary" : "ghost"}
+                      size="sm"
+                      aria-pressed={selectedTimeframe === key}
+                      className={`h-9 rounded-lg border px-2.5 font-mw-mono text-xs ${selectedTimeframe === key ? "border-mw-accent bg-[#2A1609] text-mw-accent-soft hover:bg-[#2A1609]" : "border-mw-edge bg-[#171B20] text-[#C9CED4] hover:bg-[#1F252C]"}`}
+                      onClick={() => setSelectedTimeframe(key as "5m" | "1h" | "4h" | "24h")}
+                    >
+                      <span className="mr-1.5 text-mw-muted">{key}</span>
+                      <span
+                        className={
+                          ch == null
+                            ? "text-mw-muted"
+                            : ch > 0
+                            ? "text-mw-up"
+                            : ch < 0
+                            ? "text-mw-down"
+                            : "text-mw-muted"
+                        }
                       >
-                        <span className="text-muted-foreground mr-1.5">{key}</span>
-                        <span
-                          className={
-                            ch == null
-                              ? "text-muted-foreground"
-                              : ch > 0
-                              ? "text-emerald-400"
-                              : ch < 0
-                              ? "text-red-400"
-                              : "text-muted-foreground"
-                          }
-                        >
-                          {ch == null
-                            ? "—"
-                            : `${ch > 0 ? "▲" : ch < 0 ? "▼" : "•"} ${Math.abs(ch).toFixed(2)}%`}
-                        </span>
-                      </Button>
-                    );
-                  })}
+                        {ch == null
+                          ? "—"
+                          : `${ch > 0 ? "▲" : ch < 0 ? "▼" : "•"} ${Math.abs(ch).toFixed(2)}%`}
+                      </span>
+                    </Button>
+                  );
+                })}
 
-                  {/* Always available — memecoin traders price mcap in USD by default. */}
-                  <div className="inline-flex items-center gap-0 rounded-lg border border-border/40 bg-muted/25 p-1 shrink-0">
-                    <Button
-                      size="sm"
-                      variant={displayDenom === "USD" ? "secondary" : "ghost"}
-                      className="h-6 px-2.5 text-[10px] md:text-[11px]"
-                      onClick={() => setDisplayDenom("USD")}
-                    >
-                      USD
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={displayDenom === "BNB" ? "secondary" : "ghost"}
-                      className="h-6 px-2.5 text-[10px] md:text-[11px]"
-                      onClick={() => setDisplayDenom("BNB")}
-                    >
-                      {nativeUnit}
-                    </Button>
-                  </div>
+                {/* Always available — memecoin traders price mcap in USD by default. */}
+                <div className="inline-flex shrink-0 items-center gap-1 rounded-[10px] border border-mw-border bg-mw-input p-1">
+                  <Button
+                    size="sm"
+                    variant={displayDenom === "USD" ? "secondary" : "ghost"}
+                    aria-pressed={displayDenom === "USD"}
+                    className={`h-8 rounded-lg px-3 font-mw-mono text-xs ${displayDenom === "USD" ? "bg-[#1F252C] text-mw-text" : "bg-transparent text-mw-muted"}`}
+                    onClick={() => setDisplayDenom("USD")}
+                  >
+                    USD
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={displayDenom === "BNB" ? "secondary" : "ghost"}
+                    aria-pressed={displayDenom === "BNB"}
+                    className={`h-8 rounded-lg px-3 font-mw-mono text-xs ${displayDenom === "BNB" ? "bg-[#1F252C] text-mw-text" : "bg-transparent text-mw-muted"}`}
+                    onClick={() => setDisplayDenom("BNB")}
+                  >
+                    {nativeUnit}
+                  </Button>
                 </div>
               </div>
             </div>
@@ -5400,781 +5439,751 @@ const toSeconds = (ts: number): number => {
                 />
               </div>
             </div>
-          </Card>
+          </section>
 
-          <Card className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4">
-            <Tabs
-              value={activityTab}
-              onValueChange={(v) => setActivityTab(v as any)}
-              className="h-full flex flex-col min-h-0"
-            >
-              <TabsList className="grid w-full grid-cols-3 mb-3 bg-transparent p-0 h-auto gap-2">
-                <TabsTrigger value="overview" className={ctaTabsTriggerClass}>Overview</TabsTrigger>
-                <TabsTrigger value="trades" className={ctaTabsTriggerClass}>Trades</TabsTrigger>
-                <TabsTrigger value="comments" className={ctaTabsTriggerClass}>Community</TabsTrigger>
-              </TabsList>
+          <CoinTabs
+            trailing={
+              story ? (
+                <StoryEnterButton
+                  story={story}
+                  label="Story"
+                  className="mw-focus inline-flex h-[52px] shrink-0 items-center whitespace-nowrap border-b-[3px] border-transparent px-1 text-[15px] font-semibold text-mw-muted hover:text-mw-text"
+                />
+              ) : null
+            }
+            tabs={[
+              {
+                value: "posts",
+                label: "Posts",
+                content: (
+                  <Tabs value={communityTab} onValueChange={(v) => setCommunityTab(v as any)} className="flex flex-col gap-3">
+                    <TabsList className={cp.segSmallList}>
+                      <TabsTrigger value="comments" className={cp.segSmall}>Comments</TabsTrigger>
+                      <TabsTrigger value="updates" className={cp.segSmall}>Creator Updates</TabsTrigger>
+                    </TabsList>
 
-              <TabsContent value="overview" className="mt-0">
-                {campaignDescription ? (
-                  <div className="mb-3 rounded-2xl border border-border bg-muted/10 px-4 py-4">
-                    <p className="text-xs text-muted-foreground">About {tokenData.name || tokenData.ticker || "this token"}</p>
-                    <p className="mt-2 whitespace-pre-line break-words text-sm leading-relaxed text-foreground">{campaignDescription}</p>
-                  </div>
-                ) : null}
-                <Accordion
-                  type="multiple"
-                  value={intelSections}
-                  onValueChange={setIntelSections}
-                  className="space-y-3"
-                >
-                  <AccordionItem value="campaign" className="rounded-2xl border border-border bg-muted/10 px-4">
-                    <AccordionTrigger className="py-4 text-sm font-retro text-foreground hover:no-underline">
-                      Campaign Intel
-                    </AccordionTrigger>
-                    <AccordionContent className="pb-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Creator</p>
-                          <p className="mt-1 text-sm font-retro text-foreground break-words">
-                            {creatorProfile?.displayName?.trim() || shortenAddress(campaign?.creator) || "—"}
-                          </p>
-                        </div>
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Deployed</p>
-                          <p className="mt-1 text-sm font-retro text-foreground">
-                            {formatDeployedDate(campaign?.createdAt, campaign?.timeAgo)}
-                          </p>
-                        </div>
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Stage</p>
-                          <p className="mt-1 text-sm font-retro text-foreground">{stagePill}</p>
-                        </div>
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Token contract</p>
-                          <div className="mt-1 flex items-center gap-2 min-w-0">
-                            <span className="text-sm font-mono text-foreground truncate">{shortenAddress(campaign?.token ?? "") || "—"}</span>
-                            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => copyAddress(campaign?.token, "Token contract address")}>
-                              <Copy className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </div>
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Curve progress</p>
-                          <p className="mt-1 text-sm font-retro text-foreground">{curveProgress.pct.toFixed(2)}%</p>
-                        </div>
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Remaining to graduate</p>
-                          <p className="mt-1 text-sm font-retro text-foreground break-words">{remainingCurveLabel.primary}</p>
-                        </div>
-                      </div>
-                    </AccordionContent>
-                  </AccordionItem>
-
-                  <AccordionItem value="flywheel" className="rounded-2xl border border-border bg-muted/10 px-4">
-                    <AccordionTrigger className="py-4 text-sm font-retro text-foreground hover:no-underline">
-                      Flywheel
-                    </AccordionTrigger>
-                    <AccordionContent className="pb-4">
-                      <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Buy volume</p>
-                          <p className="text-lg font-retro text-foreground">{flywheel.buyVolume}</p>
-                        </div>
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Sell volume</p>
-                          <p className="text-lg font-retro text-foreground">{flywheel.sellVolume}</p>
-                        </div>
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Net flow</p>
-                          <p className="text-lg font-retro text-foreground">{flywheel.netFlow}</p>
-                        </div>
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Protocol fees (est.)</p>
-                          <p className="text-lg font-retro text-foreground">{flywheel.feesEstimated}</p>
-                        </div>
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Upvotes</p>
-                          <p className="text-lg font-retro text-foreground">{upvoteCounts ? upvoteCounts.allTime : "—"}</p>
-                          {upvoteCounts ? <p className="text-[11px] text-muted-foreground">{upvoteCounts.last24h} in the last 24h</p> : null}
-                        </div>
-                        <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                          <p className="text-xs text-muted-foreground">Protocol fee rate</p>
-                          <p className="text-lg font-retro text-foreground">{flywheel.feeRate}</p>
-                        </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-3">
-                        Volumes come from on-chain counters when available. Fees are estimated from the protocol fee rate.
-                      </p>
-                    </AccordionContent>
-                  </AccordionItem>
-
-                  <AccordionItem value="holders" className="rounded-2xl border border-border bg-muted/10 px-4">
-                    <AccordionTrigger className="py-4 text-sm font-retro text-foreground hover:no-underline">
-                      Holder Distribution
-                    </AccordionTrigger>
-                    <AccordionContent className="pb-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs text-muted-foreground">{holderDistribution.totalHolders} holders</span>
-                        <span className="text-xs text-muted-foreground">
-                          {holderDistribution.source === "onchain"
-                            ? "On-chain token accounts"
-                            : "Estimated from bonding-curve trades"}
-                        </span>
-                      </div>
-
-                      {holderDistribution.top.length ? (
-                        <div className="space-y-3 overflow-auto min-h-0 pr-1">
-                          {holderDistribution.top.map((h, idx) => {
-                            const rank = h.isLp ? null : holderDistribution.hasLp ? idx : idx + 1;
-
-                            return (
-                              <div key={h.address} className="space-y-1">
-                                <div className="flex items-center justify-between text-xs gap-2">
-                                  <span className="font-mono min-w-0 truncate">
-                                    {rank != null ? `${rank}. ` : ""}
-
-                                    {h.isLp ? (
-                                      <span className="text-foreground">{h.label}</span>
-                                    ) : (
-                                      <Link
-                                        to={`/profile?address=${h.address}`}
-                                        className="text-foreground hover:underline underline-offset-4"
-                                      >
-                                        {h.label}
-                                      </Link>
-                                    )}
-                                  </span>
-                                  <span className="font-mono text-muted-foreground flex-shrink-0">{h.pct.toFixed(2)}%</span>
-                                </div>
-                                <Progress value={h.pct} className="h-1.5" />
-                              </div>
-                            );
-                          })}
-                          {holderDistribution.othersPct > 0 ? (
-                            <div className="space-y-1">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="font-mono">Others</span>
-                                <span className="font-mono text-muted-foreground">{holderDistribution.othersPct.toFixed(2)}%</span>
-                              </div>
-                              <Progress value={holderDistribution.othersPct} className="h-1.5" />
-                            </div>
-                          ) : null}
-                        </div>
+                    <TabsContent value="comments" className={`${cp.card} mt-0 min-h-0 p-4`}>
+                      {campaign?.campaign ? (
+                        <TokenComments
+                          chainId={chainIdForStorage}
+                          campaignAddress={campaign.campaign}
+                          tokenAddress={campaign.token}
+                        />
                       ) : (
-                        <div className="text-xs text-muted-foreground">No holder data yet.</div>
+                        <div className="text-sm text-mw-muted">Loading comments…</div>
                       )}
-                    </AccordionContent>
-                  </AccordionItem>
-                </Accordion>
-              </TabsContent>
+                    </TabsContent>
 
-              <TabsContent value="comments" className="mt-0">
-                <Tabs value={communityTab} onValueChange={(v) => setCommunityTab(v as any)} className="h-full flex flex-col min-h-0 gap-3">
-                  <TabsList className="grid w-full grid-cols-2 bg-transparent p-0 h-auto gap-2">
-                    <TabsTrigger value="comments" className={ctaTabsTriggerClass}>Comments</TabsTrigger>
-                    <TabsTrigger value="updates" className={ctaTabsTriggerClass}>Creator Updates</TabsTrigger>
-                  </TabsList>
+                    <TabsContent value="updates" className={`${cp.card} mt-0 min-h-0 p-4`}>
+                      {campaign?.campaign ? (
+                        <TokenComments
+                          chainId={chainIdForStorage}
+                          campaignAddress={campaign.campaign}
+                          tokenAddress={campaign.token}
+                          mode="updates"
+                          authorFilterAddress={campaign.creator}
+                          hideComposer
+                          pollIntervalMs={15000}
+                        />
+                      ) : (
+                        <div className="text-sm text-mw-muted">Loading creator updates…</div>
+                      )}
+                    </TabsContent>
+                  </Tabs>
+                ),
+              },
+              {
+                value: "trades",
+                label: "Trades",
+                content: (
+                  <div className={`${cp.card} overflow-auto`}>
+                    <table className="w-full border-collapse text-sm">
+                      <thead className="sticky top-0 bg-mw-surface">
+                        <tr>
+                          <th className="whitespace-nowrap border-b border-mw-border px-3.5 py-2.5 text-left font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Account</th>
+                          <th className="whitespace-nowrap border-b border-mw-border px-3.5 py-2.5 text-left font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Type</th>
+                          <th className="whitespace-nowrap border-b border-mw-border px-3.5 py-2.5 text-left font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{nativeUnit}</th>
+                          <th className="whitespace-nowrap border-b border-mw-border px-3.5 py-2.5 text-left font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Token</th>
+                          <th className="whitespace-nowrap border-b border-mw-border px-3.5 py-2.5 text-left font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Time</th>
+                          <th className="whitespace-nowrap border-b border-mw-border px-3.5 py-2.5 text-right font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Txn</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {txs.map((tx) => {
+                          const addr = normalizeProfileAddressKey(tx.makerAddress, chainIdForStorage);
+                          const prof = addr ? makerProfiles[addr] : null;
+                          const avatar = prof?.avatarUrl || "/placeholder.svg";
+                          const label = (prof?.displayName && prof.displayName.trim().length)
+                            ? prof.displayName.trim()
+                            : tx.maker;
 
-                  <TabsContent value="comments" className="mt-0 min-h-0">
-                    {campaign?.campaign ? (
-                      <TokenComments
-                        chainId={chainIdForStorage}
-                        campaignAddress={campaign.campaign}
-                        tokenAddress={campaign.token}
-                      />
-                    ) : (
-                      <div className="text-sm text-muted-foreground">Loading comments…</div>
-                    )}
-                  </TabsContent>
+                          const explorer = getExplorerBase(chainIdForStorage);
+                          const txLabel = tx.txHash ? `${tx.txHash.slice(0, 6)}…${tx.txHash.slice(-4)}` : "—";
+                          const txUrl = tx.txHash
+                            ? isSolanaPage
+                              ? `https://explorer.solana.com/tx/${tx.txHash}`
+                              : `${explorer}/tx/${tx.txHash}`
+                            : "";
 
-                  <TabsContent value="updates" className="mt-0 min-h-0">
-                    {campaign?.campaign ? (
-                      <TokenComments
-                        chainId={chainIdForStorage}
-                        campaignAddress={campaign.campaign}
-                        tokenAddress={campaign.token}
-                        mode="updates"
-                        authorFilterAddress={campaign.creator}
-                        hideComposer
-                        pollIntervalMs={15000}
-                      />
-                    ) : (
-                      <div className="text-sm text-muted-foreground">Loading creator updates…</div>
-                    )}
-                  </TabsContent>
-                </Tabs>
-              </TabsContent>
+                          return (
+                            <tr key={tx.id} className="hover:bg-[#171B20]">
+                              <td className="border-b border-[#1E2329] px-3.5 py-3">
+                                {tx.makerAddress ? (
+                                  <Link
+                                    to={`/profile?address=${tx.makerAddress}`}
+                                    className="flex items-center gap-2 min-w-0 text-mw-text hover:text-mw-accent-soft"
+                                  >
+                                    <img
+                                      src={avatar}
+                                      alt={label}
+                                      onError={(e) => {
+                                        (e.currentTarget as HTMLImageElement).src = "/placeholder.svg";
+                                      }}
+                                      className="h-7 w-7 rounded-full flex-shrink-0"
+                                    />
+                                    <span className="font-mw-mono truncate max-w-[140px]">
+                                      {label}
+                                    </span>
+                                  </Link>
+                                ) : (
+                                  <span className="font-mw-mono text-mw-muted">—</span>
+                                )}
+                              </td>
 
-              <TabsContent value="trades" className="mt-0">
-                <div className="overflow-auto">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-card/60 backdrop-blur border-b border-border">
-                      <tr>
-                        <th className="text-left py-3 px-3 font-medium text-muted-foreground">Account</th>
-                        <th className="text-left py-3 px-3 font-medium text-muted-foreground">Type</th>
-                        <th className="text-left py-3 px-3 font-medium text-muted-foreground">{nativeUnit}</th>
-                        <th className="text-left py-3 px-3 font-medium text-muted-foreground">Token</th>
-                        <th className="text-left py-3 px-3 font-medium text-muted-foreground">Time</th>
-                        <th className="text-right py-3 px-3 font-medium text-muted-foreground">Txn</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {txs.map((tx) => {
-                        const addr = normalizeProfileAddressKey(tx.makerAddress, chainIdForStorage);
-                        const prof = addr ? makerProfiles[addr] : null;
-                        const avatar = prof?.avatarUrl || "/placeholder.svg";
-                        const label = (prof?.displayName && prof.displayName.trim().length)
-                          ? prof.displayName.trim()
-                          : tx.maker;
-
-                        const explorer = getExplorerBase(chainIdForStorage);
-                        const txLabel = tx.txHash ? `${tx.txHash.slice(0, 6)}…${tx.txHash.slice(-4)}` : "—";
-                        const txUrl = tx.txHash
-                          ? isSolanaPage
-                            ? `https://explorer.solana.com/tx/${tx.txHash}`
-                            : `${explorer}/tx/${tx.txHash}`
-                          : "";
-
-                        return (
-                          <tr key={tx.id} className="border-b border-border/40 hover:bg-muted/20">
-                            <td className="py-3 px-3">
-                              {tx.makerAddress ? (
-                                <Link
-                                  to={`/profile?address=${tx.makerAddress}`}
-                                  className="flex items-center gap-2 min-w-0"
+                              <td className="border-b border-[#1E2329] px-3.5 py-3">
+                                <span
+                                  className={`font-semibold ${tx.type === "buy" ? "text-mw-up" : "text-mw-down"}`}
                                 >
-                                  <img
-                                    src={avatar}
-                                    alt={label}
-                                    onError={(e) => {
-                                      (e.currentTarget as HTMLImageElement).src = "/placeholder.svg";
-                                    }}
-                                    className="h-7 w-7 rounded-full ring-1 ring-border/30 flex-shrink-0"
-                                  />
-                                  <span className="font-mono text-foreground truncate max-w-[140px]">
-                                    {label}
-                                  </span>
-                                </Link>
-                              ) : (
-                                <span className="font-mono text-muted-foreground">—</span>
-                              )}
-                            </td>
+                                  {tx.type === "buy" ? "Buy" : "Sell"}
+                                </span>
+                              </td>
 
-                            <td className="py-3 px-3">
-                              <span
-                                className={`font-medium ${tx.type === "buy" ? "text-emerald-400" : "text-red-400"}`}
-                              >
-                                {tx.type === "buy" ? "Buy" : "Sell"}
-                              </span>
-                            </td>
+                              <td className="border-b border-[#1E2329] px-3.5 py-3 font-mw-mono text-mw-text">{tx.bnb}</td>
 
-                            <td className="py-3 px-3 font-mono text-foreground">{tx.bnb}</td>
+                              <td className="border-b border-[#1E2329] px-3.5 py-3 font-mw-mono">
+                                <span className={tx.type === "buy" ? "text-mw-up" : "text-mw-down"}>
+                                  {tx.amount}
+                                </span>
+                              </td>
 
-                            <td className="py-3 px-3 font-mono">
-                              <span className={tx.type === "buy" ? "text-emerald-300" : "text-red-300"}>
-                                {tx.amount}
-                              </span>
-                            </td>
+                              <td className="border-b border-[#1E2329] px-3.5 py-3 text-mw-muted whitespace-nowrap">{tx.time}</td>
 
-                            <td className="py-3 px-3 text-muted-foreground whitespace-nowrap">{tx.time}</td>
-
-                            <td className="py-3 px-3 text-right">
-                              {txUrl ? (
-                                <a
-                                  href={txUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="font-mono text-muted-foreground hover:text-foreground hover:underline underline-offset-4"
-                                >
-                                  {txLabel}
-                                </a>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
+                              <td className="border-b border-[#1E2329] px-3.5 py-3 text-right">
+                                {txUrl ? (
+                                  <a
+                                    href={txUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-mw-mono text-mw-muted hover:text-mw-text hover:underline underline-offset-4"
+                                  >
+                                    {txLabel}
+                                  </a>
+                                ) : (
+                                  <span className="text-mw-muted">—</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {txs.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="py-6 text-center text-sm text-mw-muted">
+                              No trades yet.
                             </td>
                           </tr>
-                        );
-                      })}
-                      {txs.length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
-                            No trades yet.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </TabsContent>
-            </Tabs>
-          </Card>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                ),
+              },
+              {
+                value: "holders",
+                label: "Holders",
+                content: (
+                  <section className={`${cp.card} flex flex-col gap-3 p-4`} aria-label="Holder distribution">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm text-mw-muted"><span className="font-bold text-mw-text">{holderDistribution.totalHolders}</span> holders</span>
+                      <span className="text-xs text-mw-muted">
+                        {holderDistribution.source === "onchain"
+                          ? "On-chain token accounts"
+                          : "Estimated from bonding-curve trades"}
+                      </span>
+                    </div>
+
+                    {holderDistribution.top.length ? (
+                      <div className="space-y-3 overflow-auto min-h-0 pr-1">
+                        {holderDistribution.top.map((h, idx) => {
+                          const rank = h.isLp ? null : holderDistribution.hasLp ? idx : idx + 1;
+
+                          return (
+                            <div key={h.address} className="space-y-1.5">
+                              <div className="flex items-center justify-between text-sm gap-2">
+                                <span className="font-mw-mono min-w-0 truncate">
+                                  {rank != null ? `${rank}. ` : ""}
+
+                                  {h.isLp ? (
+                                    <span className="text-mw-text">{h.label}</span>
+                                  ) : (
+                                    <Link
+                                      to={`/profile?address=${h.address}`}
+                                      className="text-mw-text hover:text-mw-accent-soft hover:underline underline-offset-4"
+                                    >
+                                      {h.label}
+                                    </Link>
+                                  )}
+                                </span>
+                                <span className="font-mw-mono text-mw-muted flex-shrink-0">{h.pct.toFixed(2)}%</span>
+                              </div>
+                              <Progress value={h.pct} className="h-1.5 bg-mw-border [&>div]:bg-mw-accent" />
+                            </div>
+                          );
+                        })}
+                        {holderDistribution.othersPct > 0 ? (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="font-mw-mono">Others</span>
+                              <span className="font-mw-mono text-mw-muted">{holderDistribution.othersPct.toFixed(2)}%</span>
+                            </div>
+                            <Progress value={holderDistribution.othersPct} className="h-1.5 bg-mw-border [&>div]:bg-mw-accent" />
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-mw-muted">No holder data yet.</div>
+                    )}
+                  </section>
+                ),
+              },
+              {
+                value: "about",
+                label: "About",
+                content: (
+                  <Accordion
+                    type="multiple"
+                    value={intelSections}
+                    onValueChange={setIntelSections}
+                    className="space-y-3"
+                  >
+                    <AccordionItem value="campaign" className={cp.accordionItem}>
+                      <AccordionTrigger className={cp.accordionTrigger}>
+                        Campaign Intel
+                      </AccordionTrigger>
+                      <AccordionContent className="pb-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Creator</p>
+                            <p className={cp.tileValue}>
+                              {creatorProfile?.displayName?.trim() || shortenAddress(campaign?.creator) || "—"}
+                            </p>
+                          </div>
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Deployed</p>
+                            <p className={cp.tileValue}>
+                              {formatDeployedDate(campaign?.createdAt, campaign?.timeAgo)}
+                            </p>
+                          </div>
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Stage</p>
+                            <p className={cp.tileValue}>{stagePill}</p>
+                          </div>
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Token contract</p>
+                            <div className="mt-1 flex items-center gap-2 min-w-0">
+                              <span className="text-[15px] font-mw-mono font-bold text-mw-text truncate">{shortenAddress(campaign?.token ?? "") || "—"}</span>
+                              <Button variant="ghost" size="icon" aria-label="Copy token contract address" className="h-8 w-8 shrink-0 text-mw-muted hover:bg-mw-raised hover:text-mw-text" onClick={() => copyAddress(campaign?.token, "Token contract address")}>
+                                <Copy className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Curve progress</p>
+                            <p className={cp.tileValue}>{curveProgress.pct.toFixed(2)}%</p>
+                          </div>
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Remaining to graduate</p>
+                            <p className={cp.tileValue}>{remainingCurveLabel.primary}</p>
+                          </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+
+                    <AccordionItem value="flywheel" className={cp.accordionItem}>
+                      <AccordionTrigger className={cp.accordionTrigger}>
+                        Flywheel
+                      </AccordionTrigger>
+                      <AccordionContent className="pb-4">
+                        <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Buy volume</p>
+                            <p className={cp.tileValue}>{flywheel.buyVolume}</p>
+                          </div>
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Sell volume</p>
+                            <p className={cp.tileValue}>{flywheel.sellVolume}</p>
+                          </div>
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Net flow</p>
+                            <p className={cp.tileValue}>{flywheel.netFlow}</p>
+                          </div>
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Protocol fees (est.)</p>
+                            <p className={cp.tileValue}>{flywheel.feesEstimated}</p>
+                          </div>
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Upvotes</p>
+                            <p className={cp.tileValue}>{upvoteCounts ? upvoteCounts.allTime : "—"}</p>
+                            {upvoteCounts ? <p className="text-xs text-mw-muted">{upvoteCounts.last24h} in the last 24h</p> : null}
+                          </div>
+                          <div className={cp.tile}>
+                            <p className={cp.tileLabel}>Protocol fee rate</p>
+                            <p className={cp.tileValue}>{flywheel.feeRate}</p>
+                          </div>
+                        </div>
+                        <p className="text-xs text-mw-muted mt-3">
+                          Volumes come from on-chain counters when available. Fees are estimated from the protocol fee rate.
+                        </p>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
+                ),
+              },
+            ]}
+          />
         </div>
 
-        <div className="xl:sticky xl:top-[80px] xl:-mt-px self-start">
-          <Card className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4">
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                <div className="flex items-center justify-between gap-2 mb-3">
-                  <h3 className="text-sm font-semibold">Graduation progress</h3>
-                  <span className="text-xs text-muted-foreground">
-                    {contractGraduated
-                      ? "Graduated"
-                      : solanaCurveClosed || curveProgress.matured
-                        ? "Eligible"
-                      : curveProgress.pct > 0 && curveProgress.pct < 0.01
-                        ? `${curveProgress.pct.toFixed(6)}%`
-                        : `${curveProgress.pct.toFixed(2)}%`}
-                  </span>
-                </div>
-                {contractGraduated ? (
-                  <p className="text-[10px] text-muted-foreground leading-snug mb-2">
-                    This token has graduated. Bonding is closed. Trading continues on the same page
-                    {isSolanaPage ? " via Meteora" : isRobinhoodPage ? " via Uniswap" : " via Topaz"}.
-                  </p>
-                ) : null}
-
-                <div className="mt-3 h-2 w-full rounded-full bg-muted/30 border border-border/40 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-[linear-gradient(90deg,rgba(255,255,255,0.65),rgba(255,255,255,0.25),rgba(255,255,255,0.65))] dark:bg-[linear-gradient(90deg,rgba(255,255,255,0.25),rgba(255,255,255,0.08),rgba(255,255,255,0.25))]"
-                    style={{ width: `${Math.max(0, Math.min(100, curveProgress.pct))}%`, minWidth: curveProgress.pct > 0 ? "1px" : undefined }}
+        <aside className="flex flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)]">
+          {isRobinhoodPage && (contractGraduated || isUniswapTradingActive) ? (
+            isXlUp ? (
+              <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`}>
+                <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} />
+                {/* A graduated generation-5 coin keeps its graduation line (pool link) and the
+                    creator panel (graduation payout, escrow, fees) next to the DEX trade box. */}
+                {gen5.state ? (
+                  <EvmGen5TradeNotes
+                    state={gen5.state}
+                    viewerIsCreator={gen5ViewerIsCreator}
+                    tradeTab={tradeTab}
+                    nativeSymbol={nativeUnit}
+                    explorerBase={getExplorerBase(chainIdForStorage)}
                   />
-                </div>
+                ) : null}
+                {gen5.state && gen5.creator && gen5ViewerIsCreator ? (
+                  <EvmGen5CreatorPanel
+                    state={gen5.state}
+                    creator={gen5.creator}
+                    signer={(wallet.signer as any) || null}
+                    account={String(wallet.account || "")}
+                    nativeSymbol={nativeUnit}
+                    onClaimed={() => void gen5.refresh()}
+                  />
+                ) : null}
+              </section>
+            ) : null
+          ) : (
+          <section aria-label="Trade" className={`hidden xl:block ${cp.card} p-4`}>
+            <div className="mb-3.5 flex items-center justify-between gap-2">
+              <span className={cp.title}>Trade</span>
+              <span className={`${cp.chip} font-mw-mono`}>{formatBnbFromWei(bnbBalanceWei)}</span>
+            </div>
+            <Tabs value={tradeTab} onValueChange={handleTradeTabChange} className="flex flex-col gap-3.5">
+              <TabsList className={cp.segList}>
+                <TabsTrigger value="buy" className={cp.segBuy}>Buy</TabsTrigger>
+                <TabsTrigger value="sell" className={cp.segSell}>Sell</TabsTrigger>
+              </TabsList>
 
-                {contractGraduated ? null : (
-                <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <p className="text-muted-foreground">Tokens sold</p>
-                    <p className="mt-1 font-mono text-foreground">
-                      {curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01
-                        ? `${curveProgress.soldPct.toFixed(6)}%`
-                        : `${curveProgress.soldPct.toFixed(2)}%`}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-muted-foreground">{nativeUnit} raised</p>
-                    <p className="mt-1 font-mono text-foreground">
-                      {curveProgress.raisedPct > 0 && curveProgress.raisedPct < 0.01
-                        ? `${curveProgress.raisedPct.toFixed(6)}%`
-                        : `${curveProgress.raisedPct.toFixed(2)}%`}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">In curve</p>
-                    <p className="mt-1 font-mono text-foreground">{formatBnbFromWei(curveProgress.reserveWei ?? undefined)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-muted-foreground">{nativeUnit} to target</p>
-                    <p className="mt-1 font-mono text-foreground">{remainingCurveLabel.primary}</p>
-                  </div>
-                </div>
-                )}
-              </div>
-
-              <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                <div className="flex items-center justify-between gap-2 mb-3">
-                  <h3 className="text-sm font-semibold">Your Position</h3>
-                  <span className="text-[11px] text-muted-foreground">Wallet view</span>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <p className="text-muted-foreground">{nativeUnit} balance</p>
-                    <p className="mt-1 font-mono text-foreground break-words">{formatBnbFromWei(bnbBalanceWei)}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Token balance</p>
-                    <p className="mt-1 font-mono text-foreground break-words">{formatTokenFromWei(tokenBalanceWei)} {tokenData.ticker}</p>
-                  </div>
-                </div>
-                {walletMatchesCampaign ? null : (
-                  <p className="mt-2 text-[11px] text-amber-300">
-                    {!anyWalletConnected
-                      ? `${connectTradeWalletLabel} to trade this campaign.`
-                      : isSolanaPage
-                        ? "Wrong wallet. Connect a SOL wallet to trade this campaign."
-                        : isRobinhoodPage
-                          ? "Wrong wallet. Connect a Robinhood wallet to trade this campaign."
-                          : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
-                  </p>
-                )}
-              </div>
-
-              {isRobinhoodPage && (contractGraduated || isUniswapTradingActive) ? (
-                isXlUp ? (
-                  <>
-                    <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} />
-                    {/* A graduated generation-5 coin keeps its graduation line (pool link) and the
-                        creator panel (graduation payout, escrow, fees) next to the DEX trade box. */}
-                    {gen5.state ? (
-                      <EvmGen5TradeNotes
-                        state={gen5.state}
-                        viewerIsCreator={gen5ViewerIsCreator}
-                        tradeTab={tradeTab}
-                        nativeSymbol={nativeUnit}
-                        explorerBase={getExplorerBase(chainIdForStorage)}
-                      />
-                    ) : null}
-                    {gen5.state && gen5.creator && gen5ViewerIsCreator ? (
-                      <EvmGen5CreatorPanel
-                        state={gen5.state}
-                        creator={gen5.creator}
-                        signer={(wallet.signer as any) || null}
-                        account={String(wallet.account || "")}
-                        nativeSymbol={nativeUnit}
-                        onClaimed={() => void gen5.refresh()}
-                      />
-                    ) : null}
-                  </>
-                ) : null
-              ) : (
-              <div className="hidden xl:block">
-              <Tabs value={tradeTab} onValueChange={handleTradeTabChange}>
-                <TabsList className={ctaTabsListClass}>
-                  <TabsTrigger value="buy" className={ctaTabsTriggerClass}>Buy</TabsTrigger>
-                  <TabsTrigger value="sell" className={ctaTabsTriggerClass}>Sell</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="buy" className="space-y-3 mt-0">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-2 text-[10px] text-muted-foreground hover:bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
-                          onClick={toggleTradeInputDenom}
-                        >
-                          {tradeInputDenom === "BNB" ? `Switch to ${tokenData.ticker}` : `Switch to ${nativeUnit}`}
-                        </Button>
-                      </div>
-                      <span className="text-xs text-muted-foreground">Slippage: {SLIPPAGE_PCT}%</span>
+              <TabsContent value="buy" className="space-y-3 mt-0">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={cp.smallButton}
+                        onClick={toggleTradeInputDenom}
+                      >
+                        {tradeInputDenom === "BNB" ? `Switch to ${tokenData.ticker}` : `Switch to ${nativeUnit}`}
+                      </Button>
                     </div>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={tradeAmount}
-                        onChange={(e) => setTradeAmount(e.target.value)}
-                        className="w-full bg-background border border-border rounded-lg px-3 py-2 pr-20 font-mono text-base focus:outline-none focus:ring-1 focus:ring-primary"
-                        placeholder="0"
-                      />
-                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                        <span className="text-xs font-mono text-muted-foreground">{tradeInputDenom === "BNB" ? nativeUnit : tokenData.ticker}</span>
-                      </div>
+                    <span className="text-xs text-mw-muted">Slippage: {SLIPPAGE_PCT}%</span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label={`Amount in ${tradeInputDenom === "BNB" ? nativeUnit : tokenData.ticker}`}
+                      value={tradeAmount}
+                      onChange={(e) => setTradeAmount(e.target.value)}
+                      className={cp.amountInput}
+                      placeholder="0"
+                    />
+                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                      <span className="text-sm font-mw-mono text-mw-muted">{tradeInputDenom === "BNB" ? nativeUnit : tokenData.ticker}</span>
                     </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-xs text-muted-foreground">
-                        Balance:{" "}
+                  </div>
+                  <div className={`${cp.inset} mt-3 flex flex-col gap-1.5 p-3 text-sm`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-mw-muted">
+                        Balance
+                      </span>
+                      <span className="font-mw-mono text-mw-text">
                         {tradeInputDenom === "BNB"
                           ? formatBnbFromWei(bnbBalanceWei)
                           : `${formatTokenFromWei(tokenBalanceWei)} ${tokenData.ticker}`}
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        Pay: {quoteLoading ? "…" : quoteWei != null ? formatBnbFromWei(quoteWei) : "—"}
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-mw-muted">Pay</span>
+                      <span className="font-mw-mono text-mw-text">
+                        {quoteLoading ? "…" : quoteWei != null ? formatBnbFromWei(quoteWei) : "—"}
                       </span>
                     </div>
                     {effectiveTokenWei > 0n ? (
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        Receive: {formatTokenFromWei(effectiveTokenWei)} {tokenData.ticker}
-                        {tradeInputDenom === "TOKEN" ? " (exact)" : " (est.)"}
-                      </p>
-                    ) : null}
-                    {quoteError ? (
-                      <p className="mt-2 text-center text-xs text-destructive">{quoteError}</p>
-                    ) : null}
-                    {isDbcPage && !dbcMigrated ? (
-                      <p className="mt-2 text-center text-xs text-muted-foreground">
-                        {antiSniperFeeLine({ activationUnix: dbcActivationUnix })}
-                        {dbcCompletingBuyUsed != null && tradeTab === "buy" ? (
-                          <span className="block text-emerald-300">
-                            This buy completes the curve: {formatBnbFromWei(dbcCompletingBuyUsed)} is used and the rest stays in your wallet. The coin then moves to its Meteora pool.
-                          </span>
-                        ) : null}
-                      </p>
-                    ) : null}
-                    {isDbcPage && !dbcMigrated && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (
-                      <p className="mt-2 text-center text-xs text-orange-200">{DBC_CREATOR_LOCK_COPY}</p>
-                    ) : null}
-                    {isDbcPage && dbcLockSummary?.locks?.length && solanaAccount && String(solanaAccount) === dbcCreator ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="w-full mt-2"
-                        disabled={dbcClaimPending}
-                        onClick={async () => {
-                          try {
-                            setDbcClaimPending(true);
-                            const first = dbcLockSummary.locks[0];
-                            const result = await submitDbcLockClaim({
-                              escrow: first.escrow,
-                              mint: dbcMint,
-                              recipient: String(solanaAccount),
-                            });
-                            toast({ title: "Claim submitted", description: `Tx: ${result.signature.slice(0, 12)}…` });
-                          } catch (error: any) {
-                            toast({ title: "Claim failed", description: String(error?.message || error), variant: "destructive" });
-                          } finally {
-                            setDbcClaimPending(false);
-                          }
-                        }}
-                      >
-                        Claim released tokens
-                      </Button>
-                    ) : null}
-                    {gen5.state ? (
-                      <EvmGen5TradeNotes
-                        state={gen5.state}
-                        viewerIsCreator={gen5ViewerIsCreator}
-                        tradeTab={tradeTab}
-                        nativeSymbol={nativeUnit}
-                        explorerBase={getExplorerBase(chainIdForStorage)}
-                      />
-                    ) : null}
-                    {gen5.state && gen5.creator && gen5ViewerIsCreator ? (
-                      <EvmGen5CreatorPanel
-                        state={gen5.state}
-                        creator={gen5.creator}
-                        signer={(wallet.signer as any) || null}
-                        account={String(wallet.account || "")}
-                        nativeSymbol={nativeUnit}
-                        onClaimed={() => void gen5.refresh()}
-                      />
-                    ) : null}
-                    {isDbcPage && dbcPool ? <DbcFeeChoiceLine pool={dbcPool} /> : null}
-                    {isDbcPage && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (
-                      <DbcCreatorRewardsPanel
-                        pool={dbcPool}
-                        creator={dbcCreator}
-                        mint={dbcMint}
-                        quoteSymbol={dbcQuoteSymbol}
-                        quoteDecimals={dbcQuoteDecimals}
-                        quoteMultiplier={dbcQuoteMultiplier}
-                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-mw-muted">Receive</span>
+                        <span className="font-mw-mono font-bold text-mw-text">
+                          {formatTokenFromWei(effectiveTokenWei)} {tokenData.ticker}
+                          {tradeInputDenom === "TOKEN" ? " (exact)" : " (est.)"}
+                        </span>
+                      </div>
                     ) : null}
                   </div>
+                  {quoteError ? (
+                    <p className="mt-2 text-center text-xs text-mw-down">{quoteError}</p>
+                  ) : null}
+                  {isDbcPage && !dbcMigrated ? (
+                    <p className="mt-2 text-center text-xs text-mw-muted">
+                      {antiSniperFeeLine({ activationUnix: dbcActivationUnix })}
+                      {dbcCompletingBuyUsed != null && tradeTab === "buy" ? (
+                        <span className="block text-mw-up">
+                          This buy completes the curve: {formatBnbFromWei(dbcCompletingBuyUsed)} is used and the rest stays in your wallet. The coin then moves to its Meteora pool.
+                        </span>
+                      ) : null}
+                    </p>
+                  ) : null}
+                  {isDbcPage && !dbcMigrated && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (
+                    <p className="mt-2 text-center text-xs text-mw-accent-soft">{DBC_CREATOR_LOCK_COPY}</p>
+                  ) : null}
+                  {isDbcPage && dbcLockSummary?.locks?.length && solanaAccount && String(solanaAccount) === dbcCreator ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className={`${cp.btn} w-full mt-2`}
+                      disabled={dbcClaimPending}
+                      onClick={async () => {
+                        try {
+                          setDbcClaimPending(true);
+                          const first = dbcLockSummary.locks[0];
+                          const result = await submitDbcLockClaim({
+                            escrow: first.escrow,
+                            mint: dbcMint,
+                            recipient: String(solanaAccount),
+                          });
+                          toast({ title: "Claim submitted", description: `Tx: ${result.signature.slice(0, 12)}…` });
+                        } catch (error: any) {
+                          toast({ title: "Claim failed", description: String(error?.message || error), variant: "destructive" });
+                        } finally {
+                          setDbcClaimPending(false);
+                        }
+                      }}
+                    >
+                      Claim released tokens
+                    </Button>
+                  ) : null}
+                  {gen5.state ? (
+                    <EvmGen5TradeNotes
+                      state={gen5.state}
+                      viewerIsCreator={gen5ViewerIsCreator}
+                      tradeTab={tradeTab}
+                      nativeSymbol={nativeUnit}
+                      explorerBase={getExplorerBase(chainIdForStorage)}
+                    />
+                  ) : null}
+                  {gen5.state && gen5.creator && gen5ViewerIsCreator ? (
+                    <EvmGen5CreatorPanel
+                      state={gen5.state}
+                      creator={gen5.creator}
+                      signer={(wallet.signer as any) || null}
+                      account={String(wallet.account || "")}
+                      nativeSymbol={nativeUnit}
+                      onClaimed={() => void gen5.refresh()}
+                    />
+                  ) : null}
+                  {isDbcPage && dbcPool ? <DbcFeeChoiceLine pool={dbcPool} /> : null}
+                  {isDbcPage && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (
+                    <DbcCreatorRewardsPanel
+                      pool={dbcPool}
+                      creator={dbcCreator}
+                      mint={dbcMint}
+                      quoteSymbol={dbcQuoteSymbol}
+                      quoteDecimals={dbcQuoteDecimals}
+                      quoteMultiplier={dbcQuoteMultiplier}
+                    />
+                  ) : null}
+                </div>
 
-                  <div className="text-center text-xs text-muted-foreground">
-                    {isDexStage ? (
-                      isSolanaPage ? (
-                        quoteWei != null ? (
-                          <p>Meteora execution · min received protected by {SLIPPAGE_PCT}% slippage.</p>
-                        ) : (
-                          <p>Enter an amount to quote on Meteora.</p>
-                        )
-                      ) : (isTopazTradingActive || onChainLaunched) && quoteWei != null ? (
-                        <p>
-                          Topaz execution · min received protected by {(topazSlippageBps / 100).toFixed(2)}% slippage.
-                          {tradeTab === "buy" && effectiveTokenWei > 0n
-                            ? ` Est. ${formatTokenFromWei(effectiveTokenWei)} ${tokenData.ticker}.`
-                            : ""}
-                        </p>
-                      ) : isTopazTradingActive || onChainLaunched ? (
-                        <p>Enter an amount to quote on Topaz{onChainPair ? ` · pair ${onChainPair.slice(0, 6)}…${onChainPair.slice(-4)}` : ""}.</p>
+                <div className="text-center text-xs text-mw-muted">
+                  {isDexStage ? (
+                    isSolanaPage ? (
+                      quoteWei != null ? (
+                        <p>Meteora execution · min received protected by {SLIPPAGE_PCT}% slippage.</p>
                       ) : (
-                        <p>Topaz market verification is in progress. Bonding history remains available.</p>
+                        <p>Enter an amount to quote on Meteora.</p>
                       )
-                    ) : quoteWei != null && effectiveTokenWei > 0n ? (
-                      isSolanaPage ? (
-                        <p>
-                          Pay {formatBnbFromWei(tradeInputDenom === "BNB" ? effectiveBnbWei || quoteWei : quoteWei)} exact
-                          {" "}→ ~{formatTokenFromWei(effectiveTokenWei)} {tokenData.ticker}
-                          {" "}(min {formatTokenFromWei((effectiveTokenWei * BigInt(100 - SLIPPAGE_PCT)) / 100n)} @ {SLIPPAGE_PCT}% slip)
-                        </p>
-                      ) : (
-                        <p>
-                          Pay ~{formatBnbFromWei(quoteWei)} → get {formatTokenFromWei(effectiveTokenWei)} {tokenData.ticker}
-                          {" "}(max {formatBnbFromWei((quoteWei * BigInt(100 + SLIPPAGE_PCT)) / 100n)})
-                        </p>
-                      )
+                    ) : (isTopazTradingActive || onChainLaunched) && quoteWei != null ? (
+                      <p>
+                        Topaz execution · min received protected by {(topazSlippageBps / 100).toFixed(2)}% slippage.
+                        {tradeTab === "buy" && effectiveTokenWei > 0n
+                          ? ` Est. ${formatTokenFromWei(effectiveTokenWei)} ${tokenData.ticker}.`
+                          : ""}
+                      </p>
+                    ) : isTopazTradingActive || onChainLaunched ? (
+                      <p>Enter an amount to quote on Topaz{onChainPair ? ` · pair ${onChainPair.slice(0, 6)}…${onChainPair.slice(-4)}` : ""}.</p>
                     ) : (
-                      <p>Enter a {nativeUnit} amount to buy (switch to {tokenData.ticker || "TOKEN"} only for exact token size).</p>
-                    )}
+                      <p>Topaz market verification is in progress. Bonding history remains available.</p>
+                    )
+                  ) : quoteWei != null && effectiveTokenWei > 0n ? (
+                    isSolanaPage ? (
+                      <p>
+                        Pay {formatBnbFromWei(tradeInputDenom === "BNB" ? effectiveBnbWei || quoteWei : quoteWei)} exact
+                        {" "}→ ~{formatTokenFromWei(effectiveTokenWei)} {tokenData.ticker}
+                        {" "}(min {formatTokenFromWei((effectiveTokenWei * BigInt(100 - SLIPPAGE_PCT)) / 100n)} @ {SLIPPAGE_PCT}% slip)
+                      </p>
+                    ) : (
+                      <p>
+                        Pay ~{formatBnbFromWei(quoteWei)} → get {formatTokenFromWei(effectiveTokenWei)} {tokenData.ticker}
+                        {" "}(max {formatBnbFromWei((quoteWei * BigInt(100 + SLIPPAGE_PCT)) / 100n)})
+                      </p>
+                    )
+                  ) : (
+                    <p>Enter a {nativeUnit} amount to buy (switch to {tokenData.ticker || "TOKEN"} only for exact token size).</p>
+                  )}
+                </div>
+
+                <Button
+                  onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
+                  disabled={
+                    walletMatchesCampaign &&
+                    (tradePending ||
+                      approvePending ||
+                      quoteLoading ||
+                      (isSolanaPage
+                        ? effectiveBnbWei <= 0n && !solanaCurveClosed && !contractGraduated
+                        : (isDexStage && !isTopazTradingActive) ||
+                          (tradeInputDenom === "BNB"
+                            ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
+                            : parseTokenAmountWei(tradeAmount) <= 0n)))
+                  }
+                  className={cp.ctaBuy}
+                >
+                  {!walletMatchesCampaign
+                    ? connectTradeWalletLabel
+                    : tradePending
+                      ? "Processing..."
+                      : isSolanaPage && (contractGraduated || solanaCurveClosed)
+                        ? "Buy on Meteora"
+                        : isDexStage
+                          ? "Buy on Topaz"
+                          : "Buy"}
+                </Button>
+              </TabsContent>
+
+              <TabsContent value="sell" className="space-y-3 mt-0">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-mw-muted">Amount ({tradeInputDenom === "BNB" ? nativeUnit : tokenData.ticker})</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={cp.smallButton}
+                        onClick={toggleTradeInputDenom}
+                      >
+                        {tradeInputDenom === "BNB" ? `Switch to ${tokenData.ticker}` : `Switch to ${nativeUnit}`}
+                      </Button>
+                    </div>
+                    <span className="text-xs text-mw-muted">Slippage: {SLIPPAGE_PCT}%</span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label={`Amount in ${tradeInputDenom === "BNB" ? nativeUnit : tokenData.ticker}`}
+                      value={tradeAmount}
+                      onChange={(e) => setTradeAmount(e.target.value)}
+                      className={cp.amountInput}
+                      placeholder="0"
+                    />
+                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                      <span className="text-sm font-mw-mono text-mw-muted">{tradeInputDenom === "BNB" ? nativeUnit : tokenData.ticker}</span>
+                    </div>
                   </div>
 
-                  <Button
-                    onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
-                    disabled={
-                      walletMatchesCampaign &&
-                      (tradePending ||
-                        approvePending ||
-                        quoteLoading ||
-                        (isSolanaPage
-                          ? effectiveBnbWei <= 0n && !solanaCurveClosed && !contractGraduated
-                          : (isDexStage && !isTopazTradingActive) ||
-                            (tradeInputDenom === "BNB"
-                              ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
-                              : parseTokenAmountWei(tradeAmount) <= 0n)))
-                    }
-                    className={`w-full ${topbarButtonClass} py-5`}
-                  >
-                    {!walletMatchesCampaign
-                      ? connectTradeWalletLabel
-                      : tradePending
-                        ? "Processing..."
-                        : isSolanaPage && (contractGraduated || solanaCurveClosed)
-                          ? "Buy on Meteora"
-                          : isDexStage
-                            ? "Buy on Topaz"
-                            : "Buy"}
-                  </Button>
-                </TabsContent>
+                  <div className="flex gap-1.5 mt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={`${cp.smallButton} h-10 flex-1 font-mw-mono`}
+                      onClick={() => {
+                        if (tokenBalanceWei == null) return;
+                        const amt = (tokenBalanceWei * 25n) / 100n;
+                        setTradeInputDenom("TOKEN");
+                        setTradeAmount(ethers.formatUnits(amt, tokenDecimals));
+                      }}
+                    >
+                      25%
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={`${cp.smallButton} h-10 flex-1 font-mw-mono`}
+                      onClick={() => {
+                        if (tokenBalanceWei == null) return;
+                        const amt = (tokenBalanceWei * 50n) / 100n;
+                        setTradeInputDenom("TOKEN");
+                        setTradeAmount(ethers.formatUnits(amt, tokenDecimals));
+                      }}
+                    >
+                      50%
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={`${cp.smallButton} h-10 flex-1 font-mw-mono`}
+                      onClick={() => {
+                        if (tokenBalanceWei == null) return;
+                        setTradeInputDenom("TOKEN");
+                        setTradeAmount(ethers.formatUnits(tokenBalanceWei, tokenDecimals));
+                      }}
+                    >
+                      100%
+                    </Button>
+                  </div>
 
-                <TabsContent value="sell" className="space-y-3 mt-0">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">Amount ({tradeInputDenom === "BNB" ? nativeUnit : tokenData.ticker})</span>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground"
-                          onClick={toggleTradeInputDenom}
-                        >
-                          {tradeInputDenom === "BNB" ? `Switch to ${tokenData.ticker}` : `Switch to ${nativeUnit}`}
-                        </Button>
-                      </div>
-                      <span className="text-xs text-muted-foreground">Slippage: {SLIPPAGE_PCT}%</span>
-                    </div>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={tradeAmount}
-                        onChange={(e) => setTradeAmount(e.target.value)}
-                        className="w-full bg-background border border-border rounded-lg px-3 py-2 pr-20 font-mono text-base focus:outline-none focus:ring-1 focus:ring-primary"
-                        placeholder="0"
-                      />
-                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                        <span className="text-xs font-mono text-muted-foreground">{tradeInputDenom === "BNB" ? nativeUnit : tokenData.ticker}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-1 mt-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 text-xs h-7"
-                        onClick={() => {
-                          if (tokenBalanceWei == null) return;
-                          const amt = (tokenBalanceWei * 25n) / 100n;
-                          setTradeInputDenom("TOKEN");
-                          setTradeAmount(ethers.formatUnits(amt, tokenDecimals));
-                        }}
-                      >
-                        25%
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 text-xs h-7"
-                        onClick={() => {
-                          if (tokenBalanceWei == null) return;
-                          const amt = (tokenBalanceWei * 50n) / 100n;
-                          setTradeInputDenom("TOKEN");
-                          setTradeAmount(ethers.formatUnits(amt, tokenDecimals));
-                        }}
-                      >
-                        50%
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 text-xs h-7"
-                        onClick={() => {
-                          if (tokenBalanceWei == null) return;
-                          setTradeInputDenom("TOKEN");
-                          setTradeAmount(ethers.formatUnits(tokenBalanceWei, tokenDecimals));
-                        }}
-                      >
-                        100%
-                      </Button>
-                    </div>
-
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-xs text-muted-foreground">
-                        Balance:{" "}
+                  <div className={`${cp.inset} mt-3 flex flex-col gap-1.5 p-3 text-sm`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-mw-muted">
+                        Balance
+                      </span>
+                      <span className="font-mw-mono text-mw-text">
                         {tradeInputDenom === "BNB"
                           ? formatBnbFromWei(bnbBalanceWei)
                           : `${formatTokenFromWei(tokenBalanceWei)} ${tokenData.ticker}`}
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        Payout: {tradeInputDenom === "BNB" ? formatBnbFromWei(effectiveBnbWei) : (quoteLoading ? "…" : quoteWei != null ? formatBnbFromWei(quoteWei) : "—")}
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-mw-muted">Payout</span>
+                      <span className="font-mw-mono font-bold text-mw-text">
+                        {tradeInputDenom === "BNB" ? formatBnbFromWei(effectiveBnbWei) : (quoteLoading ? "…" : quoteWei != null ? formatBnbFromWei(quoteWei) : "—")}
                       </span>
                     </div>
                     {tradeInputDenom === "BNB" && effectiveTokenWei > 0n ? (
-                      <p className="mt-1 text-[11px] text-muted-foreground">Est. sell: {formatTokenFromWei(effectiveTokenWei)} {tokenData.ticker}</p>
-                    ) : null}
-
-                    {approvePending ? (
-                      <p className="mt-2 text-center text-xs text-muted-foreground">Approval in progress...</p>
-                    ) : null}
-                    {quoteError ? (
-                      <p className="mt-2 text-center text-xs text-destructive">{quoteError}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-mw-muted">Est. sell</span>
+                        <span className="font-mw-mono text-mw-text">{formatTokenFromWei(effectiveTokenWei)} {tokenData.ticker}</span>
+                      </div>
                     ) : null}
                   </div>
 
-                  <div className="text-center text-xs text-muted-foreground">
-                    {isDexStage ? (
-                      isSolanaPage ? (
-                        quoteWei != null ? (
-                          <p>Meteora execution · min received protected by {SLIPPAGE_PCT}% slippage.</p>
-                        ) : (
-                          <p>Enter an amount to quote on Meteora.</p>
-                        )
-                      ) : (isTopazTradingActive || onChainLaunched) && quoteWei != null ? (
-                        <p>
-                          Topaz execution · min received protected by {(topazSlippageBps / 100).toFixed(2)}% slippage.
-                          {` Est. ${formatBnbFromWei(quoteWei)}.`}
-                        </p>
-                      ) : isTopazTradingActive || onChainLaunched ? (
-                        <p>Enter an amount to quote a Topaz sell.</p>
+                  {approvePending ? (
+                    <p className="mt-2 text-center text-xs text-mw-muted">Approval in progress...</p>
+                  ) : null}
+                  {quoteError ? (
+                    <p className="mt-2 text-center text-xs text-mw-down">{quoteError}</p>
+                  ) : null}
+                </div>
+
+                <div className="text-center text-xs text-mw-muted">
+                  {isDexStage ? (
+                    isSolanaPage ? (
+                      quoteWei != null ? (
+                        <p>Meteora execution · min received protected by {SLIPPAGE_PCT}% slippage.</p>
                       ) : (
-                        <p>Topaz market verification is in progress. Bonding history remains available.</p>
+                        <p>Enter an amount to quote on Meteora.</p>
                       )
-                    ) : quoteWei != null ? (
+                    ) : (isTopazTradingActive || onChainLaunched) && quoteWei != null ? (
                       <p>
-                        You will receive ~{formatBnbFromWei(quoteWei)} (min {formatBnbFromWei((quoteWei * BigInt(100 - SLIPPAGE_PCT)) / 100n)})
+                        Topaz execution · min received protected by {(topazSlippageBps / 100).toFixed(2)}% slippage.
+                        {` Est. ${formatBnbFromWei(quoteWei)}.`}
                       </p>
+                    ) : isTopazTradingActive || onChainLaunched ? (
+                      <p>Enter an amount to quote a Topaz sell.</p>
                     ) : (
-                      <p>Enter an amount to see the sell quote.</p>
-                    )}
-                  </div>
+                      <p>Topaz market verification is in progress. Bonding history remains available.</p>
+                    )
+                  ) : quoteWei != null ? (
+                    <p>
+                      You will receive ~{formatBnbFromWei(quoteWei)} (min {formatBnbFromWei((quoteWei * BigInt(100 - SLIPPAGE_PCT)) / 100n)})
+                    </p>
+                  ) : (
+                    <p>Enter an amount to see the sell quote.</p>
+                  )}
+                </div>
 
-                  <Button
-                    onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
-                    disabled={
-                      walletMatchesCampaign &&
-                      (tradePending ||
-                        approvePending ||
-                        quoteLoading ||
-                        (isSolanaPage
-                          ? effectiveTokenWei <= 0n && !solanaCurveClosed && !contractGraduated
-                          : (isDexStage && !isTopazTradingActive) ||
-                            (tradeInputDenom === "BNB"
-                              ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
-                              : parseTokenAmountWei(tradeAmount) <= 0n)))
-                    }
-                    className={`w-full ${topbarButtonClass} py-5`}
-                  >
-                    {!walletMatchesCampaign
-                      ? connectTradeWalletLabel
-                      : tradePending
-                        ? "Processing..."
-                        : isSolanaPage && (contractGraduated || solanaCurveClosed)
-                          ? "Sell on Meteora"
-                          : isDexStage
-                            ? "Sell on Topaz"
-                            : "Sell"}
-                  </Button>
-                </TabsContent>
-              </Tabs>
-              </div>
-              )}
+                <Button
+                  onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
+                  disabled={
+                    walletMatchesCampaign &&
+                    (tradePending ||
+                      approvePending ||
+                      quoteLoading ||
+                      (isSolanaPage
+                        ? effectiveTokenWei <= 0n && !solanaCurveClosed && !contractGraduated
+                        : (isDexStage && !isTopazTradingActive) ||
+                          (tradeInputDenom === "BNB"
+                            ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
+                            : parseTokenAmountWei(tradeAmount) <= 0n)))
+                  }
+                  className={cp.ctaSell}
+                >
+                  {!walletMatchesCampaign
+                    ? connectTradeWalletLabel
+                    : tradePending
+                      ? "Processing..."
+                      : isSolanaPage && (contractGraduated || solanaCurveClosed)
+                        ? "Sell on Meteora"
+                        : isDexStage
+                          ? "Sell on Topaz"
+                          : "Sell"}
+                </Button>
+              </TabsContent>
+            </Tabs>
+          </section>
+          )}
+
+          <section aria-label="Your position" className={`${cp.card} p-4`}>
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <h3 className={`${cp.title} m-0`}>Your Position</h3>
+              <span className="text-xs text-mw-muted">Wallet view</span>
             </div>
-          </Card>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-mw-muted">{nativeUnit} balance</p>
+                <p className="mt-1 font-mw-mono text-mw-text break-words">{formatBnbFromWei(bnbBalanceWei)}</p>
+              </div>
+              <div>
+                <p className="text-mw-muted">Token balance</p>
+                <p className="mt-1 font-mw-mono text-mw-text break-words">{formatTokenFromWei(tokenBalanceWei)} {tokenData.ticker}</p>
+              </div>
+            </div>
+            {walletMatchesCampaign ? null : (
+              <p className="mt-2 text-xs text-amber-300">
+                {!anyWalletConnected
+                  ? `${connectTradeWalletLabel} to trade this campaign.`
+                  : isSolanaPage
+                    ? "Wrong wallet. Connect a SOL wallet to trade this campaign."
+                    : isRobinhoodPage
+                      ? "Wrong wallet. Connect a Robinhood wallet to trade this campaign."
+                      : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
+              </p>
+            )}
+          </section>
 
-          <Card className="mt-3 bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4">
+          <section aria-label="War Room" className={`${cp.card} p-4`}>
             <div className="flex items-center justify-between gap-2 mb-3">
               <div>
-                <h3 className="text-sm font-semibold">War Room</h3>
-                <p className="text-[11px] text-muted-foreground">Live campaign chat</p>
+                <h3 className={`${cp.title} m-0`}>War Room</h3>
+                <p className="text-xs text-mw-muted">Live campaign chat</p>
               </div>
             </div>
 
@@ -6185,10 +6194,10 @@ const toSeconds = (ts: number): number => {
                 creatorAddress={campaign.creator}
               />
             ) : (
-              <div className="text-sm text-muted-foreground">Loading chat…</div>
+              <div className="text-sm text-mw-muted">Loading chat…</div>
             )}
-          </Card>
-        </div>
+          </section>
+        </aside>
       </div>
       <MobileTradeDock
         connected={walletMatchesCampaign}
@@ -6196,6 +6205,10 @@ const toSeconds = (ts: number): number => {
         onConnect={openWalletModal}
         onOpenBuy={() => {
           handleTradeTabChange("buy");
+          setMobileTradeOpen(true);
+        }}
+        onOpenSell={() => {
+          handleTradeTabChange("sell");
           setMobileTradeOpen(true);
         }}
       />

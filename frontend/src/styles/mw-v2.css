@@ -83,3 +83,10 @@
 ol.fixed.top-0 {
   background: none !important;
 }
+
+/* Placeholder banner (artboard `.banner`) until a coin has its own banner image. */
+.mw-banner {
+  background-color: #17120e;
+  background-image: linear-gradient(#ffffff0a 1px, transparent 1px), linear-gradient(90deg, #ffffff0a 1px, transparent 1px);
+  background-size: 32px 32px;
+}

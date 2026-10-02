@@ -4,6 +4,8 @@ import { Copy, Edit3, Flag, ImagePlus, Loader2, SearchCheck, Share2, ShieldCheck
 import { toast } from "sonner";
 
 import { StoryEnterButton } from "@/components/story/StoryEnterButton";
+import { CoinTabs } from "@/components/token/CoinTabs";
+import { cp } from "@/components/token/coinPageStyles";
 import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { ImportedTradesTable } from "@/components/arena/ImportedTradesTable";
@@ -378,147 +380,258 @@ export default function ImportedTokenPage({
   );
 
   return (
-    <ContentContainer className="space-y-5 px-1 pb-12 pt-2" data-imported-project-page="true" data-imported-token-page="true">
-      <section className="mwz-hud-frame p-5">
-        <div className="flex flex-col gap-5 md:flex-row md:items-start">
-          <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5">
+    <ContentContainer className="flex flex-col gap-4 px-1 pb-12 pt-2 font-mw-body text-mw-text" data-imported-project-page="true" data-imported-token-page="true">
+      {/* Header: banner, logo, name, chips, owner line, actions (UI redesign phase 1). */}
+      <section aria-label={item.name || item.symbol || "Imported project"} className="flex flex-col">
+        <div className="mw-banner h-[120px] rounded-2xl border border-[#1E2329] md:h-[200px] xl:h-[240px]" aria-hidden="true" />
+        <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-6 md:px-2">
+          <div className="relative -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-[18px] border-4 border-mw-ground bg-[#2A1609] md:-mt-16 md:h-[140px] md:w-[140px] md:rounded-3xl">
             {item.imageUrl ? (
               <img src={item.imageUrl} alt={`${item.name || item.symbol || "Imported project"} logo`} className="h-full w-full object-cover" data-project-image="true" />
             ) : (
-              <div className="flex h-full w-full items-center justify-center font-retro text-sm text-white/50">${item.symbol || "TOKEN"}</div>
+              <div className="flex h-full w-full items-center justify-center font-mw-brand text-sm text-[#FF9A4D]">${item.symbol || "TOKEN"}</div>
             )}
             {canEdit ? (
               <>
                 <input ref={fileRef} type="file" className="hidden" accept="image/png,image/jpeg,image/webp" onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadImage(f); }} />
-                <button type="button" aria-label="Edit project image" className="absolute bottom-1 right-1 rounded-md border border-white/15 bg-black/75 p-2 text-white" onClick={() => fileRef.current?.click()} disabled={uploading} data-owner-image-edit="true">
+                <button type="button" aria-label="Edit project image" className="mw-focus absolute bottom-1 right-1 inline-flex h-11 w-11 items-center justify-center rounded-[10px] border border-mw-edge bg-[rgba(5,6,8,0.8)] text-mw-text" onClick={() => fileRef.current?.click()} disabled={uploading} data-owner-image-edit="true">
                   {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
                 </button>
               </>
             ) : null}
           </div>
-          <div className="min-w-0 flex-1">
+
+          <div className="min-w-0 flex-1 md:pb-1.5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-accent/50 bg-accent/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-accent" data-imported-badge="true">IMPORTED</span>
+              <h1 className="m-0 break-words font-mw-cond text-3xl font-bold leading-tight text-mw-text md:text-[40px]" data-project-name="true">{item.name || item.symbol || "Imported project"}</h1>
+              {item.symbol ? <span className={`${cp.chip} font-mw-mono`} data-project-ticker="true">${item.symbol}</span> : null}
+              <span className={cp.chip} data-project-chain="true">{chainLabel}</span>
+              <span className={cp.chipAccent} data-imported-badge="true">IMPORTED</span>
               {ownershipPill}
               <TacticalTag label={pill.label} tone={pill.tone as "success" | "default"} />
-              {ownerWallet ? (
-                <Link to={`/profile?address=${ownerWallet}`} className="inline-flex items-center gap-2 hover:opacity-90">
-                  <Avatar className="h-6 w-6">
-                    <AvatarImage src={ownerProfile?.avatarUrl || undefined} alt={ownerDisplay} />
-                    <AvatarFallback className="text-[10px]">{(ownerDisplay || "C").slice(0, 1).toUpperCase()}</AvatarFallback>
-                  </Avatar>
-                  <span className="text-[11px] text-foreground/90 truncate max-w-[140px]">{ownerDisplay}</span>
-                </Link>
-              ) : null}
             </div>
-            <h1 className="mt-3 break-words font-retro text-2xl text-foreground" data-project-name="true">{item.name || item.symbol || "Imported project"}</h1>
-            {item.symbol ? <p className="mt-1 text-sm font-bold text-accent" data-project-ticker="true">${item.symbol}</p> : null}
-            <p className="mt-2 text-xs text-muted-foreground">Imported token — no bonding curve</p>
-            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-              <div>
-                <span className="text-muted-foreground">Chain</span>
-                <div className="mt-1 font-semibold text-foreground" data-project-chain="true">{chainLabel}</div>
-              </div>
-              <div className="min-w-0">
-                <span className="text-muted-foreground">{identityLabel}</span>
-                <button type="button" onClick={() => void copyIdentity()} className="mt-1 flex max-w-full items-center gap-1 break-all text-left font-mono text-xs text-foreground hover:text-accent" data-project-address="true">
-                  {item.tokenAddress}
-                  <Copy className="h-3.5 w-3.5 shrink-0" />
-                </button>
-              </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-sm text-mw-muted">
+              {ownerWallet ? (
+                <span className="inline-flex min-w-0 items-center gap-1.5">
+                  by
+                  <Link to={`/profile?address=${ownerWallet}`} className="inline-flex items-center gap-1.5 text-mw-accent-soft hover:text-[#FFD0A8]">
+                    <Avatar className="h-6 w-6">
+                      <AvatarImage src={ownerProfile?.avatarUrl || undefined} alt={ownerDisplay} />
+                      <AvatarFallback className="text-[10px]">{(ownerDisplay || "C").slice(0, 1).toUpperCase()}</AvatarFallback>
+                    </Avatar>
+                    <span className="truncate max-w-[160px]">{ownerDisplay}</span>
+                  </Link>
+                </span>
+              ) : null}
+              <span>Imported token — no bonding curve</span>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            {canClaim ? <Button type="button" size="sm" onClick={onClaimMemecoin} data-project-claim-action="true">CLAIM MEMECOIN</Button> : null}
-            {canEdit ? <Button type="button" variant="outline" size="sm" onClick={() => setEditing((v) => !v)} data-owner-edit-controls="true"><Edit3 className="mr-2 h-4 w-4" />EDIT</Button> : null}
-            <Button type="button" variant="secondary" size="icon" className="h-8 w-8 rounded-xl" onClick={() => void toggleFollow()} disabled={followBusy || !connectedWallet} aria-label={following ? "Unfollow" : "Follow"}>
-              <Star className={following ? "text-accent fill-accent" : "text-muted-foreground/70"} />
+
+          <div className="flex flex-wrap items-center gap-2 md:justify-end md:pb-2">
+            {canClaim ? <Button type="button" className={`${cp.btn} border-mw-accent bg-mw-accent text-[#140A02] hover:bg-[#FF8F3D] hover:text-[#140A02]`} onClick={onClaimMemecoin} data-project-claim-action="true">CLAIM MEMECOIN</Button> : null}
+            {canEdit ? <Button type="button" variant="outline" className={cp.btn} onClick={() => setEditing((v) => !v)} data-owner-edit-controls="true"><Edit3 className="h-4 w-4" />EDIT</Button> : null}
+            <Button type="button" variant="secondary" className={cp.btn} onClick={() => void toggleFollow()} disabled={followBusy || !connectedWallet} aria-label={following ? "Unfollow" : "Follow"} aria-pressed={following}>
+              <Star className={following ? "h-[18px] w-[18px] text-mw-accent fill-mw-accent" : "h-[18px] w-[18px] text-mw-muted"} />
+              {following ? "Following" : "Follow"}
             </Button>
-            {story ? <StoryEnterButton story={story} /> : null}
-            <Button type="button" variant="outline" size="sm" onClick={() => void share()} data-project-share="true"><Share2 className="mr-2 h-4 w-4" />SHARE</Button>
-            <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-[11px] text-muted-foreground">
-              <Link to={buildAbuseReportPath({ entityType: "token", reportedTokenAddress: item.tokenAddress, reportedWallet: ownerWallet, reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${item.tokenAddress}` })}>
-                <Flag className="mr-1 h-3.5 w-3.5" />Report
-              </Link>
+            <Button type="button" variant="secondary" className={cp.btn} onClick={() => setChallengeOpen(true)}>
+              <Swords className="h-[18px] w-[18px]" aria-hidden="true" />Challenge
             </Button>
+            <Button type="button" variant="outline" className={cp.btn} onClick={() => void share()} data-project-share="true"><Share2 className="h-4 w-4" />Share</Button>
+            <Link
+              className="mw-focus inline-flex min-h-11 items-center gap-1.5 rounded-[10px] px-2.5 text-sm font-semibold text-mw-muted hover:bg-mw-raised hover:text-mw-text"
+              to={buildAbuseReportPath({ entityType: "token", reportedTokenAddress: item.tokenAddress, reportedWallet: ownerWallet, reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${item.tokenAddress}` })}
+            >
+              <Flag className="h-4 w-4" aria-hidden="true" />Report
+            </Link>
           </div>
         </div>
       </section>
 
       {canClaim ? (
-        <section className="mwz-hud-frame border-orange-400/30 bg-orange-500/[0.04] p-5" data-import-claim-banner="true">
-          <h2 className="font-retro text-sm text-orange-100">Is this your project? Claim it</h2>
-          <p className="mt-2 text-sm text-muted-foreground">Ownership is claimed on this page. Trading does not wait on the claim.</p>
-          <Button type="button" size="sm" className="mt-3" onClick={onClaimMemecoin}>CLAIM MEMECOIN</Button>
+        <section className={`${cp.card} border-[#5A3416] bg-mw-accent-fill p-4 md:p-5`} data-import-claim-banner="true">
+          <h2 className={`${cp.title} m-0`}>Is this your project? Claim it</h2>
+          <p className="mt-2 text-sm text-mw-muted">Ownership is claimed on this page. Trading does not wait on the claim.</p>
+          <Button type="button" className={`${cp.btn} mt-3 border-mw-accent bg-mw-accent text-[#140A02] hover:bg-[#FF8F3D] hover:text-[#140A02]`} onClick={onClaimMemecoin}>CLAIM MEMECOIN</Button>
         </section>
       ) : null}
 
       {!item.imageUrl ? (
-        <p className="text-sm text-muted-foreground">Add a project image from the owner tools when you are verified. The page stays public without one.</p>
+        <p className="m-0 text-sm text-mw-muted">Add a project image from the owner tools when you are verified. The page stays public without one.</p>
       ) : null}
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-3 md:gap-4 items-start">
-        <div className="min-w-0 flex flex-col gap-3 md:gap-4">
-          <Card className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4">
-            <Tabs value={activityTab} onValueChange={(v) => setActivityTab(v as "chart" | "trades" | "comments")}>
-              <TabsList className="grid w-full grid-cols-3 mb-3 bg-transparent p-0 h-auto gap-2">
-                <TabsTrigger value="chart" className={ctaTabsTriggerClass}>Chart</TabsTrigger>
-                <TabsTrigger value="trades" className={ctaTabsTriggerClass}>Trades</TabsTrigger>
-                <TabsTrigger value="comments" className={ctaTabsTriggerClass}>Comments</TabsTrigger>
-              </TabsList>
-              <TabsContent value="chart" className="mt-0">
-                {chart.emptyNote ? <p className="mb-2 text-xs text-muted-foreground">{chart.emptyNote}</p> : null}
-                <div className="h-[320px] md:h-[420px]">
-                  <UnifiedMarketChart
-                    curvePoints={[]}
-                    marketCandles={chart.candles}
-                    marketState={chart.marketState as any}
-                    chainId={item.chainId}
-                    livePriceNative={livePriceNative}
-                    liveMcapNative={liveMcapNative}
-                    nativeUsdPrice={nativeUsd}
-                    marketKey={`${item.chainId}:${item.tokenAddress}`}
-                    resolution={chartResolution}
-                    onResolutionChange={(next) => setChartResolution(clampImportResolution(next) as UnifiedChartResolution)}
-                    denomination="USD"
-                    historyReady
-                    loading={false}
-                    error={null}
-                  />
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px] xl:gap-6">
+        <div className="min-w-0 flex flex-col gap-4">
+          {/* About + metrics card, fixed above the tabs. */}
+          <section aria-label="About" className={`${cp.card} flex flex-col gap-4 p-4 md:p-5`} data-project-profile="true">
+            {ownerVerified && !ownerConnected ? <span className="text-xs text-mw-muted">Connect the verified project wallet to edit.</span> : null}
+            {editing && canEdit ? (
+            <div className="space-y-4" data-owner-profile-editor="true">
+              <div>
+                <label htmlFor="import-description" className={cp.label}>Description</label>
+                <Textarea id="import-description" className="mt-2 border-mw-edge bg-mw-input text-mw-text" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1200} />
+              </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <label htmlFor="import-website" className={cp.label}>Website</label>
+                  <Input id="import-website" className="mt-2 h-11 border-mw-edge bg-mw-input text-mw-text" value={website} onChange={(e) => setWebsite(e.target.value)} />
                 </div>
-              </TabsContent>
-              <TabsContent value="trades" className="mt-0 space-y-3">
-                <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                  <div className="rounded-xl border border-border bg-muted/20 px-3 py-2"><p className="text-[10px] text-muted-foreground uppercase">Price</p><p className="mt-0.5 font-retro text-sm">{formatUsd(profile?.priceUsd)}</p></div>
-                  <div className="rounded-xl border border-border bg-muted/20 px-3 py-2"><p className="text-[10px] text-muted-foreground uppercase">Market cap</p><p className="mt-0.5 font-retro text-sm">{formatUsd(profile?.marketCapUsd)}</p></div>
-                  <div className="rounded-xl border border-border bg-muted/20 px-3 py-2"><p className="text-[10px] text-muted-foreground uppercase">Liquidity</p><p className="mt-0.5 font-retro text-sm">{formatUsd(profile?.liquidityUsd)}</p></div>
-                  <div className="rounded-xl border border-border bg-muted/20 px-3 py-2"><p className="text-[10px] text-muted-foreground uppercase">24h volume</p><p className="mt-0.5 font-retro text-sm">{formatUsd(profile?.volume24hUsd)}</p></div>
+                <div>
+                  <label htmlFor="import-x" className={cp.label}>X</label>
+                  <Input id="import-x" className="mt-2 h-11 border-mw-edge bg-mw-input text-mw-text" value={xUrl} onChange={(e) => setXUrl(e.target.value)} />
                 </div>
-                <ImportedTradesTable
-                  chainId={item.chainId}
-                  tokenAddress={item.tokenAddress}
-                  emptyState={<p className="text-sm text-muted-foreground">Trades appear here once this pool is indexed. {marketDexUrl ? <a href={marketDexUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">Open on DEX</a> : null}{explorerUrl ? <> · <a href={explorerUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">Explorer</a></> : null}</p>}
+                <div>
+                  <label htmlFor="import-telegram" className={cp.label}>Telegram</label>
+                  <Input id="import-telegram" className="mt-2 h-11 border-mw-edge bg-mw-input text-mw-text" value={telegramUrl} onChange={(e) => setTelegramUrl(e.target.value)} />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" className={`${cp.btn} border-mw-accent bg-mw-accent text-[#140A02] hover:bg-[#FF8F3D] hover:text-[#140A02]`} onClick={() => void saveProfile()} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}SAVE PROJECT</Button>
+                <Button type="button" variant="outline" className={cp.btn} onClick={() => setEditing(false)} disabled={saving}>CANCEL</Button>
+              </div>
+            </div>
+            ) : (
+            <p className="m-0 max-w-[70ch] whitespace-pre-wrap break-words text-base leading-relaxed text-mw-text" data-project-description="true">{item.description || "No description added yet."}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-2" data-project-socials="true">
+              {websiteHref ? <a href={websiteHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Website</a> : <span className={`${cp.chip} text-mw-muted`}>Website —</span>}
+              {xHref ? <a href={xHref} target="_blank" rel="noreferrer" className={cp.chipButton}>X</a> : <span className={`${cp.chip} text-mw-muted`}>X —</span>}
+              {telegramHref ? <a href={telegramHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Telegram</a> : <span className={`${cp.chip} text-mw-muted`}>Telegram —</span>}
+              <button type="button" onClick={() => void copyIdentity()} className={`${cp.chipButton} max-w-full`} data-project-address="true" title={`Copy ${identityLabel}`}>
+                <Copy className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span className="text-mw-muted">{identityLabel}</span>
+                <span className="truncate font-mw-mono">{item.tokenAddress}</span>
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-4 border-t border-mw-border pt-4 md:grid-cols-4">
+              <div className="min-w-0"><p className={cp.label}>Price</p><p className={cp.metricValue}>{formatUsd(profile?.priceUsd)}</p></div>
+              <div className="min-w-0"><p className={cp.label}>Market cap</p><p className={cp.metricValue}>{formatUsd(profile?.marketCapUsd)}</p></div>
+              <div className="min-w-0"><p className={cp.label}>Liquidity</p><p className={cp.metricValue}>{formatUsd(profile?.liquidityUsd)}</p></div>
+              <div className="min-w-0"><p className={cp.label}>24h volume</p><p className={cp.metricValue}>{formatUsd(profile?.volume24hUsd)}</p></div>
+            </div>
+          </section>
+
+          <section aria-label="Chart" className={`${cp.card} flex flex-col gap-2 p-3`}>
+            {chart.emptyNote ? <p className="m-0 px-1 text-xs text-mw-muted">{chart.emptyNote}</p> : null}
+            <div className="h-[320px] md:h-[420px]">
+              <UnifiedMarketChart
+                curvePoints={[]}
+                marketCandles={chart.candles}
+                marketState={chart.marketState as any}
+                chainId={item.chainId}
+                livePriceNative={livePriceNative}
+                liveMcapNative={liveMcapNative}
+                nativeUsdPrice={nativeUsd}
+                marketKey={`${item.chainId}:${item.tokenAddress}`}
+                resolution={chartResolution}
+                onResolutionChange={(next) => setChartResolution(clampImportResolution(next) as UnifiedChartResolution)}
+                denomination="USD"
+                historyReady
+                loading={false}
+                error={null}
+              />
+            </div>
+          </section>
+
+          <CoinTabs
+            trailing={
+              story ? (
+                <StoryEnterButton
+                  story={story}
+                  label="Story"
+                  className="mw-focus inline-flex h-[52px] shrink-0 items-center whitespace-nowrap border-b-[3px] border-transparent px-1 text-[15px] font-semibold text-mw-muted hover:text-mw-text"
                 />
-              </TabsContent>
-              <TabsContent value="comments" className="mt-0">
-                <TokenComments chainId={item.chainId} campaignAddress={item.tokenAddress} tokenAddress={item.tokenAddress} mode="comments" />
-              </TabsContent>
-            </Tabs>
-          </Card>
+              ) : null
+            }
+            tabs={[
+              {
+                value: "posts",
+                label: "Comments",
+                content: (
+                  <div className={`${cp.card} p-4`}>
+                    <TokenComments chainId={item.chainId} campaignAddress={item.tokenAddress} tokenAddress={item.tokenAddress} mode="comments" />
+                  </div>
+                ),
+              },
+              {
+                value: "trades",
+                label: "Trades",
+                content: (
+                  <div className={`${cp.card} p-4`}>
+                    <ImportedTradesTable
+                      chainId={item.chainId}
+                      tokenAddress={item.tokenAddress}
+                      emptyState={<p className="text-sm text-mw-muted">Trades appear here once this pool is indexed. {marketDexUrl ? <a href={marketDexUrl} target="_blank" rel="noreferrer" className="text-mw-accent-soft hover:underline">Open on DEX</a> : null}{explorerUrl ? <> · <a href={explorerUrl} target="_blank" rel="noreferrer" className="text-mw-accent-soft hover:underline">Explorer</a></> : null}</p>}
+                    />
+                  </div>
+                ),
+              },
+              {
+                value: "about",
+                label: "About",
+                content: (
+                  <div className="flex flex-col gap-4">
+                    <section className={`${cp.card} p-4 md:p-5`} data-import-arena-strip="true" data-import-competition-eligibility={competition.eligible ? "eligible" : "not-eligible"}>
+                      <h2 className={`${cp.title} m-0`}>Arena</h2>
+                      <Button type="button" className={`${cp.btn} mt-3`} data-challenge-this-coin="true" onClick={() => setChallengeOpen(true)}>
+                        <Swords className="h-4 w-4" />Challenge this coin
+                      </Button>
+                      {arenaItem.status === "scanning" ? (
+                        <p className="mt-2 text-sm text-mw-muted">Arena check running.</p>
+                      ) : competition.eligible && postGradFlags.arena ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button asChild variant="outline" className={cp.btn}><Link to="/warzone/battles">Battle Wall</Link></Button>
+                          <Button asChild variant="outline" className={cp.btn}><Link to="/war-room">War Room</Link></Button>
+                        </div>
+                      ) : reviewEligibleStatus ? (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-sm text-mw-muted">{competition.label}. Request a manual check if you believe the automatic result is wrong.</p>
+                          {canRequestReview && !arenaItem.reviewRequestedAt ? (
+                            <div className="max-w-xl" data-import-review-action="available">
+                              <Textarea value={reviewReason} onChange={(e) => setReviewReason(e.target.value)} maxLength={500} rows={3} className="resize-none border-mw-edge bg-mw-input text-mw-text" placeholder="Optional note for the reviewer." aria-label="Note for the reviewer" />
+                              <Button type="button" variant="outline" className={`${cp.btn} mt-2`} disabled={requestingReview} onClick={() => void handleRequestReview()}>
+                                {requestingReview ? <Loader2 className="h-4 w-4 animate-spin" /> : <SearchCheck className="h-4 w-4" />}
+                                REQUEST MANUAL CHECK
+                              </Button>
+                            </div>
+                          ) : arenaItem.reviewRequestedAt ? (
+                            <div className={`${cp.inset} p-3`} data-import-review-requested="true">
+                              <div className="font-mw-cond text-sm font-bold uppercase tracking-[0.08em] text-mw-text">MANUAL REVIEW REQUESTED</div>
+                              <p className="mt-1 text-xs text-mw-muted">
+                                Requested {formatReviewTimestamp(arenaItem.reviewRequestedAt)}. A manual review request does not approve this token or override current competition authority.
+                              </p>
+                              {arenaItem.reviewReason ? (
+                                <div className="mt-3 rounded-lg border border-mw-border bg-mw-surface p-2">
+                                  <div className={cp.label}>Submitted note</div>
+                                  <p className="mt-1 whitespace-pre-wrap break-words text-xs text-mw-muted">{arenaItem.reviewReason}</p>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-sm text-mw-muted">{competition.label}</p>
+                      )}
+                    </section>
+                  </div>
+                ),
+              },
+            ]}
+          />
         </div>
 
-        <div className="min-w-0 flex flex-col gap-3">
-          <section className="mwz-hud-frame p-4 space-y-3" data-imported-trade-panel="true">
-            <div className="font-retro text-sm text-foreground">Trade</div>
+        <aside className="flex min-w-0 flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)]">
+          <section aria-label="Trade" className={`${cp.card} space-y-3 p-4`} data-imported-trade-panel="true">
+            <div className={cp.title}>Trade</div>
             {tradingBlocked ? (
-              <p className="text-sm text-muted-foreground">Trading is unavailable while the security scan reports a honeypot or blocked transfer.</p>
+              <p className="text-sm text-mw-muted">Trading is unavailable while the security scan reports a honeypot or blocked transfer.</p>
             ) : (
               <ImportedTradePanel item={arenaItem} />
             )}
           </section>
           {postGradFlags.arena ? (
-            <Card className="bg-card/30 rounded-2xl border border-border p-4">
-              <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" />
+            <section aria-label="UpVote" className={`${cp.card} p-4`}>
+              <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" className="h-11 rounded-[10px] px-4 text-[15px]" />
               {crypticPumpListing?.listingUrl ? (
                 <CrypticPumpBadge listingUrl={crypticPumpListing.listingUrl} className="mt-3" />
               ) : canEdit ? (
@@ -535,106 +648,18 @@ export default function ImportedTokenPage({
                   onListed={setCrypticPumpListing}
                 />
               ) : null}
-            </Card>
+            </section>
           ) : null}
           {warRoomOpen ? (
-            <Card className="bg-card/30 rounded-2xl border border-border p-4">
-              <h3 className="text-sm font-semibold">War Room</h3>
-              <p className="text-[11px] text-muted-foreground mb-3">Live campaign chat</p>
+            <section aria-label="War Room" className={`${cp.card} p-4`}>
+              <h3 className={`${cp.title} m-0`}>War Room</h3>
+              <p className="text-xs text-mw-muted mb-3">Live campaign chat</p>
               <TokenWarRoom chainId={item.chainId} campaignAddress={item.tokenAddress} creatorAddress={ownerWallet || null} />
-            </Card>
+            </section>
           ) : null}
-
-      <section className="mwz-hud-frame p-5" data-project-profile="true">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="font-retro text-sm text-foreground">PROJECT</h2>
-          {ownerVerified && !ownerConnected ? <span className="text-xs text-muted-foreground">Connect the verified project wallet to edit.</span> : null}
-        </div>
-        {editing && canEdit ? (
-          <div className="mt-4 space-y-4" data-owner-profile-editor="true">
-            <div>
-              <label htmlFor="import-description" className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Description</label>
-              <Textarea id="import-description" className="mt-2" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1200} />
-            </div>
-            <div className="grid gap-4 md:grid-cols-3">
-              <div>
-                <label htmlFor="import-website" className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Website</label>
-                <Input id="import-website" className="mt-2" value={website} onChange={(e) => setWebsite(e.target.value)} />
-              </div>
-              <div>
-                <label htmlFor="import-x" className="text-xs uppercase tracking-[0.12em] text-muted-foreground">X</label>
-                <Input id="import-x" className="mt-2" value={xUrl} onChange={(e) => setXUrl(e.target.value)} />
-              </div>
-              <div>
-                <label htmlFor="import-telegram" className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Telegram</label>
-                <Input id="import-telegram" className="mt-2" value={telegramUrl} onChange={(e) => setTelegramUrl(e.target.value)} />
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button type="button" onClick={() => void saveProfile()} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}SAVE PROJECT</Button>
-              <Button type="button" variant="outline" onClick={() => setEditing(false)} disabled={saving}>CANCEL</Button>
-            </div>
-          </div>
-        ) : (
-          <div className="mt-4 space-y-4 text-sm">
-            <div>
-              <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Description</div>
-              <p className="mt-1 whitespace-pre-wrap text-foreground" data-project-description="true">{item.description || "No description added yet."}</p>
-            </div>
-            <div className="flex flex-wrap gap-x-5 gap-y-2" data-project-socials="true">
-              {websiteHref ? <a href={websiteHref} target="_blank" rel="noreferrer" className="text-accent hover:underline">Website</a> : <span className="text-muted-foreground">Website —</span>}
-              {xHref ? <a href={xHref} target="_blank" rel="noreferrer" className="text-accent hover:underline">X</a> : <span className="text-muted-foreground">X —</span>}
-              {telegramHref ? <a href={telegramHref} target="_blank" rel="noreferrer" className="text-accent hover:underline">Telegram</a> : <span className="text-muted-foreground">Telegram —</span>}
-            </div>
-          </div>
-        )}
-      </section>
-
-      <section className="mwz-hud-frame p-5" data-import-arena-strip="true" data-import-competition-eligibility={competition.eligible ? "eligible" : "not-eligible"}>
-        <h2 className="font-retro text-sm text-foreground">Arena</h2>
-        <Button type="button" size="sm" className="mt-3 font-retro" data-challenge-this-coin="true" onClick={() => setChallengeOpen(true)}>
-          <Swords className="h-4 w-4" />Challenge this coin
-        </Button>
-        {arenaItem.status === "scanning" ? (
-          <p className="mt-2 text-sm text-muted-foreground">Arena check running.</p>
-        ) : competition.eligible && postGradFlags.arena ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button asChild size="sm" variant="outline" className="font-retro"><Link to="/warzone/battles">Battle Wall</Link></Button>
-            <Button asChild size="sm" variant="outline" className="font-retro"><Link to="/war-room">War Room</Link></Button>
-          </div>
-        ) : reviewEligibleStatus ? (
-          <div className="mt-3 space-y-2">
-            <p className="text-sm text-muted-foreground">{competition.label}. Request a manual check if you believe the automatic result is wrong.</p>
-            {canRequestReview && !arenaItem.reviewRequestedAt ? (
-              <div className="max-w-xl" data-import-review-action="available">
-                <Textarea value={reviewReason} onChange={(e) => setReviewReason(e.target.value)} maxLength={500} rows={3} className="resize-none" placeholder="Optional note for the reviewer." />
-                <Button type="button" size="sm" variant="outline" className="mt-2 font-retro" disabled={requestingReview} onClick={() => void handleRequestReview()}>
-                  {requestingReview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <SearchCheck className="mr-2 h-4 w-4" />}
-                  REQUEST MANUAL CHECK
-                </Button>
-              </div>
-            ) : arenaItem.reviewRequestedAt ? (
-              <div className="rounded-md border border-white/10 bg-black/20 p-3" data-import-review-requested="true">
-                <div className="font-retro text-xs uppercase tracking-[0.12em] text-foreground">MANUAL REVIEW REQUESTED</div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Requested {formatReviewTimestamp(arenaItem.reviewRequestedAt)}. A manual review request does not approve this token or override current competition authority.
-                </p>
-                {arenaItem.reviewReason ? (
-                  <div className="mt-3 rounded border border-white/10 bg-black/20 p-2">
-                    <div className="text-[10px] uppercase tracking-[0.12em] text-white/45">Submitted note</div>
-                    <p className="mt-1 whitespace-pre-wrap break-words text-xs text-white/70">{arenaItem.reviewReason}</p>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <p className="mt-2 text-sm text-muted-foreground">{competition.label}</p>
-        )}
-      </section>
-        </div>
+        </aside>
       </div>
-      <p className="text-xs text-muted-foreground">{nativeUnit} quotes use the chain native. Project verification is separate from financial and competition eligibility.</p>
+      <p className="m-0 text-xs text-mw-muted">{nativeUnit} quotes use the chain native. Project verification is separate from financial and competition eligibility.</p>
       <ChallengeCoinModal
         open={challengeOpen}
         onOpenChange={setChallengeOpen}

@@ -54,31 +54,56 @@ type Props = {
 const USD_PRESETS = [25, 100, 250];
 const PCT_PRESETS = [25, 50, 100];
 
+/**
+ * Sits right above the app's bottom tab bar (`--mwz-footer-offset`, 0 where there is none).
+ * Connected + `onOpenSell`: green Buy and red Sell, both opening the same trade sheet.
+ */
 export function MobileTradeDock({
   connected,
   connectLabel,
   onConnect,
   onOpenBuy,
+  onOpenSell,
 }: {
   connected: boolean;
   connectLabel: string;
   onConnect: () => void;
   onOpenBuy: () => void;
+  onOpenSell?: () => void;
 }) {
   const cta = mobileDockCta({ connected, connectLabel });
+  const split = cta.kind !== "connect" && Boolean(onOpenSell);
   return (
     <div
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-background/95 px-3 pt-2 backdrop-blur xl:hidden"
-      style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+      className="fixed inset-x-0 bottom-[var(--mwz-footer-offset,0px)] z-40 border-t border-mw-border bg-mw-ground px-3 py-2.5 font-mw-body xl:hidden"
       data-mobile-trade-dock="true"
     >
-      <Button
-        type="button"
-        className="mwz-button mwz-button-orange h-12 w-full font-retro text-base"
-        onClick={cta.kind === "connect" ? onConnect : onOpenBuy}
-      >
-        {cta.label}
-      </Button>
+      {split ? (
+        <div className="grid grid-cols-2 gap-2.5">
+          <button
+            type="button"
+            className="mw-focus inline-flex min-h-[50px] items-center justify-center rounded-[10px] bg-mw-buy text-[17px] font-semibold text-[#04140A]"
+            onClick={onOpenBuy}
+          >
+            {cta.label}
+          </button>
+          <button
+            type="button"
+            className="mw-focus inline-flex min-h-[50px] items-center justify-center rounded-[10px] bg-mw-sell text-[17px] font-semibold text-[#FFF1F3]"
+            onClick={onOpenSell}
+          >
+            Sell
+          </button>
+        </div>
+      ) : (
+        <Button
+          type="button"
+          className="mw-focus h-[50px] w-full rounded-[10px] border border-mw-accent bg-mw-accent text-[17px] font-semibold text-[#140A02] hover:bg-[#FF8F3D]"
+          onClick={cta.kind === "connect" ? onConnect : onOpenBuy}
+        >
+          {cta.label}
+        </Button>
+      )}
     </div>
   );
 }

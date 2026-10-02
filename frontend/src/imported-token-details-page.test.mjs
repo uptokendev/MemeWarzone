@@ -142,9 +142,10 @@ test("imported official page mounts trading, claim banner and arena strip", () =
   assert.match(page, /data-import-arena-strip="true"/);
   assert.match(page, /Project verification is separate from financial and competition eligibility/);
   assert.match(page, /REQUEST MANUAL CHECK/);
-  assert.match(page, />Chart</);
-  assert.match(page, />Trades</);
-  assert.match(page, />Comments</);
+  // UI redesign: the chart is a fixed card above the tabs; Trades and Comments are tabs.
+  assert.match(page, /aria-label="Chart"[\s\S]*?<UnifiedMarketChart/);
+  assert.match(page, /label: "Trades"[\s\S]*?<ImportedTradesTable/);
+  assert.match(page, /label: "Comments"[\s\S]*?<TokenComments/);
   assert.match(page, /TokenComments/);
   assert.match(page, /ArenaUpvoteDialog/);
   assert.match(page, /Challenge this coin/);
