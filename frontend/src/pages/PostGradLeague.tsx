@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Crown } from "lucide-react";
 import { BattleVsMark } from "@/components/arena/BattleWallVs";
@@ -107,6 +107,42 @@ const lbl = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text
 const chip = "inline-flex h-7 items-center rounded-full border px-3 text-[13px] font-semibold";
 const button = "mw-focus inline-flex min-h-10 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60";
 
+/** The MWL season is a calendar month (UTC); it ends at 00:00 UTC on the 1st of the next month. */
+function seasonMonthEnd(season: { label?: string; month?: number }) {
+  const fromLabel = String(season.label || "").match(/(\d{4})-(\d{2})/);
+  const now = new Date();
+  const year = fromLabel ? Number(fromLabel[1]) : now.getUTCFullYear();
+  const month = Number(season.month || (fromLabel ? Number(fromLabel[2]) : now.getUTCMonth() + 1));
+  return Date.UTC(year, month, 1);
+}
+
+function SeasonCountdown({ end }: { end: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const left = Math.max(0, Math.floor((end - now) / 1000));
+  const parts: Array<[string, number]> = [["days", Math.floor(left / 86400)], ["hrs", Math.floor((left % 86400) / 3600)], ["min", Math.floor((left % 3600) / 60)], ["sec", left % 60]];
+  const next = new Date(end).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  return (
+    <div data-mwl-season-countdown="true" className="w-full lg:w-[300px]">
+      <div className="mb-1.5 flex items-baseline justify-between gap-2">
+        <span className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{left > 0 ? "Month ends in" : "Month ended"}</span>
+        <span className="text-xs text-mw-muted">{left > 0 ? `Next month opens ${next} 00:00 UTC` : `Closed ${next} 00:00 UTC`}</span>
+      </div>
+      <div className="grid grid-cols-4 gap-2 text-center">
+        {parts.map(([unit, value]) => (
+          <div key={unit} className="rounded-[10px] border border-mw-border bg-mw-input py-1.5">
+            <div className="font-mw-mono text-xl font-bold">{String(value).padStart(unit === "days" ? 1 : 2, "0")}</div>
+            <div className="font-mw-cond text-[11px] font-semibold uppercase tracking-[0.08em] text-mw-muted">{unit}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const PostGradLeague = () => {
   const { season, source, ownedTokenIds, chainId: leagueChainId } = useArenaLeagueFeed();
   const [tab, setTab] = useState<LeagueTab>("regular");
@@ -166,9 +202,12 @@ const PostGradLeague = () => {
             {headerMeta ? "Graduated coins earn points in ranked battles. The top 8 play the quarterly finals." : "The monthly fight for Warzone supremacy"}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-col gap-3 lg:w-auto lg:items-end">
+          <SeasonCountdown end={seasonMonthEnd(season)} />
+          <div className="flex flex-wrap items-center gap-2">
           <WarzoneLeagueHowItWorks className={`${button} min-h-9 px-3`} />
           <ChainFeedSwitch />
+          </div>
         </div>
       </section>
 
