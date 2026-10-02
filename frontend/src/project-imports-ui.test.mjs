@@ -122,7 +122,8 @@ test("verified project owner is the only profile and replacement-image edit auth
 });
 
 test("public imported project uses the official token layout with trading and arena status", () => {
-  for (const marker of [/data-imported-badge="true"/, /data-owner-status-pill="verified"/, /data-project-image="true"/, /data-project-name="true"/, /data-project-ticker="true"/, /data-project-description="true"/, /data-project-socials="true"/, /data-project-share="true"/, /ImportedTradePanel/, /data-import-arena-strip="true"/]) assert.match(importedPage, marker);
+  // Founder 2026-10-02: no IMPORTED chip, ownership pill or description on the page (launched-coin parity).
+  for (const marker of [/data-project-image="true"/, /data-project-name="true"/, /data-project-ticker="true"/, /data-project-socials="true"/, /data-project-share="true"/, /ImportedTradePanel/, /data-import-arena-strip="true"/]) assert.match(importedPage, marker);
   assert.match(importedPage, /Project verification is separate from financial and competition eligibility/);
   assert.match(coinsPage, /ProjectImportPanel/);
   assert.doesNotMatch(coinsPage, /title="Imported coins"/);

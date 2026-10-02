@@ -50,21 +50,22 @@ test("completed imported page renders project identity, profile and share fields
   assert.match(page, /data-project-image="true"/);
   assert.match(page, /data-project-name="true"/);
   assert.match(page, /data-project-ticker="true"/);
-  assert.match(page, /data-project-description="true"/);
+  // Founder 2026-10-02: the imported page looks exactly like a launched coin's. No description on
+  // the page (it lives in the Story) and no IMPORTED chip; the owner editor keeps the description.
+  assert.doesNotMatch(page, /data-project-description="true"/);
+  assert.match(page, /id="import-description"/);
   assert.match(page, /data-project-socials="true"/);
   assert.match(page, /data-project-share="true"/);
-  assert.match(page, /data-imported-badge="true"/);
+  assert.match(page, /<TokenShareCardModal/);
+  assert.doesNotMatch(page, /data-imported-badge="true"/);
 });
 
-test("topbar verification pill derives only from authoritative project ownership state", () => {
+test("ownership authority still derives only from the project ownership state", () => {
+  // Founder 2026-10-02: no VERIFIED/UNVERIFIED or arena-admission pill in the header (a launched
+  // coin has none). Ownership still decides who may edit; the claim banner covers unverified coins.
   assert.match(page, /ownerVerified = item.ownershipStatus === "ownership_verified"/);
-  assert.match(page, /data-owner-status-pill="verified"/);
-  assert.match(page, /> VERIFIED<\/span>/);
-  assert.match(page, /data-owner-status-pill="unverified"/);
-  assert.match(page, />UNVERIFIED<\/span>/);
-  assert.match(page, /border-orange-400\/40 bg-orange-500\/10/);
-  assert.match(page, /border-emerald-400\/40 bg-emerald-500\/10/);
-  assert.match(page, /admissionPill\(item\.arenaStatus\)/);
+  assert.match(page, /canEdit = ownerVerified && ownerConnected/);
+  assert.doesNotMatch(page, /data-owner-status-pill=/);
 });
 
 test("verified project controller can manage profile and image but registrar identity is not edit authority", () => {
@@ -150,7 +151,9 @@ test("imported official page mounts trading, claim banner and arena strip", () =
   assert.match(page, /ArenaUpvoteDialog/);
   assert.match(page, /Challenge this coin/);
   assert.match(page, /Trades appear here once this pool is indexed/);
-  assert.match(page, /Imported token — no bonding curve/);
+  // Founder 2026-10-02: launched-style meta line (holders) and the DEX venue in the about card.
+  assert.match(page, /holders\n/);
+  assert.match(page, /Trading on \{dexVenue\}/);
 });
 
 test("imports remain independent from post-grad Arena flags", () => {

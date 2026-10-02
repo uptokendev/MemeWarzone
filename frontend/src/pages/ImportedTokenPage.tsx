@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Copy, Edit3, Flag, ImagePlus, Loader2, SearchCheck, Share2, ShieldCheck, Star, Swords } from "lucide-react";
+import { Copy, Edit3, Flag, ImagePlus, Loader2, SearchCheck, Share2, Star, Swords } from "lucide-react";
 import { toast } from "sonner";
 
 import { StoryEnterButton } from "@/components/story/StoryEnterButton";
@@ -10,7 +10,8 @@ import { CoinBanner, CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components
 import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { ImportedTradesTable } from "@/components/arena/ImportedTradesTable";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
+import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
+import { MobileTradeDock, useXlUp } from "@/components/token/MobileTradeSheet";
 import { TokenComments } from "@/components/token/TokenComments";
 import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { UnifiedMarketChart, type UnifiedChartResolution } from "@/components/token/UnifiedMarketChart";
@@ -22,7 +23,6 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { ContentContainer } from "@/components/layout/ContentContainer";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
 import { postGradFlags } from "@/features/postgrad/config";
@@ -34,7 +34,6 @@ import {
 } from "@/lib/arena/importAuditPresentation.mjs";
 import {
   IMPORT_CHART_DEFAULT_RESOLUTION,
-  admissionPill,
   clampImportResolution,
   importTradingBlocked,
   importUsdCandlesToChart,
@@ -84,8 +83,17 @@ function safeExternalUrl(value: string | null | undefined) {
 function formatUsd(value: number | null | undefined) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
+  if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(1)}K`;
   return `$${n.toFixed(2)}`;
+}
+
+/** A token price keeps its significant digits ($0.0000196, not $0.00). */
+function formatUsdPrice(value: number | null | undefined) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  if (n === 0 || Math.abs(n) >= 1) return formatUsd(n);
+  return `$${n.toPrecision(3).replace(/0+$/, "")}`;
 }
 
 function tokenExplorerUrl(chainId: number, token: string) {
@@ -155,6 +163,10 @@ export default function ImportedTokenPage({
   const [crypticPumpListing, setCrypticPumpListing] = useState<CrypticPumpListingData | null>(null);
   const [activityTab, setActivityTab] = useState<"chart" | "trades" | "comments">("chart");
   const [challengeOpen, setChallengeOpen] = useState(false);
+  const [shareCardOpen, setShareCardOpen] = useState(false);
+  const [mobileTrade, setMobileTrade] = useState<"buy" | "sell" | null>(null);
+  const isXlUp = useXlUp();
+  const logoRef = useRef<HTMLImageElement | null>(null);
   const { price: nativeUsd } = useNativeUsdPrice(item.chainId);
   const { story } = useStory(item.chainId, item.tokenAddress);
 
@@ -239,7 +251,6 @@ export default function ImportedTokenPage({
   const telegramHref = useMemo(() => safeExternalUrl(item.telegramUrl), [item.telegramUrl]);
   const arenaItem = asArenaItem(item);
   const competition = presentImportCompetitionEligibility(arenaItem);
-  const pill = admissionPill(item.arenaStatus);
   const candles = useMemo(() => importUsdCandlesToChart(usdCandles, nativeUsd), [nativeUsd, usdCandles]);
   const chart = presentImportChart(profile, candles, item.chainId, item.tokenAddress, candleState);
   const tradingBlocked = importTradingBlocked(item.scan, null);
@@ -253,8 +264,18 @@ export default function ImportedTokenPage({
   const explorerUrl = tokenExplorerUrl(item.chainId, item.tokenAddress);
   const marketDexUrl = dexLink(item.chainId, item.tokenAddress);
   const ownerDisplay = (ownerProfile?.displayName && ownerProfile.displayName.trim()) || (ownerWallet ? `${ownerWallet.slice(0, 4)}…${ownerWallet.slice(-4)}` : "");
-  const ctaTabsTriggerClass =
-    "rounded-xl border px-3 py-2 font-retro text-xs md:text-sm transition-colors bg-transparent border-orange-400/40 text-orange-300 hover:bg-orange-500 hover:text-white hover:border-orange-500 data-[state=active]:bg-orange-500 data-[state=active]:text-white data-[state=active]:border-orange-500 data-[state=active]:shadow-lg";
+  // Founder 2026-10-02: an imported coin's page looks like a launched coin's; only the DEX underneath differs.
+  const dexVenue = solana ? "Jupiter" : item.chainId === 4663 ? "Uniswap" : "PancakeSwap";
+  const holdersLabel = profile?.holders != null ? Number(profile.holders).toLocaleString() : "—";
+  const shortAddress = item.tokenAddress.length > 12 ? `${item.tokenAddress.slice(0, 4)}…${item.tokenAddress.slice(-4)}` : item.tokenAddress;
+  const openWalletModal = () => {
+    try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch { /* ignore */ }
+  };
+  const tradePanel = tradingBlocked ? (
+    <p className="m-0 text-sm text-mw-muted">Trading is unavailable while the security scan reports a honeypot or blocked transfer.</p>
+  ) : (
+    <ImportedTradePanel item={arenaItem} />
+  );
 
   const signAction = async (action: string, extraLines: string[] = []) => {
     if (!connectedWallet) throw new Error("Connect a wallet first.");
@@ -269,20 +290,6 @@ export default function ImportedTokenPage({
       });
     }
     return signWalletAction({ action, walletAddress: connectedWallet, chainId: item.chainId, extraLines, signer: wallet.signer });
-  };
-
-  const share = async () => {
-    const url = window.location.href;
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: `${item.name || item.symbol || "Imported project"} on MemeWarzone`, url });
-        return;
-      }
-      await navigator.clipboard.writeText(url);
-      toast.success("Project link copied.");
-    } catch (error: any) {
-      if (String(error?.name || "") !== "AbortError") toast.error("Could not share the project link.");
-    }
   };
 
   const copyIdentity = async () => {
@@ -374,21 +381,15 @@ export default function ImportedTokenPage({
     }
   };
 
-  const ownershipPill = ownerVerified ? (
-    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-200" data-owner-status-pill="verified"><ShieldCheck className="h-3.5 w-3.5" /> VERIFIED</span>
-  ) : (
-    <span className="inline-flex items-center rounded-full border border-orange-400/40 bg-orange-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-orange-200" data-owner-status-pill="unverified">UNVERIFIED</span>
-  );
-
   return (
-    <ContentContainer className="flex flex-col gap-4 px-1 pb-12 pt-2 font-mw-body text-mw-text" data-imported-project-page="true" data-imported-token-page="true">
+    <div className="w-full flex flex-col gap-4 px-3 md:px-6 pb-24 xl:pb-0 font-mw-body text-mw-text" data-imported-project-page="true" data-imported-token-page="true">
       {/* Header: banner, logo, name, chips, owner line, actions (UI redesign phase 1). */}
       <section aria-label={item.name || item.symbol || "Imported project"} className="flex flex-col">
         <CoinBanner chainId={item.chainId} token={item.tokenAddress} editPath={`/token/${encodeURIComponent(item.tokenAddress)}/edit?chainId=${item.chainId}`} />
         <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-6 md:px-2">
           <div className="relative -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-[18px] border-4 border-mw-ground bg-[#2A1609] md:-mt-16 md:h-[140px] md:w-[140px] md:rounded-3xl">
             {item.imageUrl ? (
-              <img src={item.imageUrl} alt={`${item.name || item.symbol || "Imported project"} logo`} className="h-full w-full object-cover" data-project-image="true" />
+              <img ref={logoRef} src={item.imageUrl} alt={`${item.name || item.symbol || "Imported project"} logo`} className="h-full w-full object-cover" data-project-image="true" />
             ) : (
               <div className="flex h-full w-full items-center justify-center font-mw-brand text-sm text-[#FF9A4D]">${item.symbol || "TOKEN"}</div>
             )}
@@ -406,10 +407,8 @@ export default function ImportedTokenPage({
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="m-0 break-words font-mw-cond text-3xl font-bold leading-tight text-mw-text md:text-[40px]" data-project-name="true">{item.name || item.symbol || "Imported project"}</h1>
               {item.symbol ? <span className={`${cp.chip} font-mw-mono`} data-project-ticker="true">${item.symbol}</span> : null}
-              <span className={cp.chip} data-project-chain="true">{chainLabel}</span>
-              <span className={cp.chipAccent} data-imported-badge="true">IMPORTED</span>
-              {ownershipPill}
-              <TacticalTag label={pill.label} tone={pill.tone as "success" | "default"} />
+              <span className={cp.chip} data-project-chain="true">{chainLabel === "BNB" ? "BNB Chain" : chainLabel}</span>
+              <span className={cp.chipGood}>DEX</span>
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-sm text-mw-muted">
               {ownerWallet ? (
@@ -424,27 +423,51 @@ export default function ImportedTokenPage({
                   </Link>
                 </span>
               ) : null}
-              <span>Imported token — no bonding curve</span>
+              <span className="whitespace-nowrap">
+                <span className="font-bold text-mw-text">{holdersLabel}</span> holders
+              </span>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 md:justify-end md:pb-2">
             {canClaim ? <Button type="button" className={`${cp.btn} border-mw-accent bg-mw-accent text-[#140A02] hover:bg-[#FF8F3D] hover:text-[#140A02]`} onClick={onClaimMemecoin} data-project-claim-action="true">CLAIM MEMECOIN</Button> : null}
             {canEdit ? <Button type="button" variant="outline" className={cp.btn} onClick={() => setEditing((v) => !v)} data-owner-edit-controls="true"><Edit3 className="h-4 w-4" />EDIT</Button> : null}
-            <Button type="button" variant="secondary" className={cp.btn} onClick={() => void toggleFollow()} disabled={followBusy || !connectedWallet} aria-label={following ? "Unfollow" : "Follow"} aria-pressed={following}>
+            <button type="button" className={cp.btn} onClick={() => void toggleFollow()} disabled={followBusy || !connectedWallet} aria-label={following ? "Unfollow" : "Follow"} aria-pressed={following}>
               <Star className={following ? "h-[18px] w-[18px] text-mw-accent fill-mw-accent" : "h-[18px] w-[18px] text-mw-muted"} />
               {following ? "Following" : "Follow"}
-            </Button>
-            <Button type="button" variant="secondary" className={cp.btn} onClick={() => setChallengeOpen(true)}>
+            </button>
+            {postGradFlags.arena ? (
+              <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonVariant="secondary" buttonSize="sm" className="h-11 flex-shrink-0 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:border-mw-accent hover:bg-mw-accent hover:text-[#140A02]" />
+            ) : null}
+            <button type="button" className={cp.btn} onClick={() => setChallengeOpen(true)}>
               <Swords className="h-[18px] w-[18px]" aria-hidden="true" />Challenge
-            </Button>
-            <Button type="button" variant="outline" className={cp.btn} onClick={() => void share()} data-project-share="true"><Share2 className="h-4 w-4" />Share</Button>
+            </button>
+            {story ? <StoryEnterButton story={story} label="Story" className={cp.btn} /> : null}
+            <button type="button" className={cp.btn} onClick={() => setShareCardOpen(true)} data-project-share="true">
+              <Share2 className="h-[18px] w-[18px]" aria-hidden="true" />Share card
+            </button>
             <Link
               className="mw-focus inline-flex min-h-11 items-center gap-1.5 rounded-[10px] px-2.5 text-sm font-semibold text-mw-muted hover:bg-mw-raised hover:text-mw-text"
               to={buildAbuseReportPath({ entityType: "token", reportedTokenAddress: item.tokenAddress, reportedWallet: ownerWallet, reportedUrl: typeof window !== "undefined" ? window.location.href : `/token/${item.tokenAddress}` })}
             >
               <Flag className="h-4 w-4" aria-hidden="true" />Report
             </Link>
+            {!postGradFlags.arena ? null : crypticPumpListing?.listingUrl ? (
+              <CrypticPumpBadge listingUrl={crypticPumpListing.listingUrl} className="flex-shrink-0 self-center" />
+            ) : canEdit ? (
+              <CrypticPumpListButton
+                className="flex-shrink-0 self-center"
+                chainId={item.chainId}
+                campaignAddress={item.tokenAddress}
+                tokenAddress={item.tokenAddress}
+                name={item.name || null}
+                ticker={item.symbol || null}
+                website={item.website || null}
+                creatorWallet={String(connectedWallet || "")}
+                listing={crypticPumpListing}
+                onListed={setCrypticPumpListing}
+              />
+            ) : null}
           </div>
         </div>
       </section>
@@ -457,15 +480,15 @@ export default function ImportedTokenPage({
         </section>
       ) : null}
 
-      {!item.imageUrl ? (
-        <p className="m-0 text-sm text-mw-muted">Add a project image from the owner tools when you are verified. The page stays public without one.</p>
+      {!item.imageUrl && canEdit ? (
+        <p className="m-0 text-sm text-mw-muted">Add a project image from the owner tools. The page stays public without one.</p>
       ) : null}
 
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px] xl:gap-6">
         <div className="min-w-0 flex flex-col gap-4">
           {/* About + metrics card, fixed above the tabs. */}
-          <section aria-label="About" className={`${cp.card} flex flex-col gap-4 p-4 md:p-5`} data-project-profile="true">
-            {ownerVerified && !ownerConnected ? <span className="text-xs text-mw-muted">Connect the verified project wallet to edit.</span> : null}
+          {/* Founder 2026-10-02: no description here (it lives in the Story); tags follow the CA. */}
+          <section aria-label="About" className={`${cp.card} flex flex-col gap-3 p-4`} data-project-profile="true">
             {editing && canEdit ? (
             <div className="space-y-4" data-owner-profile-editor="true">
               <div>
@@ -491,26 +514,28 @@ export default function ImportedTokenPage({
                 <Button type="button" variant="outline" className={cp.btn} onClick={() => setEditing(false)} disabled={saving}>CANCEL</Button>
               </div>
             </div>
-            ) : (
-            <p className="m-0 max-w-[70ch] whitespace-pre-wrap break-words text-base leading-relaxed text-mw-text" data-project-description="true">{item.description || "No description added yet."}</p>
-            )}
+            ) : null}
             <div className="flex flex-wrap items-center gap-2" data-project-socials="true">
-              <CoinLinkSwap kind="website" chainId={item.chainId} token={item.tokenAddress} fallback={websiteHref ? <a href={websiteHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Website</a> : <span className={`${cp.chip} text-mw-muted`}>Website —</span>} />
-              <CoinLinkSwap kind="x" chainId={item.chainId} token={item.tokenAddress} fallback={xHref ? <a href={xHref} target="_blank" rel="noreferrer" className={cp.chipButton}>X</a> : <span className={`${cp.chip} text-mw-muted`}>X —</span>} />
-              <CoinLinkSwap kind="telegram" chainId={item.chainId} token={item.tokenAddress} fallback={telegramHref ? <a href={telegramHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Telegram</a> : <span className={`${cp.chip} text-mw-muted`}>Telegram —</span>} />
+              <CoinLinkSwap kind="website" chainId={item.chainId} token={item.tokenAddress} fallback={websiteHref ? <a href={websiteHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Website</a> : null} />
+              <CoinLinkSwap kind="x" chainId={item.chainId} token={item.tokenAddress} fallback={xHref ? <a href={xHref} target="_blank" rel="noreferrer" className={cp.chipButton}>X</a> : null} />
+              <CoinLinkSwap kind="telegram" chainId={item.chainId} token={item.tokenAddress} fallback={telegramHref ? <a href={telegramHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Telegram</a> : null} />
               <CoinLinkSwap kind="discord" chainId={item.chainId} token={item.tokenAddress} fallback={null} />
-              <button type="button" onClick={() => void copyIdentity()} className={`${cp.chipButton} max-w-full`} data-project-address="true" title={`Copy ${identityLabel}`}>
+              <button type="button" onClick={() => void copyIdentity()} className={cp.chipButton} data-project-address="true" title={`Copy ${identityLabel}`}>
                 <Copy className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                <span className="text-mw-muted">{identityLabel}</span>
-                <span className="truncate font-mw-mono">{item.tokenAddress}</span>
+                <span className="font-mw-mono">CA {shortAddress}</span>
               </button>
               <CoinTags chainId={item.chainId} token={item.tokenAddress} />
             </div>
-            <div className="grid grid-cols-2 gap-4 border-t border-mw-border pt-4 md:grid-cols-4">
-              <div className="min-w-0"><p className={cp.label}>Price</p><p className={cp.metricValue}>{formatUsd(profile?.priceUsd)}</p></div>
+            <div className="grid grid-cols-3 gap-3 border-t border-mw-border pt-3 md:grid-cols-5">
               <div className="min-w-0"><p className={cp.label}>Market cap</p><p className={cp.metricValue}>{formatUsd(profile?.marketCapUsd)}</p></div>
+              <div className="min-w-0"><p className={cp.label}>Price</p><p className={`${cp.metricValue} truncate`}>{formatUsdPrice(profile?.priceUsd)}</p></div>
+              <div className="min-w-0"><p className={cp.label}>Volume 24h</p><p className={cp.metricValue}>{formatUsd(profile?.volume24hUsd)}</p></div>
               <div className="min-w-0"><p className={cp.label}>Liquidity</p><p className={cp.metricValue}>{formatUsd(profile?.liquidityUsd)}</p></div>
-              <div className="min-w-0"><p className={cp.label}>24h volume</p><p className={cp.metricValue}>{formatUsd(profile?.volume24hUsd)}</p></div>
+              <div className="min-w-0"><p className={cp.label}>Holders</p><p className={cp.metricValue}>{holdersLabel}</p></div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+              <h3 className="m-0 text-sm font-normal text-mw-muted">Market</h3>
+              <span className="font-mw-mono text-mw-text">Trading on {dexVenue}</span>
             </div>
           </section>
 
@@ -537,15 +562,6 @@ export default function ImportedTokenPage({
           </section>
 
           <CoinTabs
-            trailing={
-              story ? (
-                <StoryEnterButton
-                  story={story}
-                  label="Story"
-                  className="mw-focus inline-flex h-[52px] shrink-0 items-center whitespace-nowrap border-b-[3px] border-transparent px-1 text-[15px] font-semibold text-mw-muted hover:text-mw-text"
-                />
-              ) : null
-            }
             tabs={[
               {
                 value: "posts",
@@ -627,35 +643,10 @@ export default function ImportedTokenPage({
         </div>
 
         <aside className="flex min-w-0 flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)]">
-          <section aria-label="Trade" className={`${cp.card} space-y-3 p-4`} data-imported-trade-panel="true">
-            <div className={cp.title}>Trade</div>
-            {tradingBlocked ? (
-              <p className="text-sm text-mw-muted">Trading is unavailable while the security scan reports a honeypot or blocked transfer.</p>
-            ) : (
-              <ImportedTradePanel item={arenaItem} />
-            )}
+          <section aria-label="Trade" className={`hidden xl:block ${cp.card} p-4`} data-imported-trade-panel="true">
+            <div className={`${cp.title} mb-3.5`}>Trade</div>
+            {isXlUp ? tradePanel : null}
           </section>
-          {postGradFlags.arena ? (
-            <section aria-label="UpVote" className={`${cp.card} p-4`}>
-              <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" className="h-11 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:border-mw-accent hover:bg-mw-accent hover:text-[#140A02]" />
-              {crypticPumpListing?.listingUrl ? (
-                <CrypticPumpBadge listingUrl={crypticPumpListing.listingUrl} className="mt-3" />
-              ) : canEdit ? (
-                <CrypticPumpListButton
-                  className="mt-3"
-                  chainId={item.chainId}
-                  campaignAddress={item.tokenAddress}
-                  tokenAddress={item.tokenAddress}
-                  name={item.name || null}
-                  ticker={item.symbol || null}
-                  website={item.website || null}
-                  creatorWallet={String(connectedWallet || "")}
-                  listing={crypticPumpListing}
-                  onListed={setCrypticPumpListing}
-                />
-              ) : null}
-            </section>
-          ) : null}
           {warRoomOpen ? (
             <section aria-label="War Room" className={`${cp.card} p-4`}>
               <h3 className={`${cp.title} m-0`}>War Room</h3>
@@ -666,6 +657,38 @@ export default function ImportedTokenPage({
         </aside>
       </div>
       <p className="m-0 text-xs text-mw-muted">{nativeUnit} quotes use the chain native. Project verification is separate from financial and competition eligibility.</p>
+      <MobileTradeDock
+        connected={Boolean(connectedWallet)}
+        connectLabel={solana ? "Connect SOL wallet" : item.chainId === 4663 ? "Connect Robinhood wallet" : "Connect BNB wallet"}
+        onConnect={openWalletModal}
+        onOpenBuy={() => setMobileTrade("buy")}
+        onOpenSell={() => setMobileTrade("sell")}
+      />
+      {mobileTrade && !isXlUp ? (
+        <div className="fixed inset-0 z-50 xl:hidden" data-mobile-trade-sheet="import">
+          <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close trade sheet" onClick={() => setMobileTrade(null)} />
+          <div
+            className="absolute inset-x-0 bottom-0 max-h-[92dvh] overflow-y-auto rounded-t-[20px] border border-mw-border bg-mw-ground p-4"
+            style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+          >
+            {tradingBlocked ? tradePanel : <ImportedTradePanel key={mobileTrade} item={arenaItem} initialSide={mobileTrade} />}
+          </div>
+        </div>
+      ) : null}
+      <TokenShareCardModal
+        open={shareCardOpen}
+        onClose={() => setShareCardOpen(false)}
+        name={item.name || item.symbol || "Imported project"}
+        ticker={item.symbol || ""}
+        chainId={item.chainId}
+        status="DEX"
+        mcap={formatUsd(profile?.marketCapUsd)}
+        holders={holdersLabel}
+        volume={formatUsd(profile?.volume24hUsd)}
+        image={item.imageUrl || ""}
+        imageEl={logoRef.current}
+        pageUrl={typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}` : ""}
+      />
       <ChallengeCoinModal
         open={challengeOpen}
         onOpenChange={setChallengeOpen}
@@ -673,6 +696,6 @@ export default function ImportedTokenPage({
         chainId={item.chainId}
         initialTargetId={item.tokenAddress}
       />
-    </ContentContainer>
+    </div>
   );
 }

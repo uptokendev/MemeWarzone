@@ -32,7 +32,7 @@ import {
   type ImportSwapQuote,
 } from "@/lib/importSwap";
 
-export function ImportedTradePanel({ item }: { item: ArenaImportItem }) {
+export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaImportItem; initialSide?: "buy" | "sell" }) {
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
   const solana = isSolanaChainId(item.chainId);
@@ -47,7 +47,7 @@ export function ImportedTradePanel({ item }: { item: ArenaImportItem }) {
   const [poolLabel, setPoolLabel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [amount, setAmount] = useState("");
-  const [side, setSide] = useState<"buy" | "sell">("buy");
+  const [side, setSide] = useState<"buy" | "sell">(initialSide);
   const [preview, setPreview] = useState<ImportSwapQuote | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [noAggregatorRoute, setNoAggregatorRoute] = useState(false);
@@ -246,69 +246,76 @@ export function ImportedTradePanel({ item }: { item: ArenaImportItem }) {
     }
   }
 
+  // UI redesign: the same panel look as a launched coin (founder: "we shouldn't see any difference");
+  // the route underneath (Jupiter / PancakeSwap via KyberSwap / Uniswap V3) is unchanged.
+  const dex = aggregated && !noAggregatorRoute ? (solana ? "Jupiter" : "PancakeSwap") : poolLabel || "the DEX";
+  const segTrigger = "mw-focus min-h-10 rounded-lg font-mw-body text-[15px] font-bold transition-colors";
+  const chip = "inline-flex min-h-[30px] items-center rounded-lg border border-[#2E353D] bg-[#171B20] px-2.5 font-mw-mono text-[13px] text-[#C9CED4]";
   return (
-    <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">
-        {aggregated && !noAggregatorRoute
-          ? `Routed by ${solana ? "Jupiter" : "PancakeSwap"} at the best available price. ${IMPORT_SWAP_FEE_LABEL} platform fee.`
-          : `Pool resolved: ${poolLabel}. Direct DEX swap for an imported token.`}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className={`rounded px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${side === "buy" ? "bg-card text-foreground" : "text-muted-foreground"}`}
-          onClick={() => setSide("buy")}
-        >
+    <div className="flex flex-col gap-2.5 font-mw-body text-mw-text">
+      <div className="grid grid-cols-2 gap-1 rounded-[10px] border border-[#242A31] bg-[#13171C] p-1" role="tablist" aria-label="Buy or sell">
+        <button type="button" role="tab" aria-selected={side === "buy"} className={`${segTrigger} ${side === "buy" ? "bg-mw-buy text-[#04140A]" : "text-mw-muted hover:text-mw-text"}`} onClick={() => setSide("buy")}>
           Buy
         </button>
-        <button
-          type="button"
-          className={`rounded px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${side === "sell" ? "bg-card text-foreground" : "text-muted-foreground"}`}
-          onClick={() => setSide("sell")}
-        >
+        <button type="button" role="tab" aria-selected={side === "sell"} className={`${segTrigger} ${side === "sell" ? "bg-mw-sell text-[#FFF1F3]" : "text-mw-muted hover:text-mw-text"}`} onClick={() => setSide("sell")}>
           Sell
         </button>
       </div>
-      <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
-        Amount ({side === "buy" ? native : item.symbol || "token"})
+      <div className="flex items-center justify-between gap-2 text-[13px]">
+        <span className="text-mw-muted">{side === "buy" ? "Pay in" : "Amount in"}</span>
+        <span className={`${chip} border-mw-accent bg-[#2A1609] text-mw-accent-soft`}>{side === "buy" ? native : item.symbol || "token"}</span>
+      </div>
+      <div className="relative">
         <input
           value={amount}
           onChange={(event) => setAmount(event.target.value)}
-          className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-          placeholder="0.0"
+          inputMode="decimal"
+          aria-label={`Amount (${side === "buy" ? native : item.symbol || "token"})`}
+          className="mw-focus h-12 w-full rounded-[10px] border border-[#2E353D] bg-mw-input pl-3.5 pr-20 font-mw-mono text-lg text-mw-text placeholder:text-[#5C6670] focus:border-mw-accent focus:outline-none"
+          placeholder="0"
         />
-      </label>
+        <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 font-mw-mono text-[13px] text-mw-muted">{side === "buy" ? native : item.symbol || "token"}</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="min-w-0 flex-1 truncate text-[13px] text-mw-muted">
+          {aggregated && !noAggregatorRoute ? `Best price via ${solana ? "Jupiter" : "PancakeSwap"}` : `Pool ${poolLabel || "resolving…"}`}
+        </span>
+        {aggregated && !noAggregatorRoute ? <span className={chip}>Fee {IMPORT_SWAP_FEE_LABEL}</span> : null}
+      </div>
       {aggregated && preview ? (
-        <div className="space-y-1 rounded-md border border-border/50 bg-background/40 px-3 py-2 text-xs text-muted-foreground" data-import-swap-preview="true">
+        <div className="flex flex-col gap-1 font-mw-mono text-[13px]" data-import-swap-preview="true">
           <div className="flex justify-between gap-2">
-            <span>You receive ≈</span>
-            <span className="text-foreground">
+            <span className="text-mw-muted">You receive ≈</span>
+            <span>
               {side === "buy"
                 ? `${Number(ethers.formatUnits(preview.amountOut, decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${item.symbol || "tokens"}`
                 : `${Number(ethers.formatUnits(preview.amountOut, solana ? 9 : 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${native}`}
             </span>
           </div>
-          <div className="flex justify-between gap-2">
-            <span>Platform fee</span>
-            <span>
-              {IMPORT_SWAP_FEE_LABEL}
-              {preview.feeNativeRaw ? ` (${Number(ethers.formatUnits(preview.feeNativeRaw, solana ? 9 : 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${native})` : ""}
-            </span>
-          </div>
+          {preview.feeNativeRaw ? (
+            <div className="flex justify-between gap-2 text-mw-muted">
+              <span>Platform fee</span>
+              <span>{Number(ethers.formatUnits(preview.feeNativeRaw, solana ? 9 : 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} {native}</span>
+            </div>
+          ) : null}
           {preview.route.length ? (
-            <div className="flex justify-between gap-2">
+            <div className="flex justify-between gap-2 text-mw-muted">
               <span>Route</span>
               <span className="truncate">{Array.from(new Set(preview.route)).join(" → ")}</span>
             </div>
           ) : null}
           {preview.priceImpactPct != null && preview.priceImpactPct > 1 ? (
-            <div className={preview.priceImpactPct > 5 ? "text-destructive" : "text-orange-300"}>Price impact {preview.priceImpactPct.toFixed(2)}%</div>
+            <div className={preview.priceImpactPct > 5 ? "text-mw-down" : "text-[#FF9A4D]"}>Price impact {preview.priceImpactPct.toFixed(2)}%</div>
           ) : null}
         </div>
       ) : null}
-      {aggregated && previewError && !preview ? <p className="text-xs text-orange-300">{previewError}</p> : null}
-      <Button className="font-retro" disabled={busy || !amount} onClick={() => void trade()}>
-        {busy ? "Swapping..." : side === "buy" ? "Buy" : "Sell"}
+      {aggregated && previewError && !preview ? <p className="m-0 text-xs text-[#FF9A4D]">{previewError}</p> : null}
+      <Button
+        className={`min-h-12 w-full rounded-[10px] font-mw-body text-base font-bold disabled:opacity-50 ${side === "buy" ? "border border-mw-buy bg-mw-buy text-[#04140A] hover:bg-[#15913F]" : "border border-mw-sell bg-mw-sell text-[#FFF1F3] hover:bg-[#C81A40]"}`}
+        disabled={busy || !amount}
+        onClick={() => void trade()}
+      >
+        {busy ? "Swapping..." : `${side === "buy" ? "Buy" : "Sell"} on ${dex}`}
       </Button>
     </div>
   );
