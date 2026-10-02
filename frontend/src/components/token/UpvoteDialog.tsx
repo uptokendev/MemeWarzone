@@ -596,13 +596,14 @@ export function UpvoteDialog({
         </Button>
       </DialogTrigger>
       <DialogContent
+        className="max-w-[480px] rounded-[18px] border border-mw-edge bg-mw-surface p-5 font-mw-body text-mw-text"
         onPointerDownOutside={(e) => { if (lockDialog) e.preventDefault(); }}
         onInteractOutside={(e) => { if (lockDialog) e.preventDefault(); }}
         onEscapeKeyDown={(e) => { if (lockDialog) e.preventDefault(); }}
       >
         <DialogHeader>
-          <DialogTitle>{voteLabel}</DialogTitle>
-          <DialogDescription>
+          <DialogTitle className="font-mw-cond text-2xl font-bold text-mw-text">{voteLabel}</DialogTitle>
+          <DialogDescription className="text-sm text-mw-muted">
             Fixed price: ${UPVOTE_USD_TARGET} per vote. One transaction = one vote (paid in {nativeUnit}).
             {isArena ? " Ranks the Warzone featured rail, not Showcase." : ""}
           </DialogDescription>
@@ -610,19 +611,19 @@ export function UpvoteDialog({
 
         <div className="space-y-3">
           {loadingCfg ? (
-            <div className="text-sm text-muted-foreground">Loading fee…</div>
+            <div className="text-sm text-mw-muted">Loading fee…</div>
           ) : !treasuryAddress ? (
-            <div className="text-sm text-muted-foreground">{voteLabel}s are temporarily unavailable on this network. Please try again later.</div>
+            <div className="text-sm text-mw-muted">{voteLabel}s are temporarily unavailable on this network. Please try again later.</div>
           ) : !isSolanaCampaign && (hasContractCode === false || !enabled) ? (
-            <div className="text-sm text-muted-foreground">{voteLabel}s are temporarily unavailable on this network. Please try again later.</div>
+            <div className="text-sm text-mw-muted">{voteLabel}s are temporarily unavailable on this network. Please try again later.</div>
           ) : (
-            <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Vote price</div>
+            <div className="rounded-[14px] border border-mw-border bg-mw-input px-4 py-3.5">
+              <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Vote price</div>
               <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <span className="text-2xl font-semibold text-foreground">{usdLabel}</span>
-                <span className="text-sm text-muted-foreground">{priceReady ? `${humanNative} ${nativeUnit}` : `— ${nativeUnit}`}</span>
+                <span className="font-mw-mono text-[28px] font-bold text-mw-text">{usdLabel}</span>
+                <span className="text-sm text-mw-muted">{priceReady ? `${humanNative} ${nativeUnit}` : `— ${nativeUnit}`}</span>
               </div>
-              <div className="mt-1 text-xs text-muted-foreground">
+              <div className="mt-1 text-xs text-mw-muted">
                 {oracleTargetWei != null && !isSolanaCampaign
                   ? "Converted via on-chain oracle"
                   : priceUsd
@@ -633,23 +634,23 @@ export function UpvoteDialog({
           )}
 
           {!isSolanaCampaign && wallet.account && !walletOnCampaignChain ? (
-            <div className="rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+            <div className="rounded-[10px] border border-[#5A3416] bg-mw-accent-fill px-3 py-2.5 text-sm text-mw-accent-soft">
               This campaign is on {robinhood ? "Robinhood" : "BNB"}. Switch the connected wallet network before voting.
             </div>
           ) : null}
 
-          <div className="text-xs text-muted-foreground">
-            Balance: <span className="text-foreground">{balanceWei != null ? `${formatNativeAmount(balanceWei, nativeDecimals)} ${nativeUnit}` : "—"}</span>
-            {insufficient ? <span className="ml-2 text-destructive">Insufficient for this vote{isSolanaCampaign ? " + fees." : " + gas."}</span> : null}
+          <div className="text-xs text-mw-muted">
+            Balance: <span className="font-mw-mono text-mw-text">{balanceWei != null ? `${formatNativeAmount(balanceWei, nativeDecimals)} ${nativeUnit}` : "—"}</span>
+            {insufficient ? <span className="ml-2 text-mw-sell">Insufficient for this vote{isSolanaCampaign ? " + fees." : " + gas."}</span> : null}
           </div>
-          <div className="text-xs text-muted-foreground">
+          <div className="text-xs text-mw-muted">
             {isArena ? "UpVotes are separate from launchpad votes." : "Cooldown and daily limits apply to keep UpVotes fair."}
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="secondary" onClick={() => setOpen(false)} disabled={submitting}>Cancel</Button>
-          <Button onClick={handleUpvote} disabled={!canUpvote || submitting || loadingCfg}>
+        <DialogFooter className="gap-2">
+          <Button variant="secondary" onClick={() => setOpen(false)} disabled={submitting} className="mw-focus min-h-11 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830]">Cancel</Button>
+          <Button onClick={handleUpvote} disabled={!canUpvote || submitting || loadingCfg} className="mw-focus min-h-11 rounded-[10px] border border-mw-accent bg-mw-accent px-5 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50">
             {submitting ? "Voting…" : `${voteLabel} (${nativeUnit})`}
           </Button>
         </DialogFooter>

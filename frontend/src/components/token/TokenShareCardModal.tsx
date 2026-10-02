@@ -164,27 +164,27 @@ export function TokenShareCardModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-black/75 p-2 backdrop-blur-sm sm:p-4">
+    <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-[rgba(5,6,8,0.75)] p-2 sm:p-4">
       <div className="flex min-h-[100dvh] items-center justify-center sm:min-h-[calc(100dvh-2rem)]">
-        <div className="relative flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden border border-orange-400/50 bg-black/95" data-token-share-card="true">
-          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/50 px-3 py-3 sm:px-4">
+        <div className="relative flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden rounded-[18px] border border-mw-edge bg-mw-surface font-mw-body text-mw-text" data-token-share-card="true">
+          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-mw-border px-4 py-3.5">
             <div className="min-w-0">
-              <div className="text-[10px] uppercase tracking-[0.22em] text-orange-300 sm:text-xs">
-                // Token share card
+              <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
+                Token share card
               </div>
-              <h3 className="mt-1 font-retro text-xl uppercase tracking-[0.08em] text-foreground sm:text-2xl">
+              <h3 className="m-0 mt-0.5 font-mw-cond text-2xl font-bold text-mw-text">
                 Share on X
               </h3>
-              <p className="mt-1 hidden text-sm text-muted-foreground sm:block">
+              <p className="m-0 mt-1 hidden text-sm text-mw-muted sm:block">
                 Same HUD as Promotion. GIFs freeze into a still so the card stays a PNG.
               </p>
             </div>
-            <button type="button" onClick={onClose} className="mwz-button h-9 w-9 shrink-0" aria-label="Close share card">
-              <X className="mx-auto h-4 w-4" />
+            <button type="button" onClick={onClose} className="mw-focus inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] text-mw-muted hover:bg-mw-raised hover:text-mw-text" aria-label="Close share card">
+              <X className="h-5 w-5" />
             </button>
           </div>
 
-          <div className="relative flex shrink-0 items-center justify-center overflow-hidden border-b border-border/70 bg-black/50">
+          <div className="relative flex shrink-0 items-center justify-center overflow-hidden border-b border-mw-border bg-mw-input">
             {imageStatus === "loading" ? (
               <div className="flex h-[28vh] max-h-[220px] min-h-[140px] w-full flex-col items-center justify-center px-4 text-center">
                 <RadarLoader label="Creating share card…" size="sm" />
@@ -192,8 +192,8 @@ export function TokenShareCardModal({
             ) : null}
             {imageStatus === "error" ? (
               <div className="flex h-[22vh] min-h-[120px] w-full flex-col items-center justify-center gap-2 px-4 text-center">
-                <p className="text-sm text-orange-200">Share card failed to load.</p>
-                <Button type="button" className="mwz-button font-retro text-xs" onClick={() => setAttempt((n) => n + 1)}>
+                <p className="text-sm text-mw-accent-soft">Share card failed to load.</p>
+                <Button type="button" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-50" onClick={() => setAttempt((n) => n + 1)}>
                   Retry
                 </Button>
               </div>
@@ -208,30 +208,30 @@ export function TokenShareCardModal({
             ) : null}
           </div>
 
-          <div className="shrink-0 border-b border-orange-400/40 bg-orange-500/10 px-3 py-3 sm:px-4">
-            <label className="flex items-start gap-2 text-sm text-foreground">
+          <div className="shrink-0 border-b border-mw-border px-4 py-3">
+            <label className="flex items-start gap-2.5 text-sm text-mw-text">
               <input
                 type="checkbox"
-                className="mt-1"
+                className="mt-1 h-4 w-4 accent-[#FF7A1A]"
                 checked={snapshot}
                 onChange={(event) => setSnapshot(event.target.checked)}
                 data-token-share-snapshot="true"
               />
               <span>
-                <span className="font-retro text-xs uppercase tracking-[0.14em] text-orange-200">Snapshot image</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">
+                <span className="font-semibold text-mw-text">Snapshot image</span>
+                <span className="mt-0.5 block text-[13px] text-mw-muted">
                   Freeze the token art into a still PNG. Use this for GIFs and other moving images.
                 </span>
               </span>
             </label>
           </div>
 
-          <div className="flex flex-wrap gap-2 px-3 py-3 sm:px-4">
-            <Button type="button" className="mwz-button mwz-button-orange font-retro" disabled={Boolean(busy) || imageStatus !== "ready"} onClick={() => void guidedShare()}>
-              <Share2 className="mr-2 h-4 w-4" />
+          <div className="flex flex-wrap justify-end gap-2 px-4 py-3.5">
+            <Button type="button" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50" disabled={Boolean(busy) || imageStatus !== "ready"} onClick={() => void guidedShare()}>
+              <Share2 className="h-4 w-4" />
               {busy === "guided" ? "Opening…" : "Download and open X"}
             </Button>
-            <Button type="button" variant="outline" className="mwz-button font-retro" disabled={Boolean(busy) || imageStatus !== "ready"} onClick={() => void downloadCard()}>
+            <Button type="button" variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-50" disabled={Boolean(busy) || imageStatus !== "ready"} onClick={() => void downloadCard()}>
               {busy === "download" ? "Saving…" : "Download share card"}
             </Button>
           </div>

@@ -19,6 +19,7 @@ export function CreateWizardShell({
   eyebrow = "Create Coin",
   stepLabels = STEP_LABELS,
   nextLabel = "Next",
+  v2 = false,
 }: {
   step: number;
   totalSteps: number;
@@ -30,7 +31,12 @@ export function CreateWizardShell({
   eyebrow?: string;
   stepLabels?: readonly string[];
   nextLabel?: string;
+  /** Redesign look (rounded surface, Barlow, orange primary). Off for the Create page, on for the Challenge popup. */
+  v2?: boolean;
 }) {
+  const sideButton = v2
+    ? "mw-focus my-auto hidden h-11 w-10 shrink-0 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-text hover:bg-[#222830] sm:flex"
+    : "mwz-button my-auto hidden h-10 w-9 shrink-0 items-center justify-center sm:flex";
   return (
     <div className="relative mx-auto flex w-full max-w-[880px] items-stretch gap-1.5 px-1 sm:gap-2 sm:px-2">
       <button
@@ -39,7 +45,7 @@ export function CreateWizardShell({
         disabled={!canBack}
         onClick={onBack}
         className={cn(
-          "mwz-button my-auto hidden h-10 w-9 shrink-0 items-center justify-center sm:flex",
+          sideButton,
           !canBack && "pointer-events-none cursor-not-allowed opacity-35",
         )}
       >
@@ -50,16 +56,18 @@ export function CreateWizardShell({
           Snug to preview + ~100px chrome; slightly roomier so direct-deploy card is not clipped. */}
       <div
         className={cn(
-          "mwz-card flex w-full flex-col overflow-hidden border-accent/25 bg-background/40",
+          v2
+            ? "flex w-full flex-col overflow-hidden rounded-[18px] border border-mw-edge bg-mw-surface font-mw-body text-mw-text"
+            : "mwz-card flex w-full flex-col overflow-hidden border-accent/25 bg-background/40",
           "h-[min(640px,calc(100dvh-4.75rem))] min-h-[min(420px,calc(100dvh-4.75rem))]",
         )}
       >
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5 sm:px-3.5">
+        <div className={cn("flex shrink-0 flex-wrap items-center justify-between gap-2 border-b", v2 ? "border-mw-border px-4 py-3" : "border-border/50 px-3 py-1.5 sm:px-3.5")}>
           <div>
-            <p className="font-retro text-[10px] uppercase tracking-[0.22em] text-accent">{eyebrow}</p>
-            <h1 className="font-retro text-base tracking-tight text-foreground sm:text-lg">
+            <p className={v2 ? "m-0 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]" : "font-retro text-[10px] uppercase tracking-[0.22em] text-accent"}>{eyebrow}</p>
+            <h1 className={v2 ? "m-0 font-mw-cond text-xl font-bold text-mw-text" : "font-retro text-base tracking-tight text-foreground sm:text-lg"}>
               {stepLabels[step - 1] || eyebrow}
-              <span className="ml-2 text-xs text-muted-foreground">
+              <span className={v2 ? "ml-2 font-mw-mono text-xs font-normal text-mw-muted" : "ml-2 text-xs text-muted-foreground"}>
                 {step}/{totalSteps}
               </span>
             </h1>
@@ -69,8 +77,8 @@ export function CreateWizardShell({
               <span
                 key={i}
                 className={cn(
-                  "h-1.5 w-3.5 rounded-sm sm:w-4",
-                  i + 1 === step ? "bg-accent" : i + 1 < step ? "bg-accent/45" : "bg-muted",
+                  v2 ? "mw-step h-1.5 w-5 rounded-full" : "h-1.5 w-3.5 rounded-sm sm:w-4",
+                  i + 1 === step ? (v2 ? "bg-mw-accent" : "bg-accent") : i + 1 < step ? (v2 ? "bg-[#7A3A0C]" : "bg-accent/45") : v2 ? "bg-[#2A3038]" : "bg-muted",
                 )}
               />
             ))}
@@ -79,13 +87,15 @@ export function CreateWizardShell({
 
         <div className="relative min-h-0 flex-1 overflow-hidden">{children}</div>
 
-        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border/50 p-1.5 sm:hidden">
+        <div className={cn("flex shrink-0 items-center justify-between gap-2 border-t sm:hidden", v2 ? "border-mw-border p-2" : "border-border/50 p-1.5")}>
           <button
             type="button"
             disabled={!canBack}
             onClick={onBack}
             className={cn(
-              "mwz-button h-9 flex-1 font-retro text-xs",
+              v2
+                ? "mw-focus inline-flex h-11 flex-1 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-[15px] font-semibold text-mw-text"
+                : "mwz-button h-9 flex-1 font-retro text-xs",
               !canBack && "pointer-events-none opacity-35",
             )}
           >
@@ -96,7 +106,9 @@ export function CreateWizardShell({
             disabled={!canNext}
             onClick={onNext}
             className={cn(
-              "mwz-button mwz-button-orange h-9 flex-1 font-retro text-xs",
+              v2
+                ? "mw-focus inline-flex h-11 flex-1 items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent text-[15px] font-semibold text-[#140A02]"
+                : "mwz-button mwz-button-orange h-9 flex-1 font-retro text-xs",
               !canNext && "pointer-events-none opacity-35",
             )}
           >
@@ -111,7 +123,7 @@ export function CreateWizardShell({
         disabled={!canNext}
         onClick={onNext}
         className={cn(
-          "mwz-button my-auto hidden h-10 w-9 shrink-0 items-center justify-center sm:flex",
+          sideButton,
           !canNext && "pointer-events-none cursor-not-allowed opacity-35",
         )}
       >
@@ -124,16 +136,18 @@ export function CreateWizardShell({
 export function CreateSplitPane({
   left,
   right,
+  v2 = false,
 }: {
   left: ReactNode;
   right: ReactNode;
+  v2?: boolean;
 }) {
   return (
     <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden md:grid-cols-[0.95fr_1.05fr]">
-      <div className="flex min-h-0 items-center justify-center overflow-y-auto overflow-x-hidden border-b border-border/40 bg-black/20 p-2.5 md:border-b-0 md:border-r md:p-3">
+      <div className={cn("flex min-h-0 items-center justify-center overflow-y-auto overflow-x-hidden border-b md:border-b-0 md:border-r", v2 ? "border-mw-border bg-mw-input p-4 md:p-5" : "border-border/40 bg-black/20 p-2.5 md:p-3")}>
         {left}
       </div>
-      <div className="flex min-h-0 flex-col overflow-y-auto overscroll-contain p-2.5 sm:p-3">{right}</div>
+      <div className={cn("flex min-h-0 flex-col overflow-y-auto overscroll-contain", v2 ? "p-4" : "p-2.5 sm:p-3")}>{right}</div>
     </div>
   );
 }

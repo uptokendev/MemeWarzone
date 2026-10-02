@@ -29,16 +29,16 @@ import { resolveImageUri } from "@/lib/media";
 import type { TokenSearchResult } from "@/types/search";
 
 const STEPS = ["Battle type", "Pick opponent", "Terms", "Review"] as const;
-const selectedClass = "border-orange-400/70 bg-orange-500/10 shadow-lg shadow-orange-500/10";
-const idleClass = "border-border bg-background/40 hover:border-orange-400/40";
+const selectedClass = "border-mw-accent bg-mw-accent-fill text-mw-text";
+const idleClass = "border-mw-border bg-mw-input text-mw-text hover:border-[#3A424C]";
 
 function CoinAvatar({ src, label, size = "h-9 w-9" }: { src?: string | null; label: string; size?: string }) {
   const url = resolveImageUri(src);
   const initial = (label.replace(/^\$/, "").trim()[0] || "?").toUpperCase();
   return url ? (
-    <img src={url} alt="" loading="lazy" className={cn(size, "shrink-0 rounded-full border border-border/60 bg-black/40 object-cover")} onError={(event) => { (event.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
+    <img src={url} alt="" loading="lazy" className={cn(size, "shrink-0 rounded-full border border-mw-border bg-mw-input object-cover")} onError={(event) => { (event.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
   ) : (
-    <div className={cn(size, "flex shrink-0 items-center justify-center rounded-full border border-border/60 bg-black/40 font-retro text-xs text-muted-foreground")}>{initial}</div>
+    <div className={cn(size, "flex shrink-0 items-center justify-center rounded-full border border-mw-border bg-mw-input font-mw-cond text-xs font-bold text-mw-muted")}>{initial}</div>
   );
 }
 
@@ -255,6 +255,7 @@ export function ChallengeCoinModal({
       <DialogContent className="mwz-portal-shell max-w-[920px] w-[min(920px,calc(100vw-1rem))] border-0 bg-transparent p-0 shadow-none gap-0 overflow-visible [&>button]:hidden">
         <DialogTitle className="sr-only">Challenge a coin</DialogTitle>
         <CreateWizardShell
+          v2
           step={step}
           totalSteps={4}
           canBack={step > 1}
@@ -267,25 +268,26 @@ export function ChallengeCoinModal({
         >
           {step === 1 ? (
             <CreateSplitPane
+              v2
               left={
-                <div className="max-w-md space-y-3 text-sm leading-relaxed text-muted-foreground">
-                  <p className="font-retro text-xs uppercase tracking-[0.2em] text-orange-300">// Battle type</p>
-                  <h2 className="font-retro text-xl text-foreground sm:text-2xl">How do you want to fight?</h2>
-                  <p><span className="font-semibold text-orange-200">Battle</span> is scored from market data, so both coins need live market data and fair matchups are ranked.</p>
-                  <p><span className="font-semibold text-orange-200">Vote Battle</span> is decided by the community. Any coin can challenge any coin.</p>
+                <div className="max-w-md space-y-3 text-sm leading-relaxed text-mw-muted">
+                  <p className="m-0 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Battle type</p>
+                  <h2 className="m-0 font-mw-cond text-2xl font-bold text-mw-text sm:text-[28px]">How do you want to fight?</h2>
+                  <p><span className="font-semibold text-mw-accent-soft">Battle</span> is scored from market data, so both coins need live market data and fair matchups are ranked.</p>
+                  <p><span className="font-semibold text-mw-accent-soft">Vote Battle</span> is decided by the community. Any coin can challenge any coin.</p>
                 </div>
               }
               right={
                 <div className="flex h-full min-h-0 flex-col gap-3" data-challenge-step="battle-type">
-                  <button type="button" data-battle-mode="normal" onClick={() => pickMode("normal")} className={cn("rounded-xl border p-4 text-left transition", battleMode === "normal" ? selectedClass : idleClass)}>
-                    <div className="font-retro text-lg text-foreground">Battle</div>
-                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Metrics fight: market cap, holders, volume, boosts. Both coins need live market data.</p>
+                  <button type="button" data-battle-mode="normal" onClick={() => pickMode("normal")} className={cn("mw-focus rounded-xl border p-4 text-left transition", battleMode === "normal" ? selectedClass : idleClass)}>
+                    <div className="font-mw-cond text-xl font-bold text-mw-text">Battle</div>
+                    <p className="mt-1.5 text-sm leading-relaxed text-mw-muted">Metrics fight: market cap, holders, volume, boosts. Both coins need live market data.</p>
                   </button>
-                  <button type="button" data-battle-mode="vote" onClick={() => pickMode("vote")} className={cn("rounded-xl border p-4 text-left transition", battleMode === "vote" ? selectedClass : idleClass)}>
-                    <div className="font-retro text-lg text-foreground">Vote Battle</div>
-                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Free votes + boosts, 6 to 48 hours. Any coin can challenge any coin.</p>
+                  <button type="button" data-battle-mode="vote" onClick={() => pickMode("vote")} className={cn("mw-focus rounded-xl border p-4 text-left transition", battleMode === "vote" ? selectedClass : idleClass)}>
+                    <div className="font-mw-cond text-xl font-bold text-mw-text">Vote Battle</div>
+                    <p className="mt-1.5 text-sm leading-relaxed text-mw-muted">Free votes + boosts, 6 to 48 hours. Any coin can challenge any coin.</p>
                   </button>
-                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" onClick={goNext}>Next</Button>
+                  <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11" onClick={goNext}>Next</Button>
                 </div>
               }
             />
@@ -293,18 +295,19 @@ export function ChallengeCoinModal({
 
           {step === 2 ? (
             <CreateSplitPane
+              v2
               left={
-                <div className="max-w-md space-y-3 text-sm leading-relaxed text-muted-foreground">
-                  <p className="font-retro text-xs uppercase tracking-[0.2em] text-orange-300">// Pick opponent</p>
-                  <h2 className="font-retro text-xl text-foreground sm:text-2xl">Choose who you fight</h2>
-                  <p><span className="font-semibold text-orange-200">Your coin</span> is the one you send into battle. The opponent is the coin you challenge. Same chain only.</p>
+                <div className="max-w-md space-y-3 text-sm leading-relaxed text-mw-muted">
+                  <p className="m-0 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Pick opponent</p>
+                  <h2 className="m-0 font-mw-cond text-2xl font-bold text-mw-text sm:text-[28px]">Choose who you fight</h2>
+                  <p><span className="font-semibold text-mw-accent-soft">Your coin</span> is the one you send into battle. The opponent is the coin you challenge. Same chain only.</p>
                   <p>
                     No eligible coin yet?{" "}
-                    <Link to="/create" onClick={() => onOpenChange(false)} className="font-semibold text-orange-200 underline underline-offset-2 hover:text-orange-100">Launch your token</Link>
+                    <Link to="/create" onClick={() => onOpenChange(false)} className="font-semibold text-mw-accent-soft underline underline-offset-2 hover:text-[#FFD0A8]">Launch your token</Link>
                     {projectImportsEnabled ? (
                       <>
                         {" "}or{" "}
-                        <Link to="/import" onClick={() => onOpenChange(false)} className="font-semibold text-orange-200 underline underline-offset-2 hover:text-orange-100">import your token</Link>
+                        <Link to="/import" onClick={() => onOpenChange(false)} className="font-semibold text-mw-accent-soft underline underline-offset-2 hover:text-[#FFD0A8]">import your token</Link>
                       </>
                     ) : null}
                     . A launched coin can battle once it graduates; an imported token once it has passed review.
@@ -314,7 +317,7 @@ export function ChallengeCoinModal({
               right={
                 <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1" data-challenge-step="opponent">
                   {chainLocked ? (
-                    <p className="text-xs text-muted-foreground" data-challenge-chain="locked">Chain: <span className="text-foreground">{getChainLabel(chainId)}</span></p>
+                    <p className="text-xs text-mw-muted" data-challenge-chain="locked">Chain: <span className="text-mw-text">{getChainLabel(chainId)}</span></p>
                   ) : chainOptions.length > 1 ? (
                     <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${chainOptions.length}, minmax(0, 1fr))` }} data-challenge-chain-switch="true">
                       {chainOptions.map((id) => (
@@ -322,7 +325,7 @@ export function ChallengeCoinModal({
                           key={id}
                           type="button"
                           onClick={() => switchChain(id)}
-                          className={cn("rounded-xl border px-3 py-2 font-retro text-xs uppercase tracking-[0.12em] transition", id === chainId ? selectedClass : idleClass)}
+                          className={cn("mw-focus rounded-[10px] border px-3 py-2 font-mw-cond text-sm font-bold uppercase tracking-[0.08em] transition", id === chainId ? selectedClass : idleClass)}
                         >
                           {getChainLabel(id)}
                         </button>
@@ -330,15 +333,15 @@ export function ChallengeCoinModal({
                     </div>
                   ) : null}
                   {!walletAddress ? (
-                    <p className="text-sm text-muted-foreground">Connect your {isSolanaChainId(chainId) ? "Solana" : "EVM"} wallet to challenge on {getChainLabel(chainId)}.</p>
+                    <p className="text-sm text-mw-muted">Connect your {isSolanaChainId(chainId) ? "Solana" : "EVM"} wallet to challenge on {getChainLabel(chainId)}.</p>
                   ) : !eligible.length ? (
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-sm text-mw-muted">
                       No eligible coins on {getChainLabel(chainId)} yet.{" "}
-                      <Link to="/create" onClick={() => onOpenChange(false)} className="font-semibold text-orange-200 underline underline-offset-2 hover:text-orange-100">Launch your token</Link>
+                      <Link to="/create" onClick={() => onOpenChange(false)} className="font-semibold text-mw-accent-soft underline underline-offset-2 hover:text-[#FFD0A8]">Launch your token</Link>
                       {projectImportsEnabled ? (
                         <>
                           {" "}or{" "}
-                          <Link to="/import" onClick={() => onOpenChange(false)} className="font-semibold text-orange-200 underline underline-offset-2 hover:text-orange-100">import your token</Link>
+                          <Link to="/import" onClick={() => onOpenChange(false)} className="font-semibold text-mw-accent-soft underline underline-offset-2 hover:text-[#FFD0A8]">import your token</Link>
                         </>
                       ) : null}
                       .
@@ -353,13 +356,13 @@ export function ChallengeCoinModal({
                             key={id}
                             type="button"
                             onClick={() => setSelectedToken(id)}
-                            className={cn("w-full rounded-xl border p-4 text-left transition", active ? selectedClass : idleClass)}
+                            className={cn("mw-focus w-full rounded-xl border p-4 text-left transition", active ? selectedClass : idleClass)}
                           >
                             <div className="flex items-center gap-3">
                               <CoinAvatar src={(item as { imageUrl?: string | null }).imageUrl} label={item.symbol || item.tokenName || "?"} size="h-10 w-10" />
                               <div className="min-w-0">
-                                <div className="font-retro text-lg text-foreground">{item.symbol ? `$${item.symbol}` : item.tokenName}</div>
-                                <p className="mt-1 truncate text-xs text-muted-foreground">{item.origin === "import" ? "imported" : "graduated"}{item.tokenName && item.symbol ? ` · ${item.tokenName}` : ""}</p>
+                                <div className="font-mw-cond text-xl font-bold text-mw-text">{item.symbol ? `$${item.symbol}` : item.tokenName}</div>
+                                <p className="mt-1 truncate text-xs text-mw-muted">{item.origin === "import" ? "imported" : "graduated"}{item.tokenName && item.symbol ? ` · ${item.tokenName}` : ""}</p>
                               </div>
                             </div>
                           </button>
@@ -368,7 +371,7 @@ export function ChallengeCoinModal({
                     </div>
                   )}
                   <div>
-                    <label className="mb-1 block font-retro text-sm text-foreground">Opponent</label>
+                    <label className="mb-1.5 block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Opponent</label>
                     <div className="flex gap-2">
                       <Input
                         value={targetTokenId}
@@ -379,14 +382,14 @@ export function ChallengeCoinModal({
                         placeholder="Token address"
                         className="font-sans normal-case tracking-normal"
                       />
-                      <Button type="button" variant="outline" className="h-10 shrink-0 font-retro" onClick={() => setSearchOpen(true)}>
+                      <Button type="button" variant="outline" className="mw-focus h-11 shrink-0 rounded-[10px] border-mw-edge bg-mw-raised text-mw-text" onClick={() => setSearchOpen(true)}>
                         <Search className="h-4 w-4" />
                       </Button>
                     </div>
-                    {targetLabel ? <p className="mt-1 text-xs text-orange-200">{targetLabel}</p> : null}
+                    {targetLabel ? <p className="mt-1 text-xs text-mw-accent-soft">{targetLabel}</p> : null}
                   </div>
                   <div data-recent-imports="true">
-                    <div className="mb-1 font-retro text-sm text-foreground">Recent imports</div>
+                    <div className="mb-1.5 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Recent imports</div>
                     {recentImports.length ? (
                       <div className="grid grid-cols-2 gap-1.5">
                         {recentImports
@@ -401,13 +404,13 @@ export function ChallengeCoinModal({
                                   setTargetTokenId(row.tokenAddress);
                                   setTargetLabel(row.symbol ? `$${row.symbol}` : row.name || row.tokenAddress);
                                 }}
-                                className={cn("rounded-xl border p-3 text-left transition", active ? selectedClass : idleClass)}
+                                className={cn("mw-focus rounded-xl border p-3 text-left transition", active ? selectedClass : idleClass)}
                               >
                                 <div className="flex items-center gap-2">
                                   <CoinAvatar src={row.imageUrl} label={row.symbol || row.name || "?"} />
                                   <div className="min-w-0">
-                                    <div className="truncate font-retro text-sm text-foreground">{row.symbol ? `$${row.symbol}` : row.name || "Import"}</div>
-                                    <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{row.name || row.tokenAddress}</p>
+                                    <div className="truncate text-sm font-bold text-mw-text">{row.symbol ? `$${row.symbol}` : row.name || "Import"}</div>
+                                    <p className="mt-0.5 truncate text-[10px] text-mw-muted">{row.name || row.tokenAddress}</p>
                                   </div>
                                 </div>
                               </button>
@@ -415,11 +418,11 @@ export function ChallengeCoinModal({
                           })}
                       </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">No imported coins on this chain yet</p>
+                      <p className="text-sm text-mw-muted">No imported coins on this chain yet</p>
                     )}
                   </div>
                   <div data-challenge-opponents="true">
-                    <div className="mb-1 font-retro text-sm text-foreground">{battleMode === "vote" ? "All coins" : "Opponents"}</div>
+                    <div className="mb-1.5 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{battleMode === "vote" ? "All coins" : "Opponents"}</div>
                     {opponents.length ? (
                       <div className="grid grid-cols-2 gap-1.5">
                         {opponents.map((row) => {
@@ -434,13 +437,13 @@ export function ChallengeCoinModal({
                                 setTargetTokenId(key);
                                 setTargetLabel(row.token?.symbol ? `$${row.token.symbol}` : row.token?.tokenName || key);
                               }}
-                              className={cn("rounded-xl border p-3 text-left transition", active ? selectedClass : idleClass, battleMode !== "vote" && !row.metricsAllowed && "opacity-60")}
+                              className={cn("mw-focus rounded-xl border p-3 text-left transition", active ? selectedClass : idleClass, battleMode !== "vote" && !row.metricsAllowed && "opacity-60")}
                             >
                               <div className="flex items-center gap-2">
                                 <CoinAvatar src={row.imageUrl} label={row.token?.symbol || row.token?.tokenName || "?"} />
                                 <div className="min-w-0">
-                                  <div className="truncate font-retro text-sm text-foreground">{row.token?.symbol ? `$${row.token.symbol}` : row.token?.tokenName || "Coin"}</div>
-                                  <p className="mt-0.5 truncate text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{tag}</p>
+                                  <div className="truncate text-sm font-bold text-mw-text">{row.token?.symbol ? `$${row.token.symbol}` : row.token?.tokenName || "Coin"}</div>
+                                  <p className="mt-0.5 truncate text-[10px] uppercase tracking-[0.12em] text-mw-muted">{tag}</p>
                                 </div>
                               </div>
                             </button>
@@ -448,14 +451,14 @@ export function ChallengeCoinModal({
                         })}
                       </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">No other coins on this chain yet</p>
+                      <p className="text-sm text-mw-muted">No other coins on this chain yet</p>
                     )}
                   </div>
                   {targetHasNoOwner ? (
-                    <p className="text-sm text-orange-200" data-challenge-no-owner="true">This coin has no verified owner yet, so nobody can answer a challenge. Choose another opponent.</p>
+                    <p className="text-sm text-mw-accent-soft" data-challenge-no-owner="true">This coin has no verified owner yet, so nobody can answer a challenge. Choose another opponent.</p>
                   ) : null}
                   {targetBlockedForMetrics ? (
-                    <p className="text-sm text-orange-200" data-challenge-metrics-blocked="true">This coin has no live market data yet, so a metrics Battle cannot be scored. Go back and pick Vote Battle, or choose another opponent.</p>
+                    <p className="text-sm text-mw-accent-soft" data-challenge-metrics-blocked="true">This coin has no live market data yet, so a metrics Battle cannot be scored. Go back and pick Vote Battle, or choose another opponent.</p>
                   ) : null}
                   {battleMode !== "vote" ? (
                     <MatchQualityPreview
@@ -468,7 +471,7 @@ export function ChallengeCoinModal({
                       }}
                     />
                   ) : null}
-                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 shrink-0 font-retro" disabled={!canNext} onClick={goNext}>Next</Button>
+                  <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11 shrink-0" disabled={!canNext} onClick={goNext}>Next</Button>
                 </div>
               }
             />
@@ -476,32 +479,33 @@ export function ChallengeCoinModal({
 
           {step === 3 ? (
             <CreateSplitPane
+              v2
               left={
-                <div className="max-w-md space-y-3 text-sm leading-relaxed text-muted-foreground">
-                  <p className="font-retro text-xs uppercase tracking-[0.2em] text-orange-300">// Set terms</p>
-                  <h2 className="font-retro text-xl text-foreground sm:text-2xl">Buy-in and fight length</h2>
+                <div className="max-w-md space-y-3 text-sm leading-relaxed text-mw-muted">
+                  <p className="m-0 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Set terms</p>
+                  <h2 className="m-0 font-mw-cond text-2xl font-bold text-mw-text sm:text-[28px]">Buy-in and fight length</h2>
                   <p>They see these terms before they accept. The buy-in is paid after both sides agree.</p>
                 </div>
               }
               right={
                 <div className="flex h-full min-h-0 flex-col gap-3">
                   <div>
-                    <div className="mb-1 font-retro text-sm text-foreground">Fight length</div>
+                    <div className="mb-1.5 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Fight length</div>
                     <div className="grid grid-cols-2 gap-1.5">
                       {battleDurationOptions(battleMode).map((item) => (
                         <button
                           key={item.hours}
                           type="button"
                           onClick={() => setDurationHours(item.hours)}
-                          className={cn("rounded-lg border px-2.5 py-2 text-left transition", durationHours === item.hours ? "border-accent bg-accent/15 text-foreground" : "border-border bg-muted/30 text-muted-foreground hover:border-accent/60")}
+                          className={cn("mw-focus rounded-[10px] border px-3 py-2.5 text-left transition", durationHours === item.hours ? "border-mw-accent bg-mw-accent-fill text-mw-text" : "border-mw-border bg-mw-input text-mw-muted hover:border-accent/60")}
                         >
-                          <span className="font-retro text-sm">{item.label}</span>
+                          <span className="text-sm font-semibold">{item.label}</span>
                         </button>
                       ))}
                     </div>
                   </div>
                   <div>
-                    <label className="mb-1 block font-retro text-sm text-foreground">Buy-in ({native})</label>
+                    <label className="mb-1.5 block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Buy-in ({native})</label>
                     <Input
                       type="number"
                       min="0"
@@ -512,7 +516,7 @@ export function ChallengeCoinModal({
                       className="font-sans normal-case tracking-normal"
                     />
                   </div>
-                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" disabled={!canNext} onClick={goNext}>Next</Button>
+                  <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11" disabled={!canNext} onClick={goNext}>Next</Button>
                 </div>
               }
             />
@@ -520,27 +524,28 @@ export function ChallengeCoinModal({
 
           {step === 4 ? (
             <CreateSplitPane
+              v2
               left={
-                <div className="max-w-md space-y-3 text-sm leading-relaxed text-muted-foreground">
-                  <p className="font-retro text-xs uppercase tracking-[0.2em] text-orange-300">// Review</p>
-                  <h2 className="font-retro text-xl text-foreground sm:text-2xl">Send the challenge</h2>
+                <div className="max-w-md space-y-3 text-sm leading-relaxed text-mw-muted">
+                  <p className="m-0 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Review</p>
+                  <h2 className="m-0 font-mw-cond text-2xl font-bold text-mw-text sm:text-[28px]">Send the challenge</h2>
                   <p>They must accept before the fight goes live.</p>
                 </div>
               }
               right={
                 <div className="flex h-full min-h-0 flex-col gap-3">
-                  <div className="space-y-2 rounded-xl border border-border/50 bg-background/30 p-3 text-sm">
-                    <div className="flex items-center gap-2 text-orange-200">
+                  <div className="space-y-2 rounded-xl border border-mw-border bg-mw-input p-3.5 text-[15px]">
+                    <div className="flex items-center gap-2 text-mw-accent-soft">
                       <Swords className="h-4 w-4" />
-                      <span className="font-retro text-sm">Review & confirm</span>
+                      <span className="font-mw-cond text-base font-bold">Review & confirm</span>
                     </div>
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Your coin</span><span className="font-retro text-foreground">{selected?.symbol || selected?.tokenName || "—"}</span></div>
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Opponent</span><span className="truncate font-medium text-foreground">{targetLabel || targetTokenId || "—"}</span></div>
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Buy-in</span><span className="text-foreground">{stakeAmount} {native}</span></div>
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Duration</span><span className="text-foreground">{battleDurationOptions(battleMode).find((item) => item.hours === durationHours)?.label || `${durationHours}h`}</span></div>
-                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Mode</span><span className="text-foreground">{battleMode === "vote" ? "Vote Battle" : "Battle"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-mw-muted">Your coin</span><span className="font-semibold text-mw-text">{selected?.symbol || selected?.tokenName || "—"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-mw-muted">Opponent</span><span className="truncate font-medium text-mw-text">{targetLabel || targetTokenId || "—"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-mw-muted">Buy-in</span><span className="text-mw-text">{stakeAmount} {native}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-mw-muted">Duration</span><span className="text-mw-text">{battleDurationOptions(battleMode).find((item) => item.hours === durationHours)?.label || `${durationHours}h`}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-mw-muted">Mode</span><span className="text-mw-text">{battleMode === "vote" ? "Vote Battle" : "Battle"}</span></div>
                   </div>
-                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-12 w-full font-retro text-base" disabled={!canNext || busy} onClick={() => void confirm()}>
+                  <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-12 w-full text-base" disabled={!canNext || busy} onClick={() => void confirm()}>
                     {busy ? "Sending…" : "Confirm"}
                   </Button>
                 </div>
