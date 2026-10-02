@@ -117,6 +117,10 @@ export async function applyMwlChampionshipBonus(db, seasonId) {
   if (transfer.status === "applied") {
     return { ok: true, idempotent: true, status: "applied", policyVersion: transfer.policy_version, epochId: transfer.epoch_id };
   }
+  // Waived by founder decision (no bonus for this month): nothing to credit, never re-applied.
+  if (transfer.status === "waived") {
+    return { ok: true, idempotent: true, status: "waived", epochId: transfer.epoch_id };
+  }
   if (transfer.epoch_state !== CHAMPIONSHIP_STATE.OPEN) {
     return { ok: false, reason: "CHAMPIONSHIP_EPOCH_CLOSED", status: transfer.status, epochId: transfer.epoch_id };
   }
@@ -292,7 +296,7 @@ export async function closeChampionshipEpoch(pool, { chainId, year, quarter, epo
       return { ok: false, reason: "CHAMPIONSHIP_EPOCH_NOT_ENDED", closesAt: epoch.closes_at };
     }
     const pending = await client.query(
-      `select count(*)::int as count from public.arena_championship_mwl_transfers where epoch_id=$1 and status<>'applied'`,
+      `select count(*)::int as count from public.arena_championship_mwl_transfers where epoch_id=$1 and status not in ('applied','waived')`,
       [epoch.id],
     );
     if (Number(pending.rows?.[0]?.count || 0) > 0) {
