@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Link, useNavigate } from "react-router-dom";
 import { BarChart2, GraduationCap, ImagePlus, Link2, MessageCircle, PenLine, Repeat2, Rocket, Rocket as LaunchIcon, Share2, Swords, TrendingUp, Trophy, X } from "lucide-react";
 import { toast } from "sonner";
@@ -80,6 +81,8 @@ export function FeedAvatar({ url, label, square = false, size = 44 }: { url?: st
   if (url && !failed) {
     return <img src={url} alt="" style={style} onError={() => setFailed(true)} className={`${shape} shrink-0 border border-mw-border object-cover`} />;
   }
+  // People without a picture get the operative mark (founder, 2026-10-02); coins keep the ticker letters.
+  if (!square) return <OperativeMark size={size} />;
   return (
     <span style={style} className={`${shape} flex shrink-0 items-center justify-center bg-[#2B3440] font-mw-cond text-sm font-bold text-mw-text`} aria-hidden="true">
       {label.replace(/^[@$]/, "").slice(0, 2).toUpperCase() || "MW"}

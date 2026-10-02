@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Textarea } from "@/components/ui/textarea";
 import { AbuseReportShortcut, currentPageUrl } from "@/components/abuse/AbuseReportShortcut";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
@@ -264,9 +265,7 @@ export function TokenComments({
           <div className="flex items-start gap-3">
             <Avatar className="h-9 w-9">
               <AvatarImage src={undefined} />
-              <AvatarFallback className="text-xs">
-                {account ? initials(account) : "?"}
-              </AvatarFallback>
+              <AvatarFallback className="bg-transparent p-0"><OperativeMark fill /></AvatarFallback>
             </Avatar>
 
             <div className="flex-1">
@@ -350,9 +349,7 @@ export function TokenComments({
                 >
                   <Avatar className={mode === "chat" ? "h-8 w-8" : "h-9 w-9"}>
                     {c.authorAvatarUrl ? <AvatarImage src={c.authorAvatarUrl} /> : null}
-                    <AvatarFallback className="text-xs">
-                      {initials(label.length ? label : c.authorAddress)}
-                    </AvatarFallback>
+                    <AvatarFallback className="bg-transparent p-0"><OperativeMark fill /></AvatarFallback>
                   </Avatar>
 
                   <div className="min-w-0 flex-1">

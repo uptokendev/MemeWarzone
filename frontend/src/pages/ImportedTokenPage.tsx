@@ -18,6 +18,7 @@ import { UnifiedMarketChart, type UnifiedChartResolution } from "@/components/to
 import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
 import { CrypticPumpBadge, CrypticPumpListButton, fetchCrypticPumpListing, type CrypticPumpListingData } from "@/components/token/CrypticPumpListing";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -416,7 +417,7 @@ export default function ImportedTokenPage({
                   <Link to={`/profile?address=${ownerWallet}`} className="inline-flex items-center gap-1.5 text-mw-accent-soft hover:text-[#FFD0A8]">
                     <Avatar className="h-6 w-6">
                       <AvatarImage src={ownerProfile?.avatarUrl || undefined} alt={ownerDisplay} />
-                      <AvatarFallback className="text-[10px]">{(ownerDisplay || "C").slice(0, 1).toUpperCase()}</AvatarFallback>
+                      <AvatarFallback className="bg-transparent p-0"><OperativeMark fill /></AvatarFallback>
                     </Avatar>
                     <span className="truncate max-w-[160px]">{ownerDisplay}</span>
                   </Link>

@@ -31,6 +31,7 @@ import {
 import { followUser, getFollowersCount, getFollowingCount, isFollowingUser, unfollowUser } from "@/lib/followApi";
 import { normalizeRank, type RankName } from "@/lib/ranks";
 import { Award, Copy, Crown, ExternalLink, Flag, Megaphone, Rocket, ShieldCheck, Trophy, Users, type LucideIcon } from "lucide-react";
+import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { cp } from "@/components/token/coinPageStyles";
 import { buildAbuseReportPath } from "@/lib/abuseReportLink";
 import { toast } from "sonner";
@@ -575,7 +576,6 @@ export default function PublicProfile({
   // Every section shows data this page already loads; nothing new is written.
   const nameText = (profile?.displayName ?? "").trim() || shorten(profileWallet);
   const handle = (profile?.displayName ?? "").trim() ? `@${(profile?.displayName ?? "").trim()}` : null;
-  const initials = ((profile?.displayName ?? "").trim() || profileWallet.replace(/^0x/i, "")).slice(0, 2).toUpperCase();
   const squadCode = recruiter?.code || walletAttribution?.recruiterCode || null;
   const hasSquad = Boolean(squad || walletAttribution?.recruiterCode);
   const postsToShow = feedSupported ? feedItems : publicPosts;
@@ -795,11 +795,11 @@ export default function PublicProfile({
           <div className="mw-banner h-full w-full" aria-hidden="true" />
         </div>
         <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-5 md:px-2">
-          <div className="relative z-[1] -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-full border-4 border-mw-ground bg-[#2A3038] md:-mt-16 md:h-[132px] md:w-[132px]">
+          <div className={`relative z-[1] -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-full border-4 bg-[#2A3038] md:-mt-16 md:h-[132px] md:w-[132px] ${profile?.avatarUrl ? "border-mw-ground" : "mw-operative border-[#3dff78]"}`}>
             {profile?.avatarUrl ? (
               <img src={profile.avatarUrl} alt={nameText} className="h-full w-full object-cover" />
             ) : (
-              <div className="flex h-full w-full items-center justify-center font-mw-cond text-3xl font-bold text-mw-text md:text-[44px]">{initials}</div>
+              <OperativeMark fill />
             )}
           </div>
           <div className="min-w-0 flex-1 md:pb-1">

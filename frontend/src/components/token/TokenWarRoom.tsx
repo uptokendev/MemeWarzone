@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { AbuseReportShortcut, currentPageUrl } from "@/components/abuse/AbuseReportShortcut";
@@ -105,7 +106,7 @@ export function TokenWarRoom({ chainId, campaignAddress, creatorAddress }: { cha
               <div key={`${m.id}:${m.clientNonce || ""}`} className={`flex items-start gap-3 rounded-xl border p-2.5 ${isMine ? "border-accent/35 bg-accent/5" : "border-border/35 bg-card/20"}`}>
                 <Avatar className="h-8 w-8">
                   {m.avatarUrl ? <AvatarImage src={m.avatarUrl} /> : null}
-                  <AvatarFallback className="text-[10px]">{initials(display)}</AvatarFallback>
+                  <AvatarFallback className="bg-transparent p-0"><OperativeMark fill /></AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-[11px]">

@@ -10,6 +10,7 @@ import { buildAbuseReportPath } from "@/lib/abuseReportLink";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Progress } from "@/components/ui/progress";
@@ -5014,9 +5015,7 @@ const toSeconds = (ts: number): number => {
                             src={creatorProfile?.avatarUrl || undefined}
                             alt={display}
                           />
-                          <AvatarFallback className="text-[10px]">
-                            {initial}
-                          </AvatarFallback>
+                          <AvatarFallback className="bg-transparent p-0"><OperativeMark fill /></AvatarFallback>
                         </Avatar>
                         <span className="truncate">{display}</span>
                       </Link>
