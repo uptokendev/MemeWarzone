@@ -1,10 +1,17 @@
-// BNB / Robinhood: move each resolved battle's league share into the league treasury.
+// BNB / Robinhood war pool crank: resolve finished pools and move their protocol and league shares.
 //
-// ArenaWarPoolTreasuryV2.claimLeague(poolId, monthlyEpoch, quarterlyEpoch) is permissionless and
-// nothing in the app sent it, so the league pots only grew when someone did it by hand. This sends
-// it for every Resolved pool that still holds an unclaimed league share.
+// On EVM a pool only became Resolved when the winner pressed Claim (the button submits the
+// server-signed result), and its protocol / league shares only moved when someone called
+// claimProtocol / claimLeague. Nothing did either, so an unclaimed win left both shares in the pool,
+// and a pool nobody resolved before its resolveDeadline could only be refunded. This crank:
+//   1. Live pool whose battle/tournament finished in the DB -> submits the resolver-signed result
+//      (resolve / resolvePlaces, from the same claim-intent the Claim button uses). Permissionless:
+//      the contract checks the resolver's signature over the winner, so this changes no payout.
+//   2. Resolved pool -> claimProtocol (operator up to its cap, rest to the protocol receiver) and
+//      claimLeague (league treasury). Both permissionless, fixed receivers.
+// The winner still collects their own prize with the Claim button (claimWinner pays msg.sender).
 //
-// The caller chooses the epoch. A wrong one cannot move money anywhere else
+// claimLeague's epoch is chosen by the caller. A wrong one cannot move money anywhere else
 // (PostGradLeagueTreasuryV2 pays fixed receivers), but it files the money under the wrong month,
 // so the month is the battle's settlement month (the month its MWL points went to), never "now".
 //
@@ -16,6 +23,7 @@ import { ethers } from "ethers";
 import { WAR_POOL_GENERATION_V2, WAR_POOL_V2_ABI, battlePoolId, tournamentPoolId, warPoolGeneration, warPoolTreasuryAddress } from "./arenaWarPoolEscrow.js";
 
 export const LEAGUE_CRANK_CHAIN_IDS = Object.freeze([56, 4663, 97, 46630]);
+const STATE_LIVE = 1n;
 const STATE_RESOLVED = 2n;
 const STATE_CANCELLED = 3n;
 
@@ -46,6 +54,22 @@ export function classifyLeaguePool(pool) {
   return { action: "claim", terminal: false, amount: BigInt(pool.pendingLeague) };
 }
 
+/**
+ * Every step a pool still needs, in order. resolve only for a Live pool; the two share claims only
+ * once Resolved. `terminal` means nothing will ever be needed again for this pool.
+ */
+export function planWarPoolSteps(pool) {
+  if (!pool) return { steps: [], terminal: false, reason: "unreadable" };
+  const state = BigInt(pool.state);
+  if (state === STATE_CANCELLED) return { steps: [], terminal: true, reason: "cancelled" };
+  if (state === STATE_LIVE) return { steps: ["resolve"], terminal: false, reason: "live" };
+  if (state !== STATE_RESOLVED) return { steps: [], terminal: false, reason: "not-live" };
+  const steps = [];
+  if (!pool.claimedProtocol && BigInt(pool.pendingProtocol) > 0n) steps.push("claimProtocol");
+  if (classifyLeaguePool(pool).action === "claim") steps.push("claimLeague");
+  return { steps, terminal: steps.length === 0, reason: steps.length ? "resolved" : "settled" };
+}
+
 function rpcUrl(chainId, env) {
   const perChain = String(env[`ROBINHOOD_RPC_HTTP_${chainId}`] || env[`BSC_RPC_HTTP_${chainId}`] || env[`VITE_PUBLIC_RPC_${chainId}`] || "").trim();
   if (perChain) return perChain.split(",")[0].trim();
@@ -73,12 +97,13 @@ export async function leagueCrankCandidates(db, chainIds, lookbackDays) {
     `select 'battle' as kind, b.id, b.chain_id, coalesce(b.settled_at, b.finished_at) as settled_at
        from public.arena_battles b
       where b.chain_id = any($1::int[]) and b.state = 'finished' and b.tournament_id is null
+        and coalesce(b.source, '') <> 'tournament'
         and coalesce(b.settled_at, b.finished_at) >= now() - ($2::text || ' days')::interval
      union all
      select 'tournament' as kind, t.id, t.chain_id, max(coalesce(b.settled_at, b.finished_at)) as settled_at
        from public.arena_tournaments t
        join public.arena_battles b on b.tournament_id = t.id and b.state = 'finished'
-      where t.chain_id = any($1::int[])
+      where t.chain_id = any($1::int[]) and t.status = 'finished'
       group by t.id, t.chain_id
      having max(coalesce(b.settled_at, b.finished_at)) >= now() - ($2::text || ' days')::interval
       order by settled_at asc`,
@@ -98,6 +123,7 @@ export async function crankLeagueShares({
   lookbackDays = Number(env.ARENA_EVM_LEAGUE_CRANK_LOOKBACK_DAYS || 120),
   terminal = new Set(),
   contractFor = (chainId) => defaultContractFor(chainId, env),
+  resolutionFor = defaultResolutionFor,
   log = () => {},
 } = {}) {
   if (mode === "off") return [];
@@ -117,36 +143,88 @@ export async function crankLeagueShares({
     const poolId = row.kind === "tournament" ? tournamentPoolId(row.id) : battlePoolId(row.id);
     const key = `${chainId}:${poolId}`;
     if (terminal.has(key)) continue;
-    let decision;
-    try {
-      decision = classifyLeaguePool(await c.contract.pools(poolId));
-    } catch (error) {
-      outcomes.push({ chainId, subject: row.id, poolId, status: "read-failed", reason: error?.shortMessage || error?.message || String(error) });
-      continue;
-    }
-    if (decision.terminal) terminal.add(key);
-    if (decision.action !== "claim") continue;
 
-    const epochs = leagueEpochsFor(row.settled_at);
-    const outcome = { chainId, subject: row.id, kind: row.kind, poolId, amountWei: decision.amount.toString(), month: epochs.monthKey, quarter: epochs.quarterKey };
-    outcomes.push(outcome);
-    if (mode !== "send") { outcome.status = "dry-run"; continue; }
-    if (!c.wallet) { outcome.status = "no-key"; continue; }
-    try {
-      const balance = await c.provider.getBalance(c.wallet.address);
-      if (balance === 0n) { outcome.status = "no-gas"; outcome.sender = c.wallet.address; continue; }
-      // Simulate first: a pool someone else just claimed reverts here instead of costing gas.
-      await c.contract.claimLeague.staticCall(poolId, epochs.monthlyEpoch, epochs.quarterlyEpoch);
-      const tx = await c.contract.claimLeague(poolId, epochs.monthlyEpoch, epochs.quarterlyEpoch);
-      outcome.txHash = tx.hash;
-      const receipt = await tx.wait();
-      outcome.status = receipt?.status === 1 ? "claimed" : "reverted";
-      if (outcome.status === "claimed") terminal.add(key);
-    } catch (error) {
-      outcome.status = "send-failed";
-      outcome.reason = error?.shortMessage || error?.message || String(error);
+    // At most resolve, protocol, league, then one last read that marks the pool done.
+    for (let round = 0; round < 4; round += 1) {
+      let pool;
+      try {
+        pool = await c.contract.pools(poolId);
+      } catch (error) {
+        outcomes.push({ chainId, subject: row.id, kind: row.kind, poolId, step: "read", status: "read-failed", reason: error?.shortMessage || error?.message || String(error) });
+        break;
+      }
+      const plan = planWarPoolSteps(pool);
+      if (plan.terminal) { terminal.add(key); break; }
+      if (!plan.steps.length) break;
+      const step = plan.steps[0];
+      const outcome = { chainId, subject: row.id, kind: row.kind, poolId, step };
+      outcomes.push(outcome);
+      let call;
+      try {
+        call = await buildStepCall(step, { row, pool, poolId, resolutionFor });
+      } catch (error) {
+        outcome.status = "blocked";
+        outcome.reason = error?.message || String(error);
+        log(outcome);
+        break;
+      }
+      Object.assign(outcome, call.describe);
+      if (mode !== "send") { outcome.status = "dry-run"; log(outcome); break; }
+      if (!c.wallet) { outcome.status = "no-key"; log(outcome); break; }
+      try {
+        const balance = await c.provider.getBalance(c.wallet.address);
+        if (balance === 0n) { outcome.status = "no-gas"; outcome.sender = c.wallet.address; log(outcome); break; }
+        // Simulate first: a pool someone else just resolved / claimed reverts here, not on chain.
+        await c.contract[call.method].staticCall(...call.args);
+        const tx = await c.contract[call.method](...call.args);
+        outcome.txHash = tx.hash;
+        const receipt = await tx.wait();
+        outcome.status = receipt?.status === 1 ? "sent" : "reverted";
+      } catch (error) {
+        outcome.status = "send-failed";
+        outcome.reason = error?.shortMessage || error?.message || String(error);
+      }
+      log(outcome);
+      if (outcome.status !== "sent") break;
     }
-    log(outcome);
   }
   return outcomes;
+}
+
+/** The contract call for one step. resolve takes the server-signed result from claim-intent. */
+export async function buildStepCall(step, { row, pool, poolId, resolutionFor }) {
+  if (step === "claimProtocol") {
+    return { method: "claimProtocol", args: [poolId], describe: { amountWei: BigInt(pool.pendingProtocol).toString() } };
+  }
+  if (step === "claimLeague") {
+    const epochs = leagueEpochsFor(row.settled_at);
+    return {
+      method: "claimLeague",
+      args: [poolId, epochs.monthlyEpoch, epochs.quarterlyEpoch],
+      describe: { amountWei: BigInt(pool.pendingLeague).toString(), month: epochs.monthKey, quarter: epochs.quarterKey },
+    };
+  }
+  if (step === "resolve") {
+    const { status, body } = await resolutionFor(row.id);
+    const signed = body?.resolve;
+    if (status !== 200 || !body?.ok || !signed?.signature) {
+      throw new Error(`resolution unavailable (${status}${body?.code ? ` ${body.code}` : ""}${body?.error ? `: ${body.error}` : ""})`);
+    }
+    if (String(body.poolId || "").toLowerCase() !== String(poolId).toLowerCase()) throw new Error("resolution is for a different pool");
+    if (signed.version === "2-places") {
+      return {
+        method: "resolvePlaces",
+        args: [poolId, signed.payouts, signed.bps, signed.deadline, signed.signature],
+        describe: { payouts: signed.payouts.join(",") },
+      };
+    }
+    if (signed.version !== "2") throw new Error(`unsupported resolution version ${signed.version}`);
+    return { method: "resolve", args: [poolId, signed.winnerPayout, signed.deadline, signed.signature], describe: { winner: signed.winnerPayout } };
+  }
+  throw new Error(`unknown step ${step}`);
+}
+
+async function defaultResolutionFor(subjectId) {
+  const { claimIntentFor } = await import("../arenaWarPools.js");
+  return claimIntentFor(subjectId);
 }

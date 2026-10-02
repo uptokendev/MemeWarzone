@@ -11,10 +11,12 @@ import { startEvmGraduationKeeperWorker } from "./evm/evmGraduationKeeperWorker.
 import { startEvmCreatorChoiceWorker } from "./evm/evmCreatorChoiceWorker.js";
 import { startSolanaFeeEscrowWorker } from "./solanaFeeEscrowWorker.js";
 import { startSolanaIndexerLoop } from "./solanaIndexer.js";
+import { startSolanaLpHarvestLoop } from "./solanaLpHarvestLoop.js";
 
 startSupportedFactoryDiscoveryLoop();
 startSolanaIndexerLoop();
 startSolanaFeeEscrowWorker();
+startSolanaLpHarvestLoop();
 startDbcFeeRoutingWorker();
 startDbcCreatorChoiceWorker();
 startDbcGraduationWorker();
