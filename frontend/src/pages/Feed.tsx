@@ -41,6 +41,22 @@ const TABS: Array<{ key: HomeTab; label: string; mobileOnly?: boolean }> = [
 ];
 
 const TREND_CHAINS = [101, 56, 4663];
+
+/** Following tab filter chips (CO-7, founder 2026-10-03). Client-side over the loaded page. */
+type FollowFilter = "everyone" | "people" | "coins" | "auto";
+const FOLLOW_FILTERS: Array<{ key: FollowFilter; label: string }> = [
+  { key: "everyone", label: "Everyone" },
+  { key: "people", label: "People" },
+  { key: "coins", label: "Coins" },
+  { key: "auto", label: "Auto updates" },
+];
+const AUTO_TYPES = new Set(["draft_created", "coin_deployed", "coin_graduated", "battle_started", "battle_finished", "trade"]);
+function matchesFollowFilter(item: FeedItem, filter: FollowFilter) {
+  if (filter === "everyone") return true;
+  if (filter === "auto") return AUTO_TYPES.has(item.type);
+  if (filter === "coins") return item.type === "coin_post" || (item.type === "post" && Boolean(item.mentionedToken || item.mentionedCampaign));
+  return item.type === "post";
+}
 const empty = "rounded-[14px] border border-mw-border bg-mw-surface p-4 text-sm text-mw-muted";
 
 export default function Feed() {
@@ -54,6 +70,7 @@ export default function Feed() {
     ? SOLANA_CHAIN_ID
     : getActiveChainId((wallet as { chainId?: number })?.chainId) || 56;
   const [tab, setTab] = useState<HomeTab>("for-you");
+  const [followFilter, setFollowFilter] = useState<FollowFilter>("everyone");
   const [items, setItems] = useState<FeedItem[]>([]);
   const [suggestions, setSuggestions] = useState<FeedSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -157,6 +174,23 @@ export default function Feed() {
             ) : null}
             {tab === "for-you" ? <div className="lg:hidden"><HomeComposer onPosted={() => void load()} /></div> : null}
 
+            {tab === "following" ? (
+              <div role="radiogroup" aria-label="Following filter" className="flex gap-2 overflow-x-auto px-3 [scrollbar-width:none] lg:px-0 [&::-webkit-scrollbar]:hidden">
+                {FOLLOW_FILTERS.map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    role="radio"
+                    aria-checked={followFilter === f.key}
+                    onClick={() => setFollowFilter(f.key)}
+                    className={`mw-focus inline-flex h-9 shrink-0 items-center rounded-full border px-3.5 text-[13px] font-semibold ${followFilter === f.key ? "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft" : "border-mw-edge bg-[#171B20] text-[#C9CED4] hover:bg-[#1F252C] hover:text-mw-text"}`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
             {postsTab ? (
               loading ? (
                 <div className={empty}>Loading feed...</div>
@@ -164,7 +198,10 @@ export default function Feed() {
                 <div className="rounded-[14px] border border-[#5A1A26] bg-[#2A0E14] p-4 text-sm text-[#FFB4C0]">{error}</div>
               ) : items.length ? (
                 <>
-                  {items.map((item) => <FeedItemView key={item.id} item={item} onChanged={() => void load()} />)}
+                  {(tab === "following" ? items.filter((item) => matchesFollowFilter(item, followFilter)) : items).map((item) => <FeedItemView key={item.id} item={item} onChanged={() => void load()} />)}
+                  {tab === "following" && followFilter !== "everyone" && !items.some((item) => matchesFollowFilter(item, followFilter)) ? (
+                    <div className={empty}>Nothing in this filter yet. Scroll for more or pick another filter.</div>
+                  ) : null}
                   <div ref={sentinelRef} aria-hidden="true" />
                   {loadingMore ? <div className={empty}>Loading more...</div> : null}
                   {!cursor ? <p className="m-0 py-2 text-center text-[13px] text-mw-muted">You are all caught up.</p> : null}
