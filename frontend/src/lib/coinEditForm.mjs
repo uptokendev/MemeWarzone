@@ -1,7 +1,7 @@
 /** Edit coin page form → the fields that changed (UI redesign phase 1b). Pure. */
 
 /**
- * @typedef {{ bannerUrl: string, bio: string, founderNote: string, websiteUrl: string, xUrl: string,
+ * @typedef {{ bannerUrl: string, bannerPositionY: number, bio: string, founderNote: string, websiteUrl: string, xUrl: string,
  *   telegramUrl: string, discordUrl: string, tags: string, pinnedPostId: string,
  *   shareUpdatesToFeed: boolean, showAutoUpdates: boolean, sectionImages: Record<string, string> }} CoinProfileForm
  */
@@ -45,5 +45,7 @@ export function diffCoinProfile(stored, form, { imported = false } = {}) {
   if (Boolean(form.shareUpdatesToFeed) !== (s.shareUpdatesToFeed !== false)) out.shareUpdatesToFeed = Boolean(form.shareUpdatesToFeed);
   if (Boolean(form.showAutoUpdates) !== (s.showAutoUpdates !== false)) out.showAutoUpdates = Boolean(form.showAutoUpdates);
   if (!sameImages(form.sectionImages, s.sectionImages)) out.sectionImages = { ...(form.sectionImages || {}) };
+  const position = Math.max(0, Math.min(100, Math.round(Number(form.bannerPositionY ?? 50))));
+  if (position !== Math.round(Number(s.bannerPositionY ?? 50))) out.bannerPositionY = position;
   return out;
 }

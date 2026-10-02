@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { StoryEnterButton } from "@/components/story/StoryEnterButton";
 import { CoinTabs } from "@/components/token/CoinTabs";
 import { cp } from "@/components/token/coinPageStyles";
-import { CoinBanner, CoinFounderNote, CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
+import { CoinBanner, CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
 import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { ImportedTradesTable } from "@/components/arena/ImportedTradesTable";
@@ -494,8 +494,6 @@ export default function ImportedTokenPage({
             ) : (
             <p className="m-0 max-w-[70ch] whitespace-pre-wrap break-words text-base leading-relaxed text-mw-text" data-project-description="true">{item.description || "No description added yet."}</p>
             )}
-            <CoinFounderNote chainId={item.chainId} token={item.tokenAddress} />
-            <CoinTags chainId={item.chainId} token={item.tokenAddress} />
             <div className="flex flex-wrap items-center gap-2" data-project-socials="true">
               <CoinLinkSwap kind="website" chainId={item.chainId} token={item.tokenAddress} fallback={websiteHref ? <a href={websiteHref} target="_blank" rel="noreferrer" className={cp.chipButton}>Website</a> : <span className={`${cp.chip} text-mw-muted`}>Website —</span>} />
               <CoinLinkSwap kind="x" chainId={item.chainId} token={item.tokenAddress} fallback={xHref ? <a href={xHref} target="_blank" rel="noreferrer" className={cp.chipButton}>X</a> : <span className={`${cp.chip} text-mw-muted`}>X —</span>} />
@@ -506,6 +504,7 @@ export default function ImportedTokenPage({
                 <span className="text-mw-muted">{identityLabel}</span>
                 <span className="truncate font-mw-mono">{item.tokenAddress}</span>
               </button>
+              <CoinTags chainId={item.chainId} token={item.tokenAddress} />
             </div>
             <div className="grid grid-cols-2 gap-4 border-t border-mw-border pt-4 md:grid-cols-4">
               <div className="min-w-0"><p className={cp.label}>Price</p><p className={cp.metricValue}>{formatUsd(profile?.priceUsd)}</p></div>

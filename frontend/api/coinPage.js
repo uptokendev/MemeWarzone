@@ -26,6 +26,7 @@ import {
 const PROFILE_COLUMNS = [
   "banner_url", "bio", "founder_note", "website_url", "x_url", "telegram_url", "discord_url",
   "tags", "pinned_post_id", "share_updates_to_feed", "show_auto_updates", "section_images",
+  "banner_position_y",
 ];
 
 /** Every stored image must be this coin's own upload (see coinPageImage.js). */
@@ -47,11 +48,20 @@ function sameAddr(chainId, a, b) {
 async function readProfile(chainId, token) {
   try {
     const match = isSolanaChain(chainId) ? "token_address = $2" : "lower(token_address) = lower($2)";
-    const { rows } = await pool.query(
-      `select ${PROFILE_COLUMNS.join(", ")}, short_story, sections, updated_at from public.token_story_profiles where chain_id = $1 and ${match} limit 1`,
-      [chainId, token],
-    );
-    return rows[0] || null;
+    const read = (columns) =>
+      pool.query(
+        `select ${columns.join(", ")}, short_story, sections, updated_at from public.token_story_profiles where chain_id = $1 and ${match} limit 1`,
+        [chainId, token],
+      );
+    try {
+      const { rows } = await read(PROFILE_COLUMNS);
+      return rows[0] || null;
+    } catch (error) {
+      // banner_position_y (20261002_000006) not applied yet: read everything else.
+      if (error?.code !== "42703") throw error;
+      const { rows } = await read(PROFILE_COLUMNS.filter((c) => c !== "banner_position_y"));
+      return rows[0] || null;
+    }
   } catch (error) {
     if (isSchemaMissing(error)) return null;
     throw error;
@@ -181,7 +191,7 @@ async function handleProfileWrite(req, res) {
   const placeholders = columns.map((column) => {
     const v = values[column];
     params.push(column === "section_images" && v != null ? JSON.stringify(v) : v);
-    const cast = column === "section_images" ? "::jsonb" : column === "tags" ? "::text[]" : column === "pinned_post_id" ? "::bigint" : "";
+    const cast = column === "section_images" ? "::jsonb" : column === "tags" ? "::text[]" : column === "pinned_post_id" ? "::bigint" : column === "banner_position_y" ? "::smallint" : "";
     return `$${params.length}${cast}`;
   });
   // Insert creates the row with the Story's own defaults; on conflict only the columns sent are set,

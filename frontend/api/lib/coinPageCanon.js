@@ -93,6 +93,12 @@ export function validateCoinProfileInput(body, origin) {
     if (url === null) return fail("COIN_LINK_INVALID", "The banner must be an https image address.", { field: "bannerUrl" });
     values.banner_url = url || null;
   }
+  if (has("bannerPositionY")) {
+    const raw = b.bannerPositionY;
+    const n = raw === null || raw === "" ? null : Math.round(Number(raw));
+    if (n !== null && (!Number.isFinite(n) || n < 0 || n > 100)) return fail("COIN_BANNER_POSITION", "Banner position must be between 0 and 100.", { field: "bannerPositionY" });
+    values.banner_position_y = n;
+  }
   if (has("tags")) {
     const tags = normalizeTags(b.tags);
     if (tags === null) return fail("COIN_TAGS_INVALID", `Up to ${COIN_TAGS_MAX} tags, letters and numbers only, ${COIN_TAG_MAX} characters each.`);
@@ -155,6 +161,7 @@ export function profileFromRow(row) {
   const r = row || {};
   return {
     bannerUrl: r.banner_url || null,
+    bannerPositionY: r.banner_position_y == null ? null : Number(r.banner_position_y),
     bio: r.bio || null,
     founderNote: r.founder_note || null,
     websiteUrl: r.website_url || null,

@@ -59,7 +59,7 @@ import { StoryEnterButton } from "@/components/story/StoryEnterButton";
 import { CoinTabs } from "@/components/token/CoinTabs";
 import { ChallengeCoinButton } from "@/components/arena/ChallengeCoinButton";
 import { cp } from "@/components/token/coinPageStyles";
-import { CoinBanner, CoinBio, CoinFounderNote, CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
+import { CoinBanner, CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
 import { useStory } from "@/lib/story/storyApi";
 import { MobileTradeDock, MobileTradeSheet, useXlUp } from "@/components/token/MobileTradeSheet";
@@ -5087,6 +5087,7 @@ const toSeconds = (ts: number): number => {
                   targetId={String(campaign?.token || campaignAddr)}
                 />
               ) : null}
+              {story ? <StoryEnterButton story={story} label="Story" className={cp.btn} /> : null}
               <button
                 type="button"
                 className={cp.btn}
@@ -5149,10 +5150,8 @@ const toSeconds = (ts: number): number => {
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px] xl:gap-6">
         <div className="min-w-0 flex flex-col gap-4">
           {/* About + metrics card, fixed above the tabs. */}
-          <section aria-label={`About ${tokenData.name || tokenData.ticker || "this token"}`} className={`${cp.card} flex flex-col gap-4 p-4 md:p-5`}>
-            <CoinBio chainId={chainIdForStorage} token={String(campaign?.token || campaignAddr || "")} fallback={campaignDescription} />
-            <CoinFounderNote chainId={chainIdForStorage} token={String(campaign?.token || campaignAddr || "")} />
-            <CoinTags chainId={chainIdForStorage} token={String(campaign?.token || campaignAddr || "")} />
+          {/* Founder 2026-10-02: no description or founder note here (they live in the Story); tags follow the CA. */}
+          <section aria-label={`About ${tokenData.name || tokenData.ticker || "this token"}`} className={`${cp.card} flex flex-col gap-3 p-4`}>
 
             <div className="flex flex-wrap items-center gap-2">
               <CoinLinkSwap
@@ -5272,96 +5271,53 @@ const toSeconds = (ts: number): number => {
                   CA {shortenAddress(campaign?.token ?? "") || "—"}
                 </span>
               </button>
+              <CoinTags chainId={chainIdForStorage} token={String(campaign?.token || campaignAddr || "")} />
             </div>
 
-            <div className="grid grid-cols-2 gap-4 border-t border-mw-border pt-4 md:grid-cols-3 xl:grid-cols-5">
+            <div className="grid grid-cols-3 gap-3 border-t border-mw-border pt-3 md:grid-cols-5">
               <div className="min-w-0">
                 <p className={cp.label}>Market cap</p>
                 <p className={cp.metricValue}>{marketCapDisplay}</p>
               </div>
-
               <div className="min-w-0">
                 <p className={cp.label}>Price</p>
-                <p className={cp.metricValue}>{priceDisplay}</p>
-                <p className={cp.metricSub}>Spot</p>
+                <p className={`${cp.metricValue} truncate`} title={String(priceDisplay)}>{priceDisplay}</p>
               </div>
-
               <div className="min-w-0">
-                <p className={cp.label}>Volume</p>
+                <p className={cp.label}>Volume {selectedTimeframe}</p>
                 <p className={cp.metricValue}>{volumeDisplay}</p>
-                <p className={cp.metricSub}>Window {selectedTimeframe}</p>
               </div>
-
               <div className="min-w-0">
                 <p className={cp.label}>{liquidityLabel}</p>
                 <p className={cp.metricValue}>{liquidityDisplay}</p>
-                {!isDexStage ? (
-                  <p className={cp.metricSub}>Remaining {remainingCurveLabel.primary}</p>
-                ) : (
-                  <p className={cp.metricSub}>Stage {stagePill}</p>
-                )}
               </div>
-
               <div className="min-w-0">
                 <p className={cp.label}>Holders</p>
                 <p className={cp.metricValue}>{tokenData.holders}</p>
               </div>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between gap-2 text-sm">
-                <h3 className="m-0 text-sm font-normal text-mw-muted">Graduation progress</h3>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <h3 className="m-0 text-sm font-normal text-mw-muted">{contractGraduated ? "Graduated" : "Bonding curve"}</h3>
                 <span className="font-mw-mono text-mw-text">
                   {contractGraduated
-                    ? "Graduated"
+                    ? `Trading ${isSolanaPage ? "on Meteora" : isRobinhoodPage ? "on Uniswap" : "on Topaz"}`
                     : solanaCurveClosed || curveProgress.matured
-                      ? "Eligible"
-                    : curveProgress.pct > 0 && curveProgress.pct < 0.01
-                      ? `${curveProgress.pct.toFixed(6)}%`
-                      : `${curveProgress.pct.toFixed(2)}%`}
+                      ? "Eligible to graduate"
+                    : `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : "to Topaz"} at 100%`}
                 </span>
               </div>
-              {contractGraduated ? (
-                <p className="m-0 text-xs leading-snug text-mw-muted">
-                  This token has graduated. Bonding is closed. Trading continues on the same page
-                  {isSolanaPage ? " via Meteora" : isRobinhoodPage ? " via Uniswap" : " via Topaz"}.
-                </p>
-              ) : null}
-
               <div className="h-2 w-full overflow-hidden rounded-full bg-mw-border">
                 <div
                   className="h-full rounded-full bg-mw-accent"
                   style={{ width: `${Math.max(0, Math.min(100, curveProgress.pct))}%`, minWidth: curveProgress.pct > 0 ? "1px" : undefined }}
                 />
               </div>
-
               {contractGraduated ? null : (
-              <div className="mt-1 grid grid-cols-2 gap-3 text-xs md:grid-cols-4">
-                <div>
-                  <p className="text-mw-muted">Tokens sold</p>
-                  <p className="mt-1 font-mw-mono text-mw-text">
-                    {curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01
-                      ? `${curveProgress.soldPct.toFixed(6)}%`
-                      : `${curveProgress.soldPct.toFixed(2)}%`}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-mw-muted">{nativeUnit} raised</p>
-                  <p className="mt-1 font-mw-mono text-mw-text">
-                    {curveProgress.raisedPct > 0 && curveProgress.raisedPct < 0.01
-                      ? `${curveProgress.raisedPct.toFixed(6)}%`
-                      : `${curveProgress.raisedPct.toFixed(2)}%`}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-mw-muted">In curve</p>
-                  <p className="mt-1 font-mw-mono text-mw-text">{formatBnbFromWei(curveProgress.reserveWei ?? undefined)}</p>
-                </div>
-                <div>
-                  <p className="text-mw-muted">{nativeUnit} to target</p>
-                  <p className="mt-1 font-mw-mono text-mw-text">{remainingCurveLabel.primary}</p>
-                </div>
-              </div>
+                <p className="m-0 font-mw-mono text-xs text-mw-muted">
+                  {formatBnbFromWei(curveProgress.reserveWei ?? undefined)} in curve · {remainingCurveLabel.primary} to target · {curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01 ? curveProgress.soldPct.toFixed(6) : curveProgress.soldPct.toFixed(2)}% of tokens sold
+                </p>
               )}
             </div>
           </section>

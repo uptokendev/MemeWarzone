@@ -38,7 +38,7 @@ export function CoinTabs({ tabs, trailing, className }: { tabs: CoinTab[]; trail
 
   return (
     <div className={cn("flex min-w-0 flex-col gap-4", className)}>
-      <div className="sticky top-[var(--mwz-topbar-offset)] z-[5] -mx-1 flex items-center gap-5 overflow-x-auto border-b border-mw-border bg-mw-ground px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="-mx-1 flex items-center gap-5 overflow-x-auto border-b border-mw-border px-1 [scrollbar-width:none] lg:overflow-visible [&::-webkit-scrollbar]:hidden">
         <div role="tablist" aria-label="Coin sections" className="flex gap-5">
           {tabs.map((tab) => {
             const on = tab.value === current;

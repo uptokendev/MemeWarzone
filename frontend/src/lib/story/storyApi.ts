@@ -59,7 +59,11 @@ function cachedStory(chainId: number, token: string, signal?: AbortSignal) {
   const key = `${Number(chainId || 0)}:${String(token || "").trim()}`;
   const hit = storyCache.get(key);
   if (hit && Date.now() - hit.at < STORY_TTL_MS) return hit.request;
-  const request = fetchStory(chainId, token, signal).catch(() => {
+  // The cached request is shared by every component asking for this coin, so it is never cancelled by
+  // one of them: a cancelled first request (React re-runs effects in development) used to sit in the
+  // cache as "no story" for five minutes and hid the Story button.
+  void signal;
+  const request = fetchStory(chainId, token).catch(() => {
     storyCache.delete(key);
     return null;
   });

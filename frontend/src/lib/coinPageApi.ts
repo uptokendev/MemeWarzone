@@ -13,6 +13,8 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 
 export type CoinPageProfile = {
   bannerUrl: string | null;
+  /** Vertical focus of the banner in percent (0 top, 50 centre, 100 bottom); null = centre. */
+  bannerPositionY: number | null;
   bio: string | null;
   founderNote: string | null;
   websiteUrl: string | null;
@@ -41,6 +43,7 @@ export type CoinPageData = {
 
 export type CoinProfileInput = Partial<{
   bannerUrl: string;
+  bannerPositionY: number | null;
   bio: string;
   founderNote: string;
   websiteUrl: string;

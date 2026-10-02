@@ -23,7 +23,7 @@ export function CoinBanner({ chainId, token, editPath }: CoinRef & { editPath: s
   return (
     <div className="relative h-[120px] overflow-hidden rounded-2xl border border-[#1E2329] md:h-[200px] xl:h-[240px]">
       {banner ? (
-        <img src={banner} alt="" className="h-full w-full object-cover" />
+        <img src={banner} alt="" className="h-full w-full object-cover" style={{ objectPosition: `50% ${data?.profile.bannerPositionY ?? 50}%` }} />
       ) : (
         <div className="mw-banner h-full w-full" aria-hidden="true" />
       )}
@@ -75,7 +75,7 @@ export function CoinTags({ chainId, token }: CoinRef) {
   const tags = data?.profile.tags || [];
   if (!tags.length) return null;
   return (
-    <div className="flex flex-wrap gap-1.5" aria-label="Tags">
+    <div className="contents" aria-label="Tags">
       {tags.map((t) => (
         <span key={t} className={cp.chip}>#{t}</span>
       ))}

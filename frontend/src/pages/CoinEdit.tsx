@@ -67,6 +67,7 @@ export default function CoinEdit() {
     const p = data.profile;
     setForm({
       bannerUrl: p.bannerUrl || "",
+      bannerPositionY: p.bannerPositionY ?? 50,
       bio: p.bio || "",
       founderNote: p.founderNote || "",
       websiteUrl: p.websiteUrl || "",
@@ -178,11 +179,49 @@ export default function CoinEdit() {
             <input ref={bannerRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => void upload("banner", e.target.files?.[0])} />
             {form.bannerUrl ? (
               <div className="relative">
-                <img src={form.bannerUrl} alt="Banner preview" className="h-[160px] w-full rounded-xl border border-mw-border object-cover md:h-[200px]" />
+                <img
+                  src={form.bannerUrl}
+                  alt="Banner preview. Drag up or down to choose what shows."
+                  draggable={false}
+                  style={{ objectPosition: `50% ${form.bannerPositionY ?? 50}%` }}
+                  onPointerDown={(e) => {
+                    const el = e.currentTarget;
+                    el.setPointerCapture(e.pointerId);
+                    const startY = e.clientY;
+                    const start = Number(form.bannerPositionY ?? 50);
+                    const height = el.getBoundingClientRect().height || 1;
+                    const move = (ev: PointerEvent) => {
+                      // Dragging down reveals the top of the image, so the focus moves up.
+                      const next = Math.max(0, Math.min(100, Math.round(start - ((ev.clientY - startY) / height) * 100)));
+                      set("bannerPositionY", next);
+                    };
+                    const up = () => {
+                      el.removeEventListener("pointermove", move);
+                      el.removeEventListener("pointerup", up);
+                      el.removeEventListener("pointercancel", up);
+                    };
+                    el.addEventListener("pointermove", move);
+                    el.addEventListener("pointerup", up);
+                    el.addEventListener("pointercancel", up);
+                  }}
+                  className="h-[160px] w-full cursor-ns-resize touch-none select-none rounded-xl border border-mw-border object-cover md:h-[200px]"
+                />
                 <div className="absolute right-2 top-2 flex gap-2">
                   <button type="button" className={`${cp.btn} min-h-10 bg-[rgba(19,23,28,0.92)] text-sm`} onClick={() => bannerRef.current?.click()} disabled={uploading === "banner"}>Replace</button>
                   <button type="button" aria-label="Remove banner" className={`${cp.btn} min-h-10 w-10 bg-[rgba(19,23,28,0.92)] px-0`} onClick={() => set("bannerUrl", "")}><X className="h-4 w-4" aria-hidden="true" /></button>
                 </div>
+                <label className="mt-2.5 flex items-center gap-3 text-sm text-mw-muted">
+                  <span className="shrink-0">Drag the banner, or set the position</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={form.bannerPositionY ?? 50}
+                    onChange={(e) => set("bannerPositionY", Number(e.target.value))}
+                    aria-label="Banner vertical position"
+                    className="w-full accent-[#FF7A1A]"
+                  />
+                </label>
               </div>
             ) : (
               <button
