@@ -45,6 +45,7 @@ import profileCabinet from "./profileCabinet.js";
 import profilePortfolio from "./profile/portfolio.js";
 import postgrad from "./postgrad.js";
 import arenaBattleActivity from "./arenaBattleActivity.js";
+import arenaMwlPrizePool from "./arenaMwlPrizePool.js";
 import upload from "./upload.js";
 import coinPage from "./coinPage.js";
 import coinPageImage from "./coinPageImage.js";
@@ -456,6 +457,7 @@ router.get("/dbc/creator-rewards", wrap(dbcCreatorRewards));
 router.get("/dbc/creator-choice", wrap(dbcCreatorChoice));
 // UI redesign battle page (new routes; registered before the arena catch-all so they never reach it).
 router.all(/^\/arena\/battles\/[^/]+\/(?:activity|comments)$/, wrap(arenaBattleActivity));
+router.get("/arena/mwl-prize-pool", wrap(arenaMwlPrizePool));
 router.all(/^\/(?:arena\/ops\/health|arena\/battles(?:\/.*)?|arena\/battle-metrics(?:\/.*)?|arena\/boosts(?:\/.*)?|arena\/sponsorships(?:\/.*)?|arena\/imports(?:\/.*)?|arena\/tournaments(?:\/.*)?|arena\/events(?:\/.*)?|arena\/league(?:\/.*)?|arena\/notifications(?:\/.*)?|arena\/votes(?:\/.*)?|arena\/war-pools(?:\/.*)?|sponsored|sponsorship-applications|sponsorship-packages|sponsorship-settings|war-room(?:\/.*)?)$/, wrap(postgrad));
 router.all(/^\/admin\/arena\/imports(?:\/.*)?$/, wrap(adminArenaImports));
 router.all(/^\/admin\/arena\/tournaments(?:\/.*)?$/, wrap(arenaTournaments));

@@ -12,6 +12,7 @@ import { fetchPostGradTournamentDetails } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
 import { getMockTournamentDetails } from "@/features/postgrad/mockTournamentFixtures.mjs";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
+import { formatPotNative, useMwlPrizePool } from "@/lib/arena/mwlPrizePoolApi";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
 import { readBracketRounds, tournamentHref } from "@/lib/arena/tournamentCommandPresentation.mjs";
 import {
@@ -178,6 +179,19 @@ const PostGradLeague = () => {
     }
   }
 
+  const seasonMonth = (() => {
+    const fromLabel = String(season.label || "").match(/(\d{4})-(\d{2})/);
+    return fromLabel ? `${fromLabel[1]}-${fromLabel[2]}` : null;
+  })();
+  const pot = useMwlPrizePool(leagueChainId, seasonMonth).data;
+  const potTiles = pot?.available
+    ? pot.split
+      ? [
+          { label: "Prize pool this month", value: formatPotNative(pot.monthlyNative, leagueChainId) },
+          { label: `Quarterly finals pot · ${pot.quarter.replace("-", " ")}`, value: formatPotNative(pot.quarterlyNative, leagueChainId) },
+        ]
+      : [{ label: "Prize pool · monthly + finals", value: formatPotNative(pot.combinedNative, leagueChainId) }]
+    : [];
   const fieldKeys = new Set(quarterFinals.field.map((entry) => tokenIdentityKey(entry.tokenId)));
   const qualifiedLabel = (tokenId: string) => (!fieldKeys.size ? "—" : fieldKeys.has(tokenIdentityKey(tokenId)) ? (quarterFinals.phase.projected ? "In" : "Qualified") : "Out");
   // Artboard: one table from #1 down (podium plus the public table), cut line after the last seed.
@@ -201,6 +215,17 @@ const PostGradLeague = () => {
           <p className="m-0 mt-1.5 text-sm text-mw-muted lg:text-[15px]">
             {headerMeta ? "Graduated coins earn points in ranked battles. The top 8 play the quarterly finals." : "The monthly fight for Warzone supremacy"}
           </p>
+          {potTiles.length ? (
+            <div data-mwl-prize-pool="true" className="mt-3 flex flex-wrap gap-2">
+              {potTiles.map((tile) => (
+                <div key={tile.label} className="min-w-0 flex-1 rounded-[10px] border border-mw-border bg-mw-input px-3 py-2 sm:min-w-[150px] sm:flex-none">
+                  <div className={lbl}>{tile.label}</div>
+                  <div className="font-mw-mono text-xl font-bold">{tile.value}</div>
+                </div>
+              ))}
+              <p className="m-0 w-full text-[13px] text-mw-muted">20% of every battle entry goes to the league{pot?.split ? ": 60% to this month, 40% to the quarterly finals." : ". The same pot pays the monthly round and the quarterly finals."}</p>
+            </div>
+          ) : null}
         </div>
         <div className="flex w-full flex-col gap-3 lg:w-auto lg:items-end">
           <SeasonCountdown end={seasonMonthEnd(season)} />
