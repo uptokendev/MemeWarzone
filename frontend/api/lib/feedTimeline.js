@@ -16,10 +16,61 @@ function iso(value) {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-/** Parse the `before` cursor; anything invalid means "from now". */
+/**
+ * Cursor = "<createdAt of the last chronological item>|<hot posts already served>". A bare timestamp
+ * (older clients) still works. Anything invalid means "from now".
+ */
 export function parseCursor(value) {
-  const ts = Date.parse(String(value || ""));
+  const [stamp, hot] = String(value || "").split("|");
+  const ts = Date.parse(stamp);
   return Number.isFinite(ts) ? new Date(ts).toISOString() : null;
+}
+
+export function parseHotOffset(value) {
+  const hot = Number(String(value || "").split("|")[1]);
+  return Number.isFinite(hot) && hot > 0 ? Math.min(500, Math.trunc(hot)) : 0;
+}
+
+export function buildCursor(before, hotOffset) {
+  return before ? `${before}|${Math.max(0, Math.trunc(hotOffset || 0))}` : null;
+}
+
+/**
+ * Reach (founder, 2026-10-02: "popular posts get noticed quicker, including views"). Engagement per
+ * hour with a gravity on age, so a post taking off now beats an old one with more total engagement.
+ * Weights: repost 3, reply 2, rocket 1, view 0.05.
+ */
+export function hotScore({ createdAt, fireCount = 0, replyCount = 0, repostCount = 0, viewCount = 0 }, now = Date.now()) {
+  const ts = Date.parse(String(createdAt || ""));
+  const hours = Number.isFinite(ts) ? Math.max(0, (now - ts) / 3_600_000) : 48;
+  const engagement = 3 * Number(repostCount || 0) + 2 * Number(replyCount || 0) + Number(fireCount || 0) + 0.05 * Number(viewCount || 0);
+  return engagement / Math.pow(hours + 2, 1.5);
+}
+
+/**
+ * Order one chronological page: posts from wallets you follow and well-engaged posts rise a little
+ * within the page; system updates keep their time. Hot posts are mixed in at fixed slots.
+ */
+export function arrangeRankedPage(items, hot, { following = [], now = Date.now() } = {}) {
+  const followed = new Set((following || []).map((w) => String(w || "").toLowerCase()));
+  const pageScore = (item) => {
+    const ts = Date.parse(String(item.createdAt || "")) || 0;
+    const ageHours = Math.max(0, (now - ts) / 3_600_000);
+    if (!item.postId) return -ageHours;
+    const engagement = Math.log2(1 + Number(item.fireCount || 0) + 2 * Number(item.replyCount || 0) + 3 * Number(item.repostCount || 0) + 0.05 * Number(item.viewCount || 0));
+    const follow = followed.has(String(item.wallet || "").toLowerCase()) ? 2 : 0;
+    return -ageHours + engagement * 1.5 + follow;
+  };
+  const hotIds = new Set(hot.map((item) => item.id));
+  const base = items.filter((item) => !hotIds.has(item.id)).sort((a, b) => pageScore(b) - pageScore(a));
+  const out = [];
+  let h = 0;
+  for (let i = 0; i < base.length || h < hot.length; i += 1) {
+    // Hot posts at slots 0, 4, 9, 14, ... so the page opens with what is taking off.
+    if (h < hot.length && (out.length === 0 || out.length % 5 === 4)) out.push({ ...hot[h++], reach: "taking_off" });
+    if (i < base.length) out.push(base[i]);
+  }
+  return out;
 }
 
 function missing(e) {

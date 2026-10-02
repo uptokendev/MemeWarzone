@@ -58,6 +58,8 @@ export type FeedItem = {
   } | null;
   coinPostId?: number;
   viewCount?: number;
+  /** "taking_off": mixed in by reach ranking (engagement per hour, views included). */
+  reach?: "taking_off" | null;
   /** Battle updates (founder, 2026-10-02: For you shows battles too). */
   battleId?: string;
   battleMode?: string | null;

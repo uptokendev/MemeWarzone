@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BarChart2, GraduationCap, ImagePlus, Link2, MessageCircle, PenLine, Repeat2, Rocket, Rocket as LaunchIcon, Share2, Swords, Trophy, X } from "lucide-react";
+import { BarChart2, GraduationCap, ImagePlus, Link2, MessageCircle, PenLine, Repeat2, Rocket, Rocket as LaunchIcon, Share2, Swords, TrendingUp, Trophy, X } from "lucide-react";
 import { toast } from "sonner";
 import { isSolanaAddress } from "@/lib/address";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
@@ -409,6 +409,12 @@ export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: 
 
   return (
     <article ref={viewRef as React.RefObject<HTMLElement>} className={`${card} px-[18px] pb-2 pt-4`}>
+      {item.reach === "taking_off" && !reposter ? (
+        <div className="mb-2 flex items-center gap-1.5 pl-[58px] text-[13px] font-semibold text-[#FF9A4D]">
+          <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
+          Taking off
+        </div>
+      ) : null}
       {reposter ? (
         <div className="mb-2 flex items-center gap-1.5 pl-[58px] text-[13px] text-mw-muted">
           <Repeat2 className="h-3.5 w-3.5" aria-hidden="true" />

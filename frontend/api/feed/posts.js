@@ -27,8 +27,12 @@ import {
   loadDraftEvents,
   loadGraduationEvents,
   loadViewCounts,
+  arrangeRankedPage,
+  buildCursor,
+  hotScore,
   mergeTimelinePage,
   parseCursor,
+  parseHotOffset,
   recordViews,
 } from "../lib/feedTimeline.js";
 
@@ -459,6 +463,27 @@ async function queryRepostsPage({ before, limit, reposters, viewer }) {
  * For you (authors = null): everything. Following (authors = followed wallets): only their posts,
  * reposts, coin posts, launches, drafts, graduations and battles. One page, newest first.
  */
+/** Posts taking off: last 48 h, ranked by engagement per hour (views included), skipping `offset`. */
+async function loadHotPosts({ limit, offset, authors, viewer }) {
+  const params = [];
+  const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
+  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.parent_id is null and p.created_at > now() - interval '48 hours'`;
+  if (Array.isArray(authors)) {
+    sql += ` and lower(p.author_address) = any($${params.push(authors.map((w) => String(w).toLowerCase()))}::text[])`;
+  }
+  sql += ` order by p.created_at desc limit 300`;
+  const { rows } = await pool.query(sql, params);
+  const items = rows.map((row) => mapPostRow(row));
+  const views = await loadViewCounts(items.map((item) => item.postId));
+  return items
+    .map((item) => ({ ...item, viewCount: views.get(Number(item.postId)) || 0 }))
+    .filter((item) => Number(item.fireCount) + Number(item.replyCount) + Number(item.repostCount) + Number(item.viewCount) > 0)
+    .map((item) => ({ item, score: hotScore(item) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(offset, offset + limit)
+    .map((row) => row.item);
+}
+
 async function loadTimelinePage({ before, limit, authors, viewer }) {
   const take = limit + 5;
   const guard = async (fn) => {
@@ -484,6 +509,26 @@ async function loadTimelinePage({ before, limit, authors, viewer }) {
   return page;
 }
 
+/** Chronological page + reach: hot posts mixed in, followed / engaged posts nudged up within the page. */
+async function loadRankedPage({ cursor, limit, authors, viewer, following }) {
+  const before = parseCursor(cursor);
+  const hotOffset = parseHotOffset(cursor);
+  const hotCount = Math.max(1, Math.ceil(limit / 6));
+  const [page, hotRaw] = await Promise.all([
+    loadTimelinePage({ before, limit, authors, viewer }),
+    loadHotPosts({ limit: hotCount, offset: hotOffset, authors, viewer }).catch((e) => {
+      if (missingTable(e)) return [];
+      throw e;
+    }),
+  ]);
+  const inPage = new Set(page.items.map((item) => item.id));
+  const hot = hotRaw.filter((item) => !inPage.has(item.id));
+  return {
+    items: arrangeRankedPage(page.items, hot, { following }),
+    nextCursor: buildCursor(page.nextCursor, hotOffset + hotRaw.length),
+  };
+}
+
 async function handleGet(req, res) {
   const q = getQuery(req);
   const limit = clampInt(q.limit, 1, 100, 40);
@@ -496,19 +541,19 @@ async function handleGet(req, res) {
     return json(res, 200, { items, tab: "author", author });
   }
 
-  const before = parseCursor(q.before);
   const pageSize = clampInt(q.limit, 1, 60, FEED_PAGE_SIZE);
   if (tab === "following") {
     if (!viewer) return json(res, 200, { items: [], nextCursor: null, tab: "following", warning: "Connect a wallet to load Following." });
     // Following = only the wallets you follow (founder, 2026-10-02). Your own posts and reposts are in For you.
     const following = await loadFollowingAddresses(viewer);
     if (!following.length) return json(res, 200, { items: [], nextCursor: null, tab: "following" });
-    const page = await loadTimelinePage({ before, limit: pageSize, authors: following, viewer });
+    const page = await loadRankedPage({ cursor: q.before, limit: pageSize, authors: following, viewer, following });
     return json(res, 200, { ...page, tab: "following" });
   }
 
   // For you = everything, newest first, infinite scroll (founder, 2026-10-02).
-  const page = await loadTimelinePage({ before, limit: pageSize, authors: null, viewer });
+  const following = viewer ? await loadFollowingAddresses(viewer) : [];
+  const page = await loadRankedPage({ cursor: q.before, limit: pageSize, authors: null, viewer, following });
   return json(res, 200, { ...page, tab: "for-you" });
 }
 

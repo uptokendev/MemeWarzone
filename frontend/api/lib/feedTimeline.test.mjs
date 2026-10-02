@@ -25,3 +25,25 @@ test("cursor and viewer keys are validated", () => {
   assert.equal(canonViewerKey("2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB"), "2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB");
   assert.equal(canonViewerKey("drop table"), "");
 });
+
+test("reach: a post taking off now beats an older one with more total engagement", async () => {
+  const { hotScore, arrangeRankedPage, parseCursor: pc, parseHotOffset, buildCursor } = await import("./feedTimeline.js");
+  const now = Date.parse("2026-10-02T12:00:00Z");
+  const fresh = hotScore({ createdAt: "2026-10-02T11:00:00Z", fireCount: 10, viewCount: 200 }, now);
+  const old = hotScore({ createdAt: "2026-10-01T12:00:00Z", fireCount: 40, viewCount: 800 }, now);
+  assert.ok(fresh > old);
+  const items = [
+    { id: "post:1", postId: 1, createdAt: "2026-10-02T11:59:00Z", wallet: "a" },
+    { id: "deploy:x", createdAt: "2026-10-02T11:58:00Z" },
+    { id: "post:2", postId: 2, createdAt: "2026-10-02T11:50:00Z", wallet: "b", fireCount: 30 },
+  ];
+  const hot = [{ id: "post:9", postId: 9, createdAt: "2026-10-02T10:00:00Z" }];
+  const page = arrangeRankedPage(items, hot, { now });
+  assert.equal(page[0].id, "post:9", "the page opens with what is taking off");
+  assert.equal(page[0].reach, "taking_off");
+  assert.equal(page.length, 4);
+  const cursor = buildCursor("2026-10-02T11:50:00.000Z", 5);
+  assert.equal(pc(cursor), "2026-10-02T11:50:00.000Z");
+  assert.equal(parseHotOffset(cursor), 5);
+  assert.equal(parseHotOffset("2026-10-02T11:50:00.000Z"), 0);
+});
