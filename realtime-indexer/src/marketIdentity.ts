@@ -25,7 +25,7 @@ function isSolanaChain(chainId: number) {
 }
 
 function isCurrentMarketChain(chainId: number) {
-  return chainId === 56 || chainId === 97 || chainId === 101 || chainId === 4663 || chainId === 46630;
+  return chainId === 56 || chainId === 97 || chainId === 101 || chainId === 4663 || chainId === 46630 || chainId === 6281971;
 }
 
 function assertCurrentMarketChain(chainId: number) {

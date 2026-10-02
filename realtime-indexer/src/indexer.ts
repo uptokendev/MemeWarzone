@@ -306,6 +306,15 @@ const CHAINS: ChainCfg[] = [
     factoryStartBlock: ENV.FACTORY_START_BLOCK_4663 || undefined,
     voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_4663 || undefined,
     voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_4663 || undefined
+  },
+  {
+    // DogeOS Chikyū (no factory yet). Present only when its RPC is configured.
+    chainId: 6281971,
+    rpcHttp: ENV.DOGEOS_RPC_HTTP_6281971,
+    factoryAddress: ENV.FACTORY_ADDRESS_6281971 || undefined,
+    factoryStartBlock: ENV.FACTORY_START_BLOCK_6281971 || undefined,
+    voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_6281971 || undefined,
+    voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_6281971 || undefined
   }
 ].filter((chain) => Boolean(chain.rpcHttp && /^https?:\/\//i.test(String(chain.rpcHttp)) && !/[<>]|YOUR_/i.test(String(chain.rpcHttp))));
 

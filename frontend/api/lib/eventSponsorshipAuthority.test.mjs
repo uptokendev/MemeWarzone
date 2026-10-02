@@ -111,6 +111,7 @@ test("native routes are BNB, SOL, and ETH with raw integer decimals", () => {
   assert.deepEqual(nativeAssetForEventSponsorship(56), { symbol: "BNB", decimals: 18, family: "evm" });
   assert.deepEqual(nativeAssetForEventSponsorship(101), { symbol: "SOL", decimals: 9, family: "solana" });
   assert.deepEqual(nativeAssetForEventSponsorship(4663), { symbol: "ETH", decimals: 18, family: "evm" });
+  assert.deepEqual(nativeAssetForEventSponsorship(6281971), { symbol: "DOGE", decimals: 18, family: "evm" });
   assert.throws(() => nativeAssetForEventSponsorship(1), /unsupported/);
 });
 

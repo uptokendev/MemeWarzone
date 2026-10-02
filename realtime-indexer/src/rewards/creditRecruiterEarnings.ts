@@ -23,11 +23,12 @@ import { pool } from "../db.js";
 
 type Db = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
 
-export const RECRUITER_CHAIN_OF: Record<number, { chain: "bnb" | "solana" | "robinhood"; token: "BNB" | "SOL" | "ETH"; evm: boolean }> = {
+export const RECRUITER_CHAIN_OF: Record<number, { chain: "bnb" | "solana" | "robinhood" | "dogeos"; token: "BNB" | "SOL" | "ETH" | "DOGE"; evm: boolean }> = {
   56: { chain: "bnb", token: "BNB", evm: true },
   97: { chain: "bnb", token: "BNB", evm: true },
   4663: { chain: "robinhood", token: "ETH", evm: true },
   46630: { chain: "robinhood", token: "ETH", evm: true },
+  6281971: { chain: "dogeos", token: "DOGE", evm: true },
   101: { chain: "solana", token: "SOL", evm: false },
   102: { chain: "solana", token: "SOL", evm: false },
 };

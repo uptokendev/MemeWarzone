@@ -31,6 +31,7 @@ const BNB_STAGING = 97;
 const SOLANA = 101;
 const ROBINHOOD = 4663;
 const ROBINHOOD_STAGING = 46630;
+const DOGEOS_STAGING = 6281971;
 const t0 = new Date("2026-09-09T00:00:00.000Z");
 
 function started() {
@@ -40,7 +41,7 @@ function started() {
 }
 
 test("STEP 1: Final Salvo supports exact production and staging chain identities", () => {
-  assert.deepEqual(FINAL_SALVO_CHAIN_IDS, [BNB, BNB_STAGING, SOLANA, ROBINHOOD, ROBINHOOD_STAGING]);
+  assert.deepEqual(FINAL_SALVO_CHAIN_IDS, [BNB, BNB_STAGING, SOLANA, ROBINHOOD, ROBINHOOD_STAGING, DOGEOS_STAGING]);
   for (const chainId of FINAL_SALVO_CHAIN_IDS) assert.equal(requiredFinalSalvoChainId(chainId), chainId);
   for (const chainId of [102, 1, 8453, 0, -1, "wrong"]) assert.throws(() => requiredFinalSalvoChainId(chainId), /Unsupported Final Salvo chain id/);
 });
@@ -50,6 +51,7 @@ test("STEP 1: Final Salvo preserves explicit environment identity", () => {
   assert.deepEqual(finalSalvoEnvironmentIdentity(BNB_STAGING, { environment: "staging" }), { chainId: BNB_STAGING, environment: "staging", solanaCluster: null });
   assert.deepEqual(finalSalvoEnvironmentIdentity(ROBINHOOD, { environment: "production" }), { chainId: ROBINHOOD, environment: "production", solanaCluster: null });
   assert.deepEqual(finalSalvoEnvironmentIdentity(ROBINHOOD_STAGING, { environment: "staging" }), { chainId: ROBINHOOD_STAGING, environment: "staging", solanaCluster: null });
+  assert.deepEqual(finalSalvoEnvironmentIdentity(DOGEOS_STAGING, { environment: "staging" }), { chainId: DOGEOS_STAGING, environment: "staging", solanaCluster: null });
   assert.deepEqual(finalSalvoEnvironmentIdentity(SOLANA, { environment: "staging", solanaCluster: "devnet" }), { chainId: SOLANA, environment: "staging", solanaCluster: "devnet" });
   assert.deepEqual(finalSalvoEnvironmentIdentity(SOLANA, { environment: "production", solanaCluster: "mainnet-beta" }), { chainId: SOLANA, environment: "production", solanaCluster: "mainnet-beta" });
   assert.throws(() => finalSalvoEnvironmentIdentity(SOLANA, { environment: "production", solanaCluster: "devnet" }), /requires mainnet-beta|requires devnet/);

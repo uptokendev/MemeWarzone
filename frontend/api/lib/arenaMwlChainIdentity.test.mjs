@@ -22,10 +22,10 @@ const scoreSource = fs.readFileSync(path.join(here, "arenaLeagueScore.js"), "utf
 const migrationSource = fs.readFileSync(path.join(repoRoot, "db", "migrations", "20260909_000002_arena_mwl_three_chain_identity.sql"), "utf8");
 
 const PROD = [56, 101, 4663];
-const STAGING = [97, 46630];
+const STAGING = [97, 46630, 6281971];
 
 test("BNB, Solana and Robinhood MWL identities include required staging authorities", () => {
-  assert.deepEqual(MWL_SUPPORTED_CHAIN_IDS, [56, 97, 101, 4663, 46630]);
+  assert.deepEqual(MWL_SUPPORTED_CHAIN_IDS, [56, 97, 101, 4663, 46630, 6281971]);
   assert.deepEqual(PROD.map((chainId) => requiredMwlChainId(chainId)), PROD);
   assert.deepEqual(STAGING.map((chainId) => requiredMwlChainId(chainId)), STAGING);
   assert.deepEqual(mwlChainIdentity(56), { chainId: 56, family: "bnb", environment: "production", nativeSymbol: "BNB" });
@@ -33,6 +33,7 @@ test("BNB, Solana and Robinhood MWL identities include required staging authorit
   assert.equal(mwlChainIdentity(101).family, "solana");
   assert.equal(mwlChainIdentity(4663).family, "robinhood");
   assert.equal(mwlChainIdentity(46630).environment, "staging");
+  assert.deepEqual(mwlChainIdentity(6281971), { chainId: 6281971, family: "dogeos", environment: "staging", nativeSymbol: "DOGE" });
 });
 
 test("missing and wrong-chain MWL requests fail closed rather than defaulting to BNB", () => {
@@ -89,6 +90,9 @@ test("MWL scoring source derives season from the Battle chain and persistence re
   assert.match(scoreSource, /writeEvent\([\s\S]*battleId: row\.id/);
   assert.match(migrationSource, /enforce_arena_mwl_point_event_season_identity/);
   assert.match(migrationSource, /season\.chain_id NOT IN \(56, 97, 101, 4663, 46630\)/);
+  const dogeosMigration = fs.readFileSync(path.join(repoRoot, "db", "migrations", "20260930_000001_dogeos_chain_identity.sql"), "utf8");
+  assert.match(dogeosMigration, /season\.chain_id NOT IN \(56, 97, 101, 4663, 46630, 6281971\)/);
+  assert.match(dogeosMigration, /chain = 'dogeos' and chain_id in \(6281971\)/);
 });
 
 test("Treasury association is exact-chain only with 60 percent Monthly MWL reserve authority", () => {

@@ -9,12 +9,16 @@ export function isRobinhoodChainId(chainId) {
   return id === 4663 || id === 46630;
 }
 
+export function isDogeosChainId(chainId) {
+  return Number(chainId) === 6281971;
+}
+
 export function isBnbChainId(chainId) {
   const id = Number(chainId);
   return id === 56 || id === 97;
 }
 
-/** Native gas token for current Warzone stakes, Support, and claims. Robinhood uses ETH, not RH. */
+/** Native gas token for current Warzone stakes, Support, and claims. Robinhood uses ETH, not RH. DogeOS uses DOGE. */
 export function nativeSymbolFor(chainId) {
   const id = Number(chainId);
   if (id === LEGACY_SOLANA_CHAIN_ID) {
@@ -22,6 +26,7 @@ export function nativeSymbolFor(chainId) {
   }
   if (isSolanaChainId(id)) return "SOL";
   if (isRobinhoodChainId(id)) return "ETH";
+  if (isDogeosChainId(id)) return "DOGE";
   if (isBnbChainId(id)) return "BNB";
   throw new Error(`Unsupported current application chain: ${String(chainId)}`);
 }

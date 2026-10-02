@@ -1,6 +1,7 @@
 import { canonicalTokenKey } from "./arenaLeagueScoreMath.js";
-import { isRobinhoodChainId, isSolanaChainId } from "./chainNative.js";
+import { isDogeosChainId, isRobinhoodChainId, isSolanaChainId } from "./chainNative.js";
 import { resolveBnbUsdPrice } from "./bnbUsdPrice.js";
+import { resolveDogeUsdPrice } from "./dogeUsdPrice.js";
 import { resolveEthUsdPrice } from "./ethUsdPrice.js";
 import { resolveSolUsdPrice } from "./solUsdPrice.js";
 import { BATTLE_POINTS_CONFIG } from "./arenaBattlePointsConfig.js";
@@ -39,6 +40,7 @@ export async function resolveNativeUsdPrice(chainId, resolveNativeUsd) {
   if (typeof resolveNativeUsd === "function") return resolveNativeUsd(chainId);
   if (isSolanaChainId(chainId)) return resolveSolUsdPrice();
   if (isRobinhoodChainId(chainId)) return resolveEthUsdPrice();
+  if (isDogeosChainId(chainId)) return resolveDogeUsdPrice();
   return resolveBnbUsdPrice();
 }
 

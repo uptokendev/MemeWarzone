@@ -1,4 +1,4 @@
-export type EvmIndexerChainId = 56 | 97 | 4663 | 46630;
+export type EvmIndexerChainId = 56 | 97 | 4663 | 46630 | 6281971;
 
 export type EvmIndexerChainConfig = {
   chainId: EvmIndexerChainId;
@@ -21,7 +21,7 @@ export type EvmIndexerChainInput = {
  * Chains whose EVM transport is understood by MemeWarzone.
  * Known does not mean operationally enabled.
  */
-export const KNOWN_EVM_INDEXER_CHAIN_IDS: readonly EvmIndexerChainId[] = [56, 97, 4663, 46630] as const;
+export const KNOWN_EVM_INDEXER_CHAIN_IDS: readonly EvmIndexerChainId[] = [56, 97, 4663, 46630, 6281971] as const;
 
 /**
  * Preserve the current production indexer posture during RH-3.

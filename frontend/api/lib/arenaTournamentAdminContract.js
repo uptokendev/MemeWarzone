@@ -72,6 +72,7 @@ export function normalizeEnvironment(chainId, body) {
   if (chainId === 56 && explicit !== "production") throw new Error("BNB chain 56 requires production environment");
   if (chainId === 46630 && explicit !== "staging") throw new Error("Robinhood chain 46630 requires staging environment");
   if (chainId === 4663 && explicit !== "production") throw new Error("Robinhood chain 4663 requires production environment");
+  if (chainId === 6281971 && explicit !== "staging") throw new Error("DogeOS chain 6281971 requires staging environment");
   if (chainId === 101) {
     const supplied = text(bodyValue(body, "solanaCluster", "solana_cluster") ?? body?.cluster).toLowerCase();
     const expected = explicit === "staging" ? "devnet" : "mainnet-beta";
@@ -79,7 +80,7 @@ export function normalizeEnvironment(chainId, body) {
     if (cluster !== expected) throw new Error(`Solana ${explicit} requires ${expected}`);
     return { environment: explicit, solanaCluster: expected };
   }
-  if (![56, 97, 4663, 46630].includes(chainId)) throw new Error("Unsupported Tournament chain/environment");
+  if (![56, 97, 4663, 46630, 6281971].includes(chainId)) throw new Error("Unsupported Tournament chain/environment");
   return { environment: explicit, solanaCluster: null };
 }
 

@@ -1,4 +1,4 @@
-import { isRobinhoodChainId, isSolanaChainId, nativeSymbolFor } from "./chainNative.js";
+import { isDogeosChainId, isRobinhoodChainId, isSolanaChainId, nativeSymbolFor } from "./chainNative.js";
 
 export const EVENT_SPONSORSHIP_TYPES = Object.freeze({
   NORMAL_TOURNAMENT: "normal_tournament",
@@ -14,6 +14,7 @@ export function nativeAssetForEventSponsorship(chainId) {
   if (!Number.isInteger(id) || id <= 0) throw new Error("event sponsorship chainId is invalid");
   if (isSolanaChainId(id)) return { symbol: "SOL", decimals: 9, family: "solana" };
   if (isRobinhoodChainId(id)) return { symbol: "ETH", decimals: 18, family: "evm" };
+  if (isDogeosChainId(id)) return { symbol: "DOGE", decimals: 18, family: "evm" };
   if (id === 56 || id === 97) return { symbol: "BNB", decimals: 18, family: "evm" };
   throw new Error(`event sponsorship chain ${id} is unsupported`);
 }

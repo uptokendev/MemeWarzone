@@ -13,7 +13,7 @@ const apiRoot = path.resolve(here, "..");
 const voteGate = fs.readFileSync(path.join(apiRoot, "arenaVoteTournamentIdentityGate.js"), "utf8");
 const finalSalvoEndpoint = fs.readFileSync(path.join(apiRoot, "arenaFinalSalvo.js"), "utf8");
 
-const EXPECTED = [56, 97, 101, 4663, 46630];
+const EXPECTED = [56, 97, 101, 4663, 46630, 6281971];
 
 test("canonical Arena identity accepts exactly the supported production and staging chains", () => {
   assert.deepEqual(ARENA_CHAIN_IDS, EXPECTED);
@@ -30,10 +30,12 @@ test("BNB and Robinhood production/staging environments never collapse", () => {
   assert.deepEqual(arenaEnvironmentIdentity(97), { chainId: 97, environment: "staging", solanaCluster: null });
   assert.deepEqual(arenaEnvironmentIdentity(4663), { chainId: 4663, environment: "production", solanaCluster: null });
   assert.deepEqual(arenaEnvironmentIdentity(46630), { chainId: 46630, environment: "staging", solanaCluster: null });
+  assert.deepEqual(arenaEnvironmentIdentity(6281971), { chainId: 6281971, environment: "staging", solanaCluster: null });
   assert.throws(() => arenaEnvironmentIdentity(97, { environment: "production" }), /requires staging/);
   assert.throws(() => arenaEnvironmentIdentity(56, { environment: "staging" }), /requires production/);
   assert.throws(() => arenaEnvironmentIdentity(46630, { environment: "production" }), /requires staging/);
   assert.throws(() => arenaEnvironmentIdentity(4663, { environment: "staging" }), /requires production/);
+  assert.throws(() => arenaEnvironmentIdentity(6281971, { environment: "production" }), /requires staging/);
 });
 
 test("Solana 101 remains explicitly split between devnet and mainnet-beta", () => {

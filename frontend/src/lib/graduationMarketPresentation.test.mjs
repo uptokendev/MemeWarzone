@@ -50,6 +50,7 @@ test("chain copy displays SOL, BNB, and ETH — not wrapped tickers", () => {
   assert.equal(nativeSymbol(56), "BNB");
   assert.equal(nativeSymbol(97), "BNB");
   assert.equal(nativeSymbol(4663), "ETH");
+  assert.equal(nativeSymbol(6281971), "DOGE");
   assert.equal(displayQuoteSymbol(catalogQuote({ chainId: "101", symbol: "WSOL", identityKind: "NATIVE", assetClass: "NATIVE" })), "SOL");
   assert.equal(displayQuoteSymbol(catalogQuote({ chainId: "4663", symbol: "WETH", identityKind: "NATIVE", assetClass: "NATIVE" })), "ETH");
   assert.equal(displayQuoteSymbol(catalogQuote({ chainId: "4663", symbol: "WETH", identityKind: "NATIVE", assetClass: "NATIVE" }), { technical: true }), "WETH");
@@ -330,7 +331,7 @@ test("provider facets and search text expose provider, category and tags", () =>
 });
 
 test("the native launch default exists for BNB and Robinhood alike, never for Solana, and takes the native create path", () => {
-  assert.deepEqual([...EVM_NATIVE_LAUNCH_CHAIN_IDS].sort((a, b) => a - b), [56, 97, 4663, 46630]);
+  assert.deepEqual([...EVM_NATIVE_LAUNCH_CHAIN_IDS].sort((a, b) => a - b), [56, 97, 4663, 46630, 6281971]);
   const eth = evmNativeLaunchQuote(4663);
   assert.equal(eth.id, "native:4663");
   assert.equal(eth.symbol, "ETH");
@@ -338,6 +339,7 @@ test("the native launch default exists for BNB and Robinhood alike, never for So
   assert.equal(eth.presentationDefault, true);
   assert.equal(eth.newGraduationEligible, true);
   assert.equal(evmNativeLaunchQuote(56).symbol, "BNB");
+  assert.equal(evmNativeLaunchQuote(6281971).symbol, "DOGE");
   assert.equal(evmNativeLaunchQuote(101), null);
   assert.equal(isEvmNativeLaunchQuote(eth), true);
   assert.equal(isEvmNativeLaunchQuote(evmNativeLaunchQuote(56)), true);

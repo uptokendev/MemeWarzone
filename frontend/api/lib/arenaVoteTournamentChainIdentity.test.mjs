@@ -18,6 +18,7 @@ const BNB_STAGING = 97;
 const SOLANA = 101;
 const ROBINHOOD = 4663;
 const ROBINHOOD_STAGING = 46630;
+const DOGEOS_STAGING = 6281971;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const apiDir = path.join(here, "..");
 const votesSource = fs.readFileSync(path.join(apiDir, "arenaTournamentVotes.js"), "utf8");
@@ -29,14 +30,14 @@ const postgradSource = fs.readFileSync(path.join(apiDir, "postgrad.js"), "utf8")
 function tournament(chainId, id = `vote-${chainId}`, identity = {}) {
   const defaults = chainId === SOLANA
     ? { environment: "production", solana_cluster: "mainnet-beta" }
-    : chainId === BNB_STAGING || chainId === ROBINHOOD_STAGING
+    : chainId === BNB_STAGING || chainId === ROBINHOOD_STAGING || chainId === DOGEOS_STAGING
       ? { environment: "staging", solana_cluster: null }
       : { environment: "production", solana_cluster: null };
   return { id, chain_id: chainId, battle_mode: "vote", ...defaults, ...identity };
 }
 
 test("Vote Tournament supports exact production and staging chain identities", () => {
-  assert.deepEqual(VOTE_TOURNAMENT_CHAIN_IDS, [BNB, BNB_STAGING, SOLANA, ROBINHOOD, ROBINHOOD_STAGING]);
+  assert.deepEqual(VOTE_TOURNAMENT_CHAIN_IDS, [BNB, BNB_STAGING, SOLANA, ROBINHOOD, ROBINHOOD_STAGING, DOGEOS_STAGING]);
   for (const chainId of VOTE_TOURNAMENT_CHAIN_IDS) {
     assert.equal(requiredVoteTournamentChainId(chainId), chainId);
     assert.equal(optionalVoteTournamentChainId(chainId), chainId);
@@ -52,6 +53,7 @@ test("Vote Tournament preserves explicit environment identity", () => {
   assert.deepEqual(voteTournamentEnvironmentIdentity(BNB_STAGING, { environment: "staging" }), { chainId: BNB_STAGING, environment: "staging", solanaCluster: null });
   assert.deepEqual(voteTournamentEnvironmentIdentity(ROBINHOOD, { environment: "production" }), { chainId: ROBINHOOD, environment: "production", solanaCluster: null });
   assert.deepEqual(voteTournamentEnvironmentIdentity(ROBINHOOD_STAGING, { environment: "staging" }), { chainId: ROBINHOOD_STAGING, environment: "staging", solanaCluster: null });
+  assert.deepEqual(voteTournamentEnvironmentIdentity(DOGEOS_STAGING, { environment: "staging" }), { chainId: DOGEOS_STAGING, environment: "staging", solanaCluster: null });
   assert.deepEqual(voteTournamentEnvironmentIdentity(SOLANA, { environment: "staging", solanaCluster: "devnet" }), { chainId: SOLANA, environment: "staging", solanaCluster: "devnet" });
   assert.deepEqual(voteTournamentEnvironmentIdentity(SOLANA, { environment: "production", solanaCluster: "mainnet-beta" }), { chainId: SOLANA, environment: "production", solanaCluster: "mainnet-beta" });
   assert.throws(() => voteTournamentEnvironmentIdentity(SOLANA, { environment: "production", solanaCluster: "devnet" }), /requires mainnet-beta|requires devnet/);
@@ -71,6 +73,8 @@ test("staging Vote Tournament identities do not collapse into production", () =>
   assert.equal(voteTournamentIdentityError(tournament(BNB_STAGING), BNB)?.code, "TOURNAMENT_CHAIN_MISMATCH");
   assert.equal(voteTournamentIdentityError(tournament(ROBINHOOD_STAGING), ROBINHOOD_STAGING), null);
   assert.equal(voteTournamentIdentityError(tournament(ROBINHOOD_STAGING), ROBINHOOD)?.code, "TOURNAMENT_CHAIN_MISMATCH");
+  assert.equal(voteTournamentIdentityError(tournament(DOGEOS_STAGING), DOGEOS_STAGING), null);
+  assert.equal(voteTournamentIdentityError(tournament(DOGEOS_STAGING), ROBINHOOD)?.code, "TOURNAMENT_CHAIN_MISMATCH");
 });
 
 test("Solana Vote Tournament requires and preserves devnet vs mainnet-beta identity", () => {

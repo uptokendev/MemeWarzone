@@ -17,6 +17,13 @@ test("getNativeSymbol labels Robinhood as ETH", () => {
   assert.match(fn, /return "BNB"/);
 });
 
+test("getNativeSymbol labels DogeOS as DOGE before the BNB fallback", () => {
+  const fn = exportedFn("getNativeSymbol");
+  assert.match(fn, /isDogeosChainId\(chainId\)\) return "DOGE"/);
+  assert.match(source, /DOGEOS_TESTNET_CHAIN_ID[^\n]*= 6281971/);
+  assert.match(source, /isDogeosChainId/);
+});
+
 test("getArenaWarPoolTreasuryAddress prefers V2 per-chain env and never leaks BNB unsuffixed onto Robinhood", () => {
   const fn = exportedFn("getArenaWarPoolTreasuryAddress");
   assert.match(fn, /isSolanaChainId\(chainId\)\) return ""/);

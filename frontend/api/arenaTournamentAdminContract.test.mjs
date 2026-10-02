@@ -36,17 +36,19 @@ test("CREATE persists canonical generation, environment, cluster, duration, spon
 });
 
 test("shared Arena identity matches Tournament Admin staging/production contract", () => {
-  assert.deepEqual(ARENA_CHAIN_IDS, [56, 97, 101, 4663, 46630]);
+  assert.deepEqual(ARENA_CHAIN_IDS, [56, 97, 101, 4663, 46630, 6281971]);
   assert.deepEqual(arenaEnvironmentIdentity(56, { environment: "production" }), { chainId: 56, environment: "production", solanaCluster: null });
   assert.deepEqual(arenaEnvironmentIdentity(97, { environment: "staging" }), { chainId: 97, environment: "staging", solanaCluster: null });
   assert.deepEqual(arenaEnvironmentIdentity(4663, { environment: "production" }), { chainId: 4663, environment: "production", solanaCluster: null });
   assert.deepEqual(arenaEnvironmentIdentity(46630, { environment: "staging" }), { chainId: 46630, environment: "staging", solanaCluster: null });
+  assert.deepEqual(arenaEnvironmentIdentity(6281971, { environment: "staging" }), { chainId: 6281971, environment: "staging", solanaCluster: null });
   assert.deepEqual(arenaEnvironmentIdentity(101, { environment: "staging", solanaCluster: "devnet" }), { chainId: 101, environment: "staging", solanaCluster: "devnet" });
   assert.deepEqual(arenaEnvironmentIdentity(101, { environment: "production", solanaCluster: "mainnet-beta" }), { chainId: 101, environment: "production", solanaCluster: "mainnet-beta" });
   assert.match(helper, /chainId === 97 && explicit !== "staging"/);
   assert.match(helper, /chainId === 56 && explicit !== "production"/);
   assert.match(helper, /chainId === 46630 && explicit !== "staging"/);
   assert.match(helper, /chainId === 4663 && explicit !== "production"/);
+  assert.match(helper, /chainId === 6281971 && explicit !== "staging"/);
   assert.match(helper, /explicit === "staging" \? "devnet" : "mainnet-beta"/);
 });
 

@@ -10,8 +10,8 @@
 
 export const NOTIFICATION_SCHEMA_VERSION = 1;
 
-export const CHAIN_LABELS = ["bnb", "solana", "robinhood"];
-export const NOTIFICATION_CHAINS = ["bnb", "solana", "robinhood", "global"];
+export const CHAIN_LABELS = ["bnb", "solana", "robinhood", "dogeos"];
+export const NOTIFICATION_CHAINS = ["bnb", "solana", "robinhood", "dogeos", "global"];
 
 const CHAIN_IDS = {
   56: "bnb",
@@ -20,6 +20,7 @@ const CHAIN_IDS = {
   102: "solana",
   4663: "robinhood",
   46630: "robinhood",
+  6281971: "dogeos",
 };
 
 const LABEL_ALIASES = {
@@ -34,9 +35,12 @@ const LABEL_ALIASES = {
   robinhood: "robinhood",
   rh: "robinhood",
   "robinhood-testnet": "robinhood",
+  dogeos: "dogeos",
+  "dogeos-testnet": "dogeos",
+  chikyu: "dogeos",
 };
 
-const STAGING_IDS = new Set(["97", "102", "46630"]);
+const STAGING_IDS = new Set(["97", "102", "46630", "6281971"]);
 const PRODUCTION_IDS = new Set(["56", "101", "4663"]);
 
 const ENTITY_TYPES = [
@@ -73,6 +77,7 @@ const NATIVE_SYMBOL = {
   bnb: "BNB",
   solana: "SOL",
   robinhood: "ETH",
+  dogeos: "DOGE",
 };
 
 export function getNativeSymbol(label) {
@@ -101,7 +106,7 @@ export function resolveChainEnvironment({ environment, chainId } = {}) {
   if (!key) return null;
   if (STAGING_IDS.has(key)) return "staging";
   if (PRODUCTION_IDS.has(key)) return "production";
-  if (key === "devnet" || key === "solana-devnet" || key === "bsc-testnet" || key === "robinhood-testnet") {
+  if (key === "devnet" || key === "solana-devnet" || key === "bsc-testnet" || key === "robinhood-testnet" || key === "dogeos-testnet") {
     return "staging";
   }
   return null;

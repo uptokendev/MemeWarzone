@@ -20,15 +20,28 @@
  * timestamp, exactly as before this module existed.
  */
 import { resolveBnbUsdPrice } from "./bnbUsdPrice.js";
+import { resolveDogeUsdPrice } from "./dogeUsdPrice.js";
 import { resolveEthUsdPrice } from "./ethUsdPrice.js";
 import { resolveSolUsdPrice } from "./solUsdPrice.js";
 
-export const NATIVE_ASSET_BY_CHAIN = Object.freeze({ 56: "BNB", 97: "BNB", 4663: "ETH", 46630: "ETH", 101: "SOL" });
+export const NATIVE_ASSET_BY_CHAIN = Object.freeze({
+  56: "BNB",
+  97: "BNB",
+  4663: "ETH",
+  46630: "ETH",
+  101: "SOL",
+  6281971: "DOGE",
+});
 export const USD_MICROS = 1_000_000;
 /** Sanity ceiling in USD per native unit; a reader answering above it is a bug, not a market. */
 export const MAX_NATIVE_USD = 10_000_000;
 
-const DEFAULT_READERS = Object.freeze({ BNB: resolveBnbUsdPrice, ETH: resolveEthUsdPrice, SOL: resolveSolUsdPrice });
+const DEFAULT_READERS = Object.freeze({
+  BNB: resolveBnbUsdPrice,
+  ETH: resolveEthUsdPrice,
+  SOL: resolveSolUsdPrice,
+  DOGE: resolveDogeUsdPrice,
+});
 
 export function nativeUsdMicrosFromPrice(price) {
   const n = Number(price);
