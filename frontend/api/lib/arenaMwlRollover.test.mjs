@@ -5,7 +5,7 @@ import test from "node:test";
 import { mwlSeasonMonthEnded } from "./arenaLeagueScoreMath.js";
 // server/db.js refuses to load without a URL; nothing here connects (every query is injected).
 process.env.DATABASE_URL ||= "postgres://test:test@127.0.0.1:1/test";
-const { rolloverEndedMwlSeasons } = await import("./arenaMwlRollover.js");
+const { closeEndedChampionships, rolloverEndedMwlSeasons } = await import("./arenaMwlRollover.js");
 
 const sept = (chainId) => ({ id: `mwl-2026-m09-c${chainId}`, chain_id: chainId, year: 2026, month: 9, active: true });
 const OCT2 = new Date("2026-10-02T11:35:25Z");
@@ -76,4 +76,29 @@ test("ensureActiveSeason refuses an ended month and the worker runs the rollover
   assert.match(score, /mwlSeasonMonthEnded\(existing\.rows\[0\], now\)[\s\S]{0,200}MWL_ROLLOVER_PENDING/);
   const worker = fs.readFileSync(new URL("../../scripts/run-arena-battle-realtime-worker.mjs", import.meta.url), "utf8");
   assert.match(worker, /rolloverEndedMwlSeasons\(\{ pool \}\)/);
+});
+
+test("a quarter closes only after all its months are finalized", async () => {
+  const closed = [];
+  const rows = [
+    { id: "quarterly-championship-2026-q3-c56", chain_id: 56, open_months: 0 },
+    { id: "quarterly-championship-2026-q3-c101", chain_id: 101, open_months: 1 },
+  ];
+  const out = await closeEndedChampionships({
+    pool: { query: async () => ({ rows }) },
+    now: OCT2,
+    close: async (_pool, { epochId }) => { closed.push(epochId); return { ok: true }; },
+  });
+  assert.deepEqual(closed, ["quarterly-championship-2026-q3-c56"]);
+  assert.equal(out[1].reason, "MWL_MONTHS_NOT_FINALIZED");
+});
+
+test("a refused quarter close (no bonus policy) is reported, never forced", async () => {
+  const [out] = await closeEndedChampionships({
+    pool: { query: async () => ({ rows: [{ id: "q3", chain_id: 56, open_months: 0 }] }) },
+    now: OCT2,
+    close: async () => ({ ok: false, reason: "CHAMPIONSHIP_BONUS_TRANSFERS_PENDING" }),
+  });
+  assert.equal(out.closed, false);
+  assert.equal(out.reason, "CHAMPIONSHIP_BONUS_TRANSFERS_PENDING");
 });

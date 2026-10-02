@@ -113,7 +113,8 @@ function StandingRow({
 }
 
 const PostGradLeague = () => {
-  const { season, source, ownedTokenIds, chainId: leagueChainId } = useArenaLeagueFeed();
+  const { season, source, ownedTokenIds, chainId: leagueChainId, history } = useArenaLeagueFeed();
+  const finishedMonths = (history || []).filter((month) => month.standings?.length);
   const [tab, setTab] = useState<LeagueTab>("regular");
   const [bracketOpen, setBracketOpen] = useState(false);
   const [bracketRounds, setBracketRounds] = useState<unknown[]>([]);
@@ -383,6 +384,40 @@ const PostGradLeague = () => {
           <p className="mt-1">{empty.body}</p>
         </div>
       )}
+
+      {tab === "regular" && finishedMonths.length ? (
+        <section data-warzone-mwl-history="true" className="space-y-5">
+          <div className="text-[10px] uppercase tracking-[0.22em] text-white/45">Previous months</div>
+          {finishedMonths.map((month) => (
+            <div key={month.seasonId} data-mwl-history-season={month.seasonId}>
+              <div className="mb-1 font-retro text-foreground">{month.label} · Final</div>
+              {(month.standings || []).map((entry) => (
+                <TokenLink key={`${month.seasonId}-${entry.tokenId}`} tokenId={entry.tokenId}>
+                  <div
+                    className="flex items-center justify-between gap-3 border-b py-2"
+                    style={{ borderColor: "var(--mwz-flat-card-border)" }}
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="w-10 shrink-0 font-retro text-white/60">#{entry.rank}</div>
+                      <WarzoneTokenMark symbol={entry.symbol} name={entry.tokenName} chainId={leagueChainId} tokenAddress={entry.tokenId} size="sm" />
+                      <div className="min-w-0">
+                        <div className="truncate font-black text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
+                        <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-retro">{Number(entry.points || 0).toLocaleString()} PTS</div>
+                      <div className="text-xs text-white/50">
+                        {entry.wins}W / {entry.losses}L
+                      </div>
+                    </div>
+                  </div>
+                </TokenLink>
+              ))}
+            </div>
+          ))}
+        </section>
+      ) : null}
     </WarzoneContent>
   );
 };

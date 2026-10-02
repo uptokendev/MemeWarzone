@@ -3,7 +3,7 @@
 // settled battle wrote its October points into September. The realtime worker runs this every
 // minute; ensureActiveSeason refuses an ended month until it has run (MWL_ROLLOVER_PENDING).
 import { pool as defaultPool } from "../../server/db.js";
-import { finalizeMwlForChampionship } from "./arenaQuarterlyChampionship.js";
+import { closeChampionshipEpoch, finalizeMwlForChampionship } from "./arenaQuarterlyChampionship.js";
 import { ensureActiveSeason } from "./arenaLeagueScore.js";
 import { mwlSeasonMonthEnded } from "./arenaLeagueScoreMath.js";
 import {
@@ -81,6 +81,42 @@ export async function rolloverEndedMwlSeasons({
       }
       const next = await openSeason(season.chain_id, pool);
       outcome.openedSeasonId = next?.id ? String(next.id) : null;
+    } catch (error) {
+      outcome.reason = error?.code || error?.message || String(error);
+    }
+  }
+  return outcomes;
+}
+
+/**
+ * Close every open Quarterly Championship whose quarter has ended and whose MWL months are all
+ * finalized. A month must be finalized before its quarter closes: finalizing into a closed quarter
+ * is refused (CHAMPIONSHIP_EPOCH_CLOSED) and would leave that month open for good. closeChampionshipEpoch
+ * itself also refuses while an MWL bonus transfer is unapplied (CHAMPIONSHIP_BONUS_TRANSFERS_PENDING,
+ * i.e. no approved bonus policy for that chain); that is reported, never forced.
+ */
+export async function closeEndedChampionships({ pool = defaultPool, now = new Date(), close = closeChampionshipEpoch } = {}) {
+  const due = await pool.query(
+    `select e.id, e.chain_id,
+            (select count(*)::int from public.arena_league_seasons s
+              where s.championship_epoch_id = e.id and s.month is not null and s.finalized_at is null) as open_months
+       from public.arena_championship_epochs e
+      where e.state = 'open' and e.closes_at <= $1
+      order by e.closes_at asc, e.chain_id asc`,
+    [now.toISOString()],
+  );
+  const outcomes = [];
+  for (const epoch of due.rows || []) {
+    const outcome = { epochId: String(epoch.id), chainId: Number(epoch.chain_id), closed: false };
+    outcomes.push(outcome);
+    if (Number(epoch.open_months) > 0) {
+      outcome.reason = "MWL_MONTHS_NOT_FINALIZED";
+      continue;
+    }
+    try {
+      const result = await close(pool, { epochId: epoch.id, nowMs: now.getTime() });
+      outcome.closed = Boolean(result?.ok);
+      if (!result?.ok) outcome.reason = result?.reason || "close-refused";
     } catch (error) {
       outcome.reason = error?.code || error?.message || String(error);
     }

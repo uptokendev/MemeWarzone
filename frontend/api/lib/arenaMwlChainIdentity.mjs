@@ -74,24 +74,35 @@ export function assertMwlSeasonIdentity(row, expected = {}) {
   return row;
 }
 
+// Where each chain's Major War League money actually sits, read from chain 2026-10-02:
+// Solana = the treasury program's mwl_vault PDA (the arena MWL receiver since 2026-09-26);
+// BNB / Robinhood = PostGradLeagueTreasuryV2, the contract ArenaWarPoolTreasuryV2.claimLeague pays
+// (`postGradLeagueTreasury()` on each war pool). Testnets have no default and need the env.
+export const MWL_TREASURY_MAINNET_DEFAULTS = Object.freeze({
+  56: "0xD9E381408A4e361C66D8b1e657583bdE6c52402d",
+  101: "PCDQmFBrYTV2kfdGtiGWJ2Au9TfaR5ZzBkXdtymV1Bd",
+  4663: "0x5D5CC19B5BE86BA28b8164f85883F17843B69810",
+});
+
+// Only MWL_TREASURY_ADDRESS_<id>. MONTHLY_LEAGUE_TREASURY_ADDRESS_<id> used to come first, but that
+// name belongs to the pre-grad MonthlyLeagueTreasury (league.js, leagueRoot.js, claims): setting it
+// would have bound the MWL to the pre-grad monthly pot.
 export function mwlTreasuryEnvKeys(chainId) {
   const id = requiredMwlChainId(chainId);
-  return Object.freeze([
-    `MONTHLY_LEAGUE_TREASURY_ADDRESS_${id}`,
-    `MWL_TREASURY_ADDRESS_${id}`,
-  ]);
+  return Object.freeze([`MWL_TREASURY_ADDRESS_${id}`]);
 }
 
 export function resolveMwlTreasuryAssociation(chainId, env = process.env) {
   const identity = mwlChainIdentity(chainId);
   const keys = mwlTreasuryEnvKeys(chainId);
   const matchedKey = keys.find((key) => String(env?.[key] || "").trim()) || null;
-  const treasuryId = matchedKey ? String(env[matchedKey]).trim() : null;
+  const fallback = MWL_TREASURY_MAINNET_DEFAULTS[identity.chainId] || null;
+  const treasuryId = matchedKey ? String(env[matchedKey]).trim() : fallback;
   return {
     ...identity,
     treasuryId,
     configured: Boolean(treasuryId),
-    configKey: matchedKey,
+    configKey: matchedKey || (fallback ? `default:${identity.chainId}` : null),
     reserveShareBps: 6000,
   };
 }

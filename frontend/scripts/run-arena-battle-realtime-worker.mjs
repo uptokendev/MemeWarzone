@@ -6,7 +6,7 @@ import { settleDueNormalBattles } from "../api/lib/arenaBattleSettlementRuntime.
 import { advanceDueFinalSalvo, finalizeDueVoteTournamentBattle, voteTournamentRuntimeEnabled } from "../api/lib/arenaVoteTournamentFinalizationService.js";
 import { advanceTournamentFromBattle } from "../api/arenaTournaments.js";
 import { IMPORT_FEED_INTERVAL_MS, refreshImportMarketStats } from "../api/lib/arenaImportMarketFeed.js";
-import { rolloverEndedMwlSeasons } from "../api/lib/arenaMwlRollover.js";
+import { closeEndedChampionships, rolloverEndedMwlSeasons } from "../api/lib/arenaMwlRollover.js";
 import { crankLeagueShares, leagueCrankMode } from "../api/lib/arenaEvmLeagueCrank.js";
 
 // Vote Battles (challenge, queue and tournament) settle only through this runtime, so it defaults
@@ -142,6 +142,7 @@ const importFeedTimer = setInterval(() => void refreshImportMarkets(), IMPORT_FE
 const mwlRolloverEnabled = !/^(0|false|no|off)$/i.test(String(process.env.ARENA_MWL_ROLLOVER_ENABLED ?? "").trim());
 const mwlRolloverMs = Math.max(15_000, Number(process.env.ARENA_MWL_ROLLOVER_SCAN_MS || 60_000));
 let mwlRolloverRunning = false;
+const championshipCloseLogged = new Map();
 async function rolloverMwl() {
   if (!mwlRolloverEnabled || mwlRolloverRunning) return;
   mwlRolloverRunning = true;
@@ -152,6 +153,15 @@ async function rolloverMwl() {
       } else {
         console.warn(`[arena-battle-realtime-worker] MWL rollover pending ${outcome.seasonId}: ${outcome.reason}`);
       }
+    }
+    // Quarters close after their months. A blocked quarter is logged when its reason changes, not every minute.
+    for (const outcome of await closeEndedChampionships({ pool })) {
+      const said = championshipCloseLogged.get(outcome.epochId);
+      const now = outcome.closed ? "closed" : outcome.reason;
+      if (said === now) continue;
+      championshipCloseLogged.set(outcome.epochId, now);
+      if (outcome.closed) console.log(`[arena-battle-realtime-worker] Quarterly Championship closed ${outcome.epochId}`);
+      else console.warn(`[arena-battle-realtime-worker] Quarterly Championship ${outcome.epochId} not closed: ${outcome.reason}`);
     }
   } catch (error) { console.warn("[arena-battle-realtime-worker] MWL rollover scan failed", error?.message || error); }
   finally { mwlRolloverRunning = false; }

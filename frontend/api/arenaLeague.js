@@ -144,6 +144,55 @@ async function currentChampionshipFor(chainId, season = null) {
   return readChampionshipStanding(pool, { chainId: chain, year: now.year, quarter: now.quarter });
 }
 
+// Finished months, newest first, from the frozen result snapshot finalization writes
+// (arena_championship_mwl_results), so the page can still show a month after it rolls over.
+async function finishedMonths(chainId, limit = 6) {
+  const seasons = await pool.query(
+    `select id, label, week, finalized_at
+       from public.arena_league_seasons
+      where chain_id = $1 and month is not null and finalized_at is not null
+      order by year desc, month desc
+      limit $2`,
+    [chainId, limit],
+  );
+  const ids = seasons.rows.map((row) => row.id);
+  if (!ids.length) return [];
+  const results = await pool.query(
+    `select season_id, token_address, token_name, symbol, final_rank, mwl_points, wins, losses, finished_fights
+       from public.arena_championship_mwl_results
+      where season_id = any($1::text[])
+      order by season_id, final_rank asc`,
+    [ids],
+  );
+  const bySeason = new Map();
+  for (const row of results.rows) {
+    if (!bySeason.has(row.season_id)) bySeason.set(row.season_id, []);
+    bySeason.get(row.season_id).push({
+      rank: Number(row.final_rank),
+      tokenId: String(row.token_address),
+      tokenName: String(row.token_name || row.symbol || "Unknown token"),
+      symbol: String(row.symbol || "---"),
+      points: Math.max(0, Number(row.mwl_points || 0)),
+      wins: Math.max(0, Number(row.wins || 0)),
+      losses: Math.max(0, Number(row.losses || 0)),
+      finishedFights: Math.max(0, Number(row.finished_fights || 0)),
+    });
+  }
+  return seasons.rows.map((row) => {
+    const standings = bySeason.get(row.id) || [];
+    return {
+      seasonId: String(row.id),
+      label: String(row.label || "Major War League"),
+      completedAt: new Date(row.finalized_at).toISOString(),
+      week: Number(row.week || 1),
+      rewardPoolUsd: 0,
+      topTokenName: standings[0]?.tokenName || "",
+      topTokenSymbol: standings[0]?.symbol || "",
+      standings,
+    };
+  });
+}
+
 async function feed(chainId, wallet) {
   const id = requiredMwlChainId(chainId);
   const season = await activeSeason(id);
@@ -153,7 +202,7 @@ async function feed(chainId, wallet) {
     chainIdentity: mwlChainIdentity(id),
     season,
     championship,
-    history: [],
+    history: await finishedMonths(id),
     owned,
   };
 }
