@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { formatCompactUsd } from "@/features/postgrad/warRoomMetrics";
 import { CampaignCard } from "@/components/home/CampaignCard";
 import { useStickyRail } from "@/hooks/useStickyRail";
 import { useWalletHandle } from "@/lib/handlesApi";
@@ -600,7 +601,8 @@ export default function PublicProfile({
     return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
   };
   const portfolioRows: Array<[string, ReactNode]> = [
-    ["Value", effectivePortfolioMetrics?.totalValueUsd != null ? `$${Math.round(effectivePortfolioMetrics.totalValueUsd).toLocaleString()}` : "—"],
+    // Same formatter as the Portfolio tiles, so rail and tiles show the same value (CO-22).
+    ["Value", effectivePortfolioMetrics?.totalValueUsd != null ? formatCompactUsd(effectivePortfolioMetrics.totalValueUsd) : "—"],
     ["Top holding", effectivePortfolioMetrics?.topHolding?.ticker ? `$${effectivePortfolioMetrics.topHolding.ticker}` : "—"],
     ["Coins held", effectivePortfolioMetrics ? formatCompactNumber(effectivePortfolioMetrics.coinsCount) : "—"],
     ["Wallet age", effectivePortfolioMetrics?.walletAge || "—"],

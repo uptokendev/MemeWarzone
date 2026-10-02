@@ -68,15 +68,18 @@ async function loadCampaignsByMints(chainId, mints) {
   const list = (mints || []).map((m) => String(m || "").trim()).filter(Boolean);
   if (!list.length) return [];
   const { rows } = await pool.query(
-    `select chain_id, campaign_address, token_address, name, symbol, logo_uri,
-            marketcap_bnb, last_price_bnb, sold_tokens
-       from public.campaigns
-      where chain_id = $1
+    // Prices live in market_stats on production (campaigns has no price columns; CO-22, 2026-10-03).
+    `select c.chain_id, c.campaign_address, c.token_address, c.name, c.symbol, c.logo_uri,
+            ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd
+       from public.campaigns c
+       left join public.market_stats ms
+         on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
+      where c.chain_id = $1
         and (
-          token_address = any($2::text[])
-          or campaign_address = any($2::text[])
-          or lower(token_address) = any($3::text[])
-          or lower(campaign_address) = any($3::text[])
+          c.token_address = any($2::text[])
+          or c.campaign_address = any($2::text[])
+          or lower(c.token_address) = any($3::text[])
+          or lower(c.campaign_address) = any($3::text[])
         )`,
     [chainId, list, list.map((m) => m.toLowerCase())],
   );
@@ -87,7 +90,8 @@ async function loadIndexedHoldings(chainId, address) {
   try {
     const { rows } = await pool.query(
       `select th.chain_id, th.token_address, th.balance_raw,
-              c.campaign_address, c.name, c.symbol, c.logo_uri, c.marketcap_bnb, c.last_price_bnb, c.sold_tokens
+              c.campaign_address, c.name, c.symbol, c.logo_uri,
+              ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd
          from public.token_holder_balances th
          left join public.campaigns c
            on c.chain_id = th.chain_id
@@ -95,6 +99,8 @@ async function loadIndexedHoldings(chainId, address) {
             lower(c.token_address) = lower(th.token_address)
             or c.token_address = th.token_address
           )
+         left join public.market_stats ms
+           on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
         where th.chain_id = $1
           and th.balance_raw > 0
           and (th.wallet = $2 or lower(th.wallet) = lower($2))
@@ -110,16 +116,25 @@ async function loadIndexedHoldings(chainId, address) {
 }
 
 function holdingValue(row, nativeUsd) {
-  const mcap = Number(row.marketcap_bnb || row.last_price_bnb || 0);
   const formatted = String(row.balanceFormatted || "0");
-  return calculateHoldingValueUsd(formatted, mcap, nativeUsd);
+  const balance = Number.parseFloat(formatted);
+  if (!Number.isFinite(balance) || balance <= 0) return 0;
+  // Indexed price per whole token first (market_stats), then the native price, then the old
+  // market-cap / 1B estimate.
+  const priceUsd = Number(row.last_price_usd || 0);
+  if (Number.isFinite(priceUsd) && priceUsd > 0) return balance * priceUsd;
+  const priceNative = Number(row.last_price_bnb || 0);
+  if (Number.isFinite(priceNative) && priceNative > 0 && nativeUsd > 0) return balance * priceNative * nativeUsd;
+  return calculateHoldingValueUsd(formatted, Number(row.marketcap_bnb || 0), nativeUsd);
 }
 
+// JSON-RPC method is getTokenAccountsByOwner with jsonParsed encoding (CO-22: the web3.js helper name
+// getParsedTokenAccountsByOwner is not an RPC method, so every Solana wallet showed 0 coins).
 async function scanSolana(address, nativeUsd) {
   const [lamports, classic, token2022] = await Promise.all([
     solanaRpc("getBalance", [address, { commitment: "confirmed" }]),
-    solanaRpc("getParsedTokenAccountsByOwner", [address, { programId: TOKEN_PROGRAM }, { encoding: "jsonParsed" }]).catch(() => ({ value: [] })),
-    solanaRpc("getParsedTokenAccountsByOwner", [address, { programId: TOKEN_2022_PROGRAM }, { encoding: "jsonParsed" }]).catch(() => ({ value: [] })),
+    solanaRpc("getTokenAccountsByOwner", [address, { programId: TOKEN_PROGRAM }, { encoding: "jsonParsed" }]).catch(() => ({ value: [] })),
+    solanaRpc("getTokenAccountsByOwner", [address, { programId: TOKEN_2022_PROGRAM }, { encoding: "jsonParsed" }]).catch(() => ({ value: [] })),
   ]);
   const native = Number(lamports?.value ?? lamports ?? 0) / 1_000_000_000;
   const accounts = [...(classic?.value || []), ...(token2022?.value || [])];
@@ -180,11 +195,14 @@ async function scanEvm(chainId, address, nativeUsd) {
   }
 
   const { rows } = await pool.query(
-    `select campaign_address, token_address, name, symbol, logo_uri, marketcap_bnb, last_price_bnb, sold_tokens
-       from public.campaigns
-      where chain_id = $1
-        and token_address is not null
-      order by created_at_chain desc nulls last
+    `select c.campaign_address, c.token_address, c.name, c.symbol, c.logo_uri,
+            ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd
+       from public.campaigns c
+       left join public.market_stats ms
+         on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
+      where c.chain_id = $1
+        and c.token_address is not null
+      order by c.created_at_chain desc nulls last
       limit $2`,
     [chainId, MAX_EVM_SCAN],
   );
