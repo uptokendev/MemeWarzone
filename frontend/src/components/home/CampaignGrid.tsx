@@ -701,7 +701,7 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
     snapToken: feedIdentity,
   });
 
-  const gridClass = "grid grid-cols-2 gap-3 justify-items-stretch sm:[grid-template-columns:repeat(auto-fill,minmax(180px,220px))] sm:justify-start sm:gap-4";
+  const gridClass = "grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4";
 
   return (
     <div className={cn("w-full", className)}>
@@ -709,17 +709,17 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
       {loading && !paintedVms.length ? (
         <div className={gridClass}>
           {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="aspect-[1/2] w-full rounded-2xl border border-border/40 bg-card/40 animate-pulse" />
+            <div key={i} className="h-[360px] w-full animate-pulse rounded-[14px] border border-mw-border bg-mw-surface" />
           ))}
         </div>
       ) : err && !paintedVms.length ? (
-        <div className="py-10 text-center text-sm text-muted-foreground">{err}</div>
+        <div className="py-10 text-center text-sm text-mw-muted">{err}</div>
       ) : paintedVms.length === 0 ? (
-        <div className="py-10 text-center text-sm text-muted-foreground">No campaigns yet.</div>
+        <div className="py-10 text-center text-sm text-mw-muted">No campaigns yet.</div>
       ) : (
         <>
           {err && (
-            <div className="mb-3 rounded-lg border border-orange-400/30 bg-orange-500/10 px-3 py-2 text-xs text-orange-200">
+            <div className="mb-3 rounded-[10px] border border-[#5A3416] bg-mw-accent-fill px-3 py-2 text-sm text-mw-accent-soft">
               Background refresh failed. Showing the last loaded campaigns.
             </div>
           )}
@@ -735,9 +735,9 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
           </div>
           <div ref={sentinelRef} className="h-12" />
           {loadingMore ? (
-            <div className="py-6 text-center text-xs text-muted-foreground">Loading more...</div>
+            <div className="py-6 text-center text-sm text-mw-muted">Loading more...</div>
           ) : nextCursor == null ? (
-            <div className="py-6 text-center text-xs text-muted-foreground">End of results</div>
+            <div className="py-6 text-center text-sm text-mw-muted">End of results</div>
           ) : null}
         </>
       )}

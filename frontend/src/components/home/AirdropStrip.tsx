@@ -67,21 +67,21 @@ export function AirdropStrip() {
   return (
     <Link
       to="/airdrops"
-      className="mwz-hud-frame group flex flex-col gap-2 px-3 py-2.5 transition hover:border-accent/50 hover:bg-accent/5 md:flex-row md:items-center md:gap-4 md:px-4"
+      className="mw-focus group flex flex-col gap-1.5 rounded-[14px] border border-mw-border bg-mw-surface px-4 py-3 font-mw-body text-mw-text transition-colors hover:border-[#3A424C] hover:text-mw-text md:flex-row md:items-center md:gap-3"
       data-airdrop-strip="true"
     >
       <div className="flex shrink-0 items-center gap-2">
-        <Gift className="h-4 w-4 text-amber-300" aria-hidden />
-        <span className="font-retro text-xs uppercase tracking-[0.2em] text-amber-200">Weekly airdrop</span>
-        <span className="font-retro text-base text-foreground md:text-lg">{formatUsd(totalUsd)}</span>
+        <Gift className="h-[18px] w-[18px] text-[#FF9A4D]" aria-hidden />
+        <span className="font-bold">Weekly airdrop</span>
+        <span className="font-mw-mono font-bold">{formatUsd(totalUsd)}</span>
       </div>
-      <div className="min-w-0 flex-1 text-xs text-muted-foreground">
+      <div className="min-w-0 flex-1 text-sm text-mw-muted">
         {rules
           ? `Trade $${rules.traderMinUsd}+ over ${rules.traderMinActiveDays} days (${rules.traderMinTrades}+ trades), or launch a coin with ${rules.creatorMinUniqueBuyers}+ buyers, to enter.`
           : "Trade or launch this week to enter."}
-        {draw ? <span className="ml-1 text-foreground/80">{draw}.</span> : null}
+        {draw ? <span className="ml-1 text-mw-text">{draw}.</span> : null}
       </div>
-      <span className="shrink-0 text-xs uppercase tracking-[0.16em] text-accent group-hover:underline">See airdrop →</span>
+      <span className="shrink-0 text-sm font-semibold text-mw-accent-soft group-hover:text-[#FFD0A8]">See airdrop</span>
     </Link>
   );
 }

@@ -64,6 +64,8 @@ function numOrUndef(s: string): number | undefined {
 export function DiscoveryControls({ className, query, onChange }: DiscoveryControlsProps) {
   const timeChips = useMemo(() => ["1h", "24h", "7d", "all"] as const, []);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Phone sheet has its own open state so the desktop inline panel never opens an overlay.
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const isDraftRow = query.tab === "drafts";
   const forcedStatus = query.tab === "ending" ? "live" : query.tab === "dex" ? "graduated" : null;
@@ -112,10 +114,59 @@ export function DiscoveryControls({ className, query, onChange }: DiscoveryContr
     });
   };
 
+  const fieldClass =
+    "h-11 w-full rounded-[10px] border border-mw-edge bg-mw-input px-3.5 text-[15px] text-mw-text placeholder:text-[#7C858F] outline-none focus:ring-2 focus:ring-mw-accent";
+  const labelClass = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+  const activeFilterCount =
+    (statusValue !== "all" && !forcedStatus ? 1 : 0) +
+    (query.mcapMinUsd != null || query.mcapMaxUsd != null ? 1 : 0) +
+    (query.progressMinPct != null || query.progressMaxPct != null ? 1 : 0);
+
+  // One set of fields, shown inline on wider screens and in a bottom sheet on phones.
+  const filterFields = (
+    <div className="grid gap-4 md:grid-cols-[repeat(3,minmax(0,1fr))_auto] md:items-end">
+      <div className="grid gap-1.5">
+        <Label className={labelClass}>Status</Label>
+        <Select value={statusValue} disabled={Boolean(forcedStatus)} onValueChange={(v) => onChange({ ...query, status: v as any })}>
+          <SelectTrigger aria-label="Status" className="h-11 rounded-[10px] border-mw-edge bg-mw-input text-mw-text">
+            <SelectValue placeholder="All" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="live">Live</SelectItem>
+            <SelectItem value="graduated">Graduated</SelectItem>
+          </SelectContent>
+        </Select>
+        {forcedStatus ? <div className="text-xs text-mw-muted">Status locked to {forcedStatus} for this tab.</div> : null}
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label className={labelClass}>Market cap (USD)</Label>
+        <div className="grid grid-cols-2 gap-1.5">
+          <input value={mcapMin} onChange={(e) => setMcapMin(e.target.value)} onBlur={applyNumericFilters} placeholder="Min" aria-label="Minimum market cap" inputMode="decimal" className={fieldClass} />
+          <input value={mcapMax} onChange={(e) => setMcapMax(e.target.value)} onBlur={applyNumericFilters} placeholder="Max" aria-label="Maximum market cap" inputMode="decimal" className={fieldClass} />
+        </div>
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label className={labelClass}>Progress (%)</Label>
+        <div className="grid grid-cols-2 gap-1.5">
+          <input value={pMin} onChange={(e) => setPMin(e.target.value)} onBlur={applyNumericFilters} placeholder="Min" aria-label="Minimum progress" inputMode="decimal" className={fieldClass} />
+          <input value={pMax} onChange={(e) => setPMax(e.target.value)} onBlur={applyNumericFilters} placeholder="Max" aria-label="Maximum progress" inputMode="decimal" className={fieldClass} />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        <Button variant="outline" className="h-11 rounded-[10px] border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830]" onClick={resetFilters}>Reset</Button>
+        <Button className="h-11 rounded-[10px] bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D]" onClick={() => { applyNumericFilters(); setFiltersOpen(false); setSheetOpen(false); }}>Apply</Button>
+      </div>
+    </div>
+  );
+
   return (
-    <div className={cn("mwz-hud-frame w-full px-3 py-3", className)}>
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className={cn("flex w-full flex-col gap-2.5 font-mw-body", className)}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div role="tablist" aria-label="Coin lists" className="flex min-w-0 max-w-full gap-1 overflow-x-auto rounded-xl border border-[#2A3038] bg-mw-input p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {TAB_DEFS.map((t) => {
             const active = query.tab === t.key;
             return (
@@ -123,7 +174,12 @@ export function DiscoveryControls({ className, query, onChange }: DiscoveryContr
                 key={t.key}
                 variant="ghost"
                 size="sm"
-                className={cn("mwz-chip shrink-0 gap-2 h-9 px-2 font-retro !text-[9px]", active && "mwz-chip-active")}
+                role="tab"
+                aria-selected={active}
+                className={cn(
+                  "mw-focus min-h-10 shrink-0 rounded-lg border px-4 font-mw-cond text-sm font-bold uppercase tracking-[0.08em]",
+                  active ? "border-[#3A424C] bg-[#1F252C] text-mw-text hover:bg-[#1F252C]" : "border-transparent text-mw-muted hover:bg-transparent hover:text-mw-text",
+                )}
                 onClick={() => {
                   const nextTab = t.key;
                   const nextStatus = nextTab === "ending" ? "live" : nextTab === "dex" ? "graduated" : "all";
@@ -135,92 +191,39 @@ export function DiscoveryControls({ className, query, onChange }: DiscoveryContr
                   onChange({ ...query, tab: nextTab, status: nextStatus, sort: nextSort });
                 }}
               >
-                {t.icon}
                 <span>{t.label}</span>
               </Button>
             );
           })}
-
-          {!isDraftRow && (
-            <div className="hidden md:flex items-center gap-2 ml-2">
-              {timeChips.map((k) => {
-                const active = (query.timeFilter ?? "24h") === k;
-                return (
-                  <Button
-                    key={k}
-                    size="sm"
-                    variant="ghost"
-                    className={cn("mwz-chip h-9 px-3 text-xs", active && "mwz-chip-active")}
-                    onClick={() => onChange({ ...query, timeFilter: k })}
-                  >
-                    {k.toUpperCase()}
-                  </Button>
-                );
-              })}
-            </div>
-          )}
         </div>
 
-        <div className="flex items-center gap-2 justify-between md:justify-end">
-          {!isDraftRow && (
-            <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
-              <SheetTrigger asChild>
-                <Button variant="outline" size="sm" className="mwz-button gap-2 h-9">
-                  <Filter className="h-4 w-4" />
-                  Filters
+        {!isDraftRow && (
+          <div role="group" aria-label="Time window" className="flex items-center gap-1">
+            {timeChips.map((k) => {
+              const active = (query.timeFilter ?? "24h") === k;
+              return (
+                <Button
+                  key={k}
+                  size="sm"
+                  variant="ghost"
+                  aria-pressed={active}
+                  className={cn(
+                    "mw-focus min-h-10 rounded-lg border px-3 font-mw-mono text-[13px]",
+                    active ? "border-mw-accent bg-[#2A1609] text-mw-accent-soft hover:bg-[#2A1609]" : "border-mw-edge bg-[#171B20] text-[#C9CED4] hover:bg-[#1F252C] hover:text-mw-text",
+                  )}
+                  onClick={() => onChange({ ...query, timeFilter: k })}
+                >
+                  {k.toUpperCase()}
                 </Button>
-              </SheetTrigger>
+              );
+            })}
+          </div>
+        )}
 
-              <SheetContent side="bottom" className="mwz-panel border-success/40">
-                <SheetHeader>
-                  <SheetTitle className="mwz-section-title">Filters</SheetTitle>
-                </SheetHeader>
-
-                <div className="mt-6 grid gap-5">
-                  <div className="grid gap-2">
-                    <Label>Status</Label>
-                    <Select value={statusValue} disabled={Boolean(forcedStatus)} onValueChange={(v) => onChange({ ...query, status: v as any })}>
-                      <SelectTrigger className="rounded-none border-success/40 bg-black/40">
-                        <SelectValue placeholder="All" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All</SelectItem>
-                        <SelectItem value="live">Live</SelectItem>
-                        <SelectItem value="graduated">Graduated</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {forcedStatus ? <div className="text-xs mwz-muted">Status locked to {forcedStatus} for this command tab.</div> : null}
-                  </div>
-
-                  <div className="grid gap-2">
-                    <Label>Market Cap (USD) range</Label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <input value={mcapMin} onChange={(e) => setMcapMin(e.target.value)} onBlur={applyNumericFilters} placeholder="Min" inputMode="decimal" className="h-10 border border-success/40 bg-black/40 px-3 text-sm outline-none focus:ring-2 focus:ring-success/30" />
-                      <input value={mcapMax} onChange={(e) => setMcapMax(e.target.value)} onBlur={applyNumericFilters} placeholder="Max" inputMode="decimal" className="h-10 border border-success/40 bg-black/40 px-3 text-sm outline-none focus:ring-2 focus:ring-success/30" />
-                    </div>
-                    <div className="text-xs mwz-muted">Uses best-effort BNB/USD conversion.</div>
-                  </div>
-
-                  <div className="grid gap-2">
-                    <Label>Progress (%) range</Label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <input value={pMin} onChange={(e) => setPMin(e.target.value)} onBlur={applyNumericFilters} placeholder="Min" inputMode="decimal" className="h-10 border border-success/40 bg-black/40 px-3 text-sm outline-none focus:ring-2 focus:ring-success/30" />
-                      <input value={pMax} onChange={(e) => setPMax(e.target.value)} onBlur={applyNumericFilters} placeholder="Max" inputMode="decimal" className="h-10 border border-success/40 bg-black/40 px-3 text-sm outline-none focus:ring-2 focus:ring-success/30" />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 pt-2">
-                    <Button variant="outline" className="mwz-button" onClick={resetFilters}>Reset</Button>
-                    <Button className="mwz-button mwz-button-active" onClick={() => { applyNumericFilters(); setFiltersOpen(false); }}>Apply</Button>
-                  </div>
-                </div>
-              </SheetContent>
-            </Sheet>
-          )}
-
-          <div className="min-w-0 w-[min(11.5rem,48vw)] shrink sm:w-[220px]">
+        <div className="ml-auto flex items-center gap-2">
+          <div className="min-w-0 w-[min(14rem,52vw)] shrink sm:w-[240px]">
             <Select value={sortValue} onValueChange={(v) => onChange({ ...query, sort: v as any })}>
-              <SelectTrigger className="mwz-chip h-9 rounded-none">
+              <SelectTrigger aria-label="Sort" className="h-11 rounded-[10px] border-mw-edge bg-mw-input text-[15px] text-mw-text">
                 <SelectValue placeholder="Sort" />
               </SelectTrigger>
               <SelectContent>
@@ -230,8 +233,40 @@ export function DiscoveryControls({ className, query, onChange }: DiscoveryContr
               </SelectContent>
             </Select>
           </div>
+
+          {!isDraftRow && (
+            <>
+              <Button
+                variant="outline"
+                aria-expanded={filtersOpen}
+                className="hidden h-11 gap-2 rounded-[10px] border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] md:inline-flex"
+                onClick={() => setFiltersOpen((v) => !v)}
+              >
+                <Filter className="h-[18px] w-[18px]" aria-hidden="true" />
+                Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}
+              </Button>
+              <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+                <SheetTrigger asChild>
+                  <Button variant="outline" className="h-11 gap-2 rounded-[10px] border-mw-edge bg-mw-raised px-3 text-[15px] font-semibold text-mw-text hover:bg-[#222830] md:hidden">
+                    <Filter className="h-[18px] w-[18px]" aria-hidden="true" />
+                    Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="bottom" className="rounded-t-[20px] border-mw-edge bg-mw-surface font-mw-body text-mw-text md:hidden">
+                  <SheetHeader>
+                    <SheetTitle className="font-mw-cond text-xl font-bold text-mw-text">Filters</SheetTitle>
+                  </SheetHeader>
+                  <div className="mt-4">{filterFields}</div>
+                </SheetContent>
+              </Sheet>
+            </>
+          )}
         </div>
       </div>
+
+      {!isDraftRow && filtersOpen ? (
+        <div className="hidden rounded-[14px] border border-mw-border bg-mw-surface p-3.5 md:block">{filterFields}</div>
+      ) : null}
     </div>
   );
 }

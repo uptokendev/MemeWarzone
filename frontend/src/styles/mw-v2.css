@@ -90,3 +90,7 @@ ol.fixed.top-0 {
   background-image: linear-gradient(#ffffff0a 1px, transparent 1px), linear-gradient(90deg, #ffffff0a 1px, transparent 1px);
   background-size: 32px 32px;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .mwz-campaign-ticker-track { animation: none; }
+}

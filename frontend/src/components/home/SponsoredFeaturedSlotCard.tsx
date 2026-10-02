@@ -70,7 +70,7 @@ export function SponsoredFeaturedSlotCard({
 
   return (
     <div
-      className={`${plainBorder ? "border-orange-400/25 hover:border-orange-300/70 ![clip-path:none] before:!hidden after:!hidden" : "mwz-hud-frame border-amber-400/40 hover:border-amber-300/70 hover:shadow-[0_0_18px_rgba(251,191,36,0.16)]"} group relative flex h-[150px] w-full snap-start overflow-hidden rounded-none border bg-black transition ${clickable ? "cursor-pointer" : ""} ${className}`}
+      className={`${plainBorder ? "h-[150px] w-full rounded-none border-orange-400/25 bg-black hover:border-orange-300/70 ![clip-path:none] before:!hidden after:!hidden" : "mw-focus h-full min-h-[230px] w-[300px] shrink-0 rounded-[14px] border-[#6B5320] bg-mw-surface hover:border-[#8A6B2A]"} group relative flex snap-start overflow-hidden border transition ${clickable ? "cursor-pointer" : ""} ${className}`}
       style={plainBorder ? { clipPath: "none" } : undefined}
       role={clickable ? "button" : "article"}
       tabIndex={clickable ? 0 : undefined}
@@ -104,7 +104,7 @@ export function SponsoredFeaturedSlotCard({
 
         <button
           type="button"
-          className={`absolute right-2 top-2 z-20 max-w-[calc(100%-1rem)] truncate border border-white/25 bg-black/80 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white ${onAdvertisementClick ? "hover:border-orange-300/70 hover:text-orange-200" : "cursor-default"}`}
+          className={`absolute right-2 top-2 z-20 inline-flex min-h-[28px] max-w-[calc(100%-1rem)] items-center truncate rounded-full border border-white/20 bg-[rgba(0,0,0,0.65)] px-2.5 text-xs font-semibold text-[#F2C14E] ${onAdvertisementClick ? "hover:border-[#F2C14E]" : "cursor-default"}`}
           aria-label="Advertisement"
           onClick={(event) => {
             event.preventDefault();
@@ -120,8 +120,9 @@ export function SponsoredFeaturedSlotCard({
           <>
             <div className="absolute inset-0 bg-black/35 transition group-hover:bg-black/40" />
             <div className="absolute inset-0 flex items-center justify-center p-4">
-              <span className="text-center text-[20px] font-semibold tracking-wide text-white/90 drop-shadow-[0_2px_12px_rgba(0,0,0,0.85)] group-hover:text-white md:text-[22px]">
-                Advertise here
+              <span className="flex flex-col items-center gap-1 text-center">
+                <span className="text-[20px] font-bold text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.85)]">Your coin here</span>
+                <span className="text-sm text-white/80 drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">Advertise here · first slot on the Coins page</span>
               </span>
             </div>
           </>

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { Contract } from "ethers";
 import { useNavigate } from "react-router-dom";
-import { ThumbsUp } from "lucide-react";
+import { ThumbsUp, ChevronLeft, ChevronRight } from "lucide-react";
 import { FeaturedCampaignCard } from "@/components/home/FeaturedCampaignCard";
 import { UpvoteDialog } from "@/components/token/UpvoteDialog";
 import {
@@ -746,18 +746,26 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
 
   return (
     <div className={`w-full ${className}`}>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="inline-flex items-center gap-2 mwz-section-title text-sm md:text-base">
-          <ThumbsUp className="h-4 w-4" />
-          Featured Campaigns
+      <div className="mb-2.5 flex items-center justify-between gap-3 font-mw-body">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h2 className="m-0 font-mw-cond text-xl font-bold tracking-[0.02em] text-mw-text">Featured</h2>
+          <span className="truncate text-sm text-mw-muted">Top 20 by UpVotes in 24h</span>
         </div>
-        <div className="hidden text-xs uppercase tracking-[0.16em] mwz-muted md:block">Live campaigns ranked by 24h UpVotes</div>
+        <div className="hidden shrink-0 gap-1.5 md:flex">
+          {/* Scroll buttons only move the rail; ranking and order are unchanged. */}
+          <button type="button" aria-label="Scroll featured left" onClick={() => railRef.current?.scrollBy({ left: -480, behavior: "smooth" })} className="mw-focus inline-flex h-10 w-10 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-text hover:bg-[#222830]">
+            <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="Scroll featured right" onClick={() => railRef.current?.scrollBy({ left: 480, behavior: "smooth" })} className="mw-focus inline-flex h-10 w-10 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-text hover:bg-[#222830]">
+            <ChevronRight className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       <div
         ref={railRef}
         data-featured-campaign-rail="true"
-        className="grid grid-flow-col grid-rows-1 auto-cols-[100%] gap-3 overflow-x-auto snap-x snap-proximity pb-1 [overflow-anchor:none] [scrollbar-width:none] sm:auto-cols-[min(100%,24rem)] lg:grid-rows-2 lg:auto-cols-[392px]"
+        className="flex items-stretch gap-3 overflow-x-auto snap-x snap-proximity pb-1 [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {loading && !cards.length ? (
           <>
@@ -768,10 +776,10 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
                 onAdvertisementClick={() => setAdNoticeOpen(true)}
               />
             ) : (
-              <div className="mwz-card h-[150px] animate-pulse border border-amber-400/20" />
+              <div className="h-[230px] w-[300px] shrink-0 animate-pulse rounded-[14px] border border-[#6B5320] bg-mw-surface" />
             )}
             {Array.from({ length: 7 }).map((_, index) => (
-              <div key={index} className="mwz-card h-[150px] animate-pulse" />
+              <div key={index} className="h-[230px] w-[220px] shrink-0 animate-pulse rounded-[14px] border border-mw-border bg-mw-surface" />
             ))}
           </>
         ) : (
@@ -786,7 +794,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
               />
             ) : null}
             {!cards.length ? (
-              <div className="mwz-muted flex h-[150px] items-center px-4 text-sm">No live featured campaigns yet — organic ranks appear after UpVotes.</div>
+              <div className="flex min-h-[230px] w-[220px] shrink-0 items-center px-4 text-sm text-mw-muted md:w-auto md:max-w-[420px]">No live featured campaigns yet — organic ranks appear after UpVotes.</div>
             ) : null}
             {cards.map((item, index) => {
               const image = usefulImage(item.logoUri) ? resolveImageUri(item.logoUri) : null;
@@ -808,7 +816,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
                   athUsdLabel={item.athUsdLabel}
                   onOpen={() => navigate(targetRoute)}
                   actions={
-                    <UpvoteDialog campaignAddress={item.campaignAddress} chainId={item.chainId} className="mwz-button mwz-button-active h-9 w-full text-[11px]" buttonVariant="ghost" buttonSize="sm" />
+                    <UpvoteDialog campaignAddress={item.campaignAddress} chainId={item.chainId} className="h-9 w-full rounded-[10px] border border-mw-edge bg-mw-raised text-sm font-semibold text-mw-text hover:bg-[#222830]" buttonVariant="ghost" buttonSize="sm" />
                   }
                 />
               );

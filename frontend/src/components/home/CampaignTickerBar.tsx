@@ -237,8 +237,8 @@ export function CampaignTickerBar({ className }: { className?: string }) {
 
   if (!loopItems.length) {
     return (
-      <div className={cn("mwz-hud-frame overflow-hidden border-success/25 bg-black/65 px-3 py-2", className)} aria-label="Live campaign ticker">
-        <div className="text-xs uppercase tracking-[0.16em] text-success/55">
+      <div className={cn("flex h-12 items-center overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface px-4", className)} aria-label="Live campaign ticker">
+        <div className="text-sm text-mw-muted">
           {loaded ? "Live ticker waiting for factory campaigns" : "Loading live campaign ticker..."}
         </div>
       </div>
@@ -246,18 +246,18 @@ export function CampaignTickerBar({ className }: { className?: string }) {
   }
 
   return (
-    <div className={cn("mwz-hud-frame overflow-hidden border-success/25 bg-black/65 py-2", className)} aria-label="Live campaign ticker">
-      <div className="mwz-campaign-ticker-track flex w-max items-center gap-3 px-3">
+    <div className={cn("flex h-12 items-center overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface", className)} aria-label="Live campaign ticker">
+      <div className="mwz-campaign-ticker-track flex w-max items-center">
         {loopItems.map((item, index) => (
           <Link
             key={`${item.campaignAddress}-${index}`}
             to={tokenDetailsPath({ tokenAddress: item.tokenAddress, campaignAddress: item.campaignAddress, chainId: Number(chainId) })}
-            className="inline-flex min-w-[10.5rem] shrink-0 items-center gap-2 border border-success/25 bg-black/45 px-3 py-1.5 text-[11px] uppercase tracking-[0.08em] text-success/80 transition hover:border-orange-400/60 hover:text-orange-300 sm:text-xs sm:tracking-[0.12em]"
+            className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-r border-[#1E2329] px-[18px] font-mw-body text-sm text-mw-text hover:bg-[#171B20] hover:text-mw-text"
           >
-            <span className="font-retro text-success">${item.symbol}</span>
-            <span className="hidden max-w-[140px] truncate text-success/45 sm:inline">{item.name}</span>
-            <span className="text-orange-300/90">{formatMc(item.marketcapBnb, nativeUsd, chainId)}</span>
-            <span className="text-success/40">UP {item.votes24h || 0}</span>
+            <span className="font-bold">${item.symbol}</span>
+            <span className="hidden max-w-[140px] truncate text-mw-muted sm:inline">{item.name}</span>
+            <span className="font-mw-mono">{formatMc(item.marketcapBnb, nativeUsd, chainId)}</span>
+            <span className="font-mw-mono text-mw-accent-soft">▲ {item.votes24h || 0}</span>
           </Link>
         ))}
       </div>

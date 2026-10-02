@@ -210,18 +210,16 @@ export function CampaignCard({
     <div
       data-live-id={liveId || undefined}
       className={cn(
-        "mwz-card group relative flex w-full flex-col overflow-hidden rounded-none",
-        "min-h-[322px] border-success/35 bg-black/70",
+        "group relative flex w-full flex-col overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface font-mw-body text-mw-text transition-colors hover:border-[#3A424C]",
         className
       )}
     >
-      <button className="block w-full text-left" onClick={() => navigate(openPath)} aria-label={`Open ${vm.name}`}>
-        <div className="relative aspect-square w-full overflow-hidden border-b border-success/25 bg-black">
-          <div className="absolute inset-0 mwz-stat-grid opacity-30 z-10 pointer-events-none" />
+      <button className="mw-focus block w-full text-left" onClick={() => navigate(openPath)} aria-label={`Open ${vm.name}`}>
+        <div className="relative h-[150px] w-full overflow-hidden bg-[#2A1609]">
           <img
             src={campaignImage || "/placeholder.svg"}
             alt={vm.name}
-            className="h-full w-full object-cover bg-black"
+            className="h-full w-full object-cover"
             draggable={false}
             loading="lazy"
             onError={(event) => {
@@ -230,127 +228,91 @@ export function CampaignCard({
               setCampaignImage("");
             }}
           />
-          <div className="absolute inset-0 z-20 bg-[linear-gradient(180deg,rgba(0,0,0,0.05),transparent_45%,rgba(0,0,0,0.62))]" />
-          <div className="absolute left-2 top-2 z-30 border border-success/55 bg-black/75 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-success shadow-[0_0_12px_rgba(57,255,79,0.14)]">
+          <div className={cn("absolute left-2.5 top-2.5 inline-flex h-[22px] items-center rounded-full bg-[rgba(0,0,0,0.55)] px-2 text-xs font-semibold", vm.isDexTrading ? "text-[#6EE7A0]" : "text-mw-accent-soft")}>
             {statusLabel}
           </div>
-          <div className="absolute right-2 top-2 z-30 inline-flex items-center gap-1 border border-accent/60 bg-black/75 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-accent">
-            <Flame className="h-3 w-3" />
+          <div className="absolute right-2.5 top-2.5 inline-flex h-[22px] items-center gap-1 rounded-full bg-[rgba(0,0,0,0.55)] px-2 font-mw-mono text-xs text-[#C9CED4]">
+            <Flame className="h-3 w-3" aria-hidden="true" />
             {Number(vm.votes24h ?? 0)}/24h
           </div>
         </div>
       </button>
 
-      <div className="flex flex-1 flex-col p-3 text-success">
-        <button className="min-w-0 text-left" onClick={() => navigate(openPath)}>
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="mwz-section-title truncate text-lg leading-none">{vm.name}</div>
-              <div className="mt-1 truncate text-sm text-success/70">{vm.symbol ? `$${vm.symbol}` : ""}</div>
-            </div>
-            <div className="shrink-0 text-right text-[10px] uppercase tracking-[0.16em] text-success/55">
-              {timeAgoFromUnix(vm.createdAt)}
-            </div>
-          </div>
-        </button>
-
-        <div className="mt-3 flex items-center gap-2 min-w-0">
-          <img
-            src="/assets/profile_placeholder.png"
-            alt="Creator"
-            className={cn("h-7 w-7 rounded-full border border-success/35 object-cover", canOpenProfile ? "cursor-pointer hover:border-accent/70" : "")}
-            draggable={false}
-            role={canOpenProfile ? "button" : undefined}
-            tabIndex={canOpenProfile ? 0 : undefined}
-            onClick={(e) => {
-              if (!canOpenProfile) return;
-              e.stopPropagation();
-              openProfile();
-            }}
-            onKeyDown={(e) => {
-              if (!canOpenProfile) return;
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                e.stopPropagation();
-                openProfile();
-              }
-            }}
-          />
-          <div
-            className={cn("truncate text-xs text-success/65", canOpenProfile ? "cursor-pointer hover:text-accent" : "")}
-            role={canOpenProfile ? "button" : undefined}
-            tabIndex={canOpenProfile ? 0 : undefined}
-            onClick={(e) => {
-              if (!canOpenProfile) return;
-              e.stopPropagation();
-              openProfile();
-            }}
-            onKeyDown={(e) => {
-              if (!canOpenProfile) return;
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                e.stopPropagation();
-                openProfile();
-              }
-            }}
-          >
-            {vm.creator ? shortAddr(vm.creator) : "—"}
-          </div>
-        </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-3 border-y border-success/20 py-2">
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-success/50">MCap</div>
-            <div className="truncate text-sm text-success">{vm.marketCapUsdLabel ?? "—"}</div>
-          </div>
-          <div className="min-w-0 text-right">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-success/50">
-              {vm.isDexTrading ? "Bonded" : "Curve"}
-            </div>
-            <div className="truncate text-sm text-success">{progressLabel}</div>
-          </div>
-        </div>
-
-        {/* Single square curve track — no extra empty rounded AthBar pill under it. */}
-        {!vm.isDexTrading ? (
-          <div className="mt-3">
-            <div className="h-2 border border-success/30 bg-black/70 p-[1px] shadow-[inset_0_0_12px_rgba(57,255,79,0.08)]">
-              <div
-                className="h-full bg-[linear-gradient(90deg,var(--mwz-orange),var(--mwz-green))] shadow-[0_0_12px_rgba(57,255,79,0.22)]"
-                style={{ width: `${Math.max(progress > 0 ? 2 : 0, progress)}%` }}
-              />
-            </div>
-          </div>
-        ) : null}
-
-        <div className="mt-3">
-          <AthBar
-            currentLabel={vm.marketCapUsdLabel ?? vm.athLabel ?? null}
-            canonicalAthUsd={vm.athUsd ?? null}
-            storageKey={`ath:${String(chainIdForStorage)}:${addr}:card-v4`}
-            className="text-[10px] text-success"
-            barMaxWidth="100%"
-          />
-        </div>
-
-        <div className="mt-auto flex items-center justify-between gap-2 pt-3" onClick={(e) => e.stopPropagation()}>
+      <div className="flex flex-1 flex-col gap-2 p-3">
+        <div className="flex items-center gap-2">
+          <button className="mw-focus min-w-0 flex-1 truncate text-left font-bold text-mw-text" onClick={() => navigate(openPath)}>
+            {vm.name}
+          </button>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className={cn("mwz-button h-8 w-8", followed && "mwz-button-active")}
+            className={cn("mw-focus h-9 w-9 shrink-0 rounded-[10px] border border-mw-edge bg-mw-raised hover:bg-[#222830]", followed && "border-mw-accent")}
             onClick={toggleFollow}
             disabled={followBusy}
             aria-label={followed ? "Unfollow campaign" : "Follow campaign"}
+            aria-pressed={followed}
             title={followed ? "Unfollow" : "Follow"}
           >
-            <Star className={cn("h-4 w-4 transition-all", followed ? "fill-current text-accent" : "text-success/75")} />
+            <Star className={cn("h-4 w-4 transition-all", followed ? "fill-current text-mw-accent" : "text-mw-muted")} />
           </Button>
+        </div>
 
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-[13px] text-mw-muted">
+          <span className="font-mw-mono">{vm.symbol ? `$${vm.symbol}` : ""}</span>
+          <span>· {timeAgoFromUnix(vm.createdAt)}</span>
+          <span className="min-w-0 truncate">
+            ·{" "}
+            <span
+              className={cn("font-mw-mono", canOpenProfile ? "cursor-pointer text-mw-accent-soft hover:text-[#FFD0A8]" : "")}
+              role={canOpenProfile ? "button" : undefined}
+              tabIndex={canOpenProfile ? 0 : undefined}
+              onClick={(e) => {
+                if (!canOpenProfile) return;
+                e.stopPropagation();
+                openProfile();
+              }}
+              onKeyDown={(e) => {
+                if (!canOpenProfile) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openProfile();
+                }
+              }}
+            >
+              {vm.creator ? shortAddr(vm.creator) : "—"}
+            </span>
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 font-mw-mono text-[13px]">
+          <span className="min-w-0 truncate text-mw-muted">MCap <b className="text-mw-text">{vm.marketCapUsdLabel ?? "—"}</b></span>
+          <span className="shrink-0 text-mw-muted">{vm.isDexTrading ? "Bonded" : <>Curve <b className="text-mw-text">{progressLabel}</b></>}</span>
+        </div>
+
+        {!vm.isDexTrading ? (
+          <div className="h-1.5 overflow-hidden rounded-full bg-mw-border" aria-hidden="true">
+            <div
+              className="h-full rounded-full bg-mw-accent"
+              style={{ width: `${Math.max(progress > 0 ? 2 : 0, progress)}%` }}
+            />
+          </div>
+        ) : null}
+
+        <AthBar
+          currentLabel={vm.marketCapUsdLabel ?? vm.athLabel ?? null}
+          canonicalAthUsd={vm.athUsd ?? null}
+          storageKey={`ath:${String(chainIdForStorage)}:${addr}:card-v4`}
+          className="text-xs text-mw-muted"
+          barMaxWidth="100%"
+        />
+
+        <div className="mt-auto pt-1" onClick={(e) => e.stopPropagation()}>
           <UpvoteDialog
             campaignAddress={addr}
             chainId={chainIdForStorage}
-            className="mwz-button mwz-button-active h-8 px-3 text-[10px]"
+            className="h-10 w-full rounded-[10px] border border-mw-edge bg-mw-raised text-sm font-semibold text-mw-text hover:bg-[#222830]"
             buttonVariant="ghost"
             buttonSize="sm"
           />

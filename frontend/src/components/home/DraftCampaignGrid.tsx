@@ -264,23 +264,23 @@ export function DraftCampaignGrid({ className, query }: { className?: string; qu
     [items, query.search, query.sort, nowMs],
   );
 
-  const gridClass = "flex flex-wrap items-start justify-start gap-3 sm:gap-4";
-  const cardClass = "w-[calc(50%-0.375rem)] min-w-0 sm:w-[220px] lg:w-[230px]";
+  const gridClass = "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3";
+  const chip = "inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-full border px-2 text-xs font-semibold";
 
   return (
-    <div className={cn("w-full", className)}>
-      <div className="mb-3 text-xs text-muted-foreground">Showing {visible.length} draft campaigns</div>
+    <div className={cn("w-full font-mw-body text-mw-text", className)}>
+      <div className="mb-3 text-sm text-mw-muted">Showing {visible.length} draft campaigns</div>
 
       {loading && !visible.length ? (
         <div className={gridClass}>
-          {Array.from({ length: 10 }).map((_, index) => (
-            <div key={index} className={cn("min-h-[322px] animate-pulse border border-success/25 bg-black/60", cardClass)} />
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="h-[260px] animate-pulse rounded-[14px] border border-mw-border bg-mw-surface" />
           ))}
         </div>
       ) : error ? (
-        <div className="py-10 text-center text-sm text-muted-foreground">{error}</div>
+        <div className="py-10 text-center text-sm text-mw-muted">{error}</div>
       ) : !visible.length ? (
-        <div className="py-10 text-center text-sm text-muted-foreground">
+        <div className="py-10 text-center text-sm text-mw-muted">
           No public draft campaigns yet. Published Prepare Pages and timed on-chain launches appear here.
         </div>
       ) : (
@@ -299,81 +299,53 @@ export function DraftCampaignGrid({ className, query }: { className?: string; qu
             const draftChainId = Number(draft.chainId);
 
             return (
-              <article key={draft.id} className={cn("mwz-hud-frame group relative flex min-h-[322px] flex-col overflow-hidden border-success/30", cardClass)}>
-                <Link to={`/prepare/${encodeURIComponent(draft.slug)}`} className="block">
-                  <div className="relative aspect-[16/10] overflow-hidden border-b border-success/25 bg-black/40">
-                    <img src={logo} alt={draft.name} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" draggable={false} loading="lazy" />
-                    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(56,58,58,0.05),transparent_42%,rgba(56,58,58,0.72))]" />
-                    <div className="absolute left-2 top-2 inline-flex items-center gap-1 border border-success/55 bg-black px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-orange-400">
-                      <ShieldCheck className="h-3 w-3" />
-                      {scheduled ? "Scheduled" : "Prepare Mode"}
-                    </div>
-                    <div className="absolute right-2 top-2 inline-flex items-center gap-1 border border-orange-400/50 bg-black px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-orange-300">
-                      <Flame className="h-3 w-3" />
-                      {heat}
-                    </div>
-                    {scheduled ? (
-                      <div className="absolute inset-x-0 bottom-0 z-30 border-t border-orange-400/35 bg-black/85 px-3 py-2 text-center text-[10px] uppercase tracking-[0.12em] text-orange-200 backdrop-blur-sm">
-                        {launchDate}
-                      </div>
-                    ) : null}
-                  </div>
+              <article key={draft.id} className="flex flex-col gap-2 rounded-[14px] border border-mw-border bg-mw-surface p-3.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={cn(chip, "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft")}>
+                    <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+                    {scheduled ? "Scheduled" : "Prepare Mode"}
+                  </span>
+                  <span className={cn(chip, "border-mw-edge bg-[#171B20] text-[#C9CED4]")}>{draftChainLabel(draftChainId)}</span>
+                  <span className="ml-auto inline-flex items-center gap-1 text-[13px] text-mw-muted">
+                    <Flame className="h-3 w-3" aria-hidden="true" />
+                    {heat}
+                  </span>
+                </div>
+
+                <Link to={`/prepare/${encodeURIComponent(draft.slug)}`} className="mw-focus group flex items-center gap-2.5 text-mw-text hover:text-mw-text">
+                  <img src={logo} alt={draft.name} className="h-12 w-12 shrink-0 rounded-[10px] bg-[#1F252C] object-cover" draggable={false} loading="lazy" />
+                  <span className="min-w-0">
+                    <b className="block truncate group-hover:text-mw-accent-soft">{draft.name}</b>
+                    <span className="block truncate font-mw-mono text-[13px] text-mw-muted">
+                      {draft.ticker ? `$${draft.ticker}` : ""}
+                      {scheduled ? ` · launch ${launchDate}` : ""}
+                      {` · ${ageLabel(draft.draftCreatedAt || draft.createdAt)}`}
+                    </span>
+                  </span>
                 </Link>
 
-                <div className="flex flex-1 flex-col p-3 text-success">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <Link to={`/prepare/${encodeURIComponent(draft.slug)}`} className="mwz-section-title block truncate text-lg leading-none hover:text-accent">
-                        {draft.name}
-                      </Link>
-                      <div className="mt-1 flex items-center gap-1.5 overflow-hidden">
-                        <div className="truncate text-sm text-success/70">{draft.ticker ? `$${draft.ticker}` : ""}</div>
-                        <span
-                          className={`inline-flex shrink-0 items-center rounded border px-1.5 py-px text-[9px] font-medium uppercase tracking-[0.08em] ${draftChainBadgeClass(draftChainId)}`}
-                        >
-                          {draftChainLabel(draftChainId)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-right text-[10px] uppercase tracking-[0.16em] text-success/50">
-                      {ageLabel(draft.draftCreatedAt || draft.createdAt)}
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between gap-3 border-y border-success/20 py-2 text-xs">
-                    <div className="min-w-0">
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-success/45">Creator</div>
-                       <Link
-                         to={`/profile/${encodeURIComponent(draft.creatorWallet)}`}
-                         className="block truncate text-success/75 hover:text-orange-300"
-                         title={draft.creatorWallet}
-                       >
-                         {shortAddr(draft.creatorWallet)}
-                       </Link>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-success/45">Readiness</div>
-                      <div className="max-w-[112px] text-success">{readiness(String(draft.status))}</div>
-                    </div>
-                  </div>
-
-                  <p className="mt-3 min-h-[4.375rem] line-clamp-3 text-sm leading-relaxed text-success/70">{mission}</p>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <div className="border border-success/20 bg-black/40 p-2">
-                      <div className="flex items-center gap-1 text-success/50"><Star className="h-3 w-3" /> Watchlist</div>
-                      <div className="mt-1 text-sm text-success">{follows}</div>
-                    </div>
-                    <div className="border border-success/20 bg-black/40 p-2">
-                      <div className="flex items-center gap-1 text-success/50"><Radio className="h-3 w-3" /> Popularity</div>
-                      <div className="mt-1 text-sm text-success">{Number.isFinite(popularityPct) ? `${popularityPct}%` : "0%"}</div>
-                    </div>
-                  </div>
-
-                  <Link to={`/prepare/${encodeURIComponent(draft.slug)}`} className="mwz-button mwz-button-active mt-3 inline-flex h-9 items-center justify-center px-3 text-[10px] uppercase tracking-[0.16em]">
-                    View Promotion Page
+                <div className="text-[13px] text-mw-muted">
+                  by{" "}
+                  <Link
+                    to={`/profile/${encodeURIComponent(draft.creatorWallet)}`}
+                    className="font-mw-mono text-mw-accent-soft hover:text-[#FFD0A8]"
+                    title={draft.creatorWallet}
+                  >
+                    {shortAddr(draft.creatorWallet)}
                   </Link>
                 </div>
+
+                <p className="m-0 line-clamp-3 text-sm text-mw-muted">{mission}</p>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 font-mw-mono text-[13px] text-mw-muted">
+                  <span>Readiness <b className="text-mw-text">{readiness(String(draft.status))}</b></span>
+                  <span className="inline-flex items-center gap-1"><Star className="h-3 w-3" aria-hidden="true" />Watchlist <b className="text-mw-text">{follows}</b></span>
+                  <span className="inline-flex items-center gap-1"><Radio className="h-3 w-3" aria-hidden="true" />Popularity <b className="text-mw-text">{Number.isFinite(popularityPct) ? `${popularityPct}%` : "0%"}</b></span>
+                </div>
+
+                <Link to={`/prepare/${encodeURIComponent(draft.slug)}`} className="mw-focus mt-auto inline-flex min-h-10 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text">
+                  View promotion page
+                </Link>
               </article>
             );
           })}

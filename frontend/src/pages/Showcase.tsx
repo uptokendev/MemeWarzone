@@ -5,7 +5,6 @@ import { DiscoveryControls } from "@/components/home/DiscoveryControls";
 import { DraftCampaignGrid } from "@/components/home/DraftCampaignGrid";
 import { SafeFeaturedCampaigns } from "@/components/home/SafeFeaturedCampaigns";
 import { AirdropStrip } from "@/components/home/AirdropStrip";
-import { HeaderBand } from "@/components/home/HeaderBand";
 import { CampaignTickerBar } from "@/components/home/CampaignTickerBar";
 import { ImportedProjectsOverlay } from "@/components/home/ImportedProjectsOverlay";
 import { ContentContainer } from "@/components/layout/ContentContainer";
@@ -33,30 +32,24 @@ const Showcase = () => {
   const isGraduatedRow = effectiveQuery.tab === "dex" || effectiveQuery.status === "graduated";
 
   return (
-    <div className="mwz-launchpad-page h-full overflow-y-auto">
-      <div className="mwz-launchpad-inner">
-        <HeaderBand showTicker={false} />
-      </div>
+    <div className="mwz-launchpad-page h-full overflow-y-auto font-mw-body text-mw-text">
+      <ContentContainer className="relative flex flex-col gap-4 px-1 pb-6 pt-1 md:px-2">
+        <CampaignTickerBar />
 
-      <ContentContainer className="relative space-y-3 px-1 pb-6 md:px-2">
-        <CampaignTickerBar className="-mt-12 !pt-0" />
-
-        <div className="relative z-20 -mt-1 mb-2 md:-mt-2 md:mb-3">
-          <SafeFeaturedCampaigns />
-        </div>
+        <SafeFeaturedCampaigns />
 
         <AirdropStrip />
 
-        <div className="mwz-live-heading flex flex-col gap-3 pt-2 md:flex-row md:items-end md:justify-between">
+        <div className="flex flex-wrap items-end gap-3 pt-2">
           <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent">
-              {isDraftRow ? "Prepare Mode" : isGraduatedRow ? "DEX Campaigns" : ""}
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
+              {isDraftRow ? "Prepare mode" : isGraduatedRow ? "DEX campaigns" : "Discover"}
             </div>
-            <h2 className="mwz-section-title text-2xl text-success md:text-3xl">
-              {isDraftRow ? "Draft Campaigns" : isGraduatedRow ? "Graduated Coins" : "Explore Coins"}
-            </h2>
+            <h1 className="m-0 font-mw-cond text-[32px] font-bold leading-none md:text-[36px]">
+              {isDraftRow ? "Draft campaigns" : isGraduatedRow ? "Graduated coins" : "Explore coins"}
+            </h1>
           </div>
-          <ChainFeedSwitch className="shrink-0 self-start md:self-auto" />
+          <ChainFeedSwitch className="ml-auto shrink-0" />
         </div>
 
         <DiscoveryControls query={effectiveQuery} onChange={setQuery} />

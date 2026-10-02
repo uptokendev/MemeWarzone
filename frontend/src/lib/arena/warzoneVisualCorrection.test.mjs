@@ -167,8 +167,9 @@ test("Warzone Featured reuses the exact Pre-Grad FeaturedCampaignCard", () => {
   assert.match(overview, /FeaturedCampaignCard/);
   assert.match(overview, /ArenaUpvoteDialog/);
   assert.match(showcase, /FeaturedCampaignCard/);
-  assert.match(card, /h-\[150px\]/);
-  assert.match(card, /w-\[150px\]/);
+  // UI redesign phase 3: the shared card is the artboard tile (110px art, 220px wide).
+  assert.match(card, /h-\[110px\]/);
+  assert.match(card, /w-\[220px\]/);
   assert.match(card, /data-featured-campaign-card="true"/);
   assert.doesNotMatch(overview, /WarzoneTokenMark imageUrl=\{item\.imageUrl\}/);
 });

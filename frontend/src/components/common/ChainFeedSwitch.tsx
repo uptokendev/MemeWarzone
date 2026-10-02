@@ -184,7 +184,7 @@ export function ChainFeedSwitch({ className, value, onChange }: { className?: st
   ] as const;
 
   return (
-    <div className={cn("inline-flex items-center gap-1 border border-[var(--mwz-flat-card-border)] bg-black/25 p-1", className)}>
+    <div role="group" aria-label="Chain" className={cn("inline-flex items-center gap-1 font-mw-body", className)}>
       {options.map((option) => {
         const isActive =
           active === option.chainId ||
@@ -195,11 +195,12 @@ export function ChainFeedSwitch({ className, value, onChange }: { className?: st
             key={option.label}
             type="button"
             onClick={() => select(option.chainId)}
+            aria-pressed={isActive}
             className={cn(
-              "px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] transition-colors",
+              "mw-focus min-h-10 rounded-lg border px-3 text-[13px] font-semibold transition-colors",
               isActive
-                ? "border border-orange-400/60 bg-orange-500/10 text-orange-300"
-                : "border border-transparent text-white/58 hover:border-[var(--mwz-flat-card-border-strong)] hover:bg-white/[0.035] hover:text-white",
+                ? "border-mw-accent bg-[#2A1609] text-mw-accent-soft"
+                : "border-mw-edge bg-[#171B20] text-[#C9CED4] hover:border-[#3A424C] hover:text-mw-text",
             )}
           >
             {option.label}
