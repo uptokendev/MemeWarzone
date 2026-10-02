@@ -101,7 +101,7 @@ function WalletIcon({ option }: { option: UnifiedWalletOption }) {
       <img
         src={option.icon}
         alt=""
-        className="h-10 w-10 rounded-2xl object-cover shadow-[0_0_26px_-12px_rgba(240,106,26,0.9)]"
+        className="h-10 w-10 rounded-xl border border-mw-border object-cover"
         onError={() => setImageFailed(true)}
       />
     );
@@ -114,20 +114,20 @@ function WalletIcon({ option }: { option: UnifiedWalletOption }) {
         <img
           src={icon}
           alt=""
-          className="h-10 w-10 rounded-2xl object-cover shadow-[0_0_26px_-12px_rgba(168,85,247,0.9)]"
+          className="h-10 w-10 rounded-xl border border-mw-border object-cover"
           onError={() => setImageFailed(true)}
         />
       );
     }
     return (
-      <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-purple-500/15 text-xl text-purple-300 shadow-[0_0_26px_-12px_rgba(168,85,247,0.9)]">
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-mw-border bg-mw-input font-mw-cond text-lg font-bold text-[#C4A1FF]">
         {getWalletInitial(option.name)}
       </div>
     );
   }
 
   return (
-    <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-accent/25 bg-accent/10 font-retro text-sm text-accent shadow-[0_0_26px_-12px_rgba(240,106,26,0.9)]">
+    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-mw-border bg-mw-input font-mw-cond text-lg font-bold text-mw-accent-soft">
       {getWalletInitial(option.name)}
     </div>
   );
@@ -149,25 +149,24 @@ function WalletRow({
       type="button"
       disabled={disabled}
       onClick={() => onConnect(option)}
-      className="group relative w-full overflow-hidden rounded-2xl border border-border/70 bg-card/80 px-3 py-3 text-left transition-all duration-200 hover:border-accent/45 hover:bg-card disabled:cursor-not-allowed disabled:opacity-70"
+      className="mw-focus group relative w-full overflow-hidden rounded-[14px] border border-mw-border bg-mw-input px-3 py-3 text-left font-mw-body text-mw-text transition-colors hover:border-[#3A424C] hover:bg-[#171B20] disabled:cursor-not-allowed disabled:opacity-70"
     >
-      <div className="absolute inset-0 bg-gradient-to-br from-accent/10 via-transparent to-primary/15 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
       <div className="relative flex items-center gap-3">
         <WalletIcon option={option} />
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate font-retro text-sm text-foreground">{option.name}</p>
+            <p className="m-0 truncate text-[15px] font-semibold text-mw-text">{option.name}</p>
             {option.detected && (
-              <span className={`${option.kind === "solana" ? "border-purple-400/30 bg-purple-400/10 text-purple-300" : "border-accent/30 bg-accent/10 text-accent"} rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]`}>
+              <span className="inline-flex h-5 items-center rounded-full border border-[#1F5133] bg-[#0F2418] px-2 text-[11px] font-semibold text-[#6EE7A0]">
                 detected
               </span>
             )}
           </div>
-          <p className="mt-1 line-clamp-1 text-xs leading-relaxed text-muted-foreground">{option.description}</p>
+          <p className="m-0 mt-0.5 line-clamp-1 text-[13px] text-mw-muted">{option.description}</p>
         </div>
 
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-border/70 bg-background/50 text-muted-foreground transition-colors group-hover:border-accent/40 group-hover:text-accent">
+        <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-muted transition-colors group-hover:text-mw-accent-soft">
           {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
         </div>
       </div>
@@ -369,7 +368,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-[999] flex items-center justify-center overflow-y-auto bg-background/80 p-4 backdrop-blur-xl"
+          className="fixed inset-0 z-[999] flex items-center justify-center overflow-y-auto bg-[rgba(5,6,8,0.75)] p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -385,24 +384,20 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
             role="dialog"
             aria-modal="true"
             aria-labelledby="connect-wallet-title"
-            className="relative my-8 w-full max-w-[420px] overflow-hidden rounded-[1.65rem] border border-accent/25 bg-card/95 shadow-[0_30px_120px_-40px_rgba(0,0,0,0.95),0_0_0_1px_rgba(240,106,26,0.08)]"
+            className="relative my-8 w-full max-w-[440px] overflow-hidden rounded-[18px] border border-mw-edge bg-mw-surface font-mw-body text-mw-text shadow-[0_24px_64px_rgba(0,0,0,0.55)]"
             initial={{ opacity: 0, y: 24, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.98 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
           >
-            <div className="pointer-events-none absolute -left-20 -top-24 h-48 w-48 rounded-full bg-accent/15 blur-3xl" />
-            <div className="pointer-events-none absolute -bottom-20 -right-20 h-52 w-52 rounded-full bg-primary/25 blur-3xl" />
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/80 to-transparent" />
 
-            <div className="relative border-b border-border/55 px-5 py-4">
+            <div className="relative border-b border-mw-border px-5 py-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="mb-3 inline-flex items-center gap-2 border border-accent/25 bg-accent/10 px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-accent">
-                    <Sparkles className="h-3 w-3" />
-                    Connect Wallet
+                  <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
+                    Connect wallet
                   </div>
-                  <h2 id="connect-wallet-title" className="font-retro text-xl text-foreground">
+                  <h2 id="connect-wallet-title" className="m-0 mt-0.5 font-mw-cond text-2xl font-bold text-mw-text">
                     Welcome back Soldier
                   </h2>
                 </div>
@@ -410,30 +405,31 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
                 <button
                   type="button"
                   onClick={handleClose}
-                  className="border border-border/70 bg-background/50 p-2 text-muted-foreground transition hover:border-accent/40 hover:text-foreground"
+                  aria-label="Close"
+                  className="mw-focus inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-mw-muted hover:bg-mw-raised hover:text-mw-text"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
             </div>
 
             <div className="relative max-h-[68vh] overflow-y-auto p-5">
               {connectedSummary && (
-                <div className={`${connectedSummary.accent === "solana" ? "border-purple-400/25 bg-purple-500/10" : "border-accent/25 bg-accent/10"} mb-4 flex items-center justify-between gap-3 rounded-2xl border p-3`}>
+                <div className={`border-[#1F5133] bg-[#0F2418] mb-4 flex items-center justify-between gap-3 rounded-[14px] border p-3`}>
                   <div className="flex min-w-0 items-center gap-3">
-                    <div className={`${connectedSummary.accent === "solana" ? "bg-purple-500/15 text-purple-300" : "bg-accent/15 text-accent"} flex h-9 w-9 shrink-0 items-center justify-center rounded-xl`}>
+                    <div className={`bg-[#123020] text-[#6EE7A0] flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]`}>
                       <CheckCircle2 className="h-4 w-4" />
                     </div>
                     <div className="min-w-0">
-                      <p className="font-retro text-sm text-foreground">{connectedSummary.label}</p>
-                      <p className="truncate text-xs text-muted-foreground">{connectedSummary.detail}</p>
+                      <p className="m-0 text-[15px] font-semibold text-mw-text">{connectedSummary.label}</p>
+                      <p className="m-0 truncate font-mw-mono text-xs text-mw-muted">{connectedSummary.detail}</p>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={connectedSummary.accent === "solana" ? handleSolanaDisconnect : handleDisconnect}
                     disabled={isBusy}
-                    className="shrink-0 rounded-xl border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground transition hover:border-destructive/40 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60"
+                    className="mw-focus min-h-10 shrink-0 rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:border-[#6B1F2A] hover:text-mw-sell disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     Disconnect
                   </button>
@@ -441,18 +437,18 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
               )}
 
               {connectingSolana && (
-                <div className="mb-4 rounded-2xl border border-purple-400/25 bg-purple-500/10 px-3 py-2 text-xs leading-relaxed text-purple-200">
+                <div className="mb-4 rounded-[10px] border border-[#5A3416] bg-mw-accent-fill px-3 py-2.5 text-sm leading-relaxed text-mw-accent-soft">
                   Approve the request in {connectingSolanaName}. If nothing pops up, click the extension icon, unlock the wallet, then try again.
                 </div>
               )}
 
               <div className="flex items-center justify-between gap-3">
-                <p className="font-retro text-sm text-foreground">Detected wallets</p>
+                <p className="m-0 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Detected wallets</p>
                 <button
                   type="button"
                   onClick={handleRefresh}
                   disabled={isBusy}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-border/70 bg-background/50 px-2.5 py-1.5 text-xs text-muted-foreground transition hover:border-accent/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mw-focus inline-flex h-9 items-center gap-1.5 rounded-full border border-mw-edge bg-[#171B20] px-3 text-[13px] font-semibold text-[#C9CED4] hover:bg-[#1F252C] hover:text-mw-text disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <RefreshCcw className="h-3.5 w-3.5" />
                   Refresh
@@ -475,12 +471,12 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
                     />
                   ))
                 ) : (
-                  <div className="rounded-2xl border border-dashed border-border/80 bg-background/35 p-5 text-center">
-                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-accent/25 bg-accent/10 text-accent">
+                  <div className="rounded-[14px] border border-dashed border-mw-edge bg-mw-input p-5 text-center">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-[#5A3416] bg-mw-accent-fill text-mw-accent-soft">
                       <AlertTriangle className="h-5 w-5" />
                     </div>
-                    <p className="mt-3 font-retro text-sm text-foreground">No wallet detected</p>
-                    <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
+                    <p className="m-0 mt-3 font-mw-cond text-lg font-bold text-mw-text">No wallet detected</p>
+                    <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-mw-muted">
                       Unlock your wallet extension, then refresh. On mobile, open MemeWarzone inside your wallet browser.
                     </p>
                   </div>
@@ -491,20 +487,20 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
                     type="button"
                     onClick={() => setMoreWalletsOpen((value) => !value)}
                     disabled={isBusy}
-                    className="group flex w-full items-center justify-between rounded-2xl border border-border/70 bg-background/45 px-3 py-3 text-left transition hover:border-accent/40 hover:bg-card disabled:cursor-not-allowed disabled:opacity-60"
+                    className="mw-focus group flex w-full items-center justify-between rounded-[14px] border border-mw-border bg-mw-input px-3 py-3 text-left text-mw-text hover:border-[#3A424C] hover:bg-[#171B20] disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-border/70 bg-card/60 text-muted-foreground">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-mw-border bg-mw-raised text-mw-muted">
                         <Wallet className="h-4 w-4" />
                       </div>
                       <div>
-                        <p className="font-retro text-sm text-foreground">More wallets</p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="m-0 text-[15px] font-semibold text-mw-text">More wallets</p>
+                        <p className="m-0 text-[13px] text-mw-muted">
                           {moreWalletsOpen ? "Hide extra detected wallets" : `Show ${hiddenWalletCount} more detected wallet${hiddenWalletCount === 1 ? "" : "s"}`}
                         </p>
                       </div>
                     </div>
-                    <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${moreWalletsOpen ? "rotate-180" : ""}`} />
+                    <ChevronDown className={`h-4 w-4 text-mw-muted transition-transform ${moreWalletsOpen ? "rotate-180" : ""}`} />
                   </button>
                 )}
               </div>
