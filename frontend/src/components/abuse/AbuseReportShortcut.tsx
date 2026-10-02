@@ -20,7 +20,7 @@ export function AbuseReportShortcut({
   return (
     <Link
       to={buildAbuseReportPath(prefill)}
-      className={`inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.12em] text-muted-foreground hover:text-foreground ${className}`}
+      className={`mw-focus inline-flex items-center gap-1 text-[13px] font-medium text-mw-muted hover:text-mw-text ${className}`}
     >
       <Flag className="h-3 w-3" />
       {label}

@@ -1,4 +1,5 @@
 /** Single post with its replies (UI redesign phase 2, artboard PostThread). Route /post/:postId. */
+import { useWalletAvatar } from "@/hooks/useWalletAvatar";
 import { useStickyRail } from "@/hooks/useStickyRail";
 import { MentionField } from "@/components/feed/MentionField";
 import { useCallback, useEffect, useState } from "react";
@@ -23,6 +24,7 @@ export default function PostThread() {
   const postId = Number(raw);
   const navigate = useNavigate();
   const { account, withSession, busy } = useFeedSession();
+  const composerAvatar = useWalletAvatar(account);
   const [post, setPost] = useState<FeedItem | null>(null);
   const [replies, setReplies] = useState<FeedItem[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "missing" | "error">("loading");
@@ -112,7 +114,7 @@ export default function PostThread() {
               </article>
 
               <div className="flex items-center gap-3 border-t border-[#242A31] px-[18px] py-3.5">
-                <span className="hidden sm:block"><FeedAvatar url={null} label={account || "You"} size={40} /></span>
+                <span className="hidden sm:block"><FeedAvatar url={composerAvatar} label={account || "You"} size={40} /></span>
                 <MentionField
                   value={reply}
                   onChange={(next) => setReply(next.slice(0, FEED_MAX_CHARS))}

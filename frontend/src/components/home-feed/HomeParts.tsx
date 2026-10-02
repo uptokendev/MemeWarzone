@@ -1,4 +1,5 @@
 /** Home feed building blocks (UI redesign phase 2, artboard Home). Read-only views over existing data. */
+import { useWalletAvatar } from "@/hooks/useWalletAvatar";
 import { MentionField } from "@/components/feed/MentionField";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -92,12 +93,13 @@ export function StoryRow({ chainId, liveBattles }: { chainId: number; liveBattle
 /** Composer (artboard): one line that grows, image button, Post. */
 export function HomeComposer({ onPosted }: { onPosted?: () => void }) {
   const composer = usePostComposer({ onPosted });
+  const composerAvatar = useWalletAvatar(composer.account);
   const [focused, setFocused] = useState(false);
   const expanded = focused || composer.body.length > 0 || Boolean(composer.file);
   return (
     <section className={`${card} flex flex-col gap-2 px-[18px] py-3.5`}>
       <div className="flex items-start gap-3.5">
-        <span className="hidden sm:block"><FeedAvatar url={null} label={composer.account || "You"} /></span>
+        <span className="hidden sm:block"><FeedAvatar url={composerAvatar} label={composer.account || "You"} /></span>
         <MentionField
           multiline
           value={composer.body}

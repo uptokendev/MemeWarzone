@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Textarea } from "@/components/ui/textarea";
@@ -262,9 +261,9 @@ export function TokenComments({
   return (
     <div className="h-full w-full flex flex-col min-h-0 gap-3">
       {showComposer ? (
-        <Card className={`border border-border/40 rounded-xl ${mode === "chat" ? "bg-card/15 p-2.5" : "bg-card/20 p-3"}`}>
+        <div className={`rounded-[14px] border border-mw-border bg-mw-input font-mw-body text-mw-text ${mode === "chat" ? "p-2.5" : "p-3"}`}>
           <div className="flex items-start gap-3">
-            <Avatar className="h-9 w-9">
+            <Avatar className="mw-avatar h-9 w-9">
               <AvatarImage src={undefined} />
               <AvatarFallback className="bg-transparent p-0"><OperativeMark fill /></AvatarFallback>
             </Avatar>
@@ -282,12 +281,12 @@ export function TokenComments({
                     ? "Connect wallet to join chat…"
                     : "Connect wallet to comment…"
                 }
-                className={mode === "chat" ? "min-h-[72px] resize-none" : "min-h-[96px] resize-none"}
+                className={`${mode === "chat" ? "min-h-[72px]" : "min-h-[96px]"} resize-none rounded-[10px] border-mw-edge bg-mw-surface text-[15px] text-mw-text placeholder:text-[#5C6670] focus-visible:ring-mw-accent`}
                 maxLength={500}
                 disabled={posting}
               />
               <div className="mt-2 flex items-center justify-between">
-                <span className="text-[11px] text-muted-foreground">
+                <span className="font-mw-mono text-xs text-mw-muted">
                   {mode === "chat" ? "Fast lane · newest first" : `${body.trim().length}/500`}
                 </span>
                 <div className="flex items-center gap-2">
@@ -295,6 +294,7 @@ export function TokenComments({
                     <Button
                       variant="secondary"
                       size="sm"
+                      className="mw-focus inline-flex min-h-10 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-sm font-semibold text-mw-text hover:bg-[#222830]"
                       onClick={() => window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal"))}
                       disabled={posting}
                     >
@@ -303,6 +303,7 @@ export function TokenComments({
                   ) : null}
                   <Button
                     size="sm"
+                    className="mw-focus inline-flex min-h-10 items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-sm font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50"
                     onClick={handlePost}
                     disabled={posting || !account || !canPost}
                   >
@@ -311,24 +312,24 @@ export function TokenComments({
                 </div>
               </div>
               {error ? (
-                <p className="mt-2 text-xs text-destructive">{error}</p>
+                <p className="mt-2 text-sm text-mw-sell">{error}</p>
               ) : null}
             </div>
           </div>
-        </Card>
+        </div>
       ) : mode === "updates" ? (
-        <div className="rounded-xl border border-border/40 bg-card/15 px-3 py-2 text-[11px] text-muted-foreground">
+        <div className="rounded-[10px] border border-mw-border bg-mw-input px-3 py-2.5 text-[13px] text-mw-muted">
           Creator-only feed. Newest official notes appear here.
         </div>
       ) : null}
 
       <div className="flex-1 min-h-0 overflow-auto pr-1">
         {loading ? (
-          <div className="py-6 text-center text-xs text-muted-foreground">
+          <div className="py-6 text-center text-sm text-mw-muted">
             {mode === "chat" ? "Loading war room…" : "Loading comments…"}
           </div>
         ) : filteredItems.length === 0 ? (
-          <div className="py-6 text-center text-xs text-muted-foreground">{effectiveEmptyState}</div>
+          <div className="py-6 text-center text-sm text-mw-muted">{effectiveEmptyState}</div>
         ) : (
           <div className={`flex flex-col ${mode === "chat" ? "gap-2" : "gap-3"}`}>
             {filteredItems.map((c) => {
@@ -342,13 +343,13 @@ export function TokenComments({
                   key={c.id}
                   className={
                     mode === "chat"
-                      ? "flex items-start gap-3 rounded-xl border border-border/35 bg-card/15 p-2.5"
+                      ? "flex items-start gap-3 rounded-[14px] border border-mw-border bg-mw-input p-2.5 font-mw-body text-mw-text"
                       : isCreatorUpdate
-                      ? "flex items-start gap-3 rounded-xl border border-accent/20 bg-accent/5 p-3"
-                      : "flex items-start gap-3 rounded-xl border border-border/40 bg-card/20 p-3"
+                      ? "flex items-start gap-3 rounded-[14px] border border-[#5A3416] bg-mw-accent-fill p-3.5 font-mw-body text-mw-text"
+                      : "flex items-start gap-3 rounded-[14px] border border-mw-border bg-mw-input p-3.5 font-mw-body text-mw-text"
                   }
                 >
-                  <Avatar className={mode === "chat" ? "h-8 w-8" : "h-9 w-9"}>
+                  <Avatar className={mode === "chat" ? "mw-avatar h-8 w-8" : "mw-avatar h-9 w-9"}>
                     {c.authorAvatarUrl ? <AvatarImage src={c.authorAvatarUrl} /> : null}
                     <AvatarFallback className="bg-transparent p-0"><OperativeMark fill /></AvatarFallback>
                   </Avatar>
@@ -356,18 +357,18 @@ export function TokenComments({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <WalletLabel className="text-xs font-semibold text-foreground truncate" wallet={c.authorAddress} displayName={c.authorDisplayName} />
+                        <WalletLabel className="truncate text-sm font-bold text-mw-text" wallet={c.authorAddress} displayName={c.authorDisplayName} />
                         {isCreatorUpdate ? (
-                          <span className="ml-2 rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
+                          <span className="ml-2 inline-flex h-5 items-center rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2 text-[11px] font-semibold text-mw-accent-soft">
                             Creator
                           </span>
                         ) : null}
-                        <span className="ml-2 text-[11px] text-muted-foreground">
+                        <span className="ml-2 text-[13px] text-mw-muted">
                           {timeAgo(c.createdAt)}
                         </span>
                       </div>
                     </div>
-                    <p className={`mt-1 whitespace-pre-wrap break-words ${mode === "chat" ? "text-[12px]" : "text-xs"} text-foreground/90`}>
+                    <p className={`m-0 mt-1 whitespace-pre-wrap break-words ${mode === "chat" ? "text-[14px]" : "text-[15px]"} text-mw-text`}>
                       {c.body}
                     </p>
                     {account && c.authorAddress && canonAddress(c.authorAddress, solana) === account ? null : (
