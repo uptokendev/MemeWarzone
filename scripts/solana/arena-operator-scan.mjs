@@ -81,6 +81,11 @@ export function selectDueBattles(rows, { settled } = {}) {
  */
 export function classifyResolveOutcome(result) {
   if (!result) return { state: "blocked", reason: "no-result", terminal: false };
+  // Resolved, but an MWL / protocol share is still in the pool: keep it in the loop.
+  if (result.claimsPending) {
+    const base = classifyResolveOutcome({ ...result, claimsPending: false });
+    return { ...base, terminal: false };
+  }
   if (result.ok && result.action === "sent") {
     return { state: "resolved", reason: result.reason || "resolved", terminal: true, signature: result.signature || null };
   }
@@ -161,4 +166,52 @@ export async function runResolveDueWatch({
     await sleep(wait);
   }
   return totals;
+}
+
+/*
+ * Operator claims after resolution (2026-10-02). A resolved pool still holds its MWL and protocol
+ * shares until someone sends claim_mwl / claim_protocol; both are permissionless and pay the fixed
+ * receivers in arena_config (mwl_vault, protocol vault). Nothing sent them, so the Solana MWL pot
+ * undercounted. resolve-due now runs both for every resolved battle, behind ARENA_OPERATOR_CLAIMS.
+ */
+export const OPERATOR_CLAIM_COMMANDS = Object.freeze(["claim-mwl", "claim-protocol"]);
+
+/** off (default) | dry (plan + log) | send. */
+export function operatorClaimsMode(env = process.env) {
+  const raw = String(env.ARENA_OPERATOR_CLAIMS || "").trim().toLowerCase();
+  return raw === "send" || raw === "dry" ? raw : "off";
+}
+
+/** Maps one runOperatorJob claim result to claimed | nothing-to-claim | planned | blocked. */
+export function classifyClaimOutcome(result) {
+  if (!result) return { state: "blocked", reason: "no-result", signature: null };
+  if (result.ok && result.action === "sent") return { state: "claimed", reason: "claimed", signature: result.signature || null };
+  if (result.ok && result.action === "skip") return { state: "nothing-to-claim", reason: result.reason || "already-claimed", signature: null };
+  if (!result.ok && result.reason === "nothing-to-claim") return { state: "nothing-to-claim", reason: "nothing-to-claim", signature: null };
+  if (result.ok && result.sent === false) {
+    const amount = result.amount != null ? String(result.amount) : "";
+    return { state: "planned", reason: amount ? `would claim ${amount} lamports` : "plan-only", signature: null };
+  }
+  return { state: "blocked", reason: result.reason || "unknown", signature: null };
+}
+
+/** Both claims for one pool. `runClaim(command, send)` returns a runOperatorJob result. */
+export async function runOperatorClaims({ mode, runClaim }) {
+  if (mode !== "dry" && mode !== "send") return [];
+  const outcomes = [];
+  for (const command of OPERATOR_CLAIM_COMMANDS) {
+    let outcome;
+    try {
+      outcome = classifyClaimOutcome(await runClaim(command, mode === "send"));
+    } catch (error) {
+      outcome = { state: "blocked", reason: String(error?.message || error), signature: null };
+    }
+    outcomes.push({ command, ...outcome });
+  }
+  return outcomes;
+}
+
+/** A pool can leave the loop only when neither share is left to claim. */
+export function operatorClaimsSettled(outcomes) {
+  return (outcomes || []).every((o) => o.state === "claimed" || o.state === "nothing-to-claim");
 }
