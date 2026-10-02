@@ -20,20 +20,30 @@ const {
  * Permitted deployment targets:
  *   bscMainnet       / 56     (preserved existing behavior)
  *   bscTestnet       / 97
+ *   robinhoodMainnet / 4663
  *   robinhoodTestnet / 46630
  *   hardhat/localhost / 31337 only with ARENA_V2_ALLOW_LOCAL=1
  *
- * Robinhood mainnet 4663 is intentionally NOT activated by T2-PRE.
+ * Chain-native authority/receiver inputs are resolved chain-specifically first.
+ * Robinhood 4663 and 46630 are STRICT and have no generic/BSC fallback.
+ * Production 4663 additionally requires explicit suffixed owner identities and a
+ * fresh non-existing deployment artifact path before any transaction is sent.
  *
- * Common authority inputs:
+ * Common BNB/local authority inputs may retain generic fallback:
  *   ARENA_V2_RESOLVER=<address>
- * Optional:
+ * Optional on BNB/local:
  *   ARENA_V2_OWNER=<address>                 defaults to deployer
  *   ARENA_LEAGUE_V2_OWNER=<address>          defaults to ARENA_V2_OWNER
  *   ARENA_V2_DEPLOYMENT_FILE=<path>          defaults by exact chain
  *
- * Chain-native receiver/signing inputs are resolved chain-specifically first.
- * For Robinhood testnet 46630 they are STRICT and have no generic/BSC fallback:
+ * Robinhood production 4663 required inputs:
+ *   ARENA_V2_OWNER_4663
+ *   ARENA_LEAGUE_V2_OWNER_4663
+ *   ARENA_V2_RESOLVER_4663
+ *   ARENA_BOOST_QUOTE_SIGNER_ADDRESS_4663
+ *   ARENA_PROTOCOL_RECEIVER_4663
+ *
+ * Robinhood testnet 46630 receiver/signing inputs remain STRICT:
  *   ARENA_BOOST_QUOTE_SIGNER_ADDRESS_46630
  *   ARENA_PROTOCOL_RECEIVER_46630
  *   ARENA_POSTGRAD_LEAGUE_TREASURY_V2_ADDRESS_46630 (optional existing League V2)
@@ -81,14 +91,21 @@ async function main() {
     allowLocal: truthy(process.env.ARENA_V2_ALLOW_LOCAL),
   });
 
-  const owner = envAddress(["ARENA_V2_OWNER"], false) || ethers.getAddress(deployer.address);
-  const leagueOwner = envAddress(["ARENA_LEAGUE_V2_OWNER"], false) || owner;
-  const resolver = envAddress([
-    `ARENA_V2_RESOLVER_${chainId}`,
-    "ARENA_V2_RESOLVER",
-    "ARENA_WAR_POOL_RESOLVER",
-    "RESOLVER",
-  ]);
+  const productionRobinhood = chainId === 4663;
+  const outputFile = String(process.env.ARENA_V2_DEPLOYMENT_FILE || "").trim() || defaultArenaV2DeploymentFile(chainId);
+  if (productionRobinhood) {
+    const normalizedOutput = outputFile.replace(/\\/g, "/").toLowerCase();
+    if (normalizedOutput.includes("46630") || normalizedOutput.includes("testnet")) {
+      throw new Error(`Robinhood mainnet 4663 refuses testnet deployment artifact path: ${outputFile}`);
+    }
+    if (fs.existsSync(outputFile)) {
+      throw new Error(`Robinhood mainnet 4663 deployment artifact already exists; refusing to overwrite: ${outputFile}`);
+    }
+  }
+
+  const owner = envAddress(envNamesFor(chainId, "ARENA_V2_OWNER"), productionRobinhood) || ethers.getAddress(deployer.address);
+  const leagueOwner = envAddress(envNamesFor(chainId, "ARENA_LEAGUE_V2_OWNER"), productionRobinhood) || owner;
+  const resolver = envAddress(envNamesFor(chainId, ["ARENA_V2_RESOLVER", "ARENA_WAR_POOL_RESOLVER", "RESOLVER"]));
 
   const boostQuoteSigner = envAddress(envNamesFor(chainId, "ARENA_BOOST_QUOTE_SIGNER_ADDRESS"));
   const protocolReceiver = envAddress(
@@ -202,7 +219,6 @@ async function main() {
   const monthlyReceiver = ethers.getAddress(await league.monthlyReceiver());
   const quarterlyReceiver = ethers.getAddress(await league.quarterlyReceiver());
 
-  const outputFile = String(process.env.ARENA_V2_DEPLOYMENT_FILE || "").trim() || defaultArenaV2DeploymentFile(chainId);
   const artifact = {
     schema: "memewarzone.arena-war-pool-treasury-v2.deployment.v1",
     createdAt: new Date().toISOString(),
