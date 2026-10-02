@@ -1,0 +1,237 @@
+name: Agent 5 Non-Arena Indexer Restart + Isolation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/agent5-nonarena-indexer-cert.yml"
+      - "scripts/certification/agent5-*"
+      - "realtime-indexer/src/indexer.ts"
+      - "realtime-indexer/src/solanaIndexer.ts"
+      - "realtime-indexer/src/topazPoolIndexer.ts"
+      - "realtime-indexer/src/meteoraSwapIndexer.ts"
+      - "realtime-indexer/src/abis.ts"
+      - "db/migrations/001_init.sql"
+      - "db/migrations/002_social.sql"
+      - "db/migrations/003_indexer.sql"
+      - "db/migrations/202607290001_war_trade_room_market_continuity_foundation.sql"
+      - "db/migrations/20260213_000003_claim_expiry_rollover.sql"
+  workflow_dispatch:
+    inputs:
+      execute_destructive:
+        description: Exact safety confirmation
+        required: true
+        type: choice
+        options:
+          - DO_NOT_EXECUTE
+          - EXECUTE_BNB97_SOLANA_DEVNET_INDEXER_RESTART_CERT
+      bnb_bonding_campaign:
+        description: Existing real BSC97 bonding campaign address
+        required: false
+        type: string
+      bnb_bonding_first_block:
+        description: First real BSC97 bonding trade block visible before stop
+        required: false
+        type: string
+      bnb_bonding_missed_block:
+        description: Later real BSC97 bonding trade block revealed while worker is down
+        required: false
+        type: string
+      bnb_topaz_campaign:
+        description: Existing real BSC97 graduated campaign
+        required: false
+        type: string
+      bnb_topaz_token:
+        description: Existing BSC97 launch token
+        required: false
+        type: string
+      bnb_topaz_pool:
+        description: Existing authoritative real Topaz pool
+        required: false
+        type: string
+      bnb_topaz_wrapped:
+        description: BSC97 wrapped native address used by pool
+        required: false
+        type: string
+      bnb_topaz_token0:
+        description: BSC97 pool token0
+        required: false
+        type: string
+      bnb_topaz_token1:
+        description: BSC97 pool token1
+        required: false
+        type: string
+      bnb_topaz_graduation_block:
+        description: Real BSC97 graduation block
+        required: false
+        type: string
+      bnb_topaz_first_block:
+        description: First real Topaz Swap/Sync block visible before stop
+        required: false
+        type: string
+      bnb_topaz_missed_block:
+        description: Later real Topaz Swap/Sync block revealed while worker is down
+        required: false
+        type: string
+      solana_bonding_campaign:
+        description: Existing real Solana devnet campaign PDA
+        required: false
+        type: string
+      solana_bonding_first_signature:
+        description: First real devnet bonding trade signature visible before stop
+        required: false
+        type: string
+      solana_bonding_missed_signature:
+        description: Later real devnet bonding trade signature identified while worker is down
+        required: false
+        type: string
+      solana_meteora_campaign:
+        description: Existing real devnet graduated campaign PDA
+        required: false
+        type: string
+      solana_meteora_mint:
+        description: Existing real devnet launch mint
+        required: false
+        type: string
+      solana_meteora_pool:
+        description: Existing real devnet Meteora pool
+        required: false
+        type: string
+      solana_meteora_graduation_slot:
+        description: Real devnet graduation slot
+        required: false
+        type: string
+      solana_meteora_first_slot:
+        description: First real Meteora swap slot visible before stop
+        required: false
+        type: string
+      solana_meteora_missed_slot:
+        description: Later real Meteora swap slot revealed while worker is down
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+jobs:
+  source-and-isolation:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agent5_isolation
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agent5_isolation"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/agent5_isolation
+      MEMEWARZONE_SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Source transport gate
+        run: node scripts/certification/agent5-nonarena-source-gate.mjs
+      - name: Non-Arena chain-isolation matrix
+        run: node scripts/certification/agent5-chain-isolation-cert.mjs
+      - name: Upload source/isolation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent5-nonarena-source-isolation-${{ github.sha }}
+          path: reports/agent5-nonarena-chain-isolation.json
+          if-no-files-found: error
+          retention-days: 30
+
+  destructive-restart-backfill:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.execute_destructive == 'EXECUTE_BNB97_SOLANA_DEVNET_INDEXER_RESTART_CERT' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: testnet-certification
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agent5_indexer_restart
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agent5_indexer_restart"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/agent5_indexer_restart
+      PG_DISABLE_SSL: "1"
+      MEMEWARZONE_SOURCE_SHA: ${{ github.sha }}
+      BSC_TESTNET_RPC: ${{ secrets.BSC_TESTNET_RPC }}
+      SOLANA_DEVNET_RPC: ${{ secrets.SOLANA_DEVNET_RPC || secrets.SOLANA_DEVNET_RPC_URL }}
+      CERT_BNB_BONDING_CAMPAIGN: ${{ inputs.bnb_bonding_campaign }}
+      CERT_BNB_BONDING_FIRST_BLOCK: ${{ inputs.bnb_bonding_first_block }}
+      CERT_BNB_BONDING_MISSED_BLOCK: ${{ inputs.bnb_bonding_missed_block }}
+      CERT_BNB_TOPAZ_CAMPAIGN: ${{ inputs.bnb_topaz_campaign }}
+      CERT_BNB_TOPAZ_TOKEN: ${{ inputs.bnb_topaz_token }}
+      CERT_BNB_TOPAZ_POOL: ${{ inputs.bnb_topaz_pool }}
+      CERT_BNB_TOPAZ_WRAPPED: ${{ inputs.bnb_topaz_wrapped }}
+      CERT_BNB_TOPAZ_TOKEN0: ${{ inputs.bnb_topaz_token0 }}
+      CERT_BNB_TOPAZ_TOKEN1: ${{ inputs.bnb_topaz_token1 }}
+      CERT_BNB_TOPAZ_GRADUATION_BLOCK: ${{ inputs.bnb_topaz_graduation_block }}
+      CERT_BNB_TOPAZ_FIRST_BLOCK: ${{ inputs.bnb_topaz_first_block }}
+      CERT_BNB_TOPAZ_MISSED_BLOCK: ${{ inputs.bnb_topaz_missed_block }}
+      CERT_SOLANA_BONDING_CAMPAIGN: ${{ inputs.solana_bonding_campaign }}
+      CERT_SOLANA_BONDING_FIRST_SIGNATURE: ${{ inputs.solana_bonding_first_signature }}
+      CERT_SOLANA_BONDING_MISSED_SIGNATURE: ${{ inputs.solana_bonding_missed_signature }}
+      CERT_SOLANA_METEORA_CAMPAIGN: ${{ inputs.solana_meteora_campaign }}
+      CERT_SOLANA_METEORA_MINT: ${{ inputs.solana_meteora_mint }}
+      CERT_SOLANA_METEORA_POOL: ${{ inputs.solana_meteora_pool }}
+      CERT_SOLANA_METEORA_GRADUATION_SLOT: ${{ inputs.solana_meteora_graduation_slot }}
+      CERT_SOLANA_METEORA_FIRST_SLOT: ${{ inputs.solana_meteora_first_slot }}
+      CERT_SOLANA_METEORA_MISSED_SLOT: ${{ inputs.solana_meteora_missed_slot }}
+    steps:
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: realtime-indexer/package-lock.json
+      - name: Fail closed on missing protected RPCs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${BSC_TESTNET_RPC:-}" || { echo "BLOCKER: BSC_TESTNET_RPC is not configured"; exit 1; }
+          test -n "${SOLANA_DEVNET_RPC:-}" || { echo "BLOCKER: SOLANA_DEVNET_RPC is not configured"; exit 1; }
+          # Never print either endpoint. BlockPI is treated as exposed and must be rotated by the operator.
+      - name: Install and build exact current realtime indexer
+        run: |
+          npm ci --prefix realtime-indexer --no-audit --no-fund
+          npm --prefix realtime-indexer run build
+      - name: Re-run certification source gate
+        run: node scripts/certification/agent5-nonarena-source-gate.mjs
+      - name: Execute real-event stop/restart/backfill matrix
+        run: node scripts/certification/agent5-indexer-restart-cert.mjs
+      - name: Upload destructive restart evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent5-indexer-restart-backfill-${{ github.sha }}
+          path: reports/agent5-indexer-restart-backfill.json
+          if-no-files-found: error
+          retention-days: 30
