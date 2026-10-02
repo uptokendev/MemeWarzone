@@ -24,6 +24,8 @@ import WarRoom from "./pages/WarRoom";
 import BattleDetails from "./pages/BattleDetails";
 import ArenaTournaments from "./pages/ArenaTournaments";
 import PostGradLeague from "./pages/PostGradLeague";
+import Feed from "./pages/Feed";
+import { HOME_FEED_READY } from "@/components/shell/useShellNav";
 import League from "./pages/League";
 import ArenaVerifyEmail from "./pages/ArenaVerifyEmail";
 import Create from "./pages/Create";
@@ -196,8 +198,8 @@ function AppShellLayout({
       >
         <RouteErrorBoundary routeKey={location.pathname}>
         <Routes>
-          <Route path="/" element={<Showcase />} />
-          {/* Coins gets its own route (founder D1, 2026-10-02); "/" becomes Home when the feed ships. */}
+          {/* Home is the feed (founder D1, 2026-10-02; in the menu from phase 2 so the founder can follow it). */}
+          <Route path="/" element={HOME_FEED_READY ? <Feed /> : <Showcase />} />
           <Route path="/coins" element={<Showcase />} />
           {postGradEnabled && postGradFlags.arena ? <Route path="/warzone" element={<Arena />} /> : null}
           {postGradEnabled && postGradFlags.arena ? <Route path="/warzone/verify-email" element={<ArenaVerifyEmail />} /> : null}
@@ -225,7 +227,7 @@ function AppShellLayout({
           <Route path="/drafts/:draftId/push-live" element={<DraftOwnerRoute><PushDraftLive /></DraftOwnerRoute>} />
           <Route path="/prepare/:slug" element={<Prepare />} />
           <Route path="/live" element={<Live />} />
-          {/* Feed hidden until the redesign ships (founder, 2026-10-01). */}
+          {/* The feed lives on "/" (Home). */}
           <Route path="/feed" element={<Navigate to="/" replace />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/command" element={<LegacyCommandCenterRedirect section="overview" />} />

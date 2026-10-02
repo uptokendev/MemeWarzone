@@ -51,6 +51,7 @@ import arenaMwlPrizePool from "./arenaMwlPrizePool.js";
 import upload from "./upload.js";
 import coinPage from "./coinPage.js";
 import coinPageImage from "./coinPageImage.js";
+import feedImage from "./feedImage.js";
 import projectImports from "./projectImports.js";
 import projectImportImage from "./projectImportImage.js";
 import rewards from "./rewards.js";
@@ -340,6 +341,7 @@ async function recruiterSignupCodeAvailabilityAlias(req, res) {
 app.use("/api/project-imports/image", wrap(projectImportImage));
 app.use("/api/upload", wrap(upload));
 app.use("/api/coin-page/image", wrap(coinPageImage));
+app.use("/api/feed/image", wrap(feedImage));
 app.get("/", (_req, res) => res.json({ ok: true, service: "MemeWarzone API", healthz: "/healthz", api: "/api" }));
 app.get("/healthz", (_req, res) => res.status(200).json({ ok: true, service: "frontend-api" }));
 app.get("/health", async (_req, res) => {
@@ -408,6 +410,7 @@ router.all("/feed/posts/:id/fire", wrap(feedPosts));
 router.all("/feed/posts/:id/repost", wrap(feedPosts));
 router.all("/feed/posts/:id/replies", wrap(feedPosts));
 router.all("/feed/posts/:id/delete", wrap(feedPosts));
+router.get("/feed/posts/:id", wrap(feedPosts));
 router.all("/feed/posts", wrap(feedPosts));
 router.all("/ably/token", wrap(ablyToken));
 router.get("/price/bnb-usd", wrap(bnbUsdPrice));

@@ -200,6 +200,7 @@ app.all("/feed/posts/:id/fire", wrap(feedPosts));
 app.all("/feed/posts/:id/repost", wrap(feedPosts));
 app.all("/feed/posts/:id/replies", wrap(feedPosts));
 app.all("/feed/posts/:id/delete", wrap(feedPosts));
+app.get("/feed/posts/:id", wrap(feedPosts));
 app.all("/feed/posts", wrap(feedPosts));
 app.all("/ably/token", wrap(ablyToken));
 app.all("/auth/nonce", wrap(authNonce));

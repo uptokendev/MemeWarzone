@@ -29,14 +29,20 @@ function signedBody(body) {
   return String(body ?? "").trim();
 }
 
-export function buildPostCreateMessage({ chainId, address, nonce, body }) {
+// Optional lines (UI redesign phase 2) bind an attached image and a quoted post to the signature.
+// A plain text post signs exactly the message it signed before.
+export function buildPostCreateMessage({ chainId, address, nonce, body, mediaUrl, quoteOf }) {
   const solana = isSolanaChain(chainId) || isSolanaAddress(address);
+  const extra = [];
+  if (mediaUrl) extra.push(`Media: ${String(mediaUrl).trim()}`);
+  if (quoteOf) extra.push(`Quote: ${Number(quoteOf)}`);
   return [
     "MemeWarzone Post",
     "Action: POST_CREATE",
     `ChainId: ${chainId}`,
     `Address: ${solana ? address : String(address).toLowerCase()}`,
     `Nonce: ${nonce}`,
+    ...extra,
     "",
     signedBody(body),
   ].join("\n");

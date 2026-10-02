@@ -4,8 +4,8 @@ import { projectImportsEnabled } from "@/features/projectImports/config";
 import { isPostGradNavEnabled, warRoomEnabled } from "@/features/postgrad/config";
 import { activeNavKey, activeWarzoneChild, buildMainNav, buildMobileTabs } from "@/lib/shellNav.mjs";
 
-/** Home (the feed on `/`) joins the menu in phase 2 of the redesign; until then `/` is Coins. */
-export const HOME_FEED_READY = false;
+/** Home (the feed on `/`) is in the menu from phase 2 of the redesign (founder, 2026-10-02). */
+export const HOME_FEED_READY = true;
 
 export function useShellNav() {
   const location = useLocation();

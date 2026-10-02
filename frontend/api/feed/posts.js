@@ -19,6 +19,7 @@ import { rankFeedPosts } from "../lib/feedRanking.js";
 import { createFeedSessionAuth } from "../lib/feedSessionAuth.js";
 import { loadFollowingAddresses, loadPostEvents } from "../lib/socialTimeline.js";
 import { isSolanaAddress, isSolanaChain } from "../../server/http.js";
+import { contractAddressInBody, isOwnFeedImage } from "../lib/feedPostMedia.js";
 
 const feedSession = createFeedSessionAuth({ pool });
 
@@ -68,12 +69,41 @@ async function consumeNonce(chainId, address, nonce) {
   );
 }
 
+async function lookupMentionedCoin(campaign, token, ticker, chainHint) {
+  try {
+    const { rows } = await pool.query(
+      `select chain_id, campaign_address, token_address
+         from public.campaigns
+        where (
+            ($1::text <> '' and (campaign_address = $1 or token_address = $1
+              or lower(campaign_address) = lower($1) or lower(token_address) = lower($1)))
+            or ($2::text <> '' and (token_address = $2 or lower(token_address) = lower($2)))
+            or ($3::text <> '' and upper(symbol) = upper($3))
+          )
+          and ($4::int is null or chain_id = $4)
+        order by created_at_chain desc nulls last
+        limit 1`,
+      [campaign, token, ticker, Number.isFinite(chainHint) ? chainHint : null],
+    );
+    const row = rows[0];
+    return row ? { chainId: Number(row.chain_id) || null, campaign: row.campaign_address || null, token: row.token_address || null } : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveMention(body, mentioned) {
   const chainHint = Number(mentioned?.chainId);
   const campaign = String(mentioned?.campaign || mentioned?.campaignAddress || "").trim();
   const token = String(mentioned?.token || mentioned?.tokenAddress || "").trim();
   const tickerMatch = String(body || "").match(/\$([A-Za-z0-9]{2,12})\b/);
   const ticker = tickerMatch ? tickerMatch[1] : "";
+  // UI redesign phase 2: a contract address written in the post becomes its coin card.
+  const bodyAddress = !campaign && !token ? contractAddressInBody(body) : "";
+  if (bodyAddress) {
+    const found = await lookupMentionedCoin(bodyAddress, "", "", chainHint);
+    if (found) return found;
+  }
 
   if (!campaign && !token && !ticker) return { chainId: null, campaign: null, token: null };
 
@@ -143,12 +173,39 @@ function mapPostRow(row, extras = {}) {
     repostedByMe: Boolean(row.reposted_by_me),
     repostedByWallet: extras.repostedByWallet || row.reposted_by || null,
     repostedByDisplayName: extras.repostedByDisplayName || row.reposted_by_display_name || null,
+    quoteOfId: row.quote_of_id == null ? null : Number(row.quote_of_id),
+    quoted: row.quote_of_id != null && row.quoted_body != null
+      ? {
+          postId: Number(row.quote_of_id),
+          wallet: row.quoted_author || null,
+          body: row.quoted_body,
+          mediaUrl: row.quoted_media_url || null,
+          createdAt: row.quoted_created_at ? new Date(row.quoted_created_at).toISOString() : null,
+          authorDisplayName: row.quoted_display_name || null,
+          authorAvatarUrl: row.quoted_avatar_url || null,
+        }
+      : null,
   };
 }
 
 const POST_FROM = `
        from public.social_posts p
        ${AUTHOR_PROFILE_LATERAL}
+       left join lateral (
+         select q.author_address, q.body, q.media_url, q.created_at, qup.display_name, qup.avatar_url
+           from public.social_posts q
+           left join lateral (
+             select u.display_name, u.avatar_url from public.user_profiles u
+              where lower(u.address) = lower(q.author_address)
+              order by
+                (u.display_name is not null and length(btrim(u.display_name)) > 0) desc,
+                (u.avatar_url is not null and length(btrim(u.avatar_url)) > 0) desc,
+                u.updated_at desc nulls last
+              limit 1
+           ) qup on true
+          where q.id = p.quote_of_id and q.status = 0
+          limit 1
+       ) qp on true
        left join public.campaigns c
          on p.mentioned_chain_id is not null
         and c.chain_id = p.mentioned_chain_id
@@ -173,6 +230,13 @@ select
   p.mentioned_token,
   p.created_at,
   p.parent_id,
+  p.quote_of_id,
+  qp.author_address as quoted_author,
+  qp.body as quoted_body,
+  qp.media_url as quoted_media_url,
+  qp.created_at as quoted_created_at,
+  qp.display_name as quoted_display_name,
+  qp.avatar_url as quoted_avatar_url,
   up.display_name as author_display_name,
   up.avatar_url as author_avatar_url,
   c.name as token_name,
@@ -240,13 +304,15 @@ reposted as (
 )
 select * from (
   select id, author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token,
-         created_at, parent_id, author_display_name, author_avatar_url, token_name, token_ticker, token_logo_uri,
+         created_at, parent_id, quote_of_id, quoted_author, quoted_body, quoted_media_url, quoted_created_at,
+         quoted_display_name, quoted_avatar_url, author_display_name, author_avatar_url, token_name, token_ticker, token_logo_uri,
          fire_count, reply_count, repost_count, fired_by_me, reposted_by_me,
          null::text as reposted_by, null::text as reposted_by_display_name, created_at as sort_at
     from own_posts
   union all
   select id, author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token,
-         created_at, parent_id, author_display_name, author_avatar_url, token_name, token_ticker, token_logo_uri,
+         created_at, parent_id, quote_of_id, quoted_author, quoted_body, quoted_media_url, quoted_created_at,
+         quoted_display_name, quoted_avatar_url, author_display_name, author_avatar_url, token_name, token_ticker, token_logo_uri,
          fire_count, reply_count, repost_count, fired_by_me, reposted_by_me,
          reposted_by, reposted_by_display_name, sort_at
     from reposted
@@ -289,6 +355,47 @@ async function loadRecentPosts({ limit, author, authors, viewer, ranked }) {
   }
 }
 
+async function loadSharedCoinPosts(limit) {
+  try {
+    const { rows } = await pool.query(
+      `select cp.id, cp.chain_id, cp.token_address, cp.author_wallet, cp.body, cp.media_url, cp.created_at,
+              c.campaign_address, c.name as token_name, c.symbol as token_ticker, c.logo_uri as token_logo_uri
+         from public.coin_posts cp
+         left join lateral (
+           select campaign_address, name, symbol, logo_uri from public.campaigns c
+            where c.chain_id = cp.chain_id
+              and (c.token_address = cp.token_address or lower(c.token_address) = lower(cp.token_address))
+            limit 1
+         ) c on true
+        where cp.status = 0 and cp.share_to_feed = true
+        order by cp.created_at desc, cp.id desc
+        limit $1`,
+      [limit],
+    );
+    return rows.map((row) => ({
+      type: "coin_post",
+      id: `coin_post:${row.id}`,
+      coinPostId: Number(row.id),
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+      wallet: row.author_wallet,
+      body: row.body,
+      mediaUrl: row.media_url || null,
+      chainId: Number(row.chain_id),
+      tokenAddress: row.token_address,
+      campaignAddress: row.campaign_address || null,
+      tokenName: row.token_name || null,
+      tokenTicker: row.token_ticker || null,
+      tokenLogoUri: row.token_logo_uri || null,
+      fireCount: 0,
+      replyCount: 0,
+      repostCount: 0,
+    }));
+  } catch (e) {
+    if (missingTable(e)) return [];
+    throw e;
+  }
+}
+
 async function handleGet(req, res) {
   const q = getQuery(req);
   const limit = clampInt(q.limit, 1, 100, 40);
@@ -321,7 +428,29 @@ async function handleGet(req, res) {
     viewer,
     ranked: { following },
   });
-  return json(res, 200, { items, tab: "for-you" });
+  // UI redesign phase 2: creator posts written as a coin (coin page, "share to feed") join For you,
+  // ranked with the same recency-first score as wallet posts.
+  const coinPosts = await loadSharedCoinPosts(limit);
+  if (!coinPosts.length) return json(res, 200, { items, tab: "for-you" });
+  return json(res, 200, { items: rankFeedPosts([...items, ...coinPosts], { following, limit }), tab: "for-you" });
+}
+
+async function handleGetOne(req, res) {
+  const postId = postIdFromReq(req);
+  if (!Number.isFinite(postId) || postId <= 0) return json(res, 400, { error: "Invalid post id" });
+  const q = getQuery(req);
+  const viewer = String(q.viewer || q.wallet || "").trim();
+  const params = [];
+  const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
+  const sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.id = $${params.push(postId)} limit 1`;
+  try {
+    const { rows } = await pool.query(sql, params);
+    if (!rows[0]) return json(res, 404, { error: "Post not found" });
+    return json(res, 200, { item: mapPostRow(rows[0]) });
+  } catch (e) {
+    if (missingTable(e)) return json(res, 404, { error: "Post not found" });
+    throw e;
+  }
 }
 
 async function handleGetReplies(req, res) {
@@ -347,9 +476,14 @@ async function handleCreate(req, res) {
   const body = String(b.body ?? "");
   const nonce = String(b.nonce ?? "");
   const signature = String(b.signature ?? "");
+  const mediaUrl = String(b.mediaUrl ?? "").trim() || null;
+  const quoteOf = Number(b.quoteOf ?? 0) > 0 ? Math.trunc(Number(b.quoteOf)) : null;
 
   if (!Number.isFinite(chainId)) return json(res, 400, { error: "Invalid chainId" });
   if (!address) return json(res, 400, { error: "Invalid address" });
+  if (mediaUrl && !isOwnFeedImage(mediaUrl, { storageBase: process.env.SUPABASE_URL, wallet: address })) {
+    return json(res, 400, { error: "Image must be uploaded through the post composer", code: "FEED_IMAGE_INVALID" });
+  }
   const trimmed = body.trim();
   if (!trimmed) return json(res, 400, { error: "Post is empty" });
   if (trimmed.length > POST_MAX_CHARS) return json(res, 400, { error: `Post too long (max ${POST_MAX_CHARS})` });
@@ -358,13 +492,18 @@ async function handleCreate(req, res) {
 
   await consumeNonce(chainId, address, nonce);
 
-  const msg = buildPostCreateMessage({ chainId, address, nonce, body: trimmed });
+  const msg = buildPostCreateMessage({ chainId, address, nonce, body: trimmed, mediaUrl, quoteOf });
   const solana = isSolanaChain(chainId) || isSolanaAddress(address);
   if (solana) {
     if (!verifySolanaSignature(msg, signature, address)) return json(res, 401, { error: "Invalid signature" });
   } else {
     const recovered = ethers.verifyMessage(msg, signature).toLowerCase();
     if (recovered !== address) return json(res, 401, { error: "Invalid signature" });
+  }
+
+  if (quoteOf) {
+    const quoted = await requireLivePost(quoteOf);
+    if (!quoted || quoted.parent_id) return json(res, 404, { error: "The post you are quoting is gone", code: "FEED_QUOTE_MISSING" });
   }
 
   let recent;
@@ -394,21 +533,30 @@ async function handleCreate(req, res) {
   const mention = await resolveMention(trimmed, b.mentioned || b);
   let rows;
   try {
-    ({ rows } = await pool.query(
-      `insert into public.social_posts (
-         author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token, status, parent_id
-       ) values ($1, $2, $3, $4, $5, $6, 0, null)
-       returning id, created_at`,
-      [address, trimmed, null, mention.chainId, mention.campaign, mention.token],
-    ));
+    ({ rows } = quoteOf
+      ? await pool.query(
+          `insert into public.social_posts (
+             author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token, status, parent_id, quote_of_id
+           ) values ($1, $2, $3, $4, $5, $6, 0, null, $7)
+           returning id, created_at`,
+          [address, trimmed, mediaUrl, mention.chainId, mention.campaign, mention.token, quoteOf],
+        )
+      : await pool.query(
+          `insert into public.social_posts (
+             author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token, status, parent_id
+           ) values ($1, $2, $3, $4, $5, $6, 0, null)
+           returning id, created_at`,
+          [address, trimmed, mediaUrl, mention.chainId, mention.campaign, mention.token],
+        ));
   } catch (e) {
     if (!missingTable(e)) throw e;
+    if (quoteOf) return json(res, 503, { error: "Quote posts are not set up yet.", code: "FEED_QUOTE_SCHEMA_MISSING" });
     ({ rows } = await pool.query(
       `insert into public.social_posts (
          author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token, status
        ) values ($1, $2, $3, $4, $5, $6, 0)
        returning id, created_at`,
-      [address, trimmed, null, mention.chainId, mention.campaign, mention.token],
+      [address, trimmed, mediaUrl, mention.chainId, mention.campaign, mention.token],
     ));
   }
 
@@ -598,6 +746,7 @@ export default async function handler(req, res) {
   try {
     const path = requestPath(req);
     if (req.method === "GET" && /\/posts\/\d+\/replies\/?$/i.test(path)) return await handleGetReplies(req, res);
+    if (req.method === "GET" && /\/posts\/\d+\/?$/i.test(path)) return await handleGetOne(req, res);
     if (req.method === "GET") return await handleGet(req, res);
     if (req.method === "POST" && /\/posts\/\d+\/fire\/?$/i.test(path)) return await handleFire(req, res);
     if (req.method === "POST" && /\/posts\/\d+\/repost\/?$/i.test(path)) return await handleRepost(req, res);
