@@ -328,7 +328,7 @@ export default function CommandCenterBattles() {
             </label>
             {autoDeployMode === "searching" ? (
               <>
-                <span className={`${chip} w-max ${chipOrange}`}>Auto deploy: searching</span>
+                <span className={`${chip} w-max ${chipOrange}`}>AUTO DEPLOY: SEARCHING</span>
                 <p className="m-0 text-sm text-mw-muted">
                   Stake {selectedBattle?.stakeNative ?? "—"} {nativeLabel(chainId, selectedBattle?.nativeSymbol)} ·{" "}
                   {battleDurationLabel((selectedBattle as { durationHours?: number } | null)?.durationHours || durationHours)}

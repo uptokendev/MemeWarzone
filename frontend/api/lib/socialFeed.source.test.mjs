@@ -66,7 +66,8 @@ test("unsigned posts are rejected and deleted posts stay out of For you", () => 
 
 test("For you is a centered post column and Who to follow uses the suggestions API", () => {
   const feed = readRepo("frontend/src/pages/Feed.tsx");
-  assert.match(feed, /max-w-\[600px\]/);
+  // UI redesign phase 2 (founder-approved style pin update): the post column sits beside the 340px right rail.
+  assert.match(feed, /lg:grid-cols-\[minmax\(0,1fr\)_340px\]/);
   assert.match(feed, /fetchFeedSuggestions/);
   assert.doesNotMatch(feed, /drafts, and deploys/);
   assert.doesNotMatch(readRepo("frontend/src/App.tsx"), /feedSession|useFeedSession/);
@@ -76,7 +77,9 @@ test("FeedComposer is mounted on Feed, Command Center, and Public Profile", () =
   const feed = readRepo("frontend/src/pages/Feed.tsx");
   const command = readRepo("frontend/src/pages/command-center/CommandCenterFeed.tsx");
   const profile = readRepo("frontend/src/pages/PublicProfile.tsx");
-  assert.match(feed, /<FeedComposer /);
+  // UI redesign phase 2: Home mounts the artboard composer (same signed posting path via usePostComposer).
+  assert.match(feed, /<HomeComposer /);
+  assert.match(readRepo("frontend/src/components/home-feed/HomeParts.tsx"), /usePostComposer/);
   assert.match(command, /<FeedComposer /);
   assert.match(profile, /<FeedComposer /);
   assert.match(feed, /For you/);

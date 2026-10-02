@@ -66,7 +66,14 @@ let arenaRealtimeWorker = null;
 const arenaWorkerEnabled =
   truthy(process.env.ARENA_BATTLE_REALTIME_ENABLED) ||
   truthy(process.env.ARENA_BATTLE_POINTS_V2);
-if (arenaWorkerEnabled) {
+// API_BACKGROUND_WORKERS_DISABLED=true runs the API only (no battle worker, settlement, league or LP
+// cranks), for a second API service that shares production's env and database, e.g. a branch preview.
+// Unset everywhere else, so production keeps starting the worker exactly as before.
+const backgroundWorkersDisabled = truthy(process.env.API_BACKGROUND_WORKERS_DISABLED);
+if (backgroundWorkersDisabled && arenaWorkerEnabled) {
+  console.log("[railway-api-start] API_BACKGROUND_WORKERS_DISABLED: not starting the arena battle worker");
+}
+if (arenaWorkerEnabled && !backgroundWorkersDisabled) {
   arenaRealtimeWorker = spawn(
     process.execPath,
     ["--import", "./api/load-local-env.mjs", "scripts/run-arena-battle-realtime-worker.mjs"],
