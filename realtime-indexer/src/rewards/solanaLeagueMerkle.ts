@@ -19,7 +19,7 @@ export const PERIOD_QUARTERLY = 2;
 export const PERIOD_MWL_MONTHLY = 3;
 export const LEAGUE_EPOCH_ACCOUNT_SIZE = 8 + 1 + 8 + 32 + 8 + 8 + 1 + 1 + 1;
 
-export type LeaguePeriod = "weekly" | "monthly" | "quarterly";
+export type LeaguePeriod = "weekly" | "monthly" | "quarterly" | "mwl_monthly";
 
 export function periodCode(period: string | number): number {
   if (period === PERIOD_WEEKLY || period === PERIOD_MONTHLY || period === PERIOD_QUARTERLY || period === PERIOD_MWL_MONTHLY) return period;

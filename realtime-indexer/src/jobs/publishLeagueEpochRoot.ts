@@ -17,8 +17,9 @@ try {
  * also redirect the protocol route and the arena (founder, 2026-09-25).
  * Never overwrites a sealed epoch. Never publishes less than the winners are
  * owed: an epoch above the poster cap or above its vault is blocked and
- * reported, never shrunk. Weekly epochs pay from league_vault, monthly and
- * quarterly from monthly_league_vault.
+ * reported, never shrunk. Weekly epochs pay from league_vault, monthly from
+ * monthly_league_vault; quarterly (Quarterly Championship) and mwl_monthly (Major War
+ * League months, arenaMwlPayouts.js in the API) from mwl_vault.
  */
 import {
   Connection,
@@ -47,7 +48,7 @@ import {
 } from "../rewards/solanaLeagueMerkle.js";
 
 const MAINNET_CHAIN_ID = 101;
-const PERIODS = ["weekly", "monthly", "quarterly"] as const;
+const PERIODS = ["weekly", "monthly", "quarterly", "mwl_monthly"] as const;
 
 function env(name: string): string {
   return String(process.env[name] || "").trim();
