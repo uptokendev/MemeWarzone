@@ -10,3 +10,4 @@ export { CoinAvatar } from "./CoinAvatar";
 export { Sparkline } from "./Sparkline";
 export { Countdown } from "./Countdown";
 export { OperativeMark, OperativeSvg } from "./OperativeMark";
+export { WalletLabel, useWalletLabel, shortWallet } from "./WalletLabel";

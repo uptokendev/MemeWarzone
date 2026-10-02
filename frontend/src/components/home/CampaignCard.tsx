@@ -1,4 +1,5 @@
 import { AthBar } from "@/components/token/AthBar";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { UpvoteDialog } from "@/components/token/UpvoteDialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -281,7 +282,7 @@ export function CampaignCard({
                 }
               }}
             >
-              {vm.creator ? shortAddr(vm.creator) : "—"}
+              {vm.creator ? <WalletLabel wallet={vm.creator} /> : "—"}
             </span>
           </span>
         </div>

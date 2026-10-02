@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { formatEther } from "ethers";
 import { Link } from "react-router-dom";
 import { ArrowRight, Users } from "lucide-react";
@@ -174,7 +175,7 @@ export default function SquadLeaderboard() {
                     <tr key={`${member.walletAddress}-${index}`}>
                       <td className={`${td} w-10 font-mw-mono font-bold text-mw-muted`}>{index + 1}</td>
                       <td className={td}>
-                        <span className="font-mw-mono" title={member.walletAddress}>{shortWallet(member.walletAddress)}</span>
+                        <span className="font-mw-mono" title={member.walletAddress}><WalletLabel wallet={member.walletAddress} /></span>
                         <div className="text-xs text-mw-muted">Score {formatBnb(member.rawScore)} · {member.isEligible ? "eligible" : "ineligible"}</div>
                       </td>
                       <td className={`${td} text-right font-mw-mono`}>{formatBnb(member.estimatedPayoutAmount)} BNB</td>

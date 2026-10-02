@@ -14,6 +14,7 @@ export type FeedItem = {
   body?: string | null;
   postId?: number;
   authorDisplayName?: string | null;
+  authorHandle?: string | null;
   authorAvatarUrl?: string | null;
   name?: string | null;
   ticker?: string | null;
@@ -44,6 +45,7 @@ export type FeedItem = {
   repostedByMe?: boolean;
   repostedByWallet?: string | null;
   repostedByDisplayName?: string | null;
+  repostedByHandle?: string | null;
   /** UI redesign phase 2. */
   mediaUrl?: string | null;
   quoteOfId?: number | null;
@@ -54,6 +56,7 @@ export type FeedItem = {
     mediaUrl: string | null;
     createdAt: string | null;
     authorDisplayName: string | null;
+    authorHandle?: string | null;
     authorAvatarUrl: string | null;
   } | null;
   coinPostId?: number;

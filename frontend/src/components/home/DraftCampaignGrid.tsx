@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Link } from "react-router-dom";
 import { Flame, Radio, ShieldCheck, Star } from "lucide-react";
 
@@ -331,7 +332,7 @@ export function DraftCampaignGrid({ className, query }: { className?: string; qu
                     className="font-mw-mono text-mw-accent-soft hover:text-[#FFD0A8]"
                     title={draft.creatorWallet}
                   >
-                    {shortAddr(draft.creatorWallet)}
+                    <WalletLabel wallet={draft.creatorWallet} />
                   </Link>
                 </div>
 

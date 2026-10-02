@@ -1,4 +1,5 @@
 /** Home feed building blocks (UI redesign phase 2, artboard Home). Read-only views over existing data. */
+import { MentionField } from "@/components/feed/MentionField";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -95,15 +96,16 @@ export function HomeComposer({ onPosted }: { onPosted?: () => void }) {
     <section className={`${card} flex flex-col gap-2 px-[18px] py-3.5`}>
       <div className="flex items-start gap-3.5">
         <span className="hidden sm:block"><FeedAvatar url={null} label={composer.account || "You"} /></span>
-        <textarea
+        <MentionField
+          multiline
           value={composer.body}
-          onChange={(e) => composer.setBody(e.target.value)}
+          onChange={composer.setBody}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           rows={expanded ? 3 : 1}
           placeholder="What are you holding? Paste a CA"
           aria-label="Write a post"
-          className="mw-focus min-h-11 flex-1 resize-none rounded-[10px] border border-[#2E353D] bg-mw-input px-3.5 py-2.5 text-[15px] text-mw-text placeholder:text-[#5C6670]"
+          className="mw-focus min-h-11 w-full resize-none rounded-[10px] border border-[#2E353D] bg-mw-input px-3.5 py-2.5 text-[15px] text-mw-text placeholder:text-[#5C6670]"
         />
         <ImagePickButton onPick={composer.setFile} disabled={composer.posting} />
         <button

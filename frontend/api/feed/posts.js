@@ -1,3 +1,4 @@
+import { attachHandles } from "../lib/userHandles.js";
 import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { badMethod, getQuery, json, readJson } from "../../server/http.js";
@@ -538,7 +539,7 @@ async function handleGet(req, res) {
 
   if (author && !tab) {
     const items = await loadRecentPosts({ limit, author, viewer });
-    return json(res, 200, { items, tab: "author", author });
+    return json(res, 200, { items: await attachHandles(items), tab: "author", author });
   }
 
   const pageSize = clampInt(q.limit, 1, 60, FEED_PAGE_SIZE);
@@ -547,7 +548,7 @@ async function handleGet(req, res) {
   if (tab === "profile") {
     if (!author) return json(res, 400, { error: "author is required", code: "FEED_PROFILE_AUTHOR" });
     const page = await loadTimelinePage({ before: parseCursor(q.before), limit: pageSize, authors: [author], viewer });
-    return json(res, 200, { ...page, tab: "profile", author });
+    return json(res, 200, { ...page, items: await attachHandles(page.items), tab: "profile", author });
   }
   if (tab === "following") {
     if (!viewer) return json(res, 200, { items: [], nextCursor: null, tab: "following", warning: "Connect a wallet to load Following." });
@@ -555,13 +556,13 @@ async function handleGet(req, res) {
     const following = await loadFollowingAddresses(viewer);
     if (!following.length) return json(res, 200, { items: [], nextCursor: null, tab: "following" });
     const page = await loadRankedPage({ cursor: q.before, limit: pageSize, authors: following, viewer, following });
-    return json(res, 200, { ...page, tab: "following" });
+    return json(res, 200, { ...page, items: await attachHandles(page.items), tab: "following" });
   }
 
   // For you = everything, newest first, infinite scroll (founder, 2026-10-02).
   const following = viewer ? await loadFollowingAddresses(viewer) : [];
   const page = await loadRankedPage({ cursor: q.before, limit: pageSize, authors: null, viewer, following });
-  return json(res, 200, { ...page, tab: "for-you" });
+  return json(res, 200, { ...page, items: await attachHandles(page.items), tab: "for-you" });
 }
 
 async function handleViews(req, res) {
@@ -587,7 +588,8 @@ async function handleGetOne(req, res) {
     const { rows } = await pool.query(sql, params);
     if (!rows[0]) return json(res, 404, { error: "Post not found" });
     const views = await loadViewCounts([postId]);
-    return json(res, 200, { item: { ...mapPostRow(rows[0]), viewCount: views.get(postId) || 0 } });
+    const [item] = await attachHandles([{ ...mapPostRow(rows[0]), viewCount: views.get(postId) || 0 }]);
+    return json(res, 200, { item });
   } catch (e) {
     if (missingTable(e)) return json(res, 404, { error: "Post not found" });
     throw e;
@@ -603,7 +605,7 @@ async function handleGetReplies(req, res) {
   try {
     const items = await queryPosts({ limit, viewer, parentId: postId });
     items.sort((a, b) => Date.parse(String(a.createdAt || "")) - Date.parse(String(b.createdAt || "")));
-    return json(res, 200, { items, postId });
+    return json(res, 200, { items: await attachHandles(items), postId });
   } catch (e) {
     if (missingTable(e)) return json(res, 200, { items: [], postId });
     throw e;

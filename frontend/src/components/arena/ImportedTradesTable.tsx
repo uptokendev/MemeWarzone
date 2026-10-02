@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Link } from "react-router-dom";
 
 import { fetchArenaImportTrades, type ArenaImportTrade } from "@/lib/arenaImports";
@@ -121,7 +122,7 @@ export function ImportedTradesTable({ chainId, tokenAddress, emptyState }: { cha
                         }}
                         className="h-7 w-7 rounded-full ring-1 ring-border/30 flex-shrink-0"
                       />
-                      <span className="font-mono text-foreground truncate max-w-[140px]">{label}</span>
+                      <WalletLabel className="font-mono text-foreground truncate max-w-[140px]" wallet={tx.maker} displayName={prof?.displayName} />
                     </Link>
                   ) : (
                     <span className="font-mono text-muted-foreground">—</span>

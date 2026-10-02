@@ -56,7 +56,7 @@ function verifySolanaSignature({ address, message, signature }) {
   }
 }
 
-function verifyProfileSignature({ chainId, address, message, signature }) {
+export function verifyProfileSignature({ chainId, address, message, signature }) {
   try {
     if (isSolanaChain(chainId)) return verifySolanaSignature({ address, message, signature });
     const recovered = ethers.verifyMessage(message, signature).toLowerCase();
@@ -107,7 +107,7 @@ function profileWriteError(e) {
   return { status: 500, error: "Server error" };
 }
 
-async function consumeNonce(chainId, address, nonce) {
+export async function consumeNonce(chainId, address, nonce) {
   const { rows } = await pool.query(
     `SELECT nonce, expires_at, used_at
      FROM auth_nonces

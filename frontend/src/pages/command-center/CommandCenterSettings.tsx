@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { EditProfileDialog } from "@/components/profile/EditProfileDialog";
+import { UsernameSettingsRow } from "@/components/profile/UsernameSettingsRow";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { setArenaNotificationEmail } from "@/features/postgrad/apiClient";
@@ -157,6 +158,7 @@ export default function CommandCenterSettings() {
           <span className={lbl}>Display name</span>
           <div className={field}>{displayName}</div>
         </div>
+        <UsernameSettingsRow wallet={walletAddress} />
         <div className="flex flex-col gap-1.5">
           <span className={lbl}>Bio</span>
           <div className={`${field} min-h-[72px] py-3 text-mw-muted`}>{loadingProfile ? "Loading profile..." : profile?.bio ? profile.bio : "No public bio set yet."}</div>

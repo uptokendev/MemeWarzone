@@ -27,6 +27,7 @@ import PostGradLeague from "./pages/PostGradLeague";
 import Feed from "./pages/Feed";
 import PostThread from "./pages/PostThread";
 import { HOME_FEED_READY } from "@/components/shell/useShellNav";
+import { UsernamePrompt } from "@/components/profile/UsernamePrompt";
 import League from "./pages/League";
 import ArenaVerifyEmail from "./pages/ArenaVerifyEmail";
 import Create from "./pages/Create";
@@ -181,6 +182,7 @@ function AppShellLayout({
       <TopBar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} leftSidebarWidth={currentSidebarWidth} />
       <ShellBackBar />
       <MobileTabBar />
+      <UsernamePrompt />
       <RankPromotionListener />
       <IncomingChallengeListener />
       <DbcScheduledLaunchListener />

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Link } from "react-router-dom";
 import { ArrowRight, Copy, ExternalLink, Gift, Image, Link2, LogOut, ShieldCheck, Trophy, UploadCloud, WalletCards } from "lucide-react";
 import { toast } from "sonner";
@@ -523,7 +524,7 @@ export default function CommandCenterRecruiter() {
             <div className="flex flex-col">
               {portal.squad.rows.map((row) => (
                 <div key={`${row.wallet_address}-${row.bound_at}`} className="flex min-h-[44px] flex-wrap items-center gap-2.5 border-b border-[#1E2329] py-1.5 text-sm last:border-b-0">
-                  <span className="font-mw-mono">{shortAddress(row.wallet_address)}</span>
+                  <WalletLabel className="font-mw-mono" wallet={row.wallet_address} />
                   <span className="text-mw-muted">· {row.role}</span>
                   <span className="flex-1 text-right text-[13px] text-mw-muted">Joined {formatDate(row.bound_at)}</span>
                   <button type="button" onClick={() => copyText(row.wallet_address, "Wallet")} className={smallButton}>Copy</button>

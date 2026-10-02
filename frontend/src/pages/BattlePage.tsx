@@ -3,6 +3,7 @@
  * BattleWallModule as the list (votes, boosts, realtime, buy-in, claim, share unchanged), framed as the
  * page banner. Around it: live activity, comments (N8), supporters, prize pool breakdown and rules.
  */
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { BarChart3, Loader2, Zap } from "lucide-react";
@@ -98,7 +99,7 @@ function CommentCard({ comment, tickers }: { comment: BattleComment; tickers: [s
       <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#2B3440] font-mw-cond text-base font-bold text-[#C9CED4]" aria-hidden="true">{initials}</span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mw-mono font-bold">{shortWallet(comment.wallet)}</span>
+          <WalletLabel className="font-mw-mono font-bold" wallet={comment.wallet} />
           {comment.side ? <SideChip side={comment.side} ticker={comment.side === "left" ? `Side A · ${tickers[0]}` : `Side B · ${tickers[1]}`} /> : null}
           <span className="text-sm text-mw-muted"><time dateTime={comment.at}>{relativeTime(comment.at)}</time></span>
         </div>
@@ -289,7 +290,7 @@ export default function BattlePage() {
       (limit ? supporters.slice(0, limit) : supporters).map((s) => (
         <div key={`${s.wallet}-${s.side}`} className="flex items-center gap-2.5 text-sm">
           <span className="w-[18px] font-mw-mono font-bold text-mw-muted">{s.rank}</span>
-          <span className="min-w-0 flex-1 truncate font-mw-mono">{shortWallet(s.wallet)}</span>
+          <WalletLabel className="min-w-0 flex-1 truncate font-mw-mono" wallet={s.wallet} />
           <span className="inline-flex h-[22px] items-center rounded-full border border-mw-edge bg-[#171B20] px-2 text-xs font-semibold text-[#C9CED4]">{tickers[s.side === "left" ? 0 : 1]}</span>
           <span className="w-20 text-right font-mw-mono">{amount(s.amountNative)} {native}</span>
         </div>

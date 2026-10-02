@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { formatEther } from "ethers";
 import { Link } from "react-router-dom";
 import { ArrowRight, ShieldAlert, Users, Wallet } from "lucide-react";
@@ -267,7 +268,7 @@ export function ProfileSquadPanel({ account, isConnected, isOwnProfile }: Profil
           <div className="flex flex-col">
             {members.map((row) => (
               <div key={`${row.walletAddress}-${row.createdAt || ""}`} className="flex min-h-11 items-center gap-2.5 border-b border-[#1E2329] text-sm last:border-b-0">
-                <span className="min-w-0 flex-1 truncate font-mw-mono">{shortWallet(row.walletAddress)}</span>
+                <WalletLabel className="min-w-0 flex-1 truncate font-mw-mono" wallet={row.walletAddress} />
                 <span className="hidden capitalize text-mw-muted sm:inline">{row.memberRole || "member"}</span>
                 <span className={`inline-flex h-[22px] items-center rounded-full border px-2 text-xs font-semibold ${row.isEligible ? "border-[#1F5133] text-[#6EE7A0]" : "border-mw-edge text-[#FFB27A]"}`}>{row.isEligible ? "Eligible" : "Not yet"}</span>
                 <span className="w-[90px] text-right font-mw-mono">{formatBnb(row.estimatedPayoutAmount ?? "0")}</span>

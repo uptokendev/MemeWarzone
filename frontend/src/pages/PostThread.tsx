@@ -1,4 +1,5 @@
 /** Single post with its replies (UI redesign phase 2, artboard PostThread). Route /post/:postId. */
+import { MentionField } from "@/components/feed/MentionField";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
@@ -66,7 +67,7 @@ export default function PostThread() {
     }
   };
 
-  const author = post?.authorDisplayName || shortWallet(post?.wallet);
+  const author = post?.authorDisplayName || (post?.authorHandle ? `@${post.authorHandle}` : shortWallet(post?.wallet));
   const hasCoin = Boolean(post && (post.mentionedCampaign || post.mentionedToken || post.tokenTicker));
 
   return (
@@ -91,14 +92,14 @@ export default function PostThread() {
                   <FeedAvatar url={post.authorAvatarUrl} label={author} size={48} />
                   <span>
                     <b className="block">{author}</b>
-                    {post.authorDisplayName ? <span className="text-sm text-mw-muted">{shortWallet(post.wallet)}</span> : null}
+                    {post.authorDisplayName ? <span className="text-sm text-mw-muted">{post.authorHandle ? `@${post.authorHandle}` : shortWallet(post.wallet)}</span> : null}
                   </span>
                 </Link>
                 <div className="mt-3.5"><FeedBody body={post.body} big /></div>
                 {post.mediaUrl ? <img src={post.mediaUrl} alt="" className="mt-3 w-full rounded-[14px] border border-mw-border object-cover" /> : null}
                 {post.quoted ? (
                   <Link to={`/post/${post.quoted.postId}`} className="mw-focus mt-3 block rounded-[14px] border border-mw-border bg-mw-input p-3 text-mw-text hover:text-mw-text">
-                    <b className="text-[13px]">{post.quoted.authorDisplayName || shortWallet(post.quoted.wallet)}</b>
+                    <b className="text-[13px]">{post.quoted.authorDisplayName || (post.quoted.authorHandle ? `@${post.quoted.authorHandle}` : shortWallet(post.quoted.wallet))}</b>
                     <p className="m-0 mt-0.5 line-clamp-3 whitespace-pre-wrap text-sm">{post.quoted.body}</p>
                   </Link>
                 ) : null}
@@ -110,9 +111,9 @@ export default function PostThread() {
 
               <div className="flex items-center gap-3 border-t border-[#242A31] px-[18px] py-3.5">
                 <span className="hidden sm:block"><FeedAvatar url={null} label={account || "You"} size={40} /></span>
-                <input
+                <MentionField
                   value={reply}
-                  onChange={(e) => setReply(e.target.value.slice(0, FEED_MAX_CHARS))}
+                  onChange={(next) => setReply(next.slice(0, FEED_MAX_CHARS))}
                   onKeyDown={(e) => { if (e.key === "Enter") void sendReply(); }}
                   placeholder="Post your reply"
                   aria-label="Post your reply"
@@ -124,7 +125,7 @@ export default function PostThread() {
               </div>
 
               {replies.map((r) => {
-                const name = r.authorDisplayName || shortWallet(r.wallet);
+                const name = r.authorDisplayName || (r.authorHandle ? `@${r.authorHandle}` : shortWallet(r.wallet));
                 return (
                   <article key={r.id} className="flex gap-3 border-t border-[#1E2329] px-[18px] py-3.5">
                     <Link to={`/profile/${r.wallet}`} className="mw-focus shrink-0 rounded-full"><FeedAvatar url={r.authorAvatarUrl} label={name} size={40} /></Link>

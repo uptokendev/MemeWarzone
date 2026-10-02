@@ -1,4 +1,5 @@
 import { ArrowUpRight, CircleDollarSign, ShieldCheck, Users } from "lucide-react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Link } from "react-router-dom";
 import { BattleMetricBreakdown } from "@/components/arena/BattleMetricBreakdown";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
@@ -96,7 +97,7 @@ export function BattleCombatantCard({
               className={cn("h-24 w-24 border object-cover", isLeader ? "border-white/35" : "border-white/10")}
             />
             <div className="text-[10px] uppercase tracking-[0.18em] text-white/38">Commander</div>
-            <div className="truncate text-xs text-white/64">{shortWallet(ownerWallet)}</div>
+            <div className="truncate text-xs text-white/64"><WalletLabel wallet={ownerWallet} /></div>
           </div>
 
           <div className="min-w-0">

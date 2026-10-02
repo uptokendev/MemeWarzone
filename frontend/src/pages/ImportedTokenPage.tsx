@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Link } from "react-router-dom";
 import { Copy, Edit3, Flag, ImagePlus, Loader2, SearchCheck, Share2, Star, Swords } from "lucide-react";
 import { toast } from "sonner";
@@ -419,7 +420,7 @@ export default function ImportedTokenPage({
                       <AvatarImage src={ownerProfile?.avatarUrl || undefined} alt={ownerDisplay} />
                       <AvatarFallback className="bg-transparent p-0"><OperativeMark fill /></AvatarFallback>
                     </Avatar>
-                    <span className="truncate max-w-[160px]">{ownerDisplay}</span>
+                    <WalletLabel className="truncate max-w-[160px]" wallet={ownerWallet} displayName={ownerProfile?.displayName} />
                   </Link>
                 </span>
               ) : null}

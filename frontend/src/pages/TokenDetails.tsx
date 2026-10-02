@@ -3,6 +3,7 @@
  * Displays comprehensive information about a specific token including
  * chart, trading interface, transactions, and holder distribution
  */
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Copy, ExternalLink, Flag, Globe, Share2, Star } from "lucide-react";
@@ -5017,7 +5018,7 @@ const toSeconds = (ts: number): number => {
                           />
                           <AvatarFallback className="bg-transparent p-0"><OperativeMark fill /></AvatarFallback>
                         </Avatar>
-                        <span className="truncate">{display}</span>
+                        <WalletLabel className="truncate" wallet={creator} displayName={creatorProfile?.displayName} />
                       </Link>
                     </span>
 
@@ -5519,9 +5520,7 @@ const toSeconds = (ts: number): number => {
                                       }}
                                       className="h-7 w-7 rounded-full flex-shrink-0"
                                     />
-                                    <span className="font-mw-mono truncate max-w-[140px]">
-                                      {label}
-                                    </span>
+                                    <WalletLabel className="font-mw-mono truncate max-w-[140px]" wallet={tx.makerAddress} displayName={prof?.displayName} />
                                   </Link>
                                 ) : (
                                   <span className="font-mw-mono text-mw-muted">—</span>
@@ -5607,7 +5606,7 @@ const toSeconds = (ts: number): number => {
                                       to={`/profile?address=${h.address}`}
                                       className="text-mw-text hover:text-mw-accent-soft hover:underline underline-offset-4"
                                     >
-                                      {h.label}
+                                      <WalletLabel wallet={h.address} />
                                     </Link>
                                   )}
                                 </span>

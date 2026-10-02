@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Link } from "react-router-dom";
 import { Flame, Radio, ShieldCheck, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -233,7 +234,7 @@ export function UpcomingDrafts({ className }: { className?: string }) {
                       Creator
                     </div>
                     <div className="truncate text-success/75">
-                      {shortAddr(draft.creatorWallet)}
+                      <WalletLabel wallet={draft.creatorWallet} />
                     </div>
                   </div>
 

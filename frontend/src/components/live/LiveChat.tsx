@@ -1,4 +1,5 @@
 // frontend/src/components/live/LiveChat.tsx
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { useEffect, useRef } from "react";
 import { Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -46,7 +47,7 @@ export const LiveChat = ({ messages, mutedWallets }: Props) => {
         })
         .map((m) => {
         const isMod = isModerator(m.wallet, MODERATORS);
-        const name = m.handle ?? shortWallet(m.wallet);
+        const name = m.handle ?? null;
         return (
           <div key={m.id} className="leading-snug">
             {isMod && (
@@ -67,7 +68,7 @@ export const LiveChat = ({ messages, mutedWallets }: Props) => {
               </span>
             )}
             <span className={cn("font-semibold", isMod ? "text-amber-400" : "text-foreground/90")}>
-              {name}
+              <WalletLabel wallet={m.wallet} displayName={name} />
             </span>
             <span className="text-muted-foreground">: </span>
             <span className="text-foreground/95">{m.text}</span>

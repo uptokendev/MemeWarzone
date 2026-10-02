@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -355,9 +356,7 @@ export function TokenComments({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <span className="text-xs font-semibold text-foreground truncate">
-                          {display}
-                        </span>
+                        <WalletLabel className="text-xs font-semibold text-foreground truncate" wallet={c.authorAddress} displayName={c.authorDisplayName} />
                         {isCreatorUpdate ? (
                           <span className="ml-2 rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
                             Creator

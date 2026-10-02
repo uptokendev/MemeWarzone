@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Button } from "@/components/ui/button";
@@ -110,7 +111,7 @@ export function TokenWarRoom({ chainId, campaignAddress, creatorAddress }: { cha
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-[11px]">
-                    <span className="font-semibold text-foreground truncate">{display}</span>
+                    <WalletLabel className="font-semibold text-foreground truncate" wallet={m.walletAddress} displayName={m.displayName} />
                     {m.role === "creator" ? <span className="rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">Creator</span> : null}
                     {isMine ? <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-400">You</span> : null}
                     <span className="text-muted-foreground">{timeAgo(m.createdAt)}</span>

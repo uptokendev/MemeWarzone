@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { MentionField } from "@/components/feed/MentionField";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Link, useNavigate } from "react-router-dom";
 import { BarChart2, GraduationCap, ImagePlus, Link2, MessageCircle, PenLine, Repeat2, Rocket, Rocket as LaunchIcon, Share2, Swords, TrendingUp, Trophy, X } from "lucide-react";
@@ -128,6 +129,53 @@ function compactCount(n?: number | null) {
   return String(v);
 }
 
+const MENTION_RE = /(^|[^A-Za-z0-9_@])@([A-Za-z0-9_]{3,20})(?![A-Za-z0-9_])/g;
+
+/** @username in a post opens that profile (founder, 2026-10-02). The body sits inside the post link, so this is a button, not a nested link. */
+function MentionText({ text }: { text: string }) {
+  const navigate = useNavigate();
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(MENTION_RE)) {
+    const start = (m.index ?? 0) + m[1].length;
+    if (start > last) parts.push(text.slice(last, start));
+    const handle = m[2];
+    parts.push(
+      <span
+        key={`${start}-${handle}`}
+        role="link"
+        tabIndex={0}
+        data-mention={handle}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          navigate(`/profile/${handle}`);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          event.stopPropagation();
+          navigate(`/profile/${handle}`);
+        }}
+        className="mw-focus cursor-pointer font-semibold text-mw-accent-soft hover:text-[#FFD0A8]"
+      >
+        @{handle}
+      </span>,
+    );
+    last = start + handle.length + 1;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+/** Display name, else @username, else the short wallet (founder, 2026-10-02: names instead of addresses). */
+function personName(displayName?: string | null, handle?: string | null, wallet?: string | null) {
+  const name = String(displayName || "").trim();
+  if (name) return name;
+  if (handle) return `@${handle}`;
+  return shorten(wallet);
+}
+
 export function FeedBody({ body, big = false }: { body?: string | null; big?: boolean }) {
   const [open, setOpen] = useState(false);
   const text = String(body || "");
@@ -135,7 +183,7 @@ export function FeedBody({ body, big = false }: { body?: string | null; big?: bo
   const shown = open || !collapsed ? text : `${text.slice(0, FEED_PREVIEW_CHARS).trimEnd()}…`;
   return (
     <>
-      <p className={`m-0 mt-1 whitespace-pre-wrap break-words ${big ? "text-lg leading-relaxed" : "text-[15px]"}`}>{shown}</p>
+      <p className={`m-0 mt-1 whitespace-pre-wrap break-words ${big ? "text-lg leading-relaxed" : "text-[15px]"}`}><MentionText text={shown} /></p>
       {collapsed ? (
         <button
           type="button"
@@ -179,7 +227,7 @@ export function FeedCoinCard({ item }: { item: FeedItem }) {
 }
 
 function QuotedPost({ quoted }: { quoted: NonNullable<FeedItem["quoted"]> }) {
-  const label = quoted.authorDisplayName ? `@${quoted.authorDisplayName}` : shorten(quoted.wallet);
+  const label = personName(quoted.authorDisplayName, quoted.authorHandle, quoted.wallet);
   return (
     <Link to={postHref(quoted.postId)} className="mw-focus mt-3 flex gap-2.5 rounded-[14px] border border-mw-border bg-mw-input p-3 text-mw-text hover:border-[#3A424C] hover:text-mw-text">
       <FeedAvatar url={quoted.authorAvatarUrl} label={label} size={32} />
@@ -197,7 +245,7 @@ function QuotedPost({ quoted }: { quoted: NonNullable<FeedItem["quoted"]> }) {
 /** Quote dialog (artboard repost popup → Quote post): your take on top, the original below. */
 function QuoteDialog({ item, onClose, onPosted }: { item: FeedItem; onClose: () => void; onPosted?: () => void }) {
   const composer = usePostComposer({ quoteOf: item.postId, onPosted });
-  const label = item.authorDisplayName ? `@${item.authorDisplayName}` : shorten(item.wallet);
+  const label = personName(item.authorDisplayName, item.authorHandle, item.wallet);
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-[rgba(5,6,8,0.75)] sm:items-center" role="dialog" aria-modal="true" aria-label="Quote post">
       <div className="flex w-full flex-col gap-3 rounded-t-[20px] border border-[#2E353D] bg-mw-surface p-4 font-mw-body text-mw-text sm:w-[560px] sm:rounded-[18px]">
@@ -215,9 +263,11 @@ function QuoteDialog({ item, onClose, onPosted }: { item: FeedItem; onClose: () 
             {composer.posting ? "Posting..." : "Post"}
           </button>
         </div>
-        <textarea
+        <MentionField
+          multiline
+          wrapperClassName="w-full"
           value={composer.body}
-          onChange={(e) => composer.setBody(e.target.value)}
+          onChange={composer.setBody}
           rows={3}
           placeholder="Add your take"
           aria-label="Your comment"
@@ -401,13 +451,12 @@ export function FeedPostActions({ item, onChanged, big = false }: { item: FeedIt
 
 export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: () => void }) {
   const ticker = item.tokenTicker || item.ticker;
-  const reposter = item.repostedByDisplayName
-    ? `@${item.repostedByDisplayName}`
-    : item.repostedByWallet
-      ? shorten(item.repostedByWallet)
-      : null;
-  const author = item.authorDisplayName ? item.authorDisplayName : shorten(item.wallet);
-  const handle = item.authorDisplayName ? `@${item.authorDisplayName}` : "";
+  const reposter = item.repostedByDisplayName || item.repostedByHandle || item.repostedByWallet
+    ? personName(item.repostedByDisplayName, item.repostedByHandle, item.repostedByWallet)
+    : null;
+  const author = personName(item.authorDisplayName, item.authorHandle, item.wallet);
+  // The grey @line is the real username, shown next to a display name.
+  const handle = item.authorHandle && String(item.authorDisplayName || "").trim() ? `@${item.authorHandle}` : "";
   const viewRef = useViewTracking(item.postId);
 
   return (
@@ -502,7 +551,7 @@ export function FeedSystemCard({ item }: { item: FeedItem }) {
               <>
                 {" "}by{" "}
                 <Link to={profileHref(item.wallet)} className="text-mw-accent-soft hover:text-[#FFD0A8]">
-                  {item.authorDisplayName ? `@${item.authorDisplayName}` : shorten(item.wallet)}
+                  {personName(item.authorDisplayName, item.authorHandle, item.wallet)}
                 </Link>
               </>
             ) : null}

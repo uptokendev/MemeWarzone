@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import PublicProfile from "./PublicProfile";
+import { HANDLE_RE, resolveHandle } from "@/lib/handlesApi";
 import { effectiveWalletAddress, normalizeRouteWallet, routeWalletsMatch } from "@/lib/address";
 
 function openWalletModal(wallet: any) {
@@ -43,7 +44,7 @@ function InvalidPublicProfile({ identifier }: { identifier: string }) {
       <div className="w-full rounded-3xl border border-border/50 bg-card/40 p-6 text-center shadow-2xl backdrop-blur-md md:p-10">
         <h1 className="font-retro text-2xl text-foreground md:text-4xl">Profile not found</h1>
         <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground md:text-base">
-          We could not resolve <span className="font-mono text-foreground">{identifier}</span> as a public profile yet. Wallet addresses are supported now; handles, usernames, and recruiter codes can be added next.
+          No profile matches <span className="font-mono text-foreground">{identifier}</span>. Open a profile by wallet address or @username.
         </p>
       </div>
     </div>
@@ -71,6 +72,35 @@ export default function ProfilePage() {
     }
     return accountWallet;
   }, [accountWallet, explicitWallet, shouldRenderPublicProfile]);
+
+  // /profile/<username> (founder, 2026-10-02): look the username up and go to that wallet's profile.
+  const handleCandidate = explicitIdentifier && !explicitWallet && HANDLE_RE.test(String(explicitIdentifier).replace(/^@/, ""))
+    ? String(explicitIdentifier).replace(/^@/, "")
+    : "";
+  const [handleLookup, setHandleLookup] = useState<{ handle: string; wallet: string | null } | null>(null);
+  useEffect(() => {
+    if (!handleCandidate) return;
+    let cancelled = false;
+    resolveHandle(handleCandidate)
+      .then((wallet) => {
+        if (!cancelled) setHandleLookup({ handle: handleCandidate, wallet });
+      })
+      .catch(() => {
+        if (!cancelled) setHandleLookup({ handle: handleCandidate, wallet: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [handleCandidate]);
+
+  if (handleCandidate) {
+    if (handleLookup?.handle === handleCandidate && handleLookup.wallet) {
+      return <Navigate to={`/profile/${handleLookup.wallet}`} replace />;
+    }
+    if (handleLookup?.handle !== handleCandidate) {
+      return <div className="mx-auto w-full max-w-[1480px] px-3 py-16 text-center font-mw-body text-mw-muted">Looking up @{handleCandidate}…</div>;
+    }
+  }
 
   if (!shouldRenderPublicProfile) {
     if (!accountWallet) {

@@ -631,8 +631,8 @@ export default function League() {
     <div className="min-w-0 overflow-x-hidden font-mw-body text-mw-text">
       <ContentContainer className="flex flex-col gap-4 px-1 pb-16 md:px-2">
         <section className="flex flex-col" aria-label={title}>
-          <div className="mw-banner h-[110px] rounded-2xl border border-[#1E2329] lg:h-[200px]" aria-hidden="true" />
-          <div className={`${card} relative mx-3 -mt-[50px] flex flex-col gap-2 p-3.5 lg:mx-5 lg:-mt-[84px] lg:flex-row lg:items-end lg:gap-[22px] lg:p-[22px]`}>
+          {/* Founder 2026-10-02: no banner behind the league header. */}
+          <div className={`${card} relative flex flex-col gap-2 p-3.5 lg:flex-row lg:items-end lg:gap-[22px] lg:p-[22px]`}>
             <div className="flex min-w-0 flex-1 items-center gap-3 lg:items-end lg:gap-[22px]">
               <div className="w-[60px] shrink-0 overflow-hidden rounded-[10px] border border-mw-edge text-center lg:w-[92px] lg:rounded-[14px]" aria-label={`Starts ${dateDay} ${dateMon}`}>
                 <div className="bg-mw-accent py-[3px] font-mw-cond text-xs font-bold tracking-[0.1em] text-[#140A02] lg:py-1.5 lg:text-sm">{dateMon}</div>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Link, useParams } from "react-router-dom";
 import {
   Bell,
@@ -459,7 +460,7 @@ function BunkerComment({
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="font-retro text-sm text-foreground">{comment.authorLabel}</span>
           <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-            Recon {shortAddress(comment.authorAddress)} {formatShortTime(comment.createdAt)}
+            Recon <WalletLabel wallet={comment.authorAddress} /> {formatShortTime(comment.createdAt)}
           </span>
         </div>
         <p className="mt-1 text-sm leading-6 text-muted-foreground">{comment.body}</p>

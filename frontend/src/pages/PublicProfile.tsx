@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useWalletHandle } from "@/lib/handlesApi";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
@@ -232,6 +233,7 @@ export default function PublicProfile({
   const effectivePortfolioMetrics = portfolioMetrics;
   const effectiveLoadingPortfolio = loadingPortfolio;
 
+  const ownHandle = useWalletHandle(profileWallet);
   const displayName = useMemo(() => {
     const name = (profile?.displayName ?? "").trim();
     return name ? `@${name}` : shorten(profileWallet);
@@ -574,8 +576,9 @@ export default function PublicProfile({
 
   // UI redesign phase 8 (artboard Profile): banner + round avatar hero, tab row, summary rail.
   // Every section shows data this page already loads; nothing new is written.
-  const nameText = (profile?.displayName ?? "").trim() || shorten(profileWallet);
-  const handle = (profile?.displayName ?? "").trim() ? `@${(profile?.displayName ?? "").trim()}` : null;
+  // Display name, else @username, else the short wallet; the @line is the real username (founder, 2026-10-02).
+  const nameText = (profile?.displayName ?? "").trim() || (ownHandle ? `@${ownHandle}` : shorten(profileWallet));
+  const handle = ownHandle && (profile?.displayName ?? "").trim() ? `@${ownHandle}` : null;
   const squadCode = recruiter?.code || walletAttribution?.recruiterCode || null;
   const hasSquad = Boolean(squad || walletAttribution?.recruiterCode);
   const postsToShow = feedSupported ? feedItems : publicPosts;
