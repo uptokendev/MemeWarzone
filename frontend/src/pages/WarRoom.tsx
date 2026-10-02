@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { ChainFeedSwitch, useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
-import { WarRoomCampaignRow } from "@/components/postgrad/WarRoomCampaignRow";
+import { WAR_ROOM_DRAFT_GRID, WAR_ROOM_MARKET_GRID, WarRoomCampaignRow } from "@/components/postgrad/WarRoomCampaignRow";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { RadarLoader } from "@/components/ui/RadarLoader";
 import { getWarRoomCampaignMetrics } from "@/features/postgrad/warRoomMetrics";
@@ -262,99 +262,110 @@ const WarRoom = () => {
     setExpandedCampaign(null);
   }, [selectedChainId]);
 
+  const sortLabel = (button: { key: SortKey; label: string }) =>
+    `${button.label}${sortKey === button.key ? (sortDirection === "desc" ? " ↓" : " ↑") : ""}`;
+  const activeSortButton = metricButtons.find((button) => button.key === sortKey) || null;
+
   return (
-    <ContentContainer className="space-y-4 px-3 pb-10 pt-20 md:px-5 md:pt-24 lg:pt-24">
-      <section className="mwz-hud-frame px-4 py-4 md:px-6 md:py-5">
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-            <div className="min-w-0">
-              <div className="text-[10px] uppercase tracking-[0.28em] text-orange-400">Trade War Room</div>
-              <h1 className="mt-2 text-2xl font-semibold uppercase tracking-[0.08em] text-white md:text-3xl">War Trade Room</h1>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <ChainFeedSwitch />
-            </div>
-          </div>
-
-          <label className="flex items-center gap-3 border border-[var(--mwz-flat-card-border)] bg-black/25 px-3 py-2.5 text-white/70 focus-within:border-orange-400/50">
-            <Search className="h-4 w-4 text-white/45" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Filter by ticker, name, creator, token or campaign address"
-              className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/35"
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </label>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {terminalModes.map((mode) => {
-              const active = activeMode === mode.key && !sortKey;
-              return (
-                <button
-                  key={mode.key}
-                  type="button"
-                  onClick={() => handleModeClick(mode.key)}
-                  className={`border px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition-colors ${active ? "border-orange-400/60 bg-orange-500/10 text-orange-300" : "border-[var(--mwz-flat-card-border)] bg-black/20 text-white/58 hover:border-[var(--mwz-flat-card-border-strong)] hover:bg-white/[0.035] hover:text-white"}`}
-                >
-                  {mode.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex gap-2 overflow-x-auto pb-1 lg:hidden">
-            {metricButtons.map((button) => {
-              const active = sortKey === button.key;
-              const directionLabel = active ? (sortDirection === "desc" ? "↓" : "↑") : "";
-              return (
-                <button
-                  key={button.key}
-                  type="button"
-                  onClick={() => handleSortClick(button.key)}
-                  className={`shrink-0 border px-3 py-1.5 text-[11px] font-medium transition-colors ${active ? "border-orange-400/60 bg-orange-500/10 text-orange-200" : "border-[var(--mwz-flat-card-border)] bg-black/20 text-white/65 hover:border-[var(--mwz-flat-card-border-strong)] hover:text-white"}`}
-                >
-                  {button.label} {directionLabel}
-                </button>
-              );
-            })}
-          </div>
+    <ContentContainer className="flex flex-col gap-3.5 px-1 pb-10 font-mw-body text-mw-text md:px-2">
+      <div className="flex flex-wrap items-end gap-3.5">
+        <div className="min-w-0">
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Trade</div>
+          <h1 className="m-0 font-mw-cond text-[30px] font-bold leading-none lg:text-[40px]">War Trade Room</h1>
         </div>
-      </section>
+        <span className="hidden flex-1 sm:block" />
+        <ChainFeedSwitch />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="relative block min-w-0 flex-1 sm:min-w-[320px]">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#7C858F]" aria-hidden="true" />
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Filter by ticker, name, creator, token or campaign address"
+            aria-label="Filter coins"
+            className="mw-focus h-11 w-full rounded-[10px] border border-mw-edge bg-mw-input pl-10 pr-3 text-[15px] text-mw-text outline-none placeholder:text-[#7C858F]"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </label>
+        <div role="tablist" aria-label="War Trade Room mode" className="flex w-full gap-1 rounded-xl border border-[#2A3038] bg-mw-input p-1 sm:w-auto">
+          {terminalModes.map((mode) => {
+            const active = activeMode === mode.key;
+            return (
+              <button
+                key={mode.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => handleModeClick(mode.key)}
+                className={`mw-focus min-h-10 flex-1 rounded-lg border px-3 font-mw-cond text-sm font-bold uppercase tracking-[0.08em] sm:flex-none sm:px-4 ${active ? "border-[#3A424C] bg-[#1F252C] text-mw-text" : "border-transparent text-mw-muted hover:text-mw-text"}`}
+              >
+                {mode.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Phones and tablets: one sort control (artboard), same handler as the column headers. */}
+      <div className="flex items-center gap-2 lg:hidden">
+        <span className="flex-1 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Sort by</span>
+        <select
+          aria-label="Sort column"
+          value={sortKey ?? ""}
+          onChange={(event) => {
+            if (event.target.value) handleSortClick(event.target.value as SortKey);
+          }}
+          className="mw-focus h-[38px] rounded-[10px] border border-mw-edge bg-mw-input px-3 text-sm text-mw-text"
+        >
+          <option value="" disabled>Default order</option>
+          {metricButtons.map((button) => (
+            <option key={button.key} value={button.key}>{sortLabel(button)}</option>
+          ))}
+        </select>
+        {activeSortButton ? (
+          <button
+            type="button"
+            onClick={() => handleSortClick(activeSortButton.key)}
+            aria-label={`Sort ${sortDirection === "desc" ? "ascending" : "descending"}`}
+            className="mw-focus h-[38px] w-[38px] rounded-[10px] border border-mw-edge bg-mw-raised font-mw-mono text-mw-text"
+          >
+            {sortDirection === "desc" ? "↓" : "↑"}
+          </button>
+        ) : null}
+      </div>
 
       {error ? (
-        <div className="mwz-card border-orange-300/25 bg-orange-500/10 px-4 py-3 text-sm text-orange-100">
+        <div role="status" className="rounded-[14px] border border-[#5A3416] bg-mw-accent-fill px-4 py-3 text-sm">
           Trade data is temporarily unavailable. Please try again shortly.
         </div>
       ) : null}
 
-      <section className="mwz-hud-frame overflow-hidden">
-        <div className={activeMode === "draft"
-          ? "hidden grid-cols-[minmax(320px,1.55fr)_110px_110px_110px] gap-3 border-b border-[var(--mwz-flat-card-border)] px-4 py-3 text-xs font-medium uppercase tracking-[0.08em] text-white/58 lg:grid"
-          : "hidden grid-cols-[minmax(320px,1.55fr)_110px_110px_110px_90px_130px_28px] gap-3 border-b border-[var(--mwz-flat-card-border)] px-4 py-3 text-xs font-medium uppercase tracking-[0.08em] text-white/58 lg:grid"}
-        >
-          <div>Coin info</div>
+      <section className="overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface">
+        <div className={`hidden gap-3 border-b border-mw-border px-4 py-2.5 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted lg:grid ${activeMode === "draft" ? WAR_ROOM_DRAFT_GRID : WAR_ROOM_MARKET_GRID}`}>
+          <div className="self-center">Coin info</div>
           {metricButtons.map((button) => {
             const active = sortKey === button.key;
-            const directionLabel = active ? (sortDirection === "desc" ? "↓" : "↑") : "";
             return (
               <button
                 key={button.key}
                 type="button"
                 onClick={() => handleSortClick(button.key)}
-                className={`flex items-center gap-1 text-left transition-colors ${active ? "text-orange-300" : "text-white/58 hover:text-white"}`}
+                aria-sort={active ? (sortDirection === "desc" ? "descending" : "ascending") : undefined}
+                className={`mw-focus min-h-7 justify-self-end rounded-md px-1 text-right uppercase tracking-[0.08em] transition-colors ${active ? "text-mw-accent-soft" : "text-mw-muted hover:text-mw-text"}`}
               >
-                <span>{button.label}</span>
-                <span className="text-[10px] text-white/45">{directionLabel}</span>
+                {sortLabel(button)}
               </button>
             );
           })}
-          {activeMode !== "draft" ? <div /> : null}
+          <div />
         </div>
         <div ref={listRef}>
           {loading ? (
-            <div className="flex min-h-[320px] items-center justify-center bg-black py-14">
+            <div className="flex min-h-[320px] items-center justify-center py-14">
               <RadarLoader label="Scanning trade radar…" size="md" />
             </div>
           ) : filteredCampaigns.length ? (
@@ -379,7 +390,7 @@ const WarRoom = () => {
               );
             })
           ) : (
-            <div className="py-10 text-center text-sm text-white/55">
+            <div className="px-4 py-10 text-center text-sm text-mw-muted">
               {source === "empty"
                 ? activeMode === "draft" ? "No public drafts are available on this chain yet." : "Coin data isn't available right now."
                 : search.trim()

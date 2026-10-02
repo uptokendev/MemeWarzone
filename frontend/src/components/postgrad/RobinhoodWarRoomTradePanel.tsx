@@ -261,7 +261,7 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
     : route ? "Healthy · direct V3 route verified" : "Unavailable";
 
   return (
-    <div className="rounded-[18px] border border-orange-400/20 bg-black/30 p-3 md:rounded-[20px] md:p-4">
+    <div className="rounded-[14px] border border-mw-border bg-mw-input p-3 md:p-3.5">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <div className="text-[10px] uppercase tracking-[0.22em] text-orange-300">

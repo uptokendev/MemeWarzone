@@ -1,9 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ChevronUp, ExternalLink, Globe, Megaphone, ShoppingCart } from "lucide-react";
+import { ChevronDown, ExternalLink, Globe, Megaphone, ShoppingCart } from "lucide-react";
 import type { CampaignInfo } from "@/lib/launchpadClient";
-import { Button } from "@/components/ui/button";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { ContinuousMarketChartPanel } from "@/components/token/ContinuousMarketChartPanel";
 import { AthBar } from "@/components/token/AthBar";
 import { WarRoomTradePanel } from "@/components/postgrad/WarRoomTradePanel";
@@ -53,29 +51,47 @@ function formatCompactNumber(value: unknown) {
   return String(Math.trunc(n));
 }
 
+const card = "rounded-[14px] border border-mw-border bg-mw-input";
+const cardTitle = "font-mw-cond text-xl font-bold tracking-[0.02em] text-mw-text";
+const lbl = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
+const smallButton = "mw-focus inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text";
+const accentButton = "mw-focus inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-3 text-sm font-bold text-[#140A02] hover:bg-[#FF8A3D] hover:text-[#140A02]";
+/** Row grid: the header in WarRoom.tsx uses the same templates. */
+export const WAR_ROOM_MARKET_GRID = "lg:grid-cols-[minmax(280px,1.6fr)_repeat(5,minmax(84px,1fr))_44px]";
+export const WAR_ROOM_DRAFT_GRID = "lg:grid-cols-[minmax(280px,1.6fr)_repeat(3,minmax(96px,1fr))_44px]";
+
 function MobileMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5">
-      <div className="text-[8px] uppercase tracking-[0.16em] text-white/35">{label}</div>
-      <div className="mt-0.5 text-xs font-semibold text-white">{value}</div>
+    <div className="rounded-[10px] border border-mw-border bg-mw-input px-2.5 py-1.5">
+      <div className={`${lbl} text-[11px]`}>{label}</div>
+      <div className="font-mw-mono text-sm font-bold text-mw-text">{value}</div>
     </div>
   );
 }
 
 function DraftInfoTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-white/10 bg-black/20 px-3 py-2.5">
-      <div className="text-[9px] uppercase tracking-[0.18em] text-white/35">{label}</div>
-      <div className="mt-1 truncate text-sm font-semibold text-white/85">{value}</div>
+    <div className="rounded-[10px] border border-mw-border bg-mw-surface px-3 py-2.5">
+      <div className={lbl}>{label}</div>
+      <div className="mt-0.5 truncate text-sm font-bold text-mw-text">{value}</div>
     </div>
   );
 }
 
 function DraftTextBlock({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-white/10 bg-black/20 px-3 py-2.5">
-      <div className="text-[9px] uppercase tracking-[0.18em] text-white/35">{label}</div>
-      <p className="mt-1.5 text-sm leading-6 text-white/68">{value}</p>
+    <div className="rounded-[10px] border border-mw-border bg-mw-surface px-3 py-2.5">
+      <div className={lbl}>{label}</div>
+      <p className="m-0 mt-1 text-sm leading-6 text-mw-muted">{value}</p>
+    </div>
+  );
+}
+
+function DetailLine({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-sm">
+      <span className="text-mw-muted">{label}</span>
+      <span className={`truncate ${mono ? "font-mw-mono" : ""}`}>{value}</span>
     </div>
   );
 }
@@ -147,198 +163,159 @@ export function WarRoomCampaignRow({
 
   const createdLabel = useMemo(() => formatAge(campaign.createdAt), [campaign.createdAt]);
 
+  const ticker = campaign.symbol ? `$${String(campaign.symbol).replace(/^\$/, "")}` : "";
+  const statusClass = metrics.status === "graduated" ? "text-[#6EE7A0]" : metrics.status === "bonding" ? "text-[#FFB27A]" : "text-mw-muted";
+  const followTokenRoute = (e: { stopPropagation: () => void }) => {
+    e.stopPropagation();
+    if (
+      rowChainId === 56 ||
+      rowChainId === 97 ||
+      rowChainId === ROBINHOOD_CHAIN_ID ||
+      rowChainId === ROBINHOOD_TESTNET_CHAIN_ID ||
+      rowChainId === 101
+    ) {
+      setSelectedFeedChainId(rowChainId);
+    }
+  };
+  const hasTokenRoute = Boolean(tokenRoute && tokenRoute !== "/");
+  const chevron = (
+    <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-text transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden="true">
+      <ChevronDown className="h-4 w-4" />
+    </span>
+  );
+
   return (
-    <div className="border-b border-white/8 last:border-b-0">
+    <div className={`border-t border-[#1E2329] font-mw-body text-mw-text first:border-t-0 ${expanded ? "bg-mw-accent-fill" : ""}`}>
       {/* Entire collapsed bar is the expand/collapse control */}
       <button
         type="button"
         onClick={handleToggleExpand}
-        className={
-          isDraft
-            ? "grid w-full grid-cols-1 gap-2 px-2.5 py-2.5 text-left transition-colors hover:bg-white/[0.035] lg:grid-cols-[minmax(320px,1.55fr)_110px_110px_110px] lg:items-center lg:gap-3 lg:px-4 lg:py-2.5"
-            : "grid w-full grid-cols-1 gap-2 px-2.5 py-2.5 text-left transition-colors hover:bg-white/[0.035] lg:grid-cols-[minmax(320px,1.55fr)_110px_110px_110px_90px_130px_28px] lg:items-center lg:gap-3 lg:px-4 lg:py-2.5"
-        }
+        aria-expanded={expanded}
+        aria-label={`${expanded ? "Collapse" : "Expand"} ${campaign.name || campaign.symbol || "coin"}`}
+        className={`mw-focus grid w-full grid-cols-1 gap-2 px-3.5 py-3 text-left transition-colors ${expanded ? "" : "hover:bg-[#171B20]"} lg:items-center lg:gap-3 lg:px-4 ${isDraft ? WAR_ROOM_DRAFT_GRID : WAR_ROOM_MARKET_GRID}`}
       >
-          <div className="flex min-w-0 items-center gap-2.5">
-            <img
-              src={campaign.logoURI || "/placeholder.svg"}
-              alt={campaign.name}
-              onError={(event) => {
-                (event.currentTarget as HTMLImageElement).src = "/placeholder.svg";
-              }}
-              className="h-9 w-9 shrink-0 rounded-lg border border-white/10 object-cover lg:h-10 lg:w-10"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <div className="truncate text-[13px] font-semibold text-white lg:text-[15px]">{campaign.symbol || campaign.name}</div>
-                <div className="truncate text-[11px] font-semibold text-white/45 lg:text-sm">{campaign.name}</div>
-                <TacticalTag label={statusLabel} tone={statusTone} />
-                {!isDraft && !metrics.hasRichStats ? <TacticalTag label="Syncing" tone="default" /> : null}
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-white/55 lg:text-[11px]">
-                <span className="text-orange-300">{createdLabel}</span>
-                <span>→</span>
-                {isDraft ? <span className="text-yellow-300">Promotion page</span> : <span className="text-yellow-300">ATH {metrics.athLabel}</span>}
-                <span>{shortenAddress(campaign.campaign)}</span>
-                <span className="hidden sm:inline">Creator {shortenAddress(campaign.creator)}</span>
-              </div>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <img
+            src={campaign.logoURI || "/placeholder.svg"}
+            alt=""
+            onError={(event) => {
+              (event.currentTarget as HTMLImageElement).src = "/placeholder.svg";
+            }}
+            className="h-10 w-10 shrink-0 rounded-[10px] border border-mw-border object-cover"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate font-bold">{campaign.name || campaign.symbol}</span>
+              {!isDraft && !metrics.hasRichStats ? (
+                <span className="inline-flex h-5 shrink-0 items-center rounded-full border border-mw-edge px-2 text-[11px] font-semibold text-mw-muted">Syncing</span>
+              ) : null}
             </div>
-            {!isDraft ? (
-              <div className="ml-1 shrink-0 text-right lg:hidden">
-                <div className="text-[8px] uppercase tracking-[0.14em] text-white/35">MCap</div>
-                <div className="text-xs font-semibold text-white">{metrics.marketCapLabel}</div>
-              </div>
-            ) : null}
-            {!isDraft ? (
-              <span className="shrink-0 text-white/50 lg:hidden" aria-hidden>
-                {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </span>
-            ) : null}
+            <div className="truncate text-xs text-mw-muted lg:text-[13px]">
+              {ticker ? <span className="font-mw-mono">{ticker}</span> : null}
+              {ticker ? " · " : null}
+              <span className={statusClass}>{statusLabel}</span>
+              {" · "}
+              {createdLabel}
+            </div>
           </div>
+          {!isDraft ? (
+            <span className="shrink-0 text-right lg:hidden">
+              <span className="block font-mw-mono font-bold">{metrics.marketCapLabel}</span>
+              <span className="font-mw-mono text-xs text-mw-muted">vol {metrics.volumeLabel}</span>
+            </span>
+          ) : null}
+          <span className="lg:hidden">{chevron}</span>
+        </div>
 
         {isDraft ? (
-          <div className="grid grid-cols-3 gap-1.5 text-sm lg:contents">
-            <div className="lg:block">
+          <div className="grid grid-cols-3 gap-1.5 lg:contents">
+            <div className="lg:text-right">
               <div className="lg:hidden"><MobileMetric label="Follows" value={draftFollows} /></div>
-              <div className="hidden font-semibold text-white lg:block">{draftFollows}</div>
+              <div className="hidden font-mw-mono font-bold lg:block">{draftFollows}</div>
             </div>
-            <div className="lg:block">
+            <div className="lg:text-right">
               <div className="lg:hidden"><MobileMetric label="Opt-Ins" value={draftOptIns} /></div>
-              <div className="hidden font-semibold text-white lg:block">{draftOptIns}</div>
+              <div className="hidden font-mw-mono font-bold lg:block">{draftOptIns}</div>
             </div>
-            <div className="lg:block">
+            <div className="lg:text-right">
               <div className="lg:hidden"><MobileMetric label="Comments" value={draftComments} /></div>
-              <div className="hidden font-semibold text-white lg:block">{draftComments}</div>
+              <div className="hidden font-mw-mono font-bold lg:block">{draftComments}</div>
             </div>
           </div>
         ) : (
           <div className="hidden lg:contents">
-            <div className="font-semibold text-white">{metrics.marketCapLabel}</div>
-            <div className="font-semibold text-white">{metrics.liquidityLabel}</div>
-            <div className="font-semibold text-white">{metrics.volumeLabel}</div>
-            <div className="font-semibold text-white">{metrics.holdersLabel}</div>
-            <div className="space-y-1">
-              <div className="flex items-center justify-between gap-2 text-xs text-white/65">
-                <span>{metrics.athLabel}</span>
-                <span>{metrics.athProgressPct}%</span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-                <div className="h-full rounded-full bg-[linear-gradient(90deg,#fb923c,#22c55e)]" style={{ width: `${metrics.athProgressPct}%` }} />
-              </div>
-            </div>
+            <div className="text-right font-mw-mono font-bold">{metrics.marketCapLabel}</div>
+            <div className="text-right font-mw-mono">{metrics.liquidityLabel}</div>
+            <div className="text-right font-mw-mono">{metrics.volumeLabel}</div>
+            <div className="text-right font-mw-mono">{metrics.holdersLabel}</div>
+            <div className="text-right font-mw-mono">{metrics.athLabel}</div>
           </div>
         )}
 
-        {!isDraft ? (
-          <div className="hidden lg:flex lg:justify-self-end">
-            <span className="inline-flex h-8 w-8 items-center justify-center text-white/70">
-              {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </span>
-          </div>
-        ) : null}
+        <span className="hidden justify-self-end lg:flex">{chevron}</span>
       </button>
 
       {expanded ? (
         isDraft ? (
-          <div className="mx-2.5 mb-2.5 grid gap-3 rounded-[18px] border border-white/10 bg-[linear-gradient(180deg,rgba(16,18,24,0.88),rgba(8,9,12,0.94))] p-2.5 md:mx-3 md:mb-3 md:gap-4 md:p-4 xl:grid-cols-[0.52fr_1.48fr]">
-            <div className="overflow-hidden rounded-[16px] border border-white/10 bg-black/35">
+          <div className="grid gap-3 px-3.5 pb-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:px-4">
+            <div className={`${card} overflow-hidden`}>
               <img
                 src={campaign.logoURI || "/placeholder.svg"}
                 alt={campaign.name}
                 onError={(event) => {
                   (event.currentTarget as HTMLImageElement).src = "/placeholder.svg";
                 }}
-                className="h-40 w-full object-cover md:h-52 xl:h-full xl:min-h-[260px]"
+                className="h-40 w-full object-cover md:h-52 lg:h-full lg:min-h-[240px]"
               />
             </div>
 
-            <div className="space-y-3">
-              <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-3 md:rounded-[20px] md:p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <h3 className="text-2xl font-semibold text-white">{campaign.name}</h3>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <TacticalTag label="Not launched yet" tone="default" />
-                      <TacticalTag label={draftStatus} tone="sponsored" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                  <DraftInfoTile label="Ticker" value={campaign.symbol || "Draft"} />
-                  <DraftInfoTile label="Chain" value={chainLabel} />
-                  <DraftInfoTile label="Creator" value={shortenAddress(campaign.creator)} />
-                  <DraftInfoTile label="Status" value={draftStatus} />
-                </div>
-
-                <div className="mt-3 grid gap-2 lg:grid-cols-2">
-                  <DraftTextBlock label="Short description" value={draftDescription} />
-                  <DraftTextBlock label="Founder note" value={founderNote} />
-                </div>
+            <div className={`${card} flex flex-col gap-3 p-3.5`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className={`${cardTitle} m-0`}>{campaign.name}</h3>
+                <span className="inline-flex h-6 items-center rounded-full border border-mw-edge px-2.5 text-xs font-semibold text-mw-muted">Not launched yet</span>
+                <span className="inline-flex h-6 items-center rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2.5 text-xs font-semibold text-mw-accent-soft">{draftStatus}</span>
               </div>
-
-              <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-3 md:rounded-[20px] md:p-4">
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {promotionHref ? (
-                    <Button asChild size="sm" className="justify-between text-[11px] md:text-sm sm:col-span-2">
-                      <Link to={promotionHref}>
-                        Open promotion
-                        <Megaphone className="h-4 w-4" />
-                      </Link>
-                    </Button>
-                  ) : null}
-                  {websiteHref ? (
-                    <Button asChild size="sm" variant="outline" className="justify-between text-[11px] md:text-sm">
-                      <a href={websiteHref} target="_blank" rel="noreferrer">
-                        Website
-                        <Globe className="h-4 w-4" />
-                      </a>
-                    </Button>
-                  ) : null}
-                  {xHref ? (
-                    <Button asChild size="sm" variant="outline" className="justify-between text-[11px] md:text-sm">
-                      <a href={xHref} target="_blank" rel="noreferrer">
-                        X account
-                        <ExternalLink className="h-4 w-4" />
-                      </a>
-                    </Button>
-                  ) : null}
-                  {extraHref ? (
-                    <Button asChild size="sm" variant="outline" className="justify-between text-[11px] md:text-sm">
-                      <a href={extraHref} target="_blank" rel="noreferrer">
-                        Extra link
-                        <ExternalLink className="h-4 w-4" />
-                      </a>
-                    </Button>
-                  ) : null}
-                </div>
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <DraftInfoTile label="Ticker" value={campaign.symbol || "Draft"} />
+                <DraftInfoTile label="Chain" value={chainLabel} />
+                <DraftInfoTile label="Creator" value={shortenAddress(campaign.creator)} />
+                <DraftInfoTile label="Status" value={draftStatus} />
+              </div>
+              <div className="grid gap-2 lg:grid-cols-2">
+                <DraftTextBlock label="Short description" value={draftDescription} />
+                <DraftTextBlock label="Founder note" value={founderNote} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {promotionHref ? (
+                  <Link to={promotionHref} className={accentButton}>
+                    <Megaphone className="h-4 w-4" aria-hidden="true" />
+                    Open promotion
+                  </Link>
+                ) : null}
+                {websiteHref ? (
+                  <a href={websiteHref} target="_blank" rel="noreferrer" className={smallButton}>
+                    <Globe className="h-4 w-4" aria-hidden="true" />
+                    Website
+                  </a>
+                ) : null}
+                {xHref ? (
+                  <a href={xHref} target="_blank" rel="noreferrer" className={smallButton}>
+                    <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                    X
+                  </a>
+                ) : null}
+                {extraHref ? (
+                  <a href={extraHref} target="_blank" rel="noreferrer" className={smallButton}>
+                    <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                    Extra link
+                  </a>
+                ) : null}
               </div>
             </div>
           </div>
         ) : (
-          <div className="mx-2.5 mb-2.5 grid gap-3 rounded-[18px] border border-white/10 bg-[linear-gradient(180deg,rgba(16,18,24,0.88),rgba(8,9,12,0.94))] p-2.5 md:mx-3 md:mb-3 md:gap-4 md:p-4 xl:grid-cols-[1.35fr_0.65fr]">
-            <div className="order-1 col-span-full flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-white/8 pb-2 text-[10px] text-white/70 xl:hidden">
-              <span><span className="text-white/40">MCap</span> {metrics.marketCapLabel}</span>
-              <span><span className="text-white/40">Liq</span> {metrics.liquidityLabel}</span>
-              <span><span className="text-white/40">Vol</span> {metrics.volumeLabel}</span>
-              <span><span className="text-white/40">Holders</span> {metrics.holdersLabel}</span>
-              <span><span className="text-white/40">ATH</span> {metrics.athLabel}</span>
-            </div>
-
-            <div className={`order-2 flex flex-col rounded-[16px] border border-white/10 bg-black/30 p-2 md:rounded-[18px] md:p-3 xl:order-1 ${chartExpanded ? "h-auto min-h-[580px] md:min-h-[660px]" : "h-[300px] md:h-[380px]"}`}>
-              <div className="mb-1.5 flex shrink-0 items-center justify-between gap-3">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-orange-300">
-                  {chartSourceLabel}
-                </div>
-              </div>
-              <div className="mb-2 shrink-0 px-0.5">
-                <AthBar
-                  currentLabel={metrics.marketCapLabel}
-                  canonicalAthUsd={metrics.athMarketCapUsd > 0 ? metrics.athMarketCapUsd : null}
-                  storageKey={`ath:${rowChainId}:${String(campaign.campaign || "")}:wtr`}
-                  className="w-full min-w-0 text-[10px] text-white/80"
-                />
-              </div>
+          <div className="grid gap-3 px-3.5 pb-4 md:grid-cols-2 lg:px-4 xl:grid-cols-[minmax(0,1fr)_260px_320px]">
+            <div className={`${card} flex flex-col p-2.5 md:col-span-2 xl:col-span-1 ${chartExpanded ? "h-auto min-h-[580px] md:min-h-[660px]" : "h-[300px] md:h-[380px]"}`}>
               <ContinuousMarketChartPanel
                 campaignAddress={campaign.campaign}
                 tokenAddress={campaign.token}
@@ -352,83 +329,99 @@ export function WarRoomCampaignRow({
               />
             </div>
 
-            <div className="order-3 space-y-2.5 md:space-y-3 xl:order-2">
-              <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-3 md:rounded-[20px] md:p-4">
-                <div className="text-[10px] uppercase tracking-[0.24em] text-accent/80">Token details</div>
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 md:mt-4">
-                  {tokenRoute && tokenRoute !== "/" ? (
-                    <Button asChild size="sm" variant="outline" className="justify-between text-[11px] md:text-sm sm:col-span-2">
-                      <Link
-                        to={tokenRoute}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (
-                            rowChainId === 56 ||
-                            rowChainId === 97 ||
-                            rowChainId === ROBINHOOD_CHAIN_ID ||
-                            rowChainId === ROBINHOOD_TESTNET_CHAIN_ID ||
-                            rowChainId === 101
-                          ) {
-                            setSelectedFeedChainId(rowChainId);
-                          }
-                        }}
-                      >
-                        Open token details
-                        <ShoppingCart className="h-4 w-4" />
-                      </Link>
-                    </Button>
-                  ) : null}
-                  {websiteHref ? (
-                    <Button asChild size="sm" variant="outline" className="justify-between text-[11px] md:text-sm">
-                      <a href={websiteHref} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
-                        Website
-                        <Globe className="h-4 w-4" />
-                      </a>
-                    </Button>
-                  ) : null}
-                  {xHref ? (
-                    <Button asChild size="sm" variant="outline" className="justify-between text-[11px] md:text-sm">
-                      <a href={xHref} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
-                        X account
-                        <ExternalLink className="h-4 w-4" />
-                      </a>
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
+            {/* Phones (artboard): three tiles and a link row; the full details card from md up. */}
+            <div className="grid grid-cols-3 gap-1.5 md:hidden">
+              <MobileMetric label="Liq" value={metrics.liquidityLabel} />
+              <MobileMetric label="Holders" value={metrics.holdersLabel} />
+              <MobileMetric label="ATH" value={metrics.athLabel} />
+            </div>
 
+            <div className={`${card} hidden flex-col gap-2 p-3.5 md:flex`}>
+              <span className={cardTitle}>Token details</span>
+              <DetailLine label="MCap" value={metrics.marketCapLabel} />
+              <DetailLine label="Liq" value={metrics.liquidityLabel} />
+              <DetailLine label="Vol" value={metrics.volumeLabel} />
+              <DetailLine label="Holders" value={metrics.holdersLabel} />
+              <DetailLine label="ATH" value={metrics.athLabel} />
+              <AthBar
+                currentLabel={metrics.marketCapLabel}
+                canonicalAthUsd={metrics.athMarketCapUsd > 0 ? metrics.athMarketCapUsd : null}
+                storageKey={`ath:${rowChainId}:${String(campaign.campaign || "")}:wtr`}
+                className="w-full min-w-0 text-[11px] text-mw-muted"
+              />
+              <DetailLine label="Campaign" value={shortenAddress(campaign.campaign)} />
+              <DetailLine label="Creator" value={shortenAddress(campaign.creator)} />
+              <div className="mt-auto flex flex-col gap-1.5 pt-1">
+                {hasTokenRoute ? (
+                  <Link to={tokenRoute} onClick={followTokenRoute} className={smallButton}>
+                    <ShoppingCart className="h-4 w-4" aria-hidden="true" />
+                    Open token details
+                  </Link>
+                ) : null}
+                {websiteHref || xHref ? (
+                  <div className="flex gap-1.5">
+                    {websiteHref ? (
+                      <a href={websiteHref} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className={`${smallButton} flex-1`}>
+                        Website
+                      </a>
+                    ) : null}
+                    {xHref ? (
+                      <a href={xHref} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className={`${smallButton} flex-1`}>
+                        X
+                      </a>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="min-w-0">
               {isRobinhoodRow && metrics.status === "graduated" ? (
                 <RobinhoodWarRoomTradePanel campaign={campaign} />
               ) : isRobinhoodRow ? (
                 // WarRoomTradePanel trades on BNB only: for a Robinhood coin it showed "Connect BNB wallet",
                 // priced in BNB and resolved the campaign on chain 97. Robinhood bonding trades run on the
                 // token page, which already uses ETH and the Robinhood chain.
-                <div
-                  className="rounded-[18px] border border-white/10 bg-white/[0.04] p-3 md:rounded-[20px] md:p-4"
-                  data-testid="war-room-robinhood-bonding-trade"
-                >
-                  <div className="text-[10px] uppercase tracking-[0.24em] text-accent/80">Trade</div>
-                  <p className="mt-2 text-xs text-white/75 md:text-sm">
+                <div className={`${card} p-3.5`} data-testid="war-room-robinhood-bonding-trade">
+                  <span className={cardTitle}>Trade</span>
+                  <p className="m-0 mt-1.5 text-sm text-mw-muted">
                     This coin trades in ETH on Robinhood Chain. Buy and sell it on its token page.
                   </p>
-                  {tokenRoute && tokenRoute !== "/" ? (
-                    <Button asChild size="sm" className="mt-3 w-full justify-between text-[11px] md:text-sm">
-                      <Link
-                        to={tokenRoute}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedFeedChainId(rowChainId);
-                        }}
-                      >
-                        Trade {campaign.symbol ? `$${String(campaign.symbol).replace(/^\$/, "")}` : "this coin"} with ETH
-                        <ShoppingCart className="h-4 w-4" />
-                      </Link>
-                    </Button>
+                  {hasTokenRoute ? (
+                    <Link
+                      to={tokenRoute}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedFeedChainId(rowChainId);
+                      }}
+                      className={`${accentButton} mt-3 min-h-11 w-full`}
+                    >
+                      <ShoppingCart className="h-4 w-4" aria-hidden="true" />
+                      Trade {campaign.symbol ? `$${String(campaign.symbol).replace(/^\$/, "")}` : "this coin"} with ETH
+                    </Link>
                   ) : null}
                 </div>
               ) : (
                 <WarRoomTradePanel campaign={campaign} />
               )}
+            </div>
+
+            <div className="flex gap-1.5 md:hidden">
+              {hasTokenRoute ? (
+                <Link to={tokenRoute} onClick={followTokenRoute} className={`${smallButton} flex-[2]`}>
+                  Token details
+                </Link>
+              ) : null}
+              {websiteHref ? (
+                <a href={websiteHref} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className={`${smallButton} flex-1`}>
+                  Website
+                </a>
+              ) : null}
+              {xHref ? (
+                <a href={xHref} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className={`${smallButton} flex-1`}>
+                  X
+                </a>
+              ) : null}
             </div>
           </div>
         )

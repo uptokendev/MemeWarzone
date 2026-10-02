@@ -1183,7 +1183,7 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
   };
 
   return (
-    <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-3 md:rounded-[20px] md:p-4">
+    <div className="rounded-[14px] border border-mw-border bg-mw-input p-3 md:p-3.5">
       <div className="text-[10px] uppercase tracking-[0.24em] text-accent/80">Trade</div>
       <div className="mt-3 rounded-xl border border-white/10 bg-black/25 p-2.5 md:mt-4 md:rounded-2xl md:p-3">
         <Tabs value={tradeTab} onValueChange={(value) => setTradeTab(value as "buy" | "sell")}>
