@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { CampaignCard } from "@/components/home/CampaignCard";
 import { useStickyRail } from "@/hooks/useStickyRail";
 import { useWalletHandle } from "@/lib/handlesApi";
 import { Link, useNavigate } from "react-router-dom";
@@ -622,30 +623,29 @@ export default function PublicProfile({
   const coinsGrid = loadingCoins ? (
     <div className={empty}>Loading created coins...</div>
   ) : createdCoins.length ? (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-      {createdCoins.map((coin) => (
-        <button
-          key={coin.campaignAddress}
-          type="button"
-          onClick={() => openCoin(coin)}
-          className="mw-focus flex flex-col overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface text-left hover:border-[#3A424C]"
-        >
-          <div className="flex h-[96px] items-center justify-center bg-[#2A1609] md:h-[130px]">
-            <img src={coin.image || "/placeholder.svg"} alt="" className="h-16 w-16 rounded-[14px] object-cover md:h-20 md:w-20" />
-          </div>
-          <div className="flex flex-col gap-1 p-3">
-            <span className="truncate text-[15px] font-bold text-mw-text">{coin.name}</span>
-            <span className="truncate font-mw-mono text-xs text-mw-muted">
-              {[coin.marketCap, coin.status && /graduat/i.test(coin.status) ? "Graduated" : coin.progress, coin.timeAgo].filter((v) => v && v !== "—").join(" · ")}
-            </span>
-            {coin.progress && !(coin.status && /graduat/i.test(coin.status)) ? (
-              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-mw-border">
-                <div className="h-full rounded-full bg-mw-accent" style={{ width: `${progressNumber(coin.progress)}%` }} />
-              </div>
-            ) : null}
-          </div>
-        </button>
-      ))}
+    // Founder 2026-10-03: the same card as the Coins page (UpVote, follow, progress).
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+      {createdCoins.map((coin) => {
+        const chainId = Number(coin.chainId || activeChainId);
+        const graduated = Boolean(coin.status && /graduat/i.test(coin.status));
+        return (
+          <CampaignCard
+            key={`${chainId}:${coin.campaignAddress}`}
+            chainIdForStorage={chainId}
+            vm={{
+              campaignAddress: coin.campaignAddress,
+              tokenAddress: coin.tokenAddress || null,
+              name: coin.name,
+              symbol: coin.ticker,
+              logoURI: coin.image,
+              creator: profileWallet,
+              marketCapUsdLabel: coin.marketCap && coin.marketCap !== "—" ? coin.marketCap : null,
+              progressPct: graduated ? 100 : coin.progress ? progressNumber(coin.progress) : null,
+              isDexTrading: graduated,
+            }}
+          />
+        );
+      })}
     </div>
   ) : (
     <div className={empty}>No public created coins yet.</div>
