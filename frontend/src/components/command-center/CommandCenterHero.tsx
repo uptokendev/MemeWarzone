@@ -38,65 +38,54 @@ export function CommandCenterHero({ walletAddress }: CommandCenterHeroProps) {
     }
   };
 
-  const statLinkClass = "mwz-flat-card p-3 text-center transition hover:border-accent/45 hover:bg-white/[0.025]";
+  const stats: Array<{ to: string; value: string | number; label: string }> = [
+    { to: `${commandBase}/coins`, value: createdCount, label: Number(createdCount) === 1 ? "coin" : "coins" },
+    { to: `${commandBase}/coins`, value: loadingDraftCount ? "..." : draftCount, label: Number(draftCount) === 1 ? "draft" : "drafts" },
+    { to: `${commandBase}/followers`, value: loadingFollows ? "..." : followersCount, label: "followers" },
+    { to: `${commandBase}/following`, value: loadingFollows ? "..." : followingCount, label: "following" },
+  ];
 
   return (
-    <section className="mwz-flat-card p-4 md:p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 items-center gap-4">
-          <div className="h-16 w-16 shrink-0 overflow-hidden border border-accent/35 bg-accent/10 md:h-20 md:w-20">
-            <img src={avatarUrl} alt={displayName} className="h-full w-full object-cover" />
-          </div>
-          <div className="min-w-0">
-            <div className="mb-1 flex items-center gap-2 font-retro text-[10px] uppercase tracking-[0.2em] text-accent">
-              <img src="/assets/ticker.png" alt="MemeWarzone" className="h-4 w-4 object-contain" />
-              <span>Creator tools</span>
-            </div>
-            <h1 className="truncate font-retro text-xl text-foreground md:text-2xl">
-              {displayName || short || "Connected wallet"}
-            </h1>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="max-w-full truncate border border-border/45 bg-white/[0.025] px-3 py-1 font-mono">
-                {walletAddress}
-              </span>
-              <button
-                type="button"
-                onClick={handleCopyAddress}
-                className="inline-flex items-center gap-1 border border-border/45 bg-white/[0.025] px-3 py-1 transition hover:border-accent/50 hover:text-foreground"
-              >
-                <Copy className="h-3 w-3" />
-                Copy
-              </button>
-              <Link
-                to={publicProfileBase}
-                className="inline-flex items-center gap-1 border border-border/45 bg-white/[0.025] px-3 py-1 transition hover:border-accent/50 hover:text-foreground"
-              >
-                Public profile
-                <ExternalLink className="h-3 w-3" />
-              </Link>
-            </div>
+    <section className="flex flex-col gap-3 font-mw-body text-mw-text lg:flex-row lg:items-center lg:gap-[18px] lg:rounded-[14px] lg:border lg:border-mw-border lg:bg-mw-surface lg:p-5">
+      <div className="flex min-w-0 flex-1 items-center gap-3 lg:gap-[18px]">
+        <img src={avatarUrl} alt="" className="h-[52px] w-[52px] shrink-0 rounded-full border border-mw-border object-cover lg:h-[72px] lg:w-[72px]" />
+        <div className="min-w-0 flex-1">
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Your profile</div>
+          <h1 className="m-0 truncate font-mw-cond text-xl font-bold leading-tight lg:text-[30px]">{displayName || short || "Connected wallet"}</h1>
+          <div className="mt-0.5 hidden items-center gap-2 font-mw-mono text-[13px] text-mw-muted sm:flex">
+            <span className="truncate">{short} · only you see this</span>
+            <button
+              type="button"
+              onClick={handleCopyAddress}
+              aria-label="Copy wallet address"
+              className="mw-focus inline-flex h-6 items-center gap-1 rounded-full border border-mw-edge bg-mw-raised px-2 font-mw-body text-xs font-semibold text-mw-text"
+            >
+              <Copy className="h-3 w-3" aria-hidden="true" />
+              Copy
+            </button>
           </div>
         </div>
-
-        <div className="grid grid-cols-2 gap-2 text-center sm:min-w-[460px] sm:grid-cols-4">
-          <Link to={`${commandBase}/followers`} className={statLinkClass}>
-            <div className="font-retro text-lg text-foreground">{loadingFollows ? "..." : followersCount}</div>
-            <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Followers</div>
-          </Link>
-          <Link to={`${commandBase}/following`} className={statLinkClass}>
-            <div className="font-retro text-lg text-foreground">{loadingFollows ? "..." : followingCount}</div>
-            <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Following</div>
-          </Link>
-          <Link to={`${commandBase}/coins`} className={statLinkClass}>
-            <div className="font-retro text-lg text-foreground">{createdCount}</div>
-            <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Coins</div>
-          </Link>
-          <Link to={`${commandBase}/coins`} className={statLinkClass}>
-            <div className="font-retro text-lg text-foreground">{loadingDraftCount ? "..." : draftCount}</div>
-            <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Drafts</div>
-          </Link>
-        </div>
+        <Link
+          to={publicProfileBase}
+          className="mw-focus inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text lg:hidden"
+        >
+          Profile
+        </Link>
       </div>
+      <div className="-mx-3 flex gap-4 overflow-x-auto whitespace-nowrap px-3 text-sm [scrollbar-width:none] lg:mx-0 lg:gap-[22px] lg:px-0 lg:text-[15px] [&::-webkit-scrollbar]:hidden">
+        {stats.map((stat) => (
+          <Link key={stat.label} to={stat.to} className="mw-focus rounded-md text-mw-text hover:text-mw-text">
+            <b>{stat.value}</b> <span className="text-mw-muted">{stat.label}</span>
+          </Link>
+        ))}
+      </div>
+      <Link
+        to={publicProfileBase}
+        className="mw-focus hidden min-h-11 shrink-0 items-center gap-1.5 rounded-[10px] border border-mw-edge bg-mw-raised px-[18px] text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text lg:inline-flex"
+      >
+        Public profile
+        <ExternalLink className="h-4 w-4" aria-hidden="true" />
+      </Link>
     </section>
   );
 }

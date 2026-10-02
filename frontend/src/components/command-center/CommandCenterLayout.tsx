@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 
-import { ArenaDailyBriefing } from "@/components/command-center/ArenaDailyBriefing";
 import { CommandCenterDataProvider } from "@/components/command-center/CommandCenterContext";
 import { CommandCenterHero } from "@/components/command-center/CommandCenterHero";
 import { CommandCenterSidebar } from "@/components/command-center/CommandCenterSidebar";
@@ -15,13 +14,10 @@ type CommandCenterLayoutProps = {
 export function CommandCenterLayout({ walletAddress, basePath, children }: CommandCenterLayoutProps) {
   return (
     <CommandCenterDataProvider key={walletAddress} walletAddress={walletAddress}>
-      <ContentContainer className="mwz-command-center-layout space-y-4 pb-8 pt-28 md:pt-32 lg:pt-36">
+      <ContentContainer className="flex flex-col gap-3.5 px-1 pb-16 md:px-2">
         <CommandCenterHero walletAddress={walletAddress} />
-        <ArenaDailyBriefing />
-        <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-          <CommandCenterSidebar basePath={basePath} />
-          <div className="min-w-0">{children}</div>
-        </div>
+        <CommandCenterSidebar basePath={basePath} />
+        <div className="min-w-0 pt-1.5 lg:pt-1.5">{children}</div>
       </ContentContainer>
     </CommandCenterDataProvider>
   );

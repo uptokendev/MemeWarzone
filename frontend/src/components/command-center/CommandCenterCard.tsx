@@ -18,17 +18,17 @@ export function CommandCenterCard({
   className = "",
 }: CommandCenterCardProps) {
   return (
-    <section className={`mwz-command-card p-4 md:p-5 ${className}`}>
+    <section className={`flex flex-col gap-3 rounded-[14px] border border-mw-border bg-mw-surface p-3.5 font-mw-body text-mw-text md:p-[18px] ${className}`}>
       {(eyebrow || title || description || action) && (
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             {eyebrow && (
-              <div className="mb-2 font-retro text-[10px] uppercase tracking-[0.18em] text-accent">
+              <div className="mb-0.5 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
                 {eyebrow}
               </div>
             )}
-            {title && <h2 className="font-retro text-lg text-foreground md:text-xl">{title}</h2>}
-            {description && <p className="mt-2 text-sm text-muted-foreground">{description}</p>}
+            {title && <h2 className="m-0 font-mw-cond text-xl font-bold tracking-[0.02em] text-mw-text">{title}</h2>}
+            {description && <p className="m-0 mt-1 text-sm text-mw-muted">{description}</p>}
           </div>
           {action && <div className="shrink-0">{action}</div>}
         </div>

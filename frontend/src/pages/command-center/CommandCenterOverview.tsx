@@ -1,4 +1,7 @@
 import { Link } from "react-router-dom";
+import { Trophy } from "lucide-react";
+
+import { ArenaDailyBriefing } from "@/components/command-center/ArenaDailyBriefing";
 
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
@@ -35,96 +38,85 @@ export default function CommandCenterOverview() {
       : 0;
   const symbol = nativeSymbol(chainId);
 
+  const row = "flex min-h-10 items-center gap-2.5 border-b border-[#1E2329] text-sm last:border-b-0";
+
   return (
-    <div>
-      <div className="mb-4">
+    <div className="flex flex-col gap-3.5">
+      <ArenaDailyBriefing />
+
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <div className="rounded-[14px] border border-mw-border bg-mw-surface p-3">
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Native {symbol}</div>
+          <div className="font-mw-mono text-[19px] font-bold">{loadingBalances ? "…" : nativeBalance || "-"}</div>
+          <div className="text-xs text-mw-muted">Connected wallet balance</div>
+        </div>
+        <div className="rounded-[14px] border border-mw-border bg-mw-surface p-3">
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Coins held</div>
+          <div className="font-mw-mono text-[19px] font-bold">{loadingBalances ? "…" : tokenBalances.length}</div>
+          <div className="text-xs text-mw-muted">Launchpad tokens in this wallet</div>
+        </div>
+      </div>
+
+      <CommandCenterCard title="Portfolio">
         <PortfolioMetricsGrid
           metrics={portfolioMetrics}
           loading={loadingPortfolioMetrics}
           variant="command-center"
         />
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <CommandCenterCard title="League Cabinet" description="Badges, trophies, and league status.">
-          <div className="rounded-2xl border border-border/50 bg-background/25 p-4">
-            {loadingLeagueCabinet ? (
-              <div className="font-retro text-sm text-muted-foreground">Loading league cabinet...</div>
-            ) : trophyCount > 0 ? (
-              <>
-                <div className="font-retro text-3xl text-foreground">{trophyCount}</div>
-                <p className="mt-2 text-sm text-muted-foreground">Cabinet items detected for this wallet.</p>
-              </>
-            ) : (
-              <>
-                <div className="font-retro text-lg text-foreground">No trophies yet</div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  League wins, badges, and status items will appear here once earned.
-                </p>
-              </>
-            )}
+        <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Top holdings</div>
+        {loadingBalances ? (
+          <div className="text-sm text-mw-muted">Loading token balances...</div>
+        ) : tokenBalances.length > 0 ? (
+          <div className="flex flex-col">
+            {tokenBalances.slice(0, 6).map((token) => (
+              <Link
+                key={`${token.tokenAddress}-${token.campaignAddress}`}
+                to={tokenDetailsPath(
+                  {
+                    tokenAddress: token.tokenAddress,
+                    campaignAddress: token.campaignAddress,
+                    chainId,
+                  },
+                  { chainId },
+                )}
+                className={`${row} text-mw-text hover:text-mw-text`}
+              >
+                <img
+                  src={(token as any).image || "/placeholder.svg"}
+                  alt=""
+                  className="h-8 w-8 shrink-0 rounded-lg border border-mw-border object-cover"
+                />
+                <b className="min-w-0 flex-1 truncate">{token.ticker ? `$${String(token.ticker).replace(/^\$/, "")}` : token.name}</b>
+                <span className="hidden truncate text-mw-muted sm:inline">{token.name}</span>
+                <span className="shrink-0 text-right font-mw-mono">
+                  {Number(token.balanceFormatted).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                </span>
+              </Link>
+            ))}
           </div>
-        </CommandCenterCard>
+        ) : (
+          <div className="text-sm text-mw-muted">No launchpad token balances detected yet.</div>
+        )}
+      </CommandCenterCard>
 
-        <CommandCenterCard title="Balances" description="Wallet balance and detected launchpad token balances.">
-          <div className="space-y-3 rounded-2xl border border-border/50 bg-background/25 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border/50 bg-card/35">
-                  <img src="/assets/ticker.png" alt={symbol} className="h-7 w-7 object-contain" />
-                </div>
-                <div>
-                  <div className="font-retro text-sm text-foreground">Native {symbol}</div>
-                  <div className="mt-1 text-xs text-muted-foreground">Connected wallet balance</div>
-                </div>
-              </div>
-              <div className="shrink-0 font-retro text-sm text-foreground">
-                {loadingBalances ? "Loading..." : nativeBalance || "-"}
-              </div>
-            </div>
-            <div className="border-t border-border/50 pt-3">
-              <div className="font-retro text-sm text-foreground">Token balances</div>
-              {loadingBalances ? (
-                <div className="mt-2 text-sm text-muted-foreground">Loading token balances...</div>
-              ) : tokenBalances.length > 0 ? (
-                <div className="mt-3 grid gap-2">
-                  {tokenBalances.slice(0, 6).map((token) => (
-                    <Link
-                      key={`${token.tokenAddress}-${token.campaignAddress}`}
-                      to={tokenDetailsPath(
-                        {
-                          tokenAddress: token.tokenAddress,
-                          campaignAddress: token.campaignAddress,
-                          chainId,
-                        },
-                        { chainId },
-                      )}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-border/40 bg-card/25 p-3 transition hover:border-accent/50 hover:bg-card/45"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <img
-                          src={(token as any).image || "/placeholder.svg"}
-                          alt={token.ticker || token.name}
-                          className="h-10 w-10 shrink-0 rounded-xl border border-border/50 object-cover"
-                        />
-                        <div className="min-w-0">
-                          <div className="truncate font-retro text-xs text-foreground">{token.name}</div>
-                          <div className="text-xs text-muted-foreground">{token.ticker}</div>
-                        </div>
-                      </div>
-                      <div className="shrink-0 text-right font-retro text-xs text-foreground">
-                        {Number(token.balanceFormatted).toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-2 text-sm text-muted-foreground">No launchpad token balances detected yet.</div>
-              )}
+      <CommandCenterCard title="League cabinet">
+        {loadingLeagueCabinet ? (
+          <div className="text-sm text-mw-muted">Loading league cabinet...</div>
+        ) : trophyCount > 0 ? (
+          <div className="flex items-center gap-3 rounded-[14px] border border-[#5A3416] bg-[#1A130D] p-3">
+            <Trophy className="h-5 w-5 text-[#F2C14E]" aria-hidden="true" />
+            <div>
+              <b className="font-mw-mono text-lg">{trophyCount}</b>
+              <div className="text-[13px] text-mw-muted">Cabinet items detected for this wallet.</div>
             </div>
           </div>
-        </CommandCenterCard>
-      </div>
+        ) : (
+          <div>
+            <div className="font-bold">No trophies yet</div>
+            <p className="m-0 mt-1 text-sm text-mw-muted">League wins, badges, and status items will appear here once earned.</p>
+          </div>
+        )}
+      </CommandCenterCard>
     </div>
   );
 }

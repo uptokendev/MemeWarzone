@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { NavLink } from "react-router-dom";
-import { Coins, Gift, Home, LifeBuoy, Menu, Settings, Shield, Swords, Trophy, Users, X } from "lucide-react";
+import { Coins, Gift, Home, LifeBuoy, Settings, Shield, Swords, Trophy, Users } from "lucide-react";
 
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { postGradFlags } from "@/features/postgrad/config";
@@ -15,13 +15,13 @@ const menuItems: Array<{
   requiresArena?: boolean;
 }> = [
   { label: "Overview", path: "", icon: Home, end: true },
-  { label: "Coins", path: "coins", icon: Coins },
+  { label: "My coins", path: "coins", icon: Coins },
   { label: "Battles", path: "battles", icon: Swords, requiresArena: true },
   { label: "Recruiter", path: "recruiter", icon: Shield },
   { label: "Squad", path: "squad", icon: Users, requiresSquad: true },
-  { label: "Warzone Airdrops", path: "airdrops", icon: Gift },
-  { label: "Rewards / Claims", path: "claims", icon: Trophy },
-  { label: "Support & Safety", path: "support", icon: LifeBuoy },
+  { label: "Airdrops", path: "airdrops", icon: Gift },
+  { label: "Rewards and claims", path: "claims", icon: Trophy },
+  { label: "Support and safety", path: "support", icon: LifeBuoy },
   { label: "Settings", path: "settings", icon: Settings },
 ];
 
@@ -39,7 +39,7 @@ type CommandCenterSidebarProps = {
 };
 
 export function CommandCenterSidebar({ basePath }: CommandCenterSidebarProps) {
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const navRef = useRef<HTMLElement | null>(null);
   const { attribution, walletAddress, chainId } = useCommandCenterData();
   const battleFeed = useArenaBattleFeed(walletAddress, chainId);
   const hasArenaCoins = battleFeed.creatorStatuses.some((item) => item.eligibility || Boolean(item.battleId));
@@ -53,49 +53,34 @@ export function CommandCenterSidebar({ basePath }: CommandCenterSidebarProps) {
     [attribution?.recruiterLinkState, attribution?.squadState, battleFeed.loading, hasArenaCoins],
   );
 
+  useEffect(() => {
+    navRef.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  });
+
+  // UI redesign: the section menu is a row of tabs under the hero (artboard), same links and visibility.
   return (
-    <aside className="mwz-command-sidebar p-3 lg:sticky lg:top-4 lg:h-fit">
-      <button
-        type="button"
-        onClick={() => setMobileOpen((open) => !open)}
-        className="mwz-command-menu-toggle flex w-full items-center justify-between gap-3 px-3 py-3 font-retro text-xs uppercase tracking-[0.16em] text-foreground transition lg:hidden"
-        aria-expanded={mobileOpen}
-      >
-        <span className="inline-flex items-center gap-2">
-          <Menu className="h-4 w-4 text-accent" />
-          Command Menu
-        </span>
-        {mobileOpen ? <X className="h-4 w-4" /> : null}
-      </button>
-
-      <div className="mb-3 hidden px-3 pt-2 font-retro text-[10px] uppercase tracking-[0.2em] text-muted-foreground lg:block">
-        Command Menu
-      </div>
-
-      <nav className={`${mobileOpen ? "flex" : "hidden"} mt-3 flex-col gap-1 lg:mt-0 lg:flex`}>
-        {visibleMenuItems.map((item) => {
-          const Icon = item.icon;
-          const to = item.path ? `${basePath}/${item.path}` : basePath;
-          return (
-            <NavLink
-              key={item.label}
-              to={to}
-              end={item.end}
-              onClick={() => setMobileOpen(false)}
-              className={({ isActive }) =>
-                `mwz-command-nav-item flex min-w-0 items-center gap-2 border px-3 py-3 font-retro text-xs transition ${
-                  isActive
-                    ? "mwz-command-nav-item-active border-accent/70 bg-accent/10 text-accent"
-                    : "border-transparent text-muted-foreground hover:border-border/60 hover:bg-white/[0.025] hover:text-foreground"
-                }`
-              }
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span>{item.label}</span>
-            </NavLink>
-          );
-        })}
-      </nav>
-    </aside>
+    <nav
+      ref={navRef}
+      aria-label="Profile sections"
+      className="flex gap-[22px] overflow-x-auto border-b border-[#242A31] font-mw-body [scrollbar-width:none] [-webkit-overflow-scrolling:touch] [&::-webkit-scrollbar]:hidden"
+    >
+      {visibleMenuItems.map((item) => {
+        const to = item.path ? `${basePath}/${item.path}` : basePath;
+        return (
+          <NavLink
+            key={item.label}
+            to={to}
+            end={item.end}
+            className={({ isActive }) =>
+              `mw-focus inline-flex h-[46px] shrink-0 items-center whitespace-nowrap border-b-[3px] px-1 text-[15px] font-semibold transition-colors lg:h-[52px] ${
+                isActive ? "border-mw-accent text-mw-text" : "border-transparent text-mw-muted hover:text-mw-text"
+              }`
+            }
+          >
+            {item.label}
+          </NavLink>
+        );
+      })}
+    </nav>
   );
 }
