@@ -7,7 +7,7 @@ import { advanceDueFinalSalvo, finalizeDueVoteTournamentBattle, voteTournamentRu
 import { advanceTournamentFromBattle } from "../api/arenaTournaments.js";
 import { IMPORT_FEED_INTERVAL_MS, refreshImportMarketStats } from "../api/lib/arenaImportMarketFeed.js";
 import { closeEndedChampionships, rolloverEndedMwlSeasons } from "../api/lib/arenaMwlRollover.js";
-import { crankLeagueShares, leagueCrankMode } from "../api/lib/arenaEvmLeagueCrank.js";
+import { crankLeagueShares, leagueCrankMode, sweepMwlEpochs } from "../api/lib/arenaEvmLeagueCrank.js";
 import { harvestLpFees, lpHarvestMode } from "../api/lib/evmLpHarvestCrank.js";
 import { runMwlPayouts } from "../api/lib/arenaMwlPayouts.js";
 
@@ -180,9 +180,13 @@ async function crankLeague() {
   if (leagueCrank === "off" || leagueCrankRunning) return;
   leagueCrankRunning = true;
   try {
-    const outcomes = await crankLeagueShares({ db: pool, mode: leagueCrank, terminal: leagueCrankTerminal });
+    const outcomes = [
+      ...(await crankLeagueShares({ db: pool, mode: leagueCrank, terminal: leagueCrankTerminal })),
+      // Then move ended MWL months / quarters from PostGradLeagueTreasuryV2 into the MWL vaults.
+      ...(await sweepMwlEpochs({ db: pool, mode: leagueCrank })),
+    ];
     for (const o of outcomes) {
-      const line = `[arena-battle-realtime-worker] war pool crank ${o.step || ""} ${o.status} chain=${o.chainId} ${o.kind || ""} ${o.subject} pool=${o.poolId}${o.amountWei ? ` wei=${o.amountWei}` : ""}${o.month ? ` month=${o.month} quarter=${o.quarter}` : ""}${o.winner ? ` winner=${o.winner}` : ""}${o.txHash ? ` tx=${o.txHash}` : ""}${o.reason ? ` ${o.reason}` : ""}`;
+      const line = `[arena-battle-realtime-worker] war pool crank ${o.step || ""} ${o.status} chain=${o.chainId} ${o.kind || ""} ${o.subject} pool=${o.poolId}${o.amountWei ? ` wei=${o.amountWei}` : ""}${o.month ? ` month=${o.month} quarter=${o.quarter}` : ""}${o.key ? ` epoch=${o.key}` : ""}${o.winner ? ` winner=${o.winner}` : ""}${o.txHash ? ` tx=${o.txHash}` : ""}${o.reason ? ` ${o.reason}` : ""}`;
       if (o.status === "sent" || o.status === "dry-run") console.log(line); else console.warn(line);
     }
   } catch (error) { console.warn("[arena-battle-realtime-worker] league crank pass failed", error?.message || error); }
