@@ -7,6 +7,7 @@ import {
   HomeComposer,
   LaunchCard,
   LeagueCard,
+  AirdropCard,
   LiveBattlesCard,
   RecruiterCard,
   StoryRow,
@@ -190,6 +191,7 @@ export default function Feed() {
           <LiveBattlesCard battles={liveBattles} />
           <TrendingCard chainIds={TREND_CHAINS} />
           <LeagueCard chainId={coinChainId} />
+          <AirdropCard chainId={coinChainId} />
           <RecruiterCard />
           <FeedWhoToFollow authors={suggestions} />
         </aside>

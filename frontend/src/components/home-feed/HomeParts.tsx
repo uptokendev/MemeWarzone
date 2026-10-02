@@ -14,6 +14,7 @@ import { battleClockLabel } from "@/lib/arena/battlePresentation";
 import { presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { loadLeagueSummary } from "@/lib/leagueApi";
+import { fetchAirdropPreview } from "@/lib/rewardProgramsApi";
 import {
   agoLabel,
   chainNameFor,
@@ -308,15 +309,50 @@ export function LeagueCard({ chainId, className = "" }: { chainId: number; class
   );
 }
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** First weekly epoch boundary after now, stepping from the last epoch end the API reported. */
+function nextWeeklyDrop(epochEnd?: string | null) {
+  const end = epochEnd ? Date.parse(epochEnd) : NaN;
+  if (!Number.isFinite(end)) return null;
+  const now = Date.now();
+  const steps = end > now ? 0 : Math.floor((now - end) / WEEK_MS) + 1;
+  return new Date(end + steps * WEEK_MS).toISOString();
+}
+
+/** Weekly airdrop card (CO-11): this week's pool for the chain and the next drop. Same preview the Airdrops page reads. */
+export function AirdropCard({ chainId, className = "" }: { chainId: number; className?: string }) {
+  const preview = useQuery({
+    queryKey: ["home-airdrop", chainId],
+    queryFn: () => fetchAirdropPreview(chainId),
+    staleTime: 60_000,
+    retry: 1,
+  }).data;
+  let pool = "—";
+  try {
+    if (preview?.estimatedPoolRaw != null && String(preview.estimatedPoolRaw) === "0") pool = `0 ${preview.tokenSymbol || ""}`.trim();
+    else if (preview?.estimatedPoolRaw != null) pool = formatNative(Number(ethers.formatUnits(BigInt(String(preview.estimatedPoolRaw)), chainId === 101 ? 9 : 18)), chainId);
+  } catch {}
+  const next = useCountdownTo(nextWeeklyDrop(preview?.epoch?.end));
+  const players = preview ? Number(preview.traderCount || 0) + Number(preview.creatorCount || 0) : 0;
+  return (
+    <Link to="/airdrops" className={`${card} mw-focus flex flex-col gap-1.5 p-4 text-mw-text hover:border-[#3A424C] hover:text-mw-text ${className}`}>
+      <span className={lbl}>Weekly Airdrop</span>
+      <span className="font-mw-mono text-[28px] font-bold">{pool}</span>
+      <span className="text-sm text-mw-muted">{[next ? `next drop in ${next}` : null, players ? `${players} eligible` : null].filter(Boolean).join(" · ") || "Open airdrops"}</span>
+    </Link>
+  );
+}
+
 /** Recruiter image card (founder's image, 680 × 400; placeholder until the file is added). */
 export function RecruiterCard({ className = "" }: { className?: string }) {
   const [failed, setFailed] = useState(false);
   return (
     <section className={`${card} flex flex-col overflow-hidden border-[#5A3416] ${className}`}>
       {failed ? (
-        <div className="flex h-[200px] items-center justify-center bg-mw-input text-sm text-mw-muted">Recruiter image · 680 × 400</div>
+        <div className="flex aspect-[17/10] items-center justify-center bg-mw-input text-sm text-mw-muted">Recruiter image · 680 × 400</div>
       ) : (
-        <img src="/assets/recruiter-signup.png" alt="Become a MemeWarzone recruiter" onError={() => setFailed(true)} className="h-[200px] w-full object-cover" />
+        <img src="/assets/recruiter-signup.png" alt="Become a MemeWarzone recruiter" onError={() => setFailed(true)} className="aspect-[17/10] w-full object-cover" />
       )}
       <div className="p-3">
         <Link to="/recruiter/signup" className="mw-focus inline-flex min-h-11 w-full items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent text-[15px] font-bold text-[#140A02] hover:bg-[#FF8A3D] hover:text-[#140A02]">Become a recruiter</Link>
