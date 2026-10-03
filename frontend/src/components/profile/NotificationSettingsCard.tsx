@@ -127,7 +127,7 @@ export function NotificationSettingsCard({
           </span>
         </div>
       ))}
-      {!emailVerified ? <p className="m-0 text-xs text-mw-muted">Verify an email address below to get notifications by email.</p> : null}
+      {!emailVerified ? <p className="m-0 text-xs text-mw-muted">Verify an email address above to get notifications by email.</p> : null}
       {dirty ? (
         <div className="flex justify-end">
           <button

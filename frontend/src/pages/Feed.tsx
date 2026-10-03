@@ -150,7 +150,7 @@ export default function Feed() {
           {/* CO-21 (founder, 2026-10-03): the story row became the ad row (slot home-top-row). */}
           <AdRow chainId={coinChainId} />
           <div className="hidden lg:block"><HomeComposer onPosted={() => void load()} /></div>
-          <nav role="tablist" aria-label="Feed filter" className="flex gap-5 overflow-x-auto border-b border-[#242A31] px-3 [scrollbar-width:none] lg:gap-6 lg:px-1 [&::-webkit-scrollbar]:hidden">
+          <nav role="tablist" aria-label="Feed filter" className="flex gap-5 overflow-x-auto border-b border-[#242A31] px-0 [scrollbar-width:none] lg:gap-6 lg:px-1 [&::-webkit-scrollbar]:hidden">
             {TABS.map((t) => (
               <button
                 key={t.key}
@@ -165,7 +165,7 @@ export default function Feed() {
             ))}
           </nav>
 
-          <div className="flex flex-col gap-2.5 px-2 lg:gap-4 lg:px-0">
+          <div className="flex flex-col gap-2.5 lg:gap-4">
             {tab === "for-you" ? (
               <div className="flex items-center gap-2.5 rounded-[14px] border border-mw-border bg-mw-surface px-3.5 py-2.5 text-[13px] text-[#C9CED4]">
                 <span className="text-[#FF9A4D]" aria-hidden="true">●</span>
@@ -175,7 +175,7 @@ export default function Feed() {
             {tab === "for-you" ? <div className="lg:hidden"><HomeComposer onPosted={() => void load()} /></div> : null}
 
             {tab === "following" ? (
-              <div role="radiogroup" aria-label="Following filter" className="flex gap-2 overflow-x-auto px-3 [scrollbar-width:none] lg:px-0 [&::-webkit-scrollbar]:hidden">
+              <div role="radiogroup" aria-label="Following filter" className="flex gap-2 overflow-x-auto px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {FOLLOW_FILTERS.map((f) => (
                   <button
                     key={f.key}

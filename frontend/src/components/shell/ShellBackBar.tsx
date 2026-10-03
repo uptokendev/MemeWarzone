@@ -10,7 +10,7 @@ export function ShellBackBar() {
   const back = resolveBackBar(location.pathname, { ownWallet });
   if (!back) return null;
   return (
-    <div className="fixed left-0 right-0 top-[var(--mw-topbar-h)] z-30 bg-mw-ground px-2 lg:left-[var(--mwz-left-sidebar-width)] lg:px-4">
+    <div className="fixed left-0 right-0 top-[var(--mw-topbar-h)] z-30 bg-mw-ground px-3 lg:left-[var(--mwz-left-sidebar-width)] lg:px-4">
       <BackBar title={back.title} fallback={back.fallback} />
     </div>
   );

@@ -68,7 +68,7 @@ const Arena = () => {
     <WarzoneContent className="flex flex-col gap-5 font-mw-body text-mw-text">
       <header
         data-warzone-page-header="true"
-        className="bg-[#17120e] font-mw-body -mx-3 flex flex-col gap-3 border-b border-[#1E2329] px-4 py-5 md:mx-0 md:rounded-[18px] md:border md:border-[#2A3038] lg:flex-row lg:items-end lg:gap-5 lg:p-7"
+        className="bg-[#17120e] font-mw-body -mx-4 flex flex-col gap-3 border-b border-[#1E2329] px-4 py-5 md:mx-0 md:rounded-[18px] md:border md:border-[#2A3038] lg:flex-row lg:items-end lg:gap-5 lg:p-7"
        style={{ backgroundImage: "url(/assets/warzone-banner.jpg)", backgroundSize: "cover", backgroundPosition: "center" }}>
         <div className="min-w-0 flex-1">
           <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Warzone</div>
@@ -81,7 +81,7 @@ const Arena = () => {
       </header>
 
       {/* Phones: quick links to the Warzone sections (artboard WarzoneMobile). */}
-      <nav aria-label="Warzone sections" className="-mx-3 flex gap-2 overflow-x-auto px-3 [scrollbar-width:none] lg:hidden [&::-webkit-scrollbar]:hidden">
+      <nav aria-label="Warzone sections" className="-mx-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] lg:hidden [&::-webkit-scrollbar]:hidden">
         {[
           ["Battles", "/warzone/battles"],
           ["Leagues", "/league"],

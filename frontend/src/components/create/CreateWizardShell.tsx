@@ -38,7 +38,7 @@ export function CreateWizardShell({
     ? "mw-focus my-auto hidden h-11 w-10 shrink-0 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-text hover:bg-[#222830] sm:flex"
     : "mwz-button my-auto hidden h-10 w-9 shrink-0 items-center justify-center sm:flex";
   return (
-    <div className="relative mx-auto flex w-full max-w-[880px] items-stretch gap-1.5 px-1 sm:gap-2 sm:px-2">
+    <div className="relative mx-auto flex w-full max-w-[880px] items-stretch gap-1.5 px-0 sm:gap-2 sm:px-2">
       <button
         type="button"
         aria-label="Previous step"

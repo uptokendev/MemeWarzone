@@ -6,9 +6,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
-import { EditProfileDialog } from "@/components/profile/EditProfileDialog";
-import { UsernameSettingsRow } from "@/components/profile/UsernameSettingsRow";
-import { SettingsBannerRow } from "@/components/profile/SettingsBannerRow";
 import { NotificationSettingsCard } from "@/components/profile/NotificationSettingsCard";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
@@ -134,53 +131,7 @@ export default function CommandCenterSettings({ section = "settings" }: { sectio
       <h2 className="sr-only">{showNotifications ? "Notifications" : "Settings"}</h2>
       {showSettings ? (
       <>
-      <CommandCenterCard title="Profile">
-        <div className="flex flex-wrap items-center gap-3">
-          <img src={avatarUrl} alt={displayName} className="h-16 w-16 rounded-full border border-mw-border object-cover" />
-          <Button onClick={handlePickAvatar} className={smallButton} disabled={savingProfile || savingAvatar}>
-            <Image className="h-4 w-4" aria-hidden="true" />
-            {savingAvatar ? (awaitingWallet ? "Confirm wallet..." : "Uploading...") : "Change picture"}
-          </Button>
-          {/* CO-19 (founder, 2026-10-03): Edit profile is a Command Center tab now. */}
-          <Link to={`/profile/${encodeURIComponent(walletAddress)}/command/edit-profile`} className={primaryButton}>
-            <Settings className="h-4 w-4" aria-hidden="true" />
-            Edit profile
-          </Link>
-        </div>
-
-        <input
-          ref={avatarInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/jpg,image/webp"
-          className="hidden"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) void handleAvatarSelected(file);
-            event.currentTarget.value = "";
-          }}
-        />
-
-        <EditProfileDialog
-          open={editOpen}
-          onOpenChange={setEditOpen}
-          initialUsername={profile?.displayName ?? ""}
-          initialBio={profile?.bio ?? ""}
-          saving={savingProfile}
-          onSave={handleSaveProfile}
-        />
-
-        <div className="flex flex-col gap-1.5">
-          <span className={lbl}>Display name</span>
-          <div className={field}>{displayName}</div>
-        </div>
-        <UsernameSettingsRow wallet={walletAddress} />
-        <SettingsBannerRow walletAddress={walletAddress} chainId={chainId} />
-        <div className="flex flex-col gap-1.5">
-          <span className={lbl}>Bio</span>
-          <div className={`${field} min-h-[72px] py-3 text-mw-muted`}>{loadingProfile ? "Loading profile..." : profile?.bio ? profile.bio : "No public bio set yet."}</div>
-        </div>
-      </CommandCenterCard>
-
+      {/* Founder 2026-10-03: profile fields (picture, name, username, banner, bio) live only on the Edit profile tab. */}
       <CommandCenterCard title="Wallets">
         <div className={kvRow}>
           <span className="flex items-center gap-2 text-mw-muted"><Wallet className="h-4 w-4 text-mw-accent-soft" aria-hidden="true" />Owner wallet</span>
@@ -210,7 +161,7 @@ export default function CommandCenterSettings({ section = "settings" }: { sectio
       </>
       ) : null}
 
-      {showNotifications && postGradFlags.arena ? (
+      {showSettings && postGradFlags.arena ? (
         <CommandCenterCard title="Arena challenge email">
           <p className="m-0 flex items-center gap-2 text-sm text-mw-muted">
             <Mail className="h-4 w-4 shrink-0 text-mw-accent-soft" aria-hidden="true" />
@@ -239,8 +190,8 @@ export default function CommandCenterSettings({ section = "settings" }: { sectio
         </CommandCenterCard>
       ) : null}
 
-      {/* CO-5 (founder, 2026-10-03): per-category bell and email toggles. */}
-      {showNotifications ? (
+      {/* CO-5 toggles; Settings holds the notification settings, the Notifications tab only the list (founder, 2026-10-03). */}
+      {showSettings ? (
       <NotificationSettingsCard
         walletAddress={walletAddress}
         chainId={chainId || walletChainId}

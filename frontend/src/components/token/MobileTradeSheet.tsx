@@ -75,7 +75,7 @@ export function MobileTradeDock({
   const split = cta.kind !== "connect" && Boolean(onOpenSell);
   return (
     <div
-      className="fixed inset-x-0 bottom-[var(--mwz-footer-offset,0px)] z-40 border-t border-mw-border bg-mw-ground px-3 py-2.5 font-mw-body xl:hidden"
+      className="fixed inset-x-0 bottom-[var(--mwz-footer-offset,0px)] z-40 border-t border-mw-border bg-mw-ground px-4 py-2.5 font-mw-body xl:hidden"
       data-mobile-trade-dock="true"
     >
       {split ? (

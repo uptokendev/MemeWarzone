@@ -168,3 +168,19 @@ ol.fixed.top-0 {
   .mw-marquee-track { animation: none; }
   .mw-marquee [data-marquee-dup] { display: none; }
 }
+
+/* Phones: one 16px side margin on every page (founder, 2026-10-03: content sat 4px to 17px from the
+   edge depending on the page). Page roots are the 1480px width container and the Warzone frame. */
+@media (max-width: 767px) {
+  main .max-w-\[1480px\],
+  main [data-warzone-content="true"] {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  /* A container nested in another page container must not add a second margin. */
+  main .max-w-\[1480px\] .max-w-\[1480px\],
+  main [data-warzone-content="true"] .max-w-\[1480px\] {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+}

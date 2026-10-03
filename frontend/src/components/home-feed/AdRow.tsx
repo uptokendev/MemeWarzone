@@ -123,7 +123,7 @@ export function AdRow({ chainId }: { chainId: number }) {
       data-ad-slot={HOME_TOP_ROW_SLOT}
       className={`${slides ? "mw-marquee" : ""} overflow-hidden border-b border-[#1E2329] py-3.5 lg:rounded-[14px] lg:border lg:border-mw-border lg:bg-mw-surface`}
     >
-      <div ref={wrapRef} className="overflow-hidden px-3.5">
+      <div ref={wrapRef} className="overflow-hidden lg:px-3.5">
         <div ref={trackRef} className={`${slides ? "mw-marquee-track w-max" : ""} flex gap-2`}>
           {render(false, "a")}
           {slides ? render(true, "b") : null}
