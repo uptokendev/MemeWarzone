@@ -1,4 +1,5 @@
 import express from "express";
+import recruiterCreatorCoins from "../../api/recruiterCreatorCoins.js";
 import serverless from "serverless-http";
 
 import { createRailwayProxyMiddleware } from "../../server/railwayProxy.js";
@@ -325,6 +326,7 @@ app.all("/recruiters", wrap(recruiters));
 app.all("/recruiters/wallet/:wallet/summary", wrap(recruiterWalletSummary));
 app.all("/recruiters/:code/summary", wrap(recruiterSummary));
 app.all("/recruiters/:code/replacements", wrap(recruiterReplacements));
+app.all("/recruiters/:code/creator-coins", wrap(recruiterCreatorCoins));
 app.all("/recruiters/:code/referral/capture", wrap(recruiterReferralCapture));
 app.all("/recruiters/me/payouts", wrap(recruiterMePayouts));
 app.all("/recruiters/me/wallets/link", wrap(recruiterMeWalletLink));

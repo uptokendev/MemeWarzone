@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { RecruitedCreatorsCard } from "@/components/recruiter/RecruitedCreatorsCard";
 import { Link, useParams } from "react-router-dom";
 import { formatEther } from "ethers";
 import { ArrowRight, Copy } from "lucide-react";
@@ -223,6 +224,11 @@ export default function RecruiterProfile() {
             <Link to="/squads" className="mt-1.5 text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">Squad pool leaderboard</Link>
           </section>
         ) : null}
+      </div>
+
+      {/* CO-9 (founder, 2026-10-03): recruited creators, their top coins and the weekly league rank. */}
+      <div className="mt-4">
+        <RecruitedCreatorsCard code={summary.code} linkedCreatorsCount={summary.linkedCreatorsCount} />
       </div>
 
       {summary.status === "closed" && replacements.length > 0 ? (

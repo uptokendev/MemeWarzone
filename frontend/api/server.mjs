@@ -10,6 +10,7 @@ process.on("uncaughtException", (error) => {
   console.error("[api] uncaughtException (kept alive)", error?.stack || error);
 });
 
+import recruiterCreatorCoins from "./recruiterCreatorCoins.js";
 import { pool } from "../server/db.js";
 import { createRailwayProxyMiddleware } from "../server/railwayProxy.js";
 
@@ -574,6 +575,7 @@ router.all("/recruiters/signup/code-availability", wrap(recruiterSignupCodeAvail
 router.all("/recruiters/wallet/:wallet/summary", wrap(recruiterWalletSummary));
 router.all("/recruiters/:code/summary", wrap(recruiterSummary));
 router.all("/recruiters/:code/replacements", wrap(recruiterReplacements));
+router.all("/recruiters/:code/creator-coins", wrap(recruiterCreatorCoins));
 router.all("/recruiters/:code/referral/capture", wrap(recruiterReferralCapture));
 router.all("/recruiters/me/payouts", wrap(recruiterMePayouts));
 router.all("/recruiters/me/wallets/link", wrap(recruiterMeWalletLink));
