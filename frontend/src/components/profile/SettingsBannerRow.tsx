@@ -18,7 +18,8 @@ export function SettingsBannerRow({ walletAddress, chainId }: { walletAddress: s
     }
   }
 
-  if (editor.loading) return null;
+  // The banner needs the CO-19 API; hide the row on an older server.
+  if (editor.loading || !editor.linksSupported) return null;
   return (
     <div className="flex flex-col gap-2" data-settings-banner="true">
       <ProfileBannerEditor

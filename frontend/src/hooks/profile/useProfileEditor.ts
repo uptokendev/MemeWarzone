@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useWallet } from "@/contexts/WalletContext";
-import { fetchUserProfile, normalizeProfileLinks, saveUserProfileV2, type UserProfile } from "@/lib/profileApi";
+import { buildProfileMessage, fetchUserProfile, normalizeProfileLinks, requestNonce, saveUserProfile, saveUserProfileV2, type UserProfile } from "@/lib/profileApi";
 import { uploadProfileImage } from "@/lib/profileUpload";
 import { signSolanaMessage } from "@/lib/solanaWallet";
 
@@ -47,12 +47,15 @@ export function useProfileEditor(walletAddress: string | null | undefined, chain
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState<null | "avatar" | "banner">(null);
+  // An API from before CO-19 (or a database without the new columns) cannot store banner and links.
+  const [linksSupported, setLinksSupported] = useState(true);
 
   const reload = useCallback(async () => {
     if (!walletAddress || !chainId) return;
     setLoading(true);
     try {
       const p = await fetchUserProfile(Number(chainId), walletAddress);
+      setLinksSupported(p ? p.linksSupported !== false : true);
       const d = toDraft(p);
       setLoaded(d);
       setDraft(d);
@@ -98,6 +101,17 @@ export function useProfileEditor(walletAddress: string | null | undefined, chain
       if (!walletAddress || !chainId) throw new Error("Connect your wallet first.");
       setSaving(true);
       try {
+        if (!linksSupported) {
+          // Old API: the version 1 save (name, picture, bio), the same message the old dialog signs.
+          const address = isSolanaChain(chainId) ? walletAddress : walletAddress.toLowerCase();
+          const nonce = await requestNonce(Number(chainId), address);
+          const avatarUrl = next.avatarUrl.trim() || null;
+          const displayName = next.displayName.trim() || null;
+          const signature = await sign(buildProfileMessage({ chainId: Number(chainId), address, nonce, displayName, avatarUrl }));
+          await saveUserProfile({ chainId: Number(chainId), address, displayName, bio: next.bio.trim() || null, avatarUrl, nonce, signature });
+          await reload();
+          return;
+        }
         await saveUserProfileV2({
           chainId: Number(chainId),
           address: walletAddress,
@@ -118,9 +132,9 @@ export function useProfileEditor(walletAddress: string | null | undefined, chain
         setSaving(false);
       }
     },
-    [draft, walletAddress, chainId, sign, reload],
+    [draft, walletAddress, chainId, sign, reload, linksSupported],
   );
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(loaded);
-  return { draft, setDraft, loaded, loading, saving, uploading, dirty, upload, save, reload };
+  return { draft, setDraft, loaded, loading, saving, uploading, dirty, upload, save, reload, linksSupported };
 }

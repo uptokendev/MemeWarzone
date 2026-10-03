@@ -49,7 +49,13 @@ export default function CommandCenterEditProfile() {
       <h2 className="sr-only">Edit profile</h2>
       <CommandCenterCard title="Edit profile">
         {editor.loading ? <p className="m-0 text-sm text-mw-muted">Loading profile...</p> : null}
+        {!editor.loading && !editor.linksSupported ? (
+          <p className="m-0 rounded-[10px] border border-[#5A3416] bg-mw-accent-fill px-3 py-2.5 text-sm text-mw-accent-soft">
+            This server does not store banner, website, X and Telegram yet. Name, picture and bio save now; the rest after the API update.
+          </p>
+        ) : null}
 
+        {editor.linksSupported ? (
         <ProfileBannerEditor
           bannerUrl={draft.bannerUrl}
           positionY={draft.bannerPositionY}
@@ -58,6 +64,7 @@ export default function CommandCenterEditProfile() {
           onPosition={(y) => set({ bannerPositionY: y })}
           onRemove={() => set({ bannerUrl: "", bannerPositionY: 50 })}
         />
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="h-20 w-20 shrink-0 overflow-hidden rounded-full border border-mw-border bg-mw-input">
@@ -105,6 +112,7 @@ export default function CommandCenterEditProfile() {
           <span className="text-xs text-mw-muted">@username in your bio links to that profile.</span>
         </label>
 
+        {editor.linksSupported ? (
         <div className="grid gap-3 md:grid-cols-3">
           <label className="flex flex-col gap-1.5">
             <span className={cp.label}>Website</span>
@@ -119,6 +127,7 @@ export default function CommandCenterEditProfile() {
             <input className={input} value={draft.telegramUrl} onChange={(e) => set({ telegramUrl: e.target.value })} placeholder="@handle or t.me link" />
           </label>
         </div>
+        ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-mw-border pt-3">
           <Link to={`/profile/${encodeURIComponent(walletAddress)}`} className={cp.btn}>

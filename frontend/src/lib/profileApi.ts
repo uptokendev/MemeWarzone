@@ -18,6 +18,8 @@ export type UserProfile = {
   websiteUrl?: string | null;
   xUrl?: string | null;
   telegramUrl?: string | null;
+  /** True when the API returned the CO-19 fields (new API + migrated database). */
+  linksSupported?: boolean;
 };
 
 async function readJson(res: Response): Promise<any> {
@@ -97,6 +99,7 @@ export async function fetchUserProfile(chainId: number, address: string): Promis
     websiteUrl: (p.websiteUrl ?? null) as string | null,
     xUrl: (p.xUrl ?? null) as string | null,
     telegramUrl: (p.telegramUrl ?? null) as string | null,
+    linksSupported: Object.prototype.hasOwnProperty.call(p, "bannerUrl"),
   };
 }
 
