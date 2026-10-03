@@ -207,9 +207,10 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
         <Link
           to="/"
           aria-label="MemeWarzone home"
-          className="mw-focus shrink-0 font-mw-brand text-[15px] tracking-[0.02em] text-mw-accent hover:text-mw-accent sm:text-[17px] lg:w-[188px] lg:text-xl"
+          className="mw-focus flex shrink-0 items-center rounded-lg lg:w-[188px]"
         >
-          MEMEWARZONE
+          {/* Founder 2026-10-03: the gold logo in place of the text wordmark. */}
+          <img src="/assets/navbar-logo.png" alt="MemeWarzone" width={1168} height={213} className="h-[26px] w-auto sm:h-[30px] lg:h-[34px]" draggable={false} />
         </Link>
 
         {/* Same search as before: opens the search palette (also on Ctrl/Cmd+K and "/"). */}

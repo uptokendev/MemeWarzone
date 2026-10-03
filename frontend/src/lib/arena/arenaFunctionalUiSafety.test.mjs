@@ -54,9 +54,9 @@ test("Final Salvo presentation remains Free Vote only", () => {
 });
 
 test("event sponsorship is not wired to the homepage advertising application", () => {
-  const flow = read("../../components/arena/EventSponsorshipFlow.tsx");
+  // Founder 2026-10-03: the unused EventSponsorshipFlow component was removed (CO-17 audit); the
+  // contracts module keeps the guarantee.
   const contracts = read("./eventSponsorshipContracts.ts");
 
-  assert.doesNotMatch(flow, /sponsorship-applications|featured-top-left|homepage-sponsored-rail/);
   assert.doesNotMatch(contracts, /featured-top-left|homepage-sponsored-rail/);
 });
