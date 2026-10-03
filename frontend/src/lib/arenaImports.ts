@@ -96,6 +96,37 @@ export async function fetchRecentArenaImports(chainId: number, limit = 12): Prom
   return Array.isArray(json?.items) ? json.items : [];
 }
 
+/** A listed import with the import feed's market stats (USD); one War Trade Room row. */
+export type ArenaImportMarketRow = {
+  id: string;
+  chainId: number;
+  tokenAddress: string;
+  name?: string | null;
+  symbol?: string | null;
+  imageUrl?: string | null;
+  website?: string | null;
+  xUrl?: string | null;
+  telegramUrl?: string | null;
+  createdAt?: string | null;
+  priceUsd: number | null;
+  marketCapUsd: number | null;
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+  holders: number | null;
+  dexId: string | null;
+  pairAddress: string | null;
+  marketUpdatedAt: string | null;
+  tradingBlocked: boolean;
+};
+
+export async function fetchArenaImportMarket(chainId: number, signal?: AbortSignal): Promise<ArenaImportMarketRow[]> {
+  const params = new URLSearchParams({ chainId: String(chainId), limit: "100" });
+  const res = await apiFetch(`/api/arena/imports/market?${params.toString()}`, { cache: "no-store", signal });
+  if (!res.ok) throw new Error(`Imported coins are unavailable (${res.status})`);
+  const json = await readJson(res);
+  return Array.isArray(json?.items) ? json.items : [];
+}
+
 export async function fetchArenaImports(wallet: string, chainId?: number | null): Promise<ArenaImportItem[]> {
   const params = new URLSearchParams({ wallet });
   if (chainId) params.set("chainId", String(chainId));

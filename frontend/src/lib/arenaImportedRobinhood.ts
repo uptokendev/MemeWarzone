@@ -15,6 +15,7 @@ const ADAPTER_ABI = [
   "function swapRouter() view returns (address)",
   "function wrappedNative() view returns (address)",
 ] as const;
+const V3_POOL_ABI = ["function liquidity() view returns (uint128)"] as const;
 const FEE_TIERS = [500, 3000, 10000] as const;
 
 function envAddress(name: string, chainId: number): string {
@@ -37,14 +38,19 @@ export async function resolveImportedRobinhoodV3Route(input: {
   if (!ethers.isAddress(routerAddress) || !ethers.isAddress(wrappedNativeAddress)) return null;
 
   const factory = new Contract(factoryAddress, V3_FACTORY_ABI, input.provider);
+  // An import can have a pool on several fee tiers; trade on the one holding the most liquidity,
+  // not the first that exists (an empty 0.05% pool would quote nothing).
   let poolAddress = ethers.ZeroAddress;
   let fee = 3000;
+  let bestLiquidity = -1n;
   for (const candidate of FEE_TIERS) {
     const pool = String(await factory.getPool(input.tokenAddress, wrappedNativeAddress, candidate));
-    if (pool && pool !== ethers.ZeroAddress) {
+    if (!pool || pool === ethers.ZeroAddress) continue;
+    const liquidity = await new Contract(pool, V3_POOL_ABI, input.provider).liquidity().then((v: bigint) => BigInt(v)).catch(() => 0n);
+    if (liquidity > bestLiquidity) {
+      bestLiquidity = liquidity;
       poolAddress = pool;
       fee = candidate;
-      break;
     }
   }
   if (!poolAddress || poolAddress === ethers.ZeroAddress) return null;

@@ -175,7 +175,7 @@ test("ordinary token fallback preserves original live Token Details boundary", (
 
 test("Robinhood imported trades resolve a V3 pool or hide the panel with a clear note", () => {
   assert.match(tradePanel, /resolveImportedRobinhoodV3Route/);
-  assert.match(tradePanel, /Trading on Robinhood imports arrives next/);
+  assert.match(tradePanel, /No Uniswap V3 pool with ETH for this token yet/);
   assert.match(tradePanel, /data-robinhood-import-trade-pending="true"/);
 });
 

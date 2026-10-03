@@ -5,7 +5,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
-import { getNativeSymbol, isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
+import { getNativeSymbol, isRobinhoodChainId, isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
+import { getReadProvider } from "@/lib/readProvider";
 import {
   executeTopazBuy,
   executeTopazSell,
@@ -32,6 +33,19 @@ import {
   type ImportSwapQuote,
 } from "@/lib/importSwap";
 
+/**
+ * Reads for an EVM import go to the coin's own chain, never through the wallet: a wallet sitting on
+ * another chain would read the wrong network (no pool, wrong decimals) before the user even trades.
+ */
+function importReadProvider(chainId: number): ethers.Provider | null {
+  if (isSolanaChainId(chainId)) return null;
+  try {
+    return getReadProvider(chainId as SupportedChainId);
+  } catch {
+    return null;
+  }
+}
+
 export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaImportItem; initialSide?: "buy" | "sell" }) {
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
@@ -41,6 +55,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
   // Imports on Solana (Jupiter) and BNB mainnet (PancakeSwap via KyberSwap) swap through the
   // aggregator path with the 0.5% platform fee; Robinhood keeps its Uniswap V3 route.
   const aggregated = solana || Number(item.chainId) === 56;
+  const readProvider = importReadProvider(item.chainId);
   const scanDecimals = (item.scan as { decimals?: number } | undefined)?.decimals;
   const [chainDecimals, setChainDecimals] = useState<number | null>(null);
   const decimals = Number(chainDecimals ?? scanDecimals ?? (solana ? 9 : 18));
@@ -54,13 +69,13 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
 
   useEffect(() => {
     let cancelled = false;
-    void readImportTokenDecimals(item.chainId, item.tokenAddress, wallet.provider).then((value) => {
+    void readImportTokenDecimals(item.chainId, item.tokenAddress, readProvider).then((value) => {
       if (!cancelled && value !== null) setChainDecimals(value);
     });
     return () => {
       cancelled = true;
     };
-  }, [item.chainId, item.tokenAddress, wallet.provider]);
+  }, [item.chainId, item.tokenAddress, readProvider]);
 
   function amountRaw(): bigint | null {
     const text = String(amount || "").trim();
@@ -74,7 +89,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
 
   // Live quote: what you receive, the route and the fee, before you sign.
   useEffect(() => {
-    if (!aggregated) return;
+    if (!aggregated && !robinhood) return;
     const raw = amountRaw();
     setPreviewError(null);
     if (!raw) {
@@ -83,8 +98,9 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      quoteImportSwap({ chainId: item.chainId, token: item.tokenAddress, side, amountRaw: raw, signal: controller.signal })
+      (robinhood ? quoteRobinhoodPreview(raw) : quoteImportSwap({ chainId: item.chainId, token: item.tokenAddress, side, amountRaw: raw, signal: controller.signal }))
         .then((next) => {
+          if (controller.signal.aborted) return;
           setPreview(next);
           setNoAggregatorRoute(false);
         })
@@ -100,7 +116,28 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aggregated, amount, side, decimals, item.chainId, item.tokenAddress]);
+  }, [aggregated, robinhood, amount, side, decimals, item.chainId, item.tokenAddress]);
+
+  /** Robinhood quotes on chain (QuoterV2 through the coin's deepest Uniswap V3 pool), same preview shape. */
+  async function quoteRobinhoodPreview(raw: bigint): Promise<ImportSwapQuote> {
+    if (!readProvider) throw new Error("Robinhood RPC is not configured.");
+    const route = await resolveImportedRobinhoodV3Route({ provider: readProvider, tokenAddress: item.tokenAddress, chainId: item.chainId });
+    if (!route) throw new Error("No Uniswap V3 pool with ETH for this token.");
+    const quote = side === "buy" ? await quoteRobinhoodV3Buy(readProvider, route, raw, 100) : await quoteRobinhoodV3Sell(readProvider, route, raw, 100);
+    return {
+      chainId: item.chainId,
+      provider: "uniswap-v3",
+      side,
+      amountIn: quote.amountInRaw.toString(),
+      amountOut: quote.amountOutRaw.toString(),
+      minAmountOut: quote.minimumOutRaw.toString(),
+      priceImpactPct: null,
+      feeBps: 0,
+      feeNativeRaw: null,
+      route: [`Uniswap V3 ${(route.fee / 10000).toFixed(2)}%`],
+      quote: null,
+    };
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -110,25 +147,25 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
           if (!cancelled) setPoolLabel("Jupiter");
           return;
         }
-        if (!wallet.provider) {
+        if (Number(item.chainId) === 56) {
+          if (!cancelled) setPoolLabel("PancakeSwap");
+          return;
+        }
+        if (!readProvider) {
           if (!cancelled) setPoolLabel(null);
           return;
         }
         if (robinhood) {
           const route = await resolveImportedRobinhoodV3Route({
-            provider: wallet.provider,
+            provider: readProvider,
             tokenAddress: item.tokenAddress,
             chainId: item.chainId,
           });
           if (!cancelled) setPoolLabel(route ? `Uniswap V3 ${route.poolAddress.slice(0, 10)}…` : "");
           return;
         }
-        if (Number(item.chainId) === 56) {
-          if (!cancelled) setPoolLabel("PancakeSwap");
-          return;
-        }
         const route = await resolveImportedTopazRoute({
-          provider: wallet.provider,
+          provider: readProvider,
           tokenAddress: item.tokenAddress,
           chainId: item.chainId,
         });
@@ -140,12 +177,12 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
     return () => {
       cancelled = true;
     };
-  }, [decimals, item.chainId, item.tokenAddress, robinhood, solana, wallet.provider]);
+  }, [decimals, item.chainId, item.tokenAddress, robinhood, solana, readProvider]);
 
   if (robinhood && poolLabel === "") {
     return (
       <p className="text-sm text-muted-foreground" data-robinhood-import-trade-pending="true">
-        Trading on Robinhood imports arrives next
+        No Uniswap V3 pool with ETH for this token yet
       </p>
     );
   }
@@ -177,65 +214,76 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         return;
       }
       if (!wallet.provider || !wallet.signer || !wallet.account) throw new Error(`Connect the ${native} wallet first.`);
+      // The trade signs on the coin's own chain: switch the wallet first (same as our own coins'
+      // panels) and sign with the fresh signer, never one bound to the previous network.
+      let tradeSigner = wallet.signer;
+      let tradeAccount = wallet.account;
+      if (Number(wallet.chainId) !== Number(item.chainId)) {
+        const switched = await wallet.switchToChain(item.chainId as SupportedChainId);
+        tradeSigner = switched.signer;
+        tradeAccount = switched.account || wallet.account;
+      }
       if (Number(item.chainId) === 56 && !noAggregatorRoute) {
-        if (Number(wallet.chainId) !== 56) throw new Error("Switch your wallet to BNB Chain first.");
         const quote = await quoteImportSwap({ chainId: 56, token: item.tokenAddress, side, amountRaw: amountInRaw });
-        const hash = await executeBscImportSwap({ token: item.tokenAddress, side, account: wallet.account, signer: wallet.signer, quote, amountRaw: amountInRaw });
+        const hash = await executeBscImportSwap({ token: item.tokenAddress, side, account: tradeAccount, signer: tradeSigner, quote, amountRaw: amountInRaw });
         toast.success(`Swap confirmed: ${hash.slice(0, 10)}…`);
         setAmount("");
         return;
       }
+      const reads = readProvider || wallet.provider;
       if (robinhood) {
         const route = await resolveImportedRobinhoodV3Route({
-          provider: wallet.provider,
+          provider: reads,
           tokenAddress: item.tokenAddress,
           chainId: item.chainId,
         });
-        if (!route) throw new Error("Robinhood V3 pool is not available.");
+        if (!route) throw new Error("No Uniswap V3 pool with ETH for this token.");
         if (side === "buy") {
-          const quote = await quoteRobinhoodV3Buy(wallet.provider, route, ethers.parseEther(String(raw)), 100);
-          const tx = await executeRobinhoodV3Buy({ signer: wallet.signer, quote, recipient: wallet.account });
-          await tx.wait();
+          const quote = await quoteRobinhoodV3Buy(reads, route, amountInRaw, 100);
+          const tx = await executeRobinhoodV3Buy({ signer: tradeSigner, quote, recipient: tradeAccount });
+          const receipt = await tx.wait();
+          if (receipt && Number(receipt.status) !== 1) throw new Error("Swap transaction reverted.");
         } else {
-          const tokenAmount = ethers.parseUnits(String(raw), decimals);
-          await ensureRobinhoodV3SellAllowance({ signer: wallet.signer, route, amountInRaw: tokenAmount });
-          const quote = await quoteRobinhoodV3Sell(wallet.provider, route, tokenAmount, 100);
-          const tx = await executeRobinhoodV3Sell({ signer: wallet.signer, quote, recipient: wallet.account });
-          await tx.wait();
+          await ensureRobinhoodV3SellAllowance({ signer: tradeSigner, route, amountInRaw });
+          const quote = await quoteRobinhoodV3Sell(reads, route, amountInRaw, 100);
+          const tx = await executeRobinhoodV3Sell({ signer: tradeSigner, quote, recipient: tradeAccount });
+          const receipt = await tx.wait();
+          if (receipt && Number(receipt.status) !== 1) throw new Error("Swap transaction reverted.");
         }
-        toast.success("Swap submitted.");
+        toast.success("Swap confirmed.");
+        setAmount("");
         return;
       }
       const route = await resolveImportedTopazRoute({
-        provider: wallet.provider,
+        provider: reads,
         tokenAddress: item.tokenAddress,
         chainId: item.chainId,
       });
       if (!route) throw new Error("Topaz pool is not available.");
       if (side === "buy") {
         const quote = await quoteTopazBuy({
-          provider: wallet.provider,
+          provider: reads,
           resolved: route,
           nativeAmountInRaw: ethers.parseEther(String(raw)),
           slippageBps: 100,
         });
-        const tx = await executeTopazBuy({ signer: wallet.signer, recipient: wallet.account, quote });
+        const tx = await executeTopazBuy({ signer: tradeSigner, recipient: tradeAccount, quote });
         await tx.wait();
       } else {
         const tokenAmount = ethers.parseUnits(String(raw), decimals);
         await ensureTopazSellAllowance({
-          signer: wallet.signer,
-          owner: wallet.account,
+          signer: tradeSigner,
+          owner: tradeAccount,
           resolved: route,
           tokenAmountRaw: tokenAmount,
         });
         const quote = await quoteTopazSell({
-          provider: wallet.provider,
+          provider: reads,
           resolved: route,
           tokenAmountInRaw: tokenAmount,
           slippageBps: 100,
         });
-        const tx = await executeTopazSell({ signer: wallet.signer, recipient: wallet.account, quote });
+        const tx = await executeTopazSell({ signer: tradeSigner, recipient: tradeAccount, quote });
         await tx.wait();
       }
       toast.success("Swap confirmed.");
@@ -282,7 +330,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         </span>
         {aggregated && !noAggregatorRoute ? <span className={chip}>Fee {IMPORT_SWAP_FEE_LABEL}</span> : null}
       </div>
-      {aggregated && preview ? (
+      {(aggregated || robinhood) && preview ? (
         <div className="flex flex-col gap-1 font-mw-mono text-[13px]" data-import-swap-preview="true">
           <div className="flex justify-between gap-2">
             <span className="text-mw-muted">You receive ≈</span>
@@ -309,7 +357,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
           ) : null}
         </div>
       ) : null}
-      {aggregated && previewError && !preview ? <p className="m-0 text-xs text-[#FF9A4D]">{previewError}</p> : null}
+      {(aggregated || robinhood) && previewError && !preview ? <p className="m-0 text-xs text-[#FF9A4D]">{previewError}</p> : null}
       <Button
         className={`min-h-12 w-full rounded-[10px] font-mw-body text-base font-bold disabled:opacity-50 ${side === "buy" ? "border border-mw-buy bg-mw-buy text-[#04140A] hover:bg-[#15913F]" : "border border-mw-sell bg-mw-sell text-[#FFF1F3] hover:bg-[#C81A40]"}`}
         disabled={busy || !amount}

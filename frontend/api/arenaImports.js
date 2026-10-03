@@ -14,6 +14,7 @@ import { evaluateImportedCompetitionEligibility, loadImportedCompetitionEligibil
 import { getArenaTokenProfile } from "./lib/arenaTokenProfile.js";
 import { IMPORT_CANDLE_TIMEFRAMES, impliedSupply, sharedCandleSource, toCandleRows } from "./lib/arenaImportCandles.js";
 import { dexScreenerChainSlug, fetchDexScreenerPairs, geckoTerminalNetwork, pickDeepestPair } from "./lib/arenaImportMarketFeed.js";
+import { importTradingBlocked } from "../src/lib/arena/importChartPresentation.mjs";
 
 function ident(value, chainId) {
   const raw = String(value || "").trim();
@@ -128,6 +129,62 @@ async function handleLookup(req, res) {
   const result = await pool.query(sql, params);
   const item = mapImport(result.rows[0]);
   return item ? json(res, 200, { item }) : json(res, 200, { item: null });
+}
+
+function finiteOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** War Trade Room row for a listed import: identity plus the feed's stored market stats (USD). */
+export function publicMarketImport(row) {
+  return {
+    id: String(row.id),
+    chainId: Number(row.chain_id),
+    tokenAddress: String(row.token_address),
+    name: row.name || null,
+    symbol: row.symbol || null,
+    imageUrl: row.image_url || null,
+    website: row.website || null,
+    xUrl: row.x_url || null,
+    telegramUrl: row.telegram_url || null,
+    createdAt: row.created_at || null,
+    priceUsd: finiteOrNull(row.price_usd),
+    marketCapUsd: finiteOrNull(row.market_cap_usd),
+    liquidityUsd: finiteOrNull(row.liquidity_usd),
+    volume24hUsd: finiteOrNull(row.volume_24h_usd),
+    holders: finiteOrNull(row.holders),
+    dexId: row.dex_id || null,
+    pairAddress: row.pair_address || null,
+    marketUpdatedAt: row.market_updated_at || null,
+    // Same rule as the coin page: a honeypot / non-transferable / paused scan shows no trade panel.
+    tradingBlocked: importTradingBlocked(row.scan_json && typeof row.scan_json === "object" ? row.scan_json : {}, null),
+  };
+}
+
+/**
+ * GET /arena/imports/market?chainId&limit -- listed imports (status 'passed') on one chain with the
+ * market stats the import feed writes every ~60 s; the War Trade Room's Imported tab. Read-only.
+ */
+async function handleMarket(req, res) {
+  const query = getQuery(req);
+  const chainId = Number(query.chainId);
+  if (!Number.isFinite(chainId) || chainId <= 0) return json(res, 400, { error: "chainId is required" });
+  const limit = Math.max(1, Math.min(200, Number(query.limit || 100) || 100));
+  const result = await pool.query(
+    `select i.id, i.chain_id, i.token_address, i.name, i.symbol, i.image_url,
+            i.website, i.x_url, i.telegram_url, i.created_at, i.scan_json,
+            s.price_usd, s.market_cap_usd, s.liquidity_usd, s.volume_24h_usd, s.holders,
+            s.dex_id, s.pair_address, s.updated_at as market_updated_at
+       from public.arena_token_imports i
+       left join public.arena_import_market_stats s on s.chain_id = i.chain_id and s.token_address = i.token_address
+      where i.chain_id = $1 and i.status = 'passed'
+      order by s.volume_24h_usd desc nulls last, i.created_at desc
+      limit $2`,
+    [chainId, limit],
+  );
+  return json(res, 200, { items: result.rows.map(publicMarketImport), updatedAt: new Date().toISOString() });
 }
 
 async function handleEligibility(req, res) {
@@ -264,6 +321,7 @@ export default async function handler(req, res) {
   const path = String(req.path || new URL(req.url, "http://localhost").pathname);
   try {
     if (method === "GET" && path === "/arena/imports/recent") return handleRecent(req, res);
+    if (method === "GET" && path === "/arena/imports/market") return handleMarket(req, res);
     if (method === "GET" && path === "/arena/imports") return handleList(req, res);
     if (method === "GET" && path === "/arena/imports/lookup") return handleLookup(req, res);
     if (method === "GET" && path === "/arena/imports/eligibility") return handleEligibility(req, res);
