@@ -22,15 +22,15 @@ function openWalletModal(wallet: any) {
 function ConnectCommandCenterPrompt({ onConnect }: { onConnect: () => void }) {
   return (
     <div className="mx-auto flex min-h-[65vh] w-full max-w-3xl items-center justify-center px-4">
-      <div className="w-full rounded-3xl border border-border/50 bg-card/40 p-6 text-center shadow-2xl backdrop-blur-md md:p-10">
-        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-accent/40 bg-accent/10 font-retro text-2xl text-accent">
+      <div className="w-full rounded-[14px] border border-mw-border bg-mw-surface p-6 text-center font-mw-body md:p-10">
+        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-[14px] border border-[#7A3A0C] bg-[#2A1609] font-mw-cond text-2xl font-bold text-mw-accent-soft">
           CC
         </div>
-        <h1 className="font-retro text-2xl text-foreground md:text-4xl">Open your Command Center</h1>
-        <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground md:text-base">
+        <h1 className="m-0 font-mw-cond text-[32px] font-bold leading-none text-mw-text lg:text-[40px]">Open your Command Center</h1>
+        <p className="mx-auto mt-4 max-w-xl text-[15px] text-mw-muted">
           Connect wallet to open your Command Center. Public profiles stay visible to visitors, but owner tools require the connected wallet.
         </p>
-        <Button onClick={onConnect} className="mt-6 font-retro">
+        <Button onClick={onConnect} className="mw-focus mt-6 inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50">
           Connect wallet
         </Button>
       </div>
@@ -41,10 +41,10 @@ function ConnectCommandCenterPrompt({ onConnect }: { onConnect: () => void }) {
 function InvalidPublicProfile({ identifier }: { identifier: string }) {
   return (
     <div className="mx-auto flex min-h-[65vh] w-full max-w-3xl items-center justify-center px-4">
-      <div className="w-full rounded-3xl border border-border/50 bg-card/40 p-6 text-center shadow-2xl backdrop-blur-md md:p-10">
-        <h1 className="font-retro text-2xl text-foreground md:text-4xl">Profile not found</h1>
-        <p className="mx-auto mt-4 max-w-xl text-sm text-muted-foreground md:text-base">
-          No profile matches <span className="font-mono text-foreground">{identifier}</span>. Open a profile by wallet address or @username.
+      <div className="w-full rounded-[14px] border border-mw-border bg-mw-surface p-6 text-center font-mw-body md:p-10">
+        <h1 className="m-0 font-mw-cond text-[32px] font-bold leading-none text-mw-text lg:text-[40px]">Profile not found</h1>
+        <p className="mx-auto mt-4 max-w-xl text-[15px] text-mw-muted">
+          No profile matches <span className="break-all font-mw-mono text-mw-text">{identifier}</span>. Open a profile by wallet address or @username.
         </p>
       </div>
     </div>

@@ -2,8 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AlertCircle, ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { cp } from "@/components/token/coinPageStyles";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConnectWalletButton } from "@/components/ConnectWalletButton";
 import { Input } from "@/components/ui/input";
@@ -42,7 +41,15 @@ const initialForm: SignupFormState = {
   acceptTerms: false,
 };
 
-const pageShellClass = "mx-auto flex w-full max-w-[1480px] flex-col gap-6 px-1 pt-24 pb-8 md:px-2 md:pt-28";
+const pageShellClass = "mx-auto flex w-full max-w-[1480px] flex-col gap-4 px-1 pt-24 pb-8 font-mw-body text-mw-text md:px-2 md:pt-28";
+
+const PRIMARY_BTN =
+  "mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50";
+const INPUT =
+  "h-11 rounded-[10px] border border-mw-edge bg-mw-input px-3 text-[15px] text-mw-text placeholder:text-[#5C6670] focus-visible:ring-mw-accent md:text-[15px]";
+const TEXTAREA =
+  "rounded-[10px] border border-mw-edge bg-mw-input px-3 py-2 text-[15px] text-mw-text placeholder:text-[#5C6670] focus-visible:ring-mw-accent md:text-[15px]";
+const LABEL = "font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted";
 
 export default function RecruiterSignup() {
   const navigate = useNavigate();
@@ -204,19 +211,17 @@ export default function RecruiterSignup() {
   if (!isConnected || !account) {
     return (
       <div className={pageShellClass}>
-        <Card className="border-border/60 bg-card/65 p-6">
-          <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Recruiter signup</p>
-          <h1 className="mt-2 font-retro text-3xl text-foreground">Connect your wallet to register as a recruiter.</h1>
-          <p className="mt-3 text-sm text-muted-foreground">
+        <section className={`${cp.card} p-4`}>
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Recruiter signup</div>
+          <h1 className="m-0 mt-1 font-mw-cond text-[32px] font-bold leading-none lg:text-[40px]">Connect your wallet to register as a recruiter.</h1>
+          <p className="mt-2 text-[15px] text-mw-muted">
             Use the wallet that should own the recruiter profile. BNB and Solana wallets are both supported.
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
+          <div className="mt-4 flex flex-wrap gap-2">
             <ConnectWalletButton />
-            <Button asChild variant="outline" className="font-retro">
-              <Link to="/recruiter">Back to recruiter overview</Link>
-            </Button>
+            <Link to="/recruiter" className={cp.btn}>Back to recruiter overview</Link>
           </div>
-        </Card>
+        </section>
       </div>
     );
   }
@@ -224,9 +229,9 @@ export default function RecruiterSignup() {
   if (loadingStatus) {
     return (
       <div className={pageShellClass}>
-        <Card className="border-border/60 bg-card/65 px-6 py-12 text-center text-sm text-muted-foreground">
+        <div className={`${cp.card} px-4 py-10 text-center text-[15px] text-mw-muted`}>
           Checking recruiter signup status...
-        </Card>
+        </div>
       </div>
     );
   }
@@ -234,74 +239,68 @@ export default function RecruiterSignup() {
   if (signupStatus?.isRecruiter && signupStatus.recruiter) {
     return (
       <div className={pageShellClass}>
-        <Card className="border-border/60 bg-card/65 p-6">
-          <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Recruiter signup</p>
-          <h1 className="mt-2 font-retro text-3xl text-foreground">This wallet is already a recruiter.</h1>
-          <p className="mt-3 text-sm text-muted-foreground">
-            Wallet <span className="text-foreground">{account}</span> already owns recruiter code{" "}
-            <span className="text-foreground">{signupStatus.recruiter.code}</span>.
+        <section className={`${cp.card} p-4`}>
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Recruiter signup</div>
+          <h1 className="m-0 mt-1 font-mw-cond text-[32px] font-bold leading-none lg:text-[40px]">This wallet is already a recruiter.</h1>
+          <p className="mt-2 text-[15px] text-mw-muted">
+            Wallet <span className="break-all font-mw-mono text-mw-text">{account}</span> already owns recruiter code{" "}
+            <span className="font-mw-mono font-bold text-mw-text">{signupStatus.recruiter.code}</span>.
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Button asChild className="font-retro">
-              <Link to="/command/recruiter">Open recruiter dashboard</Link>
-            </Button>
-            <Button asChild variant="outline" className="font-retro">
-              <Link to={`/recruiters/${encodeURIComponent(signupStatus.recruiter.code)}`}>Public recruiter profile</Link>
-            </Button>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link to="/command/recruiter" className={PRIMARY_BTN}>Open recruiter dashboard</Link>
+            <Link to={`/recruiters/${encodeURIComponent(signupStatus.recruiter.code)}`} className={cp.btn}>Public recruiter profile</Link>
           </div>
-        </Card>
+        </section>
       </div>
     );
   }
 
   return (
     <div className={pageShellClass}>
-      <Card className="overflow-hidden border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(240,106,26,0.16),transparent_36%),linear-gradient(180deg,rgba(18,22,28,0.94),rgba(9,12,16,0.98))] p-6 md:p-8">
-        <div className="max-w-3xl space-y-4">
-          <p className="font-retro text-xs uppercase tracking-[0.24em] text-amber-100/70">Recruiter signup</p>
-          <h1 className="font-retro text-3xl text-foreground md:text-5xl">Claim your recruiter identity.</h1>
-          <p className="text-sm text-muted-foreground">Connected via {walletMode === "solana" ? "Solana" : "BNB"}: {account}</p>
-        </div>
-      </Card>
+      <div className="max-w-3xl">
+        <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Recruiter signup</div>
+        <h1 className="m-0 mt-1 font-mw-cond text-[32px] font-bold leading-none lg:text-[40px]">Claim your recruiter identity.</h1>
+        <p className="mt-2 break-all text-[15px] text-mw-muted">Connected via {walletMode === "solana" ? "Solana" : "BNB"}: <span className="font-mw-mono text-mw-text">{account}</span></p>
+      </div>
 
-      {statusError ? <Card className="border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-100">{statusError}</Card> : null}
+      {statusError ? <div className="rounded-[10px] border border-[#5C1F2B] bg-[#2A1016] p-3 text-[15px] text-mw-sell">{statusError}</div> : null}
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <Card className="border-border/60 bg-card/65 p-6">
-          <div className="grid gap-5 md:grid-cols-2">
-            <div className="space-y-2"><Label htmlFor="wallet-address">Wallet address</Label><Input id="wallet-address" value={account} readOnly className="font-mono text-xs" /></div>
-            <div className="space-y-2"><Label htmlFor="display-name">Recruiter display name</Label><Input id="display-name" value={form.displayName} onChange={(event) => updateField("displayName", event.target.value)} placeholder="Warzone Alpha" maxLength={40} /></div>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <section className={`${cp.card} p-4`}>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2"><Label htmlFor="wallet-address" className={LABEL}>Wallet address</Label><Input id="wallet-address" value={account} readOnly className={`${INPUT} font-mw-mono text-xs md:text-xs`} /></div>
+            <div className="space-y-2"><Label htmlFor="display-name" className={LABEL}>Recruiter display name</Label><Input id="display-name" value={form.displayName} onChange={(event) => updateField("displayName", event.target.value)} placeholder="Warzone Alpha" maxLength={40} className={INPUT} /></div>
             <div className="space-y-2">
-              <Label htmlFor="desired-code">Desired recruiter code</Label>
-              <Input id="desired-code" value={form.desiredCode} onChange={(event) => updateField("desiredCode", event.target.value)} placeholder="alpha-squad" maxLength={24} />
-              <div className="flex items-center gap-2 text-xs">
-                {checkingCode ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
-                {codeAvailability?.isAvailable === true ? <span className="flex items-center gap-1 text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" />{codeAvailability.message || "Code available"}</span> : null}
-                {codeAvailability?.isAvailable === false ? <span className="flex items-center gap-1 text-rose-200"><AlertCircle className="h-3.5 w-3.5" />{codeAvailability.message || "Code unavailable"}</span> : null}
-                {codeAvailability?.isAvailable == null ? <span className="text-muted-foreground">{codeAvailability?.message || "Use lowercase letters, numbers, dashes, or underscores."}</span> : null}
+              <Label htmlFor="desired-code" className={LABEL}>Desired recruiter code</Label>
+              <Input id="desired-code" value={form.desiredCode} onChange={(event) => updateField("desiredCode", event.target.value)} placeholder="alpha-squad" maxLength={24} className={INPUT} />
+              <div className="flex items-center gap-2 text-[13px]">
+                {checkingCode ? <Loader2 className="h-3.5 w-3.5 animate-spin text-mw-muted" /> : null}
+                {codeAvailability?.isAvailable === true ? <span className="flex items-center gap-1 text-[#6EE7A0]"><CheckCircle2 className="h-3.5 w-3.5" />{codeAvailability.message || "Code available"}</span> : null}
+                {codeAvailability?.isAvailable === false ? <span className="flex items-center gap-1 text-mw-sell"><AlertCircle className="h-3.5 w-3.5" />{codeAvailability.message || "Code unavailable"}</span> : null}
+                {codeAvailability?.isAvailable == null ? <span className="text-mw-muted">{codeAvailability?.message || "Use lowercase letters, numbers, dashes, or underscores."}</span> : null}
               </div>
             </div>
-            <div className="space-y-2"><Label htmlFor="email">Email</Label><Input id="email" type="email" value={form.email} onChange={(event) => updateField("email", event.target.value)} placeholder="you@example.com" /></div>
-            <div className="space-y-2"><Label htmlFor="telegram">Telegram</Label><Input id="telegram" value={form.telegram} onChange={(event) => updateField("telegram", event.target.value)} placeholder="@handle" /></div>
-            <div className="space-y-2"><Label htmlFor="discord">Discord</Label><Input id="discord" value={form.discord} onChange={(event) => updateField("discord", event.target.value)} placeholder="username#1234" /></div>
-            <div className="space-y-2 md:col-span-2"><Label htmlFor="x-handle">X handle</Label><Input id="x-handle" value={form.xHandle} onChange={(event) => updateField("xHandle", event.target.value)} placeholder="@memewarzone" /></div>
-            <div className="space-y-2 md:col-span-2"><Label htmlFor="pitch">Short pitch / audience description</Label><Textarea id="pitch" value={form.pitch} onChange={(event) => updateField("pitch", event.target.value)} placeholder="Tell us how you plan to grow your squad." rows={5} /></div>
+            <div className="space-y-2"><Label htmlFor="email" className={LABEL}>Email</Label><Input id="email" type="email" value={form.email} onChange={(event) => updateField("email", event.target.value)} placeholder="you@example.com" className={INPUT} /></div>
+            <div className="space-y-2"><Label htmlFor="telegram" className={LABEL}>Telegram</Label><Input id="telegram" value={form.telegram} onChange={(event) => updateField("telegram", event.target.value)} placeholder="@handle" className={INPUT} /></div>
+            <div className="space-y-2"><Label htmlFor="discord" className={LABEL}>Discord</Label><Input id="discord" value={form.discord} onChange={(event) => updateField("discord", event.target.value)} placeholder="username#1234" className={INPUT} /></div>
+            <div className="space-y-2 md:col-span-2"><Label htmlFor="x-handle" className={LABEL}>X handle</Label><Input id="x-handle" value={form.xHandle} onChange={(event) => updateField("xHandle", event.target.value)} placeholder="@memewarzone" className={INPUT} /></div>
+            <div className="space-y-2 md:col-span-2"><Label htmlFor="pitch" className={LABEL}>Short pitch / audience description</Label><Textarea id="pitch" value={form.pitch} onChange={(event) => updateField("pitch", event.target.value)} placeholder="Tell us how you plan to grow your squad." rows={5} className={TEXTAREA} /></div>
           </div>
-        </Card>
+        </section>
 
-        <Card className="border-border/60 bg-card/65 p-6">
+        <section className={`${cp.card} p-4`}>
           <div className="flex items-start gap-3">
-            <Checkbox id="accept-terms" checked={form.acceptTerms} onCheckedChange={(checked) => updateField("acceptTerms", Boolean(checked))} />
-            <div className="space-y-2">
-              <Label htmlFor="accept-terms">I confirm this wallet is the recruiter owner and I accept the recruiter program terms.</Label>
-              <p className="text-sm text-muted-foreground">Submitting asks your wallet to sign the recruiter signup message.</p>
+            <Checkbox id="accept-terms" checked={form.acceptTerms} onCheckedChange={(checked) => updateField("acceptTerms", Boolean(checked))} className="mt-0.5 h-5 w-5 rounded-[2px] border-mw-edge data-[state=checked]:border-mw-accent data-[state=checked]:bg-mw-accent data-[state=checked]:text-[#140A02]" />
+            <div className="space-y-1">
+              <Label htmlFor="accept-terms" className="text-[15px] font-semibold leading-snug text-mw-text">I confirm this wallet is the recruiter owner and I accept the recruiter program terms.</Label>
+              <p className="text-[13px] text-mw-muted">Submitting asks your wallet to sign the recruiter signup message.</p>
             </div>
           </div>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Button type="submit" className="font-retro" disabled={!canSubmit || submitting}>{submitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Signing and submitting...</> : "Sign and submit"}</Button>
-            <Button asChild type="button" variant="outline" className="font-retro"><Link to="/recruiter">Back to recruiter overview<ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button type="submit" className={PRIMARY_BTN} disabled={!canSubmit || submitting}>{submitting ? <><Loader2 className="h-4 w-4 animate-spin" />Signing and submitting...</> : "Sign and submit"}</button>
+            <Link to="/recruiter" className={cp.btn}>Back to recruiter overview<ArrowRight className="h-4 w-4" /></Link>
           </div>
-        </Card>
+        </section>
       </form>
     </div>
   );

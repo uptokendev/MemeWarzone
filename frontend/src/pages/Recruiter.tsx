@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, ShieldCheck, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { cp } from "@/components/token/coinPageStyles";
 import { ConnectWalletButton } from "@/components/ConnectWalletButton";
 import { useRecruiterWallet } from "@/hooks/useRecruiterWallet";
 import { fetchRecruiterSignupStatus, type RecruiterSignupStatus } from "@/lib/recruiterApi";
+
+const PRIMARY_BTN =
+  "mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50";
 
 export default function Recruiter() {
   const recruiterWallet = useRecruiterWallet();
@@ -38,98 +40,88 @@ export default function Recruiter() {
   }, [account]);
 
   return (
-    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-6 px-1 py-8 md:px-2">
-      <Card className="overflow-hidden border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(240,106,26,0.18),transparent_38%),linear-gradient(180deg,rgba(18,22,28,0.94),rgba(9,12,16,0.98))] p-6 md:p-8">
-        <div className="max-w-3xl space-y-4">
-          <p className="font-retro text-xs uppercase tracking-[0.24em] text-amber-100/70">Recruiter Program</p>
-          <h1 className="font-retro text-3xl text-foreground md:text-5xl">Build your squad before the battlefield opens.</h1>
-          <p className="text-sm text-muted-foreground md:text-base">
-            Recruit creators and traders, share your referral link, grow your squad and track your rewards from the Command Center.
-          </p>
-        </div>
-      </Card>
+    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-4 px-1 py-8 font-mw-body text-mw-text md:px-2">
+      <div className="max-w-3xl">
+        <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Recruiter Program</div>
+        <h1 className="m-0 mt-1 font-mw-cond text-[32px] font-bold leading-none lg:text-[40px]">Build your squad before the battlefield opens.</h1>
+        <p className="mt-2 text-[15px] text-mw-muted">
+          Recruit creators and traders, share your referral link, grow your squad and track your rewards from the Command Center.
+        </p>
+      </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="border-border/60 bg-card/70 p-5">
-          <Users className="h-5 w-5 text-amber-200" />
-          <h2 className="mt-4 font-retro text-xl text-foreground">Grow your network</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className={`${cp.card} p-4`}>
+          <Users className="h-5 w-5 text-mw-accent-soft" aria-hidden="true" />
+          <h2 className={`mt-3 ${cp.title}`}>Grow your network</h2>
+          <p className="mt-1 text-[15px] text-mw-muted">
             Invite creators and traders with your recruiter link and grow your squad as your network expands.
           </p>
-        </Card>
-        <Card className="border-border/60 bg-card/70 p-5">
-          <ShieldCheck className="h-5 w-5 text-sky-200" />
-          <h2 className="mt-4 font-retro text-xl text-foreground">Track rewards</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
+        </div>
+        <div className={`${cp.card} p-4`}>
+          <ShieldCheck className="h-5 w-5 text-mw-accent-soft" aria-hidden="true" />
+          <h2 className={`mt-3 ${cp.title}`}>Track rewards</h2>
+          <p className="mt-1 text-[15px] text-mw-muted">
             See pending, claimable, claimed and historical recruiter rewards in one place.
           </p>
-        </Card>
-        <Card className="border-border/60 bg-card/70 p-5">
-          <ArrowRight className="h-5 w-5 text-emerald-200" />
-          <h2 className="mt-4 font-retro text-xl text-foreground">Stay public</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
+        </div>
+        <div className={`${cp.card} p-4`}>
+          <ArrowRight className="h-5 w-5 text-mw-accent-soft" aria-hidden="true" />
+          <h2 className={`mt-3 ${cp.title}`}>Stay public</h2>
+          <p className="mt-1 text-[15px] text-mw-muted">
             Your leaderboard position, public recruiter profile and referral link remain visible to the community. Manage your recruiter account from the Command Center.
           </p>
-        </Card>
+        </div>
       </div>
 
       {!isConnected || !account ? (
-        <Card className="border-border/60 bg-card/65 p-6">
+        <section className={`${cp.card} p-4`}>
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Wallet required</p>
-              <h2 className="mt-2 font-retro text-2xl text-foreground">Connect to continue into recruiter setup.</h2>
-              <p className="mt-3 text-sm text-muted-foreground">
+              <p className={cp.label}>Wallet required</p>
+              <h2 className={`mt-1 ${cp.title}`}>Connect to continue into recruiter setup.</h2>
+              <p className="mt-1 text-[15px] text-mw-muted">
                 Connect the wallet you want to use as your recruiter identity, then choose your recruiter code and complete signup.
               </p>
             </div>
             <ConnectWalletButton />
           </div>
-        </Card>
+        </section>
       ) : loading ? (
-        <Card className="border-border/60 bg-card/65 px-6 py-12 text-center text-sm text-muted-foreground">
+        <div className={`${cp.card} px-4 py-10 text-center text-[15px] text-mw-muted`}>
           Checking recruiter wallet status...
-        </Card>
+        </div>
       ) : status?.isRecruiter && status.recruiter ? (
-        <Card className="border-border/60 bg-card/65 p-6">
+        <section className={`${cp.card} p-4`}>
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Existing recruiter</p>
-              <h2 className="mt-2 font-retro text-2xl text-foreground">{status.recruiter.displayName || status.recruiter.code}</h2>
-              <p className="mt-3 text-sm text-muted-foreground">
-                This {activeWallet?.chain === "solana" ? "Solana" : "BNB"} wallet already owns recruiter code <span className="text-foreground">{status.recruiter.code}</span>. Continue in Command Center → Recruiter.
+              <p className={cp.label}>Existing recruiter</p>
+              <h2 className={`mt-1 ${cp.title}`}>{status.recruiter.displayName || status.recruiter.code}</h2>
+              <p className="mt-1 text-[15px] text-mw-muted">
+                This {activeWallet?.chain === "solana" ? "Solana" : "BNB"} wallet already owns recruiter code <span className="font-mw-mono font-bold text-mw-text">{status.recruiter.code}</span>. Continue in Command Center → Recruiter.
               </p>
             </div>
-            <div className="flex flex-wrap gap-3">
-              <Button asChild className="font-retro">
-                <Link to="/profile?tab=recruiter">Open recruiter dashboard</Link>
-              </Button>
-              <Button asChild variant="outline" className="font-retro">
-                <Link to={`/recruiters/${encodeURIComponent(status.recruiter.code)}`}>Public profile</Link>
-              </Button>
+            <div className="flex flex-wrap gap-2">
+              <Link to="/profile?tab=recruiter" className={PRIMARY_BTN}>Open recruiter dashboard</Link>
+              <Link to={`/recruiters/${encodeURIComponent(status.recruiter.code)}`} className={cp.btn}>Public profile</Link>
             </div>
           </div>
-        </Card>
+        </section>
       ) : (
-        <Card className="border-border/60 bg-card/65 p-6">
+        <section className={`${cp.card} p-4`}>
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Recruiter signup</p>
-              <h2 className="mt-2 font-retro text-2xl text-foreground">This wallet is not a recruiter yet.</h2>
-              <p className="mt-3 text-sm text-muted-foreground">
+              <p className={cp.label}>Recruiter signup</p>
+              <h2 className={`mt-1 ${cp.title}`}>This wallet is not a recruiter yet.</h2>
+              <p className="mt-1 text-[15px] text-mw-muted">
                 Choose your recruiter code, add your contact details and confirm the signup with your wallet.
               </p>
             </div>
-            <div className="flex flex-wrap gap-3">
-              <Button asChild className="font-retro">
-                <Link to="/recruiter/signup">Start recruiter signup</Link>
-              </Button>
-              <Button asChild variant="outline" className="font-retro">
-                <Link to="/recruiters">Browse public recruiters</Link>
-              </Button>
+            <div className="flex flex-wrap gap-2">
+              <Link to="/recruiter/signup" className={PRIMARY_BTN}>Start recruiter signup</Link>
+              <Link to="/recruiters" className={cp.btn}>Browse public recruiters</Link>
             </div>
           </div>
-        </Card>
+        </section>
       )}
     </div>
   );

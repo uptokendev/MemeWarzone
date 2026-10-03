@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { formatEther } from "ethers";
 import { Link } from "react-router-dom";
 import { ArrowRight, Trophy } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { cp } from "@/components/token/coinPageStyles";
 import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { BNB_CHAIN_ID, isSolanaChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 import { fetchAirdropWinners, type AirdropWinner } from "@/lib/rewardProgramsApi";
@@ -59,63 +58,59 @@ export default function AirdropWinners() {
   }, [effectiveChainId]);
 
   return (
-    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-6 px-1 py-8 md:px-2">
-      <Card className="overflow-hidden border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.2),transparent_42%),linear-gradient(180deg,rgba(18,22,28,0.94),rgba(9,12,16,0.98))] p-6 md:p-8">
-        <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-          <div className="max-w-3xl space-y-3">
-            <p className="font-retro text-xs uppercase tracking-[0.24em] text-amber-100/70">Published winners</p>
-            <h1 className="font-retro text-3xl text-foreground md:text-5xl">
-              See the latest MemeWarzone Airdrop winners.
-            </h1>
-            <p className="text-sm text-muted-foreground md:text-base">
-              Browse recent trader and creator winners, their rewards and the epoch they won.
-            </p>
-          </div>
-
-          <Button asChild variant="outline" className="font-retro">
-            <Link to="/airdrops">
-              Back to airdrops
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
-          </Button>
+    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-4 px-1 py-8 font-mw-body text-mw-text md:px-2">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="max-w-3xl">
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Published winners</div>
+          <h1 className="m-0 mt-1 font-mw-cond text-[32px] font-bold leading-none lg:text-[40px]">
+            See the latest MemeWarzone Airdrop winners.
+          </h1>
+          <p className="mt-2 text-[15px] text-mw-muted">
+            Browse recent trader and creator winners, their rewards and the epoch they won.
+          </p>
         </div>
-      </Card>
 
-      <Card className="border-border/60 bg-card/65 p-6">
+        <Link to="/airdrops" className={cp.btn}>
+          Back to airdrops
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </div>
+
+      <section className={`${cp.card} p-4`}>
         <div className="flex items-center gap-3">
-          <Trophy className="h-4 w-4 text-amber-200" />
+          <Trophy className="h-5 w-5 shrink-0 text-mw-accent-soft" aria-hidden="true" />
           <div>
-            <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Winner history</p>
-            <h2 className="mt-1 font-retro text-xl text-foreground">Recent published draws</h2>
+            <p className={cp.label}>Winner history</p>
+            <h2 className={`mt-1 ${cp.title}`}>Recent published draws</h2>
           </div>
         </div>
 
-        <div className="mt-5 space-y-3">
+        <div className="mt-4 space-y-2">
           {loading ? (
-            <div className="rounded-2xl border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">
+            <div className={`${cp.inset} p-3 text-[15px] text-mw-muted`}>
               Loading winners...
             </div>
           ) : error ? (
-            <div className="rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-100">
+            <div className="rounded-[10px] border border-[#5C1F2B] bg-[#2A1016] p-3 text-[15px] text-mw-sell">
               {error}
             </div>
           ) : winners.length === 0 ? (
-            <div className="rounded-2xl border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">
+            <div className={`${cp.inset} p-3 text-[15px] text-mw-muted`}>
               No published airdrop winners yet.
             </div>
           ) : (
             winners.map((winner) => (
-              <div key={`${winner.drawId}-${winner.walletAddress}-${winner.program}`} className="rounded-2xl border border-border/60 bg-background/35 p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="font-retro text-sm text-foreground">{winner.walletAddress}</p>
-                    <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+              <div key={`${winner.drawId}-${winner.walletAddress}-${winner.program}`} className={`${cp.inset} p-3`}>
+                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                  <div className="min-w-0">
+                    <p className="break-all font-mw-mono text-sm font-bold text-mw-text">{winner.walletAddress}</p>
+                    <p className="mt-1 text-[13px] text-mw-muted">
                       {airdropProgramLabel(winner.program)} · epoch #{winner.epochId} · {airdropRankNoun(winner.program)} #{winner.winnerRank}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="font-retro text-sm text-foreground">{formatNative(winner.payoutAmount, solana)} {symbol}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
+                  <div className="md:text-right">
+                    <p className="font-mw-mono text-sm font-bold text-mw-text">{formatNative(winner.payoutAmount, solana)} {symbol}</p>
+                    <p className="mt-1 text-[13px] text-mw-muted">
                       Weight tier {winner.weightTier} · score {winner.activityScore}
                     </p>
                   </div>
@@ -124,7 +119,7 @@ export default function AirdropWinners() {
             ))
           )}
         </div>
-      </Card>
+      </section>
     </div>
   );
 }

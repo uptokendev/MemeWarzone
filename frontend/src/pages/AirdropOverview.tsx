@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { formatEther } from "ethers";
 import { Link } from "react-router-dom";
 import { ArrowRight, Gift, Sparkles, Trophy } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { cp } from "@/components/token/coinPageStyles";
 import { ConnectWalletButton } from "@/components/ConnectWalletButton";
 import { useWallet } from "@/contexts/WalletContext";
 import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
@@ -14,6 +13,9 @@ import { fetchAirdropWinners, fetchWalletRewardEligibility, type AirdropWinner, 
 import { airdropProgramLabel, airdropRankNoun } from "@/lib/airdropProgramLabel.mjs";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
+
+const PRIMARY_BTN =
+  "mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50";
 
 function formatNative(raw: string, solana: boolean): string {
   try {
@@ -57,43 +59,43 @@ function EligibilityCard(props: {
 }) {
   const { title, item, claimableAmount, solana, symbol } = props;
   return (
-    <Card className="border-border/60 bg-card/65 p-5">
+    <section className={`${cp.card} p-4`}>
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">{title}</p>
-          <h2 className="mt-1 font-retro text-xl text-foreground">
+          <p className={cp.label}>{title}</p>
+          <h2 className={`mt-1 ${cp.title}`}>
             {item ? (item.isEligible ? "Eligible this week" : "Not eligible this week") : "No weekly result yet"}
           </h2>
         </div>
-        <Gift className="h-4 w-4 text-amber-200" />
+        <Gift className="h-5 w-5 shrink-0 text-mw-accent-soft" aria-hidden="true" />
       </div>
 
-      <div className="mt-5 grid gap-4 md:grid-cols-2">
-        <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Claimable</p>
-          <p className="mt-2 font-retro text-lg text-foreground">{formatNative(claimableAmount, solana)} {symbol}</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className={cp.tile}>
+          <p className={cp.tileLabel}>Claimable</p>
+          <p className={cp.tileValue}>{formatNative(claimableAmount, solana)} {symbol}</p>
         </div>
-        <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Last computed</p>
-          <p className="mt-2 font-retro text-sm text-foreground">{formatDate(item?.computedAt)}</p>
+        <div className={cp.tile}>
+          <p className={cp.tileLabel}>Last computed</p>
+          <p className={cp.tileValue}>{formatDate(item?.computedAt)}</p>
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-border/60 bg-background/20 p-4">
-        <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Why this result?</p>
+      <div className={`mt-3 ${cp.inset} p-3`}>
+        <p className={cp.label}>Why this result?</p>
         {item?.reasonCodes?.length ? (
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-wrap gap-2">
             {item.reasonCodes.map((reason) => (
-              <span key={reason} className="rounded-full border border-border/60 bg-background/40 px-2.5 py-1 text-[10px] tracking-[0.06em] text-foreground">
+              <span key={reason} className="inline-flex min-h-[26px] items-center rounded-full border border-mw-edge bg-[#171B20] px-2.5 py-1 text-[13px] font-semibold text-[#C9CED4]">
                 {formatEligibilityReason(reason)}
               </span>
             ))}
           </div>
         ) : (
-          <p className="mt-3 text-sm text-muted-foreground">No eligibility issues were found for this result.</p>
+          <p className="mt-2 text-[15px] text-mw-muted">No eligibility issues were found for this result.</p>
         )}
       </div>
-    </Card>
+    </section>
   );
 }
 
@@ -145,55 +147,53 @@ export default function AirdropOverview() {
   }), [summary]);
 
   return (
-    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-6 px-1 py-8 md:px-2">
-      <Card className="overflow-hidden border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(253,224,71,0.18),transparent_40%),linear-gradient(180deg,rgba(18,22,28,0.94),rgba(9,12,16,0.98))] p-6 md:p-8">
-        <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-          <div className="max-w-3xl space-y-3">
-            <p className="font-retro text-xs uppercase tracking-[0.24em] text-amber-100/70">Warzone {symbol} Airdrops</p>
-            <h1 className="font-retro text-3xl text-foreground md:text-5xl">Weekly rewards for active traders and creators.</h1>
-            <p className="text-sm text-muted-foreground md:text-base">See your weekly eligibility, why you qualify or don’t qualify, available rewards and recent winners in one place.</p>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <Button asChild variant="outline" className="font-retro"><Link to="/airdrops/winners">Public winners<Trophy className="ml-2 h-4 w-4" /></Link></Button>
-            {account ? <Button asChild className="font-retro"><Link to="/profile?tab=airdrops">Review claimable rewards<ArrowRight className="ml-2 h-4 w-4" /></Link></Button> : <ConnectWalletButton />}
-          </div>
+    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-4 px-1 py-8 font-mw-body text-mw-text md:px-2">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="max-w-3xl">
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Warzone {symbol} Airdrops</div>
+          <h1 className="m-0 mt-1 font-mw-cond text-[32px] font-bold leading-none lg:text-[40px]">Weekly rewards for active traders and creators.</h1>
+          <p className="mt-2 text-[15px] text-mw-muted">See your weekly eligibility, why you qualify or don’t qualify, available rewards and recent winners in one place.</p>
         </div>
-      </Card>
+        <div className="flex flex-wrap gap-2">
+          <Link to="/airdrops/winners" className={cp.btn}>Public winners<Trophy className="h-4 w-4" aria-hidden="true" /></Link>
+          {account ? <Link to="/profile?tab=airdrops" className={PRIMARY_BTN}>Review claimable rewards<ArrowRight className="h-4 w-4" aria-hidden="true" /></Link> : <ConnectWalletButton />}
+        </div>
+      </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="border-border/60 bg-card/70 p-5"><p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Trader claimable</p><p className="mt-4 font-retro text-3xl text-foreground">{formatNative(totals.traderClaimable, solana)} {symbol}</p></Card>
-        <Card className="border-border/60 bg-card/70 p-5"><p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Creator claimable</p><p className="mt-4 font-retro text-3xl text-foreground">{formatNative(totals.creatorClaimable, solana)} {symbol}</p></Card>
-        <Card className="border-border/60 bg-card/70 p-5"><p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Total wallet rewards</p><p className="mt-4 font-retro text-3xl text-foreground">{formatNative(totals.totalClaimable, solana)} {symbol}</p></Card>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className={`${cp.card} p-4`}><p className={cp.label}>Trader claimable</p><p className={cp.metricValue}>{formatNative(totals.traderClaimable, solana)} {symbol}</p></div>
+        <div className={`${cp.card} p-4`}><p className={cp.label}>Creator claimable</p><p className={cp.metricValue}>{formatNative(totals.creatorClaimable, solana)} {symbol}</p></div>
+        <div className={`${cp.card} p-4`}><p className={cp.label}>Total wallet rewards</p><p className={cp.metricValue}>{formatNative(totals.totalClaimable, solana)} {symbol}</p></div>
       </div>
 
       {!account ? (
-        <Card className="border-border/60 bg-card/65 p-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"><div><p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Wallet required</p><h2 className="mt-1 font-retro text-2xl text-foreground">Connect to inspect your airdrop eligibility.</h2><p className="mt-2 text-sm text-muted-foreground">Once connected, we’ll show your latest trader and creator eligibility state, why you qualify or don’t qualify, and any claimable airdrop rewards.</p></div><ConnectWalletButton /></div>
-        </Card>
+        <section className={`${cp.card} p-4`}>
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"><div><p className={cp.label}>Wallet required</p><h2 className={`mt-1 ${cp.title}`}>Connect to inspect your airdrop eligibility.</h2><p className="mt-1 text-[15px] text-mw-muted">Once connected, we’ll show your latest trader and creator eligibility state, why you qualify or don’t qualify, and any claimable airdrop rewards.</p></div><ConnectWalletButton /></div>
+        </section>
       ) : loading ? (
-        <Card className="border-border/60 bg-card/65 px-6 py-12 text-center text-sm text-muted-foreground">Loading airdrop information...</Card>
+        <div className={`${cp.card} px-4 py-10 text-center text-[15px] text-mw-muted`}>Loading airdrop information...</div>
       ) : error ? (
-        <Card className="border-rose-400/30 bg-rose-400/10 px-6 py-12 text-center text-sm text-rose-100">{error}</Card>
+        <div className="rounded-[14px] border border-[#5C1F2B] bg-[#2A1016] px-4 py-10 text-center text-[15px] text-mw-sell">{error}</div>
       ) : (
-        <div className="grid gap-6 xl:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-2">
           <EligibilityCard title="Trader bucket" item={traderEligibility} claimableAmount={totals.traderClaimable} solana={solana} symbol={symbol} />
           <EligibilityCard title="Creator bucket" item={creatorEligibility} claimableAmount={totals.creatorClaimable} solana={solana} symbol={symbol} />
         </div>
       )}
 
-      <Card className="border-border/60 bg-card/65 p-6">
-        <div className="flex items-center gap-3"><Sparkles className="h-4 w-4 text-amber-200" /><div><p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">Recent winners</p><h2 className="mt-1 font-retro text-xl text-foreground">Published draw results</h2></div></div>
-        <div className="mt-5 space-y-3">
-          {winners.length === 0 ? <div className="rounded-2xl border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">No published airdrop winners yet.</div> : winners.map((winner) => (
-            <div key={`${winner.drawId}-${winner.walletAddress}-${winner.program}`} className="rounded-2xl border border-border/60 bg-background/35 p-4">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div><p className="font-retro text-sm text-foreground">{winner.walletAddress} · {airdropProgramLabel(winner.program)}</p><p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">Epoch #{winner.epochId} · {airdropRankNoun(winner.program)} #{winner.winnerRank}</p></div>
-                <div className="text-right"><p className="font-retro text-sm text-foreground">{formatNative(winner.payoutAmount, solana)} {symbol}</p><p className="mt-1 text-xs text-muted-foreground">Weight tier {winner.weightTier}</p></div>
+      <section className={`${cp.card} p-4`}>
+        <div className="flex items-center gap-3"><Sparkles className="h-5 w-5 shrink-0 text-mw-accent-soft" aria-hidden="true" /><div><p className={cp.label}>Recent winners</p><h2 className={`mt-1 ${cp.title}`}>Published draw results</h2></div></div>
+        <div className="mt-4 space-y-2">
+          {winners.length === 0 ? <div className={`${cp.inset} p-3 text-[15px] text-mw-muted`}>No published airdrop winners yet.</div> : winners.map((winner) => (
+            <div key={`${winner.drawId}-${winner.walletAddress}-${winner.program}`} className={`${cp.inset} p-3`}>
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0"><p className="break-all font-mw-mono text-sm font-bold text-mw-text">{winner.walletAddress} · {airdropProgramLabel(winner.program)}</p><p className="mt-1 text-[13px] text-mw-muted">Epoch #{winner.epochId} · {airdropRankNoun(winner.program)} #{winner.winnerRank}</p></div>
+                <div className="md:text-right"><p className="font-mw-mono text-sm font-bold text-mw-text">{formatNative(winner.payoutAmount, solana)} {symbol}</p><p className="mt-1 text-[13px] text-mw-muted">Weight tier {winner.weightTier}</p></div>
               </div>
             </div>
           ))}
         </div>
-      </Card>
+      </section>
     </div>
   );
 }

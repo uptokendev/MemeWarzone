@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatEther } from "ethers";
 import { ArrowRight, BarChart3, ShieldCheck, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { cp } from "@/components/token/coinPageStyles";
 import { fetchRecruiterLeaderboard, type RecruiterSummary } from "@/lib/recruiterApi";
 
 function formatBnb(raw: string): string {
@@ -24,15 +23,18 @@ function formatDate(value: string | null): string {
 function statusTone(status: string): string {
   switch (status) {
     case "active":
-      return "border-emerald-400/30 bg-emerald-400/10 text-emerald-200";
+      return `${cp.chipGood} font-mw-body`;
     case "closed":
-      return "border-rose-400/30 bg-rose-400/10 text-rose-200";
+      return "inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border border-[#5C1F2B] bg-[#2A1016] px-2.5 text-[13px] font-semibold text-mw-sell";
     case "inactive":
-      return "border-amber-300/30 bg-amber-300/10 text-amber-100";
+      return cp.chipAccent;
     default:
-      return "border-slate-400/30 bg-slate-400/10 text-slate-200";
+      return cp.chip;
   }
 }
+
+const PRIMARY_BTN =
+  "mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50";
 
 export default function RecruiterLeaderboard() {
   const [recruiters, setRecruiters] = useState<RecruiterSummary[]>([]);
@@ -75,143 +77,139 @@ export default function RecruiterLeaderboard() {
   }, [recruiters]);
 
   return (
-    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-6 px-1 py-16 md:px-2">
-      <Card className="overflow-hidden border-border/60 bg-[radial-gradient(circle_at_top_left,rgba(240,106,26,0.22),transparent_42%),linear-gradient(180deg,rgba(22,26,31,0.94),rgba(8,11,15,0.98))] p-6 md:p-8">
-        <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-          <div className="max-w-3xl space-y-3">
-            <p className="font-retro text-xs uppercase tracking-[0.24em] text-amber-100/70">Recruiter Network</p>
-            <h1 className="font-retro text-3xl text-foreground md:text-5xl">See who is leading the MemeWarzone recruiter network.</h1>
-            <p className="text-sm text-muted-foreground md:text-base">Compare recruiters by network growth, activity, earnings and performance score.</p>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Button asChild className="font-retro">
-              <Link to="/profile?tab=recruiter">
-                Recruiter Dashboard
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Link>
-            </Button>
-          </div>
+    <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-4 px-1 py-16 font-mw-body text-mw-text md:px-2">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="max-w-3xl">
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Recruiter Network</div>
+          <h1 className="m-0 mt-1 font-mw-cond text-[32px] font-bold leading-none lg:text-[40px]">See who is leading the MemeWarzone recruiter network.</h1>
+          <p className="mt-2 text-[15px] text-mw-muted">Compare recruiters by network growth, activity, earnings and performance score.</p>
         </div>
-      </Card>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="border-border/60 bg-card/70 p-5">
-          <div className="flex items-center justify-between">
-            <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Active recruiters</p>
-            <ShieldCheck className="h-4 w-4 text-emerald-300" />
-          </div>
-          <p className="mt-4 font-retro text-3xl text-foreground">{totals.activeRecruiters}</p>
-        </Card>
-
-        <Card className="border-border/60 bg-card/70 p-5">
-          <div className="flex items-center justify-between">
-            <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Linked wallets</p>
-            <Users className="h-4 w-4 text-amber-200" />
-          </div>
-          <p className="mt-4 font-retro text-3xl text-foreground">{totals.linkedWallets}</p>
-        </Card>
-
-        <Card className="border-border/60 bg-card/70 p-5">
-          <div className="flex items-center justify-between">
-            <p className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">Claimable rewards</p>
-            <BarChart3 className="h-4 w-4 text-sky-200" />
-          </div>
-          <p className="mt-4 font-retro text-3xl text-foreground">{totals.claimableBnb} BNB</p>
-        </Card>
+        <div className="flex flex-wrap gap-2">
+          <Link to="/profile?tab=recruiter" className={PRIMARY_BTN}>
+            Recruiter Dashboard
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        </div>
       </div>
 
-      <Card className="border-border/60 bg-card/65 p-4 md:p-6">
-        <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className={`${cp.card} p-4`}>
+          <div className="flex items-center justify-between">
+            <p className={cp.label}>Active recruiters</p>
+            <ShieldCheck className="h-4 w-4 text-[#6EE7A0]" aria-hidden="true" />
+          </div>
+          <p className={cp.metricValue}>{totals.activeRecruiters}</p>
+        </div>
+
+        <div className={`${cp.card} p-4`}>
+          <div className="flex items-center justify-between">
+            <p className={cp.label}>Linked wallets</p>
+            <Users className="h-4 w-4 text-mw-accent-soft" aria-hidden="true" />
+          </div>
+          <p className={cp.metricValue}>{totals.linkedWallets}</p>
+        </div>
+
+        <div className={`${cp.card} p-4`}>
+          <div className="flex items-center justify-between">
+            <p className={cp.label}>Claimable rewards</p>
+            <BarChart3 className="h-4 w-4 text-mw-accent-soft" aria-hidden="true" />
+          </div>
+          <p className={cp.metricValue}>{totals.claimableBnb} BNB</p>
+        </div>
+      </div>
+
+      <section className={`${cp.card} p-4`}>
+        <div className="mb-3 flex items-center justify-between gap-3">
           <div>
-            <p className="font-retro text-xs uppercase tracking-[0.22em] text-muted-foreground">Leaderboard</p>
-            <p className="mt-1 text-sm text-muted-foreground">Sorted by total earned, then linked wallet count.</p>
+            <h2 className={cp.title}>Leaderboard</h2>
+            <p className="mt-1 text-[15px] text-mw-muted">Sorted by total earned, then linked wallet count.</p>
           </div>
         </div>
 
         {loading ? (
-          <div className="rounded-2xl border border-border/60 bg-background/30 px-4 py-12 text-center text-sm text-muted-foreground">
+          <div className={`${cp.inset} px-4 py-10 text-center text-[15px] text-mw-muted`}>
             Loading recruiter leaderboard...
           </div>
         ) : error ? (
-          <div className="rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-12 text-center text-sm text-rose-100">
+          <div className="rounded-[10px] border border-[#5C1F2B] bg-[#2A1016] px-4 py-10 text-center text-[15px] text-mw-sell">
             {error}
           </div>
         ) : recruiters.length === 0 ? (
-          <div className="rounded-2xl border border-border/60 bg-background/30 px-4 py-12 text-center text-sm text-muted-foreground">
+          <div className={`${cp.inset} px-4 py-10 text-center text-[15px] text-mw-muted`}>
             No recruiters have been published yet.
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {recruiters.map((recruiter, index) => (
               <Link
                 key={`${recruiter.code}-${recruiter.walletAddress}`}
                 to={`/recruiters/${encodeURIComponent(recruiter.code)}`}
-                className="group block rounded-2xl border border-border/60 bg-background/35 p-4 transition-colors hover:border-amber-300/40 hover:bg-background/55"
+                className="mw-focus group block rounded-[10px] border border-mw-border bg-mw-input p-3 transition-colors hover:border-[#3A424C] hover:bg-[#161A1F]"
               >
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="flex items-start gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-300/20 bg-amber-300/10 font-retro text-lg text-amber-100">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] border border-[#7A3A0C] bg-[#2A1609] font-mw-mono text-base font-bold text-mw-accent-soft">
                       #{index + 1}
                     </div>
 
-                    <div className="space-y-2">
+                    <div className="min-w-0 space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="font-retro text-lg text-foreground">
+                        <h3 className="font-mw-cond text-lg font-bold text-mw-text">
                           {recruiter.displayName || recruiter.code}
-                        </h2>
-                        <span className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] ${statusTone(recruiter.status)}`}>
+                        </h3>
+                        <span className={statusTone(recruiter.status)}>
                           {recruiter.status}
                         </span>
                         {recruiter.isOg ? (
-                          <span className="rounded-full border border-sky-300/30 bg-sky-300/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-100">
+                          <span className={cp.chipAccent}>
                             OG
                           </span>
                         ) : null}
                       </div>
 
-                      <p className="font-retro text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                      <p className="font-mw-mono text-xs text-mw-muted">
                         /r/{recruiter.code}
                       </p>
 
-                      <div className="grid gap-3 text-sm text-muted-foreground md:grid-cols-2 lg:grid-cols-4">
+                      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                         <div>
-                          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80">Linked wallets</p>
-                          <p className="mt-1 font-retro text-foreground">{recruiter.linkedWalletCount}</p>
+                          <p className={cp.tileLabel}>Linked wallets</p>
+                          <p className="mt-0.5 font-mw-mono text-sm font-bold text-mw-text">{recruiter.linkedWalletCount}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80">Claimable</p>
-                          <p className="mt-1 font-retro text-foreground">{formatBnb(recruiter.claimableEarningsRaw)} BNB</p>
+                          <p className={cp.tileLabel}>Claimable</p>
+                          <p className="mt-0.5 font-mw-mono text-sm font-bold text-mw-text">{formatBnb(recruiter.claimableEarningsRaw)} BNB</p>
                         </div>
                         <div>
-                          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80">Total earned</p>
-                          <p className="mt-1 font-retro text-foreground">{formatBnb(recruiter.totalEarnedRaw)} BNB</p>
+                          <p className={cp.tileLabel}>Total earned</p>
+                          <p className="mt-0.5 font-mw-mono text-sm font-bold text-mw-text">{formatBnb(recruiter.totalEarnedRaw)} BNB</p>
                         </div>
                         <div>
-                          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80">Last referred event</p>
-                          <p className="mt-1 font-retro text-foreground">{formatDate(recruiter.lastReferredEventAt)}</p>
+                          <p className={cp.tileLabel}>Last referred event</p>
+                          <p className="mt-0.5 font-mw-mono text-sm font-bold text-mw-text">{formatDate(recruiter.lastReferredEventAt)}</p>
                         </div>
                       </div>
 
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-[13px] text-mw-muted">
                         Weighted score:{" "}
-                        <span className="font-retro text-foreground">
+                        <span className="font-mw-mono font-bold text-mw-text">
                           {(recruiter.weightedScore ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                         </span>
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 text-sm text-amber-100/80 group-hover:text-amber-100">
+                  <div className="flex items-center gap-2 text-[15px] font-semibold text-mw-accent-soft group-hover:text-mw-text">
                     View recruiter profile
-                    <ArrowRight className="h-4 w-4" />
+                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
                   </div>
                 </div>
               </Link>
             ))}
           </div>
         )}
-      </Card>
+      </section>
     </div>
   );
 }

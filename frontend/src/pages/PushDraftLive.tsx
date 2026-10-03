@@ -775,12 +775,12 @@ export default function PushDraftLive() {
     }
   };
 
-  if (loading) return <div className="mx-auto max-w-4xl py-20 text-center font-retro text-muted-foreground">Loading draft...</div>;
+  if (loading) return <div className="mx-auto max-w-4xl py-20 text-center font-mw-body text-[15px] text-mw-muted">Loading draft...</div>;
   if (!draft || !bundle) {
     return (
-      <div className="mx-auto max-w-4xl py-20 text-center">
-        <h1 className="font-retro text-4xl text-foreground">Draft not found</h1>
-        <Button asChild className="mwz-button mt-6 font-retro"><Link to="/profile?tab=drafts">Back to Drafts</Link></Button>
+      <div className="mx-auto max-w-4xl px-4 py-20 text-center font-mw-body">
+        <h1 className="m-0 font-mw-cond text-[32px] font-bold leading-none text-mw-text lg:text-[40px]">Draft not found</h1>
+        <Button asChild className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-6"><Link to="/profile?tab=drafts">Back to Drafts</Link></Button>
       </div>
     );
   }
@@ -792,32 +792,32 @@ export default function PushDraftLive() {
 
   return (
     <div className="mx-auto w-full max-w-[1480px] px-1 py-8 md:px-2">
-      <div className="mwz-card p-5 md:p-7">
+      <div className="rounded-[14px] border border-mw-border bg-mw-surface p-4 font-mw-body text-mw-text md:p-7">
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-orange-400">Prepare Mode</div>
-            <h1 className="mwz-section-title mt-1 text-3xl text-success md:text-4xl">Deploy Draft</h1>
-            <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Prepare Mode</div>
+            <h1 className="m-0 font-mw-cond text-[32px] font-bold leading-none text-mw-text lg:text-[40px] mt-2">Deploy Draft</h1>
+            <p className="mt-3 max-w-3xl text-[15px] text-mw-muted">
               {dbcDraft
                 ? "Set a launch time (nothing is created on chain yet). When the timer ends, you launch the coin with one wallet signature."
                 : "Choose the graduation tier and deploy immediately, or pay gas now and arm a countdown that blocks trading until launch time."}
             </p>
           </div>
-          <Button asChild variant="outline" className="mwz-button h-10 font-retro text-xs">
+          <Button asChild variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60">
             <Link to={`/drafts/${draft.id}/promotion`}>Back to Setup</Link>
           </Button>
         </div>
 
         <div className="mb-5 grid gap-4 md:grid-cols-[140px_1fr]">
-          <div className="mwz-card overflow-hidden border-success/35 bg-black/70">
+          <div className="mx-auto w-full max-w-[160px] overflow-hidden rounded-[14px] border border-mw-border bg-mw-input md:max-w-none">
             <img src={logoURI || "/placeholder.svg"} alt={draft.name} className="aspect-square h-full w-full object-cover" />
           </div>
-          <div className="mwz-card p-4">
-            <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-              <ShieldCheck className="h-4 w-4 text-success" /> {chainLabel} · ${draft.ticker} · {draft.status.replace(/_/g, " ")}
+          <div className="rounded-[10px] border border-mw-border bg-mw-input p-4">
+            <div className="flex flex-wrap items-center gap-2 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
+              <ShieldCheck className="h-4 w-4 text-[#6EE7A0]" /> {chainLabel} · ${draft.ticker} · {draft.status.replace(/_/g, " ")}
             </div>
-            <h2 className="mt-3 font-retro text-2xl text-foreground">{draft.name}</h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">{bundle.promotion.missionStatement || draft.description || "No mission statement saved yet."}</p>
+            <h2 className="mt-3 break-words font-mw-cond text-2xl font-bold text-mw-text">{draft.name}</h2>
+            <p className="mt-2 break-words text-sm leading-6 text-mw-muted">{bundle.promotion.missionStatement || draft.description || "No mission statement saved yet."}</p>
           </div>
         </div>
 
@@ -830,15 +830,15 @@ export default function PushDraftLive() {
         />
 
         {dbcDraft ? null : (
-        <div className="mwz-card mt-5 p-4">
-          <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Creator deployment eligibility</div>
+        <div className="rounded-[10px] border border-mw-border bg-mw-input mt-5 p-4">
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Creator deployment eligibility</div>
           {creatorEligibility?.allowed ? (
             <div className="mt-2 space-y-1">
-              <p className="text-sm text-green-300">Eligible to deploy or arm now.</p>
-              <p className="text-xs text-muted-foreground">Live campaigns: {creatorEligibility.currentLiveCount} / {creatorEligibility.maxLiveBonding}</p>
+              <p className="text-sm text-[#6EE7A0]">Eligible to deploy or arm now.</p>
+              <p className="font-mw-mono text-xs text-mw-muted">Live campaigns: {creatorEligibility.currentLiveCount} / {creatorEligibility.maxLiveBonding}</p>
             </div>
           ) : creatorEligibility ? (
-            <div className="mt-2 space-y-2 text-sm text-orange-300">
+            <div className="mt-2 space-y-2 text-sm text-mw-accent-soft">
               {isCreatorArmCooldownActive(creatorEligibility) ? (
                 <p>Creator cooldown active. Another campaign may be deployed or armed after {formatLocalLaunch(creatorEligibility.cooldownEndsAt)} ({creatorTimeZone}).</p>
               ) : creatorEligibility.currentLiveCount >= creatorEligibility.maxLiveBonding ? (
@@ -846,49 +846,49 @@ export default function PushDraftLive() {
               ) : (
                 <p>This creator wallet cannot deploy or arm another campaign right now.</p>
               )}
-              <p className="text-xs text-muted-foreground">Trading-open time does not affect arm cooldown. Arming, even with a timer, starts the 24h creator cooldown immediately.</p>
+              <p className="text-xs text-mw-muted">Trading-open time does not affect arm cooldown. Arming, even with a timer, starts the 24h creator cooldown immediately.</p>
               <Button
                 type="button"
                 variant="outline"
-                className="h-8 border-orange-400/40 bg-orange-500/10 px-3 text-xs text-orange-200 hover:bg-orange-500/20"
+                className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-[#7A3A0C] bg-[#2A1609] px-4 text-sm font-semibold text-mw-accent-soft hover:bg-[#341B0B] hover:text-mw-accent-soft"
                 onClick={() => showArmBlock(resolveCreatorArmBlock({ mode, eligibility: creatorEligibility, errorMessage: "Deployment not available for this wallet right now." }))}
               >
                 Why can&apos;t I deploy?
               </Button>
             </div>
           ) : null}
-          {creatorEligibilityError ? <p className="mt-2 text-sm text-orange-300">{creatorEligibilityError}</p> : null}
+          {creatorEligibilityError ? <p className="mt-2 text-sm text-mw-sell">{creatorEligibilityError}</p> : null}
         </div>
         )}
 
         <div className="mt-5 grid gap-3 md:grid-cols-2">
-          <button type="button" onClick={() => setMode("now")} className={`mwz-card p-4 text-left ${mode === "now" ? "border-success/60 bg-success/10" : "border-border"}`}>
-            <div className="flex items-center gap-2 font-retro text-lg text-foreground"><Rocket className="h-4 w-4" /> Deploy now</div>
-            <p className="mt-2 text-sm text-muted-foreground">{dbcDraft ? "Sign once in your wallet and your coin goes live." : "Pay gas, deploy the campaign, and open trading immediately."}</p>
+          <button type="button" onClick={() => setMode("now")} className={`mw-focus rounded-[14px] border p-4 text-left ${mode === "now" ? "border-[#1F5133] bg-[#0F2418]" : "border-mw-border bg-mw-input hover:border-mw-edge"}`}>
+            <div className="flex items-center gap-2 font-mw-cond text-lg font-bold text-mw-text"><Rocket className="h-4 w-4" /> Deploy now</div>
+            <p className="mt-2 text-sm text-mw-muted">{dbcDraft ? "Sign once in your wallet and your coin goes live." : "Pay gas, deploy the campaign, and open trading immediately."}</p>
           </button>
-          <button type="button" onClick={() => setMode("scheduled")} className={`mwz-card p-4 text-left ${mode === "scheduled" ? "border-orange-400/60 bg-orange-500/10" : "border-border"}`}>
-            <div className="flex items-center gap-2 font-retro text-lg text-foreground"><Clock3 className="h-4 w-4" /> Deploy with countdown</div>
-            <p className="mt-2 text-sm text-muted-foreground">{dbcDraft ? "Save a launch time. The pool is created only when you deploy after that time." : "Pay gas now. The campaign is created immediately, but trading remains blocked until the selected time."}</p>
+          <button type="button" onClick={() => setMode("scheduled")} className={`mw-focus rounded-[14px] border p-4 text-left ${mode === "scheduled" ? "border-[#7A3A0C] bg-[#2A1609]" : "border-mw-border bg-mw-input hover:border-mw-edge"}`}>
+            <div className="flex items-center gap-2 font-mw-cond text-lg font-bold text-mw-text"><Clock3 className="h-4 w-4" /> Deploy with countdown</div>
+            <p className="mt-2 text-sm text-mw-muted">{dbcDraft ? "Save a launch time. The pool is created only when you deploy after that time." : "Pay gas now. The campaign is created immediately, but trading remains blocked until the selected time."}</p>
           </button>
         </div>
 
         {mode === "scheduled" ? (
-          <div className="mwz-card mt-4 p-4">
-            <label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{dbcDraft ? "You can launch from" : "Trading opens at"} ({creatorTimeZone})</label>
+          <div className="rounded-[10px] border border-mw-border bg-mw-input mt-4 p-4">
+            <label className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{dbcDraft ? "You can launch from" : "Trading opens at"} ({creatorTimeZone})</label>
             <Input
               type="datetime-local"
               value={launchAtInput}
               onChange={(event) => setLaunchAtInput(event.target.value)}
               min={toLocalInputValue(new Date(Date.now() + 5 * 60 * 1000))}
               max={toLocalInputValue(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000))}
-              className="mt-2 max-w-md"
+              className="h-11 rounded-[10px] border border-mw-edge bg-mw-input px-3 text-[15px] text-mw-text placeholder:text-[#5C6670] mt-2 w-full max-w-md font-mw-mono"
               disabled={submitting}
             />
             {selectedLaunchValid ? (
-              <div className="mt-3 space-y-1 text-xs text-muted-foreground">
-                <p>Creator timezone: <span className="text-foreground">{creatorTimeZone} ({timeZoneOffset(selectedLaunchDate)})</span></p>
-                <p>UTC time: <span className="text-foreground">{selectedLaunchDate.toISOString().replace("T", " ").slice(0, 16)} UTC</span></p>
-                <p className="pt-1 text-orange-200">
+              <div className="mt-3 space-y-1 text-xs text-mw-muted">
+                <p>Creator timezone: <span className="font-mw-mono text-mw-text">{creatorTimeZone} ({timeZoneOffset(selectedLaunchDate)})</span></p>
+                <p>UTC time: <span className="font-mw-mono text-mw-text">{selectedLaunchDate.toISOString().replace("T", " ").slice(0, 16)} UTC</span></p>
+                <p className="pt-1 text-mw-accent-soft">
                   {dbcDraft
                     ? "Nothing is created until you launch. At this time you get a reminder on any page of the site while your wallet is connected."
                     : "This timestamp controls only when trading opens. It is not reserved, queued, or made exclusive to this campaign."}
@@ -916,16 +916,16 @@ export default function PushDraftLive() {
         ) : null}
 
         {!ownerConnected ? (
-          <p className="mt-4 text-sm text-orange-300">
+          <p className="mt-4 text-sm text-mw-accent-soft">
             {draftIsSolana ? "Connect the draft owner Solana wallet (Phantom/Solflare) before deployment." : "Connect the draft owner wallet before deployment."}
           </p>
         ) : null}
         {draftIsSolana && ownerConnected ? (
-          <p className="mt-4 text-sm text-muted-foreground">{dbcDraft ? "Your wallet confirms one Solana transaction when you launch. The coin trades from that moment." : "Your wallet will confirm the Solana launch transaction. Trading becomes available according to the launch time you selected."}</p>
+          <p className="mt-4 text-sm text-mw-muted">{dbcDraft ? "Your wallet confirms one Solana transaction when you launch. The coin trades from that moment." : "Your wallet will confirm the Solana launch transaction. Trading becomes available according to the launch time you selected."}</p>
         ) : null}
-        {!DRAFT_PUSH_LIVE_ENABLED ? <p className="mt-4 text-sm text-orange-300">Draft deployment is temporarily unavailable. Your draft remains saved.</p> : null}
+        {!DRAFT_PUSH_LIVE_ENABLED ? <p className="mt-4 text-sm text-mw-accent-soft">Draft deployment is temporarily unavailable. Your draft remains saved.</p> : null}
 
-        <Button onClick={deploy} disabled={blocked} className="mwz-button mwz-button-orange mt-5 h-12 w-full justify-center font-retro">
+        <Button onClick={deploy} disabled={blocked} className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-5 h-auto min-h-[54px] w-full whitespace-normal py-3 text-center text-[17px]">
           {submitting
             ? "Confirming Deployment..."
             : dbcDraft && mode === "scheduled"

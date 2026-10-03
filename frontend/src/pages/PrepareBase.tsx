@@ -268,9 +268,9 @@ function RadarCard({
   ];
 
   return (
-    <div className="mwz-card p-5 md:p-6">
-      <div className="text-xs uppercase tracking-[0.22em] text-orange-300">
-        // RECON HEAT
+    <div className="rounded-[14px] border border-mw-border bg-mw-surface p-4 md:p-6">
+      <div className="font-mw-cond text-xl font-bold tracking-[0.02em] text-mw-text">
+        RECON HEAT
       </div>
 
       <div className="mx-auto mt-5 flex h-40 w-40 items-center justify-center">
@@ -280,7 +280,7 @@ function RadarCard({
           {dots.map((classes, index) => (
             <span
               key={classes}
-              className={`absolute ${classes} rounded-full bg-orange-300 transition-all duration-300 ${
+              className={`mw-dot absolute ${classes} rounded-full bg-mw-accent-soft transition-all duration-300 ${
                 pulse === index
                   ? "scale-150 opacity-100 shadow-[0_0_18px_rgba(255,185,71,0.9)]"
                   : "opacity-55 shadow-[0_0_8px_rgba(255,153,0,0.4)]"
@@ -290,9 +290,9 @@ function RadarCard({
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between text-xs uppercase tracking-[0.18em]">
-        <span className="mwz-muted">{Number(comments) || 0} transmissions</span>
-        <span className="text-orange-300 transition-all duration-300">
+      <div className="mt-4 flex items-center justify-between gap-2 font-mw-mono text-[13px]">
+        <span className="text-mw-muted">{Number(comments) || 0} transmissions</span>
+        <span className="text-mw-accent-soft transition-all duration-300">
           {livePercentage}% · {heatLabel}
         </span>
       </div>
@@ -302,7 +302,7 @@ function RadarCard({
 
 function TokenLogo({ src, ticker }: { src?: string | null; ticker: string }) { 
   return (
-    <div className="mb-5 flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-[radial-gradient(circle_at_30%_25%,rgba(57,255,122,0.95),rgba(0,65,28,0.95)_52%,rgba(0,0,0,0.78))] font-retro text-2xl text-white">
+    <div className="mb-5 flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border border-mw-edge bg-mw-input font-mw-cond text-2xl font-bold text-mw-accent-soft">
       {src ? (
         <img src={src} alt={`${ticker} logo`} className="h-full w-full object-cover" />
       ) : (
@@ -343,7 +343,7 @@ function WarzoneHudPreview({
           </div>
 
           <div className="flex min-h-[4.8rem] items-center justify-center border-t border-orange-400/30 bg-black/95 px-4 py-3 text-center md:min-h-[5.6rem]">
-            <div className="line-clamp-2 font-retro text-2xl uppercase leading-[0.9] tracking-[0.06em] text-orange-100 drop-shadow-[0_0_14px_rgba(255,122,26,0.35)] md:text-3xl">
+            <div className="line-clamp-2 font-mw-cond font-bold text-2xl uppercase leading-[0.9] tracking-[0.06em] text-orange-100 drop-shadow-[0_0_14px_rgba(255,122,26,0.35)] md:text-3xl">
               {name}
             </div>
           </div>
@@ -457,42 +457,42 @@ function ShareModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-black/75 p-2 backdrop-blur-sm sm:p-4">
+    <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-black/75 p-2 font-mw-body text-mw-text sm:p-4">
       <div className="flex min-h-[100dvh] items-center justify-center sm:min-h-[calc(100dvh-2rem)]">
-        <div className="relative flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden border border-orange-400/50 bg-black/95">
-          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/50 px-3 py-3 sm:px-4">
+        <div className="relative flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface">
+          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-mw-border px-3 py-3 sm:px-4">
             <div className="min-w-0">
-              <div className="text-[10px] uppercase tracking-[0.22em] text-orange-300 sm:text-xs">
-                // Dynamic share card
+              <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
+                Dynamic share card
               </div>
-              <h3 className="mt-1 font-retro text-xl uppercase tracking-[0.08em] text-foreground sm:text-2xl">
+              <h3 className="mt-1 font-mw-cond text-2xl font-bold text-mw-text">
                 Share on X
               </h3>
-              <p className="mt-1 hidden text-sm text-muted-foreground sm:block">
+              <p className="mt-1 hidden text-sm text-mw-muted sm:block">
                 Save the share card, open X, then attach the PNG — same pattern as trade P&amp;L cards.
               </p>
             </div>
 
-            <button type="button" onClick={onClose} className="mwz-button h-9 w-9 shrink-0">
+            <button type="button" onClick={onClose} className="mw-focus inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-text hover:bg-[#222830]">
               <X className="mx-auto h-4 w-4" />
             </button>
           </div>
 
-          <div className="relative flex shrink-0 items-center justify-center overflow-hidden border-b border-border/70 bg-black/50">
+          <div className="relative flex shrink-0 items-center justify-center overflow-hidden border-b border-mw-border bg-mw-input">
             {imageStatus === "loading" ? (
               <div className="flex h-[28vh] max-h-[220px] min-h-[140px] w-full flex-col items-center justify-center px-4 text-center">
                 <RadarLoader label="Creating share card…" size="sm" />
-                <p className="mt-2 max-w-sm text-xs text-muted-foreground">
+                <p className="mt-2 max-w-sm text-xs text-mw-muted">
                   Rendering your Prepare Mode art. This can take a few seconds.
                 </p>
               </div>
             ) : null}
             {imageStatus === "error" ? (
               <div className="flex h-[22vh] min-h-[120px] w-full flex-col items-center justify-center gap-2 px-4 text-center">
-                <p className="text-sm text-orange-200">Share card failed to load.</p>
+                <p className="text-sm text-mw-sell">Share card failed to load.</p>
                 <Button
                   type="button"
-                  className="mwz-button font-retro text-xs"
+                  className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60"
                   onClick={() => {
                     setImageStatus("loading");
                     setImageAttempt((attempt) => attempt + 1);
@@ -516,20 +516,20 @@ function ShareModal({
             />
           </div>
 
-          <div className="shrink-0 border-b border-orange-400/40 bg-orange-500/10 px-3 py-3 sm:px-4">
-            <div className="text-[10px] uppercase tracking-[0.18em] text-orange-300 sm:text-xs">
+          <div className="shrink-0 border-b border-mw-border bg-[#1A1008] px-3 py-3 sm:px-4">
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
               Fast path (recommended)
             </div>
-            <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+            <p className="mt-1 text-[13px] text-mw-muted sm:text-sm">
               Downloads the card, then opens X with your message. Attach the PNG in X and Post.
             </p>
             <Button
               type="button"
               onClick={() => void guidedShare()}
               disabled={Boolean(busy)}
-              className="mwz-button mwz-button-orange mt-2 w-full font-retro"
+              className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-2 w-full"
             >
-              <ExternalLink className="mr-2 h-4 w-4" />
+              <ExternalLink className="h-4 w-4" />
               {busy === "guided" ? "Preparing…" : "1 · Download card & open X"}
             </Button>
           </div>
@@ -537,12 +537,12 @@ function ShareModal({
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4">
             <div className="grid gap-2 sm:grid-cols-3 sm:gap-3">
               <div
-                className={`rounded-lg border p-3 ${
-                  downloaded ? "border-emerald-400/50 bg-emerald-500/10" : "border-border/70 bg-black/40"
+                className={`mw-panel rounded-[10px] border p-3 ${
+                  downloaded ? "border-[#1F5133] bg-[#0F2418]" : "border-mw-border bg-mw-input"
                 }`}
               >
-                <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-orange-300 sm:text-xs">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-orange-500/20 font-retro text-[10px] text-orange-200">
+                <div className="flex items-center gap-2 text-sm font-semibold text-mw-text">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full border border-[#7A3A0C] bg-[#2A1609] font-mw-mono text-[11px] font-bold text-mw-accent-soft">
                     1
                   </span>
                   Save the card
@@ -551,20 +551,20 @@ function ShareModal({
                   type="button"
                   onClick={() => void downloadCard()}
                   disabled={Boolean(busy)}
-                  className="mwz-button mt-2 w-full font-retro text-xs"
+                  className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 mt-2 w-full px-3 text-sm"
                 >
-                  <Download className="mr-2 h-4 w-4" />
+                  <Download className="h-4 w-4" />
                   {busy === "download" ? "Saving…" : downloaded ? "Download again" : "Download share card"}
                 </Button>
               </div>
 
               <div
-                className={`rounded-lg border p-3 ${
-                  openedX ? "border-emerald-400/50 bg-emerald-500/10" : "border-border/70 bg-black/40"
+                className={`mw-panel rounded-[10px] border p-3 ${
+                  openedX ? "border-[#1F5133] bg-[#0F2418]" : "border-mw-border bg-mw-input"
                 }`}
               >
-                <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-orange-300 sm:text-xs">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-orange-500/20 font-retro text-[10px] text-orange-200">
+                <div className="flex items-center gap-2 text-sm font-semibold text-mw-text">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full border border-[#7A3A0C] bg-[#2A1609] font-mw-mono text-[11px] font-bold text-mw-accent-soft">
                     2
                   </span>
                   Open X
@@ -573,29 +573,29 @@ function ShareModal({
                   type="button"
                   onClick={openXOnly}
                   disabled={Boolean(busy)}
-                  className="mwz-button mt-2 w-full font-retro text-xs"
+                  className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 mt-2 w-full px-3 text-sm"
                 >
-                  <ExternalLink className="mr-2 h-4 w-4" />
+                  <ExternalLink className="h-4 w-4" />
                   {busy === "open-x" ? "Opening…" : "Open X compose"}
                 </Button>
               </div>
 
-              <div className="rounded-lg border border-border/70 bg-black/40 p-3">
-                <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-orange-300 sm:text-xs">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-orange-500/20 font-retro text-[10px] text-orange-200">
+              <div className="rounded-[10px] border border-mw-border bg-mw-input p-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-mw-text">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full border border-[#7A3A0C] bg-[#2A1609] font-mw-mono text-[11px] font-bold text-mw-accent-soft">
                     3
                   </span>
                   Attach in X
                 </div>
-                <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                <p className="mt-2 text-xs leading-relaxed text-mw-muted">
                   In X: media button → pick the PNG → Post.
                 </p>
               </div>
             </div>
 
-            <div className="mt-3 flex flex-wrap gap-2 border-t border-border/50 pt-3">
-              <Button type="button" onClick={() => void copyPage()} className="mwz-button font-retro text-xs">
-                <Share2 className="mr-2 h-4 w-4" />
+            <div className="mt-3 flex flex-wrap gap-2 border-t border-mw-border pt-3">
+              <Button type="button" onClick={() => void copyPage()} className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60">
+                <Share2 className="h-4 w-4" />
                 Copy page link
               </Button>
               <Button
@@ -606,9 +606,9 @@ function ShareModal({
                     duration: 6_000,
                   });
                 }}
-                className="mwz-button font-retro text-xs"
+                className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60"
               >
-                <ImageDown className="mr-2 h-4 w-4" />
+                <ImageDown className="h-4 w-4" />
                 Copy PNG link
               </Button>
             </div>
@@ -765,19 +765,19 @@ function TransmissionList({
   return (
     <section className="mx-auto w-full max-w-[1480px] px-4 py-10 md:px-8 md:py-14">
       {replyingTo && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <div className="mwz-card w-full max-w-lg border-orange-400/50 bg-black/95 p-5">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4">
+          <div className="rounded-[14px] border border-mw-border bg-mw-surface w-full max-w-lg p-4 font-mw-body text-mw-text sm:p-5">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
-                <div className="text-xs uppercase tracking-[0.22em] text-orange-300">
-                  // Creator reply
+                <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
+                  Creator reply
                 </div>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                <p className="mt-2 break-words text-sm leading-6 text-mw-muted">
                   Replying to {replyingTo.displayName || shortWallet(replyingTo.walletAddress)}: “{replyingTo.body}”
                 </p>
               </div>
 
-              <button onClick={() => setReplyingTo(null)} className="mwz-button h-8 w-8">
+              <button onClick={() => setReplyingTo(null)} className="mw-focus inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-text hover:bg-[#222830]">
                 <X className="mx-auto h-4 w-4" />
               </button>
             </div>
@@ -785,14 +785,14 @@ function TransmissionList({
             <Textarea
               value={replyBody}
               onChange={(e) => setReplyBody(e.target.value)}
-              className="min-h-32 border-border/70 bg-background/50 font-retro"
+              className="min-h-32 mw-focus rounded-[10px] border border-mw-edge bg-mw-input px-3 py-2 text-[15px] leading-6 text-mw-text placeholder:text-[#5C6670]"
               placeholder="Send official creator reply..."
             />
 
             <Button
               onClick={() => send(true)}
               disabled={loading || !replyBody.trim()}
-              className="mwz-button mwz-button-orange mt-3 w-full font-retro"
+              className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-3 w-full"
             >
               Send creator reply
             </Button>
@@ -802,14 +802,13 @@ function TransmissionList({
 
       <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div className="flex items-center gap-4">
-          <div className="h-px w-16 bg-orange-400/70" />
           <div>
-            <h2 className="font-retro text-3xl uppercase tracking-[0.12em] text-foreground md:text-4xl">
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
+              Bunker comms feed
+            </div>
+            <h2 className="m-0 mt-2 font-mw-cond text-[32px] font-bold leading-none text-mw-text lg:text-[40px]">
               Transmissions
             </h2>
-            <p className="mt-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              // Bunker comms feed
-            </p>
           </div>
         </div>
       </div>
@@ -818,17 +817,17 @@ function TransmissionList({
         <div className="max-h-[720px] overflow-y-auto pr-1">
           <div className="grid gap-4 md:grid-cols-2">
             {items.length === 0 ? (
-              <div className="mwz-card p-5 text-sm text-muted-foreground md:col-span-2">
+              <div className="rounded-[14px] border border-mw-border bg-mw-surface p-4 text-sm text-mw-muted md:col-span-2">
                 No transmissions intercepted yet. Be the first soldier in the bunker.
               </div>
             ) : (
               items.map((item) => (
-                <div key={item.id} className="mwz-card flex gap-3 p-4">
+                <div key={item.id} className="rounded-[14px] border border-mw-border bg-mw-surface flex gap-3 p-4">
                   {item.avatarUrl ? (
                     <img
                       src={item.avatarUrl}
                       alt=""
-                      className="h-10 w-10 shrink-0 border border-border/60 object-cover bg-black/40"
+                      className="h-10 w-10 shrink-0 rounded-full border border-mw-border bg-mw-input object-cover"
                       onError={(event) => {
                         (event.currentTarget as HTMLImageElement).style.display = "none";
                         const fallback = event.currentTarget.nextElementSibling as HTMLElement | null;
@@ -837,7 +836,7 @@ function TransmissionList({
                     />
                   ) : null}
                   <div
-                    className={`h-10 w-10 shrink-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,153,0,0.55),rgba(25,8,2,0.9))] ${
+                    className={`h-10 w-10 shrink-0 rounded-full border border-mw-border bg-[#2A1609] ${
                       item.avatarUrl ? "hidden" : ""
                     }`}
                     aria-hidden={Boolean(item.avatarUrl)}
@@ -847,31 +846,31 @@ function TransmissionList({
                     <div className="flex items-center justify-between gap-3">
                       <Link
                         to={`/profile/${encodeURIComponent(item.walletAddress)}`}
-                        className="truncate font-retro text-sm text-foreground hover:text-orange-200"
+                        className="truncate text-[15px] font-semibold text-mw-text hover:text-mw-accent-soft"
                         title={item.walletAddress}
                       >
                         {item.displayName || shortWallet(item.walletAddress)}
                       </Link>
-                      <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                      <span className="shrink-0 font-mw-mono text-xs text-mw-muted">
                         {new Date(item.createdAt).toLocaleDateString()}
                       </span>
                     </div>
 
-                    <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
+                    <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-[#C9CED4]">
                       {item.body}
                     </p>
 
-                    <div className="mt-3 flex gap-4 text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 text-[13px] font-semibold text-mw-muted">
                       <button
                         type="button"
                         onClick={() => void react(item)}
                         disabled={Boolean(reactingIds[item.id])}
                         aria-pressed={Boolean(item.viewerReacted)}
                         aria-label={item.viewerReacted ? "Remove fire" : "Fire this transmission"}
-                        className={`inline-flex items-center gap-1 transition-colors disabled:opacity-60 ${
+                        className={`mw-focus inline-flex min-h-11 items-center gap-1 transition-colors disabled:opacity-60 ${
                           item.viewerReacted
-                            ? "text-orange-300 hover:text-orange-200"
-                            : "text-muted-foreground hover:text-orange-200"
+                            ? "text-mw-accent-soft hover:text-mw-text"
+                            : "text-mw-muted hover:text-mw-accent-soft"
                         }`}
                       >
                         <span aria-hidden="true">🔥</span>
@@ -885,9 +884,9 @@ function TransmissionList({
                             ? setReplyingTo(item)
                             : toast.error("Only the creator can reply.")
                         }
-                        className="inline-flex items-center gap-1 text-orange-300 hover:text-orange-200"
+                        className="mw-focus inline-flex min-h-11 items-center gap-1 text-mw-accent-soft hover:text-mw-text"
                       >
-                        <MessageSquareReply className="h-3 w-3" />
+                        <MessageSquareReply className="h-3.5 w-3.5" />
                         Reply
                       </button>
                       {account && item.walletAddress?.toLowerCase() === account.toLowerCase() ? null : (
@@ -909,8 +908,8 @@ function TransmissionList({
           </div>
         </div>
 
-        <div className="mwz-card p-5">
-          <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-orange-300">
+        <div className="rounded-[14px] border border-mw-border bg-mw-surface p-4 sm:p-5">
+          <div className="mb-3 flex items-center gap-2 font-mw-cond text-xl font-bold tracking-[0.02em] text-mw-text">
             <Send className="h-4 w-4" />
             Send transmission
           </div>
@@ -919,20 +918,20 @@ function TransmissionList({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="Drop your call sign, alpha, or war cry..."
-            className="min-h-32 border-border/70 bg-background/50 font-retro text-base"
+            className="min-h-32 mw-focus rounded-[10px] border border-mw-edge bg-mw-input px-3 py-2 text-[15px] leading-6 text-mw-text placeholder:text-[#5C6670]"
           />
 
           <Button
             onClick={() => send(false)}
             disabled={loading || !body.trim()}
-            className="mwz-button mwz-button-orange mt-3 w-full font-retro"
+            className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-3 w-full"
           >
-            <Send className="mr-2 h-4 w-4" />
+            <Send className="h-4 w-4" />
             Send transmission
           </Button>
 
           {!account && (
-            <p className="mt-3 text-xs text-muted-foreground">
+            <p className="mt-3 text-[13px] text-mw-muted">
               Wallet connection required for bunker actions.
             </p>
           )}
@@ -1070,7 +1069,7 @@ export default function Prepare() {
 
   if (loading) {
     return (
-      <div className="relative min-h-[70dvh] bg-black">
+      <div className="relative min-h-[70dvh] bg-mw-ground">
         <RadarLoaderOverlay show mode="fullscreen" label="Scanning promotion dossier…" />
       </div>
     );
@@ -1078,9 +1077,9 @@ export default function Prepare() {
 
   if (!bundle || !draft || !promo || !pop) {
     return (
-      <div className="mx-auto max-w-4xl py-20 text-center">
-        <h1 className="font-retro text-4xl text-foreground">Prepare page not found</h1>
-        <Button asChild className="mwz-button mt-6 font-retro">
+      <div className="mx-auto max-w-4xl px-4 py-20 text-center font-mw-body">
+        <h1 className="m-0 font-mw-cond text-[32px] font-bold leading-none text-mw-text lg:text-[40px]">Prepare page not found</h1>
+        <Button asChild className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-6">
           <Link to="/create">Create Draft</Link>
         </Button>
       </div>
@@ -1111,37 +1110,35 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
   else if (hasFollowed) followLabel = "Following";
 
   return (
-    <div className="relative -mx-2 -mt-1 min-h-screen overflow-hidden bg-[radial-gradient(ellipse_at_top,rgba(255,153,0,0.20),transparent_48%),radial-gradient(ellipse_at_bottom,rgba(57,255,79,0.09),transparent_52%),linear-gradient(180deg,rgba(26,8,2,0.96),rgba(1,6,0,0.98))] md:-mx-3 lg:-mx-4">
+    <div className="relative -mx-2 -mt-1 min-h-screen overflow-hidden font-mw-body text-mw-text md:-mx-3 lg:-mx-4">
       {shareOpen && <ShareModal bundle={bundle} onClose={() => setShareOpen(false)} />}
 
-      <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(255,153,0,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(57,255,79,0.05)_1px,transparent_1px)] [background-size:52px_52px]" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,153,0,0.22),transparent_34%)]" />
 
       <main className="relative z-10">
-        <section className="relative isolate flex min-h-[680px] flex-col items-center px-2 py-4 text-center md:px-4 md:py-6">
-          <div className="absolute left-4 top-6 hidden gap-3 text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:flex">
-            <span className="text-orange-300">// COORD: 47.6° N · 11.2° E</span>
+        <section className="relative isolate flex min-h-[680px] flex-col items-center px-4 py-4 text-center md:px-8 md:py-6">
+          <div className="absolute left-4 top-6 hidden gap-3 font-mw-mono text-xs text-mw-muted md:flex">
+            <span className="text-mw-accent-soft">COORD: 47.6° N · 11.2° E</span>
             <span>SECTOR: 04-RECON</span>
           </div>
 
-          <div className="absolute right-4 top-6 hidden items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-orange-200 md:flex">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-red-400" />
+          <div className="absolute right-4 top-6 hidden items-center gap-2 font-mw-mono text-xs text-mw-muted md:flex">
+            <span className="mw-dot h-2 w-2 animate-pulse rounded-full bg-mw-sell" />
             UNARMED · DRAFT MODE
           </div>
 
           {isCreator && (
             <div className="absolute left-4 top-16 z-20 md:left-auto md:right-4">
-              <Button asChild variant="outline" className="mwz-button h-9 px-3 font-retro text-xs">
+              <Button asChild variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60">
                 <Link to={`/drafts/${draft.id}/promotion`}>
-                  <Edit3 className="mr-2 h-4 w-4" />
+                  <Edit3 className="h-4 w-4" />
                   Back to edit
                 </Link>
               </Button>
             </div>
           )}
 
-<div className="mwz-chip mwz-chip-active relative z-20 mt-3 inline-flex items-center gap-2 px-4 py-2 text-xs md:mt-4">
-  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-orange-300" />
+<div className={`inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2.5 text-[13px] font-semibold text-mw-accent-soft relative z-20 ${isCreator ? "mt-16" : "mt-3"} md:mt-4`}>
+  <span className="mw-dot h-1.5 w-1.5 animate-pulse rounded-full bg-mw-accent" />
   Incoming transmission · Prepare Mode
 </div>
 
@@ -1149,13 +1146,13 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
   <WarzoneHudPreview imageUrl={heroImageUrl} ticker={ticker} name={draft.name} />
 </div>
 
-          <p className="relative z-20 mt-5 max-w-2xl text-lg leading-relaxed text-muted-foreground md:text-2xl">
+          <p className="relative z-20 mt-5 max-w-2xl break-words px-2 text-lg leading-relaxed text-[#C9CED4] md:text-2xl">
             {heroTagline}{" "}
           </p>
 
           <Link
             to={`/profile/${encodeURIComponent(draft.creatorWallet)}`}
-            className="relative z-20 mt-4 inline-flex items-center gap-2 border border-orange-400/35 bg-black/55 px-4 py-2 text-xs uppercase tracking-[0.16em] text-orange-200 transition-colors hover:border-orange-300 hover:text-orange-100"
+            className="mw-focus relative z-20 mt-4 inline-flex min-h-11 max-w-full items-center gap-2 rounded-full border border-mw-edge bg-[#171B20] px-4 text-sm font-semibold text-[#C9CED4] transition-colors hover:border-[#3A424C] hover:text-mw-text"
             title={draft.creatorWallet}
           >
             <Users className="h-4 w-4" />
@@ -1164,13 +1161,13 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
 
           {acting.canSwitch && acting.kind && viewerWallet ? (
             <div className="relative z-20 mt-5 flex flex-wrap items-center justify-center gap-2">
-              <span className="mwz-chip inline-flex items-center gap-2 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em]">
+              <span className="inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border border-mw-edge bg-[#171B20] px-2.5 text-[13px] font-semibold text-[#C9CED4] max-w-full truncate">
                 Acting as · {acting.kind === "evm" ? "BNB operative" : "SOL scout"} {shortWallet(viewerWallet)}
               </span>
               <button
                 type="button"
                 onClick={handleSwitchOperative}
-                className="text-[10px] uppercase tracking-[0.16em] text-orange-300 underline-offset-4 hover:text-orange-200 hover:underline"
+                className="mw-focus min-h-11 px-2 text-[13px] font-semibold text-mw-accent-soft underline-offset-4 hover:text-mw-text hover:underline"
               >
                 Switch operative
               </button>
@@ -1181,36 +1178,36 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
             <Button
               onClick={handleArmNotification}
               disabled={armingNotification}
-              className={`mwz-button h-13 px-6 font-retro text-base active:!translate-y-px ${
+              className={`mw-focus inline-flex min-h-[52px] items-center justify-center gap-2 rounded-[10px] border px-6 text-[16px] font-semibold active:translate-y-px disabled:opacity-60 ${
                 hasArmed
-                  ? "!border-green-400 !bg-green-500/25 !text-green-100"
-                  : "mwz-button-orange"
+                  ? "border-[#1F5133] bg-[#0F2418] text-[#6EE7A0] hover:bg-[#13301F]"
+                  : "border-mw-accent bg-mw-accent text-[#140A02] hover:bg-[#FF8F3D]"
               }`}
             >
-              <Bell className="mr-2 h-4 w-4" fill={hasArmed ? "currentColor" : "none"} />
+              <Bell className="h-4 w-4" fill={hasArmed ? "currentColor" : "none"} />
               {armLabel}
             </Button>
 
             <Button
               onClick={handleFollow}
               disabled={followingDraft}
-              className={`mwz-button h-13 px-6 font-retro text-base active:!translate-y-px ${
-                hasFollowed ? "mwz-button-orange !bg-orange-500/25 !text-orange-100" : ""
+              className={`mw-focus inline-flex min-h-[52px] items-center justify-center gap-2 rounded-[10px] border px-6 text-[16px] font-semibold active:translate-y-px disabled:opacity-60 ${
+                hasFollowed ? "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft hover:bg-[#341B0B]" : "border-mw-edge bg-mw-raised text-mw-text hover:bg-[#222830]"
               }`}
             >
-              <Star className="mr-2 h-4 w-4" fill={hasFollowed ? "currentColor" : "none"} />
+              <Star className="h-4 w-4" fill={hasFollowed ? "currentColor" : "none"} />
               {followLabel}
             </Button>
 
             <Button
               onClick={() => setShareOpen(true)}
               variant="outline"
-              className="mwz-button h-13 px-6 font-retro text-base active:!translate-y-px active:!bg-orange-500/15"
+              className="mw-focus inline-flex min-h-[52px] items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-6 text-[16px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text active:translate-y-px"
             >
-              <Share2 className="mr-2 h-4 w-4" />
+              <Share2 className="h-4 w-4" />
               Generate share card
             </Button>
-            <Button asChild variant="ghost" className="h-13 px-4 font-retro text-xs text-muted-foreground">
+            <Button asChild variant="ghost" className="mw-focus inline-flex min-h-[52px] items-center justify-center gap-2 rounded-[10px] px-4 text-sm font-semibold text-mw-muted hover:bg-[#171B20] hover:text-mw-text">
               <Link
                 to={buildAbuseReportPath({
                   entityType: draft.campaignAddress ? "campaign" : "other",
@@ -1219,13 +1216,13 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
                   reportedUrl: typeof window !== "undefined" ? window.location.href : `/prepare/${draft.slug || slug}`,
                 })}
               >
-                <Flag className="mr-2 h-4 w-4" />
+                <Flag className="h-4 w-4" />
                 Report abuse
               </Link>
             </Button>
           </div>
 
-          <div className="mwz-card relative z-20 mt-10 grid w-full max-w-6xl overflow-hidden border-orange-400/35 bg-black/45 md:grid-cols-4">
+          <div className="rounded-[14px] border border-mw-border bg-mw-surface relative z-20 mt-10 grid w-full max-w-6xl grid-cols-2 overflow-hidden md:grid-cols-4">
             {[
               ["Armed recruits", String(pop.armedCount ?? 0), Users],
               ["Watchlists", String(followCount ?? pop.follows), Star],
@@ -1234,16 +1231,16 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
             ].map(([label, value, Icon], index) => (
               <div
                 key={String(label)}
-                className={`flex items-center gap-3 px-5 py-4 text-left ${
-                  index > 0 ? "border-t border-border/50 md:border-l md:border-t-0" : ""
-                }`}
+                className={`flex min-w-0 items-center gap-3 border-mw-border px-4 py-4 text-left md:px-5 ${
+                  index > 0 ? "border-l md:border-l" : ""
+                } ${index === 2 ? "border-l-0 md:border-l" : ""} ${index > 1 ? "border-t md:border-t-0" : ""}`}
               >
-                <Icon className="h-5 w-5 text-orange-300" />
-                <div>
-                  <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                <Icon className="h-5 w-5 shrink-0 text-mw-accent-soft" />
+                <div className="min-w-0">
+                  <div className="text-xs text-mw-muted">
                     {label as string}
                   </div>
-                  <div className="mt-1 font-retro text-2xl leading-none text-foreground">
+                  <div className="mt-1 break-words font-mw-mono text-lg font-bold leading-tight text-mw-text md:text-xl">
                     {value as string}
                   </div>
                 </div>
@@ -1253,51 +1250,50 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
         </section>
 
         <section className="mx-auto w-full max-w-[1480px] px-4 py-10 md:px-8 md:py-14">
-          <div className="mb-6 flex items-center gap-4">
-            <div className="h-px w-16 bg-orange-400/70" />
-            <h2 className="font-retro text-3xl uppercase tracking-[0.12em] text-foreground md:text-4xl">
+          <div className="mb-6 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <h2 className="m-0 font-mw-cond text-[28px] font-bold leading-none text-mw-text lg:text-[32px]">
               The Dossier
             </h2>
-            <span className="hidden text-xs uppercase tracking-[0.2em] text-muted-foreground md:inline">
-              // Creator-curated sections
+            <span className="hidden text-sm text-mw-muted md:inline">
+              Creator-curated sections
             </span>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr_1fr]">
-            <div className="mwz-card p-6 md:p-8">
-              <div className="text-xs uppercase tracking-[0.22em] text-orange-300">
-                // Lore
+            <div className="rounded-[14px] border border-mw-border bg-mw-surface p-4 md:p-8">
+              <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
+                Lore
               </div>
 
-              <h3 className="mt-2 font-retro text-3xl uppercase tracking-[0.08em] text-foreground">
+              <h3 className="mt-1 font-mw-cond text-2xl font-bold text-mw-text">
                 The brief
               </h3>
 
-              <p className="mt-4 whitespace-pre-line text-sm leading-7 text-muted-foreground md:text-base">
+              <p className="mt-4 whitespace-pre-line break-words text-[15px] leading-7 text-[#C9CED4]">
                 {promo.missionStatement ||
                   draft.description ||
                   "Creator has not published a mission statement yet."}
               </p>
 
               {promo.creatorNote && (
-                <p className="mt-5 border-l border-orange-400/40 pl-4 text-sm leading-6 text-orange-100/85">
+                <p className="mt-5 break-words border-l-2 border-mw-accent pl-4 text-sm leading-6 text-mw-accent-soft">
                   {promo.creatorNote}
                 </p>
               )}
             </div>
 
-            <div className="mwz-card p-5 md:p-6">
-              <div className="text-xs uppercase tracking-[0.22em] text-orange-300">
-                // Comms channels
+            <div className="rounded-[14px] border border-mw-border bg-mw-surface p-4 md:p-6">
+              <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
+                Comms channels
               </div>
 
-              <h3 className="mt-2 font-retro text-3xl uppercase tracking-[0.08em] text-foreground">
+              <h3 className="mt-1 font-mw-cond text-2xl font-bold text-mw-text">
                 Tune in
               </h3>
 
               <div className="mt-5 flex flex-col gap-2">
                 {links.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-sm text-mw-muted">
                     No public comms channels published yet.
                   </p>
                 ) : (
@@ -1307,15 +1303,15 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
                       href={String(url)}
                       target="_blank"
                       rel="noreferrer"
-                      className="mwz-button flex items-center justify-between gap-3 px-3 py-3 text-left text-xs"
+                      className="mw-focus flex min-h-11 items-center justify-between gap-3 rounded-[10px] border border-mw-border bg-mw-input px-3 py-2.5 text-left text-mw-text hover:border-mw-edge hover:bg-[#171B20]"
                     >
                       <span className="flex items-center gap-3">
-                        <Globe className="h-4 w-4 text-orange-300" />
+                        <Globe className="h-4 w-4 text-mw-accent-soft" />
                         <span>
-                          <span className="block text-sm text-foreground">
+                          <span className="block text-sm font-semibold text-mw-text">
                             {label as string}
                           </span>
-                          <span className="block text-[10px] text-muted-foreground">
+                          <span className="block text-xs text-mw-muted">
                             {meta as string} · {code as string}
                           </span>
                         </span>
@@ -1336,9 +1332,8 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
         </section>
 
         <section className="mx-auto w-full max-w-[1480px] px-4 py-10 md:px-8 md:py-14">
-          <div className="mb-6 flex items-center gap-4">
-            <div className="h-px w-16 bg-orange-400/70" />
-            <h2 className="font-retro text-3xl uppercase tracking-[0.12em] text-foreground md:text-4xl">
+          <div className="mb-6 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <h2 className="m-0 font-mw-cond text-[28px] font-bold leading-none text-mw-text lg:text-[32px]">
               Mission Phases
             </h2>
           </div>
@@ -1352,38 +1347,38 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
                 data-selected={isActive ? "true" : undefined}
                 className={
                   isActive
-                    ? "mwz-card border-2 !border-orange-400 bg-orange-500/15 p-5 shadow-[0_0_28px_rgba(245,132,32,0.2)]"
-                    : "mwz-card border border-border/50 bg-black/30 p-5 opacity-90"
+                    ? "mw-panel rounded-[14px] border border-[#7A3A0C] bg-[#1A1008] p-4 md:p-5"
+                    : "rounded-[14px] border border-mw-border bg-mw-surface p-4 opacity-90 md:p-5"
                 }
               >
                 <div className="flex items-center justify-between">
                   <span
-                    className={`text-[10px] uppercase tracking-[0.2em] ${
-                      isActive ? "text-orange-300" : "text-muted-foreground"
+                    className={`font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] ${
+                      isActive ? "text-[#FF9A4D]" : "text-mw-muted"
                     }`}
                   >
                     Phase 0{index + 1}
                   </span>
                   {isActive ? (
-                    <Flame className="h-4 w-4 text-orange-300" />
+                    <Flame className="h-4 w-4 text-mw-accent-soft" />
                   ) : (
-                    <Rocket className="h-4 w-4 text-muted-foreground" />
+                    <Rocket className="h-4 w-4 text-mw-muted" />
                   )}
                 </div>
 
-                <div className="mt-4 font-retro text-2xl uppercase text-foreground md:text-3xl">
+                <div className="mt-3 font-mw-cond text-2xl font-bold text-mw-text">
                   {title}
                 </div>
 
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
+                <p className="mt-2 text-sm leading-6 text-mw-muted">{body}</p>
 
                 {isActive ? (
-                  <div className="mt-4 inline-flex items-center gap-2 border border-orange-400/60 bg-orange-500/20 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-orange-200">
-                    <span className="h-1.5 w-1.5 animate-pulse bg-orange-300" />
+                  <div className="inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2.5 text-[13px] font-semibold text-mw-accent-soft mt-4">
+                    <span className="mw-dot h-1.5 w-1.5 animate-pulse rounded-full bg-mw-accent" />
                     Active · Prepare Mode
                   </div>
                 ) : (
-                  <div className="mt-4 text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">
+                  <div className="mt-4 text-[13px] text-mw-muted">
                     Locked until prior phase
                   </div>
                 )}
@@ -1405,29 +1400,29 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
         />
 
         <section className="mx-auto w-full max-w-[1480px] px-4 py-10 pb-20 md:px-8 md:py-14 md:pb-24">
-          <div className="mwz-card border-orange-400/50 bg-[radial-gradient(ellipse_at_top,rgba(255,153,0,0.18),rgba(2,17,4,0.92)_70%)] p-8 text-center md:p-12">
-            <div className="text-xs uppercase tracking-[0.22em] text-orange-300">
-              // Prepare Mode active
+          <div className="rounded-[14px] border border-[#7A3A0C] bg-mw-surface p-6 text-center md:p-12">
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
+              Prepare Mode active
             </div>
 
-            <h3 className="mt-3 bg-gradient-to-b from-white to-orange-400 bg-clip-text font-retro text-5xl uppercase tracking-[0.08em] text-transparent md:text-7xl">
+            <h3 className="mt-3 font-mw-cond text-[40px] font-bold leading-none text-mw-text md:text-[56px]">
               Be first in.
             </h3>
 
-            <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-muted-foreground">
+            <p className="mx-auto mt-4 max-w-xl text-[15px] leading-7 text-mw-muted">
               {(followCount ?? pop.follows).toLocaleString()} soldiers already watching.
               The moment {ticker} moves from draft to live campaign, the alert fires.
             </p>
 
             {acting.canSwitch && acting.kind && viewerWallet ? (
               <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-                <span className="mwz-chip inline-flex items-center gap-2 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em]">
+                <span className="inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border border-mw-edge bg-[#171B20] px-2.5 text-[13px] font-semibold text-[#C9CED4] max-w-full truncate">
                   Acting as · {acting.kind === "evm" ? "BNB operative" : "SOL scout"} {shortWallet(viewerWallet)}
                 </span>
                 <button
                   type="button"
                   onClick={handleSwitchOperative}
-                  className="text-[10px] uppercase tracking-[0.16em] text-orange-300 underline-offset-4 hover:text-orange-200 hover:underline"
+                  className="mw-focus min-h-11 px-2 text-[13px] font-semibold text-mw-accent-soft underline-offset-4 hover:text-mw-text hover:underline"
                 >
                   Switch operative
                 </button>
@@ -1438,13 +1433,13 @@ const heroTagline = draft.description || "The launchpad that turns every drop in
               <Button
                 onClick={handleArmNotification}
                 disabled={armingNotification}
-                className={`mwz-button h-13 px-6 font-retro text-base active:!translate-y-px ${
+                className={`mw-focus inline-flex min-h-[52px] items-center justify-center gap-2 rounded-[10px] border px-6 text-[16px] font-semibold active:translate-y-px disabled:opacity-60 ${
                   hasArmed
-                    ? "!border-green-400 !bg-green-500/25 !text-green-100"
-                    : "mwz-button-orange"
+                    ? "border-[#1F5133] bg-[#0F2418] text-[#6EE7A0] hover:bg-[#13301F]"
+                    : "border-mw-accent bg-mw-accent text-[#140A02] hover:bg-[#FF8F3D]"
                 }`}
               >
-                <Bell className="mr-2 h-4 w-4" fill={hasArmed ? "currentColor" : "none"} />
+                <Bell className="h-4 w-4" fill={hasArmed ? "currentColor" : "none"} />
                 {armLabel}
               </Button>
             </div>
