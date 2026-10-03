@@ -3,9 +3,10 @@ import { requireAdminOrOps } from "../lib/apiAuth.js";
 import { configuredRewardVaultAddresses, readRewardFunding } from "../lib/financeFunding.js";
 import { readNativeUpvoteRevenue } from "../lib/financeVoteRevenue.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
-import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
+import { normalizeSolanaCluster, resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 import { cachedFeeRouting, feeRoutingDays, feeRoutingNetwork } from "../lib/financeFeeRouting.js";
 import { dashboardPrincipalCan } from "../dashboard/_access.js";
+import { cachedInventoryBalances } from "../lib/financeInventoryBalances.js";
 
 const FINANCE_NETWORKS = new Map([
   [56, { chain: "bnb", decimals: 18, asset: "BNB", environment: "mainnet" }],
@@ -85,8 +86,17 @@ function rewardState(status) {
   return null;
 }
 
-function rewardChainCandidates(network) {
+// The Solana cluster this API's database belongs to. reward_ledger stores
+// chain "101" for both clusters, so the live API (production DB, mainnet) must
+// not report its rows as devnet, and the test API not as mainnet. Same default
+// as quoteAssetCatalog.js.
+export function apiSolanaCluster(env = process.env) {
+  return normalizeSolanaCluster(env.SOLANA_CLUSTER || env.VITE_SOLANA_CLUSTER || "mainnet-beta");
+}
+
+export function rewardChainCandidates(network) {
   if (network.chain !== "solana") return [String(network.chainId)];
+  if (network.cluster !== apiSolanaCluster()) return [];
   if (network.environment === "staging" && network.cluster === "devnet") {
     return ["101", "solana-devnet"];
   }
@@ -174,7 +184,15 @@ async function rewardCoverage(network, obligationRaw) {
   };
 }
 
+export function rewardsNotice(network) {
+  if (network.chain !== "solana" || network.cluster === apiSolanaCluster()) return null;
+  return network.cluster === "devnet"
+    ? "This API reads the production database, which holds Solana mainnet rewards only. Devnet rewards are on the test stack."
+    : "This API reads the test database, which holds Solana devnet rewards only. Mainnet rewards are on the live API.";
+}
+
 async function financeRewards(req, res, network) {
+  const notice = rewardsNotice(network);
   try {
     const rows = await loadRewardRows(network);
     const { aggregates, obligationRaw } = buildNativeRewardModel(rows, network);
@@ -185,6 +203,7 @@ async function financeRewards(req, res, network) {
       source: "dashboard-api",
       aggregates,
       coverage,
+      ...(notice ? { notice } : {}),
     });
   } catch (error) {
     if (schemaMissing(error)) {
@@ -347,7 +366,8 @@ function financeInventoryItems(network) {
   return items;
 }
 
-async function financeInventory(req, res, network) {
+export async function financeInventory(req, res, network, { balances = cachedInventoryBalances } = {}) {
+  const items = financeInventoryItems(network);
   return res.status(200).json({
     schemaVersion: "finance-inventory-v1",
     generatedAt: new Date().toISOString(),
@@ -358,7 +378,8 @@ async function financeInventory(req, res, network) {
       environment: network.environment,
       ...(network.cluster ? { cluster: network.cluster } : {}),
     },
-    items: financeInventoryItems(network),
+    // Each item carries a live native balance; a failed read is "unknown", never 0.
+    items: await balances(items, network),
   });
 }
 
