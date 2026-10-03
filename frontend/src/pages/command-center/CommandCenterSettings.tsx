@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { NotificationSettingsCard } from "@/components/profile/NotificationSettingsCard";
+import { DisplaySettingsCard } from "@/components/profile/DisplaySettingsCard";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { setArenaNotificationEmail } from "@/features/postgrad/apiClient";
@@ -189,6 +190,10 @@ export default function CommandCenterSettings({ section = "settings" }: { sectio
             ) : null}
           </div>
         </CommandCenterCard>
+      ) : null}
+
+      {showSettings ? (
+        <DisplaySettingsCard walletAddress={walletAddress} chainId={chainId || walletChainId} evmWallet={wallet} solanaAccount={solanaAccount} />
       ) : null}
 
       {showSettings ? <BlockedAccountsCard /> : null}

@@ -7,6 +7,7 @@ import { cp } from "@/components/token/coinPageStyles";
 import { formatCompactUsd } from "@/features/postgrad/warRoomMetrics";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import type { PortfolioHolding } from "@/lib/profileApi";
+import { applyDisplayPrefs, DEFAULT_DISPLAY_PREFS, type DisplayPrefs } from "@/lib/displayPrefs";
 
 type Section = "created" | "platform" | "imported" | "wallet";
 
@@ -23,15 +24,18 @@ export function ProfileCoinsTab({
   holdings,
   loadingHoldings,
   chainId,
+  displayPrefs = DEFAULT_DISPLAY_PREFS,
 }: {
   createdGrid: ReactNode;
   createdCount: number;
   holdings: PortfolioHolding[] | null;
   loadingHoldings: boolean;
   chainId: number;
+  /** The profile owner's portfolio display settings (Command Center > Settings). */
+  displayPrefs?: DisplayPrefs;
 }) {
   const navigate = useNavigate();
-  const list = holdings || [];
+  const list = applyDisplayPrefs(holdings || [], displayPrefs);
   const launched = list.filter((h) => h.kind === "launched");
   const imported = list.filter((h) => h.kind === "imported");
   const counts: Record<Section, number> = { created: createdCount, platform: launched.length, imported: imported.length, wallet: list.length };
@@ -133,7 +137,7 @@ export function ProfileCoinsTab({
                 <b className="block truncate">{h.ticker ? `$${String(h.ticker).replace(/^\$/, "")}` : h.name || "Token"}</b>
                 <span className="block truncate text-xs text-mw-muted">
                   {h.name || ""}
-                  {h.kind === "imported" ? " · Imported on MemeWarzone" : h.kind === "launched" ? " · Launched on MemeWarzone" : ""}
+                  {h.kind === "imported" ? " · Imported on MemeWarzone" : h.kind === "launched" ? " · Launched on MemeWarzone" : h.kind === "native" ? " · Native coin" : h.stable ? " · Stablecoin" : ""}
                 </span>
               </span>
               <span className="shrink-0 text-right">
@@ -144,14 +148,14 @@ export function ProfileCoinsTab({
           );
           const row = "flex min-h-14 items-center gap-3 border-b border-[#1E2329] py-2 text-mw-text last:border-b-0";
           return h.platform ? (
-            <Link key={`w:${h.mint}`} to={pathFor(h)} className={`${row} hover:text-mw-text`}>{content}</Link>
+            <Link key={`w:${h.mint || h.kind}`} to={pathFor(h)} className={`${row} hover:text-mw-text`}>{content}</Link>
           ) : (
-            <div key={`w:${h.mint}`} className={row}>{content}</div>
+            <div key={`w:${h.mint || h.kind}`} className={row}>{content}</div>
           );
         })}
       </div>
     ) : holdings ? (
-      <div className={empty}>No tokens in this wallet.</div>
+      <div className={empty}>No tokens to show for this wallet.</div>
     ) : (
       <div className={empty}>Wallet holdings are not available right now.</div>
     );

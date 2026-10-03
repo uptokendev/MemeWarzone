@@ -270,7 +270,7 @@ export async function saveUserProfile(input: SaveProfileInput): Promise<void> {
 export type PortfolioHolding = {
   mint: string | null;
   campaignAddress: string | null;
-  kind: "launched" | "imported" | "other";
+  kind: "launched" | "imported" | "other" | "native";
   platform: boolean;
   ticker: string | null;
   name: string | null;
@@ -280,6 +280,9 @@ export type PortfolioHolding = {
   valueUsd: number;
   marketCapUsd?: number | null;
   marketStage?: string | null;
+  /** Native coin or its wrapped version, and stablecoins (hideable in Settings). */
+  native?: boolean;
+  stable?: boolean;
 };
 
 /**

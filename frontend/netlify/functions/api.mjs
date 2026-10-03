@@ -1,6 +1,7 @@
 import express from "express";
 import moderation from "../../api/moderation.js";
 import notificationPrefs from "../../api/notificationPrefs.js";
+import displayPrefs from "../../api/displayPrefs.js";
 import recruiterCreatorCoins from "../../api/recruiterCreatorCoins.js";
 import serverless from "serverless-http";
 
@@ -330,6 +331,7 @@ app.all("/recruiters/:code/summary", wrap(recruiterSummary));
 app.all("/recruiters/:code/replacements", wrap(recruiterReplacements));
 app.all("/recruiters/:code/creator-coins", wrap(recruiterCreatorCoins));
 app.all("/notification-prefs", wrap(notificationPrefs));
+app.all("/display-prefs", wrap(displayPrefs));
 app.all("/moderation", wrap(moderation));
 app.all("/recruiters/:code/referral/capture", wrap(recruiterReferralCapture));
 app.all("/recruiters/me/payouts", wrap(recruiterMePayouts));

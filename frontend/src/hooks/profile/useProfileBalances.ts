@@ -206,6 +206,8 @@ export function useProfileBalances({
                   balanceFormatted: h.balanceFormatted,
                   valueUsd: h.valueUsd,
                   kind: h.kind,
+                  native: h.native,
+                  stable: h.stable,
                 })));
                 setPortfolioMetrics(server.metrics);
               }

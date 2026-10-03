@@ -19,6 +19,7 @@ import {
 } from "@/lib/chainConfig";
 import { fetchUserProfile, fetchPublicPortfolio, fetchPublicPortfolioMetrics, type PortfolioHolding, type UserProfile } from "@/lib/profileApi";
 import { ProfileCoinsTab } from "@/components/profile/ProfileCoinsTab";
+import { useDisplayPrefs } from "@/lib/displayPrefs";
 import { fetchOwnerCampaignDrafts, fetchPublicCampaignDrafts, type CampaignDraft } from "@/lib/draftApi";
 import { isSolanaAddress } from "@/lib/address";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
@@ -226,6 +227,7 @@ export default function PublicProfile({
 
   const [portfolioMetrics, setPortfolioMetrics] = useState<PortfolioMetrics | null>(null);
   const [holdings, setHoldings] = useState<PortfolioHolding[] | null>(null);
+  const { prefs: displayPrefs } = useDisplayPrefs(profileWallet);
   const [loadingPortfolio, setLoadingPortfolio] = useState(true);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [isFollowing, setIsFollowing] = useState(false);
@@ -767,6 +769,7 @@ export default function PublicProfile({
           holdings={holdings}
           loadingHoldings={loadingPortfolio}
           chainId={activeChainId}
+          displayPrefs={displayPrefs}
         />
       ),
     },
