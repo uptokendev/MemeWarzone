@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { NavLink } from "react-router-dom";
-import { Coins, Gift, Home, LifeBuoy, Settings, Shield, Swords, Trophy, Users } from "lucide-react";
+import { Coins, Gift, Home, LifeBuoy, Settings, Shield, Swords, Trophy, UserPen, Users } from "lucide-react";
 
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { postGradFlags } from "@/features/postgrad/config";
@@ -22,6 +22,7 @@ const menuItems: Array<{
   { label: "Airdrops", path: "airdrops", icon: Gift },
   { label: "Rewards and claims", path: "claims", icon: Trophy },
   { label: "Support and safety", path: "support", icon: LifeBuoy },
+  { label: "Edit profile", path: "edit-profile", icon: UserPen },
   { label: "Settings", path: "settings", icon: Settings },
 ];
 

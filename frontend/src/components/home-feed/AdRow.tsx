@@ -87,13 +87,14 @@ function HouseTile({ hidden }: { hidden?: boolean }) {
 }
 
 /**
- * Row of 6 ad spots at the top of Home, same height as the story row it replaces (CO-21).
- * Paid ads first, then "Your ad here" in the empty spots. Scrolls as a ticker only when the
- * tiles do not fit the width.
+ * Row of up to 6 ad spots at the top of Home, same height as the story row it replaces (CO-21).
+ * Paid ads first, then one "Your ad here" tile while a spot is free. Scrolls as a ticker only when
+ * the tiles do not fit the width.
  */
 export function AdRow({ chainId }: { chainId: number }) {
   const ads = useQuery({ queryKey: ["home-top-row-ads", chainId], queryFn: () => loadAds(chainId), staleTime: 60_000, retry: 1 }).data || [];
-  const spots: Array<AdItem | null> = [...ads, ...Array.from({ length: Math.max(0, SPOTS - ads.length) }, () => null)];
+  // Founder 2026-10-03: paid ads, then a single "Your ad here" while a spot is free (never a row of them).
+  const spots: Array<AdItem | null> = ads.length < SPOTS ? [...ads, null] : ads;
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [slides, setSlides] = useState(false);

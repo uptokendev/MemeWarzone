@@ -297,6 +297,9 @@ export default async function handler(req, res) {
       name = `sponsors/${uuid}.${ext}`;
     } else if (kind === "avatar" && address) {
       name = `avatars/${chainId}/${address}/${uuid}.${ext}`;
+    } else if (kind === "profile_banner" && address) {
+      // Profile banner (CO-19 Edit profile, 2026-10-03): same wallet-signed auth as the avatar.
+      name = `banners/${chainId}/${address}/${uuid}.${ext}`;
     } else if (kind === "arena_import") {
       name = `arena-imports/${chainId}/${importId}/${uuid}.${ext}`;
     } else {

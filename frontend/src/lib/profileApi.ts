@@ -13,6 +13,11 @@ export type UserProfile = {
   previousRank?: string | null;
   rankPoints?: number | null;
   rankUpdatedAt?: string | null;
+  bannerUrl?: string | null;
+  bannerPositionY?: number | null;
+  websiteUrl?: string | null;
+  xUrl?: string | null;
+  telegramUrl?: string | null;
 };
 
 async function readJson(res: Response): Promise<any> {
@@ -87,7 +92,133 @@ export async function fetchUserProfile(chainId: number, address: string): Promis
     previousRank: (p.previousRank ?? null) as string | null,
     rankPoints: p.rankPoints == null ? null : Number(p.rankPoints),
     rankUpdatedAt: (p.rankUpdatedAt ?? null) as string | null,
+    bannerUrl: (p.bannerUrl ?? null) as string | null,
+    bannerPositionY: p.bannerPositionY == null ? null : Number(p.bannerPositionY),
+    websiteUrl: (p.websiteUrl ?? null) as string | null,
+    xUrl: (p.xUrl ?? null) as string | null,
+    telegramUrl: (p.telegramUrl ?? null) as string | null,
   };
+}
+
+/* ---- Edit profile v2 (CO-19, 2026-10-03). Must match api/profile.js exactly (same message, same link cleaning). ---- */
+
+export type ProfileLinks = {
+  bannerUrl: string | null;
+  bannerPositionY: number | null;
+  websiteUrl: string | null;
+  xUrl: string | null;
+  telegramUrl: string | null;
+};
+
+function cleanWebsite(value?: string | null): string | null {
+  const v = String(value ?? "").trim();
+  if (!v) return null;
+  const withScheme = /^https?:\/\//i.test(v) ? v : `https://${v}`;
+  try {
+    const u = new URL(withScheme);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    return u.toString().slice(0, 200);
+  } catch {
+    return null;
+  }
+}
+
+function cleanSocial(value: string | null | undefined, host: "x.com" | "t.me"): string | null {
+  const v = String(value ?? "").trim();
+  if (!v) return null;
+  const handle = v.replace(/^@/, "");
+  if (/^[A-Za-z0-9_]{1,32}$/.test(handle)) return `https://${host}/${handle}`;
+  const hosts = host === "x.com" ? ["x.com", "twitter.com", "www.x.com", "www.twitter.com"] : ["t.me", "telegram.me", "www.t.me"];
+  try {
+    const u = new URL(/^https?:\/\//i.test(v) ? v : `https://${v}`);
+    if (!hosts.includes(u.hostname.toLowerCase())) return null;
+    const path = u.pathname.replace(/^\/+/, "").split("/")[0];
+    return /^[A-Za-z0-9_+]{1,64}$/.test(path) ? `https://${host}/${path}` : null;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeProfileLinks(input: { bannerUrl?: string | null; bannerPositionY?: number | string | null; websiteUrl?: string | null; xUrl?: string | null; telegramUrl?: string | null }): ProfileLinks {
+  const pos = input.bannerPositionY;
+  const n = pos == null || pos === "" ? null : Math.round(Number(pos));
+  return {
+    bannerUrl: String(input.bannerUrl ?? "").trim().slice(0, 300) || null,
+    bannerPositionY: n != null && Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null,
+    websiteUrl: cleanWebsite(input.websiteUrl),
+    xUrl: cleanSocial(input.xUrl, "x.com"),
+    telegramUrl: cleanSocial(input.telegramUrl, "t.me"),
+  };
+}
+
+export function buildProfileMessageV2(args: {
+  chainId: number;
+  address: string;
+  nonce: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  bio?: string | null;
+} & ProfileLinks): string {
+  return [
+    "MemeWarzone Profile",
+    "Action: PROFILE_UPSERT",
+    "Version: 2",
+    `ChainId: ${args.chainId}`,
+    `Address: ${normalizeAddress(args.address, args.chainId)}`,
+    `Nonce: ${args.nonce}`,
+    "",
+    `DisplayName: ${String(args.displayName ?? "").trim().slice(0, 32)}`,
+    `AvatarUrl: ${String(args.avatarUrl ?? "").trim().slice(0, 200)}`,
+    `Bio: ${String(args.bio ?? "").trim().slice(0, 280)}`,
+    `BannerUrl: ${String(args.bannerUrl ?? "").trim().slice(0, 300)}`,
+    `BannerPositionY: ${args.bannerPositionY == null ? "" : args.bannerPositionY}`,
+    `Website: ${args.websiteUrl ?? ""}`,
+    `X: ${args.xUrl ?? ""}`,
+    `Telegram: ${args.telegramUrl ?? ""}`,
+  ].join("\n");
+}
+
+/** Signed version 2 save: one profile for the wallet on every chain. */
+export async function saveUserProfileV2(input: {
+  chainId: number;
+  address: string;
+  displayName: string | null;
+  bio: string | null;
+  avatarUrl: string | null;
+  links: ProfileLinks;
+  sign: (message: string) => Promise<string>;
+}): Promise<void> {
+  const address = normalizeAddress(input.address, input.chainId);
+  const nonce = await requestNonce(input.chainId, address);
+  const message = buildProfileMessageV2({
+    chainId: input.chainId,
+    address,
+    nonce,
+    displayName: input.displayName,
+    avatarUrl: input.avatarUrl,
+    bio: input.bio,
+    ...input.links,
+  });
+  const signature = await input.sign(message);
+  const res = await apiFetch(`/api/profile`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      version: 2,
+      chainId: input.chainId,
+      address,
+      displayName: input.displayName,
+      avatarUrl: input.avatarUrl,
+      bio: input.bio,
+      ...input.links,
+      nonce,
+      signature,
+    }),
+  });
+  if (!res.ok) {
+    const j = await readJson(res);
+    throw new Error(j?.error || `Failed to save profile (${res.status})`);
+  }
 }
 
 export async function requestNonce(chainId: number, address: string): Promise<string> {

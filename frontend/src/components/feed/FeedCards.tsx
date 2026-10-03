@@ -132,7 +132,7 @@ function compactCount(n?: number | null) {
 const MENTION_RE = /(^|[^A-Za-z0-9_@])@([A-Za-z0-9_]{3,20})(?![A-Za-z0-9_])/g;
 
 /** @username in a post opens that profile (founder, 2026-10-02). The body sits inside the post link, so this is a button, not a nested link. */
-function MentionText({ text }: { text: string }) {
+export function MentionText({ text }: { text: string }) {
   const navigate = useNavigate();
   const parts: React.ReactNode[] = [];
   let last = 0;

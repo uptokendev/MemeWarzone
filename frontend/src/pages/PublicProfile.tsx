@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { MentionText } from "@/components/feed/FeedCards";
+import { Globe, Send } from "lucide-react";
 import { formatCompactUsd } from "@/features/postgrad/warRoomMetrics";
 import { CampaignCard } from "@/components/home/CampaignCard";
 import { useStickyRail } from "@/hooks/useStickyRail";
@@ -800,7 +802,12 @@ export default function PublicProfile({
       {/* Hero: banner, round avatar, name, rank chips, wallet, bio, counts, actions. */}
       <section aria-label={nameText} className="flex flex-col">
         <div className="relative h-[120px] overflow-hidden rounded-2xl border border-[#1E2329] md:h-[200px] xl:h-[220px]">
-          <div className="mw-banner h-full w-full" aria-hidden="true" />
+          {/* CO-19: the banner the owner set in Edit profile, at its chosen position. */}
+          {profile?.bannerUrl ? (
+            <img src={profile.bannerUrl} alt="" className="h-full w-full object-cover" style={{ objectPosition: `50% ${profile.bannerPositionY ?? 50}%` }} />
+          ) : (
+            <div className="mw-banner h-full w-full" aria-hidden="true" />
+          )}
         </div>
         <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-5 md:px-2">
           <div className={`relative z-[1] -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-full border-4 bg-[#2A3038] md:-mt-16 md:h-[132px] md:w-[132px] ${profile?.avatarUrl ? "border-mw-ground" : "mw-operative border-[#3dff78]"}`}>
@@ -828,6 +835,24 @@ export default function PublicProfile({
                 <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                 Explorer
               </a>
+              {/* CO-19 profile links. */}
+              {profile?.websiteUrl ? (
+                <a href={profile.websiteUrl} target="_blank" rel="noopener noreferrer nofollow" className={`${cp.chipButton} h-8`} data-profile-link="website">
+                  <Globe className="h-3.5 w-3.5" aria-hidden="true" />
+                  {profile.websiteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "").slice(0, 32)}
+                </a>
+              ) : null}
+              {profile?.xUrl ? (
+                <a href={profile.xUrl} target="_blank" rel="noopener noreferrer nofollow" className={`${cp.chipButton} h-8`} data-profile-link="x">
+                  X @{profile.xUrl.split("/").pop()}
+                </a>
+              ) : null}
+              {profile?.telegramUrl ? (
+                <a href={profile.telegramUrl} target="_blank" rel="noopener noreferrer nofollow" className={`${cp.chipButton} h-8`} data-profile-link="telegram">
+                  <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                  {profile.telegramUrl.split("/").pop()}
+                </a>
+              ) : null}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 md:pb-1">
@@ -850,7 +875,7 @@ export default function PublicProfile({
         </div>
         <div className="mt-3 flex flex-col gap-2 px-1 md:px-2">
           {profile?.bio ? (
-            <p className="m-0 max-w-[70ch] whitespace-pre-wrap break-words text-[15px] text-mw-text">{profile.bio}</p>
+            <p className="m-0 max-w-[70ch] whitespace-pre-wrap break-words text-[15px] text-mw-text"><MentionText text={profile.bio} /></p>
           ) : (
             <p className="m-0 text-sm text-mw-muted">No public bio yet.</p>
           )}

@@ -22,6 +22,73 @@ function buildProfileMessage({ chainId, address, nonce, displayName, avatarUrl }
   ].join("\n");
 }
 
+/**
+ * Version 2 (CO-19 Edit profile, 2026-10-03): also signs bio, banner and links. Sent with `version: 2`;
+ * version 1 saves keep the old message and never touch the new columns.
+ */
+export function buildProfileMessageV2({ chainId, address, nonce, displayName, avatarUrl, bio, bannerUrl, bannerPositionY, websiteUrl, xUrl, telegramUrl }) {
+  return [
+    "MemeWarzone Profile",
+    "Action: PROFILE_UPSERT",
+    "Version: 2",
+    `ChainId: ${chainId}`,
+    `Address: ${address}`,
+    `Nonce: ${nonce}`,
+    "",
+    `DisplayName: ${String(displayName ?? "").trim().slice(0, 32)}`,
+    `AvatarUrl: ${String(avatarUrl ?? "").trim().slice(0, 200)}`,
+    `Bio: ${String(bio ?? "").trim().slice(0, 280)}`,
+    `BannerUrl: ${String(bannerUrl ?? "").trim().slice(0, 300)}`,
+    `BannerPositionY: ${bannerPositionY == null ? "" : bannerPositionY}`,
+    `Website: ${websiteUrl ?? ""}`,
+    `X: ${xUrl ?? ""}`,
+    `Telegram: ${telegramUrl ?? ""}`,
+  ].join("\n");
+}
+
+/** https URL only, max 200 chars; anything else is null. */
+function cleanWebsite(value) {
+  const v = String(value ?? "").trim();
+  if (!v) return null;
+  const withScheme = /^https?:\/\//i.test(v) ? v : `https://${v}`;
+  try {
+    const u = new URL(withScheme);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    return u.toString().slice(0, 200);
+  } catch {
+    return null;
+  }
+}
+
+/** X / Telegram: a handle or a URL on that site, stored as a full https URL. */
+function cleanSocial(value, host) {
+  const v = String(value ?? "").trim();
+  if (!v) return null;
+  const handle = v.replace(/^@/, "");
+  if (/^[A-Za-z0-9_]{1,32}$/.test(handle)) return `https://${host}/${handle}`;
+  const hosts = host === "x.com" ? ["x.com", "twitter.com", "www.x.com", "www.twitter.com"] : ["t.me", "telegram.me", "www.t.me"];
+  try {
+    const u = new URL(/^https?:\/\//i.test(v) ? v : `https://${v}`);
+    if (!hosts.includes(u.hostname.toLowerCase())) return null;
+    const path = u.pathname.replace(/^\/+/, "").split("/")[0];
+    return /^[A-Za-z0-9_+]{1,64}$/.test(path) ? `https://${host}/${path}` : null;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeProfileLinks(b) {
+  const pos = b?.bannerPositionY;
+  const n = pos == null || pos === "" ? null : Math.round(Number(pos));
+  return {
+    bannerUrl: String(b?.bannerUrl ?? "").trim().slice(0, 300) || null,
+    bannerPositionY: Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null,
+    websiteUrl: cleanWebsite(b?.websiteUrl),
+    xUrl: cleanSocial(b?.xUrl, "x.com"),
+    telegramUrl: cleanSocial(b?.telegramUrl, "t.me"),
+  };
+}
+
 function base58Decode(value) {
   const raw = String(value || "").trim();
   if (!raw) return Buffer.alloc(0);
@@ -96,6 +163,38 @@ async function upsertUserProfile(chainId, address, displayName, avatarUrl, bio) 
     }
     throw e;
   }
+}
+
+/**
+ * Version 2 save: writes this chain's row with every field, then copies the same profile onto the
+ * wallet's rows on other chains, so one save shows everywhere (founder, 2026-10-03).
+ */
+async function upsertUserProfileV2(chainId, address, p, evm) {
+  const params = [chainId, address, p.displayName || null, p.avatarUrl || null, p.bio || null, p.bannerUrl, p.bannerPositionY, p.websiteUrl, p.xUrl, p.telegramUrl];
+  await pool.query(
+    `INSERT INTO user_profiles (chain_id, address, display_name, avatar_url, bio, banner_url, banner_position_y, website_url, x_url, telegram_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (chain_id, address)
+     DO UPDATE SET
+       display_name = EXCLUDED.display_name,
+       avatar_url = EXCLUDED.avatar_url,
+       bio = EXCLUDED.bio,
+       banner_url = EXCLUDED.banner_url,
+       banner_position_y = EXCLUDED.banner_position_y,
+       website_url = EXCLUDED.website_url,
+       x_url = EXCLUDED.x_url,
+       telegram_url = EXCLUDED.telegram_url,
+       updated_at = NOW()`,
+    params,
+  );
+  await pool.query(
+    `UPDATE user_profiles
+        SET display_name = $3, avatar_url = $4, bio = $5, banner_url = $6, banner_position_y = $7,
+            website_url = $8, x_url = $9, telegram_url = $10, updated_at = NOW()
+      WHERE chain_id <> $1
+        AND (address = $2 OR ($11::boolean AND lower(address) = lower($2)))`,
+    [...params, evm],
+  );
 }
 
 function profileWriteError(e) {
@@ -190,18 +289,44 @@ export default async function handler(req, res) {
       if (isSol && !isSolanaAddress(addr)) return json(res, 400, { error: "Invalid address" });
       if (!isSol && !isAddress(addr)) return json(res, 400, { error: "Invalid address" });
 
-      const { rows } = await pool.query(
-        `SELECT address,
-                chain_id AS "chainId",
-                display_name AS "displayName",
-                avatar_url AS "avatarUrl",
-                bio,
-                updated_at AS "updatedAt"
-           FROM user_profiles
-          WHERE chain_id = $1 AND address = $2
-          LIMIT 1`,
-        [chainId, addr]
-      );
+      // One profile per wallet (founder, 2026-10-03): the most recently saved row on any chain.
+      const evm = !isSol;
+      let rows;
+      try {
+        ({ rows } = await pool.query(
+          `SELECT address,
+                  chain_id AS "chainId",
+                  display_name AS "displayName",
+                  avatar_url AS "avatarUrl",
+                  bio,
+                  updated_at AS "updatedAt",
+                  banner_url AS "bannerUrl",
+                  banner_position_y AS "bannerPositionY",
+                  website_url AS "websiteUrl",
+                  x_url AS "xUrl",
+                  telegram_url AS "telegramUrl"
+             FROM user_profiles
+            WHERE address = $1 OR ($2::boolean AND lower(address) = lower($1))
+            ORDER BY updated_at DESC NULLS LAST, (chain_id = $3) DESC
+            LIMIT 1`,
+          [addr, evm, chainId],
+        ));
+      } catch (e) {
+        if (e?.code !== "42703") throw e;
+        // Before 20261003_000001_user_profile_links.sql: the old per-chain read.
+        ({ rows } = await pool.query(
+          `SELECT address,
+                  chain_id AS "chainId",
+                  display_name AS "displayName",
+                  avatar_url AS "avatarUrl",
+                  bio,
+                  updated_at AS "updatedAt"
+             FROM user_profiles
+            WHERE chain_id = $1 AND address = $2
+            LIMIT 1`,
+          [chainId, addr],
+        ));
+      }
 
       const profile = rows[0] ?? null;
       const rankState = await loadRankState(chainId, addr);
@@ -244,6 +369,18 @@ export default async function handler(req, res) {
       if (!pool) return json(res, 500, { error: "Server misconfigured: DATABASE_URL missing" });
 
       await consumeNonce(chainId, address, nonce);
+      if (Number(b.version) === 2) {
+        const links = normalizeProfileLinks(b);
+        const msgV2 = buildProfileMessageV2({ chainId, address, nonce, displayName, avatarUrl: avatarUrl ?? "", bio: bio ?? "", ...links });
+        if (!verifyProfileSignature({ chainId, address, message: msgV2, signature })) return json(res, 401, { error: "Invalid signature" });
+        try {
+          await upsertUserProfileV2(chainId, address, { displayName, avatarUrl, bio, ...links }, !isSol);
+        } catch (e) {
+          if (e?.code === "42703") return json(res, 503, { error: "Profile links need a database update first.", code: "PROFILE_LINKS_UNAVAILABLE" });
+          throw e;
+        }
+        return json(res, 200, { ok: true, version: 2, ...links });
+      }
       const msg = buildProfileMessage({ chainId, address, nonce, displayName, avatarUrl: avatarUrl ?? "" });
       if (!verifyProfileSignature({ chainId, address, message: msg, signature })) return json(res, 401, { error: "Invalid signature" });
 

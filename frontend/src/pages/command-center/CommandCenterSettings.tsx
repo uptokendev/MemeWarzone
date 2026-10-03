@@ -8,6 +8,7 @@ import { CommandCenterCard } from "@/components/command-center/CommandCenterCard
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { EditProfileDialog } from "@/components/profile/EditProfileDialog";
 import { UsernameSettingsRow } from "@/components/profile/UsernameSettingsRow";
+import { SettingsBannerRow } from "@/components/profile/SettingsBannerRow";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { setArenaNotificationEmail } from "@/features/postgrad/apiClient";
@@ -127,10 +128,11 @@ export default function CommandCenterSettings() {
             <Image className="h-4 w-4" aria-hidden="true" />
             {savingAvatar ? (awaitingWallet ? "Confirm wallet..." : "Uploading...") : "Change picture"}
           </Button>
-          <Button onClick={handleEdit} className={primaryButton} disabled={savingProfile || savingAvatar}>
+          {/* CO-19 (founder, 2026-10-03): Edit profile is a Command Center tab now. */}
+          <Link to={`/profile/${encodeURIComponent(walletAddress)}/command/edit-profile`} className={primaryButton}>
             <Settings className="h-4 w-4" aria-hidden="true" />
             Edit profile
-          </Button>
+          </Link>
         </div>
 
         <input
@@ -159,6 +161,7 @@ export default function CommandCenterSettings() {
           <div className={field}>{displayName}</div>
         </div>
         <UsernameSettingsRow wallet={walletAddress} />
+        <SettingsBannerRow walletAddress={walletAddress} chainId={chainId} />
         <div className="flex flex-col gap-1.5">
           <span className={lbl}>Bio</span>
           <div className={`${field} min-h-[72px] py-3 text-mw-muted`}>{loadingProfile ? "Loading profile..." : profile?.bio ? profile.bio : "No public bio set yet."}</div>
