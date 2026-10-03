@@ -8,6 +8,7 @@ on:
       - 'frontend/api/arenaTournaments.js'
       - 'frontend/api/lib/arenaTournamentAdminContract.js'
       - 'frontend/api/arenaTournamentAdminContract.test.mjs'
+      - 'frontend/api/arenaTournamentAdminInvites.integration.test.mjs'
       - 'db/migrations/20260910_000002_arena_tournament_admin_contract.sql'
       - '.github/workflows/tournament-admin-backend-contract.yml'
   pull_request:
@@ -17,6 +18,7 @@ on:
       - 'frontend/api/arenaTournaments.js'
       - 'frontend/api/lib/arenaTournamentAdminContract.js'
       - 'frontend/api/arenaTournamentAdminContract.test.mjs'
+      - 'frontend/api/arenaTournamentAdminInvites.integration.test.mjs'
       - 'db/migrations/20260910_000002_arena_tournament_admin_contract.sql'
       - '.github/workflows/tournament-admin-backend-contract.yml'
   workflow_dispatch:
