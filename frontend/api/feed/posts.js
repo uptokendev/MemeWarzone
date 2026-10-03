@@ -756,8 +756,13 @@ async function handleCreate(req, res) {
 
 async function handleDelete(req, res) {
   const b = await readJson(req);
-  const chainId = Number(b.chainId);
-  const address = canonPostWallet(chainId, b.address);
+  // Delete from the "…" menu (founder, 2026-10-03) runs on the feed session (one signature per 30 days):
+  // the wallet comes from the session, so only the session's own posts match below. Without a session
+  // the signed path is unchanged.
+  const session = hasSessionToken(req) ? await feedSession.requireSession(req, res) : null;
+  if (hasSessionToken(req) && !session) return;
+  const chainId = session ? Number(session.chainId) : Number(b.chainId);
+  const address = session ? canonPostWallet(chainId, session.walletAddress) : canonPostWallet(chainId, b.address);
   const nonce = String(b.nonce ?? "");
   const signature = String(b.signature ?? "");
   const postId = postIdFromReq(req, b);
@@ -765,17 +770,19 @@ async function handleDelete(req, res) {
   if (!Number.isFinite(chainId)) return json(res, 400, { error: "Invalid chainId" });
   if (!address) return json(res, 400, { error: "Invalid address" });
   if (!Number.isFinite(postId) || postId <= 0) return json(res, 400, { error: "Invalid post id" });
-  if (!nonce) return json(res, 400, { error: "Nonce missing" });
-  if (!signature) return json(res, 400, { error: "Signature missing" });
+  if (!session) {
+    if (!nonce) return json(res, 400, { error: "Nonce missing" });
+    if (!signature) return json(res, 400, { error: "Signature missing" });
 
-  await consumeNonce(chainId, address, nonce);
-  const msg = buildPostDeleteMessage({ chainId, address, nonce, postId });
-  const solana = isSolanaChain(chainId) || isSolanaAddress(address);
-  if (solana) {
-    if (!verifySolanaSignature(msg, signature, address)) return json(res, 401, { error: "Invalid signature" });
-  } else {
-    const recovered = ethers.verifyMessage(msg, signature).toLowerCase();
-    if (recovered !== address) return json(res, 401, { error: "Invalid signature" });
+    await consumeNonce(chainId, address, nonce);
+    const msg = buildPostDeleteMessage({ chainId, address, nonce, postId });
+    const solana = isSolanaChain(chainId) || isSolanaAddress(address);
+    if (solana) {
+      if (!verifySolanaSignature(msg, signature, address)) return json(res, 401, { error: "Invalid signature" });
+    } else {
+      const recovered = ethers.verifyMessage(msg, signature).toLowerCase();
+      if (recovered !== address) return json(res, 401, { error: "Invalid signature" });
+    }
   }
 
   const { rowCount } = await pool.query(
