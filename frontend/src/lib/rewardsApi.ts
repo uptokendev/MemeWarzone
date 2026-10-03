@@ -2,7 +2,7 @@ import { ethers } from "ethers";
 import { normalizeAddress } from "@/lib/address";
 
 export type RewardItem = {
-  period: "weekly" | "monthly";
+  period: "weekly" | "monthly" | "mwl_monthly" | "quarterly";
   epochStart: string;
   epochEnd: string;
   expiresAt?: string | null;
@@ -56,7 +56,7 @@ export function monthIdFromEpochStart(epochStart: string): string {
 export function buildLeagueClaimMessage(args: {
   chainId: number;
   recipient: string;
-  period: "weekly" | "monthly";
+  period: "weekly" | "monthly" | "mwl_monthly" | "quarterly";
   epochStart: string;
   category: string;
   rank: number;
@@ -102,7 +102,7 @@ export async function fetchMonthlyClaim(
 
 export async function submitLeagueClaim(params: {
   chainId: number;
-  period: "weekly" | "monthly";
+  period: "weekly" | "monthly" | "mwl_monthly" | "quarterly";
   epochStart: string;
   category: string;
   rank: number;
@@ -156,7 +156,7 @@ export async function submitLeagueClaim(params: {
 
 export async function recordLeagueClaimTx(params: {
   chainId: number;
-  period: "weekly" | "monthly";
+  period: "weekly" | "monthly" | "mwl_monthly" | "quarterly";
   epochStart: string;
   category: string;
   rank: number;

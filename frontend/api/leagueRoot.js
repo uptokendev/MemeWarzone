@@ -1,3 +1,4 @@
+import { MWL_EVM_PERIOD_CODES, isMwlPayoutPeriod } from "./lib/mwlPayoutVaults.js";
 import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, isAddress, json, readJson } from "../server/http.js";
@@ -178,6 +179,8 @@ export function monthIdFromDate(date) {
 }
 
 function periodCode(period) {
+  // Major War League periods have their own codes (3 / 4) and vaults; see lib/mwlPayoutVaults.js.
+  if (isMwlPayoutPeriod(period)) return MWL_EVM_PERIOD_CODES[period];
   return period === "weekly" ? 1 : 2;
 }
 

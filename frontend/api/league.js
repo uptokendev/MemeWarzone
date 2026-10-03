@@ -1,3 +1,4 @@
+import { MWL_EVM_PERIOD_CODES, MWL_PAYOUT_CATEGORIES, isMwlPayoutPeriod, mwlVaultAddress } from "./lib/mwlPayoutVaults.js";
 import crypto from "crypto";
 import { readSolanaLeagueVaultSpendable } from "./lib/solanaLeagueVaultBalance.js";
 import { ethers } from "ethers";
@@ -31,6 +32,8 @@ const CATEGORY_SET = new Set([
   "top_earner",
   "crowd_favorite",
   "recruiter_league",
+  // Major War League payouts (arenaMwlPayouts.js), periods mwl_monthly / quarterly only.
+  ...Object.values(MWL_PAYOUT_CATEGORIES),
 ]);
 
 // Accept old period spellings for backward compatibility.
@@ -337,6 +340,7 @@ function getOperatorPk() {
 // ---------------------------
 
 function periodCode(period) {
+  if (isMwlPayoutPeriod(period)) return MWL_EVM_PERIOD_CODES[period];
   return period === "weekly" ? 1 : 2;
 }
 
@@ -721,7 +725,10 @@ export default async function handler(req, res) {
       if (solanaClaim ? !isSolanaAddress(recipient) : !isAddress(recipient)) {
         return json(res, 400, { error: "Invalid recipient" });
       }
-      if (!(period === "weekly" || period === "monthly")) return json(res, 400, { error: "Invalid period" });
+      if (!(period === "weekly" || period === "monthly" || isMwlPayoutPeriod(period))) return json(res, 400, { error: "Invalid period" });
+      const mwlClaim = isMwlPayoutPeriod(period);
+      if (mwlClaim && category !== MWL_PAYOUT_CATEGORIES[period]) return json(res, 400, { error: "Invalid category" });
+      if (!mwlClaim && Object.values(MWL_PAYOUT_CATEGORIES).includes(category)) return json(res, 400, { error: "Invalid category" });
       if (!CATEGORY_SET.has(category)) return json(res, 400, { error: "Invalid category" });
       if (!Number.isFinite(rank) || rank < 1 || rank > 255) return json(res, 400, { error: "Invalid rank" }); // poker payout: up to 255 paid places
       if (!epochStart) return json(res, 400, { error: "epochStart missing" });
@@ -743,16 +750,21 @@ export default async function handler(req, res) {
         if (recovered !== recipient) return json(res, 401, { error: "Invalid signature" });
       }
 
-      if (!solanaClaim) {
+      if (!solanaClaim && !mwlClaim) {
         const vaultAddress = getTreasuryVaultV2Address(chainId);
         if (!isAddress(vaultAddress)) return json(res, 500, { error: "Server misconfigured: bad TreasuryVaultV2 address" });
+      }
+      if (!solanaClaim && mwlClaim && !isAddress(mwlVaultAddress(period, chainId))) {
+        return json(res, 503, { error: "Major War League vault is not configured on this chain yet." });
       }
       // EVM monthly prizes are sealed in MonthlyLeagueTreasury under monthId (YYYYMM) -- the same
       // claim() shape as TreasuryVaultV2, so the client call is unchanged; only vault and id differ.
       const evmMonthly = !solanaClaim && period === "monthly";
       const vaultAddress = solanaClaim
         ? leagueVaultForPeriod(period)
-        : evmMonthly
+        : mwlClaim
+          ? mwlVaultAddress(period, chainId).toLowerCase()
+          : evmMonthly
           ? String(process.env[`MONTHLY_LEAGUE_TREASURY_ADDRESS_${chainId}`] || MAINNET_MONTHLY_LEAGUE_TREASURY[chainId] || "").trim().toLowerCase()
           : getTreasuryVaultV2Address(chainId);
       if (evmMonthly && !isAddress(vaultAddress)) return json(res, 500, { error: "Server misconfigured: bad MonthlyLeagueTreasury address" });

@@ -4,6 +4,9 @@
  * winners (league_epoch_winners, poker places); this posts the Merkle root the claim card needs:
  *   weekly  -> TreasuryVaultV2.setEpochRoot(epochId, root, total)
  *   monthly -> MonthlyLeagueTreasury.sealMonth(monthId, root, total)
+ *   mwl_monthly / quarterly -> the Major War League's own TreasuryVaultV2 per period
+ *     (MWL_MONTHLY_VAULT_ADDRESS_<id> / MWL_QUARTERLY_VAULT_ADDRESS_<id>), epoch codes 3 / 4; the
+ *     vault must cover the list plus every earlier MWL prize still unclaimed from it.
  * signed by the vaults' rootPoster key LEAGUE_ROOT_POSTER_PK. Until now this was only the admin
  * endpoint POST /api/leagueRoot, so no EVM league prize became claimable by itself.
  *
@@ -26,6 +29,7 @@ import "../api/load-local-env.mjs";
 import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { buildMerkleRoot, categoryHashFromString, computeEpochId, leafHash, monthIdFromDate } from "../api/leagueRoot.js";
+import { isMwlPayoutPeriod, mwlVaultAddress } from "../api/lib/mwlPayoutVaults.js";
 
 const dryRun = process.argv.includes("--dry-run");
 const LOOKBACK_DAYS = Number(process.env.EVM_LEAGUE_ROOT_LOOKBACK_DAYS || 120);
@@ -37,6 +41,8 @@ const MAINNET = {
 
 const WEEKLY_ABI = [
   "function epochRoot(uint256) view returns (bytes32)",
+  "function epochTotal(uint256) view returns (uint256)",
+  "function epochClaimedTotal(uint256) view returns (uint256)",
   "function setEpochRoot(uint256 epochId, bytes32 root, uint256 totalAmount)",
 ];
 const MONTHLY_ABI = [
@@ -49,6 +55,8 @@ const MONTHLY_ABI = [
 ];
 
 function address(kind, chainId) {
+  // Major War League months / quarters: their own TreasuryVaultV2 per period (never a pre-grad vault).
+  if (isMwlPayoutPeriod(kind)) return mwlVaultAddress(kind, chainId);
   const envName = kind === "weekly" ? "TREASURY_VAULT_V2_ADDRESS" : "MONTHLY_LEAGUE_TREASURY_ADDRESS";
   return String(process.env[`${envName}_${chainId}`] || MAINNET[chainId]?.[kind] || "").trim();
 }
@@ -71,7 +79,7 @@ async function epochList(chainId) {
   const { rows } = await pool.query(
     `select distinct period, epoch_start
        from public.league_epoch_winners
-      where chain_id = $1 and period in ('weekly','monthly')
+      where chain_id = $1 and period in ('weekly','monthly','mwl_monthly','quarterly')
         and epoch_start > now() - make_interval(days => $2::int)
       order by epoch_start asc`,
     [chainId, LOOKBACK_DAYS],
@@ -122,6 +130,22 @@ async function recordPostedRoot(item, txHash, status) {
   );
 }
 
+/** Unclaimed remainder of every MWL epoch already posted to this vault (epochTotal - epochClaimedTotal). */
+async function mwlStillOwed(vault, chainId, period) {
+  const { rows } = await pool.query(
+    `select metadata->>'claimId' as "claimId" from public.league_epoch_roots
+      where chain_id = $1 and period = $2 and metadata->>'claimId' is not null`,
+    [chainId, period],
+  );
+  let owed = 0n;
+  for (const row of rows) {
+    const id = BigInt(row.claimId);
+    const [total, claimed] = await Promise.all([vault.epochTotal(id), vault.epochClaimedTotal(id)]);
+    if (BigInt(total) > BigInt(claimed)) owed += BigInt(total) - BigInt(claimed);
+  }
+  return owed;
+}
+
 async function main() {
   if (!pool) throw new Error("DATABASE_URL is required");
   const pk = String(process.env.LEAGUE_ROOT_POSTER_PK || "").trim();
@@ -145,7 +169,7 @@ async function main() {
         const built = await buildRoot(chainId, period, epochStart);
         const item = { ...base, claimId: built.claimId.toString(), root: built.root, total: built.total.toString(), winners: built.count };
 
-        if (period === "weekly") {
+        if (period === "weekly" || isMwlPayoutPeriod(period)) {
           const vault = new ethers.Contract(vaultAddress, WEEKLY_ABI, signer);
           const onChain = await vault.epochRoot(built.claimId);
           if (onChain !== ethers.ZeroHash) {
@@ -155,7 +179,10 @@ async function main() {
             continue;
           }
           const balance = await provider.getBalance(vaultAddress);
-          if (balance < built.total) throw new Error(`vault holds ${balance}, the list pays ${built.total}; nothing shrunk -- fund or wait`);
+          // An MWL vault must also still cover every earlier MWL prize not yet claimed from it, so a
+          // new list can never spend money owed to earlier winners (read from the vault itself).
+          const owed = isMwlPayoutPeriod(period) ? await mwlStillOwed(vault, chainId, period) : 0n;
+          if (balance < built.total + owed) throw new Error(`vault holds ${balance}, the list pays ${built.total}${owed ? ` and ${owed} is still owed to earlier winners` : ""}; nothing shrunk -- fund or wait`);
           await vault.setEpochRoot.staticCall(built.claimId, built.root, built.total);
           if (dryRun) { report.push({ ...item, status: "would_publish" }); continue; }
           const tx = await vault.setEpochRoot(built.claimId, built.root, built.total);

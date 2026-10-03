@@ -7,8 +7,9 @@ import { advanceDueFinalSalvo, finalizeDueVoteTournamentBattle, voteTournamentRu
 import { advanceTournamentFromBattle } from "../api/arenaTournaments.js";
 import { IMPORT_FEED_INTERVAL_MS, refreshImportMarketStats } from "../api/lib/arenaImportMarketFeed.js";
 import { closeEndedChampionships, rolloverEndedMwlSeasons } from "../api/lib/arenaMwlRollover.js";
-import { crankLeagueShares, leagueCrankMode } from "../api/lib/arenaEvmLeagueCrank.js";
+import { crankLeagueShares, leagueCrankMode, sweepMwlEpochs } from "../api/lib/arenaEvmLeagueCrank.js";
 import { harvestLpFees, lpHarvestMode } from "../api/lib/evmLpHarvestCrank.js";
+import { runMwlPayouts } from "../api/lib/arenaMwlPayouts.js";
 
 // Vote Battles (challenge, queue and tournament) settle only through this runtime, so it defaults
 // on: with ARENA_VOTE_TOURNAMENT_RUNTIME unset no Vote Battle ever finished. Set it to false to stop it.
@@ -179,9 +180,13 @@ async function crankLeague() {
   if (leagueCrank === "off" || leagueCrankRunning) return;
   leagueCrankRunning = true;
   try {
-    const outcomes = await crankLeagueShares({ db: pool, mode: leagueCrank, terminal: leagueCrankTerminal });
+    const outcomes = [
+      ...(await crankLeagueShares({ db: pool, mode: leagueCrank, terminal: leagueCrankTerminal })),
+      // Then move ended MWL months / quarters from PostGradLeagueTreasuryV2 into the MWL vaults.
+      ...(await sweepMwlEpochs({ db: pool, mode: leagueCrank })),
+    ];
     for (const o of outcomes) {
-      const line = `[arena-battle-realtime-worker] war pool crank ${o.step || ""} ${o.status} chain=${o.chainId} ${o.kind || ""} ${o.subject} pool=${o.poolId}${o.amountWei ? ` wei=${o.amountWei}` : ""}${o.month ? ` month=${o.month} quarter=${o.quarter}` : ""}${o.winner ? ` winner=${o.winner}` : ""}${o.txHash ? ` tx=${o.txHash}` : ""}${o.reason ? ` ${o.reason}` : ""}`;
+      const line = `[arena-battle-realtime-worker] war pool crank ${o.step || ""} ${o.status} chain=${o.chainId} ${o.kind || ""} ${o.subject} pool=${o.poolId}${o.amountWei ? ` wei=${o.amountWei}` : ""}${o.month ? ` month=${o.month} quarter=${o.quarter}` : ""}${o.key ? ` epoch=${o.key}` : ""}${o.winner ? ` winner=${o.winner}` : ""}${o.txHash ? ` tx=${o.txHash}` : ""}${o.reason ? ` ${o.reason}` : ""}`;
       if (o.status === "sent" || o.status === "dry-run") console.log(line); else console.warn(line);
     }
   } catch (error) { console.warn("[arena-battle-realtime-worker] league crank pass failed", error?.message || error); }
@@ -208,11 +213,30 @@ async function runLpHarvest() {
 }
 if (lpHarvest !== "off") console.log(`[arena-battle-realtime-worker] EVM LP harvest active mode=${lpHarvest} intervalMs=${lpHarvestMs}`);
 const lpHarvestTimer = setInterval(() => void runLpHarvest(), lpHarvestMs); lpHarvestTimer.unref?.(); void runLpHarvest();
+// Major War League payouts: every finished MWL month and closed Quarterly Championship is split
+// poker-style into league_epoch_winners (arenaMwlPayouts.js). Off unless ARENA_MWL_PAYOUTS=on:
+// it must not run before migration 20261002_000002 and the share-ledger backfill are applied.
+const mwlPayoutsOn = /^(1|true|on|yes)$/i.test(String(process.env.ARENA_MWL_PAYOUTS || "").trim());
+const mwlPayoutsMs = Math.max(60_000, Number(process.env.ARENA_MWL_PAYOUTS_SCAN_MS || 600_000));
+let mwlPayoutsRunning = false;
+async function payMwl() {
+  if (!mwlPayoutsOn || mwlPayoutsRunning) return;
+  mwlPayoutsRunning = true;
+  try {
+    for (const o of await runMwlPayouts({ pool })) {
+      const line = `[arena-battle-realtime-worker] MWL payout ${o.period} ${o.key} chain=${o.chainId} ${o.status} pot=${o.pot ?? ""} paid=${o.paid ?? ""} winners=${o.winners ?? ""}${o.reason ? ` ${o.reason}` : ""}`;
+      if (o.status === "failed") console.warn(line); else console.log(line);
+    }
+  } catch (error) { console.warn("[arena-battle-realtime-worker] MWL payout pass failed", error?.message || error); }
+  finally { mwlPayoutsRunning = false; }
+}
+if (mwlPayoutsOn) console.log(`[arena-battle-realtime-worker] MWL payouts active intervalMs=${mwlPayoutsMs}`);
+const mwlPayoutsTimer = setInterval(() => void payMwl(), mwlPayoutsMs); mwlPayoutsTimer.unref?.(); void payMwl();
 const keepAlive = setInterval(() => {}, 60_000);
 
 async function shutdown(signal) {
   console.log(`[arena-battle-realtime-worker] shutting down on ${signal}`);
-  clearInterval(keepAlive); clearInterval(finishedTimer); clearInterval(settlementTimer); clearInterval(voteTimer); clearInterval(importFeedTimer); clearInterval(mwlRolloverTimer); clearInterval(leagueCrankTimer); clearInterval(lpHarvestTimer);
+  clearInterval(keepAlive); clearInterval(finishedTimer); clearInterval(settlementTimer); clearInterval(voteTimer); clearInterval(importFeedTimer); clearInterval(mwlRolloverTimer); clearInterval(leagueCrankTimer); clearInterval(lpHarvestTimer); clearInterval(mwlPayoutsTimer);
   stopArenaBattleRealtimeWorker();
   try { await pool.end(); } catch {}
   process.exit(0);

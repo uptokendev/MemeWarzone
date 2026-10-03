@@ -41,7 +41,7 @@ type RewardCardConfig = {
 
 type LeagueRewardMetadata = {
   claimSource: "league_api";
-  period: "weekly" | "monthly";
+  period: "weekly" | "monthly" | "mwl_monthly" | "quarterly";
   epochStart: string;
   epochEnd: string | null;
   expiresAt: string | null;
@@ -55,7 +55,7 @@ type LeagueRewardMetadata = {
 type LeagueRewardRow = {
   // Quarterly finals claim through the same rail once the client supports
   // period code 2 (solanaRewardV0Claim.ts); the API only lists weekly/monthly today.
-  period: "weekly" | "monthly";
+  period: "weekly" | "monthly" | "mwl_monthly" | "quarterly";
   epochStart: string;
   epochEnd?: string | null;
   expiresAt?: string | null;
@@ -288,6 +288,19 @@ function readLeagueRewardMetadata(item: RewardLedgerItem): LeagueRewardMetadata 
   return metadata?.claimSource === "league_api" ? (metadata as LeagueRewardMetadata) : null;
 }
 
+// Major War League prizes read as "Major War League September 2026 · #1"; pre-grad keep their key.
+function leagueRewardLabel(metadata: LeagueRewardMetadata): string {
+  const start = new Date(String(metadata.epochStart || ""));
+  const valid = Number.isFinite(start.getTime());
+  if (metadata.period === "mwl_monthly" && valid) {
+    return `Major War League ${start.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })} · #${metadata.rank}`;
+  }
+  if (metadata.period === "quarterly" && valid) {
+    return `Quarterly Championship Q${Math.floor(start.getUTCMonth() / 3) + 1} ${start.getUTCFullYear()} · #${metadata.rank}`;
+  }
+  return `${metadata.period}:${metadata.category}:${metadata.rank}`;
+}
+
 async function fetchLeagueRewardItems(walletAddress?: string | null, chainId?: number | null): Promise<RewardLedgerItem[]> {
   if (!walletAddress || chainId == null || !Number.isFinite(Number(chainId))) return [];
 
@@ -317,7 +330,7 @@ async function fetchLeagueRewardItems(walletAddress?: string | null, chainId?: n
       id: buildLeagueRewardId(id, reward),
       rewardType: "league",
       sourceId: null,
-      sourceLabel: `${metadata.period}:${metadata.category}:${metadata.rank}`,
+      sourceLabel: leagueRewardLabel(metadata),
       walletAddress,
       userId: null,
       chain: solana ? "solana" : robinhood ? "robinhood" : "bnb",
@@ -352,7 +365,7 @@ async function fetchWalletNonce(chainId: number, walletAddress: string): Promise
 function buildLeagueClaimMessage(input: {
   chainId: number;
   recipient: string;
-  period: "weekly" | "monthly";
+  period: "weekly" | "monthly" | "mwl_monthly" | "quarterly";
   epochStart: string;
   category: string;
   rank: number;

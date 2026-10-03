@@ -240,6 +240,26 @@
           "address": "0xA590A8c3051dBd5E83B250191eBaCD07C10eCFeF",
           "contract": "contracts/token/LaunchTokenDeployer.sol:LaunchTokenDeployer",
           "args": []
+        },
+        {
+          "name": "TreasuryVaultV2 (MWL monthly)",
+          "address": "0xC46D33FCce7030627254278716d4AEb536Cf46FF",
+          "contract": "contracts/TreasuryVaultV2.sol:TreasuryVaultV2",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x0000000000000000000000000000000000000000",
+            "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50"
+          ]
+        },
+        {
+          "name": "TreasuryVaultV2 (MWL quarterly)",
+          "address": "0xa83d8194C367f2d3eA7B3963f50d579efD8a2218",
+          "contract": "contracts/TreasuryVaultV2.sol:TreasuryVaultV2",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x0000000000000000000000000000000000000000",
+            "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50"
+          ]
         }
       ]
     },
@@ -575,6 +595,26 @@
           "address": "0x1e463947d28f2c878312139b87aD482a614F1cDC",
           "contract": "contracts/RobinhoodStockLaunchCampaign.sol:RobinhoodStockLaunchCampaign",
           "args": []
+        },
+        {
+          "name": "TreasuryVaultV2 (MWL monthly)",
+          "address": "0xa20388579323e22076b07e89Ac916aE6Ff91A0E0",
+          "contract": "contracts/TreasuryVaultV2.sol:TreasuryVaultV2",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x0000000000000000000000000000000000000000",
+            "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50"
+          ]
+        },
+        {
+          "name": "TreasuryVaultV2 (MWL quarterly)",
+          "address": "0xA2f8e9C7aaeeECaa78D070FEe64CB54427d5291e",
+          "contract": "contracts/TreasuryVaultV2.sol:TreasuryVaultV2",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x0000000000000000000000000000000000000000",
+            "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50"
+          ]
         }
       ]
     }

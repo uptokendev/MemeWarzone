@@ -1,3 +1,4 @@
+import { isMwlPayoutPeriod } from "./lib/mwlPayoutVaults.js";
 import { pool } from "../server/db.js";
 import {
   badMethod,
@@ -505,7 +506,8 @@ export default async function handler(req, res) {
         computedAt: r.computedAt,
         rootPublishedAt: r.rootPublishedAt || null,
         rootTxHash: r.rootTxHash || null,
-        claimable: solana ? Boolean(r.rootPublishedAt) : true,
+        // Major War League prizes are claimable once their root is on chain, on every chain.
+        claimable: solana || isMwlPayoutPeriod(r.period) ? Boolean(r.rootPublishedAt) : true,
       })),
     });
   } catch (e) {

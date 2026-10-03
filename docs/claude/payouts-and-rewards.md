@@ -110,3 +110,30 @@ First weeks expire late November 2026; run the script monthly from then. `buildB
 optional `value` for payable calls only.
 
 
+
+### Major War League payouts (built 2026-10-02)
+
+Founder: poker split, recipient = coin creator / verified import owner, 60% month / 40% quarter,
+no expiry, no manual work, every winner can collect. Pre-grad leagues untouched (own periods, vaults).
+
+- **Ledger** `arena_league_share_ledger` (migration `20261002_000002`): each battle's league share,
+  recorded by the crank BEFORE it moves it (Solana `claim_mwl` in resolve-due, EVM `claimLeague` in
+  the API crank). Split = `PostGradLeagueTreasuryV2` (monthly = floor(gross*6000/10000)).
+- **Winners** `arenaMwlPayouts.js` (API realtime worker, `ARENA_MWL_PAYOUTS=on`): finalized MWL month
+  -> period `mwl_monthly`/category `mwl`; closed Quarterly Championship -> `quarterly`/`championship`.
+  Pot = all unassigned ledger shares of that period and earlier (late shares roll forward). Coins
+  without a valid owner wallet are skipped; Solana places < 0.005 SOL not paid alone; nobody payable
+  -> `arena_mwl_payout_runs.status = rolled_over`. `expires_at` null.
+- **Solana**: `cron:publish-league-epoch-root` (indexer scheduled task) posts `mwl_monthly` (3) and
+  `quarterly` (2) roots for `mwl_vault`.
+- **EVM**: two `TreasuryVaultV2` per chain (`scripts/deploy-mwl-payout-vaults.ts`, Safe batch MWL1:
+  setReceivers, claim caps, 24 months + 8 quarters authorized, 2-year publish windows). Epoch codes
+  3 / 4. API crank sweeps `claimMonthly`/`claimQuarterly` after each period ONLY when the receiver is
+  the MWL vault. `publish-evm-league-roots.mjs` posts MWL roots only when the vault covers the list
+  plus every earlier MWL prize still unclaimed (read from `epochTotal`/`epochClaimedTotal`).
+  Env: `MWL_MONTHLY_VAULT_ADDRESS_<id>`, `MWL_QUARTERLY_VAULT_ADDRESS_<id>`.
+- Rehearsed: staging (Sept pays ASK's owner 0.012 SOL, Q3 0.008 SOL; a signed claim returns a valid
+  mwl_vault proof) and hardhat `test/MwlPayoutVaults.spec.ts` (full EVM money path + hot-key bounds).
+- **LP fees**: `EVM_LP_HARVEST` (API, hourly, simulates locker.harvest) and `SOLANA_LP_HARVEST_AUTO`
+  (indexer, 6h; refuses without `SOLANA_PROTOCOL_TREASURY_ADDRESS`, whose fallback is the devnet
+  deployer HuKfoF).

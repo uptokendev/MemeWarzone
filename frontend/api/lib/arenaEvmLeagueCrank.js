@@ -20,6 +20,7 @@
 // Run one instance: sends are sequential and nonces are not coordinated across processes.
 import { ethers } from "ethers";
 
+import { recordLeagueShare } from "./arenaLeagueShareLedger.js";
 import { WAR_POOL_GENERATION_V2, WAR_POOL_V2_ABI, battlePoolId, tournamentPoolId, warPoolGeneration, warPoolTreasuryAddress } from "./arenaWarPoolEscrow.js";
 
 export const LEAGUE_CRANK_CHAIN_IDS = Object.freeze([56, 4663, 97, 46630]);
@@ -124,6 +125,7 @@ export async function crankLeagueShares({
   terminal = new Set(),
   contractFor = (chainId) => defaultContractFor(chainId, env),
   resolutionFor = defaultResolutionFor,
+  recordShare = recordLeagueShare,
   log = () => {},
 } = {}) {
   if (mode === "off") return [];
@@ -171,6 +173,18 @@ export async function crankLeagueShares({
       Object.assign(outcome, call.describe);
       if (mode !== "send") { outcome.status = "dry-run"; log(outcome); break; }
       if (!c.wallet) { outcome.status = "no-key"; log(outcome); break; }
+      if (step === "claimLeague") {
+        // Record the share for the MWL payout before it moves (see arenaLeagueShareLedger.js). A
+        // failed write holds the claim: a share must never reach the vault unrecorded.
+        try {
+          await recordShare(db, { chainId, subjectKind: row.kind, subjectId: row.id, grossRaw: BigInt(pool.pendingLeague), settledAt: row.settled_at, source: "evm_claim_league" });
+        } catch (error) {
+          outcome.status = "blocked";
+          outcome.reason = `ledger write failed: ${error?.message || error}`;
+          log(outcome);
+          break;
+        }
+      }
       try {
         const balance = await c.provider.getBalance(c.wallet.address);
         if (balance === 0n) { outcome.status = "no-gas"; outcome.sender = c.wallet.address; log(outcome); break; }
@@ -227,4 +241,107 @@ export async function buildStepCall(step, { row, pool, poolId, resolutionFor }) 
 async function defaultResolutionFor(subjectId) {
   const { claimIntentFor } = await import("../arenaWarPools.js");
   return claimIntentFor(subjectId);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Major War League sweep: PostGradLeagueTreasuryV2 -> the MWL payout vaults.
+//
+// claimLeague files each share under its battle's month and quarter (pendingMonthlyByEpoch /
+// pendingQuarterlyByEpoch). Once a month (quarter) is over, claimMonthly(epoch) / claimQuarterly(epoch)
+// (permissionless) pays it to the treasury's fixed receiver. This sends them, but ONLY when that
+// receiver is the configured MWL vault for the period: before the Safe points the receivers at the
+// vaults they are the Safe, and sweeping then would move winners' money out of the payout path.
+// The epochs to look at come from the share ledger (every share recorded before it was claimed).
+// ---------------------------------------------------------------------------------------------
+const LEAGUE_TREASURY_ABI = [
+  "function monthlyReceiver() view returns (address)",
+  "function quarterlyReceiver() view returns (address)",
+  "function pendingMonthlyByEpoch(bytes32) view returns (uint256)",
+  "function pendingQuarterlyByEpoch(bytes32) view returns (uint256)",
+  "function claimMonthly(bytes32 epoch)",
+  "function claimQuarterly(bytes32 epoch)",
+];
+const WAR_POOL_LEAGUE_ABI = ["function postGradLeagueTreasury() view returns (address)"];
+
+/** Epoch keys whose period is over at `now` ("2026-09" ended at Oct 1 00:00 UTC; "2026-Q3" at Oct 1). */
+export function periodKeyEnded(key, now = new Date()) {
+  const month = /^(\d{4})-(\d{2})$/.exec(key);
+  const quarter = /^(\d{4})-Q([1-4])$/.exec(key);
+  let end;
+  if (month) end = Date.UTC(Number(month[1]), Number(month[2]), 1);
+  else if (quarter) end = Date.UTC(Number(quarter[1]), Number(quarter[2]) * 3, 1);
+  else return false;
+  return now.getTime() >= end;
+}
+
+export async function sweepMwlEpochs({
+  db,
+  env = process.env,
+  mode = leagueCrankMode(env),
+  now = new Date(),
+  contractFor = (chainId) => defaultContractFor(chainId, env),
+  vaultFor = async (period, chainId) => {
+    const { mwlVaultAddress } = await import("./mwlPayoutVaults.js");
+    return mwlVaultAddress(period, chainId, env);
+  },
+  log = () => {},
+} = {}) {
+  if (mode === "off") return [];
+  const outcomes = [];
+  for (const chainId of LEAGUE_CRANK_CHAIN_IDS) {
+    const c = contractFor(chainId);
+    if (!c) continue;
+    const keys = await db.query(
+      `select distinct month_key as key, 'monthly' as kind from public.arena_league_share_ledger where chain_id = $1
+       union
+       select distinct quarter_key as key, 'quarterly' as kind from public.arena_league_share_ledger where chain_id = $1`,
+      [chainId],
+    );
+    if (!keys.rows.length) continue;
+    let treasury;
+    try {
+      const warPool = c.leagueTreasuryResolver ? null : new ethers.Contract(c.contract.target ?? c.contract.address, WAR_POOL_LEAGUE_ABI, c.provider);
+      const address = c.leagueTreasuryResolver ? await c.leagueTreasuryResolver() : await warPool.postGradLeagueTreasury();
+      treasury = c.leagueTreasury || new ethers.Contract(address, LEAGUE_TREASURY_ABI, c.wallet || c.provider);
+    } catch (error) {
+      outcomes.push({ chainId, step: "sweep", status: "read-failed", reason: error?.shortMessage || error?.message || String(error) });
+      continue;
+    }
+    for (const row of keys.rows) {
+      const key = String(row.key);
+      if (!periodKeyEnded(key, now)) continue;
+      const monthly = row.kind === "monthly";
+      const epoch = ethers.id(key);
+      const outcome = { chainId, step: monthly ? "claimMonthly" : "claimQuarterly", key };
+      try {
+        const pending = BigInt(await (monthly ? treasury.pendingMonthlyByEpoch(epoch) : treasury.pendingQuarterlyByEpoch(epoch)));
+        if (pending === 0n) continue;
+        outcome.amountWei = pending.toString();
+        const receiver = String(await (monthly ? treasury.monthlyReceiver() : treasury.quarterlyReceiver())).toLowerCase();
+        const vault = String(await vaultFor(monthly ? "mwl_monthly" : "quarterly", chainId) || "").toLowerCase();
+        if (!vault || receiver !== vault) {
+          outcome.status = "held";
+          outcome.reason = `receiver ${receiver} is not the MWL ${monthly ? "monthly" : "quarterly"} vault ${vault || "(not configured)"}`;
+          outcomes.push(outcome);
+          log(outcome);
+          continue;
+        }
+        outcomes.push(outcome);
+        if (mode !== "send") { outcome.status = "dry-run"; log(outcome); continue; }
+        if (!c.wallet) { outcome.status = "no-key"; log(outcome); continue; }
+        const method = monthly ? "claimMonthly" : "claimQuarterly";
+        await treasury[method].staticCall(epoch);
+        const tx = await treasury[method](epoch);
+        outcome.txHash = tx.hash;
+        const receipt = await tx.wait();
+        outcome.status = receipt?.status === 1 ? "sent" : "reverted";
+      } catch (error) {
+        outcome.status = "send-failed";
+        outcome.reason = error?.shortMessage || error?.message || String(error);
+        if (!outcomes.includes(outcome)) outcomes.push(outcome);
+      }
+      log(outcome);
+    }
+  }
+  return outcomes;
 }

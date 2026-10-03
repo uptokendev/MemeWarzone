@@ -1,3 +1,4 @@
+import { MWL_EVM_PERIOD_CODES, isMwlPayoutPeriod, mwlVaultAddress } from "./mwlPayoutVaults.js";
 import {
   AbiCoder,
   Interface,
@@ -33,7 +34,15 @@ export class EvmLeagueClaimVerificationError extends Error {
 function periodCode(period) {
   if (period === "weekly") return 1;
   if (period === "monthly") return 2;
-  throw new EvmLeagueClaimVerificationError("LEAGUE_PERIOD_INVALID", "League claim period must be weekly or monthly.", 400);
+  if (isMwlPayoutPeriod(period)) return MWL_EVM_PERIOD_CODES[period];
+  throw new EvmLeagueClaimVerificationError("LEAGUE_PERIOD_INVALID", "League claim period must be weekly, monthly, mwl_monthly or quarterly.", 400);
+}
+
+// Major War League prizes pay from their own TreasuryVaultV2 per period (mwlPayoutVaults.js).
+function mwlVault(period, chainId) {
+  const configured = mwlVaultAddress(period, chainId);
+  if (configured) return getAddress(configured);
+  throw new EvmLeagueClaimVerificationError("LEAGUE_VAULT_UNAVAILABLE", `Missing Major War League ${period} vault for chain ${Number(chainId)}.`, 503);
 }
 
 function rpcUrl(chainId) {
@@ -186,7 +195,8 @@ export function buildExpectedEvmLeagueClaim({ chainId, period, epochStart, categ
     : BigInt(keccak256(coder.encode(["uint32", "uint8", "uint64"], [chain, periodCode(period), BigInt(epochStartSec)])));
   const categoryHash = keccak256(toUtf8Bytes(String(category || "").toLowerCase().trim()));
   const leaf = keccak256(coder.encode(["uint256", "bytes32", "uint8", "address", "uint256"], [epochId, categoryHash, normalizedRank, normalizedRecipient, amount]));
-  return { chainId: chain, vaultAddress: monthly ? monthlyVaultAddress(chain) : vaultAddress(chain), claimedGetter: monthly ? "monthLeafClaimed" : "epochLeafClaimed", epochId, epochIdHex: zeroPadValue(toBeHex(epochId), 32), epochStartSec, categoryHash, rank: normalizedRank, recipient: normalizedRecipient, amountRaw: amount.toString(), leaf };
+  const vault = monthly ? monthlyVaultAddress(chain) : isMwlPayoutPeriod(period) ? mwlVault(period, chain) : vaultAddress(chain);
+  return { chainId: chain, vaultAddress: vault, claimedGetter: monthly ? "monthLeafClaimed" : "epochLeafClaimed", epochId, epochIdHex: zeroPadValue(toBeHex(epochId), 32), epochStartSec, categoryHash, rank: normalizedRank, recipient: normalizedRecipient, amountRaw: amount.toString(), leaf };
 }
 
 export function evmLeagueClaimEventTopics(expected) {
