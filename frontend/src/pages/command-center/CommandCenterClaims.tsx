@@ -388,7 +388,7 @@ async function prepareLeagueRewardClaim(
   metadata: LeagueRewardMetadata,
   walletAddress: string,
   chainId: number,
-): Promise<PreparedSolanaLeagueClaim> {
+): Promise<PreparedSolanaLeagueClaim | { alreadyPaid: true; txHash: string }> {
   const nonce = await fetchWalletNonce(chainId, walletAddress);
   const message = buildLeagueClaimMessage({
     chainId,
@@ -416,6 +416,12 @@ async function prepareLeagueRewardClaim(
     }),
   });
   const json = await parseApiJson(res);
+  // The server answers {ok, txHash, claimedAt} for a prize it already paid (idempotent claim). That
+  // answer has no claim data: passing it on crashed as "Invalid category hash" (2026-10-03, $ASK).
+  if (json?.mode !== "solana_treasury") {
+    if (json?.txHash) return { alreadyPaid: true, txHash: String(json.txHash) };
+    throw new Error("The server did not return claim data for this prize. Refresh and try again.");
+  }
   return { ...json, chainId } as PreparedSolanaLeagueClaim;
 }
 
@@ -630,13 +636,18 @@ export default function CommandCenterClaims() {
           try {
             if (isSolanaRewardChainId(claimChainId)) {
               const prepared = await prepareLeagueRewardClaim(metadata, walletAddress, claimChainId);
-              const txHash = await submitSolanaLeagueClaim(prepared);
-              toast.dismiss(toastId);
-              const recordToast = toast.loading("Finalizing league claim...");
-              try {
-                await recordLeagueRewardClaim(metadata, walletAddress, claimChainId, txHash);
-              } finally {
-                toast.dismiss(recordToast);
+              if ("alreadyPaid" in prepared) {
+                // Paid before (e.g. a second click or Claim all after a claim): nothing to sign.
+                toast.dismiss(toastId);
+              } else {
+                const txHash = await submitSolanaLeagueClaim(prepared);
+                toast.dismiss(toastId);
+                const recordToast = toast.loading("Finalizing league claim...");
+                try {
+                  await recordLeagueRewardClaim(metadata, walletAddress, claimChainId, txHash);
+                } finally {
+                  toast.dismiss(recordToast);
+                }
               }
             } else {
               const { requestNonce } = await import("@/lib/profileApi");

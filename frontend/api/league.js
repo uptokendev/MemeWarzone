@@ -921,14 +921,10 @@ export default async function handler(req, res) {
             });
           }
 
-          // Record the claim request for UX/audit, but do NOT mark paid here.
-          await client.query(
-            `INSERT INTO league_epoch_claims (chain_id, period, epoch_start, category, rank, recipient_address, signature)
-             VALUES ($1, $2, $3::timestamptz, $4, $5, $6, $7)
-             ON CONFLICT (chain_id, period, epoch_start, category, rank)
-             DO NOTHING`,
-            [chainId, period, epochStart, category, rank, recipient, signature]
-          );
+          // No league_epoch_claims row here: its claimed_at defaults to now() and /api/rewards hides any
+          // prize that has one, so writing it before the wallet signed hid prizes that were never paid
+          // (2026-10-03: $ASK's Q3 share vanished after a failed claim). The record step writes it with
+          // the transaction.
 
           await client.query("COMMIT");
           if (solanaClaim) {
