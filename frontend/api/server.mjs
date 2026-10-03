@@ -10,6 +10,7 @@ process.on("uncaughtException", (error) => {
   console.error("[api] uncaughtException (kept alive)", error?.stack || error);
 });
 
+import moderation from "./moderation.js";
 import notificationPrefs from "./notificationPrefs.js";
 import notificationUnsubscribe from "./notificationUnsubscribe.js";
 import recruiterCreatorCoins from "./recruiterCreatorCoins.js";
@@ -580,6 +581,7 @@ router.all("/recruiters/:code/replacements", wrap(recruiterReplacements));
 router.all("/recruiters/:code/creator-coins", wrap(recruiterCreatorCoins));
 router.all("/notification-prefs/unsubscribe", wrap(notificationUnsubscribe));
 router.all("/notification-prefs", wrap(notificationPrefs));
+router.all("/moderation", wrap(moderation));
 router.all("/recruiters/:code/referral/capture", wrap(recruiterReferralCapture));
 router.all("/recruiters/me/payouts", wrap(recruiterMePayouts));
 router.all("/recruiters/me/wallets/link", wrap(recruiterMeWalletLink));

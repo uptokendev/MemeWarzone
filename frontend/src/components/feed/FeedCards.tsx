@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { ItemMenu } from "@/components/moderation/ItemMenu";
+import { useModeration } from "@/hooks/useModeration";
 import { CoinSparkline } from "@/components/feed/CoinSparkline";
 import { PostImage } from "@/components/feed/PostImage";
 import { MentionField } from "@/components/feed/MentionField";
@@ -168,6 +170,14 @@ export function MentionText({ text }: { text: string }) {
   }
   if (last < text.length) parts.push(text.slice(last));
   return <>{parts}</>;
+}
+
+function absoluteUrl(path: string) {
+  try {
+    return new URL(path, window.location.origin).toString();
+  } catch {
+    return path;
+  }
 }
 
 /** Display name, else @username, else the short wallet (founder, 2026-10-02: names instead of addresses). */
@@ -466,6 +476,9 @@ export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: 
   // The grey @line is the real username, shown next to a display name.
   const handle = item.authorHandle && String(item.authorDisplayName || "").trim() ? `@${item.authorHandle}` : "";
   const viewRef = useViewTracking(item.postId);
+  const moderation = useModeration();
+  // CO-30: hidden posts and posts or reposts by blocked accounts disappear for this viewer only.
+  if (moderation.isHidden("post", item.postId) || moderation.isBlocked(item.wallet) || moderation.isBlocked(item.repostedByWallet)) return null;
 
   return (
     <article ref={viewRef as React.RefObject<HTMLElement>} className={`${card} px-[18px] pb-2 pt-4`}>
@@ -490,6 +503,13 @@ export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: 
           <div className="flex flex-wrap items-center gap-x-2">
             <Link to={profileHref(item.wallet)} className="truncate font-bold text-mw-text hover:text-mw-text">{author}</Link>
             <span className="text-sm text-mw-muted">{handle ? `${handle} · ` : ""}{timeAgo(item.createdAt)}</span>
+            <ItemMenu
+              className="-mr-2 -mt-1 ml-auto"
+              report={{ entityType: "post", subject: "Reported post", reportedWallet: item.wallet, reportedUrl: absoluteUrl(postHref(item.postId)) }}
+              hide={item.postId ? { type: "post", id: item.postId } : undefined}
+              author={item.wallet}
+              authorLabel={author}
+            />
           </div>
           <Link to={postHref(item.postId)} className="block text-mw-text hover:text-mw-text">
             <FeedBody body={item.body} />
@@ -511,6 +531,8 @@ export function FeedCoinPostCard({ item }: { item: FeedItem }) {
   const path = tokenHref(item);
   const href = path && path !== "/" ? path : null;
   const avatar = <FeedAvatar url={item.tokenLogoUri} label={ticker || name} square />;
+  const moderation = useModeration();
+  if (moderation.isHidden("coin_post", item.id)) return null;
   return (
     <article className={`${card} flex gap-3.5 px-[18px] py-4`}>
       {href ? <Link to={href} className="mw-focus shrink-0 rounded-[12px]">{avatar}</Link> : avatar}
@@ -519,6 +541,12 @@ export function FeedCoinPostCard({ item }: { item: FeedItem }) {
           {href ? <Link to={href} className="font-bold text-mw-text hover:text-mw-text">{name}</Link> : <b>{name}</b>}
           <span className={`${chip} border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft`}>Creator update</span>
           <span className="text-sm text-mw-muted">{ticker ? `${ticker} · ` : ""}{timeAgo(item.createdAt)}</span>
+          {/* Coin updates are posted as the coin: Report and Hide, no Block (founder: blocking never touches coin pages). */}
+          <ItemMenu
+            className="-mr-2 -mt-1 ml-auto"
+            report={{ entityType: "post", subject: "Reported post", reportedUrl: absoluteUrl(href || "/") }}
+            hide={{ type: "coin_post", id: item.id }}
+          />
         </div>
         <FeedBody body={item.body} />
         {item.mediaUrl ? <PostImage src={item.mediaUrl} /> : null}

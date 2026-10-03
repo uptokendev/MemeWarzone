@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ItemMenu } from "@/components/moderation/ItemMenu";
+import { useModeration } from "@/hooks/useModeration";
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -130,6 +132,7 @@ export function TokenComments({
   const [loading, setLoading] = useState(false);
   const [posting, setPosting] = useState(false);
   const [body, setBody] = useState("");
+  const moderation = useModeration();
   const [error, setError] = useState<string | null>(null);
 
   const normalizedCampaign = useMemo(() => canonAddress(campaignAddress, solana), [campaignAddress, solana]);
@@ -332,7 +335,7 @@ export function TokenComments({
           <div className="py-6 text-center text-sm text-mw-muted">{effectiveEmptyState}</div>
         ) : (
           <div className={`flex flex-col ${mode === "chat" ? "gap-2" : "gap-3"}`}>
-            {filteredItems.map((c) => {
+            {filteredItems.filter((c) => !moderation.isHidden("comment", c.id) && !moderation.isBlocked(c.authorAddress)).map((c) => {
               const label = (c.authorDisplayName ?? "").trim();
               const display = label.length ? label : shorten(c.authorAddress);
               const isCreatorUpdate =
@@ -367,6 +370,13 @@ export function TokenComments({
                           {timeAgo(c.createdAt)}
                         </span>
                       </div>
+                      <ItemMenu
+                        className="-mr-1 -mt-1"
+                        report={{ entityType: "post", subject: "Reported comment", reportedWallet: c.authorAddress, reportedUrl: currentPageUrl(`/token/${normalizedCampaign}`) }}
+                        hide={{ type: "comment", id: c.id }}
+                        author={c.authorAddress}
+                        authorLabel={(c.authorDisplayName ?? "").trim() || null}
+                      />
                     </div>
                     <p className={`m-0 mt-1 whitespace-pre-wrap break-words ${mode === "chat" ? "text-[14px]" : "text-[15px]"} text-mw-text`}>
                       {c.body}

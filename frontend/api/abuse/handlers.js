@@ -88,9 +88,13 @@ function parseReportFields(body) {
   const reportedTokenAddress = clampText(body.reportedTokenAddress || body.reported_token_address, 128);
   const reportedUrl = sanitizeHttpUrl(body.reportedUrl || body.reported_url || body.url);
 
+  // CO-30 (founder 2026-10-03): the "…" menu on posts, comments and profiles files a quick in-app
+  // report (one textbox). It may come without an email; the reporter follows it in Command Center.
+  const inApp = String(body.source || "") === "in_app" && (entityType === "post" || entityType === "profile");
+
   const errors = [];
   if (!category) errors.push("Choose an abuse category.");
-  if (!email) errors.push("A notification email is required.");
+  if (!email && !inApp) errors.push("A notification email is required.");
   if (description.length < DESCRIPTION_MIN) errors.push("Describe what happened in more detail.");
   return {
     errors,
@@ -105,6 +109,7 @@ function parseReportFields(body) {
       reportedCampaignAddress: reportedCampaignAddress || null,
       reportedTokenAddress: reportedTokenAddress || null,
       reportedUrl: reportedUrl || null,
+      inApp,
     },
   };
 }
@@ -162,6 +167,23 @@ export function createAbuseReporterHandlers({ pool }) {
       return res.status(429).json({ ok: false, error: "Too many reports from this wallet right now. Try again later." });
     }
 
+    // In-app reports without an email use the wallet's verified notification email, else stay empty
+    // (reporter_email is NOT NULL; abuseNotify skips an empty address).
+    let reporterEmail = parsed.values.email;
+    if (!reporterEmail && parsed.values.inApp) {
+      try {
+        const verified = await pool.query(
+          `select email from public.wallet_notification_emails
+            where lower(wallet) = lower($1) and verified_at is not null
+            limit 1`,
+          [actor.walletAddress],
+        );
+        reporterEmail = String(verified.rows[0]?.email || "");
+      } catch {
+        reporterEmail = "";
+      }
+    }
+
     const seq = await pool.query("select nextval('public.abuse_report_reference_seq') as seq");
     const publicReference = publicReferenceFromSeq(seq.rows[0].seq);
     const inserted = await pool.query(
@@ -176,7 +198,7 @@ export function createAbuseReporterHandlers({ pool }) {
         publicReference,
         actor.walletAddress,
         actor.chainId,
-        parsed.values.email,
+        reporterEmail || "",
         parsed.values.category,
         parsed.values.subject,
         parsed.values.description,

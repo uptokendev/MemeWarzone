@@ -56,6 +56,8 @@ export type CreateAbuseReportInput = {
   reportedCampaignAddress?: string;
   reportedTokenAddress?: string;
   reportedUrl?: string;
+  /** "in_app": quick report from the "…" menu on a post, comment or profile (email optional). */
+  source?: "in_app";
 };
 
 function sessionKey(walletAddress: string, chainId: number) {

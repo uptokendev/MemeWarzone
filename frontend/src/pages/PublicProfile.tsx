@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ItemMenu } from "@/components/moderation/ItemMenu";
+import { useModeration } from "@/hooks/useModeration";
 import { MentionText } from "@/components/feed/FeedCards";
 import { Globe, Send } from "lucide-react";
 import { formatCompactUsd } from "@/features/postgrad/warRoomMetrics";
@@ -36,10 +38,9 @@ import {
 } from "@/lib/recruiterApi";
 import { followUser, getFollowersCount, getFollowingCount, isFollowingUser, unfollowUser } from "@/lib/followApi";
 import { normalizeRank, type RankName } from "@/lib/ranks";
-import { Award, Copy, Crown, ExternalLink, Flag, Megaphone, Rocket, ShieldCheck, Trophy, Users, type LucideIcon } from "lucide-react";
+import { Award, Copy, Crown, ExternalLink,  Megaphone, Rocket, ShieldCheck, Trophy, Users, type LucideIcon } from "lucide-react";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { cp } from "@/components/token/coinPageStyles";
-import { buildAbuseReportPath } from "@/lib/abuseReportLink";
 import { toast } from "sonner";
 
 type PublicCoin = {
@@ -160,6 +161,7 @@ export default function PublicProfile({
   isOwnProfile: boolean;
 }) {
   const railRef = useStickyRail<HTMLElement>();
+  const moderation = useModeration();
   const navigate = useNavigate();
   const wallet = useWallet();
   const { fetchCampaigns, fetchCampaignSummary } = useLaunchpad();
@@ -591,11 +593,6 @@ export default function PublicProfile({
   const postsToShow = feedSupported ? feedItems : publicPosts;
   const empty = `${cp.card} p-4 text-sm text-mw-muted`;
   const accentButton = "mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-bold text-[#140A02] hover:bg-[#FF8A3D] disabled:opacity-60";
-  const reportPath = buildAbuseReportPath({
-    entityType: "profile",
-    reportedWallet: profileWallet,
-    reportedUrl: typeof window !== "undefined" ? window.location.href : `/profile/${profileWallet}`,
-  });
   const openCoin = (coin: PublicCoin) =>
     navigate(tokenDetailsPath({ tokenAddress: coin.tokenAddress, campaignAddress: coin.campaignAddress, chainId: coin.chainId }));
   const progressNumber = (value?: string | null) => {
@@ -800,6 +797,51 @@ export default function PublicProfile({
   ];
   const currentTab = tabs.some((t) => t.value === tab) ? tab : "posts";
 
+  // CO-30 (founder, 2026-10-03): a profile you blocked shows only its banner and picture, then a
+  // "This user is blocked" notice with Unblock. Everything else stays hidden until you unblock.
+  if (!isOwnProfile && moderation.isBlocked(profileWallet)) {
+    return (
+      <div className="mx-auto w-full max-w-[1480px] flex flex-col gap-4 px-3 pb-24 font-mw-body text-mw-text md:px-2 xl:pb-10" data-public-profile="true" data-profile-blocked-view="true">
+        <section aria-label="Blocked profile" className="flex flex-col">
+          <div className="relative h-[120px] overflow-hidden rounded-2xl border border-[#1E2329] md:h-[200px] xl:h-[220px]">
+            {profile?.bannerUrl ? (
+              <img src={profile.bannerUrl} alt="" className="h-full w-full object-cover" style={{ objectPosition: `50% ${profile.bannerPositionY ?? 50}%` }} />
+            ) : (
+              <div className="mw-banner h-full w-full" aria-hidden="true" />
+            )}
+          </div>
+          {/* Founder 2026-10-03: name or @username and the wallet stay visible so people recognise the account. */}
+          <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-5 md:px-2">
+            <div className={`relative z-[1] -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-full border-4 bg-[#2A3038] md:-mt-16 md:h-[132px] md:w-[132px] ${profile?.avatarUrl ? "border-mw-ground" : "mw-operative border-[#3dff78]"}`}>
+              {profile?.avatarUrl ? <img src={profile.avatarUrl} alt="" className="h-full w-full object-cover" /> : <OperativeMark fill />}
+            </div>
+            <div className="min-w-0 flex-1 md:pb-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="m-0 break-words font-mw-cond text-3xl font-bold leading-tight text-mw-text md:text-[36px]">{nameText}</h1>
+                <span className={cp.chip} data-profile-blocked="true">Blocked by you</span>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-mw-muted">
+                {handle ? <span>{handle}</span> : null}
+                <span className={`${cp.chip} h-8 font-mw-mono`}>{shorten(profileWallet)}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section className={`${cp.card} flex flex-col items-center gap-3 px-4 py-10 text-center`}>
+          <p className="m-0 font-mw-cond text-2xl font-bold text-mw-text">This user is blocked</p>
+          <p className="m-0 max-w-md text-[15px] text-mw-muted">You do not see their posts, comments or profile. Their coin pages and trading are not affected.</p>
+          <button
+            type="button"
+            onClick={() => void moderation.unblock(profileWallet).then(() => toast.success("Unblocked"), (error) => toast.error(String((error as Error)?.message || "Could not unblock")))}
+            className={accentButton}
+          >
+            Unblock
+          </button>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-[1480px] flex flex-col gap-4 px-3 pb-24 font-mw-body text-mw-text md:px-2 xl:pb-10" data-public-profile="true">
       {/* Hero: banner, round avatar, name, rank chips, wallet, bio, counts, actions. */}
@@ -827,6 +869,7 @@ export default function PublicProfile({
               </h1>
               <span className={cp.chipAccent}>Public rank · {rank}</span>
               {recruiter?.isOg ? <span className={cp.chip}>OG recruiter</span> : null}
+              {!isOwnProfile && moderation.isBlocked(profileWallet) ? <span className={cp.chip} data-profile-blocked="true">Blocked by you</span> : null}
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-mw-muted">
               {handle ? <span>{handle}</span> : null}
@@ -868,10 +911,13 @@ export default function PublicProfile({
                 <button type="button" onClick={() => void handleToggleFollow()} disabled={followBusy} className={isFollowing ? cp.btn : accentButton}>
                   {followBusy ? "Updating…" : isFollowing ? "Unfollow" : "+ Follow"}
                 </button>
-                <Link to={reportPath} className={cp.btn} aria-label="Report abuse">
-                  <Flag className="h-4 w-4" aria-hidden="true" />
-                  <span className="hidden sm:inline">Report abuse</span>
-                </Link>
+                {/* CO-30 (founder, 2026-10-03): Report profile and Block live in the "…" menu, same as on posts. */}
+                <ItemMenu
+                  className="h-11 w-11 border border-mw-edge bg-mw-raised"
+                  report={{ entityType: "profile", subject: "Reported profile", reportedWallet: profileWallet, reportedUrl: typeof window !== "undefined" ? window.location.href : `/profile/${profileWallet}` }}
+                  author={profileWallet}
+                  authorLabel={nameText}
+                />
               </>
             )}
           </div>

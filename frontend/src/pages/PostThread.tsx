@@ -1,4 +1,6 @@
 /** Single post with its replies (UI redesign phase 2, artboard PostThread). Route /post/:postId. */
+import { ItemMenu } from "@/components/moderation/ItemMenu";
+import { useModeration } from "@/hooks/useModeration";
 import { PostImage } from "@/components/feed/PostImage";
 import { useWalletAvatar } from "@/hooks/useWalletAvatar";
 import { useStickyRail } from "@/hooks/useStickyRail";
@@ -26,6 +28,7 @@ export default function PostThread() {
   const navigate = useNavigate();
   const { account, withSession, busy } = useFeedSession();
   const composerAvatar = useWalletAvatar(account);
+  const moderation = useModeration();
   const [post, setPost] = useState<FeedItem | null>(null);
   const [replies, setReplies] = useState<FeedItem[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "missing" | "error">("loading");
@@ -93,6 +96,7 @@ export default function PostThread() {
           {post ? (
             <>
               <article className="p-[18px]">
+                <div className="flex items-start gap-2">
                 <Link to={`/profile/${post.wallet}`} className="mw-focus flex w-max items-center gap-3 rounded-full text-mw-text hover:text-mw-text">
                   <FeedAvatar url={post.authorAvatarUrl} label={author} size={48} />
                   <span>
@@ -100,6 +104,14 @@ export default function PostThread() {
                     {post.authorDisplayName ? <span className="text-sm text-mw-muted">{post.authorHandle ? `@${post.authorHandle}` : shortWallet(post.wallet)}</span> : null}
                   </span>
                 </Link>
+                <ItemMenu
+                  className="ml-auto"
+                  report={{ entityType: "post", subject: "Reported post", reportedWallet: post.wallet, reportedUrl: typeof window !== "undefined" ? window.location.href : `/post/${post.postId}` }}
+                  hide={post.postId ? { type: "post", id: post.postId } : undefined}
+                  author={post.wallet}
+                  authorLabel={author}
+                />
+                </div>
                 <div className="mt-3.5"><FeedBody body={post.body} big /></div>
                 {post.mediaUrl ? <PostImage src={post.mediaUrl} /> : null}
                 {post.quoted ? (
@@ -129,13 +141,22 @@ export default function PostThread() {
                 </button>
               </div>
 
-              {replies.map((r) => {
+              {replies.filter((r) => !moderation.isHidden("post", r.postId) && !moderation.isBlocked(r.wallet)).map((r) => {
                 const name = r.authorDisplayName || (r.authorHandle ? `@${r.authorHandle}` : shortWallet(r.wallet));
                 return (
                   <article key={r.id} className="flex gap-3 border-t border-[#1E2329] px-[18px] py-3.5">
                     <Link to={`/profile/${r.wallet}`} className="mw-focus shrink-0 rounded-full"><FeedAvatar url={r.authorAvatarUrl} label={name} size={40} /></Link>
                     <div className="min-w-0 flex-1">
-                      <div className="flex gap-2"><b>{name}</b><span className="text-sm text-mw-muted">{timeAgo(r.createdAt)}</span></div>
+                      <div className="flex items-start gap-2">
+                        <b>{name}</b><span className="text-sm text-mw-muted">{timeAgo(r.createdAt)}</span>
+                        <ItemMenu
+                          className="-mt-1.5 ml-auto"
+                          report={{ entityType: "post", subject: "Reported comment", reportedWallet: r.wallet, reportedUrl: typeof window !== "undefined" ? window.location.href : `/post/${post.postId}` }}
+                          hide={r.postId ? { type: "post", id: r.postId } : undefined}
+                          author={r.wallet}
+                          authorLabel={name}
+                        />
+                      </div>
                       <FeedBody body={r.body} />
                     </div>
                   </article>

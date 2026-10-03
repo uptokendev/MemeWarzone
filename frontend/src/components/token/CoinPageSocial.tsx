@@ -3,6 +3,8 @@
  * query, so the page makes one request per coin, and each falls back to what the page showed before
  * when the owner has not set anything.
  */
+import { ItemMenu } from "@/components/moderation/ItemMenu";
+import { useModeration } from "@/hooks/useModeration";
 import { PostImage } from "@/components/feed/PostImage";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -103,6 +105,7 @@ export function CoinPostsPanel({
 }: CoinRef & { name: string; ticker: string; logoUrl?: string | null; children?: ReactNode }) {
   const { data, isLoading, isError } = useCoinPage(chainId, token);
   const { isOwner, sign } = useCoinOwnerSigner(chainId, data?.owner?.wallet);
+  const moderation = useModeration();
   const { createPost, deletePost, uploadImage } = useCoinPageMutations(chainId, token, data?.owner?.token);
   const [text, setText] = useState("");
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
@@ -200,7 +203,7 @@ export function CoinPostsPanel({
       {/* Unavailable coin page data degrades to the existing comments below, with no error card. */}
       {isLoading && !isError ? <div className={`${cp.card} p-4 text-sm text-mw-muted`}>Loading posts…</div> : null}
 
-      {items.map((item) => {
+      {items.filter((item) => !moderation.isHidden("coin_post", item.id)).map((item) => {
         const pinned = item.pinned;
         return (
           <article key={item.id} className={`${cp.card} flex gap-3.5 px-4 pb-2 pt-4 md:px-[18px]`}>
@@ -211,6 +214,13 @@ export function CoinPostsPanel({
                 {item.kind === "post" ? <span className={`${cp.chipAccent} h-[22px] text-xs`}>Creator update</span> : <span className="inline-flex h-[22px] items-center gap-1 rounded-full border border-[#24384A] bg-[#14202A] px-2 text-xs font-semibold text-[#8CC4F0]"><AutoIcon kind={item.kind} />Auto update</span>}
                 {pinned ? <span className={`${cp.chip} h-[22px] text-xs`}><Pin className="h-3 w-3" aria-hidden="true" />Pinned</span> : null}
                 <span className="text-sm text-mw-muted">${ticker} · <time dateTime={item.at}>{relativeTime(item.at)}</time></span>
+                {item.kind === "post" && !isOwner ? (
+                  <ItemMenu
+                    className="ml-auto"
+                    report={{ entityType: "post", subject: "Reported post", reportedUrl: typeof window !== "undefined" ? window.location.href : "" }}
+                    hide={{ type: "coin_post", id: item.id }}
+                  />
+                ) : null}
                 {item.kind === "post" && isOwner ? (
                   <button type="button" aria-label="Delete post" onClick={() => void remove(item as CoinPost)} disabled={busy === `del:${item.id}`} className="mw-focus ml-auto inline-flex h-10 w-10 items-center justify-center rounded-lg text-mw-muted hover:bg-mw-raised hover:text-mw-down">
                     {busy === `del:${item.id}` ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}

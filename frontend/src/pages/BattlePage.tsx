@@ -3,6 +3,8 @@
  * BattleWallModule as the list (votes, boosts, realtime, buy-in, claim, share unchanged), framed as the
  * page banner. Around it: live activity, comments (N8), supporters, prize pool breakdown and rules.
  */
+import { ItemMenu } from "@/components/moderation/ItemMenu";
+import { useModeration } from "@/hooks/useModeration";
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -93,7 +95,10 @@ function SideChip({ side, ticker }: { side: "left" | "right"; ticker?: string })
 }
 
 function CommentCard({ comment, tickers }: { comment: BattleComment; tickers: [string, string] }) {
+  const moderation = useModeration();
   const initials = comment.wallet.replace(/^0x/, "").slice(0, 2).toUpperCase();
+  // CO-30: hidden comments and comments by blocked accounts disappear for this viewer only.
+  if (moderation.isHidden("battle_comment", comment.id) || moderation.isBlocked(comment.wallet)) return null;
   return (
     <article className={`${card} flex gap-3 p-3.5 lg:gap-3.5 lg:px-[18px] lg:py-4`}>
       <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#2B3440] font-mw-cond text-base font-bold text-[#C9CED4]" aria-hidden="true">{initials}</span>
@@ -102,6 +107,12 @@ function CommentCard({ comment, tickers }: { comment: BattleComment; tickers: [s
           <WalletLabel className="font-mw-mono font-bold" wallet={comment.wallet} />
           {comment.side ? <SideChip side={comment.side} ticker={comment.side === "left" ? `Side A · ${tickers[0]}` : `Side B · ${tickers[1]}`} /> : null}
           <span className="text-sm text-mw-muted"><time dateTime={comment.at}>{relativeTime(comment.at)}</time></span>
+          <ItemMenu
+            className="-mr-1 -mt-1 ml-auto"
+            report={{ entityType: "post", subject: "Reported comment", reportedWallet: comment.wallet, reportedUrl: typeof window !== "undefined" ? window.location.href : "" }}
+            hide={{ type: "battle_comment", id: comment.id }}
+            author={comment.wallet}
+          />
         </div>
         <p className="m-0 mt-1 whitespace-pre-line break-words text-[15px]">{comment.body}</p>
       </div>
