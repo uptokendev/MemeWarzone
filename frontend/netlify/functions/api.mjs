@@ -1,4 +1,5 @@
 import express from "express";
+import notificationPrefs from "../../api/notificationPrefs.js";
 import recruiterCreatorCoins from "../../api/recruiterCreatorCoins.js";
 import serverless from "serverless-http";
 
@@ -327,6 +328,7 @@ app.all("/recruiters/wallet/:wallet/summary", wrap(recruiterWalletSummary));
 app.all("/recruiters/:code/summary", wrap(recruiterSummary));
 app.all("/recruiters/:code/replacements", wrap(recruiterReplacements));
 app.all("/recruiters/:code/creator-coins", wrap(recruiterCreatorCoins));
+app.all("/notification-prefs", wrap(notificationPrefs));
 app.all("/recruiters/:code/referral/capture", wrap(recruiterReferralCapture));
 app.all("/recruiters/me/payouts", wrap(recruiterMePayouts));
 app.all("/recruiters/me/wallets/link", wrap(recruiterMeWalletLink));

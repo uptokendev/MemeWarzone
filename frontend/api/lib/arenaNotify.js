@@ -1,4 +1,5 @@
 import { pool } from "../../server/db.js";
+import { notificationAllowed } from "./notificationPrefs.js";
 import { normalizeWalletFlexible } from "../../server/http.js";
 import { sendEmailNotification, siteOrigin } from "./notify.js";
 
@@ -20,6 +21,8 @@ export async function verifiedEmailForWallet(wallet) {
 
 export async function notifyChallenge({ defenderWallet, challengerSymbol, defenderSymbol, battleId }) {
   const to = await verifiedEmailForWallet(defenderWallet);
+  // CO-5: the wallet can turn battle emails off (default on).
+  if (to && !(await notificationAllowed(defenderWallet, "battles", "email"))) return { ok: true, skipped: true, reason: "email_off" };
   if (!to) return { ok: true, skipped: true, reason: "no_verified_email" };
   const origin = siteOrigin();
   const walletPath = walletKey(defenderWallet);
@@ -63,6 +66,8 @@ export async function sendVerifyEmail({ email, token, wallet }) {
 
 export async function notifyDeclined({ toWallet, fromSymbol, toSymbol, battleId, message }) {
   const to = await verifiedEmailForWallet(toWallet);
+  // CO-5: the wallet can turn battle emails off (default on).
+  if (to && !(await notificationAllowed(toWallet, "battles", "email"))) return { ok: true, skipped: true, reason: "email_off" };
   if (!to) return { ok: true, skipped: true, reason: "no_verified_email" };
   const origin = siteOrigin();
   const walletPath = walletKey(toWallet);
@@ -91,6 +96,8 @@ export async function notifyDeclined({ toWallet, fromSymbol, toSymbol, battleId,
 
 export async function notifyCounterOffer({ toWallet, fromSymbol, toSymbol, amount, nativeSymbol, previousAmount, durationHours, previousDurationHours, battleId }) {
   const to = await verifiedEmailForWallet(toWallet);
+  // CO-5: the wallet can turn battle emails off (default on).
+  if (to && !(await notificationAllowed(toWallet, "battles", "email"))) return { ok: true, skipped: true, reason: "email_off" };
   if (!to) return { ok: true, skipped: true, reason: "no_verified_email" };
   const origin = siteOrigin();
   const walletPath = walletKey(toWallet);

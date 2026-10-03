@@ -9,6 +9,7 @@ import { useCommandCenterData } from "@/components/command-center/CommandCenterC
 import { EditProfileDialog } from "@/components/profile/EditProfileDialog";
 import { UsernameSettingsRow } from "@/components/profile/UsernameSettingsRow";
 import { SettingsBannerRow } from "@/components/profile/SettingsBannerRow";
+import { NotificationSettingsCard } from "@/components/profile/NotificationSettingsCard";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { setArenaNotificationEmail } from "@/features/postgrad/apiClient";
@@ -222,6 +223,15 @@ export default function CommandCenterSettings() {
           </div>
         </CommandCenterCard>
       ) : null}
+
+      {/* CO-5 (founder, 2026-10-03): per-category bell and email toggles. */}
+      <NotificationSettingsCard
+        walletAddress={walletAddress}
+        chainId={chainId || walletChainId}
+        evmWallet={wallet}
+        solanaAccount={solanaAccount}
+        emailVerified={Boolean(arenaEmailStatus?.verified)}
+      />
 
       <div id="notifications" className="scroll-mt-24">
         <CommandCenterCard

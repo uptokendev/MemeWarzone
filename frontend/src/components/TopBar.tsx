@@ -3,6 +3,7 @@
  * Responsive header with search and actions
  */
 
+import { bellAllowed, useNotificationPrefs } from "@/hooks/useNotificationPrefs";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Bell, Menu, Search } from "lucide-react";
@@ -94,11 +95,15 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
   }, [notificationOpen, disconnectOpen]);
 
   const {
-    notifications: draftNotifications,
-    unreadCount: unreadNotifications,
+    notifications: draftNotificationsAll,
+    unreadCount: unreadNotificationsAll,
     markOneRead,
     markAllRead,
   } = usePrepareNotificationCenter(account, 20);
+  // CO-5: draft and promotion notices are "your coin events"; hidden from the bell when that toggle is off.
+  const coinBell = bellAllowed(useNotificationPrefs(account), "coin");
+  const draftNotifications = coinBell ? draftNotificationsAll : [];
+  const unreadNotifications = coinBell ? unreadNotificationsAll : 0;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
