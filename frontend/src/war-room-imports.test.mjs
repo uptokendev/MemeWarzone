@@ -59,3 +59,11 @@ test("imports market read: listed imports only, with the feed's stats and the co
   assert.match(api, /left join public\.arena_import_market_stats s on s\.chain_id = i\.chain_id and s\.token_address = i\.token_address/);
   assert.match(api, /tradingBlocked: importTradingBlocked\(/);
 });
+
+test("Robinhood mainnet imports pay the 0.5% platform fee through the Universal Router", async () => {
+  const lib = await read("./lib/robinhoodImportSwap.mjs");
+  assert.match(tradePanel, /const robinhoodFee = Number\(item\.chainId\) === 4663/);
+  assert.match(tradePanel, /executeImportSwap4663\(\{ signer: tradeSigner, quote, token: item\.tokenAddress \}\)/);
+  assert.match(lib, /IMPORT_SWAP_FEE_RECEIVER_4663 = "0x632061cA786f7B585Bbd46A792FDA92B02f70671"/);
+  assert.match(lib, /export const IMPORT_SWAP_FEE_BPS = 50/);
+});

@@ -24,6 +24,7 @@ import {
   resolveImportedRobinhoodV3Route,
 } from "@/lib/arenaImportedRobinhood";
 import type { ArenaImportItem } from "@/lib/arenaImports";
+import { executeImportSwap4663, quoteImportSwap4663, resolveImportPool } from "@/lib/robinhoodImportSwap.mjs";
 import {
   IMPORT_SWAP_FEE_LABEL,
   executeBscImportSwap,
@@ -56,6 +57,9 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
   // aggregator path with the 0.5% platform fee; Robinhood keeps its Uniswap V3 route.
   const aggregated = solana || Number(item.chainId) === 56;
   const readProvider = importReadProvider(item.chainId);
+  // Robinhood mainnet imports swap through Uniswap's Universal Router with the same 0.5% platform
+  // fee as BNB and Solana (founder, 2026-10-03); the testnet keeps the fee-less adapter route.
+  const robinhoodFee = Number(item.chainId) === 4663;
   const scanDecimals = (item.scan as { decimals?: number } | undefined)?.decimals;
   const [chainDecimals, setChainDecimals] = useState<number | null>(null);
   const decimals = Number(chainDecimals ?? scanDecimals ?? (solana ? 9 : 18));
@@ -121,6 +125,22 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
   /** Robinhood quotes on chain (QuoterV2 through the coin's deepest Uniswap V3 pool), same preview shape. */
   async function quoteRobinhoodPreview(raw: bigint): Promise<ImportSwapQuote> {
     if (!readProvider) throw new Error("Robinhood RPC is not configured.");
+    if (robinhoodFee) {
+      const quote = await quoteImportSwap4663({ provider: readProvider, token: item.tokenAddress, side, amountIn: raw, slippageBps: 100 });
+      return {
+        chainId: item.chainId,
+        provider: "uniswap-universal-router",
+        side,
+        amountIn: quote.amountIn.toString(),
+        amountOut: quote.amountOut.toString(),
+        minAmountOut: quote.minOut.toString(),
+        priceImpactPct: null,
+        feeBps: 50,
+        feeNativeRaw: quote.feeWei.toString(),
+        route: [`Uniswap V3 ${(quote.route.fee / 10000).toFixed(2)}%`],
+        quote: null,
+      };
+    }
     const route = await resolveImportedRobinhoodV3Route({ provider: readProvider, tokenAddress: item.tokenAddress, chainId: item.chainId });
     if (!route) throw new Error("No Uniswap V3 pool with ETH for this token.");
     const quote = side === "buy" ? await quoteRobinhoodV3Buy(readProvider, route, raw, 100) : await quoteRobinhoodV3Sell(readProvider, route, raw, 100);
@@ -153,6 +173,11 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         }
         if (!readProvider) {
           if (!cancelled) setPoolLabel(null);
+          return;
+        }
+        if (robinhoodFee) {
+          const pool = await resolveImportPool(readProvider, item.tokenAddress);
+          if (!cancelled) setPoolLabel(pool ? `Uniswap V3 ${pool.pool.slice(0, 10)}…` : "");
           return;
         }
         if (robinhood) {
@@ -231,6 +256,15 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         return;
       }
       const reads = readProvider || wallet.provider;
+      if (robinhoodFee) {
+        // Quote on the read RPC, then one Universal Router transaction (a sell adds a signed Permit2
+        // permit and, the first time, an exact ERC20 approval to Permit2).
+        const quote = await quoteImportSwap4663({ provider: reads, token: item.tokenAddress, side, amountIn: amountInRaw, slippageBps: 100 });
+        await executeImportSwap4663({ signer: tradeSigner, quote, token: item.tokenAddress });
+        toast.success("Swap confirmed.");
+        setAmount("");
+        return;
+      }
       if (robinhood) {
         const route = await resolveImportedRobinhoodV3Route({
           provider: reads,
@@ -296,7 +330,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
 
   // UI redesign: the same panel look as a launched coin (founder: "we shouldn't see any difference");
   // the route underneath (Jupiter / PancakeSwap via KyberSwap / Uniswap V3) is unchanged.
-  const dex = aggregated && !noAggregatorRoute ? (solana ? "Jupiter" : "PancakeSwap") : poolLabel || "the DEX";
+  const dex = aggregated && !noAggregatorRoute ? (solana ? "Jupiter" : "PancakeSwap") : robinhood ? "Uniswap" : poolLabel || "the DEX";
   const segTrigger = "mw-focus min-h-10 rounded-lg font-mw-body text-[15px] font-bold transition-colors";
   const chip = "inline-flex min-h-[30px] items-center rounded-lg border border-[#2E353D] bg-[#171B20] px-2.5 font-mw-mono text-[13px] text-[#C9CED4]";
   return (
@@ -328,7 +362,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         <span className="min-w-0 flex-1 truncate text-[13px] text-mw-muted">
           {aggregated && !noAggregatorRoute ? `Best price via ${solana ? "Jupiter" : "PancakeSwap"}` : `Pool ${poolLabel || "resolving…"}`}
         </span>
-        {aggregated && !noAggregatorRoute ? <span className={chip}>Fee {IMPORT_SWAP_FEE_LABEL}</span> : null}
+        {(aggregated && !noAggregatorRoute) || robinhoodFee ? <span className={chip}>Fee {IMPORT_SWAP_FEE_LABEL}</span> : null}
       </div>
       {(aggregated || robinhood) && preview ? (
         <div className="flex flex-col gap-1 font-mw-mono text-[13px]" data-import-swap-preview="true">
