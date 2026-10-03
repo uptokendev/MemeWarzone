@@ -162,6 +162,7 @@ async function scanSolana(address, nativeUsd) {
     const ticker = campaign?.symbol || h.ticker;
     const valued = {
       ticker,
+      platform: Boolean(campaign),
       balanceFormatted: h.balanceFormatted,
       valueUsd: holdingValue(
         { ...campaign, balanceFormatted: h.balanceFormatted, marketcap_bnb: campaign?.marketcap_bnb },
@@ -187,6 +188,7 @@ async function scanEvm(chainId, address, nativeUsd) {
       const balanceFormatted = Number.isFinite(formatted) ? String(formatted) : "0";
       return {
         ticker: row.symbol || String(row.token_address || "?").slice(0, 6),
+        platform: Boolean(row.campaign_address),
         balanceFormatted,
         valueUsd: holdingValue({ ...row, balanceFormatted }, nativeUsd),
       };
@@ -219,6 +221,7 @@ async function scanEvm(chainId, address, nativeUsd) {
       const formatted = ethers.formatUnits(rawBal, Number.isFinite(decimals) ? decimals : 18);
       holdings.push({
         ticker: symbol || row.symbol || "???",
+        platform: true,
         balanceFormatted: formatted,
         valueUsd: holdingValue({ ...row, balanceFormatted: formatted }, nativeUsd),
       });
@@ -254,7 +257,13 @@ async function computePortfolio(chainId, address) {
     createdAt,
     holdingsCount: positiveBalanceCount,
   });
-  return { metrics, createdAt };
+  // Founder 2026-10-03: split held coins into MemeWarzone coins and other tokens (coinsCount stays the total).
+  const held = scan.holdings.filter((h) => Number.parseFloat(h.balanceFormatted || "0") > 0);
+  const platformCoinsCount = held.filter((h) => h.platform).length;
+  return {
+    metrics: metrics ? { ...metrics, platformCoinsCount, otherTokensCount: held.length - platformCoinsCount } : metrics,
+    createdAt,
+  };
 }
 
 export default async function handler(req, res) {

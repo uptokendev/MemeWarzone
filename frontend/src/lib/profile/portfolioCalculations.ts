@@ -22,6 +22,9 @@ export type PortfolioMetrics = {
     valueUsd: number;
   } | null;
   coinsCount: number;
+  /** Held coins launched on MemeWarzone / every other token (founder, 2026-10-03). Absent on older APIs. */
+  platformCoinsCount?: number;
+  otherTokensCount?: number;
   walletAge: string;
   /** Formatted "since MMM YYYY" based on actual on-chain first activity */
   walletAgeSince?: string;

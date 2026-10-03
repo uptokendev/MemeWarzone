@@ -114,7 +114,10 @@ export function PortfolioMetricsGrid({
     ? `${topHolding.percentOfPortfolio}% of portfolio`
     : undefined;
 
-  const coinsCount = isLoading ? "—" : metrics.coinsCount;
+  // Founder 2026-10-03: the tile counts MemeWarzone coins; other tokens go on the second line.
+  const platformCount = metrics?.platformCoinsCount ?? metrics?.coinsCount ?? 0;
+  const otherCount = metrics?.otherTokensCount;
+  const coinsCount = isLoading ? "—" : platformCount;
 
   const walletAge = isLoading ? "—" : metrics?.walletAge ?? "new";
 
@@ -159,12 +162,14 @@ export function PortfolioMetricsGrid({
         />
 
         <PortfolioMetricCard
-          label="COINS"
+          label="MEMEWARZONE COINS"
           value={coinsCount}
           subValue={
-            !isLoading && metrics && metrics.coinsCount > 0
-              ? `${metrics.coinsCount} token${metrics.coinsCount === 1 ? "" : "s"} held`
-              : undefined
+            !isLoading && metrics && otherCount != null
+              ? `${otherCount} other token${otherCount === 1 ? "" : "s"}`
+              : !isLoading && metrics && metrics.coinsCount > 0
+                ? `${metrics.coinsCount} token${metrics.coinsCount === 1 ? "" : "s"} held`
+                : undefined
           }
         />
 

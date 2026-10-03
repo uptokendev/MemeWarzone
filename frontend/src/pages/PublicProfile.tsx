@@ -606,7 +606,10 @@ export default function PublicProfile({
     // Same formatter as the Portfolio tiles, so rail and tiles show the same value (CO-22).
     ["Value", effectivePortfolioMetrics?.totalValueUsd != null ? formatCompactUsd(effectivePortfolioMetrics.totalValueUsd) : "—"],
     ["Top holding", effectivePortfolioMetrics?.topHolding?.ticker ? `$${effectivePortfolioMetrics.topHolding.ticker}` : "—"],
-    ["Coins held", effectivePortfolioMetrics ? formatCompactNumber(effectivePortfolioMetrics.coinsCount) : "—"],
+    // Founder 2026-10-03: deployed coins, MemeWarzone coins held, other tokens.
+    ["Coins deployed", formatCompactNumber(createdCoins.length)],
+    ["MemeWarzone coins held", effectivePortfolioMetrics ? formatCompactNumber(effectivePortfolioMetrics.platformCoinsCount ?? effectivePortfolioMetrics.coinsCount) : "—"],
+    ...(effectivePortfolioMetrics?.otherTokensCount != null ? [["Other tokens", formatCompactNumber(effectivePortfolioMetrics.otherTokensCount)] as [string, string]] : []),
     ["Wallet age", effectivePortfolioMetrics?.walletAge || "—"],
   ];
   const recruiterRows: Array<[string, ReactNode]> = recruiter
