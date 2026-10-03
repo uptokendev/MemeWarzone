@@ -1,12 +1,44 @@
 import { pool } from "../server/db.js";
-import { badMethod, json } from "../server/http.js";
+import { badMethod, getQuery, json } from "../server/http.js";
 
 /**
  * Public list of sponsorship duration packages (prices editable by admin in Supabase/dashboard).
- * GET /api/sponsorship-packages
+ * GET /api/sponsorship-packages              -> packages for every slot (slot_code is null), as before
+ * GET /api/sponsorship-packages?slot=<code>  -> that slot's own packages (e.g. home-top-row, CO-21),
+ *                                               falling back to the every-slot packages when it has none
+ * slot_code is read through to_jsonb so the route keeps working before the column exists.
  */
+export function normalizePackageSlot(value) {
+  const slot = String(value || "").trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(slot) ? slot : "";
+}
+
+export async function listPackagesForSlot(db, slot) {
+  const result = await db.query(
+    `select
+       id::text as "id",
+       code,
+       label,
+       duration_days as "durationDays",
+       price_usd::float8 as "priceUsd",
+       currency,
+       active,
+       sort_order as "sortOrder",
+       notes,
+       nullif(lower(to_jsonb(p) ->> 'slot_code'), '') as "slotCode"
+     from public.sponsorship_packages p
+     where coalesce(active, true) = true
+     order by sort_order asc, duration_days asc`,
+  );
+  const shared = result.rows.filter((row) => !row.slotCode);
+  if (!slot) return shared;
+  const own = result.rows.filter((row) => row.slotCode === slot);
+  return own.length ? own : shared;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") return badMethod(res);
+  const slot = normalizePackageSlot(getQuery(req).slot);
 
   try {
     if (!pool) {
@@ -18,23 +50,9 @@ export default async function handler(req, res) {
       });
     }
 
-    const result = await pool.query(
-      `select
-         id::text as "id",
-         code,
-         label,
-         duration_days as "durationDays",
-         price_usd::float8 as "priceUsd",
-         currency,
-         active,
-         sort_order as "sortOrder",
-         notes
-       from public.sponsorship_packages
-       where coalesce(active, true) = true
-       order by sort_order asc, duration_days asc`,
-    );
+    const rows = await listPackagesForSlot(pool, slot);
 
-    if (!result.rows.length) {
+    if (!rows.length) {
       return json(res, 200, {
         items: defaultPackages(),
         source: "defaults",
@@ -44,7 +62,8 @@ export default async function handler(req, res) {
     }
 
     return json(res, 200, {
-      items: result.rows,
+      items: rows,
+      slot: slot || null,
       source: "database",
       updatedAt: new Date().toISOString(),
     });

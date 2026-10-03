@@ -52,11 +52,12 @@ export function SponsorshipApplyDialog({
 
   useEffect(() => {
     if (!open) return;
-    void fetchSponsorshipPackages().then((items) => {
+    void fetchSponsorshipPackages(defaultSlot).then((items) => {
       setPackages(items);
-      if (items.length && !packageCode) setPackageCode(items[0].code);
+      if (items.length && !items.some((item) => item.code === packageCode)) setPackageCode(items[0].code);
     });
-  }, [open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultSlot]);
 
   const update = (key: keyof typeof form, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));

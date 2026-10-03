@@ -22,6 +22,9 @@ import { badMethod, getQuery, json, defaultPublicChainId} from "../server/http.j
 
 const FEATURED_SLOT = "featured-top-left";
 const RAIL_SLOT = "homepage-sponsored-rail";
+/** Home ad row (CO-21): 6 paid wide banner tiles; the UI draws "Your ad here" in empty spots, no house ad here. */
+const HOME_TOP_ROW_SLOT = "home-top-row";
+export const HOME_TOP_ROW_SPOTS = 6;
 const HOUSE_SETTING_KEY = "featured_house_ad";
 const LIVE_PAYMENT_STATUSES = ["paid", "verified", "waived"];
 
@@ -264,6 +267,7 @@ async function dbPlacements(limit, slotFilter) {
        coalesce(sp.symbol, '') as "symbol",
        coalesce(sp.image_url, sa.image_url) as "logoUri",
        coalesce(sp.image_url, sa.image_url) as "imageUrl",
+       nullif(to_jsonb(sp) ->> 'banner_url', '') as "bannerUrl",
        coalesce(sp.active, false) as "isActive",
        coalesce(sp.updated_at, sp.created_at, sa.updated_at, sa.created_at) as "lastActivityAt",
        coalesce(sp.project_type, 'external') as "placementType",
@@ -283,7 +287,10 @@ async function dbPlacements(limit, slotFilter) {
        and (sp.starts_at is null or sp.starts_at <= now())
        and (sp.ends_at is null or sp.ends_at >= now())
        ${slotClause}
-     order by coalesce(sp.priority, 1000) asc, sp.starts_at asc nulls first, sp.created_at desc nulls last
+     order by ${slotFilter === HOME_TOP_ROW_SLOT
+       // Ad row: highest priority first, then who started first (handoff contract).
+       ? "coalesce(sp.priority, 1000) desc, sp.starts_at asc nulls first, sp.created_at asc nulls last"
+       : "coalesce(sp.priority, 1000) asc, sp.starts_at asc nulls first, sp.created_at desc nulls last"}
      limit $1`,
     params,
   );
@@ -295,8 +302,8 @@ export default async function handler(req, res) {
 
   const q = getQuery(req);
   const chainId = toInt(q.chainId, defaultPublicChainId());
-  const limit = clamp(toInt(q.limit, 8), 1, 24);
   const slotFilter = normSlot(q.slot || q.slotCode || q.slot_code);
+  const limit = clamp(toInt(q.limit, 8), 1, slotFilter === HOME_TOP_ROW_SLOT ? HOME_TOP_ROW_SPOTS : 24);
   const selectOne = ["1", "true", "yes", "one"].includes(String(q.select || "").trim().toLowerCase());
   const strategy = String(q.strategy || (selectOne ? "weighted" : "priority")).trim().toLowerCase();
 
@@ -306,7 +313,8 @@ export default async function handler(req, res) {
     const houseEnabled = await isFeaturedHouseAdEnabled();
 
     // Fetch a wider pool when selecting one so rotation has candidates.
-    const fetchLimit = selectOne ? Math.max(limit, 24) : limit;
+    // The ad row is filtered by chain after the query, so it reads a wider pool and cuts to 6 below.
+    const fetchLimit = selectOne || slotFilter === HOME_TOP_ROW_SLOT ? Math.max(limit, 24) : limit;
     let placements = await dbPlacements(fetchLimit, slotFilter || null);
     placements = placements.filter((item) => matchesChain(item, chainId));
     if (!placements.length) {

@@ -103,15 +103,28 @@ const SponsorshipApplication = () => {
   const [packages, setPackages] = useState<SponsorshipPackage[]>([]);
 
   useEffect(() => {
-    setForm(loadDraft());
-    void fetchSponsorshipPackages().then((items) => {
+    // A saved draft must not undo ?slot= from the Home ad row's "Your ad here" link.
+    const slot = searchParams.get("slot");
+    const draft = loadDraft();
+    setForm(slotOptions.some((option) => option.value === slot) ? { ...draft, preferredSlot: String(slot) } : draft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Each slot has its own price list (CO-21); keep the chosen package only if it belongs to the slot.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSponsorshipPackages(form.preferredSlot).then((items) => {
+      if (cancelled) return;
       setPackages(items);
       setForm((current) => ({
         ...current,
-        packageCode: current.packageCode || items[0]?.code || "",
+        packageCode: items.some((item) => item.code === current.packageCode) ? current.packageCode : items[0]?.code || "",
       }));
     });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [form.preferredSlot]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

@@ -58,18 +58,30 @@ function mapRow(row) {
   };
 }
 
-async function resolvePackage(packageCode) {
+/**
+ * A package belongs to one slot (slot_code) or to every slot (null). A slot's own packages are only
+ * valid for that slot, so a cheaper home-top-row price cannot be booked for Featured (CO-21).
+ */
+export function packageFitsSlot(packageSlot, preferredSlot) {
+  const own = String(packageSlot || "").trim().toLowerCase();
+  if (!own) return true;
+  return own === String(preferredSlot || "").trim().toLowerCase();
+}
+
+async function resolvePackage(packageCode, preferredSlot) {
   const code = cleanText(packageCode, 40);
   if (!code || !pool) return null;
   try {
     const result = await pool.query(
-      `select code, label, duration_days as "durationDays", price_usd::float8 as "priceUsd"
-         from public.sponsorship_packages
+      `select code, label, duration_days as "durationDays", price_usd::float8 as "priceUsd",
+              nullif(lower(to_jsonb(p) ->> 'slot_code'), '') as "slotCode"
+         from public.sponsorship_packages p
         where lower(code) = lower($1) and coalesce(active, true) = true
         limit 1`,
       [code],
     );
-    return result.rows[0] || null;
+    const pkg = result.rows[0] || null;
+    return pkg && packageFitsSlot(pkg.slotCode, preferredSlot) ? pkg : null;
   } catch {
     return null;
   }
@@ -134,10 +146,11 @@ async function createApplication(req, res) {
   }
 
   // No upfront payment — lock package snapshot at apply time. Admin can adjust before approve.
-  const pkg = await resolvePackage(body.packageCode || body.package_code);
+  const preferredSlot = cleanText(body.preferredSlot, 80) || "featured-top-left";
+  const pkg = await resolvePackage(body.packageCode || body.package_code, preferredSlot);
   if (!pkg) {
     return json(res, 400, {
-      error: "Select a valid sponsorship package (3 days, 1 week, 2 weeks, 1 month, or 3 months).",
+      error: "Select a valid sponsorship package for this slot (3 days, 1 week, 2 weeks, 1 month, or 3 months).",
       code: "PACKAGE_REQUIRED",
     });
   }
@@ -150,7 +163,7 @@ async function createApplication(req, res) {
     websiteUrl,
     cleanText(body.imageUrl, 2000) || null,
     bio,
-    cleanText(body.preferredSlot, 80) || "featured-top-left",
+    preferredSlot,
     normalizeDate(body.preferredStart),
     normalizeDate(body.preferredEnd),
     cleanText(body.paymentReference, 160) || null,

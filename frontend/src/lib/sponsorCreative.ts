@@ -24,9 +24,11 @@ export type SponsorshipPackage = {
   currency?: string;
 };
 
-export async function fetchSponsorshipPackages(): Promise<SponsorshipPackage[]> {
+/** Packages for one slot (CO-21: home-top-row has its own prices); no slot = the every-slot list. */
+export async function fetchSponsorshipPackages(slot?: string | null): Promise<SponsorshipPackage[]> {
   try {
-    const res = await apiFetch("/api/sponsorship-packages", { cache: "no-store" });
+    const query = slot ? `?slot=${encodeURIComponent(slot)}` : "";
+    const res = await apiFetch(`/api/sponsorship-packages${query}`, { cache: "no-store" });
     const json = await res.json().catch(() => ({}));
     const items = Array.isArray(json?.items) ? json.items : [];
     return items.map((item: any) => ({
