@@ -1,6 +1,7 @@
 /**
  * Netlify API router for MemeWarzone frontend.
  */
+import moderation from "../../api/moderation.js";
 import notificationPrefs from "../../api/notificationPrefs.js";
 import recruiterCreatorCoins from "../../api/recruiterCreatorCoins.js";
 import express from "express";
@@ -249,6 +250,7 @@ app.all("/recruiters/:code/summary", wrap(recruiterSummary));
 app.all("/recruiters/:code/replacements", wrap(recruiterReplacements));
 app.all("/recruiters/:code/creator-coins", wrap(recruiterCreatorCoins));
 app.all("/notification-prefs", wrap(notificationPrefs));
+app.all("/moderation", wrap(moderation));
 app.all("/recruiters/:code/referral/capture", wrap(recruiterReferralCapture));
 
 app.all("/attribution/wallet-connect", wrap(attributionWalletConnect));

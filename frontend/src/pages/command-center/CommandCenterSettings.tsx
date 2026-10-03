@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BlockedAccountsCard } from "@/components/moderation/BlockedAccountsCard";
 import { Link, useNavigate } from "react-router-dom";
 import { Bell, ExternalLink, Image, Mail, Settings, ShieldCheck, Wallet } from "lucide-react";
 import { toast } from "sonner";
@@ -189,6 +190,8 @@ export default function CommandCenterSettings({ section = "settings" }: { sectio
           </div>
         </CommandCenterCard>
       ) : null}
+
+      {showSettings ? <BlockedAccountsCard /> : null}
 
       {/* CO-5 toggles; Settings holds the notification settings, the Notifications tab only the list (founder, 2026-10-03). */}
       {showSettings ? (
