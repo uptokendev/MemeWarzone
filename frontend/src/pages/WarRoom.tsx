@@ -77,6 +77,8 @@ function importSortValue(row: ArenaImportMarketRow, sortKey: SortKey) {
       return Number(row.volume24hUsd || 0);
     case "holders":
       return Number(row.holders || 0);
+    case "ath":
+      return Math.max(Number(row.athMarketCapUsd || 0), Number(row.marketCapUsd || 0));
     default:
       return 0;
   }

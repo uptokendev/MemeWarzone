@@ -105,20 +105,32 @@ function ImportRowChart({ row, nativeUsd }: { row: ArenaImportMarketRow; nativeU
   const [usdCandles, setUsdCandles] = useState<ArenaImportCandleResponse["items"]>([]);
   const [state, setState] = useState<{ loading: boolean; reason?: string }>({ loading: true });
 
+  // Same loop as the coin page: a rate-limited answer (shared GeckoTerminal budget) retries in 20 s
+  // instead of leaving the chart empty; otherwise refresh each minute.
   useEffect(() => {
     const controller = new AbortController();
+    let timer: number | undefined;
     setUsdCandles([]);
     setState({ loading: true });
-    void fetchArenaImportCandles(row.tokenAddress, row.chainId, resolution, controller.signal)
-      .then((payload) => {
-        if (controller.signal.aborted) return;
-        if (payload?.items?.length) setUsdCandles(payload.items);
-        setState({ loading: false, reason: payload?.reason });
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setState({ loading: false });
-      });
-    return () => controller.abort();
+    const load = () => {
+      void fetchArenaImportCandles(row.tokenAddress, row.chainId, resolution, controller.signal)
+        .then((payload) => {
+          if (controller.signal.aborted) return;
+          if (payload?.items?.length) setUsdCandles(payload.items);
+          setState({ loading: Boolean(payload?.rateLimited && !payload.items?.length), reason: payload?.reason });
+          timer = window.setTimeout(load, payload?.rateLimited ? 20_000 : 60_000);
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          setState({ loading: false });
+          timer = window.setTimeout(load, 30_000);
+        });
+    };
+    load();
+    return () => {
+      controller.abort();
+      if (timer) window.clearTimeout(timer);
+    };
   }, [resolution, row.chainId, row.tokenAddress]);
 
   const candles = importUsdCandlesToChart(usdCandles, nativeUsd);
@@ -166,6 +178,8 @@ export function WarRoomImportRow({
   const liquidityLabel = formatCompactUsd(Number(row.liquidityUsd || 0));
   const volumeLabel = formatCompactUsd(Number(row.volume24hUsd || 0));
   const holdersLabel = formatCompactCount(Number(row.holders || 0));
+  // ATH can never be below today's market cap, whatever the feed has stored so far.
+  const athLabel = formatCompactUsd(Math.max(Number(row.athMarketCapUsd || 0), Number(row.marketCapUsd || 0)));
   const age = formatAge(row.createdAt);
   const tokenRoute = tokenDetailsPath({ tokenAddress: row.tokenAddress, chainId }, { chainId });
   const websiteHref = resolveExternalHref(row.website);
@@ -222,8 +236,7 @@ export function WarRoomImportRow({
           <div className="text-right font-mw-mono">{liquidityLabel}</div>
           <div className="text-right font-mw-mono">{volumeLabel}</div>
           <div className="text-right font-mw-mono">{holdersLabel}</div>
-          {/* No ATH series for imports: the feed stores the current snapshot only. */}
-          <div className="text-right font-mw-mono text-mw-muted">—</div>
+          <div className="text-right font-mw-mono">{athLabel}</div>
         </div>
         <span className="hidden justify-self-end lg:flex">{chevron}</span>
       </button>
@@ -246,6 +259,7 @@ export function WarRoomImportRow({
             <DetailLine label="Liq" value={liquidityLabel} />
             <DetailLine label="Vol" value={volumeLabel} />
             <DetailLine label="Holders" value={holdersLabel} />
+            <DetailLine label="ATH" value={athLabel} />
             <DetailLine label="Trades on" value={dex} />
             <DetailLine label="Token" value={`${row.tokenAddress.slice(0, 6)}…${row.tokenAddress.slice(-4)}`} />
             <div className="mt-auto flex flex-col gap-1.5 pt-1">

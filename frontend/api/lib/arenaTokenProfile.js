@@ -114,6 +114,19 @@ export async function getArenaTokenProfile(chainId, tokenIdentity, deps = {}) {
     nowMs: deps.nowMs,
     resolveNativeUsd: deps.resolveNativeUsd,
   });
+  // Imports: all-time high from the import feed (migration 20261003_000005; null before it).
+  let athMarketCapUsd = null;
+  if (base.origin === "import" && base.tokenAddress) {
+    const ath = await query(
+      `select to_jsonb(s) ->> 'ath_market_cap_usd' as ath
+         from public.arena_import_market_stats s
+        where s.chain_id = $1 and s.token_address = $2
+        limit 1`,
+      [idNum, base.tokenAddress],
+    ).catch(() => ({ rows: [] }));
+    const value = Number(ath?.rows?.[0]?.ath);
+    athMarketCapUsd = Number.isFinite(value) && value > 0 ? value : null;
+  }
   return {
     identity: `${idNum}:${base.tokenAddress || base.campaignAddress}`,
     chainId: idNum,
@@ -132,6 +145,7 @@ export async function getArenaTokenProfile(chainId, tokenIdentity, deps = {}) {
     verifiedAt: base.verifiedAt,
     metadataUpdatedAt: base.metadataUpdatedAt,
     marketCapUsd: market?.marketCapUsd ?? null,
+    athMarketCapUsd,
     priceUsd: null,
     volume24hUsd: market?.volume24hUsd ?? null,
     holders: market?.holders ?? null,

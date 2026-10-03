@@ -64,6 +64,8 @@ export type ArenaTokenProfile = {
   verifiedAt?: string | null;
   metadataUpdatedAt?: string | null;
   marketCapUsd: number | null;
+  /** Imports: all-time high market cap (USD) from the import feed. */
+  athMarketCapUsd?: number | null;
   priceUsd: number | null;
   volume24hUsd: number | null;
   holders: number | null;
@@ -116,6 +118,7 @@ export type ArenaImportMarketRow = {
   dexId: string | null;
   pairAddress: string | null;
   marketUpdatedAt: string | null;
+  athMarketCapUsd?: number | null;
   tradingBlocked: boolean;
 };
 

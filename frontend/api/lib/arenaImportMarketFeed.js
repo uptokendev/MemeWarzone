@@ -17,6 +17,8 @@
  * holders are recounted every HOLDER_REFRESH_MS and carried forward in between.
  */
 
+import { parseGeckoOhlcv } from "./arenaImportCandles.js";
+
 export const IMPORT_FEED_INTERVAL_MS = 60_000;
 export const HOLDER_REFRESH_MS = 5 * 60_000;
 const DEXSCREENER = "https://api.dexscreener.com/tokens/v1";
@@ -64,18 +66,26 @@ function geckoClient(env = process.env, fetchImpl = fetch) {
   };
 }
 
-/** GeckoTerminal token attributes as the feed's market shape (fallback when DexScreener has no pair). */
-export function geckoMarket(attributes) {
+/**
+ * GeckoTerminal token attributes as the feed's market shape (fallback when DexScreener has no pair).
+ * With `?include=top_pools` the same call names the token's top pool and its DEX: that pool becomes
+ * pair_address, so the chart and trades work for tokens DexScreener does not list (Capybara on
+ * PumpSwap showed NO_POOL), and the DEX chip shows the real venue instead of "geckoterminal".
+ */
+export function geckoMarket(attributes, included = []) {
   const a = attributes || {};
   const marketCapUsd = (num(a.market_cap_usd) || null) ?? num(a.fdv_usd);
   if (!(marketCapUsd > 0)) return null;
+  const pools = (Array.isArray(included) ? included : []).filter((item) => item?.type === "pool" && String(item?.id || "").includes("_"));
+  pools.sort((x, y) => (num(y?.attributes?.reserve_in_usd) || 0) - (num(x?.attributes?.reserve_in_usd) || 0));
+  const top = pools[0] || null;
   return {
     priceUsd: num(a.price_usd),
     marketCapUsd,
     liquidityUsd: num(a.total_reserve_in_usd),
     volume24hUsd: num(a.volume_usd?.h24) ?? 0,
-    pairAddress: null,
-    dexId: "geckoterminal",
+    pairAddress: top ? String(top.id).slice(String(top.id).indexOf("_") + 1) : null,
+    dexId: String(top?.relationships?.dex?.data?.id || "geckoterminal"),
   };
 }
 
@@ -163,7 +173,8 @@ function solanaRpc(env = process.env) {
  */
 export async function refreshImportMarketStats({ pool, env = process.env, fetchImpl = fetch, nowMs = Date.now() } = {}) {
   const imports = await pool.query(
-    `select i.chain_id, i.token_address, s.holders, s.holders_updated_at
+    `select i.chain_id, i.token_address, s.holders, s.holders_updated_at,
+            to_jsonb(s) ->> 'ath_seeded_at' as ath_seeded_at
        from public.arena_token_imports i
        left join public.arena_import_market_stats s on s.chain_id = i.chain_id and s.token_address = i.token_address
       where i.status = 'passed'
@@ -178,7 +189,8 @@ export async function refreshImportMarketStats({ pool, env = process.env, fetchI
     if (!byChain.has(row.chain_id)) byChain.set(row.chain_id, { slug, network, rows: [] });
     byChain.get(row.chain_id).rows.push(row);
   }
-  const summary = { updated: 0, unlisted: 0, errors: [] };
+  const summary = { updated: 0, unlisted: 0, errors: [], athSeeded: 0 };
+  let athSeedsLeft = ATH_SEEDS_PER_PASS;
   for (const [chainId, { slug, network, rows }] of byChain) {
     let pairs = [];
     if (slug) {
@@ -192,8 +204,8 @@ export async function refreshImportMarketStats({ pool, env = process.env, fetchI
       let market = pickDeepestPair(chainId, row.token_address, pairs);
       let source = "dexscreener";
       if ((!market || !(market.marketCapUsd > 0)) && network) {
-        const json = await gecko.get(`/networks/${network}/tokens/${encodeURIComponent(row.token_address)}`).catch(() => null);
-        market = geckoMarket(json?.data?.attributes);
+        const json = await gecko.get(`/networks/${network}/tokens/${encodeURIComponent(row.token_address)}?include=top_pools`).catch(() => null);
+        market = geckoMarket(json?.data?.attributes, json?.included);
         source = "geckoterminal";
       }
       if (!market || !(market.marketCapUsd > 0)) {
@@ -229,7 +241,59 @@ export async function refreshImportMarketStats({ pool, env = process.env, fetchI
         [chainId, row.token_address, market.priceUsd, market.marketCapUsd, market.liquidityUsd, market.volume24hUsd, holders, holdersAt, market.pairAddress, market.dexId, source, nowMs],
       );
       summary.updated += 1;
+      // ATH (migration 20261003_000005): seed the history once per coin, then keep the running max.
+      let seededAth = null;
+      if (!row.ath_seeded_at && market.pairAddress && network && athSeedsLeft > 0 && athSupported) {
+        athSeedsLeft -= 1;
+        const daily = await gecko
+          .get(`/networks/${network}/pools/${encodeURIComponent(market.pairAddress)}/ohlcv/day?aggregate=1&limit=1000&currency=usd&token=${encodeURIComponent(row.token_address)}`)
+          .catch(() => null);
+        seededAth = athFromDailyCandles(parseGeckoOhlcv(daily), market.marketCapUsd, market.priceUsd);
+        if (daily) summary.athSeeded += 1;
+        else seededAth = undefined; // no answer (budget / upstream): try again next pass
+      }
+      await recordImportAth(pool, chainId, row.token_address, market.marketCapUsd, seededAth);
     }
   }
   return summary;
+}
+
+export const ATH_SEEDS_PER_PASS = 2;
+let athSupported = true;
+
+/** Highest daily high (USD price) times the current supply (market cap / price); null if unknown. */
+export function athFromDailyCandles(bars, marketCapUsd, priceUsd) {
+  const cap = Number(marketCapUsd);
+  const price = Number(priceUsd);
+  if (!(cap > 0) || !(price > 0) || !Array.isArray(bars) || !bars.length) return null;
+  const supply = cap / price;
+  let high = 0;
+  for (const bar of bars) {
+    const h = Number(bar?.h ?? bar?.high);
+    if (Number.isFinite(h) && h > high) high = h;
+  }
+  return high > 0 ? high * supply : null;
+}
+
+/**
+ * Raises the stored ATH to the current market cap (or a seeded historical value). seededAth: a number
+ * (seed found), null (seed ran, no history) or undefined (no seed this pass). Before the migration the
+ * columns are missing: the feed keeps working and stops trying.
+ */
+async function recordImportAth(pool, chainId, tokenAddress, marketCapUsd, seededAth) {
+  if (!athSupported) return;
+  const candidate = Math.max(Number(marketCapUsd) || 0, Number(seededAth) || 0);
+  try {
+    await pool.query(
+      `update public.arena_import_market_stats
+          set ath_at = case when $3::numeric > coalesce(ath_market_cap_usd, 0) then now() else ath_at end,
+              ath_market_cap_usd = greatest(coalesce(ath_market_cap_usd, 0), $3::numeric),
+              ath_seeded_at = case when $4::boolean then now() else ath_seeded_at end
+        where chain_id = $1 and token_address = $2`,
+      [chainId, tokenAddress, candidate, seededAth !== undefined],
+    );
+  } catch (error) {
+    if (error?.code === "42703") athSupported = false;
+    else throw error;
+  }
 }

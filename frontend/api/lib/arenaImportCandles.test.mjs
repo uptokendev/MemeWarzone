@@ -110,7 +110,12 @@ test("an upstream failure falls back to the last good bars, and only throws with
   t += IMPORT_CANDLE_TIMEFRAMES["1h"].ttlMs;
   const stale = await source.bars(args);
   assert.equal(stale.stale, true);
-  await assert.rejects(source.bars({ ...args, resolution: "4h" }), /GeckoTerminal 429/);
+  // 2026-10-03: an upstream 429 with nothing cached answers rateLimited (the client retries)...
+  const limited = await source.bars({ ...args, resolution: "4h" });
+  assert.deepEqual([limited.bars.length, limited.rateLimited], [0, true]);
+  // ...any other upstream failure with nothing to show still throws.
+  const broken = createCandleSource({ env: {}, fetchImpl: async () => ({ ok: false, status: 502, json: async () => ({}) }), now: () => t });
+  await assert.rejects(broken.bars({ ...args, resolution: "4h" }), /GeckoTerminal 502/);
 });
 
 // As GeckoTerminal returned it for Derpy Dave (2026-09-27): a sell into wrapped SOL.

@@ -158,6 +158,7 @@ export function publicMarketImport(row) {
     dexId: row.dex_id || null,
     pairAddress: row.pair_address || null,
     marketUpdatedAt: row.market_updated_at || null,
+    athMarketCapUsd: finiteOrNull(row.ath_market_cap_usd),
     // Same rule as the coin page: a honeypot / non-transferable / paused scan shows no trade panel.
     tradingBlocked: importTradingBlocked(row.scan_json && typeof row.scan_json === "object" ? row.scan_json : {}, null),
   };
@@ -176,7 +177,8 @@ async function handleMarket(req, res) {
     `select i.id, i.chain_id, i.token_address, i.name, i.symbol, i.image_url,
             i.website, i.x_url, i.telegram_url, i.created_at, i.scan_json,
             s.price_usd, s.market_cap_usd, s.liquidity_usd, s.volume_24h_usd, s.holders,
-            s.dex_id, s.pair_address, s.updated_at as market_updated_at
+            s.dex_id, s.pair_address, s.updated_at as market_updated_at,
+            to_jsonb(s) ->> 'ath_market_cap_usd' as ath_market_cap_usd
        from public.arena_token_imports i
        left join public.arena_import_market_stats s on s.chain_id = i.chain_id and s.token_address = i.token_address
       where i.chain_id = $1 and i.status = 'passed'

@@ -70,6 +70,7 @@ test("holders are owners with a positive balance; a non-DAS RPC yields null, not
 
 test("a feed pass covers Solana, Robinhood and BNB, falls back to GeckoTerminal, and skips the unlisted", async () => {
   const writes = [];
+  const athWrites = [];
   const geckoCalls = [];
   const pool = {
     query: async (text, params) => {
@@ -81,7 +82,8 @@ test("a feed pass covers Solana, Robinhood and BNB, falls back to GeckoTerminal,
           { chain_id: 56, token_address: "0xBnb", holders: null, holders_updated_at: null },
         ] };
       }
-      writes.push(params);
+      if (/insert into public\.arena_import_market_stats/.test(text)) writes.push(params);
+      else if (/ath_market_cap_usd/.test(text)) athWrites.push(params);
       return { rows: [] };
     },
   };
@@ -93,7 +95,7 @@ test("a feed pass covers Solana, Robinhood and BNB, falls back to GeckoTerminal,
     if (u.startsWith("https://api.dexscreener.com/tokens/v1/bsc/")) return ok([]);
     if (u.startsWith("https://api.geckoterminal.com/")) {
       geckoCalls.push(u.replace("https://api.geckoterminal.com/api/v2", ""));
-      if (u.endsWith("/networks/bsc/tokens/0xBnb")) return ok({ data: { attributes: { market_cap_usd: "90000", total_reserve_in_usd: "12000", volume_usd: { h24: "300" }, price_usd: "0.01" } } });
+      if (u.endsWith("/networks/bsc/tokens/0xBnb?include=top_pools")) return ok({ data: { attributes: { market_cap_usd: "90000", total_reserve_in_usd: "12000", volume_usd: { h24: "300" }, price_usd: "0.01" } } });
       if (u.endsWith("/networks/robinhood/tokens/0xRh/info")) return ok({ data: { attributes: { holders: { count: 321 } } } });
       if (u.endsWith("/networks/bsc/tokens/0xBnb/info")) return ok({ data: { attributes: { holders: { count: 77 } } } });
       return { ok: false, status: 404, json: async () => ({}) };
@@ -101,13 +103,18 @@ test("a feed pass covers Solana, Robinhood and BNB, falls back to GeckoTerminal,
     return dasFetch(["x", "y", "z"])(url, init);
   };
   const summary = await refreshImportMarketStats({ pool, env: { SOLANA_RPC_URL: "https://rpc" }, fetchImpl, nowMs: NOW });
-  assert.deepEqual(summary, { updated: 3, unlisted: 1, errors: [] });
+  assert.deepEqual(summary, { updated: 3, unlisted: 1, errors: [], athSeeded: 0 });
   const byToken = Object.fromEntries(writes.map((w) => [w[1], { mcap: w[3], liq: w[4], holders: w[6], source: w[10] }]));
   assert.deepEqual(byToken[DAVE], { mcap: 57770, liq: 20129.38, holders: 2, source: "dexscreener" });
   assert.deepEqual(byToken["0xRh"], { mcap: 250000, liq: 40000, holders: 321, source: "dexscreener" });
   assert.deepEqual(byToken["0xBnb"], { mcap: 90000, liq: 12000, holders: 77, source: "geckoterminal" });
-  // Solana holders came from Helius, so GeckoTerminal was asked only where it had to be.
-  assert.ok(!geckoCalls.some((c) => c.includes(DAVE)));
+  // Solana holders came from Helius, so GeckoTerminal was never asked for Dave's holders.
+  assert.ok(!geckoCalls.some((c) => c.includes(`/tokens/${DAVE}/info`)));
+  // ATH (2026-10-03): every updated coin raises its running max; the history seed is tried for coins
+  // with a pool (max 2 per pass) and, when it gets no answer (404 here), is not marked done.
+  assert.equal(athWrites.length, 3);
+  assert.deepEqual(athWrites.find((w) => w[1] === DAVE).slice(2), [57770, false]);
+  assert.equal(geckoCalls.filter((c) => c.includes("/ohlcv/day")).length, 2);
 });
 
 test("GeckoTerminal calls are capped per pass, so the free rate limit is never exceeded", async () => {
@@ -166,4 +173,16 @@ test("live baselines store an integer data lag (an import's lag is fractional se
   );
   const lagParams = [seen[0][15], seen[0][33]];
   assert.deepEqual(lagParams, [5, 5]);
+});
+
+test("GeckoTerminal fallback keeps the top pool and its DEX (Capybara on PumpSwap had no chart)", () => {
+  const included = [
+    { id: "solana_SmallPool", type: "pool", attributes: { reserve_in_usd: "100" }, relationships: { dex: { data: { id: "raydium" } } } },
+    { id: "solana_7Zz7vbbV1MgTr5EEz6yy2j37XCKujjyLWMzaNpmv5tXU", type: "pool", attributes: { reserve_in_usd: "10781.6" }, relationships: { dex: { data: { id: "pumpswap" } } } },
+    { id: "solana", type: "token" },
+  ];
+  const m = geckoMarket({ market_cap_usd: "12995.6", price_usd: "0.000013", total_reserve_in_usd: "10881" }, included);
+  assert.equal(m.pairAddress, "7Zz7vbbV1MgTr5EEz6yy2j37XCKujjyLWMzaNpmv5tXU");
+  assert.equal(m.dexId, "pumpswap");
+  assert.equal(geckoMarket({ market_cap_usd: "1" }).pairAddress, null, "without pools: no pair, as before");
 });

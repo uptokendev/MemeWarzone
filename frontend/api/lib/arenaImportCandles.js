@@ -16,6 +16,13 @@
  * to 20 of them, so this path is capped separately (ARENA_IMPORT_CANDLES_GECKO_PER_MIN, default 8),
  * cached per pool+timeframe, and concurrent requests for the same key share one upstream call. Over the
  * cap a stale cache entry is served; with none, the caller gets `rateLimited` and retries.
+ *
+ * 2026-10-03: with 16 imports and 2 calls per opened coin (chart + trades) the 8/min cap left most coins
+ * empty until the window reset ("BAWLS suddenly shows a chart"). Three changes: the cap without a key is
+ * 12 (the feed's real GeckoTerminal use on Solana is ~1 call/pass: holders come from RPC); an upstream
+ * 429 answers `rateLimited` (the client retries) instead of a 502; and `warm()` lets a background loop
+ * (importChartWarmer.js) keep every import's default chart cached using spare budget only, so a coin
+ * shows its last chart instead of nothing when the budget is spent.
  */
 
 /** Chart resolution -> GeckoTerminal timeframe/aggregate. 30m is built from two 15m bars. */
@@ -157,7 +164,7 @@ export function parseGeckoTrades(json, chainId, tokenAddress) {
 export function createCandleSource({ env = process.env, fetchImpl = fetch, now = () => Date.now() } = {}) {
   const key = String(env.COINGECKO_API_KEY || "").trim();
   const base = key ? "https://pro-api.coingecko.com/api/v3/onchain" : "https://api.geckoterminal.com/api/v2";
-  const perMinute = Math.max(1, Number(env.ARENA_IMPORT_CANDLES_GECKO_PER_MIN) || (key ? 120 : 8));
+  const perMinute = Math.max(1, Number(env.ARENA_IMPORT_CANDLES_GECKO_PER_MIN) || (key ? 120 : 12));
   const cache = new Map();
   const inflight = new Map();
   let windowStart = 0;
@@ -174,6 +181,18 @@ export function createCandleSource({ env = process.env, fetchImpl = fetch, now =
     return true;
   }
 
+  /** Calls left in the current minute window. */
+  function budgetLeft() {
+    if (now() - windowStart >= 60_000) return perMinute;
+    return Math.max(0, perMinute - used);
+  }
+
+  function upstreamError(res) {
+    const error = new Error(`GeckoTerminal ${res.status}`);
+    error.status = res.status;
+    return error;
+  }
+
   async function fetchBars(network, pairAddress, tokenAddress, spec) {
     const url = `${base}/networks/${encodeURIComponent(network)}/pools/${encodeURIComponent(pairAddress)}/ohlcv/${spec.timeframe}`
       + `?aggregate=${spec.aggregate}&limit=${GECKO_LIMIT}&currency=usd&token=${encodeURIComponent(tokenAddress)}`;
@@ -181,7 +200,7 @@ export function createCandleSource({ env = process.env, fetchImpl = fetch, now =
       headers: { accept: "application/json", ...(key ? { "x-cg-pro-api-key": key } : {}) },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) throw new Error(`GeckoTerminal ${res.status}`);
+    if (!res.ok) throw upstreamError(res);
     const bars = parseGeckoOhlcv(await res.json());
     return spec.merge ? mergeBars(bars, spec.seconds) : bars;
   }
@@ -202,6 +221,8 @@ export function createCandleSource({ env = process.env, fetchImpl = fetch, now =
       })
       .catch((error) => {
         if (hit) return { bars: hit.bars, stale: true, rateLimited: false };
+        // Upstream rate limit: tell the client to retry, like our own cap does.
+        if (error?.status === 429) return { bars: [], stale: false, rateLimited: true };
         throw error;
       })
       .finally(() => inflight.delete(cacheKey));
@@ -222,13 +243,14 @@ export function createCandleSource({ env = process.env, fetchImpl = fetch, now =
       signal: AbortSignal.timeout(15_000),
     })
       .then(async (res) => {
-        if (!res.ok) throw new Error(`GeckoTerminal ${res.status}`);
+        if (!res.ok) throw upstreamError(res);
         const fresh = parseGeckoTrades(await res.json(), chainId, tokenAddress);
         cache.set(cacheKey, { at: now(), bars: fresh });
         return { trades: fresh, stale: false, rateLimited: false };
       })
       .catch((error) => {
         if (hit) return { trades: hit.bars, stale: true, rateLimited: false };
+        if (error?.status === 429) return { trades: [], stale: false, rateLimited: true };
         throw error;
       })
       .finally(() => inflight.delete(cacheKey));
@@ -260,7 +282,22 @@ export function createCandleSource({ env = process.env, fetchImpl = fetch, now =
     return request;
   }
 
-  return { bars, trades, poolInfo };
+  /**
+   * Background refresh for a chart that is missing or older than maxAgeMs, using spare budget only:
+   * at least `reserve` calls per minute stay free for people opening coins. Returns true if it fetched.
+   */
+  async function warm({ network, pairAddress, tokenAddress, resolution = "1h", maxAgeMs = 10 * 60_000, reserve = 4 }) {
+    const spec = IMPORT_CANDLE_TIMEFRAMES[resolution];
+    if (!spec || !network || !pairAddress || !tokenAddress) return false;
+    const cacheKey = `${network}:${pairAddress}:${tokenAddress}:${resolution}`;
+    const hit = cache.get(cacheKey);
+    if (hit && now() - hit.at < maxAgeMs) return false;
+    if (inflight.has(cacheKey) || budgetLeft() <= reserve) return false;
+    const result = await bars({ network, pairAddress, tokenAddress, resolution }).catch(() => null);
+    return Boolean(result && !result.rateLimited);
+  }
+
+  return { bars, trades, poolInfo, warm, budgetLeft };
 }
 
 let shared = null;

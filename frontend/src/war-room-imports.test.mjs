@@ -67,3 +67,12 @@ test("Robinhood mainnet imports pay the 0.5% platform fee through the Universal 
   assert.match(lib, /IMPORT_SWAP_FEE_RECEIVER_4663 = "0x632061cA786f7B585Bbd46A792FDA92B02f70671"/);
   assert.match(lib, /export const IMPORT_SWAP_FEE_BPS = 50/);
 });
+
+test("import rows retry a rate-limited chart and show the ATH; coin page has an ATH tile", async () => {
+  const page = await read("./pages/ImportedTokenPage.tsx");
+  assert.match(importRow, /timer = window\.setTimeout\(load, payload\?\.rateLimited \? 20_000 : 60_000\)/);
+  assert.match(importRow, /const athLabel = formatCompactUsd\(Math\.max\(Number\(row\.athMarketCapUsd \|\| 0\), Number\(row\.marketCapUsd \|\| 0\)\)\)/);
+  assert.match(importRow, /<div className="text-right font-mw-mono">\{athLabel\}<\/div>/);
+  assert.match(page, /data-import-ath="true"/);
+  assert.match(api, /to_jsonb\(s\) ->> 'ath_market_cap_usd' as ath_market_cap_usd/);
+});

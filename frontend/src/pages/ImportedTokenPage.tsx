@@ -521,8 +521,9 @@ export default function ImportedTokenPage({
               </button>
               <CoinTags chainId={item.chainId} token={item.tokenAddress} />
             </div>
-            <div className="grid grid-cols-3 gap-3 border-t border-mw-border pt-3 md:grid-cols-5">
+            <div className="grid grid-cols-3 gap-3 border-t border-mw-border pt-3 md:grid-cols-6">
               <div className="min-w-0"><p className={cp.label}>Market cap</p><p className={cp.metricValue}>{formatUsd(profile?.marketCapUsd)}</p></div>
+              <div className="min-w-0" data-import-ath="true"><p className={cp.label}>ATH</p><p className={cp.metricValue}>{formatUsd(profile?.athMarketCapUsd != null || profile?.marketCapUsd != null ? Math.max(Number(profile?.athMarketCapUsd || 0), Number(profile?.marketCapUsd || 0)) || null : null)}</p></div>
               <div className="min-w-0"><p className={cp.label}>Price</p><p className={`${cp.metricValue} truncate`}>{formatUsdPrice(profile?.priceUsd)}</p></div>
               <div className="min-w-0"><p className={cp.label}>Volume 24h</p><p className={cp.metricValue}>{formatUsd(profile?.volume24hUsd)}</p></div>
               <div className="min-w-0"><p className={cp.label}>Liquidity</p><p className={cp.metricValue}>{formatUsd(profile?.liquidityUsd)}</p></div>

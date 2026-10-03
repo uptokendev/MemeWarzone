@@ -15,6 +15,7 @@ import notificationPrefs from "./notificationPrefs.js";
 import notificationUnsubscribe from "./notificationUnsubscribe.js";
 import recruiterCreatorCoins from "./recruiterCreatorCoins.js";
 import { pool } from "../server/db.js";
+import { startImportChartWarmer } from "./lib/importChartWarmer.js";
 import { createRailwayProxyMiddleware } from "../server/railwayProxy.js";
 
 import activityTrades from "./activity/trades.js";
@@ -651,6 +652,9 @@ app.use((err, _req, res, _next) => {
 });
 
 const port = Number(process.env.PORT || process.env.API_PORT || 3001);
+// Imported coins' charts stay cached in this process (CO-1, 2026-10-03).
+startImportChartWarmer({ pool });
+
 app.listen(port, "0.0.0.0", () => {
   console.log(`[api/server] listening on ${port}`);
   try {
