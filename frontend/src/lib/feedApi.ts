@@ -204,6 +204,17 @@ export async function toggleFeedRepost(postId: number, token: string): Promise<{
   return { on: Boolean(json.on), repostCount: Number(json.repostCount || 0) };
 }
 
+/** Deletes your own post or reply on the feed session (one signature per 30 days). */
+export async function deleteFeedPost(postId: number, token: string): Promise<void> {
+  const res = await apiFetch(`/api/feed/posts/${postId}/delete`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const json = await readJson(res);
+  if (!res.ok) throw sessionError(json, `Could not delete the post (${res.status})`, res.status);
+}
+
 export async function createFeedReply(postId: number, token: string, body: string): Promise<{ id: number | null; replyCount: number }> {
   const res = await apiFetch(`/api/feed/posts/${postId}/replies`, {
     method: "POST",

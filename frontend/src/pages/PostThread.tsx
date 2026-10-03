@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { FeedAvatar, FeedBody, FeedCoinCard, FeedPostActions, timeAgo } from "@/components/feed/FeedCards";
 import { useFeedSession } from "@/hooks/useFeedSession";
-import { FEED_MAX_CHARS, createFeedReply, feedViewerKey, fetchFeedPost, fetchPostReplies, queueFeedView, type FeedItem } from "@/lib/feedApi";
+import { FEED_MAX_CHARS, createFeedReply, deleteFeedPost, feedViewerKey, fetchFeedPost, fetchPostReplies, queueFeedView, type FeedItem } from "@/lib/feedApi";
 
 function shortWallet(value?: string | null) {
   const v = String(value || "");
@@ -110,6 +110,11 @@ export default function PostThread() {
                   hide={post.postId ? { type: "post", id: post.postId } : undefined}
                   author={post.wallet}
                   authorLabel={author}
+                  onDelete={post.postId ? async () => {
+                    // Your own post (founder, 2026-10-03): deleted on the feed session, then back to Home.
+                    await withSession((token) => deleteFeedPost(Number(post.postId), token));
+                    navigate("/");
+                  } : undefined}
                 />
                 </div>
                 <div className="mt-3.5"><FeedBody body={post.body} big /></div>
@@ -155,6 +160,10 @@ export default function PostThread() {
                           hide={r.postId ? { type: "post", id: r.postId } : undefined}
                           author={r.wallet}
                           authorLabel={name}
+                          onDelete={r.postId ? async () => {
+                            await withSession((token) => deleteFeedPost(Number(r.postId), token));
+                            void load();
+                          } : undefined}
                         />
                       </div>
                       <FeedBody body={r.body} />

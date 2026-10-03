@@ -15,6 +15,7 @@ import {
   feedViewerKey,
   queueFeedView,
   toggleFeedFire,
+  deleteFeedPost,
   toggleFeedRepost,
   type FeedItem,
   type FeedSuggestion,
@@ -485,8 +486,18 @@ export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: 
   const handle = item.authorHandle && String(item.authorDisplayName || "").trim() ? `@${item.authorHandle}` : "";
   const viewRef = useViewTracking(item.postId);
   const moderation = useModeration();
+  const { withSession } = useFeedSession();
+  const [deleted, setDeleted] = useState(false);
   // CO-30: hidden posts and posts or reposts by blocked accounts disappear for this viewer only.
-  if (moderation.isHidden("post", item.postId) || moderation.isBlocked(item.wallet) || moderation.isBlocked(item.repostedByWallet)) return null;
+  if (deleted || moderation.isHidden("post", item.postId) || moderation.isBlocked(item.wallet) || moderation.isBlocked(item.repostedByWallet)) return null;
+  // Your own post: Delete in the "…" menu (founder, 2026-10-03), on the feed session.
+  const removeOwn = item.postId
+    ? async () => {
+        await withSession((token) => deleteFeedPost(Number(item.postId), token));
+        setDeleted(true);
+        onChanged?.();
+      }
+    : undefined;
 
   return (
     <article ref={viewRef as React.RefObject<HTMLElement>} className={`${card} px-[18px] pb-2 pt-4`}>
@@ -517,6 +528,7 @@ export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: 
               hide={item.postId ? { type: "post", id: item.postId } : undefined}
               author={item.wallet}
               authorLabel={author}
+              onDelete={removeOwn}
             />
           </div>
           <Link to={postHref(item.postId)} className="block text-mw-text hover:text-mw-text">

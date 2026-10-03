@@ -41,3 +41,13 @@ test("profiles: Report profile and Block in the menu, blocked view keeps only ba
   assert.match(profile, /moderation\.unblock\(profileWallet\)/);
   assert.match(read("pages/command-center/CommandCenterSettings.tsx"), /<BlockedAccountsCard \/>/);
 });
+
+// Founder, 2026-10-03: your own post or reply gets Delete in the "…" menu, on the feed session.
+test("own posts and replies can be deleted from the … menu", () => {
+  const read = (p) => fs.readFileSync(new URL(`./${p}`, import.meta.url), "utf8");
+  assert.match(read("components/moderation/ItemMenu.tsx"), /if \(own\) return onDelete \? <OwnItemMenu/);
+  assert.match(read("components/feed/FeedCards.tsx"), /onDelete=\{removeOwn\}/);
+  assert.match(read("pages/PostThread.tsx"), /deleteFeedPost\(Number\(post\.postId\), token\)/);
+  assert.match(read("pages/PostThread.tsx"), /deleteFeedPost\(Number\(r\.postId\), token\)/);
+  assert.match(fs.readFileSync(new URL("../api/feed/posts.js", import.meta.url), "utf8"), /async function handleDelete[\s\S]{0,600}feedSession\.requireSession/);
+});
