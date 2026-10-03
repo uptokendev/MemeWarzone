@@ -21,6 +21,7 @@ import {
   type FeedSuggestion,
 } from "@/lib/feedApi";
 import { useFeedSession } from "@/hooks/useFeedSession";
+import { readStoredFeedSession } from "@/lib/feedSession";
 import { usePostComposer } from "@/components/feed/usePostComposer";
 
 /* UI redesign phase 2: cards in the artboard style. Fire / repost / session behaviour is unchanged;
@@ -99,7 +100,7 @@ export function FeedAvatar({ url, label, square = false, size = 44 }: { url?: st
 /** Counts a view once a post card has been on screen for about a second (one view per viewer per post). */
 function useViewTracking(postId?: number | null) {
   const ref = useRef<HTMLElement | null>(null);
-  const { account } = useFeedSession();
+  const { account, chainId } = useFeedSession();
   useEffect(() => {
     const el = ref.current;
     if (!el || !postId || typeof IntersectionObserver === "undefined") return;
@@ -108,7 +109,7 @@ function useViewTracking(postId?: number | null) {
       ([entry]) => {
         if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
           timer = window.setTimeout(() => {
-            queueFeedView(Number(postId), feedViewerKey(account));
+            queueFeedView(Number(postId), feedViewerKey(account), account ? readStoredFeedSession(account, chainId) : null);
             observer.disconnect();
           }, 1000);
         } else if (timer != null) {

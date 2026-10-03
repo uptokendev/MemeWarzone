@@ -329,7 +329,7 @@ export async function loadViewCounts(postIds) {
   }
 }
 
-const VIEWER_KEY = /^(anon:[A-Za-z0-9-]{8,64}|0x[0-9a-f]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/;
+const VIEWER_KEY = /^(anon:[A-Za-z0-9-]{8,64}|ip:[0-9a-f]{32}|0x[0-9a-f]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/;
 
 /** One view per viewer per post. viewer = wallet (EVM lowercased) or an anonymous browser id. */
 export function canonViewerKey(value) {

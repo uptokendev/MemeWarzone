@@ -313,22 +313,26 @@ export function feedViewerKey(account?: string | null) {
 let pendingViews = new Set<number>();
 let viewTimer: number | null = null;
 let viewViewer = "";
+let viewToken = "";
 /** Set when the API answers 404: it has no views route (older deploy), so stop posting for this page load. */
 let viewsUnsupported = false;
 
 /** Queue a view; sent in small batches (one view per viewer per post is kept server side). */
-export function queueFeedView(postId: number, viewer: string) {
+export function queueFeedView(postId: number, viewer: string, sessionToken?: string | null) {
   if (!postId || !viewer || viewsUnsupported) return;
   viewViewer = viewer;
+  // A stored feed session makes the view count for the verified wallet (never prompts for one).
+  if (sessionToken) viewToken = sessionToken;
   pendingViews.add(postId);
   if (viewTimer != null) return;
   viewTimer = window.setTimeout(() => {
     const ids = [...pendingViews].slice(0, 40);
     pendingViews = new Set([...pendingViews].slice(40));
     viewTimer = null;
+    const token = viewToken;
     void apiFetch("/api/feed/views", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: token ? { "content-type": "application/json", Authorization: `Bearer ${token}` } : { "content-type": "application/json" },
       body: JSON.stringify({ postIds: ids, viewer: viewViewer }),
       keepalive: true,
     })

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { attachHandles } from "../lib/userHandles.js";
 import { notifyRepost, notifySocialPost } from "../lib/socialNotify.js";
 import { ethers } from "ethers";
@@ -628,10 +629,31 @@ async function handleGet(req, res) {
   return json(res, 200, { ...page, items: await attachHandles(page.items), tab: "for-you" });
 }
 
+// Unique views (founder, 2026-10-03): the server decides who the viewer is. A verified wallet (feed
+// session) counts once per post; everyone else counts once per post per IP address, stored only as a
+// salted hash. The browser's own viewer id is ignored: it could be regenerated or set to any wallet.
+function clientIp(req) {
+  const real = String(req.headers?.["x-real-ip"] || "").trim();
+  if (real) return real;
+  const forwarded = String(req.headers?.["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwarded || req.ip || req.socket?.remoteAddress || "";
+}
+
+function ipViewerKey(req) {
+  const ip = clientIp(req);
+  if (!ip) return "";
+  const salt = String(process.env.VIEW_HASH_SALT || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.DATABASE_URL || "mwz-views");
+  return `ip:${crypto.createHash("sha256").update(`${salt}|${ip}`).digest("hex").slice(0, 32)}`;
+}
+
 async function handleViews(req, res) {
   const b = req.body && typeof req.body === "object" && Object.keys(req.body).length ? req.body : await readJson(req);
   try {
-    const added = await recordViews(Array.isArray(b.postIds) ? b.postIds : [], b.viewer);
+    // A bad or expired session token falls back to the IP key quietly (no 401 for a view).
+    const quiet = { status() { return this; }, json() { return this; } };
+    const session = hasSessionToken(req) ? await feedSession.requireSession(req, quiet) : null;
+    const viewerKey = session ? session.walletAddress : ipViewerKey(req);
+    const added = await recordViews(Array.isArray(b.postIds) ? b.postIds : [], viewerKey);
     return json(res, 200, { ok: true, added });
   } catch (e) {
     if (missingTable(e)) return json(res, 200, { ok: true, added: 0, warning: "views not set up yet" });

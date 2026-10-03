@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { FeedAvatar, FeedBody, FeedCoinCard, FeedPostActions, timeAgo } from "@/components/feed/FeedCards";
 import { useFeedSession } from "@/hooks/useFeedSession";
+import { readStoredFeedSession } from "@/lib/feedSession";
 import { FEED_MAX_CHARS, createFeedReply, deleteFeedPost, feedViewerKey, fetchFeedPost, fetchPostReplies, queueFeedView, type FeedItem } from "@/lib/feedApi";
 
 function shortWallet(value?: string | null) {
@@ -26,7 +27,7 @@ export default function PostThread() {
   const { postId: raw } = useParams<{ postId: string }>();
   const postId = Number(raw);
   const navigate = useNavigate();
-  const { account, withSession, busy } = useFeedSession();
+  const { account, chainId, withSession, busy } = useFeedSession();
   const composerAvatar = useWalletAvatar(account);
   const moderation = useModeration();
   const [post, setPost] = useState<FeedItem | null>(null);
@@ -49,11 +50,11 @@ export default function PostThread() {
       setPost(item);
       setReplies(list);
       setState("ready");
-      queueFeedView(postId, feedViewerKey(account));
+      queueFeedView(postId, feedViewerKey(account), account ? readStoredFeedSession(account, chainId) : null);
     } catch {
       setState("error");
     }
-  }, [account, postId]);
+  }, [account, chainId, postId]);
 
   useEffect(() => {
     void load();
