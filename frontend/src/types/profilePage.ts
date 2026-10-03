@@ -6,6 +6,9 @@ export type TokenBalanceRow = {
   ticker: string;
   balanceRaw: bigint;
   balanceFormatted: string;
+  /** From /api/profile/portfolio (founder, 2026-10-03): USD value and where the coin comes from. */
+  valueUsd?: number;
+  kind?: "launched" | "imported" | "other";
 };
 
 export type ActivityTradeRow = {

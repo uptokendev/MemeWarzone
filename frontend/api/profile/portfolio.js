@@ -128,6 +128,50 @@ function holdingValue(row, nativeUsd) {
   return calculateHoldingValueUsd(formatted, Number(row.marketcap_bnb || 0), nativeUsd);
 }
 
+// Imported coins (arena_token_imports) with their DEX price (arena_import_market_stats).
+async function loadImportsByMints(chainId, mints) {
+  if (!mints.length) return [];
+  try {
+    const { rows } = await pool.query(
+      `select i.token_address, i.name, i.symbol, i.image_url, s.price_usd
+         from public.arena_token_imports i
+         left join public.arena_import_market_stats s
+           on s.chain_id = i.chain_id and s.token_address = i.token_address
+        where i.chain_id = $1 and i.token_address = any($2::text[])`,
+      [chainId, mints],
+    );
+    return rows;
+  } catch (e) {
+    if (e?.code === "42P01" || e?.code === "42703") return [];
+    throw e;
+  }
+}
+
+// Name, logo and USD price for any Solana token Jupiter lists (founder, 2026-10-03: every coin in the
+// wallet shows, not only ours). One request per 100 mints; a slow or failing Jupiter just leaves them bare.
+async function loadJupiterTokens(mints) {
+  const out = new Map();
+  const key = String(process.env.JUPITER_API_KEY || "").trim();
+  const base = key ? "https://api.jup.ag/tokens/v2" : "https://lite-api.jup.ag/tokens/v2";
+  for (let i = 0; i < mints.length; i += 100) {
+    const batch = mints.slice(i, i + 100);
+    try {
+      const res = await fetch(`${base}/search?query=${encodeURIComponent(batch.join(","))}`, {
+        headers: key ? { "x-api-key": key } : {},
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) continue;
+      const list = await res.json();
+      for (const t of Array.isArray(list) ? list : []) if (t?.id) out.set(String(t.id), t);
+    } catch {
+      // leave these tokens without metadata
+    }
+  }
+  return out;
+}
+
+const positive = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? Number(n) : null);
+
 // JSON-RPC method is getTokenAccountsByOwner with jsonParsed encoding (CO-22: the web3.js helper name
 // getParsedTokenAccountsByOwner is not an RPC method, so every Solana wallet showed 0 coins).
 async function scanSolana(address, nativeUsd) {
@@ -157,19 +201,38 @@ async function scanSolana(address, nativeUsd) {
     if (row.token_address) byMint.set(row.token_address, row);
     if (row.campaign_address) byMint.set(row.campaign_address, row);
   }
+  const notLaunched = owned.filter((h) => !byMint.get(h.mint)).map((h) => h.mint);
+  const imports = new Map((await loadImportsByMints(101, notLaunched)).map((r) => [String(r.token_address), r]));
+  const jupiter = await loadJupiterTokens(owned.map((h) => h.mint).filter((m) => !byMint.get(m) || !positive(byMint.get(m)?.last_price_usd)));
+  // Each holding says where it comes from (founder, 2026-10-03): launched here, imported here, or any other
+  // token in the wallet. Launched and imported both count as MemeWarzone coins.
   const holdings = owned.map((h) => {
     const campaign = byMint.get(h.mint);
-    const ticker = campaign?.symbol || h.ticker;
-    const valued = {
-      ticker,
-      platform: Boolean(campaign),
+    const imported = campaign ? null : imports.get(h.mint);
+    const jup = jupiter.get(h.mint);
+    const balance = Number.parseFloat(h.balanceFormatted) || 0;
+    let valueUsd;
+    let priceUsd;
+    if (campaign) {
+      valueUsd = holdingValue({ ...campaign, balanceFormatted: h.balanceFormatted, marketcap_bnb: campaign?.marketcap_bnb }, nativeUsd);
+      if (!(valueUsd > 0) && positive(jup?.usdPrice)) valueUsd = balance * Number(jup.usdPrice);
+      priceUsd = balance > 0 && valueUsd > 0 ? valueUsd / balance : null;
+    } else {
+      priceUsd = positive(imported?.price_usd) ?? positive(jup?.usdPrice);
+      valueUsd = priceUsd ? balance * priceUsd : 0;
+    }
+    return {
+      ticker: campaign?.symbol || imported?.symbol || jup?.symbol || h.ticker,
+      name: campaign?.name || imported?.name || jup?.name || null,
+      image: campaign?.logo_uri || imported?.image_url || jup?.icon || null,
+      mint: h.mint,
+      campaignAddress: campaign?.campaign_address || null,
+      kind: campaign ? "launched" : imported ? "imported" : "other",
+      platform: Boolean(campaign || imported),
       balanceFormatted: h.balanceFormatted,
-      valueUsd: holdingValue(
-        { ...campaign, balanceFormatted: h.balanceFormatted, marketcap_bnb: campaign?.marketcap_bnb },
-        nativeUsd,
-      ),
+      priceUsd,
+      valueUsd,
     };
-    return valued;
   });
   return { native, holdings };
 }
@@ -188,6 +251,11 @@ async function scanEvm(chainId, address, nativeUsd) {
       const balanceFormatted = Number.isFinite(formatted) ? String(formatted) : "0";
       return {
         ticker: row.symbol || String(row.token_address || "?").slice(0, 6),
+        name: row.name || null,
+        image: row.logo_uri || null,
+        mint: row.token_address || null,
+        campaignAddress: row.campaign_address || null,
+        kind: row.campaign_address ? "launched" : "other",
         platform: Boolean(row.campaign_address),
         balanceFormatted,
         valueUsd: holdingValue({ ...row, balanceFormatted }, nativeUsd),
@@ -221,6 +289,11 @@ async function scanEvm(chainId, address, nativeUsd) {
       const formatted = ethers.formatUnits(rawBal, Number.isFinite(decimals) ? decimals : 18);
       holdings.push({
         ticker: symbol || row.symbol || "???",
+        name: row.name || null,
+        image: row.logo_uri || null,
+        mint: token,
+        campaignAddress: row.campaign_address || null,
+        kind: "launched",
         platform: true,
         balanceFormatted: formatted,
         valueUsd: holdingValue({ ...row, balanceFormatted: formatted }, nativeUsd),
@@ -262,6 +335,22 @@ async function computePortfolio(chainId, address) {
   const platformCoinsCount = held.filter((h) => h.platform).length;
   return {
     metrics: metrics ? { ...metrics, platformCoinsCount, otherTokensCount: held.length - platformCoinsCount } : metrics,
+    // The list behind the numbers, highest value first (Command Center Top holdings, profile Coins tab).
+    holdings: held
+      .map((h) => ({
+        mint: h.mint || null,
+        campaignAddress: h.campaignAddress || null,
+        kind: h.kind || (h.platform ? "launched" : "other"),
+        platform: Boolean(h.platform),
+        ticker: h.ticker || null,
+        name: h.name || null,
+        image: h.image || null,
+        balanceFormatted: h.balanceFormatted,
+        priceUsd: h.priceUsd ?? null,
+        valueUsd: Number(h.valueUsd) || 0,
+      }))
+      .sort((a, b) => b.valueUsd - a.valueUsd)
+      .slice(0, 50),
     createdAt,
   };
 }
@@ -295,7 +384,7 @@ export default async function handler(req, res) {
     if (!pending) {
       pending = computePortfolio(chainId, addr)
         .then((payload) => {
-          const body = { metrics: payload.metrics, warning: null };
+          const body = { metrics: payload.metrics, holdings: payload.holdings || [], warning: null };
           cache.set(key, { at: Date.now(), payload: body });
           if (cache.size > 2_000) cache.delete(cache.keys().next().value);
           return body;

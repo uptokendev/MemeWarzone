@@ -53,7 +53,7 @@ export default function CommandCenterOverview() {
         <div className="rounded-[14px] border border-mw-border bg-mw-surface p-3">
           <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Coins held</div>
           <div className="font-mw-mono text-[19px] font-bold">{loadingBalances ? "…" : tokenBalances.length}</div>
-          <div className="text-xs text-mw-muted">Launchpad tokens in this wallet</div>
+          <div className="text-xs text-mw-muted">Tokens in this wallet</div>
         </div>
       </div>
 
@@ -68,31 +68,53 @@ export default function CommandCenterOverview() {
           <div className="text-sm text-mw-muted">Loading token balances...</div>
         ) : tokenBalances.length > 0 ? (
           <div className="flex flex-col">
-            {tokenBalances.slice(0, 6).map((token) => (
-              <Link
-                key={`${token.tokenAddress}-${token.campaignAddress}`}
-                to={tokenDetailsPath(
-                  {
-                    tokenAddress: token.tokenAddress,
-                    campaignAddress: token.campaignAddress,
-                    chainId,
-                  },
-                  { chainId },
-                )}
-                className={`${row} text-mw-text hover:text-mw-text`}
-              >
-                <img
-                  src={(token as any).image || "/placeholder.svg"}
-                  alt=""
-                  className="h-8 w-8 shrink-0 rounded-lg border border-mw-border object-cover"
-                />
-                <b className="min-w-0 flex-1 truncate">{token.ticker ? `$${String(token.ticker).replace(/^\$/, "")}` : token.name}</b>
-                <span className="hidden truncate text-mw-muted sm:inline">{token.name}</span>
-                <span className="shrink-0 text-right font-mw-mono">
-                  {Number(token.balanceFormatted).toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                </span>
-              </Link>
-            ))}
+            {tokenBalances.slice(0, 8).map((token) => {
+              // Founder, 2026-10-03: logo, name, ticker and USD value for every coin in the wallet.
+              // Coins launched or imported here open their coin page; other tokens are listed only.
+              const content = (
+                <>
+                  <img
+                    src={(token as any).image || "/placeholder.svg"}
+                    alt=""
+                    className="h-8 w-8 shrink-0 rounded-lg border border-mw-border object-cover"
+                    onError={(event) => { (event.currentTarget as HTMLImageElement).src = "/placeholder.svg"; }}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <b className="block truncate">{token.ticker ? `$${String(token.ticker).replace(/^\$/, "")}` : token.name}</b>
+                    <span className="block truncate text-xs text-mw-muted">
+                      {token.name}
+                      {token.kind === "imported" ? " · Imported" : token.kind === "launched" ? " · Launched here" : ""}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    {typeof token.valueUsd === "number" && token.valueUsd > 0 ? (
+                      <b className="block font-mw-mono">${token.valueUsd.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}</b>
+                    ) : null}
+                    <span className="block font-mw-mono text-xs text-mw-muted">
+                      {Number(token.balanceFormatted).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                    </span>
+                  </span>
+                </>
+              );
+              return token.kind === "other" ? (
+                <div key={`${token.tokenAddress}-${token.campaignAddress}`} className={`${row} py-1.5 text-mw-text`}>{content}</div>
+              ) : (
+                <Link
+                  key={`${token.tokenAddress}-${token.campaignAddress}`}
+                  to={tokenDetailsPath(
+                    {
+                      tokenAddress: token.tokenAddress,
+                      campaignAddress: token.campaignAddress,
+                      chainId,
+                    },
+                    { chainId },
+                  )}
+                  className={`${row} py-1.5 text-mw-text hover:text-mw-text`}
+                >
+                  {content}
+                </Link>
+              );
+            })}
           </div>
         ) : (
           <div className="text-sm text-mw-muted">No launchpad token balances detected yet.</div>

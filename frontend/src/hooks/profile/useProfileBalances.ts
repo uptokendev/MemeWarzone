@@ -19,6 +19,7 @@ import {
 import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
 import { isSolanaAddress } from "@/lib/address";
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
+import { fetchPublicPortfolio } from "@/lib/profileApi";
 
 const ERC20_ABI_MIN = [
   {
@@ -188,6 +189,28 @@ export function useProfileBalances({
             const lamports = await conn.getBalance(owner, "confirmed");
             const sol = (Number(lamports) / 1_000_000_000).toFixed(4);
             if (!cancelled) setNativeBalance(`${sol} SOL`);
+
+            // Founder, 2026-10-03: every coin in the wallet with name, logo and USD value, launched or
+            // imported here or any Jupiter-listed token, and a real Total value. The server has the
+            // prices; this browser scan below stays as the fallback for an API without the list.
+            const server = await fetchPublicPortfolio(101, targetRaw).catch(() => null);
+            if (server?.holdings) {
+              if (!cancelled) {
+                setTokenBalances(server.holdings.map((h) => ({
+                  campaignAddress: String(h.campaignAddress || h.mint || ""),
+                  tokenAddress: String(h.mint || ""),
+                  image: h.image || "/placeholder.svg",
+                  name: h.name || "Solana token",
+                  ticker: h.ticker || String(h.mint || "").slice(0, 4),
+                  balanceRaw: 0n,
+                  balanceFormatted: h.balanceFormatted,
+                  valueUsd: h.valueUsd,
+                  kind: h.kind,
+                })));
+                setPortfolioMetrics(server.metrics);
+              }
+              return;
+            }
 
             let rows: TokenBalanceRow[] = [];
             try {

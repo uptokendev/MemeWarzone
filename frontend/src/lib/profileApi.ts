@@ -267,6 +267,36 @@ export async function saveUserProfile(input: SaveProfileInput): Promise<void> {
   }
 }
 
+export type PortfolioHolding = {
+  mint: string | null;
+  campaignAddress: string | null;
+  kind: "launched" | "imported" | "other";
+  platform: boolean;
+  ticker: string | null;
+  name: string | null;
+  image: string | null;
+  balanceFormatted: string;
+  priceUsd: number | null;
+  valueUsd: number;
+};
+
+/**
+ * Metrics plus the holdings list behind them (founder, 2026-10-03). `holdings` is null on an API from
+ * before the list existed, so callers can fall back to their own scan.
+ */
+export async function fetchPublicPortfolio(
+  chainId: number,
+  address: string,
+): Promise<{ metrics: PortfolioMetrics | null; holdings: PortfolioHolding[] | null }> {
+  const addr = normalizeAddress(address, chainId);
+  const params = new URLSearchParams({ chainId: String(chainId), address: addr });
+  const json = await apiJson<any>(`/api/profile/portfolio?${params.toString()}`);
+  return {
+    metrics: (json?.metrics as PortfolioMetrics) ?? null,
+    holdings: Array.isArray(json?.holdings) ? (json.holdings as PortfolioHolding[]) : null,
+  };
+}
+
 /**
  * Thin wrapper for the public portfolio metrics endpoint (Phase 6).
  * Always uses apiJson (central apiBase layer) for consistency with AGENTS.md.
