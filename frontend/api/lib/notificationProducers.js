@@ -17,8 +17,8 @@ import { CATEGORY_LABELS, absoluteTarget, notificationWalletKey, notifyWallet, u
 export const DEFAULT_REWARD_LOOKBACK_DAYS = 14;
 export const DEFAULT_COIN_LOOKBACK_HOURS = 6;
 export const DEFAULT_TRADE_LOOKBACK_MINUTES = 30;
-/** Founder decision pending; overridable with NOTIFY_LARGE_BUY_USD. */
-export const DEFAULT_LARGE_BUY_USD = 1000;
+/** Founder 2026-10-03: $500 per buy; overridable with NOTIFY_LARGE_BUY_USD. */
+export const DEFAULT_LARGE_BUY_USD = 500;
 
 const CHAIN_NAMES = { 56: "BNB", 97: "BNB testnet", 101: "Solana", 4663: "Robinhood", 46630: "Robinhood testnet" };
 

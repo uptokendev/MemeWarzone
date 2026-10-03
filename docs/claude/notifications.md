@@ -21,7 +21,7 @@ One bell feed for four categories, each with a bell and an email toggle per wall
   5 min): league/MWL prizes with a published root and no claim; `reward_ledger` status claimable;
   recruiter earnings (one per recruiter per chain per week); staked battle wins (same rule as
   `/arena/war-pools/claimable`); coin launch, graduation, large buy (`NOTIFY_LARGE_BUY_USD`,
-  default 1000, live native price). Tournament places are not covered yet.
+  default 500 (founder 2026-10-03), live native price). Tournament places are not covered yet.
 - **Email digest** (`npm run cron:notification-digest`, hourly): one email per wallet with a
   verified address for social/rewards/coin, only categories whose email is on, max 20 items, a
   stop link per category. Provider failure: rows younger than 24 h are retried next run.
