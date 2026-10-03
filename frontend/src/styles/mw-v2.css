@@ -184,3 +184,18 @@ ol.fixed.top-0 {
     padding-right: 0 !important;
   }
 }
+
+/* Coin card in a post (founder 2026-10-03): on narrow cards the logo, gaps and Buy shrink so the name,
+   price and price line all keep room. */
+@container coin-card (max-width: 360px) {
+  [data-coin-row] { gap: 10px; }
+  [data-coin-logo] > * { width: 44px !important; height: 44px !important; }
+  [data-coin-buy] { padding-left: 12px; padding-right: 12px; }
+  [data-coin-sparkline] { min-width: 40px; }
+  [data-coin-text] { min-width: 68px; }
+  [data-coin-price-line] { font-size: 13px; }
+}
+/* Too narrow for the line next to Buy (small phones): name, price and change stay, the line goes. */
+@container coin-card (max-width: 210px) {
+  [data-coin-sparkline] { display: none; }
+}

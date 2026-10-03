@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ItemMenu } from "@/components/moderation/ItemMenu";
 import { useModeration } from "@/hooks/useModeration";
-import { CoinSparkline } from "@/components/feed/CoinSparkline";
+import { CoinPriceLine, CoinSparkline, useCoinMiniMarket } from "@/components/feed/CoinSparkline";
 import { PostImage } from "@/components/feed/PostImage";
 import { MentionField } from "@/components/feed/MentionField";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
@@ -219,27 +219,35 @@ export function FeedCoinCard({ item }: { item: FeedItem }) {
   const path = tokenHref(item);
   const chain = chainLabel(item.chainId || item.mentionedChainId);
   const href = path && path !== "/" ? path : null;
+  // Founder 2026-10-03: price, change and a price line on the card (like cashtags on X, from the CA).
+  const market = useCoinMiniMarket({
+    chainId: item.chainId || item.mentionedChainId,
+    campaign: item.campaignAddress || item.mentionedCampaign,
+    token: item.tokenAddress || item.mentionedToken,
+  });
   return (
-    <div className="mt-3 flex items-center gap-3.5 rounded-[14px] border border-mw-border bg-mw-input p-3.5">
-      <FeedAvatar url={item.tokenLogoUri || item.logoUri} label={ticker || name} square size={56} />
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate font-bold">{name}</span>
-          {ticker ? <span className={`${chip} border-mw-edge font-mw-mono text-[#C9CED4]`}>${String(ticker).replace(/^\$/, "")}</span> : null}
-          {chain ? <span className={`${chip} border-mw-edge text-[#C9CED4]`}>{chain}</span> : null}
+    <div ref={market.ref} className="mt-3 rounded-[14px] border border-mw-border bg-mw-input p-3.5" style={{ containerType: "inline-size", containerName: "coin-card" }}>
+      {/* Narrow cards (phones, the thread's side card) tighten logo, gaps and Buy: rule in mw-v2.css. */}
+      <div className="flex items-center gap-3.5" data-coin-row="true">
+        <span className="shrink-0" data-coin-logo="true">
+          <FeedAvatar url={item.tokenLogoUri || item.logoUri} label={ticker || name} square size={56} />
+        </span>
+        <div className="min-w-[84px] flex-1" data-coin-text="true">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate font-bold">{name}</span>
+            {ticker && market.priceUsd == null && market.change == null ? <span className={`${chip} border-mw-edge font-mw-mono text-[#C9CED4]`}>${String(ticker).replace(/^\$/, "")}</span> : null}
+            {chain ? <span className={`${chip} border-mw-edge text-[#C9CED4]`}>{chain}</span> : null}
+          </div>
+          {/* With a price the ticker moves into the price line: "$K88 $0.000026 +80.4%" (founder's X example). */}
+          <CoinPriceLine ticker={ticker} priceUsd={market.priceUsd} change={market.change} />
         </div>
+        <CoinSparkline values={market.values} />
+        {href ? (
+          <Link to={href} data-coin-buy="true" className="mw-focus inline-flex min-h-11 shrink-0 items-center rounded-[10px] border border-mw-buy bg-mw-buy px-4 text-sm font-bold text-[#04140A] hover:bg-[#15913F] hover:text-[#04140A]">
+            Buy
+          </Link>
+        ) : null}
       </div>
-      {/* Founder 2026-10-03: small price line next to Buy (like cashtags on X, from the CA). */}
-      <CoinSparkline
-        chainId={item.chainId || item.mentionedChainId}
-        campaign={item.campaignAddress || item.mentionedCampaign}
-        token={item.tokenAddress || item.mentionedToken}
-      />
-      {href ? (
-        <Link to={href} className="mw-focus inline-flex min-h-11 shrink-0 items-center rounded-[10px] border border-mw-buy bg-mw-buy px-4 text-sm font-bold text-[#04140A] hover:bg-[#15913F] hover:text-[#04140A]">
-          Buy
-        </Link>
-      ) : null}
     </div>
   );
 }
