@@ -148,6 +148,16 @@ export async function createAbuseReport(token: string, input: CreateAbuseReportI
   return json.report as AbuseReportDetail;
 }
 
+/** Quick report from the "…" menu on the feed session token (one signature per 30 days). */
+export async function createInAppAbuseReport(feedToken: string, input: CreateAbuseReportInput): Promise<AbuseReportDetail> {
+  const json = await abuseFetch("/api/abuse/in-app-report", feedToken, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return json.report as AbuseReportDetail;
+}
+
 export async function replyToAbuseReport(token: string, reportId: string, message: string) {
   return abuseFetch(`/api/abuse/reports/${encodeURIComponent(reportId)}/messages`, token, {
     method: "POST",

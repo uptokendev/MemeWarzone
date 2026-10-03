@@ -57,6 +57,8 @@ export type CoinProfileInput = Partial<{
   sectionImages: Record<string, string>;
 }>;
 
+type FeedSessionRunner = <T>(fn: (token: string) => Promise<T>) => Promise<T>;
+
 export const coinPageKey = (chainId: number, token: string) => ["coin-page", Number(chainId), String(token || "")];
 
 async function readJsonOrThrow(res: Response) {
@@ -138,8 +140,23 @@ export function useCoinPageMutations(chainId: number, token: string, ownerToken:
     [chainId, signedToken, refresh],
   );
 
+  // `session` is the owner's feed session (one signature per 30 days, founder 2026-10-03). When given,
+  // creator updates, their image and deleting them need no signature of their own.
   const createPost = useCallback(
-    async (sign: (a: string, l: string[]) => Promise<WalletActionAuthPayload>, post: { body: string; mediaUrl?: string | null; shareToFeed?: boolean }) => {
+    async (sign: (a: string, l: string[]) => Promise<WalletActionAuthPayload>, post: { body: string; mediaUrl?: string | null; shareToFeed?: boolean }, session?: FeedSessionRunner) => {
+      if (session) {
+        const data = await session(async (token) =>
+          readJsonOrThrow(
+            await apiFetch("/api/coin-page/posts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ chainId, token: signedToken, post }),
+            }),
+          ),
+        );
+        await refresh();
+        return data.post as CoinPost;
+      }
       const auth = await sign("coin_post_create", [`Token: ${signedToken}`]);
       const data = await readJsonOrThrow(
         await apiFetch("/api/coin-page/posts", {
@@ -155,7 +172,20 @@ export function useCoinPageMutations(chainId: number, token: string, ownerToken:
   );
 
   const deletePost = useCallback(
-    async (sign: (a: string, l: string[]) => Promise<WalletActionAuthPayload>, postId: string) => {
+    async (sign: (a: string, l: string[]) => Promise<WalletActionAuthPayload>, postId: string, session?: FeedSessionRunner) => {
+      if (session) {
+        await session(async (token) =>
+          readJsonOrThrow(
+            await apiFetch(`/api/coin-page/posts/${encodeURIComponent(postId)}/delete`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ chainId, token: signedToken }),
+            }),
+          ),
+        );
+        await refresh();
+        return;
+      }
       const auth = await sign("coin_post_delete", [`Token: ${signedToken}`, `PostId: ${postId}`]);
       await readJsonOrThrow(
         await apiFetch(`/api/coin-page/posts/${encodeURIComponent(postId)}/delete`, {
@@ -171,7 +201,18 @@ export function useCoinPageMutations(chainId: number, token: string, ownerToken:
 
   /** Uploads one image for `slot` ("banner" | "post" | "section:<key>") and returns its URL. */
   const uploadImage = useCallback(
-    async (sign: (a: string, l: string[]) => Promise<WalletActionAuthPayload>, slot: string, file: File) => {
+    async (sign: (a: string, l: string[]) => Promise<WalletActionAuthPayload>, slot: string, file: File, session?: FeedSessionRunner) => {
+      if (session && slot === "post") {
+        const qs = new URLSearchParams({ chainId: String(chainId), token: signedToken, slot });
+        const data = await session(async (token) => {
+          const form = new FormData();
+          form.append("file", file);
+          return readJsonOrThrow(
+            await apiFetch(`/api/coin-page/image?${qs.toString()}`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form }),
+          );
+        });
+        return String(data.url);
+      }
       const auth = await sign("coin_page_image", [`Token: ${signedToken}`, `Slot: ${slot}`]);
       const qs = new URLSearchParams({ chainId: String(chainId), token: signedToken, slot });
       appendAuthToSearchParams(qs, auth);

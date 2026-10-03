@@ -3,6 +3,9 @@ import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, isSolanaChain, json, readJson } from "../server/http.js";
 import { buildCommentMessage, canonCampaign, canonWallet } from "./lib/commentsCanon.js";
 import { verifySolanaSignature } from "./lib/walletActionAuth.js";
+import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
+
+const feedSession = createFeedSessionAuth({ pool });
 
 // Solana campaigns and wallets are case-sensitive base58. The BNB-era schema
 // (002_social.sql) enforced lowercase on token_comments, so every Solana
@@ -100,13 +103,18 @@ export default async function handler(req, res) {
   if (req.method === "POST") {
     try {
       const b = await readJson(req);
+      // With a feed session (one signature per 30 days, founder 2026-10-03) the author is the session's
+      // wallet and the comment needs no nonce or signature. Without one the signed path below is unchanged.
+      const bearer = /^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""));
+      const session = bearer ? await feedSession.requireSession(req, res) : null;
+      if (bearer && !session) return;
       const chainId = Number(b.chainId);
       const campaignAddress = canonCampaign(chainId, b.campaignAddress);
       const rawToken = b.tokenAddress ? String(b.tokenAddress).trim() : "";
       const tokenAddress = rawToken
         ? (isSolanaChain(chainId) ? (isSolanaAddress(rawToken) ? rawToken : "") : (isAddress(rawToken.toLowerCase()) ? rawToken.toLowerCase() : ""))
         : null;
-      const address = canonWallet(chainId, b.address);
+      const address = canonWallet(chainId, session ? session.walletAddress : b.address);
       const body = String(b.body ?? "");
       const nonce = String(b.nonce ?? "");
       const signature = String(b.signature ?? "");
@@ -120,19 +128,27 @@ export default async function handler(req, res) {
       const trimmed = body.trim();
       if (!trimmed) return json(res, 400, { error: "Comment is empty" });
       if (trimmed.length > 500) return json(res, 400, { error: "Comment too long" });
-      if (!nonce) return json(res, 400, { error: "Nonce missing" });
-      if (!signature) return json(res, 400, { error: "Signature missing" });
-
-      await ensureCommentsSchema();
-      await consumeNonce(chainId, address, nonce);
-
-      const msg = buildCommentMessage({ chainId, address, campaignAddress, nonce, body: trimmed });
-      const solana = isSolanaChain(chainId) || isSolanaAddress(address);
-      if (solana) {
-        if (!verifySolanaSignature(msg, signature, address)) return json(res, 401, { error: "Invalid signature" });
+      if (session) {
+        // A Solana session comments on Solana coins, an EVM session on EVM coins.
+        if (isSolanaChain(chainId) !== isSolanaChain(Number(session.chainId))) {
+          return json(res, 400, { error: "Connect a wallet on this coin's chain to comment" });
+        }
+        await ensureCommentsSchema();
       } else {
-        const recovered = ethers.verifyMessage(msg, signature).toLowerCase();
-        if (recovered !== address) return json(res, 401, { error: "Invalid signature" });
+        if (!nonce) return json(res, 400, { error: "Nonce missing" });
+        if (!signature) return json(res, 400, { error: "Signature missing" });
+
+        await ensureCommentsSchema();
+        await consumeNonce(chainId, address, nonce);
+
+        const msg = buildCommentMessage({ chainId, address, campaignAddress, nonce, body: trimmed });
+        const solana = isSolanaChain(chainId) || isSolanaAddress(address);
+        if (solana) {
+          if (!verifySolanaSignature(msg, signature, address)) return json(res, 401, { error: "Invalid signature" });
+        } else {
+          const recovered = ethers.verifyMessage(msg, signature).toLowerCase();
+          if (recovered !== address) return json(res, 401, { error: "Invalid signature" });
+        }
       }
 
       const { rows } = await pool.query(

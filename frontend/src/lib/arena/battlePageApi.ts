@@ -76,7 +76,7 @@ export function usePostBattleComment(battleId: string) {
       chainId: number;
       walletAddress: string;
       sign: (action: string, lines: string[]) => Promise<WalletActionAuthPayload>;
-      /** Feed session (one signature per 12 h): when given, the comment needs no signature of its own. */
+      /** Feed session (one signature per 30 days): when given, the comment needs no signature of its own. */
       withSession?: <T>(fn: (token: string) => Promise<T>) => Promise<T>;
     }) => {
       const text = normalizeBattleCommentText(input.text);

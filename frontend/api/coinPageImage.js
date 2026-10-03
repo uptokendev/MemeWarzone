@@ -11,6 +11,7 @@ import crypto from "crypto";
 import { pool } from "../server/db.js";
 import { inspectImageFile, PROJECT_IMPORT_IMAGE_LIMITS } from "./lib/imageFileValidation.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
+import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
 import { coinIdent, coinPageOwner } from "./lib/coinPageOwner.js";
 import { coinImagePath, parseImageSlot } from "./lib/coinPageCanon.js";
 
@@ -22,6 +23,15 @@ function getStorageClient() {
   if (!url || !key) throw new Error("Supabase upload storage env is missing");
   storageClient = createClient(url, key);
   return storageClient;
+}
+
+const feedSession = createFeedSessionAuth({ pool });
+
+function sameWallet(a, b) {
+  const x = String(a || "").trim();
+  const y = String(b || "").trim();
+  if (!x || !y) return false;
+  return x.startsWith("0x") || y.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y;
 }
 
 function bad(res, status, error, code) {
@@ -53,7 +63,15 @@ export default async function handler(req, res) {
 
     // Same transport as /api/upload: auth in form fields, falling back to the query string.
     const field = (key) => first(fields, key) || String(q[key] || "").trim();
-    const verified = await requireWalletActionAuth({
+    // The image on a creator update goes through on the owner's feed session (one signature per 30 days,
+    // founder 2026-10-03), like the update itself. Banner and story images stay signed.
+    const bearer = slot === "post" && /^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""));
+    if (bearer) {
+      const session = await feedSession.requireSession(req, res);
+      if (!session) return;
+      if (!sameWallet(session.walletAddress, owner.wallet)) return bad(res, 403, "Only the verified owner of this coin can upload its images.", "COIN_NOT_OWNER");
+    }
+    const verified = bearer ? { walletAddress: owner.wallet } : await requireWalletActionAuth({
       res,
       pool,
       auth: {

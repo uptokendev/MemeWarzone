@@ -50,7 +50,7 @@ export default async function handler(req, res) {
   try {
     const [fields, files] = await form.parse(req);
     const field = (key) => first(fields, key) || String(q[key] || "").trim();
-    // With a feed session (one signature per 12 h) the session's wallet must be the uploader.
+    // With a feed session (one signature per 30 days) the session's wallet must be the uploader.
     const bearer = /^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""));
     if (bearer) {
       const session = await feedSession.requireSession(req, res);

@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { AbuseReportShortcut, currentPageUrl } from "@/components/abuse/AbuseReportShortcut";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
+import { useFeedSession } from "@/hooks/useFeedSession";
 import { isSolanaAddress } from "@/lib/address";
 import { apiFetch } from "@/lib/apiBase";
 import { isSolanaChainId } from "@/lib/chainConfig";
@@ -133,6 +134,7 @@ export function TokenComments({
   const [posting, setPosting] = useState(false);
   const [body, setBody] = useState("");
   const moderation = useModeration();
+  const feedSession = useFeedSession();
   const [error, setError] = useState<string | null>(null);
 
   const normalizedCampaign = useMemo(() => canonAddress(campaignAddress, solana), [campaignAddress, solana]);
@@ -206,14 +208,40 @@ export function TokenComments({
         window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal"));
         return;
       }
-      if (!solana && !wallet.signer) {
-        toast("Connect your wallet to comment.");
-        return;
-      }
-
       const author = canonAddress(account, solana);
       if (!author) {
         toast("Connect the matching wallet to comment.");
+        return;
+      }
+
+      // One wallet signature per 30 days (founder, 2026-10-03): when the feed session's wallet is the
+      // author, the comment goes through on that session with no signature of its own.
+      if (canonAddress(feedSession.account, solana) === author) {
+        await feedSession.withSession(async (token) => {
+          setPosting(true);
+          const res = await apiFetch("/api/comments", {
+            method: "POST",
+            headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              chainId,
+              campaignAddress: normalizedCampaign,
+              tokenAddress: normalizedToken,
+              body: body.trim(),
+            }),
+          });
+          if (!res.ok) {
+            const j = await readJson(res);
+            throw Object.assign(new Error(j?.error || `Failed to post comment (${res.status})`), { code: j?.code });
+          }
+        });
+        setBody("");
+        await load();
+        toast(mode === "chat" ? "Message sent." : "Comment posted.");
+        return;
+      }
+
+      if (!solana && !wallet.signer) {
+        toast("Connect your wallet to comment.");
         return;
       }
       const nonce = await getNonce(chainId, author);
@@ -257,7 +285,7 @@ export function TokenComments({
     } finally {
       setPosting(false);
     }
-  }, [account, body, canPost, chainId, load, mode, normalizedCampaign, normalizedToken, solana, wallet.signer]);
+  }, [account, body, canPost, chainId, feedSession, load, mode, normalizedCampaign, normalizedToken, solana, wallet.signer]);
 
   const showComposer = !hideComposer && mode !== "updates";
 

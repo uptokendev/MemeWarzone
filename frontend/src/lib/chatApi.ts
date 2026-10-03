@@ -75,6 +75,21 @@ export async function joinWarRoom(args: { chainId: number; campaignAddress: stri
   return parseResponse(res) as Promise<ChatSession>;
 }
 
+/** Join with the feed session (one signature per 30 days): the server takes the wallet from the session. */
+export async function joinWarRoomWithFeedSession(args: { chainId: number; campaignAddress: string; creatorAddress?: string | null; token: string; }) {
+  const { token, ...rest } = args;
+  const res = await apiFetch("/api/chat/join", {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(rest),
+  });
+  if (res.status === 401) {
+    // An expired or revoked feed session: the caller opens a new one and retries.
+    throw Object.assign(new Error("Feed session required."), { code: "FEED_SESSION_REQUIRED" });
+  }
+  return parseResponse(res) as Promise<ChatSession>;
+}
+
 export async function fetchWarRoomHistory(args: { chainId: number; campaignAddress: string; limit?: number; beforeId?: number | null; }) {
   const qs = new URLSearchParams({
     chainId: String(args.chainId),

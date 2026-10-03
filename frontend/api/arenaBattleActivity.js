@@ -117,7 +117,7 @@ async function handleCommentCreate(req, res, battleId) {
   const body = await readJson(req);
   const checked = normalizeBattleComment(body.body);
   if (!checked.ok) return json(res, 400, { error: checked.error, code: checked.code });
-  // With a feed session (one signature per 12 h, founder 2026-10-02) the wallet comes from the session.
+  // With a feed session (one signature per 30 days) the wallet comes from the session.
   const bearer = /^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""));
   const session = bearer ? await feedSession.requireSession(req, res) : null;
   if (bearer && !session) return;

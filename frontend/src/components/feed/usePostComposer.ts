@@ -1,6 +1,6 @@
 /**
  * One posting path for the Home composer and the quote dialog (UI redesign phase 2). Uses the feed
- * session (one wallet signature per 12 h, founder 2026-10-02) for the image upload and the post.
+ * session (one wallet signature per 30 days) for the image upload and the post.
  */
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -42,7 +42,7 @@ export function usePostComposer({ quoteOf, onPosted }: { quoteOf?: number | null
     try {
       setPosting(true);
       const trimmed = body.trim();
-      // One wallet signature opens a 12 h feed session; posts and images then go through without prompts.
+      // One wallet signature opens a 30-day feed session; posts and images then go through without prompts.
       await withSession(async (token) => {
         const mediaUrl = file
           ? await uploadFeedImage({ file, chainId, address: account, walletType: solana ? "solana" : "evm", token })

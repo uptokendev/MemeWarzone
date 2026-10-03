@@ -651,7 +651,7 @@ function hasSessionToken(req) {
 
 async function handleCreate(req, res) {
   const b = req.body && typeof req.body === "object" && Object.keys(req.body).length ? req.body : await readJson(req);
-  // UI redesign (founder, 2026-10-02): a connected wallet signs once per 12 h session instead of every
+  // UI redesign (founder, 2026-10-02): a connected wallet signs once per 30-day session instead of every
   // post. With a session the wallet comes from the session; without one the signed path below is unchanged.
   const session = hasSessionToken(req) ? await feedSession.requireSession(req, res) : null;
   if (hasSessionToken(req) && !session) return;

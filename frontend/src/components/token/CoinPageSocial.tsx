@@ -5,6 +5,7 @@
  */
 import { ItemMenu } from "@/components/moderation/ItemMenu";
 import { useModeration } from "@/hooks/useModeration";
+import { useFeedSession } from "@/hooks/useFeedSession";
 import { PostImage } from "@/components/feed/PostImage";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -104,8 +105,15 @@ export function CoinPostsPanel({
   children,
 }: CoinRef & { name: string; ticker: string; logoUrl?: string | null; children?: ReactNode }) {
   const { data, isLoading, isError } = useCoinPage(chainId, token);
-  const { isOwner, sign } = useCoinOwnerSigner(chainId, data?.owner?.wallet);
+  const { isOwner, sign, viewer } = useCoinOwnerSigner(chainId, data?.owner?.wallet);
   const moderation = useModeration();
+  // Creator updates run on the feed session when its wallet is the owner (one signature per 30 days).
+  const feedSession = useFeedSession();
+  const sessionWallet = String(feedSession.account || "");
+  const ownerSession =
+    isOwner && sessionWallet && (sessionWallet.startsWith("0x") ? sessionWallet.toLowerCase() === viewer.toLowerCase() : sessionWallet === viewer)
+      ? feedSession.withSession
+      : undefined;
   const { createPost, deletePost, uploadImage } = useCoinPageMutations(chainId, token, data?.owner?.token);
   const [text, setText] = useState("");
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
@@ -120,7 +128,7 @@ export function CoinPostsPanel({
     if (!text.trim() || busy) return;
     setBusy("post");
     try {
-      await createPost(sign, { body: text.trim(), mediaUrl, shareToFeed });
+      await createPost(sign, { body: text.trim(), mediaUrl, shareToFeed }, ownerSession);
       setText("");
       setMediaUrl(null);
       toast.success("Posted.");
@@ -135,7 +143,7 @@ export function CoinPostsPanel({
     if (!file) return;
     setBusy("image");
     try {
-      setMediaUrl(await uploadImage(sign, "post", file));
+      setMediaUrl(await uploadImage(sign, "post", file, ownerSession));
     } catch (error: any) {
       toast.error(String(error?.message || "Could not upload the image."));
     } finally {
@@ -147,7 +155,7 @@ export function CoinPostsPanel({
   const remove = async (post: CoinPost) => {
     setBusy(`del:${post.id}`);
     try {
-      await deletePost(sign, post.id);
+      await deletePost(sign, post.id, ownerSession);
       toast.success("Post deleted.");
     } catch (error: any) {
       toast.error(String(error?.message || "Could not delete the post."));

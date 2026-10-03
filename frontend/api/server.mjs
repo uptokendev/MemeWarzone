@@ -208,6 +208,7 @@ import adminArenaImports from "./admin/arenaImports.js";
 import arenaTournaments from "./arenaTournaments.js";
 import abuseSession from "./abuse/session.js";
 import abuseReports from "./abuse/reports.js";
+import abuseInAppReport from "./abuse/inAppReport.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -565,6 +566,7 @@ router.all("/admin/abuse/reports", wrap(adminAbuseReports));
 router.all("/admin/abuse/permissions/revoke", wrap(adminAbusePermissions));
 router.all("/admin/abuse/permissions", wrap(adminAbusePermissions));
 router.all("/abuse/session", wrap(abuseSession));
+router.all("/abuse/in-app-report", wrap(abuseInAppReport));
 router.all("/abuse/reports/:reportId/messages", wrap(abuseReports));
 router.all("/abuse/reports/:reportId/evidence/:evidenceId", wrap(abuseReports));
 router.all("/abuse/reports/:reportId/evidence", wrap(abuseReports));

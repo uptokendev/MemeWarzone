@@ -5,13 +5,14 @@
  *
  *   GET  /api/coin-page?chainId=&token=
  *   POST /api/coin-page/profile            signed coin_page_profile_update
- *   POST /api/coin-page/posts              signed coin_post_create
- *   POST /api/coin-page/posts/:id/delete   signed coin_post_delete
+ *   POST /api/coin-page/posts              signed coin_post_create, or the owner's feed session
+ *   POST /api/coin-page/posts/:id/delete   signed coin_post_delete, or the owner's feed session
  *   POST /api/coin-page/image?…&slot=      multipart, signed coin_page_image (see coinPageImage)
  */
 import { pool } from "../server/db.js";
 import { getQuery, json, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
+import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
 import { coinIdent, coinPageOwner, isSolanaChain } from "./lib/coinPageOwner.js";
 import {
   COIN_POST_RATE,
@@ -144,8 +145,21 @@ async function handleGet(req, res) {
   });
 }
 
-/** Resolves the owner and checks the signature. Returns { owner, verified } or null after replying. */
-async function authorizeOwner(res, body, action, extraLines = []) {
+const feedSession = createFeedSessionAuth({ pool });
+
+function sameWallet(a, b) {
+  const x = String(a || "").trim();
+  const y = String(b || "").trim();
+  if (!x || !y) return false;
+  return x.startsWith("0x") || y.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+/**
+ * Resolves the owner and checks the signature. Returns { owner, verified } or null after replying.
+ * With `req` (creator updates only, founder 2026-10-03) a feed session whose wallet is the owner counts
+ * instead of a signature: one signature per 30 days covers posting. Profile, story and images stay signed.
+ */
+async function authorizeOwner(res, body, action, extraLines = [], req = null) {
   const chainId = Number(body.chainId || 0);
   const token = coinIdent(chainId, body.token);
   if (!chainId || !token) {
@@ -156,6 +170,15 @@ async function authorizeOwner(res, body, action, extraLines = []) {
   if (!owner) {
     json(res, 403, { error: "Only the verified owner of this coin can do this.", code: "COIN_NOT_OWNER" });
     return null;
+  }
+  if (req && /^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""))) {
+    const session = await feedSession.requireSession(req, res);
+    if (!session) return null;
+    if (!sameWallet(session.walletAddress, owner.wallet)) {
+      json(res, 403, { error: "Only the verified owner of this coin can do this.", code: "COIN_NOT_OWNER" });
+      return null;
+    }
+    return { chainId, owner, verified: { walletAddress: owner.wallet } };
   }
   const verified = await requireWalletActionAuth({
     res, pool, auth: body.auth, expectedWallet: owner.wallet, chainId, action,
@@ -210,7 +233,7 @@ async function handlePostCreate(req, res) {
   const body = await readJson(req);
   const checked = validateCoinPostInput(body.post);
   if (!checked.ok) return json(res, 400, { error: checked.error, code: checked.code });
-  const auth = await authorizeOwner(res, body, "coin_post_create");
+  const auth = await authorizeOwner(res, body, "coin_post_create", [], req);
   if (!auth) return;
   const { chainId, owner, verified } = auth;
   const { body: text, media_url, share_to_feed } = checked.values;
@@ -236,7 +259,7 @@ async function handlePostCreate(req, res) {
 async function handlePostDelete(req, res, postId) {
   const body = await readJson(req);
   if (!/^\d{1,18}$/.test(String(postId))) return json(res, 400, { error: "Unknown post", code: "COIN_POST_UNKNOWN" });
-  const auth = await authorizeOwner(res, body, "coin_post_delete", [`PostId: ${postId}`]);
+  const auth = await authorizeOwner(res, body, "coin_post_delete", [`PostId: ${postId}`], req);
   if (!auth) return;
   const { chainId, owner } = auth;
   const { rowCount } = await pool.query(

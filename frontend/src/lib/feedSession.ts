@@ -9,9 +9,16 @@ function sessionKey(walletAddress: string, chainId: number) {
   return `mwz:feed-session:v1:${chainId}:${walletAddress}`;
 }
 
+// The session lasts 30 days on the server (founder, 2026-10-03), so the token is kept in localStorage
+// and survives closing the tab. Tokens from before that sat in sessionStorage and are still read.
 export function readStoredFeedSession(walletAddress: string, chainId: number): string {
+  const key = sessionKey(walletAddress, chainId);
   try {
-    return String(sessionStorage.getItem(sessionKey(walletAddress, chainId)) || "");
+    const stored = localStorage.getItem(key);
+    if (stored) return stored;
+  } catch {}
+  try {
+    return String(sessionStorage.getItem(key) || "");
   } catch {
     return "";
   }
@@ -19,13 +26,21 @@ export function readStoredFeedSession(walletAddress: string, chainId: number): s
 
 export function storeFeedSession(walletAddress: string, chainId: number, token: string) {
   try {
-    sessionStorage.setItem(sessionKey(walletAddress, chainId), token);
-  } catch {}
+    localStorage.setItem(sessionKey(walletAddress, chainId), token);
+  } catch {
+    try {
+      sessionStorage.setItem(sessionKey(walletAddress, chainId), token);
+    } catch {}
+  }
 }
 
 export function clearFeedSession(walletAddress: string, chainId: number) {
+  const key = sessionKey(walletAddress, chainId);
   try {
-    sessionStorage.removeItem(sessionKey(walletAddress, chainId));
+    localStorage.removeItem(key);
+  } catch {}
+  try {
+    sessionStorage.removeItem(key);
   } catch {}
 }
 

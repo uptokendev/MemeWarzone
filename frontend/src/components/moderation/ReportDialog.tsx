@@ -1,10 +1,8 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Modal } from "@/components/ui-v2";
-import { useWallet } from "@/contexts/WalletContext";
 import { useFeedSession } from "@/hooks/useFeedSession";
-import { createAbuseReport, openAbuseSession, readStoredAbuseSession, signAbuseSession, clearAbuseSession } from "@/lib/abuseApi";
-import { signSolanaMessage } from "@/lib/solanaWallet";
+import { createInAppAbuseReport } from "@/lib/abuseApi";
 
 export type ReportTarget = {
   entityType: "post" | "profile";
@@ -22,24 +20,10 @@ const MAX = 1000;
  * in-app report. The reporter follows it in Command Center > Support.
  */
 export function ReportDialog({ open, onClose, target }: { open: boolean; onClose: () => void; target: ReportTarget }) {
-  const { account, chainId } = useFeedSession();
-  const wallet = useWallet() as any;
+  // Runs on the feed session (founder, 2026-10-03): the one signature per 30 days that covers posting.
+  const { account, withSession } = useFeedSession();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-
-  async function session(): Promise<string> {
-    const stored = readStoredAbuseSession(account, chainId);
-    if (stored) return stored;
-    const solana = !account.startsWith("0x");
-    const auth = await signAbuseSession({
-      walletAddress: account,
-      chainId,
-      walletType: solana ? "solana" : "evm",
-      signMessage: solana ? async (message) => (await signSolanaMessage(message, account)).signature : undefined,
-      signer: solana ? undefined : wallet?.signer,
-    });
-    return openAbuseSession({ walletAddress: account, chainId, auth });
-  }
 
   async function send() {
     if (!account) {
@@ -58,15 +42,7 @@ export function ReportDialog({ open, onClose, target }: { open: boolean; onClose
         reportedUrl: target.reportedUrl,
         source: "in_app" as const,
       };
-      let token = await session();
-      try {
-        await createAbuseReport(token, input);
-      } catch (error) {
-        if ((error as { code?: string })?.code !== "ABUSE_SESSION_REQUIRED") throw error;
-        clearAbuseSession(account, chainId);
-        token = await session();
-        await createAbuseReport(token, input);
-      }
+      await withSession((token) => createInAppAbuseReport(token, input));
       toast.success("Report sent. You can follow it in Command Center > Support.");
       setText("");
       onClose();

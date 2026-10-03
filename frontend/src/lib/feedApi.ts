@@ -148,7 +148,7 @@ export async function createFeedPost(input: {
   signature: string;
   mediaUrl?: string | null;
   quoteOf?: number | null;
-  /** Feed session token: the post then needs no nonce or signature (one signature per 12 h). */
+  /** Feed session token: the post then needs no nonce or signature (one signature per 30 days). */
   token?: string;
 }): Promise<{ id: number | null }> {
   const { token, ...payload } = input;

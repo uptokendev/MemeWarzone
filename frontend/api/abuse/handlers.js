@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import formidable from "formidable";
 import fs from "node:fs";
 import { readJson } from "../../server/http.js";
+import { createFeedSessionAuth } from "../lib/feedSessionAuth.js";
 import {
   ABUSE_STATUSES,
   DESCRIPTION_MAX,
@@ -134,10 +135,13 @@ export function createAbuseReporterHandlers({ pool }) {
     return res.status(200).json(opened);
   }
 
-  async function createReport(req, res, actor) {
+  async function createReport(req, res, actor, options = {}) {
     const parsed = parseReportFields(await readJson(req));
     if (parsed.errors.length) {
       return res.status(400).json({ ok: false, error: parsed.errors[0] });
+    }
+    if (options.inAppOnly && !parsed.values.inApp) {
+      return res.status(400).json({ ok: false, error: "Only quick reports on posts and profiles can be sent this way." });
     }
 
     const duplicate = await findOpenDuplicateReport(pool, {
@@ -485,7 +489,25 @@ export function createAbuseReporterHandlers({ pool }) {
     }
   }
 
-  return { session, reports };
+  // Quick report from the "…" menu (founder, 2026-10-03): runs on the feed session, so the one
+  // signature per 30 days that covers posting covers reporting too. Only in-app post and profile
+  // reports; the full abuse desk (other categories, messages, evidence) keeps its own session.
+  const feedSession = createFeedSessionAuth({ pool });
+  async function inAppReport(req, res) {
+    if (String(req.method || "").toUpperCase() !== "POST") return methodNotAllowed(res);
+    const actor = await feedSession.requireSession(req, res);
+    if (!actor) return;
+    try {
+      return await createReport(req, res, actor, { inAppOnly: true });
+    } catch (error) {
+      console.error("[abuse/in-app-report]", error);
+      if (!res.headersSent) {
+        res.status(500).json({ ok: false, error: "Could not send the report." });
+      }
+    }
+  }
+
+  return { session, reports, inAppReport };
 }
 
 export function createAbuseAdminReportReader({ pool }) {

@@ -5,10 +5,12 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { getActiveWalletKind } from "@/lib/activeWalletChain";
 import { isSolanaAddress } from "@/lib/address";
 import { signSolanaMessage } from "@/lib/solanaWallet";
+import { useFeedSession } from "@/hooks/useFeedSession";
 import {
   buildChatSessionMessage,
   fetchWarRoomHistory,
   joinWarRoom,
+  joinWarRoomWithFeedSession,
   sendWarRoomMessage,
   type ChatMessage,
   type ChatSession,
@@ -78,6 +80,7 @@ export function useWarRoom(args: { chainId: number; campaignAddress: string; cre
     return solana || evm;
   }, [isSolanaConnected, solanaAccount, wallet.account]);
   const isSolanaViewer = isSolanaAddress(walletAddress);
+  const feedSession = useFeedSession();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
@@ -183,6 +186,23 @@ useEffect(() => {
 
     setJoining(true);
     try {
+      // One wallet signature per 30 days (founder, 2026-10-03): when the feed session's wallet is this
+      // viewer, the room is joined on that session with no signature of its own.
+      const solanaRoom = Number(args.chainId) === 101 || Number(args.chainId) === 102;
+      if (normalizeViewer(feedSession.account) === walletAddress && solanaRoom === isSolanaViewer) {
+        const viaFeed = await feedSession.withSession((token) =>
+          joinWarRoomWithFeedSession({
+            chainId: args.chainId,
+            campaignAddress: roomAddress,
+            creatorAddress: args.creatorAddress ?? undefined,
+            token,
+          }),
+        );
+        writeStoredSession(args.chainId, roomAddress, walletAddress, viaFeed);
+        setSession(viaFeed);
+        setError(null);
+        return viaFeed;
+      }
       const nonce = await getNonce(args.chainId, walletAddress);
       const msg = buildChatSessionMessage({
         chainId: args.chainId,
@@ -208,7 +228,7 @@ useEffect(() => {
     } finally {
       setJoining(false);
     }
-  }, [args.chainId, args.creatorAddress, isSolanaViewer, roomAddress, wallet.isConnected, wallet.signer, walletAddress]);
+  }, [args.chainId, args.creatorAddress, feedSession, isSolanaViewer, roomAddress, wallet.isConnected, wallet.signer, walletAddress]);
 
   const postMessage = useCallback(async (text: string) => {
     const trimmed = String(text ?? "").trim();

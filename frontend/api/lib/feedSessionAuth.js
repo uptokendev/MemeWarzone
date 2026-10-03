@@ -9,7 +9,11 @@ import {
 
 export { FEED_SESSION_ACTION, FEED_SESSION_SCOPE, createFeedSessionToken, hashFeedSessionToken };
 
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+// One signature covers every social action for 30 days (founder, 2026-10-03): posting, replies,
+// reposts, quotes, rockets, comments (feed, coin, battle), War Room chat, report, block and hide.
+// Actions that tie something to the wallet (username, profile, settings, ownership, payments) keep
+// their own signature.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 function readSessionToken(req) {
   const header = String(req.headers?.authorization || "").trim();
