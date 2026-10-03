@@ -1,8 +1,16 @@
 import { pool } from "../../server/db.js";
+import { publicHiddenWhere } from "../lib/publicHiddenCampaigns.js";
 
 // Current operational analytics never use legacy Solana product chain 102 as a
 // staging selector. Keep it excluded so old rows cannot re-enter current KPIs.
 const CURRENTLY_EXCLUDED_CHAIN_IDS = new Set([97, 102]);
+// Campaigns flagged meta.publicHidden (test coins) are left out of every KPI,
+// with their drafts, creators and trades, the same rule Explore and the leagues
+// use. Address key: Solana base58 keeps its case, EVM is case-insensitive.
+function campaignKeySql(alias, column = "campaign_address") {
+  return `case when ${alias}.chain_id in (101, 102) then ${alias}.${column} else lower(${alias}.${column}) end`;
+}
+
 // Historical 102 records still need Solana case-sensitive address joins while
 // they are being excluded from current operational totals.
 const SOLANA_ADDRESS_FAMILY_CHAIN_IDS = new Set([101, 102]);
@@ -57,7 +65,13 @@ async function chainRows(from, to, selectedChain) {
   }
 
   const result = await pool.query(`
-    with chain_ids as (
+    with hidden as (
+      select h.chain_id, ${campaignKeySql("h")} as campaign_key
+        from public.campaigns h
+       where h.campaign_address is not null
+         and ${publicHiddenWhere("h")}
+    ),
+    chain_ids as (
       select distinct chain_id
         from (
           select chain_id from public.campaign_drafts
@@ -77,8 +91,12 @@ async function chainRows(from, to, selectedChain) {
                  and deployed_at is null
              )::int as drafts_open,
              count(*) filter (where created_at >= $1 and created_at < $2)::int as drafts_created_in_range
-        from public.campaign_drafts
-       where chain_id <> all($3::int[])
+        from public.campaign_drafts cd
+       where cd.chain_id <> all($3::int[])
+         and not exists (
+           select 1 from hidden hx
+            where hx.chain_id = cd.chain_id and hx.campaign_key = ${campaignKeySql("cd")}
+         )
        group by chain_id
     ),
     campaign_counts as (
@@ -99,8 +117,9 @@ async function chainRows(from, to, selectedChain) {
              )::int as graduated,
              count(*) filter (where coalesce(created_at_chain, created_at) >= $1 and coalesce(created_at_chain, created_at) < $2)::int as campaigns_created_in_range,
              count(*) filter (where graduated_at_chain >= $1 and graduated_at_chain < $2)::int as graduated_in_range
-        from public.campaigns
-       where chain_id <> all($3::int[])
+        from public.campaigns cp
+       where cp.chain_id <> all($3::int[])
+         and not ${publicHiddenWhere("cp")}
        group by chain_id
     ),
     imports as (
@@ -121,13 +140,18 @@ async function chainRows(from, to, selectedChain) {
     creators as (
       select chain_id, count(distinct creator)::int as unique_creators
         from (
-          select chain_id, nullif(trim(creator_wallet), '') as creator
-            from public.campaign_drafts
-           where chain_id <> all($3::int[])
+          select cd.chain_id, nullif(trim(cd.creator_wallet), '') as creator
+            from public.campaign_drafts cd
+           where cd.chain_id <> all($3::int[])
+             and not exists (
+               select 1 from hidden hx
+                where hx.chain_id = cd.chain_id and hx.campaign_key = ${campaignKeySql("cd")}
+             )
           union
-          select chain_id, nullif(trim(creator_address), '') as creator
-            from public.campaigns
-           where chain_id <> all($3::int[])
+          select cp.chain_id, nullif(trim(cp.creator_address), '') as creator
+            from public.campaigns cp
+           where cp.chain_id <> all($3::int[])
+             and not ${publicHiddenWhere("cp")}
         ) u
        where creator is not null
        group by chain_id
@@ -143,8 +167,12 @@ async function chainRows(from, to, selectedChain) {
              coalesce(sum(abs(bnb_amount)) filter (where block_time >= now() - interval '24 hours'), 0)::numeric as volume_native_24h,
              coalesce(sum(abs(bnb_amount)), 0)::numeric as volume_native_lifetime,
              greatest(coalesce(sum(case when lower(side) = 'buy' then bnb_amount when lower(side) = 'sell' then -bnb_amount else 0 end), 0), 0)::numeric as bonding_tvl_native
-        from public.curve_trades
-       where chain_id <> all($3::int[])
+        from public.curve_trades ct
+       where ct.chain_id <> all($3::int[])
+         and not exists (
+           select 1 from hidden hx
+            where hx.chain_id = ct.chain_id and hx.campaign_key = ${campaignKeySql("ct")}
+         )
        group by chain_id
     )
     select c.chain_id,
@@ -245,6 +273,13 @@ async function topCampaigns(from, to, selectedChain) {
          or (t.chain_id <> all($4::int[]) and lower(d.campaign_address) = lower(t.campaign_address)))
      where t.block_time >= $1 and t.block_time < $2
        and t.chain_id <> all($3::int[])
+       and not exists (
+         select 1 from public.campaigns h
+          where h.chain_id = t.chain_id
+            and h.campaign_address is not null
+            and ${campaignKeySql("h")} = ${campaignKeySql("t")}
+            and ${publicHiddenWhere("h")}
+       )
        ${selected}
      group by t.chain_id, t.campaign_address
      order by volume_native desc
