@@ -7,6 +7,9 @@ import { ItemMenu } from "@/components/moderation/ItemMenu";
 import { useModeration } from "@/hooks/useModeration";
 import { useFeedSession } from "@/hooks/useFeedSession";
 import { PostImage } from "@/components/feed/PostImage";
+import { FeedPostActions } from "@/components/feed/FeedCards";
+import { feedViewerKey, fetchFeedPost } from "@/lib/feedApi";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ImagePlus, Loader2, Pencil, Pin, Rocket, Swords, Trash2, Trophy, X } from "lucide-react";
@@ -239,6 +242,7 @@ export function CoinPostsPanel({
               {item.kind === "post" && item.mediaUrl ? (
                 <PostImage src={item.mediaUrl} className="mb-3" />
               ) : null}
+              {item.kind === "post" && (item as CoinPost).socialPostId ? <CoinPostActions postId={Number((item as CoinPost).socialPostId)} /> : null}
               {item.kind === "battle" && item.battleId ? (
                 <Link to={`/warzone/battles/${encodeURIComponent(item.battleId)}`} className="mb-3 inline-flex text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">View battle</Link>
               ) : null}
@@ -254,4 +258,17 @@ export function CoinPostsPanel({
       {children}
     </div>
   );
+}
+
+/** Reactions on a creator update (founder, 2026-10-03): its linked post, same action row as the feed. */
+function CoinPostActions({ postId }: { postId: number }) {
+  const { account } = useFeedSession();
+  const viewer = feedViewerKey(account);
+  const { data, refetch } = useQuery({
+    queryKey: ["coin-post-actions", postId, viewer],
+    queryFn: () => fetchFeedPost(postId, viewer),
+    staleTime: 30_000,
+  });
+  if (!data) return null;
+  return <FeedPostActions item={data} onChanged={() => void refetch()} />;
 }

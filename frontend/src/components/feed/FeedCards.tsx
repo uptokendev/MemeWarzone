@@ -570,6 +570,8 @@ export function FeedCoinPostCard({ item }: { item: FeedItem }) {
         </div>
         <FeedBody body={item.body} />
         {item.mediaUrl ? <PostImage src={item.mediaUrl} /> : null}
+        {/* Founder 2026-10-03: creator updates take reactions like any post, through their linked post. */}
+        {item.postId ? <FeedPostActions item={item} /> : null}
       </div>
     </article>
   );

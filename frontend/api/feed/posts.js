@@ -20,6 +20,7 @@ import { AUTHOR_PROFILE_LATERAL, REPOSTER_PROFILE_LATERAL } from "../lib/feedPro
 import { rankFeedPosts } from "../lib/feedRanking.js";
 import { createFeedSessionAuth } from "../lib/feedSessionAuth.js";
 import { loadFollowingAddresses, loadPostEvents } from "../lib/socialTimeline.js";
+import { hasCoinPostLink, notCoinPostSql } from "../lib/coinPostLink.js";
 import { isSolanaAddress, isSolanaChain } from "../../server/http.js";
 import { contractAddressInBody, isOwnFeedImage } from "../lib/feedPostMedia.js";
 import {
@@ -316,7 +317,7 @@ async function queryPosts({ limit, authors, viewer, parentId, ranked }) {
   if (parentId) {
     sql += ` and p.parent_id = $${params.push(parentId)}`;
   } else {
-    sql += " and p.parent_id is null";
+    sql += ` and p.parent_id is null${await notCoinPostSql()}`;
   }
   if (Array.isArray(authors) && authors.length) {
     sql += ` and (p.author_address = any($${params.push(authors)}::text[]) or lower(p.author_address) = any($${params.push(authors.map((w) => w.toLowerCase()))}::text[]))`;
@@ -331,12 +332,13 @@ async function queryPosts({ limit, authors, viewer, parentId, ranked }) {
 
 async function queryFollowing(viewer, following, limit) {
   const params = [viewer, following, following.map((w) => w.toLowerCase()), limit];
+  const shadow = await notCoinPostSql();
   const sql = `
 with own_posts as (
   ${postSelect("$1")}
   ${POST_FROM}
   where p.status = 0
-    and p.parent_id is null
+    and p.parent_id is null${shadow}
     and (p.author_address = any($2::text[]) or lower(p.author_address) = any($3::text[]))
 ),
 reposted as (
@@ -404,7 +406,34 @@ async function loadRecentPosts({ limit, author, authors, viewer, ranked }) {
   }
 }
 
-async function loadSharedCoinPosts(limit, { before = null, authors = null } = {}) {
+// Creator updates take reactions through their linked social_posts row (founder, 2026-10-03): the card
+// gets that row's id (postId) and its counts, so the action row works like on any post.
+async function attachCoinPostEngagement(items, viewer) {
+  if (!items.length || !(await hasCoinPostLink())) return items;
+  const params = [];
+  const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
+  const ids = items.map((item) => item.coinPostId);
+  const { rows } = await pool.query(
+    `${postSelect(viewerSql)}, p.coin_post_id ${POST_FROM} where p.status = 0 and p.coin_post_id = any($${params.push(ids)}::bigint[])`,
+    params,
+  );
+  const byCoinPost = new Map(rows.map((row) => [Number(row.coin_post_id), row]));
+  return items.map((item) => {
+    const row = byCoinPost.get(item.coinPostId);
+    if (!row) return item;
+    return {
+      ...item,
+      postId: Number(row.id),
+      fireCount: Number(row.fire_count || 0),
+      replyCount: Number(row.reply_count || 0),
+      repostCount: Number(row.repost_count || 0),
+      firedByMe: Boolean(row.fired_by_me),
+      repostedByMe: Boolean(row.reposted_by_me),
+    };
+  });
+}
+
+async function loadSharedCoinPosts(limit, { before = null, authors = null, viewer = null } = {}) {
   try {
     const params = [limit];
     const extra = [
@@ -428,7 +457,7 @@ async function loadSharedCoinPosts(limit, { before = null, authors = null } = {}
         limit $1`,
       params,
     );
-    return rows.map((row) => ({
+    const items = rows.map((row) => ({
       type: "coin_post",
       id: `coin_post:${row.id}`,
       coinPostId: Number(row.id),
@@ -446,6 +475,7 @@ async function loadSharedCoinPosts(limit, { before = null, authors = null } = {}
       replyCount: 0,
       repostCount: 0,
     }));
+    return await attachCoinPostEngagement(items, viewer);
   } catch (e) {
     if (missingTable(e)) return [];
     throw e;
@@ -456,7 +486,7 @@ async function loadSharedCoinPosts(limit, { before = null, authors = null } = {}
 async function queryPostsPage({ before, limit, authors, viewer }) {
   const params = [];
   const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
-  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.parent_id is null`;
+  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.parent_id is null${await notCoinPostSql()}`;
   if (before) sql += ` and p.created_at < $${params.push(before)}`;
   if (Array.isArray(authors)) {
     sql += ` and lower(p.author_address) = any($${params.push(authors.map((w) => String(w).toLowerCase()))}::text[])`;
@@ -501,7 +531,7 @@ async function queryRepostsPage({ before, limit, reposters, viewer }) {
 async function loadHotPosts({ limit, offset, authors, viewer }) {
   const params = [];
   const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
-  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.parent_id is null and p.created_at > now() - interval '48 hours'`;
+  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.parent_id is null and p.created_at > now() - interval '48 hours'${await notCoinPostSql()}`;
   if (Array.isArray(authors)) {
     sql += ` and lower(p.author_address) = any($${params.push(authors.map((w) => String(w).toLowerCase()))}::text[])`;
   }
@@ -531,7 +561,7 @@ async function loadTimelinePage({ before, limit, authors, viewer }) {
   const sources = await Promise.all([
     guard(() => queryPostsPage({ before, limit: take, authors, viewer })),
     guard(() => queryRepostsPage({ before, limit: take, reposters: authors, viewer })),
-    loadSharedCoinPosts(take, { before, authors }),
+    loadSharedCoinPosts(take, { before, authors, viewer }),
     loadDeployEvents({ before, limit: take, authors }),
     loadDraftEvents({ before, limit: take, authors }),
     loadGraduationEvents({ before, limit: take, authors }),
