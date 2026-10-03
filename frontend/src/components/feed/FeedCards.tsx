@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PostImage } from "@/components/feed/PostImage";
 import { MentionField } from "@/components/feed/MentionField";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Link, useNavigate } from "react-router-dom";
@@ -486,7 +487,7 @@ export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: 
           <Link to={postHref(item.postId)} className="block text-mw-text hover:text-mw-text">
             <FeedBody body={item.body} />
           </Link>
-          {item.mediaUrl ? <img src={item.mediaUrl} alt="" className="mt-3 max-h-[420px] w-full rounded-[14px] border border-mw-border object-cover" /> : null}
+          {item.mediaUrl ? <PostImage src={item.mediaUrl} /> : null}
           {item.quoted ? <QuotedPost quoted={item.quoted} /> : null}
           {(item.mentionedCampaign || item.mentionedToken || ticker) ? <FeedCoinCard item={item} /> : null}
           {item.postId ? <FeedPostActions item={item} onChanged={onChanged} /> : null}
@@ -513,7 +514,7 @@ export function FeedCoinPostCard({ item }: { item: FeedItem }) {
           <span className="text-sm text-mw-muted">{ticker ? `${ticker} · ` : ""}{timeAgo(item.createdAt)}</span>
         </div>
         <FeedBody body={item.body} />
-        {item.mediaUrl ? <img src={item.mediaUrl} alt="" className="mt-3 max-h-[420px] w-full rounded-[14px] border border-mw-border object-cover" /> : null}
+        {item.mediaUrl ? <PostImage src={item.mediaUrl} /> : null}
       </div>
     </article>
   );

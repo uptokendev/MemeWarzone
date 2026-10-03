@@ -3,6 +3,7 @@
  * query, so the page makes one request per coin, and each falls back to what the page showed before
  * when the owner has not set anything.
  */
+import { PostImage } from "@/components/feed/PostImage";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ImagePlus, Loader2, Pencil, Pin, Rocket, Swords, Trash2, Trophy, X } from "lucide-react";
@@ -218,7 +219,7 @@ export function CoinPostsPanel({
               </div>
               <p className="mb-3 mt-1 whitespace-pre-line break-words text-[15px] text-mw-text">{item.kind === "post" ? item.body : item.text}</p>
               {item.kind === "post" && item.mediaUrl ? (
-                <img src={item.mediaUrl} alt="" className="mb-3 max-h-[420px] w-full rounded-xl border border-mw-border object-cover" loading="lazy" />
+                <PostImage src={item.mediaUrl} className="mb-3" />
               ) : null}
               {item.kind === "battle" && item.battleId ? (
                 <Link to={`/warzone/battles/${encodeURIComponent(item.battleId)}`} className="mb-3 inline-flex text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">View battle</Link>
