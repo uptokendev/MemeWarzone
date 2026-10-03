@@ -32,7 +32,8 @@ test("CREATE persists canonical generation, environment, cluster, duration, spon
     assert.match(migration, new RegExp(token));
   }
   assert.match(helper, /Battle Tournament round duration must be exactly 12 or 24 hours/);
-  assert.match(helper, /Vote Tournament round duration must be exactly 24 hours/);
+  assert.match(helper, /Vote Tournament round duration must be a whole number of hours from \$\{VOTE_TOURNAMENT_MIN_ROUND_HOURS\} to \$\{VOTE_TOURNAMENT_MAX_ROUND_HOURS\}/);
+  assert.doesNotMatch(helper, /exactly 24 hours/);
 });
 
 test("CREATE and EDIT write the scoring path and generation the runtime requires per kind", () => {

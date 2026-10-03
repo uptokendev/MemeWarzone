@@ -1,6 +1,6 @@
 import { beginFinalSalvo, closeFinalSalvoShot } from "./arenaFinalSalvoRuntime.mjs";
 import { advanceVoteTournamentBracket } from "./arenaVoteTournamentBracketService.js";
-import { resolveTournamentVoteMatch } from "./arenaTournamentVoteRuntime.mjs";
+import { isVoteTournamentRoundHours, resolveTournamentVoteMatch } from "./arenaTournamentVoteRuntime.mjs";
 import { VOTE_BATTLE_ROUND_NUMBER, isStandaloneVoteBattle } from "./arenaBattleMode.js";
 import { decideVoteBattleSettlement, settleVoteBattle } from "./arenaVoteBattleSettlement.js";
 
@@ -241,7 +241,7 @@ export async function finalizeDueVoteTournamentBattle(pool, battleId, now = new 
       if (
         !tournament ||
         tournament.status !== "live" ||
-        Number(tournament.round_duration_hours) !== 24 ||
+        !isVoteTournamentRoundHours(tournament.round_duration_hours) ||
         !authoritativeVoteGeneration(tournament)
       ) {
         await client.query("rollback");

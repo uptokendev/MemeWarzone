@@ -5,6 +5,11 @@ import { isAddress, isSolanaAddress, json, readJson } from "../../server/http.js
 import { requireAdminOrOps } from "./apiAuth.js";
 import { isSolanaChainId, nativeSymbolFor } from "./chainNative.js";
 import { optionalChainId } from "./arenaTournamentChainIdentity.js";
+import {
+  isVoteTournamentRoundHours,
+  VOTE_TOURNAMENT_MAX_ROUND_HOURS,
+  VOTE_TOURNAMENT_MIN_ROUND_HOURS,
+} from "./arenaTournamentVoteRuntime.mjs";
 
 const REGISTRATION_MODES = new Set(["open", "invite_only", "invite_plus_open"]);
 const REGISTRATION_STATES = new Set(["pending", "open", "closed"]);
@@ -22,10 +27,10 @@ const KIND_GENERATION = Object.freeze({
   vote: Object.freeze({ contestScoringVersion: "vote_tournament_v1", competitionGeneration: "arena_competition_v2" }),
 });
 
-// The Vote runtime runs regulation on exactly 24h: arenaVoteTournamentBracketService,
-// arenaVoteTournamentFinalizationService, arenaTournamentVoteRuntime and the Solana
-// boost routes all refuse any other round_duration_hours.
-export const VOTE_TOURNAMENT_ROUND_HOURS = 24;
+// Vote Tournament rounds: whole hours from 1 to 48 (default 24). The vote runtime
+// (match resolver, bracket service, finalizer, Final Salvo finalizer) accepts the
+// same range through isVoteTournamentRoundHours.
+export const VOTE_TOURNAMENT_DEFAULT_ROUND_HOURS = 24;
 
 function text(value) {
   return String(value ?? "").trim();
@@ -78,7 +83,7 @@ export function tournamentGenerationForKind(kind) {
 
 export function normalizeRoundDuration(kind, value) {
   if (value == null || value === "") {
-    if (kind === "vote") return VOTE_TOURNAMENT_ROUND_HOURS;
+    if (kind === "vote") return VOTE_TOURNAMENT_DEFAULT_ROUND_HOURS;
     throw new Error("Battle Tournament round duration must be exactly 12 or 24 hours");
   }
   const hours = Number(value);
@@ -86,8 +91,8 @@ export function normalizeRoundDuration(kind, value) {
     if (hours !== 12 && hours !== 24) throw new Error("Battle Tournament round duration must be exactly 12 or 24 hours");
     return hours;
   }
-  if (hours !== VOTE_TOURNAMENT_ROUND_HOURS) {
-    throw new Error("Vote Tournament round duration must be exactly 24 hours; the Vote runtime and Final Salvo only run 24h regulation");
+  if (!isVoteTournamentRoundHours(hours)) {
+    throw new Error(`Vote Tournament round duration must be a whole number of hours from ${VOTE_TOURNAMENT_MIN_ROUND_HOURS} to ${VOTE_TOURNAMENT_MAX_ROUND_HOURS}`);
   }
   return hours;
 }

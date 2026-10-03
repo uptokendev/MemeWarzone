@@ -51,6 +51,7 @@ function call(handler, { method, path, body }) {
 }
 
 const hour = 3_600_000;
+const randomVoterSuffix = () => Array.from({ length: 40 }, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join("");
 const iso = (offsetMs) => new Date(Date.now() + offsetMs).toISOString();
 
 test("Tournament builder: create, invites, edit lock, scoped removal, vote start", { skip }, async (t) => {
@@ -60,6 +61,8 @@ test("Tournament builder: create, invites, edit lock, scoped removal, vote start
   const created = [];
   t.after(async () => {
     if (created.length) {
+      await pool.query("delete from public.arena_contest_actions where tournament_id = any($1::text[])", [created]);
+      await pool.query("delete from public.arena_vote_tiebreaks where battle_id in (select id from public.arena_battles where tournament_id = any($1::text[]))", [created]).catch(() => {});
       await pool.query("delete from public.arena_battles where tournament_id = any($1::text[])", [created]);
       await pool.query("delete from public.arena_tournaments where id = any($1::text[])", [created]);
     }
@@ -97,12 +100,14 @@ test("Tournament builder: create, invites, edit lock, scoped removal, vote start
     assert.ok(res.body.invites.every((i) => i.status === "pending"));
   });
 
-  await t.test("vote create needs 24h and lands on the vote runtime generation", async () => {
-    const bad = await route("POST", "/api/admin/arena/tournaments", {
-      ...base, name: "Vote 12h", chainId: 101, environment: "staging", kind: "vote", roundDurationHours: 12,
-    });
-    assert.equal(bad.status, 400);
-    assert.match(bad.body.error, /exactly 24 hours/);
+  await t.test("vote create takes 1..48 whole hours and lands on the vote runtime generation", async () => {
+    for (const hours of [0, 49, 1.5, -1]) {
+      const bad = await route("POST", "/api/admin/arena/tournaments", {
+        ...base, name: `Vote ${hours}h`, chainId: 101, environment: "staging", kind: "vote", roundDurationHours: hours,
+      });
+      assert.equal(bad.status, 400, `${hours}h accepted`);
+      assert.match(bad.body.error, /whole number of hours from 1 to 48/);
+    }
     const res = await route("POST", "/api/admin/arena/tournaments", {
       ...base, name: "Vote SOL devnet", chainId: 101, environment: "staging", kind: "vote", roundDurationHours: 24,
       registrationMode: "invite_plus_open", invites: [{ tokenAddress: SOL_MINT_A }],
@@ -154,6 +159,11 @@ test("Tournament builder: create, invites, edit lock, scoped removal, vote start
 
   await t.test("edit persists every builder field but never switches environment/cluster", async () => {
     const id = created[1];
+    const tooLong = await route("PATCH", `/api/admin/arena/tournaments/${id}`, { roundDurationHours: 49 });
+    assert.equal(tooLong.status, 400);
+    const longest = await route("PATCH", `/api/admin/arena/tournaments/${id}`, { roundDurationHours: 48 });
+    assert.equal(longest.status, 200, JSON.stringify(longest.body));
+    assert.equal(longest.body.tournament.roundDurationHours, 48);
     const locked = await route("PATCH", `/api/admin/arena/tournaments/${id}`, { environment: "production", solanaCluster: "mainnet-beta" });
     assert.equal(locked.status, 400);
     assert.match(locked.body.error, /locked/);
@@ -212,52 +222,80 @@ test("Tournament builder: create, invites, edit lock, scoped removal, vote start
     assert.equal(single.status, 200, JSON.stringify(single.body));
   });
 
-  await t.test("vote tournament START builds 24h vote battles the vote runtime accepts", async () => {
-    const res = await route("POST", "/api/admin/arena/tournaments", {
-      ...base, name: "Vote BNB staging start", chainId: 97, environment: "staging", kind: "vote", registrationMode: "open",
-    });
-    assert.equal(res.status, 201, JSON.stringify(res.body));
-    const id = res.body.tournament.id;
-    created.push(id);
-    // The certified gate schema carries only the campaigns columns the Arena
-    // migrations reference. START reads coin metadata from the launchpad
-    // columns; add them (no-op on a full launchpad schema).
-    await pool.query(`alter table public.campaigns
+  // The certified gate schema carries only the campaigns columns the Arena
+  // migrations reference. START reads coin metadata from the launchpad
+  // columns; add them (no-op on a full launchpad schema).
+  const ensureCampaignColumns = () => pool.query(`alter table public.campaigns
       add column if not exists name text, add column if not exists symbol text,
       add column if not exists creator_address text, add column if not exists created_at timestamptz,
       add column if not exists graduated_at_chain timestamptz, add column if not exists fee_recipient_address text,
       add column if not exists created_block bigint`);
-    const tokens = ["0x1000000000000000000000000000000000000001", "0x1000000000000000000000000000000000000002",
-      "0x1000000000000000000000000000000000000003", "0x1000000000000000000000000000000000000004"];
-    for (const token of tokens) {
+
+  for (const hours of [24, 1, 48]) {
+    await t.test(`vote tournament START with ${hours}h rounds builds battles the vote runtime accepts and settles at the right end`, async () => {
+      const res = await route("POST", "/api/admin/arena/tournaments", {
+        ...base, name: `Vote BNB staging ${hours}h`, chainId: 97, environment: "staging", kind: "vote", registrationMode: "open",
+        roundDurationHours: hours,
+      });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      const id = res.body.tournament.id;
+      created.push(id);
+      await ensureCampaignColumns();
+      const tokens = [1, 2, 3, 4].map((n) => `0x${String(hours).padStart(2, "0")}${"0".repeat(37)}${n}`);
+      for (const token of tokens) {
+        await pool.query(
+          "insert into public.arena_tournament_entries (tournament_id, token_address, owner_wallet, buy_in_intent) values ($1,$2,$3,true)",
+          [id, token, EVM_WALLET],
+        );
+      }
+      const closed = await route("POST", `/api/admin/arena/tournaments/${id}/registration/close`, {});
+      assert.equal(closed.status, 200, JSON.stringify(closed.body));
+      const started = await route("POST", `/api/admin/arena/tournaments/${id}/start?chainId=97`, {});
+      assert.equal(started.status, 200, JSON.stringify(started.body));
+      const battles = (await pool.query(
+        `select id, battle_mode, contest_scoring_version, competition_generation, ends_at,
+                extract(epoch from ends_at - started_at)::int as seconds
+           from public.arena_battles where tournament_id = $1`,
+        [id],
+      )).rows;
+      assert.equal(battles.length, 2);
+      for (const battle of battles) {
+        assert.equal(battle.battle_mode, "vote");
+        assert.equal(battle.contest_scoring_version, "vote_tournament_v1");
+        assert.equal(battle.competition_generation, "arena_competition_v2");
+        assert.equal(battle.seconds, hours * 3600);
+      }
+      const { resolveTournamentVoteMatch } = await import("./lib/arenaTournamentVoteRuntime.mjs");
+      const live = (await pool.query("select * from public.arena_tournaments where id = $1", [id])).rows[0];
+      const firstMatch = live.bracket.rounds[0].matches[0];
+      const match = resolveTournamentVoteMatch({ tournament: live, matchRef: firstMatch.battleId });
+      assert.equal(match.ok, true, JSON.stringify(match));
+
+      // One confirmed free vote for the left coin, then finalize around the battle's own end time.
       await pool.query(
-        "insert into public.arena_tournament_entries (tournament_id, token_address, owner_wallet, buy_in_intent) values ($1,$2,$3,true)",
-        [id, token, EVM_WALLET],
+        `insert into public.arena_contest_actions (
+           chain_id, tournament_id, match_id, battle_id, round_number, phase, salvo_index,
+           side, wallet, action_type, boost_units, points,
+           gross_native_raw, pool_native_raw, protocol_native_raw, confirmed_at
+         ) values ($1,$2,$3,$4,$5,'regulation',null,'left',$6,'free_vote',0,1,0,0,0,now())`,
+        // Unique voter per tournament: the free-vote unique index keys on (match_id, round, phase, wallet)
+        // without tournament_id, and every tournament's first match is "m1".
+        [97, id, match.matchId, match.battleId, match.roundNumber, `0x${randomVoterSuffix()}`],
       );
-    }
-    const closed = await route("POST", `/api/admin/arena/tournaments/${id}/registration/close`, {});
-    assert.equal(closed.status, 200, JSON.stringify(closed.body));
-    const started = await route("POST", `/api/admin/arena/tournaments/${id}/start?chainId=97`, {});
-    assert.equal(started.status, 200, JSON.stringify(started.body));
-    const battles = (await pool.query(
-      `select battle_mode, contest_scoring_version, competition_generation, extract(epoch from ends_at - started_at)::int as seconds
-         from public.arena_battles where tournament_id = $1`,
-      [id],
-    )).rows;
-    assert.equal(battles.length, 2);
-    for (const battle of battles) {
-      assert.equal(battle.battle_mode, "vote");
-      assert.equal(battle.contest_scoring_version, "vote_tournament_v1");
-      assert.equal(battle.competition_generation, "arena_competition_v2");
-      assert.equal(battle.seconds, 24 * 3600);
-    }
-    const { resolveTournamentVoteMatch } = await import("./lib/arenaTournamentVoteRuntime.mjs");
-    const live = (await pool.query("select * from public.arena_tournaments where id = $1", [id])).rows[0];
-    const firstBattle = live.bracket.rounds[0].matches[0].battleId;
-    const match = resolveTournamentVoteMatch({ tournament: live, matchRef: firstBattle });
-    assert.equal(match.ok, true, JSON.stringify(match));
-    const afterLive = await route("POST", `/api/admin/arena/tournaments/${id}/invites`, { invites: [EVM_TOKEN_C] });
-    assert.equal(afterLive.status, 409);
-    assert.equal(afterLive.body.code, "TOURNAMENT_NOT_UPCOMING");
-  });
+      const { finalizeDueVoteTournamentBattle } = await import("./lib/arenaVoteTournamentFinalizationService.js");
+      const endsAt = new Date(battles.find((b) => b.id === match.battleId).ends_at).getTime();
+      const early = await finalizeDueVoteTournamentBattle(pool, match.battleId, new Date(endsAt - 1000));
+      assert.equal(early.settled, false);
+      assert.equal(early.reason, "regulation-still-live");
+      const due = await finalizeDueVoteTournamentBattle(pool, match.battleId, new Date(endsAt + 1000));
+      assert.equal(due.settled, true, JSON.stringify(due));
+      assert.equal(due.winnerToken.toLowerCase(), match.tokenA.toLowerCase());
+      const advanced = (await pool.query("select bracket from public.arena_tournaments where id = $1", [id])).rows[0];
+      assert.equal(advanced.bracket.rounds[0].matches[0].winner.toLowerCase(), match.tokenA.toLowerCase());
+
+      const afterLive = await route("POST", `/api/admin/arena/tournaments/${id}/invites`, { invites: [EVM_TOKEN_C] });
+      assert.equal(afterLive.status, 409);
+      assert.equal(afterLive.body.code, "TOURNAMENT_NOT_UPCOMING");
+    });
+  }
 });
