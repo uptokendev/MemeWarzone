@@ -117,18 +117,20 @@ async function upsertPlacement(req, res) {
     clean(body.packageCode, 80) || null,
     body.packageDurationDays != null ? Number(body.packageDurationDays) : null,
     body.packagePriceUsd != null ? Number(body.packagePriceUsd) : null,
+    // Home top row banner (CO-21, column from migration 20261003_000003).
+    clean(body.bannerUrl, 2000) || null,
   ];
   const result = await pool.query(
     `insert into public.sponsored_placements (
        id, application_id, chain_id, campaign_address, token_address, creator_address,
        project_name, symbol, image_url, bio, website_url, target_url, project_type,
        placement_label, slot_code, priority, active, payment_status, starts_at, ends_at, admin_notes,
-       package_code, package_duration_days, package_price_usd
+       package_code, package_duration_days, package_price_usd, banner_url
      ) values (
        coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6,
        $7, $8, $9, $10, $11, $12, $13,
        $14, $15, $16, $17, $18, $19, $20, $21,
-       $22, $23, $24
+       $22, $23, $24, $25
      )
      on conflict (id) do update set
        application_id = excluded.application_id,
@@ -154,6 +156,7 @@ async function upsertPlacement(req, res) {
        package_code = excluded.package_code,
        package_duration_days = excluded.package_duration_days,
        package_price_usd = excluded.package_price_usd,
+       banner_url = excluded.banner_url,
        paused_at = case when excluded.active then null else now() end,
        updated_at = now()
      returning *`,
@@ -185,6 +188,7 @@ async function patchPlacement(req, res) {
             ends_at = coalesce($12::timestamptz, ends_at),
             active = coalesce($13::boolean, active),
             payment_status = coalesce($14, payment_status),
+            banner_url = case when $15::boolean then $16 else banner_url end,
             paused_at = case
               when $13::boolean is true then null
               when $13::boolean is false then now()
@@ -208,6 +212,8 @@ async function patchPlacement(req, res) {
       iso(body.endsAt),
       body.active == null ? null : Boolean(body.active),
       paymentStatus,
+      Object.prototype.hasOwnProperty.call(body, "bannerUrl"),
+      body.bannerUrl != null ? clean(body.bannerUrl, 2000) || null : null,
     ],
   );
   if (!result.rows[0]) return json(res, 404, { error: "placement not found" });
