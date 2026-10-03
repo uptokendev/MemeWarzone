@@ -903,9 +903,15 @@ export default function PublicProfile({
           </div>
           <div className="flex flex-wrap items-center gap-2 md:pb-1">
             {isOwnProfile ? (
-              <button type="button" onClick={() => navigate("/profile")} className={accentButton}>
-                Open Command Center
-              </button>
+              <>
+                {/* Founder 2026-10-03: a grey Edit straight to Command Center > Edit profile. */}
+                <button type="button" onClick={() => navigate(`/profile/${encodeURIComponent(profileWallet)}/command/edit-profile`)} className={cp.btn} data-profile-edit="true">
+                  Edit
+                </button>
+                <button type="button" onClick={() => navigate("/profile")} className={accentButton}>
+                  Open Command Center
+                </button>
+              </>
             ) : (
               <>
                 <button type="button" onClick={() => void handleToggleFollow()} disabled={followBusy} className={isFollowing ? cp.btn : accentButton}>
