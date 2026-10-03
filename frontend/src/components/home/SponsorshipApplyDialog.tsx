@@ -16,10 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/apiBase";
 import {
-  FEATURED_SPONSOR_CREATIVE_H,
-  FEATURED_SPONSOR_CREATIVE_W,
-  FEATURED_SPONSOR_DIMENSIONS_COPY,
   fetchSponsorshipPackages,
+  sponsorCreativeSpec,
   formatPackagePrice,
   uploadSponsorCreative,
   type SponsorshipPackage,
@@ -177,8 +175,8 @@ export function SponsorshipApplyDialog({
           </label>
 
           <div className="space-y-2 rounded-[14px] border border-mw-border bg-mw-input p-3.5">
-            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Featured creative</div>
-            <p className="text-sm leading-relaxed text-mw-muted">{FEATURED_SPONSOR_DIMENSIONS_COPY}</p>
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{sponsorCreativeSpec(defaultSlot).label}</div>
+            <p className="text-sm leading-relaxed text-mw-muted">{sponsorCreativeSpec(defaultSlot).copy}</p>
             <input
               ref={fileRef}
               type="file"
@@ -199,7 +197,7 @@ export function SponsorshipApplyDialog({
                 {uploading ? "Uploading…" : form.imageUrl ? "Replace image" : "Upload image"}
               </Button>
               <span className="text-xs text-mw-muted">
-                {FEATURED_SPONSOR_CREATIVE_W}×{FEATURED_SPONSOR_CREATIVE_H}px recommended
+                {sponsorCreativeSpec(defaultSlot).uploadW}×{sponsorCreativeSpec(defaultSlot).uploadH}px recommended
               </span>
             </div>
             {form.imageUrl ? (

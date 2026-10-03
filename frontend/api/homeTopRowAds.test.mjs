@@ -52,3 +52,14 @@ test("migration: slot_code + banner_url columns, ad row placeholder packages tha
   assert.match(migration, /'htr-w1', '1 week',\s+7,\s+49\.00, 20, 'home-top-row'/);
   assert.doesNotMatch(migration.split("on conflict (code) do update set")[1], /price_usd/);
 });
+
+test("apply form and dialog show the image size of the chosen slot (CO-21)", async () => {
+  const creative = await readFile(new URL("../src/lib/sponsorCreative.ts", import.meta.url), "utf8");
+  const page = await readFile(new URL("../src/pages/SponsorshipApplication.tsx", import.meta.url), "utf8");
+  const dialog = await readFile(new URL("../src/components/home/SponsorshipApplyDialog.tsx", import.meta.url), "utf8");
+  assert.match(creative, /FEATURED_SPONSOR_CREATIVE_W = 600;[\s\S]*FEATURED_SPONSOR_CREATIVE_H = 488;/, "redesign Featured card 300x244 at 2x");
+  assert.match(creative, /uploadW: 480,\s*uploadH: 180,/, "Home top row banner 8:3 at 2x");
+  assert.match(page, /const creativeSpec = sponsorCreativeSpec\(form\.preferredSlot\)/);
+  assert.match(page, /\{creativeSpec\.copy\}/);
+  assert.match(dialog, /sponsorCreativeSpec\(defaultSlot\)\.copy/);
+});

@@ -9,9 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/apiBase";
 import { analytics, analyticsErrorCode } from "@/lib/analytics/ProductAnalytics";
 import {
-  FEATURED_SPONSOR_CREATIVE_H,
-  FEATURED_SPONSOR_CREATIVE_W,
-  FEATURED_SPONSOR_DIMENSIONS_COPY,
+  sponsorCreativeSpec,
   fetchSponsorshipPackages,
   formatPackagePrice,
   uploadSponsorCreative,
@@ -131,6 +129,8 @@ const SponsorshipApplication = () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(form));
   }, [form]);
 
+  // The size hint follows the chosen slot (Featured card or Home top row banner).
+  const creativeSpec = sponsorCreativeSpec(form.preferredSlot);
   const slotDetail = useMemo(
     () => slotOptions.find((option) => option.value === form.preferredSlot)?.detail ?? "",
     [form.preferredSlot],
@@ -258,8 +258,8 @@ const SponsorshipApplication = () => {
               <Input value={form.websiteUrl} onChange={(event) => update("websiteUrl", event.target.value)} className={inputClass()} placeholder="https://project.xyz" />
             </label>
             <div className="space-y-2 rounded-[10px] border border-[#7A3A0C] bg-[#2A1609] p-3 font-mw-body md:col-span-2">
-              <span className="block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-accent-soft">Featured creative upload</span>
-              <p className="text-[13px] leading-relaxed text-[#E8D5C4]">{FEATURED_SPONSOR_DIMENSIONS_COPY}</p>
+              <span className="block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-accent-soft">{creativeSpec.label} upload</span>
+              <p className="text-[13px] leading-relaxed text-[#E8D5C4]">{creativeSpec.copy}</p>
               <input
                 ref={fileRef}
                 type="file"
@@ -273,7 +273,7 @@ const SponsorshipApplication = () => {
                   {uploading ? "Uploading…" : form.imageUrl ? "Replace image" : "Upload image"}
                 </button>
                 <span className="font-mw-mono text-xs text-mw-muted">
-                  {FEATURED_SPONSOR_CREATIVE_W}×{FEATURED_SPONSOR_CREATIVE_H}px (2× display {392}×{150})
+                  {creativeSpec.uploadW}×{creativeSpec.uploadH}px (2× display {creativeSpec.displayW}×{creativeSpec.displayH})
                 </span>
               </div>
               {form.imageUrl ? (
