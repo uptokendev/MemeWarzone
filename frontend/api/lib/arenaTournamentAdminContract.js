@@ -1,15 +1,36 @@
 import { randomBytes } from "crypto";
 
 import { pool } from "../../server/db.js";
-import { json, readJson } from "../../server/http.js";
+import { isAddress, isSolanaAddress, json, readJson } from "../../server/http.js";
 import { requireAdminOrOps } from "./apiAuth.js";
-import { nativeSymbolFor } from "./chainNative.js";
+import { isSolanaChainId, nativeSymbolFor } from "./chainNative.js";
 import { optionalChainId } from "./arenaTournamentChainIdentity.js";
+import {
+  isVoteTournamentRoundHours,
+  VOTE_TOURNAMENT_MAX_ROUND_HOURS,
+  VOTE_TOURNAMENT_MIN_ROUND_HOURS,
+} from "./arenaTournamentVoteRuntime.mjs";
 
 const REGISTRATION_MODES = new Set(["open", "invite_only", "invite_plus_open"]);
 const REGISTRATION_STATES = new Set(["pending", "open", "closed"]);
 const START_MODES = new Set(["manual", "scheduled"]);
 const ENVIRONMENTS = new Set(["staging", "production"]);
+const MAX_INVITES_PER_REQUEST = 256;
+
+// Scoring path and competition generation are fixed by the Tournament kind.
+// contest_scoring_version is NOT NULL without a default (20260903_000104), so a
+// create that omits it never reaches the table. Both kinds run on Arena
+// competition V2: the Vote runtime (finalizer, bracket service, boosts) refuses
+// anything else, and Battle Points V3 / Tournament buy-in V2 / boosts require it.
+const KIND_GENERATION = Object.freeze({
+  battle: Object.freeze({ contestScoringVersion: "battle_points_v3", competitionGeneration: "arena_competition_v2" }),
+  vote: Object.freeze({ contestScoringVersion: "vote_tournament_v1", competitionGeneration: "arena_competition_v2" }),
+});
+
+// Vote Tournament rounds: whole hours from 1 to 48 (default 24). The vote runtime
+// (match resolver, bracket service, finalizer, Final Salvo finalizer) accepts the
+// same range through isVoteTournamentRoundHours.
+export const VOTE_TOURNAMENT_DEFAULT_ROUND_HOURS = 24;
 
 function text(value) {
   return String(value ?? "").trim();
@@ -54,15 +75,106 @@ function normalizeTournamentKind(body) {
   throw new Error("kind/tournament_type must be battle or vote");
 }
 
+export function tournamentGenerationForKind(kind) {
+  const generation = KIND_GENERATION[kind];
+  if (!generation) throw new Error("kind/tournament_type must be battle or vote");
+  return generation;
+}
+
 export function normalizeRoundDuration(kind, value) {
-  if (value == null || value === "") return kind === "vote" ? 24 : null;
+  if (value == null || value === "") {
+    if (kind === "vote") return VOTE_TOURNAMENT_DEFAULT_ROUND_HOURS;
+    throw new Error("Battle Tournament round duration must be exactly 12 or 24 hours");
+  }
   const hours = Number(value);
   if (kind === "battle") {
     if (hours !== 12 && hours !== 24) throw new Error("Battle Tournament round duration must be exactly 12 or 24 hours");
     return hours;
   }
-  if (!Number.isInteger(hours) || hours < 1) throw new Error("Vote Tournament round duration must be an integer of at least 1 hour");
+  if (!isVoteTournamentRoundHours(hours)) {
+    throw new Error(`Vote Tournament round duration must be a whole number of hours from ${VOTE_TOURNAMENT_MIN_ROUND_HOURS} to ${VOTE_TOURNAMENT_MAX_ROUND_HOURS}`);
+  }
   return hours;
+}
+
+/**
+ * A coin or wallet address in the Tournament chain's own format. EVM addresses
+ * are stored lowercased, the same form public opt-in stores entries in
+ * (normalizeWalletFlexible), so the (tournament_id, token_address) unique key
+ * cannot hold two case variants of one coin. Solana base58 is case-sensitive and
+ * is kept exactly.
+ */
+export function normalizeTournamentAddress(chainId, value, field) {
+  const raw = text(value);
+  if (isSolanaChainId(chainId)) {
+    if (!isSolanaAddress(raw)) throw new Error(`${field} must be a Solana base58 address`);
+    return raw;
+  }
+  if (!isAddress(raw)) throw new Error(`${field} must be a 0x-prefixed 40-hex EVM address`);
+  return raw.toLowerCase();
+}
+
+export function normalizeInviteList(chainId, list) {
+  if (list == null) return [];
+  if (!Array.isArray(list)) throw new Error("invites must be an array of { tokenAddress, ownerWallet? }");
+  if (list.length > MAX_INVITES_PER_REQUEST) throw new Error(`At most ${MAX_INVITES_PER_REQUEST} invites per request`);
+  const byToken = new Map();
+  for (const item of list) {
+    const isString = typeof item === "string";
+    const tokenAddress = normalizeTournamentAddress(chainId, isString ? item : item?.tokenAddress ?? item?.token_address, "Invite token address");
+    const ownerRaw = isString ? "" : text(item?.ownerWallet ?? item?.owner_wallet);
+    const ownerWallet = ownerRaw ? normalizeTournamentAddress(chainId, ownerRaw, "Invite owner wallet") : null;
+    if (!byToken.has(tokenAddress)) byToken.set(tokenAddress, { tokenAddress, ownerWallet });
+  }
+  return [...byToken.values()];
+}
+
+function tokenMatchSql(chainId, column, param) {
+  return isSolanaChainId(chainId) ? `${column} = ${param}` : `lower(${column}) = lower(${param})`;
+}
+
+/**
+ * Upsert invites inside the caller's transaction. A re-invite of a declined or
+ * expired coin goes back to pending; an accepted invite keeps its status. Legacy
+ * rows written before addresses were normalized are matched case-insensitively
+ * on EVM so they are updated instead of duplicated.
+ */
+async function upsertInvites(db, tournamentId, chainId, invites) {
+  for (const invite of invites) {
+    const updated = await db.query(
+      `update public.arena_tournament_invites
+          set owner_wallet = coalesce($3, owner_wallet),
+              status = case when status in ('declined', 'expired') then 'pending' else status end,
+              updated_at = now()
+        where tournament_id = $1 and ${tokenMatchSql(chainId, "token_address", "$2")}
+        returning id`,
+      [tournamentId, invite.tokenAddress, invite.ownerWallet],
+    );
+    if (updated.rows[0]) continue;
+    await db.query(
+      `insert into public.arena_tournament_invites (tournament_id, token_address, owner_wallet)
+       values ($1,$2,$3)
+       on conflict (tournament_id, token_address) do nothing`,
+      [tournamentId, invite.tokenAddress, invite.ownerWallet],
+    );
+  }
+}
+
+async function listAdminInvites(db, tournamentId) {
+  const result = await db.query(
+    `select token_address, owner_wallet, status, created_at, updated_at
+       from public.arena_tournament_invites
+      where tournament_id = $1
+      order by created_at asc, token_address asc`,
+    [tournamentId],
+  );
+  return result.rows.map((row) => ({
+    tokenAddress: String(row.token_address),
+    ownerWallet: row.owner_wallet || null,
+    status: String(row.status || "pending"),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  }));
 }
 
 export function normalizeEnvironment(chainId, body) {
@@ -129,6 +241,12 @@ function adminItem(row, participantCount = 0) {
     kind: row.tournament_type === "vote" || row.battle_mode === "vote" ? "vote" : row.tournament_type === "battle" || row.battle_mode === "normal" ? "battle" : "unknown",
     tournament_type: row.tournament_type || null,
     battle_mode: row.battle_mode || null,
+    origin: row.origin || null,
+    contestScoringVersion: row.contest_scoring_version || null,
+    contest_scoring_version: row.contest_scoring_version || null,
+    competitionGeneration: row.competition_generation || null,
+    competition_generation: row.competition_generation || null,
+    adminContractVersion: row.admin_contract_version == null ? null : Number(row.admin_contract_version),
     participantCount,
     cap: Number(row.cap || 0),
     buyInNative: Number(row.buy_in_native || 0),
@@ -198,6 +316,9 @@ export async function handleTournamentAdminCreate(req, res) {
   const parsed = await readAdminBody(req, res);
   if (!parsed.ok) return true;
   const body = parsed.body;
+  let values;
+  let invites;
+  let id;
   try {
     const name = text(body.name);
     if (!name) throw new Error("name is required");
@@ -205,6 +326,7 @@ export async function handleTournamentAdminCreate(req, res) {
     if (chainId == null) throw new Error("chainId is required");
     const env = normalizeEnvironment(chainId, body);
     const kind = normalizeTournamentKind(body);
+    const generation = tournamentGenerationForKind(kind.tournamentType);
     const cap = parseExactBracketCap(body.cap);
     const registrationMode = text(bodyValue(body, "registrationMode", "registration_mode") || "open");
     if (!REGISTRATION_MODES.has(registrationMode)) throw new Error("Invalid registrationMode");
@@ -218,35 +340,49 @@ export async function handleTournamentAdminCreate(req, res) {
     const roundDurationHours = normalizeRoundDuration(kind.tournamentType, bodyValue(body, "roundDurationHours", "round_duration_hours"));
     const buyInNative = normalizeBuyIn(bodyValue(body, "buyInNative", "buy_in_native"));
     const sponsorReference = text(bodyValue(body, "sponsorReference", "sponsor_reference")) || null;
+    invites = normalizeInviteList(chainId, body.invites);
     const registrationState = Date.now() >= Date.parse(registrationOpensAt) && Date.now() < Date.parse(registrationClosesAt) ? "open" : "pending";
-    const id = `tourney-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
-    const inserted = await pool.query(
+    id = `tourney-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
+    values = [id, chainId, name, registrationMode, registrationState, registrationOpensAt, registrationClosesAt,
+      startMode, buyInNative, nativeSymbolFor(chainId), text(body.terms), startsAt, cap,
+      String(admin.mode || "admin"), kind.battleMode, kind.tournamentType, env.environment, env.solanaCluster,
+      roundDurationHours, sponsorReference, JSON.stringify(Array.isArray(body.inviteWallets) ? body.inviteWallets.map(text).filter(Boolean) : []),
+      generation.contestScoringVersion, generation.competitionGeneration];
+  } catch (error) {
+    json(res, 400, { ok: false, error: String(error?.message || error), code: "INVALID_TOURNAMENT_CONTRACT" });
+    return true;
+  }
+  // Tournament and its invites commit together: an invalid invite never leaves
+  // a half-configured invite-only tournament behind.
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const inserted = await client.query(
       `insert into public.arena_tournaments (
          id, chain_id, name, status, origin, registration_mode, registration_state,
          registration_opens_at, registration_closes_at, start_mode, buy_in_native,
          native_symbol, terms, starts_at, cap, created_by, battle_mode,
          tournament_type, environment, solana_cluster, round_duration_hours,
-         sponsor_reference, state_version, exact_bracket_required, admin_contract_version, invite_wallets
-     ) values ($1,$2,$3,'upcoming','custom',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,1,true,1,$21::jsonb)
+         sponsor_reference, state_version, exact_bracket_required, admin_contract_version, invite_wallets,
+         contest_scoring_version, competition_generation
+     ) values ($1,$2,$3,'upcoming','custom',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,1,true,1,$21::jsonb,$22,$23)
        returning *`,
-      [id, chainId, name, registrationMode, registrationState, registrationOpensAt, registrationClosesAt,
-       startMode, buyInNative, nativeSymbolFor(chainId), text(body.terms), startsAt, cap,
-       String(admin.mode || "admin"), kind.battleMode, kind.tournamentType, env.environment, env.solanaCluster,
-       roundDurationHours, sponsorReference, JSON.stringify(Array.isArray(body.inviteWallets) ? body.inviteWallets.map(text).filter(Boolean) : [])],
+      values,
     );
-    const invites = Array.isArray(body.invites) ? body.invites : [];
-    for (const invite of invites) {
-      const token = text(invite?.tokenAddress ?? invite);
-      if (!token) continue;
-      await pool.query(
-        `insert into public.arena_tournament_invites (tournament_id, token_address, owner_wallet)
-         values ($1,$2,$3) on conflict (tournament_id, token_address) do nothing`,
-        [id, token, text(invite?.ownerWallet) || null],
-      );
-    }
-    json(res, 201, { ok: true, tournament: adminItem(inserted.rows[0], 0) });
+    await upsertInvites(client, id, Number(inserted.rows[0].chain_id), invites);
+    await client.query("commit");
+    json(res, 201, { ok: true, tournament: adminItem(inserted.rows[0], 0), invites: await listAdminInvites(pool, id) });
   } catch (error) {
-    json(res, 400, { ok: false, error: String(error?.message || error), code: "INVALID_TOURNAMENT_CONTRACT" });
+    await client.query("rollback").catch(() => {});
+    const constraint = String(error?.code || "").startsWith("23");
+    json(res, constraint ? 400 : 503, {
+      ok: false,
+      error: constraint ? "Tournament violates a storage constraint" : "Tournament storage is unavailable",
+      code: constraint ? "INVALID_TOURNAMENT_CONTRACT" : "TOURNAMENT_STORAGE_UNAVAILABLE",
+      detail: String(error?.message || error),
+    });
+  } finally {
+    client.release();
   }
   return true;
 }
@@ -304,6 +440,7 @@ async function lockedMutation(req, res, id, routeLabel, mutate) {
               starts_at = $9, cap = $10, terms = $11, sponsor_reference = $12,
               battle_mode = $13, tournament_type = $14, round_duration_hours = $15,
               status = $16, buy_in_native = $17, environment = $18, solana_cluster = $19,
+              contest_scoring_version = $21, competition_generation = $22,
               state_version = state_version + 1, updated_at = now()
         where id = $1 and chain_id = $2 and state_version = $20
         returning *`,
@@ -317,7 +454,9 @@ async function lockedMutation(req, res, id, routeLabel, mutate) {
        next.buyInNative === undefined ? row.buy_in_native : next.buyInNative,
        next.environment ?? row.environment,
        next.solanaCluster === undefined ? row.solana_cluster : next.solanaCluster,
-       version],
+       version,
+       next.contestScoringVersion ?? row.contest_scoring_version,
+       next.competitionGeneration ?? row.competition_generation],
     );
     if (!update.rows[0]) {
       await client.query("rollback");
@@ -332,7 +471,9 @@ async function lockedMutation(req, res, id, routeLabel, mutate) {
     } catch (error) {
       console.warn("[arena-tournament-admin] notify failed", error?.message || error);
     }
-    json(res, 200, { ok: true, tournament: adminItem(update.rows[0], await countEntries(pool, id)) });
+    const payload = { ok: true, tournament: adminItem(update.rows[0], await countEntries(pool, id)) };
+    if (next.includeInvites) payload.invites = await listAdminInvites(pool, id);
+    json(res, 200, payload);
     return true;
   } catch (error) {
     await client.query("rollback").catch(() => {});
@@ -343,13 +484,42 @@ async function lockedMutation(req, res, id, routeLabel, mutate) {
   }
 }
 
+/**
+ * Chain, environment and Solana cluster are the Tournament's identity: they pick
+ * the buy-in treasury, the market data and which deployment serves it. They are
+ * set once at create. An edit may restate them, or fill a legacy row that never
+ * stored them, but may never switch them.
+ */
+export function lockedTournamentIdentity(row, body) {
+  const chainId = Number(row.chain_id);
+  const storedEnvironment = text(row.environment).toLowerCase();
+  const storedCluster = text(row.solana_cluster).toLowerCase();
+  const suppliedEnvironment = text(bodyValue(body, "environment", "runtime_environment")).toLowerCase();
+  const suppliedCluster = text(bodyValue(body, "solanaCluster", "solana_cluster") ?? body?.cluster).toLowerCase();
+  if (storedEnvironment && suppliedEnvironment && suppliedEnvironment !== storedEnvironment) {
+    throw new Error(`Tournament environment is locked to ${storedEnvironment}; create a new tournament for ${suppliedEnvironment}`);
+  }
+  if (storedCluster && suppliedCluster && suppliedCluster !== storedCluster) {
+    throw new Error(`Solana cluster is locked to ${storedCluster}; create a new tournament for ${suppliedCluster}`);
+  }
+  return normalizeEnvironment(chainId, {
+    environment: storedEnvironment || suppliedEnvironment,
+    solanaCluster: storedCluster || suppliedCluster,
+  });
+}
+
 export function handleTournamentAdminEdit(req, res, id) {
-  return lockedMutation(req, res, id, "admin/arena/tournaments/edit", async ({ row, body }) => {
+  return lockedMutation(req, res, id, "admin/arena/tournaments/edit", async ({ client, row, body }) => {
     if (row.status !== "upcoming") return { ok: false, code: "TOURNAMENT_NOT_UPCOMING", error: "Only upcoming tournaments can be edited" };
     try {
+      const identity = lockedTournamentIdentity(row, body);
       const kind = normalizeTournamentKind({ kind: bodyValue(body, "kind", "tournament_type") ?? row.tournament_type ?? row.battle_mode });
+      const generation = tournamentGenerationForKind(kind.tournamentType);
       const cap = body.cap == null ? Number(row.cap) : parseExactBracketCap(body.cap);
-      const duration = normalizeRoundDuration(kind.tournamentType, bodyValue(body, "roundDurationHours", "round_duration_hours") ?? row.round_duration_hours);
+      const kindChanged = kind.tournamentType !== (row.tournament_type || (row.battle_mode === "vote" ? "vote" : "battle"));
+      const suppliedDuration = bodyValue(body, "roundDurationHours", "round_duration_hours");
+      // Switching kind without a new duration takes that kind's default (24h).
+      const duration = normalizeRoundDuration(kind.tournamentType, suppliedDuration ?? (kindChanged ? 24 : row.round_duration_hours));
       const registrationMode = text(bodyValue(body, "registrationMode", "registration_mode") ?? row.registration_mode);
       if (!REGISTRATION_MODES.has(registrationMode)) throw new Error("Invalid registrationMode");
       const opens = parseTimestamp(bodyValue(body, "registrationOpensAt", "registration_opens_at") ?? row.registration_opens_at, "registrationOpensAt", { required: true });
@@ -362,10 +532,22 @@ export function handleTournamentAdminEdit(req, res, id) {
       const buyInNative = bodyValue(body, "buyInNative", "buy_in_native") == null
         ? Number(row.buy_in_native || 0)
         : normalizeBuyIn(bodyValue(body, "buyInNative", "buy_in_native"));
-      const identity = normalizeEnvironment(Number(row.chain_id), {
-        environment: body.environment ?? row.environment,
-        solanaCluster: bodyValue(body, "solanaCluster", "solana_cluster") ?? row.solana_cluster,
-      });
+      const enrolled = await countEntries(client, id);
+      if (cap < enrolled) {
+        return { ok: false, http: 409, code: "TOURNAMENT_CAP_BELOW_ENTRANTS", error: `Bracket size ${cap} is below the ${enrolled} coins already registered` };
+      }
+      // An entrant registered (and may have paid) against the stored buy-in. The
+      // price cannot move under them; remove unpaid entrants or cancel first.
+      if (enrolled > 0 && buyInNative !== Number(row.buy_in_native || 0)) {
+        return { ok: false, http: 409, code: "TOURNAMENT_BUY_IN_LOCKED", error: "Buy-in cannot change once coins are registered" };
+      }
+      if (enrolled > 0 && kindChanged) {
+        return { ok: false, http: 409, code: "TOURNAMENT_KIND_LOCKED", error: "Tournament type cannot change once coins are registered" };
+      }
+      // Admin-contract rows always carry the canonical generation for their kind.
+      // A legacy row keeps whatever generation it was created on unless its kind
+      // changes (which is only possible with nobody registered).
+      const canonicalGeneration = Number(row.admin_contract_version) === 1 || kindChanged;
       return {
         ok: true,
         name: text(body.name ?? row.name),
@@ -383,6 +565,8 @@ export function handleTournamentAdminEdit(req, res, id) {
         sponsorReference: bodyValue(body, "sponsorReference", "sponsor_reference") === undefined ? row.sponsor_reference : text(bodyValue(body, "sponsorReference", "sponsor_reference")) || null,
         battleMode: kind.battleMode,
         tournamentType: kind.tournamentType,
+        contestScoringVersion: canonicalGeneration ? generation.contestScoringVersion : undefined,
+        competitionGeneration: canonicalGeneration ? generation.competitionGeneration : undefined,
       };
     } catch (error) {
       return { ok: false, http: 400, code: "INVALID_TOURNAMENT_CONTRACT", error: String(error?.message || error) };
@@ -409,9 +593,23 @@ export function handleTournamentCancel(req, res, id) {
   });
 }
 
+/**
+ * Remove one unpaid entry: tournament + token (+ owner wallet). An owner wallet
+ * can register several coins in one tournament (entries are unique per token),
+ * so the wallet alone never selects what to delete. Callers that do not send
+ * tokenAddress still work when the wallet holds exactly one entry; with more
+ * than one the request is refused instead of deleting them all.
+ */
 export async function handleTournamentRemoveUnpaidEntrant(req, res, id, wallet) {
   const admin = await requireTournamentAdminAuth(req, res, "admin/arena/tournaments/remove-unpaid-entrant");
   if (!admin) return true;
+  let requestedToken = "";
+  try {
+    const url = new URL(req.url, "http://localhost");
+    requestedToken = text(url.searchParams.get("tokenAddress") ?? url.searchParams.get("token_address"));
+  } catch {
+    requestedToken = "";
+  }
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -419,15 +617,33 @@ export async function handleTournamentRemoveUnpaidEntrant(req, res, id, wallet) 
     const row = found.rows[0];
     if (!row) { await client.query("rollback"); json(res, 404, { ok: false, code: "TOURNAMENT_NOT_FOUND" }); return true; }
     if (row.status !== "upcoming") { await client.query("rollback"); json(res, 409, { ok: false, code: "TOURNAMENT_NOT_UPCOMING" }); return true; }
-    const entry = await client.query("select * from public.arena_tournament_entries where tournament_id = $1 and lower(owner_wallet) = lower($2) for update", [id, wallet]);
-    if (!entry.rows[0]) { await client.query("rollback"); json(res, 404, { ok: false, code: "TOURNAMENT_ENTRY_NOT_FOUND" }); return true; }
-    if (entry.rows[0].buy_in_paid) { await client.query("rollback"); json(res, 409, { ok: false, code: "PAID_ENTRANT_IMMUTABLE", error: "Paid entrant cannot be removed" }); return true; }
+    const chainId = Number(row.chain_id);
+    const params = [id, wallet];
+    let tokenClause = "";
+    if (requestedToken) {
+      params.push(requestedToken);
+      tokenClause = ` and ${tokenMatchSql(chainId, "token_address", "$3")}`;
+    }
+    const entries = await client.query(
+      `select * from public.arena_tournament_entries
+        where tournament_id = $1 and lower(owner_wallet) = lower($2)${tokenClause}
+        for update`,
+      params,
+    );
+    if (!entries.rows[0]) { await client.query("rollback"); json(res, 404, { ok: false, code: "TOURNAMENT_ENTRY_NOT_FOUND" }); return true; }
+    if (entries.rows.length > 1) {
+      await client.query("rollback");
+      json(res, 409, { ok: false, code: "TOURNAMENT_ENTRY_TOKEN_REQUIRED", error: "This wallet registered more than one coin; pass tokenAddress to pick the entry" });
+      return true;
+    }
+    const entry = entries.rows[0];
+    if (entry.buy_in_paid) { await client.query("rollback"); json(res, 409, { ok: false, code: "PAID_ENTRANT_IMMUTABLE", error: "Paid entrant cannot be removed" }); return true; }
     if (Number(row.buy_in_native || 0) > 0) { await client.query("rollback"); json(res, 409, { ok: false, code: "PAYMENT_RECONCILIATION_REQUIRED", error: "Positive-buy-in entrant requires authoritative chain reconciliation before removal" }); return true; }
-    await client.query("delete from public.arena_tournament_entries where tournament_id = $1 and lower(owner_wallet) = lower($2)", [id, wallet]);
+    await client.query("delete from public.arena_tournament_entries where id = $1 and tournament_id = $2 and buy_in_paid = false", [entry.id, id]);
     const updated = await client.query("update public.arena_tournaments set state_version = state_version + 1, updated_at = now() where id = $1 and state_version = $2 returning *", [id, Number(row.state_version)]);
     if (!updated.rows[0]) { await client.query("rollback"); json(res, 409, { ok: false, code: "TOURNAMENT_STATE_CONFLICT" }); return true; }
     await client.query("commit");
-    json(res, 200, { ok: true, tournament: adminItem(updated.rows[0], await countEntries(pool, id)) });
+    json(res, 200, { ok: true, removed: { tokenAddress: String(entry.token_address), ownerWallet: String(entry.owner_wallet) }, tournament: adminItem(updated.rows[0], await countEntries(pool, id)) });
   } catch (error) {
     await client.query("rollback").catch(() => {});
     json(res, 503, { ok: false, error: "Tournament storage is unavailable", detail: String(error?.message || error) });
@@ -435,6 +651,62 @@ export async function handleTournamentRemoveUnpaidEntrant(req, res, id, wallet) 
     client.release();
   }
   return true;
+}
+
+export async function handleTournamentInviteList(req, res, id) {
+  const admin = await requireTournamentAdminAuth(req, res, "admin/arena/tournaments/invites/list");
+  if (!admin) return true;
+  const found = await pool.query("select * from public.arena_tournaments where id = $1", [id]);
+  if (!found.rows[0]) { json(res, 404, { ok: false, code: "TOURNAMENT_NOT_FOUND" }); return true; }
+  json(res, 200, { ok: true, tournament: adminItem(found.rows[0], await countEntries(pool, id)), invites: await listAdminInvites(pool, id) });
+  return true;
+}
+
+/**
+ * Add invited coins to an upcoming tournament. Same lock, status and
+ * state-version checks as every other admin mutation: no invite changes once a
+ * tournament is live, finished or cancelled.
+ */
+export function handleTournamentInviteAdd(req, res, id) {
+  return lockedMutation(req, res, id, "admin/arena/tournaments/invites/add", async ({ client, row, body }) => {
+    if (row.status !== "upcoming") return { ok: false, code: "TOURNAMENT_NOT_UPCOMING", error: "Invites can change only while the tournament is upcoming" };
+    let invites;
+    try {
+      invites = normalizeInviteList(Number(row.chain_id), body.invites ?? (body.tokenAddress ? [body] : null));
+    } catch (error) {
+      return { ok: false, http: 400, code: "INVALID_TOURNAMENT_INVITE", error: String(error?.message || error) };
+    }
+    if (!invites.length) return { ok: false, http: 400, code: "INVALID_TOURNAMENT_INVITE", error: "At least one invite tokenAddress is required" };
+    await upsertInvites(client, String(row.id), Number(row.chain_id), invites);
+    return { ok: true, includeInvites: true };
+  });
+}
+
+/**
+ * Withdraw one invite. A coin that already registered keeps its entry; removing
+ * its invite first would leave an invite-only roster with an uninvited coin, so
+ * the unpaid entrant must be removed before the invite.
+ */
+export function handleTournamentInviteRemove(req, res, id, tokenAddress) {
+  return lockedMutation(req, res, id, "admin/arena/tournaments/invites/remove", async ({ client, row }) => {
+    if (row.status !== "upcoming") return { ok: false, code: "TOURNAMENT_NOT_UPCOMING", error: "Invites can change only while the tournament is upcoming" };
+    const chainId = Number(row.chain_id);
+    const token = text(tokenAddress);
+    if (!token) return { ok: false, http: 400, code: "INVALID_TOURNAMENT_INVITE", error: "tokenAddress is required" };
+    const entered = await client.query(
+      `select 1 from public.arena_tournament_entries where tournament_id = $1 and ${tokenMatchSql(chainId, "token_address", "$2")} limit 1`,
+      [String(row.id), token],
+    );
+    if (entered.rows[0]) {
+      return { ok: false, http: 409, code: "TOURNAMENT_INVITE_HAS_ENTRANT", error: "This coin is already registered; remove the unpaid entrant before withdrawing its invite" };
+    }
+    const removed = await client.query(
+      `delete from public.arena_tournament_invites where tournament_id = $1 and ${tokenMatchSql(chainId, "token_address", "$2")} returning id`,
+      [String(row.id), token],
+    );
+    if (!removed.rows[0]) return { ok: false, http: 404, code: "TOURNAMENT_INVITE_NOT_FOUND", error: "No invite for this coin" };
+    return { ok: true, includeInvites: true };
+  });
 }
 
 export async function handleTournamentAdminContractRoute(req, res, { method, path }) {
@@ -450,6 +722,11 @@ export async function handleTournamentAdminContractRoute(req, res, { method, pat
   if (close && method === "POST") return handleTournamentRegistrationState(req, res, decodeURIComponent(close[1]), "closed");
   const cancel = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/cancel$/);
   if (cancel && method === "POST") return handleTournamentCancel(req, res, decodeURIComponent(cancel[1]));
+  const invites = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/invites$/);
+  if (invites && method === "GET") return handleTournamentInviteList(req, res, decodeURIComponent(invites[1]));
+  if (invites && method === "POST") return handleTournamentInviteAdd(req, res, decodeURIComponent(invites[1]));
+  const invite = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/invites\/([^/]+)$/);
+  if (invite && method === "DELETE") return handleTournamentInviteRemove(req, res, decodeURIComponent(invite[1]), decodeURIComponent(invite[2]));
   const remove = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/entrants\/([^/]+)$/);
   if (remove && method === "DELETE") return handleTournamentRemoveUnpaidEntrant(req, res, decodeURIComponent(remove[1]), decodeURIComponent(remove[2]));
   return false;

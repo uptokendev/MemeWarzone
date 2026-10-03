@@ -8,7 +8,12 @@ on:
       - 'frontend/api/arenaTournaments.js'
       - 'frontend/api/lib/arenaTournamentAdminContract.js'
       - 'frontend/api/arenaTournamentAdminContract.test.mjs'
+      - 'frontend/api/arenaTournamentAdminInvites.integration.test.mjs'
       - 'db/migrations/20260910_000002_arena_tournament_admin_contract.sql'
+      - 'db/migrations/20261003_000001_arena_vote_tournament_round_cap.sql'
+      - 'frontend/api/lib/arenaTournamentVoteRuntime.mjs'
+      - 'frontend/api/lib/arenaVoteTournamentBracketService.js'
+      - 'frontend/api/lib/arenaVoteTournamentFinalizationService.js'
       - '.github/workflows/tournament-admin-backend-contract.yml'
   pull_request:
     branches:
@@ -17,7 +22,12 @@ on:
       - 'frontend/api/arenaTournaments.js'
       - 'frontend/api/lib/arenaTournamentAdminContract.js'
       - 'frontend/api/arenaTournamentAdminContract.test.mjs'
+      - 'frontend/api/arenaTournamentAdminInvites.integration.test.mjs'
       - 'db/migrations/20260910_000002_arena_tournament_admin_contract.sql'
+      - 'db/migrations/20261003_000001_arena_vote_tournament_round_cap.sql'
+      - 'frontend/api/lib/arenaTournamentVoteRuntime.mjs'
+      - 'frontend/api/lib/arenaVoteTournamentBracketService.js'
+      - 'frontend/api/lib/arenaVoteTournamentFinalizationService.js'
       - '.github/workflows/tournament-admin-backend-contract.yml'
   workflow_dispatch:
 
@@ -73,6 +83,8 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000001_arena_tournament_exact_bracket_control.sql >/dev/null
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20261003_000001_arena_vote_tournament_round_cap.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20261003_000001_arena_vote_tournament_round_cap.sql >/dev/null
 
       - name: SQL boundary matrix
         shell: bash
@@ -96,7 +108,7 @@ jobs:
             ('cert-soldev','SOL devnet vote',101,'upcoming','custom','open',0,'',now()+interval '3 hour',64,'{}'::jsonb,now(),now(),
              'SOL','vote',1,'vote_tournament_v1','arena_competition_v2',true,'vote','staging','devnet','closed',now()-interval '2 hour',now()-interval '1 hour','manual',NULL,1,1,'[]'::jsonb),
             ('cert-solmain','SOL mainnet vote',101,'upcoming','custom','open',0,'',now()+interval '3 hour',128,'{}'::jsonb,now(),now(),
-             'SOL','vote',721,'vote_tournament_v1','arena_competition_v2',true,'vote','production','mainnet-beta','closed',now()-interval '2 hour',now()-interval '1 hour','manual','sponsor-x',1,1,'[]'::jsonb);
+             'SOL','vote',48,'vote_tournament_v1','arena_competition_v2',true,'vote','production','mainnet-beta','closed',now()-interval '2 hour',now()-interval '1 hour','manual','sponsor-x',1,1,'[]'::jsonb);
 
           DO $$
           BEGIN
@@ -129,6 +141,12 @@ jobs:
                 (id,name,chain_id,status,origin,registration_mode,buy_in_native,terms,starts_at,cap,bracket,created_at,updated_at,native_symbol,battle_mode,round_duration_hours,contest_scoring_version,competition_generation,exact_bracket_required,tournament_type,environment,registration_state,registration_opens_at,registration_closes_at,start_mode,state_version,admin_contract_version)
               VALUES ('bad-vote-duration','bad',97,'upcoming','custom','open',0,'',now()+interval '3 hour',4,'{}',now(),now(),'BNB','vote',0,'vote_tournament_v1','arena_competition_v2',true,'vote','staging','closed',now()-interval '2 hour',now()-interval '1 hour','manual',1,1);
               RAISE EXCEPTION 'vote duration zero accepted';
+            EXCEPTION WHEN check_violation THEN NULL; END;
+            BEGIN
+              INSERT INTO public.arena_tournaments
+                (id,name,chain_id,status,origin,registration_mode,buy_in_native,terms,starts_at,cap,bracket,created_at,updated_at,native_symbol,battle_mode,round_duration_hours,contest_scoring_version,competition_generation,exact_bracket_required,tournament_type,environment,registration_state,registration_opens_at,registration_closes_at,start_mode,state_version,admin_contract_version)
+              VALUES ('bad-vote-duration-49','bad',97,'upcoming','custom','open',0,'',now()+interval '3 hour',4,'{}',now(),now(),'BNB','vote',49,'vote_tournament_v1','arena_competition_v2',true,'vote','staging','closed',now()-interval '2 hour',now()-interval '1 hour','manual',1,1);
+              RAISE EXCEPTION 'vote duration 49 accepted';
             EXCEPTION WHEN check_violation THEN NULL; END;
             BEGIN
               INSERT INTO public.arena_tournaments

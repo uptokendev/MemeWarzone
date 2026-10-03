@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import { captureLiveBaselines } from "./arenaBattleMetrics.js";
 import { getArenaMarketSnapshot } from "./arenaMarketSnapshot.js";
 import { isSolanaChainId } from "./chainNative.js";
+import { isVoteTournamentRoundHours } from "./arenaTournamentVoteRuntime.mjs";
 
 function ident(value) {
   return String(value || "").trim();
@@ -130,7 +131,7 @@ async function insertVoteTournamentBattle(client, tournament, left, right) {
     `insert into public.arena_battles (
        id, chain_id, state, source, stake_native, native_symbol, challenger_token, defender_token, tournament_id,
        participants, challenger_start_mcap_usd, defender_start_mcap_usd, started_at, ends_at, creator_address
-     ) values ($1,$2,'live','tournament',0,$3,$4,$5,$6,$7::jsonb,$8,$9,$10::timestamptz,$10::timestamptz + interval '24 hours',$11)`,
+     ) values ($1,$2,'live','tournament',0,$3,$4,$5,$6,$7::jsonb,$8,$9,$10::timestamptz,$10::timestamptz + make_interval(hours => $12::int),$11)`,
     [
       id,
       chainId,
@@ -143,6 +144,7 @@ async function insertVoteTournamentBattle(client, tournament, left, right) {
       rightSnap.marketCapUsd,
       startedAt,
       leftSnap.ownerWallet || null,
+      Number(tournament.round_duration_hours),
     ],
   );
 
@@ -169,7 +171,7 @@ function assertVoteTournamentGeneration(tournament) {
   if (tournament.battle_mode !== "vote") throw new Error("vote-tournament-mode-required");
   if (tournament.contest_scoring_version !== "vote_tournament_v1") throw new Error("vote-tournament-scoring-version-required");
   if (tournament.competition_generation !== "arena_competition_v2") throw new Error("vote-tournament-v2-generation-required");
-  if (Number(tournament.round_duration_hours) !== 24) throw new Error("vote-tournament-24h-round-required");
+  if (!isVoteTournamentRoundHours(tournament.round_duration_hours)) throw new Error("vote-tournament-round-duration-invalid");
 }
 
 export async function advanceVoteTournamentBracket({ client, tournamentId, battleId, winnerToken }) {
