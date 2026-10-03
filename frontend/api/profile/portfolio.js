@@ -70,7 +70,8 @@ async function loadCampaignsByMints(chainId, mints) {
   const { rows } = await pool.query(
     // Prices live in market_stats on production (campaigns has no price columns; CO-22, 2026-10-03).
     `select c.chain_id, c.campaign_address, c.token_address, c.name, c.symbol, c.logo_uri,
-            ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd
+            ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd,
+            ms.market_cap_usd, ms.market_stage
        from public.campaigns c
        left join public.market_stats ms
          on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
@@ -91,7 +92,8 @@ async function loadIndexedHoldings(chainId, address) {
     const { rows } = await pool.query(
       `select th.chain_id, th.token_address, th.balance_raw,
               c.campaign_address, c.name, c.symbol, c.logo_uri,
-              ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd
+              ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd,
+              ms.market_cap_usd, ms.market_stage
          from public.token_holder_balances th
          left join public.campaigns c
            on c.chain_id = th.chain_id
@@ -133,7 +135,7 @@ async function loadImportsByMints(chainId, mints) {
   if (!mints.length) return [];
   try {
     const { rows } = await pool.query(
-      `select i.token_address, i.name, i.symbol, i.image_url, s.price_usd
+      `select i.token_address, i.name, i.symbol, i.image_url, s.price_usd, s.market_cap_usd
          from public.arena_token_imports i
          left join public.arena_import_market_stats s
            on s.chain_id = i.chain_id and s.token_address = i.token_address
@@ -229,6 +231,8 @@ async function scanSolana(address, nativeUsd) {
       campaignAddress: campaign?.campaign_address || null,
       kind: campaign ? "launched" : imported ? "imported" : "other",
       platform: Boolean(campaign || imported),
+      marketCapUsd: positive(campaign?.market_cap_usd) ?? positive(imported?.market_cap_usd),
+      marketStage: campaign?.market_stage || null,
       balanceFormatted: h.balanceFormatted,
       priceUsd,
       valueUsd,
@@ -257,6 +261,8 @@ async function scanEvm(chainId, address, nativeUsd) {
         campaignAddress: row.campaign_address || null,
         kind: row.campaign_address ? "launched" : "other",
         platform: Boolean(row.campaign_address),
+        marketCapUsd: positive(row.market_cap_usd),
+        marketStage: row.market_stage || null,
         balanceFormatted,
         valueUsd: holdingValue({ ...row, balanceFormatted }, nativeUsd),
       };
@@ -348,6 +354,8 @@ async function computePortfolio(chainId, address) {
         balanceFormatted: h.balanceFormatted,
         priceUsd: h.priceUsd ?? null,
         valueUsd: Number(h.valueUsd) || 0,
+        marketCapUsd: h.marketCapUsd ?? null,
+        marketStage: h.marketStage || null,
       }))
       .sort((a, b) => b.valueUsd - a.valueUsd)
       .slice(0, 50),

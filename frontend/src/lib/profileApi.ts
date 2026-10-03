@@ -278,6 +278,8 @@ export type PortfolioHolding = {
   balanceFormatted: string;
   priceUsd: number | null;
   valueUsd: number;
+  marketCapUsd?: number | null;
+  marketStage?: string | null;
 };
 
 /**
@@ -291,8 +293,9 @@ export async function fetchPublicPortfolio(
   const addr = normalizeAddress(address, chainId);
   const params = new URLSearchParams({ chainId: String(chainId), address: addr });
   const json = await apiJson<any>(`/api/profile/portfolio?${params.toString()}`);
+  const legacy = json && (typeof json.totalValueUsd !== "undefined" || typeof json.coinsCount !== "undefined") ? json : null;
   return {
-    metrics: (json?.metrics as PortfolioMetrics) ?? null,
+    metrics: (json?.metrics as PortfolioMetrics) ?? (legacy as PortfolioMetrics | null),
     holdings: Array.isArray(json?.holdings) ? (json.holdings as PortfolioHolding[]) : null,
   };
 }

@@ -41,7 +41,7 @@ export function FeaturedCampaignCard({
       className={`mw-focus group flex ${grid ? "w-full" : "h-[244px] w-[220px] shrink-0 snap-start"} cursor-pointer flex-col overflow-hidden rounded-[14px] border border-mw-border bg-mw-surface font-mw-body text-mw-text transition-colors hover:border-[#3A424C]`}
       role="button"
       tabIndex={0}
-      aria-label={`#${rank} ${name || "Campaign"}`}
+      aria-label={rank > 0 ? `#${rank} ${name || "Campaign"}` : name || "Campaign"}
       onClick={open}
       onKeyDown={onKeyDown}
     >
@@ -60,7 +60,8 @@ export function FeaturedCampaignCard({
             el.src = "/placeholder.svg";
           }}
         />
-        <div className="absolute left-2 top-2 inline-flex h-[22px] items-center rounded-full bg-[rgba(0,0,0,0.55)] px-2 font-mw-mono text-xs font-semibold text-[#C9CED4]">#{rank}</div>
+        {/* rank 0 = not a ranked list (profile Coins tab): no badge. */}
+        {rank > 0 ? <div className="absolute left-2 top-2 inline-flex h-[22px] items-center rounded-full bg-[rgba(0,0,0,0.55)] px-2 font-mw-mono text-xs font-semibold text-[#C9CED4]">#{rank}</div> : null}
       </div>
 
       <div className={`flex min-w-0 flex-1 flex-col gap-1 px-2.5 pb-3 pt-2.5 ${grid ? "lg:gap-2 lg:p-3" : ""}`}>
