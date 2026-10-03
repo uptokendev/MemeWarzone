@@ -6,7 +6,7 @@ import {
   finalSalvoShotIdentity,
   requiredFinalSalvoChainId,
 } from "./arenaFinalSalvoRuntime.mjs";
-import { findTournamentVoteMatch, isVoteTournamentRoundHours } from "./arenaTournamentVoteRuntime.mjs";
+import { findTournamentVoteMatch } from "./arenaTournamentVoteRuntime.mjs";
 
 function ident(value) {
   return String(value ?? "").trim();
@@ -78,7 +78,7 @@ async function loadAuthority(client, identity) {
        from public.arena_tournaments where id=$1 and chain_id=$2 limit 1 for update`,
     [identity.tournamentId, identity.chainId],
   )).rows[0] || null;
-  if (!tournament || tournament.battle_mode !== "vote" || !isVoteTournamentRoundHours(tournament.round_duration_hours)) {
+  if (!tournament || tournament.battle_mode !== "vote" || Number(tournament.round_duration_hours) !== 24) {
     return { ok: false, code: "FINAL_SALVO_TOURNAMENT_IDENTITY_MISMATCH" };
   }
 

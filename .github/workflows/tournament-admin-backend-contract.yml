@@ -14,7 +14,6 @@ on:
       - 'frontend/api/lib/arenaTournamentVoteRuntime.mjs'
       - 'frontend/api/lib/arenaVoteTournamentBracketService.js'
       - 'frontend/api/lib/arenaVoteTournamentFinalizationService.js'
-      - 'frontend/api/lib/arenaFinalSalvoFinalizer.js'
       - '.github/workflows/tournament-admin-backend-contract.yml'
   pull_request:
     branches:
@@ -29,7 +28,6 @@ on:
       - 'frontend/api/lib/arenaTournamentVoteRuntime.mjs'
       - 'frontend/api/lib/arenaVoteTournamentBracketService.js'
       - 'frontend/api/lib/arenaVoteTournamentFinalizationService.js'
-      - 'frontend/api/lib/arenaFinalSalvoFinalizer.js'
       - '.github/workflows/tournament-admin-backend-contract.yml'
   workflow_dispatch:
 
