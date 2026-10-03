@@ -211,6 +211,50 @@ function battleSides(participants) {
   }));
 }
 
+function logoKey(chainId, token) {
+  const t = String(token || "").trim();
+  return `${Number(chainId)}:${t.startsWith("0x") ? t.toLowerCase() : t}`;
+}
+
+// Battle participants are stored without a logo, so the feed card showed initials (founder, 2026-10-03).
+// Same sources as the battle pages: launched coins' campaigns.logo_uri, imported coins' image_url.
+async function loadBattleLogos(rows) {
+  const chains = [];
+  const tokens = [];
+  for (const r of rows) {
+    for (const side of battleSides(r.participants)) {
+      if (side.imageUrl || !side.tokenAddress) continue;
+      chains.push(Number(r.chain_id));
+      tokens.push(String(side.tokenAddress));
+    }
+  }
+  const map = new Map();
+  if (!tokens.length) return map;
+  const pairs = `select * from unnest($1::int[], $2::text[]) as q(chain_id, token)`;
+  const lookups = [
+    `select c.chain_id, c.token_address as token, c.logo_uri as logo
+       from public.campaigns c join (${pairs}) q
+         on q.chain_id = c.chain_id and (c.token_address = q.token or lower(c.token_address) = lower(q.token))
+      where coalesce(c.logo_uri, '') <> ''`,
+    `select i.chain_id, i.token_address as token, i.image_url as logo
+       from public.arena_token_imports i join (${pairs}) q
+         on q.chain_id = i.chain_id and (i.token_address = q.token or lower(i.token_address) = lower(q.token))
+      where coalesce(i.image_url, '') <> ''`,
+  ];
+  for (const sql of lookups) {
+    try {
+      const { rows: found } = await pool.query(sql, [chains, tokens]);
+      for (const f of found) {
+        const key = logoKey(f.chain_id, f.token);
+        if (!map.has(key)) map.set(key, String(f.logo));
+      }
+    } catch (e) {
+      if (!missing(e)) throw e;
+    }
+  }
+  return map;
+}
+
 /** Battle went live (started_at) and battle result (finished_at with a winner). */
 export function loadBattleEvents({ before, limit, authors }) {
   return safe(async () => {
@@ -241,6 +285,8 @@ export function loadBattleEvents({ before, limit, authors }) {
         limit $${p2.push(limit)}`,
       p2,
     );
+    const logos = await loadBattleLogos([...live.rows, ...done.rows]);
+    const sidesOf = (r) => battleSides(r.participants).map((side) => ({ ...side, imageUrl: side.imageUrl || logos.get(logoKey(r.chain_id, side.tokenAddress)) || null }));
     return [
       ...live.rows.map((r) => ({
         type: "battle_started",
@@ -249,7 +295,7 @@ export function loadBattleEvents({ before, limit, authors }) {
         createdAt: iso(r.at),
         chainId: Number(r.chain_id) || null,
         battleMode: r.battle_mode || null,
-        sides: battleSides(r.participants),
+        sides: sidesOf(r),
         stakeNative: r.stake_native == null ? null : Number(r.stake_native),
         nativeSymbol: r.native_symbol || null,
       })),
@@ -260,7 +306,7 @@ export function loadBattleEvents({ before, limit, authors }) {
         createdAt: iso(r.at),
         chainId: Number(r.chain_id) || null,
         battleMode: r.battle_mode || null,
-        sides: battleSides(r.participants),
+        sides: sidesOf(r),
         winnerToken: r.winner_token,
       })),
     ];

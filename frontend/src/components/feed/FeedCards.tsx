@@ -645,7 +645,7 @@ export function FeedBattleCard({ item }: { item: FeedItem }) {
         <span className="text-sm text-mw-muted">{mode}{chainLabel(item.chainId) ? ` · ${chainLabel(item.chainId)}` : ""} · {timeAgo(item.createdAt)}</span>
       </div>
       <div className="flex items-center gap-3">
-        <FeedAvatar url={a?.imageUrl} label={a?.symbol || "?"} square size={52} />
+        <FeedAvatar url={a?.imageUrl} label={a?.symbol || "?"} square size={72} />
         <div className="min-w-0 flex-1 text-center">
           <div className="truncate font-bold">{tick(a)} <span className="font-medium text-mw-muted">vs</span> {tick(b)}</div>
           <div className="mt-0.5 flex items-center justify-center gap-1.5 text-sm text-mw-muted">
@@ -662,7 +662,7 @@ export function FeedBattleCard({ item }: { item: FeedItem }) {
             )}
           </div>
         </div>
-        <FeedAvatar url={b?.imageUrl} label={b?.symbol || "?"} square size={52} />
+        <FeedAvatar url={b?.imageUrl} label={b?.symbol || "?"} square size={72} />
       </div>
       <Link to={href} className="mw-focus inline-flex min-h-10 w-max items-center gap-2 self-end rounded-[10px] border border-mw-edge bg-mw-raised px-3 text-sm font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text">
         <Swords className="h-4 w-4" aria-hidden="true" />
