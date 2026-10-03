@@ -122,7 +122,8 @@ test("failed X OAuth reopens Claim Memecoin and explains account mismatch", () =
   assert.match(claimDialog, /PROJECT_IMPORT_X_ACCOUNT_MISMATCH/);
   assert.match(claimDialog, /does not match the project account attached to this token/);
   assert.match(claimDialog, /THAT WAS NOT THE CORRECT X ACCOUNT/);
-  assert.match(claimDialog, /text-red-300/);
+  // Founder 2026-10-03: claim popup restyled to the new design; the mismatch alert keeps its red, now the mw red.
+  assert.match(claimDialog, /text-\[#FB7185\]/);
   assert.match(claimDialog, /data-project-x-mismatch-alert="true"/);
   assert.match(entry, /onManualReviewRequested=\{\(next\) => \{ setProject\(next\); setClaimOpen\(false\); \}\}/);
 });
