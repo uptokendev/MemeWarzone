@@ -96,14 +96,14 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
 
   const {
     notifications: draftNotificationsAll,
-    unreadCount: unreadNotificationsAll,
     markOneRead,
     markAllRead,
   } = usePrepareNotificationCenter(account, 20);
-  // CO-5: draft and promotion notices are "your coin events"; hidden from the bell when that toggle is off.
-  const coinBell = bellAllowed(useNotificationPrefs(account), "coin");
-  const draftNotifications = coinBell ? draftNotificationsAll : [];
-  const unreadNotifications = coinBell ? unreadNotificationsAll : 0;
+  // CO-5: each notification is hidden from the bell when its category's bell toggle is off
+  // (draft and promotion notices are "your coin events").
+  const notificationPrefs = useNotificationPrefs(account);
+  const draftNotifications = draftNotificationsAll.filter((item) => bellAllowed(notificationPrefs, item.category || "coin"));
+  const unreadNotifications = draftNotifications.filter((item) => !item.read).length;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -15,6 +15,7 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { setArenaNotificationEmail } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
 import { usePrepareNotificationCenter } from "@/hooks/usePrepareNotificationCenter";
+import { bellAllowed, useNotificationPrefs } from "@/hooks/useNotificationPrefs";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import { getActiveChainId, getChainLabel, isAllowedChainId } from "@/lib/chainConfig";
 import { requestWalletChainSwitch } from "@/lib/launchpadReadiness";
@@ -62,12 +63,15 @@ export default function CommandCenterSettings({ section = "settings" }: { sectio
   const [arenaEmailStatus, setArenaEmailStatus] = useState<{ configured: boolean; verified: boolean; email?: string | null } | null>(null);
   const [savingEmail, setSavingEmail] = useState(false);
   const {
-    notifications,
-    unreadCount,
+    notifications: allNotifications,
     loading: loadingNotifications,
     markOneRead,
     markAllRead,
   } = usePrepareNotificationCenter(walletAddress, 20);
+  // CO-5: same rule as the bell: a category whose bell toggle is off is not listed.
+  const notificationPrefs = useNotificationPrefs(walletAddress);
+  const notifications = allNotifications.filter((item) => bellAllowed(notificationPrefs, item.category || "coin"));
+  const unreadCount = notifications.filter((item) => !item.read).length;
 
   const handleSwitchChain = async () => {
     if (!wallet.provider) {

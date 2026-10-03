@@ -1,4 +1,4 @@
-import { badMethod, getQuery, isAddress, isSolanaChain, normalizeAddress as centralNormalize, json, readJson } from "../../server/http.js";
+import { badMethod, getQuery, isAddress, isSolanaChain, normalizeAddress as centralNormalize, normalizeWalletFlexible, json, readJson } from "../../server/http.js";
 
 function methodAllowed(req, res, allowed) {
   if (allowed.includes(req.method)) return true;
@@ -7,8 +7,10 @@ function methodAllowed(req, res, allowed) {
 }
 
 function normalizeAddress(value, chainId) {
-  // Delegate to central for Solana raw base58 support (with chainId or heuristic)
-  return centralNormalize(value, chainId);
+  // Delegate to central for Solana raw base58 support (with chainId or heuristic). Without a chain
+  // id the central helper only takes EVM, so a Solana wallet's bell came back empty: notifications
+  // are written with the flexible key (EVM lowercased, Solana as-is), so read them the same way.
+  return centralNormalize(value, chainId) || normalizeWalletFlexible(value);
 }
 
 async function getPool() {
@@ -35,6 +37,8 @@ function mapNotification(row) {
     eventType: String(row.event_type || ""),
     targetType: String(row.target_type || "draft"),
     targetId: String(row.target_id || ""),
+    // CO-5: battles | social | rewards | coin (rows from before the column are coin events).
+    category: String(row.category || "coin"),
   };
 }
 

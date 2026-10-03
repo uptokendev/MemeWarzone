@@ -9,12 +9,17 @@ async function parseJson(res: Response) {
   return json as any;
 }
 
+/** EVM lowercased, Solana base58 as-is (the bell's wallet key); "" for anything else. */
 function normalizeWallet(value?: string | null) {
-  return String(value || "").trim().toLowerCase();
+  const raw = String(value || "").trim();
+  if (/^0x[a-fA-F0-9]{40}$/.test(raw)) return raw.toLowerCase();
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw)) return raw;
+  return "";
 }
 
+// Solana wallets have a bell too (CO-5); before this only EVM addresses were queried.
 function isEvmAddress(value?: string | null) {
-  return /^0x[a-f0-9]{40}$/.test(normalizeWallet(value));
+  return Boolean(normalizeWallet(value));
 }
 
 export async function fetchPrepareNotifications(walletAddress?: string | null, limit = 20): Promise<DraftNotification[]> {

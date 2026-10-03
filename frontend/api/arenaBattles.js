@@ -13,7 +13,7 @@ import {
 } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps, isAuthEnforceArenaMutations } from "./lib/apiAuth.js";
-import { notifyChallenge, notifyCounterOffer, notifyDeclined } from "./lib/arenaNotify.js";
+import { notifyAccepted, notifyChallenge, notifyCounterOffer, notifyDeclined } from "./lib/arenaNotify.js";
 import {
   creatorChallengePayload,
   isStrictlyHigherStake,
@@ -1386,6 +1386,16 @@ async function handleAccept(req, res, battleId) {
     defender_start_mcap_usd: row.defender_start_mcap_usd ?? (hydratedDefender ? coinMcap(hydratedDefender) : 0),
   }, Number(row.chain_id));
   const offerer = await coinByIdentity(row.chain_id, offerFromToken(row));
+  // CO-5: bell + email to the side whose offer was accepted; the accepting coin is the other one.
+  const offererIsChallenger = String(offerFromToken(row) || "").toLowerCase() === String(row.challenger_token || "").toLowerCase();
+  const accepter = offererIsChallenger ? defenderCoin : challengerCoin;
+  await notifyAccepted({
+    toWallet: ident(offerer?.creator_address, row.chain_id) || offerer?.creator_address,
+    fromSymbol: accepter?.symbol || accepter?.name,
+    toSymbol: offerer?.symbol || offerer?.name,
+    battleId,
+    escrowRequired: live?.state === "matched",
+  });
   await publishArenaCreatorEvent(
     row.chain_id,
     ident(offerer?.creator_address, row.chain_id) || offerer?.creator_address,

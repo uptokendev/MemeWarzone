@@ -136,8 +136,14 @@ const inbox = async (wallet) => (await call(battlesRuntime, "GET", `/arena/battl
 const status = async (wallet) => (await call(battlesRuntime, "GET", `/arena/battles/creator-status?chainId=${CHAIN}&creator=${wallet.address}`)).json;
 const detail = async (id) => (await call(battlesRuntime, "GET", `/arena/battles/${id}?chainId=${CHAIN}`)).json?.battle;
 const events = (box) => (box?.items || []).map((i) => `${i.event}:${i.offerCount}`);
+// CO-5: the bell row each step writes (category battles), read straight from the table.
+const bell = async (wallet, battleId) => (await pool.query(
+  `select event_type from public.prepare_mode_notifications
+    where wallet_address = $1 and category = 'battles' and target_id = $2 order by created_at`,
+  [wallet.address.toLowerCase(), String(battleId)],
+).catch(() => ({ rows: [] }))).rows.map((r) => r.event_type);
 
-async function challenge(from, fromToken, toToken, { mode = "vote", stake = 0.01, hours = mode === "vote" ? 1 : 24 } = {}) {
+async function challenge(from, fromToken, toToken, { mode = "vote", stake = 0.01, hours = mode === "vote" ? 6 : 24 } = {}) {
   const lines = [`Challenger: ${fromToken}`, `Defender: ${toToken}`, `Stake: ${stake}`, `Duration: ${hours}`, ...(mode === "vote" ? [`Mode: vote`] : [])];
   const res = await call(battlesRuntime, "POST", "/arena/battles/challenge", {
     tokenId: fromToken, targetTokenId: toToken, chainId: CHAIN, stakeNative: stake, durationHours: hours, battleMode: mode,
@@ -194,22 +200,26 @@ async function main() {
   check("opponent list answers with a chain id (was 404) and flags ownerless coins", Array.isArray(opp?.items) && orphanRow?.hasOwner === false, `items=${opp?.items?.length} orphan.hasOwner=${orphanRow?.hasOwner}`);
 
   // ---- Vote battle: challenge -> counter -> accept -> votes -> clock out -> winner -> league
-  r = await challenge(A, coinA, coinB, { mode: "vote", hours: 1 });
+  // Vote battles run 6 / 12 / 24 / 48 hours (11da3d25); the harness used the old 1-hour minimum.
+  r = await challenge(A, coinA, coinB, { mode: "vote", hours: 6 });
   const vb = r.json?.battle;
-  check("A challenges B to a 1-hour Vote Battle", r.status === 200 && vb?.state === "challenged" && vb?.durationHours === 1 && vb?.battleMode === "vote", `${r.status} ${vb?.state} ${vb?.durationHours}h ${vb?.battleMode}`);
+  check("A challenges B to a 6-hour Vote Battle", r.status === 200 && vb?.state === "challenged" && vb?.durationHours === 6 && vb?.battleMode === "vote", `${r.status} ${vb?.state} ${vb?.durationHours}h ${vb?.battleMode}`);
   check("B's inbox has the challenge popup", events(await inbox(B)).includes("challenge_received:0"), JSON.stringify(events(await inbox(B))));
   check("A's inbox is empty while waiting", events(await inbox(A)).length === 0, JSON.stringify(events(await inbox(A))));
-  r = await counter(B, vb.id, 0.02, 6);
-  check("B counters: higher buy-in, 6 hours", r.status === 200 && r.json?.battle?.offeredDurationHours === 6, `${r.status} ${r.json?.error || ""}`);
+  check("B's bell has the challenge", (await bell(B, vb.id)).includes("challenge"), JSON.stringify(await bell(B, vb.id)));
+  r = await counter(B, vb.id, 0.02, 12);
+  check("B counters: higher buy-in, 12 hours", r.status === 200 && r.json?.battle?.offeredDurationHours === 12, `${r.status} ${r.json?.error || ""}`);
   check("A's inbox gets the counter popup back", events(await inbox(A)).includes("counter_received:1"), JSON.stringify(events(await inbox(A))));
   check("B's inbox is empty while A decides", events(await inbox(B)).length === 0, JSON.stringify(events(await inbox(B))));
-  r = await counter(A, vb.id, 0.015, 6);
+  check("A's bell has the counter-offer", (await bell(A, vb.id)).includes("counter"), JSON.stringify(await bell(A, vb.id)));
+  r = await counter(A, vb.id, 0.015, 12);
   check("a counter that does not raise the buy-in is refused", r.status === 400, `${r.status}`);
   r = await accept(B, vb.id);
   check("the owner who made the live offer cannot accept it", r.status === 401 || r.status === 404 || r.status === 409, `${r.status} ${r.json?.code || r.json?.error || ""}`);
   r = await accept(A, vb.id);
   const vLive = r.json?.battle;
-  check("A accepts B's counter: fight is live with the countered terms", r.status === 200 && vLive?.state === "live" && vLive?.durationHours === 6 && Number(vLive?.stakeNative) === 0.02, `${r.status} ${vLive?.state} ${vLive?.durationHours}h stake ${vLive?.stakeNative}`);
+  check("B's bell says the counter was accepted", (await bell(B, vb.id)).includes("accepted"), JSON.stringify(await bell(B, vb.id)));
+  check("A accepts B's counter: fight is live with the countered terms", r.status === 200 && vLive?.state === "live" && vLive?.durationHours === 12 && Number(vLive?.stakeNative) === 0.02, `${r.status} ${vLive?.state} ${vLive?.durationHours}h stake ${vLive?.stakeNative}`);
   const voters = [newWallet(), newWallet(), newWallet()];
   const v1 = await vote(voters[0], vb.id, coinA);
   const v2 = await vote(voters[1], vb.id, coinA);

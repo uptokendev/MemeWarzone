@@ -38,6 +38,8 @@ export type DraftNotification = {
   createdAt: string;
   read: boolean;
   kind: "follow" | "comment" | "heat" | "publish" | "launch";
+  /** CO-5 notification category from the API; absent on local draft notices (coin events). */
+  category?: "battles" | "social" | "rewards" | "coin";
 };
 
 export type DraftMetricsSeed = {

@@ -1,4 +1,5 @@
 import { attachHandles } from "../lib/userHandles.js";
+import { notifyRepost, notifySocialPost } from "../lib/socialNotify.js";
 import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { badMethod, getQuery, json, readJson } from "../../server/http.js";
@@ -745,6 +746,8 @@ async function handleCreate(req, res) {
     ));
   }
 
+  // CO-5: quoted author and @mentions (fire-and-forget; never delays or fails the post).
+  if (rows[0]?.id) void notifySocialPost(pool, { postId: rows[0].id, actor: address, body: trimmed, quoteOfId: quoteOf || null });
   return json(res, 200, {
     id: rows[0]?.id ?? null,
     createdAt: rows[0]?.created_at ? new Date(rows[0].created_at).toISOString() : null,
@@ -878,6 +881,7 @@ async function handleRepost(req, res) {
      on conflict do nothing`,
     [postId, address],
   );
+  void notifyRepost(pool, { postId, actor: address });
   const { rows } = await pool.query(`select count(*)::int as n from public.social_post_reposts where post_id = $1`, [postId]);
   return json(res, 200, { ok: true, on: true, repostCount: Number(rows[0]?.n || 0) });
 }
@@ -916,6 +920,7 @@ async function handleReply(req, res) {
      returning id, created_at`,
     [address, trimmed, null, mention.chainId, mention.campaign, mention.token, postId],
   );
+  if (rows[0]?.id) void notifySocialPost(pool, { postId: rows[0].id, actor: address, body: trimmed, parentId: postId });
   const { rows: counts } = await pool.query(
     `select count(*)::int as n from public.social_posts where parent_id = $1 and status = 0`,
     [postId],
