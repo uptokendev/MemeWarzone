@@ -137,3 +137,20 @@ no expiry, no manual work, every winner can collect. Pre-grad leagues untouched 
 - **LP fees**: `EVM_LP_HARVEST` (API, hourly, simulates locker.harvest) and `SOLANA_LP_HARVEST_AUTO`
   (indexer, 6h; refuses without `SOLANA_PROTOCOL_TREASURY_ADDRESS`, whose fallback is the devnet
   deployer HuKfoF).
+
+
+### Finance fee-routing view (built 2026-10-03)
+
+`GET /api/admin/finance/fee-routing?chainId=…[&environment=production&solanaCluster=mainnet-beta]&days=30`
+(bearer + `finance.view` only; `frontend/api/lib/financeFeeRouting*.js`). Per chain: every fee flow with
+its split and code citation, every destination's live balance (RPC), DB inflows over the period, and live
+wiring checks (router getters, `route_state`, `arena_config`, `arena_money_config_v2`) against the
+registry. Failed reads are `unknown`, never zero. Facts found while building it, read from chain:
+- **LP protocol share on EVM is stranded by design.** Lockers route the 20% via `routeLpToken`
+  (`safeTransferFrom` of WBNB/WETH into `ProtocolRevenueVault`); the vault forwards native only on
+  `receive()` and has no ERC20 withdraw. No graduation has harvested on mainnet yet (balances 0).
+- **No gen-6 router events are recorded.** `reward_events` has no rows for 56/4663 while the V4
+  vaults hold fees: the indexer scans V4 only if `TREASURY_ROUTERS_EXTRA_<id>` is set
+  (`realtime-indexer/src/indexer.ts:1182-1188`). Recruiter credit reads the same table.
+- EVM war-pool protocol share goes straight to the Safe (`protocolReceiver`), not the protocol vault.
+- Solana deployer 9YN7 holds `route_state` / `arena_config` / `rewards_config` authority (no fee path pays it).
