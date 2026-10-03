@@ -14,6 +14,8 @@ on:
       - 'frontend/api/lib/arenaTournamentVoteRuntime.mjs'
       - 'frontend/api/lib/arenaVoteTournamentBracketService.js'
       - 'frontend/api/lib/arenaVoteTournamentFinalizationService.js'
+      - 'db/migrations/20261003_000006_arena_free_vote_tournament_scope.sql'
+      - 'frontend/api/arenaFreeVoteTournamentScope.integration.test.mjs'
       - '.github/workflows/tournament-admin-backend-contract.yml'
   pull_request:
     branches:
@@ -28,6 +30,8 @@ on:
       - 'frontend/api/lib/arenaTournamentVoteRuntime.mjs'
       - 'frontend/api/lib/arenaVoteTournamentBracketService.js'
       - 'frontend/api/lib/arenaVoteTournamentFinalizationService.js'
+      - 'db/migrations/20261003_000006_arena_free_vote_tournament_scope.sql'
+      - 'frontend/api/arenaFreeVoteTournamentScope.integration.test.mjs'
       - '.github/workflows/tournament-admin-backend-contract.yml'
   workflow_dispatch:
 
@@ -85,6 +89,8 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20261003_000001_arena_vote_tournament_round_cap.sql >/dev/null
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20261003_000001_arena_vote_tournament_round_cap.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20261003_000006_arena_free_vote_tournament_scope.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20261003_000006_arena_free_vote_tournament_scope.sql >/dev/null
 
       - name: SQL boundary matrix
         shell: bash
