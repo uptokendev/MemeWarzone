@@ -112,16 +112,16 @@ export function SearchPopup({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="flex max-h-[80vh] w-[min(920px,calc(100vw-1.5rem))] max-w-4xl flex-col gap-0 overflow-hidden border-orange-400/30 bg-black/95 p-0 shadow-[0_0_40px_rgba(251,146,60,0.12)]">
+        <DialogContent className="flex max-h-[80vh] w-[min(920px,calc(100vw-1.5rem))] max-w-4xl flex-col gap-0 overflow-hidden rounded-[18px] border border-mw-edge bg-mw-surface p-0 font-mw-body text-mw-text shadow-[0_24px_64px_rgba(0,0,0,0.55)] [&>button]:h-11 [&>button]:w-11 [&>button]:text-mw-muted">
           <DialogTitle className="sr-only">Search tokens and wallets</DialogTitle>
-          <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
-            <Search className="h-4 w-4 shrink-0 text-orange-300/80" />
+          <div className="flex items-center gap-2.5 border-b border-mw-border px-4 py-2.5 pr-14">
+            <Search className="h-5 w-5 shrink-0 text-mw-muted" />
             <input
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={placeholder}
-              className="h-11 w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+              className="h-11 w-full bg-transparent text-[16px] text-mw-text outline-none placeholder:text-[#5C6670]"
             />
           </div>
 
@@ -139,16 +139,16 @@ export function SearchPopup({
             {searching ? (
               <div className="space-y-1">
                 {loading ? (
-                  <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+                  <div className="flex items-center justify-center gap-2 py-8 text-sm text-mw-muted">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Scanning warzone…
                   </div>
                 ) : null}
                 {!loading && error ? (
-                  <div className="px-2 py-6 text-center text-xs text-destructive">{error}</div>
+                  <div className="px-2 py-6 text-center text-sm text-mw-sell">{error}</div>
                 ) : null}
                 {!loading && !error && results.length === 0 ? (
-                  <div className="px-2 py-8 text-center text-sm text-muted-foreground">
+                  <div className="px-2 py-8 text-center text-sm text-mw-muted">
                     No matches. Try a ticker, token address, profile name, or wallet.
                   </div>
                 ) : null}
@@ -160,21 +160,21 @@ export function SearchPopup({
                       key={`${row.kind}:${row.href}`}
                       type="button"
                       onClick={() => selectToken(row)}
-                      className="flex w-full items-center gap-3 border border-transparent px-2 py-2 text-left hover:border-orange-400/30 hover:bg-orange-500/10"
+                      className="mw-focus flex min-h-12 w-full items-center gap-3 rounded-[10px] border border-transparent px-2.5 py-2 text-left text-mw-text hover:border-mw-border hover:bg-mw-input"
                     >
                       <img
                         src={resolveImageUri(row.logoURI || "") || "/placeholder.svg"}
                         alt=""
-                        className="h-10 w-10 shrink-0 object-cover"
+                        className="h-10 w-10 shrink-0 rounded-[10px] border border-mw-border object-cover"
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3">
-                          <span className="truncate font-semibold text-foreground">{row.name}</span>
+                          <span className="truncate font-semibold text-mw-text">{row.name}</span>
                           {/* A draft is a promotion page, not a tradeable token.
                               Showing it as a bare $TICKER alongside live tokens
                               would send people to a page with no chart and no
                               buy button with no warning. */}
-                          <span className="shrink-0 font-mono text-[11px] text-orange-200">
+                          <span className="shrink-0 font-mw-mono text-xs text-mw-accent-soft">
                             {row.kind === "wallet"
                               ? "Profile"
                               : row.kind === "draft"
@@ -182,7 +182,7 @@ export function SearchPopup({
                                 : `$${row.symbol}`}
                           </span>
                         </div>
-                        <div className="truncate font-mono text-[10px] text-muted-foreground">
+                        <div className="truncate font-mw-mono text-xs text-mw-muted">
                           {mcap || row.tokenAddress || row.campaignAddress}
                         </div>
                       </div>
@@ -202,7 +202,7 @@ export function SearchPopup({
                   <HistoryBlock title="Recently viewed" items={viewed} onSelect={selectHistory} />
                 ) : null}
                 {!featured.length && !trending.length && !searched.length && !viewed.length ? (
-                  <p className="px-1 py-6 text-center text-sm text-muted-foreground">
+                  <p className="px-1 py-6 text-center text-sm text-mw-muted">
                     Type a ticker, name, or paste an address.
                   </p>
                 ) : null}
@@ -229,9 +229,9 @@ function HistoryBlock({
   return (
     <section>
       <div className="mb-2 flex items-center justify-between px-1">
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</h3>
+        <h3 className="m-0 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">{title}</h3>
         {onClear ? (
-          <button type="button" onClick={onClear} className="text-[11px] text-orange-300 hover:text-orange-200">
+          <button type="button" onClick={onClear} className="mw-focus min-h-9 px-1 text-[13px] font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">
             Clear
           </button>
         ) : null}
@@ -242,12 +242,12 @@ function HistoryBlock({
             key={`${item.kind}:${item.href}:${item.at}`}
             type="button"
             onClick={() => onSelect(item)}
-            className="flex w-full items-center gap-3 px-2 py-2 text-left hover:bg-orange-500/10"
+            className="mw-focus flex min-h-12 w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left text-mw-text hover:bg-mw-input"
           >
-            <img src={resolveImageUri(item.logoURI || "") || "/placeholder.svg"} alt="" className="h-8 w-8 object-cover" />
+            <img src={resolveImageUri(item.logoURI || "") || "/placeholder.svg"} alt="" className="h-9 w-9 rounded-[10px] border border-mw-border object-cover" />
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm text-foreground">{item.name}</div>
-              <div className="truncate font-mono text-[10px] text-muted-foreground">
+              <div className="truncate text-sm font-semibold text-mw-text">{item.name}</div>
+              <div className="truncate font-mw-mono text-xs text-mw-muted">
                 {item.kind === "wallet"
                   ? "Wallet"
                   : item.kind === "draft"

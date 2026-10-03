@@ -76,17 +76,17 @@ export const ConnectWalletButton = () => {
       >
         <Button
           variant="outline"
-          className="font-mono text-xs md:text-sm rounded-full px-3 md:px-4 py-1 h-auto flex items-center gap-2"
+          className="mw-focus flex h-11 items-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-3 font-mw-mono text-[13px] text-mw-text hover:bg-[#222830] hover:text-mw-text"
           onClick={() => setShowDropdown((open) => !open)}
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+          <span className="h-2 w-2 rounded-full bg-mw-up" />
           {shortAddress}
         </Button>
 
         {showDropdown && (
-          <div className="absolute right-0 mt-1 w-32 rounded-md border border-border bg-background shadow-lg z-50">
+          <div className="absolute right-0 z-50 mt-1 w-36 rounded-[10px] border border-mw-edge bg-mw-surface p-1 font-mw-body shadow-lg">
             <button
-              className="w-full text-left text-xs px-3 py-2 hover:bg-muted"
+              className="mw-focus min-h-10 w-full rounded-lg px-3 text-left text-sm text-mw-text hover:bg-mw-raised"
               onClick={() => void handleDisconnect()}
             >
               Disconnect
@@ -102,7 +102,7 @@ export const ConnectWalletButton = () => {
       <Button
         onClick={() => setIsOpen(true)}
         disabled={connecting || connectingSolana}
-        className="font-retro text-xs md:text-sm rounded-full px-3 md:px-4 py-1 h-auto flex items-center gap-1"
+        className="mw-focus flex h-11 items-center gap-1.5 rounded-[10px] border border-mw-accent bg-mw-accent px-4 font-mw-body text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-60"
       >
         {connecting || connectingSolana ? (
           <>
