@@ -12,6 +12,7 @@ import {
   ROBINHOOD_TESTNET_CHAIN_ID,
 } from "@/lib/chainConfig";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
+import { applyDisplayPrefs, useDisplayPrefs } from "@/lib/displayPrefs";
 
 function nativeSymbol(chainId?: number | null): "BNB" | "SOL" | "ETH" {
   if (isSolanaChainId(chainId)) return "SOL";
@@ -29,7 +30,12 @@ export default function CommandCenterOverview() {
     loadingBalances,
     portfolioMetrics,
     loadingPortfolioMetrics,
+    walletAddress,
   } = useCommandCenterData();
+  // Settings > Portfolio display (founder, 2026-10-03) filters the list; Total value counts everything.
+  const { prefs: displayPrefs } = useDisplayPrefs(walletAddress);
+  const shownBalances = applyDisplayPrefs(tokenBalances, displayPrefs);
+  const coinsHeld = tokenBalances.filter((t) => t.kind !== "native").length;
 
   const trophyCount = Array.isArray((leagueCabinet as any)?.trophies)
     ? (leagueCabinet as any).trophies.length
@@ -52,7 +58,7 @@ export default function CommandCenterOverview() {
         </div>
         <div className="rounded-[14px] border border-mw-border bg-mw-surface p-3">
           <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Coins held</div>
-          <div className="font-mw-mono text-[19px] font-bold">{loadingBalances ? "…" : tokenBalances.length}</div>
+          <div className="font-mw-mono text-[19px] font-bold">{loadingBalances ? "…" : coinsHeld}</div>
           <div className="text-xs text-mw-muted">Tokens in this wallet</div>
         </div>
       </div>
@@ -66,9 +72,9 @@ export default function CommandCenterOverview() {
         <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Top holdings</div>
         {loadingBalances ? (
           <div className="text-sm text-mw-muted">Loading token balances...</div>
-        ) : tokenBalances.length > 0 ? (
+        ) : shownBalances.length > 0 ? (
           <div className="flex flex-col">
-            {tokenBalances.slice(0, 8).map((token) => {
+            {shownBalances.slice(0, 8).map((token) => {
               // Founder, 2026-10-03: logo, name, ticker and USD value for every coin in the wallet.
               // Coins launched or imported here open their coin page; other tokens are listed only.
               const content = (
@@ -83,7 +89,7 @@ export default function CommandCenterOverview() {
                     <b className="block truncate">{token.ticker ? `$${String(token.ticker).replace(/^\$/, "")}` : token.name}</b>
                     <span className="block truncate text-xs text-mw-muted">
                       {token.name}
-                      {token.kind === "imported" ? " · Imported" : token.kind === "launched" ? " · Launched here" : ""}
+                      {token.kind === "imported" ? " · Imported" : token.kind === "launched" ? " · Launched here" : token.kind === "native" ? " · Native coin" : token.stable ? " · Stablecoin" : ""}
                     </span>
                   </span>
                   <span className="shrink-0 text-right">
@@ -96,8 +102,8 @@ export default function CommandCenterOverview() {
                   </span>
                 </>
               );
-              return token.kind === "other" ? (
-                <div key={`${token.tokenAddress}-${token.campaignAddress}`} className={`${row} py-1.5 text-mw-text`}>{content}</div>
+              return token.kind === "other" || token.kind === "native" ? (
+                <div key={`${token.tokenAddress || token.kind}-${token.campaignAddress}`} className={`${row} py-1.5 text-mw-text`}>{content}</div>
               ) : (
                 <Link
                   key={`${token.tokenAddress}-${token.campaignAddress}`}

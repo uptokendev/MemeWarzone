@@ -8,7 +8,9 @@ export type TokenBalanceRow = {
   balanceFormatted: string;
   /** From /api/profile/portfolio (founder, 2026-10-03): USD value and where the coin comes from. */
   valueUsd?: number;
-  kind?: "launched" | "imported" | "other";
+  kind?: "launched" | "imported" | "other" | "native";
+  native?: boolean;
+  stable?: boolean;
 };
 
 export type ActivityTradeRow = {

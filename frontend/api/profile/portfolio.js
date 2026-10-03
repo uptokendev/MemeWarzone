@@ -70,7 +70,8 @@ async function loadCampaignsByMints(chainId, mints) {
   const { rows } = await pool.query(
     // Prices live in market_stats on production (campaigns has no price columns; CO-22, 2026-10-03).
     `select c.chain_id, c.campaign_address, c.token_address, c.name, c.symbol, c.logo_uri,
-            ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd
+            ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd,
+            ms.market_cap_usd, ms.market_stage
        from public.campaigns c
        left join public.market_stats ms
          on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
@@ -91,7 +92,8 @@ async function loadIndexedHoldings(chainId, address) {
     const { rows } = await pool.query(
       `select th.chain_id, th.token_address, th.balance_raw,
               c.campaign_address, c.name, c.symbol, c.logo_uri,
-              ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd
+              ms.market_cap_bnb as marketcap_bnb, ms.last_price_bnb, ms.last_price_usd,
+              ms.market_cap_usd, ms.market_stage
          from public.token_holder_balances th
          left join public.campaigns c
            on c.chain_id = th.chain_id
@@ -133,7 +135,7 @@ async function loadImportsByMints(chainId, mints) {
   if (!mints.length) return [];
   try {
     const { rows } = await pool.query(
-      `select i.token_address, i.name, i.symbol, i.image_url, s.price_usd
+      `select i.token_address, i.name, i.symbol, i.image_url, s.price_usd, s.market_cap_usd
          from public.arena_token_imports i
          left join public.arena_import_market_stats s
            on s.chain_id = i.chain_id and s.token_address = i.token_address
@@ -170,6 +172,33 @@ async function loadJupiterTokens(mints) {
   return out;
 }
 
+// Native-coin wrappers and stablecoins, flagged so the owner can hide them from the list (founder,
+// 2026-10-03). Mints/addresses first, symbols as the fallback for anything not listed here.
+const WRAPPED_NATIVE = new Set([
+  "So11111111111111111111111111111111111111112", // WSOL
+  "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", // WBNB (BNB Chain)
+]);
+const STABLE_ADDRESSES = new Set([
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC (Solana)
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT (Solana)
+  "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo", // PYUSD (Solana)
+  "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB", // USD1 (Solana)
+  "0x55d398326f99059ff775485246999027b3197955", // USDT (BNB Chain)
+  "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", // USDC (BNB Chain)
+  "0xc5f0f7b66764f6ec8c8dff7ba683102295e16409", // FDUSD (BNB Chain)
+  "0xe9e7cea3dedca5984780bafc599bd69add087d56", // BUSD (BNB Chain)
+]);
+const STABLE_SYMBOLS = new Set(["USDC", "USDT", "USD1", "PYUSD", "DAI", "FDUSD", "BUSD", "USDS", "USDE", "TUSD", "USDP", "USDG"]);
+const WRAPPED_SYMBOLS = new Set(["WSOL", "WBNB", "WETH"]);
+const addrKey = (a) => { const t = String(a || "").trim(); return t.startsWith("0x") ? t.toLowerCase() : t; };
+function holdingFlags(mint, ticker) {
+  const sym = String(ticker || "").toUpperCase();
+  return {
+    native: WRAPPED_NATIVE.has(addrKey(mint)) || WRAPPED_SYMBOLS.has(sym),
+    stable: STABLE_ADDRESSES.has(addrKey(mint)) || STABLE_SYMBOLS.has(sym),
+  };
+}
+
 const positive = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? Number(n) : null);
 
 // JSON-RPC method is getTokenAccountsByOwner with jsonParsed encoding (CO-22: the web3.js helper name
@@ -203,7 +232,8 @@ async function scanSolana(address, nativeUsd) {
   }
   const notLaunched = owned.filter((h) => !byMint.get(h.mint)).map((h) => h.mint);
   const imports = new Map((await loadImportsByMints(101, notLaunched)).map((r) => [String(r.token_address), r]));
-  const jupiter = await loadJupiterTokens(owned.map((h) => h.mint).filter((m) => !byMint.get(m) || !positive(byMint.get(m)?.last_price_usd)));
+  const WSOL = "So11111111111111111111111111111111111111112";
+  const jupiter = await loadJupiterTokens([...new Set([WSOL, ...owned.map((h) => h.mint).filter((m) => !byMint.get(m) || !positive(byMint.get(m)?.last_price_usd))])]);
   // Each holding says where it comes from (founder, 2026-10-03): launched here, imported here, or any other
   // token in the wallet. Launched and imported both count as MemeWarzone coins.
   const holdings = owned.map((h) => {
@@ -229,12 +259,19 @@ async function scanSolana(address, nativeUsd) {
       campaignAddress: campaign?.campaign_address || null,
       kind: campaign ? "launched" : imported ? "imported" : "other",
       platform: Boolean(campaign || imported),
+      marketCapUsd: positive(campaign?.market_cap_usd) ?? positive(imported?.market_cap_usd),
+      marketStage: campaign?.market_stage || null,
       balanceFormatted: h.balanceFormatted,
       priceUsd,
       valueUsd,
     };
   });
-  return { native, holdings };
+  // SOL itself as a row in the list (founder: In wallet shows every coin, SOL too). Not part of the
+  // holdings that feed the metrics, which already add the native balance.
+  const nativeRow = native > 0
+    ? { ticker: "SOL", name: "Solana", image: jupiter.get(WSOL)?.icon || null, mint: null, campaignAddress: null, kind: "native", platform: false, balanceFormatted: String(native), priceUsd: nativeUsd || null, valueUsd: native * (nativeUsd || 0) }
+    : null;
+  return { native, holdings, nativeRow };
 }
 
 async function scanEvm(chainId, address, nativeUsd) {
@@ -257,6 +294,8 @@ async function scanEvm(chainId, address, nativeUsd) {
         campaignAddress: row.campaign_address || null,
         kind: row.campaign_address ? "launched" : "other",
         platform: Boolean(row.campaign_address),
+        marketCapUsd: positive(row.market_cap_usd),
+        marketStage: row.market_stage || null,
         balanceFormatted,
         valueUsd: holdingValue({ ...row, balanceFormatted }, nativeUsd),
       };
@@ -333,10 +372,17 @@ async function computePortfolio(chainId, address) {
   // Founder 2026-10-03: split held coins into MemeWarzone coins and other tokens (coinsCount stays the total).
   const held = scan.holdings.filter((h) => Number.parseFloat(h.balanceFormatted || "0") > 0);
   const platformCoinsCount = held.filter((h) => h.platform).length;
+  // EVM native coin row (Solana builds its own with the SOL icon).
+  const evmSymbol = Number(chainId) === 4663 || Number(chainId) === 46630 ? "ETH" : "BNB";
+  const nativeRow = scan.nativeRow !== undefined
+    ? scan.nativeRow
+    : scan.native > 0
+      ? { ticker: evmSymbol, name: evmSymbol === "ETH" ? "Ether" : "BNB", image: null, mint: null, campaignAddress: null, kind: "native", platform: false, balanceFormatted: String(scan.native), priceUsd: nativeUsd || null, valueUsd: scan.native * (nativeUsd || 0) }
+      : null;
   return {
     metrics: metrics ? { ...metrics, platformCoinsCount, otherTokensCount: held.length - platformCoinsCount } : metrics,
     // The list behind the numbers, highest value first (Command Center Top holdings, profile Coins tab).
-    holdings: held
+    holdings: [...(nativeRow ? [nativeRow] : []), ...held]
       .map((h) => ({
         mint: h.mint || null,
         campaignAddress: h.campaignAddress || null,
@@ -348,6 +394,10 @@ async function computePortfolio(chainId, address) {
         balanceFormatted: h.balanceFormatted,
         priceUsd: h.priceUsd ?? null,
         valueUsd: Number(h.valueUsd) || 0,
+        marketCapUsd: h.marketCapUsd ?? null,
+        marketStage: h.marketStage || null,
+        native: h.kind === "native" || holdingFlags(h.mint, h.ticker).native,
+        stable: h.kind !== "native" && holdingFlags(h.mint, h.ticker).stable,
       }))
       .sort((a, b) => b.valueUsd - a.valueUsd)
       .slice(0, 50),

@@ -17,7 +17,9 @@ import {
   isEvmChainId,
   SOLANA_CHAIN_ID,
 } from "@/lib/chainConfig";
-import { fetchUserProfile, fetchPublicPortfolioMetrics, type UserProfile } from "@/lib/profileApi";
+import { fetchUserProfile, fetchPublicPortfolio, fetchPublicPortfolioMetrics, type PortfolioHolding, type UserProfile } from "@/lib/profileApi";
+import { ProfileCoinsTab } from "@/components/profile/ProfileCoinsTab";
+import { useDisplayPrefs } from "@/lib/displayPrefs";
 import { fetchOwnerCampaignDrafts, fetchPublicCampaignDrafts, type CampaignDraft } from "@/lib/draftApi";
 import { isSolanaAddress } from "@/lib/address";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
@@ -224,6 +226,8 @@ export default function PublicProfile({
   );
 
   const [portfolioMetrics, setPortfolioMetrics] = useState<PortfolioMetrics | null>(null);
+  const [holdings, setHoldings] = useState<PortfolioHolding[] | null>(null);
+  const { prefs: displayPrefs } = useDisplayPrefs(profileWallet);
   const [loadingPortfolio, setLoadingPortfolio] = useState(true);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [isFollowing, setIsFollowing] = useState(false);
@@ -354,6 +358,7 @@ export default function PublicProfile({
   useEffect(() => {
     if (!profileWallet || !activeChainId) {
       setPortfolioMetrics(null);
+      setHoldings(null);
       setLoadingPortfolio(false);
       return;
     }
@@ -364,9 +369,11 @@ export default function PublicProfile({
       setLoadingPortfolio(true);
       setPortfolioError(null);
       try {
-        const data = await fetchPublicPortfolioMetrics(activeChainId, profileWallet);
+        // Metrics plus the holdings list (Coins tab, founder 2026-10-03), from the same request.
+        const data = await fetchPublicPortfolio(activeChainId, profileWallet);
         if (!cancelled) {
-          setPortfolioMetrics(data ?? null);
+          setPortfolioMetrics(data.metrics ?? null);
+          setHoldings(data.holdings);
         }
       } catch (e: any) {
         if (!cancelled) {
@@ -752,7 +759,20 @@ export default function PublicProfile({
 
   const tabs: Array<{ value: string; label: string; content: ReactNode }> = [
     { value: "posts", label: "Posts", content: postsList },
-    { value: "coins", label: "Coins", content: coinsGrid },
+    {
+      value: "coins",
+      label: "Coins",
+      content: (
+        <ProfileCoinsTab
+          createdGrid={coinsGrid}
+          createdCount={createdCoins.length}
+          holdings={holdings}
+          loadingHoldings={loadingPortfolio}
+          chainId={activeChainId}
+          displayPrefs={displayPrefs}
+        />
+      ),
+    },
     { value: "drafts", label: "Drafts", content: draftsList },
     {
       value: "portfolio",

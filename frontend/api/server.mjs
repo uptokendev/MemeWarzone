@@ -12,6 +12,7 @@ process.on("uncaughtException", (error) => {
 
 import moderation from "./moderation.js";
 import notificationPrefs from "./notificationPrefs.js";
+import displayPrefs from "./displayPrefs.js";
 import notificationUnsubscribe from "./notificationUnsubscribe.js";
 import recruiterCreatorCoins from "./recruiterCreatorCoins.js";
 import { pool } from "../server/db.js";
@@ -584,6 +585,7 @@ router.all("/recruiters/:code/replacements", wrap(recruiterReplacements));
 router.all("/recruiters/:code/creator-coins", wrap(recruiterCreatorCoins));
 router.all("/notification-prefs/unsubscribe", wrap(notificationUnsubscribe));
 router.all("/notification-prefs", wrap(notificationPrefs));
+router.all("/display-prefs", wrap(displayPrefs));
 router.all("/moderation", wrap(moderation));
 router.all("/recruiters/:code/referral/capture", wrap(recruiterReferralCapture));
 router.all("/recruiters/me/payouts", wrap(recruiterMePayouts));
