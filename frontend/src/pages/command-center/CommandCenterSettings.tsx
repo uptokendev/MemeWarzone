@@ -27,7 +27,13 @@ function formatNotificationDate(value?: string | null) {
   return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export default function CommandCenterSettings() {
+/**
+ * Settings and, since CO-29 (founder 2026-10-03), the Notifications tab: the same component renders
+ * one section or the other so the handlers and data loading stay in one place.
+ */
+export default function CommandCenterSettings({ section = "settings" }: { section?: "settings" | "notifications" } = {}) {
+  const showSettings = section === "settings";
+  const showNotifications = section === "notifications";
   const {
     walletAddress,
     chainId,
@@ -121,7 +127,9 @@ export default function CommandCenterSettings() {
 
   return (
     <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
-      <h2 className="sr-only">Settings</h2>
+      <h2 className="sr-only">{showNotifications ? "Notifications" : "Settings"}</h2>
+      {showSettings ? (
+      <>
       <CommandCenterCard title="Profile">
         <div className="flex flex-wrap items-center gap-3">
           <img src={avatarUrl} alt={displayName} className="h-16 w-16 rounded-full border border-mw-border object-cover" />
@@ -195,7 +203,10 @@ export default function CommandCenterSettings() {
         </div>
       </CommandCenterCard>
 
-      {postGradFlags.arena ? (
+      </>
+      ) : null}
+
+      {showNotifications && postGradFlags.arena ? (
         <CommandCenterCard title="Arena challenge email">
           <p className="m-0 flex items-center gap-2 text-sm text-mw-muted">
             <Mail className="h-4 w-4 shrink-0 text-mw-accent-soft" aria-hidden="true" />
@@ -225,6 +236,7 @@ export default function CommandCenterSettings() {
       ) : null}
 
       {/* CO-5 (founder, 2026-10-03): per-category bell and email toggles. */}
+      {showNotifications ? (
       <NotificationSettingsCard
         walletAddress={walletAddress}
         chainId={chainId || walletChainId}
@@ -232,7 +244,9 @@ export default function CommandCenterSettings() {
         solanaAccount={solanaAccount}
         emailVerified={Boolean(arenaEmailStatus?.verified)}
       />
+      ) : null}
 
+      {showNotifications ? (
       <div id="notifications" className="scroll-mt-24">
         <CommandCenterCard
           title="Notifications"
@@ -270,6 +284,7 @@ export default function CommandCenterSettings() {
           </div>
         </CommandCenterCard>
       </div>
+      ) : null}
     </div>
   );
 }

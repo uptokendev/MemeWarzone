@@ -260,6 +260,7 @@ function AppShellLayout({
           <Route path="/profile/:wallet/command/claims" element={<CommandCenterShell><CommandCenterClaims /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/settings" element={<CommandCenterShell><CommandCenterSettings /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/edit-profile" element={<CommandCenterShell><CommandCenterEditProfile /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/notifications" element={<CommandCenterShell><CommandCenterSettings section="notifications" /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/followers" element={<CommandCenterShell><CommandCenterSocial mode="followers" /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/following" element={<CommandCenterShell><CommandCenterSocial mode="following" /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/coins" element={<CommandCenterShell><CommandCenterCoins /></CommandCenterShell>} />

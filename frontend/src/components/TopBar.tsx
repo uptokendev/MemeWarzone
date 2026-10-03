@@ -175,7 +175,8 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
   const openNotificationSettings = () => {
     setNotificationOpen(false);
     if (account) {
-      navigate(`/profile/${encodeURIComponent(account)}/command/settings#notifications`);
+      // CO-29: "View all" opens the Notifications tab, not the top of Settings.
+      navigate(`/profile/${encodeURIComponent(account)}/command/notifications`);
       return;
     }
     navigate("/profile?tab=settings");
