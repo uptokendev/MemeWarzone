@@ -204,7 +204,7 @@ const PostGradLeague = () => {
 
   return (
     <WarzoneContent className="space-y-4 font-mw-body text-mw-text">
-      <section className="mw-banner flex flex-col gap-3 rounded-[18px] border border-[#2A3038] p-4 lg:flex-row lg:items-end lg:gap-[22px] lg:p-[26px]">
+      <section className="bg-[#17120e] font-mw-body flex flex-col gap-3 rounded-[18px] border border-[#2A3038] p-4 lg:flex-row lg:items-end lg:gap-[22px] lg:p-[26px]" style={{ backgroundImage: "url(/assets/mwl-banner.png)", backgroundSize: "cover", backgroundPosition: "center" }}>
         <Crown className="hidden h-10 w-10 shrink-0 text-[#F2C14E] lg:block" aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap gap-2">

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { CoinSparkline } from "@/components/feed/CoinSparkline";
 import { PostImage } from "@/components/feed/PostImage";
 import { MentionField } from "@/components/feed/MentionField";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
@@ -218,6 +219,12 @@ export function FeedCoinCard({ item }: { item: FeedItem }) {
           {chain ? <span className={`${chip} border-mw-edge text-[#C9CED4]`}>{chain}</span> : null}
         </div>
       </div>
+      {/* Founder 2026-10-03: small price line next to Buy (like cashtags on X, from the CA). */}
+      <CoinSparkline
+        chainId={item.chainId || item.mentionedChainId}
+        campaign={item.campaignAddress || item.mentionedCampaign}
+        token={item.tokenAddress || item.mentionedToken}
+      />
       {href ? (
         <Link to={href} className="mw-focus inline-flex min-h-11 shrink-0 items-center rounded-[10px] border border-mw-buy bg-mw-buy px-4 text-sm font-bold text-[#04140A] hover:bg-[#15913F] hover:text-[#04140A]">
           Buy

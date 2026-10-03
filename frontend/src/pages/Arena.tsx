@@ -68,8 +68,8 @@ const Arena = () => {
     <WarzoneContent className="flex flex-col gap-5 font-mw-body text-mw-text">
       <header
         data-warzone-page-header="true"
-        className="mw-banner -mx-3 flex flex-col gap-3 border-b border-[#1E2329] px-4 py-5 md:mx-0 md:rounded-[18px] md:border md:border-[#2A3038] lg:flex-row lg:items-end lg:gap-5 lg:p-7"
-      >
+        className="bg-[#17120e] font-mw-body -mx-3 flex flex-col gap-3 border-b border-[#1E2329] px-4 py-5 md:mx-0 md:rounded-[18px] md:border md:border-[#2A3038] lg:flex-row lg:items-end lg:gap-5 lg:p-7"
+       style={{ backgroundImage: "url(/assets/warzone-banner.jpg)", backgroundSize: "cover", backgroundPosition: "center" }}>
         <div className="min-w-0 flex-1">
           <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Warzone</div>
           <h1 className="m-0 mt-1 font-mw-cond text-[34px] font-bold leading-none lg:text-5xl">The post-grad battlefield</h1>
