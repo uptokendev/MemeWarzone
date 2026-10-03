@@ -532,6 +532,12 @@ export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: 
               onDelete={removeOwn}
             />
           </div>
+          {item.parentId ? (
+            // A reply shown on its own (reposted, quoted): where it belongs (founder, 2026-10-03).
+            <Link to={postHref(item.parentId)} className="mt-0.5 inline-block text-[13px] text-mw-muted hover:text-mw-text" data-reply-context="true">
+              Replying to a post · <span className="text-mw-accent-soft">View the post</span>
+            </Link>
+          ) : null}
           <Link to={postHref(item.postId)} className="block text-mw-text hover:text-mw-text">
             <FeedBody body={item.body} />
           </Link>

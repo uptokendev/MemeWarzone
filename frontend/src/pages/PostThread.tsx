@@ -118,6 +118,11 @@ export default function PostThread() {
                   } : undefined}
                 />
                 </div>
+                {post.parentId ? (
+                  <Link to={`/post/${post.parentId}`} className="mt-3 inline-block text-sm text-mw-muted hover:text-mw-text" data-reply-context="true">
+                    Replying to a post · <span className="text-mw-accent-soft">View the post</span>
+                  </Link>
+                ) : null}
                 <div className="mt-3.5"><FeedBody body={post.body} big /></div>
                 {post.mediaUrl ? <PostImage src={post.mediaUrl} /> : null}
                 {post.quoted ? (
@@ -167,7 +172,10 @@ export default function PostThread() {
                           } : undefined}
                         />
                       </div>
-                      <FeedBody body={r.body} />
+                      {/* Founder 2026-10-03: replies take rockets, reposts, quotes and replies like posts.
+                          Tapping the text opens the reply's own page with its answers. */}
+                      <Link to={`/post/${r.postId}`} className="block text-mw-text hover:text-mw-text"><FeedBody body={r.body} /></Link>
+                      {r.postId ? <FeedPostActions item={r} onChanged={() => void load()} /> : null}
                     </div>
                   </article>
                 );

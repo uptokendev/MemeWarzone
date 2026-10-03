@@ -351,7 +351,6 @@ reposted as (
   join public.social_post_reposts rp on rp.post_id = p.id
   ${REPOSTER_PROFILE_LATERAL}
   where p.status = 0
-    and p.parent_id is null
     and (rp.author_address = any($2::text[]) or lower(rp.author_address) = any($3::text[]))
 )
 select * from (
@@ -508,7 +507,7 @@ async function queryRepostsPage({ before, limit, reposters, viewer }) {
     ${POST_FROM}
     join public.social_post_reposts rp on rp.post_id = p.id
     ${REPOSTER_PROFILE_LATERAL}
-    where p.status = 0 and p.parent_id is null`;
+    where p.status = 0`;
   if (before) sql += ` and rp.created_at < $${params.push(before)}`;
   if (Array.isArray(reposters)) {
     sql += ` and lower(rp.author_address) = any($${params.push(reposters.map((w) => String(w).toLowerCase()))}::text[])`;
@@ -741,7 +740,8 @@ async function handleCreate(req, res) {
 
   if (quoteOf) {
     const quoted = await requireLivePost(quoteOf);
-    if (!quoted || quoted.parent_id) return json(res, 404, { error: "The post you are quoting is gone", code: "FEED_QUOTE_MISSING" });
+    // Replies can be quoted like posts (founder, 2026-10-03).
+    if (!quoted) return json(res, 404, { error: "The post you are quoting is gone", code: "FEED_QUOTE_MISSING" });
   }
 
   let recent;
@@ -913,7 +913,8 @@ async function handleRepost(req, res) {
   const postId = postIdFromReq(req);
   if (!Number.isFinite(postId) || postId <= 0) return json(res, 400, { error: "Invalid post id" });
   const live = await requireLivePost(postId);
-  if (!live || live.parent_id) return json(res, 404, { error: "Post not found" });
+  // Replies can be reposted like posts (founder, 2026-10-03).
+  if (!live) return json(res, 404, { error: "Post not found" });
 
   const address = session.walletAddress;
   const existing = await pool.query(
@@ -952,7 +953,8 @@ async function handleReply(req, res) {
   const postId = postIdFromReq(req, b);
   if (!Number.isFinite(postId) || postId <= 0) return json(res, 400, { error: "Invalid post id" });
   const live = await requireLivePost(postId);
-  if (!live || live.parent_id) return json(res, 404, { error: "Post not found" });
+  // A reply can be answered too (founder, 2026-10-03); its own post page lists those answers.
+  if (!live) return json(res, 404, { error: "Post not found" });
 
   const trimmed = String(b.body ?? "").trim();
   if (!trimmed) return json(res, 400, { error: "Reply is empty" });
