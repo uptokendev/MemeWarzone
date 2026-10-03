@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiBase";
+import { sizedImageProps } from "@/lib/sizedImage.mjs";
 import { resolveImageUri } from "@/lib/media";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 
@@ -46,7 +47,20 @@ function AdTile({ ad, hidden }: { ad: AdItem; hidden?: boolean }) {
   const body = (
     <>
       {image ? (
-        <img src={image} alt={hidden ? "" : ad.name || "Sponsored"} className="h-full w-full object-cover" loading="lazy" />
+        <img
+          {...sizedImageProps(image, 240, 90)}
+          alt={hidden ? "" : ad.name || "Sponsored"}
+          className="h-full w-full object-cover"
+          loading="lazy"
+          onError={(event) => {
+            // A resized copy that fails falls back to the original upload once.
+            const el = event.currentTarget;
+            if (el.dataset.fallbackApplied) return;
+            el.dataset.fallbackApplied = "1";
+            el.removeAttribute("srcset");
+            el.src = image;
+          }}
+        />
       ) : (
         <span className="flex h-full w-full items-center justify-center px-3 text-center font-mw-cond text-lg font-bold text-mw-text">{ad.name || "Sponsored"}</span>
       )}

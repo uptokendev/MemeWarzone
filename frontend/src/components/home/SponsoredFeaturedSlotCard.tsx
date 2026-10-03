@@ -3,6 +3,7 @@
  * House ad: soft centered "Advertise here". Paid: small bottom title overlay.
  */
 import { resolveImageUri } from "@/lib/media";
+import { sizedImageProps } from "@/lib/sizedImage.mjs";
 
 export type FeaturedSponsorPlacement = {
   id?: string | null;
@@ -51,6 +52,9 @@ export function SponsoredFeaturedSlotCard({
   const title = String(placement.name || "Sponsored").trim() || "Sponsored";
   const imageRaw = placement.imageUrl || placement.logoUri;
   const image = usefulImage(imageRaw) ? resolveImageUri(String(imageRaw)) : null;
+  // The card is 300x244: ask storage for that size (1x/2x) instead of letting the browser shrink a
+  // large upload, which looked soft. The search popup's wide variant keeps the original file.
+  const sized = image && !plainBorder ? sizedImageProps(image, 300, 244) : { src: image || "", srcSet: undefined };
   const href = String(placement.targetUrl || placement.websiteUrl || "").trim();
   const isHouse = Boolean(placement.isHouseAd);
   const clickable = isHouse || Boolean(href);
@@ -88,7 +92,8 @@ export function SponsoredFeaturedSlotCard({
           would crush an absolute Advertisement pill into a 1px strip. */}
       <div className="relative h-full w-full">
         <img
-          src={image || "/placeholder.svg"}
+          src={sized.src || "/placeholder.svg"}
+          srcSet={sized.srcSet}
           alt=""
           className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]"
           draggable={false}
@@ -96,8 +101,16 @@ export function SponsoredFeaturedSlotCard({
           referrerPolicy="no-referrer"
           onError={(event) => {
             const el = event.currentTarget;
+            // A resized copy that fails falls back to the original upload first, then the placeholder.
+            if (!el.dataset.fallbackApplied && sized.srcSet && image) {
+              el.dataset.fallbackApplied = "sized";
+              el.removeAttribute("srcset");
+              el.src = image;
+              return;
+            }
             if (el.dataset.fallbackApplied === "1") return;
             el.dataset.fallbackApplied = "1";
+            el.removeAttribute("srcset");
             el.src = "/placeholder.svg";
           }}
         />
