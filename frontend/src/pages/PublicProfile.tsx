@@ -810,9 +810,20 @@ export default function PublicProfile({
               <div className="mw-banner h-full w-full" aria-hidden="true" />
             )}
           </div>
-          <div className="px-1 md:px-2">
+          {/* Founder 2026-10-03: name or @username and the wallet stay visible so people recognise the account. */}
+          <div className="flex flex-col gap-3 px-1 md:flex-row md:items-end md:gap-5 md:px-2">
             <div className={`relative z-[1] -mt-12 h-24 w-24 shrink-0 overflow-hidden rounded-full border-4 bg-[#2A3038] md:-mt-16 md:h-[132px] md:w-[132px] ${profile?.avatarUrl ? "border-mw-ground" : "mw-operative border-[#3dff78]"}`}>
               {profile?.avatarUrl ? <img src={profile.avatarUrl} alt="" className="h-full w-full object-cover" /> : <OperativeMark fill />}
+            </div>
+            <div className="min-w-0 flex-1 md:pb-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="m-0 break-words font-mw-cond text-3xl font-bold leading-tight text-mw-text md:text-[36px]">{nameText}</h1>
+                <span className={cp.chip} data-profile-blocked="true">Blocked by you</span>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-mw-muted">
+                {handle ? <span>{handle}</span> : null}
+                <span className={`${cp.chip} h-8 font-mw-mono`}>{shorten(profileWallet)}</span>
+              </div>
             </div>
           </div>
         </section>
