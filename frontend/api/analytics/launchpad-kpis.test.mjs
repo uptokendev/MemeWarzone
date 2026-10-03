@@ -34,3 +34,12 @@ test("admin launchpad totals expose campaign and import inventory", () => {
 test("launchpad KPI chain exclusion is unchanged", () => {
   assert.match(source, /CURRENTLY_EXCLUDED_CHAIN_IDS = new Set\(\[97, 102\]\)/);
 });
+
+test("hidden test campaigns (meta.publicHidden) are left out of every KPI", () => {
+  assert.match(source, /import \{ publicHiddenWhere \} from "\.\.\/lib\/publicHiddenCampaigns\.js"/);
+  assert.match(source, /with hidden as \(/);
+  assert.match(source, /from public\.campaigns cp\s+where cp\.chain_id <> all\(\$3::int\[\]\)\s+and not \$\{publicHiddenWhere\("cp"\)\}/);
+  assert.match(source, /from public\.campaign_drafts cd\s+where cd\.chain_id <> all\(\$3::int\[\]\)\s+and not exists/);
+  assert.match(source, /from public\.curve_trades ct\s+where ct\.chain_id <> all\(\$3::int\[\]\)\s+and not exists/);
+  assert.match(source, /and \$\{campaignKeySql\("h"\)\} = \$\{campaignKeySql\("t"\)\}\s+and \$\{publicHiddenWhere\("h"\)\}/);
+});
