@@ -171,10 +171,10 @@ export function RewardUnlockFlight() {
           }}
         >
           <div
-            className={`relative overflow-hidden rounded-2xl border bg-card/95 shadow-2xl transition-[width,height,transform,opacity,filter] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            className={`relative overflow-hidden rounded-[18px] border bg-mw-surface font-mw-body text-mw-text shadow-2xl transition-[width,height,transform,opacity,filter] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${
               moving
-                ? "rotate-[7deg] scale-90 border-accent blur-[0.4px] shadow-[0_0_76px_rgba(249,115,22,0.78)]"
-                : "rotate-0 scale-100 border-accent/70 shadow-[0_0_36px_rgba(249,115,22,0.45)]"
+                ? "rotate-[7deg] scale-90 border-mw-accent blur-[0.4px] shadow-[0_0_76px_rgba(249,115,22,0.78)]"
+                : "rotate-0 scale-100 border-mw-accent-edge shadow-[0_0_36px_rgba(249,115,22,0.45)]"
             }`}
             style={{
               width: moving ? geometry.targetWidth : geometry.startWidth,
@@ -184,7 +184,7 @@ export function RewardUnlockFlight() {
             {imageUrl ? (
               <img src={imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-55" />
             ) : null}
-            <div className="absolute inset-0 bg-gradient-to-br from-background/20 via-background/65 to-background" />
+            <div className="absolute inset-0 bg-gradient-to-br from-[rgba(19,23,28,0.2)] via-[rgba(19,23,28,0.65)] to-[#13171c]" />
             <div
               className={`absolute inset-y-0 -left-1/2 w-1/3 rotate-12 bg-gradient-to-r from-transparent via-white/70 to-transparent transition-transform duration-700 ${
                 moving ? "translate-x-[650%]" : "translate-x-0"
@@ -193,18 +193,18 @@ export function RewardUnlockFlight() {
 
             <div className="relative flex h-full items-center gap-4 p-4">
               <div
-                className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-accent/60 bg-accent/20 transition-transform duration-700 ${
+                className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-[14px] border border-[#5A3416] bg-mw-accent-fill transition-transform duration-700 ${
                   moving ? "rotate-[24deg] scale-125" : "rotate-0 scale-100"
                 }`}
               >
-                <Trophy className="h-7 w-7 text-accent" />
+                <Trophy className="h-7 w-7 text-mw-accent" />
               </div>
               <div className="min-w-0">
-                <div className="font-retro text-[10px] uppercase tracking-[0.2em] text-accent">
+                <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
                   {eyebrow}
                 </div>
-                <div className="mt-1 truncate font-retro text-base text-foreground">{title}</div>
-                <div className="mt-1 font-retro text-xs text-muted-foreground">
+                <div className="mt-0.5 truncate font-mw-cond text-lg font-bold text-mw-text">{title}</div>
+                <div className="mt-0.5 font-mw-mono text-xs text-mw-muted">
                   #{reward.rank} · {amount} {currency}
                 </div>
               </div>
@@ -216,7 +216,7 @@ export function RewardUnlockFlight() {
       {geometry.particles.map((particle, index) => (
         <span
           key={index}
-          className={`absolute rounded-full bg-accent shadow-[0_0_16px_rgba(249,115,22,0.95)] transition-all duration-500 ${
+          className={`absolute rounded-full bg-mw-accent shadow-[0_0_16px_rgba(249,115,22,0.95)] transition-all duration-500 ${
             flight.phase === "flying" ? "scale-100 opacity-80" : "scale-0 opacity-0"
           }`}
           style={{
@@ -230,12 +230,12 @@ export function RewardUnlockFlight() {
       ))}
 
       <div
-        className={`absolute left-1/2 top-[calc(50%-74px)] h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-accent/70 shadow-[0_0_52px_rgba(249,115,22,0.72)] transition-all duration-500 ${
+        className={`absolute left-1/2 top-[calc(50%-74px)] h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-mw-accent shadow-[0_0_52px_rgba(249,115,22,0.72)] transition-all duration-500 ${
           impacting ? "scale-[3.8] opacity-0" : "scale-0 opacity-0"
         }`}
       />
       <div
-        className={`absolute left-1/2 top-[calc(50%-74px)] h-12 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/70 blur-md transition-all duration-300 ${
+        className={`absolute left-1/2 top-[calc(50%-74px)] h-12 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(255,122,26,0.7)] text-mw-accent blur-md transition-all duration-300 ${
           impacting ? "scale-[2.4] opacity-0" : "scale-0 opacity-0"
         }`}
       />
@@ -245,7 +245,7 @@ export function RewardUnlockFlight() {
         return (
           <span
             key={`burst-${index}`}
-            className="absolute left-1/2 top-[calc(50%-74px)] h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_12px_rgba(249,115,22,0.9)] transition-all duration-500"
+            className="absolute left-1/2 top-[calc(50%-74px)] h-1.5 w-1.5 rounded-full bg-mw-accent shadow-[0_0_12px_rgba(249,115,22,0.9)] transition-all duration-500"
             style={{
               transform: `translate(-50%, -50%) translate(${Math.cos(angle) * distance}px, ${
                 Math.sin(angle) * distance

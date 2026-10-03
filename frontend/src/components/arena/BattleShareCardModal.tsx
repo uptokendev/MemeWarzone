@@ -112,20 +112,20 @@ export function BattleShareCardModal({ open, onClose, battleId, leftTicker, righ
   }
 
   return (
-    <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-black/75 p-2 backdrop-blur-sm sm:p-4">
+    <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-[rgba(5,6,8,0.75)] p-2 sm:p-4">
       <div className="flex min-h-[100dvh] items-center justify-center sm:min-h-[calc(100dvh-2rem)]">
-        <div className="relative flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden border border-orange-400/50 bg-black/95" data-battle-share-card-modal={battleId}>
-          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/50 px-3 py-3 sm:px-4">
+        <div className="relative flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden rounded-[18px] border border-mw-edge bg-mw-surface font-mw-body text-mw-text" data-battle-share-card-modal={battleId}>
+          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-mw-border px-4 py-3.5">
             <div className="min-w-0">
-              <div className="text-[10px] uppercase tracking-[0.22em] text-orange-300 sm:text-xs">// Battle share card</div>
-              <h3 className="mt-1 font-retro text-xl uppercase tracking-[0.08em] text-foreground sm:text-2xl">Share on X</h3>
+              <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Battle share card</div>
+              <h3 className="m-0 mt-0.5 font-mw-cond text-2xl font-bold text-mw-text">Share on X</h3>
             </div>
-            <button type="button" onClick={onClose} className="mwz-button h-9 w-9 shrink-0" aria-label="Close share card">
-              <X className="mx-auto h-4 w-4" />
+            <button type="button" onClick={onClose} className="mw-focus inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] text-mw-muted hover:bg-mw-raised hover:text-mw-text" aria-label="Close share card">
+              <X className="h-5 w-5" />
             </button>
           </div>
 
-          <div className="relative flex shrink-0 items-center justify-center overflow-hidden border-b border-border/70 bg-black/50">
+          <div className="relative flex shrink-0 items-center justify-center overflow-hidden border-b border-mw-border bg-mw-input">
             {imageStatus === "loading" ? (
               <div className="flex h-[28vh] max-h-[220px] min-h-[140px] w-full flex-col items-center justify-center px-4 text-center">
                 <RadarLoader label="Creating share card…" size="sm" />
@@ -133,8 +133,8 @@ export function BattleShareCardModal({ open, onClose, battleId, leftTicker, righ
             ) : null}
             {imageStatus === "error" ? (
               <div className="flex h-[22vh] min-h-[120px] w-full flex-col items-center justify-center gap-2 px-4 text-center">
-                <p className="text-sm text-orange-200">Share card failed to load.</p>
-                <Button type="button" className="mwz-button font-retro text-xs" onClick={() => setAttempt((n) => n + 1)}>
+                <p className="text-sm text-mw-accent-soft">Share card failed to load.</p>
+                <Button type="button" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60" onClick={() => setAttempt((n) => n + 1)}>
                   Retry
                 </Button>
               </div>
@@ -144,16 +144,16 @@ export function BattleShareCardModal({ open, onClose, battleId, leftTicker, righ
             ) : null}
           </div>
 
-          <p className="shrink-0 whitespace-pre-line border-b border-border/50 px-3 py-3 text-sm text-foreground/85 sm:px-4" data-battle-share-text="true">
+          <p className="shrink-0 whitespace-pre-line border-b border-mw-border px-4 py-3 text-sm text-mw-text" data-battle-share-text="true">
             {shareText}
           </p>
 
-          <div className="flex flex-wrap gap-2 px-3 py-3 sm:px-4">
-            <Button type="button" className="mwz-button mwz-button-orange font-retro" disabled={Boolean(busy) || imageStatus !== "ready"} onClick={() => void guidedShare()}>
-              <Share2 className="mr-2 h-4 w-4" />
+          <div className="flex flex-wrap justify-end gap-2 px-4 py-3.5">
+            <Button type="button" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50" disabled={Boolean(busy) || imageStatus !== "ready"} onClick={() => void guidedShare()}>
+              <Share2 className="h-4 w-4" />
               {busy === "guided" ? "Opening…" : "Download and open X"}
             </Button>
-            <Button type="button" variant="outline" className="mwz-button font-retro" disabled={Boolean(busy) || imageStatus !== "ready"} onClick={() => void downloadCard()}>
+            <Button type="button" variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60" disabled={Boolean(busy) || imageStatus !== "ready"} onClick={() => void downloadCard()}>
               {busy === "download" ? "Saving…" : "Download share card"}
             </Button>
           </div>

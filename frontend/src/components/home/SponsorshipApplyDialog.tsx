@@ -128,22 +128,22 @@ export function SponsorshipApplyDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto border-amber-400/30 bg-background">
+      <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] max-w-lg overflow-y-auto rounded-[18px] border border-mw-edge bg-mw-surface font-mw-body text-mw-text p-5 [&>button]:right-2 [&>button]:top-2 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center [&>button]:text-mw-muted [&>button]:opacity-100 [&>button:hover]:text-mw-text">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 font-retro text-xl">
-            <Megaphone className="h-5 w-5 text-amber-300" />
+          <DialogTitle className="flex items-center gap-2 pr-10 text-left font-mw-cond text-2xl font-bold text-mw-text">
+            <Megaphone className="h-5 w-5 shrink-0 text-mw-accent-soft" />
             Advertise in Featured
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-left text-sm text-mw-muted">
             No payment upfront. Choose a package, submit for review — only after we approve do you pay to go live.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3">
           <label className="space-y-1.5">
-            <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Package</span>
+            <span className="block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Package</span>
             <select
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="mw-focus flex h-11 w-full rounded-[10px] border border-mw-edge bg-mw-input px-3 text-base text-mw-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mw-accent disabled:opacity-60"
               value={packageCode}
               onChange={(e) => setPackageCode(e.target.value)}
               disabled={!packages.length || submitting}
@@ -157,27 +157,27 @@ export function SponsorshipApplyDialog({
             </select>
           </label>
           <label className="space-y-1.5">
-            <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Project name</span>
-            <Input value={form.projectName} onChange={(e) => update("projectName", e.target.value)} placeholder="Project or token name" />
+            <span className="block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Project name</span>
+            <Input value={form.projectName} onChange={(e) => update("projectName", e.target.value)} placeholder="Project or token name" className="h-11 rounded-[10px] border border-mw-edge bg-mw-input px-3 text-base text-mw-text placeholder:text-[#4B535C] focus-visible:ring-2 focus-visible:ring-mw-accent focus-visible:ring-offset-0" />
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1.5">
-              <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Contact name</span>
-              <Input value={form.contactName} onChange={(e) => update("contactName", e.target.value)} placeholder="Your name" />
+              <span className="block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Contact name</span>
+              <Input value={form.contactName} onChange={(e) => update("contactName", e.target.value)} placeholder="Your name" className="h-11 rounded-[10px] border border-mw-edge bg-mw-input px-3 text-base text-mw-text placeholder:text-[#4B535C] focus-visible:ring-2 focus-visible:ring-mw-accent focus-visible:ring-offset-0" />
             </label>
             <label className="space-y-1.5">
-              <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Email or Telegram</span>
-              <Input value={form.contactChannel} onChange={(e) => update("contactChannel", e.target.value)} placeholder="@handle or email" />
+              <span className="block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Email or Telegram</span>
+              <Input value={form.contactChannel} onChange={(e) => update("contactChannel", e.target.value)} placeholder="@handle or email" className="h-11 rounded-[10px] border border-mw-edge bg-mw-input px-3 text-base text-mw-text placeholder:text-[#4B535C] focus-visible:ring-2 focus-visible:ring-mw-accent focus-visible:ring-offset-0" />
             </label>
           </div>
           <label className="space-y-1.5">
-            <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Website</span>
-            <Input value={form.websiteUrl} onChange={(e) => update("websiteUrl", e.target.value)} placeholder="https://" />
+            <span className="block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Website</span>
+            <Input value={form.websiteUrl} onChange={(e) => update("websiteUrl", e.target.value)} placeholder="https://" className="h-11 rounded-[10px] border border-mw-edge bg-mw-input px-3 text-base text-mw-text placeholder:text-[#4B535C] focus-visible:ring-2 focus-visible:ring-mw-accent focus-visible:ring-offset-0" />
           </label>
 
-          <div className="space-y-2 rounded-lg border border-amber-400/25 bg-amber-500/5 p-3">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-amber-200/90">Featured creative</div>
-            <p className="text-xs leading-relaxed text-muted-foreground">{FEATURED_SPONSOR_DIMENSIONS_COPY}</p>
+          <div className="space-y-2 rounded-[14px] border border-mw-border bg-mw-input p-3.5">
+            <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Featured creative</div>
+            <p className="text-sm leading-relaxed text-mw-muted">{FEATURED_SPONSOR_DIMENSIONS_COPY}</p>
             <input
               ref={fileRef}
               type="file"
@@ -191,28 +191,28 @@ export function SponsorshipApplyDialog({
                 variant="outline"
                 size="sm"
                 disabled={uploading || submitting}
-                className="font-retro"
+                className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60"
                 onClick={() => fileRef.current?.click()}
               >
-                <ImagePlus className="mr-1.5 h-4 w-4" />
+                <ImagePlus className="h-4 w-4" />
                 {uploading ? "Uploading…" : form.imageUrl ? "Replace image" : "Upload image"}
               </Button>
-              <span className="text-[10px] text-muted-foreground">
+              <span className="text-xs text-mw-muted">
                 {FEATURED_SPONSOR_CREATIVE_W}×{FEATURED_SPONSOR_CREATIVE_H}px recommended
               </span>
             </div>
             {form.imageUrl ? (
-              <div className="overflow-hidden rounded border border-border/60 bg-black">
+              <div className="overflow-hidden rounded-[10px] border border-mw-border bg-mw-surface">
                 <img src={form.imageUrl} alt="Creative preview" className="h-[75px] w-full object-cover" />
               </div>
             ) : null}
           </div>
 
           <label className="space-y-1.5">
-            <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Short bio</span>
-            <Textarea value={form.bio} onChange={(e) => update("bio", e.target.value)} className="min-h-20" placeholder="What should Featured visitors know?" />
+            <span className="block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Short bio</span>
+            <Textarea value={form.bio} onChange={(e) => update("bio", e.target.value)} className="min-h-20 rounded-[10px] border border-mw-edge bg-mw-input px-3 py-2.5 text-base text-mw-text placeholder:text-[#4B535C] focus-visible:ring-2 focus-visible:ring-mw-accent focus-visible:ring-offset-0" placeholder="What should Featured visitors know?" />
           </label>
-          <Button type="button" className="mwz-button mwz-button-orange font-retro" disabled={submitting || uploading} onClick={() => void handleSubmit()}>
+          <Button type="button" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50" disabled={submitting || uploading} onClick={() => void handleSubmit()}>
             {submitting ? "Submitting…" : "Submit application"}
           </Button>
         </div>

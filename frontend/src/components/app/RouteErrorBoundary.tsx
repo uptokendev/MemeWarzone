@@ -27,17 +27,17 @@ export class RouteErrorBoundary extends Component<Props, State> {
     const { error } = this.state;
     if (!error) return this.props.children;
     return (
-      <div role="alert" data-route-error="true" className="mwz-hud-frame mx-auto my-10 max-w-xl space-y-3 p-6 text-sm">
-        <h1 className="font-retro text-lg text-foreground">Something went wrong on this page</h1>
-        <p className="text-muted-foreground">The rest of the app still works. Reload to try again, or go back.</p>
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-background/60 p-3 text-xs text-orange-200">
+      <div role="alert" data-route-error="true" className="mx-4 my-10 max-w-xl space-y-3 rounded-[18px] border border-mw-edge bg-mw-surface font-mw-body text-mw-text p-5 text-sm sm:mx-auto">
+        <h1 className="font-mw-cond text-2xl font-bold text-mw-text">Something went wrong on this page</h1>
+        <p className="text-mw-muted">The rest of the app still works. Reload to try again, or go back.</p>
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-[14px] border border-mw-border bg-mw-input p-3 font-mw-mono text-xs text-mw-sell">
           {String(error?.message || error)}
         </pre>
-        <div className="flex gap-2">
-          <button type="button" className="mwz-button mwz-button-orange min-h-10 px-4 font-retro text-xs" onClick={() => window.location.reload()}>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50" onClick={() => window.location.reload()}>
             Reload
           </button>
-          <button type="button" className="min-h-10 rounded-md border border-border/60 px-4 font-retro text-xs" onClick={() => window.history.back()}>
+          <button type="button" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60" onClick={() => window.history.back()}>
             Back
           </button>
         </div>

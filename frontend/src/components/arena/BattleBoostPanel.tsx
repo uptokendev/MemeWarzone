@@ -176,26 +176,26 @@ export function BattleBoostPanel({ battleId, chainId, left, right }: {
     useBattleBoost({ battleId, chainId, left, right });
 
   return (
-    <section data-battle-boost-panel="true" className="space-y-3">
+    <section data-battle-boost-panel="true" className="space-y-3 font-mw-body text-mw-text">
       <div>
-        <div className="text-[10px] uppercase tracking-[0.24em] text-white/45">Battle Boost</div>
-        <p className="mt-1 text-xs text-white/55">$1 paid Boosts add to the competition prize pool. 90% goes to the prize pool and 10% to protocol. V3 Boost points use backend-authoritative {APPROVED_V3_CURVE} scoring.</p>
+        <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Battle Boost</div>
+        <p className="mt-1 text-sm text-mw-muted">$1 paid Boosts add to the competition prize pool. 90% goes to the prize pool and 10% to protocol. V3 Boost points use backend-authoritative {APPROVED_V3_CURVE} scoring.</p>
       </div>
-      {runtimeReady === null ? <div role="status" aria-live="polite" className="text-[10px] uppercase tracking-[0.14em] text-white/38">Checking Battle Boost runtime…</div> : runtimeReady === false ? <div role="status" aria-live="polite" data-battle-boost-runtime="unavailable" className="text-[10px] uppercase tracking-[0.14em] text-white/38">Battle Boost unavailable</div> : null}
+      {runtimeReady === null ? <div role="status" aria-live="polite" className="text-xs text-mw-muted">Checking Battle Boost runtime…</div> : runtimeReady === false ? <div role="status" aria-live="polite" data-battle-boost-runtime="unavailable" className="text-xs text-mw-accent-soft">Battle Boost unavailable</div> : null}
       <div className="flex flex-wrap gap-2" aria-label="Battle Boost quantity">
-        {[1, 5, 10].map((value) => <Button key={value} type="button" size="sm" variant={quantity === value ? "default" : "outline"} className="font-retro" disabled={runtimeReady !== true} onClick={() => setQuantity(value)}>{value}x</Button>)}
+        {[1, 5, 10].map((value) => <Button key={value} type="button" size="sm" variant={quantity === value ? "default" : "outline"} className={`mw-focus inline-flex min-h-11 min-w-14 items-center justify-center whitespace-nowrap rounded-full border px-4 font-mw-mono text-sm font-semibold disabled:opacity-50 ${quantity === value ? "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft hover:bg-[#341C0B]" : "border-mw-edge bg-[#171B20] text-[#C9CED4] hover:bg-[#1F252C] hover:text-mw-text"}`} disabled={runtimeReady !== true} onClick={() => setQuantity(value)}>{value}x</Button>)}
       </div>
       <div className="grid min-w-0 gap-2 md:grid-cols-2">
-        <div className="min-w-0 space-y-1"><Button type="button" variant="outline" className="w-full min-w-0 justify-between gap-2 font-retro" disabled={disabled || !left.tokenId || sideBlocked("left")} onClick={() => void boost("left", left.tokenId)}><span className="truncate">Boost {left.ticker || left.name || "left"}</span><span className="shrink-0 text-xs opacity-70">{totals.left}</span></Button>{isSolana && paymentLabel(paymentStates.left) ? <div data-solana-boost-state="left" className="text-[10px] uppercase tracking-[0.12em] text-white/42">{paymentLabel(paymentStates.left)}</div> : null}</div>
-        <div className="min-w-0 space-y-1"><Button type="button" variant="outline" className="w-full min-w-0 justify-between gap-2 font-retro" disabled={disabled || !right.tokenId || sideBlocked("right")} onClick={() => void boost("right", right.tokenId)}><span className="truncate">Boost {right.ticker || right.name || "right"}</span><span className="shrink-0 text-xs opacity-70">{totals.right}</span></Button>{isSolana && paymentLabel(paymentStates.right) ? <div data-solana-boost-state="right" className="text-[10px] uppercase tracking-[0.12em] text-white/42">{paymentLabel(paymentStates.right)}</div> : null}</div>
+        <div className="min-w-0 space-y-1"><Button type="button" variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-between gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 w-full min-w-0" disabled={disabled || !left.tokenId || sideBlocked("left")} onClick={() => void boost("left", left.tokenId)}><span className="truncate">Boost {left.ticker || left.name || "left"}</span><span className="shrink-0 font-mw-mono text-sm text-mw-muted">{totals.left}</span></Button>{isSolana && paymentLabel(paymentStates.left) ? <div data-solana-boost-state="left" className="text-xs text-mw-muted">{paymentLabel(paymentStates.left)}</div> : null}</div>
+        <div className="min-w-0 space-y-1"><Button type="button" variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-between gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 w-full min-w-0" disabled={disabled || !right.tokenId || sideBlocked("right")} onClick={() => void boost("right", right.tokenId)}><span className="truncate">Boost {right.ticker || right.name || "right"}</span><span className="shrink-0 font-mw-mono text-sm text-mw-muted">{totals.right}</span></Button>{isSolana && paymentLabel(paymentStates.right) ? <div data-solana-boost-state="right" className="text-xs text-mw-muted">{paymentLabel(paymentStates.right)}</div> : null}</div>
       </div>
       {approvedRows.length ? (
-        <div data-battle-v3-authoritative-boost="true" className="grid gap-1 text-[10px] uppercase tracking-[0.14em] text-white/48">
+        <div data-battle-v3-authoritative-boost="true" className="grid gap-1 rounded-[14px] border border-mw-border bg-mw-input p-3 text-xs text-mw-muted">
           {approvedRows.map((row) => <div key={row.side}>{row.side}: {row.boostPoints == null ? "—" : row.boostPoints.toFixed(2)} / 10 Boost pts · {row.boostUnits} confirmed units{v3TotalAuthoritative && row.totalPoints != null ? ` · ${row.totalPoints.toFixed(2)} / 100 total` : ""}</div>)}
           {!v3TotalAuthoritative ? <div>Final V3 total awaiting backend authoritative-total status.</div> : null}
         </div>
       ) : null}
-      {summary?.total?.grossNativeRaw ? <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Confirmed Boost support: {isSolana ? formatBoostLamports(summary.total.grossNativeRaw) : formatBoostNative(summary.total.grossNativeRaw, nativeSymbol)}</div> : null}
+      {summary?.total?.grossNativeRaw ? <div className="text-xs text-mw-muted">Confirmed Boost support: {isSolana ? formatBoostLamports(summary.total.grossNativeRaw) : formatBoostNative(summary.total.grossNativeRaw, nativeSymbol)}</div> : null}
     </section>
   );
 }

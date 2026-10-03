@@ -145,53 +145,53 @@ export function ChallengeResponsePopup({
   return (
     <>
       <Dialog open={open && !buyInOpen} onOpenChange={(next) => { if (!next) onClose(); }}>
-        <DialogContent className="mwz-portal-shell max-w-md border-accent/40 bg-background/95 p-0">
-          <div className="mwz-hud-frame space-y-4 border-0 p-5">
-            <DialogTitle className="font-retro text-[10px] uppercase tracking-[0.22em] text-accent">{view.kicker}</DialogTitle>
-            <h2 className="font-retro text-xl text-foreground">{view.headline}</h2>
-            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+        <DialogContent className="mwz-portal-shell w-[calc(100vw-2rem)] max-w-md rounded-[18px] border border-mw-edge bg-mw-surface p-0 font-mw-body text-mw-text [&>button]:right-2 [&>button]:top-2 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center [&>button]:text-mw-muted [&>button]:opacity-100 [&>button:hover]:text-mw-text">
+          <div className="space-y-4 p-5">
+            <DialogTitle className="pr-10 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">{view.kicker}</DialogTitle>
+            <h2 className="break-words font-mw-cond text-2xl font-bold text-mw-text">{view.headline}</h2>
+            <p className="text-sm text-mw-muted">
               {view.mode === "respond" && countdown ? `COMMUNITY VS COMMUNITY · ANSWER WITHIN ${countdown}` : view.communityLine}
             </p>
-            {view.counterLine ? <p className="text-sm text-accent">{view.counterLine}</p> : null}
-            <p className="font-retro text-sm text-foreground">Buy-in {view.buyInLabel} · {view.durationLabel}</p>
+            {view.counterLine ? <p className="rounded-[10px] border border-[#5A3416] bg-mw-accent-fill px-3 py-2.5 text-sm text-mw-accent-soft">{view.counterLine}</p> : null}
+            <p className="rounded-[14px] border border-mw-border bg-mw-input px-4 py-3 font-mw-mono text-[15px] font-bold text-mw-text">Buy-in {view.buyInLabel} · {view.durationLabel}</p>
 
             {view.mode === "declined" ? (
               <>
-                <p className="text-sm text-foreground">This challenge was declined.</p>
-                {view.message ? <p className="text-sm text-muted-foreground">Message: {view.message}</p> : null}
-                <Button className="font-retro w-full" onClick={onClose}>Close</Button>
+                <p className="text-sm text-mw-text">This challenge was declined.</p>
+                {view.message ? <p className="text-sm text-mw-muted">Message: {view.message}</p> : null}
+                <Button className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 w-full" onClick={onClose}>Close</Button>
               </>
             ) : view.mode === "accepted" ? (
               battle.state === "live" ? (
                 <>
-                  <p className="text-sm text-foreground">Your challenge was accepted. The battle is live on the Battle Wall.</p>
-                  <Button className="font-retro w-full" onClick={onClose}>Close</Button>
+                  <p className="text-sm text-mw-text">Your challenge was accepted. The battle is live on the Battle Wall.</p>
+                  <Button className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 w-full" onClick={onClose}>Close</Button>
                 </>
               ) : (
-                <p className="text-sm text-muted-foreground">Accepted — pay your buy-in.</p>
+                <p className="text-sm text-mw-muted">Accepted — pay your buy-in.</p>
               )
             ) : waitingCopy ? (
-              <p className="text-sm text-accent">{waitingCopy}</p>
+              <p className="text-sm text-mw-accent-soft">{waitingCopy}</p>
             ) : declineOpen ? (
               <div className="space-y-3">
-                <p className="text-sm text-foreground">Are you sure you want to decline?</p>
+                <p className="text-sm text-mw-text">Are you sure you want to decline?</p>
                 <textarea
                   value={declineMessage}
                   maxLength={280}
                   onChange={(event) => setDeclineMessage(event.target.value)}
-                  className="min-h-20 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                  className="min-h-20 mw-focus w-full rounded-[10px] border border-mw-edge bg-mw-input px-3 py-2.5 text-base text-mw-text placeholder:text-[#4B535C] focus:outline-none focus:ring-2 focus:ring-mw-accent"
                   placeholder="Optional message to the other owner"
                 />
                 <div className="flex gap-2">
-                  <Button variant="outline" className="font-retro flex-1" disabled={Boolean(busy)} onClick={() => setDeclineOpen(false)}>Back</Button>
-                  <Button className="font-retro flex-1" disabled={busy === "decline"} onClick={() => void decline()}>
+                  <Button variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 flex-1" disabled={Boolean(busy)} onClick={() => setDeclineOpen(false)}>Back</Button>
+                  <Button className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 flex-1" disabled={busy === "decline"} onClick={() => void decline()}>
                     {busy === "decline" ? "Declining..." : "Decline"}
                   </Button>
                 </div>
               </div>
             ) : (
               <div className="space-y-3">
-                <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                <label className="block font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">
                   Counter buy-in ({view.nativeSymbol})
                   <input
                     type="number"
@@ -199,18 +199,18 @@ export function ChallengeResponsePopup({
                     step="any"
                     value={counterStake}
                     onChange={(event) => setCounterStake(event.target.value)}
-                    className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                    className="mt-1.5 font-mw-mono normal-case tracking-normal mw-focus w-full rounded-[10px] border border-mw-edge bg-mw-input px-3 py-2.5 text-base text-mw-text placeholder:text-[#4B535C] focus:outline-none focus:ring-2 focus:ring-mw-accent"
                     placeholder={`Higher than ${offered}`}
                   />
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <Button className="font-retro" disabled={Boolean(busy)} onClick={() => void accept()}>
+                <div className="grid grid-cols-1 gap-2 min-[400px]:grid-cols-3">
+                  <Button className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50" disabled={Boolean(busy)} onClick={() => void accept()}>
                     {busy === "accept" ? "..." : "ACCEPT"}
                   </Button>
-                  <Button variant="outline" className="font-retro" disabled={Boolean(busy)} onClick={() => void counter()}>
+                  <Button variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60" disabled={Boolean(busy)} onClick={() => void counter()}>
                     {busy === "counter" ? "..." : "COUNTER"}
                   </Button>
-                  <Button variant="outline" className="font-retro" disabled={Boolean(busy)} onClick={() => setDeclineOpen(true)}>
+                  <Button variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60" disabled={Boolean(busy)} onClick={() => setDeclineOpen(true)}>
                     DECLINE
                   </Button>
                 </div>

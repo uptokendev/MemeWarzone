@@ -55,15 +55,15 @@ export function BuyInPopup({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="mwz-portal-shell max-w-md border-accent/40 bg-background/95 p-0">
-        <div className="mwz-hud-frame space-y-4 border-0 p-5">
-          <DialogTitle className="font-retro text-[10px] uppercase tracking-[0.22em] text-accent">Scheduled battle</DialogTitle>
-          <h2 className="font-retro text-lg text-foreground">{live ? "Battle is live" : waitingOther ? "Waiting for the other side" : "Accepted — pay your buy-in"}</h2>
-          <p className="text-sm text-muted-foreground">{view.headline}</p>
-          <p className="font-retro text-sm text-foreground">Buy-in {view.buyInLabel}</p>
-          {depositEnds ? <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Deposit window until {new Date(depositEnds).toLocaleString()}</p> : null}
+      <DialogContent className="mwz-portal-shell w-[calc(100vw-2rem)] max-w-md rounded-[18px] border border-mw-edge bg-mw-surface p-0 font-mw-body text-mw-text [&>button]:right-2 [&>button]:top-2 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center [&>button]:text-mw-muted [&>button]:opacity-100 [&>button:hover]:text-mw-text">
+        <div className="space-y-4 p-5">
+          <DialogTitle className="pr-10 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Scheduled battle</DialogTitle>
+          <h2 className="font-mw-cond text-2xl font-bold text-mw-text">{live ? "Battle is live" : waitingOther ? "Waiting for the other side" : "Accepted — pay your buy-in"}</h2>
+          <p className="break-words text-sm text-mw-muted">{view.headline}</p>
+          <p className="rounded-[14px] border border-mw-border bg-mw-input px-4 py-3 font-mw-mono text-[15px] font-bold text-mw-text">Buy-in {view.buyInLabel}</p>
+          {depositEnds ? <p className="text-xs text-mw-muted">Deposit window until {new Date(depositEnds).toLocaleString()}</p> : null}
           {live || waitingOther ? (
-            <p className="text-sm text-muted-foreground">{live ? "Both stakes are in. The fight is on the Battle Wall." : "Your stake is in. Waiting for the other owner."}</p>
+            <p className="text-sm text-mw-muted">{live ? "Both stakes are in. The fight is on the Battle Wall." : "Your stake is in. Waiting for the other owner."}</p>
           ) : (
             <ArenaStakeButton
               battleId={battle.id}
@@ -72,7 +72,7 @@ export function BuyInPopup({
               battleState={battle.state}
             />
           )}
-          <Button type="button" variant="outline" className="font-retro w-full" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 w-full" onClick={() => onOpenChange(false)}>
             Close
           </Button>
         </div>

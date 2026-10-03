@@ -143,11 +143,11 @@ export function VictoryUnlockModal() {
         if (!nextOpen) setRevealed(false);
       }}
     >
-      <DialogContent className="max-h-[94vh] max-w-3xl overflow-y-auto rounded-3xl border border-accent/40 bg-card/95 p-0 shadow-2xl shadow-accent/10">
-        <div className="relative overflow-hidden rounded-3xl">
+      <DialogContent className="max-h-[94vh] w-[calc(100vw-2rem)] max-w-3xl overflow-y-auto rounded-[18px] border border-mw-edge bg-mw-surface font-mw-body text-mw-text p-0 [&>button]:right-2 [&>button]:top-2 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center [&>button]:text-mw-muted [&>button]:opacity-100 [&>button:hover]:text-mw-text">
+        <div className="relative overflow-hidden rounded-[18px] bg-mw-surface">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(249,115,22,0.22),transparent_48%)]" />
           <div
-            className={`pointer-events-none absolute left-1/2 top-16 h-36 w-36 -translate-x-1/2 rounded-full border border-accent/40 transition-all duration-700 ${
+            className={`pointer-events-none absolute left-1/2 top-16 h-36 w-36 -translate-x-1/2 rounded-full border border-mw-accent-edge transition-all duration-700 ${
               revealed ? "scale-[2.4] opacity-0" : "scale-50 opacity-80"
             }`}
           />
@@ -157,13 +157,13 @@ export function VictoryUnlockModal() {
                 revealed ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
               }`}
             >
-              <div className="mb-2 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-accent/50 bg-accent/15 shadow-lg shadow-accent/20">
-                <Trophy className={`h-7 w-7 text-accent transition-transform duration-700 ${revealed ? "rotate-0 scale-100" : "-rotate-12 scale-75"}`} />
+              <div className="mb-2 inline-flex h-14 w-14 items-center justify-center rounded-[14px] border border-[#5A3416] bg-mw-accent-fill">
+                <Trophy className={`h-7 w-7 text-mw-accent transition-transform duration-700 ${revealed ? "rotate-0 scale-100" : "-rotate-12 scale-75"}`} />
               </div>
-              <DialogTitle className="font-retro text-2xl uppercase tracking-[0.12em] text-foreground sm:text-3xl">
+              <DialogTitle className="font-mw-cond text-2xl font-bold text-mw-text sm:text-3xl">
                 {title}
               </DialogTitle>
-              <DialogDescription className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              <DialogDescription className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
                 {subtitle}
               </DialogDescription>
             </DialogHeader>
@@ -173,40 +173,40 @@ export function VictoryUnlockModal() {
                 revealed ? "translate-y-0 opacity-100" : "translate-y-5 opacity-0"
               }`}
             >
-              <div className="overflow-hidden rounded-2xl border border-accent/30 bg-background/70 shadow-xl shadow-black/20">
+              <div className="overflow-hidden rounded-[14px] border border-mw-border bg-mw-input">
                 <div className="relative aspect-square overflow-hidden">
                   <img src={imageUrl || getLeagueImage(win.category)} alt={`${leagueTitle} victory card`} className="h-full w-full object-cover" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[rgba(5,6,8,0.85)] via-transparent to-transparent" />
                   <div className="absolute inset-y-0 -left-1/2 w-1/3 rotate-12 bg-gradient-to-r from-transparent via-white/45 to-transparent animate-[shine_1.1s_ease-out_1]" />
                   <div className="absolute bottom-4 left-4 right-4">
-                    <div className="font-retro text-lg text-foreground drop-shadow">{leagueTitle}</div>
-                    <div className="mt-1 font-retro text-[11px] uppercase tracking-[0.16em] text-accent">{placement}</div>
+                    <div className="font-mw-cond text-xl font-bold text-mw-text drop-shadow">{leagueTitle}</div>
+                    <div className="mt-1 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">{placement}</div>
                   </div>
                 </div>
               </div>
 
-              <div className="flex flex-col justify-between gap-4 rounded-2xl border border-border bg-background/55 p-5">
+              <div className="flex flex-col justify-between gap-4 rounded-[14px] border border-mw-border bg-mw-input p-5">
                 <div className="space-y-4">
                   <div>
-                    <div className="font-retro text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Achievement</div>
-                    <div className="mt-1 font-retro text-xl text-foreground">{placement}</div>
-                    <div className="mt-1 font-retro text-xs text-muted-foreground">{formatEpochLabel(win)}</div>
+                    <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Achievement</div>
+                    <div className="mt-1 font-mw-cond text-xl font-bold text-mw-text">{placement}</div>
+                    <div className="mt-1 text-xs text-mw-muted">{formatEpochLabel(win)}</div>
                   </div>
 
-                  <div className="rounded-2xl border border-accent/25 bg-accent/10 p-4 shadow-[0_0_28px_rgba(249,115,22,0.12)]">
-                    <div className="font-retro text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Reward claimed</div>
-                    <div className={`mt-1 font-retro text-2xl text-accent transition-all delay-300 duration-500 ${revealed ? "scale-100 opacity-100" : "scale-90 opacity-0"}`}>
+                  <div className="rounded-[14px] border border-[#5A3416] bg-mw-accent-fill p-4">
+                    <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Reward claimed</div>
+                    <div className={`mt-1 break-all font-mw-mono text-2xl font-bold text-mw-accent-soft transition-all delay-300 duration-500 ${revealed ? "scale-100 opacity-100" : "scale-90 opacity-0"}`}>
                       {rewardAmount} {currency}
                     </div>
                   </div>
 
-                  <div className="space-y-2 font-retro text-xs text-muted-foreground">
+                  <div className="space-y-2 text-sm text-mw-muted">
                     <div className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                      <CheckCircle2 className="h-4 w-4 text-[#6EE7A0]" />
                       Transaction confirmed
                     </div>
                     <div className="flex items-center gap-2">
-                      <ShieldCheck className="h-4 w-4 text-accent" />
+                      <ShieldCheck className="h-4 w-4 text-mw-accent-soft" />
                       Trophy added to cabinet
                     </div>
                   </div>
@@ -217,7 +217,7 @@ export function VictoryUnlockModal() {
                     href={txExplorerUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-2 font-retro text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                    className="mw-focus inline-flex min-h-11 items-center gap-2 text-sm text-mw-muted transition-colors hover:text-mw-text"
                   >
                     View transaction <ExternalLink className="h-3.5 w-3.5" />
                   </a>
@@ -230,16 +230,16 @@ export function VictoryUnlockModal() {
                 revealed ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
               }`}
             >
-              <Button type="button" className="font-retro" onClick={handleShare}>
-                <ExternalLink className="mr-2 h-4 w-4" />
+              <Button type="button" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50" onClick={handleShare}>
+                <ExternalLink className="h-4 w-4" />
                 Share on X
               </Button>
-              <Button type="button" variant="outline" className="font-retro" onClick={handleDownload}>
-                <Download className="mr-2 h-4 w-4" />
+              <Button type="button" variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60" onClick={handleDownload}>
+                <Download className="h-4 w-4" />
                 Download Trophy
               </Button>
-              <Button type="button" variant="outline" className="font-retro" onClick={handleViewCabinet}>
-                <Trophy className="mr-2 h-4 w-4" />
+              <Button type="button" variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60" onClick={handleViewCabinet}>
+                <Trophy className="h-4 w-4" />
                 {destinationLabel}
               </Button>
             </div>

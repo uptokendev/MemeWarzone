@@ -193,18 +193,18 @@ export function MobileTradeSheet({
 
   return (
     <div className="fixed inset-0 z-50 xl:hidden" data-mobile-trade-sheet="true">
-      <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close trade sheet" onClick={onClose} />
+      <button type="button" className="absolute inset-0 bg-[rgba(5,6,8,0.75)]" aria-label="Close trade sheet" onClick={onClose} />
       <div
-        className="absolute inset-x-0 bottom-0 max-h-[92dvh] overflow-y-auto rounded-t-2xl border border-border/70 bg-background px-4 pt-3 shadow-2xl"
+        className="absolute inset-x-0 bottom-0 max-h-[92dvh] overflow-y-auto rounded-t-[20px] border border-mw-edge bg-mw-surface px-4 pt-3 font-mw-body text-mw-text shadow-2xl"
         style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
       >
         <div className="mb-3 flex items-center justify-between">
-          <div className="grid flex-1 grid-cols-2 gap-2 pr-2">
+          <div className="grid flex-1 grid-cols-2 gap-1 rounded-[10px] border border-mw-border bg-mw-input p-1 mr-2">
             <button
               type="button"
               className={cn(
-                "h-10 rounded-lg font-retro text-sm",
-                side === "buy" ? "bg-orange-500 text-white" : "border border-border text-muted-foreground",
+                "mw-focus min-h-11 rounded-lg text-[15px] font-bold",
+                side === "buy" ? "bg-mw-buy text-[#04140A]" : "text-mw-muted hover:text-mw-text",
               )}
               onClick={() => onSideChange("buy")}
             >
@@ -213,49 +213,49 @@ export function MobileTradeSheet({
             <button
               type="button"
               className={cn(
-                "h-10 rounded-lg font-retro text-sm",
-                side === "sell" ? "bg-orange-500 text-white" : "border border-border text-muted-foreground",
+                "mw-focus min-h-11 rounded-lg text-[15px] font-bold",
+                side === "sell" ? "bg-mw-sell text-[#FFF1F3]" : "text-mw-muted hover:text-mw-text",
               )}
               onClick={() => onSideChange("sell")}
             >
               Sell
             </button>
           </div>
-          <button type="button" className="mwz-button h-9 w-9 shrink-0" onClick={onClose} aria-label="Close">
-            <X className="mx-auto h-4 w-4" />
+          <button type="button" className="mw-focus inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] text-mw-muted hover:bg-mw-raised hover:text-mw-text" onClick={onClose} aria-label="Close">
+            <X className="h-5 w-5" />
           </button>
         </div>
 
         <div className="flex items-end justify-center gap-2 py-4">
-          {prefix ? <span className="pb-1 font-retro text-5xl leading-none text-foreground">$</span> : null}
+          {prefix ? <span className="pb-1 font-mw-mono text-5xl font-bold leading-none text-mw-text">$</span> : null}
           <input
             value={displayAmount}
             onChange={(event) => setDisplayAmount(event.target.value.replace(/[^0-9.]/g, ""))}
             inputMode="decimal"
             placeholder="0"
-            className="min-w-0 max-w-[55%] bg-transparent text-center font-retro text-5xl leading-none text-foreground outline-none"
+            className="min-w-0 max-w-[55%] bg-transparent text-center font-mw-mono text-5xl font-bold leading-none text-mw-text placeholder:text-[#4B535C] outline-none"
             aria-label="Trade amount"
             data-mobile-trade-amount="true"
           />
           <button
             type="button"
             onClick={cycleUnit}
-            className="mb-1 rounded-full border border-border/70 px-2 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+            className="mw-focus mb-1 inline-flex min-h-11 items-center rounded-full border border-mw-edge bg-[#171B20] px-3 text-[13px] font-semibold text-[#C9CED4] hover:text-mw-text"
             data-mobile-trade-unit={unit}
           >
             {unitLabel}
           </button>
         </div>
 
-        <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
+        <div className="mb-3 flex items-center justify-between gap-2 text-xs text-mw-muted">
           <span>
             {walletLine}
           </span>
-          <button type="button" className="font-semibold uppercase tracking-[0.14em] text-orange-300" onClick={setMax}>
+          <button type="button" className="mw-focus inline-flex min-h-11 items-center rounded-lg px-2 font-mw-cond text-sm font-bold uppercase tracking-[0.08em] text-mw-accent-soft hover:text-[#FFD0A8]" onClick={setMax}>
             MAX
           </button>
         </div>
-        <div className="mb-3 text-[11px] text-muted-foreground">
+        <div className="mb-3 text-xs text-mw-muted">
           Token bag: {tokenBalanceLabel}
         </div>
 
@@ -264,7 +264,7 @@ export function MobileTradeSheet({
             <button
               key={usd}
               type="button"
-              className="h-10 rounded-lg border border-border text-sm font-semibold text-foreground"
+              className="mw-focus min-h-11 rounded-[10px] border border-mw-edge bg-[#171B20] font-mw-mono text-sm font-semibold text-mw-text hover:bg-[#1F252C]"
               onClick={() => setUsdPreset(usd)}
             >
               ${usd}
@@ -276,7 +276,7 @@ export function MobileTradeSheet({
             <button
               key={pct}
               type="button"
-              className="h-10 rounded-lg border border-border text-sm text-muted-foreground"
+              className="mw-focus min-h-11 rounded-[10px] border border-mw-edge bg-[#171B20] font-mw-mono text-sm text-[#C9CED4] hover:bg-[#1F252C] hover:text-mw-text"
               onClick={() => setPercent(pct)}
             >
               {pct}%
@@ -284,12 +284,12 @@ export function MobileTradeSheet({
           ))}
         </div>
 
-        {quoteLine ? <p className="mb-2 text-center text-xs text-muted-foreground">{quoteLine}</p> : null}
-        {error ? <p className="mb-2 text-center text-xs text-destructive">{error}</p> : null}
+        {quoteLine ? <p className="mb-2 text-center text-xs text-mw-muted">{quoteLine}</p> : null}
+        {error ? <p className="mb-2 text-center text-xs text-mw-sell">{error}</p> : null}
 
         <Button
           type="button"
-          className="mwz-button mwz-button-orange h-12 w-full font-retro text-base"
+          className={side === "sell" ? "mw-focus min-h-[54px] w-full rounded-[10px] border border-mw-sell bg-mw-sell text-[17px] font-semibold text-[#FFF1F3] hover:bg-[#BE123C] disabled:opacity-60" : "mw-focus min-h-[54px] w-full rounded-[10px] border border-mw-buy bg-mw-buy text-[17px] font-semibold text-[#04140A] hover:bg-[#15803D] disabled:opacity-60"}
           disabled={cta.kind === "empty" || cta.kind === "pending" || (cta.kind === "submit" && disabled)}
           onClick={() => {
             if (cta.kind === "connect") onConnect();

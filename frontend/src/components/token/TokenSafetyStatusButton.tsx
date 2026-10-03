@@ -268,49 +268,49 @@ export function TokenSafetyStatusButton({ campaignAddress, chainId }: TokenSafet
   }, [adapter.chain, blocked, warning, buyPreflight?.allowed, sellPreflight?.allowed, blocks, warnings, campaign, status?.chain]);
 
   const buttonClass = state === "ok"
-    ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+    ? "border-[#1F5133] bg-[#0F2418] text-[#6EE7A0] hover:bg-[#143020]"
     : state === "warning"
-      ? "border-orange-400/50 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30"
+      ? "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft hover:bg-[#341C0B]"
       : state === "blocked"
-        ? "border-rose-400/50 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30"
-        : "border-border/50 bg-card/50 text-muted-foreground";
+        ? "border-[#5A1F2A] bg-[#2A0F16] text-[#FDA4AF] hover:bg-[#35121B]"
+        : "border-mw-edge bg-[#171B20] text-[#C9CED4] hover:text-mw-text";
 
   const popover = open && anchor ? createPortal(
     <div
       data-token-safety
-      className="w-[min(92vw,25rem)] rounded-2xl border border-border/60 bg-black/90 p-3 text-sm text-foreground shadow-2xl backdrop-blur-md"
+      className="w-[min(92vw,25rem)] rounded-[18px] border border-mw-edge bg-mw-surface font-mw-body text-mw-text p-4 text-sm shadow-2xl"
       style={{ position: "fixed", top: anchor.top, right: anchor.right, zIndex: 90 }}
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <div className="inline-flex items-center gap-2 font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            <ShieldCheck className="h-4 w-4 text-accent" />
+          <div className="inline-flex items-center gap-2 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">
+            <ShieldCheck className="h-4 w-4 text-mw-accent" />
             Campaign safety · {status?.chain || adapter.chain}
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">{safetySummary(state, walletAddress, chainId)}</p>
+          <p className="mt-1 text-sm text-mw-muted">{safetySummary(state, walletAddress, chainId)}</p>
         </div>
-        <button type="button" onClick={() => setOpen(false)} className="rounded-lg border border-border/50 p-1 text-muted-foreground hover:text-foreground">
-          <X className="h-3.5 w-3.5" />
+        <button type="button" onClick={() => setOpen(false)} className="mw-focus inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] text-mw-muted hover:bg-mw-raised hover:text-mw-text -mr-2 -mt-2" aria-label="Close safety">
+          <X className="h-5 w-5" />
         </button>
       </div>
 
       <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-xl border border-border/50 bg-card/30 p-2">
+        <div className="rounded-[10px] border border-mw-border bg-mw-input p-2.5">
           <div className="flex items-center justify-between gap-2">
-            <span className="font-retro uppercase tracking-[0.12em]">Buy</span>
-            <span className={buyPreflight?.allowed ? "text-emerald-200" : "text-rose-200"}>{buyPreflight?.allowed ? "OK" : "Blocked"}</span>
+            <span className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Buy</span>
+            <span className={buyPreflight?.allowed ? "font-semibold text-[#6EE7A0]" : "font-semibold text-mw-sell"}>{buyPreflight?.allowed ? "OK" : "Blocked"}</span>
           </div>
         </div>
-        <div className="rounded-xl border border-border/50 bg-card/30 p-2">
+        <div className="rounded-[10px] border border-mw-border bg-mw-input p-2.5">
           <div className="flex items-center justify-between gap-2">
-            <span className="font-retro uppercase tracking-[0.12em]">Sell</span>
-            <span className={sellPreflight?.allowed ? "text-emerald-200" : "text-rose-200"}>{sellPreflight?.allowed ? "OK" : "Blocked"}</span>
+            <span className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Sell</span>
+            <span className={sellPreflight?.allowed ? "font-semibold text-[#6EE7A0]" : "font-semibold text-mw-sell"}>{sellPreflight?.allowed ? "OK" : "Blocked"}</span>
           </div>
         </div>
       </div>
 
       <div className="mt-3 space-y-2 text-xs">
-        <div className="rounded-xl border border-border/50 bg-card/25 p-2 text-muted-foreground">
+        <div className="rounded-[10px] border border-mw-border bg-mw-input p-2.5 text-mw-muted">
           Backend route check: {status?.routeAuthorizationReady ? "ready" : "pending"}
           {walletAddress
             ? walletRisk?.riskLevel
@@ -319,11 +319,11 @@ export function TokenSafetyStatusButton({ campaignAddress, chainId }: TokenSafet
             : ` · Wallet checks: connect ${safetyNetworkLabel(chainId)}`}
           {cluster?.id ? ` · Cluster: ${cluster.id}` : ""}
         </div>
-        {status?.protocolLive === false ? <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-2 text-rose-100">{status.label} is not live for trading.</div> : null}
-        {blocks.slice(0, 4).map((reason) => <div key={reason} className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-2 text-rose-100">{reason}</div>)}
-        {warnings.slice(0, 4).map((item) => <div key={item} className="rounded-xl border border-orange-400/30 bg-orange-500/10 p-2 text-orange-100">{item}</div>)}
+        {status?.protocolLive === false ? <div className="rounded-[10px] border border-[#5A1F2A] bg-[#2A0F16] p-2.5 text-[#FDA4AF]">{status.label} is not live for trading.</div> : null}
+        {blocks.slice(0, 4).map((reason) => <div key={reason} className="rounded-[10px] border border-[#5A1F2A] bg-[#2A0F16] p-2.5 text-[#FDA4AF]">{reason}</div>)}
+        {warnings.slice(0, 4).map((item) => <div key={item} className="rounded-[10px] border border-[#5A3416] bg-mw-accent-fill p-2.5 text-mw-accent-soft">{item}</div>)}
         {campaignState ? (
-          <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-card/25 p-2 text-muted-foreground">
+          <div className="grid grid-cols-2 gap-2 rounded-[10px] border border-mw-border bg-mw-input p-2.5 text-mw-muted">
             <div>Campaign: {campaignState.paused ? "paused" : "live"}</div>
             <div>Buy: {campaignState.buyPaused ? "paused" : "live"}</div>
             <div>Sell: {campaignState.sellPaused ? "paused" : "live"}</div>
@@ -333,8 +333,8 @@ export function TokenSafetyStatusButton({ campaignAddress, chainId }: TokenSafet
         ) : null}
       </div>
 
-      <Button type="button" variant="outline" size="sm" className="mt-3 h-8 w-full font-retro text-xs" disabled={loading} onClick={() => void refresh()}>
-        <RefreshCw className={`mr-2 h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+      <Button type="button" variant="outline" size="sm" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 mt-3 w-full" disabled={loading} onClick={() => void refresh()}>
+        <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
         Refresh safety
       </Button>
     </div>,
@@ -350,7 +350,7 @@ export function TokenSafetyStatusButton({ campaignAddress, chainId }: TokenSafet
           updateAnchor();
           setOpen((value) => !value);
         }}
-        className={`inline-flex h-8 items-center gap-1.5 rounded-xl border px-3 font-retro text-[10px] uppercase tracking-[0.14em] shadow-lg backdrop-blur-md transition ${buttonClass}`}
+        className={`mw-focus inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 font-mw-body text-[13px] font-semibold transition ${buttonClass}`}
         title="Trading safety status"
       >
         <StatusIcon state={state} />

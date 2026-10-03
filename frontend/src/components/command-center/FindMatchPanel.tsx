@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Crosshair } from "lucide-react";
 
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Button } from "@/components/ui/button";
 import { fetchArenaBattleMatches } from "@/features/postgrad/apiClient";
 import {
@@ -71,14 +70,14 @@ export function FindMatchPanel({
       title="Find Match"
       description="Server-ranked rivals for the coin you selected. Challenge only picks the opponent — you still set stake, duration, and send the challenge."
     >
-      <div className="mb-3 flex items-center gap-2 text-muted-foreground">
-        <Crosshair className="h-4 w-4 text-accent" />
-        <span className="font-retro text-[10px] uppercase tracking-[0.16em]">Opponent recommendations</span>
+      <div className="mb-3 flex items-center gap-2 font-mw-body text-mw-muted">
+        <Crosshair className="h-4 w-4 text-mw-accent" />
+        <span className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Opponent recommendations</span>
       </div>
-      {busy ? <p className="text-sm text-muted-foreground">Scanning for ranked rivals...</p> : null}
-      {warning ? <p className="text-sm text-muted-foreground">{warning}</p> : null}
+      {busy ? <p className="text-sm text-mw-muted">Scanning for ranked rivals...</p> : null}
+      {warning ? <p className="rounded-[10px] border border-[#5A3416] bg-mw-accent-fill px-3 py-2.5 text-sm text-mw-accent-soft">{warning}</p> : null}
       {!busy && !warning && !candidates.length ? (
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-mw-muted">
           No recommended rivals returned. Search a token below — you can still issue a challenge.
         </p>
       ) : null}
@@ -89,44 +88,44 @@ export function FindMatchPanel({
             return (
               <div
                 key={candidate.tokenId}
-                className={`mwz-hud-frame space-y-3 p-4 ${selected ? "border-accent/50" : ""}`}
+                className={`space-y-3 rounded-[14px] border bg-mw-input p-4 font-mw-body text-mw-text ${selected ? "border-mw-accent-edge" : "border-mw-border"}`}
                 data-find-match-candidate={candidate.tokenId}
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <div className="font-retro text-sm text-foreground">
+                    <div className="break-words font-mw-cond text-lg font-bold text-mw-text">
                       {candidate.tokenName}{" "}
-                      <span className="text-muted-foreground">${candidate.symbol}</span>
+                      <span className="font-mw-body text-sm font-semibold text-mw-muted">${candidate.symbol}</span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <TacticalTag label={candidate.classificationLabel} tone={candidate.ranked ? "success" : "hot"} />
-                      <TacticalTag label={candidate.rankedLabel} tone={candidate.ranked ? "sponsored" : "hot"} />
+                      <span className={candidate.ranked ? "inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border border-[#1F5133] bg-[#0F2418] px-2.5 text-[13px] font-semibold text-[#6EE7A0]" : "inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2.5 text-[13px] font-semibold text-mw-accent-soft"}>{candidate.classificationLabel}</span>
+                      <span className={candidate.ranked ? "inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border border-mw-edge bg-[#171B20] px-2.5 text-[13px] font-semibold text-[#C9CED4]" : "inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2.5 text-[13px] font-semibold text-mw-accent-soft"}>{candidate.rankedLabel}</span>
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Match Quality</div>
-                    <div className="font-retro text-lg text-foreground">{candidate.matchQualityLabel || "—"}</div>
+                    <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Match Quality</div>
+                    <div className="font-mw-mono text-lg font-bold text-mw-text">{candidate.matchQualityLabel || "—"}</div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 text-xs text-mw-muted sm:grid-cols-4">
                   <div>
                     MCAP
-                    <div className="font-retro text-foreground">{candidate.marketCapLabel}</div>
+                    <div className="mt-0.5 break-words font-mw-mono text-sm font-bold text-mw-text">{candidate.marketCapLabel}</div>
                   </div>
                   <div>
                     Holders
-                    <div className="font-retro text-foreground">{candidate.holdersLabel}</div>
+                    <div className="mt-0.5 break-words font-mw-mono text-sm font-bold text-mw-text">{candidate.holdersLabel}</div>
                   </div>
                   <div>
                     Liquidity
-                    <div className="font-retro text-foreground">{candidate.liquidityLabel}</div>
+                    <div className="mt-0.5 break-words font-mw-mono text-sm font-bold text-mw-text">{candidate.liquidityLabel}</div>
                   </div>
                   <div>
                     24h vol
-                    <div className="font-retro text-foreground">{candidate.volumeLabel}</div>
+                    <div className="mt-0.5 break-words font-mw-mono text-sm font-bold text-mw-text">{candidate.volumeLabel}</div>
                   </div>
                 </div>
-                <Button type="button" size="sm" className="font-retro" onClick={() => onSelectTarget(candidate.tokenId)}>
+                <Button type="button" size="sm" className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50" onClick={() => onSelectTarget(candidate.tokenId)}>
                   Challenge
                 </Button>
               </div>

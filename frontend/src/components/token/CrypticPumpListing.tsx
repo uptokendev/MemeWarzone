@@ -18,7 +18,7 @@ const PENDING_LISTING_PREFIX = "mwz:crypticpump:pendingListing:";
 
 /** CrypticPump purple CTA (list button only) */
 const CP_BTN =
-  "h-8 border border-violet-400/80 bg-gradient-to-b from-violet-500/90 to-purple-800/95 px-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-violet-50 shadow-[0_0_18px_rgba(139,92,246,0.35)] hover:from-violet-400 hover:to-purple-700 hover:border-violet-300 hover:text-white";
+  "mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-violet-400/70 bg-[#1E1530] px-4 text-[15px] font-semibold text-violet-100 hover:border-violet-300 hover:bg-[#2A1D44] hover:text-white";
 
 /** Official partner badge art (public for everyone once listing URL is saved). */
 const CP_BADGE_SRC = "/assets/partners/crypticpump-listed-badge.png";
@@ -518,47 +518,47 @@ export function CrypticPumpListButton({
     open && typeof document !== "undefined"
       ? createPortal(
           <div
-            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 p-3 sm:p-4"
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-[rgba(5,6,8,0.75)] p-3 sm:p-4"
             style={{ zIndex: 9999 }}
             role="dialog"
             aria-modal="true"
             aria-label="List on CrypticPump"
           >
-            {/* Flat panel — no mwz-card (that class still draws the PNG border-image frame). */}
+            {/* Flat panel: no legacy card class (it still draws the PNG border-image frame). */}
             <div
-              className="flex max-h-[min(94vh,920px)] w-full max-w-3xl flex-col overflow-hidden border border-orange-400/45 bg-black"
-              style={{ borderImage: "none", boxShadow: "none", clipPath: "none", borderRadius: 0 }}
+              className="flex max-h-[min(94vh,920px)] w-full max-w-3xl flex-col overflow-hidden rounded-[18px] border border-mw-edge bg-mw-surface font-mw-body text-mw-text"
+              style={{ borderImage: "none", boxShadow: "none", clipPath: "none" }}
             >
-              <div className="shrink-0 border-b border-border/50 bg-black p-3 sm:p-4">
-                <div className="text-[10px] uppercase tracking-[0.2em] text-orange-300">// Partner</div>
-                <h3 className="font-retro text-lg text-foreground sm:text-xl">List on CrypticPump</h3>
-                <p className="mt-1 text-xs text-muted-foreground">
+              <div className="shrink-0 border-b border-mw-border p-4">
+                <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Partner</div>
+                <h3 className="m-0 mt-0.5 font-mw-cond text-2xl font-bold text-mw-text">List on CrypticPump</h3>
+                <p className="mt-1 text-sm text-mw-muted">
                   Free basic listing via the form. After a successful submit, press Close so we can attach the public
                   badge on this token.
                 </p>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-black p-3 sm:p-4">
-                <div className="relative min-h-[min(70vh,720px)] w-full border border-orange-400/40 bg-black">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4">
+                <div className="relative min-h-[min(70vh,720px)] w-full overflow-hidden rounded-[14px] border border-mw-border bg-mw-input">
                   {iframeStatus === "loading" ? (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black text-xs text-muted-foreground">
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-mw-input text-sm text-mw-muted">
                       Loading CrypticPump form…
                     </div>
                   ) : null}
                   {iframeStatus === "timeout" ? (
-                    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black px-4 text-center">
-                      <p className="text-sm text-orange-200">
+                    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-mw-input px-4 text-center">
+                      <p className="text-sm text-mw-accent-soft">
                         The form didn&apos;t load in this window (common if production framing is blocked).
                       </p>
                       <a
                         href={iframeSrc}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="mwz-button mwz-button-orange px-4 py-2 font-retro text-xs"
+                        className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 text-center"
                       >
                         Open CrypticPump form in a new tab
                       </a>
-                      <p className="max-w-md text-xs text-muted-foreground">
+                      <p className="max-w-md text-sm text-mw-muted">
                         After listing, return here and press Close so we can check for the badge.
                       </p>
                     </div>
@@ -567,49 +567,49 @@ export function CrypticPumpListButton({
                     key={iframeSrc}
                     src={iframeSrc}
                     title="Submit your project to CrypticPump"
-                    className="min-h-[min(70vh,720px)] w-full border-0 bg-black"
+                    className="min-h-[min(70vh,720px)] w-full border-0 bg-mw-input"
                     style={{ borderImage: "none", borderRadius: 0, boxShadow: "none" }}
                     loading="eager"
                     referrerPolicy="strict-origin-when-cross-origin"
                     onLoad={() => setIframeStatus("loaded")}
                   />
                 </div>
-                {error ? <p className="mt-3 text-xs text-orange-300">{error}</p> : null}
-                <div className="mt-3 space-y-1 border border-border/40 bg-muted/10 p-2.5 text-[11px] text-muted-foreground">
-                  <div className="text-[10px] uppercase tracking-[0.14em] text-orange-300/90">Return handshake</div>
+                {error ? <p className="mt-3 text-sm text-mw-sell">{error}</p> : null}
+                <div className="mt-3 space-y-1 rounded-[10px] border border-mw-border bg-mw-input p-3 text-xs text-mw-muted">
+                  <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Return handshake</div>
                   <p>
                     Parent page origin:{" "}
-                    <span className="font-mono text-foreground/80">{parentOrigin || "(unknown)"}</span>
-                    . Partner must <span className="font-mono text-foreground/80">postMessage(..., parentOrigin)</span>{" "}
-                    or <span className="font-mono text-foreground/80">'*'</span>. Hardcoding only{" "}
-                    <span className="font-mono text-foreground/80">https://memewar.zone</span> drops the event on
+                    <span className="font-mw-mono text-mw-text">{parentOrigin || "(unknown)"}</span>
+                    . Partner must <span className="font-mw-mono text-mw-text">postMessage(..., parentOrigin)</span>{" "}
+                    or <span className="font-mw-mono text-mw-text">'*'</span>. Hardcoding only{" "}
+                    <span className="font-mw-mono text-mw-text">https://memewar.zone</span> drops the event on
                     Netlify / www.
                   </p>
-                  <p className="text-foreground/50">
-                    We pass <span className="font-mono">parentOrigin</span> /{" "}
-                    <span className="font-mono">returnOrigin</span> on the iframe URL for them to read.
+                  <p className="text-mw-muted">
+                    We pass <span className="font-mw-mono">parentOrigin</span> /{" "}
+                    <span className="font-mw-mono">returnOrigin</span> on the iframe URL for them to read.
                   </p>
-                  {handshakeNote ? <p className="text-orange-200">{handshakeNote}</p> : null}
+                  {handshakeNote ? <p className="text-mw-accent-soft">{handshakeNote}</p> : null}
                   {lastPartnerPing ? (
-                    <p className="break-all font-mono text-[10px] text-foreground/70">Last parent ping: {lastPartnerPing}</p>
+                    <p className="break-all font-mw-mono text-[11px] text-mw-text">Last parent ping: {lastPartnerPing}</p>
                   ) : (
-                    <p className="text-foreground/50">
+                    <p className="text-mw-muted">
                       No postMessage received on the <strong>parent</strong> page yet. Iframe{" "}
-                      <span className="font-mono">[CrypticPump handshake]</span> logs only prove they <em>sent</em> —
+                      <span className="font-mw-mono">[CrypticPump handshake]</span> logs only prove they <em>sent</em> —
                       not that this page got it.
                     </p>
                   )}
                 </div>
               </div>
 
-              <div className="flex shrink-0 flex-col gap-2 border-t border-orange-400/30 bg-black p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
-                <p className="text-[11px] text-muted-foreground leading-snug sm:max-w-[65%]">
-                  After you submit on CrypticPump, press <span className="text-orange-200">Close</span>. We re-check
+              <div className="flex shrink-0 flex-col gap-2 border-t border-mw-border p-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs leading-snug text-mw-muted sm:max-w-[65%]">
+                  After you submit on CrypticPump, press <span className="font-semibold text-mw-text">Close</span>. We re-check
                   whether the listing was saved and show the badge if it was.
                 </p>
                 <Button
                   type="button"
-                  className="mwz-button mwz-button-orange shrink-0 font-retro"
+                  className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 shrink-0"
                   disabled={busy}
                   onClick={() => void handleClose()}
                 >

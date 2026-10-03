@@ -65,25 +65,25 @@ export function FinalSalvoPanel({
   const rightSelected = walletVote === "right" || tokenIdentityEqual(walletVote, String(rightToken || rightLabel));
 
   return (
-    <section aria-label={model.title} data-final-salvo={model.phase} className="space-y-3 border-t border-white/10 pt-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] uppercase tracking-[0.16em] text-white/52">
-        <span className="font-retro text-orange-200">{model.title}</span>
+    <section aria-label={model.title} data-final-salvo={model.phase} className="space-y-3 border-t border-mw-border pt-3 font-mw-body text-mw-text">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-mw-muted">
+        <span className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">{model.title}</span>
         <span>{model.shotLabel}</span>
-        <span aria-live="polite">{model.clockLabel}</span>
+        <span aria-live="polite" className="font-mw-mono">{model.clockLabel}</span>
       </div>
 
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border border-white/10 bg-black/20 p-3 sm:gap-3">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 rounded-[14px] border border-mw-border bg-mw-input p-3 sm:gap-3">
         <div className="min-w-0">
-          <div className="truncate text-[9px] uppercase tracking-[0.18em] text-white/42" title={leftToken || leftLabel}>{leftLabel}</div>
-          <div className="mt-1 font-retro text-xl text-white/90">{model.leftVotes}</div>
+          <div className="truncate font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted" title={leftToken || leftLabel}>{leftLabel}</div>
+          <div className="mt-1 font-mw-mono text-xl font-bold text-mw-text">{model.leftVotes}</div>
         </div>
         <div className="text-center">
-          <div className="text-[9px] uppercase tracking-[0.18em] text-white/42">Series</div>
-          <div className="mt-1 font-retro text-lg text-white/80">{model.seriesLabel}</div>
+          <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Series</div>
+          <div className="mt-1 font-mw-mono text-lg font-bold text-mw-text">{model.seriesLabel}</div>
         </div>
         <div className="min-w-0 text-right">
-          <div className="truncate text-[9px] uppercase tracking-[0.18em] text-white/42" title={rightToken || rightLabel}>{rightLabel}</div>
-          <div className="mt-1 font-retro text-xl text-white/90">{model.rightVotes}</div>
+          <div className="truncate font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted" title={rightToken || rightLabel}>{rightLabel}</div>
+          <div className="mt-1 font-mw-mono text-xl font-bold text-mw-text">{model.rightVotes}</div>
         </div>
       </div>
 
@@ -93,7 +93,7 @@ export function FinalSalvoPanel({
             type="button"
             size="sm"
             variant={leftSelected ? "secondary" : "outline"}
-            className="min-w-0 font-retro"
+            className={`mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 min-w-0 ${leftSelected ? "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft hover:bg-[#341C0B]" : ""}`}
             disabled={busy || !model.walletEligible || !onVote}
             onClick={() => onVote?.("left")}
           >
@@ -103,7 +103,7 @@ export function FinalSalvoPanel({
             type="button"
             size="sm"
             variant={rightSelected ? "secondary" : "outline"}
-            className="min-w-0 font-retro"
+            className={`mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 min-w-0 ${rightSelected ? "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft hover:bg-[#341C0B]" : ""}`}
             disabled={busy || !model.walletEligible || !onVote}
             onClick={() => onVote?.("right")}
           >
@@ -113,16 +113,16 @@ export function FinalSalvoPanel({
       ) : null}
 
       {model.shotClosed ? (
-        <p className="text-xs text-white/48">
+        <p className="text-sm text-mw-muted">
           {model.winner ? `Final Salvo winner: ${model.winner}` : "Shot closed. Awaiting authoritative shot result."}
         </p>
       ) : model.walletVote ? (
-        <p className="text-xs text-white/48">This wallet already used its Free Vote for the current shot.</p>
+        <p className="text-sm text-mw-muted">This wallet already used its Free Vote for the current shot.</p>
       ) : (
-        <p className="text-xs text-white/48">Free Vote only. Each shot resets the eligible-wallet vote window.</p>
+        <p className="text-sm text-mw-muted">Free Vote only. Each shot resets the eligible-wallet vote window.</p>
       )}
 
-      <div data-final-salvo-boost="disabled" className="text-[10px] uppercase tracking-[0.14em] text-white/36">
+      <div data-final-salvo-boost="disabled" className="text-xs text-mw-muted">
         Boost disabled during Final Salvo
       </div>
     </section>
