@@ -75,7 +75,7 @@ function unknownAmount({ asset, decimals, source, error, status = "unknown", ext
   return { asset, decimals, raw: null, amount: null, status, source, asOf: null, error: String(error || "Source unavailable.").slice(0, 300), ...extra };
 }
 
-function solanaRpcUrls(env) {
+export function solanaRpcUrls(env) {
   const urls = [];
   for (const name of ["SOLANA_MAINNET_RPC_HTTP", "SOLANA_MAINNET_RPC_URL", "SOLANA_RPC_URL", "SOLANA_RPC_HTTP"]) {
     for (const part of String(env[name] || "").split(",")) {

@@ -197,7 +197,7 @@ async function readLedger({ address, chainId, statuses, rewardType, limit = 100 
 }
 
 async function writeAudit({ batchId = null, rewardLedgerId = null, action, oldValue = null, newValue = null, reason = null, req = null }) {
-  const actorId = String(req?.headers?.["x-admin-email"] || req?.headers?.["x-user-email"] || "api");
+  const actorId = String(req?.dashboardPrincipal?.email || req?.headers?.["x-admin-email"] || req?.headers?.["x-user-email"] || "api");
   await pool.query(
     `insert into public.reward_audit_logs (batch_id, reward_ledger_id, actor_type, actor_id, action, old_value, new_value, reason, metadata)
      values ($1, $2, 'api', $3, $4, $5, $6, $7, '{}'::jsonb)`,
@@ -552,29 +552,52 @@ export async function internalRewardClaimVault(req, res) {
   }
 }
 
+// reward_ledger.amount is in each chain's smallest unit (wei on EVM, lamports
+// on Solana), so amounts are only summed inside one chain + token. The old
+// single recruiterRouteAmount / airdropPoolAmount added wei and lamports
+// together; they stay in the payload as null and the totals live in byChain.
 export async function internalRewardRouting(req, res) {
   if (!methodAllowed(req, res, ["GET", "POST"])) return;
   try {
-    const { rows } = await pool.query(
-      `select coalesce(count(distinct wallet_address), 0)::int as active_linked_wallet_count,
-              coalesce(sum(amount) filter (where reward_type = 'airdrop'), 0)::text as airdrop_pool_amount,
-              coalesce(sum(amount) filter (where reward_type = 'recruiter'), 0)::text as recruiter_route_amount
-         from public.reward_ledger
-        where status in ('approved', 'claimable', 'claim_pending', 'claimed')`,
-    );
-    const row = rows[0] || {};
+    const [walletResult, chainResult] = await Promise.all([
+      pool.query(
+        `select coalesce(count(distinct wallet_address), 0)::int as active_linked_wallet_count
+           from public.reward_ledger
+          where status in ('approved', 'claimable', 'claim_pending', 'claimed')`,
+      ),
+      pool.query(
+        `select chain::text as chain,
+                coalesce(nullif(token_symbol, ''), '') as token_symbol,
+                count(distinct wallet_address)::int as wallet_count,
+                coalesce(sum(amount) filter (where reward_type = 'airdrop'), 0)::text as airdrop_pool_amount,
+                coalesce(sum(amount) filter (where reward_type = 'recruiter'), 0)::text as recruiter_route_amount
+           from public.reward_ledger
+          where status in ('approved', 'claimable', 'claim_pending', 'claimed')
+          group by chain::text, coalesce(nullif(token_symbol, ''), '')
+          order by chain::text, coalesce(nullif(token_symbol, ''), '')`,
+      ),
+    ]);
+    const row = walletResult.rows[0] || {};
     return json(res, 200, {
       routes: [],
       activeLinkedWalletCount: Number(row.active_linked_wallet_count || 0),
       lockedWalletCount: 0,
-      recruiterRouteAmount: String(row.recruiter_route_amount || "0"),
-      airdropPoolAmount: String(row.airdrop_pool_amount || "0"),
+      recruiterRouteAmount: null,
+      airdropPoolAmount: null,
+      byChain: chainResult.rows.map((item) => ({
+        chain: item.chain,
+        chainId: Number(item.chain) || null,
+        tokenSymbol: chainSymbol(item.chain, item.token_symbol),
+        walletCount: Number(item.wallet_count || 0),
+        recruiterRouteAmount: String(item.recruiter_route_amount || "0"),
+        airdropPoolAmount: String(item.airdrop_pool_amount || "0"),
+      })),
       status: "ready",
       materializedAt: new Date().toISOString(),
     });
   } catch (error) {
     if (!schemaMissing(error)) console.error("[internal/reward-routing]", error);
-    return json(res, 200, { routes: [], status: "schema_missing", materializedAt: null });
+    return json(res, 200, { routes: [], byChain: [], status: "schema_missing", materializedAt: null });
   }
 }
 
@@ -643,17 +666,21 @@ export async function adminRewardOverview(req, res) {
   try {
     const [totalsResult, typeResult, chainResult] = await Promise.all([
       pool.query(
+        // Counts only: amounts across chains would add wei to lamports. The
+        // per-chain amounts are in rewardsByChain.
         `select count(*)::int as total_rewards,
-                coalesce(sum(amount) filter (where status = 'claimable'), 0)::text as total_claimable,
-                coalesce(sum(amount) filter (where status = 'claim_pending'), 0)::text as total_claim_pending,
+                null::text as total_claimable,
+                null::text as total_claim_pending,
                 count(*) filter (where status = 'claim_pending')::int as total_claim_pending_count,
-                coalesce(sum(amount) filter (where status = 'claimed'), 0)::text as total_claimed,
+                null::text as total_claimed,
                 count(*) filter (where status = 'failed')::int as total_failed,
                 count(*) filter (where status = 'expired')::int as total_expired
            from public.reward_ledger`,
       ),
       pool.query(
         `select reward_type,
+                chain,
+                token_symbol,
                 count(*)::int as count,
                 coalesce(sum(amount), 0)::text as amount,
                 count(*) filter (where status = 'claimable')::int as claimable_count,
@@ -661,14 +688,17 @@ export async function adminRewardOverview(req, res) {
                 count(*) filter (where status = 'claimed')::int as claimed_count,
                 count(*) filter (where status = 'failed')::int as failed_count
            from public.reward_ledger
-          group by reward_type
-          order by reward_type`,
+          group by reward_type, chain, token_symbol
+          order by reward_type, chain, token_symbol`,
       ),
       pool.query(
         `select chain,
                 token_symbol,
                 count(*)::int as count,
                 coalesce(sum(amount), 0)::text as amount,
+                coalesce(sum(amount) filter (where status = 'claimable'), 0)::text as claimable_amount,
+                coalesce(sum(amount) filter (where status = 'claim_pending'), 0)::text as claim_pending_amount,
+                coalesce(sum(amount) filter (where status = 'claimed'), 0)::text as claimed_amount,
                 count(*) filter (where status = 'claimable')::int as claimable_count,
                 count(*) filter (where status = 'claim_pending')::int as claim_pending_count,
                 count(*) filter (where status = 'claimed')::int as claimed_count,

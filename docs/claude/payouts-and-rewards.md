@@ -154,3 +154,23 @@ registry. Failed reads are `unknown`, never zero. Facts found while building it,
   (`realtime-indexer/src/indexer.ts:1182-1188`). Recruiter credit reads the same table.
 - EVM war-pool protocol share goes straight to the Safe (`protocolReceiver`), not the protocol vault.
 - Solana deployer 9YN7 holds `route_state` / `arena_config` / `rewards_config` authority (no fee path pays it).
+
+### Command Center Reward Ops / recruiter payouts auth (2026-10-03, fix/finance-p0)
+
+Verified on the live API (`3a591353`) before the change: `/api/admin/rewards/*` and
+`/api/security/recruiter-payouts` answer 401 without auth (enforce flags are on), and every
+`/api/internal/rewards/*` route answers 503 `INTERNAL_AUTH_NOT_CONFIGURED` because neither
+`RANK_EVENTS_TOKEN` nor `INTERNAL_API_TOKEN` is set there. No worker, script or cron in this repo
+calls these routes; the indexer has its own `/api/security/rewards/*` (rewardOpsRoutes.ts).
+- `/api/admin/rewards/*` now needs a dashboard bearer with `finance.view` (GET) / `finance.manage`
+  (writes), or the ops key; `/api/security/recruiter-payouts` needs `recruiter_payouts.manage` or the
+  ops key. Both fail closed in `railwayProxy.js` and again in the route
+  (`api/lib/dashboardPermissionOrOps.js`), whatever `API_AUTH_ENFORCE_*` says.
+- Dashboard doors to the internal handlers: `/api/admin/rewards/{publications,draws,routing,claim-vault,epoch-status}`.
+  `/api/internal/rewards/*` is unchanged (internal token). The draw-run route is not exposed.
+- `reward_ledger.amount` is per-chain atomic units. Production holds Solana rows only: chain 101
+  (mainnet, lamports) and legacy chain 102 (small test rows, left in place). Routing and overview
+  amounts are now per chain + token; the old cross-chain sums are `null`.
+- Finance rewards read chain-101 rows only for the API's own cluster (`SOLANA_CLUSTER`, default
+  mainnet-beta): picking devnet on the live API returns no rows plus a `notice`.
+- Finance inventory items carry a live native `balance` (fee-routing readers); failed read = unknown.
