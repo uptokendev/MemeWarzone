@@ -29,7 +29,7 @@ export type CoinPageProfile = {
   updatedAt: string | null;
 };
 
-export type CoinPost = { id: string; kind: "post"; at: string; body: string; mediaUrl: string | null; shareToFeed: boolean };
+export type CoinPost = { id: string; kind: "post"; at: string; body: string; mediaUrl: string | null; shareToFeed: boolean; socialPostId?: number | null };
 export type CoinAutoUpdate = { id: string; kind: "launch" | "graduation" | "battle"; at: string; text: string; battleId?: string; won?: boolean };
 
 export type CoinPageData = {

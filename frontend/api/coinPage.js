@@ -13,6 +13,7 @@ import { pool } from "../server/db.js";
 import { getQuery, json, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
+import { hasCoinPostLink, linkCoinPost, unlinkCoinPost } from "./lib/coinPostLink.js";
 import { coinIdent, coinPageOwner, isSolanaChain } from "./lib/coinPageOwner.js";
 import {
   COIN_POST_RATE,
@@ -77,7 +78,17 @@ async function readPosts(chainId, token, limit = 50) {
         where chain_id = $1 and ${match} and status = 0 order by created_at desc limit $3`,
       [chainId, token, limit],
     );
-    return rows.map(postFromRow);
+    const posts = rows.map(postFromRow);
+    // Each creator update's linked post, which carries its reactions (founder, 2026-10-03).
+    if (posts.length && (await hasCoinPostLink())) {
+      const linked = await pool.query(
+        `select id, coin_post_id from public.social_posts where status = 0 and coin_post_id = any($1::bigint[])`,
+        [rows.map((r) => r.id)],
+      ).catch(() => ({ rows: [] }));
+      const byCoinPost = new Map(linked.rows.map((r) => [String(r.coin_post_id), Number(r.id)]));
+      return posts.map((post) => ({ ...post, socialPostId: byCoinPost.get(String(post.id)) ?? null }));
+    }
+    return posts;
   } catch (error) {
     if (isSchemaMissing(error)) return [];
     throw error;
@@ -253,6 +264,10 @@ async function handlePostCreate(req, res) {
      values ($1, $2, $3, $4, $5, $6) returning id, body, media_url, share_to_feed, created_at`,
     [chainId, owner.token, verified.walletAddress, text, media_url, share_to_feed],
   );
+  // The linked post that carries rockets, reposts, replies and views (founder, 2026-10-03).
+  if (rows[0]?.id) {
+    await linkCoinPost(null, { coinPostId: rows[0].id, authorWallet: verified.walletAddress, body: text, mediaUrl: media_url, chainId, token: owner.token });
+  }
   return json(res, 200, { ok: true, post: postFromRow(rows[0]) });
 }
 
@@ -267,6 +282,7 @@ async function handlePostDelete(req, res, postId) {
     [postId, chainId, owner.token],
   );
   if (!rowCount) return json(res, 404, { error: "Post not found", code: "COIN_POST_UNKNOWN" });
+  await unlinkCoinPost(postId);
   // A deleted post cannot stay pinned.
   await pool.query(
     `update public.token_story_profiles set pinned_post_id = null, updated_at = now()
