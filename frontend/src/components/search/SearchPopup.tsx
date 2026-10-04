@@ -13,6 +13,7 @@ import { useSolUsdPrice } from "@/hooks/useSolUsdPrice";
 import { isSolanaChainId } from "@/lib/chainConfig";
 import { resolveImageUri } from "@/lib/media";
 import { formatSearchMcapUsd } from "@/components/search/SearchOverlayCard";
+import { PersonAvatar } from "@/components/ui-v2/PersonAvatar";
 import type { SearchHistoryItem } from "@/lib/searchHistory";
 import type { TokenSearchResult } from "@/types/search";
 
@@ -163,11 +164,15 @@ export function SearchPopup({
                       onClick={() => selectToken(row)}
                       className="mw-focus flex min-h-12 w-full items-center gap-3 rounded-[10px] border border-transparent px-2.5 py-2 text-left text-mw-text hover:border-mw-border hover:bg-mw-input"
                     >
-                      <img
-                        src={resolveImageUri(row.logoURI || "") || "/placeholder.svg"}
-                        alt=""
-                        className="h-10 w-10 shrink-0 rounded-[10px] border border-mw-border object-cover"
-                      />
+                      {row.kind === "wallet" ? (
+                        <PersonAvatar url={row.logoURI || null} size={40} />
+                      ) : (
+                        <img
+                          src={resolveImageUri(row.logoURI || "") || "/placeholder.svg"}
+                          alt=""
+                          className="h-10 w-10 shrink-0 rounded-[10px] border border-mw-border object-cover"
+                        />
+                      )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3">
                           <span className="truncate font-semibold text-mw-text">{row.name}</span>
@@ -184,7 +189,7 @@ export function SearchPopup({
                           </span>
                         </div>
                         <div className="truncate font-mw-mono text-xs text-mw-muted">
-                          {mcap || row.tokenAddress || row.campaignAddress}
+                          {row.subtitle || mcap || row.tokenAddress || row.campaignAddress}
                         </div>
                       </div>
                     </button>

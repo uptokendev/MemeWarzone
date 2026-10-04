@@ -103,11 +103,14 @@ async function searchProfiles(
       const address = String(row.address || "").trim();
       if (!address) return null;
       const displayName = String(row.displayName || "").trim();
+      const handle = String(row.handle || "").trim();
+      const short = `${address.slice(0, 4)}…${address.slice(-4)}`;
       return {
         kind: "wallet" as const,
         campaignAddress: address,
-        name: displayName || "Wallet",
-        symbol: `${address.slice(0, 4)}…${address.slice(-4)}`,
+        name: displayName || (handle ? `@${handle}` : "Wallet"),
+        symbol: short,
+        subtitle: handle ? `@${handle} · ${short}` : short,
         status: "unknown" as const,
         logoURI: row.avatarUrl ? String(row.avatarUrl) : undefined,
         chainId: Number(row.chainId || chainId) || chainId,
@@ -245,7 +248,8 @@ export async function searchTokensRemote(
   ]);
   const merged = new Map<string, TokenSearchResult>();
   for (const row of [...tokenPages.flat(), ...importPages.flat(), ...profilePages.flat(), ...draftPages.flat()]) {
-    const key = `${row.kind}:${row.chainId}:${row.tokenAddress || row.campaignAddress}`;
+    // One result per person: profiles are the same on every chain.
+    const key = row.kind === "wallet" ? `wallet:${row.campaignAddress.toLowerCase()}` : `${row.kind}:${row.chainId}:${row.tokenAddress || row.campaignAddress}`;
     if (!merged.has(key)) merged.set(key, row);
   }
   const ranked = [...merged.values()]

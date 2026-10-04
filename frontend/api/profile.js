@@ -259,6 +259,47 @@ export default async function handler(req, res) {
       if (search && !raw) {
         if (search.length < 2) return json(res, 200, { items: [] });
         const limit = Math.min(Math.max(Number(q.limit || 8), 1), 20);
+        // Founder 2026-10-05: people are found by display name or @username, on every chain (one profile
+        // per wallet), one result per wallet with its newest profile.
+        const term = search.replace(/^@/, "");
+        try {
+          const { rows } = await pool.query(
+            `with matches as (
+               select h.wallet_key as wallet from public.user_handles h where h.handle ilike $1
+               union
+               select p.address from public.user_profiles p
+                where p.display_name is not null and btrim(p.display_name) <> '' and p.display_name ilike $1
+             )
+             select coalesce(up.address, m.wallet) as address,
+                    coalesce(up.chain_id, $4) as "chainId",
+                    up.display_name as "displayName",
+                    up.avatar_url as "avatarUrl",
+                    up.bio,
+                    h.handle
+               from (select distinct on (lower(wallet)) wallet from matches) m
+               left join lateral (
+                 select u.address, u.chain_id, u.display_name, u.avatar_url, u.bio, u.updated_at
+                   from public.user_profiles u
+                  where u.address = m.wallet or lower(u.address) = lower(m.wallet)
+                  order by u.updated_at desc nulls last
+                  limit 1
+               ) up on true
+               left join public.user_handles h on h.wallet_key = m.wallet or lower(h.wallet_key) = lower(m.wallet)
+              order by
+                case
+                  when lower(h.handle) = lower($2) or lower(up.display_name) = lower($2) then 0
+                  when lower(h.handle) like lower($2) || '%' or lower(up.display_name) like lower($2) || '%' then 1
+                  else 2
+                end,
+                up.updated_at desc nulls last
+              limit $3`,
+            [`%${term}%`, term, limit, chainId],
+          );
+          return json(res, 200, { items: rows });
+        } catch (e) {
+          if (e?.code !== "42P01") throw e;
+        }
+        // No usernames table yet: display names on this chain, as before.
         const { rows } = await pool.query(
           `SELECT address,
                   chain_id AS "chainId",

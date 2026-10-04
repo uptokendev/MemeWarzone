@@ -13,6 +13,8 @@ export interface TokenSearchResult {
   logoURI?: string;
   chainId: number;
   marketcapBnb?: string | null;
+  /** Second line for people: "@username · 9YN7…eF8H" (founder, 2026-10-05). */
+  subtitle?: string;
   /** Imported coins carry their DEX market cap in USD (founder, 2026-10-05). */
   marketCapUsd?: number | null;
   href: string;
