@@ -12,6 +12,7 @@ import { startEvmCreatorChoiceWorker } from "./evm/evmCreatorChoiceWorker.js";
 import { startSolanaFeeEscrowWorker } from "./solanaFeeEscrowWorker.js";
 import { startSolanaIndexerLoop } from "./solanaIndexer.js";
 import { startSolanaLpHarvestLoop } from "./solanaLpHarvestLoop.js";
+import { startProtocolForwarderKeeper } from "./protocolForwarderKeeper.js";
 
 startSupportedFactoryDiscoveryLoop();
 startSolanaIndexerLoop();
@@ -22,6 +23,8 @@ startDbcCreatorChoiceWorker();
 startDbcGraduationWorker();
 startEvmGraduationKeeperWorker();
 startEvmCreatorChoiceWorker();
+// Off unless PROTOCOL_FORWARDER_KEEPER=dry|send; never blocks startup (own timers, errors stay in its status).
+void startProtocolForwarderKeeper().catch((error) => console.error("[forwarder-keeper] start failed", error));
 startMeteoraSwapIndexerLoop();
 startDbcIndexerLoop();
 if (String(process.env.ENABLE_SOLANA_MARKET_STATS || "1") === "1") startSolanaMarketStatsLoop();

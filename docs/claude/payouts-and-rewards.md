@@ -270,3 +270,25 @@ entries, +$698 Home placements on BNB). Still not countable, needs indexing:
   `sharedRevenueLanes` / `revenueLaneEvents`. Each lane is one spec (`LANE_SPECS`) that builds both
   the hourly and the per-event SQL. Production Sep / Oct 2026: Summary = Close = CSV ($67.72 /
   $717.75, CSV within $0.00001 of per-row rounding).
+
+### Protocol forwarder flush keeper (built 2026-10-04, PR #507, not deployed)
+
+`realtime-indexer/src/protocolForwarderKeeper.ts` calls the permissionless `flush()` on ProtocolRevenueForwarder
+(BNB 56 / Robinhood 4663) so the LP protocol 20% (WBNB/WETH) reaches ProtocolRevenueVault (operator fill, overflow to
+the Safe). Started from `main.ts`, own timer per chain, status in `/health` → `protocolForwarderKeeper`.
+
+| Env | Default | |
+|---|---|---|
+| `PROTOCOL_FORWARDER_KEEPER` | `off` | `off` / `dry` (static call + log only) / `send` |
+| `PROTOCOL_FORWARDER_ADDRESS_56`, `_4663` | unset | unset = chain skipped |
+| `PROTOCOL_FORWARDER_KEEPER_PK` | unset | dedicated gas-only key, `send` only. No fallback to any other key; missing key, the deployer `0x77F96A7d…` or an `EVM_KEEPER_FORBIDDEN_ADDRESSES` entry refuses start |
+| `PROTOCOL_FORWARDER_KEEPER_INTERVAL_MS` | 3600000 | min 60000 |
+| `PROTOCOL_FORWARDER_MIN_FLUSH_USD` | 1 | priced with the vault's own `nativeUsdPrice()` |
+| `PROTOCOL_FORWARDER_MIN_FLUSH_WEI_<id>` | 56: 0.002 BNB, 4663: 0.0005 ETH | only when the vault price is 0 |
+| `PROTOCOL_FORWARDER_MAX_GAS_COST_BPS` | 500 | gas cost must be <= 5% of the value flushed |
+| `PROTOCOL_FORWARDER_TICK_TIMEOUT_MS` | 60000 | bounded tick |
+
+Fail closed per chain: forwarder `nativeSink()` must be the known vault, `admin()` the Safe, `wrappedNative()` the known
+WBNB/WETH, else the chain is refused until restart. One flush in flight per chain (receipt polled next tick).
+Turn on only after PF2 (router points at the forwarder): first `dry`, then `send` with a funded keeper key.
+Tests: `npm run test:protocol-forwarder-keeper` (12).
