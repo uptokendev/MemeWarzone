@@ -261,7 +261,8 @@ test("Solana paid UP votes are a revenue lane in /revenue and /summary alike, te
     seen.push({ text, params });
     if (/from public\.votes/.test(text)) {
       assert.equal(params[0], 101);
-      assert.equal(params[1], "11111111111111111111111111111111");
+      // The native vote asset is part of the shared lane spec (financeRevenueLanes.js), not a parameter.
+      assert.match(text, /lower\('11111111111111111111111111111111'\)/);
       assert.match(text, /not exists \(\s*select 1 from public\.campaigns hc/);
       return { rows: [{ hour: new Date("2026-09-26T20:00:00Z"), period_start: new Date("2026-09-26T20:07:47Z"), period_end: new Date("2026-09-26T20:07:47Z"), evidence_count: 1, amount_raw: "24770869" }] };
     }

@@ -1,14 +1,16 @@
-// Read-only inputs for the accounting pages: revenue per month (the same lanes
-// and rules as /api/admin/finance/revenue: bonding-curve protocol fees from
-// reward_events and native UP votes, hidden test coins left out, each hour
-// valued at that hour's price), revenue events for the CSV export, and the
+// Read-only inputs for the accounting pages: revenue per month (the very lanes
+// of /api/admin/finance/revenue and /summary, financeRevenueLanes.js: bonding
+// curve, UP votes, arena boosts / entries, sponsorships, Home placements, DBC
+// referral, EVM graduation; hidden test coins left out, each hour valued at
+// that hour's price), revenue events for the CSV export, and the
 // fee-routing "Ours" / held balances. Nothing here writes.
 
 import { pool } from "../../server/db.js";
 import { normalizeSolanaCluster } from "../../shared/solanaCurrentAuthority.mjs";
 import { atomicToDecimal, cachedFeeRouting, feeRoutingAllNetworks } from "./financeFeeRouting.js";
 import { readNativeUpvoteRevenue } from "./financeVoteRevenue.js";
-import { mergeTotals } from "./financePrices.js";
+import { mergeTotals, priceAssetFor } from "./financePrices.js";
+import { laneDecimals, revenueLaneEvents, sharedRevenueLanes } from "./financeRevenueLanes.js";
 import { notPublicHiddenCampaignSql } from "./publicHiddenSql.js";
 import { addMonths, monthOf, roundUsd } from "./financeAccountingCosts.js";
 
@@ -38,23 +40,6 @@ function monthOfMs(ms) {
   return new Date(ms).toISOString().slice(0, 7);
 }
 
-async function bondingHourly(db, network, start, end) {
-  const { rows } = await db.query(
-    `select date_trunc('hour', r.occurred_at) as hour,
-            count(*)::int as evidence_count,
-            coalesce(sum(r.protocol_amount), 0)::text as amount_raw
-       from public.reward_events r
-      where r.chain_id = $1
-        and r.route_kind = 'trade'
-        and r.protocol_amount > 0
-        and r.occurred_at >= $2 and r.occurred_at < $3
-        and ${notPublicHiddenCampaignSql("r")}
-      group by 1`,
-    [network.chainId, start, end],
-  );
-  return rows.map((row) => ({ hour: hourMs(row.hour), raw: String(row.amount_raw || "0").split(".")[0], evidenceCount: Number(row.evidence_count || 0) }));
-}
-
 async function excludedCount(db, network, start, end) {
   const { rows } = await db.query(
     `select count(*)::int as n
@@ -81,12 +66,28 @@ function groupByMonth(buckets) {
   return out;
 }
 
+// The UP vote check of the shared lanes, from the injected `upvotes` reader
+// (financeVoteRevenue.readNativeUpvoteRevenue by default). Solana votes always
+// count (founder 2026-10-04), as on /revenue.
+function upvoteApprovalFrom(upvotes) {
+  return async (network) => {
+    if (network.chain === "solana") return { approved: true, reason: null };
+    const result = await upvotes(network);
+    return { approved: Boolean(result?.approved), reason: result?.reason || null };
+  };
+}
+
 /**
- * Revenue per month for [fromMonth, toMonth], all mainnets.
+ * Revenue per month for [fromMonth, toMonth], all mainnets. Reads the same
+ * lanes as /revenue and /summary (financeRevenueLanes.sharedRevenueLanes) and
+ * values each lane-month exactly as /summary does (event-hour price), so the
+ * Close, the tax reserve and Summary agree month by month.
  * @returns {Promise<{months: Record<string, {totalUsd:number|null, lanes:object[]}>, notes:string[], excludedTestCoinEvents:number}>}
  */
-export async function monthlyRevenue({ fromMonth, toMonth, db = pool, prices, upvotes = readNativeUpvoteRevenue, networks = accountingNetworks(), env = process.env }) {
+export async function monthlyRevenue({ fromMonth, toMonth, db = pool, prices, upvotes = readNativeUpvoteRevenue, networks = accountingNetworks(), env = process.env, readLanes = sharedRevenueLanes }) {
   const { start, end } = windowBounds(fromMonth, toMonth);
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
   const lanesByMonth = new Map();
   const notes = [];
   let excluded = 0;
@@ -101,37 +102,26 @@ export async function monthlyRevenue({ fromMonth, toMonth, db = pool, prices, up
       notes.push("This API reads the test database, whose chain 101 rows are Solana devnet, so Solana revenue is left out here. Mainnet revenue is on the live API.");
       continue;
     }
-    const lanes = [];
-    lanes.push({ lane: "bonding_curve_fee", buckets: await bondingHourly(db, network, start, end) });
+    const shared = await readLanes(db, network, { upvoteApproval: upvoteApprovalFrom(upvotes) });
+    notes.push(...(shared.notes || []));
     excluded += await excludedCount(db, network, start, end);
-    if (network.chain === "bnb" || network.chain === "robinhood") {
-      try {
-        const result = await upvotes(network);
-        if (result?.approved && result.aggregate) {
-          const startMs = Date.parse(start);
-          const endMs = Date.parse(end);
-          const buckets = (result.aggregate.buckets || [])
-            .map((b) => ({ hour: hourMs(b.hour), raw: String(b.raw || "0"), evidenceCount: null }))
-            .filter((b) => b.hour != null && b.hour >= startMs && b.hour < endMs);
-          lanes.push({ lane: "upvotes", buckets });
-        } else if (result && !result.approved) {
-          notes.push(`UP vote revenue on chain ${network.chainId} is left out: ${result.reason || "not approved"}.`);
-        }
-      } catch (error) {
-        notes.push(`UP vote revenue on chain ${network.chainId} could not be read (${String(error?.message || error).slice(0, 120)}).`);
-      }
-    }
-    for (const { lane, buckets } of lanes) {
+    for (const lane of shared.lanes) {
+      const decimals = laneDecimals(lane, network);
+      const buckets = lane.buckets
+        .map((b) => ({ hour: hourMs(b.hour), raw: String(b.raw || "0").split(".")[0], evidenceCount: b.evidenceCount ?? null }))
+        .filter((b) => b.hour != null && b.hour >= startMs && b.hour < endMs);
       for (const [month, list] of groupByMonth(buckets)) {
         const total = list.reduce((s, b) => s + BigInt(b.raw), 0n);
         if (total === 0n) continue;
-        const usd = await prices.valueEvents(network.asset, list.map((b) => ({ hour: b.hour, raw: b.raw })), network.decimals);
+        const usd = await prices.valueEvents(lane.aggregate.assetSymbol, list.map((b) => ({ hour: b.hour, raw: b.raw })), decimals);
         push(month, {
           chainId: network.chainId,
           chain: network.chain,
-          lane,
-          asset: network.asset,
-          nativeAmount: atomicToDecimal(total.toString(), network.decimals),
+          lane: lane.aggregate.lane,
+          laneId: lane.aggregate.id,
+          source: lane.aggregate.source ?? null,
+          asset: lane.aggregate.assetSymbol,
+          nativeAmount: atomicToDecimal(total.toString(), decimals),
           evidenceCount: list.every((b) => b.evidenceCount != null) ? list.reduce((s, b) => s + b.evidenceCount, 0) : null,
           amountUsd: usd.amountUsd,
           priceBasis: usd.priceBasis,
@@ -150,8 +140,12 @@ export async function monthlyRevenue({ fromMonth, toMonth, db = pool, prices, up
   return { months, notes: [...new Set(notes)], excludedTestCoinEvents: excluded };
 }
 
-/** Per-event rows for the revenue CSV, oldest first. Capped per lane; `truncated` says so. */
-export async function revenueEventRows({ fromMonth, toMonth, db = pool, prices, fx, upvotes = readNativeUpvoteRevenue, networks = accountingNetworks(), env = process.env }) {
+/**
+ * Per-event rows for the revenue CSV, oldest first: one row per event of every
+ * shared revenue lane (same filters, amounts and test-coin rule as /revenue),
+ * each at its hour's price. Capped per lane; `truncated` says so.
+ */
+export async function revenueEventRows({ fromMonth, toMonth, db = pool, prices, fx, upvotes = readNativeUpvoteRevenue, networks = accountingNetworks(), env = process.env, readEvents = revenueLaneEvents }) {
   const { start, end } = windowBounds(fromMonth, toMonth);
   const raw = [];
   const notes = [];
@@ -161,67 +155,38 @@ export async function revenueEventRows({ fromMonth, toMonth, db = pool, prices, 
       notes.push("Solana rows on this API are devnet and are left out.");
       continue;
     }
-    const { rows } = await db.query(
-      `select r.occurred_at, r.tx_hash, r.log_index, r.campaign_address, r.protocol_amount::text as amount_raw
-         from public.reward_events r
-        where r.chain_id = $1
-          and r.route_kind = 'trade'
-          and r.protocol_amount > 0
-          and r.occurred_at >= $2 and r.occurred_at < $3
-          and ${notPublicHiddenCampaignSql("r")}
-        order by r.occurred_at asc, r.id asc
-        limit $4`,
-      [network.chainId, start, end, MAX_EXPORT_ROWS_PER_LANE + 1],
-    );
-    if (rows.length > MAX_EXPORT_ROWS_PER_LANE) truncated = true;
-    for (const row of rows.slice(0, MAX_EXPORT_ROWS_PER_LANE)) raw.push({ network, lane: "bonding_curve_fee", at: row.occurred_at, txHash: row.tx_hash, logIndex: row.log_index, campaign: row.campaign_address, amountRaw: String(row.amount_raw).split(".")[0] });
-
-    if (network.chain === "bnb" || network.chain === "robinhood") {
-      let approved = false;
-      try {
-        approved = Boolean((await upvotes(network))?.approved);
-      } catch {
-        approved = false;
-      }
-      if (!approved) {
-        notes.push(`UP votes on chain ${network.chainId} are left out (revenue destination not verified).`);
-      } else {
-        const votes = await db.query(
-          `select v.block_timestamp as occurred_at, v.tx_hash, v.log_index, v.campaign_address, v.amount_raw::text as amount_raw
-             from public.votes v
-            where v.chain_id = $1
-              and v.status = 'confirmed'
-              and lower(v.asset_address) = '0x0000000000000000000000000000000000000000'
-              and v.block_timestamp >= $2 and v.block_timestamp < $3
-              and ${notPublicHiddenCampaignSql("v")}
-            order by v.block_timestamp asc, v.id asc
-            limit $4`,
-          [network.chainId, start, end, MAX_EXPORT_ROWS_PER_LANE + 1],
-        );
-        if (votes.rows.length > MAX_EXPORT_ROWS_PER_LANE) truncated = true;
-        for (const row of votes.rows.slice(0, MAX_EXPORT_ROWS_PER_LANE)) raw.push({ network, lane: "upvotes", at: row.occurred_at, txHash: row.tx_hash, logIndex: row.log_index, campaign: row.campaign_address, amountRaw: String(row.amount_raw).split(".")[0] });
-      }
-    }
+    const read = await readEvents(db, network, { start, end, maxRowsPerLane: MAX_EXPORT_ROWS_PER_LANE, upvoteApproval: upvoteApprovalFrom(upvotes) });
+    notes.push(...(read.notes || []));
+    if (read.truncated) truncated = true;
+    for (const e of read.events) raw.push({ network, ...e, priceAsset: priceAssetFor(e.def.assetSymbol) });
   }
 
-  // Hourly closes per asset, then spot for hours without history.
+  // Hourly closes per price asset, then spot for hours without history. USD lanes are $1.
   const closes = new Map();
-  for (const asset of [...new Set(raw.map((r) => r.network.asset))]) {
-    closes.set(asset, await prices.hourly(asset, raw.filter((r) => r.network.asset === asset).map((r) => hourMs(r.at)).filter((h) => h != null)));
+  for (const asset of [...new Set(raw.map((r) => r.priceAsset).filter((a) => a && a !== "USD"))]) {
+    closes.set(asset, await prices.hourly(asset, raw.filter((r) => r.priceAsset === asset).map((r) => hourMs(r.at)).filter((h) => h != null)));
   }
   const spots = new Map();
   const out = [];
   for (const r of raw) {
-    const native = atomicToDecimal(r.amountRaw, r.network.decimals);
+    const decimals = Number.isInteger(r.def.decimals) ? r.def.decimals : r.network.decimals;
+    const native = atomicToDecimal(r.amountRaw, decimals);
     const hour = hourMs(r.at);
-    let price = closes.get(r.network.asset)?.get(hour) ?? null;
-    let priceSource = price != null ? `Binance ${r.network.asset}USDT 1h close` : null;
-    if (price == null) {
-      if (!spots.has(r.network.asset)) spots.set(r.network.asset, await prices.spot(r.network.asset).catch(() => null));
-      const spot = spots.get(r.network.asset);
-      if (spot) {
-        price = spot.priceUsd;
-        priceSource = `${spot.source} (current price, no history for that hour)`;
+    let price = null;
+    let priceSource = null;
+    if (r.priceAsset === "USD") {
+      price = 1;
+      priceSource = "USD amount ($1)";
+    } else if (r.priceAsset) {
+      price = closes.get(r.priceAsset)?.get(hour) ?? null;
+      priceSource = price != null ? `Binance ${r.priceAsset}USDT 1h close` : null;
+      if (price == null) {
+        if (!spots.has(r.priceAsset)) spots.set(r.priceAsset, await prices.spot(r.priceAsset).catch(() => null));
+        const spot = spots.get(r.priceAsset);
+        if (spot) {
+          price = spot.priceUsd;
+          priceSource = `${spot.source} (current price, no history for that hour)`;
+        }
       }
     }
     const amountUsd = price != null && native != null ? roundUsd(Number(native) * price) : null;
@@ -232,8 +197,10 @@ export async function revenueEventRows({ fromMonth, toMonth, db = pool, prices, 
       month: monthOf(date),
       chainId: r.network.chainId,
       chain: r.network.chain,
-      lane: r.lane,
-      asset: r.network.asset,
+      lane: r.def.lane,
+      laneId: r.def.id,
+      source: r.def.source,
+      asset: r.def.assetSymbol,
       amountNative: native,
       priceUsd: price,
       amountUsd,
@@ -244,6 +211,8 @@ export async function revenueEventRows({ fromMonth, toMonth, db = pool, prices, 
       txHash: r.txHash,
       logIndex: r.logIndex,
       campaignAddress: r.campaign,
+      reference: r.reference,
+      eventId: r.eventId,
     });
   }
   out.sort((a, b) => (a.occurredAt < b.occurredAt ? -1 : a.occurredAt > b.occurredAt ? 1 : 0));

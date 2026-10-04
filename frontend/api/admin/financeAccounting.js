@@ -733,9 +733,11 @@ export function createFinanceAccountingHandler(deps = {}) {
       if (out.truncated) res.setHeader("X-Export-Truncated", "1");
       return sendCsv(res, `mwz-revenue-events-${suffix}.csv`, [
         { key: "occurredAt", label: "occurred_at" }, { key: "month", label: "month" }, { key: "chainId", label: "chain_id" }, { key: "chain", label: "chain" }, { key: "lane", label: "lane" },
+        { key: "source", label: "source" }, { key: "laneId", label: "lane_id" },
         { key: "asset", label: "asset" }, { key: "amountNative", label: "amount_native" }, { key: "priceUsd", label: "price_usd" }, { key: "amountUsd", label: "amount_usd" }, { key: "priceSource", label: "price_source" },
         { key: "usdPerEur", label: "usd_per_eur" }, { key: "amountEur", label: "amount_eur" }, { key: "fxSource", label: "fx_source" },
         { key: "txHash", label: "tx_hash" }, { key: "logIndex", label: "log_index" }, { key: "campaignAddress", label: "campaign_address" },
+        { key: "reference", label: "reference" }, { key: "eventId", label: "event_id" },
       ], out.rows);
     }
     if (kind === "payouts") {

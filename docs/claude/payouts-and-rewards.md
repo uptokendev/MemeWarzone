@@ -265,3 +265,8 @@ entries, +$698 Home placements on BNB). Still not countable, needs indexing:
   2026-09-26 router scan (f47cb48c). All 4 EVM mainnet coins are hidden test coins today.
 - `arena_war_pool_deposits` misses stakes (battle arena-mugwhj11 has one 0.05 SOL stake recorded,
   the ledger proves two); the entries lane reads the MWL ledger instead.
+- Accounting (Close, tax reserve, distributions, revenue CSV) reads the same lanes:
+  `financeAccountingSources.js` `monthlyRevenue` / `revenueEventRows` call
+  `sharedRevenueLanes` / `revenueLaneEvents`. Each lane is one spec (`LANE_SPECS`) that builds both
+  the hourly and the per-event SQL. Production Sep / Oct 2026: Summary = Close = CSV ($67.72 /
+  $717.75, CSV within $0.00001 of per-row rounding).

@@ -92,7 +92,7 @@ export function laneFromHourlyRows(rows, { id, chain, lane, source, assetSymbol,
     const end = toIso(row.period_end);
     if (start && (!periodStart || start < periodStart)) periodStart = start;
     if (end && (!periodEnd || end > periodEnd)) periodEnd = end;
-    buckets.push({ hour: row.hour, raw });
+    buckets.push({ hour: row.hour, raw, evidenceCount: Number(row.evidence_count || 0) });
   }
   if (total === 0n || !periodStart || !periodEnd) return null;
   return {
@@ -140,27 +140,141 @@ function campaignNotHiddenSql(chainExpr, ref) {
   )`;
 }
 
-const HOURLY = (timeExpr) => `date_trunc('hour', ${timeExpr}) as hour,
-            min(${timeExpr}) as period_start,
-            max(${timeExpr}) as period_end,
-            count(*)::int as evidence_count`;
+// One spec per lane: FROM / WHERE / time / amount. The hourly query (/revenue,
+// /summary, Close) and the per-event query (revenue CSV) are both built from
+// it, so the two can never filter differently. $1 is always the chain id.
+const NATIVE_VOTE_ASSET = { solana: "11111111111111111111111111111111", evm: "0x0000000000000000000000000000000000000000" };
 
-export const LANE_QUERIES = Object.freeze({
-  arena_boosts: `
-    select ${HOURLY("a.confirmed_at")},
-           coalesce(sum(a.protocol_native_raw), 0)::text as amount_raw
-      from public.arena_contest_actions a
+export const LANE_SPECS = Object.freeze({
+  bonding: {
+    from: "public.reward_events r",
+    where: `r.chain_id = $1
+       and r.route_kind = 'trade'
+       and r.protocol_amount > 0
+       and ${campaignNotHiddenSql("r.chain_id", "r.campaign_address")}`,
+    time: "r.occurred_at", amount: "r.protocol_amount",
+    tx: "r.tx_hash", logIndex: "r.log_index", campaign: "r.campaign_address", ref: "r.source_event", eventId: "r.id::text",
+  },
+  upvotes_solana: {
+    from: "public.votes v",
+    where: `v.chain_id = $1
+       and v.status = 'confirmed'
+       and lower(v.asset_address) = lower('${NATIVE_VOTE_ASSET.solana}')
+       and ${campaignNotHiddenSql("v.chain_id", "v.campaign_address")}`,
+    time: "v.block_timestamp", amount: "v.amount_raw",
+    tx: "v.tx_hash", logIndex: "v.log_index", campaign: "v.campaign_address", ref: "null::text", eventId: "v.id::text",
+  },
+  upvotes_evm: {
+    from: "public.votes v",
+    where: `v.chain_id = $1
+       and v.status = 'confirmed'
+       and lower(v.asset_address) = lower('${NATIVE_VOTE_ASSET.evm}')
+       and ${campaignNotHiddenSql("v.chain_id", "v.campaign_address")}`,
+    time: "v.block_timestamp", amount: "v.amount_raw",
+    tx: "v.tx_hash", logIndex: "v.log_index", campaign: "v.campaign_address", ref: "null::text", eventId: "v.id::text",
+  },
+  arena_boosts: {
+    from: `public.arena_contest_actions a
       join public.arena_battles b on b.id = a.battle_id and b.chain_id = a.chain_id
-      left join public.arena_tournaments t on t.id::text = a.tournament_id::text
-     where a.chain_id = $1
+      left join public.arena_tournaments t on t.id::text = a.tournament_id::text`,
+    where: `a.chain_id = $1
        and a.action_type = 'boost'
        and a.confirmed_at is not null
        and coalesce(a.tx_hash, a.signature_reference) is not null
        and a.protocol_native_raw > 0
        and b.state = 'finished'
        and (a.tournament_id is null or t.status = 'finished')
-       and ${battleNotHiddenSql("b")}
-     group by 1`,
+       and ${battleNotHiddenSql("b")}`,
+    time: "a.confirmed_at", amount: "a.protocol_native_raw",
+    tx: "coalesce(a.tx_hash, a.signature_reference)", logIndex: "a.log_index", campaign: "null::text", ref: "a.battle_id::text", eventId: "a.id::text",
+  },
+  arena_entries: {
+    from: `public.arena_league_share_ledger l
+      left join public.arena_battles b on l.subject_kind = 'battle' and b.id = l.subject_id and b.chain_id = l.chain_id`,
+    where: `l.chain_id = $1
+       and l.gross_raw > 0
+       and (b.id is null or ${battleNotHiddenSql("b")})`,
+    time: "coalesce(b.settled_at, l.created_at)", amount: "floor(l.gross_raw / 4)",
+    tx: "l.tx_hash", logIndex: "null::int", campaign: "null::text", ref: "l.subject_id::text", eventId: "l.id::text",
+  },
+  sponsorships: {
+    from: "public.sponsorship_payments p",
+    where: `p.chain_id = $1
+       and p.status = 'confirmed'
+       and p.confirmed_at is not null`,
+    time: "p.confirmed_at", amount: "(coalesce(p.marketing_native_raw, 0) + coalesce(p.protocol_native_raw, 0))",
+    tx: "coalesce(p.tx_hash, p.signature_reference)", logIndex: "null::int", campaign: "null::text", ref: "p.event_sponsorship_id::text", eventId: "p.id::text",
+  },
+  home_placements: {
+    from: `public.sponsored_placements p
+      left join public.sponsorship_applications a on a.id = p.application_id`,
+    where: `p.chain_id = $1
+       and p.payment_status in ('paid', 'verified')
+       and coalesce(a.status, '') <> 'rejected'
+       and coalesce(p.package_price_usd, a.package_price_usd, a.payment_due_usd) > 0
+       and coalesce(a.paid_at, p.approved_at, p.starts_at) is not null
+       and (p.campaign_address is null or ${campaignNotHiddenSql("p.chain_id", "p.campaign_address")})`,
+    time: "coalesce(a.paid_at, p.approved_at, p.starts_at)", amount: "round(coalesce(p.package_price_usd, a.package_price_usd, a.payment_due_usd) * 100)",
+    tx: "null::text", logIndex: "null::int", campaign: "p.campaign_address", ref: "p.project_name", eventId: "p.id::text",
+  },
+  dbc_referral: {
+    from: "public.dbc_fee_accruals d",
+    where: `$1::int = 101
+       and d.referral_fee > 0
+       and ${campaignNotHiddenSql("101", "d.pool")}`,
+    time: "d.created_at", amount: "d.referral_fee",
+    tx: "d.tx_hash", logIndex: "d.log_index", campaign: "d.pool", ref: "null::text", eventId: "d.id::text",
+  },
+  graduation_fee: {
+    from: "public.reward_events r",
+    where: `r.chain_id = $1
+       and r.route_kind = 'finalize'
+       and r.protocol_amount > 0
+       and ${campaignNotHiddenSql("r.chain_id", "r.campaign_address")}`,
+    time: "r.occurred_at", amount: "r.protocol_amount",
+    tx: "r.tx_hash", logIndex: "r.log_index", campaign: "r.campaign_address", ref: "r.source_event", eventId: "r.id::text",
+  },
+});
+
+function hourlySql(spec) {
+  return `
+    select date_trunc('hour', ${spec.time}) as hour,
+           min(${spec.time}) as period_start,
+           max(${spec.time}) as period_end,
+           count(*)::int as evidence_count,
+           coalesce(sum(${spec.amount}), 0)::text as amount_raw
+      from ${spec.from}
+     where ${spec.where}
+     group by 1`;
+}
+
+// $2 / $3: window [start, end); $4: row cap.
+function eventSql(spec) {
+  return `
+    select ${spec.time} as occurred_at,
+           (${spec.amount})::text as amount_raw,
+           ${spec.tx} as tx_hash,
+           ${spec.logIndex} as log_index,
+           ${spec.campaign} as campaign_address,
+           ${spec.ref} as reference,
+           ${spec.eventId} as event_id
+      from ${spec.from}
+     where ${spec.where}
+       and ${spec.time} >= $2 and ${spec.time} < $3
+     order by 1 asc, 7 asc
+     limit $4`;
+}
+
+const mapSpecs = (build) => Object.freeze(Object.fromEntries(Object.entries(LANE_SPECS).map(([k, spec]) => [k, build(spec)])));
+export const LANE_QUERIES = Object.freeze({
+  ...mapSpecs(hourlySql),
+  bonding_excluded: `
+    select count(*)::int as n
+      from public.reward_events r
+     where r.chain_id = $1
+       and r.route_kind = 'trade'
+       and r.protocol_amount > 0
+       and not ${campaignNotHiddenSql("r.chain_id", "r.campaign_address")}`,
   arena_boosts_excluded: `
     select count(*)::int as n
       from public.arena_contest_actions a
@@ -170,104 +284,142 @@ export const LANE_QUERIES = Object.freeze({
        and a.confirmed_at is not null
        and a.protocol_native_raw > 0
        and not ${battleNotHiddenSql("b")}`,
-  arena_entries: `
-    select ${HOURLY("coalesce(b.settled_at, l.created_at)")},
-           coalesce(sum(floor(l.gross_raw / 4)), 0)::text as amount_raw
-      from public.arena_league_share_ledger l
-      left join public.arena_battles b on l.subject_kind = 'battle' and b.id = l.subject_id and b.chain_id = l.chain_id
-     where l.chain_id = $1
-       and l.gross_raw > 0
-       and (b.id is null or ${battleNotHiddenSql("b")})
-     group by 1`,
-  sponsorships: `
-    select ${HOURLY("p.confirmed_at")},
-           coalesce(sum(coalesce(p.marketing_native_raw, 0) + coalesce(p.protocol_native_raw, 0)), 0)::text as amount_raw
-      from public.sponsorship_payments p
-     where p.chain_id = $1
-       and p.status = 'confirmed'
-       and p.confirmed_at is not null
-     group by 1`,
-  home_placements: `
-    select ${HOURLY("coalesce(a.paid_at, p.approved_at, p.starts_at)")},
-           coalesce(sum(round(coalesce(p.package_price_usd, a.package_price_usd, a.payment_due_usd) * 100)), 0)::text as amount_raw
-      from public.sponsored_placements p
-      left join public.sponsorship_applications a on a.id = p.application_id
-     where p.chain_id = $1
-       and p.payment_status in ('paid', 'verified')
-       and coalesce(a.status, '') <> 'rejected'
-       and coalesce(p.package_price_usd, a.package_price_usd, a.payment_due_usd) > 0
-       and coalesce(a.paid_at, p.approved_at, p.starts_at) is not null
-       and (p.campaign_address is null or ${campaignNotHiddenSql("p.chain_id", "p.campaign_address")})
-     group by 1`,
-  dbc_referral: `
-    select ${HOURLY("d.created_at")},
-           coalesce(sum(d.referral_fee), 0)::text as amount_raw
-      from public.dbc_fee_accruals d
-     where $1::int = 101
-       and d.referral_fee > 0
-       and ${campaignNotHiddenSql("101", "d.pool")}
-     group by 1`,
-  graduation_fee: `
-    select ${HOURLY("r.occurred_at")},
-           coalesce(sum(r.protocol_amount), 0)::text as amount_raw
-      from public.reward_events r
-     where r.chain_id = $1
-       and r.route_kind = 'finalize'
-       and r.protocol_amount > 0
-       and ${campaignNotHiddenSql("r.chain_id", "r.campaign_address")}
-     group by 1`,
 });
+export const EVENT_QUERIES = mapSpecs(eventSql);
 
-/** Lane definitions for one network: which query, label and asset. */
-export function laneDefinitions(network) {
+/**
+ * Every revenue lane of one network, in display order. `core: true` marks the
+ * two lanes that existed before this module (bonding curve, UP votes); `vote`
+ * marks the lane that needs the UP vote approval check.
+ */
+export function laneDefinitions(network, { includeCore = false } = {}) {
   const native = { assetSymbol: network.asset, decimals: network.decimals };
-  const defs = [
+  const solana = network.chain === "solana";
+  const defs = [];
+  if (includeCore) {
+    defs.push({ key: "bonding", core: true, id: `bonding-route:${network.chainId}`, lane: "bonding_curve_fee", source: "Bonding-curve trade fee protocol share", ...native, sourceInventoryId: solana ? "sol101-mainnet-protocol-vault" : `${evmPrefix(network)}-treasury-router` });
+    defs.push({ key: solana ? "upvotes_solana" : "upvotes_evm", core: true, vote: true, id: `upvotes:${network.chainId}:native`, lane: "upvotes", source: "Paid UP votes 100%", ...native, sourceInventoryId: solana ? "sol101-mainnet-protocol-treasury" : `${evmPrefix(network)}-vote-treasury` });
+  }
+  defs.push(
     { key: "arena_boosts", lane: "other_approved", source: "Arena boosts 10%", ...native, sourceInventoryId: inventoryId(network, "arena") },
     { key: "arena_entries", lane: "other_approved", source: "Battle entries 5% (stakes, support, tournament buy-ins)", ...native, sourceInventoryId: inventoryId(network, "arena") },
     { key: "sponsorships", lane: "sponsorship", source: "Sponsorships 10% + marketing 20%", ...native, sourceInventoryId: inventoryId(network, "sponsorship") },
     { key: "home_placements", lane: "sponsorship", source: "Home placements (marked paid by admin, off-chain)", assetSymbol: "USD", decimals: USD_CENTS_DECIMALS, sourceInventoryId: "off-chain-sponsorship-applications" },
-  ];
-  if (network.chain === "solana") {
+  );
+  if (solana) {
     defs.push({ key: "dbc_referral", lane: "other_approved", source: "Meteora DBC referral (20% of Meteora's cut)", ...native, sourceInventoryId: inventoryId(network, "dbcReferral") });
   } else {
     defs.push({ key: "graduation_fee", lane: "bonding_curve_fee", source: "Graduation fee (finalize) protocol share", ...native, sourceInventoryId: inventoryId(network, "finalize") });
   }
-  return defs;
+  return defs.map((d) => ({ ...d, id: d.id || `${d.key.replaceAll("_", "-")}:${network.chainId}` }));
 }
 
 /**
- * The extra revenue lanes of one mainnet. `db` is a pg pool (injected for
- * tests). A table that does not exist yet drops its lane; any other error is
- * logged and drops only that lane, never the whole revenue read.
- * @returns {Promise<{lanes: Array<{aggregate: object, buckets: Array<{hour: any, raw: string}>}>, excludedEvents: number}>}
+ * UP votes count only where the whole payment is ours: Solana always (plain
+ * transfer to the vote treasury, founder 2026-10-04); BNB / Robinhood when the
+ * vote treasury's feeReceiver is the protocol revenue vault (financeVoteRevenue.js).
  */
-export async function extraRevenueLanes(db, network, { log = console } = {}) {
+async function defaultUpvoteApproval(network) {
+  if (network.chain === "solana") return { approved: true, reason: null };
+  const { readNativeUpvoteRevenue } = await import("./financeVoteRevenue.js");
+  const result = await readNativeUpvoteRevenue(network);
+  return { approved: Boolean(result?.approved), reason: result?.reason || null };
+}
+
+/**
+ * THE revenue lanes of one mainnet: bonding curve, UP votes and the lanes
+ * above. /revenue, /summary (admin/finance.js revenueLanes) and the accounting
+ * Close / tax / CSV (financeAccountingSources.js) all read this one function.
+ *
+ * Errors: a missing table drops its lane. The bonding lane is the base figure,
+ * so any other bonding error throws (as before); any other lane error is
+ * logged and drops only that lane.
+ * @returns {Promise<{lanes: object[], excludedEvents: number, notes: string[]}>}
+ */
+export async function sharedRevenueLanes(db, network, { upvoteApproval = defaultUpvoteApproval, log = console } = {}) {
   const lanes = [];
+  const notes = [];
   let excludedEvents = 0;
-  for (const def of laneDefinitions(network)) {
+  for (const def of laneDefinitions(network, { includeCore: true })) {
     try {
+      if (def.vote) {
+        const approval = await upvoteApproval(network);
+        if (!approval?.approved) {
+          notes.push(`UP vote revenue on chain ${network.chainId} is left out: ${approval?.reason || "not approved"}.`);
+          continue;
+        }
+      }
       const { rows } = await db.query(LANE_QUERIES[def.key], [network.chainId]);
-      const lane = laneFromHourlyRows(rows, {
-        id: `${def.key.replaceAll("_", "-")}:${network.chainId}`,
-        chain: network.chain,
-        lane: def.lane,
-        source: def.source,
-        assetSymbol: def.assetSymbol,
-        decimals: def.decimals,
-        sourceInventoryId: def.sourceInventoryId,
-      });
+      const lane = laneFromHourlyRows(rows, def);
       if (lane) lanes.push(lane);
     } catch (error) {
-      if (!isSchemaMissing(error)) log.warn?.(`[finance/revenue] ${def.key} lane omitted`, error?.message || error);
+      if (isSchemaMissing(error)) continue;
+      if (def.key === "bonding") throw error;
+      log.warn?.(`[finance/revenue] ${def.key} lane omitted`, error?.message || error);
+      if (def.vote) notes.push(`UP vote revenue on chain ${network.chainId} could not be read (${String(error?.message || error).slice(0, 120)}).`);
     }
   }
+  for (const key of ["bonding_excluded", "arena_boosts_excluded"]) {
+    try {
+      const { rows } = await db.query(LANE_QUERIES[key], [network.chainId]);
+      excludedEvents += Number(rows?.[0]?.n || 0);
+    } catch (error) {
+      if (!isSchemaMissing(error)) log.warn?.(`[finance/revenue] ${key} count omitted`, error?.message || error);
+    }
+  }
+  return { lanes, excludedEvents, notes };
+}
+
+/** The lanes added by this module only (no bonding / UP votes). */
+export async function extraRevenueLanes(db, network, options = {}) {
+  const extraIds = new Set(laneDefinitions(network).map((d) => d.id));
+  const all = await sharedRevenueLanes(db, network, { ...options, upvoteApproval: async () => ({ approved: false, reason: "core lane" }) });
+  return { lanes: all.lanes.filter((l) => extraIds.has(l.aggregate.id)), excludedEvents: await countArenaExcluded(db, network, options) };
+}
+
+async function countArenaExcluded(db, network, { log = console } = {}) {
   try {
     const { rows } = await db.query(LANE_QUERIES.arena_boosts_excluded, [network.chainId]);
-    excludedEvents += Number(rows?.[0]?.n || 0);
+    return Number(rows?.[0]?.n || 0);
   } catch (error) {
     if (!isSchemaMissing(error)) log.warn?.("[finance/revenue] arena test-coin count omitted", error?.message || error);
+    return 0;
   }
-  return { lanes, excludedEvents };
+}
+
+/**
+ * Per-event rows of every lane of one network for [start, end), for the
+ * revenue CSV. Same specs (filters, amounts, test coins) as the hourly lanes.
+ * @returns {Promise<{events: object[], notes: string[], truncated: boolean}>}
+ */
+export async function revenueLaneEvents(db, network, { start, end, maxRowsPerLane, upvoteApproval = defaultUpvoteApproval, log = console } = {}) {
+  const events = [];
+  const notes = [];
+  let truncated = false;
+  for (const def of laneDefinitions(network, { includeCore: true })) {
+    try {
+      if (def.vote) {
+        const approval = await upvoteApproval(network);
+        if (!approval?.approved) {
+          notes.push(`UP votes on chain ${network.chainId} are left out (${approval?.reason || "revenue destination not verified"}).`);
+          continue;
+        }
+      }
+      const { rows } = await db.query(EVENT_QUERIES[def.key], [network.chainId, start, end, maxRowsPerLane + 1]);
+      if (rows.length > maxRowsPerLane) truncated = true;
+      for (const row of rows.slice(0, maxRowsPerLane)) {
+        const raw = String(row.amount_raw ?? "0").split(".")[0];
+        if (!/^\d+$/.test(raw) || raw === "0") continue;
+        events.push({ def, at: row.occurred_at, amountRaw: raw, txHash: row.tx_hash ?? null, logIndex: row.log_index ?? null, campaign: row.campaign_address ?? null, reference: row.reference ?? null, eventId: row.event_id ?? null });
+      }
+    } catch (error) {
+      if (isSchemaMissing(error)) continue;
+      if (def.key === "bonding") throw error;
+      log.warn?.(`[finance/revenue-events] ${def.key} omitted`, error?.message || error);
+      notes.push(`${def.source} on chain ${network.chainId} could not be read.`);
+    }
+  }
+  return { events, notes, truncated };
 }
 
 /** Decimals of a lane: its own (USD cents, ...) or the chain's native decimals. */
