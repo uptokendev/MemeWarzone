@@ -31,6 +31,7 @@ import {
   deriveCampaignFeeAccounts,
 } from "./solanaCreatorFeeMath.js";
 import { getRpcUrls } from "./getServerReadProvider.js";
+import { SUPERSEDED_MONTHLY_LEAGUE_TREASURIES, monthlyLeagueTreasuryAddress } from "./evmMonthlyLeagueTreasury.js";
 
 export const PAYOUTS_SCHEMA = "finance-payouts-v1";
 const DEFAULT_DAYS = 30;
@@ -38,12 +39,11 @@ const MAX_DAYS = 3650;
 const CACHE_TTL_MS = 60_000;
 const cache = new Map();
 
-// Retired monthly league vaults (wei cap bug). league.js,
-// evmLeagueClaimVerification.js and publish-evm-league-roots.mjs still fall
-// back to these when MONTHLY_LEAGUE_TREASURY_ADDRESS_<id> is not set.
+// Retired monthly league vaults (wei cap bug). Since #505 the payout code
+// resolves the vault through evmMonthlyLeagueTreasury.js and refuses these.
 export const PAYOUT_CODE_MONTHLY_FALLBACK = Object.freeze({
-  56: "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8",
-  4663: "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
+  56: SUPERSEDED_MONTHLY_LEAGUE_TREASURIES[56][0],
+  4663: SUPERSEDED_MONTHLY_LEAGUE_TREASURIES[4663][0],
 });
 // publish-evm-league-roots.mjs falls back to these weekly vaults.
 const PAYOUT_CODE_WEEKLY_FALLBACK = Object.freeze({
@@ -498,9 +498,14 @@ function leagueUpcoming(type, schedule, lastRoots) {
   ];
 }
 
+// The vault claims and claim lists actually use: the same resolver as league.js,
+// evmLeagueClaimVerification.js and publish-evm-league-roots.mjs (#505).
 function payoutCodeMonthly(chainId, env) {
-  const configured = String(env[`MONTHLY_LEAGUE_TREASURY_ADDRESS_${chainId}`] || "").trim();
-  return configured ? { address: configured, from: `MONTHLY_LEAGUE_TREASURY_ADDRESS_${chainId}` } : { address: PAYOUT_CODE_MONTHLY_FALLBACK[chainId], from: "the address written into league.js, evmLeagueClaimVerification.js and publish-evm-league-roots.mjs" };
+  try {
+    return { address: monthlyLeagueTreasuryAddress(chainId, env), from: "the payout code (evmMonthlyLeagueTreasury.js)", error: null };
+  } catch (error) {
+    return { address: null, from: null, error: String(error?.message || error) };
+  }
 }
 
 function payoutCodeWeekly(chainId, env) {
@@ -558,8 +563,13 @@ async function leagueType(ctx, id, classified, lastRoots, leagueError) {
   } else if (id === "monthly_league") {
     const code = payoutCodeMonthly(ctx.chainId, ctx.env);
     const router = wiringActual(ctx.feeRouting, "v4_monthlyLeagueTreasury") || ctx.destinations.get("monthly_league")?.address;
-    vaults = [await vaultFromAddress(ctx, "monthly_payout", "Monthly league vault the payout code pays from", code.address)];
-    if (router && !same(router, code.address)) {
+    if (code.error) {
+      t.warnings.push({ level: "critical", message: `Monthly league claims are refused on this chain: ${code.error}` });
+      vaults = router ? [vaultFromDestination(ctx, "monthly_league", { label: "Monthly league vault the fee router sends to", address: router })] : [];
+    } else {
+      vaults = [await vaultFromAddress(ctx, "monthly_payout", "Monthly league vault the payout code pays from", code.address)];
+    }
+    if (!code.error && router && !same(router, code.address)) {
       vaults.push(vaultFromDestination(ctx, "monthly_league", { label: "Monthly league vault the fee router sends to", address: router }));
       t.warnings.push({ level: "critical", message: `Vault mismatch: the fee router sends monthly league money to ${router}, but claims and claim lists use ${code.address} (${code.from}). New monthly prizes would be posted against the old vault.` });
       coverNote = "Compared with the vault the payout code pays from. The vault the fee router fills is shown beside it.";

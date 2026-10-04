@@ -190,7 +190,7 @@ const EVM_READERS = {
 
 const BNB = { chainId: 56, chain: "bnb", environment: "mainnet", nativeSymbol: "BNB", nativeDecimals: 18 };
 
-test("EVM build: monthly vault mismatch is a warning; the old vault is short; test coins left out; USD at the given price", async () => {
+test("EVM build: monthly claims use the current vault (#505 resolver); short vault warns; test coins left out; USD at the given price", async () => {
   const db = fakeDb([
     [/from public\.league_epoch_winners w/, [
       { period: "monthly", category: "top_earner", amount_raw: "4711134454742", claimed_at: null, root_at: null, test_coin: false },
@@ -203,9 +203,9 @@ test("EVM build: monthly vault mismatch is a warning; the old vault is short; te
   assert.equal(monthly.owed.pending.raw, "4711134454742");
   assert.equal(monthly.owed.testCoins.raw, "2899159664458");
   assert.equal(monthly.coverage.status, "short");
-  assert.equal(monthly.coverage.shortByAmount, "0.0000076102941192");
-  assert.equal(monthly.vaults[0].address, PAYOUT_CODE_MONTHLY_FALLBACK[56]);
-  assert.ok(monthly.warnings.some((w) => w.level === "critical" && /Vault mismatch/.test(w.message)));
+  assert.equal(monthly.coverage.shortByAmount, "0.0000076102941142");
+  assert.equal(monthly.vaults[0].address.toLowerCase(), "0x42d254a7451808bb01df879d71bcafdc5d605a38");
+  assert.ok(!monthly.warnings.some((w) => /Vault mismatch/.test(w.message)));
   assert.ok(out.warnings.some((w) => w.typeId === "monthly_league" && /short by/.test(w.message)));
 
   const weekly = out.types.find((t) => t.id === "weekly_league");
@@ -350,4 +350,10 @@ test("arena prizes: paid-in counts boosts from arena_contest_actions as well as 
   const boostSql = db.seen.find((q) => /arena_contest_actions/.test(q.sql)).sql;
   assert.match(boostSql, /action_type = 'boost'/);
   assert.match(boostSql, /confirmed_at is not null/);
+});
+
+test("monthly league: a superseded vault in MONTHLY_LEAGUE_TREASURY_ADDRESS_<id> is reported as refused claims, not a mismatch", async () => {
+  const { monthlyLeagueTreasuryAddress } = await import("./evmMonthlyLeagueTreasury.js");
+  assert.throws(() => monthlyLeagueTreasuryAddress(56, { MONTHLY_LEAGUE_TREASURY_ADDRESS_56: PAYOUT_CODE_MONTHLY_FALLBACK[56] }), /superseded/);
+  assert.equal(monthlyLeagueTreasuryAddress(56, {}).toLowerCase(), "0x42d254a7451808bb01df879d71bcafdc5d605a38");
 });
