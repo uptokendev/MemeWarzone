@@ -597,7 +597,9 @@ export default function PublicProfile({
   const handle = ownHandle && (profile?.displayName ?? "").trim() ? `@${ownHandle}` : null;
   const squadCode = recruiter?.code || walletAttribution?.recruiterCode || null;
   const hasSquad = Boolean(squad || walletAttribution?.recruiterCode);
-  const postsToShow = feedSupported ? feedItems : publicPosts;
+  // A public profile is the person's own posts, reposts and creator updates (founder, 2026-10-04);
+  // launches, drafts, graduations and battles show in the feed, not here.
+  const postsToShow = (feedSupported ? feedItems : publicPosts).filter((item) => item.type === "post" || item.type === "coin_post");
   const empty = `${cp.card} p-4 text-sm text-mw-muted`;
   const accentButton = "mw-focus inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-bold text-[#140A02] hover:bg-[#FF8A3D] disabled:opacity-60";
   const openCoin = (coin: PublicCoin) =>

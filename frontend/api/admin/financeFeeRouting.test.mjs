@@ -49,3 +49,25 @@ test("fee routing returns the read model for finance.view", async () => {
   assert.equal(res.body.days, 7);
   assert.equal(res.headers["Cache-Control"], "no-store");
 });
+
+test("fee routing refuses testnets", async () => {
+  for (const chainId of ["97", "46630"]) {
+    const res = fakeRes();
+    await financeFeeRouting({ method: "GET", query: { chainId }, dashboardPrincipal: principal(["finance.view"]) }, res, { build, db: {} });
+    assert.equal(res.statusCode, 400);
+  }
+});
+
+test("fee routing chainId=all reads the three mainnets and adds totals", async () => {
+  const res = fakeRes();
+  const seen = [];
+  const buildEach = async ({ network, days }) => {
+    seen.push(network.chainId);
+    return { schemaVersion: "finance-fee-routing-v1", network, days, totals: { holdings: { byChain: [{ chainId: network.chainId, chain: network.chain, assets: [], amountUsd: 10, pricedCount: 1, missingPriceCount: 0 }] }, inflows: { byChain: [] } }, prices: [] };
+  };
+  await financeFeeRouting({ method: "GET", query: { chainId: "all", days: "30" }, dashboardPrincipal: principal(["finance.view"]) }, res, { build: buildEach, db: {} });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(seen.sort((a, b) => a - b), [56, 101, 4663]);
+  assert.equal(res.body.schemaVersion, "finance-all-chains-v1");
+  assert.equal(res.body.totals.holdings.amountUsd, 30);
+});

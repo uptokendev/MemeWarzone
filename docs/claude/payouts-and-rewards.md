@@ -174,3 +174,43 @@ calls these routes; the indexer has its own `/api/security/rewards/*` (rewardOps
 - Finance rewards read chain-101 rows only for the API's own cluster (`SOLANA_CLUSTER`, default
   mainnet-beta): picking devnet on the live API returns no rows plus a `notice`.
 - Finance inventory items carry a live native `balance` (fee-routing readers); failed read = unknown.
+
+### Finance: mainnets only, All chains, USD (2026-10-04, feat/finance-mainnet-allchains-usd)
+
+- Founder: finance shows mainnets only (Solana 101 mainnet-beta, BNB 56, Robinhood 4663). `financeScope()` in
+  `frontend/api/admin/finance.js` refuses 97, 46630 and Solana devnet with 400; `chainId=all` (also the default
+  with no chainId) returns `finance-all-chains-v1`: one section per chain (a failing chain is reported, not
+  hidden) plus merged `totals`. LP harvest keeps its old parser (`harvestNetwork`) and is untouched.
+- USD lives in `frontend/api/lib/financePrices.js`. Spot: the existing readers (`*UsdPrice.js`: env override,
+  then Binance spot, 60 s cache). History: Binance hourly klines (same public API, no key); there is no
+  native/USD history in the DB (`token_candles.reference_price_usd` is empty on production, `market_stats`
+  holds only the latest). Revenue and fee inflows are queried per hour and valued at that hour's close;
+  hours without history use spot and say `priceBasis: current|mixed`. Balances use spot. USDC/USDT = $1
+  (quote catalog rule). No price -> `amountUsd: null`, counted in `missingPriceCount`, never 0.
+- Totals never add SOL + BNB + ETH: native sums are per chain and asset only; the USD total is cross-chain.
+- Hidden test coins (`meta.publicHidden`) are left out of revenue and fee inflows via
+  `notPublicHiddenCampaignSql` (`api/lib/publicHiddenSql.js`). `arena_league_share_ledger` and
+  `dbc_fee_accruals` have no campaign column and are shown in full. Fee-routing holdings leave out watch-only
+  wallets; inflow totals leave out the DBC collector (its claim is re-split into the vault slices).
+- Production read-only run 2026-10-04 12:33 UTC: revenue $65.33 (0.540657363 SOL, K88 only, event-time
+  prices; 66 test-coin fee events left out); fee destinations hold $287.27 (SOL $273.08, BNB $11.43,
+  ETH $2.76; watch-only deployer wallets left out); routed in (all time) $168.56, all Solana.
+
+### Finance: "Ours" vs "Held now", LP harvest mainnets only (2026-10-04, feat/finance-ours-lpharvest-mainnet)
+
+- Every fee-routing destination carries `ownership: ours | owed | watch`, `ownershipReason` (with the code
+  line) and `ownershipMixed`. Table: `frontend/api/lib/financeFeeRoutingOwnership.js`; an id missing from it
+  is counted as owed and flagged `ownershipUnclassified`, and the ownership test fails.
+- Ours: Solana protocol_vault PDA, operator 2AMf (cap fill + import-swap fee), Squads fk5Y, UP vote treasury,
+  LP-fee protocol treasury, DBC referral account (swept 100% to protocol_vault), import-swap fee owner; EVM
+  ProtocolRevenueVault (its wrapped LP share is ours but unmovable: no ERC20 withdraw), operator EOA, Safe.
+- Mixed, counted as owed: DBC fee collector (re-split mostly to reward vaults), EVM ArenaWarPoolTreasuryV2
+  (pendingProtocol sits beside players' prizes until claimProtocol), LP lockers (creator pending + protocol
+  pending). Charity treasury is owed (earmarked), even though only the Safe can move it.
+- `totals.ours` (fee-routing and overview; overview also gets `totals.feeHoldings`) uses `buildTotals`, so
+  price rules match Held now. Production read-only 2026-10-04: Held now $287.35, Ours $151.42 (SOL
+  1.132841864 = $137.48, BNB 0.014206 = $11.21, ETH 0.001009 = $2.72). Solana vote/LP/DBC receivers are not
+  set in the local env, so they read not_configured there (4 unknown in Ours).
+- `/api/admin/finance/lp-harvest` refuses BNB 97, Solana devnet and anything not BNB 56 / Solana mainnet-beta
+  with 400 (`lpHarvestMainnetOnly`), before `financeLpHarvest` runs. Robinhood 4663 has no harvest path in
+  this route (it was never in `harvestNetwork`). `/api/dashboard/lp-fees` (testnet-open read mode) unchanged.

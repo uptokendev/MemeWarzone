@@ -1,7 +1,7 @@
 /** Single post with its replies (UI redesign phase 2, artboard PostThread). Route /post/:postId. */
 import { ItemMenu } from "@/components/moderation/ItemMenu";
 import { useModeration } from "@/hooks/useModeration";
-import { PostImage } from "@/components/feed/PostImage";
+import { PostImageGrid } from "@/components/feed/PostImage";
 import { useWalletAvatar } from "@/hooks/useWalletAvatar";
 import { useStickyRail } from "@/hooks/useStickyRail";
 import { MentionField } from "@/components/feed/MentionField";
@@ -124,7 +124,7 @@ export default function PostThread() {
                   </Link>
                 ) : null}
                 <div className="mt-3.5"><FeedBody body={post.body} big /></div>
-                {post.mediaUrl ? <PostImage src={post.mediaUrl} /> : null}
+                {post.mediaUrls?.length || post.mediaUrl ? <PostImageGrid images={post.mediaUrls?.length ? post.mediaUrls : [String(post.mediaUrl)]} /> : null}
                 {post.quoted ? (
                   <Link to={`/post/${post.quoted.postId}`} className="mw-focus mt-3 block rounded-[14px] border border-mw-border bg-mw-input p-3 text-mw-text hover:text-mw-text">
                     <b className="text-[13px]">{post.quoted.authorDisplayName || (post.quoted.authorHandle ? `@${post.quoted.authorHandle}` : shortWallet(post.quoted.wallet))}</b>

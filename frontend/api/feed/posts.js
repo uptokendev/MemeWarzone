@@ -22,6 +22,7 @@ import { rankFeedPosts } from "../lib/feedRanking.js";
 import { createFeedSessionAuth } from "../lib/feedSessionAuth.js";
 import { loadFollowingAddresses, loadPostEvents } from "../lib/socialTimeline.js";
 import { hasCoinPostLink, notCoinPostSql } from "../lib/coinPostLink.js";
+import { MAX_POST_IMAGES, cleanMediaUrls, hasMediaUrls, mediaUrlsSelect, refreshMediaUrlColumns, rowMediaUrls } from "../lib/postMediaUrls.js";
 import { isSolanaAddress, isSolanaChain } from "../../server/http.js";
 import { contractAddressInBody, isOwnFeedImage } from "../lib/feedPostMedia.js";
 import {
@@ -196,6 +197,7 @@ function mapPostRow(row, extras = {}) {
     wallet: row.author_address,
     body: row.body,
     mediaUrl: row.media_url || null,
+    mediaUrls: rowMediaUrls(row),
     mentionedChainId: row.mentioned_chain_id == null ? null : Number(row.mentioned_chain_id),
     mentionedCampaign: row.mentioned_campaign || null,
     mentionedToken: row.mentioned_token || null,
@@ -276,6 +278,7 @@ select
   p.author_address,
   p.body,
   p.media_url,
+  ${mediaUrlsSelect("p")},
   p.mentioned_chain_id,
   p.mentioned_campaign,
   p.mentioned_token,
@@ -354,14 +357,14 @@ reposted as (
     and (rp.author_address = any($2::text[]) or lower(rp.author_address) = any($3::text[]))
 )
 select * from (
-  select id, author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token,
+  select id, author_address, body, media_url, media_urls, mentioned_chain_id, mentioned_campaign, mentioned_token,
          created_at, parent_id, quote_of_id, quoted_author, quoted_body, quoted_media_url, quoted_created_at,
          quoted_display_name, quoted_avatar_url, author_display_name, author_avatar_url, token_name, token_ticker, token_logo_uri,
          fire_count, reply_count, repost_count, fired_by_me, reposted_by_me,
          null::text as reposted_by, null::text as reposted_by_display_name, created_at as sort_at
     from own_posts
   union all
-  select id, author_address, body, media_url, mentioned_chain_id, mentioned_campaign, mentioned_token,
+  select id, author_address, body, media_url, media_urls, mentioned_chain_id, mentioned_campaign, mentioned_token,
          created_at, parent_id, quote_of_id, quoted_author, quoted_body, quoted_media_url, quoted_created_at,
          quoted_display_name, quoted_avatar_url, author_display_name, author_avatar_url, token_name, token_ticker, token_logo_uri,
          fire_count, reply_count, repost_count, fired_by_me, reposted_by_me,
@@ -443,7 +446,7 @@ async function loadSharedCoinPosts(limit, { before = null, authors = null, viewe
         : "",
     ].join(" ");
     const { rows } = await pool.query(
-      `select cp.id, cp.chain_id, cp.token_address, cp.author_wallet, cp.body, cp.media_url, cp.created_at,
+      `select cp.id, cp.chain_id, cp.token_address, cp.author_wallet, cp.body, cp.media_url, ${mediaUrlsSelect("cp", "coin")}, cp.created_at,
               c.campaign_address, c.name as token_name, c.symbol as token_ticker, c.logo_uri as token_logo_uri
          from public.coin_posts cp
          left join lateral (
@@ -465,6 +468,7 @@ async function loadSharedCoinPosts(limit, { before = null, authors = null, viewe
       wallet: row.author_wallet,
       body: row.body,
       mediaUrl: row.media_url || null,
+      mediaUrls: rowMediaUrls(row),
       chainId: Number(row.chain_id),
       tokenAddress: row.token_address,
       campaignAddress: row.campaign_address || null,
@@ -548,7 +552,7 @@ async function loadHotPosts({ limit, offset, authors, viewer }) {
     .map((row) => row.item);
 }
 
-async function loadTimelinePage({ before, limit, authors, viewer }) {
+async function loadTimelinePage({ before, limit, authors, viewer, ownPostsOnly = false }) {
   const take = limit + 5;
   const guard = async (fn) => {
     try {
@@ -562,10 +566,12 @@ async function loadTimelinePage({ before, limit, authors, viewer }) {
     guard(() => queryPostsPage({ before, limit: take, authors, viewer })),
     guard(() => queryRepostsPage({ before, limit: take, reposters: authors, viewer })),
     loadSharedCoinPosts(take, { before, authors, viewer }),
-    loadDeployEvents({ before, limit: take, authors }),
-    loadDraftEvents({ before, limit: take, authors }),
-    loadGraduationEvents({ before, limit: take, authors }),
-    loadBattleEvents({ before, limit: take, authors }),
+    // A public profile is the person's own posts (founder, 2026-10-04): launches, drafts, graduations
+    // and battles stay in the feed, not on the profile.
+    ownPostsOnly ? [] : loadDeployEvents({ before, limit: take, authors }),
+    ownPostsOnly ? [] : loadDraftEvents({ before, limit: take, authors }),
+    ownPostsOnly ? [] : loadGraduationEvents({ before, limit: take, authors }),
+    ownPostsOnly ? [] : loadBattleEvents({ before, limit: take, authors }),
   ]);
   const page = mergeTimelinePage(sources, limit);
   const views = await loadViewCounts(page.items.map((item) => item.postId).filter(Boolean));
@@ -606,11 +612,11 @@ async function handleGet(req, res) {
   }
 
   const pageSize = clampInt(q.limit, 1, 60, FEED_PAGE_SIZE);
-  // Public profile Posts tab (UI redesign phase 8): one wallet's posts, reposts, coin posts and
-  // auto updates, newest first, infinite scroll. Same sources as For you, no ranking.
+  // Public profile Posts tab (UI redesign phase 8): one wallet's posts, reposts and creator updates,
+  // newest first, infinite scroll. No auto updates (founder, 2026-10-04): those belong in the feed.
   if (tab === "profile") {
     if (!author) return json(res, 400, { error: "author is required", code: "FEED_PROFILE_AUTHOR" });
-    const page = await loadTimelinePage({ before: parseCursor(q.before), limit: pageSize, authors: [author], viewer });
+    const page = await loadTimelinePage({ before: parseCursor(q.before), limit: pageSize, authors: [author], viewer, ownPostsOnly: true });
     return json(res, 200, { ...page, items: await attachHandles(page.items), tab: "profile", author });
   }
   if (tab === "following") {
@@ -711,13 +717,20 @@ async function handleCreate(req, res) {
   const body = String(b.body ?? "");
   const nonce = String(b.nonce ?? "");
   const signature = String(b.signature ?? "");
-  const mediaUrl = String(b.mediaUrl ?? "").trim() || null;
+  // Up to 4 images (founder, 2026-10-04), on the session path. The first one is also media_url, so the
+  // signed path and every single-image reader stay as they were.
+  const extraImages = session ? cleanMediaUrls(b.mediaUrls) : [];
+  const mediaUrl = String(b.mediaUrl ?? "").trim() || extraImages[0] || null;
+  const mediaUrls = extraImages.length ? (extraImages[0] === mediaUrl ? extraImages : [mediaUrl, ...extraImages.filter((u) => u !== mediaUrl)].filter(Boolean)) : [];
   const quoteOf = Number(b.quoteOf ?? 0) > 0 ? Math.trunc(Number(b.quoteOf)) : null;
 
   if (!Number.isFinite(chainId)) return json(res, 400, { error: "Invalid chainId" });
   if (!address) return json(res, 400, { error: "Invalid address" });
-  if (mediaUrl && !isOwnFeedImage(mediaUrl, { storageBase: process.env.SUPABASE_URL, wallet: address })) {
-    return json(res, 400, { error: "Image must be uploaded through the post composer", code: "FEED_IMAGE_INVALID" });
+  if (mediaUrls.length > MAX_POST_IMAGES) return json(res, 400, { error: `At most ${MAX_POST_IMAGES} images per post`, code: "FEED_IMAGE_COUNT" });
+  for (const url of mediaUrl ? [mediaUrl, ...mediaUrls] : mediaUrls) {
+    if (!isOwnFeedImage(url, { storageBase: process.env.SUPABASE_URL, wallet: address })) {
+      return json(res, 400, { error: "Image must be uploaded through the post composer", code: "FEED_IMAGE_INVALID" });
+    }
   }
   const trimmed = body.trim();
   if (!trimmed) return json(res, 400, { error: "Post is empty" });
@@ -799,6 +812,10 @@ async function handleCreate(req, res) {
   }
 
   // CO-5: quoted author and @mentions (fire-and-forget; never delays or fails the post).
+  // The full image list, written right after the insert so the insert paths above stay unchanged.
+  if (rows[0]?.id && mediaUrls.length > 1 && hasMediaUrls("social")) {
+    await pool.query(`update public.social_posts set media_urls = $2::text[] where id = $1`, [rows[0].id, mediaUrls]);
+  }
   if (rows[0]?.id) void notifySocialPost(pool, { postId: rows[0].id, actor: address, body: trimmed, quoteOfId: quoteOf || null });
   return json(res, 200, {
     id: rows[0]?.id ?? null,
@@ -995,6 +1012,7 @@ async function handleReply(req, res) {
 
 export default async function handler(req, res) {
   try {
+    await refreshMediaUrlColumns();
     const path = requestPath(req);
     if (req.method === "GET" && /\/posts\/\d+\/replies\/?$/i.test(path)) return await handleGetReplies(req, res);
     if (req.method === "GET" && /\/posts\/\d+\/?$/i.test(path)) return await handleGetOne(req, res);

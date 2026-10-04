@@ -23,12 +23,28 @@ function activeMention(value: string, caret: number) {
 }
 
 /**
+ * Grows a textarea with its text (founder, 2026-10-04: long posts were hard to read in a small box),
+ * up to `max` px, then it scrolls. `rows` stays the minimum height.
+ */
+export function useAutoGrow(ref: { current: HTMLTextAreaElement | null }, value: string, max = 320) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || el.tagName !== "TEXTAREA") return;
+    el.style.height = "auto";
+    const next = Math.min(el.scrollHeight + 2, max);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight + 2 > max ? "auto" : "hidden";
+  }, [ref, value, max]);
+}
+
+/**
  * Post / reply field with @username suggestions (founder, 2026-10-02). Typing @ and a letter lists
  * matching usernames; Enter or Tab inserts the highlighted one. Otherwise a plain textarea / input.
  */
 export function MentionField(props: BaseProps & ({ multiline: true; rows?: number } | { multiline?: false; rows?: never })) {
   const { value, onChange, onKeyDown, className, wrapperClassName, multiline, ...rest } = props as BaseProps & { multiline?: boolean; rows?: number };
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null);
+  useAutoGrow(ref, multiline ? value : "");
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [items, setItems] = useState<HandleSuggestion[]>([]);
   const [active, setActive] = useState(0);

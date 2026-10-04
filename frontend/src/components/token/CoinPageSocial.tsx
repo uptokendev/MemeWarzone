@@ -6,7 +6,10 @@
 import { ItemMenu } from "@/components/moderation/ItemMenu";
 import { useModeration } from "@/hooks/useModeration";
 import { useFeedSession } from "@/hooks/useFeedSession";
-import { PostImage } from "@/components/feed/PostImage";
+import { PostImageGrid } from "@/components/feed/PostImage";
+import { ComposerImages } from "@/components/feed/FeedCards";
+import { MAX_POST_IMAGES } from "@/lib/feedApi";
+import { useAutoGrow } from "@/components/feed/MentionField";
 import { FeedPostActions } from "@/components/feed/FeedCards";
 import { feedViewerKey, fetchFeedPost } from "@/lib/feedApi";
 import { useQuery } from "@tanstack/react-query";
@@ -119,7 +122,10 @@ export function CoinPostsPanel({
       : undefined;
   const { createPost, deletePost, uploadImage } = useCoinPageMutations(chainId, token, data?.owner?.token);
   const [text, setText] = useState("");
-  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  // Up to 4 images per update (founder, 2026-10-04), uploaded as they are picked.
+  const [mediaUrls, setMediaUrls] = useState<string[]>([]);
+  const textRef = useRef<HTMLTextAreaElement | null>(null);
+  useAutoGrow(textRef, text);
   const [shareToFeed, setShareToFeed] = useState(true);
   const [busy, setBusy] = useState<"post" | "image" | string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -131,9 +137,9 @@ export function CoinPostsPanel({
     if (!text.trim() || busy) return;
     setBusy("post");
     try {
-      await createPost(sign, { body: text.trim(), mediaUrl, shareToFeed }, ownerSession);
+      await createPost(sign, { body: text.trim(), mediaUrl: mediaUrls[0] || null, mediaUrls: mediaUrls.length > 1 ? mediaUrls : undefined, shareToFeed }, ownerSession);
       setText("");
-      setMediaUrl(null);
+      setMediaUrls([]);
       toast.success("Posted.");
     } catch (error: any) {
       toast.error(String(error?.message || "Could not post."));
@@ -142,11 +148,16 @@ export function CoinPostsPanel({
     }
   };
 
-  const pickImage = async (file: File | undefined) => {
-    if (!file) return;
+  const pickImages = async (picked: File[]) => {
+    if (!picked.length) return;
+    const room = MAX_POST_IMAGES - mediaUrls.length;
+    if (picked.length > room) toast(`Up to ${MAX_POST_IMAGES} images per update.`);
     setBusy("image");
     try {
-      setMediaUrl(await uploadImage(sign, "post", file, ownerSession));
+      for (const file of picked.slice(0, Math.max(0, room))) {
+        const url = await uploadImage(sign, "post", file, ownerSession);
+        setMediaUrls((current) => (current.length < MAX_POST_IMAGES ? [...current, url] : current));
+      }
     } catch (error: any) {
       toast.error(String(error?.message || "Could not upload the image."));
     } finally {
@@ -175,26 +186,20 @@ export function CoinPostsPanel({
             <CoinAvatar src={logoUrl} ticker={ticker} size={44} />
             <label className="sr-only" htmlFor="coin-post-body">Post an update</label>
             <textarea
+              ref={textRef}
               id="coin-post-body"
               rows={2}
               maxLength={280}
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder="Post an update to your holders"
-              className="min-h-11 flex-1 resize-y rounded-[10px] border border-mw-edge bg-mw-input px-3.5 py-2.5 text-[15px] text-mw-text placeholder:text-[#7C858F] focus:outline-none focus:ring-2 focus:ring-mw-accent"
+              className="min-h-11 flex-1 resize-none rounded-[10px] border border-mw-edge bg-mw-input px-3.5 py-2.5 text-[15px] text-mw-text placeholder:text-[#7C858F] focus:outline-none focus:ring-2 focus:ring-mw-accent"
             />
           </div>
-          {mediaUrl ? (
-            <div className="relative ml-14 w-fit">
-              <img src={mediaUrl} alt="Attached image" className="max-h-48 rounded-xl border border-mw-border object-cover" />
-              <button type="button" aria-label="Remove image" onClick={() => setMediaUrl(null)} className="mw-focus absolute right-1 top-1 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-[rgba(5,6,8,0.8)] text-mw-text">
-                <X className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
-          ) : null}
+          <ComposerImages urls={mediaUrls} onRemove={(i) => setMediaUrls((current) => current.filter((_, j) => j !== i))} className="ml-14" />
           <div className="ml-14 flex flex-wrap items-center gap-2">
-            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => void pickImage(e.target.files?.[0])} />
-            <button type="button" aria-label="Add image" className={cn(cp.btn, "w-11 px-0")} onClick={() => fileRef.current?.click()} disabled={busy === "image"}>
+            <input ref={fileRef} type="file" multiple accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => void pickImages(Array.from(e.target.files || []))} />
+            <button type="button" aria-label="Add image" className={cn(cp.btn, "w-11 px-0")} onClick={() => fileRef.current?.click()} disabled={busy === "image" || mediaUrls.length >= MAX_POST_IMAGES}>
               {busy === "image" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <ImagePlus className="h-4 w-4" aria-hidden="true" />}
             </button>
             <label className="inline-flex min-h-11 items-center gap-2 text-sm text-mw-muted">
@@ -239,8 +244,8 @@ export function CoinPostsPanel({
                 ) : null}
               </div>
               <p className="mb-3 mt-1 whitespace-pre-line break-words text-[15px] text-mw-text">{item.kind === "post" ? item.body : item.text}</p>
-              {item.kind === "post" && item.mediaUrl ? (
-                <PostImage src={item.mediaUrl} className="mb-3" />
+              {item.kind === "post" && ((item as CoinPost).mediaUrls?.length || item.mediaUrl) ? (
+                <PostImageGrid images={(item as CoinPost).mediaUrls?.length ? ((item as CoinPost).mediaUrls as string[]) : [String(item.mediaUrl)]} className="mb-3" />
               ) : null}
               {item.kind === "post" && (item as CoinPost).socialPostId ? <CoinPostActions postId={Number((item as CoinPost).socialPostId)} /> : null}
               {item.kind === "battle" && item.battleId ? (

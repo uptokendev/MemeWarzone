@@ -74,3 +74,31 @@ test("percentOf never rounds above the balance", () => {
     assert.ok(Number(percentOf(balance, 100)) <= balance, `100% of ${balance}`);
   }
 });
+
+test("buy MAX / % and the check before signing keep fees and gas back", () => {
+  const sheet = fs.readFileSync(new URL("../components/token/MobileTradeSheet.tsx", import.meta.url), "utf8");
+  const page = fs.readFileSync(new URL("../pages/TokenDetails.tsx", import.meta.url), "utf8");
+  const warRoom = fs.readFileSync(new URL("../components/postgrad/WarRoomTradePanel.tsx", import.meta.url), "utf8");
+  const rhWarRoom = fs.readFileSync(new URL("../components/postgrad/RobinhoodWarRoomTradePanel.tsx", import.meta.url), "utf8");
+  const trade = fs.readFileSync(new URL("./solanaTradeV1.ts", import.meta.url), "utf8");
+  const reserve = fs.readFileSync(new URL("./tradeBalanceReserve.ts", import.meta.url), "utf8");
+  assert.match(reserve, /SOLANA_BUY_FEE_RESERVE_LAMPORTS = 5_000_000n/);
+  assert.match(reserve, /SOLANA_BUY_FEE_RESERVE_SOL = 0\.005/);
+  assert.match(reserve, /BNB_BUY_GAS_RESERVE_WEI = 500_000_000_000_000n/);
+  assert.match(reserve, /ETH_BUY_GAS_RESERVE_WEI = 200_000_000_000_000n/);
+  // MAX / %
+  assert.match(sheet, /percentOf\(Math\.max\(0, nativeBalance - reserve\), pct\)/);
+  assert.match(page, /if \(isSolanaPage\) return solanaQuote\.native \? SOLANA_BUY_FEE_RESERVE_SOL : 0;/);
+  assert.match(page, /return gas \+ \(afterGas \* SLIPPAGE_PCT\) \/ \(100 \+ SLIPPAGE_PCT\);/);
+  assert.match(warRoom, /isSolanaCampaign \? SOLANA_BUY_FEE_RESERVE_LAMPORTS : evmBuyGasReserveWei\(false\)/);
+  // Typed amounts: checked before signing
+  assert.match(page, /solanaQuote\.native && bnbBalanceWei != null && amountIn \+ SOLANA_BUY_FEE_RESERVE_LAMPORTS > bnbBalanceWei/);
+  assert.match(page, /maxCostWei \+ gasReserveWei > bnbBalanceWei/);
+  assert.match(page, /nativeAmountInRaw \+ topazGasReserve > bnbBalanceWei/);
+  assert.match(warRoom, /nativeAmountInRaw \+ gasReserveWei > bnbBalanceWei/);
+  assert.match(rhWarRoom, /amountIn \+ ETH_BUY_GAS_RESERVE_WEI > nativeBalance/);
+  // Raw simulation text for System Program error 1 is replaced with a plain message.
+  assert.match(trade, /insufficient lamports\|Program 1\{32\} failed: custom program error: 0x1/);
+  // 100% of 0.128754 SOL with the reserve leaves 0.005 SOL in the wallet.
+  assert.equal(percentOf(0.128754 - 0.005, 100), "0.123754");
+});

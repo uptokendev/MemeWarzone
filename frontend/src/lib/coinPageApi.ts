@@ -29,7 +29,7 @@ export type CoinPageProfile = {
   updatedAt: string | null;
 };
 
-export type CoinPost = { id: string; kind: "post"; at: string; body: string; mediaUrl: string | null; shareToFeed: boolean; socialPostId?: number | null };
+export type CoinPost = { id: string; kind: "post"; at: string; body: string; mediaUrl: string | null; mediaUrls?: string[]; shareToFeed: boolean; socialPostId?: number | null };
 export type CoinAutoUpdate = { id: string; kind: "launch" | "graduation" | "battle"; at: string; text: string; battleId?: string; won?: boolean };
 
 export type CoinPageData = {
@@ -143,7 +143,7 @@ export function useCoinPageMutations(chainId: number, token: string, ownerToken:
   // `session` is the owner's feed session (one signature per 30 days, founder 2026-10-03). When given,
   // creator updates, their image and deleting them need no signature of their own.
   const createPost = useCallback(
-    async (sign: (a: string, l: string[]) => Promise<WalletActionAuthPayload>, post: { body: string; mediaUrl?: string | null; shareToFeed?: boolean }, session?: FeedSessionRunner) => {
+    async (sign: (a: string, l: string[]) => Promise<WalletActionAuthPayload>, post: { body: string; mediaUrl?: string | null; mediaUrls?: string[]; shareToFeed?: boolean }, session?: FeedSessionRunner) => {
       if (session) {
         const data = await session(async (token) =>
           readJsonOrThrow(

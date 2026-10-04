@@ -48,6 +48,8 @@ export type FeedItem = {
   repostedByHandle?: string | null;
   /** UI redesign phase 2. */
   mediaUrl?: string | null;
+  /** All images in order, up to 4 (founder, 2026-10-04). */
+  mediaUrls?: string[];
   quoteOfId?: number | null;
   quoted?: {
     postId: number;
@@ -140,6 +142,9 @@ export async function fetchFeedSuggestions(viewer?: string): Promise<FeedSuggest
   return Array.isArray(json?.items) ? json.items : [];
 }
 
+/** Images per post (founder, 2026-10-04). */
+export const MAX_POST_IMAGES = 4;
+
 export async function createFeedPost(input: {
   chainId: number;
   address: string;
@@ -147,6 +152,8 @@ export async function createFeedPost(input: {
   nonce: string;
   signature: string;
   mediaUrl?: string | null;
+  /** All images in order (first = mediaUrl), when there is more than one. Session posts only. */
+  mediaUrls?: string[];
   quoteOf?: number | null;
   /** Feed session token: the post then needs no nonce or signature (one signature per 30 days). */
   token?: string;

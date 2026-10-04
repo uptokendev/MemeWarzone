@@ -8,7 +8,7 @@ import { ethers } from "ethers";
 import { Swords } from "lucide-react";
 import { BattleVsMark } from "@/components/arena/BattleWallVs";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
-import { FeedAvatar, ImagePickButton } from "@/components/feed/FeedCards";
+import { ComposerImages, FeedAvatar, ImagePickButton } from "@/components/feed/FeedCards";
 import { usePostComposer } from "@/components/feed/usePostComposer";
 import type { Battle } from "@/features/postgrad/contracts";
 import { battleClockLabel } from "@/lib/arena/battlePresentation";
@@ -95,7 +95,7 @@ export function HomeComposer({ onPosted }: { onPosted?: () => void }) {
   const composer = usePostComposer({ onPosted });
   const composerAvatar = useWalletAvatar(composer.account);
   const [focused, setFocused] = useState(false);
-  const expanded = focused || composer.body.length > 0 || Boolean(composer.file);
+  const expanded = focused || composer.body.length > 0 || composer.files.length > 0;
   return (
     <section className={`${card} flex flex-col gap-2 px-[18px] py-3.5`}>
       <div className="flex items-start gap-3.5">
@@ -111,7 +111,7 @@ export function HomeComposer({ onPosted }: { onPosted?: () => void }) {
           aria-label="Write a post"
           className="mw-focus min-h-11 w-full resize-none rounded-[10px] border border-[#2E353D] bg-mw-input px-3.5 py-2.5 text-[15px] text-mw-text placeholder:text-[#5C6670]"
         />
-        <ImagePickButton onPick={composer.setFile} disabled={composer.posting} />
+        <ImagePickButton onPickMany={composer.addFiles} disabled={composer.posting || !composer.canAddImage} />
         <button
           type="button"
           disabled={!composer.canPost}
@@ -121,12 +121,7 @@ export function HomeComposer({ onPosted }: { onPosted?: () => void }) {
           {composer.posting ? "Posting..." : "Post"}
         </button>
       </div>
-      {composer.previewUrl ? (
-        <div className="relative ml-0 w-max sm:ml-[58px]">
-          <img src={composer.previewUrl} alt="Image to post" className="max-h-40 rounded-[10px] border border-mw-border" />
-          <button type="button" onClick={() => composer.setFile(null)} className="mw-focus absolute right-1.5 top-1.5 rounded-full bg-black/70 px-2 text-xs text-white">Remove</button>
-        </div>
-      ) : null}
+      <ComposerImages urls={composer.previewUrls} onRemove={composer.removeFile} className="ml-0 sm:ml-[58px]" />
       <div className="flex items-center justify-between gap-3 pl-0 text-[13px] text-mw-muted sm:pl-[58px]">
         <span>A contract address in your post turns into a coin card with a Buy button.</span>
         {expanded ? <span className={composer.remaining < 40 ? "text-[#FF9A4D]" : ""}>{composer.remaining}</span> : null}

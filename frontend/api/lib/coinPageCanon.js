@@ -137,8 +137,18 @@ export function validateCoinPostInput(body) {
   if (text.length > COIN_POST_MAX) return fail("COIN_POST_TOO_LONG", `Posts can be at most ${COIN_POST_MAX} characters.`);
   const media = httpsUrlOrEmpty(b.mediaUrl);
   if (media === null) return fail("COIN_LINK_INVALID", "The image must be an https address.");
+  // Up to 4 images (founder, 2026-10-04); the first is also media_url.
+  const extra = [];
+  for (const raw of Array.isArray(b.mediaUrls) ? b.mediaUrls : []) {
+    const url = httpsUrlOrEmpty(raw);
+    if (url === null) return fail("COIN_LINK_INVALID", "The image must be an https address.");
+    if (url && !extra.includes(url)) extra.push(url);
+  }
+  const first = media || extra[0] || null;
+  const mediaUrls = extra.length ? [first, ...extra.filter((u) => u !== first)] : [];
+  if (mediaUrls.length > 4) return fail("COIN_POST_IMAGES", "At most 4 images per update.");
   const shareToFeed = b.shareToFeed === undefined ? true : b.shareToFeed === true;
-  return { ok: true, values: { body: text, media_url: media || null, share_to_feed: shareToFeed } };
+  return { ok: true, values: { body: text, media_url: first, media_urls: mediaUrls, share_to_feed: shareToFeed } };
 }
 
 /** `banner`, `post` or `section:<story key>`; null otherwise. */
@@ -178,12 +188,14 @@ export function profileFromRow(row) {
 }
 
 export function postFromRow(row) {
+  const list = Array.isArray(row.media_urls) ? row.media_urls.filter(Boolean) : [];
   return {
     id: String(row.id),
     kind: "post",
     at: new Date(row.created_at).toISOString(),
     body: String(row.body || ""),
     mediaUrl: row.media_url || null,
+    mediaUrls: list.length ? list.slice(0, 4) : row.media_url ? [row.media_url] : [],
     shareToFeed: row.share_to_feed !== false,
   };
 }
