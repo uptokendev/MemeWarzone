@@ -214,3 +214,22 @@ calls these routes; the indexer has its own `/api/security/rewards/*` (rewardOps
 - `/api/admin/finance/lp-harvest` refuses BNB 97, Solana devnet and anything not BNB 56 / Solana mainnet-beta
   with 400 (`lpHarvestMainnetOnly`), before `financeLpHarvest` runs. Robinhood 4663 has no harvest path in
   this route (it was never in `harvestNetwork`). `/api/dashboard/lp-fees` (testnet-open read mode) unchanged.
+
+### Finance payouts overview (2026-10-04, feat/finance-payouts)
+
+`GET /api/admin/finance/payouts?chainId=all|56|4663|101(+environment=production&solanaCluster=mainnet-beta)&days=30`
+(bearer + `finance.view`, GET only, 60 s cache; `frontend/api/lib/financePayouts.js`). Per mainnet and payout type
+(weekly, monthly, MWL, recruiter, creator fees, airdrop, squad, war pool/arena, operator fill): paid (period + all time,
+last tx link), owed now (claimable = root on chain, waiting = no root yet), the paying vault's live balance (fee-routing
+balances) and covered / short. Test-coin prizes are left out of paid/owed and shown apart, but the vault check counts
+them (the vault pays them). Facts read on production 2026-10-04:
+- `league_epoch_claims.signature` is the winner's wallet message signature (base64), not a transaction; the claim
+  transaction is `league_epoch_payouts.tx_hash` (older claims have no payout row, so no link).
+- **EVM monthly league: vault mismatch.** V4 routers send to `0x42D254A7…` (BNB) / `0x576c1d6B…` (RH); claims and roots
+  use `MONTHLY_LEAGUE_TREASURY_ADDRESS_<id>` or the old `0xF62A09de…` / `0xE72A281b…` (balance 0). BNB August monthly
+  winners (0.0000123 BNB, no root) are therefore short against the old vault.
+- Solana recruiter: 1065542 lamports claimable in `recruiter_reward_ledger` (33 of 35 rows are test coins); the prepared
+  weekly batch (671407 lamports, not posted) is in a `recruiter_reward_claims` row whose payout wallet is the devnet key HuKfoF.
+- Creator claims are not recorded anywhere; Solana "owed" is read live from each public coin's escrow + creator vault
+  (same math as `solanaCreatorFeeMath.js`), EVM owed = CreatorRewardsVault V1 + V2 balances.
+- `ProtocolRevenueVault.operatorFillCapUsd/operatorFilledUsd` are 18-decimal USD (cap 10000e18); Solana `route_state` is USD micros.
