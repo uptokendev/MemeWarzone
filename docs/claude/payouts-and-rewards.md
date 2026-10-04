@@ -174,3 +174,24 @@ calls these routes; the indexer has its own `/api/security/rewards/*` (rewardOps
 - Finance rewards read chain-101 rows only for the API's own cluster (`SOLANA_CLUSTER`, default
   mainnet-beta): picking devnet on the live API returns no rows plus a `notice`.
 - Finance inventory items carry a live native `balance` (fee-routing readers); failed read = unknown.
+
+### Finance: mainnets only, All chains, USD (2026-10-04, feat/finance-mainnet-allchains-usd)
+
+- Founder: finance shows mainnets only (Solana 101 mainnet-beta, BNB 56, Robinhood 4663). `financeScope()` in
+  `frontend/api/admin/finance.js` refuses 97, 46630 and Solana devnet with 400; `chainId=all` (also the default
+  with no chainId) returns `finance-all-chains-v1`: one section per chain (a failing chain is reported, not
+  hidden) plus merged `totals`. LP harvest keeps its old parser (`harvestNetwork`) and is untouched.
+- USD lives in `frontend/api/lib/financePrices.js`. Spot: the existing readers (`*UsdPrice.js`: env override,
+  then Binance spot, 60 s cache). History: Binance hourly klines (same public API, no key); there is no
+  native/USD history in the DB (`token_candles.reference_price_usd` is empty on production, `market_stats`
+  holds only the latest). Revenue and fee inflows are queried per hour and valued at that hour's close;
+  hours without history use spot and say `priceBasis: current|mixed`. Balances use spot. USDC/USDT = $1
+  (quote catalog rule). No price -> `amountUsd: null`, counted in `missingPriceCount`, never 0.
+- Totals never add SOL + BNB + ETH: native sums are per chain and asset only; the USD total is cross-chain.
+- Hidden test coins (`meta.publicHidden`) are left out of revenue and fee inflows via
+  `notPublicHiddenCampaignSql` (`api/lib/publicHiddenSql.js`). `arena_league_share_ledger` and
+  `dbc_fee_accruals` have no campaign column and are shown in full. Fee-routing holdings leave out watch-only
+  wallets; inflow totals leave out the DBC collector (its claim is re-split into the vault slices).
+- Production read-only run 2026-10-04 12:33 UTC: revenue $65.33 (0.540657363 SOL, K88 only, event-time
+  prices; 66 test-coin fee events left out); fee destinations hold $287.27 (SOL $273.08, BNB $11.43,
+  ETH $2.76; watch-only deployer wallets left out); routed in (all time) $168.56, all Solana.

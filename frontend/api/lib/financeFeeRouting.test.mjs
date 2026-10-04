@@ -14,8 +14,21 @@ import {
 } from "./financeFeeRoutingSolana.js";
 import { EVM_DEPLOYER, EVM_SAFE, evmFeeRoutingRegistry, evmGetterSelector } from "./financeFeeRoutingEvm.js";
 import { encodeBalanceOf } from "./financeFeeRoutingReaders.js";
+import { createPriceService } from "./financePrices.js";
 
 const NOW = "2026-10-03T12:00:00.000Z";
+// Offline prices: SOL 100, BNB 500, ETH unknown; no history.
+const prices = createPriceService({
+  spotReaders: {
+    SOL: async () => ({ price: 100, source: "spot", at: Date.parse(NOW) }),
+    BNB: async () => ({ price: 500, source: "spot", at: Date.parse(NOW) }),
+    ETH: async () => ({ price: 0, source: "none", at: 0 }),
+  },
+  fetchImpl: async () => { throw new Error("offline"); },
+  nowMs: () => Date.parse(NOW),
+  env: {},
+  historyCache: new Map(),
+});
 
 test("network selection: Solana needs production/mainnet-beta, EVM by chain id", () => {
   assert.equal(feeRoutingNetwork({ chainId: "101" }), null);
@@ -26,6 +39,8 @@ test("network selection: Solana needs production/mainnet-beta, EVM by chain id",
   assert.equal(feeRoutingNetwork({ chainId: 4663 }).nativeSymbol, "ETH");
   assert.equal(feeRoutingNetwork({ chainId: 56 }).chain, "bnb");
   assert.equal(feeRoutingNetwork({ chainId: 1 }), null);
+  assert.equal(feeRoutingNetwork({ chainId: 97 }), null, "testnets are out of finance");
+  assert.equal(feeRoutingNetwork({ chainId: 46630 }), null, "testnets are out of finance");
   assert.equal(feeRoutingDays("x"), 30);
   assert.equal(feeRoutingDays("99999"), 3650);
   assert.equal(atomicToDecimal("1500000000", 9), "1.5");
@@ -111,7 +126,9 @@ test("EVM: failed RPC reads become unknown, never zero; wiring mismatch and depl
     },
   };
   const network = feeRoutingNetwork({ chainId: 56 });
-  const out = await buildFeeRouting({ network, days: 30, db: fakeDb({ rows: { rewardEvents: [{ n: 3, weekly: "30", monthly: "70", recruiter: "5", airdrop: "0", squad: "1", protocol: "42" }] } }), readers, now: () => NOW });
+  const db = fakeDb({ rows: { rewardEvents: [{ n: 3, weekly: "30", monthly: "70", recruiter: "5", airdrop: "0", squad: "1", protocol: "42" }] } });
+  const fakeDbQueries = db.queries;
+  const out = await buildFeeRouting({ network, days: 30, db, readers, prices, now: () => NOW });
   assert.equal(out.schemaVersion, "finance-fee-routing-v1");
   for (const d of out.destinations) {
     for (const b of d.balances) {
@@ -128,6 +145,17 @@ test("EVM: failed RPC reads become unknown, never zero; wiring mismatch and depl
   assert.equal(weekly.eventCount, 3);
   const creator = out.destinations.find((d) => d.id === "creator_vault_v2").inflows[0];
   assert.equal(creator.status, "unknown", "no creator column: unknown, not zero");
+  assert.equal(creator.amountUsd, null, "unknown amount: no USD");
+  assert.equal(weekly.priceUsd, 500, "inflow valued at spot when the hour has no history");
+  assert.equal(typeof weekly.amountUsd, "number");
+  assert.equal(weekly.priceBasis, "current");
+  assert.equal("buckets" in JSON.parse(JSON.stringify(weekly)), false, "hourly buckets never leave the API");
+  assert.equal(out.totals.holdings.amountUsd, null, "every balance failed: no USD total, not 0");
+  assert.ok(out.totals.holdings.unknownAmountCount > 0);
+  assert.equal(out.testCoinsExcluded, true);
+  for (const q of fakeDbQueries) {
+    if (/from public\.(reward_events|votes_confirmed)/.test(q.sql)) assert.match(q.sql, /publicHidden/, "test coins are left out");
+  }
 });
 
 test("Solana: DB failure marks inflows unknown; live wiring compared with the program-derived receivers", async () => {
@@ -158,10 +186,18 @@ test("Solana: DB failure marks inflows unknown; live wiring compared with the pr
     readSolanaAccountData: async ({ address }) => ({ data: accountData(address), slot: 9, rpc: "fake" }),
   };
   const network = feeRoutingNetwork({ chainId: 101, environment: "production", solanaCluster: "mainnet-beta" });
-  const out = await buildFeeRouting({ network, days: 7, db: fakeDb({ fail: true }), readers, env: {}, now: () => NOW });
+  const out = await buildFeeRouting({ network, days: 7, db: fakeDb({ fail: true }), readers, prices, env: {}, now: () => NOW });
   const protocol = out.destinations.find((d) => d.id === "protocol_vault");
   assert.equal(protocol.balances[0].amount, "0.000001");
   assert.equal(protocol.inflows[0].status, "unknown");
+  assert.equal(protocol.balances[0].amountUsd, 0.0001, "balance at spot");
+  assert.equal(protocol.inflows[0].amountUsd, null, "failed inflow: no USD");
+  assert.equal(out.totals.inflows.amountUsd, null);
+  const deployer = out.destinations.find((d) => d.id === "deployer");
+  assert.ok(deployer.balances[0].amountUsd > 0);
+  const holdingsSol = out.totals.holdings.byChain[0].assets.find((a) => a.asset === "SOL");
+  const counted = out.destinations.filter((d) => !d.flags.includes("watch")).flatMap((d) => d.balances).filter((b) => b.status === "ok" && b.asset === "SOL").length;
+  assert.equal(holdingsSol.pricedCount, counted, "watch-only wallets are left out of holdings");
   const operator = out.destinations.find((d) => d.id === "route_operator");
   assert.equal(operator.balances.find((b) => b.asset === "WSOL").status, "unknown");
   const vote = out.destinations.find((d) => d.id === "vote_treasury");
