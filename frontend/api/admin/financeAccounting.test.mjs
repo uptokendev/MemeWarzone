@@ -434,7 +434,7 @@ test("Safe batch: Transaction Builder shape, native transfers from the Safe, uns
   assert.throws(() => buildSafeBatch({ chainId: 4663, distribution: d, settings: SETTINGS }), /share of Ours is zero/);
   assert.throws(() => buildSafeBatch({ chainId: 97, distribution: d, settings: SETTINGS }), /BNB 56 and Robinhood 4663/);
   const noAddr = effectiveDistributionSettings(null);
-  assert.throws(() => buildSafeBatch({ chainId: 56, distribution: computeDistribution({ oursUsd: 50000, chains: CHAINS, taxReserveUsd: 0, openCostsUsd: 0, settings: noAddr }), settings: noAddr }), /No EVM payout address for: Shareholder A, Shareholder B, Shareholder C/);
+  assert.throws(() => buildSafeBatch({ chainId: 56, distribution: computeDistribution({ oursUsd: 50000, chains: CHAINS, taxReserveUsd: 0, openCostsUsd: 0, settings: noAddr }), settings: noAddr }), /No EVM payout address for: Patrick, Sven, Dough/);
   const squads = buildSquadsProposal({ distribution: d, settings: SETTINGS, createdAtMs: NOW });
   assert.match(squads, /PROPOSAL ONLY/);
   assert.match(squads, /lamports to 9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H/);

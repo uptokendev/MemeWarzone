@@ -17,7 +17,9 @@ import { EVM_SAFE } from "./financeFeeRoutingEvm.js";
 
 // The Safe that owns the BNB 56 and Robinhood 4663 contracts (same address on
 // both chains, docs/claude/evm-deployments.md) and the Solana Squads multisig
-// (CLAUDE.md). Editable in settings.
+// (CLAUDE.md). Editable in settings. Share names follow the 50/30/20 split
+// already written in the dashboard's distribution page copy; payout
+// addresses start empty and must be entered before a batch can be built.
 const DEFAULT_EVM_SAFE = EVM_SAFE;
 const DEFAULT_SQUADS_MULTISIG = "fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv";
 const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -28,9 +30,9 @@ export const SAFE_BATCH_CHAINS = Object.freeze({
 
 export const DEFAULT_DISTRIBUTION_SETTINGS = Object.freeze({
   shares: Object.freeze([
-    Object.freeze({ id: "a", name: "Shareholder A", bps: 5000, evmAddress: "", solanaAddress: "" }),
-    Object.freeze({ id: "b", name: "Shareholder B", bps: 3000, evmAddress: "", solanaAddress: "" }),
-    Object.freeze({ id: "c", name: "Shareholder C", bps: 2000, evmAddress: "", solanaAddress: "" }),
+    Object.freeze({ id: "a", name: "Patrick", bps: 5000, evmAddress: "", solanaAddress: "" }),
+    Object.freeze({ id: "b", name: "Sven", bps: 3000, evmAddress: "", solanaAddress: "" }),
+    Object.freeze({ id: "c", name: "Dough", bps: 2000, evmAddress: "", solanaAddress: "" }),
   ]),
   bufferUsd: 10000,
   evmSafes: Object.freeze({ 56: DEFAULT_EVM_SAFE, 4663: DEFAULT_EVM_SAFE }),
