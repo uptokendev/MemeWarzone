@@ -28,6 +28,7 @@ import {
 import { recordTopazFill } from "@/lib/recordTopazFill";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
+import { SOLANA_BUY_FEE_RESERVE_LAMPORTS, evmBuyGasReserveWei } from "@/lib/tradeBalanceReserve";
 
 const CAMPAIGN_ABI = [
   ...((LaunchCampaignArtifact.abi as any[]) ?? []),
@@ -911,6 +912,10 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
           const nativeAmountInRaw = tradeInputDenom === "BNB" ? parseBnbAmountWei(tradeAmount) : effectiveBnbWei;
           if (nativeAmountInRaw <= 0n) throw new Error("Enter a valid BNB or token amount.");
           if (bnbBalanceWei != null && nativeAmountInRaw > bnbBalanceWei) throw new Error("Insufficient BNB balance.");
+          const gasReserveWei = evmBuyGasReserveWei(false);
+          if (bnbBalanceWei != null && nativeAmountInRaw + gasReserveWei > bnbBalanceWei) {
+            throw new Error(`Not enough BNB. Keep about ${ethers.formatEther(gasReserveWei)} BNB in your wallet for gas.`);
+          }
           const quote = await quoteTopazBuy({
             provider: readProvider,
             resolved,
@@ -1210,7 +1215,10 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
   // Buy: 25% / 50% of the native balance, only while the amount is entered in native units (fills the field only).
   const setBuyPercent = (pct: bigint) => {
     if (bnbBalanceWei == null) return;
-    setTradeAmount(ethers.formatUnits((bnbBalanceWei * pct) / 100n, isSolanaCampaign ? 9 : 18));
+    // Solana: the buy spends every lamport entered, so keep rent for the token account and the network fee.
+    const reserve = isSolanaCampaign ? SOLANA_BUY_FEE_RESERVE_LAMPORTS : evmBuyGasReserveWei(false);
+    const spendable = bnbBalanceWei > reserve ? bnbBalanceWei - reserve : 0n;
+    setTradeAmount(ethers.formatUnits((spendable * pct) / 100n, isSolanaCampaign ? 9 : 18));
   };
 
   return (

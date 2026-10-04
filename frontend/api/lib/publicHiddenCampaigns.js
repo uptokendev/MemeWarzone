@@ -1,4 +1,5 @@
 import { pool } from "../../server/db.js";
+import { publicHiddenWhere } from "./publicHiddenSql.js";
 
 // campaigns.meta->>'publicHidden' = true takes a campaign out of every public
 // listing: the feed, trending, and the league standings. Direct token links
@@ -7,10 +8,9 @@ import { pool } from "../../server/db.js";
 // One definition, so a surface cannot drift: the feed used to be the only
 // reader, which is how hidden test campaigns still showed up in the leagues.
 
-export function publicHiddenWhere(alias = "") {
-  const prefix = alias ? `${alias}.` : "";
-  return `lower(coalesce(${prefix}meta->>'publicHidden', 'false')) in ('true', '1', 'yes', 'on')`;
-}
+// The SQL lives in publicHiddenSql.js (no database import) so injected-db read
+// models share this exact definition.
+export { notPublicHiddenCampaignSql, publicHiddenWhere } from "./publicHiddenSql.js";
 
 // Same key the feed uses: Solana base58 keeps its case, EVM is case-insensitive.
 export function publicCampaignKey(chainId, campaignAddress) {

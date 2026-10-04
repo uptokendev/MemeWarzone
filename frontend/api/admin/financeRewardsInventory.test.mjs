@@ -61,13 +61,16 @@ test("inventory adds a balance to each item through the injected reader", async 
   try {
     const res = fakeRes();
     const balances = async (items) => items.map((item) => ({ ...item, balance: { status: "unknown", amount: null, raw: null, asset: "BNB", decimals: 18 } }));
-    await financeInventory({ query: {} }, res, { chainId: 56, chain: "bnb", decimals: 18, asset: "BNB", environment: "mainnet" }, { balances });
+    const prices = { valueAtSpot: async () => ({ amountUsd: null, priceUsd: null, priceSource: null, priceAt: null, priceBasis: null }), spotTable: async () => [] };
+    await financeInventory({ query: {} }, res, { chainId: 56, chain: "bnb", decimals: 18, asset: "BNB", environment: "mainnet" }, { balances, prices });
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.schemaVersion, "finance-inventory-v1");
     const factory = res.body.items.find((item) => item.id === "bnb56-factory");
     assert.ok(factory);
     assert.equal(factory.balance.status, "unknown");
     assert.equal(factory.balance.amount, null);
+    assert.equal(factory.balance.amountUsd, null, "unknown balance: no USD");
+    assert.equal(res.body.totals.unknownAmountCount, res.body.items.length);
   } finally {
     if (saved == null) delete process.env.FACTORY_ADDRESS_56; else process.env.FACTORY_ADDRESS_56 = saved;
   }

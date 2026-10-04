@@ -19,6 +19,7 @@ import {
 import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
+import { ETH_BUY_GAS_RESERVE_WEI } from "@/lib/tradeBalanceReserve";
 
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_DECIMALS = 18;
@@ -237,8 +238,9 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
   };
 
   const amountIn = parseAmount(amount, TOKEN_DECIMALS);
+  // Buys pay gas in ETH on top of the amount entered.
   const insufficient = tab === "buy"
-    ? nativeBalance != null && amountIn > nativeBalance
+    ? nativeBalance != null && amountIn + ETH_BUY_GAS_RESERVE_WEI > nativeBalance
     : tokenBalance != null && amountIn > tokenBalance;
   const quoteOut = quoteDetails?.amountOutRaw ?? null;
   const minimumOut = quoteDetails?.minimumOutRaw ?? null;
@@ -401,7 +403,13 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
       ) : null}
 
       {error ? <div role="alert" className="rounded-[10px] border border-[#5A1A26] bg-[#2A0E14] px-3 py-2 text-xs text-[#FFB4C0]">{error}</div> : null}
-      {insufficient ? <div className="text-xs text-[#FFB4C0]">Insufficient {tab === "buy" ? "ETH" : campaign.symbol || "token"} balance.</div> : null}
+      {insufficient ? (
+        <div className="text-xs text-[#FFB4C0]">
+          {tab === "buy"
+            ? `Not enough ETH. Keep about ${ethers.formatEther(ETH_BUY_GAS_RESERVE_WEI)} ETH in your wallet for gas.`
+            : `Insufficient ${campaign.symbol || "token"} balance.`}
+        </div>
+      ) : null}
 
       <Button
         type="button"
