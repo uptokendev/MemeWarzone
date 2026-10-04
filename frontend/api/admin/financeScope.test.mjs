@@ -85,3 +85,67 @@ test("the finance router refuses a testnet with 400 and never reads it", async (
     if (saved == null) delete process.env.DASHBOARD_OPS_KEY; else process.env.DASHBOARD_OPS_KEY = saved;
   }
 });
+
+test("LP harvest: mainnets pass the input check, BNB 97 and Solana devnet are refused before any harvest logic", async () => {
+  const { harvestNetwork, lpHarvestMainnetOnly, LP_HARVEST_SCOPE_ERROR } = await import("./finance.js");
+  const pick = (query) => lpHarvestMainnetOnly(harvestNetwork({ query }));
+  assert.equal(pick({ chainId: "56" }).chainId, 56);
+  assert.equal(pick({ chainId: "101", environment: "production", solanaCluster: "mainnet-beta" }).cluster, "mainnet-beta");
+  assert.equal(pick({ chainId: "97" }), null);
+  assert.equal(pick({ chainId: "46630" }), null);
+  assert.equal(pick({ chainId: "101", environment: "staging", solanaCluster: "devnet" }), null);
+  assert.equal(pick({ chainId: "101" }), null);
+  assert.match(LP_HARVEST_SCOPE_ERROR, /mainnets only/);
+});
+
+test("LP harvest route answers a testnet with 400 and never calls the indexer", async () => {
+  const { default: financeAdmin } = await import("./finance.js");
+  const saved = process.env.DASHBOARD_OPS_KEY;
+  const savedFetch = globalThis.fetch;
+  process.env.DASHBOARD_OPS_KEY = "test-ops-key";
+  let fetched = 0;
+  globalThis.fetch = async () => { fetched += 1; throw new Error("no network in tests"); };
+  try {
+    for (const query of [{ chainId: "97" }, { chainId: "101", environment: "staging", solanaCluster: "devnet" }]) {
+      const res = {
+        statusCode: 0, body: null, headers: {},
+        setHeader(name, value) { this.headers[name] = value; },
+        status(code) { this.statusCode = code; return this; },
+        json(body) { this.body = body; return this; },
+        end() { return this; },
+      };
+      await financeAdmin({ method: "POST", path: "/api/admin/finance/lp-harvest", url: "/api/admin/finance/lp-harvest", query, body: { pair: "0xabc" }, headers: { "x-ops-key": "test-ops-key" } }, res);
+      if (res.statusCode === 401 || res.statusCode === 403) continue; // auth layer differs per env
+      assert.equal(res.statusCode, 400);
+      assert.match(res.body.error, /mainnets only/);
+    }
+    assert.equal(fetched, 0);
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (saved == null) delete process.env.DASHBOARD_OPS_KEY; else process.env.DASHBOARD_OPS_KEY = saved;
+  }
+});
+
+test("all chains overview and fee routing carry Ours beside Held now, per chain, USD summed only when priced", async () => {
+  const solana = FINANCE_MAINNETS[0];
+  const bnb = FINANCE_MAINNETS[1];
+  const out = await buildAllChains("fee-routing", [solana, bnb].map((n) => ({ ...n })), async (network) => ({
+    totals: {
+      holdings: totalsFor(network, "5", network.chainId === 101 ? 500 : null),
+      ours: totalsFor(network, "2", network.chainId === 101 ? 200 : null),
+      inflows: totalsFor(network, null, null),
+    },
+    prices: [],
+  }));
+  assert.equal(out.totals.ours.amountUsd, 200, "BNB has no price: it is counted as missing, not as 0");
+  assert.equal(out.totals.ours.missingPriceCount, 1);
+  assert.deepEqual(out.totals.ours.byChain.map((c) => c.assets[0].amountNative), ["2", "2"]);
+  assert.equal(out.totals.holdings.amountUsd, 500);
+  const overview = await buildAllChains("overview", [solana].map((n) => ({ ...n })), async (network) => ({
+    modules: [],
+    totals: { revenue: null, holdings: null, feeHoldings: totalsFor(network, "5", 500), ours: totalsFor(network, "2", 200) },
+    prices: [],
+  }));
+  assert.equal(overview.totals.ours.amountUsd, 200);
+  assert.equal(overview.totals.feeHoldings.amountUsd, 500);
+});
