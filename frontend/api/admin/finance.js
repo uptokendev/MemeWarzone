@@ -3,7 +3,10 @@ import { requireAdminOrOps } from "../lib/apiAuth.js";
 import { configuredRewardVaultAddresses, readRewardFunding } from "../lib/financeFunding.js";
 import { readNativeUpvoteRevenue } from "../lib/financeVoteRevenue.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
-import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
+import { normalizeSolanaCluster, resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
+import { cachedFeeRouting, feeRoutingDays, feeRoutingNetwork } from "../lib/financeFeeRouting.js";
+import { dashboardPrincipalCan } from "../dashboard/_access.js";
+import { cachedInventoryBalances } from "../lib/financeInventoryBalances.js";
 
 const FINANCE_NETWORKS = new Map([
   [56, { chain: "bnb", decimals: 18, asset: "BNB", environment: "mainnet" }],
@@ -83,8 +86,17 @@ function rewardState(status) {
   return null;
 }
 
-function rewardChainCandidates(network) {
+// The Solana cluster this API's database belongs to. reward_ledger stores
+// chain "101" for both clusters, so the live API (production DB, mainnet) must
+// not report its rows as devnet, and the test API not as mainnet. Same default
+// as quoteAssetCatalog.js.
+export function apiSolanaCluster(env = process.env) {
+  return normalizeSolanaCluster(env.SOLANA_CLUSTER || env.VITE_SOLANA_CLUSTER || "mainnet-beta");
+}
+
+export function rewardChainCandidates(network) {
   if (network.chain !== "solana") return [String(network.chainId)];
+  if (network.cluster !== apiSolanaCluster()) return [];
   if (network.environment === "staging" && network.cluster === "devnet") {
     return ["101", "solana-devnet"];
   }
@@ -172,7 +184,15 @@ async function rewardCoverage(network, obligationRaw) {
   };
 }
 
+export function rewardsNotice(network) {
+  if (network.chain !== "solana" || network.cluster === apiSolanaCluster()) return null;
+  return network.cluster === "devnet"
+    ? "This API reads the production database, which holds Solana mainnet rewards only. Devnet rewards are on the test stack."
+    : "This API reads the test database, which holds Solana devnet rewards only. Mainnet rewards are on the live API.";
+}
+
 async function financeRewards(req, res, network) {
+  const notice = rewardsNotice(network);
   try {
     const rows = await loadRewardRows(network);
     const { aggregates, obligationRaw } = buildNativeRewardModel(rows, network);
@@ -183,6 +203,7 @@ async function financeRewards(req, res, network) {
       source: "dashboard-api",
       aggregates,
       coverage,
+      ...(notice ? { notice } : {}),
     });
   } catch (error) {
     if (schemaMissing(error)) {
@@ -229,13 +250,35 @@ async function bondingRevenueAggregate(network) {
     chain: network.chain,
     lane: "bonding_curve_fee",
     assetSymbol: network.asset,
-    sourceInventoryId: `bnb${network.chainId}-treasury-router`,
+    sourceInventoryId: network.chain === "solana"
+      ? "sol101-mainnet-protocol-vault"
+      : `bnb${network.chainId}-treasury-router`,
     nativeAmount,
     evidenceCount: Number(row.evidence_count || 0),
   };
 }
 
 async function financeRevenue(req, res, network) {
+  // Solana mainnet: the protocol slice of launchpad and DBC trades is in
+  // reward_events (chain 101 rows on the production database are mainnet).
+  // Devnet has no rows here, so it stays empty rather than borrowing mainnet's.
+  if (network.chain === "solana" && network.environment === "production" && network.cluster === "mainnet-beta") {
+    const aggregates = [];
+    try {
+      const bonding = await bondingRevenueAggregate(network);
+      if (bonding) aggregates.push(bonding);
+    } catch (error) {
+      if (!schemaMissing(error)) throw error;
+    }
+    return res.status(200).json({
+      schemaVersion: "finance-revenue-v1",
+      generatedAt: new Date().toISOString(),
+      source: "dashboard-api",
+      aggregates,
+      quarantine: [],
+    });
+  }
+
   if (network.chain !== "bnb") {
     return res.status(200).json({
       schemaVersion: "finance-revenue-v1",
@@ -323,7 +366,8 @@ function financeInventoryItems(network) {
   return items;
 }
 
-async function financeInventory(req, res, network) {
+export async function financeInventory(req, res, network, { balances = cachedInventoryBalances } = {}) {
+  const items = financeInventoryItems(network);
   return res.status(200).json({
     schemaVersion: "finance-inventory-v1",
     generatedAt: new Date().toISOString(),
@@ -334,7 +378,8 @@ async function financeInventory(req, res, network) {
       environment: network.environment,
       ...(network.cluster ? { cluster: network.cluster } : {}),
     },
-    items: financeInventoryItems(network),
+    // Each item carries a live native balance; a failed read is "unknown", never 0.
+    items: await balances(items, network),
   });
 }
 
@@ -593,7 +638,40 @@ async function financeLpHarvest(req, res, network) {
   }
 }
 
+// GET /api/admin/finance/fee-routing: read-only fee routing map, balances and
+// inflows. Bearer only: the dashboard permission gate in railwayProxy.js must
+// have resolved a principal with finance.view; ops keys and the legacy
+// no-auth fallback are refused here.
+export async function financeFeeRouting(req, res, { build = cachedFeeRouting, db = pool } = {}) {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    res.setHeader("Allow", "GET");
+    return res.status(405).json({ ok: false, error: "Fee routing is read-only (GET)." });
+  }
+  if (!req.dashboardPrincipal || !dashboardPrincipalCan(req.dashboardPrincipal, "finance.view")) {
+    return res.status(401).json({ ok: false, error: "Dashboard sign-in with finance.view is required.", code: "FINANCE_VIEW_REQUIRED" });
+  }
+  const network = feeRoutingNetwork(req.query || {});
+  if (!network) {
+    return res.status(400).json({
+      ok: false,
+      error: "Fee routing covers BNB 56/97, Robinhood 4663/46630 and Solana 101 with environment=production&solanaCluster=mainnet-beta.",
+    });
+  }
+  try {
+    const payload = await build({ network, days: feeRoutingDays(req.query?.days), db });
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).json(payload);
+  } catch (error) {
+    console.error("[api/admin/finance/fee-routing]", error);
+    return res.status(500).json({ ok: false, error: "Fee routing read failed." });
+  }
+}
+
 export default async function financeAdmin(req, res) {
+  const routePath = String(req.path || new URL(req.url, "http://localhost").pathname);
+  if (routePath === "/api/admin/finance/fee-routing") return financeFeeRouting(req, res);
+
   const auth = await requireAdminOrOps(req, res, { routeLabel: "admin/finance", allowOps: true });
   if (!auth) return;
 

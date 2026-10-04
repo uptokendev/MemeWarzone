@@ -32,7 +32,34 @@ test("CREATE persists canonical generation, environment, cluster, duration, spon
     assert.match(migration, new RegExp(token));
   }
   assert.match(helper, /Battle Tournament round duration must be exactly 12 or 24 hours/);
-  assert.match(helper, /Vote Tournament round duration must be an integer of at least 1 hour/);
+  assert.match(helper, /Vote Tournament round duration must be a whole number of hours from \$\{VOTE_TOURNAMENT_MIN_ROUND_HOURS\} to \$\{VOTE_TOURNAMENT_MAX_ROUND_HOURS\}/);
+  assert.doesNotMatch(helper, /exactly 24 hours/);
+});
+
+test("CREATE and EDIT write the scoring path and generation the runtime requires per kind", () => {
+  assert.match(helper, /battle: Object\.freeze\(\{ contestScoringVersion: "battle_points_v3", competitionGeneration: "arena_competition_v2" \}\)/);
+  assert.match(helper, /vote: Object\.freeze\(\{ contestScoringVersion: "vote_tournament_v1", competitionGeneration: "arena_competition_v2" \}\)/);
+  assert.match(helper, /contest_scoring_version, competition_generation\n\s+\) values/);
+  assert.match(helper, /contest_scoring_version = \$21, competition_generation = \$22/);
+});
+
+test("invites: per-chain address validation, versioned add/remove, upcoming only", () => {
+  assert.match(helper, /must be a Solana base58 address/);
+  assert.match(helper, /must be a 0x-prefixed 40-hex EVM address/);
+  assert.match(helper, /invites\$\/\);/);
+  assert.match(helper, /handleTournamentInviteAdd/);
+  assert.match(helper, /handleTournamentInviteRemove/);
+  assert.match(helper, /Invites can change only while the tournament is upcoming/);
+  assert.match(helper, /TOURNAMENT_INVITE_HAS_ENTRANT/);
+});
+
+test("edit locks environment/cluster and unpaid removal is scoped to one entry", () => {
+  assert.match(helper, /export function lockedTournamentIdentity/);
+  assert.match(helper, /Tournament environment is locked to/);
+  assert.match(helper, /Solana cluster is locked to/);
+  assert.match(helper, /TOURNAMENT_ENTRY_TOKEN_REQUIRED/);
+  assert.match(helper, /delete from public\.arena_tournament_entries where id = \$1 and tournament_id = \$2 and buy_in_paid = false/);
+  assert.doesNotMatch(helper, /delete from public\.arena_tournament_entries where tournament_id = \$1 and lower\(owner_wallet\)/);
 });
 
 test("shared Arena identity matches Tournament Admin staging/production contract", () => {
@@ -65,7 +92,7 @@ test("Vote regulation evolves through tournament duration without rewriting Fina
 test("dashboard edit contract persists buyInNative and environment identity", () => {
   assert.match(helper, /buy_in_native = \$17/);
   assert.match(helper, /environment = \$18, solana_cluster = \$19/);
-  assert.match(helper, /normalizeEnvironment\(Number\(row\.chain_id\)/);
+  assert.match(helper, /const identity = lockedTournamentIdentity\(row, body\);/);
 });
 
 test("new-generation START requires registration closed and reconcile keeps dashboard alias", () => {

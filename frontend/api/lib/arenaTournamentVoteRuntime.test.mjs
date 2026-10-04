@@ -67,9 +67,14 @@ test("rejects a token that is not a participant", () => {
   assert.deepEqual(result, { ok: false, reason: "selected-token-not-in-match" });
 });
 
-test("rejects non-vote tournaments and non-24h vote rounds", () => {
+test("rejects non-vote tournaments and vote rounds outside 1..48 whole hours", () => {
   assert.equal(resolveTournamentVoteMatch({ tournament: tournament({ battle_mode: "normal" }), matchRef: "m1" }).reason, "tournament-not-vote-mode");
-  assert.equal(resolveTournamentVoteMatch({ tournament: tournament({ round_duration_hours: 12 }), matchRef: "m1" }).reason, "invalid-round-duration");
+  for (const hours of [0, 49, 72, 1.5, -1]) {
+    assert.equal(resolveTournamentVoteMatch({ tournament: tournament({ round_duration_hours: hours }), matchRef: "m1" }).reason, "invalid-round-duration", `${hours}h`);
+  }
+  for (const hours of [1, 12, 24, 48]) {
+    assert.equal(resolveTournamentVoteMatch({ tournament: tournament({ round_duration_hours: hours }), matchRef: "m1" }).ok, true, `${hours}h`);
+  }
 });
 
 test("only the latest unresolved round is vote-active", () => {

@@ -2,6 +2,18 @@ function text(value) {
   return String(value || "").trim();
 }
 
+// Vote Tournament regulation length per round, in whole hours (the column is
+// integer). Founder range: 1 to 48 hours. Battle end times come from the
+// tournament row through the arena_battles trigger, so every consumer reads
+// battle.ends_at; this check only refuses a tournament row outside the range.
+export const VOTE_TOURNAMENT_MIN_ROUND_HOURS = 1;
+export const VOTE_TOURNAMENT_MAX_ROUND_HOURS = 48;
+
+export function isVoteTournamentRoundHours(value) {
+  const hours = Number(value);
+  return Number.isInteger(hours) && hours >= VOTE_TOURNAMENT_MIN_ROUND_HOURS && hours <= VOTE_TOURNAMENT_MAX_ROUND_HOURS;
+}
+
 function isEvm(value) {
   return /^0x[0-9a-fA-F]{40}$/.test(text(value));
 }
@@ -82,7 +94,7 @@ export function resolveTournamentVoteMatch({ tournament, matchRef, selectedToken
   if (text(tournament?.battle_mode || tournament?.battleMode) !== "vote") {
     return { ok: false, reason: "tournament-not-vote-mode" };
   }
-  if (Number(tournament?.round_duration_hours ?? tournament?.roundDurationHours ?? 24) !== 24) {
+  if (!isVoteTournamentRoundHours(tournament?.round_duration_hours ?? tournament?.roundDurationHours ?? 24)) {
     return { ok: false, reason: "invalid-round-duration" };
   }
 

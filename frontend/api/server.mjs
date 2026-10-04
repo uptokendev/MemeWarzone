@@ -87,7 +87,8 @@ import launchStatus from "./launch-status.js";
 import robinhoodStockGraduationRegistryAdmin from "./admin/robinhoodStockGraduationRegistry.js";
 import quoteAssetCatalogAdmin from "./admin/quoteAssetCatalog.js";
 import { dashboardAuthProjectRef } from "./dashboard/_auth.js";
-import { withAdminOrOps, withInternalAuth, getAuthEnforceSnapshot } from "./lib/apiAuth.js";
+import { withInternalAuth, getAuthEnforceSnapshot } from "./lib/apiAuth.js";
+import { withDashboardPermissionOrOpsKey } from "./lib/dashboardPermissionOrOps.js";
 import { draftDeploy } from "./dev-fix/draft-deploy.js";
 import { solanaDirectCreateV4 } from "./dev-fix/solana-direct-create.js";
 import solanaCampaignAccount from "./solanaCampaignAccount.js";
@@ -549,12 +550,24 @@ router.get("/airdrops/pool", wrap(airdropPool));
 router.all("/airdrops/preview", wrap(airdropPreview));
 router.all("/airdrops/previous-winners", wrap(airdropPreviousWinners));
 router.all("/airdrops/winners", wrap(airdropWinners));
-router.all("/admin/rewards/overview", wrap(withAdminOrOps(adminRewardOverview, "admin/rewards/overview")));
-router.all("/admin/rewards/batches", wrap(withAdminOrOps(adminRewardBatches, "admin/rewards/batches")));
-router.all("/admin/rewards/batches/:id", wrap(withAdminOrOps(adminRewardBatchById, "admin/rewards/batches/:id")));
-router.all("/admin/rewards/ledger", wrap(withAdminOrOps(adminRewardLedger, "admin/rewards/ledger")));
-router.all("/admin/rewards/alerts", wrap(withAdminOrOps(adminRewardAlerts, "admin/rewards/alerts")));
-router.all("/admin/rewards/audit-log", wrap(withAdminOrOps(adminRewardAuditLog, "admin/rewards/audit-log")));
+// Reward Ops (Command Center): dashboard sign-in with finance.view to read,
+// finance.manage to write, or the ops key. Fails closed regardless of
+// API_AUTH_ENFORCE_*. The publications/draws/routing/claim-vault/epoch-status
+// entries are the dashboard's door to the same handlers the /internal/rewards
+// routes use; those stay internal-token only for server-to-server callers.
+const REWARD_OPS_PERMISSIONS = { read: "finance.view", write: "finance.manage" };
+const rewardOps = (handler, label) => wrap(withDashboardPermissionOrOpsKey(handler, label, REWARD_OPS_PERMISSIONS));
+router.all("/admin/rewards/overview", rewardOps(adminRewardOverview, "admin/rewards/overview"));
+router.all("/admin/rewards/batches", rewardOps(adminRewardBatches, "admin/rewards/batches"));
+router.all("/admin/rewards/batches/:id", rewardOps(adminRewardBatchById, "admin/rewards/batches/:id"));
+router.all("/admin/rewards/ledger", rewardOps(adminRewardLedger, "admin/rewards/ledger"));
+router.all("/admin/rewards/alerts", rewardOps(adminRewardAlerts, "admin/rewards/alerts"));
+router.all("/admin/rewards/audit-log", rewardOps(adminRewardAuditLog, "admin/rewards/audit-log"));
+router.all("/admin/rewards/publications", rewardOps(internalRewardPublications, "admin/rewards/publications"));
+router.all("/admin/rewards/draws", rewardOps(internalAirdropDraws, "admin/rewards/draws"));
+router.all("/admin/rewards/routing", rewardOps(internalRewardRouting, "admin/rewards/routing"));
+router.all("/admin/rewards/claim-vault", rewardOps(internalRewardClaimVault, "admin/rewards/claim-vault"));
+router.all("/admin/rewards/epoch-status", rewardOps(internalRewardEpochStatus, "admin/rewards/epoch-status"));
 router.all("/admin/abuse/me", wrap(adminAbuseMe));
 router.all("/admin/abuse/staff", wrap(adminAbuseStaff));
 router.all("/admin/abuse/reports/:reportId/reply", wrap(adminAbuseReports));
@@ -602,22 +615,29 @@ router.all("/recruiter-routing/trade-authorization", wrap(routingTradeAuthorizat
 router.all("/launchpad/preflight-create", wrap(launchpadPreflightCreate));
 router.all("/launchpad/preflight-buy", wrap(launchpadPreflightBuy));
 router.all("/launchpad/preflight-sell", wrap(launchpadPreflightSell));
+// Security (Command Center): dashboard sign-in with security.view to read,
+// security.manage to write, or the ops key. Fails closed regardless of
+// API_AUTH_ENFORCE_*. status, creator profile and launch eligibility stay
+// public: the launch app reads them (bnbAdapter, robinhoodAdapter,
+// bnbLaunchpadAdapter) without a bearer.
+const SECURITY_PERMISSIONS = { read: "security.view", write: "security.manage" };
+const securityOps = (handler, label) => wrap(withDashboardPermissionOrOpsKey(handler, label, SECURITY_PERMISSIONS));
 router.all("/security/status", wrap(securityStatus));
-router.all("/security/creators", wrap(withAdminOrOps(securityCreators, "security/creators")));
-router.all("/security/clusters", wrap(withAdminOrOps(securityClusters, "security/clusters")));
-router.all("/security/manual-review", wrap(withAdminOrOps(securityManualReview, "security/manual-review")));
-router.all("/security/mass-deployers", wrap(withAdminOrOps(securityMassDeployers, "security/mass-deployers")));
-router.all("/security/audit-log", wrap(withAdminOrOps(securityAuditLog, "security/audit-log")));
-router.all("/security/recruiter-payouts", wrap(withAdminOrOps(securityRecruiterPayouts, "security/recruiter-payouts")));
+router.all("/security/creators", securityOps(securityCreators, "security/creators"));
+router.all("/security/clusters", securityOps(securityClusters, "security/clusters"));
+router.all("/security/manual-review", securityOps(securityManualReview, "security/manual-review"));
+router.all("/security/mass-deployers", securityOps(securityMassDeployers, "security/mass-deployers"));
+router.all("/security/audit-log", securityOps(securityAuditLog, "security/audit-log"));
+router.all("/security/recruiter-payouts", wrap(withDashboardPermissionOrOpsKey(securityRecruiterPayouts, "security/recruiter-payouts", { read: "recruiter_payouts.manage", write: "recruiter_payouts.manage" })));
 router.all("/security/creator/:wallet/profile", wrap(securityCreatorProfile));
 router.all("/security/creator/:wallet/launch-eligibility", wrap(securityCreatorLaunchEligibility));
-router.all("/security/creator/:wallet/tier", wrap(withAdminOrOps(securityCreatorTier, "security/creator/tier")));
-router.all("/security/creator/:wallet/restrict", wrap(withAdminOrOps(securityCreatorRestrict, "security/creator/restrict")));
-router.all("/security/creator/:wallet/manual-review", wrap(withAdminOrOps(securityCreatorManualReview, "security/creator/manual-review")));
-router.all("/security/cluster/:clusterId/restrict", wrap(withAdminOrOps(securityClusterRestrict, "security/cluster/restrict")));
-router.all("/security/wallet/:wallet/restrict", wrap(withAdminOrOps(securityWalletRestrict, "security/wallet/restrict")));
-router.all("/security/contracts/:action", wrap(withAdminOrOps(securityContractAction, "security/contracts")));
-router.all("/security/solana/:action", wrap(withAdminOrOps(securityContractAction, "security/contracts")));
+router.all("/security/creator/:wallet/tier", securityOps(securityCreatorTier, "security/creator/tier"));
+router.all("/security/creator/:wallet/restrict", securityOps(securityCreatorRestrict, "security/creator/restrict"));
+router.all("/security/creator/:wallet/manual-review", securityOps(securityCreatorManualReview, "security/creator/manual-review"));
+router.all("/security/cluster/:clusterId/restrict", securityOps(securityClusterRestrict, "security/cluster/restrict"));
+router.all("/security/wallet/:wallet/restrict", securityOps(securityWalletRestrict, "security/wallet/restrict"));
+router.all("/security/contracts/:action", securityOps(securityContractAction, "security/contracts"));
+router.all("/security/solana/:action", securityOps(securityContractAction, "security/contracts"));
 router.all("/recruiter-auth-nonce", wrap(recruiterAuthNonce));
 router.all("/recruiter-auth-verify", wrap(recruiterAuthVerify));
 router.all("/recruiter-portal", wrap(recruiterPortal));

@@ -1,8 +1,16 @@
 import { pool } from "../../server/db.js";
+import { publicHiddenWhere } from "../lib/publicHiddenCampaigns.js";
 
 // Current operational analytics never use legacy Solana product chain 102 as a
 // staging selector. Keep it excluded so old rows cannot re-enter current KPIs.
 const CURRENTLY_EXCLUDED_CHAIN_IDS = new Set([97, 102]);
+// Campaigns flagged meta.publicHidden (test coins) are left out of every KPI,
+// with their drafts, creators and trades, the same rule Explore and the leagues
+// use. Address key: Solana base58 keeps its case, EVM is case-insensitive.
+function campaignKeySql(alias, column = "campaign_address") {
+  return `case when ${alias}.chain_id in (101, 102) then ${alias}.${column} else lower(${alias}.${column}) end`;
+}
+
 // Historical 102 records still need Solana case-sensitive address joins while
 // they are being excluded from current operational totals.
 const SOLANA_ADDRESS_FAMILY_CHAIN_IDS = new Set([101, 102]);
@@ -57,7 +65,13 @@ async function chainRows(from, to, selectedChain) {
   }
 
   const result = await pool.query(`
-    with chain_ids as (
+    with hidden as (
+      select h.chain_id, ${campaignKeySql("h")} as campaign_key
+        from public.campaigns h
+       where h.campaign_address is not null
+         and ${publicHiddenWhere("h")}
+    ),
+    chain_ids as (
       select distinct chain_id
         from (
           select chain_id from public.campaign_drafts
@@ -77,12 +91,17 @@ async function chainRows(from, to, selectedChain) {
                  and deployed_at is null
              )::int as drafts_open,
              count(*) filter (where created_at >= $1 and created_at < $2)::int as drafts_created_in_range
-        from public.campaign_drafts
-       where chain_id <> all($3::int[])
+        from public.campaign_drafts cd
+       where cd.chain_id <> all($3::int[])
+         and not exists (
+           select 1 from hidden hx
+            where hx.chain_id = cd.chain_id and hx.campaign_key = ${campaignKeySql("cd")}
+         )
        group by chain_id
     ),
     campaign_counts as (
       select chain_id,
+             count(*)::int as campaigns_total,
              count(*) filter (
                where graduated_at_chain is null
                  and lower(coalesce(market_stage, 'bonding')) not in ('graduated', 'dex')
@@ -98,20 +117,41 @@ async function chainRows(from, to, selectedChain) {
              )::int as graduated,
              count(*) filter (where coalesce(created_at_chain, created_at) >= $1 and coalesce(created_at_chain, created_at) < $2)::int as campaigns_created_in_range,
              count(*) filter (where graduated_at_chain >= $1 and graduated_at_chain < $2)::int as graduated_in_range
-        from public.campaigns
+        from public.campaigns cp
+       where cp.chain_id <> all($3::int[])
+         and not ${publicHiddenWhere("cp")}
+       group by chain_id
+    ),
+    imports as (
+      select chain_id,
+             count(*)::int as imports_total,
+             count(*) filter (where created_at >= $1 and created_at < $2)::int as imports_in_range,
+             count(*) filter (where ownership_status = 'ownership_verified')::int as verified_imports,
+             count(*) filter (where coalesce(ownership_status, 'ownership_pending') <> 'ownership_verified')::int as unverified_imports,
+             count(*) filter (
+               where ownership_status = 'ownership_verified'
+                 and ownership_verified_at >= $1
+                 and ownership_verified_at < $2
+             )::int as verified_imports_in_range
+        from public.arena_token_imports
        where chain_id <> all($3::int[])
        group by chain_id
     ),
     creators as (
       select chain_id, count(distinct creator)::int as unique_creators
         from (
-          select chain_id, nullif(trim(creator_wallet), '') as creator
-            from public.campaign_drafts
-           where chain_id <> all($3::int[])
+          select cd.chain_id, nullif(trim(cd.creator_wallet), '') as creator
+            from public.campaign_drafts cd
+           where cd.chain_id <> all($3::int[])
+             and not exists (
+               select 1 from hidden hx
+                where hx.chain_id = cd.chain_id and hx.campaign_key = ${campaignKeySql("cd")}
+             )
           union
-          select chain_id, nullif(trim(creator_address), '') as creator
-            from public.campaigns
-           where chain_id <> all($3::int[])
+          select cp.chain_id, nullif(trim(cp.creator_address), '') as creator
+            from public.campaigns cp
+           where cp.chain_id <> all($3::int[])
+             and not ${publicHiddenWhere("cp")}
         ) u
        where creator is not null
        group by chain_id
@@ -127,18 +167,28 @@ async function chainRows(from, to, selectedChain) {
              coalesce(sum(abs(bnb_amount)) filter (where block_time >= now() - interval '24 hours'), 0)::numeric as volume_native_24h,
              coalesce(sum(abs(bnb_amount)), 0)::numeric as volume_native_lifetime,
              greatest(coalesce(sum(case when lower(side) = 'buy' then bnb_amount when lower(side) = 'sell' then -bnb_amount else 0 end), 0), 0)::numeric as bonding_tvl_native
-        from public.curve_trades
-       where chain_id <> all($3::int[])
+        from public.curve_trades ct
+       where ct.chain_id <> all($3::int[])
+         and not exists (
+           select 1 from hidden hx
+            where hx.chain_id = ct.chain_id and hx.campaign_key = ${campaignKeySql("ct")}
+         )
        group by chain_id
     )
     select c.chain_id,
            coalesce(d.drafts_open, 0)::int as drafts_open,
            coalesce(d.drafts_created_in_range, 0)::int as drafts_created_in_range,
+           coalesce(cc.campaigns_total, 0)::int as campaigns_total,
            coalesce(cc.live, 0)::int as live,
            coalesce(cc.ended, 0)::int as ended,
            coalesce(cc.graduated, 0)::int as graduated,
            coalesce(cc.graduated_in_range, 0)::int as graduated_in_range,
            coalesce(cc.campaigns_created_in_range, 0)::int as campaigns_created_in_range,
+           coalesce(i.imports_total, 0)::int as imports_total,
+           coalesce(i.imports_in_range, 0)::int as imports_in_range,
+           coalesce(i.verified_imports, 0)::int as verified_imports,
+           coalesce(i.unverified_imports, 0)::int as unverified_imports,
+           coalesce(i.verified_imports_in_range, 0)::int as verified_imports_in_range,
            coalesce(cr.unique_creators, 0)::int as unique_creators,
            coalesce(t.trades_in_range, 0)::int as trades_in_range,
            coalesce(t.buys_in_range, 0)::int as buys_in_range,
@@ -152,6 +202,7 @@ async function chainRows(from, to, selectedChain) {
       from chain_ids c
       left join drafts d using (chain_id)
       left join campaign_counts cc using (chain_id)
+      left join imports i using (chain_id)
       left join creators cr using (chain_id)
       left join trades t using (chain_id)
      where true ${selected}
@@ -166,11 +217,17 @@ async function chainRows(from, to, selectedChain) {
       unit: meta.unit,
       draftsOpen: n(row.drafts_open),
       draftsCreatedInRange: n(row.drafts_created_in_range),
+      campaignsTotal: n(row.campaigns_total),
       live: n(row.live),
       ended: n(row.ended),
       graduated: n(row.graduated),
       graduatedInRange: n(row.graduated_in_range),
       campaignsCreatedInRange: n(row.campaigns_created_in_range),
+      importsTotal: n(row.imports_total),
+      importsInRange: n(row.imports_in_range),
+      verifiedImports: n(row.verified_imports),
+      unverifiedImports: n(row.unverified_imports),
+      verifiedImportsInRange: n(row.verified_imports_in_range),
       uniqueCreators: n(row.unique_creators),
       tradesInRange: n(row.trades_in_range),
       buysInRange: n(row.buys_in_range),
@@ -216,6 +273,13 @@ async function topCampaigns(from, to, selectedChain) {
          or (t.chain_id <> all($4::int[]) and lower(d.campaign_address) = lower(t.campaign_address)))
      where t.block_time >= $1 and t.block_time < $2
        and t.chain_id <> all($3::int[])
+       and not exists (
+         select 1 from public.campaigns h
+          where h.chain_id = t.chain_id
+            and h.campaign_address is not null
+            and ${campaignKeySql("h")} = ${campaignKeySql("t")}
+            and ${publicHiddenWhere("h")}
+       )
        ${selected}
      group by t.chain_id, t.campaign_address
      order by volume_native desc
@@ -243,12 +307,18 @@ export async function launchpadKpis({ from, to, chainId = "all" }) {
   const top = await topCampaigns(from, to, selectedChain);
   const totals = chains.reduce((acc, row) => {
     acc.draftsOpen += row.draftsOpen;
+    acc.campaignsTotal += row.campaignsTotal;
     acc.live += row.live;
     acc.ended += row.ended;
     acc.graduated += row.graduated;
     acc.graduatedInRange += row.graduatedInRange;
     acc.campaignsCreatedInRange += row.campaignsCreatedInRange;
     acc.draftsCreatedInRange += row.draftsCreatedInRange;
+    acc.importsTotal += row.importsTotal;
+    acc.importsInRange += row.importsInRange;
+    acc.verifiedImports += row.verifiedImports;
+    acc.unverifiedImports += row.unverifiedImports;
+    acc.verifiedImportsInRange += row.verifiedImportsInRange;
     acc.uniqueCreators += row.uniqueCreators;
     acc.tradesInRange += row.tradesInRange;
     acc.uniqueTradersInRange += row.uniqueTradersInRange;
@@ -256,11 +326,17 @@ export async function launchpadKpis({ from, to, chainId = "all" }) {
   }, {
     draftsOpen: 0,
     draftsCreatedInRange: 0,
+    campaignsTotal: 0,
     live: 0,
     ended: 0,
     graduated: 0,
     graduatedInRange: 0,
     campaignsCreatedInRange: 0,
+    importsTotal: 0,
+    importsInRange: 0,
+    verifiedImports: 0,
+    unverifiedImports: 0,
+    verifiedImportsInRange: 0,
     uniqueCreators: 0,
     tradesInRange: 0,
     uniqueTradersInRange: 0,

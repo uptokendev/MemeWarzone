@@ -26,6 +26,10 @@ async function check(name, method, path, body, options = {}) {
     headers: {
       ...(body ? { "content-type": "application/json" } : {}),
       "x-admin-email": process.env.SECURITY_SMOKE_ADMIN_EMAIL || "smoke@memewar.zone",
+      // Everything except status, creator profile and launch eligibility needs
+      // the ops key or a Command Center bearer with security.view/manage.
+      ...(process.env.DASHBOARD_OPS_KEY ? { "x-ops-key": process.env.DASHBOARD_OPS_KEY } : {}),
+      ...(process.env.SECURITY_SMOKE_BEARER ? { authorization: `Bearer ${process.env.SECURITY_SMOKE_BEARER}` } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
   });
