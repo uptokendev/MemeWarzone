@@ -119,3 +119,14 @@ export function taxReserveSchedule(months, rules) {
   });
   return { rows, ytdProfitUsd: broken ? null : roundUsd(ytdProfit), ytdReserveUsd: broken ? null : roundUsd(ytdReserve) };
 }
+
+/** What changed between two saved tax rule sets, in plain lines. `before` null = the defaults were in use. */
+export function describeTaxChange(before, after) {
+  const fmt = (rules) => (rules?.brackets || []).map((b) => `${Math.round(Number(b.rate) * 10000) / 100}%${b.upTo == null ? " above" : ` up to ${rules.currency || "EUR"} ${Number(b.upTo).toLocaleString("en-US")}`}`).join(", ");
+  const lines = [];
+  const prevText = before ? fmt(before) : "defaults";
+  const nextText = fmt(after);
+  if (prevText !== nextText) lines.push(`Brackets: ${prevText || "none"} -> ${nextText || "none"}`);
+  if ((before?.name || "") !== (after?.name || "") && after?.name) lines.push(`Name: ${after.name}`);
+  return lines.length ? lines : ["Saved without changes"];
+}

@@ -11,8 +11,8 @@
 //                   Revenue page adds it: lifetime only, at current price;
 //   where it is     the fee-routing map's cached balances, split into "ours"
 //                   (protocol-owned) and "held for others" (owed + mixed);
-//   owed to users   outstanding rewards from /rewards (allocated, claimable,
-//                   pending).
+//   owed to users   what Payouts lists as owed now (league, battle league,
+//                   MWL, recruiter, airdrop, creator fees), test coins left out.
 //
 // A chain whose read fails is reported as unavailable and its amounts are
 // unknown, never zero. Read-only: GET, no keys, no signing.

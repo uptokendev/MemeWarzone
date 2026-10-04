@@ -1,3 +1,11 @@
+> **Obsolete (2026-10-04).** Finance no longer reads wallet, vault or reward-custody addresses from
+> env. Inventory, reward funding and the status checks come from the fee-routing map
+> (`api/lib/financeFeeRouting*.js`, addresses from the deployment records and program seeds). The
+> only finance addresses still read from the API env are the Solana off-chain receivers:
+> `SOLANA_VOTE_TREASURY_ADDRESS`, `DBC_FEE_COLLECTOR`, `DBC_REFERRAL_TOKEN_ACCOUNT(S)` and, optionally,
+> `FINANCE_SOLANA_LP_PROTOCOL_TREASURY_ADDRESS` (otherwise the indexer's reported LP treasury). The
+> Overview page names any that are missing. The text below is kept for history only.
+
 # Finance reward custody configuration
 
 The Finance API compares canonical native-asset reward obligations with approved reward claim custody balances. These reads happen only on the Railway Frontend API. Custody addresses and RPC URLs are not returned to the dashboard Finance read model.

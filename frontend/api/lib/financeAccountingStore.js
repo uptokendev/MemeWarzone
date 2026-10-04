@@ -160,6 +160,24 @@ export async function markReopened(client, month, reason, actor) {
   return closeFromRow(rows[0]);
 }
 
+/** The last changes to one setting ('settings.distribution' / 'settings.tax_reserve_rules'), newest first. */
+export async function listSettingsHistory(db, action, limit = 20) {
+  const { rows } = await db.query(
+    `select occurred_at, actor_email, before, after
+       from public.finance_audit_log
+      where action = $1
+      order by occurred_at desc, id desc
+      limit $2`,
+    [action, limit],
+  );
+  return rows.map((row) => ({
+    at: row.occurred_at instanceof Date ? row.occurred_at.toISOString() : String(row.occurred_at),
+    by: row.actor_email,
+    before: row.before ?? null,
+    after: row.after ?? null,
+  }));
+}
+
 export async function readSettings(db) {
   const { rows } = await db.query(`select tax_reserve_rules, distribution, updated_by, updated_at from public.finance_settings where id = 1`);
   return rows[0] || null;
