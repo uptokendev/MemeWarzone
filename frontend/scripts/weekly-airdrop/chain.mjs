@@ -28,8 +28,18 @@ export async function resolvePoolWei(chainId) {
   if (!vaultAddress) throw new Error("CommunityRewardsVault address is required");
   const vault = new Contract(vaultAddress, ["function warzoneAirdropBalance() view returns (uint256)"], providerFor(chainId));
   const availableWei = BigInt(await vault.warzoneAirdropBalance());
-  if (availableWei <= 0n) throw new Error("warzoneAirdropBalance is zero");
-  return { availableWei, source: "community_rewards_vault", vaultAddress };
+  // An empty vault is a normal week with nothing to share (no unlinked-recruiter
+  // trades yet), not a failure: the runner skips the epoch instead of alerting.
+  return { availableWei: availableWei > 0n ? availableWei : 0n, source: "community_rewards_vault", vaultAddress };
+}
+
+/** Why there is nothing to distribute this week, or null when there is a pool. */
+export function emptyAirdropPoolReason(pool, totalPoolWei) {
+  if (pool && BigInt(pool.availableWei ?? 0n) <= 0n) {
+    return `airdrop pool is empty (warzoneAirdropBalance is 0 on ${pool.vaultAddress || "the community rewards vault"})`;
+  }
+  if (BigInt(totalPoolWei ?? 0n) <= 0n) return "calculated weekly airdrop pool is zero";
+  return null;
 }
 
 export async function markFundingCheck(client, batchId) {

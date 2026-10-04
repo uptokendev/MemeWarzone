@@ -11,7 +11,7 @@ import {
 } from "./candidates.mjs";
 import {
   configuredVaultAddress, ensureOnChainBatch, keepFundingCheck, markClaimOpen,
-  markFundingCheck, resolvePoolWei,
+  markFundingCheck, resolvePoolWei, emptyAirdropPoolReason,
 } from "./chain.mjs";
 import { materializeAirdropBatch } from "./materialize.mjs";
 import { nativeUsdFor, thresholdsFor } from "./usdRules.mjs";
@@ -136,6 +136,11 @@ async function main() {
     const totalPoolWei = anchor?.totalWeeklyPoolWei
       ? asBigInt(anchor.totalWeeklyPoolWei)
       : (pool.availableWei * BigInt(distributionBps)) / 10000n;
+    const emptyReason = anchor ? null : emptyAirdropPoolReason(pool, totalPoolWei);
+    if (emptyReason) {
+      // Nothing to share this week: no batch, no funding, no alert. The next run checks again.
+      return console.log(`[weekly-airdrop] chain ${chainId} ${epochId}: nothing to distribute, ${emptyReason}`);
+    }
     if (totalPoolWei <= 0n) throw new Error("Calculated weekly airdrop pool is zero");
 
     // One USD rule set for every chain, converted at this run's spot price (usdRules.mjs).
