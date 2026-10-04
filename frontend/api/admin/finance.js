@@ -12,6 +12,7 @@ import { notPublicHiddenCampaignSql, publicHiddenWhere } from "../lib/publicHidd
 import { financePayouts } from "../lib/financePayouts.js";
 import { buildFinanceSummary, cachedFinanceSummary, summaryMonths } from "../lib/financeSummary.js";
 import financeAccounting, { isFinanceAccountingPath } from "./financeAccounting.js";
+import { extraRevenueLanes, summaryRevenueLanes, valueRevenueLanes } from "../lib/financeRevenueLanes.js";
 
 // Finance shows mainnets only (founder decision 2026-10-04): nothing is earned
 // on a testnet. chainId=all reads all three and adds a cross-chain total.
@@ -374,6 +375,7 @@ async function bondingRevenueAggregate(network) {
       periodEnd: merged.periodEnd,
       chain: network.chain,
       lane: "bonding_curve_fee",
+      source: "Bonding-curve trade fee protocol share",
       assetSymbol: network.asset,
       sourceInventoryId: network.chain === "solana"
         ? "sol101-mainnet-protocol-vault"
@@ -414,7 +416,8 @@ async function hiddenCampaignAddresses(network) {
 }
 
 // The revenue lanes with their hourly buckets: protocol share of bonding-curve
-// trades and paid UP votes (all three chains); hidden test coins left out.
+// trades and paid UP votes (all three chains), plus the lanes in
+// financeRevenueLanes.js; hidden test coins left out.
 // /revenue values them as one lifetime figure, /summary month by month.
 export async function revenueLanes(network) {
   const lanes = [];
@@ -452,6 +455,7 @@ export async function revenueLanes(network) {
                 periodEnd,
                 chain: network.chain,
                 lane: "upvotes",
+                source: "Paid UP votes 100%",
                 assetSymbol: network.asset,
                 sourceInventoryId: network.chain === "solana" ? "sol101-mainnet-protocol-treasury" : `${evmPrefix(network)}-vote-treasury`,
                 nativeAmount,
@@ -465,6 +469,12 @@ export async function revenueLanes(network) {
         if (!schemaMissing(error)) console.warn("[finance/revenue] upvote lane omitted", error?.message || error);
       }
     }
+
+    // Arena boosts / entries, sponsorships, Home placements, DBC referral and
+    // EVM graduation fees: api/lib/financeRevenueLanes.js.
+    const extra = await extraRevenueLanes(pool, network);
+    lanes.push(...extra.lanes);
+    excludedEvents += extra.excludedEvents;
   }
 
   return { lanes, excludedEvents, hiddenCampaigns, notice };
@@ -473,11 +483,7 @@ export async function revenueLanes(network) {
 export async function buildRevenue(network, { prices = defaultPriceService() } = {}) {
   const { lanes, excludedEvents, hiddenCampaigns, notice } = await revenueLanes(network);
 
-  const aggregates = [];
-  for (const lane of lanes) {
-    const usd = await prices.valueEvents(lane.aggregate.assetSymbol, lane.buckets, network.decimals);
-    aggregates.push({ ...lane.aggregate, chainId: network.chainId, ...usd });
-  }
+  const aggregates = await valueRevenueLanes(lanes, network, prices);
 
   return {
     schemaVersion: "finance-revenue-v1",
@@ -1062,7 +1068,7 @@ function defaultSummaryBuild(months) {
       const read = await revenueLanes(network);
       if (read.notice) return { unavailable: read.notice, lanes: [] };
       return {
-        lanes: read.lanes.map((lane) => ({ asset: lane.aggregate.assetSymbol, decimals: network.decimals, buckets: lane.buckets })),
+        lanes: summaryRevenueLanes(read.lanes, network),
         excludedTestCoinEvents: read.excludedEvents,
       };
     },

@@ -232,7 +232,11 @@ function mainnetRegistry(chainId) {
         { destinationId: "safe", share: "5% of entries + 10% of boosts", note: "protocolReceiver (operatorReceiver unset)" },
       ],
       citation: "contracts/ArenaWarPoolTreasuryV2.sol:77-79,503-509,627-701",
-      notes: ["75% of entries and 90% of boosts are the prize, held in the war pool until claimed."],
+      notes: [
+        "75% of entries and 90% of boosts are the prize, held in the war pool until claimed.",
+        "Entries are battle stakes and tournament buy-ins (vote battles included). A cancelled pool refunds everything, so nothing is earned until it resolves.",
+        "Revenue lanes: arena-boosts (10% of confirmed boosts on finished battles) and arena-entries (league share / 4) in api/lib/financeRevenueLanes.js.",
+      ],
     },
     {
       id: "evm_post_grad",
@@ -271,8 +275,20 @@ function mainnetRegistry(chainId) {
         { destinationId: "protocol_vault", share: "20% marketing + 10% protocol" },
       ],
       citation: `contracts/WarzoneSponsorshipRouterV1.sol:23-24,181-182; ${rec}/mainnet.sponsorship-v1.json`,
-      notes: [],
+      notes: ["Revenue lane: sponsorships (marketing 20% + protocol 10% of confirmed sponsorship_payments). No refund path in the router."],
     },
+    ...(chainId === 56 ? [{
+      id: "evm_import_swaps",
+      label: "Imported-coin swaps",
+      trigger: "Swap from an imported coin page (KyberSwap, PancakeSwap pools only)",
+      router: "KyberSwap aggregator fee (feeReceiver checked by the API)",
+      totalFee: "0.5% (IMPORT_SWAP_FEE_BPS default 50), always in BNB",
+      status: "live, not indexed",
+      splits: [{ destinationId: "protocol_vault", share: "100% of the swap fee (IMPORT_SWAP_FEE_RECEIVER_56)" }],
+      citation: "frontend/api/importSwap.js:10-21,36,204-231",
+      notes: ["The API does not record import swaps, so this fee has no revenue lane yet: it is only visible as part of the protocol vault's forwarded balance."],
+    }] : []),
+    homePlacementsFlow(),
   ];
 
   const wiring = [
@@ -329,6 +345,25 @@ function testnetRegistry(chainId) {
     wiring: [],
     inflowDestinations: { weekly: "weekly_league", monthly: "monthly_league", recruiter: "recruiter_vault", airdrop: "community_vault", squad: "community_vault", protocol: "protocol_vault", creator: "creator_vault_v2" },
     alerts: [{ level: "info", message: "Testnet: destinations are read from the gen-6 router's getters at request time. The live API reads the production database, which holds no testnet routing events." }],
+  };
+}
+
+// Home top row / featured slots: sold off-chain, so there is no on-chain
+// destination. Shared with the Solana registry.
+export function homePlacementsFlow() {
+  return {
+    id: "home_placements",
+    label: "Home placements (sponsored slots)",
+    trigger: "Admin marks a sponsorship application paid (admin/sponsorship.js patchApplication)",
+    router: "Off-chain: no contract or program",
+    totalFee: "Package price in USD (sponsorship_packages)",
+    status: "off-chain, admin-recorded",
+    splits: [],
+    citation: "frontend/api/admin/sponsorship.js:46-77; public.sponsored_placements, public.sponsorship_applications",
+    notes: [
+      "100% protocol revenue when paid. Revenue lane home-placements values the package price in USD at paid_at (api/lib/financeRevenueLanes.js).",
+      "No payment reference or transaction is stored, so the amount rests on the admin's paid mark.",
+    ],
   };
 }
 

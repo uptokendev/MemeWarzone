@@ -336,3 +336,18 @@ test("all chains: a failing chain is reported, the others still load", async () 
   assert.equal(out.networks[1].status, "ok");
   assert.equal(out.prices.length, 1);
 });
+
+test("arena prizes: paid-in counts boosts from arena_contest_actions as well as stakes", async () => {
+  const db = fakeDb([
+    [/from public\.arena_war_pool_deposits/, [{ purpose: "stake", created_at: "2026-10-01T05:05:28Z", amount_raw: "200000000000000000" }]],
+    [/from public\.arena_contest_actions/, [{ created_at: "2026-10-02T11:35:21Z", amount_raw: "1304809797000000000" }]],
+  ]);
+  const out = await buildPayouts({ network: BNB, days: 30, db, env: {}, feeRouting: evmFeeRouting(), readers: EVM_READERS, prices: priceService(), now: () => NOW });
+  const arena = out.types.find((t) => t.id === "arena_prizes");
+  assert.equal(arena.paidIn.allTime.raw, "1504809797000000000");
+  assert.equal(arena.paidIn.allTime.count, 2);
+  assert.ok(arena.sources.includes("db:arena_contest_actions"));
+  const boostSql = db.seen.find((q) => /arena_contest_actions/.test(q.sql)).sql;
+  assert.match(boostSql, /action_type = 'boost'/);
+  assert.match(boostSql, /confirmed_at is not null/);
+});

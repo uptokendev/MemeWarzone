@@ -1,8 +1,10 @@
 // Finance Summary: one plain read for the Command Center summary page, made
 // for a read-only partner. No new sources and no new tables:
 //
-//   money earned    the /revenue lanes (protocol share of bonding-curve trades
-//                   and paid UP votes, hidden test coins left out), split by
+//   money earned    the /revenue lanes (protocol share of bonding-curve trades,
+//                   paid UP votes and the financeRevenueLanes.js lanes: arena
+//                   boosts / entries, sponsorships, Home placements, DBC
+//                   referral, EVM graduation; hidden test coins left out), split by
 //                   UTC calendar month and valued with the same event-time
 //                   rule (Binance hourly close of each event's hour);
 //   LP fee share    the protocol's harvested LP share after graduation, as the
