@@ -29,6 +29,44 @@ function solanaRpcUrl(): string {
   return String(process.env.SOLANA_RPC_URL || process.env.SOLANA_RPC || "https://api.mainnet-beta.solana.com").trim();
 }
 
+/** Mainnet deployer. It must never hold user money, so it can never receive the protocol 20%. */
+const SOLANA_MAINNET_DEPLOYER = "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H";
+
+/**
+ * Why a mainnet harvest must not run, or null when it may. Fail closed: the 20% only goes to an
+ * explicit SOLANA_PROTOCOL_TREASURY_ADDRESS, never to the fallbacks protocolTreasury() would use
+ * (SOLANA_VOTE_TREASURY_ADDRESS, the HuKfoF devnet operator, or the operator itself), and never to
+ * the deployer. When this returns null, protocolTreasury() resolves to exactly that address.
+ */
+export function solanaMainnetHarvestBlocker(
+  env: NodeJS.ProcessEnv = process.env,
+  operatorAddress: string | null = null,
+): string | null {
+  const raw = String(env.SOLANA_PROTOCOL_TREASURY_ADDRESS || "").trim();
+  if (!raw) {
+    return "Harvest refused: SOLANA_PROTOCOL_TREASURY_ADDRESS is not set on the indexer. The protocol 20% would go to a fallback wallet.";
+  }
+  let address: string;
+  try {
+    address = new PublicKey(raw).toBase58();
+  } catch {
+    return "Harvest refused: SOLANA_PROTOCOL_TREASURY_ADDRESS on the indexer is not a valid Solana address.";
+  }
+  if (address !== raw) {
+    return "Harvest refused: SOLANA_PROTOCOL_TREASURY_ADDRESS on the indexer is not a valid Solana address.";
+  }
+  if (address === SOLANA_MAINNET_DEPLOYER) {
+    return "Harvest refused: SOLANA_PROTOCOL_TREASURY_ADDRESS is the deployer wallet, which must never hold user money.";
+  }
+  if (address === DEFAULT_SOLANA_OPERATOR) {
+    return "Harvest refused: SOLANA_PROTOCOL_TREASURY_ADDRESS is the HuKfoF devnet operator, not the protocol treasury.";
+  }
+  if (operatorAddress && address === operatorAddress) {
+    return "Harvest refused: SOLANA_PROTOCOL_TREASURY_ADDRESS is the harvest operator itself, so the protocol 20% would stay in the operator wallet.";
+  }
+  return null;
+}
+
 function protocolTreasury(operator: PublicKey): PublicKey {
   const raw = String(
     process.env.SOLANA_PROTOCOL_TREASURY_ADDRESS ||
@@ -489,7 +527,7 @@ export async function listSolanaLpFees(input: {
     split: { creatorBps: CREATOR_FEE_BPS, protocolBps: PROTOCOL_FEE_BPS },
     notes: [
       "Solana LP fees accrue on the permanently locked DAMM v2 position.",
-      "There is no EVM TreasuryRouter. The 20% protocol share goes to the HuKfoF operator ATA.",
+      "There is no EVM TreasuryRouter. The 20% protocol share goes to protocolTreasury.",
       "Harvest claims fees then splits 80% creator / 20% protocol.",
     ],
     items,
@@ -497,10 +535,37 @@ export async function listSolanaLpFees(input: {
   };
 }
 
+// One Solana harvest at a time per process. The split amounts are the operator's balance change
+// across the claim, so two harvests in flight together (double click, retry, the auto loop next to a
+// manual collect) could each count the other's claim and pay the split twice from operator funds.
+let solanaHarvestInFlight: string | null = null;
+
 export async function harvestSolanaLpFees(input: {
   pool: Pool;
   campaign?: string | null;
   pair?: string | null;
+  /** Mainnet manual collect: the treasury the route checked. The harvest refuses if it resolves to anything else. */
+  expectedProtocolTreasury?: string | null;
+}) {
+  if (solanaHarvestInFlight) {
+    throw Object.assign(
+      new Error(`Another Solana LP harvest is still running (${solanaHarvestInFlight}). Wait for it to finish and refresh before trying again.`),
+      { status: 409 },
+    );
+  }
+  solanaHarvestInFlight = String(input.pair || input.campaign || "unknown position").slice(0, 64);
+  try {
+    return await harvestSolanaLpFeesOnce(input);
+  } finally {
+    solanaHarvestInFlight = null;
+  }
+}
+
+async function harvestSolanaLpFeesOnce(input: {
+  pool: Pool;
+  campaign?: string | null;
+  pair?: string | null;
+  expectedProtocolTreasury?: string | null;
 }) {
   const parsed = parseOperatorKey();
   if (!parsed.keypair) {
@@ -515,6 +580,12 @@ export async function harvestSolanaLpFees(input: {
   }
   const operator = parsed.keypair;
   const treasury = protocolTreasury(operator.publicKey);
+  if (input.expectedProtocolTreasury && treasury.toBase58() !== input.expectedProtocolTreasury) {
+    throw Object.assign(
+      new Error("Harvest refused: the protocol treasury the harvest would pay is not the checked SOLANA_PROTOCOL_TREASURY_ADDRESS."),
+      { status: 503 },
+    );
+  }
 
   const clauses = ["c.chain_id = $1", "c.graduated_at_chain is not null"];
   const params: unknown[] = [SOLANA_CHAIN_ID];
