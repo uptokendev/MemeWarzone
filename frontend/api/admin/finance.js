@@ -11,6 +11,7 @@ import { buildTotals, defaultPriceService, mergeTotals, priceAssetFor } from "..
 import { notPublicHiddenCampaignSql, publicHiddenWhere } from "../lib/publicHiddenCampaigns.js";
 import { financePayouts } from "../lib/financePayouts.js";
 import { buildFinanceSummary, cachedFinanceSummary, summaryMonths } from "../lib/financeSummary.js";
+import financeAccounting, { isFinanceAccountingPath } from "./financeAccounting.js";
 
 // Finance shows mainnets only (founder decision 2026-10-04): nothing is earned
 // on a testnet. chainId=all reads all three and adds a cross-chain total.
@@ -1081,6 +1082,8 @@ export default async function financeAdmin(req, res) {
   // Payouts overview (read-only, bearer + finance.view): api/lib/financePayouts.js.
   if (routePath === "/api/admin/finance/payouts") return financePayouts(req, res, { db: pool, canView: (p) => dashboardPrincipalCan(p, "finance.view") });
   if (routePath === "/api/admin/finance/summary") return financeSummary(req, res);
+  // Accounting (costs, close, tax reserve, exports, distributions): dashboard sign-in only, see financeAccounting.js.
+  if (isFinanceAccountingPath(routePath)) return financeAccounting(req, res);
 
   const auth = await requireAdminOrOps(req, res, { routeLabel: "admin/finance", allowOps: true });
   if (!auth) return;
