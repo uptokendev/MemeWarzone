@@ -94,6 +94,15 @@ with a realistic price and prize. **Check values, not presence:** `node scripts/
 prices every payout bound on both chains in dollars and fails outside $1..$1M -- run it after any
 deploy or Safe batch that sets a cap. After M2: the new addresses go into `league.js`,
 `evmLeagueClaimVerification.js` and `publish-evm-league-roots.mjs`.
+**Done 2026-10-04** (`fix/evm-monthly-league-treasury`): one resolver, `frontend/api/lib/evmMonthlyLeagueTreasury.js`,
+used by the publisher, `leagueRoot.js`, `monthlyLeagueTreasury.js`, `league.js` and claim verification. An env
+pointing at a superseded vault (or anything but the record on mainnet) fails closed; a seal also requires router V4
+and V3 `monthlyLeagueTreasury()` to equal the vault. Verified on chain that day: no month sealed on either old vault,
+both hold 0 (BNB dust 36239495805697 wei moved in M1), new vaults hold all monthly money, 202609 + 202610
+authorized (exceptional), **202608 not authorized** -> BNB August (12321428573942 wei, 5 leaves) needs a Safe
+`authorizeMonth(202608, ..., exceptional=true)` on `0x42D254A7…` before the publisher can seal it. BNB
+TreasuryRouterV2 `0xe157a6FD…` still points at the old vault (any V2-routed monthly slice lands there; Safe
+`withdrawNative` moves it).
 
 
 ### Airdrop: 60-day claim window, unclaimed rolls back into the pot (founder, 2026-09-27)
