@@ -6,6 +6,7 @@ import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../server/http.js";
 import { persistFinalizedCategory, readFinalizedCategory } from "./lib/finalizeLeagueEpoch.js";
 import { monthIdForEpochStart } from "./lib/evmLeagueClaimVerification.js";
+import { monthlyLeagueTreasuryAddress, monthlyLeagueTreasuryForMonth } from "./lib/evmMonthlyLeagueTreasury.js";
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "./lib/pokerPayout.mjs";
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import {
@@ -311,11 +312,6 @@ function getRpcUrl(chainId) {
   if (fallback && (id === 56 || id === 97)) return fallback;
   throw new Error(`Missing RPC env (BSC_RPC_HTTP_${id} or ROBINHOOD_RPC_HTTP_${id})`);
 }
-
-const MAINNET_MONTHLY_LEAGUE_TREASURY = {
-  56: "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8",
-  4663: "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
-};
 
 function getTreasuryVaultV2Address(chainId) {
   const id = Number(chainId);
@@ -760,12 +756,30 @@ export default async function handler(req, res) {
       // EVM monthly prizes are sealed in MonthlyLeagueTreasury under monthId (YYYYMM) -- the same
       // claim() shape as TreasuryVaultV2, so the client call is unchanged; only vault and id differ.
       const evmMonthly = !solanaClaim && period === "monthly";
+      // The treasury that holds this month (lib/evmMonthlyLeagueTreasury.js): the current vault, or a
+      // superseded one only if the month was sealed there. A bad or superseded config fails closed.
+      // Only the claim step returns a vault (and reads the chain); record keeps the config check.
+      let evmMonthlyVault = "";
+      if (evmMonthly) {
+        try {
+          if (action === "record") {
+            evmMonthlyVault = monthlyLeagueTreasuryAddress(chainId).toLowerCase();
+          } else {
+            const network = ethers.Network.from(Number(chainId));
+            const provider = new ethers.JsonRpcProvider(getRpcUrl(chainId), network, { staticNetwork: network, batchMaxCount: 1 });
+            evmMonthlyVault = (await monthlyLeagueTreasuryForMonth(provider, chainId, monthIdForEpochStart(new Date(epochStart)))).toLowerCase();
+          }
+        } catch (error) {
+          console.error("[api/league claim] MonthlyLeagueTreasury unavailable", { chainId, epochStart, code: error?.code, message: error?.message });
+          return json(res, 503, { error: "Monthly league treasury is unavailable right now. Nothing was sent.", code: error?.code || "MONTHLY_TREASURY_UNAVAILABLE" });
+        }
+      }
       const vaultAddress = solanaClaim
         ? leagueVaultForPeriod(period)
         : mwlClaim
           ? mwlVaultAddress(period, chainId).toLowerCase()
           : evmMonthly
-          ? String(process.env[`MONTHLY_LEAGUE_TREASURY_ADDRESS_${chainId}`] || MAINNET_MONTHLY_LEAGUE_TREASURY[chainId] || "").trim().toLowerCase()
+          ? evmMonthlyVault
           : getTreasuryVaultV2Address(chainId);
       if (evmMonthly && !isAddress(vaultAddress)) return json(res, 500, { error: "Server misconfigured: bad MonthlyLeagueTreasury address" });
       const client = await pool.connect();

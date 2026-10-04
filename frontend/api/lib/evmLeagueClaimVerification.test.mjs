@@ -10,7 +10,9 @@ test("monthly EVM claims use MonthlyLeagueTreasury and monthId; weekly keeps Tre
   process.env.TREASURY_VAULT_V2_ADDRESS_56 = "0xC9286EE3390A4dC642340bd703396E6B7b2521d5";
   const monthly = buildExpectedEvmLeagueClaim({ chainId: 56, period: "monthly", epochStart: "2026-09-01T00:00:00.000Z", category: "recruiter_league", rank: 7, recipient, amountRaw: "1000" });
   assert.equal(monthly.epochId, 202609n, "monthId YYYYMM, as MonthlyLeagueTreasury.sealMonth keys it");
-  assert.equal(monthly.vaultAddress, "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8");
+  // The 2026-09-27 replacement (deployments/bnb/mainnet.monthly-league-treasury-v2.json), not the
+  // superseded few-wei-cap vault 0xF62A09de... that the routers no longer feed.
+  assert.equal(monthly.vaultAddress, "0x42D254A7451808Bb01df879d71BcAfDC5D605A38");
   assert.equal(monthly.claimedGetter, "monthLeafClaimed");
   const coder = AbiCoder.defaultAbiCoder();
   const expectedLeaf = keccak256(coder.encode(["uint256", "bytes32", "uint8", "address", "uint256"], [202609n, keccak256(toUtf8Bytes("recruiter_league")), 7, recipient, 1000n]));

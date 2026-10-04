@@ -2,6 +2,12 @@ import { MWL_EVM_PERIOD_CODES, isMwlPayoutPeriod } from "./lib/mwlPayoutVaults.j
 import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, isAddress, json, readJson } from "../server/http.js";
+import {
+  MonthlyLeagueTreasuryConfigError,
+  assertFeeRoutersFeedMonthlyTreasury,
+  isSupersededMonthlyLeagueTreasury,
+  monthlyLeagueTreasuryForMonth,
+} from "./lib/evmMonthlyLeagueTreasury.js";
 
 // POST /api/leagueRoot
 // Admin-only helper to publish a weekly epoch root or seal a monthly league root.
@@ -127,7 +133,21 @@ async function publishWeeklyRoot({ res, chainId, claimId, root, winnerTotal, wal
 }
 
 async function publishMonthlyRoot({ res, chainId, claimId, root, winnerTotal, wallet }) {
-  const treasuryAddress = chainScopedEnv("MONTHLY_LEAGUE_TREASURY_ADDRESS", chainId);
+  // lib/evmMonthlyLeagueTreasury.js: the vault holding this month (current, or a superseded one only
+  // if the month was already sealed there -> the 409 below). Bad or superseded config fails closed,
+  // and a new seal goes ahead only while the live fee routers feed that same vault.
+  let treasuryAddress;
+  try {
+    treasuryAddress = await monthlyLeagueTreasuryForMonth(wallet.provider, chainId, claimId);
+    if (!isSupersededMonthlyLeagueTreasury(chainId, treasuryAddress)) {
+      await assertFeeRoutersFeedMonthlyTreasury(wallet.provider, chainId, treasuryAddress);
+    }
+  } catch (error) {
+    if (error instanceof MonthlyLeagueTreasuryConfigError) {
+      return json(res, error.status || 500, { error: `MonthlyLeagueTreasury refused: ${error.message}`, code: error.code });
+    }
+    throw error;
+  }
   if (!isAddress(treasuryAddress)) {
     return json(res, 500, { error: "Server misconfigured: bad MonthlyLeagueTreasury address" });
   }
@@ -148,6 +168,11 @@ async function publishMonthlyRoot({ res, chainId, claimId, root, winnerTotal, wa
       root: existing.winnersRoot,
       contractAddress: treasuryAddress,
     });
+  }
+
+  // Never seal on a superseded vault (unreachable: it is only resolved for a month already sealed there).
+  if (isSupersededMonthlyLeagueTreasury(chainId, treasuryAddress)) {
+    return json(res, 409, { error: "Refusing to seal on a superseded MonthlyLeagueTreasury", contractAddress: treasuryAddress });
   }
 
   const tx = await treasury.sealMonth(claimId, root, winnerTotal);

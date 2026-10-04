@@ -20,8 +20,14 @@
  *   node scripts/publish-evm-league-roots.mjs --dry-run      # reads + static calls, sends nothing
  *   node scripts/publish-evm-league-roots.mjs                # hourly Coolify task on the API
  *
+ * Monthly: the treasury comes from api/lib/evmMonthlyLeagueTreasury.js (deployment record; the
+ * optional MONTHLY_LEAGUE_TREASURY_ADDRESS_<id> must equal it, a superseded vault is refused). A month
+ * is sealed there only while the live fee routers (V4, V3) send the monthly slice to that same vault,
+ * and never on a superseded vault. A dry run without LEAGUE_ROOT_POSTER_PK static-calls sealMonth from
+ * the treasury's on-chain rootPoster, so it reports the contract's real verdict.
+ *
  * Env: DATABASE_URL, LEAGUE_ROOT_POSTER_PK, EVM_LEAGUE_ROOT_CHAINS (default 56,4663),
- * TREASURY_VAULT_V2_ADDRESS_<id>, MONTHLY_LEAGUE_TREASURY_ADDRESS_<id> (mainnet defaults below),
+ * TREASURY_VAULT_V2_ADDRESS_<id> (mainnet defaults below), MONTHLY_LEAGUE_TREASURY_ADDRESS_<id>,
  * BSC_RPC_HTTP_<id> / ROBINHOOD_RPC_HTTP_<id> (public RPC defaults).
  */
 // First: the same env setup the API server boots with (Supabase pooler TLS), before server/db.js reads it.
@@ -30,13 +36,20 @@ import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { buildMerkleRoot, categoryHashFromString, computeEpochId, leafHash, monthIdFromDate } from "../api/leagueRoot.js";
 import { isMwlPayoutPeriod, mwlVaultAddress } from "../api/lib/mwlPayoutVaults.js";
+import {
+  assertFeeRoutersFeedMonthlyTreasury,
+  isSupersededMonthlyLeagueTreasury,
+  monthlyLeagueTreasuryAddress,
+  monthlyLeagueTreasuryForMonth,
+} from "../api/lib/evmMonthlyLeagueTreasury.js";
 
 const dryRun = process.argv.includes("--dry-run");
 const LOOKBACK_DAYS = Number(process.env.EVM_LEAGUE_ROOT_LOOKBACK_DAYS || 120);
 
+// Weekly TreasuryVaultV2 defaults. Monthly lives in api/lib/evmMonthlyLeagueTreasury.js.
 const MAINNET = {
-  56: { weekly: "0xC9286EE3390A4dC642340bd703396E6B7b2521d5", monthly: "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8" },
-  4663: { weekly: "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e", monthly: "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238" },
+  56: { weekly: "0xC9286EE3390A4dC642340bd703396E6B7b2521d5" },
+  4663: { weekly: "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e" },
 };
 
 const WEEKLY_ABI = [
@@ -48,6 +61,7 @@ const WEEKLY_ABI = [
 const MONTHLY_ABI = [
   "function monthSeal(uint256) view returns (bool isSealed, bytes32 winnersRoot, uint256 oraclePrice, uint256 capUsd, uint256 capNative, uint256 playerPool, uint256 winnerTotal, uint256 overflow, uint256 sealedAt)",
   "function sealMonth(uint256 monthId, bytes32 winnersRoot, uint256 winnerTotal)",
+  "function rootPoster() view returns (address)",
   // Custom errors, so a BLOCKED line names the reason (contracts/MonthlyLeagueTreasury.sol).
   ...["NotRootPosterOrMultisig", "RootZero", "MonthAlreadySealed", "WinnerTotalAboveCap", "WinnerTotalAbovePlayerPool",
     "MonthNotAuthorized", "MonthAuthConsumed", "MonthAuthRevoked", "SealTooEarly", "SealAuthExpired",
@@ -57,8 +71,9 @@ const MONTHLY_ABI = [
 function address(kind, chainId) {
   // Major War League months / quarters: their own TreasuryVaultV2 per period (never a pre-grad vault).
   if (isMwlPayoutPeriod(kind)) return mwlVaultAddress(kind, chainId);
-  const envName = kind === "weekly" ? "TREASURY_VAULT_V2_ADDRESS" : "MONTHLY_LEAGUE_TREASURY_ADDRESS";
-  return String(process.env[`${envName}_${chainId}`] || MAINNET[chainId]?.[kind] || "").trim();
+  // Monthly: the one canonical resolver; throws (-> BLOCKED) on a missing, superseded or odd config.
+  if (kind === "monthly") return monthlyLeagueTreasuryAddress(chainId);
+  return String(process.env[`TREASURY_VAULT_V2_ADDRESS_${chainId}`] || MAINNET[chainId]?.[kind] || "").trim();
 }
 
 function rpcUrl(chainId) {
@@ -162,9 +177,10 @@ async function main() {
 
     for (const { period, epoch_start: epochStart } of await epochList(chainId)) {
       const at = new Date(epochStart).toISOString();
-      const vaultAddress = address(period, chainId);
-      const base = { chainId, period, epochStart: at, vault: vaultAddress };
+      const base = { chainId, period, epochStart: at, vault: "" };
       try {
+        const vaultAddress = address(period, chainId);
+        base.vault = vaultAddress;
         if (!ethers.isAddress(vaultAddress)) throw new Error(`no ${period} league vault configured for chain ${chainId}`);
         const built = await buildRoot(chainId, period, epochStart);
         const item = { ...base, claimId: built.claimId.toString(), root: built.root, total: built.total.toString(), winners: built.count };
@@ -192,7 +208,11 @@ async function main() {
           if (published) await recordPostedRoot(item, tx.hash, "published");
           report.push({ ...item, status: published ? "published" : "PUBLISHED_ROOT_MISMATCH", txHash: tx.hash });
         } else {
-          const treasury = new ethers.Contract(vaultAddress, MONTHLY_ABI, signer);
+          // The vault holding this month: the current one, or a superseded vault only if the month was
+          // already sealed there (then it is reported, never sealed again anywhere).
+          const monthVault = await monthlyLeagueTreasuryForMonth(provider, chainId, built.claimId);
+          item.vault = monthVault;
+          const treasury = new ethers.Contract(monthVault, MONTHLY_ABI, signer);
           const seal = await treasury.monthSeal(built.claimId);
           if (seal.isSealed) {
             const same = seal.winnersRoot.toLowerCase() === built.root.toLowerCase();
@@ -200,7 +220,12 @@ async function main() {
             report.push({ ...item, status: same ? "already_sealed" : "ON_CHAIN_ROOT_DIFFERS", onChainRoot: seal.winnersRoot });
             continue;
           }
-          await treasury.sealMonth.staticCall(built.claimId, built.root, built.total);
+          if (isSupersededMonthlyLeagueTreasury(chainId, monthVault)) throw new Error(`refusing to seal on superseded MonthlyLeagueTreasury ${monthVault}`);
+          // The live fee routers must feed this vault; otherwise the record and the chain disagree.
+          await assertFeeRoutersFeedMonthlyTreasury(provider, chainId, monthVault);
+          // Dry run without the key: ask the contract as its own rootPoster, not as a random wallet.
+          if (pk) await treasury.sealMonth.staticCall(built.claimId, built.root, built.total);
+          else await treasury.connect(provider).sealMonth.staticCall(built.claimId, built.root, built.total, { from: await treasury.rootPoster() });
           if (dryRun) { report.push({ ...item, status: "would_seal" }); continue; }
           const tx = await treasury.sealMonth(built.claimId, built.root, built.total);
           await tx.wait(1);

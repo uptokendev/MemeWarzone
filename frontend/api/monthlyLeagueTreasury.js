@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, isAddress, json } from "../server/http.js";
+import { MonthlyLeagueTreasuryConfigError, monthlyLeagueTreasuryForMonth } from "./lib/evmMonthlyLeagueTreasury.js";
 
 const MONTHLY_TREASURY_ABI = [
   "function monthSeal(uint256 monthId) view returns (bool isSealed, bytes32 winnersRoot, uint256 oraclePrice, uint256 capUsd, uint256 capNative, uint256 playerPool, uint256 winnerTotal, uint256 overflow, uint256 sealedAt)",
@@ -35,17 +36,8 @@ export default async function handler(req, res) {
       return json(res, 400, { error: "Invalid wallet" });
     }
 
-    const contractAddress = chainScopedEnv("MONTHLY_LEAGUE_TREASURY_ADDRESS", chainId);
-    if (!isAddress(contractAddress)) {
-      return json(res, 500, { error: "Server misconfigured: bad MonthlyLeagueTreasury address" });
-    }
-
     const rpc = chainScopedEnv("BSC_RPC_HTTP", chainId);
     if (!rpc) return json(res, 500, { error: "Server misconfigured: missing RPC url" });
-
-    const epochStart = epochStartFromMonthId(monthId);
-    const winners = await loadWinners(chainId, epochStart);
-    const tree = buildWinnerTree(monthId, winners);
 
     const network = ethers.Network.from(Number(chainId));
     const provider = new ethers.JsonRpcProvider(rpc, network, {
@@ -53,6 +45,27 @@ export default async function handler(req, res) {
       batchMaxCount: 1,
       batchStallTime: 0,
     });
+
+    // lib/evmMonthlyLeagueTreasury.js: the current vault, or a superseded one only if this month was
+    // sealed there. A missing, superseded or non-canonical config fails closed (no claim transaction).
+    let contractAddress;
+    try {
+      contractAddress = await monthlyLeagueTreasuryForMonth(provider, chainId, monthId);
+    } catch (error) {
+      if (error instanceof MonthlyLeagueTreasuryConfigError) {
+        console.error("[api/monthlyLeagueTreasury] misconfigured", { chainId, code: error.code, message: error.message });
+        return json(res, 500, { error: "Server misconfigured: bad MonthlyLeagueTreasury address", code: error.code });
+      }
+      throw error;
+    }
+    if (!isAddress(contractAddress)) {
+      return json(res, 500, { error: "Server misconfigured: bad MonthlyLeagueTreasury address" });
+    }
+
+    const epochStart = epochStartFromMonthId(monthId);
+    const winners = await loadWinners(chainId, epochStart);
+    const tree = buildWinnerTree(monthId, winners);
+
     const treasury = new ethers.Contract(contractAddress, MONTHLY_TREASURY_ABI, provider);
     const [seal, claimedTotal, outstandingClaims, totalOutstandingClaims, unallocatedBalance] = await Promise.all([
       treasury.monthSeal(monthId),
