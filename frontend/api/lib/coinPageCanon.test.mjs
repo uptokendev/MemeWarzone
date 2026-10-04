@@ -54,9 +54,14 @@ test("profile: limits and types", () => {
 test("posts: 1..280 characters, https image, share defaults on", () => {
   assert.equal(validateCoinPostInput({ body: "  " }).code, "COIN_POST_EMPTY");
   assert.equal(validateCoinPostInput({ body: "x".repeat(281) }).code, "COIN_POST_TOO_LONG");
-  assert.deepEqual(validateCoinPostInput({ body: " gm " }).values, { body: "gm", media_url: null, share_to_feed: true });
+  // Founder 2026-10-04: up to 4 images per update; media_urls is empty for a post without extra images.
+  assert.deepEqual(validateCoinPostInput({ body: " gm " }).values, { body: "gm", media_url: null, media_urls: [], share_to_feed: true });
   assert.equal(validateCoinPostInput({ body: "gm", shareToFeed: false }).values.share_to_feed, false);
   assert.equal(validateCoinPostInput({ body: "gm", mediaUrl: "http://x.y/z.png" }).code, "COIN_LINK_INVALID");
+  const four = ["https://a.b/1.png", "https://a.b/2.png", "https://a.b/3.png", "https://a.b/4.png"];
+  assert.deepEqual(validateCoinPostInput({ body: "gm", mediaUrls: four }).values.media_urls, four);
+  assert.equal(validateCoinPostInput({ body: "gm", mediaUrls: four }).values.media_url, four[0]);
+  assert.equal(validateCoinPostInput({ body: "gm", mediaUrls: [...four, "https://a.b/5.png"] }).code, "COIN_POST_IMAGES");
 });
 
 test("image slots and storage path", () => {

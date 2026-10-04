@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ItemMenu } from "@/components/moderation/ItemMenu";
 import { useModeration } from "@/hooks/useModeration";
 import { CoinPriceLine, CoinSparkline, useCoinMiniMarket } from "@/components/feed/CoinSparkline";
-import { PostImage } from "@/components/feed/PostImage";
+import { PostImage, PostImageGrid } from "@/components/feed/PostImage";
 import { MentionField } from "@/components/feed/MentionField";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Link, useNavigate } from "react-router-dom";
@@ -15,6 +15,7 @@ import {
   feedViewerKey,
   queueFeedView,
   toggleFeedFire,
+  MAX_POST_IMAGES,
   deleteFeedPost,
   toggleFeedRepost,
   type FeedItem,
@@ -308,9 +309,10 @@ function QuoteDialog({ item, onClose, onPosted }: { item: FeedItem; onClose: () 
             <p className="m-0 mt-0.5 line-clamp-3 whitespace-pre-wrap text-sm">{item.body}</p>
           </div>
         </div>
+        <ComposerImages urls={composer.previewUrls} onRemove={composer.removeFile} />
         <div className="flex items-center gap-2 text-[13px] text-mw-muted">
-          <ImagePickButton onPick={composer.setFile} disabled={composer.posting} />
-          <span>{composer.file ? composer.file.name : "A contract address in your text adds a coin card."}</span>
+          <ImagePickButton onPickMany={composer.addFiles} disabled={composer.posting || !composer.canAddImage} />
+          <span>{composer.files.length ? `${composer.files.length} of ${MAX_POST_IMAGES} images` : "A contract address in your text adds a coin card."}</span>
         </div>
       </div>
     </div>
@@ -541,7 +543,7 @@ export function FeedPostCard({ item, onChanged }: { item: FeedItem; onChanged?: 
           <Link to={postHref(item.postId)} className="block text-mw-text hover:text-mw-text">
             <FeedBody body={item.body} />
           </Link>
-          {item.mediaUrl ? <PostImage src={item.mediaUrl} /> : null}
+          {item.mediaUrls?.length || item.mediaUrl ? <PostImageGrid images={item.mediaUrls?.length ? item.mediaUrls : [String(item.mediaUrl)]} /> : null}
           {item.quoted ? <QuotedPost quoted={item.quoted} /> : null}
           {(item.mentionedCampaign || item.mentionedToken || ticker) ? <FeedCoinCard item={item} /> : null}
           {item.postId ? <FeedPostActions item={item} onChanged={onChanged} /> : null}
@@ -576,7 +578,7 @@ export function FeedCoinPostCard({ item }: { item: FeedItem }) {
           />
         </div>
         <FeedBody body={item.body} />
-        {item.mediaUrl ? <PostImage src={item.mediaUrl} /> : null}
+        {item.mediaUrls?.length || item.mediaUrl ? <PostImageGrid images={item.mediaUrls?.length ? item.mediaUrls : [String(item.mediaUrl)]} /> : null}
         {/* Founder 2026-10-03: creator updates take reactions like any post, through their linked post. */}
         {item.postId ? <FeedPostActions item={item} /> : null}
       </div>
@@ -745,17 +747,36 @@ export function FeedWhoToFollow({ authors }: { authors: FeedSuggestion[] }) {
 }
 
 /** Image picker button for the composers (artboard "Add image"). */
-export function ImagePickButton({ onPick, disabled }: { onPick: (file: File) => void; disabled?: boolean }) {
+/** Thumbnails of the images picked for a post, each with its own remove button. */
+export function ComposerImages({ urls, onRemove, className = "" }: { urls: string[]; onRemove: (index: number) => void; className?: string }) {
+  if (!urls.length) return null;
+  return (
+    <div className={`flex flex-wrap gap-2 ${className}`} data-composer-images={urls.length}>
+      {urls.map((url, i) => (
+        <div key={url} className="relative">
+          <img src={url} alt={`Image ${i + 1} to post`} className="h-24 w-24 rounded-[10px] border border-mw-border object-cover" />
+          <button type="button" onClick={() => onRemove(i)} aria-label={`Remove image ${i + 1}`} className="mw-focus absolute right-1 top-1 inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/75 text-white">
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ImagePickButton({ onPick, onPickMany, disabled }: { onPick?: (file: File) => void; onPickMany?: (files: File[]) => void; disabled?: boolean }) {
   return (
     <label className={`mw-focus inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[10px] border border-mw-edge bg-mw-raised text-mw-text hover:bg-[#222830] ${disabled ? "pointer-events-none opacity-50" : ""}`} aria-label="Add image">
       <ImagePlus className="h-5 w-5" aria-hidden="true" />
       <input
         type="file"
         accept="image/png,image/jpeg,image/webp"
+        multiple={Boolean(onPickMany)}
         className="sr-only"
         onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) onPick(file);
+          const picked = Array.from(event.target.files || []);
+          if (onPickMany && picked.length) onPickMany(picked);
+          else if (picked[0]) onPick?.(picked[0]);
           event.currentTarget.value = "";
         }}
       />

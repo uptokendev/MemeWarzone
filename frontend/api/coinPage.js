@@ -14,6 +14,7 @@ import { getQuery, json, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
 import { hasCoinPostLink, linkCoinPost, unlinkCoinPost } from "./lib/coinPostLink.js";
+import { hasMediaUrls, mediaUrlsSelect, refreshMediaUrlColumns } from "./lib/postMediaUrls.js";
 import { coinIdent, coinPageOwner, isSolanaChain } from "./lib/coinPageOwner.js";
 import {
   COIN_POST_RATE,
@@ -74,7 +75,7 @@ async function readPosts(chainId, token, limit = 50) {
   try {
     const match = isSolanaChain(chainId) ? "token_address = $2" : "lower(token_address) = lower($2)";
     const { rows } = await pool.query(
-      `select id, body, media_url, share_to_feed, created_at from public.coin_posts
+      `select id, body, media_url, ${mediaUrlsSelect("coin_posts", "coin")}, share_to_feed, created_at from public.coin_posts
         where chain_id = $1 and ${match} and status = 0 order by created_at desc limit $3`,
       [chainId, token, limit],
     );
@@ -247,9 +248,11 @@ async function handlePostCreate(req, res) {
   const auth = await authorizeOwner(res, body, "coin_post_create", [], req);
   if (!auth) return;
   const { chainId, owner, verified } = auth;
-  const { body: text, media_url, share_to_feed } = checked.values;
-  if (!imageAllowed(media_url, chainId, owner.token)) {
-    return json(res, 400, { error: "Images must be uploaded on this page.", code: "COIN_IMAGE_FOREIGN" });
+  const { body: text, media_url, media_urls, share_to_feed } = checked.values;
+  for (const url of [media_url, ...media_urls]) {
+    if (!imageAllowed(url, chainId, owner.token)) {
+      return json(res, 400, { error: "Images must be uploaded on this page.", code: "COIN_IMAGE_FOREIGN" });
+    }
   }
   const recent = await pool.query(
     `select count(*)::int as n from public.coin_posts
@@ -264,6 +267,11 @@ async function handlePostCreate(req, res) {
      values ($1, $2, $3, $4, $5, $6) returning id, body, media_url, share_to_feed, created_at`,
     [chainId, owner.token, verified.walletAddress, text, media_url, share_to_feed],
   );
+  // All images of the update (founder, 2026-10-04), written after the insert like on posts.
+  if (rows[0]?.id && media_urls.length > 1 && hasMediaUrls("coin")) {
+    await pool.query(`update public.coin_posts set media_urls = $2::text[] where id = $1`, [rows[0].id, media_urls]);
+    rows[0].media_urls = media_urls;
+  }
   // The linked post that carries rockets, reposts, replies and views (founder, 2026-10-03).
   if (rows[0]?.id) {
     await linkCoinPost(null, { coinPostId: rows[0].id, authorWallet: verified.walletAddress, body: text, mediaUrl: media_url, chainId, token: owner.token });
@@ -293,6 +301,7 @@ async function handlePostDelete(req, res, postId) {
 }
 
 export default async function handler(req, res) {
+  await refreshMediaUrlColumns();
   const method = String(req.method || "GET").toUpperCase();
   const p = String(req.path || new URL(req.url, "http://localhost").pathname).replace(/\/+$/, "");
   try {
