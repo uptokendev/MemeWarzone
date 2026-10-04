@@ -125,7 +125,7 @@ export function requireInternalAuth(req, res, { routeLabel = "internal" } = {}) 
   return false;
 }
 
-function dashboardPrincipalAsAdmin(principal) {
+export function dashboardPrincipalAsAdmin(principal) {
   return {
     id: principal.authUserId,
     email: principal.email,

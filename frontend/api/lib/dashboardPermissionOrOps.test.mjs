@@ -67,6 +67,8 @@ test("a principal with the permission passes", () => {
   const auth = requireDashboardPermissionOrOpsKey({ headers: {}, dashboardPrincipal: principal(["finance.view"]) }, res, "finance.view");
   assert.equal(auth.mode, "admin");
   assert.equal(res.statusCode, 0);
+  // Security handlers record the acting admin from apiAuth.admin.email.
+  assert.equal(auth.admin.email, "ops@example.com");
 });
 
 test("wrapper: finance.view cannot write, finance.manage can", async () => {
@@ -82,4 +84,32 @@ test("wrapper: finance.view cannot write, finance.manage can", async () => {
   await handler({ method: "POST", headers: {}, dashboardPrincipal: principal(["finance.manage", "finance.view"]) }, allowed);
   assert.equal(allowed.statusCode, 200);
   assert.equal(calls, 1);
+});
+
+test("wrapper: security.view reads, only security.manage writes; ops key passes both", async () => {
+  const SECURITY = { read: "security.view", write: "security.manage" };
+  let seen = null;
+  const handler = withDashboardPermissionOrOpsKey(async (req, res) => { seen = req.apiAuth; res.status(200).json({ ok: true }); }, "security", SECURITY);
+
+  const noAuth = fakeRes();
+  await withEnv({ DASHBOARD_OPS_KEY: "ops-secret", OPS_READ_KEY: null, API_AUTH_ENFORCE_SECURITY_MUTATIONS: "0" }, () => handler({ method: "GET", headers: {}, query: {} }, noAuth));
+  assert.equal(noAuth.statusCode, 401);
+
+  const read = fakeRes();
+  await handler({ method: "GET", headers: {}, dashboardPrincipal: principal(["security.view"]) }, read);
+  assert.equal(read.statusCode, 200);
+
+  const write = fakeRes();
+  await handler({ method: "POST", headers: {}, dashboardPrincipal: principal(["security.view"]) }, write);
+  assert.equal(write.statusCode, 403);
+  assert.equal(write.body.permission, "security.manage");
+
+  const manage = fakeRes();
+  await handler({ method: "POST", headers: {}, dashboardPrincipal: principal(["security.manage", "security.view"]) }, manage);
+  assert.equal(manage.statusCode, 200);
+  assert.equal(seen.admin.email, "ops@example.com");
+
+  const ops = fakeRes();
+  await withEnv({ DASHBOARD_OPS_KEY: "ops-secret", OPS_READ_KEY: null }, () => handler({ method: "POST", headers: { "x-ops-key": "ops-secret" }, query: {} }, ops));
+  assert.equal(ops.statusCode, 200);
 });

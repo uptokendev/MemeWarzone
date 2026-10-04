@@ -1,4 +1,5 @@
 import pg from "pg";
+import { authorizeDiagnostics } from "./lib/diagnosticsAuth.js";
 
 const { Pool } = pg;
 
@@ -594,20 +595,19 @@ async function collectAblyStats() {
 
 export default async function handler(req, res) {
   try {
-    const want = String(process.env.DIAGNOSTICS_TOKEN || "");
-    const got = String(req.query?.token || "");
-
-    // Hide endpoint if not authorized
-    if (!want || got !== want) {
-      return res.status(404).json({ error: "Not found" });
-    }
-
+    // Command Center user with diagnostics.view, or DIAGNOSTICS_TOKEN.
+    const auth = await authorizeDiagnostics(req, res);
+    if (!auth) return;
 
     // Optional UI: /api/diagnostics-ui?token=... is rewritten here as /api/diagnostics?ui=1&token=...
     // We keep it inside this single function to save function slots on Vercel Hobby.
     const ui = String(req.query?.ui || "");
     if (ui === "1") {
-      const token = got; // token comes from querystring
+      // The page fetches the JSON again with the token, so it only works with the token.
+      if (auth.mode !== "token") {
+        return res.status(400).json({ ok: false, error: "The diagnostics page needs the diagnostics token." });
+      }
+      const token = auth.token;
 
       const html = `<!doctype html>
 <html lang="en">

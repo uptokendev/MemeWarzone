@@ -66,6 +66,6 @@ test("the ops key still reaches the route (server-to-server)", async () => {
 });
 
 test("unrelated routes keep the old no-bearer pass-through", async () => {
-  const { nextCalled } = await run("/api/security/creators");
+  const { nextCalled } = await run("/api/rewards/me");
   assert.equal(nextCalled, true);
 });

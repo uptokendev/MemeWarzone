@@ -1,4 +1,4 @@
-// Fail-closed auth for dashboard finance routes (Reward Ops, recruiter payouts).
+// Fail-closed auth for dashboard routes (Reward Ops, recruiter payouts, Security).
 //
 // A request passes only when either:
 //   - the railwayProxy capability gate already resolved a dashboard principal
@@ -8,7 +8,7 @@
 // these routes never fall back to the legacy no-auth path.
 
 import { timingSafeEqual } from "node:crypto";
-import { getExpectedOpsKey, readOpsKey } from "./apiAuth.js";
+import { dashboardPrincipalAsAdmin, getExpectedOpsKey, readOpsKey } from "./apiAuth.js";
 import { dashboardPrincipalCan } from "../dashboard/_access.js";
 
 function sameSecret(provided, expected) {
@@ -29,14 +29,16 @@ export function permissionForMethod(method, { read, write }) {
 }
 
 /**
- * Returns the auth context ({ mode: "admin", principal } or { mode: "ops-key" })
+ * Returns the auth context ({ mode: "admin", principal, admin } or { mode: "ops-key" })
  * or null after writing the refusal.
  */
 export function requireDashboardPermissionOrOpsKey(req, res, permission) {
   const principal = req.dashboardPrincipal;
   if (principal) {
     if (dashboardPrincipalCan(principal, permission)) {
-      return { mode: "admin", principal, authorizationSource: "dashboard-permission" };
+      // `admin` mirrors requireAdminOrOps so handlers that record the acting
+      // admin (security_actions.admin_email) keep seeing the signed-in email.
+      return { mode: "admin", principal, admin: dashboardPrincipalAsAdmin(principal), authorizationSource: "dashboard-permission" };
     }
     if (!res.headersSent) {
       res.status(403).json({ ok: false, error: "You do not have permission to access this Command Center section.", permission, code: "DASHBOARD_PERMISSION_REQUIRED" });
