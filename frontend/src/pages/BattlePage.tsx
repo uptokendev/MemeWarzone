@@ -5,6 +5,7 @@
  */
 import { ItemMenu } from "@/components/moderation/ItemMenu";
 import { useModeration } from "@/hooks/useModeration";
+import { PersonAvatar } from "@/components/ui-v2/PersonAvatar";
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -96,12 +97,11 @@ function SideChip({ side, ticker }: { side: "left" | "right"; ticker?: string })
 
 function CommentCard({ comment, tickers }: { comment: BattleComment; tickers: [string, string] }) {
   const moderation = useModeration();
-  const initials = comment.wallet.replace(/^0x/, "").slice(0, 2).toUpperCase();
   // CO-30: hidden comments and comments by blocked accounts disappear for this viewer only.
   if (moderation.isHidden("battle_comment", comment.id) || moderation.isBlocked(comment.wallet)) return null;
   return (
     <article className={`${card} flex gap-3 p-3.5 lg:gap-3.5 lg:px-[18px] lg:py-4`}>
-      <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#2B3440] font-mw-cond text-base font-bold text-[#C9CED4]" aria-hidden="true">{initials}</span>
+      <PersonAvatar wallet={comment.wallet} size={44} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <WalletLabel className="font-mw-mono font-bold" wallet={comment.wallet} />
@@ -244,9 +244,7 @@ export default function BattlePage() {
 
   const composer = (
     <section className={`${card} flex items-center gap-3 p-3 lg:gap-3.5 lg:px-[18px] lg:py-3.5`} aria-label="Write a comment">
-      <span className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#2B3440] font-mw-cond text-[15px] font-bold text-[#C9CED4] lg:inline-flex" aria-hidden="true">
-        {signer.address ? signer.address.replace(/^0x/, "").slice(0, 2).toUpperCase() : "?"}
-      </span>
+      <span className="hidden lg:inline-flex"><PersonAvatar wallet={signer.address || null} size={44} /></span>
       <input
         type="text"
         maxLength={280}

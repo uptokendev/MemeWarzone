@@ -28,6 +28,7 @@ import { useWallet } from "@/contexts/WalletContext";
 import { getFrontendApiOrigin } from "@/lib/apiBase";
 import { isSolanaChainId } from "@/lib/chainConfig";
 import { resolveImageUri } from "@/lib/media";
+import { PersonAvatar } from "@/components/ui-v2/PersonAvatar";
 import warzoneHud from "@/assets/promotion/warzonehud.png";
 import {
   addDraftComment,
@@ -823,24 +824,8 @@ function TransmissionList({
             ) : (
               items.map((item) => (
                 <div key={item.id} className="rounded-[14px] border border-mw-border bg-mw-surface flex gap-3 p-4">
-                  {item.avatarUrl ? (
-                    <img
-                      src={item.avatarUrl}
-                      alt=""
-                      className="h-10 w-10 shrink-0 rounded-full border border-mw-border bg-mw-input object-cover"
-                      onError={(event) => {
-                        (event.currentTarget as HTMLImageElement).style.display = "none";
-                        const fallback = event.currentTarget.nextElementSibling as HTMLElement | null;
-                        if (fallback) fallback.classList.remove("hidden");
-                      }}
-                    />
-                  ) : null}
-                  <div
-                    className={`h-10 w-10 shrink-0 rounded-full border border-mw-border bg-[#2A1609] ${
-                      item.avatarUrl ? "hidden" : ""
-                    }`}
-                    aria-hidden={Boolean(item.avatarUrl)}
-                  />
+                  {/* No picture = the green operative (founder, 2026-10-03). */}
+                  <PersonAvatar wallet={item.walletAddress} url={item.avatarUrl || null} size={40} />
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3">

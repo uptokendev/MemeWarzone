@@ -1,6 +1,7 @@
 import { Copy, ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import { PersonAvatar } from "@/components/ui-v2/PersonAvatar";
 
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 
@@ -48,7 +49,8 @@ export function CommandCenterHero({ walletAddress }: CommandCenterHeroProps) {
   return (
     <section className="flex flex-col gap-3 font-mw-body text-mw-text lg:flex-row lg:items-center lg:gap-[18px] lg:rounded-[14px] lg:border lg:border-mw-border lg:bg-mw-surface lg:p-5">
       <div className="flex min-w-0 flex-1 items-center gap-3 lg:gap-[18px]">
-        <img src={avatarUrl} alt="" className="h-[52px] w-[52px] shrink-0 rounded-full border border-mw-border object-cover lg:h-[72px] lg:w-[72px]" />
+        <span className="lg:hidden"><PersonAvatar url={avatarUrl || null} size={52} /></span>
+        <span className="hidden lg:inline-flex"><PersonAvatar url={avatarUrl || null} size={72} /></span>
         <div className="min-w-0 flex-1">
           <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-[#FF9A4D]">Your profile</div>
           <h1 className="m-0 truncate font-mw-cond text-xl font-bold leading-tight lg:text-[30px]">{displayName || short || "Connected wallet"}</h1>

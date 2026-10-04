@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { PersonAvatar } from "@/components/ui-v2/PersonAvatar";
 import { Button } from "@/components/ui/button";
 import { RadarLoader } from "@/components/ui/RadarLoader";
 import {
@@ -375,10 +376,15 @@ function StandingsTable({
               const label = rowLabel(league, row);
               const ident = (
                 <span className="flex min-w-0 items-center gap-2.5">
+                  {league.rowType === "wallet" ? (
+                    // People in wallet leagues: their picture or the green operative (founder, 2026-10-03).
+                    <PersonAvatar wallet={row?.wallet || null} size={38} />
+                  ) : (
                   <Avatar className="h-[38px] w-[38px] shrink-0 rounded-[10px]">
                     {league.rowType === "token" && row?.logo_uri ? <AvatarImage src={row.logo_uri} alt="" className="object-cover" /> : null}
                     <AvatarFallback className="rounded-[10px] bg-[#2A1609] font-mw-brand text-[10px] text-[#FF9A4D]">{String(label || "?").slice(0, 3).toUpperCase()}</AvatarFallback>
                   </Avatar>
+                  )}
                   <span className="min-w-0">
                     <span className="block truncate font-bold text-mw-text">{label}</span>
                     <span className="block truncate font-mw-mono text-[13px] text-mw-muted">

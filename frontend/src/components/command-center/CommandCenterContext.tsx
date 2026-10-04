@@ -218,9 +218,8 @@ export function CommandCenterDataProvider({
     return name ? `@${name}` : shortenWallet(walletAddress) || "Command Center";
   }, [profile?.displayName, walletAddress]);
 
-  const avatarUrl =
-    profile?.avatarUrl ||
-    "https://images.unsplash.com/photo-1621504450181-5d356f61d307?w=200&h=200&fit=crop";
+  // No picture = the green operative (founder, 2026-10-03), not a stock photo.
+  const avatarUrl = profile?.avatarUrl || "";
 
   const value = useMemo<CommandCenterData>(() => ({
     walletAddress,

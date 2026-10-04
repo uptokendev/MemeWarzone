@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
+import { PersonAvatar } from "@/components/ui-v2/PersonAvatar";
 import { Link } from "react-router-dom";
 
 import { fetchArenaImportTrades, type ArenaImportTrade } from "@/lib/arenaImports";
@@ -106,22 +107,13 @@ export function ImportedTradesTable({ chainId, tokenAddress, emptyState }: { cha
           {trades.map((tx) => {
             const key = (solana ? tx.maker : tx.maker?.toLowerCase()) || "";
             const prof = key ? profiles[key] : null;
-            const avatar = prof?.avatarUrl || "/placeholder.svg";
-            const label = prof?.displayName?.trim() ? prof.displayName.trim() : tx.maker ? shorten(tx.maker) : "—";
             const txUrl = solana ? `https://explorer.solana.com/tx/${tx.txHash}` : explorer ? `${explorer}/tx/${tx.txHash}` : "";
             return (
               <tr key={tx.txHash} className="border-b border-border/40 hover:bg-muted/20">
                 <td className="py-3 px-3">
                   {tx.maker ? (
                     <Link to={`/profile?address=${tx.maker}`} className="flex items-center gap-2 min-w-0">
-                      <img
-                        src={avatar}
-                        alt={label}
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).src = "/placeholder.svg";
-                        }}
-                        className="h-7 w-7 rounded-full ring-1 ring-border/30 flex-shrink-0"
-                      />
+                      <PersonAvatar url={prof?.avatarUrl || null} size={28} />
                       <WalletLabel className="font-mono text-foreground truncate max-w-[140px]" wallet={tx.maker} displayName={prof?.displayName} />
                     </Link>
                   ) : (

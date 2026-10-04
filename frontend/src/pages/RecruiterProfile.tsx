@@ -5,6 +5,7 @@ import { formatEther } from "ethers";
 import { ArrowRight, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { ContentContainer } from "@/components/layout/ContentContainer";
+import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import {
   fetchRecruiterReplacements,
   fetchRecruiterSummary,
@@ -153,8 +154,9 @@ export default function RecruiterProfile() {
           {squadImage ? (
             <img src={squadImage} alt="" className="h-[88px] w-[88px] shrink-0 rounded-full border-4 border-mw-ground object-cover lg:h-[136px] lg:w-[136px]" />
           ) : (
-            <span className="flex h-[88px] w-[88px] shrink-0 items-center justify-center rounded-full border-4 border-mw-ground bg-[#2B3440] font-mw-cond text-3xl font-bold lg:h-[136px] lg:w-[136px] lg:text-[44px]" aria-hidden="true">
-              {name.slice(0, 2).toUpperCase()}
+            // No image = the green operative, like every other profile (founder, 2026-10-03).
+            <span className="mw-operative h-[88px] w-[88px] shrink-0 overflow-hidden rounded-full border-4 border-[#3dff78] lg:h-[136px] lg:w-[136px]">
+              <OperativeMark fill />
             </span>
           )}
           <div className="min-w-0 flex-1 pb-1.5">
