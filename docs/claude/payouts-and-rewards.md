@@ -195,3 +195,22 @@ calls these routes; the indexer has its own `/api/security/rewards/*` (rewardOps
 - Production read-only run 2026-10-04 12:33 UTC: revenue $65.33 (0.540657363 SOL, K88 only, event-time
   prices; 66 test-coin fee events left out); fee destinations hold $287.27 (SOL $273.08, BNB $11.43,
   ETH $2.76; watch-only deployer wallets left out); routed in (all time) $168.56, all Solana.
+
+### Finance: "Ours" vs "Held now", LP harvest mainnets only (2026-10-04, feat/finance-ours-lpharvest-mainnet)
+
+- Every fee-routing destination carries `ownership: ours | owed | watch`, `ownershipReason` (with the code
+  line) and `ownershipMixed`. Table: `frontend/api/lib/financeFeeRoutingOwnership.js`; an id missing from it
+  is counted as owed and flagged `ownershipUnclassified`, and the ownership test fails.
+- Ours: Solana protocol_vault PDA, operator 2AMf (cap fill + import-swap fee), Squads fk5Y, UP vote treasury,
+  LP-fee protocol treasury, DBC referral account (swept 100% to protocol_vault), import-swap fee owner; EVM
+  ProtocolRevenueVault (its wrapped LP share is ours but unmovable: no ERC20 withdraw), operator EOA, Safe.
+- Mixed, counted as owed: DBC fee collector (re-split mostly to reward vaults), EVM ArenaWarPoolTreasuryV2
+  (pendingProtocol sits beside players' prizes until claimProtocol), LP lockers (creator pending + protocol
+  pending). Charity treasury is owed (earmarked), even though only the Safe can move it.
+- `totals.ours` (fee-routing and overview; overview also gets `totals.feeHoldings`) uses `buildTotals`, so
+  price rules match Held now. Production read-only 2026-10-04: Held now $287.35, Ours $151.42 (SOL
+  1.132841864 = $137.48, BNB 0.014206 = $11.21, ETH 0.001009 = $2.72). Solana vote/LP/DBC receivers are not
+  set in the local env, so they read not_configured there (4 unknown in Ours).
+- `/api/admin/finance/lp-harvest` refuses BNB 97, Solana devnet and anything not BNB 56 / Solana mainnet-beta
+  with 400 (`lpHarvestMainnetOnly`), before `financeLpHarvest` runs. Robinhood 4663 has no harvest path in
+  this route (it was never in `harvestNetwork`). `/api/dashboard/lp-fees` (testnet-open read mode) unchanged.

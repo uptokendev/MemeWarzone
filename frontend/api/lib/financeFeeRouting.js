@@ -29,6 +29,7 @@ import {
   solanaFeeRoutingRegistry,
 } from "./financeFeeRoutingSolana.js";
 import { EVM_FEE_ROUTING_CHAINS, evmFeeRoutingRegistry, evmGetterSelector } from "./financeFeeRoutingEvm.js";
+import { destinationOwnership } from "./financeFeeRoutingOwnership.js";
 import { buildTotals, defaultPriceService, priceAssetFor } from "./financePrices.js";
 import { notPublicHiddenCampaignSql } from "./publicHiddenSql.js";
 
@@ -488,7 +489,7 @@ async function resolveRouterDestinations(registry, ctx) {
 
 // --------------------------------------------------------------------------
 
-function publicDestination(destination, balances, inflows) {
+function publicDestination(destination, balances, inflows, chain) {
   return {
     id: destination.id,
     label: destination.label,
@@ -498,6 +499,7 @@ function publicDestination(destination, balances, inflows) {
     role: destination.role || "",
     citation: destination.citation || "",
     flags: destination.flags || [],
+    ...destinationOwnership(chain, destination),
     balances,
     inflows: inflows || [],
   };
@@ -549,11 +551,14 @@ export async function attachUsd(destinations, transit, priceService) {
 
 /**
  * Totals for the page. Holdings: every destination except watch-only wallets,
- * each address and asset once. Inflows: every routed amount except the DBC
- * collector, whose claim is re-split into the vault slices already counted.
+ * each address and asset once. Ours: the subset of holdings classified
+ * ownership "ours" (financeFeeRoutingOwnership.js); mixed balances are not in
+ * it. Inflows: every routed amount except the DBC collector, whose claim is
+ * re-split into the vault slices already counted.
  */
 export function feeRoutingTotals(network, destinations) {
   const holdings = [];
+  const ours = [];
   const inflows = [];
   const seen = new Set();
   for (const d of destinations) {
@@ -562,7 +567,9 @@ export function feeRoutingTotals(network, destinations) {
         const key = `${String(d.address || d.id).toLowerCase()}:${b.asset}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        holdings.push({ chainId: network.chainId, chain: network.chain, asset: b.asset, amount: b.status === "ok" ? b.amount : null, amountUsd: b.amountUsd ?? null });
+        const entry = { chainId: network.chainId, chain: network.chain, asset: b.asset, amount: b.status === "ok" ? b.amount : null, amountUsd: b.amountUsd ?? null };
+        holdings.push(entry);
+        if (d.ownership === "ours") ours.push(entry);
       }
     }
     if (d.id === "dbc_fee_collector") continue;
@@ -570,7 +577,11 @@ export function feeRoutingTotals(network, destinations) {
       inflows.push({ chainId: network.chainId, chain: network.chain, asset: i.asset, amount: i.status === "ok" ? i.amount : null, amountUsd: i.amountUsd ?? null });
     }
   }
-  return { holdings: buildTotals(holdings, { seed: [network] }), inflows: buildTotals(inflows, { seed: [network] }) };
+  return {
+    holdings: buildTotals(holdings, { seed: [network] }),
+    ours: buildTotals(ours, { seed: [network] }),
+    inflows: buildTotals(inflows, { seed: [network] }),
+  };
 }
 
 export async function buildFeeRouting({ network, days, db, env = process.env, fetchImpl = fetch, readers, prices, now = () => new Date().toISOString() }) {
@@ -588,7 +599,7 @@ export async function buildFeeRouting({ network, days, db, env = process.env, fe
     solana ? solanaWiring(ctx, registry) : evmWiring(ctx, registry),
   ]);
 
-  const destinations = registry.destinations.map((d, i) => publicDestination(d, balances[i], inflowResult.inflows[d.id]));
+  const destinations = registry.destinations.map((d, i) => publicDestination(d, balances[i], inflowResult.inflows[d.id], network.chain));
   const priceService = prices || defaultPriceService();
   await attachUsd(destinations, inflowResult.extras?.escrowFlushed, priceService);
   const alerts = [...staticAlerts(network, registry, env), ...wiring.alerts];

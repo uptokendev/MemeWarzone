@@ -45,8 +45,9 @@ function evmPrefix(network) {
   return network.chain === "robinhood" ? `rh${network.chainId}` : `bnb${network.chainId}`;
 }
 
-// LP harvest keeps its own network parsing (BNB 56/97, Solana by authority);
-// the harvest page is outside this change.
+// LP harvest keeps its own network parsing (BNB 56/97, Solana by authority).
+// The route then refuses anything that is not a mainnet (founder decision
+// 2026-10-04, see lpHarvestMainnetOnly) before any harvest logic runs.
 const FINANCE_NETWORKS = new Map([
   [56, { chain: "bnb", decimals: 18, asset: "BNB", environment: "mainnet" }],
   [97, { chain: "bnb", decimals: 18, asset: "BNB", environment: "testnet" }],
@@ -92,7 +93,7 @@ function safeAsset(value, fallback) {
   return /^[A-Z0-9._-]{1,20}$/.test(text) ? text : fallback;
 }
 
-function harvestNetwork(req) {
+export function harvestNetwork(req) {
   const chainId = Number(req.query?.chainId ?? defaultEvmChainId());
   const evmNetwork = FINANCE_NETWORKS.get(chainId);
   if (evmNetwork) return { chainId, ...evmNetwork };
@@ -112,6 +113,16 @@ function harvestNetwork(req) {
     environment: authority.environment,
     cluster: authority.cluster,
   };
+}
+
+export const LP_HARVEST_SCOPE_ERROR = "LP harvest covers mainnets only: BNB 56, or Solana 101 with environment=production&solanaCluster=mainnet-beta. Testnets and devnet are refused.";
+
+/** The harvest network if it is a mainnet; null for BNB 97, Solana devnet or anything else. */
+export function lpHarvestMainnetOnly(network) {
+  if (!network) return null;
+  if (network.chain === "bnb" && network.chainId === 56 && network.environment === "mainnet") return network;
+  if (network.chain === "solana" && network.chainId === 101 && network.environment === "production" && network.cluster === "mainnet-beta") return network;
+  return null;
 }
 
 function rewardState(status) {
@@ -729,9 +740,17 @@ export async function buildOverview(network, options = {}) {
   const blockerCount = modules.filter((module) => blockingStatuses.has(module.status)).length;
   const warningCount = modules.filter((module) => warningStatuses.has(module.status)).length;
 
-  // Money on the overview: protocol revenue (test coins excluded) and what the
-  // tracked inventory holds now. A failed read leaves its total out, not zero.
-  const [revenueRead, inventoryRead] = await Promise.allSettled([buildRevenue(network, options), buildInventory(network, options)]);
+  // Money on the overview: protocol revenue (test coins excluded), what the
+  // tracked inventory holds now, and from the fee-routing map what every fee
+  // destination holds ("Held now") and the protocol-owned part of it ("Ours").
+  // A failed read leaves its total out, not zero.
+  const feeNetwork = feeRoutingNetwork({ chainId: network.chainId, environment: network.environment, solanaCluster: network.cluster });
+  const readFeeRouting = options.feeRouting || ((n) => cachedFeeRouting({ network: n, days: feeRoutingDays(undefined), db: pool }));
+  const [revenueRead, inventoryRead, feeRoutingRead] = await Promise.allSettled([
+    buildRevenue(network, options),
+    buildInventory(network, options),
+    feeNetwork ? readFeeRouting(feeNetwork) : Promise.reject(new Error(`No fee routing for chain ${network.chainId}.`)),
+  ]);
 
   return {
     schemaVersion: "finance-overview-v1",
@@ -748,6 +767,8 @@ export async function buildOverview(network, options = {}) {
     totals: {
       revenue: revenueRead.status === "fulfilled" ? revenueRead.value.totals : null,
       holdings: inventoryRead.status === "fulfilled" ? inventoryRead.value.totals : null,
+      feeHoldings: feeRoutingRead.status === "fulfilled" ? feeRoutingRead.value.totals?.holdings ?? null : null,
+      ours: feeRoutingRead.status === "fulfilled" ? feeRoutingRead.value.totals?.ours ?? null : null,
     },
     prices: revenueRead.status === "fulfilled" ? revenueRead.value.prices : [],
     testCoinsExcluded: true,
@@ -841,6 +862,8 @@ const ALL_CHAIN_MERGERS = {
     totals: {
       revenue: mergeTotals(datas.map((d) => d.totals?.revenue)),
       holdings: mergeTotals(datas.map((d) => d.totals?.holdings)),
+      feeHoldings: mergeTotals(datas.map((d) => d.totals?.feeHoldings)),
+      ours: mergeTotals(datas.map((d) => d.totals?.ours)),
     },
   }),
   revenue: (datas) => ({ totals: mergeTotals(datas.map((d) => d.totals)), excludedTestCoinEvents: datas.reduce((s, d) => s + (d.excludedTestCoinEvents || 0), 0) }),
@@ -856,6 +879,7 @@ const ALL_CHAIN_MERGERS = {
   "fee-routing": (datas) => ({
     totals: {
       holdings: mergeTotals(datas.map((d) => d.totals?.holdings)),
+      ours: mergeTotals(datas.map((d) => d.totals?.ours)),
       inflows: mergeTotals(datas.map((d) => d.totals?.inflows)),
     },
   }),
@@ -936,15 +960,10 @@ export default async function financeAdmin(req, res) {
   const pathname = String(req.path || new URL(req.url, "http://localhost").pathname);
   const method = String(req.method || "GET").toUpperCase();
 
-  // LP harvest is untouched by the mainnet-only scope: it keeps its own parsing.
+  // LP harvest: mainnets only. Pure input check; financeLpHarvest is unchanged.
   if (pathname === "/api/admin/finance/lp-harvest") {
-    const network = harvestNetwork(req);
-    if (!network) {
-      return res.status(400).json({
-        ok: false,
-        error: "Finance network must be BNB 56/97 or Solana 101 with explicit staging/devnet or production/mainnet-beta identity.",
-      });
-    }
+    const network = lpHarvestMainnetOnly(harvestNetwork(req));
+    if (!network) return res.status(400).json({ ok: false, error: LP_HARVEST_SCOPE_ERROR });
     try {
       return await financeLpHarvest(req, res, network);
     } catch (error) {
