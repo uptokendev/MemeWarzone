@@ -27,6 +27,7 @@
     "test:wtr": "tsx --test src/tests/marketContinuity.test.ts src/tests/topazPoolCore.test.ts src/tests/graduationSearch.test.ts",
     "test:market-normalization": "tsx --test src/tests/normalizedMarketAuthority.test.ts",
     "test:league-merkle-parity": "tsx --test src/tests/solanaLeagueMerkleParity.test.ts",
+    "test:league-trueup": "tsx --test src/tests/dbcLeagueCredit.test.ts src/tests/leagueTrueUp.integration.test.ts",
     "test:solana-graduation-decode": "tsx --test src/tests/solanaGraduationEventDecode.test.ts",
     "test:solana-graduation-binding": "tsx --test src/tests/solanaGraduationQuoteBinding.test.ts src/tests/solanaQuoteAssetMeta.test.ts",
     "test:solana-market-stats": "tsx --test src/tests/solanaMarketStats.test.ts",

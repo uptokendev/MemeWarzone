@@ -52,6 +52,8 @@ export interface LeaguePrizeMeta {
   period?: LeaguePeriod;
   computedAt?: string;
   totalLeagueFeeRaw?: string;
+  /** Sum of every league's pot this epoch: the prize money settlement pays (not the raw fee total). */
+  totalPotRaw?: string;
   leagueCount?: number;
   winners?: number;
   splitBps?: number[];
@@ -660,6 +662,7 @@ async function loadLegacySummary({ chain, chainId, period, epochOffset }: LoadLe
   const currentLeaders: CurrentLeagueLeader[] = [];
   let prize: LeaguePrizeMeta | undefined;
   let totalFeeRaw = 0n;
+  let totalPotRaw = 0n;
 
   for (const [key, payload] of results) {
     const def = LEAGUES.find((league) => league.key === key)!;
@@ -678,6 +681,8 @@ async function loadLegacySummary({ chain, chainId, period, epochOffset }: LoadLe
       }
       try {
         const pot = BigInt(String((payload.prize as any)?.availablePotRaw ?? (payload.prize as any)?.potRaw ?? "0"));
+        // Perfect Run is monthly only; on the weekly tab it loads the monthly pot, which is not weekly money.
+        if (def.supports.includes(period)) totalPotRaw += pot;
         // accumulate category pots when total fee is missing
         if (totalFeeRaw === 0n && pot > 0n) totalFeeRaw += pot;
       } catch {
@@ -700,6 +705,7 @@ async function loadLegacySummary({ chain, chainId, period, epochOffset }: LoadLe
     basis: prize?.basis || "league_fee_only",
     period,
     totalLeagueFeeRaw: totalFeeRaw > 0n ? totalFeeRaw.toString() : prize?.totalLeagueFeeRaw || "0",
+    totalPotRaw: totalPotRaw.toString(),
     potRaw: prize?.potRaw || (totalFeeRaw > 0n ? totalFeeRaw.toString() : "0"),
     availablePotRaw: prize?.availablePotRaw || prize?.potRaw || (totalFeeRaw > 0n ? totalFeeRaw.toString() : "0"),
   };

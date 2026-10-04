@@ -249,17 +249,20 @@ async function callLegacyLeague(req, { category, chainId, period, epochOffset, l
 function rankRows(rows, prize, policy, chainId) {
   const safeRows = Array.isArray(rows) ? rows : [];
   const generatedUsd = rawToUsd(
-    firstDefined(prize?.availablePotRaw, prize?.potRaw),
+    firstDefined(prize?.potRaw, prize?.availablePotRaw),
     readNativeUsd(),
     nativeDecimals(chainId),
   );
   const curve = calculatePayoutCurve(safeRows.length, generatedUsd, policy);
-  const exact = Array.isArray(prize?.availablePayoutsRaw) ? prize.availablePayoutsRaw : Array.isArray(prize?.payoutsRaw) ? prize.payoutsRaw : null;
+  // payoutsRaw splits the whole pot, as settlement does; availablePayoutsRaw splits what is left after
+  // payouts, which understates a past epoch's winners.
+  const exact = Array.isArray(prize?.payoutsRaw) ? prize.payoutsRaw : Array.isArray(prize?.availablePayoutsRaw) ? prize.availablePayoutsRaw : null;
 
   // Exact settlement amounts when the API has them: the row's own payout (recruiter league, frozen
-  // winners) or the poker split for its rank. The policy curve is only a fallback estimate.
+  // winners' settled amount_raw) or the poker split for its rank. The policy curve is only a fallback estimate.
   return safeRows.map((row, index) => {
-    const raw = row?.payoutRaw != null ? String(row.payoutRaw) : exact ? String(exact[index] ?? '0') : null;
+    const own = firstDefined(row?.payoutRaw, row?.amount_raw);
+    const raw = own != null ? String(own) : exact ? String(exact[index] ?? '0') : null;
     return {
       ...row,
       rank: Number(row?.rank || index + 1),
@@ -296,15 +299,18 @@ function summarizePrize(leagues, period, policy, chainId) {
   const nativeSymbol = solana ? 'SOL' : robinhood ? 'ETH' : 'BNB';
   let generatedUsd = 0;
   let totalLeagueFeeRaw = '0';
+  // Sum of the category pots: the prize money settlement pays across every league this epoch.
+  let totalPot = 0n;
   const byLeague = {};
 
   for (const leagueResult of leagues) {
     const prize = leagueResult.prize;
     if (!prize) continue;
     if (prize.totalLeagueFeeRaw && totalLeagueFeeRaw === '0') totalLeagueFeeRaw = String(prize.totalLeagueFeeRaw);
-    const raw = firstDefined(prize.availablePotRaw, prize.potRaw, '0');
+    const raw = firstDefined(prize.potRaw, prize.availablePotRaw, '0');
     const usd = rawToUsd(raw, nativeUsd, decimals);
     generatedUsd += usd;
+    try { totalPot += BigInt(String(raw)); } catch { /* malformed raw: leave it out of the total */ }
     byLeague[leagueResult.key] = {
       potRaw: prize.potRaw,
       availablePotRaw: prize.availablePotRaw,
@@ -338,6 +344,7 @@ function summarizePrize(leagues, period, policy, chainId) {
     nativeUsdPrice: nativeUsd || null,
     nativeUsdPriceSource: priceSource,
     totalLeagueFeeRaw,
+    totalPotRaw: totalPot.toString(),
     byLeague,
     warning: nativeUsd > 0
       ? undefined

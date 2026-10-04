@@ -22,6 +22,9 @@ import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayou
 import { recruiterLeagueStandings, recruiterPrizeRecipient, type NativeUsd, type RecruiterStanding } from "../rewards/recruiterLeague.js";
 import { curveTradeGen5Columns } from "../evm/curveTradeGen5Columns.js";
 import { fetchAirdropNativeUsd } from "../rewards/airdropThresholds.js";
+import { Connection } from "@solana/web3.js";
+import { dbcLeagueCreditRaw } from "../rewards/dbcLeagueCredit.js";
+import { categoryShare, getLateFeeCreditsRaw, recordBudgetBaseline, trueUpLateFees } from "../rewards/leagueTrueUp.js";
 const DEFAULT_PROTOCOL_FEE_BPS = 200; // 2%
 const DEFAULT_LEAGUE_FEE_BPS = 75; // 0.75% slice of gross (carved out of the 2% protocol fee)
 
@@ -98,6 +101,9 @@ async function computeTotalLeagueFeeRawInRange(
         -- Solana: swaps on a graduated coin's Meteora pool (meteoraSwapIndexer, log_index 20000+)
         -- pay no league fee; counting them made the pot larger than the league vault.
         AND NOT (t.chain_id = 101 AND t.log_index >= 20000)
+        -- DBC trades: their league share reaches the vault through the DBC fee router and is credited
+        -- from the chain (dbcLeagueCreditRaw); counting the trade too would pay it twice.
+        AND coalesce(t.venue, '') <> 'dbc'
     ),
     base AS (
       SELECT
@@ -552,9 +558,21 @@ async function finalizeEpochFor(
   const budgetBps = period === "weekly" ? weeklyBudgetBps : period === "monthly" ? monthlyBudgetBps : 10_000;
   const budget = (totalLeagueFeeRaw * BigInt(budgetBps)) / 10_000n;
 
+  // Solana: the DBC league share that landed in this period's vault while the epoch was open. An
+  // unreadable chain blocks the epoch (retried next run): settling without it would strand that money.
+  let dbcCredit = 0n;
+  if (isSolanaChain(chainId)) {
+    try {
+      const connection = new Connection(String(ENV.SOLANA_RPC_HTTP || "").trim(), "confirmed");
+      dbcCredit = await dbcLeagueCreditRaw(connection, period, epochStart.getTime(), epochEnd.getTime());
+    } catch (error) {
+      console.error(`[finalizeEpochWinners] BLOCKED chain=${chainId} period=${period} epoch=${epochStartIso}: DBC credit unreadable -- ${(error as Error)?.message || error}`);
+      return;
+    }
+    if (dbcCredit > 0n) console.log(`[finalizeEpochWinners] chain=${chainId} period=${period} epoch=${epochStartIso}: DBC credit ${dbcCredit}`);
+  }
+
   const leagueCount = categories.length;
-  const base = leagueCount ? budget / BigInt(leagueCount) : 0n;
-  const rem = leagueCount ? budget % BigInt(leagueCount) : 0n;
 
   for (let i = 0; i < categories.length; i++) {
     const category = categories[i];
@@ -563,8 +581,12 @@ async function finalizeEpochFor(
       continue;
     }
 
-    let pot = base + (BigInt(i) < rem ? 1n : 0n);
+    // baseShare is the true-up baseline (trueUpLateFees); DBC credit, rollovers and late-fee credits
+    // are exact amounts already in the vault and are never re-derived.
+    const baseShare = categoryShare(budget, leagueCount, i);
+    let pot = baseShare + categoryShare(dbcCredit, leagueCount, i);
     pot += await getRolloverRaw(chainId, period, epochStartIso, category);
+    pot += await getLateFeeCreditsRaw(pool as any, chainId, period, epochStartIso, category);
 
     // Poker payout (founder, 2026-09-26): the whole qualified field is read, 15% of it is paid
     // (min 3 weekly / 5 monthly) on the 1/rank^0.72 curve the league page shows. Was: weekly paid
@@ -592,6 +614,7 @@ async function finalizeEpochFor(
         category,
         pot.toString(),
       ]);
+      await recordBudgetBaseline(pool as any, chainId, period, epochStartIso, category, baseShare);
       continue;
     }
 
@@ -603,6 +626,7 @@ async function finalizeEpochFor(
         category,
         pot.toString(),
       ]);
+      await recordBudgetBaseline(pool as any, chainId, period, epochStartIso, category, baseShare);
       continue;
     }
 
@@ -705,6 +729,10 @@ async function finalizeEpochFor(
       client.release();
     }
 
+    // After COMMIT, outside the winners transaction: a failing insert there (no migration yet) would
+    // abort the winners. A crash in between only means no true-up for this category.
+    await recordBudgetBaseline(pool as any, chainId, period, epochStartIso, category, baseShare);
+
     const insertedAny = inserted.length > 0;
     const chain = normalizeChain(chainId);
     for (const winner of chain ? inserted : []) {
@@ -769,12 +797,45 @@ async function main() {
   const lastMonthStart = new Date(Date.UTC(thisMonthStart.getUTCFullYear(), thisMonthStart.getUTCMonth() - 1, 1, 0, 0, 0, 0));
   const lastMonthEnd = thisMonthStart;
 
-  for (const chainId of chains) {
-    console.log(`[finalizeEpochWinners] chain=${chainId} weekly=${lastWeekStart.toISOString()}..${lastWeekEnd.toISOString()}`);
-    await finalizeEpochFor(chainId, "weekly", lastWeekStart, lastWeekEnd);
+  // Grace after an epoch ends before it is settled, so the indexers can store its last trades. Trades
+  // stored later still reach winners through the true-up below. FINALIZE_WEEKLY_START overrides it.
+  const graceHours = Number(process.env.LEAGUE_FINALIZE_GRACE_HOURS ?? 2);
+  const graceMs = Number.isFinite(graceHours) && graceHours >= 0 ? graceHours * 3600_000 : 2 * 3600_000;
+  const weeklyReady = Number.isFinite(envWeekStart) || now.getTime() - lastWeekEnd.getTime() >= graceMs;
+  const monthlyReady = now.getTime() - lastMonthEnd.getTime() >= graceMs;
+  const WEEK_MS = 7 * 86400_000;
+  const protocolFeeBps = readBps(process.env.PROTOCOL_FEE_BPS, DEFAULT_PROTOCOL_FEE_BPS);
+  const leagueFeeBps = readBps(process.env.LEAGUE_FEE_BPS, DEFAULT_LEAGUE_FEE_BPS);
+  const weeklyBudgetBps = readBps(process.env.WEEKLY_PRIZE_BUDGET_BPS, DEFAULT_WEEKLY_PRIZE_BUDGET_BPS);
+  const monthlyBudgetBps = readBps(process.env.MONTHLY_PRIZE_BUDGET_BPS, DEFAULT_MONTHLY_PRIZE_BUDGET_BPS);
+  const feeFor = (chainId: number) => (startIso: string, endIso: string) =>
+    computeTotalLeagueFeeRawInRange(chainId, startIso, endIso, protocolFeeBps, leagueFeeBps);
+  // True-up horizon: the four settled weeks before this one, the two settled months before this one.
+  const weeklySources = Array.from({ length: 5 }, (_, k) => ({
+    start: new Date(thisWeekStart.getTime() - (k + 1) * WEEK_MS),
+    end: new Date(thisWeekStart.getTime() - k * WEEK_MS),
+  }));
+  const monthlySources = Array.from({ length: 3 }, (_, k) => ({
+    start: new Date(Date.UTC(thisMonthStart.getUTCFullYear(), thisMonthStart.getUTCMonth() - (k + 1), 1)),
+    end: new Date(Date.UTC(thisMonthStart.getUTCFullYear(), thisMonthStart.getUTCMonth() - k, 1)),
+  }));
 
-    console.log(`[finalizeEpochWinners] chain=${chainId} monthly=${lastMonthStart.toISOString()}..${lastMonthEnd.toISOString()}`);
-    await finalizeEpochFor(chainId, "monthly", lastMonthStart, lastMonthEnd);
+  for (const chainId of chains) {
+    if (weeklyReady) {
+      console.log(`[finalizeEpochWinners] chain=${chainId} weekly=${lastWeekStart.toISOString()}..${lastWeekEnd.toISOString()}`);
+      await finalizeEpochFor(chainId, "weekly", lastWeekStart, lastWeekEnd);
+    } else {
+      console.log(`[finalizeEpochWinners] chain=${chainId} weekly=${lastWeekStart.toISOString()}: in the ${graceHours}h grace after its end; next run settles it`);
+    }
+    await trueUpLateFees(pool as any, { chainId, period: "weekly", categories: [...WEEKLY_CATEGORIES], budgetBps: weeklyBudgetBps, sources: weeklySources, targetStart: thisWeekStart, computeFee: feeFor(chainId) });
+
+    if (monthlyReady) {
+      console.log(`[finalizeEpochWinners] chain=${chainId} monthly=${lastMonthStart.toISOString()}..${lastMonthEnd.toISOString()}`);
+      await finalizeEpochFor(chainId, "monthly", lastMonthStart, lastMonthEnd);
+    } else {
+      console.log(`[finalizeEpochWinners] chain=${chainId} monthly=${lastMonthStart.toISOString()}: in the ${graceHours}h grace after its end; next run settles it`);
+    }
+    await trueUpLateFees(pool as any, { chainId, period: "monthly", categories: [...MONTHLY_CATEGORIES], budgetBps: monthlyBudgetBps, sources: monthlySources, targetStart: thisMonthStart, computeFee: feeFor(chainId) });
   }
 
   console.log("[finalizeEpochWinners] done");
