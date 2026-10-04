@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { getServerReadProvider } from "./getServerReadProvider.js";
+import { notPublicHiddenCampaignSql } from "./publicHiddenSql.js";
 
 const VOTE_TREASURY_ABI = ["function feeReceiver() view returns (address)"];
 
@@ -22,7 +23,7 @@ function configuredAddress(chainId, name) {
 }
 
 export async function readNativeUpvoteRevenue(network) {
-  if (network.chain !== "bnb") return { approved: false, aggregate: null, reason: "CHAIN_NOT_SUPPORTED" };
+  if (network.chain !== "bnb" && network.chain !== "robinhood") return { approved: false, aggregate: null, reason: "CHAIN_NOT_SUPPORTED" };
 
   const voteTreasury = configuredAddress(network.chainId, "VOTE_TREASURY_ADDRESS");
   const protocolRevenueVault = configuredAddress(network.chainId, "PROTOCOL_REVENUE_VAULT_ADDRESS");
@@ -37,20 +38,37 @@ export async function readNativeUpvoteRevenue(network) {
     return { approved: false, aggregate: null, reason: "FEE_RECEIVER_NOT_PROTOCOL_REVENUE_VAULT" };
   }
 
+  // Grouped by hour so the finance view can value each vote at the price of
+  // its hour. Votes on hidden test coins are left out.
   const { rows } = await pool.query(
-    `select min(block_timestamp) as period_start,
-            max(block_timestamp) as period_end,
+    `select date_trunc('hour', v.block_timestamp) as hour,
+            min(v.block_timestamp) as period_start,
+            max(v.block_timestamp) as period_end,
             count(*)::int as evidence_count,
-            coalesce(sum(amount_raw), 0)::text as amount_raw
-       from public.votes
-      where chain_id = $1
-        and status = 'confirmed'
-        and lower(asset_address) = lower($2)`,
+            coalesce(sum(v.amount_raw), 0)::text as amount_raw
+       from public.votes v
+      where v.chain_id = $1
+        and v.status = 'confirmed'
+        and lower(v.asset_address) = lower($2)
+        and ${notPublicHiddenCampaignSql("v")}
+      group by 1`,
     [network.chainId, ethers.ZeroAddress],
   );
-  const row = rows[0] || {};
-  const raw = String(row.amount_raw || "0");
-  if (!/^\d+$/.test(raw) || BigInt(raw) === 0n || !row.period_start || !row.period_end) {
+  let total = 0n;
+  let evidenceCount = 0;
+  let periodStart = null;
+  let periodEnd = null;
+  const buckets = [];
+  for (const row of rows) {
+    const raw = String(row.amount_raw || "0").split(".")[0];
+    if (!/^\d+$/.test(raw)) continue;
+    total += BigInt(raw);
+    evidenceCount += Number(row.evidence_count || 0);
+    if (row.period_start && (!periodStart || new Date(row.period_start) < new Date(periodStart))) periodStart = row.period_start;
+    if (row.period_end && (!periodEnd || new Date(row.period_end) > new Date(periodEnd))) periodEnd = row.period_end;
+    buckets.push({ hour: row.hour, raw });
+  }
+  if (total === 0n || !periodStart || !periodEnd) {
     return { approved: true, aggregate: null, reason: null };
   }
 
@@ -58,10 +76,11 @@ export async function readNativeUpvoteRevenue(network) {
     approved: true,
     reason: null,
     aggregate: {
-      amountRaw: raw,
-      periodStart: row.period_start,
-      periodEnd: row.period_end,
-      evidenceCount: Number(row.evidence_count || 0),
+      amountRaw: total.toString(),
+      periodStart,
+      periodEnd,
+      evidenceCount,
+      buckets,
     },
   };
 }

@@ -29,6 +29,8 @@ import {
   solanaFeeRoutingRegistry,
 } from "./financeFeeRoutingSolana.js";
 import { EVM_FEE_ROUTING_CHAINS, evmFeeRoutingRegistry, evmGetterSelector } from "./financeFeeRoutingEvm.js";
+import { buildTotals, defaultPriceService, priceAssetFor } from "./financePrices.js";
+import { notPublicHiddenCampaignSql } from "./publicHiddenSql.js";
 
 export const FEE_ROUTING_SCHEMA = "finance-fee-routing-v1";
 const DEFAULT_DAYS = 30;
@@ -43,18 +45,28 @@ export function feeRoutingDays(value) {
   return Math.min(days, MAX_DAYS);
 }
 
+/** Finance covers the mainnets only (2026-10-04): nothing is earned on a testnet. */
+export const FEE_ROUTING_MAINNET_CHAIN_IDS = Object.freeze([101, 56, 4663]);
+
+const SOLANA_MAINNET_FEE_NETWORK = Object.freeze({ chainId: 101, chain: "solana", environment: "production", cluster: "mainnet-beta", nativeSymbol: "SOL", nativeDecimals: 9 });
+
 /**
- * Network for the fee-routing view. Solana is mainnet-beta only (production
- * DB, live API); devnet would mix targets, so it is refused rather than guessed.
+ * Network for the fee-routing view: BNB 56, Robinhood 4663 or Solana mainnet-beta
+ * (production DB, live API). Testnets and devnet are refused rather than guessed.
  */
 export function feeRoutingNetwork(query = {}) {
   const chainId = Number(query.chainId);
-  if (EVM_FEE_ROUTING_CHAINS[chainId]) return { chainId, ...EVM_FEE_ROUTING_CHAINS[chainId] };
+  if (chainId === 56 || chainId === 4663) return { chainId, ...EVM_FEE_ROUTING_CHAINS[chainId] };
   if (chainId !== 101) return null;
   const environment = String(query.environment || "").trim().toLowerCase();
   const cluster = String(query.solanaCluster ?? query.cluster ?? "").trim().toLowerCase().replace(/^solana-/, "");
   if (environment !== "production" || cluster !== "mainnet-beta") return null;
-  return { chainId: 101, chain: "solana", environment: "production", cluster: "mainnet-beta", nativeSymbol: "SOL", nativeDecimals: 9 };
+  return { ...SOLANA_MAINNET_FEE_NETWORK };
+}
+
+/** chainId=all: the three mainnets, in display order. */
+export function feeRoutingAllNetworks() {
+  return [{ ...SOLANA_MAINNET_FEE_NETWORK }, { chainId: 56, ...EVM_FEE_ROUTING_CHAINS[56] }, { chainId: 4663, ...EVM_FEE_ROUTING_CHAINS[4663] }];
 }
 
 export function atomicToDecimal(raw, decimals) {
@@ -165,11 +177,37 @@ async function safeQuery(db, sql, params) {
   }
 }
 
+/**
+ * Sums hourly rows (one per key and hour) into one row per key, keeping the
+ * hourly amounts per column so each can be valued at the price of its hour.
+ * Rows without an `hour` column are valued at spot later.
+ */
+export function rollupHourly(rows, columns, keyColumn = null) {
+  const out = new Map();
+  for (const row of rows || []) {
+    const key = keyColumn ? row?.[keyColumn] : "_";
+    const acc = out.get(key) || { n: 0, __buckets: {} };
+    if (keyColumn) acc[keyColumn] = key;
+    acc.n += Number(row?.n ?? 0);
+    for (const column of columns) {
+      const text = row?.[column] == null ? "0" : String(row[column]).split(".")[0];
+      if (!/^\d+$/.test(text) || acc[column] === "invalid") { acc[column] = "invalid"; continue; }
+      acc[column] = (BigInt(acc[column] || "0") + BigInt(text)).toString();
+      (acc.__buckets[column] ||= []).push({ hour: row?.hour ?? null, raw: text });
+    }
+    out.set(key, acc);
+  }
+  return out;
+}
+
 function inflowFrom(row, column, { asset, decimals, source, asOf, note, countColumn = "n" }) {
   const raw = row?.[column];
   const text = raw == null ? "0" : String(raw).split(".")[0];
   if (!/^\d+$/.test(text)) return unknownAmount({ asset, decimals, source, error: "Non-integer aggregate.", extra: { eventCount: null } });
-  return okAmount({ asset, decimals, raw: text, source, asOf, extra: { eventCount: Number(row?.[countColumn] ?? 0), ...(note ? { note } : {}) } });
+  const amount = okAmount({ asset, decimals, raw: text, source, asOf, extra: { eventCount: Number(row?.[countColumn] ?? 0), ...(note ? { note } : {}) } });
+  // Internal: removed by attachUsd before the payload leaves the API.
+  Object.defineProperty(amount, "buckets", { value: row?.__buckets?.[column] || [{ hour: null, raw: text }], enumerable: false });
+  return amount;
 }
 
 function inflowError(error, { asset, decimals, source }) {
@@ -188,6 +226,7 @@ export async function solanaInflows(db, { days, now }) {
   const reSource = "db:reward_events";
   const re = await safeQuery(db, `
     select case when source_event = 'EvtSwap2' then 'dbc' else 'launchpad' end as lane,
+           date_trunc('hour', r.occurred_at) as hour,
            count(*)::int as n,
            coalesce(sum(nullif(metadata->>'weeklyLeagueLamports', '')::numeric), 0)::text as weekly,
            coalesce(sum(nullif(metadata->>'monthlyLeagueLamports', '')::numeric), 0)::text as monthly,
@@ -198,16 +237,18 @@ export async function solanaInflows(db, { days, now }) {
            coalesce(sum(protocol_amount), 0)::text as protocol,
            coalesce(sum(nullif(metadata->>'creatorLamports', '')::numeric), 0)::text as creator,
            coalesce(sum(raw_amount), 0)::text as fee
-      from public.reward_events
-     where chain_id = 101 and occurred_at >= $1
-     group by 1`, [since]);
+      from public.reward_events r
+     where r.chain_id = 101 and r.occurred_at >= $1
+       and ${notPublicHiddenCampaignSql("r")}
+     group by 1, 2`, [since]);
   if (re.error) {
     for (const id of ["league_weekly", "league_monthly", "recruiter_vault", "airdrop_vault", "squad_vault", "protocol_vault", "creator_fee_vaults"]) {
       add(id, inflowError(re.error, { ...base, source: reSource }));
     }
   } else {
+    const lanes = rollupHourly(re.rows, ["weekly", "monthly", "league", "recruiter", "airdrop", "squad", "protocol", "creator", "fee"], "lane");
     for (const lane of ["launchpad", "dbc"]) {
-      const row = re.rows.find((r) => r.lane === lane) || { n: 0 };
+      const row = lanes.get(lane) || { n: 0 };
       const note = lane === "launchpad"
         ? "Launchpad trade + graduation slices (FeeSlicesAccrued counts when escrowed; it reaches the vault on flush)"
         : "Meteora DBC slices routed by the collector";
@@ -223,41 +264,48 @@ export async function solanaInflows(db, { days, now }) {
   }
 
   const mwl = await safeQuery(db, `
-    select count(*)::int as n, coalesce(sum(gross_raw), 0)::text as amount
+    select date_trunc('hour', created_at) as hour, count(*)::int as n, coalesce(sum(gross_raw), 0)::text as amount
       from public.arena_league_share_ledger
-     where chain_id = 101 and created_at >= $1`, [since]);
+     where chain_id = 101 and created_at >= $1
+     group by 1`, [since]);
   add("mwl_vault", mwl.error ? inflowError(mwl.error, { ...base, source: "db:arena_league_share_ledger" })
-    : inflowFrom(mwl.rows[0], "amount", { ...base, source: "db:arena_league_share_ledger", note: "Arena league shares recorded by the crank before it moves them" }));
+    : inflowFrom(rollupHourly(mwl.rows, ["amount"]).get("_") || { n: 0 }, "amount", { ...base, source: "db:arena_league_share_ledger", note: "Arena league shares recorded by the crank before it moves them" }));
 
   const votes = await safeQuery(db, `
-    select count(*)::int as n, coalesce(sum(amount_raw), 0)::text as amount
-      from public.votes_confirmed
-     where chain_id = 101 and status = 'confirmed'
-       and asset_address = '11111111111111111111111111111111'
-       and block_timestamp >= $1`, [since]);
+    select date_trunc('hour', v.block_timestamp) as hour, count(*)::int as n, coalesce(sum(v.amount_raw), 0)::text as amount
+      from public.votes_confirmed v
+     where v.chain_id = 101 and v.status = 'confirmed'
+       and v.asset_address = '11111111111111111111111111111111'
+       and v.block_timestamp >= $1
+       and ${notPublicHiddenCampaignSql("v")}
+     group by 1`, [since]);
   add("vote_treasury", votes.error ? inflowError(votes.error, { ...base, source: "db:votes_confirmed" })
-    : inflowFrom(votes.rows[0], "amount", { ...base, source: "db:votes_confirmed", note: "Confirmed native UP votes" }));
+    : inflowFrom(rollupHourly(votes.rows, ["amount"]).get("_") || { n: 0 }, "amount", { ...base, source: "db:votes_confirmed", note: "Confirmed native UP votes" }));
 
   const dbc = await safeQuery(db, `
-    select count(*)::int as n,
+    select date_trunc('hour', created_at) as hour,
+           count(*)::int as n,
            coalesce(sum(collector_amount), 0)::text as collector,
            coalesce(sum(referral_fee), 0)::text as referral
       from public.dbc_fee_accruals
-     where created_at >= $1`, [since]);
+     where created_at >= $1
+     group by 1`, [since]);
   if (dbc.error) {
     add("dbc_fee_collector", inflowError(dbc.error, { ...base, source: "db:dbc_fee_accruals" }));
     add("dbc_referral", inflowError(dbc.error, { ...base, source: "db:dbc_fee_accruals" }));
   } else {
-    add("dbc_fee_collector", inflowFrom(dbc.rows[0], "collector", { ...base, source: "db:dbc_fee_accruals", note: "Partner fee claimed by the collector before re-split" }));
-    add("dbc_referral", inflowFrom(dbc.rows[0], "referral", { ...base, source: "db:dbc_fee_accruals", note: "Referral fee named on our swaps" }));
+    const dbcRow = rollupHourly(dbc.rows, ["collector", "referral"]).get("_") || { n: 0 };
+    add("dbc_fee_collector", inflowFrom(dbcRow, "collector", { ...base, source: "db:dbc_fee_accruals", note: "Partner fee claimed by the collector before re-split" }));
+    add("dbc_referral", inflowFrom(dbcRow, "referral", { ...base, source: "db:dbc_fee_accruals", note: "Referral fee named on our swaps" }));
   }
 
   const escrow = await safeQuery(db, `
-    select event_kind, count(*)::int as n, coalesce(sum(protocol_lamports), 0)::text as protocol, coalesce(sum(total_lamports), 0)::text as total
-      from public.solana_fee_escrow_events
-     where chain_id = 101 and created_at >= $1 and event_kind in ('FeeSlicesAccrued', 'FeeEscrowFlushed')
-     group by 1`, [since]);
-  const flushed = escrow.rows?.find((r) => r.event_kind === "FeeEscrowFlushed");
+    select e.event_kind, date_trunc('hour', e.created_at) as hour, count(*)::int as n, coalesce(sum(e.protocol_lamports), 0)::text as protocol, coalesce(sum(e.total_lamports), 0)::text as total
+      from public.solana_fee_escrow_events e
+     where e.chain_id = 101 and e.created_at >= $1 and e.event_kind in ('FeeSlicesAccrued', 'FeeEscrowFlushed')
+       and ${notPublicHiddenCampaignSql("e")}
+     group by 1, 2`, [since]);
+  const flushed = escrow.rows ? rollupHourly(escrow.rows, ["protocol", "total"], "event_kind").get("FeeEscrowFlushed") : null;
   return {
     inflows: out,
     extras: {
@@ -276,15 +324,19 @@ export async function evmInflows(db, network, registry, { days, now }) {
   const ids = registry.inflowDestinations || {};
 
   const re = await safeQuery(db, `
-    select count(*)::int as n,
+    select date_trunc('hour', r.occurred_at) as hour,
+           count(*)::int as n,
            coalesce(sum(floor(league_amount * 3000 / 10000)), 0)::text as weekly,
            coalesce(sum(league_amount - floor(league_amount * 3000 / 10000)), 0)::text as monthly,
            coalesce(sum(recruiter_amount), 0)::text as recruiter,
            coalesce(sum(airdrop_amount), 0)::text as airdrop,
            coalesce(sum(squad_amount), 0)::text as squad,
            coalesce(sum(protocol_amount), 0)::text as protocol
-      from public.reward_events
-     where chain_id = $1 and occurred_at >= $2`, [network.chainId, since]);
+      from public.reward_events r
+     where r.chain_id = $1 and r.occurred_at >= $2
+       and ${notPublicHiddenCampaignSql("r")}
+     group by 1`, [network.chainId, since]);
+  const reRow = re.error ? null : rollupHourly(re.rows, ["weekly", "monthly", "recruiter", "airdrop", "squad", "protocol"]).get("_") || { n: 0 };
   const reOpts = { ...base, source: "db:reward_events", note: "Treasury router RouteExecuted events" };
   const columns = [
     ["weekly", ids.weekly, "League slice x weeklyLeagueBps 3000 (the router's split), derived per event"],
@@ -296,31 +348,34 @@ export async function evmInflows(db, network, registry, { days, now }) {
   ];
   for (const [column, id, note] of columns) {
     if (!id) continue;
-    add(id, re.error ? inflowError(re.error, reOpts) : inflowFrom(re.rows[0], column, { ...reOpts, ...(note ? { note } : {}) }));
+    add(id, re.error ? inflowError(re.error, reOpts) : inflowFrom(reRow, column, { ...reOpts, ...(note ? { note } : {}) }));
   }
   if (ids.creator) {
     add(ids.creator, inflowError("reward_events has no creator column; the indexer drops RouteExecuted.creatorAmount (realtime-indexer/src/indexer.ts:1273-1289).", reOpts));
   }
-  const routeEventCount = re.error ? null : Number(re.rows[0]?.n || 0);
+  const routeEventCount = re.error ? null : Number(reRow?.n || 0);
 
   if (ids.votes) {
     const votes = await safeQuery(db, `
-      select count(*)::int as n, coalesce(sum(amount_raw), 0)::text as amount
-        from public.votes_confirmed
-       where chain_id = $1 and status = 'confirmed'
-         and asset_address = '0x0000000000000000000000000000000000000000'
-         and block_timestamp >= $2`, [network.chainId, since]);
+      select date_trunc('hour', v.block_timestamp) as hour, count(*)::int as n, coalesce(sum(v.amount_raw), 0)::text as amount
+        from public.votes_confirmed v
+       where v.chain_id = $1 and v.status = 'confirmed'
+         and v.asset_address = '0x0000000000000000000000000000000000000000'
+         and v.block_timestamp >= $2
+         and ${notPublicHiddenCampaignSql("v")}
+       group by 1`, [network.chainId, since]);
     add(ids.votes, votes.error ? inflowError(votes.error, { ...base, source: "db:votes_confirmed" })
-      : inflowFrom(votes.rows[0], "amount", { ...base, source: "db:votes_confirmed", note: "Confirmed native UP votes" }));
+      : inflowFrom(rollupHourly(votes.rows, ["amount"]).get("_") || { n: 0 }, "amount", { ...base, source: "db:votes_confirmed", note: "Confirmed native UP votes" }));
   }
 
   if (ids.mwl) {
     const mwl = await safeQuery(db, `
-      select count(*)::int as n, coalesce(sum(gross_raw), 0)::text as amount
+      select date_trunc('hour', created_at) as hour, count(*)::int as n, coalesce(sum(gross_raw), 0)::text as amount
         from public.arena_league_share_ledger
-       where chain_id = $1 and created_at >= $2`, [network.chainId, since]);
+       where chain_id = $1 and created_at >= $2
+       group by 1`, [network.chainId, since]);
     add(ids.mwl, mwl.error ? inflowError(mwl.error, { ...base, source: "db:arena_league_share_ledger" })
-      : inflowFrom(mwl.rows[0], "amount", { ...base, source: "db:arena_league_share_ledger", note: "Arena league shares claimed by the crank" }));
+      : inflowFrom(rollupHourly(mwl.rows, ["amount"]).get("_") || { n: 0 }, "amount", { ...base, source: "db:arena_league_share_ledger", note: "Arena league shares claimed by the crank" }));
   }
 
   return { inflows: out, extras: { routeEventCount } };
@@ -469,7 +524,56 @@ function staticAlerts(network, registry, env) {
   return alerts;
 }
 
-export async function buildFeeRouting({ network, days, db, env = process.env, fetchImpl = fetch, readers, now = () => new Date().toISOString() }) {
+// --------------------------------------------------------------------------
+// USD. Balances at spot; inflows at the price of the hour each event happened
+// in (financePrices.js). A missing price is null, never 0.
+
+async function usdFor(amount, priceService, { events }) {
+  if (amount.status !== "ok" || amount.amount == null || !priceAssetFor(amount.asset)) {
+    return { amountUsd: null, priceUsd: null, priceSource: null, priceAt: null, priceBasis: null };
+  }
+  return events
+    ? priceService.valueEvents(amount.asset, amount.buckets || [{ hour: null, raw: amount.raw }], amount.decimals)
+    : priceService.valueAtSpot(amount.asset, amount.amount);
+}
+
+export async function attachUsd(destinations, transit, priceService) {
+  const jobs = [];
+  for (const d of destinations) {
+    for (const b of d.balances) jobs.push(usdFor(b, priceService, { events: false }).then((usd) => Object.assign(b, usd)));
+    for (const i of d.inflows) jobs.push(usdFor(i, priceService, { events: true }).then((usd) => Object.assign(i, usd)));
+  }
+  if (transit) jobs.push(usdFor(transit, priceService, { events: true }).then((usd) => Object.assign(transit, usd)));
+  await Promise.all(jobs);
+}
+
+/**
+ * Totals for the page. Holdings: every destination except watch-only wallets,
+ * each address and asset once. Inflows: every routed amount except the DBC
+ * collector, whose claim is re-split into the vault slices already counted.
+ */
+export function feeRoutingTotals(network, destinations) {
+  const holdings = [];
+  const inflows = [];
+  const seen = new Set();
+  for (const d of destinations) {
+    if (!d.flags.includes("watch")) {
+      for (const b of d.balances) {
+        const key = `${String(d.address || d.id).toLowerCase()}:${b.asset}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        holdings.push({ chainId: network.chainId, chain: network.chain, asset: b.asset, amount: b.status === "ok" ? b.amount : null, amountUsd: b.amountUsd ?? null });
+      }
+    }
+    if (d.id === "dbc_fee_collector") continue;
+    for (const i of d.inflows) {
+      inflows.push({ chainId: network.chainId, chain: network.chain, asset: i.asset, amount: i.status === "ok" ? i.amount : null, amountUsd: i.amountUsd ?? null });
+    }
+  }
+  return { holdings: buildTotals(holdings, { seed: [network] }), inflows: buildTotals(inflows, { seed: [network] }) };
+}
+
+export async function buildFeeRouting({ network, days, db, env = process.env, fetchImpl = fetch, readers, prices, now = () => new Date().toISOString() }) {
   const generatedAt = now();
   const r = readers || { readEvmNative, readEvmToken, readEvmCall, readSolanaLamports, readSolanaTokenByOwner, readSolanaAccountData };
   const solana = network.chain === "solana";
@@ -485,6 +589,8 @@ export async function buildFeeRouting({ network, days, db, env = process.env, fe
   ]);
 
   const destinations = registry.destinations.map((d, i) => publicDestination(d, balances[i], inflowResult.inflows[d.id]));
+  const priceService = prices || defaultPriceService();
+  await attachUsd(destinations, inflowResult.extras?.escrowFlushed, priceService);
   const alerts = [...staticAlerts(network, registry, env), ...wiring.alerts];
 
   if (!solana && inflowResult.extras?.routeEventCount === 0 && network.environment === "mainnet") {
@@ -517,6 +623,10 @@ export async function buildFeeRouting({ network, days, db, env = process.env, fe
     wiring: wiring.checks,
     alerts,
     ...(inflowResult.extras?.escrowFlushed ? { transit: { escrowFlushed: inflowResult.extras.escrowFlushed } } : {}),
+    totals: feeRoutingTotals(network, destinations),
+    prices: await priceService.spotTable([priceAssetFor(network.nativeSymbol)]),
+    testCoinsExcluded: true,
+    testCoinsNote: "Router events, UP votes and escrow events on test coins (campaigns hidden from public listings) are left out. The MWL ledger and DBC accruals carry no campaign, so they are shown in full. Balances are what the chain holds.",
   };
 }
 
