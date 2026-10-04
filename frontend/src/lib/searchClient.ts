@@ -8,6 +8,7 @@ import {
   tokenDetailsPath,
 } from "@/lib/tokenDetailsPath";
 import type { TokenSearchResult } from "@/types/search";
+import { fetchArenaImportMarket, type ArenaImportMarketRow } from "@/lib/arenaImports";
 
 function scoreRow(query: string, row: TokenSearchResult): number {
   const q = query.toLowerCase().trim();
@@ -180,6 +181,52 @@ async function searchDrafts(
     .filter((row): row is TokenSearchResult => Boolean(row));
 }
 
+// Imported coins (founder, 2026-10-05: searching "ASK" found nothing). The listed imports per chain are
+// a short list, read once a minute and matched here on ticker, name or address.
+const importListCache = new Map<number, { at: number; rows: Promise<ArenaImportMarketRow[]> }>();
+function importList(chainId: number) {
+  const hit = importListCache.get(chainId);
+  if (hit && Date.now() - hit.at < 60_000) return hit.rows;
+  // No abort signal: the list is shared between keystrokes, a cancelled search must not empty it.
+  const rows = fetchArenaImportMarket(chainId).catch(() => {
+    importListCache.delete(chainId);
+    return [] as ArenaImportMarketRow[];
+  });
+  importListCache.set(chainId, { at: Date.now(), rows });
+  return rows;
+}
+
+async function searchImports(chainId: number, q: string, limit: number, signal?: AbortSignal): Promise<TokenSearchResult[]> {
+  const needle = q.toLowerCase().replace(/^\$/, "").trim();
+  if (!needle) return [];
+  if (signal?.aborted) return [];
+  const rows = await importList(chainId);
+  return rows
+    .filter((row) => {
+      const sym = String(row.symbol || "").toLowerCase().replace(/^\$/, "");
+      const name = String(row.name || "").toLowerCase();
+      const addr = String(row.tokenAddress || "").toLowerCase();
+      return sym.includes(needle) || name.includes(needle) || (needle.length >= 6 && addr.startsWith(needle));
+    })
+    .slice(0, limit)
+    .map((row) => {
+      const chain = Number(row.chainId || chainId) || chainId;
+      return {
+        kind: "token" as const,
+        campaignAddress: row.tokenAddress,
+        tokenAddress: row.tokenAddress,
+        name: String(row.name || row.symbol || "Imported coin"),
+        symbol: String(row.symbol || "").replace(/^\$/, ""),
+        status: "graduated" as const,
+        logoURI: row.imageUrl || undefined,
+        chainId: chain,
+        marketcapBnb: null,
+        marketCapUsd: row.marketCapUsd ?? null,
+        href: `/token/${encodeURIComponent(row.tokenAddress)}?chainId=${chain}`,
+      };
+    });
+}
+
 export async function searchTokensRemote(
   q: string,
   opts?: { limit?: number; signal?: AbortSignal; chainId?: number },
@@ -188,15 +235,16 @@ export async function searchTokensRemote(
   if (query.length < 2) return [];
   const limit = opts?.limit ?? 12;
   const chainIds = getBnbCampaignFeedChainIds(opts?.chainId);
-  const [tokenPages, profilePages, draftPages] = await Promise.all([
+  const [tokenPages, profilePages, draftPages, importPages] = await Promise.all([
     Promise.all(chainIds.map((id) => searchChain(id, query, limit, opts?.signal).catch(() => []))),
     Promise.all(chainIds.map((id) => searchProfiles(id, query, 8, opts?.signal).catch(() => []))),
     // Drafts were never queried here, so a published promotion could not be
     // found by name or ticker even though its page was public.
     Promise.all(chainIds.map((id) => searchDrafts(id, query, 8, opts?.signal).catch(() => []))),
+    Promise.all(chainIds.map((id) => searchImports(id, query, 8, opts?.signal).catch(() => []))),
   ]);
   const merged = new Map<string, TokenSearchResult>();
-  for (const row of [...tokenPages.flat(), ...profilePages.flat(), ...draftPages.flat()]) {
+  for (const row of [...tokenPages.flat(), ...importPages.flat(), ...profilePages.flat(), ...draftPages.flat()]) {
     const key = `${row.kind}:${row.chainId}:${row.tokenAddress || row.campaignAddress}`;
     if (!merged.has(key)) merged.set(key, row);
   }

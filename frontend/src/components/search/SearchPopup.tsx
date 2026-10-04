@@ -154,7 +154,8 @@ export function SearchPopup({
                 ) : null}
                 {results.map((row) => {
                   const native = Number(row.marketcapBnb);
-                  const mcap = formatSearchMcapUsd(Number.isFinite(native) ? native : null, usdPrice);
+                  // Imported coins come with a USD market cap from their DEX.
+                  const mcap = row.marketCapUsd ? formatSearchMcapUsd(row.marketCapUsd, 1) : formatSearchMcapUsd(Number.isFinite(native) ? native : null, usdPrice);
                   return (
                     <button
                       key={`${row.kind}:${row.href}`}
