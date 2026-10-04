@@ -90,9 +90,10 @@ test('Operations and Community endpoints enforce read/manage separation server-s
   assert.match(proxy, /admin\\\/rewards[^\n]*readOnly \? "finance\.view" : "finance\.manage"/)
 })
 
-test('Reward Ops and recruiter payouts fail closed without a bearer', () => {
+test('Reward Ops, recruiter payouts and Security fail closed without a bearer', () => {
   assert.match(proxy, /FAIL_CLOSED_DASHBOARD_ROUTE = \/\^\\\/api\\\/\(\?:admin\\\/rewards\|security\\\/recruiter-payouts\)/)
-  assert.match(proxy, /if \(FAIL_CLOSED_DASHBOARD_ROUTE\.test\(pathname\)\) return authorizeDashboardOrOpsKey\(req, res, permission\)/)
+  assert.match(proxy, /if \(FAIL_CLOSED_DASHBOARD_ROUTE\.test\(pathname\)\) return true;/)
+  assert.match(proxy, /if \(isFailClosedDashboardRoute\(pathname\)\) return authorizeDashboardOrOpsKey\(req, res, permission\)/)
 })
 
 test('Security, diagnostics and payout routes map to explicit capabilities', () => {

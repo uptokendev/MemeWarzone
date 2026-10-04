@@ -2,7 +2,7 @@ import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { badMethod, getQuery, json } from "../../server/http.js";
 import { getServerReadProvider } from "../lib/getServerReadProvider.js";
-import { requireDashboardAdmin } from "./_auth.js";
+import { dashboardPrincipalCan, requireDashboardPermission } from "./_access.js";
 import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 
 const BNB_LOCKER_ABI = [
@@ -111,7 +111,7 @@ async function proxySolanaLpFees(q, authority, limit) {
   return payload;
 }
 
-async function authorize(req, res) {
+export async function authorize(req, res) {
   const opsKey = String(process.env.DASHBOARD_OPS_KEY || process.env.OPS_READ_KEY || "").trim();
   const provided = String(req.headers["x-ops-key"] || getQuery(req).opsKey || "").trim();
   if (opsKey && provided && opsKey === provided) return { mode: "ops-key" };
@@ -123,9 +123,19 @@ async function authorize(req, res) {
   const creator = toAddr(q.creator);
   if (creator) return { mode: "creator-self", creator };
 
-  const admin = await requireDashboardAdmin(req, res);
-  if (!admin) return null;
-  return { mode: "admin", admin };
+  // Command Center users need finance.view (same capability as Finance).
+  const principal = req.dashboardPrincipal || (await requireDashboardPermission(req, res, "finance.view"));
+  if (!principal) return null;
+  if (!dashboardPrincipalCan(principal, "finance.view")) {
+    res.status(403).json({
+      ok: false,
+      code: "DASHBOARD_PERMISSION_REQUIRED",
+      error: "You do not have permission to access this Command Center section.",
+      permission: "finance.view",
+    });
+    return null;
+  }
+  return { mode: "admin", principal };
 }
 
 async function loadGraduatedRows(chainId, limit) {

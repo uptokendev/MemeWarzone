@@ -122,16 +122,24 @@ function routeCapability(pathname, req) {
 
   if (pathname === "/api/diagnostics") return "diagnostics.view";
   if (/^\/api\/security\/recruiter-payouts(?:\/|$)/.test(pathname)) return "recruiter_payouts.manage";
-  if (/^\/api\/security\/(?:solana|contracts)(?:\/|$)/.test(pathname)) return "security.manage";
+  // GET here only serves the sync-jobs list; every action under it is a POST.
+  if (/^\/api\/security\/(?:solana|contracts)(?:\/|$)/.test(pathname)) return readOnly ? "security.view" : "security.manage";
   if (/^\/api\/security(?:\/|$)/.test(pathname)) return readOnly ? "security.view" : "security.manage";
   if (/^\/api\/admin\/rewards(?:\/|$)/.test(pathname)) return readOnly ? "finance.view" : "finance.manage";
   return null;
 }
 
-// Reward Ops and recruiter payouts move money records: no bearer means no
+// Reward Ops, recruiter payouts and the Security section: no bearer means no
 // dashboard principal, so only the server-to-server ops key may continue.
 // The route handlers check again (api/lib/dashboardPermissionOrOps.js).
 const FAIL_CLOSED_DASHBOARD_ROUTE = /^\/api\/(?:admin\/rewards|security\/recruiter-payouts)(?:\/|$)/i;
+// The launch app reads these Security routes without a bearer; they stay public.
+const PUBLIC_SECURITY_ROUTE = /^\/api\/security\/(?:status|creator\/[^/]+\/(?:profile|launch-eligibility))\/?$/i;
+
+function isFailClosedDashboardRoute(pathname) {
+  if (FAIL_CLOSED_DASHBOARD_ROUTE.test(pathname)) return true;
+  return /^\/api\/security(?:\/|$)/i.test(pathname) && !PUBLIC_SECURITY_ROUTE.test(pathname);
+}
 
 async function authorizeDashboardOrOpsKey(req, res, permission) {
   const authorization = String(req.headers?.authorization || "").trim();
@@ -145,7 +153,7 @@ async function authorizeDashboardOrOpsKey(req, res, permission) {
 async function gateDashboardRoute(pathname, req, res) {
   const permission = routeCapability(pathname, req);
   if (!permission) return true;
-  if (FAIL_CLOSED_DASHBOARD_ROUTE.test(pathname)) return authorizeDashboardOrOpsKey(req, res, permission);
+  if (isFailClosedDashboardRoute(pathname)) return authorizeDashboardOrOpsKey(req, res, permission);
   return authorizeDashboardBearer(req, res, permission);
 }
 
