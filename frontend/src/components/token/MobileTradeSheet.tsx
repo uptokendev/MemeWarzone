@@ -38,6 +38,8 @@ type Props = {
   nativeUsd: number | null;
   priceNative: number | null;
   nativeBalance: number;
+  /** Native kept back on buy MAX / %: the trade spends every unit entered, so rent and network fees must stay in the wallet. */
+  nativeReserve?: number;
   tokenBalance: number;
   nativeBalanceLabel: string;
   tokenBalanceLabel: string;
@@ -117,6 +119,7 @@ export function MobileTradeSheet({
   nativeUsd,
   priceNative,
   nativeBalance,
+  nativeReserve = 0,
   tokenBalance,
   nativeBalanceLabel,
   tokenBalanceLabel,
@@ -175,7 +178,8 @@ export function MobileTradeSheet({
       return;
     }
     setUnit("NATIVE");
-    setDisplayAmount(percentOf(nativeBalance, pct));
+    const reserve = Number.isFinite(nativeReserve) && nativeReserve > 0 ? nativeReserve : 0;
+    setDisplayAmount(percentOf(Math.max(0, nativeBalance - reserve), pct));
   }
 
   function setMax() {

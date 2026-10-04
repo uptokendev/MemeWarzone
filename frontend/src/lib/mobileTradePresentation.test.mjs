@@ -74,3 +74,17 @@ test("percentOf never rounds above the balance", () => {
     assert.ok(Number(percentOf(balance, 100)) <= balance, `100% of ${balance}`);
   }
 });
+
+test("Solana buy MAX / % keeps the fee reserve: the buy spends every lamport entered", () => {
+  const sheet = fs.readFileSync(new URL("../components/token/MobileTradeSheet.tsx", import.meta.url), "utf8");
+  const page = fs.readFileSync(new URL("../pages/TokenDetails.tsx", import.meta.url), "utf8");
+  const warRoom = fs.readFileSync(new URL("../components/postgrad/WarRoomTradePanel.tsx", import.meta.url), "utf8");
+  const reserve = fs.readFileSync(new URL("./solanaBuyReserve.ts", import.meta.url), "utf8");
+  assert.match(reserve, /SOLANA_BUY_FEE_RESERVE_LAMPORTS = 5_000_000n/);
+  assert.match(reserve, /SOLANA_BUY_FEE_RESERVE_SOL = 0\.005/);
+  assert.match(sheet, /percentOf\(Math\.max\(0, nativeBalance - reserve\), pct\)/);
+  assert.match(page, /nativeReserve=\{isSolanaPage \? SOLANA_BUY_FEE_RESERVE_SOL : 0\}/);
+  assert.match(warRoom, /isSolanaCampaign \? SOLANA_BUY_FEE_RESERVE_LAMPORTS : 0n/);
+  // 100% of 0.128754 SOL with the reserve leaves 0.005 SOL in the wallet.
+  assert.equal(percentOf(0.128754 - 0.005, 100), "0.123754");
+});
