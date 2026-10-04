@@ -103,7 +103,7 @@ import {
 } from "@/lib/localTopazTrades";
 import { fetchTopazTradeReports, reportTopazTrade } from "@/lib/topazTradeReports";
 import { isValidTradeTxHash, mergeTradePoints, normalizeTradeTxHash, SYNTHETIC_LOG_INDEX_MIN, tradeDedupeKey } from "@/lib/tradeDedupe";
-import { SOLANA_BUY_FEE_RESERVE_SOL } from "@/lib/solanaBuyReserve";
+import { SOLANA_BUY_FEE_RESERVE_LAMPORTS, SOLANA_BUY_FEE_RESERVE_SOL, evmBuyGasReserveWei, solanaBuyFeeMessage } from "@/lib/tradeBalanceReserve";
 
 const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
@@ -4338,6 +4338,10 @@ const toSeconds = (ts: number): number => {
             amountIn = effectiveBnbWei > 0n ? effectiveBnbWei : 0n;
           }
           if (amountIn <= 0n) throw new Error(`Enter a ${quoteUnit} amount to buy.`);
+          // The buy spends every lamport entered; token-account rent and the network fee come on top.
+          if (solanaQuote.native && bnbBalanceWei != null && amountIn + SOLANA_BUY_FEE_RESERVE_LAMPORTS > bnbBalanceWei) {
+            throw new Error(solanaBuyFeeMessage(bnbBalanceWei > SOLANA_BUY_FEE_RESERVE_LAMPORTS ? bnbBalanceWei - SOLANA_BUY_FEE_RESERVE_LAMPORTS : 0n));
+          }
           const estTokens = effectiveTokenWei > 0n ? effectiveTokenWei : 0n;
           minOut = applySlippageMinOut(estTokens, SLIPPAGE_PCT);
           toast({
@@ -4565,6 +4569,10 @@ const toSeconds = (ts: number): number => {
           const nativeAmountInRaw = tradeInputDenom === "BNB" ? parseBnbAmountWei(tradeAmount) : effectiveBnbWei;
           if (nativeAmountInRaw <= 0n) throw new Error(`Enter a valid ${nativeUnit} or token amount.`);
           if (bnbBalanceWei != null && nativeAmountInRaw > bnbBalanceWei) throw new Error(`Insufficient ${nativeUnit} balance.`);
+          const topazGasReserve = evmBuyGasReserveWei(isRobinhoodPage);
+          if (bnbBalanceWei != null && nativeAmountInRaw + topazGasReserve > bnbBalanceWei) {
+            throw new Error(`Not enough ${nativeUnit}. Keep about ${ethers.formatEther(topazGasReserve)} ${nativeUnit} in your wallet for gas.`);
+          }
           const quote = await quoteTopazBuy({
             provider: readProvider,
             resolved,
@@ -4729,10 +4737,11 @@ const toSeconds = (ts: number): number => {
         const baseCostWei = quoteWei && quoteWei > 0n ? quoteWei : tradeInputDenom === "BNB" ? inputBnbWei : 0n;
         if (baseCostWei > 0n) {
           const maxCostWei = (baseCostWei * BigInt(100 + SLIPPAGE_PCT)) / 100n;
-          if (maxCostWei > bnbBalanceWei) {
+          const gasReserveWei = evmBuyGasReserveWei(isRobinhoodPage);
+          if (maxCostWei + gasReserveWei > bnbBalanceWei) {
             toast({
               title: `Insufficient ${nativeUnit}`,
-              description: `You need ~${formatBnbFromWei(maxCostWei)} to place this buy.`,
+              description: `You need ~${formatBnbFromWei(maxCostWei)} for this buy plus about ${ethers.formatEther(gasReserveWei)} ${nativeUnit} for gas.`,
               variant: "destructive",
             });
             return;
@@ -6230,7 +6239,16 @@ const toSeconds = (ts: number): number => {
           nativeUsd={nativeUsd}
           priceNative={pageLivePriceNative}
           nativeBalance={Number.isFinite(nativeBalanceNum) ? nativeBalanceNum : 0}
-          nativeReserve={isSolanaPage ? SOLANA_BUY_FEE_RESERVE_SOL : 0}
+          nativeReserve={(() => {
+            // Buy MAX / % must leave what the trade pays on top of the amount entered.
+            if (isSolanaPage) return solanaQuote.native ? SOLANA_BUY_FEE_RESERVE_SOL : 0;
+            const gas = Number(ethers.formatEther(evmBuyGasReserveWei(isRobinhoodPage)));
+            if (isDexStage) return gas;
+            // Bonding buys send cost + SLIPPAGE_PCT headroom, so the spendable part is (balance - gas) / (1 + slippage).
+            const bal = Number.isFinite(nativeBalanceNum) ? nativeBalanceNum : 0;
+            const afterGas = Math.max(0, bal - gas);
+            return gas + (afterGas * SLIPPAGE_PCT) / (100 + SLIPPAGE_PCT);
+          })()}
           tokenBalance={Number.isFinite(tokenBalanceNum) ? tokenBalanceNum : 0}
           nativeBalanceLabel={formatBnbFromWei(bnbBalanceWei)}
           tokenBalanceLabel={`${formatTokenFromWei(tokenBalanceWei)} ${tokenData.ticker}`}

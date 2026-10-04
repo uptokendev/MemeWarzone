@@ -301,6 +301,10 @@ export function mapSolanaTradeError(err: unknown): string {
   if (/AlreadyGraduated/i.test(msg)) {
     return "This campaign has graduated. Bonding-curve trading is closed.";
   }
+  // System Program transfer error 1: the wallet cannot cover the buy plus rent and fees.
+  if (/insufficient lamports|Program 1{32} failed: custom program error: 0x1\b/i.test(msg)) {
+    return "Not enough SOL. Keep about 0.005 SOL in your wallet for the token account and network fee.";
+  }
   if (/SlippageExceeded/i.test(msg)) {
     return "Slippage exceeded — retry with a higher slippage or smaller size.";
   }
