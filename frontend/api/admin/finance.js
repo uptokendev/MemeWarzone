@@ -1,7 +1,7 @@
 import { pool } from "../../server/db.js";
 import { requireAdminOrOps } from "../lib/apiAuth.js";
 import { configuredRewardVaultAddresses, readRewardFunding } from "../lib/financeFunding.js";
-import { readNativeUpvoteRevenue } from "../lib/financeVoteRevenue.js";
+import { readNativeUpvoteRevenue, readSolanaUpvoteRevenue } from "../lib/financeVoteRevenue.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
 import { normalizeSolanaCluster, resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 import { cachedFeeRouting, feeRoutingAllNetworks, feeRoutingDays, feeRoutingNetwork } from "../lib/financeFeeRouting.js";
@@ -413,7 +413,7 @@ async function hiddenCampaignAddresses(network) {
 }
 
 // The revenue lanes with their hourly buckets: protocol share of bonding-curve
-// trades and, on BNB / Robinhood, paid UP votes; hidden test coins left out.
+// trades and paid UP votes (all three chains); hidden test coins left out.
 // /revenue values them as one lifetime figure, /summary month by month.
 export async function revenueLanes(network) {
   const lanes = [];
@@ -433,9 +433,12 @@ export async function revenueLanes(network) {
       if (!schemaMissing(error)) throw error;
     }
 
-    if (network.chain === "bnb" || network.chain === "robinhood") {
+    // Paid UP votes: BNB / Robinhood when the vote treasury pays the protocol
+    // revenue vault; Solana always (a plain transfer to the vote treasury,
+    // founder decision 2026-10-04).
+    if (network.chain === "bnb" || network.chain === "robinhood" || network.chain === "solana") {
       try {
-        const upvotes = await readNativeUpvoteRevenue(network);
+        const upvotes = network.chain === "solana" ? await readSolanaUpvoteRevenue(network) : await readNativeUpvoteRevenue(network);
         if (upvotes.approved && upvotes.aggregate) {
           const nativeAmount = atomicToDecimal(upvotes.aggregate.amountRaw, network.decimals);
           const periodStart = toIso(upvotes.aggregate.periodStart);
@@ -449,7 +452,7 @@ export async function revenueLanes(network) {
                 chain: network.chain,
                 lane: "upvotes",
                 assetSymbol: network.asset,
-                sourceInventoryId: `${evmPrefix(network)}-vote-treasury`,
+                sourceInventoryId: network.chain === "solana" ? "sol101-mainnet-protocol-treasury" : `${evmPrefix(network)}-vote-treasury`,
                 nativeAmount,
                 evidenceCount: upvotes.aggregate.evidenceCount,
               },

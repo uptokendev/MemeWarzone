@@ -38,8 +38,30 @@ export async function readNativeUpvoteRevenue(network) {
     return { approved: false, aggregate: null, reason: "FEE_RECEIVER_NOT_PROTOCOL_REVENUE_VAULT" };
   }
 
-  // Grouped by hour so the finance view can value each vote at the price of
-  // its hour. Votes on hidden test coins are left out.
+  const aggregate = await hourlyNativeVotes(network.chainId, ethers.ZeroAddress);
+  if (!aggregate) return { approved: true, aggregate: null, reason: null };
+  return { approved: true, reason: null, aggregate };
+}
+
+// Solana paid UP votes: a plain System transfer to the vote treasury with memo
+// mwz-upvote:<campaign> (api/dev-fix/solana-vote-ingest.js). There is no fee
+// receiver to check: the whole payment is protocol revenue (fee routing marks
+// vote_treasury "ours"). Native SOL is stored with the System Program id as
+// asset_address. Founder decision 2026-10-04: counted as revenue like BNB /
+// Robinhood votes.
+export const SOLANA_NATIVE_VOTE_ASSET = "11111111111111111111111111111111";
+
+export async function readSolanaUpvoteRevenue(network) {
+  if (network.chain !== "solana") return { approved: false, aggregate: null, reason: "CHAIN_NOT_SUPPORTED" };
+  const aggregate = await hourlyNativeVotes(network.chainId, SOLANA_NATIVE_VOTE_ASSET);
+  return { approved: true, reason: null, aggregate };
+}
+
+// Grouped by hour so the finance view can value each vote at the price of its
+// hour. Votes on hidden test coins are left out; a vote without a campaign
+// passes. EVM addresses compare case-insensitively; the Solana System Program
+// id is all digits, so lower() leaves it unchanged.
+async function hourlyNativeVotes(chainId, assetAddress) {
   const { rows } = await pool.query(
     `select date_trunc('hour', v.block_timestamp) as hour,
             min(v.block_timestamp) as period_start,
@@ -52,7 +74,7 @@ export async function readNativeUpvoteRevenue(network) {
         and lower(v.asset_address) = lower($2)
         and ${notPublicHiddenCampaignSql("v")}
       group by 1`,
-    [network.chainId, ethers.ZeroAddress],
+    [chainId, assetAddress],
   );
   let total = 0n;
   let evidenceCount = 0;
@@ -68,19 +90,12 @@ export async function readNativeUpvoteRevenue(network) {
     if (row.period_end && (!periodEnd || new Date(row.period_end) > new Date(periodEnd))) periodEnd = row.period_end;
     buckets.push({ hour: row.hour, raw });
   }
-  if (total === 0n || !periodStart || !periodEnd) {
-    return { approved: true, aggregate: null, reason: null };
-  }
-
+  if (total === 0n || !periodStart || !periodEnd) return null;
   return {
-    approved: true,
-    reason: null,
-    aggregate: {
-      amountRaw: total.toString(),
-      periodStart,
-      periodEnd,
-      evidenceCount,
-      buckets,
-    },
+    amountRaw: total.toString(),
+    periodStart,
+    periodEnd,
+    evidenceCount,
+    buckets,
   };
 }

@@ -251,3 +251,57 @@ test("summary route: GET only, finance.view bearer required, currency checked", 
   assert.equal(res.headers["Cache-Control"], "private, max-age=60");
   clearFinanceSummaryCache();
 });
+
+test("Solana paid UP votes are a revenue lane in /revenue and /summary alike, test coins excluded", async () => {
+  const { pool } = await import("../../server/db.js");
+  const { revenueLanes, buildRevenue } = await import("../admin/finance.js");
+  const original = pool.query;
+  const seen = [];
+  pool.query = async (text, params) => {
+    seen.push({ text, params });
+    if (/from public\.votes/.test(text)) {
+      assert.equal(params[0], 101);
+      assert.equal(params[1], "11111111111111111111111111111111");
+      assert.match(text, /not exists \(\s*select 1 from public\.campaigns hc/);
+      return { rows: [{ hour: new Date("2026-09-26T20:00:00Z"), period_start: new Date("2026-09-26T20:07:47Z"), period_end: new Date("2026-09-26T20:07:47Z"), evidence_count: 1, amount_raw: "24770869" }] };
+    }
+    if (/from public\.reward_events/.test(text) && /group by 1/.test(text)) {
+      return { rows: [{ hour: new Date("2026-10-02T08:00:00Z"), period_start: new Date("2026-10-02T08:10:00Z"), period_end: new Date("2026-10-02T08:20:00Z"), evidence_count: 2, amount_raw: "17468840" }] };
+    }
+    if (/count\(\*\)::int as n/.test(text)) return { rows: [{ n: 0 }] };
+    return { rows: [] };
+  };
+  try {
+    const sol = { ...FINANCE_MAINNETS[0] };
+    const lanes = await revenueLanes(sol);
+    assert.deepEqual(lanes.lanes.map((l) => l.aggregate.lane), ["bonding_curve_fee", "upvotes"]);
+    const vote = lanes.lanes[1].aggregate;
+    assert.equal(vote.id, "upvotes:101:native");
+    assert.equal(vote.assetSymbol, "SOL");
+    assert.equal(vote.nativeAmount, "0.024770869");
+    assert.equal(vote.sourceInventoryId, "sol101-mainnet-protocol-treasury");
+
+    const revenue = await buildRevenue(sol, { prices: { ...fakePrices, async spotTable() { return []; } } });
+    assert.equal(revenue.aggregates.find((a) => a.lane === "upvotes").amountUsd, 2.477087);
+    assert.equal(revenue.totals.amountUsd, Math.round((2.477087 + 1.746884) * 1e6) / 1e6);
+
+    const summary = await buildFinanceSummary({
+      networks: [sol],
+      months: 2,
+      now: NOW,
+      prices: fakePrices,
+      readRevenue: async (network) => {
+        const read = await revenueLanes(network);
+        return { lanes: read.lanes.map((lane) => ({ asset: lane.aggregate.assetSymbol, decimals: network.decimals, buckets: lane.buckets })), excludedTestCoinEvents: read.excludedEvents };
+      },
+      readLpShare: noLp,
+      readFeeRouting: noFees,
+      readRewards: noRewards,
+    });
+    assert.equal(summary.revenue.lastMonth.totals.amountUsd, 2.477087);
+    assert.equal(summary.revenue.thisMonth.totals.amountUsd, 1.746884);
+    assert.equal(summary.revenue.allTime.amountUsd, revenue.totals.amountUsd);
+  } finally {
+    pool.query = original;
+  }
+});
