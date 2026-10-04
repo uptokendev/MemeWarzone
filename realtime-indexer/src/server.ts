@@ -398,6 +398,7 @@ app.get("/health", async (_req, res) => {
         v3: (await import("./robinhoodV3PoolIndexer.js")).robinhoodV3PublicHealth(),
       },
       solana: solanaIndexerPublicHealth(),
+      protocolForwarderKeeper: (await import("./protocolForwarderKeeper.js")).protocolForwarderKeeperHealth(),
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });

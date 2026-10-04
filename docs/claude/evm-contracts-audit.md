@@ -116,3 +116,23 @@ and the launchpad and battle system are proven there end to end. What remains
 is in `evm-deployments.md` "Still to do".
 
 
+
+### ProtocolRevenueForwarder: LP protocol 20% (2026-10-04, built and tested, NOT deployed)
+
+The gen-6 lockers route the LP protocol 20% as WBNB/WETH through `TreasuryRouterV4.routeLpToken` into
+`ProtocolRevenueVault`, which only forwards native and has no ERC20 path: that share is stuck once it lands.
+Fix: `contracts/ProtocolRevenueForwarder.sol` becomes the router's `protocolRevenueVault`. Native in is
+forwarded to the existing vault in the same call (operator fill, overflow to the Safe, unchanged); wrapped
+native waits for a permissionless `flush()` that unwraps and forwards; other ERC20s leave only to the Safe
+(`withdrawToken`). No setters, no storage besides the reentrancy flag.
+
+- Safe steps per chain: PF1 `proposeProtocolRevenueVault(forwarder)`, >= 3600 s, PF2 `acceptProtocolRevenueVault()`
+  (`scripts/make-protocol-forwarder-batches.ts`). Rollback: same pair with the old vault (`ROLLBACK=1`).
+- Deploy: `scripts/deploy-protocol-revenue-forwarder.ts` (dry run by default, eth_call-simulates the constructor).
+- Gas: +~10,970 per routed protocol share (every buy, sell, create first buy, graduation). Harvest unchanged.
+- Residual risk until PF2 executes: a public `harvest()` after a gen-6 graduation sends the 20% to the old vault,
+  permanently. On 2026-10-04 no gen-6 coin had graduated on either chain (only the hidden canaries exist).
+- After PF2: finance registry `protocol` entry and the "LP share stuck" warnings in
+  `frontend/api/lib/financeFeeRoutingEvm.js` / `financeFeeRoutingOwnership.js`, vault `Deposit.from` becomes the
+  forwarder for router routes, lift the API harvest pause (`LP_HARVEST_PAUSED_CHAIN_IDS`), add the forwarder to
+  `config/verification/mainnet-contracts.json`.
