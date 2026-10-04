@@ -49,6 +49,9 @@ import {
 } from "../lib/financeAccountingCosts.js";
 import { effectiveTaxRules, taxReserveSchedule, validateTaxRules } from "../lib/financeAccountingTax.js";
 import {
+  BUFFER_LABEL,
+  DIVIDEND_NOTE,
+  OPERATOR_CAP_USD,
   SAFE_BATCH_CHAINS,
   buildSafeBatch,
   buildSquadsProposal,
@@ -58,6 +61,8 @@ import {
 } from "../lib/financeAccountingDistributions.js";
 import { toCsv } from "../lib/financeAccountingCsv.js";
 import { currentBalances, monthlyRevenue, revenueEventRows } from "../lib/financeAccountingSources.js";
+import { buildPayoutsAllChains, cachedPayouts, payoutsDays } from "../lib/financePayouts.js";
+import { feeRoutingAllNetworks } from "../lib/financeFeeRouting.js";
 import {
   ACCOUNTING_MIGRATION,
   accountingTablesMissing,
@@ -80,8 +85,18 @@ import {
 const BASE = "/api/admin/finance";
 const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|close|distributions|exports)(?:\/|$)/;
 const MAX_EXPORT_MONTHS = 36;
+const FIRST_MONTH = "2024-01";
+// Close order (founder 2026-10-04): closed months form an unbroken run from
+// the start. A month closes only when every earlier month with activity is
+// closed; a month reopens only when no later month is closed (reopen latest
+// first). Months without revenue or costs never block.
+const CLOSE_ORDER_RULE = "A month can be closed only when every earlier month with revenue or costs is closed. A month can be reopened only when no later month is closed: reopen the latest first.";
+
+function monthHasActivity(row) {
+  return (row.lanes || []).length > 0 || (row.occurrences || []).length > 0 || (row.revenueUsd ?? 0) !== 0 || (row.costsUsd ?? 0) !== 0;
+}
 const PROPOSAL_LABEL = "Proposal only. Nothing is sent from this page.";
-const TAX_LABEL = "Default rates; confirm with your tax adviser. This is a reserve estimate, not tax advice.";
+const TAX_LABEL = "Default rates; no adviser has confirmed these yet. This is a reserve estimate, not tax advice.";
 
 export function isFinanceAccountingPath(pathname) {
   return ACCOUNTING_PATH.test(String(pathname || ""));
@@ -152,6 +167,7 @@ export function createFinanceAccountingHandler(deps = {}) {
   const revenue = (args) => (deps.revenue || monthlyRevenue)({ db: db(), prices: prices(), ...args });
   const revenueEvents = (args) => (deps.revenueEvents || revenueEventRows)({ db: db(), prices: prices(), fx: fx(), ...args });
   const balances = () => (deps.balances || currentBalances)({ db: db() });
+  const payouts = (days) => (deps.payouts || ((d) => buildPayoutsAllChains(feeRoutingAllNetworks(), (network) => cachedPayouts({ network, days: d, db: db() }))))(days);
 
   async function settings() {
     const row = await readSettings(db());
@@ -408,7 +424,18 @@ export function createFinanceAccountingHandler(deps = {}) {
       generatedAt: new Date(nowMs()).toISOString(),
       source: "dashboard-api",
       year,
-      months: data.months.map(({ lanes, occurrences, ...row }) => ({ ...row, closable: row.status === "open" && row.month < nowMonth })),
+      months: data.months.map(({ lanes, occurrences, ...row }, i, all) => {
+        const earlierOpen = all.slice(0, i).filter((m) => m.status !== "closed" && monthHasActivity(m)).map((m) => m.month);
+        const laterClosed = all.slice(i + 1).filter((m) => m.status === "closed").map((m) => m.month);
+        return {
+          ...row,
+          closable: row.status === "open" && row.month < nowMonth && earlierOpen.length === 0,
+          closeBlockedBy: row.status === "open" ? earlierOpen : [],
+          reopenable: row.status === "closed" && laterClosed.length === 0,
+          reopenBlockedBy: row.status === "closed" ? laterClosed : [],
+        };
+      }),
+      closeOrderRule: CLOSE_ORDER_RULE,
       ytd: data.ytd,
       notes: data.notes,
       canManage: dashboardPrincipalCan(principal, "finance.manage"),
@@ -467,6 +494,21 @@ export function createFinanceAccountingHandler(deps = {}) {
     return res.status(200).json({ schemaVersion: "finance-close-month-v1", source: "dashboard-api", month, status: "open", from: "live", close, snapshot: preview, closable: month < nowMonth, canManage });
   }
 
+  /**
+   * Open months before `month` (from 2024-01) with any activity: revenue
+   * lanes or cost occurrences. Closing must go in order over those.
+   */
+  async function openActiveMonthsBefore(month) {
+    const last = addMonths(month, -1);
+    if (last < FIRST_MONTH) return [];
+    const closes = await listCloses(db(), FIRST_MONTH, last);
+    const open = monthRange(FIRST_MONTH, last).filter((m) => closes.get(m)?.status !== "closed");
+    if (!open.length) return [];
+    const costs = (await listCosts(db())).filter((c) => !c.deletedAt);
+    const live = await revenue({ fromMonth: open[0], toMonth: open[open.length - 1] });
+    return open.filter((m) => (live.months[m]?.lanes || []).length > 0 || costs.some((c) => expandCost(c, m, m).length > 0));
+  }
+
   async function postCloseMonth(req, res, actor, month) {
     const body = req.body || {};
     const action = String(body.action || "");
@@ -476,6 +518,10 @@ export function createFinanceAccountingHandler(deps = {}) {
     const nowMonth = currentMonth(nowMs());
     if (action === "close") {
       if (month >= nowMonth) throw new FinanceInputError("Only a month that has ended can be closed.", "month");
+      const blockers = await openActiveMonthsBefore(month);
+      if (blockers.length) {
+        throw new HttpError(409, `Close the earlier months with activity first: ${blockers.join(", ")}.`, { code: "EARLIER_MONTHS_OPEN", months: blockers });
+      }
       // Computed before the transaction (it reads chains and prices); the
       // transaction then only checks the status and writes.
       const snapshot = await buildSnapshot(month, actor);
@@ -490,6 +536,10 @@ export function createFinanceAccountingHandler(deps = {}) {
     }
     const reason = typeof body.reason === "string" ? body.reason.trim() : "";
     if (reason.length < 3 || reason.length > 500) throw new FinanceInputError("Give a reason for reopening (3 to 500 characters).", "reason");
+    const later = [...(await listCloses(db(), addMonths(month, 1), "9999-12")).values()].filter((c) => c.status === "closed").map((c) => c.month);
+    if (later.length) {
+      throw new HttpError(409, `Later months are closed: reopen ${later.slice().reverse().join(", then ")} first (latest first).`, { code: "LATER_MONTHS_CLOSED", months: later });
+    }
     const result = await withTransaction(db(), async (client) => {
       const before = await lockClose(client, month);
       if (before.status !== "closed") throw new HttpError(409, `${month} is not closed.`, { code: "NOT_CLOSED" });
@@ -524,7 +574,6 @@ export function createFinanceAccountingHandler(deps = {}) {
       openCostsUsd(costs),
     ]);
     const distribution = computeDistribution({
-      oursUsd: bal.oursUsd,
       chains: bal.chains || [],
       taxReserveUsd: yearData.ytd.reserveUsd,
       openCostsUsd: open,
@@ -540,12 +589,23 @@ export function createFinanceAccountingHandler(deps = {}) {
       generatedAt: new Date(nowMs()).toISOString(),
       source: "dashboard-api",
       label: PROPOSAL_LABEL,
+      dividendNote: DIVIDEND_NOTE,
       settings: s.distribution,
-      balances: { asOf: bal.asOf || null, oursUsd: bal.oursUsd ?? null, heldUsd: bal.heldUsd ?? null, owedUsd: bal.owedUsd ?? null, chains: (bal.chains || []).map(({ oursNative, ...c }) => c), errors: bal.errors || [], note: bal.note || null },
+      multisig: (bal.chains || []).map((c) => ({ chainId: c.chainId, chain: c.chain, asset: c.asset, address: c.multisigAddress, amountNative: c.multisigAmount ?? null, amountUsd: c.multisigUsd, priceUsd: c.priceUsd })),
+      buffer: {
+        label: BUFFER_LABEL,
+        capUsd: OPERATOR_CAP_USD,
+        totalUsd: bal.operatorUsd ?? null,
+        chains: (bal.chains || []).map((c) => ({ chainId: c.chainId, chain: c.chain, asset: c.asset, address: c.operator?.address ?? null, amountNative: c.operator?.amount ?? null, amountUsd: c.operator?.amountUsd ?? null, status: c.operator?.status ?? "unknown" })),
+        protocolVaults: (bal.chains || []).map((c) => ({ chainId: c.chainId, chain: c.chain, asset: c.asset, address: c.protocolVault?.address ?? null, amountNative: c.protocolVault?.amount ?? null, amountUsd: c.protocolVault?.amountUsd ?? null, status: c.protocolVault?.status ?? "unknown" })),
+        note: "Protocol revenue fills the operator wallet up to the $10,000 cap; the rest overflows to the multisig. The operator wallet and the protocol vault (revenue not yet forwarded) are never distributed.",
+      },
+      balances: { asOf: bal.asOf || null, oursUsd: bal.oursUsd ?? null, heldUsd: bal.heldUsd ?? null, owedUsd: bal.owedUsd ?? null, errors: bal.errors || [], note: bal.note || null },
       taxYear: yearData.year,
       distribution,
-      formula: "Distributable now = Ours - treasury buffer - tax reserve (this year to date) - open costs (costs dated up to today in months not yet closed). Each share gets its percentage, rounded down to the cent; per chain it is paid from that chain's part of Ours at the spot price shown.",
-      safeChains: Object.entries(SAFE_BATCH_CHAINS).map(([chainId, c]) => ({ chainId: Number(chainId), label: c.label, asset: c.asset, safe: s.distribution.evmSafes?.[chainId] || null })),
+      formula: "Distributable now = what the multisig holds (Squads vault on Solana, Safe on BNB and Robinhood; native coin, at spot) - tax reserve (this year to date) - open costs (costs dated up to today in months not yet closed). Each share gets its percentage, rounded down to the cent, minus its withholding % if the adviser set one; per chain it is paid from that chain's part of the multisig balance and never more than the multisig holds there.",
+      safeChains: Object.entries(SAFE_BATCH_CHAINS).map(([chainId, c]) => ({ chainId: Number(chainId), label: c.label, asset: c.asset, safe: (bal.chains || []).find((x) => x.chainId === Number(chainId))?.multisigAddress || null })),
+      squadsVault: (bal.chains || []).find((x) => x.chainId === 101)?.multisigAddress || null,
       canManage: dashboardPrincipalCan(principal, "finance.manage"),
     });
   }
@@ -561,14 +621,14 @@ export function createFinanceAccountingHandler(deps = {}) {
 
   async function getSafeBatch(req, res) {
     const chainId = Number(req.query?.chainId);
-    const { s, distribution } = await distributionModel();
-    const batch = buildSafeBatch({ chainId, distribution, settings: s.distribution, createdAtMs: nowMs() });
+    const { bal, distribution } = await distributionModel();
+    const batch = buildSafeBatch({ chainId, distribution, chains: bal.chains || [], createdAtMs: nowMs() });
     return sendFile(res, `mwz-distribution-proposal-${chainId}-${todayIso(nowMs())}.safe-batch.json`, "application/json; charset=utf-8", `${JSON.stringify(batch, null, 2)}\n`);
   }
 
   async function getSquadsProposal(req, res) {
-    const { s, distribution } = await distributionModel();
-    const textBody = buildSquadsProposal({ distribution, settings: s.distribution, createdAtMs: nowMs() });
+    const { bal, distribution } = await distributionModel();
+    const textBody = buildSquadsProposal({ distribution, chains: bal.chains || [], createdAtMs: nowMs() });
     return sendFile(res, `mwz-distribution-proposal-solana-${todayIso(nowMs())}.txt`, "text/plain; charset=utf-8", `${textBody}\n`);
   }
 
@@ -679,8 +739,57 @@ export function createFinanceAccountingHandler(deps = {}) {
       ], out.rows);
     }
     if (kind === "payouts") {
-      // TODO(finance-payouts): export from /api/admin/finance/payouts once that route is merged (built separately).
-      return res.status(501).json({ ok: false, code: "PAYOUTS_EXPORT_NOT_AVAILABLE", error: "The payouts export waits for the payouts endpoint, which is not on this API yet." });
+      // The payouts read model (/api/admin/finance/payouts, financePayouts.js)
+      // is a window of days ending now, so "paid in period" runs from the first
+      // day of `from` to today; owed and vault coverage are as of now.
+      const days = payoutsDays(Math.max(1, Math.ceil((nowMs() - Date.parse(`${from}-01T00:00:00Z`)) / 86_400_000)));
+      const data = await payouts(days);
+      const eur = await fx().rate(null).catch(() => null);
+      const eurOf = (usd) => (usd != null && eur?.usdPerEur ? round2(usd / eur.usdPerEur) : null);
+      const rows = [];
+      for (const section of data.networks || []) {
+        if (section.status !== "ok") {
+          rows.push({ chainId: section.chainId, chain: section.chain, type: "read failed", note: section.error || "The payouts read failed for this chain." });
+          continue;
+        }
+        for (const t of section.data.types || []) {
+          const paid = t.paid?.recorded ? t.paid.period : null;
+          const owed = t.owed?.known ? t.owed.total : null;
+          rows.push({
+            chainId: section.chainId,
+            chain: section.chain,
+            type: t.id,
+            label: t.label,
+            asset: t.asset,
+            periodFrom: section.data.period?.from ?? null,
+            periodTo: section.data.period?.to ?? null,
+            paidNative: paid?.amount ?? null,
+            paidUsd: paid?.amountUsd ?? null,
+            paidEur: eurOf(paid?.amountUsd ?? null),
+            paidCount: paid?.count ?? null,
+            paidPriceSource: paid?.priceSource ?? null,
+            owedNative: owed?.amount ?? null,
+            owedUsd: owed?.amountUsd ?? null,
+            owedEur: eurOf(owed?.amountUsd ?? null),
+            owedPriceSource: owed?.priceSource ?? null,
+            coverage: t.coverage?.status ?? null,
+            lastPayoutAt: t.paid?.lastPayout?.at ?? null,
+            lastPayoutNative: t.paid?.lastPayout?.amount ?? null,
+            lastPayoutTxHash: t.paid?.lastPayout?.txHash ?? null,
+            usdPerEur: eur?.usdPerEur ?? null,
+            fxSource: eur?.source ?? null,
+            note: [t.paid?.note, t.owed?.note].filter(Boolean).join(" ") || null,
+          });
+        }
+      }
+      return sendCsv(res, `mwz-payouts-${suffix}.csv`, [
+        { key: "chainId", label: "chain_id" }, { key: "chain", label: "chain" }, { key: "type", label: "payout_type" }, { key: "label", label: "label" }, { key: "asset", label: "asset" },
+        { key: "periodFrom", label: "paid_period_from" }, { key: "periodTo", label: "paid_period_to" },
+        { key: "paidNative", label: "paid_native" }, { key: "paidUsd", label: "paid_usd" }, { key: "paidEur", label: "paid_eur" }, { key: "paidCount", label: "paid_count" }, { key: "paidPriceSource", label: "paid_price_source" },
+        { key: "owedNative", label: "owed_now_native" }, { key: "owedUsd", label: "owed_now_usd" }, { key: "owedEur", label: "owed_now_eur" }, { key: "owedPriceSource", label: "owed_price_source" },
+        { key: "coverage", label: "vault_coverage" }, { key: "lastPayoutAt", label: "last_payout_at" }, { key: "lastPayoutNative", label: "last_payout_native" }, { key: "lastPayoutTxHash", label: "last_payout_tx_hash" },
+        { key: "usdPerEur", label: "usd_per_eur" }, { key: "fxSource", label: "fx_source" }, { key: "note", label: "note" },
+      ], rows);
     }
     return res.status(404).json({ ok: false, error: "Unknown export. Use revenue-events, costs, close-summaries or payouts." });
   }

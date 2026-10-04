@@ -250,9 +250,24 @@ export async function revenueEventRows({ fromMonth, toMonth, db = pool, prices, 
   return { rows: out, notes: [...new Set(notes)], truncated };
 }
 
+// Fee-routing destination ids (financeFeeRoutingSolana.js / financeFeeRoutingEvm.js).
+const MULTISIG_ID = { solana: "squads_vault", evm: "safe" };
+const OPERATOR_ID = { solana: "route_operator", evm: "protocol_operator" };
+const PROTOCOL_VAULT_ID = "protocol_vault";
+
+function nativeOf(destination, symbol) {
+  const b = (destination?.balances || []).find((x) => x.asset === symbol);
+  if (!destination) return { address: null, status: "missing", amount: null, raw: null, amountUsd: null, priceUsd: null };
+  if (!b || b.status !== "ok") return { address: destination.address || null, status: b?.status || "unknown", amount: null, raw: null, amountUsd: null, priceUsd: null };
+  return { address: destination.address || null, status: "ok", amount: b.amount, raw: String(b.raw), amountUsd: b.amountUsd ?? null, priceUsd: b.priceUsd ?? null };
+}
+
 /**
- * Ours and held balances now, from the fee-routing read model (all mainnets).
- * Owed = held minus ours (mixed balances count as owed there).
+ * Balances now, from the fee-routing read model (all mainnets): per chain the
+ * multisig (Squads vault / Safe, the only distributable money), the operator
+ * wallet (the buffer, capped at $10k, never distributed) and the protocol
+ * vault (not yet forwarded). Plus Ours / held / owed totals for the close.
+ * Only the native asset of the multisig counts (a Safe's WBNB / WETH is left out).
  */
 export async function currentBalances({ db = pool, build = cachedFeeRouting, networks = feeRoutingAllNetworks(), prices } = {}) {
   const settled = await Promise.allSettled(networks.map((network) => build({ network, days: 30, db, ...(prices ? { prices } : {}) })));
@@ -261,38 +276,48 @@ export async function currentBalances({ db = pool, build = cachedFeeRouting, net
   const chains = [];
   settled.forEach((result, index) => {
     const network = networks[index];
+    const kind = network.chain === "solana" ? "solana" : "evm";
+    const base = { chainId: network.chainId, chain: network.chain, asset: network.nativeSymbol, decimals: network.nativeDecimals };
     if (result.status !== "fulfilled") {
       errors.push(`Chain ${network.chainId}: balances could not be read.`);
-      chains.push({ chainId: network.chainId, chain: network.chain, asset: network.nativeSymbol, decimals: network.nativeDecimals, oursUsd: null, heldUsd: null, priceUsd: null });
+      chains.push({ ...base, multisigAddress: null, multisigUsd: null, multisigRaw: null, multisigAmount: null, priceUsd: null, operator: null, protocolVault: null, oursUsd: null, heldUsd: null });
       return;
     }
     const data = result.value;
     datas.push(data);
-    const price = (data.prices || []).find((p) => p.asset === network.nativeSymbol)?.priceUsd ?? null;
+    const byId = new Map((data.destinations || []).map((d) => [d.id, d]));
+    const spot = (data.prices || []).find((p) => p.asset === network.nativeSymbol)?.priceUsd ?? null;
+    const multisig = nativeOf(byId.get(MULTISIG_ID[kind]), network.nativeSymbol);
+    if (multisig.status !== "ok") errors.push(`Chain ${network.chainId}: the multisig balance could not be read.`);
     chains.push({
-      chainId: network.chainId,
-      chain: network.chain,
-      asset: network.nativeSymbol,
-      decimals: network.nativeDecimals,
+      ...base,
+      multisigAddress: multisig.address,
+      multisigUsd: multisig.status === "ok" ? multisig.amountUsd : null,
+      multisigRaw: multisig.status === "ok" ? multisig.raw : null,
+      multisigAmount: multisig.amount,
+      priceUsd: multisig.priceUsd ?? spot,
+      operator: nativeOf(byId.get(OPERATOR_ID[kind]), network.nativeSymbol),
+      protocolVault: nativeOf(byId.get(PROTOCOL_VAULT_ID), network.nativeSymbol),
       oursUsd: data.totals?.ours?.amountUsd ?? null,
       heldUsd: data.totals?.holdings?.amountUsd ?? null,
-      oursNative: data.totals?.ours?.byChain?.[0]?.assets || [],
-      priceUsd: price,
     });
   });
   const ours = mergeTotals(datas.map((d) => d.totals?.ours));
   const held = mergeTotals(datas.map((d) => d.totals?.holdings));
-  const complete = errors.length === 0 && ours.missingPriceCount === 0 && ours.unknownAmountCount === 0;
-  const oursUsd = complete ? ours.amountUsd ?? 0 : null;
-  const heldUsd = errors.length === 0 && held.missingPriceCount === 0 && held.unknownAmountCount === 0 ? held.amountUsd ?? 0 : null;
+  const failed = settled.some((r) => r.status !== "fulfilled");
+  const oursUsd = !failed && ours.missingPriceCount === 0 && ours.unknownAmountCount === 0 ? ours.amountUsd ?? 0 : null;
+  const heldUsd = !failed && held.missingPriceCount === 0 && held.unknownAmountCount === 0 ? held.amountUsd ?? 0 : null;
+  const sumKnown = (pick) => (chains.every((c) => pick(c) != null) ? roundUsd(chains.reduce((s, c) => s + pick(c), 0)) : null);
   return {
     asOf: new Date().toISOString(),
     oursUsd,
     heldUsd,
     owedUsd: oursUsd != null && heldUsd != null ? roundUsd(heldUsd - oursUsd) : null,
+    multisigUsd: sumKnown((c) => c.multisigUsd),
+    operatorUsd: sumKnown((c) => (c.operator?.status === "ok" ? c.operator.amountUsd : null)),
     chains,
     prices: datas.flatMap((d) => d.prices || []),
     errors,
-    note: "Balances at spot, read from the fee-routing map. Ours = protocol-owned balances; owed = everything else held (creator, league, MWL, recruiter, airdrop pots and mixed balances).",
+    note: "Balances at spot, read from the fee-routing map. Ours = protocol-owned balances (operator wallet, protocol vault, multisig, ...); owed = everything else held (creator, league, MWL, recruiter, airdrop pots and mixed balances).",
   };
 }

@@ -3,40 +3,43 @@
 // description (Solana) as files to download. Nothing here signs, submits or
 // moves funds, and no key is loaded.
 //
-//   distributable = max(0, Ours - buffer - tax reserve - open costs)
+// Founder decision 2026-10-04: protocol revenue fills the operator wallet up
+// to the $10,000 cap and the rest overflows to the multisig (Solana Squads
+// vault, EVM Safe). The operator wallet is the treasury buffer and is never
+// distributed. Only what the multisig holds can be distributed:
 //
-// Ours is the fee-routing "Ours" total (protocol-owned balances, at spot).
+//   distributable = max(0, multisig balance (all chains, native, at spot)
+//                          - tax reserve (this year to date) - open costs)
+//
 // Each share gets distributable * bps / 10000, rounded down to the cent; the
-// rounding remainder stays in the treasury. Per chain, a share is paid from
-// that chain's part of Ours (pro rata to its USD value), converted to the
-// native asset at the spot price shown, rounded down to 1e-9.
+// rounding remainder stays in the multisig. A withholding % per shareholder
+// (default 0, set by the adviser, never computed here) is held back from that
+// share and also stays in the multisig. Per chain, a share is paid from that
+// chain's part of the multisig balance (pro rata to its USD value), converted
+// to the native asset at the spot price shown, rounded down to 1e-9, and never
+// more than the multisig holds on that chain.
 
 import { ethers } from "ethers";
 import { FinanceInputError, roundUsd } from "./financeAccountingCosts.js";
-import { EVM_SAFE } from "./financeFeeRoutingEvm.js";
 
-// The Safe that owns the BNB 56 and Robinhood 4663 contracts (same address on
-// both chains, docs/claude/evm-deployments.md) and the Solana Squads multisig
-// (CLAUDE.md). Editable in settings. Share names follow the 50/30/20 split
-// already written in the dashboard's distribution page copy; payout
-// addresses start empty and must be entered before a batch can be built.
-const DEFAULT_EVM_SAFE = EVM_SAFE;
-const DEFAULT_SQUADS_MULTISIG = "fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv";
 const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 export const SAFE_BATCH_CHAINS = Object.freeze({
   56: { chain: "bnb", asset: "BNB", decimals: 18, label: "BNB Chain" },
   4663: { chain: "robinhood", asset: "ETH", decimals: 18, label: "Robinhood Chain" },
 });
+export const OPERATOR_CAP_USD = 10000;
+export const BUFFER_LABEL = "Buffer: operator wallet, capped at $10,000 (not distributed)";
+export const DIVIDEND_NOTE = "A distribution is a dividend from MemeWarzone BV to its shareholders. Before anything is paid it needs the go of the tax adviser and the notary: dividend withholding tax and the treaty rules for the US corporation, the participation exemption for the Dutch holdings, and the BV's distribution test. The batch generated here is a proposal only.";
 
+// Shareholders (founder 2026-10-04): partners hold their shares through these
+// entities. Payout addresses start empty and must be entered before a batch
+// can be built; withholding stays 0 until the adviser sets it.
 export const DEFAULT_DISTRIBUTION_SETTINGS = Object.freeze({
   shares: Object.freeze([
-    Object.freeze({ id: "a", name: "Patrick", bps: 5000, evmAddress: "", solanaAddress: "" }),
-    Object.freeze({ id: "b", name: "Sven", bps: 3000, evmAddress: "", solanaAddress: "" }),
-    Object.freeze({ id: "c", name: "Dough", bps: 2000, evmAddress: "", solanaAddress: "" }),
+    Object.freeze({ id: "a", name: "Patrick", entity: "Dutch personal holding (BV)", bps: 5000, withholdingPct: 0, evmAddress: "", solanaAddress: "" }),
+    Object.freeze({ id: "b", name: "Sven", entity: "Dutch personal holding (BV)", bps: 3000, withholdingPct: 0, evmAddress: "", solanaAddress: "" }),
+    Object.freeze({ id: "c", name: "Dough", entity: "US corporation", bps: 2000, withholdingPct: 0, evmAddress: "", solanaAddress: "" }),
   ]),
-  bufferUsd: 10000,
-  evmSafes: Object.freeze({ 56: DEFAULT_EVM_SAFE, 4663: DEFAULT_EVM_SAFE }),
-  squadsMultisig: DEFAULT_SQUADS_MULTISIG,
 });
 
 function evmAddress(value, field) {
@@ -54,6 +57,7 @@ function solanaAddress(value, field) {
   return raw;
 }
 
+/** Validates the settings form. Fields from older versions (bufferUsd, evmSafes, squadsMultisig) are ignored. */
 export function validateDistributionSettings(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new FinanceInputError("Send the distribution settings as a JSON object.");
   if (!Array.isArray(body.shares) || body.shares.length < 1 || body.shares.length > 10) throw new FinanceInputError("shares must list 1 to 10 shareholders.", "shares");
@@ -62,22 +66,22 @@ export function validateDistributionSettings(body) {
     const n = index + 1;
     const name = typeof share?.name === "string" ? share.name.trim() : "";
     if (!name || name.length > 80) throw new FinanceInputError(`Share ${n}: name is required (at most 80 characters).`, "shares");
+    const entity = typeof share?.entity === "string" ? share.entity.trim() : "";
+    if (entity.length > 120) throw new FinanceInputError(`Share ${n}: legal entity is longer than 120 characters.`, "shares");
     const bps = Number(share?.bps);
     if (!Number.isInteger(bps) || bps < 1 || bps > 10000) throw new FinanceInputError(`Share ${n}: bps must be a whole number from 1 to 10000 (5000 = 50%).`, "shares");
+    const withholdingPct = share?.withholdingPct == null || share?.withholdingPct === "" ? 0 : Number(share.withholdingPct);
+    if (!Number.isFinite(withholdingPct) || withholdingPct < 0 || withholdingPct > 100 || Math.round(withholdingPct * 100) !== withholdingPct * 100) {
+      throw new FinanceInputError(`Share ${n}: withholding % must be 0 to 100 with at most two decimals.`, "shares");
+    }
     const id = String(share?.id || `s${n}`).trim().slice(0, 32) || `s${n}`;
     if (ids.has(id)) throw new FinanceInputError(`Share ${n}: id is used twice.`, "shares");
     ids.add(id);
-    return { id, name, bps, evmAddress: evmAddress(share?.evmAddress, `Share ${n} EVM address`), solanaAddress: solanaAddress(share?.solanaAddress, `Share ${n} Solana address`) };
+    return { id, name, entity, bps, withholdingPct, evmAddress: evmAddress(share?.evmAddress, `Share ${n} EVM address`), solanaAddress: solanaAddress(share?.solanaAddress, `Share ${n} Solana address`) };
   });
   const total = shares.reduce((s, x) => s + x.bps, 0);
   if (total !== 10000) throw new FinanceInputError(`Shares add up to ${total / 100}%, they must add up to 100%.`, "shares");
-  const bufferUsd = Number(body.bufferUsd);
-  if (!Number.isFinite(bufferUsd) || bufferUsd < 0 || bufferUsd > 1e10) throw new FinanceInputError("bufferUsd must be zero or more.", "bufferUsd");
-  const evmSafes = {};
-  for (const chainId of Object.keys(SAFE_BATCH_CHAINS)) {
-    evmSafes[chainId] = evmAddress(body.evmSafes?.[chainId], `Safe address for chain ${chainId}`);
-  }
-  return { shares, bufferUsd: roundUsd(bufferUsd), evmSafes, squadsMultisig: solanaAddress(body.squadsMultisig, "Squads multisig") };
+  return { shares };
 }
 
 export function effectiveDistributionSettings(stored) {
@@ -109,60 +113,66 @@ export function unitsToDecimal(units, decimals) {
 
 /**
  * @param {object} input
- * @param {number|null} input.oursUsd
- * @param {Array<{chainId:number, chain:string, asset:string, decimals:number, oursUsd:number|null, priceUsd:number|null}>} input.chains
+ * @param {Array<{chainId:number, chain:string, asset:string, decimals:number, multisigAddress:string|null,
+ *   multisigUsd:number|null, multisigRaw:string|null, priceUsd:number|null}>} input.chains
  * @param {number|null} input.taxReserveUsd
  * @param {number|null} input.openCostsUsd
  * @param {object} input.settings  effective distribution settings
  */
-export function computeDistribution({ oursUsd, chains = [], taxReserveUsd, openCostsUsd, settings }) {
+export function computeDistribution({ chains = [], taxReserveUsd, openCostsUsd, settings }) {
   const blockers = [];
-  if (oursUsd == null) blockers.push("Ours could not be valued in USD (a balance or price read failed).");
+  for (const c of chains) {
+    if (c.multisigUsd == null || c.multisigRaw == null) blockers.push(`The multisig balance on chain ${c.chainId} could not be read or valued.`);
+  }
+  if (!chains.length) blockers.push("No multisig balances were read.");
   if (taxReserveUsd == null) blockers.push("The tax reserve could not be computed.");
   if (openCostsUsd == null) blockers.push("Open costs could not be read.");
-  const deductions = {
-    bufferUsd: settings.bufferUsd,
-    taxReserveUsd: taxReserveUsd == null ? null : Math.max(0, taxReserveUsd),
-    openCostsUsd,
-  };
-  if (blockers.length) return { oursUsd, deductions, distributableUsd: null, retainedUsd: null, shares: [], blockers };
+  const multisigUsd = blockers.length ? null : roundUsd(chains.reduce((s, c) => s + c.multisigUsd, 0));
+  const deductions = { taxReserveUsd: taxReserveUsd == null ? null : Math.max(0, taxReserveUsd), openCostsUsd };
+  if (blockers.length) return { multisigUsd, deductions, distributableUsd: null, retainedUsd: null, shares: [], blockers };
 
-  const raw = oursUsd - deductions.bufferUsd - deductions.taxReserveUsd - deductions.openCostsUsd;
+  const raw = multisigUsd - deductions.taxReserveUsd - deductions.openCostsUsd;
   const distributableUsd = raw > 0 ? floorCents(raw) : 0;
-  const pricedChains = chains.filter((c) => c.oursUsd != null && c.oursUsd > 0 && c.priceUsd > 0);
-  const pricedTotal = pricedChains.reduce((s, c) => s + c.oursUsd, 0);
+  const priced = chains.filter((c) => c.multisigUsd > 0 && c.priceUsd > 0);
+  const pricedTotal = priced.reduce((s, c) => s + c.multisigUsd, 0);
+  const remaining = new Map(priced.map((c) => [c.chainId, BigInt(c.multisigRaw)]));
   const shares = settings.shares.map((share) => {
-    const amountUsd = floorCents((distributableUsd * share.bps) / 10000);
-    const perChain = pricedChains.map((c) => {
-      const usd = pricedTotal > 0 ? (amountUsd * c.oursUsd) / pricedTotal : 0;
-      const units = usdToNativeUnits(usd, c.priceUsd, c.decimals);
+    const grossUsd = floorCents((distributableUsd * share.bps) / 10000);
+    const withholdingUsd = floorCents((grossUsd * (share.withholdingPct || 0)) / 100);
+    const netUsd = roundUsd(grossUsd - withholdingUsd);
+    const perChain = priced.map((c) => {
+      const usd = pricedTotal > 0 ? (netUsd * c.multisigUsd) / pricedTotal : 0;
+      let units = usdToNativeUnits(usd, c.priceUsd, c.decimals);
+      const left = remaining.get(c.chainId);
+      if (units > left) units = left;
+      remaining.set(c.chainId, left - units);
       return { chainId: c.chainId, chain: c.chain, asset: c.asset, amountUsd: floorCents(usd), units: units.toString(), amountNative: unitsToDecimal(units, c.decimals), priceUsd: c.priceUsd };
     });
-    return { ...share, percent: share.bps / 100, amountUsd, perChain };
+    return { ...share, percent: share.bps / 100, amountUsd: grossUsd, withholdingUsd, netUsd, perChain };
   });
-  const paid = shares.reduce((s, x) => s + x.amountUsd, 0);
+  const paid = shares.reduce((s, x) => s + x.netUsd, 0);
   return {
-    oursUsd: roundUsd(oursUsd),
+    multisigUsd,
     deductions,
     distributableUsd,
     shortfallUsd: raw < 0 ? roundUsd(-raw) : 0,
-    retainedUsd: roundUsd(oursUsd - paid),
+    retainedUsd: roundUsd(multisigUsd - paid),
     shares,
     blockers,
   };
 }
 
 /**
- * Unsigned Safe Transaction Builder batch: one native transfer per share, from
- * the Safe. Import it in the Safe app (Transaction Builder) to review; the
- * Safe owners decide whether to sign. Throws when a share has no EVM address
- * or the chain has no Safe set, so no shareholder is left out silently.
+ * Unsigned Safe Transaction Builder batch: one native transfer per share (net
+ * of withholding), from the Safe whose balance was read. Import it in the Safe
+ * app (Transaction Builder) to review; the Safe owners decide whether to sign.
+ * Throws when a share has no EVM address, so no shareholder is left out.
  */
-export function buildSafeBatch({ chainId, distribution, settings, createdAtMs = Date.now() }) {
-  const chain = SAFE_BATCH_CHAINS[chainId];
-  if (!chain) throw new FinanceInputError("Safe batches cover BNB 56 and Robinhood 4663.", "chainId");
-  const safe = settings.evmSafes?.[chainId];
-  if (!safe) throw new FinanceInputError(`No Safe address is set for chain ${chainId}.`, "evmSafes");
+export function buildSafeBatch({ chainId, distribution, chains, createdAtMs = Date.now() }) {
+  const meta = SAFE_BATCH_CHAINS[chainId];
+  if (!meta) throw new FinanceInputError("Safe batches cover BNB 56 and Robinhood 4663.", "chainId");
+  const safe = chains.find((c) => c.chainId === Number(chainId))?.multisigAddress;
+  if (!safe) throw new FinanceInputError(`No Safe is known for chain ${chainId}.`, "chainId");
   if (distribution.distributableUsd == null) throw new FinanceInputError("Nothing to propose: the distributable amount could not be computed.");
   const missing = distribution.shares.filter((s) => !s.evmAddress).map((s) => s.name);
   if (missing.length) throw new FinanceInputError(`No EVM payout address for: ${missing.join(", ")}. Set it in the distribution settings first.`, "shares");
@@ -172,16 +182,16 @@ export function buildSafeBatch({ chainId, distribution, settings, createdAtMs = 
     const part = share.perChain.find((p) => p.chainId === Number(chainId));
     if (!part || part.units === "0") continue;
     transactions.push({ to: share.evmAddress, value: part.units, data: "0x", contractMethod: null, contractInputsValues: null });
-    lines.push(`${share.name} ${share.percent}%: ${part.amountNative} ${chain.asset} (~$${part.amountUsd.toFixed(2)})`);
+    lines.push(`${share.name} (${share.entity || "entity not set"}) ${share.percent}%${share.withholdingPct ? `, ${share.withholdingPct}% withheld` : ""}: ${part.amountNative} ${meta.asset} (~$${part.amountUsd.toFixed(2)})`);
   }
-  if (!transactions.length) throw new FinanceInputError(`Nothing to pay on chain ${chainId}: its share of Ours is zero.`);
+  if (!transactions.length) throw new FinanceInputError(`Nothing to pay on chain ${chainId}: the Safe holds nothing distributable there.`);
   return {
     version: "1.0",
     chainId: String(chainId),
     createdAt: createdAtMs,
     meta: {
-      name: `MWZ distribution proposal ${new Date(createdAtMs).toISOString().slice(0, 10)} (${chain.label})`,
-      description: `Proposal only, generated unsigned by the Command Center. Native ${chain.asset} transfers from Safe ${safe}. ${lines.join("; ")}. The Safe pays from its own balance. Check every amount and address before anyone signs.`,
+      name: `MWZ distribution proposal ${new Date(createdAtMs).toISOString().slice(0, 10)} (${meta.label})`,
+      description: `Proposal only, generated unsigned by the Command Center. Dividend from MemeWarzone BV; needs the tax adviser's and notary's go before anyone signs. Native ${meta.asset} transfers from Safe ${safe}: ${lines.join("; ")}. Check every amount and address.`,
       txBuilderVersion: "1.16.5",
       createdFromSafeAddress: safe,
       createdFromOwnerAddress: "",
@@ -191,25 +201,27 @@ export function buildSafeBatch({ chainId, distribution, settings, createdAtMs = 
 }
 
 /** Text for a Squads vault transaction proposal (Solana). Nothing is created on chain. */
-export function buildSquadsProposal({ distribution, settings, createdAtMs = Date.now() }) {
+export function buildSquadsProposal({ distribution, chains, createdAtMs = Date.now() }) {
   if (distribution.distributableUsd == null) throw new FinanceInputError("Nothing to propose: the distributable amount could not be computed.");
-  if (!settings.squadsMultisig) throw new FinanceInputError("No Squads multisig is set.", "squadsMultisig");
+  const vault = chains.find((c) => c.chainId === 101)?.multisigAddress;
+  if (!vault) throw new FinanceInputError("No Squads vault is known.", "chainId");
   const missing = distribution.shares.filter((s) => !s.solanaAddress).map((s) => s.name);
   if (missing.length) throw new FinanceInputError(`No Solana payout address for: ${missing.join(", ")}. Set it in the distribution settings first.`, "shares");
   const rows = distribution.shares
     .map((share) => ({ share, part: share.perChain.find((p) => p.chainId === 101) }))
     .filter(({ part }) => part && part.units !== "0");
-  if (!rows.length) throw new FinanceInputError("Nothing to pay on Solana: its share of Ours is zero.");
+  if (!rows.length) throw new FinanceInputError("Nothing to pay on Solana: the Squads vault holds nothing distributable.");
   const lines = [
     `MWZ distribution proposal ${new Date(createdAtMs).toISOString().slice(0, 10)} (Solana)`,
     "",
     "PROPOSAL ONLY. Generated unsigned by the Command Center. Nothing was created, signed or sent.",
-    `Squads multisig: ${settings.squadsMultisig}`,
-    "Create one vault transaction with a SOL transfer (System Program) per line below, from the multisig vault.",
+    DIVIDEND_NOTE,
+    `Squads vault: ${vault}`,
+    "Create one vault transaction with a SOL transfer (System Program) per line below, from the Squads vault.",
     "",
-    ...rows.map(({ share, part }) => `${share.name} (${share.percent}%): ${part.amountNative} SOL = ${part.units} lamports to ${share.solanaAddress} (~$${part.amountUsd.toFixed(2)} at $${part.priceUsd} per SOL)`),
+    ...rows.map(({ share, part }) => `${share.name} (${share.entity || "entity not set"}, ${share.percent}%${share.withholdingPct ? `, ${share.withholdingPct}% withheld` : ""}): ${part.amountNative} SOL = ${part.units} lamports to ${share.solanaAddress} (~$${part.amountUsd.toFixed(2)} at $${part.priceUsd} per SOL)`),
     "",
-    `Distributable now: $${distribution.distributableUsd.toFixed(2)} = Ours $${distribution.oursUsd.toFixed(2)} - buffer $${distribution.deductions.bufferUsd.toFixed(2)} - tax reserve $${distribution.deductions.taxReserveUsd.toFixed(2)} - open costs $${distribution.deductions.openCostsUsd.toFixed(2)}.`,
+    `Distributable now: $${distribution.distributableUsd.toFixed(2)} = multisig $${distribution.multisigUsd.toFixed(2)} - tax reserve $${distribution.deductions.taxReserveUsd.toFixed(2)} - open costs $${distribution.deductions.openCostsUsd.toFixed(2)}. The operator wallet (buffer, capped at $10,000) is not distributed.`,
     "Check every amount and address before anyone approves.",
   ];
   return lines.join("\n");

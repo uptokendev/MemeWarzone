@@ -1,7 +1,7 @@
 // Tax reserve: a configurable bracket list, not hardcoded law. The default is
 // the Dutch corporate income tax (vennootschapsbelasting) brackets in force
 // for 2024-2026 (19% up to EUR 200,000 taxable profit, 25.8% above). The page
-// labels them "Default rates; confirm with your tax adviser" and finance.manage
+// labels them "Default rates; no adviser has confirmed these yet" and finance.manage
 // can replace them. This is a reserve estimate, not tax advice.
 //
 // Method: profit is accumulated per calendar year. For month m, with the
@@ -21,7 +21,7 @@ export const DEFAULT_TAX_RESERVE_RULES = Object.freeze({
     Object.freeze({ upTo: 200000, rate: 0.19 }),
     Object.freeze({ upTo: null, rate: 0.258 }),
   ]),
-  note: "Default rates; confirm with your tax adviser. Estimate for a reserve, not tax advice.",
+  note: "Default rates; no adviser has confirmed these yet. Estimate for a reserve, not tax advice.",
 });
 
 /** Validates rules from the settings form. Brackets ascending, the last one open ended. */

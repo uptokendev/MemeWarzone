@@ -39,6 +39,16 @@ function makeRevenue(byMonth) {
   };
 }
 
+const SQUADS = "fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv";
+const SAFE = "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7";
+const op = (amountUsd) => ({ address: "op", status: "ok", amount: "1", raw: "1", amountUsd, priceUsd: 1 });
+// Multisig: Solana 100 SOL ($20k), BNB 50 BNB ($30k), Robinhood empty. Operator wallets hold the $10k buffer.
+const BAL_CHAINS = [
+  { chainId: 101, chain: "solana", asset: "SOL", decimals: 9, multisigAddress: SQUADS, multisigUsd: 20000, multisigRaw: "100000000000", multisigAmount: "100", priceUsd: 200, operator: op(4000), protocolVault: op(0) },
+  { chainId: 56, chain: "bnb", asset: "BNB", decimals: 18, multisigAddress: SAFE, multisigUsd: 30000, multisigRaw: "50000000000000000000", multisigAmount: "50", priceUsd: 600, operator: op(6000), protocolVault: op(0) },
+  { chainId: 4663, chain: "robinhood", asset: "ETH", decimals: 18, multisigAddress: SAFE, multisigUsd: 0, multisigRaw: "0", multisigAmount: "0", priceUsd: 4000, operator: op(0), protocolVault: op(0) },
+];
+
 function setup({ installed = true, revenue = { value: {} }, balances } = {}) {
   const db = createFakeAccountingDb({ installed });
   const handler = createFinanceAccountingHandler({
@@ -48,11 +58,13 @@ function setup({ installed = true, revenue = { value: {} }, balances } = {}) {
     nowMs: () => NOW,
     revenue: makeRevenue(revenue),
     revenueEvents: async () => ({ rows: [{ occurredAt: "2026-09-01T10:00:00.000Z", month: "2026-09", chainId: 56, chain: "bnb", lane: "bonding_curve_fee", asset: "BNB", amountNative: "0.1", priceUsd: 500, amountUsd: 50, priceSource: "Binance BNBUSDT 1h close", usdPerEur: 1.1, amountEur: 45.45, fxSource: "ECB", txHash: "0xabc", logIndex: 3, campaignAddress: "0xc" }], notes: [], truncated: false }),
-    balances: balances || (async () => ({ asOf: "2026-10-04T12:00:00.000Z", oursUsd: 50000, heldUsd: 80000, owedUsd: 30000, chains: [
-      { chainId: 101, chain: "solana", asset: "SOL", decimals: 9, oursUsd: 20000, priceUsd: 200 },
-      { chainId: 56, chain: "bnb", asset: "BNB", decimals: 18, oursUsd: 30000, priceUsd: 600 },
-      { chainId: 4663, chain: "robinhood", asset: "ETH", decimals: 18, oursUsd: 0, priceUsd: 4000 },
-    ], errors: [] })),
+    balances: balances || (async () => ({ asOf: "2026-10-04T12:00:00.000Z", oursUsd: 60000, heldUsd: 90000, owedUsd: 30000, multisigUsd: 50000, operatorUsd: 10000, chains: BAL_CHAINS, errors: [] })),
+    payouts: async (days) => ({ networks: [
+      { chainId: 56, chain: "bnb", status: "ok", data: { period: { from: "2026-09-01T00:00:00.000Z", to: "2026-10-04T12:00:00.000Z", days }, types: [
+        { id: "weekly_league", label: "Weekly league", asset: "BNB", paid: { recorded: true, period: { amount: "1.5", amountUsd: 900, count: 3, priceSource: "Binance BNBUSDT 1h close at each event" }, lastPayout: { at: "2026-09-28T00:00:00.000Z", amount: "0.5", txHash: "0xpaid" } }, owed: { known: true, total: { amount: "0.2", amountUsd: 120, priceSource: "spot" } }, coverage: { status: "covered" } },
+      ] } },
+      { chainId: 101, chain: "solana", status: "error", error: "The payouts read failed for chain 101." },
+    ] }),
   });
   async function call(method, path, { principal = MANAGER, body, query = {} } = {}) {
     const headers = {};
@@ -274,7 +286,7 @@ test("tax brackets: Dutch default 19% to EUR 200k then 25.8%; zero for a loss", 
   assert.equal(Math.round(bracketTax(300000, b)), 38000 + 25800);
   assert.equal(bracketTax(-5000, b), 0);
   assert.equal(effectiveTaxRules(null).isDefault, true);
-  assert.match(effectiveTaxRules(null).note, /confirm with your tax adviser/);
+  assert.match(effectiveTaxRules(null).note, /no adviser has confirmed these yet/);
   assert.throws(() => validateTaxRules({ name: "x", currency: "EUR", brackets: [{ upTo: 100, rate: 0.1 }, { upTo: 50, rate: 0.2 }, { upTo: null, rate: 0.3 }] }), /higher than the bracket before/);
   assert.throws(() => validateTaxRules({ name: "x", currency: "EUR", brackets: [{ upTo: null, rate: 19 }] }), /between 0 and 1/);
   assert.throws(() => validateTaxRules({ name: "x", currency: "EUR", brackets: [{ upTo: 100, rate: 0.1 }] }), /last bracket has no upper limit/);
@@ -298,7 +310,7 @@ test("tax schedule: increments of year-to-date tax; loss month releases; frozen 
 test("tax page: label, default rules, editable by finance.manage with an audit row", async () => {
   const { call, db } = setup({ revenue: { value: { "2026-09": 10000 } } });
   const view = await call("GET", "/api/admin/finance/tax-reserves", { principal: VIEWER });
-  assert.match(view.body.label, /Default rates; confirm with your tax adviser/);
+  assert.match(view.body.label, /Default rates; no adviser has confirmed these yet/);
   assert.match(view.body.label, /not tax advice/);
   assert.equal(view.body.rules.isDefault, true);
   assert.equal(view.body.months.find((m) => m.month === "2026-09").reserveUsd, 1900);
@@ -328,7 +340,8 @@ test("close: needs confirm, only past months; snapshot is frozen; reopen needs a
   assert.equal(snap.costs.totalUsd, 1000);
   assert.equal(snap.profitUsd, 4000);
   assert.equal(snap.tax.reserveUsd, 760);
-  assert.equal(snap.balances.oursUsd, 50000);
+  assert.equal(snap.balances.oursUsd, 60000);
+  assert.equal(snap.balances.multisigUsd, 50000);
   assert.equal(snap.fx.usdPerEur, 1.1225);
   assert.deepEqual(snap.prices.map((p) => p.asset), ["SOL", "BNB", "ETH"]);
   assert.equal(snap.revenue.testCoinsExcluded, true);
@@ -366,62 +379,101 @@ test("a recurring cost that starts in a closed month can still get an end date",
   assert.equal((await call("DELETE", "/api/admin/finance/costs/1")).status, 409);
 });
 
+// ------------------------------------------------------------- close order
+
+test("close order: earlier months with activity must be closed first; months without activity never block", async () => {
+  const { call } = setup({ revenue: { value: { "2026-07": 100, "2026-09": 5000 } } });
+  const blocked = await call("POST", "/api/admin/finance/close/2026-09", { body: { action: "close", confirm: "CLOSE 2026-09" } });
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.body.code, "EARLIER_MONTHS_OPEN");
+  assert.deepEqual(blocked.body.months, ["2026-07"]);
+  const year = await call("GET", "/api/admin/finance/close", { principal: VIEWER });
+  const sep = year.body.months.find((m) => m.month === "2026-09");
+  assert.deepEqual([sep.closable, sep.closeBlockedBy], [false, ["2026-07"]]);
+  assert.match(year.body.closeOrderRule, /reopen the latest first/);
+  assert.equal((await call("POST", "/api/admin/finance/close/2026-07", { body: { action: "close", confirm: "CLOSE 2026-07" } })).status, 200);
+  // August has no activity: it does not block September.
+  assert.equal((await call("POST", "/api/admin/finance/close/2026-09", { body: { action: "close", confirm: "CLOSE 2026-09" } })).status, 200);
+  const reopenEarly = await call("POST", "/api/admin/finance/close/2026-07", { body: { action: "reopen", confirm: "REOPEN 2026-07", reason: "fix" } });
+  assert.equal(reopenEarly.status, 409);
+  assert.equal(reopenEarly.body.code, "LATER_MONTHS_CLOSED");
+  assert.match(reopenEarly.body.error, /reopen 2026-09 first/);
+  const after = await call("GET", "/api/admin/finance/close", { principal: VIEWER });
+  assert.deepEqual(after.body.months.filter((m) => m.status === "closed").map((m) => [m.month, m.reopenable]), [["2026-07", false], ["2026-09", true]]);
+  assert.equal((await call("POST", "/api/admin/finance/close/2026-09", { body: { action: "reopen", confirm: "REOPEN 2026-09", reason: "fix" } })).status, 200);
+  assert.equal((await call("POST", "/api/admin/finance/close/2026-07", { body: { action: "reopen", confirm: "REOPEN 2026-07", reason: "fix" } })).status, 200);
+});
+
+test("close order: a cost in an earlier open month blocks too", async () => {
+  const { call } = setup();
+  await call("POST", "/api/admin/finance/costs", { body: { incurredOn: "2026-03-02", category: "legal_accounting", vendor: "Notary", amount: "800", currency: "EUR" } });
+  const out = await call("POST", "/api/admin/finance/close/2026-05", { body: { action: "close", confirm: "CLOSE 2026-05" } });
+  assert.equal(out.status, 409);
+  assert.deepEqual(out.body.months, ["2026-03"]);
+});
+
 // ------------------------------------------------------------- distributions
 
 const SETTINGS = effectiveDistributionSettings({
   shares: [
-    { id: "a", name: "Alice", bps: 5000, evmAddress: "0x1111111111111111111111111111111111111111", solanaAddress: "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H" },
-    { id: "b", name: "Bob", bps: 3000, evmAddress: "0x2222222222222222222222222222222222222222", solanaAddress: "fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv" },
-    { id: "c", name: "Carol", bps: 2000, evmAddress: "0x3333333333333333333333333333333333333333", solanaAddress: "So11111111111111111111111111111111111111112" },
+    { id: "a", name: "Patrick", entity: "Dutch personal holding (BV)", bps: 5000, evmAddress: "0x1111111111111111111111111111111111111111", solanaAddress: "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H" },
+    { id: "b", name: "Sven", entity: "Dutch personal holding (BV)", bps: 3000, evmAddress: "0x2222222222222222222222222222222222222222", solanaAddress: "fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv" },
+    { id: "c", name: "Dough", entity: "US corporation", bps: 2000, withholdingPct: 15, evmAddress: "0x3333333333333333333333333333333333333333", solanaAddress: "So11111111111111111111111111111111111111112" },
   ],
-  bufferUsd: 10000,
-  evmSafes: { 56: "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", 4663: "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7" },
-  squadsMultisig: "fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv",
 });
-const CHAINS = [
-  { chainId: 101, chain: "solana", asset: "SOL", decimals: 9, oursUsd: 20000, priceUsd: 200 },
-  { chainId: 56, chain: "bnb", asset: "BNB", decimals: 18, oursUsd: 30000, priceUsd: 600 },
-];
 
-test("distribution math: Ours - buffer - tax - open costs, 50/30/20, rounded down, remainder retained", () => {
-  const d = computeDistribution({ oursUsd: 50000, chains: CHAINS, taxReserveUsd: 5000, openCostsUsd: 1000.005, settings: SETTINGS });
-  assert.equal(d.distributableUsd, 33999.99);
-  assert.deepEqual(d.shares.map((s) => s.amountUsd), [16999.99, 10199.99, 6799.99]);
-  assert.ok(d.retainedUsd >= 16000.03 - 1e-6);
-  const alice = d.shares[0];
-  assert.equal(alice.perChain.find((p) => p.chainId === 101).amountUsd, 6799.99);
-  assert.equal(alice.perChain.find((p) => p.chainId === 101).units, usdToNativeUnits(16999.99 * 0.4, 200, 9).toString());
-  const none = computeDistribution({ oursUsd: 12000, chains: CHAINS, taxReserveUsd: 3000, openCostsUsd: 0, settings: SETTINGS });
+test("distribution math: only the multisig is distributable; minus tax and open costs; operator buffer never counted", () => {
+  const d = computeDistribution({ chains: BAL_CHAINS, taxReserveUsd: 5000, openCostsUsd: 1000.005, settings: SETTINGS });
+  assert.equal(d.multisigUsd, 50000, "operator wallets ($10k) are not in it");
+  assert.equal(d.distributableUsd, 43999.99);
+  assert.deepEqual(d.shares.map((s) => s.amountUsd), [21999.99, 13199.99, 8799.99]);
+  assert.deepEqual(d.shares.map((s) => s.withholdingUsd), [0, 0, 1319.99]);
+  assert.equal(d.shares[2].netUsd, 7480);
+  const patrick = d.shares[0];
+  assert.equal(patrick.perChain.find((p) => p.chainId === 101).amountUsd, 8799.99);
+  assert.equal(patrick.perChain.find((p) => p.chainId === 101).units, usdToNativeUnits(21999.99 * 0.4, 200, 9).toString());
+  assert.equal(patrick.perChain.some((p) => p.chainId === 4663), false, "an empty Safe pays nothing");
+  for (const chain of BAL_CHAINS.filter((c) => c.multisigUsd > 0)) {
+    const total = d.shares.reduce((s, x) => s + BigInt(x.perChain.find((p) => p.chainId === chain.chainId).units), 0n);
+    assert.ok(total <= BigInt(chain.multisigRaw), "never more than the multisig holds");
+  }
+  assert.ok(d.retainedUsd >= 6000 + 1319.99 - 0.05);
+  const none = computeDistribution({ chains: BAL_CHAINS, taxReserveUsd: 49000, openCostsUsd: 2000, settings: SETTINGS });
   assert.equal(none.distributableUsd, 0);
   assert.equal(none.shortfallUsd, 1000);
-  const negTax = computeDistribution({ oursUsd: 20000, chains: CHAINS, taxReserveUsd: -500, openCostsUsd: 0, settings: SETTINGS });
-  assert.equal(negTax.distributableUsd, 10000, "a negative reserve never adds money");
-  const blocked = computeDistribution({ oursUsd: null, chains: CHAINS, taxReserveUsd: 0, openCostsUsd: 0, settings: SETTINGS });
-  assert.equal(blocked.distributableUsd, null);
-  assert.equal(blocked.blockers.length, 1);
+  const negTax = computeDistribution({ chains: BAL_CHAINS, taxReserveUsd: -500, openCostsUsd: 0, settings: SETTINGS });
+  assert.equal(negTax.distributableUsd, 50000, "a negative reserve never adds money");
+  const unread = computeDistribution({ chains: [{ ...BAL_CHAINS[0], multisigUsd: null, multisigRaw: null }, BAL_CHAINS[1]], taxReserveUsd: 0, openCostsUsd: 0, settings: SETTINGS });
+  assert.equal(unread.distributableUsd, null);
+  assert.match(unread.blockers[0], /multisig balance on chain 101/);
 });
 
-test("distribution settings: shares must add to 100%, addresses checked, defaults 50/30/20", () => {
+test("distribution settings: entities, withholding %, 100% total, addresses checked; defaults", () => {
   const defaults = effectiveDistributionSettings(null);
-  assert.deepEqual(defaults.shares.map((s) => s.bps), [5000, 3000, 2000]);
+  assert.deepEqual(defaults.shares.map((s) => [s.name, s.bps, s.entity, s.withholdingPct]), [["Patrick", 5000, "Dutch personal holding (BV)", 0], ["Sven", 3000, "Dutch personal holding (BV)", 0], ["Dough", 2000, "US corporation", 0]]);
+  assert.equal("bufferUsd" in defaults, false);
   assert.equal(defaults.isDefault, true);
-  assert.throws(() => validateDistributionSettings({ ...SETTINGS, shares: [{ name: "A", bps: 6000 }, { name: "B", bps: 3000 }] }), /add up to 90%/);
-  assert.throws(() => validateDistributionSettings({ ...SETTINGS, shares: [{ name: "A", bps: 10000, evmAddress: "0x123" }] }), /not an EVM address/);
-  assert.throws(() => validateDistributionSettings({ ...SETTINGS, shares: [{ name: "A", bps: 10000, solanaAddress: "0OIl" }] }), /not a Solana address/);
-  assert.throws(() => validateDistributionSettings({ ...SETTINGS, bufferUsd: -1 }), /bufferUsd/);
-  const lower = validateDistributionSettings({ ...SETTINGS, shares: [{ name: "A", bps: 10000, evmAddress: "0x1edcedf5e5d9c2fad5f9f6b964077dd74020a7a7" }] });
-  assert.equal(lower.shares[0].evmAddress, "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "checksummed");
+  assert.throws(() => validateDistributionSettings({ shares: [{ name: "A", bps: 6000 }, { name: "B", bps: 3000 }] }), /add up to 90%/);
+  assert.throws(() => validateDistributionSettings({ shares: [{ name: "A", bps: 10000, evmAddress: "0x123" }] }), /not an EVM address/);
+  assert.throws(() => validateDistributionSettings({ shares: [{ name: "A", bps: 10000, solanaAddress: "0OIl" }] }), /not a Solana address/);
+  assert.throws(() => validateDistributionSettings({ shares: [{ name: "A", bps: 10000, withholdingPct: 120 }] }), /withholding/);
+  assert.throws(() => validateDistributionSettings({ shares: [{ name: "A", bps: 10000, withholdingPct: 1.234 }] }), /two decimals/);
+  const lower = validateDistributionSettings({ shares: [{ name: "A", bps: 10000, evmAddress: "0x1edcedf5e5d9c2fad5f9f6b964077dd74020a7a7" }], bufferUsd: 5 });
+  assert.equal(lower.shares[0].evmAddress, SAFE, "checksummed");
+  assert.equal("bufferUsd" in lower, false, "old buffer field ignored");
 });
 
-test("Safe batch: Transaction Builder shape, native transfers from the Safe, unsigned", () => {
-  const d = computeDistribution({ oursUsd: 50000, chains: CHAINS, taxReserveUsd: 5000, openCostsUsd: 1000, settings: SETTINGS });
-  const batch = buildSafeBatch({ chainId: 56, distribution: d, settings: SETTINGS, createdAtMs: NOW });
+test("Safe batch: Transaction Builder shape, net native transfers from the Safe that was read, unsigned", () => {
+  const d = computeDistribution({ chains: BAL_CHAINS, taxReserveUsd: 5000, openCostsUsd: 1000, settings: SETTINGS });
+  const batch = buildSafeBatch({ chainId: 56, distribution: d, chains: BAL_CHAINS, createdAtMs: NOW });
   assert.equal(batch.version, "1.0");
   assert.equal(batch.chainId, "56");
   assert.equal(batch.createdAt, NOW);
-  assert.equal(batch.meta.createdFromSafeAddress, "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7");
+  assert.equal(batch.meta.createdFromSafeAddress, SAFE);
   assert.equal(batch.meta.txBuilderVersion, "1.16.5");
   assert.match(batch.meta.description, /Proposal only/);
+  assert.match(batch.meta.description, /notary/);
+  assert.match(batch.meta.description, /Dough \(US corporation\) 20%, 15% withheld/);
   assert.equal(batch.transactions.length, 3);
   for (const tx of batch.transactions) {
     assert.deepEqual(Object.keys(tx).sort(), ["contractInputsValues", "contractMethod", "data", "to", "value"]);
@@ -429,39 +481,50 @@ test("Safe batch: Transaction Builder shape, native transfers from the Safe, uns
     assert.equal(tx.data, "0x");
     assert.equal(tx.contractMethod, null);
   }
-  assert.equal(batch.transactions[0].to, "0x1111111111111111111111111111111111111111");
+  assert.equal(batch.transactions[2].value, d.shares[2].perChain.find((p) => p.chainId === 56).units, "net of withholding");
   assert.equal(JSON.stringify(batch).includes("signature"), false);
-  assert.throws(() => buildSafeBatch({ chainId: 4663, distribution: d, settings: SETTINGS }), /share of Ours is zero/);
-  assert.throws(() => buildSafeBatch({ chainId: 97, distribution: d, settings: SETTINGS }), /BNB 56 and Robinhood 4663/);
+  assert.throws(() => buildSafeBatch({ chainId: 4663, distribution: d, chains: BAL_CHAINS }), /holds nothing distributable/);
+  assert.throws(() => buildSafeBatch({ chainId: 97, distribution: d, chains: BAL_CHAINS }), /BNB 56 and Robinhood 4663/);
   const noAddr = effectiveDistributionSettings(null);
-  assert.throws(() => buildSafeBatch({ chainId: 56, distribution: computeDistribution({ oursUsd: 50000, chains: CHAINS, taxReserveUsd: 0, openCostsUsd: 0, settings: noAddr }), settings: noAddr }), /No EVM payout address for: Patrick, Sven, Dough/);
-  const squads = buildSquadsProposal({ distribution: d, settings: SETTINGS, createdAtMs: NOW });
+  assert.throws(() => buildSafeBatch({ chainId: 56, distribution: computeDistribution({ chains: BAL_CHAINS, taxReserveUsd: 0, openCostsUsd: 0, settings: noAddr }), chains: BAL_CHAINS }), /No EVM payout address for: Patrick, Sven, Dough/);
+  const squads = buildSquadsProposal({ distribution: d, chains: BAL_CHAINS, createdAtMs: NOW });
   assert.match(squads, /PROPOSAL ONLY/);
+  assert.match(squads, /dividend from MemeWarzone BV/);
+  assert.match(squads, new RegExp(`Squads vault: ${SQUADS}`));
   assert.match(squads, /lamports to 9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H/);
+  assert.match(squads, /operator wallet \(buffer, capped at \$10,000\) is not distributed/);
 });
 
-test("distributions route: label, formula, open costs, downloads; settings saved with audit", async () => {
+test("distributions route: labels, buffer shown, open costs, downloads; settings saved with audit", async () => {
   const { call, db } = setup({ revenue: { value: { "2026-09": 10000 } } });
   await call("POST", "/api/admin/finance/costs", { body: { incurredOn: "2026-10-01", category: "servers", vendor: "VPS", amount: "500", currency: "USD" } });
   await call("POST", "/api/admin/finance/costs", { body: { incurredOn: "2026-10-20", category: "servers", vendor: "future", amount: "999", currency: "USD" } });
   const view = await call("GET", "/api/admin/finance/distributions", { principal: VIEWER });
   assert.equal(view.body.label, "Proposal only. Nothing is sent from this page.");
+  assert.match(view.body.dividendNote, /dividend from MemeWarzone BV/);
+  assert.match(view.body.dividendNote, /participation exemption/);
+  assert.equal(view.body.buffer.label, "Buffer: operator wallet, capped at $10,000 (not distributed)");
+  assert.equal(view.body.buffer.totalUsd, 10000);
+  assert.equal(view.body.buffer.capUsd, 10000);
+  assert.deepEqual(view.body.multisig.map((m) => m.amountUsd), [20000, 30000, 0]);
   assert.equal(view.body.distribution.deductions.openCostsUsd, 500, "only costs dated up to today");
-  // tax: Sept profit 10000 at 19% = 1900; Oct profit -500-999 → ytd 8501 → reserve 1615.19 ytd
   assert.equal(view.body.distribution.deductions.taxReserveUsd, 1615.19);
-  assert.equal(view.body.distribution.distributableUsd, Math.floor((50000 - 10000 - 1615.19 - 500) * 100) / 100);
+  assert.equal(view.body.distribution.distributableUsd, Math.floor((50000 - 1615.19 - 500) * 100) / 100);
+  assert.equal(view.body.safeChains.find((c) => c.chainId === 56).safe, SAFE);
+  assert.equal(view.body.squadsVault, SQUADS);
   const missing = await call("GET", "/api/admin/finance/distributions/safe-batch", { principal: VIEWER, query: { chainId: "56" } });
   assert.equal(missing.status, 400);
   assert.match(missing.body.error, /No EVM payout address/);
   const saved = await call("PUT", "/api/admin/finance/distributions", { body: { settings: SETTINGS } });
   assert.equal(saved.status, 200);
   assert.equal(db.state.audit.at(-1).action, "settings.distribution");
+  assert.equal(db.state.audit.at(-1).after.shares[2].entity, "US corporation");
   const file = await call("GET", "/api/admin/finance/distributions/safe-batch", { principal: VIEWER, query: { chainId: "56" } });
   assert.equal(file.status, 200);
   assert.match(file.headers["content-disposition"], /attachment; filename="mwz-distribution-proposal-56-2026-10-04\.safe-batch\.json"/);
   assert.equal(JSON.parse(file.text).transactions.length, 3);
   const squads = await call("GET", "/api/admin/finance/distributions/squads-proposal", { principal: VIEWER });
-  assert.match(squads.text, /Squads multisig: fk5Y/);
+  assert.match(squads.text, /Squads vault: fk5Y/);
 });
 
 // ------------------------------------------------------------- exports
@@ -475,7 +538,7 @@ test("CSV: quoting and formula guard", () => {
   assert.equal(toCsv([{ key: "a", label: "a" }, { key: "b", label: "b" }], [{ a: 1, b: "x\ny" }]), 'a,b\r\n1,"x\ny"\r\n');
 });
 
-test("exports: costs, close summaries and revenue events as CSV attachments; payouts waits", async () => {
+test("exports: costs, close summaries, revenue events and payouts as CSV attachments", async () => {
   const { call } = setup({ revenue: { value: { "2026-09": 5000 } } });
   await call("POST", "/api/admin/finance/costs", { body: COST });
   await call("POST", "/api/admin/finance/close/2026-09", { body: { action: "close", confirm: "CLOSE 2026-09" } });
@@ -495,7 +558,35 @@ test("exports: costs, close summaries and revenue events as CSV attachments; pay
   const events = await call("GET", "/api/admin/finance/exports/revenue-events.csv", { principal: VIEWER, query: { from: "2026-09", to: "2026-09" } });
   assert.match(events.text, /tx_hash/);
   assert.match(events.text, /0xabc/);
-  const payouts = await call("GET", "/api/admin/finance/exports/payouts", { principal: VIEWER });
-  assert.equal(payouts.status, 501);
+  const payouts = await call("GET", "/api/admin/finance/exports/payouts", { principal: VIEWER, query: { from: "2026-09", to: "2026-10" } });
+  assert.equal(payouts.status, 200);
+  assert.match(payouts.headers["content-disposition"], /mwz-payouts-2026-09_2026-10\.csv/);
+  const plines = payouts.text.trim().split("\r\n");
+  assert.match(plines[0], /paid_native,paid_usd,paid_eur,paid_count,paid_price_source,owed_now_native,owed_now_usd/);
+  assert.match(plines[0], /last_payout_tx_hash/);
+  assert.match(plines[1], /^56,bnb,weekly_league,Weekly league,BNB,/);
+  assert.match(plines[1], /,1\.5,900,801\.78,3,/);
+  assert.match(plines[1], /0xpaid/);
+  assert.match(plines[2], /^101,solana,read failed/);
   assert.equal((await call("GET", "/api/admin/finance/exports/secrets", { principal: VIEWER })).status, 404);
+});
+
+test("balances: multisig (Squads / Safe) is the distributable source; operator wallet is the buffer", async () => {
+  const { currentBalances } = await import("../lib/financeAccountingSources.js");
+  const { buildTotals } = await import("../lib/financePrices.js");
+  const dest = (id, amount, amountUsd, ownership = "ours") => ({ id, address: `${id}-addr`, ownership, flags: [], balances: [{ asset: "SOL", status: "ok", amount, raw: String(Number(amount) * 1e9), amountUsd, priceUsd: 200 }] });
+  const solana = { chainId: 101, chain: "solana", nativeSymbol: "SOL", nativeDecimals: 9 };
+  const bnb = { chainId: 56, chain: "bnb", nativeSymbol: "BNB", nativeDecimals: 18 };
+  const out = await currentBalances({
+    networks: [solana, bnb],
+    build: async ({ network }) => {
+      if (network.chainId === 56) throw new Error("rpc down");
+      return { destinations: [dest("squads_vault", "10", 2000), dest("route_operator", "50", 10000), dest("protocol_vault", "1", 200), dest("league_weekly", "5", 1000, "owed")], prices: [{ asset: "SOL", priceUsd: 200 }], totals: { ours: buildTotals([{ chainId: 101, chain: "solana", asset: "SOL", amount: "61", amountUsd: 12200 }]), holdings: buildTotals([{ chainId: 101, chain: "solana", asset: "SOL", amount: "66", amountUsd: 13200 }]) } };
+    },
+  });
+  const sol = out.chains[0];
+  assert.deepEqual([sol.multisigAddress, sol.multisigUsd, sol.multisigRaw, sol.operator.amountUsd, sol.protocolVault.amountUsd], ["squads_vault-addr", 2000, "10000000000", 10000, 200]);
+  assert.equal(out.chains[1].multisigUsd, null);
+  assert.equal(out.multisigUsd, null, "a failed chain makes the total unknown");
+  assert.match(out.errors[0], /Chain 56/);
 });
