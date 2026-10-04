@@ -7,8 +7,15 @@ function missingTable() {
   return error;
 }
 
-export function createFakeAccountingDb({ installed = true } = {}) {
-  const state = { costs: [], audit: [], closes: new Map(), settings: null, nextId: 1, queries: [], installed };
+function missingColumn() {
+  const error = new Error('column "tax_rules" does not exist');
+  error.code = "42703";
+  return error;
+}
+
+// distributionsInstalled: false = 20261005_000001_finance_distributions.sql not applied yet.
+export function createFakeAccountingDb({ installed = true, distributionsInstalled = true } = {}) {
+  const state = { costs: [], audit: [], closes: new Map(), settings: null, distributions: [], nextId: 1, queries: [], installed, distributionsInstalled };
   const nowIso = () => new Date().toISOString();
   const costRow = (c) => ({ ...c });
 
@@ -19,6 +26,41 @@ export function createFakeAccountingDb({ installed = true } = {}) {
     if (!state.installed && /finance_/.test(text)) throw missingTable();
 
     if (text.startsWith("select (select 1 from public.finance_costs")) return { rows: [{}] };
+    if (!state.distributionsInstalled && (/finance_distributions/.test(text) || /\btax_rules\b/.test(text))) throw /finance_distributions/.test(text) ? missingTable() : missingColumn();
+    if (!state.distributionsInstalled && text.startsWith("insert into public.finance_audit_log") && /^(settings\.tax_rules|distribution\.)/.test(String(params[2]))) {
+      const error = new Error('new row violates check constraint "finance_audit_log_action_chk"');
+      error.code = "23514";
+      error.constraint = "finance_audit_log_action_chk";
+      throw error;
+    }
+
+    // distributions
+    const distOut = (d) => ({ ...d });
+    if (text.startsWith("insert into public.finance_distributions")) {
+      const [week, availableOn, usdPerEur, ge, we, ne, gu, nu, shares, perChain, checklist, dueOn, note, by] = params;
+      if (state.distributions.some((d) => d.week === week && d.status !== "cancelled")) {
+        const error = new Error("duplicate key value violates unique constraint");
+        error.code = "23505";
+        throw error;
+      }
+      const row = { id: String(state.nextId++), week, status: "proposed", available_on: availableOn, usd_per_eur: usdPerEur == null ? null : String(usdPerEur), total_gross_eur: String(ge), total_withholding_eur: String(we), total_net_eur: String(ne), total_gross_usd: gu == null ? null : String(gu), total_net_usd: nu == null ? null : String(nu), shares: JSON.parse(shares), per_chain: JSON.parse(perChain), tx_hashes: {}, checklist: JSON.parse(checklist), dividend_tax_due_on: dueOn, dividend_tax_return_filed_on: null, dividend_tax_paid_on: null, note, decided_by: null, decided_at: null, created_by: by, created_at: nowIso(), updated_by: by, updated_at: nowIso() };
+      state.distributions.push(row);
+      return { rows: [distOut(row)] };
+    }
+    if (text.startsWith("select id, week, status") && text.includes("where id = $1")) {
+      const row = state.distributions.find((d) => d.id === String(params[0]));
+      return { rows: row ? [distOut(row)] : [] };
+    }
+    if (text.startsWith("select id, week, status")) {
+      return { rows: [...state.distributions].sort((a, b) => (a.week < b.week ? 1 : -1)).map(distOut) };
+    }
+    if (text.startsWith("update public.finance_distributions")) {
+      const row = state.distributions.find((d) => d.id === String(params[0]));
+      if (!row) return { rows: [] };
+      const [, status, availableOn, txHashes, checklist, dueOn, filedOn, paidOn, note, decidedBy, decidedAt, by] = params;
+      Object.assign(row, { status, available_on: availableOn, tx_hashes: JSON.parse(txHashes), checklist: JSON.parse(checklist), dividend_tax_due_on: dueOn, dividend_tax_return_filed_on: filedOn, dividend_tax_paid_on: paidOn, note, decided_by: decidedBy, decided_at: decidedAt, updated_by: by, updated_at: nowIso() });
+      return { rows: [distOut(row)] };
+    }
 
     // costs
     if (text.startsWith("insert into public.finance_costs")) {
@@ -92,12 +134,12 @@ export function createFakeAccountingDb({ installed = true } = {}) {
     // settings
     if (text.startsWith("select tax_reserve_rules, distribution")) return { rows: state.settings ? [{ ...state.settings }] : [] };
     if (text.startsWith("insert into public.finance_settings")) {
-      state.settings ||= { tax_reserve_rules: null, distribution: null, updated_by: null, updated_at: nowIso() };
+      state.settings ||= { tax_reserve_rules: null, distribution: null, tax_rules: null, updated_by: null, updated_at: nowIso() };
       return { rows: [] };
     }
-    const settingSelect = /^select (tax_reserve_rules|distribution) as value from public.finance_settings/.exec(text);
+    const settingSelect = /^select (tax_reserve_rules|distribution|tax_rules) as value from public.finance_settings/.exec(text);
     if (settingSelect) return { rows: [{ value: state.settings?.[settingSelect[1]] ?? null }] };
-    const settingUpdate = /^update public.finance_settings set (tax_reserve_rules|distribution) = \$1::jsonb/.exec(text);
+    const settingUpdate = /^update public.finance_settings set (tax_reserve_rules|distribution|tax_rules) = \$1::jsonb/.exec(text);
     if (settingUpdate) {
       state.settings[settingUpdate[1]] = JSON.parse(params[0]);
       state.settings.updated_by = params[1];

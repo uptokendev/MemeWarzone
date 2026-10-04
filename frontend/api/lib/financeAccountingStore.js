@@ -7,6 +7,14 @@
 import { costFromRow } from "./financeAccountingCosts.js";
 
 export const ACCOUNTING_MIGRATION = "db/migrations/20261004_000002_finance_accounting.sql";
+// Weekly distributions: finance_distributions, finance_settings.tax_rules and the
+// new audit actions. Until it is applied the weekly view still works (records
+// list empty, rules from code); recording and saving rules answer 503.
+export const DISTRIBUTIONS_MIGRATION = "db/migrations/20261005_000001_finance_distributions.sql";
+
+export function distributionTablesMissing(error) {
+  return error?.code === "42P01" || error?.code === "42703" || (error?.code === "23514" && /finance_audit_log_(action|entity)_chk/.test(String(error?.constraint || error?.message || "")));
+}
 
 export function accountingTablesMissing(error) {
   return error?.code === "42P01" || error?.code === "42703";
@@ -179,16 +187,99 @@ export async function listSettingsHistory(db, action, limit = 20) {
 }
 
 export async function readSettings(db) {
-  const { rows } = await db.query(`select tax_reserve_rules, distribution, updated_by, updated_at from public.finance_settings where id = 1`);
-  return rows[0] || null;
+  try {
+    const { rows } = await db.query(`select tax_reserve_rules, distribution, tax_rules, updated_by, updated_at from public.finance_settings where id = 1`);
+    return rows[0] || null;
+  } catch (error) {
+    // tax_rules arrives with DISTRIBUTIONS_MIGRATION; before that, read the rest.
+    if (error?.code !== "42703") throw error;
+    const { rows } = await db.query(`select tax_reserve_rules, distribution, updated_by, updated_at from public.finance_settings where id = 1`);
+    return { ...(rows[0] || {}), tax_rules: null, taxRulesColumnMissing: true };
+  }
 }
 
-/** column: 'tax_reserve_rules' | 'distribution'. Returns the previous value. */
+/** column: 'tax_reserve_rules' | 'distribution' | 'tax_rules'. Returns the previous value. */
 export async function saveSetting(client, column, value, actor) {
-  if (column !== "tax_reserve_rules" && column !== "distribution") throw new Error("Unknown finance setting.");
+  if (column !== "tax_reserve_rules" && column !== "distribution" && column !== "tax_rules") throw new Error("Unknown finance setting.");
   await client.query(`insert into public.finance_settings (id) values (1) on conflict (id) do nothing`);
   const { rows } = await client.query(`select ${column} as value from public.finance_settings where id = 1 for update`);
   const before = rows[0]?.value ?? null;
   await client.query(`update public.finance_settings set ${column} = $1::jsonb, updated_by = $2, updated_at = now() where id = 1`, [JSON.stringify(value), actor.email]);
   return before;
+}
+
+// ------------------------------------------------------------ distributions
+
+const DIST_COLUMNS = `id, week, status, available_on::text as available_on, usd_per_eur::text as usd_per_eur,
+  total_gross_eur::text as total_gross_eur, total_withholding_eur::text as total_withholding_eur, total_net_eur::text as total_net_eur,
+  total_gross_usd::text as total_gross_usd, total_net_usd::text as total_net_usd, shares, per_chain, tx_hashes, checklist,
+  dividend_tax_due_on::text as dividend_tax_due_on, dividend_tax_return_filed_on::text as dividend_tax_return_filed_on,
+  dividend_tax_paid_on::text as dividend_tax_paid_on, note, decided_by, decided_at, created_by, created_at, updated_by, updated_at`;
+
+function distributionFromRow(row) {
+  const iso = (v) => (v == null ? null : v instanceof Date ? v.toISOString() : String(v));
+  const num = (v) => (v == null ? null : Number(v));
+  return {
+    id: String(row.id),
+    week: row.week,
+    status: row.status,
+    availableOn: row.available_on || null,
+    usdPerEur: num(row.usd_per_eur),
+    totalGrossEur: num(row.total_gross_eur),
+    totalWithholdingEur: num(row.total_withholding_eur),
+    totalNetEur: num(row.total_net_eur),
+    totalGrossUsd: num(row.total_gross_usd),
+    totalNetUsd: num(row.total_net_usd),
+    shares: row.shares || [],
+    perChain: row.per_chain || [],
+    txHashes: row.tx_hashes || {},
+    checklist: row.checklist || {},
+    dividendTaxDueOn: row.dividend_tax_due_on || null,
+    dividendTaxReturnFiledOn: row.dividend_tax_return_filed_on || null,
+    dividendTaxPaidOn: row.dividend_tax_paid_on || null,
+    note: row.note || "",
+    decidedBy: row.decided_by || null,
+    decidedAt: iso(row.decided_at),
+    createdBy: row.created_by,
+    createdAt: iso(row.created_at),
+    updatedBy: row.updated_by || null,
+    updatedAt: iso(row.updated_at),
+  };
+}
+
+export async function listDistributions(db, { limit = 200 } = {}) {
+  const { rows } = await db.query(`select ${DIST_COLUMNS} from public.finance_distributions order by week desc, id desc limit $1`, [limit]);
+  return rows.map(distributionFromRow);
+}
+
+export async function getDistribution(db, id, { forUpdate = false } = {}) {
+  const { rows } = await db.query(`select ${DIST_COLUMNS} from public.finance_distributions where id = $1${forUpdate ? " for update" : ""}`, [id]);
+  return rows[0] ? distributionFromRow(rows[0]) : null;
+}
+
+export async function insertDistribution(client, rec, actor) {
+  const { rows } = await client.query(
+    `insert into public.finance_distributions
+       (week, status, available_on, usd_per_eur, total_gross_eur, total_withholding_eur, total_net_eur, total_gross_usd, total_net_usd,
+        shares, per_chain, tx_hashes, checklist, dividend_tax_due_on, note, created_by, updated_by)
+     values ($1, 'proposed', $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, '{}'::jsonb, $11::jsonb, $12, $13, $14, $14)
+     returning ${DIST_COLUMNS}`,
+    [rec.week, rec.availableOn, rec.usdPerEur, rec.totalGrossEur, rec.totalWithholdingEur, rec.totalNetEur, rec.totalGrossUsd, rec.totalNetUsd,
+      JSON.stringify(rec.shares), JSON.stringify(rec.perChain), JSON.stringify(rec.checklist || {}), rec.dividendTaxDueOn, rec.note || "", actor.email],
+  );
+  return distributionFromRow(rows[0]);
+}
+
+export async function updateDistribution(client, id, next, actor) {
+  const { rows } = await client.query(
+    `update public.finance_distributions
+        set status = $2, available_on = $3, tx_hashes = $4::jsonb, checklist = $5::jsonb, dividend_tax_due_on = $6,
+            dividend_tax_return_filed_on = $7, dividend_tax_paid_on = $8, note = $9,
+            decided_by = $10, decided_at = $11, updated_by = $12, updated_at = now()
+      where id = $1
+      returning ${DIST_COLUMNS}`,
+    [id, next.status, next.availableOn, JSON.stringify(next.txHashes || {}), JSON.stringify(next.checklist || {}), next.dividendTaxDueOn,
+      next.dividendTaxReturnFiledOn, next.dividendTaxPaidOn, next.note || "", next.decidedBy, next.decidedAt, actor.email],
+  );
+  return rows[0] ? distributionFromRow(rows[0]) : null;
 }
