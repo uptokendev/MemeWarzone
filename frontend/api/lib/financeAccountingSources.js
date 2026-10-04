@@ -73,7 +73,7 @@ function upvoteApprovalFrom(upvotes) {
   return async (network) => {
     if (network.chain === "solana") return { approved: true, reason: null };
     const result = await upvotes(network);
-    return { approved: Boolean(result?.approved), reason: result?.reason || null };
+    return { approved: Boolean(result?.approved), reason: result?.reason || null, message: result?.message || null };
   };
 }
 

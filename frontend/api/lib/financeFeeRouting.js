@@ -510,7 +510,7 @@ function staticAlerts(network, registry, env) {
   if (network.chain === "solana") {
     const lp = registry.destinations.find((d) => d.id === "lp_protocol_treasury");
     if (!lp?.address) {
-      alerts.push({ level: "warning", message: "The LP-fee protocol treasury is not set on this API (FINANCE_SOLANA_LP_PROTOCOL_TREASURY_ADDRESS). The indexer's 20% LP share goes to SOLANA_PROTOCOL_TREASURY_ADDRESS, falling back to SOLANA_VOTE_TREASURY_ADDRESS and then to devnet key HuKfoF; the manual collect route does not refuse when it is unset." });
+      alerts.push({ level: "warning", message: "The LP-fee protocol treasury is unknown: FINANCE_SOLANA_LP_PROTOCOL_TREASURY_ADDRESS is not set on this API and the indexer did not report its protocolTreasury. The indexer's 20% LP share goes to SOLANA_PROTOCOL_TREASURY_ADDRESS, falling back to SOLANA_VOTE_TREASURY_ADDRESS and then to devnet key HuKfoF; the manual collect route does not refuse when it is unset." });
     } else if (lp.address === SOLANA_DEVNET_DEPLOYER) {
       alerts.push({ level: "critical", message: "The LP-fee protocol treasury is the devnet key HuKfoF." });
     } else if (lp.address === SOLANA_DEPLOYER) {
@@ -584,11 +584,38 @@ export function feeRoutingTotals(network, destinations) {
   };
 }
 
-export async function buildFeeRouting({ network, days, db, env = process.env, fetchImpl = fetch, readers, prices, now = () => new Date().toISOString() }) {
+function indexerBase(env) {
+  return String(env.INDEXER_API_BASE_URL || env.INDEXER_BASE_URL || env.RAILWAY_INDEXER_URL || env.VITE_TOKEN_API_BASE || env.VITE_REALTIME_API_BASE || "").trim().replace(/\/+$/, "");
+}
+
+/**
+ * Where the indexer sends the Solana 20% LP-fee share: `protocolTreasury` of
+ * its /api/dashboard/lp-fees read (realtime-indexer/src/lpFeesRoutes.ts). Used
+ * only when the API has no FINANCE_SOLANA_LP_PROTOCOL_TREASURY_ADDRESS, so the
+ * map needs no extra env. "" when the indexer is not configured or not reachable.
+ */
+export async function readIndexerLpTreasury({ env = process.env, fetchImpl = fetch, timeoutMs = 5000 } = {}) {
+  const base = indexerBase(env);
+  if (!base) return "";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${base}/api/dashboard/lp-fees?chainId=101&environment=production&solanaCluster=mainnet-beta&limit=1`, { headers: { Accept: "application/json" }, signal: controller.signal });
+    const payload = await response.json().catch(() => null);
+    return response.ok && typeof payload?.protocolTreasury === "string" ? payload.protocolTreasury.trim() : "";
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function buildFeeRouting({ network, days, db, env = process.env, fetchImpl = fetch, readers, prices, now = () => new Date().toISOString(), lpTreasuryReader = readIndexerLpTreasury }) {
   const generatedAt = now();
   const r = readers || { readEvmNative, readEvmToken, readEvmCall, readSolanaLamports, readSolanaTokenByOwner, readSolanaAccountData };
   const solana = network.chain === "solana";
-  const registry = solana ? solanaFeeRoutingRegistry(env) : evmFeeRoutingRegistry(network.chainId);
+  const indexerLpTreasury = solana ? await lpTreasuryReader({ env }) : "";
+  const registry = solana ? solanaFeeRoutingRegistry(env, { indexerLpTreasury }) : evmFeeRoutingRegistry(network.chainId);
   const ctx = { urls: solana ? solanaRpcUrls(env) : getRpcUrls(network.chainId), fetchImpl, readers: r, now };
 
   if (!solana) await resolveRouterDestinations(registry, ctx);

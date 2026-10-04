@@ -47,7 +47,7 @@ import {
   todayIso,
   validateCostInput,
 } from "../lib/financeAccountingCosts.js";
-import { effectiveTaxRules, taxReserveSchedule, validateTaxRules } from "../lib/financeAccountingTax.js";
+import { describeTaxChange, effectiveTaxRules, taxReserveSchedule, validateTaxRules } from "../lib/financeAccountingTax.js";
 import {
   BUFFER_LABEL,
   DIVIDEND_NOTE,
@@ -56,6 +56,7 @@ import {
   buildSafeBatch,
   buildSquadsProposal,
   computeDistribution,
+  describeDistributionChange,
   effectiveDistributionSettings,
   validateDistributionSettings,
 } from "../lib/financeAccountingDistributions.js";
@@ -71,6 +72,7 @@ import {
   insertCost,
   listCloses,
   listCosts,
+  listSettingsHistory,
   lockClose,
   markClosed,
   markReopened,
@@ -383,10 +385,16 @@ export function createFinanceAccountingHandler(deps = {}) {
 
   // ---------------------------------------------------------------- tax
 
+  // Who changed a setting and what, from finance_audit_log (newest first).
+  async function settingsHistory(action, describe) {
+    const rows = await (deps.settingsHistory || listSettingsHistory)(db(), action, 20);
+    return rows.map((row) => ({ at: row.at, by: row.by, changes: describe(row.before, row.after) }));
+  }
+
   async function getTax(req, res, principal) {
     const year = parseYear(req.query?.year, nowMs());
     const s = await settings();
-    const data = await buildYear(year, { rules: s.tax });
+    const [data, history] = await Promise.all([buildYear(year, { rules: s.tax }), settingsHistory("settings.tax_reserve_rules", describeTaxChange)]);
     return res.status(200).json({
       schemaVersion: "finance-tax-reserves-v2",
       generatedAt: new Date(nowMs()).toISOString(),
@@ -397,6 +405,7 @@ export function createFinanceAccountingHandler(deps = {}) {
       months: data.months.map(({ lanes, occurrences, ...row }) => row),
       ytd: data.ytd,
       notes: data.notes,
+      history,
       method: "Profit (revenue minus costs) adds up per calendar year. Each month's reserve is the bracket tax on the year-to-date profit minus the bracket tax on the year-to-date profit before that month, both at that month's USD/EUR rate. A loss month releases reserve. Closed months keep the reserve frozen at close.",
       canManage: dashboardPrincipalCan(principal, "finance.manage"),
     });
@@ -583,7 +592,7 @@ export function createFinanceAccountingHandler(deps = {}) {
   }
 
   async function getDistributions(req, res, principal) {
-    const { s, bal, yearData, distribution } = await distributionModel();
+    const [{ s, bal, yearData, distribution }, history] = await Promise.all([distributionModel(), settingsHistory("settings.distribution", describeDistributionChange)]);
     return res.status(200).json({
       schemaVersion: "finance-distributions-v2",
       generatedAt: new Date(nowMs()).toISOString(),
@@ -591,6 +600,7 @@ export function createFinanceAccountingHandler(deps = {}) {
       label: PROPOSAL_LABEL,
       dividendNote: DIVIDEND_NOTE,
       settings: s.distribution,
+      history,
       multisig: (bal.chains || []).map((c) => ({ chainId: c.chainId, chain: c.chain, asset: c.asset, address: c.multisigAddress, amountNative: c.multisigAmount ?? null, amountUsd: c.multisigUsd, priceUsd: c.priceUsd })),
       buffer: {
         label: BUFFER_LABEL,

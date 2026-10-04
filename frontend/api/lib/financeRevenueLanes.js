@@ -311,7 +311,9 @@ export function laneDefinitions(network, { includeCore = false } = {}) {
   } else {
     defs.push({ key: "graduation_fee", lane: "bonding_curve_fee", source: "Graduation fee (finalize) protocol share", ...native, sourceInventoryId: inventoryId(network, "finalize") });
   }
-  return defs.map((d) => ({ ...d, id: d.id || `${d.key.replaceAll("_", "-")}:${network.chainId}` }));
+  // `chain` goes on every aggregate: the dashboard checks each row belongs to
+  // the chain section it came in (it was missing, so every chain section failed).
+  return defs.map((d) => ({ ...d, chain: network.chain, id: d.id || `${d.key.replaceAll("_", "-")}:${network.chainId}` }));
 }
 
 /**
@@ -323,7 +325,16 @@ async function defaultUpvoteApproval(network) {
   if (network.chain === "solana") return { approved: true, reason: null };
   const { readNativeUpvoteRevenue } = await import("./financeVoteRevenue.js");
   const result = await readNativeUpvoteRevenue(network);
-  return { approved: Boolean(result?.approved), reason: result?.reason || null };
+  return { approved: Boolean(result?.approved), reason: result?.reason || null, message: result?.message || null };
+}
+
+const CHAIN_NAMES = Object.freeze({ 101: "Solana", 56: "BNB", 4663: "Robinhood" });
+
+/** Plain note for UP votes left out of revenue; the reason code stays at the end for the logs. */
+export function upvoteNote(network, approval) {
+  const name = CHAIN_NAMES[network.chainId] || `Chain ${network.chainId}`;
+  const why = approval?.message || "the vote treasury could not be checked";
+  return `${name} UP votes are left out of revenue: ${why}${approval?.reason ? ` (${approval.reason})` : ""}.`;
 }
 
 /**
@@ -345,7 +356,7 @@ export async function sharedRevenueLanes(db, network, { upvoteApproval = default
       if (def.vote) {
         const approval = await upvoteApproval(network);
         if (!approval?.approved) {
-          notes.push(`UP vote revenue on chain ${network.chainId} is left out: ${approval?.reason || "not approved"}.`);
+          notes.push(upvoteNote(network, approval));
           continue;
         }
       }
@@ -401,7 +412,7 @@ export async function revenueLaneEvents(db, network, { start, end, maxRowsPerLan
       if (def.vote) {
         const approval = await upvoteApproval(network);
         if (!approval?.approved) {
-          notes.push(`UP votes on chain ${network.chainId} are left out (${approval?.reason || "revenue destination not verified"}).`);
+          notes.push(upvoteNote(network, approval));
           continue;
         }
       }

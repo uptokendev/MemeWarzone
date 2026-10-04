@@ -519,6 +519,12 @@ test("distributions route: labels, buffer shown, open costs, downloads; settings
   assert.equal(saved.status, 200);
   assert.equal(db.state.audit.at(-1).action, "settings.distribution");
   assert.equal(db.state.audit.at(-1).after.shares[2].entity, "US corporation");
+  const after = await call("GET", "/api/admin/finance/distributions", { principal: VIEWER });
+  assert.equal(after.body.history.length, 1, "who changed what is shown to every finance.view user");
+  assert.equal(after.body.history[0].by, "manager@example.com");
+  assert.ok(after.body.history[0].changes.includes("Patrick EVM payout address: not set -> 0x1111111111111111111111111111111111111111"));
+  assert.ok(after.body.history[0].changes.includes("Dough withholding: 0% -> 15%"));
+  assert.equal(view.body.history.length, 0);
   const file = await call("GET", "/api/admin/finance/distributions/safe-batch", { principal: VIEWER, query: { chainId: "56" } });
   assert.equal(file.status, 200);
   assert.match(file.headers["content-disposition"], /attachment; filename="mwz-distribution-proposal-56-2026-10-04\.safe-batch\.json"/);

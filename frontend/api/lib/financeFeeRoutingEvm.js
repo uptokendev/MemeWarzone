@@ -367,6 +367,15 @@ export function homePlacementsFlow() {
   };
 }
 
+/**
+ * UP vote treasury and ProtocolRevenueVault of a mainnet, from the deployment
+ * record above (deployments/<chain>/mainnet.*.json). null for other chains.
+ */
+export function evmMainnetVoteAddresses(chainId) {
+  const a = MAINNET[Number(chainId)];
+  return a ? { voteTreasury: a.upvote, protocolRevenueVault: a.protocol } : null;
+}
+
 export function evmFeeRoutingRegistry(chainId) {
   if (MAINNET[chainId]) return mainnetRegistry(chainId);
   if (TESTNET_ROUTERS[chainId]) return testnetRegistry(chainId);

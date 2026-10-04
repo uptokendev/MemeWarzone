@@ -57,8 +57,12 @@ export function createFakeAccountingDb({ installed = true } = {}) {
     // audit
     if (text.startsWith("insert into public.finance_audit_log")) {
       const [actorId, actorEmail, action, entityType, entityId, before, after] = params;
-      state.audit.push({ actorId, actorEmail, action, entityType, entityId, before: before == null ? null : JSON.parse(before), after: after == null ? null : JSON.parse(after) });
+      state.audit.push({ actorId, actorEmail, action, entityType, entityId, before: before == null ? null : JSON.parse(before), after: after == null ? null : JSON.parse(after), occurredAt: nowIso() });
       return { rows: [] };
+    }
+    if (text.startsWith("select occurred_at, actor_email, before, after from public.finance_audit_log")) {
+      const rows = state.audit.filter((a) => a.action === params[0]).reverse().slice(0, params[1]);
+      return { rows: rows.map((a) => ({ occurred_at: a.occurredAt, actor_email: a.actorEmail, before: a.before, after: a.after })) };
     }
 
     // close

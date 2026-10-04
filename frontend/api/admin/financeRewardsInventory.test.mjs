@@ -3,7 +3,7 @@ import test from "node:test";
 
 process.env.DATABASE_URL ||= "postgres://user:pass@127.0.0.1:1/none";
 
-const { apiSolanaCluster, financeInventory, rewardChainCandidates, rewardsNotice } = await import("./finance.js");
+const { apiSolanaCluster, financeInventory, inventoryFromFeeRouting, rewardChainCandidates, rewardFundingFromFeeRouting, rewardsNotice } = await import("./finance.js");
 
 function fakeRes() {
   return {
@@ -55,23 +55,41 @@ test("BNB candidates are the chain id only", () => {
   assert.deepEqual(rewardChainCandidates({ chainId: 56, chain: "bnb" }), ["56"]);
 });
 
-test("inventory adds a balance to each item through the injected reader", async () => {
-  const saved = process.env.FACTORY_ADDRESS_56;
-  process.env.FACTORY_ADDRESS_56 = "0x00000000000000000000000000000000000000f1";
-  try {
-    const res = fakeRes();
-    const balances = async (items) => items.map((item) => ({ ...item, balance: { status: "unknown", amount: null, raw: null, asset: "BNB", decimals: 18 } }));
-    const prices = { valueAtSpot: async () => ({ amountUsd: null, priceUsd: null, priceSource: null, priceAt: null, priceBasis: null }), spotTable: async () => [] };
-    await financeInventory({ query: {} }, res, { chainId: 56, chain: "bnb", decimals: 18, asset: "BNB", environment: "mainnet" }, { balances, prices });
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.schemaVersion, "finance-inventory-v1");
-    const factory = res.body.items.find((item) => item.id === "bnb56-factory");
-    assert.ok(factory);
-    assert.equal(factory.balance.status, "unknown");
-    assert.equal(factory.balance.amount, null);
-    assert.equal(factory.balance.amountUsd, null, "unknown balance: no USD");
-    assert.equal(res.body.totals.unknownAmountCount, res.body.items.length);
-  } finally {
-    if (saved == null) delete process.env.FACTORY_ADDRESS_56; else process.env.FACTORY_ADDRESS_56 = saved;
-  }
+test("inventory lists the fee-routing destinations with their balances; no env needed", async () => {
+  const feeRouting = {
+    destinations: [
+      { id: "protocol_vault", label: "Protocol vault (PDA)", kind: "pda", address: "BvQHb6qq22ZHAVUpXaaeizBaRhGpuu5T3i8Y3ebZ2que", role: "Protocol share", ownership: "ours", flags: [], balances: [{ asset: "SOL", status: "ok", amount: "0.5", raw: "500000000", amountUsd: 60, source: "rpc:x" }] },
+      { id: "lp_protocol_treasury", label: "LP-fee protocol treasury", kind: "wallet", address: "BvQHb6qq22ZHAVUpXaaeizBaRhGpuu5T3i8Y3ebZ2que", ownership: "ours", flags: [], balances: [{ asset: "SOL", status: "ok", amount: "0.5", raw: "500000000" }] },
+      { id: "dbc_fee_collector", label: "Meteora DBC fee collector", kind: "wallet", address: null, ownership: "owed", flags: [], balances: [{ asset: "SOL", status: "not_configured", amount: null, error: "DBC_FEE_COLLECTOR is not set on this API." }] },
+      { id: "creator_fee_vaults", label: "Creator fee vaults", kind: "pda-set", address: null, flags: [], balances: [] },
+      { id: "deployer", label: "Deployer (watch only)", kind: "wallet", address: "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H", ownership: "watch", flags: ["watch"], balances: [{ asset: "SOL", status: "unknown", amount: null, error: "rpc down" }] },
+    ],
+    totals: { holdings: { byChain: [], amountUsd: 60, pricedCount: 1, missingPriceCount: 0, unknownAmountCount: 0 } },
+    prices: [{ asset: "SOL", priceUsd: 120 }],
+  };
+  const { items, missing } = inventoryFromFeeRouting(mainnet, feeRouting);
+  assert.deepEqual(items.map((i) => i.id), ["101-protocol_vault", "101-deployer"], "same address once, pda-set and unset addresses not listed as items");
+  assert.equal(items[0].kind, "vault");
+  assert.equal(items[0].kindLabel, "program account");
+  assert.equal(items[0].balance.status, "ok");
+  assert.equal(items[1].watchOnly, true);
+  assert.equal(items[1].balance.status, "unknown");
+  assert.equal(items[1].balance.amount, null, "an unread balance is never 0");
+  assert.deepEqual(missing, [{ id: "dbc_fee_collector", label: "Meteora DBC fee collector", note: "DBC_FEE_COLLECTOR is not set on this API." }]);
+  const res = fakeRes();
+  await financeInventory({ query: {} }, res, mainnet, { feeRouting, prices: { spotTable: async () => [] } });
+  assert.equal(res.body.schemaVersion, "finance-inventory-v1");
+  assert.equal(res.body.addressSource, "fee-routing");
+  assert.equal(res.body.totals.amountUsd, 60, "inventory total is Held now");
+});
+
+test("reward funding is the airdrop vault on the fee-routing map, never an env list", () => {
+  const sol = rewardFundingFromFeeRouting(mainnet, { destinations: [{ id: "airdrop_vault", label: "Airdrop vault", address: "BE9ubLmT1M1N976ABCc9DpYo4iaeRJ4DHEXLCksrGQk4", balances: [{ asset: "SOL", status: "ok", raw: "273479887" }] }] });
+  assert.equal(sol.readable, true);
+  assert.equal(sol.fundedRaw, 273479887n);
+  const rh = rewardFundingFromFeeRouting({ chainId: 4663, chain: "robinhood", asset: "ETH", decimals: 18 }, { destinations: [{ id: "airdrop_distributor", label: "Airdrop distributor", address: "0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D", balances: [{ asset: "ETH", status: "unknown", error: "rpc down" }] }] });
+  assert.equal(rh.configured, true);
+  assert.equal(rh.readable, false);
+  assert.match(rh.error, /rpc down/);
+  assert.equal(rewardFundingFromFeeRouting(mainnet, { destinations: [] }).configured, false);
 });

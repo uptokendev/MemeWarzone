@@ -84,6 +84,30 @@ export function validateDistributionSettings(body) {
   return { shares };
 }
 
+/**
+ * What changed between two saved distribution settings, in plain lines
+ * ("Patrick EVM payout address: not set -> 0x..."). `before` null = the
+ * defaults were in use.
+ */
+export function describeDistributionChange(before, after) {
+  const prev = new Map(((before && Array.isArray(before.shares) ? before.shares : DEFAULT_DISTRIBUTION_SETTINGS.shares) || []).map((s) => [s.id, s]));
+  const next = new Map(((after && Array.isArray(after.shares) ? after.shares : []) || []).map((s) => [s.id, s]));
+  const lines = [];
+  const show = (v) => (v === "" || v == null ? "not set" : String(v));
+  for (const [id, share] of next) {
+    const old = prev.get(id);
+    if (!old) { lines.push(`${share.name} added: ${share.bps / 100}%`); continue; }
+    if (old.name !== share.name) lines.push(`${show(old.name)} renamed to ${show(share.name)}`);
+    if (old.bps !== share.bps) lines.push(`${share.name} share: ${old.bps / 100}% -> ${share.bps / 100}%`);
+    if ((old.entity || "") !== (share.entity || "")) lines.push(`${share.name} legal entity: ${show(old.entity)} -> ${show(share.entity)}`);
+    if ((old.withholdingPct || 0) !== (share.withholdingPct || 0)) lines.push(`${share.name} withholding: ${old.withholdingPct || 0}% -> ${share.withholdingPct || 0}%`);
+    if ((old.evmAddress || "") !== (share.evmAddress || "")) lines.push(`${share.name} EVM payout address: ${show(old.evmAddress)} -> ${show(share.evmAddress)}`);
+    if ((old.solanaAddress || "") !== (share.solanaAddress || "")) lines.push(`${share.name} Solana payout address: ${show(old.solanaAddress)} -> ${show(share.solanaAddress)}`);
+  }
+  for (const [id, share] of prev) if (!next.has(id)) lines.push(`${share.name} removed`);
+  return lines.length ? lines : ["Saved without changes"];
+}
+
 export function effectiveDistributionSettings(stored) {
   if (stored && typeof stored === "object") {
     try {

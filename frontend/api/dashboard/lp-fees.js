@@ -4,6 +4,7 @@ import { badMethod, getQuery, json } from "../../server/http.js";
 import { getServerReadProvider } from "../lib/getServerReadProvider.js";
 import { dashboardPrincipalCan, requireDashboardPermission } from "./_access.js";
 import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
+import { loadPublicHiddenCampaignKeys, publicCampaignKey } from "../lib/publicHiddenCampaigns.js";
 
 const BNB_LOCKER_ABI = [
   "function poolInfo(address) view returns (address campaign,address creator,address creatorFeeRecipient,address pool,address token0,address token1,uint256 lockedLpAmount,uint16 creatorFeeBps,uint16 protocolFeeBps,bool registered)",
@@ -59,6 +60,20 @@ function weiToDecimal(value) {
   } catch {
     return 0;
   }
+}
+
+// Read-only label: items whose campaign is a hidden test coin get
+// testCoin: true, so the dashboard can list them apart and not count their
+// errors. Nothing else in the payload changes; a failed lookup labels nothing.
+export async function labelTestCoins(chainId, items, { loadKeys = loadPublicHiddenCampaignKeys } = {}) {
+  if (!Array.isArray(items) || items.length === 0) return items;
+  let keys;
+  try {
+    keys = await loadKeys(chainId);
+  } catch {
+    return items;
+  }
+  return items.map((item) => (item?.campaignAddress && keys.has(publicCampaignKey(chainId, item.campaignAddress)) ? { ...item, testCoin: true } : item));
 }
 
 function resolveIndexerBaseUrl() {
@@ -400,7 +415,7 @@ export default async function handler(req, res) {
         });
       }
       const payload = await proxySolanaLpFees(q, authority, limit);
-      return json(res, 200, payload);
+      return json(res, 200, { ...payload, items: await labelTestCoins(101, payload.items) });
     }
 
     const pairFilter = toAddr(q.pair || q.pool);
@@ -475,7 +490,7 @@ export default async function handler(req, res) {
             "harvest(pool) on PermanentLpLocker splits 80% creator / 20% protocol.",
             "Unharvested = still on pool. Harvested lifetime = already paid/routed. Pending = failed transfer leftovers.",
           ],
-      items,
+      items: await labelTestCoins(chainId, items),
       updatedAt: new Date().toISOString(),
     });
   } catch (error) {
