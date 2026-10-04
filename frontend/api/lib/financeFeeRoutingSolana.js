@@ -7,6 +7,7 @@
 // compared with what this registry expects.
 
 import { PublicKey } from "@solana/web3.js";
+import { homePlacementsFlow } from "./financeFeeRoutingEvm.js";
 
 export const SOLANA_TREASURY_PROGRAM_ID = "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX";
 export const SOLANA_LAUNCHPAD_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
@@ -173,7 +174,11 @@ export function solanaFeeRoutingRegistry(env = process.env) {
         { destinationId: "protocol_vault", share: "5% of entries + 10% of boosts", note: "arena_config.protocol_receiver" },
       ],
       citation: `${T}/arena.rs:36-41,694-699,903,917`,
-      notes: ["75% of entries and 90% of boosts are the prize, held in each pool's arena_vault until claimed."],
+      notes: [
+        "75% of entries and 90% of boosts are the prize, held in each pool's arena_vault until claimed.",
+        "Entries are battle stakes, support and tournament buy-ins (vote battles included). The split is taken at resolve; a cancelled pool refunds stakes, support, buy-ins and boosts (arena.rs:560-627).",
+        "Revenue lanes: arena-boosts (10% of confirmed boosts on finished battles) and arena-entries (MWL share / 4) in api/lib/financeRevenueLanes.js.",
+      ],
     },
     {
       id: "sol_sponsorship",
@@ -186,7 +191,7 @@ export function solanaFeeRoutingRegistry(env = process.env) {
         { destinationId: "protocol_vault", share: "20% marketing + 10% protocol", note: "marketing_receiver and protocol_receiver (both protocol_vault on mainnet)" },
       ],
       citation: `${T}/arena_money_v2/sponsorship.rs:11-13,162,176`,
-      notes: ["70% goes to the event prize vault, then to the event receiver."],
+      notes: ["70% goes to the event prize vault, then to the event receiver.", "Revenue lane: sponsorships (marketing + protocol of confirmed sponsorship_payments)."],
     },
     {
       id: "sol_upvotes",
@@ -208,7 +213,7 @@ export function solanaFeeRoutingRegistry(env = process.env) {
       status: "live",
       splits: [{ destinationId: importSwapDest, share: "100% of the platform fee, as WSOL" }],
       citation: "frontend/api/importSwap.js:20,27",
-      notes: [],
+      notes: ["The API does not record import swaps, so this fee has no revenue lane yet: it shows only in the operator wallet's WSOL balance."],
     },
     {
       id: "sol_dbc",
@@ -232,8 +237,10 @@ export function solanaFeeRoutingRegistry(env = process.env) {
       notes: [
         "Migration fee 22% of the threshold, split 90% creator / 10% partner. Graduated DAMM v2 LP fees 80% creator / 20% partner.",
         "The referral account is swept weekly into protocol_vault.",
+        "Revenue: the protocol remainder is in the bonding lane (reward_events EvtSwap2); the referral fee is lane dbc-referral (dbc_fee_accruals.referral_fee).",
       ],
     },
+    homePlacementsFlow(),
   ];
 
   return { pda, destinations, flows };

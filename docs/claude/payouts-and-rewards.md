@@ -242,3 +242,31 @@ them (the vault pays them). Facts read on production 2026-10-04:
 - Creator claims are not recorded anywhere; Solana "owed" is read live from each public coin's escrow + creator vault
   (same math as `solanaCreatorFeeMath.js`), EVM owed = CreatorRewardsVault V1 + V2 balances.
 - `ProtocolRevenueVault.operatorFillCapUsd/operatorFilledUsd` are 18-decimal USD (cap 10000e18); Solana `route_state` is USD micros.
+
+### Finance fee coverage audit (2026-10-04, feat/finance-fee-coverage)
+
+Every fee route checked against what `revenueLanes()` counts. Lanes added in
+`frontend/api/lib/financeRevenueLanes.js` (protocol share only; prize and MWL money never):
+arena boosts 10% (`arena_contest_actions.protocol_native_raw`, finished battles only: a cancelled
+pool refunds), battle entries 5% (`arena_league_share_ledger.gross_raw / 4`: the program takes 20%
+MWL and 5% protocol of the same base), sponsorships marketing 20% + protocol 10%
+(`sponsorship_payments`, confirmed), Home placements (USD package price of placements an admin marked
+paid; no payment reference exists), DBC referral (`dbc_fee_accruals.referral_fee`), EVM graduation
+(`reward_events.route_kind = 'finalize'`; Solana graduation is stored as `trade` and was already in).
+Lane values stay inside the dashboard enum (`other_approved` / `sponsorship` / `bonding_curve_fee`);
+each aggregate carries a `source` label.
+
+Production on 2026-10-04: earnings went from $68.71 to $785.47 all time (+$15.71 boosts, +$3.04
+entries, +$698 Home placements on BNB). Still not countable, needs indexing:
+- Import swap fee 0.5% (Solana WSOL to the operator, BNB to the protocol vault): the API never
+  records a swap. Record signature + fee at build/confirm, or index transfers into the fee accounts.
+- BNB / Robinhood `RouteExecuted`: production has 11 curve trades on 56/4663 and 0 `reward_events`,
+  and no `rewards-router:` cursor in `indexer_state`, so the live indexer does not run the
+  2026-09-26 router scan (f47cb48c). All 4 EVM mainnet coins are hidden test coins today.
+- `arena_war_pool_deposits` misses stakes (battle arena-mugwhj11 has one 0.05 SOL stake recorded,
+  the ledger proves two); the entries lane reads the MWL ledger instead.
+- Accounting (Close, tax reserve, distributions, revenue CSV) reads the same lanes:
+  `financeAccountingSources.js` `monthlyRevenue` / `revenueEventRows` call
+  `sharedRevenueLanes` / `revenueLaneEvents`. Each lane is one spec (`LANE_SPECS`) that builds both
+  the hourly and the per-event SQL. Production Sep / Oct 2026: Summary = Close = CSV ($67.72 /
+  $717.75, CSV within $0.00001 of per-row rounding).

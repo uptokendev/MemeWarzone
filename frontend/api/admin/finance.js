@@ -1,17 +1,17 @@
 import { pool } from "../../server/db.js";
 import { requireAdminOrOps } from "../lib/apiAuth.js";
 import { configuredRewardVaultAddresses, readRewardFunding } from "../lib/financeFunding.js";
-import { readNativeUpvoteRevenue, readSolanaUpvoteRevenue } from "../lib/financeVoteRevenue.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
 import { normalizeSolanaCluster, resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 import { cachedFeeRouting, feeRoutingAllNetworks, feeRoutingDays, feeRoutingNetwork } from "../lib/financeFeeRouting.js";
 import { dashboardPrincipalCan } from "../dashboard/_access.js";
 import { cachedInventoryBalances } from "../lib/financeInventoryBalances.js";
 import { buildTotals, defaultPriceService, mergeTotals, priceAssetFor } from "../lib/financePrices.js";
-import { notPublicHiddenCampaignSql, publicHiddenWhere } from "../lib/publicHiddenCampaigns.js";
+import { publicHiddenWhere } from "../lib/publicHiddenCampaigns.js";
 import { financePayouts } from "../lib/financePayouts.js";
 import { buildFinanceSummary, cachedFinanceSummary, summaryMonths } from "../lib/financeSummary.js";
 import financeAccounting, { isFinanceAccountingPath } from "./financeAccounting.js";
+import { sharedRevenueLanes, summaryRevenueLanes, valueRevenueLanes } from "../lib/financeRevenueLanes.js";
 
 // Finance shows mainnets only (founder decision 2026-10-04): nothing is earned
 // on a testnet. chainId=all reads all three and adds a cross-chain total.
@@ -326,78 +326,6 @@ function solanaRowsAreMainnet(network) {
   return network.chain !== "solana" || apiSolanaCluster() === "mainnet-beta";
 }
 
-function mergeHourlyRows(rows) {
-  let total = 0n;
-  let evidenceCount = 0;
-  let periodStart = null;
-  let periodEnd = null;
-  const buckets = [];
-  for (const row of rows) {
-    const raw = String(row.amount_raw || "0").split(".")[0];
-    if (!/^\d+$/.test(raw)) continue;
-    total += BigInt(raw);
-    evidenceCount += Number(row.evidence_count || 0);
-    const start = toIso(row.period_start);
-    const end = toIso(row.period_end);
-    if (start && (!periodStart || start < periodStart)) periodStart = start;
-    if (end && (!periodEnd || end > periodEnd)) periodEnd = end;
-    buckets.push({ hour: row.hour, raw });
-  }
-  return { total, evidenceCount, periodStart, periodEnd, buckets };
-}
-
-async function bondingRevenueAggregate(network) {
-  // Grouped by hour so each slice is valued at the price of its hour; hidden
-  // test coins are left out (same rule as the KPI endpoint).
-  const { rows } = await pool.query(
-    `select date_trunc('hour', r.occurred_at) as hour,
-            min(r.occurred_at) as period_start,
-            max(r.occurred_at) as period_end,
-            count(*)::int as evidence_count,
-            coalesce(sum(r.protocol_amount), 0)::text as amount_raw
-       from public.reward_events r
-      where r.chain_id = $1
-        and r.route_kind = 'trade'
-        and r.protocol_amount > 0
-        and ${notPublicHiddenCampaignSql("r")}
-      group by 1`,
-    [network.chainId],
-  );
-  const merged = mergeHourlyRows(rows);
-  const nativeAmount = atomicToDecimal(merged.total.toString(), network.decimals);
-  if (!nativeAmount || nativeAmount === "0" || !merged.periodStart || !merged.periodEnd) return null;
-
-  return {
-    aggregate: {
-      id: `bonding-route:${network.chainId}`,
-      periodStart: merged.periodStart,
-      periodEnd: merged.periodEnd,
-      chain: network.chain,
-      lane: "bonding_curve_fee",
-      assetSymbol: network.asset,
-      sourceInventoryId: network.chain === "solana"
-        ? "sol101-mainnet-protocol-vault"
-        : `${evmPrefix(network)}-treasury-router`,
-      nativeAmount,
-      evidenceCount: merged.evidenceCount,
-    },
-    buckets: merged.buckets,
-  };
-}
-
-async function excludedTestCoinEvents(network) {
-  const { rows } = await pool.query(
-    `select count(*)::int as n
-       from public.reward_events r
-      where r.chain_id = $1
-        and r.route_kind = 'trade'
-        and r.protocol_amount > 0
-        and not ${notPublicHiddenCampaignSql("r")}`,
-    [network.chainId],
-  );
-  return Number(rows[0]?.n || 0);
-}
-
 // The browser merges LP-fee lanes from /api/dashboard/lp-fees; it drops the
 // hidden test coins with this list.
 async function hiddenCampaignAddresses(network) {
@@ -414,70 +342,29 @@ async function hiddenCampaignAddresses(network) {
 }
 
 // The revenue lanes with their hourly buckets: protocol share of bonding-curve
-// trades and paid UP votes (all three chains); hidden test coins left out.
-// /revenue values them as one lifetime figure, /summary month by month.
+// trades, paid UP votes, arena boosts / entries, sponsorships, Home
+// placements, DBC referral and EVM graduation (api/lib/financeRevenueLanes.js,
+// the one definition the accounting Close / tax / CSV also read); hidden test
+// coins left out. /revenue values them as one lifetime figure, /summary month
+// by month.
 export async function revenueLanes(network) {
-  const lanes = [];
-  let excludedEvents = 0;
-  let hiddenCampaigns = [];
-  let notice = null;
-
   if (!solanaRowsAreMainnet(network)) {
-    notice = "This API reads the test database, whose chain 101 rows are Solana devnet. Mainnet revenue is on the live API.";
-  } else {
-    try {
-      const bonding = await bondingRevenueAggregate(network);
-      if (bonding) lanes.push(bonding);
-      excludedEvents = await excludedTestCoinEvents(network);
-      hiddenCampaigns = await hiddenCampaignAddresses(network);
-    } catch (error) {
-      if (!schemaMissing(error)) throw error;
-    }
-
-    // Paid UP votes: BNB / Robinhood when the vote treasury pays the protocol
-    // revenue vault; Solana always (a plain transfer to the vote treasury,
-    // founder decision 2026-10-04).
-    if (network.chain === "bnb" || network.chain === "robinhood" || network.chain === "solana") {
-      try {
-        const upvotes = network.chain === "solana" ? await readSolanaUpvoteRevenue(network) : await readNativeUpvoteRevenue(network);
-        if (upvotes.approved && upvotes.aggregate) {
-          const nativeAmount = atomicToDecimal(upvotes.aggregate.amountRaw, network.decimals);
-          const periodStart = toIso(upvotes.aggregate.periodStart);
-          const periodEnd = toIso(upvotes.aggregate.periodEnd);
-          if (nativeAmount && nativeAmount !== "0" && periodStart && periodEnd) {
-            lanes.push({
-              aggregate: {
-                id: `upvotes:${network.chainId}:native`,
-                periodStart,
-                periodEnd,
-                chain: network.chain,
-                lane: "upvotes",
-                assetSymbol: network.asset,
-                sourceInventoryId: network.chain === "solana" ? "sol101-mainnet-protocol-treasury" : `${evmPrefix(network)}-vote-treasury`,
-                nativeAmount,
-                evidenceCount: upvotes.aggregate.evidenceCount,
-              },
-              buckets: upvotes.aggregate.buckets,
-            });
-          }
-        }
-      } catch (error) {
-        if (!schemaMissing(error)) console.warn("[finance/revenue] upvote lane omitted", error?.message || error);
-      }
-    }
+    return { lanes: [], excludedEvents: 0, hiddenCampaigns: [], notice: "This API reads the test database, whose chain 101 rows are Solana devnet. Mainnet revenue is on the live API." };
   }
-
-  return { lanes, excludedEvents, hiddenCampaigns, notice };
+  let hiddenCampaigns = [];
+  try {
+    hiddenCampaigns = await hiddenCampaignAddresses(network);
+  } catch (error) {
+    if (!schemaMissing(error)) throw error;
+  }
+  const shared = await sharedRevenueLanes(pool, network);
+  return { lanes: shared.lanes, excludedEvents: shared.excludedEvents, hiddenCampaigns, notice: null };
 }
 
 export async function buildRevenue(network, { prices = defaultPriceService() } = {}) {
   const { lanes, excludedEvents, hiddenCampaigns, notice } = await revenueLanes(network);
 
-  const aggregates = [];
-  for (const lane of lanes) {
-    const usd = await prices.valueEvents(lane.aggregate.assetSymbol, lane.buckets, network.decimals);
-    aggregates.push({ ...lane.aggregate, chainId: network.chainId, ...usd });
-  }
+  const aggregates = await valueRevenueLanes(lanes, network, prices);
 
   return {
     schemaVersion: "finance-revenue-v1",
@@ -1062,7 +949,7 @@ function defaultSummaryBuild(months) {
       const read = await revenueLanes(network);
       if (read.notice) return { unavailable: read.notice, lanes: [] };
       return {
-        lanes: read.lanes.map((lane) => ({ asset: lane.aggregate.assetSymbol, decimals: network.decimals, buckets: lane.buckets })),
+        lanes: summaryRevenueLanes(read.lanes, network),
         excludedTestCoinEvents: read.excludedEvents,
       };
     },

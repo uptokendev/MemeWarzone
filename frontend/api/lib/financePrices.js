@@ -11,7 +11,8 @@
 // read falls back to spot and the figure says "at current price".
 //
 // Stablecoins (USDC, USDT) count as $1, the rule quoteAssetVerification.js
-// already uses for stable quotes.
+// already uses for stable quotes. "USD" is a lane already in dollars (Home
+// placements, priced in USD off-chain; financeRevenueLanes.js).
 //
 // A price that cannot be read is null, never 0. Read-only: no key, no signing.
 
@@ -23,7 +24,7 @@ const HOUR_MS = 3_600_000;
 const KLINE_LIMIT = 1000;
 const MAX_KLINE_REQUESTS = 30;
 const KLINE_TIMEOUT_MS = 5000;
-const STABLES = new Set(["USDC", "USDT"]);
+const STABLES = new Set(["USDC", "USDT", "USD"]);
 
 export const PRICE_FEEDS = Object.freeze({
   SOL: { symbol: "SOLUSDT", envName: "SOL_USD_PRICE", fetchFlag: "SOL_USD_PRICE_FETCH", read: resolveSolUsdPrice },
