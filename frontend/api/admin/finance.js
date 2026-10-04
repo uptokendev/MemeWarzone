@@ -1,7 +1,7 @@
 import { pool } from "../../server/db.js";
 import { requireAdminOrOps } from "../lib/apiAuth.js";
 import { configuredRewardVaultAddresses, readRewardFunding } from "../lib/financeFunding.js";
-import { readNativeUpvoteRevenue } from "../lib/financeVoteRevenue.js";
+import { readNativeUpvoteRevenue, readSolanaUpvoteRevenue } from "../lib/financeVoteRevenue.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
 import { normalizeSolanaCluster, resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 import { cachedFeeRouting, feeRoutingAllNetworks, feeRoutingDays, feeRoutingNetwork } from "../lib/financeFeeRouting.js";
@@ -10,6 +10,7 @@ import { cachedInventoryBalances } from "../lib/financeInventoryBalances.js";
 import { buildTotals, defaultPriceService, mergeTotals, priceAssetFor } from "../lib/financePrices.js";
 import { notPublicHiddenCampaignSql, publicHiddenWhere } from "../lib/publicHiddenCampaigns.js";
 import { financePayouts } from "../lib/financePayouts.js";
+import { buildFinanceSummary, cachedFinanceSummary, summaryMonths } from "../lib/financeSummary.js";
 
 // Finance shows mainnets only (founder decision 2026-10-04): nothing is earned
 // on a testnet. chainId=all reads all three and adds a cross-chain total.
@@ -411,7 +412,10 @@ async function hiddenCampaignAddresses(network) {
   return rows.map((row) => String(row.campaign_address));
 }
 
-export async function buildRevenue(network, { prices = defaultPriceService() } = {}) {
+// The revenue lanes with their hourly buckets: protocol share of bonding-curve
+// trades and paid UP votes (all three chains); hidden test coins left out.
+// /revenue values them as one lifetime figure, /summary month by month.
+export async function revenueLanes(network) {
   const lanes = [];
   let excludedEvents = 0;
   let hiddenCampaigns = [];
@@ -429,9 +433,12 @@ export async function buildRevenue(network, { prices = defaultPriceService() } =
       if (!schemaMissing(error)) throw error;
     }
 
-    if (network.chain === "bnb" || network.chain === "robinhood") {
+    // Paid UP votes: BNB / Robinhood when the vote treasury pays the protocol
+    // revenue vault; Solana always (a plain transfer to the vote treasury,
+    // founder decision 2026-10-04).
+    if (network.chain === "bnb" || network.chain === "robinhood" || network.chain === "solana") {
       try {
-        const upvotes = await readNativeUpvoteRevenue(network);
+        const upvotes = network.chain === "solana" ? await readSolanaUpvoteRevenue(network) : await readNativeUpvoteRevenue(network);
         if (upvotes.approved && upvotes.aggregate) {
           const nativeAmount = atomicToDecimal(upvotes.aggregate.amountRaw, network.decimals);
           const periodStart = toIso(upvotes.aggregate.periodStart);
@@ -445,7 +452,7 @@ export async function buildRevenue(network, { prices = defaultPriceService() } =
                 chain: network.chain,
                 lane: "upvotes",
                 assetSymbol: network.asset,
-                sourceInventoryId: `${evmPrefix(network)}-vote-treasury`,
+                sourceInventoryId: network.chain === "solana" ? "sol101-mainnet-protocol-treasury" : `${evmPrefix(network)}-vote-treasury`,
                 nativeAmount,
                 evidenceCount: upvotes.aggregate.evidenceCount,
               },
@@ -458,6 +465,12 @@ export async function buildRevenue(network, { prices = defaultPriceService() } =
       }
     }
   }
+
+  return { lanes, excludedEvents, hiddenCampaigns, notice };
+}
+
+export async function buildRevenue(network, { prices = defaultPriceService() } = {}) {
+  const { lanes, excludedEvents, hiddenCampaigns, notice } = await revenueLanes(network);
 
   const aggregates = [];
   for (const lane of lanes) {
@@ -592,6 +605,54 @@ async function readIndexerLpFees(network) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// The protocol's harvested LP share after graduation, as the Revenue page adds
+// it in the browser (financeRevenue.ts): lifetime only, no event times, so the
+// native side is valued at current price. The coin's own token has no price
+// and is counted, not guessed. Hidden test coins are left out.
+const WRAPPED_NATIVE = new Set(["SOL", "WSOL", "BNB", "WBNB", "ETH", "WETH"]);
+
+export function lpShareFromIndexer(payload, network, hidden) {
+  const solana = network.chain === "solana";
+  const skip = new Set(hidden.map((a) => (solana ? a : a.toLowerCase())));
+  const amounts = [];
+  let unpricedTokenCount = 0;
+  for (const item of payload?.items || []) {
+    const campaign = typeof item?.campaignAddress === "string" ? item.campaignAddress.trim() : "";
+    if (campaign && skip.has(solana ? campaign : campaign.toLowerCase())) continue;
+    const harvested = item?.fees?.harvestedLifetime;
+    if (!harvested || typeof harvested !== "object") continue;
+    if (solana) {
+      const unharvested = item.fees.unharvested || {};
+      for (const [amount, symbol] of [[harvested.protocolToken0Display, unharvested.token0Symbol], [harvested.protocolToken1Display, unharvested.token1Symbol]]) {
+        if (typeof amount !== "string" || !/^\d+(\.\d+)?$/.test(amount) || Number(amount) === 0) continue;
+        if (WRAPPED_NATIVE.has(String(symbol || "").toUpperCase())) amounts.push(amount);
+        else unpricedTokenCount += 1;
+      }
+      continue;
+    }
+    if (item.fees.registered !== true) continue;
+    const token = String(item.tokenAddress || "").toLowerCase();
+    for (const [side, raw] of [[item.fees.token0, harvested.protocolToken0Raw], [item.fees.token1, harvested.protocolToken1Raw]]) {
+      if (typeof raw !== "string" || !/^\d+$/.test(raw) || /^0+$/.test(raw)) continue;
+      if (String(side || "").toLowerCase() === token) { unpricedTokenCount += 1; continue; }
+      const amount = atomicToDecimal(raw, network.decimals);
+      if (amount) amounts.push(amount);
+    }
+  }
+  return { amounts, unpricedTokenCount };
+}
+
+async function readLpShare(network, prices) {
+  const [payload, hidden] = await Promise.all([readIndexerLpFees(network), hiddenCampaignAddresses(network)]);
+  const { amounts, unpricedTokenCount } = lpShareFromIndexer(payload, network, hidden);
+  const entries = [];
+  for (const amount of amounts) {
+    const usd = await prices.valueAtSpot(network.asset, amount);
+    entries.push({ asset: network.asset, amount, amountUsd: usd.amountUsd });
+  }
+  return { entries, unpricedTokenCount };
 }
 
 async function buildReconciliationSummary(network) {
@@ -962,11 +1023,64 @@ export async function financeFeeRouting(req, res, { build = cachedFeeRouting, db
   }
 }
 
+// GET /api/admin/finance/summary: the plain summary page in one read. Bearer
+// only, like fee routing (it carries the fee-routing balances): the dashboard
+// gate in railwayProxy.js resolves finance.view for a GET. Cached 60 s.
+export async function financeSummary(req, res, { build = defaultSummaryBuild } = {}) {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    res.setHeader("Allow", "GET");
+    return res.status(405).json({ ok: false, error: "The finance summary is read-only (GET)." });
+  }
+  if (!req.dashboardPrincipal || !dashboardPrincipalCan(req.dashboardPrincipal, "finance.view")) {
+    return res.status(401).json({ ok: false, error: "Dashboard sign-in with finance.view is required.", code: "FINANCE_VIEW_REQUIRED" });
+  }
+  const currency = String(req.query?.currency ?? "usd").trim().toLowerCase();
+  if (currency !== "usd" && currency !== "native") {
+    return res.status(400).json({ ok: false, error: "currency must be usd or native." });
+  }
+  try {
+    const months = summaryMonths(req.query?.months);
+    const payload = await cachedFinanceSummary(`months:${months}`, () => build(months));
+    res.setHeader("Cache-Control", "private, max-age=60");
+    return res.status(200).json(payload);
+  } catch (error) {
+    console.error("[api/admin/finance/summary]", error);
+    return res.status(500).json({ ok: false, error: "Finance summary read failed." });
+  }
+}
+
+function defaultSummaryBuild(months) {
+  const prices = defaultPriceService();
+  const days = feeRoutingDays(undefined);
+  return buildFinanceSummary({
+    networks: FINANCE_MAINNETS.map((n) => ({ ...n })),
+    months,
+    prices,
+    readRevenue: async (network) => {
+      const read = await revenueLanes(network);
+      if (read.notice) return { unavailable: read.notice, lanes: [] };
+      return {
+        lanes: read.lanes.map((lane) => ({ asset: lane.aggregate.assetSymbol, decimals: network.decimals, buckets: lane.buckets })),
+        excludedTestCoinEvents: read.excludedEvents,
+      };
+    },
+    readLpShare: (network) => readLpShare(network, prices),
+    readFeeRouting: (network) => {
+      const feeNetwork = feeRoutingNetwork({ chainId: network.chainId, environment: network.environment, solanaCluster: network.cluster });
+      if (!feeNetwork) throw new Error(`No fee routing for chain ${network.chainId}.`);
+      return cachedFeeRouting({ network: feeNetwork, days, db: pool });
+    },
+    readRewards: (network) => buildRewards(network, { prices }),
+  });
+}
+
 export default async function financeAdmin(req, res) {
   const routePath = String(req.path || new URL(req.url, "http://localhost").pathname);
   if (routePath === "/api/admin/finance/fee-routing") return financeFeeRouting(req, res);
   // Payouts overview (read-only, bearer + finance.view): api/lib/financePayouts.js.
   if (routePath === "/api/admin/finance/payouts") return financePayouts(req, res, { db: pool, canView: (p) => dashboardPrincipalCan(p, "finance.view") });
+  if (routePath === "/api/admin/finance/summary") return financeSummary(req, res);
 
   const auth = await requireAdminOrOps(req, res, { routeLabel: "admin/finance", allowOps: true });
   if (!auth) return;
