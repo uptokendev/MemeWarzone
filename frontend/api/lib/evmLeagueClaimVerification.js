@@ -11,6 +11,7 @@ import {
   zeroPadValue,
 } from "ethers";
 import { getLogsWithRetry, isRangeLimitRpcError, withRpcRetry } from "./rpcResilience.js";
+import { MonthlyLeagueTreasuryConfigError, monthlyLeagueTreasuryAddress, monthlyLeagueTreasuryForMonth } from "./evmMonthlyLeagueTreasury.js";
 
 const EVM_LEAGUE_CHAINS = new Set([56, 97, 4663, 46630]);
 export const EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS = 5_000;
@@ -70,16 +71,26 @@ function vaultAddress(chainId) {
 }
 
 // Monthly league prizes live in MonthlyLeagueTreasury, sealed per monthId -- not in TreasuryVaultV2.
-const MAINNET_MONTHLY_LEAGUE = {
-  56: "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8",
-  4663: "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
-};
-
+// The address comes from lib/evmMonthlyLeagueTreasury.js only; a bad or superseded config fails closed.
 function monthlyVaultAddress(chainId) {
-  const chain = Number(chainId);
-  const configured = String(process.env[`MONTHLY_LEAGUE_TREASURY_ADDRESS_${chain}`] || MAINNET_MONTHLY_LEAGUE[chain] || "").trim();
-  if (configured) return getAddress(configured);
-  throw new EvmLeagueClaimVerificationError("LEAGUE_VAULT_UNAVAILABLE", `Missing chain-specific MonthlyLeagueTreasury address for chain ${chain}.`, 503);
+  try {
+    return monthlyLeagueTreasuryAddress(chainId);
+  } catch (error) {
+    throw new EvmLeagueClaimVerificationError("LEAGUE_VAULT_UNAVAILABLE", error?.message || `Missing MonthlyLeagueTreasury for chain ${Number(chainId)}.`, 503);
+  }
+}
+
+// The treasury that sealed this month (the current one unless the month was sealed on a superseded
+// vault). Verification and discovery check claims against that vault, never a vault without the seal.
+async function withMonthlyVaultForMonth(expected, provider) {
+  let vault;
+  try {
+    vault = await monthlyLeagueTreasuryForMonth(provider, expected.chainId, expected.epochId);
+  } catch (error) {
+    if (error instanceof MonthlyLeagueTreasuryConfigError) throw new EvmLeagueClaimVerificationError("LEAGUE_VAULT_UNAVAILABLE", error.message, 503);
+    throw new EvmLeagueClaimVerificationError("LEAGUE_RPC_UNAVAILABLE", `Could not read MonthlyLeagueTreasury seal state on chain ${expected.chainId}: ${error?.message || error}`, 503);
+  }
+  return { ...expected, vaultAddress: vault };
 }
 
 export function monthIdForEpochStart(epoch) {
@@ -204,8 +215,9 @@ export function evmLeagueClaimEventTopics(expected) {
 }
 
 export async function verifyEvmLeagueClaimTransaction({ chainId, period, epochStart, category, rank, recipient, amountRaw, txHash, minConfirmations = 1 }) {
-  const expected = buildExpectedEvmLeagueClaim({ chainId, period, epochStart, category, rank, recipient, amountRaw });
-  const provider = providerForChain(expected.chainId);
+  const built = buildExpectedEvmLeagueClaim({ chainId, period, epochStart, category, rank, recipient, amountRaw });
+  const provider = providerForChain(built.chainId);
+  const expected = period === "monthly" ? await withMonthlyVaultForMonth(built, provider) : built;
   let network;
   let tx;
   let receipt;
@@ -254,8 +266,9 @@ export async function verifyEvmLeagueClaimTransaction({ chainId, period, epochSt
 }
 
 export async function discoverEvmLeagueClaimTransaction({ chainId, period, epochStart, category, rank, recipient, amountRaw, minConfirmations = 1, lookbackBlocks = positiveIntEnv("EVM_CLAIM_RECONCILE_LOOKBACK_BLOCKS", 2_000_000), chunkBlocks = positiveIntEnv("EVM_CLAIM_RECONCILE_CHUNK_BLOCKS", EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS) }) {
-  const expected = buildExpectedEvmLeagueClaim({ chainId, period, epochStart, category, rank, recipient, amountRaw });
-  const provider = providerForChain(expected.chainId);
+  const built = buildExpectedEvmLeagueClaim({ chainId, period, epochStart, category, rank, recipient, amountRaw });
+  const provider = providerForChain(built.chainId);
+  const expected = period === "monthly" ? await withMonthlyVaultForMonth(built, provider) : built;
   const callData = EVM_LEAGUE_INTERFACE.encodeFunctionData(expected.claimedGetter, [expected.epochId, expected.leaf]);
   let rawClaimed;
   try {

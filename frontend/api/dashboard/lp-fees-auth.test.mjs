@@ -49,3 +49,19 @@ test("unchanged: ops key, testnet-open and creator-self modes", async () => {
     if (saved == null) delete process.env.DASHBOARD_OPS_KEY; else process.env.DASHBOARD_OPS_KEY = saved;
   }
 });
+
+test("hidden test coins are labelled testCoin, nothing else changes; a failed lookup labels nothing", async () => {
+  const { labelTestCoins } = await import("./lp-fees.js");
+  const items = [
+    { campaignAddress: "C3xHVp98JQ7eoRKtnNE9TwKqg4NLKcpvmFpy6XASwGd5", fees: { error: "Position account: x not found" } },
+    { campaignAddress: "Real111111111111111111111111111111111111111", fees: {} },
+  ];
+  const labelled = await labelTestCoins(101, items, { loadKeys: async () => new Set(["101:C3xHVp98JQ7eoRKtnNE9TwKqg4NLKcpvmFpy6XASwGd5"]) });
+  assert.equal(labelled[0].testCoin, true);
+  assert.deepEqual(labelled[0].fees, items[0].fees);
+  assert.equal(labelled[1].testCoin, undefined);
+  const evm = await labelTestCoins(56, [{ campaignAddress: "0xABC" }], { loadKeys: async () => new Set(["56:0xabc"]) });
+  assert.equal(evm[0].testCoin, true, "EVM addresses compare lower-case");
+  const failed = await labelTestCoins(101, items, { loadKeys: async () => { throw new Error("db down"); } });
+  assert.deepEqual(failed, items);
+});

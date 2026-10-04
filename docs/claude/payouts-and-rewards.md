@@ -94,6 +94,15 @@ with a realistic price and prize. **Check values, not presence:** `node scripts/
 prices every payout bound on both chains in dollars and fails outside $1..$1M -- run it after any
 deploy or Safe batch that sets a cap. After M2: the new addresses go into `league.js`,
 `evmLeagueClaimVerification.js` and `publish-evm-league-roots.mjs`.
+**Done 2026-10-04** (`fix/evm-monthly-league-treasury`): one resolver, `frontend/api/lib/evmMonthlyLeagueTreasury.js`,
+used by the publisher, `leagueRoot.js`, `monthlyLeagueTreasury.js`, `league.js` and claim verification. An env
+pointing at a superseded vault (or anything but the record on mainnet) fails closed; a seal also requires router V4
+and V3 `monthlyLeagueTreasury()` to equal the vault. Verified on chain that day: no month sealed on either old vault,
+both hold 0 (BNB dust 36239495805697 wei moved in M1), new vaults hold all monthly money, 202609 + 202610
+authorized (exceptional), **202608 not authorized** -> BNB August (12321428573942 wei, 5 leaves) needs a Safe
+`authorizeMonth(202608, ..., exceptional=true)` on `0x42D254A7…` before the publisher can seal it. BNB
+TreasuryRouterV2 `0xe157a6FD…` still points at the old vault (any V2-routed monthly slice lands there; Safe
+`withdrawNative` moves it).
 
 
 ### Airdrop: 60-day claim window, unclaimed rolls back into the pot (founder, 2026-09-27)
@@ -214,3 +223,94 @@ calls these routes; the indexer has its own `/api/security/rewards/*` (rewardOps
 - `/api/admin/finance/lp-harvest` refuses BNB 97, Solana devnet and anything not BNB 56 / Solana mainnet-beta
   with 400 (`lpHarvestMainnetOnly`), before `financeLpHarvest` runs. Robinhood 4663 has no harvest path in
   this route (it was never in `harvestNetwork`). `/api/dashboard/lp-fees` (testnet-open read mode) unchanged.
+
+### Finance payouts overview (2026-10-04, feat/finance-payouts)
+
+`GET /api/admin/finance/payouts?chainId=all|56|4663|101(+environment=production&solanaCluster=mainnet-beta)&days=30`
+(bearer + `finance.view`, GET only, 60 s cache; `frontend/api/lib/financePayouts.js`). Per mainnet and payout type
+(weekly, monthly, MWL, recruiter, creator fees, airdrop, squad, war pool/arena, operator fill): paid (period + all time,
+last tx link), owed now (claimable = root on chain, waiting = no root yet), the paying vault's live balance (fee-routing
+balances) and covered / short. Test-coin prizes are left out of paid/owed and shown apart, but the vault check counts
+them (the vault pays them). Facts read on production 2026-10-04:
+- `league_epoch_claims.signature` is the winner's wallet message signature (base64), not a transaction; the claim
+  transaction is `league_epoch_payouts.tx_hash` (older claims have no payout row, so no link).
+- **EVM monthly league: vault mismatch.** V4 routers send to `0x42D254A7…` (BNB) / `0x576c1d6B…` (RH); claims and roots
+  use `MONTHLY_LEAGUE_TREASURY_ADDRESS_<id>` or the old `0xF62A09de…` / `0xE72A281b…` (balance 0). BNB August monthly
+  winners (0.0000123 BNB, no root) are therefore short against the old vault.
+- Solana recruiter: 1065542 lamports claimable in `recruiter_reward_ledger` (33 of 35 rows are test coins); the prepared
+  weekly batch (671407 lamports, not posted) is in a `recruiter_reward_claims` row whose payout wallet is the devnet key HuKfoF.
+- Creator claims are not recorded anywhere; Solana "owed" is read live from each public coin's escrow + creator vault
+  (same math as `solanaCreatorFeeMath.js`), EVM owed = CreatorRewardsVault V1 + V2 balances.
+- `ProtocolRevenueVault.operatorFillCapUsd/operatorFilledUsd` are 18-decimal USD (cap 10000e18); Solana `route_state` is USD micros.
+
+### Finance fee coverage audit (2026-10-04, feat/finance-fee-coverage)
+
+Every fee route checked against what `revenueLanes()` counts. Lanes added in
+`frontend/api/lib/financeRevenueLanes.js` (protocol share only; prize and MWL money never):
+arena boosts 10% (`arena_contest_actions.protocol_native_raw`, finished battles only: a cancelled
+pool refunds), battle entries 5% (`arena_league_share_ledger.gross_raw / 4`: the program takes 20%
+MWL and 5% protocol of the same base), sponsorships marketing 20% + protocol 10%
+(`sponsorship_payments`, confirmed), Home placements (USD package price of placements an admin marked
+paid; no payment reference exists), DBC referral (`dbc_fee_accruals.referral_fee`), EVM graduation
+(`reward_events.route_kind = 'finalize'`; Solana graduation is stored as `trade` and was already in).
+Lane values stay inside the dashboard enum (`other_approved` / `sponsorship` / `bonding_curve_fee`);
+each aggregate carries a `source` label.
+
+Production on 2026-10-04: earnings went from $68.71 to $785.47 all time (+$15.71 boosts, +$3.04
+entries, +$698 Home placements on BNB). Still not countable, needs indexing:
+- Import swap fee 0.5% (Solana WSOL to the operator, BNB to the protocol vault): the API never
+  records a swap. Record signature + fee at build/confirm, or index transfers into the fee accounts.
+- BNB / Robinhood `RouteExecuted`: production has 11 curve trades on 56/4663 and 0 `reward_events`,
+  and no `rewards-router:` cursor in `indexer_state`, so the live indexer does not run the
+  2026-09-26 router scan (f47cb48c). All 4 EVM mainnet coins are hidden test coins today.
+- `arena_war_pool_deposits` misses stakes (battle arena-mugwhj11 has one 0.05 SOL stake recorded,
+  the ledger proves two); the entries lane reads the MWL ledger instead.
+- Accounting (Close, tax reserve, distributions, revenue CSV) reads the same lanes:
+  `financeAccountingSources.js` `monthlyRevenue` / `revenueEventRows` call
+  `sharedRevenueLanes` / `revenueLaneEvents`. Each lane is one spec (`LANE_SPECS`) that builds both
+  the hourly and the per-event SQL. Production Sep / Oct 2026: Summary = Close = CSV ($67.72 /
+  $717.75, CSV within $0.00001 of per-row rounding).
+
+### Protocol forwarder flush keeper (built 2026-10-04, PR #507, not deployed)
+
+`realtime-indexer/src/protocolForwarderKeeper.ts` calls the permissionless `flush()` on ProtocolRevenueForwarder
+(BNB 56 / Robinhood 4663) so the LP protocol 20% (WBNB/WETH) reaches ProtocolRevenueVault (operator fill, overflow to
+the Safe). Started from `main.ts`, own timer per chain, status in `/health` → `protocolForwarderKeeper`.
+
+| Env | Default | |
+|---|---|---|
+| `PROTOCOL_FORWARDER_KEEPER` | `off` | `off` / `dry` (static call + log only) / `send` |
+| `PROTOCOL_FORWARDER_ADDRESS_56`, `_4663` | unset | unset = chain skipped |
+| `PROTOCOL_FORWARDER_KEEPER_PK` | unset | dedicated gas-only key, `send` only. No fallback to any other key; missing key, the deployer `0x77F96A7d…` or an `EVM_KEEPER_FORBIDDEN_ADDRESSES` entry refuses start |
+| `PROTOCOL_FORWARDER_KEEPER_INTERVAL_MS` | 3600000 | min 60000 |
+| `PROTOCOL_FORWARDER_MIN_FLUSH_USD` | 1 | priced with the vault's own `nativeUsdPrice()` |
+| `PROTOCOL_FORWARDER_MIN_FLUSH_WEI_<id>` | 56: 0.002 BNB, 4663: 0.0005 ETH | only when the vault price is 0 |
+| `PROTOCOL_FORWARDER_MAX_GAS_COST_BPS` | 500 | gas cost must be <= 5% of the value flushed |
+| `PROTOCOL_FORWARDER_TICK_TIMEOUT_MS` | 60000 | bounded tick |
+
+Fail closed per chain: forwarder `nativeSink()` must be the known vault, `admin()` the Safe, `wrappedNative()` the known
+WBNB/WETH, else the chain is refused until restart. One flush in flight per chain (receipt polled next tick).
+Turn on only after PF2 (router points at the forwarder): first `dry`, then `send` with a funded keeper key.
+Tests: `npm run test:protocol-forwarder-keeper` (12).
+
+### Finance finish: status checks, wallets from the map (2026-10-04, fix/finance-finish)
+
+- "Finance revenue chain is invalid." on every page: `laneDefinitions()` (financeRevenueLanes.js, #506) never set
+  `chain`, so every revenue aggregate lacked it and the dashboard's parser rejected each chain section. Fixed in
+  both: lanes carry `chain`, the dashboard parser falls back to the section's chain and skips single bad rows.
+- Overview / Reconciliation are `api/lib/financeStatus.js` checks (id, module, chainId, status ok|attention|blocked,
+  title, detail, action) from fee routing, payouts, the revenue lanes, the indexer LP read and the accounting
+  tables. Accounting checks are computed once per request (`buildOverviewScope`), not per chain.
+- Inventory and reward funding come from the fee-routing map; no `FINANCE_REWARD_CUSTODY_*` / `*_FACTORY_ADDRESS`
+  env lists any more. Reward funding = Solana `airdrop_vault` PDA / EVM airdrop distributor balance.
+- `DBC_REFERRAL_TOKEN_ACCOUNTS` is a JSON map `{quoteMint: tokenAccount}` (live app bundle: WSOL entry
+  `AYQNtghqVvzCUHr8Nkuap2Gpe6FZTuB42P7HvTy8K1tS`); fee routing read it as a comma list, so the referral account was
+  always "not set" (the 1 unread in Ours). Solana UP vote treasury on mainnet is `4AjT4LkVuf9mrgoPN4KisZnKKQwiPw7JbMUJckBEhy8j`
+  (tx 3eTrtQqr…, memo mwz-upvote). The indexer reports the LP-fee protocol treasury as the protocol_vault PDA
+  `BvQHb6qq…`; fee routing now uses that when `FINANCE_SOLANA_LP_PROTOCOL_TREASURY_ADDRESS` is unset.
+- BNB / Robinhood vote treasuries' `feeReceiver()` read the protocol vaults (0xc2d4E6f8… / 0x632061cA…) on
+  2026-10-04, so UP vote revenue is approved there from the deployment record (env optional). The only BNB vote is a
+  test coin.
+- The $698 BNB Home placements disappeared from revenue because both placements were set to `waived` at
+  2026-10-04 18:32 UTC (sponsored_placements.updated_at). Waived is not revenue.
+- Summary "Owed to users" = Payouts owed now (all payout types); `/rewards` is the airdrop ledger only.

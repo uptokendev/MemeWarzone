@@ -7,6 +7,7 @@
 // compared with what this registry expects.
 
 import { PublicKey } from "@solana/web3.js";
+import { homePlacementsFlow } from "./financeFeeRoutingEvm.js";
 
 export const SOLANA_TREASURY_PROGRAM_ID = "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX";
 export const SOLANA_LAUNCHPAD_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
@@ -63,12 +64,47 @@ const L = "programs/memewarzone_solana/src";
  * configuration, not program state (vote treasury, LP protocol treasury, DBC
  * collector). Missing env means "not configured", never a guessed address.
  */
-export function solanaFeeRoutingRegistry(env = process.env) {
+/**
+ * The WSOL referral token account. DBC_REFERRAL_TOKEN_ACCOUNTS is a JSON map
+ * {quoteMint: tokenAccount} (src/lib/dbcTrade.mjs resolveReferralTokenAccount);
+ * its WSOL entry is the account the weekly sweep empties. A single
+ * DBC_REFERRAL_TOKEN_ACCOUNT, or a plain comma list, also works.
+ */
+export function dbcReferralFromEnv(env = process.env) {
+  const single = validPubkey(firstEnv(env, "DBC_REFERRAL_TOKEN_ACCOUNT", "VITE_DBC_REFERRAL_TOKEN_ACCOUNT"));
+  if (single) return single;
+  const raw = firstEnv(env, "DBC_REFERRAL_TOKEN_ACCOUNTS", "VITE_DBC_REFERRAL_TOKEN_ACCOUNTS");
+  if (!raw) return "";
+  if (raw.startsWith("{")) {
+    try {
+      const map = JSON.parse(raw);
+      return validPubkey(typeof map?.[WSOL_MINT] === "string" ? map[WSOL_MINT].trim() : "");
+    } catch {
+      return "";
+    }
+  }
+  return validPubkey(raw.split(",")[0].trim());
+}
+
+/**
+ * The 20% LP-fee receiver: the API env if set, else what the indexer reports
+ * it pays (`protocolTreasury` of /api/dashboard/lp-fees, passed in as
+ * `indexerLpTreasury` by buildFeeRouting).
+ */
+export function lpProtocolTreasuryFrom(env = process.env, indexerLpTreasury = "") {
+  const fromEnv = validPubkey(firstEnv(env, "FINANCE_SOLANA_LP_PROTOCOL_TREASURY_ADDRESS", "SOLANA_MAINNET_PROTOCOL_TREASURY_ADDRESS", "SOLANA_PROTOCOL_TREASURY_ADDRESS"));
+  if (fromEnv) return { address: fromEnv, source: "env" };
+  const fromIndexer = validPubkey(String(indexerLpTreasury || "").trim());
+  return fromIndexer ? { address: fromIndexer, source: "indexer" } : { address: "", source: null };
+}
+
+export function solanaFeeRoutingRegistry(env = process.env, { indexerLpTreasury = "" } = {}) {
   const pda = deriveSolanaTreasuryPdas();
   const voteTreasury = validPubkey(firstEnv(env, "SOLANA_MAINNET_VOTE_TREASURY_ADDRESS", "SOLANA_VOTE_TREASURY_ADDRESS", "VOTE_TREASURY_ADDRESS_101", "VITE_VOTE_TREASURY_ADDRESS_101", "VITE_SOLANA_VOTE_TREASURY_ADDRESS"));
-  const lpProtocolTreasury = validPubkey(firstEnv(env, "FINANCE_SOLANA_LP_PROTOCOL_TREASURY_ADDRESS", "SOLANA_MAINNET_PROTOCOL_TREASURY_ADDRESS", "SOLANA_PROTOCOL_TREASURY_ADDRESS"));
+  const lp = lpProtocolTreasuryFrom(env, indexerLpTreasury);
+  const lpProtocolTreasury = lp.address;
   const dbcCollector = validPubkey(firstEnv(env, "DBC_FEE_COLLECTOR"));
-  const dbcReferral = validPubkey(firstEnv(env, "DBC_REFERRAL_TOKEN_ACCOUNT", "DBC_REFERRAL_TOKEN_ACCOUNTS").split(",")[0]);
+  const dbcReferral = dbcReferralFromEnv(env);
   const importSwapOwner = validPubkey(firstEnv(env, "SOLANA_IMPORT_SWAP_FEE_OWNER")) || SOLANA_ROUTE_OPERATOR;
 
   const destinations = [
@@ -83,7 +119,7 @@ export function solanaFeeRoutingRegistry(env = process.env) {
     { id: "squad_vault", label: "Squad vault (PDA)", kind: "pda", address: pda.squad, custody: "Treasury program; one global vault", role: "2.5% of linked trades; no attribution rule yet, slices accrue", citation: `${T}/route.rs:43-56; docs/claude/payouts-and-rewards.md:81`, assets: ["native"] },
     { id: "creator_fee_vaults", label: "Creator fee vaults (per campaign)", kind: "pda-set", address: null, custody: "Launchpad PDA [creator-fee-vault, campaign] per coin; creator claims", role: "5% of every trade fee", citation: `${L}/fee_escrow.rs:19-21,642-660`, assets: [] },
     { id: "vote_treasury", label: "UP vote treasury", kind: "wallet", address: voteTreasury || null, custody: "Plain System transfer with memo mwz-upvote:<campaign>", role: "Paid UP votes", citation: "frontend/api/lib/arenaVoteTreasury.js:34-40", assets: ["native"], missingEnv: "SOLANA_MAINNET_VOTE_TREASURY_ADDRESS" },
-    { id: "lp_protocol_treasury", label: "LP-fee protocol treasury", kind: "wallet", address: lpProtocolTreasury || null, custody: "Indexer env SOLANA_PROTOCOL_TREASURY_ADDRESS", role: "20% of post-graduation LP fees", citation: "realtime-indexer/src/solanaLpFees.ts:21-45", assets: ["native", "wsol"], missingEnv: "FINANCE_SOLANA_LP_PROTOCOL_TREASURY_ADDRESS" },
+    { id: "lp_protocol_treasury", label: lpProtocolTreasury && lpProtocolTreasury === pda.protocol ? "LP-fee protocol treasury (the protocol vault)" : "LP-fee protocol treasury", kind: "wallet", address: lpProtocolTreasury || null, custody: lp.source === "indexer" ? "Indexer env SOLANA_PROTOCOL_TREASURY_ADDRESS, as the indexer reports it" : "Indexer env SOLANA_PROTOCOL_TREASURY_ADDRESS", role: "20% of post-graduation LP fees", citation: "realtime-indexer/src/solanaLpFees.ts:21-45", assets: ["native", "wsol"], missingEnv: "FINANCE_SOLANA_LP_PROTOCOL_TREASURY_ADDRESS" },
     { id: "dbc_fee_collector", label: "Meteora DBC fee collector", kind: "wallet", address: dbcCollector || null, custody: "Hot key DBC_FEE_COLLECTOR_SECRET (indexer); partner feeClaimer + leftoverReceiver", role: "Partner share of DBC fees before re-split to the treasury PDAs", citation: "frontend/api/lib/dbc/dbcConfigLadder.js:232-236; realtime-indexer/src/dbc/dbcFeeRouter.ts", assets: ["native", "wsol"], missingEnv: "DBC_FEE_COLLECTOR" },
     { id: "dbc_referral", label: "Meteora DBC referral token account", kind: "token-account", address: dbcReferral || null, custody: "WSOL account; swept weekly to protocol_vault", role: "20% of Meteora's cut on swaps made on our site", citation: "realtime-indexer/src/dbc/dbcReferralSweep.ts:80-100", assets: ["native"], missingEnv: "DBC_REFERRAL_TOKEN_ACCOUNT" },
     { id: "deployer", label: "Deployer (watch only)", kind: "wallet", address: SOLANA_DEPLOYER, custody: "Founder key; holds rewards_config / route_state / arena authority", role: "Must never hold user money. No fee path in program code pays it.", citation: "CLAUDE.md §1; docs/claude/solana-programs.md:415", assets: ["native"], flags: ["deployer", "watch"] },
@@ -173,7 +209,11 @@ export function solanaFeeRoutingRegistry(env = process.env) {
         { destinationId: "protocol_vault", share: "5% of entries + 10% of boosts", note: "arena_config.protocol_receiver" },
       ],
       citation: `${T}/arena.rs:36-41,694-699,903,917`,
-      notes: ["75% of entries and 90% of boosts are the prize, held in each pool's arena_vault until claimed."],
+      notes: [
+        "75% of entries and 90% of boosts are the prize, held in each pool's arena_vault until claimed.",
+        "Entries are battle stakes, support and tournament buy-ins (vote battles included). The split is taken at resolve; a cancelled pool refunds stakes, support, buy-ins and boosts (arena.rs:560-627).",
+        "Revenue lanes: arena-boosts (10% of confirmed boosts on finished battles) and arena-entries (MWL share / 4) in api/lib/financeRevenueLanes.js.",
+      ],
     },
     {
       id: "sol_sponsorship",
@@ -186,7 +226,7 @@ export function solanaFeeRoutingRegistry(env = process.env) {
         { destinationId: "protocol_vault", share: "20% marketing + 10% protocol", note: "marketing_receiver and protocol_receiver (both protocol_vault on mainnet)" },
       ],
       citation: `${T}/arena_money_v2/sponsorship.rs:11-13,162,176`,
-      notes: ["70% goes to the event prize vault, then to the event receiver."],
+      notes: ["70% goes to the event prize vault, then to the event receiver.", "Revenue lane: sponsorships (marketing + protocol of confirmed sponsorship_payments)."],
     },
     {
       id: "sol_upvotes",
@@ -208,7 +248,7 @@ export function solanaFeeRoutingRegistry(env = process.env) {
       status: "live",
       splits: [{ destinationId: importSwapDest, share: "100% of the platform fee, as WSOL" }],
       citation: "frontend/api/importSwap.js:20,27",
-      notes: [],
+      notes: ["The API does not record import swaps, so this fee has no revenue lane yet: it shows only in the operator wallet's WSOL balance."],
     },
     {
       id: "sol_dbc",
@@ -232,8 +272,10 @@ export function solanaFeeRoutingRegistry(env = process.env) {
       notes: [
         "Migration fee 22% of the threshold, split 90% creator / 10% partner. Graduated DAMM v2 LP fees 80% creator / 20% partner.",
         "The referral account is swept weekly into protocol_vault.",
+        "Revenue: the protocol remainder is in the bonding lane (reward_events EvtSwap2); the referral fee is lane dbc-referral (dbc_fee_accruals.referral_fee).",
       ],
     },
+    homePlacementsFlow(),
   ];
 
   return { pda, destinations, flows };

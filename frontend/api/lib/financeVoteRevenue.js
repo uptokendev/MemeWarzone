@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { getServerReadProvider } from "./getServerReadProvider.js";
 import { notPublicHiddenCampaignSql } from "./publicHiddenSql.js";
+import { evmMainnetVoteAddresses } from "./financeFeeRoutingEvm.js";
 
 const VOTE_TREASURY_ABI = ["function feeReceiver() view returns (address)"];
 
@@ -22,24 +23,66 @@ function configuredAddress(chainId, name) {
   );
 }
 
-export async function readNativeUpvoteRevenue(network) {
+// Env first (VOTE_TREASURY_ADDRESS_<id> / PROTOCOL_REVENUE_VAULT_ADDRESS_<id>),
+// then the mainnet deployment record the fee-routing map uses, so the live API
+// needs no extra env for BNB 56 / Robinhood 4663.
+export function upvoteRevenueAddresses(network, { readEnv = configuredAddress } = {}) {
+  const record = evmMainnetVoteAddresses(network.chainId);
+  return {
+    voteTreasury: readEnv(network.chainId, "VOTE_TREASURY_ADDRESS") || record?.voteTreasury || "",
+    protocolRevenueVault: readEnv(network.chainId, "PROTOCOL_REVENUE_VAULT_ADDRESS") || record?.protocolRevenueVault || "",
+  };
+}
+
+export async function readNativeUpvoteRevenue(network, { readFeeReceiver } = {}) {
   if (network.chain !== "bnb" && network.chain !== "robinhood") return { approved: false, aggregate: null, reason: "CHAIN_NOT_SUPPORTED" };
 
-  const voteTreasury = configuredAddress(network.chainId, "VOTE_TREASURY_ADDRESS");
-  const protocolRevenueVault = configuredAddress(network.chainId, "PROTOCOL_REVENUE_VAULT_ADDRESS");
+  const { voteTreasury, protocolRevenueVault } = upvoteRevenueAddresses(network);
   if (!ethers.isAddress(voteTreasury) || !ethers.isAddress(protocolRevenueVault)) {
-    return { approved: false, aggregate: null, reason: "REVENUE_DESTINATION_NOT_CONFIGURED" };
+    return {
+      approved: false,
+      aggregate: null,
+      reason: "REVENUE_DESTINATION_NOT_CONFIGURED",
+      message: `the UP vote treasury or protocol revenue vault address for chain ${network.chainId} is not known (set VOTE_TREASURY_ADDRESS_${network.chainId} and PROTOCOL_REVENUE_VAULT_ADDRESS_${network.chainId} on the API)`,
+    };
   }
 
-  const provider = await getServerReadProvider(network.chainId);
-  const treasury = new ethers.Contract(voteTreasury, VOTE_TREASURY_ABI, provider);
-  const receiver = String(await treasury.feeReceiver()).toLowerCase();
+  const receiver = String(await (readFeeReceiver
+    ? readFeeReceiver(network, voteTreasury)
+    : new ethers.Contract(voteTreasury, VOTE_TREASURY_ABI, await getServerReadProvider(network.chainId)).feeReceiver())).toLowerCase();
   if (receiver !== protocolRevenueVault.toLowerCase()) {
-    return { approved: false, aggregate: null, reason: "FEE_RECEIVER_NOT_PROTOCOL_REVENUE_VAULT" };
+    return {
+      approved: false,
+      aggregate: null,
+      reason: "FEE_RECEIVER_NOT_PROTOCOL_REVENUE_VAULT",
+      message: `the UP vote treasury ${voteTreasury} pays ${receiver}, not the protocol revenue vault ${protocolRevenueVault}`,
+    };
   }
 
-  // Grouped by hour so the finance view can value each vote at the price of
-  // its hour. Votes on hidden test coins are left out.
+  const aggregate = await hourlyNativeVotes(network.chainId, ethers.ZeroAddress);
+  if (!aggregate) return { approved: true, aggregate: null, reason: null };
+  return { approved: true, reason: null, aggregate };
+}
+
+// Solana paid UP votes: a plain System transfer to the vote treasury with memo
+// mwz-upvote:<campaign> (api/dev-fix/solana-vote-ingest.js). There is no fee
+// receiver to check: the whole payment is protocol revenue (fee routing marks
+// vote_treasury "ours"). Native SOL is stored with the System Program id as
+// asset_address. Founder decision 2026-10-04: counted as revenue like BNB /
+// Robinhood votes.
+export const SOLANA_NATIVE_VOTE_ASSET = "11111111111111111111111111111111";
+
+export async function readSolanaUpvoteRevenue(network) {
+  if (network.chain !== "solana") return { approved: false, aggregate: null, reason: "CHAIN_NOT_SUPPORTED" };
+  const aggregate = await hourlyNativeVotes(network.chainId, SOLANA_NATIVE_VOTE_ASSET);
+  return { approved: true, reason: null, aggregate };
+}
+
+// Grouped by hour so the finance view can value each vote at the price of its
+// hour. Votes on hidden test coins are left out; a vote without a campaign
+// passes. EVM addresses compare case-insensitively; the Solana System Program
+// id is all digits, so lower() leaves it unchanged.
+async function hourlyNativeVotes(chainId, assetAddress) {
   const { rows } = await pool.query(
     `select date_trunc('hour', v.block_timestamp) as hour,
             min(v.block_timestamp) as period_start,
@@ -52,7 +95,7 @@ export async function readNativeUpvoteRevenue(network) {
         and lower(v.asset_address) = lower($2)
         and ${notPublicHiddenCampaignSql("v")}
       group by 1`,
-    [network.chainId, ethers.ZeroAddress],
+    [chainId, assetAddress],
   );
   let total = 0n;
   let evidenceCount = 0;
@@ -68,19 +111,12 @@ export async function readNativeUpvoteRevenue(network) {
     if (row.period_end && (!periodEnd || new Date(row.period_end) > new Date(periodEnd))) periodEnd = row.period_end;
     buckets.push({ hour: row.hour, raw });
   }
-  if (total === 0n || !periodStart || !periodEnd) {
-    return { approved: true, aggregate: null, reason: null };
-  }
-
+  if (total === 0n || !periodStart || !periodEnd) return null;
   return {
-    approved: true,
-    reason: null,
-    aggregate: {
-      amountRaw: total.toString(),
-      periodStart,
-      periodEnd,
-      evidenceCount,
-      buckets,
-    },
+    amountRaw: total.toString(),
+    periodStart,
+    periodEnd,
+    evidenceCount,
+    buckets,
   };
 }

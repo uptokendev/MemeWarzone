@@ -1,14 +1,20 @@
 import { pool } from "../../server/db.js";
 import { requireAdminOrOps } from "../lib/apiAuth.js";
-import { configuredRewardVaultAddresses, readRewardFunding } from "../lib/financeFunding.js";
-import { readNativeUpvoteRevenue } from "../lib/financeVoteRevenue.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
 import { normalizeSolanaCluster, resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 import { cachedFeeRouting, feeRoutingAllNetworks, feeRoutingDays, feeRoutingNetwork } from "../lib/financeFeeRouting.js";
 import { dashboardPrincipalCan } from "../dashboard/_access.js";
-import { cachedInventoryBalances } from "../lib/financeInventoryBalances.js";
 import { buildTotals, defaultPriceService, mergeTotals, priceAssetFor } from "../lib/financePrices.js";
-import { notPublicHiddenCampaignSql, publicHiddenWhere } from "../lib/publicHiddenCampaigns.js";
+import { publicHiddenWhere } from "../lib/publicHiddenCampaigns.js";
+import { cachedPayouts, financePayouts, payoutsDays } from "../lib/financePayouts.js";
+import { ACCOUNTING_MODULES, CHAIN_MODULES, STATUS_MODULES, accountingChecks, lpReadSummary, modulesFromChecks, openPastMonths, reconciliationChecks, revenueChecks, rewardChecks, walletChecks } from "../lib/financeStatus.js";
+import { ACCOUNTING_MIGRATION, accountingTablesMissing, assertAccountingTables, listCloses, listCosts, readSettings } from "../lib/financeAccountingStore.js";
+import { expandCost } from "../lib/financeAccountingCosts.js";
+import { effectiveTaxRules } from "../lib/financeAccountingTax.js";
+import { effectiveDistributionSettings } from "../lib/financeAccountingDistributions.js";
+import { buildFinanceSummary, cachedFinanceSummary, summaryMonths } from "../lib/financeSummary.js";
+import financeAccounting, { isFinanceAccountingPath } from "./financeAccounting.js";
+import { sharedRevenueLanes, summaryRevenueLanes, valueRevenueLanes } from "../lib/financeRevenueLanes.js";
 
 // Finance shows mainnets only (founder decision 2026-10-04): nothing is earned
 // on a testnet. chainId=all reads all three and adds a cross-chain total.
@@ -115,7 +121,18 @@ export function harvestNetwork(req) {
   };
 }
 
-export const LP_HARVEST_SCOPE_ERROR = "LP harvest covers mainnets only: BNB 56, or Solana 101 with environment=production&solanaCluster=mainnet-beta. Testnets and devnet are refused.";
+export const LP_HARVEST_SCOPE_ERROR = "LP harvest runs on Solana mainnet only: chainId=101 with environment=production&solanaCluster=mainnet-beta. Testnets and devnet are refused.";
+
+// Founder decision 2026-10-04: harvest on BNB 56 and Robinhood 4663 is paused. Their protocol 20%
+// would land as WBNB/WETH in ProtocolRevenueVault, which has no ERC20 withdraw. Read-only fee
+// views stay; only the harvest write is refused.
+export const LP_HARVEST_EVM_PAUSED_ERROR = "Harvest on BNB and Robinhood is paused until the protocol share has a vault that can pay it out.";
+const LP_HARVEST_PAUSED_CHAIN_IDS = new Set([56, 4663]);
+
+/** True when the request names (or defaults to) BNB 56 or Robinhood 4663. */
+export function lpHarvestEvmPaused(req) {
+  return LP_HARVEST_PAUSED_CHAIN_IDS.has(Number(req.query?.chainId ?? defaultEvmChainId()));
+}
 
 /** The harvest network if it is a mainnet; null for BNB 97, Solana devnet or anything else. */
 export function lpHarvestMainnetOnly(network) {
@@ -212,8 +229,36 @@ function buildNativeRewardModel(rows, network) {
   return { aggregates, obligationRaw };
 }
 
-async function rewardCoverage(network, obligationRaw) {
-  const funding = await readRewardFunding(network);
+// The vault that pays the reward_ledger rewards (the weekly airdrop), from the
+// fee-routing map the Payouts page also reads: Solana airdrop_vault PDA, EVM
+// airdrop distributor. No env list: the map already knows the addresses.
+const REWARD_VAULT_IDS = Object.freeze({ solana: Object.freeze(["airdrop_vault"]), evm: Object.freeze(["airdrop_distributor"]) });
+
+export function rewardFundingFromFeeRouting(network, feeRouting) {
+  const ids = network.chain === "solana" ? REWARD_VAULT_IDS.solana : REWARD_VAULT_IDS.evm;
+  const vaults = (feeRouting?.destinations || []).filter((d) => ids.includes(d.id) && d.address);
+  if (vaults.length === 0) return { configured: false, readable: false, vaultCount: 0, fundedRaw: 0n, vaults: [], error: "The fee routing map has no reward vault for this chain." };
+  let fundedRaw = 0n;
+  for (const vault of vaults) {
+    const balance = (vault.balances || []).find((b) => b.asset === network.asset);
+    if (!balance || balance.status !== "ok" || !/^\d+$/.test(String(balance.raw ?? ""))) {
+      return { configured: true, readable: false, vaultCount: vaults.length, fundedRaw: 0n, vaults: vaults.map(({ id, label, address }) => ({ id, label, address })), error: balance?.error || `${vault.label} balance could not be read.` };
+    }
+    fundedRaw += BigInt(balance.raw);
+  }
+  return { configured: true, readable: true, vaultCount: vaults.length, fundedRaw, vaults: vaults.map(({ id, label, address }) => ({ id, label, address })), error: null };
+}
+
+async function readRewardFunding(network, { feeRouting } = {}) {
+  try {
+    return rewardFundingFromFeeRouting(network, feeRouting || await readFeeRoutingFor(network));
+  } catch (error) {
+    return { configured: true, readable: false, vaultCount: 0, fundedRaw: 0n, vaults: [], error: String(error?.message || "The fee routing read failed.").slice(0, 200) };
+  }
+}
+
+async function rewardCoverage(network, obligationRaw, options = {}) {
+  const funding = await readRewardFunding(network, options);
   const obligationAmount = atomicToDecimal(obligationRaw.toString(), network.decimals) || "0";
   const fundedAmount = atomicToDecimal(funding.fundedRaw.toString(), network.decimals) || "0";
   const coverageStatus = !funding.configured || !funding.readable
@@ -230,6 +275,8 @@ async function rewardCoverage(network, obligationRaw) {
       obligationAmount,
       fundedAmount,
       coverageStatus,
+      vaults: funding.vaults,
+      ...(funding.error ? { error: funding.error } : {}),
     }],
   };
 }
@@ -312,78 +359,6 @@ function solanaRowsAreMainnet(network) {
   return network.chain !== "solana" || apiSolanaCluster() === "mainnet-beta";
 }
 
-function mergeHourlyRows(rows) {
-  let total = 0n;
-  let evidenceCount = 0;
-  let periodStart = null;
-  let periodEnd = null;
-  const buckets = [];
-  for (const row of rows) {
-    const raw = String(row.amount_raw || "0").split(".")[0];
-    if (!/^\d+$/.test(raw)) continue;
-    total += BigInt(raw);
-    evidenceCount += Number(row.evidence_count || 0);
-    const start = toIso(row.period_start);
-    const end = toIso(row.period_end);
-    if (start && (!periodStart || start < periodStart)) periodStart = start;
-    if (end && (!periodEnd || end > periodEnd)) periodEnd = end;
-    buckets.push({ hour: row.hour, raw });
-  }
-  return { total, evidenceCount, periodStart, periodEnd, buckets };
-}
-
-async function bondingRevenueAggregate(network) {
-  // Grouped by hour so each slice is valued at the price of its hour; hidden
-  // test coins are left out (same rule as the KPI endpoint).
-  const { rows } = await pool.query(
-    `select date_trunc('hour', r.occurred_at) as hour,
-            min(r.occurred_at) as period_start,
-            max(r.occurred_at) as period_end,
-            count(*)::int as evidence_count,
-            coalesce(sum(r.protocol_amount), 0)::text as amount_raw
-       from public.reward_events r
-      where r.chain_id = $1
-        and r.route_kind = 'trade'
-        and r.protocol_amount > 0
-        and ${notPublicHiddenCampaignSql("r")}
-      group by 1`,
-    [network.chainId],
-  );
-  const merged = mergeHourlyRows(rows);
-  const nativeAmount = atomicToDecimal(merged.total.toString(), network.decimals);
-  if (!nativeAmount || nativeAmount === "0" || !merged.periodStart || !merged.periodEnd) return null;
-
-  return {
-    aggregate: {
-      id: `bonding-route:${network.chainId}`,
-      periodStart: merged.periodStart,
-      periodEnd: merged.periodEnd,
-      chain: network.chain,
-      lane: "bonding_curve_fee",
-      assetSymbol: network.asset,
-      sourceInventoryId: network.chain === "solana"
-        ? "sol101-mainnet-protocol-vault"
-        : `${evmPrefix(network)}-treasury-router`,
-      nativeAmount,
-      evidenceCount: merged.evidenceCount,
-    },
-    buckets: merged.buckets,
-  };
-}
-
-async function excludedTestCoinEvents(network) {
-  const { rows } = await pool.query(
-    `select count(*)::int as n
-       from public.reward_events r
-      where r.chain_id = $1
-        and r.route_kind = 'trade'
-        and r.protocol_amount > 0
-        and not ${notPublicHiddenCampaignSql("r")}`,
-    [network.chainId],
-  );
-  return Number(rows[0]?.n || 0);
-}
-
 // The browser merges LP-fee lanes from /api/dashboard/lp-fees; it drops the
 // hidden test coins with this list.
 async function hiddenCampaignAddresses(network) {
@@ -399,59 +374,34 @@ async function hiddenCampaignAddresses(network) {
   return rows.map((row) => String(row.campaign_address));
 }
 
-export async function buildRevenue(network, { prices = defaultPriceService() } = {}) {
-  const lanes = [];
-  let excludedEvents = 0;
-  let hiddenCampaigns = [];
-  let notice = null;
-
+// The revenue lanes with their hourly buckets: protocol share of bonding-curve
+// trades, paid UP votes, arena boosts / entries, sponsorships, Home
+// placements, DBC referral and EVM graduation (api/lib/financeRevenueLanes.js,
+// the one definition the accounting Close / tax / CSV also read); hidden test
+// coins left out. /revenue values them as one lifetime figure, /summary month
+// by month.
+export async function revenueLanes(network) {
   if (!solanaRowsAreMainnet(network)) {
-    notice = "This API reads the test database, whose chain 101 rows are Solana devnet. Mainnet revenue is on the live API.";
-  } else {
-    try {
-      const bonding = await bondingRevenueAggregate(network);
-      if (bonding) lanes.push(bonding);
-      excludedEvents = await excludedTestCoinEvents(network);
-      hiddenCampaigns = await hiddenCampaignAddresses(network);
-    } catch (error) {
-      if (!schemaMissing(error)) throw error;
-    }
-
-    if (network.chain === "bnb" || network.chain === "robinhood") {
-      try {
-        const upvotes = await readNativeUpvoteRevenue(network);
-        if (upvotes.approved && upvotes.aggregate) {
-          const nativeAmount = atomicToDecimal(upvotes.aggregate.amountRaw, network.decimals);
-          const periodStart = toIso(upvotes.aggregate.periodStart);
-          const periodEnd = toIso(upvotes.aggregate.periodEnd);
-          if (nativeAmount && nativeAmount !== "0" && periodStart && periodEnd) {
-            lanes.push({
-              aggregate: {
-                id: `upvotes:${network.chainId}:native`,
-                periodStart,
-                periodEnd,
-                chain: network.chain,
-                lane: "upvotes",
-                assetSymbol: network.asset,
-                sourceInventoryId: `${evmPrefix(network)}-vote-treasury`,
-                nativeAmount,
-                evidenceCount: upvotes.aggregate.evidenceCount,
-              },
-              buckets: upvotes.aggregate.buckets,
-            });
-          }
-        }
-      } catch (error) {
-        if (!schemaMissing(error)) console.warn("[finance/revenue] upvote lane omitted", error?.message || error);
-      }
-    }
+    return { lanes: [], excludedEvents: 0, hiddenCampaigns: [], notice: "This API reads the test database, whose chain 101 rows are Solana devnet. Mainnet revenue is on the live API." };
   }
-
-  const aggregates = [];
-  for (const lane of lanes) {
-    const usd = await prices.valueEvents(lane.aggregate.assetSymbol, lane.buckets, network.decimals);
-    aggregates.push({ ...lane.aggregate, chainId: network.chainId, ...usd });
+  let hiddenCampaigns = [];
+  try {
+    hiddenCampaigns = await hiddenCampaignAddresses(network);
+  } catch (error) {
+    if (!schemaMissing(error)) throw error;
   }
+  const shared = await sharedRevenueLanes(pool, network);
+  return { lanes: shared.lanes, excludedEvents: shared.excludedEvents, hiddenCampaigns, notes: shared.notes || [], notice: null };
+}
+
+export async function buildRevenue(network, { prices = defaultPriceService() } = {}) {
+  return buildRevenueFromLanes(network, await revenueLanes(network), { prices });
+}
+
+async function buildRevenueFromLanes(network, read, { prices = defaultPriceService() } = {}) {
+  const { lanes, excludedEvents, hiddenCampaigns, notice, notes = [] } = read;
+
+  const aggregates = await valueRevenueLanes(lanes, network, prices);
 
   return {
     schemaVersion: "finance-revenue-v1",
@@ -466,66 +416,73 @@ export async function buildRevenue(network, { prices = defaultPriceService() } =
     testCoinsExcluded: true,
     excludedTestCoinEvents: excludedEvents,
     hiddenCampaigns,
+    ...(notes.length ? { warnings: notes } : {}),
     ...(notice ? { notice } : {}),
   };
 }
 
-function financeInventoryItems(network) {
-  const items = [];
-  const seenAddresses = new Set();
-  const add = (id, kind, label, address, role) => {
-    const value = String(address || "").trim();
-    if (!value) return;
-    const key = `${network.chain}:${value.toLowerCase()}`;
-    if (seenAddresses.has(key)) return;
-    seenAddresses.add(key);
-    items.push({ id, chain: network.chain, kind, label, address: value, role, status: "configured" });
-  };
-
-  if (network.chain === "bnb") {
-    const suffix = network.chainId === 97 ? "97" : "56";
-    const env = (name) => process.env[`${name}_${suffix}`] || process.env[`VITE_${name}_${suffix}`] || (network.chainId === 56 ? process.env[name] || process.env[`VITE_${name}`] : undefined);
-    add(`bnb${network.chainId}-factory`, "contract", "Launch Factory", env("FACTORY_ADDRESS"), "campaign creation authority");
-    add(`bnb${network.chainId}-treasury-router`, "contract", "Treasury Router", env("TREASURY_ROUTER_ADDRESS"), "fee route authority");
-    add(`bnb${network.chainId}-treasury-vault`, "vault", "Treasury Vault", env("TREASURY_VAULT_ADDRESS"), "treasury custody");
-    add(`bnb${network.chainId}-protocol-revenue`, "vault", "Protocol Revenue Vault", env("PROTOCOL_REVENUE_VAULT_ADDRESS"), "protocol revenue custody");
-    add(`bnb${network.chainId}-community-rewards`, "vault", "Community Rewards Vault", env("COMMUNITY_REWARDS_VAULT_ADDRESS"), "community reward routing");
-    add(`bnb${network.chainId}-recruiter-rewards`, "vault", "Recruiter Rewards Vault", env("RECRUITER_REWARDS_VAULT_ADDRESS"), "recruiter reward routing");
-    configuredRewardVaultAddresses(network).forEach((address, index) => add(`bnb${network.chainId}-claim-custody-${index + 1}`, "vault", "Reward Claim Custody", address, "active reward claim funding"));
-    add(`bnb${network.chainId}-lp-locker`, "contract", "Permanent LP Locker", env("PERMANENT_LP_LOCKER_ADDRESS") || env("LP_LOCKER_ADDRESS"), "permanently locked graduation liquidity");
-    add(`bnb${network.chainId}-vote-treasury`, "contract", "UP Vote Treasury", env("VOTE_TREASURY_ADDRESS"), "verified paid-vote collection");
-  } else if (network.chain === "robinhood") {
-    // Robinhood 4663: chain-suffixed names only, never the BNB defaults.
-    const p = evmPrefix(network);
-    const env = (name) => process.env[`${name}_${network.chainId}`] || process.env[`VITE_${name}_${network.chainId}`];
-    add(`${p}-factory`, "contract", "Launch Factory", env("FACTORY_ADDRESS"), "campaign creation authority");
-    add(`${p}-treasury-router`, "contract", "Treasury Router", env("TREASURY_ROUTER_ADDRESS"), "fee route authority");
-    add(`${p}-treasury-vault`, "vault", "Treasury Vault", env("TREASURY_VAULT_ADDRESS"), "treasury custody");
-    add(`${p}-protocol-revenue`, "vault", "Protocol Revenue Vault", env("PROTOCOL_REVENUE_VAULT_ADDRESS"), "protocol revenue custody");
-    add(`${p}-community-rewards`, "vault", "Community Rewards Vault", env("COMMUNITY_REWARDS_VAULT_ADDRESS"), "community reward routing");
-    add(`${p}-recruiter-rewards`, "vault", "Recruiter Rewards Vault", env("RECRUITER_REWARDS_VAULT_ADDRESS"), "recruiter reward routing");
-    add(`${p}-lp-locker`, "contract", "Permanent LP Locker", env("PERMANENT_LP_LOCKER_ADDRESS") || env("LP_LOCKER_ADDRESS"), "permanently locked graduation liquidity");
-    add(`${p}-vote-treasury`, "contract", "UP Vote Treasury", env("VOTE_TREASURY_ADDRESS"), "verified paid-vote collection");
-  } else if (network.environment === "staging" && network.cluster === "devnet") {
-    add("sol101-devnet-protocol-treasury", "wallet", "Solana Protocol Treasury", process.env.SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS || process.env.SOLANA_PROTOCOL_TREASURY_ADDRESS || process.env.SOLANA_VOTE_TREASURY_ADDRESS, "protocol revenue destination");
-    configuredRewardVaultAddresses(network).forEach((address, index) => add(`sol101-devnet-claim-custody-${index + 1}`, "vault", "Solana Reward Claim Custody", address, "reward claim funding"));
-    add("sol101-devnet-operator", "wallet", "Solana LP Operator", process.env.SOLANA_DEVNET_OPERATOR_ADDRESS || process.env.SOLANA_OPERATOR_ADDRESS || process.env.SOLANA_HARVEST_OPERATOR_ADDRESS, "Meteora position operator");
-  } else if (network.environment === "production" && network.cluster === "mainnet-beta") {
-    add("sol101-mainnet-protocol-treasury", "wallet", "Solana Protocol Treasury", process.env.SOLANA_MAINNET_PROTOCOL_TREASURY_ADDRESS || process.env.SOLANA_MAINNET_VOTE_TREASURY_ADDRESS, "protocol revenue destination");
-    configuredRewardVaultAddresses(network).forEach((address, index) => add(`sol101-mainnet-claim-custody-${index + 1}`, "vault", "Solana Reward Claim Custody", address, "reward claim funding"));
-    add("sol101-mainnet-operator", "wallet", "Solana LP Operator", process.env.SOLANA_MAINNET_OPERATOR_ADDRESS || process.env.SOLANA_MAINNET_HARVEST_OPERATOR_ADDRESS, "Meteora position operator");
-  }
-  return items;
+// Fee routing for a finance mainnet, cached 60 s and shared with the Fee
+// Routing, Payouts and Summary pages.
+function feeNetworkFor(network) {
+  const feeNetwork = feeRoutingNetwork({ chainId: network.chainId, environment: network.environment, solanaCluster: network.cluster });
+  if (!feeNetwork) throw new Error(`No fee routing for chain ${network.chainId}.`);
+  return feeNetwork;
 }
 
-export async function buildInventory(network, { balances = cachedInventoryBalances, prices = defaultPriceService() } = {}) {
-  const items = await balances(financeInventoryItems(network), network);
-  // Balances at spot. A failed read stays unknown with no USD.
-  for (const item of items) {
-    if (!item.balance) continue;
-    const usd = item.balance.status === "ok" ? await prices.valueAtSpot(item.balance.asset, item.balance.amount) : NO_USD;
-    item.balance = { ...item.balance, ...usd };
+function readFeeRoutingFor(network) {
+  return cachedFeeRouting({ network: feeNetworkFor(network), days: feeRoutingDays(undefined), db: pool });
+}
+
+function readPayoutsFor(network) {
+  return cachedPayouts({ network: feeNetworkFor(network), days: payoutsDays(undefined), db: pool });
+}
+
+const INVENTORY_KINDS = Object.freeze({ wallet: "wallet", multisig: "multisig", vault: "vault", pda: "vault", "token-account": "wallet", contract: "contract" });
+const KIND_LABELS = Object.freeze({ wallet: "wallet", multisig: "multisig", vault: "vault", pda: "program account", "token-account": "token account", contract: "contract" });
+
+/**
+ * The wallet and vault list for Settings, taken from the fee-routing map:
+ * every destination it knows (addresses from the deployment records and the
+ * program seeds), with the balances it read. No env list is needed. A
+ * destination without an address is listed under `missing` with what to set.
+ */
+export function inventoryFromFeeRouting(network, feeRouting) {
+  const items = [];
+  const missing = [];
+  const seen = new Set();
+  for (const d of feeRouting?.destinations || []) {
+    if (d.kind === "pda-set") continue;
+    if (!d.address) {
+      const notSet = (d.balances || []).find((b) => b.status === "not_configured");
+      missing.push({ id: d.id, label: d.label, note: notSet?.error || "No address recorded for this chain." });
+      continue;
+    }
+    const key = network.chain === "solana" ? d.address : d.address.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const balances = d.balances || [];
+    const native = balances.find((b) => b.asset === network.asset) || balances[0] || null;
+    items.push({
+      id: `${network.chainId}-${d.id}`,
+      chain: network.chain,
+      kind: INVENTORY_KINDS[d.kind] || "contract",
+      kindLabel: KIND_LABELS[d.kind] || d.kind || "contract",
+      label: String(d.label || d.id).slice(0, 120),
+      address: d.address,
+      role: String(d.role || d.custody || d.label || d.id).slice(0, 120),
+      status: "configured",
+      ownership: d.ownership || null,
+      watchOnly: (d.flags || []).includes("watch") || d.ownership === "watch",
+      ...(native ? { balance: { asset: native.asset, amount: native.status === "ok" ? native.amount : null, raw: native.status === "ok" ? native.raw : null, status: native.status === "ok" ? "ok" : "unknown", source: native.source || "rpc", asOf: native.asOf || null, ...(native.status === "ok" ? {} : { error: native.error || "Balance read failed." }), amountUsd: native.amountUsd ?? null, priceUsd: native.priceUsd ?? null, priceSource: native.priceSource ?? null, priceAt: native.priceAt ?? null, priceBasis: native.priceBasis ?? null } } : {}),
+      balances: balances.map((b) => ({ asset: b.asset, amount: b.status === "ok" ? b.amount : null, status: b.status === "ok" ? "ok" : "unknown", amountUsd: b.amountUsd ?? null, ...(b.status === "ok" ? {} : { error: b.error || "Balance read failed." }) })),
+    });
   }
+  return { items, missing };
+}
+
+export async function buildInventory(network, { feeRouting, prices = defaultPriceService() } = {}) {
+  const routing = feeRouting || await readFeeRoutingFor(network);
+  const { items, missing } = inventoryFromFeeRouting(network, routing);
   return {
     schemaVersion: "finance-inventory-v1",
     generatedAt: new Date().toISOString(),
@@ -536,16 +493,13 @@ export async function buildInventory(network, { balances = cachedInventoryBalanc
       environment: network.environment,
       ...(network.cluster ? { cluster: network.cluster } : {}),
     },
-    // Each item carries a live native balance; a failed read is "unknown", never 0.
+    addressSource: "fee-routing",
+    // Each item carries its live balances; a failed read is "unknown", never 0.
     items,
-    totals: buildTotals(items.filter((item) => item.balance).map((item) => ({
-      chainId: network.chainId,
-      chain: network.chain,
-      asset: item.balance.asset,
-      amount: item.balance.status === "ok" ? item.balance.amount : null,
-      amountUsd: item.balance.amountUsd ?? null,
-    })), { seed: [network] }),
-    prices: await prices.spotTable([priceAssetFor(network.asset)]),
+    missing,
+    // Same total as "Held now": every balance except watch-only wallets.
+    totals: routing?.totals?.holdings ?? buildTotals([], { seed: [network] }),
+    prices: routing?.prices?.length ? routing.prices : await prices.spotTable([priceAssetFor(network.asset)]),
   };
 }
 
@@ -582,195 +536,195 @@ async function readIndexerLpFees(network) {
   }
 }
 
-async function buildReconciliationSummary(network) {
-  const inventory = financeInventoryItems(network);
-  let sourceErrorCount = 0;
-  let staleSourceCount = 0;
+// The protocol's harvested LP share after graduation, as the Revenue page adds
+// it in the browser (financeRevenue.ts): lifetime only, no event times, so the
+// native side is valued at current price. The coin's own token has no price
+// and is counted, not guessed. Hidden test coins are left out.
+const WRAPPED_NATIVE = new Set(["SOL", "WSOL", "BNB", "WBNB", "ETH", "WETH"]);
 
-  try {
-    const lp = await readIndexerLpFees(network);
-    for (const item of lp.items) if (item?.fees?.error) sourceErrorCount += 1;
-    const updatedAt = Date.parse(String(lp.updatedAt || ""));
-    if (!Number.isFinite(updatedAt) || Date.now() - updatedAt > 15 * 60 * 1000) staleSourceCount += 1;
-  } catch {
-    sourceErrorCount += 1;
-    staleSourceCount += 1;
+export function lpShareFromIndexer(payload, network, hidden) {
+  const solana = network.chain === "solana";
+  const skip = new Set(hidden.map((a) => (solana ? a : a.toLowerCase())));
+  const amounts = [];
+  let unpricedTokenCount = 0;
+  for (const item of payload?.items || []) {
+    const campaign = typeof item?.campaignAddress === "string" ? item.campaignAddress.trim() : "";
+    if (campaign && skip.has(solana ? campaign : campaign.toLowerCase())) continue;
+    const harvested = item?.fees?.harvestedLifetime;
+    if (!harvested || typeof harvested !== "object") continue;
+    if (solana) {
+      const unharvested = item.fees.unharvested || {};
+      for (const [amount, symbol] of [[harvested.protocolToken0Display, unharvested.token0Symbol], [harvested.protocolToken1Display, unharvested.token1Symbol]]) {
+        if (typeof amount !== "string" || !/^\d+(\.\d+)?$/.test(amount) || Number(amount) === 0) continue;
+        if (WRAPPED_NATIVE.has(String(symbol || "").toUpperCase())) amounts.push(amount);
+        else unpricedTokenCount += 1;
+      }
+      continue;
+    }
+    if (item.fees.registered !== true) continue;
+    const token = String(item.tokenAddress || "").toLowerCase();
+    for (const [side, raw] of [[item.fees.token0, harvested.protocolToken0Raw], [item.fees.token1, harvested.protocolToken1Raw]]) {
+      if (typeof raw !== "string" || !/^\d+$/.test(raw) || /^0+$/.test(raw)) continue;
+      if (String(side || "").toLowerCase() === token) { unpricedTokenCount += 1; continue; }
+      const amount = atomicToDecimal(raw, network.decimals);
+      if (amount) amounts.push(amount);
+    }
   }
-
-  let obligationRaw = 0n;
-  try {
-    const rows = await loadRewardRows(network);
-    obligationRaw = buildNativeRewardModel(rows, network).obligationRaw;
-  } catch (error) {
-    if (!schemaMissing(error)) throw error;
-    sourceErrorCount += 1;
-  }
-
-  const { funding } = await rewardCoverage(network, obligationRaw);
-  const fundingBlocked = !funding.configured || !funding.readable;
-  const underfunded = funding.readable && funding.fundedRaw < obligationRaw;
-  if (funding.configured && !funding.readable) staleSourceCount += 1;
-
-  const trackedInventoryCount = inventory.length;
-  const balancedInventoryCount = funding.readable && !underfunded ? funding.vaultCount : 0;
-  const balanceBreakCount = underfunded ? 1 : 0;
-  const status = trackedInventoryCount === 0 || fundingBlocked || sourceErrorCount > 0
-    ? "blocked"
-    : balanceBreakCount > 0 || staleSourceCount > 0 || balancedInventoryCount < trackedInventoryCount
-      ? "attention"
-      : "ready";
-
-  return {
-    chain: network.chain,
-    status,
-    trackedInventoryCount,
-    balancedInventoryCount,
-    balanceBreakCount,
-    missingPriceCount: 0,
-    duplicateCandidateCount: 0,
-    quarantinedTransferCount: 0,
-    staleSourceCount: staleSourceCount + sourceErrorCount,
-  };
+  return { amounts, unpricedTokenCount };
 }
 
-export async function buildReconciliation(network) {
+async function readLpShare(network, prices) {
+  const [payload, hidden] = await Promise.all([readIndexerLpFees(network), hiddenCampaignAddresses(network)]);
+  const { amounts, unpricedTokenCount } = lpShareFromIndexer(payload, network, hidden);
+  const entries = [];
+  for (const amount of amounts) {
+    const usd = await prices.valueAtSpot(network.asset, amount);
+    entries.push({ asset: network.asset, amount, amountUsd: usd.amountUsd });
+  }
+  return { entries, unpricedTokenCount };
+}
+
+function errorText(reason, fallback) {
+  return String(reason?.message || reason || fallback).slice(0, 300);
+}
+
+/**
+ * Every check of one chain (financeStatus.js) from the reads the other pages
+ * make: fee routing, payouts, the revenue lanes and the indexer LP read.
+ * Each read is settled on its own, so one failing source becomes one check.
+ */
+export async function chainStatus(network, { readFeeRouting = readFeeRoutingFor, readPayouts = readPayoutsFor, readRevenueLanes = revenueLanes, readLpFees = readIndexerLpFees } = {}) {
+  const [feeRead, payoutsRead, lanesRead, lpRead] = await Promise.allSettled([
+    readFeeRouting(network),
+    readPayouts(network),
+    readRevenueLanes(network),
+    readLpFees(network),
+  ]);
+  const feeRouting = feeRead.status === "fulfilled" ? feeRead.value : null;
+  const payouts = payoutsRead.status === "fulfilled" ? payoutsRead.value : null;
+  const lanes = lanesRead.status === "fulfilled" ? lanesRead.value : null;
+  if (feeRead.status === "rejected") console.error(`[api/admin/finance] status fee routing ${network.chainId}`, feeRead.reason);
+  if (payoutsRead.status === "rejected") console.error(`[api/admin/finance] status payouts ${network.chainId}`, payoutsRead.reason);
+  if (lanesRead.status === "rejected") console.error(`[api/admin/finance] status revenue ${network.chainId}`, lanesRead.reason);
+  const lp = lpRead.status === "fulfilled" ? lpReadSummary(lpRead.value, lanes?.hiddenCampaigns || [], { solana: network.chain === "solana" }) : null;
+  const checks = [
+    ...walletChecks(network, feeRouting, feeRead.status === "rejected" ? errorText(feeRead.reason, "The fee routing read failed.") : null),
+    ...revenueChecks(network, {
+      revenueError: lanesRead.status === "rejected" ? errorText(lanesRead.reason, "The revenue read failed.") : lanes?.notice || null,
+      notes: lanes?.notes || [],
+      lp,
+      lpError: lpRead.status === "rejected" ? errorText(lpRead.reason, "Indexer LP read failed.") : null,
+    }),
+    ...rewardChecks(network, { payouts, payoutsError: payoutsRead.status === "rejected" ? errorText(payoutsRead.reason, "The payouts read failed.") : null }),
+    ...reconciliationChecks(network, { feeRouting, payouts }),
+  ];
+  return { checks, feeRouting, payouts, lanes, lp };
+}
+
+export async function buildReconciliation(network, options = {}) {
+  const { checks, feeRouting, payouts, lp } = await chainStatus(network, options);
+  const own = checks.filter((c) => c.module === "reconciliation" || c.module === "inventory" || c.module === "rewards");
+  const tracked = (feeRouting?.destinations || []).filter((d) => d.address && !(d.flags || []).includes("watch") && (d.balances || []).length);
+  const balanced = tracked.filter((d) => d.balances.every((b) => b.status === "ok"));
+  const status = own.some((c) => c.status === "blocked") ? "blocked" : own.some((c) => c.status === "attention") ? "attention" : "ready";
   return {
     schemaVersion: "finance-reconciliation-v1",
     generatedAt: new Date().toISOString(),
     source: "dashboard-api",
-    chains: [{ ...(await buildReconciliationSummary(network)), chainId: network.chainId }],
+    chains: [{
+      chain: network.chain,
+      chainId: network.chainId,
+      status,
+      trackedInventoryCount: tracked.length,
+      balancedInventoryCount: balanced.length,
+      balanceBreakCount: (payouts?.types || []).filter((t) => t.coverage?.status === "short").length,
+      missingPriceCount: feeRouting?.totals?.holdings?.missingPriceCount ?? 0,
+      duplicateCandidateCount: 0,
+      quarantinedTransferCount: 0,
+      staleSourceCount: (feeRouting?.wiring || []).filter((w) => w.status === "unknown").length + (lp?.errors.length ?? 0),
+    }],
+    checks: own,
   };
 }
 
-async function revenueModuleStatus(network) {
-  const now = new Date().toISOString();
-  let blockerCount = 0;
-  let warningCount = 0;
-  let status = "ready";
-
+// Accounting status (costs, tax, close, distributions): one set for all
+// chains, from the accounting tables. `activeMonths` are the months with
+// revenue (from the lanes the chain status read) or costs.
+export async function accountingStatus({ db = pool, revenueMonths = [], now = Date.now() } = {}) {
+  const currentMonth = new Date(now).toISOString().slice(0, 7);
   try {
-    const lp = await readIndexerLpFees(network);
-    const errors = lp.items.filter((item) => item?.fees?.error).length;
-    const registered = lp.items.filter((item) => item?.fees?.registered === true).length;
-    if (errors > 0) {
-      warningCount += errors;
-      status = "attention";
-    } else if (lp.items.length === 0 || registered === 0) {
-      status = "pending";
-      warningCount += 1;
-    }
-  } catch {
-    blockerCount += 1;
-    status = "blocked";
+    await assertAccountingTables(db);
+    const [costs, settingsRow] = await Promise.all([listCosts(db), readSettings(db)]);
+    const costMonths = [];
+    for (const cost of costs) for (const occurrence of expandCost(cost, "2024-01", currentMonth, { onOrBefore: new Date(now).toISOString().slice(0, 10) })) costMonths.push(occurrence.month);
+    const activeMonths = [...new Set([...revenueMonths, ...costMonths])].filter((m) => m < currentMonth);
+    const closes = activeMonths.length ? await listCloses(db, [...activeMonths].sort()[0], currentMonth) : new Map();
+    const closed = [...closes.entries()].filter(([, row]) => row?.status === "closed").map(([month]) => month);
+    const openMonths = openPastMonths(activeMonths, closed, currentMonth);
+    return accountingChecks({
+      costCount: costs.length,
+      taxIsDefault: effectiveTaxRules(settingsRow?.tax_reserve_rules).isDefault !== false,
+      openMonths,
+      activeMonths: activeMonths.length,
+      distribution: effectiveDistributionSettings(settingsRow?.distribution),
+    });
+  } catch (error) {
+    if (accountingTablesMissing(error)) return accountingChecks({ tablesMissing: true, migration: ACCOUNTING_MIGRATION });
+    console.error("[api/admin/finance] accounting status", error);
+    return accountingChecks({ readError: errorText(error, "The accounting read failed.") });
   }
-
-  if (network.chain === "bnb" || network.chain === "robinhood") {
-    try {
-      await pool.query(`select 1 from public.reward_events where chain_id = $1 limit 1`, [network.chainId]);
-    } catch (error) {
-      if (schemaMissing(error)) {
-        blockerCount += 1;
-        status = "blocked";
-      } else {
-        throw error;
-      }
-    }
-  }
-
-  return { key: "revenue", status, blockerCount, warningCount, lastUpdatedAt: now };
 }
 
+/** Months (YYYY-MM) with revenue in the lanes of one chain. */
+export function laneMonths(lanes) {
+  const out = new Set();
+  for (const lane of lanes?.lanes || []) for (const bucket of lane.buckets || []) {
+    const ms = bucket.hour instanceof Date ? bucket.hour.getTime() : Date.parse(String(bucket.hour ?? ""));
+    if (Number.isFinite(ms)) out.add(new Date(ms).toISOString().slice(0, 7));
+  }
+  return [...out];
+}
+
+/**
+ * Overview of one chain: the status checks, module tiles and the money
+ * totals. Revenue uses the same lanes and valuation as Revenue and Summary;
+ * Held now and Ours come from the fee-routing map. `options.accounting` (the
+ * accounting checks, computed once for all chains) is added when given.
+ */
 export async function buildOverview(network, options = {}) {
   const generatedAt = new Date().toISOString();
-  const inventory = financeInventoryItems(network);
-  const productionLike = network.environment === "mainnet" || network.environment === "production";
-  const inventoryStatus = inventory.length > 0 ? "ready" : productionLike ? "pending" : "blocked";
+  const status = await chainStatus(network, options);
+  const accounting = options.accounting || [];
+  const checks = [...status.checks, ...accounting];
+  const chainChecks = status.checks;
+  const blockerCount = chainChecks.filter((c) => c.status === "blocked").length;
+  const warningCount = chainChecks.filter((c) => c.status === "attention").length;
 
-  let rewardStatus = "blocked";
-  let rewardBlockers = 1;
-  let rewardWarnings = 0;
+  let revenue = null;
   try {
-    const rows = await loadRewardRows(network);
-    const { obligationRaw } = buildNativeRewardModel(rows, network);
-    const { coverage } = await rewardCoverage(network, obligationRaw);
-    const state = coverage[0]?.coverageStatus || "blocked";
-    rewardStatus = state === "covered" ? "ready" : state;
-    rewardBlockers = state === "blocked" ? 1 : 0;
-    rewardWarnings = state === "attention" ? 1 : 0;
+    revenue = status.lanes ? (await buildRevenueFromLanes(network, status.lanes, options)).totals : null;
   } catch (error) {
-    if (!schemaMissing(error)) throw error;
+    console.error(`[api/admin/finance] overview revenue ${network.chainId}`, error);
   }
-
-  const reconciliation = await buildReconciliationSummary(network);
-  const revenue = await revenueModuleStatus(network);
-  const reconciliationBlockers = reconciliation.status === "blocked" ? 1 : 0;
-  const reconciliationWarnings = reconciliation.status === "attention" ? 1 : 0;
-
-  const modules = [
-    {
-      key: "inventory",
-      status: inventoryStatus,
-      blockerCount: inventoryStatus === "blocked" ? 1 : 0,
-      warningCount: inventoryStatus === "pending" ? 1 : 0,
-      lastUpdatedAt: generatedAt,
-    },
-    revenue,
-    {
-      key: "rewards",
-      status: rewardStatus,
-      blockerCount: rewardBlockers,
-      warningCount: rewardWarnings,
-      lastUpdatedAt: generatedAt,
-    },
-    { key: "costs", status: "disabled", blockerCount: 0, warningCount: 0 },
-    { key: "taxReserves", status: "disabled", blockerCount: 0, warningCount: 0 },
-    {
-      key: "reconciliation",
-      status: reconciliation.status,
-      blockerCount: reconciliationBlockers,
-      warningCount: reconciliationWarnings,
-      lastUpdatedAt: generatedAt,
-    },
-    { key: "close", status: "disabled", blockerCount: 0, warningCount: 0 },
-    { key: "distributions", status: "disabled", blockerCount: 0, warningCount: 0 },
-  ];
-
-  const blockingStatuses = new Set(["blocked", "disabled"]);
-  const warningStatuses = new Set(["attention", "pending"]);
-  const blockerCount = modules.filter((module) => blockingStatuses.has(module.status)).length;
-  const warningCount = modules.filter((module) => warningStatuses.has(module.status)).length;
-
-  // Money on the overview: protocol revenue (test coins excluded), what the
-  // tracked inventory holds now, and from the fee-routing map what every fee
-  // destination holds ("Held now") and the protocol-owned part of it ("Ours").
-  // A failed read leaves its total out, not zero.
-  const feeNetwork = feeRoutingNetwork({ chainId: network.chainId, environment: network.environment, solanaCluster: network.cluster });
-  const readFeeRouting = options.feeRouting || ((n) => cachedFeeRouting({ network: n, days: feeRoutingDays(undefined), db: pool }));
-  const [revenueRead, inventoryRead, feeRoutingRead] = await Promise.allSettled([
-    buildRevenue(network, options),
-    buildInventory(network, options),
-    feeNetwork ? readFeeRouting(feeNetwork) : Promise.reject(new Error(`No fee routing for chain ${network.chainId}.`)),
-  ]);
+  const prices = status.feeRouting?.prices || [];
 
   return {
     schemaVersion: "finance-overview-v1",
     generatedAt,
     source: "dashboard-api",
-    modules,
-    chains: [{
-      chain: network.chain,
-      chainId: network.chainId,
-      closeStatus: "not_ready",
-      blockerCount,
-      warningCount,
-    }],
+    modules: modulesFromChecks(checks, accounting.length ? STATUS_MODULES : CHAIN_MODULES, generatedAt),
+    // Kept for older dashboards: counts of this chain's checks. A month is
+    // closed for all chains together (see the close checks), not per chain.
+    chains: [{ chain: network.chain, chainId: network.chainId, closeStatus: blockerCount ? "not_ready" : "review_ready", blockerCount, warningCount }],
+    checks,
+    revenueMonths: laneMonths(status.lanes),
     totals: {
-      revenue: revenueRead.status === "fulfilled" ? revenueRead.value.totals : null,
-      holdings: inventoryRead.status === "fulfilled" ? inventoryRead.value.totals : null,
-      feeHoldings: feeRoutingRead.status === "fulfilled" ? feeRoutingRead.value.totals?.holdings ?? null : null,
-      ours: feeRoutingRead.status === "fulfilled" ? feeRoutingRead.value.totals?.ours ?? null : null,
+      revenue,
+      holdings: status.feeRouting?.totals?.holdings ?? null,
+      feeHoldings: status.feeRouting?.totals?.holdings ?? null,
+      ours: status.feeRouting?.totals?.ours ?? null,
     },
-    prices: revenueRead.status === "fulfilled" ? revenueRead.value.prices : [],
+    prices,
     testCoinsExcluded: true,
   };
 }
@@ -859,6 +813,7 @@ function uniquePrices(payloads) {
 const ALL_CHAIN_MERGERS = {
   overview: (datas) => ({
     modules: mergeOverviewModules(datas.map((d) => d.modules)),
+    revenueMonths: [...new Set(datas.flatMap((d) => d.revenueMonths || []))],
     totals: {
       revenue: mergeTotals(datas.map((d) => d.totals?.revenue)),
       holdings: mergeTotals(datas.map((d) => d.totals?.holdings)),
@@ -916,6 +871,31 @@ export async function buildAllChains(page, networks, build) {
   };
 }
 
+/**
+ * The overview for a scope. Chain checks per mainnet; the accounting checks
+ * (costs, tax, close, distributions) once, because they cover all chains.
+ * The close check needs the months with revenue on every mainnet, so a
+ * single-chain overview also reads the other chains' revenue months.
+ */
+export async function buildOverviewScope(scope, { build = buildOverview, accounting = accountingStatus, readRevenueMonths = async (n) => laneMonths(await revenueLanes(n)) } = {}) {
+  if (scope.all) {
+    const payload = await buildAllChains("overview", scope.networks, (n) => build(n));
+    const checks = await accounting({ revenueMonths: payload.revenueMonths || [] });
+    const chainModules = (payload.modules || []).filter((m) => CHAIN_MODULES.includes(m.key));
+    return { ...payload, modules: [...chainModules, ...modulesFromChecks(checks, ACCOUNTING_MODULES, payload.generatedAt)], checks };
+  }
+  const network = scope.networks[0];
+  const others = FINANCE_MAINNETS.filter((n) => n.chainId !== network.chainId);
+  const [data, otherMonths] = await Promise.all([
+    build(network),
+    Promise.allSettled(others.map((n) => readRevenueMonths({ ...n }))),
+  ]);
+  const months = [...(data.revenueMonths || []), ...otherMonths.flatMap((r) => (r.status === "fulfilled" ? r.value : []))];
+  const checks = await accounting({ revenueMonths: months });
+  const all = [...(data.checks || []), ...checks];
+  return { ...data, checks: all, modules: modulesFromChecks(all, STATUS_MODULES, data.generatedAt) };
+}
+
 // GET /api/admin/finance/fee-routing: read-only fee routing map, balances and
 // inflows. Bearer only: the dashboard permission gate in railwayProxy.js must
 // have resolved a principal with finance.view; ops keys and the legacy
@@ -950,9 +930,72 @@ export async function financeFeeRouting(req, res, { build = cachedFeeRouting, db
   }
 }
 
+// GET /api/admin/finance/summary: the plain summary page in one read. Bearer
+// only, like fee routing (it carries the fee-routing balances): the dashboard
+// gate in railwayProxy.js resolves finance.view for a GET. Cached 60 s.
+export async function financeSummary(req, res, { build = defaultSummaryBuild } = {}) {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    res.setHeader("Allow", "GET");
+    return res.status(405).json({ ok: false, error: "The finance summary is read-only (GET)." });
+  }
+  if (!req.dashboardPrincipal || !dashboardPrincipalCan(req.dashboardPrincipal, "finance.view")) {
+    return res.status(401).json({ ok: false, error: "Dashboard sign-in with finance.view is required.", code: "FINANCE_VIEW_REQUIRED" });
+  }
+  const currency = String(req.query?.currency ?? "usd").trim().toLowerCase();
+  if (currency !== "usd" && currency !== "native") {
+    return res.status(400).json({ ok: false, error: "currency must be usd or native." });
+  }
+  try {
+    const months = summaryMonths(req.query?.months);
+    const payload = await cachedFinanceSummary(`months:${months}`, () => build(months));
+    res.setHeader("Cache-Control", "private, max-age=60");
+    return res.status(200).json(payload);
+  } catch (error) {
+    console.error("[api/admin/finance/summary]", error);
+    return res.status(500).json({ ok: false, error: "Finance summary read failed." });
+  }
+}
+
+function defaultSummaryBuild(months) {
+  const prices = defaultPriceService();
+  const days = feeRoutingDays(undefined);
+  return buildFinanceSummary({
+    networks: FINANCE_MAINNETS.map((n) => ({ ...n })),
+    months,
+    prices,
+    readRevenue: async (network) => {
+      const read = await revenueLanes(network);
+      if (read.notice) return { unavailable: read.notice, lanes: [] };
+      return {
+        lanes: summaryRevenueLanes(read.lanes, network),
+        excludedTestCoinEvents: read.excludedEvents,
+      };
+    },
+    readLpShare: (network) => readLpShare(network, prices),
+    readFeeRouting: (network) => {
+      const feeNetwork = feeRoutingNetwork({ chainId: network.chainId, environment: network.environment, solanaCluster: network.cluster });
+      if (!feeNetwork) throw new Error(`No fee routing for chain ${network.chainId}.`);
+      return cachedFeeRouting({ network: feeNetwork, days, db: pool });
+    },
+    // Owed to users = the Payouts page's "Owed now" (league, battle league,
+    // MWL, recruiter, airdrop and creator fees), so both pages agree. The
+    // reward ledger alone (/rewards) is only the weekly airdrop.
+    readRewards: async (network) => {
+      const payouts = await readPayoutsFor(network);
+      return { totals: { outstanding: payouts?.totals?.owed ?? null } };
+    },
+  });
+}
+
 export default async function financeAdmin(req, res) {
   const routePath = String(req.path || new URL(req.url, "http://localhost").pathname);
   if (routePath === "/api/admin/finance/fee-routing") return financeFeeRouting(req, res);
+  // Payouts overview (read-only, bearer + finance.view): api/lib/financePayouts.js.
+  if (routePath === "/api/admin/finance/payouts") return financePayouts(req, res, { db: pool, canView: (p) => dashboardPrincipalCan(p, "finance.view") });
+  if (routePath === "/api/admin/finance/summary") return financeSummary(req, res);
+  // Accounting (costs, close, tax reserve, exports, distributions): dashboard sign-in only, see financeAccounting.js.
+  if (isFinanceAccountingPath(routePath)) return financeAccounting(req, res);
 
   const auth = await requireAdminOrOps(req, res, { routeLabel: "admin/finance", allowOps: true });
   if (!auth) return;
@@ -962,6 +1005,7 @@ export default async function financeAdmin(req, res) {
 
   // LP harvest: mainnets only. Pure input check; financeLpHarvest is unchanged.
   if (pathname === "/api/admin/finance/lp-harvest") {
+    if (lpHarvestEvmPaused(req)) return res.status(400).json({ ok: false, code: "LP_HARVEST_PAUSED", error: LP_HARVEST_EVM_PAUSED_ERROR });
     const network = lpHarvestMainnetOnly(harvestNetwork(req));
     if (!network) return res.status(400).json({ ok: false, error: LP_HARVEST_SCOPE_ERROR });
     try {
@@ -976,8 +1020,16 @@ export default async function financeAdmin(req, res) {
   const scope = financeScope(req.query || {});
   if (!scope) return res.status(400).json({ ok: false, error: FINANCE_SCOPE_ERROR });
 
+  if (pathname === "/api/admin/finance/overview" && method === "GET") {
+    try {
+      return res.status(200).json(await buildOverviewScope(scope));
+    } catch (error) {
+      console.error("[api/admin/finance]", pathname, error);
+      return res.status(500).json({ ok: false, error: "Finance operation failed." });
+    }
+  }
+
   const builders = {
-    "/api/admin/finance/overview": ["overview", (n) => buildOverview(n)],
     "/api/admin/finance/rewards": ["rewards", (n) => buildRewards(n)],
     "/api/admin/finance/revenue": ["revenue", (n) => buildRevenue(n)],
     "/api/admin/finance/inventory": ["inventory", (n) => buildInventory(n)],
