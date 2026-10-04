@@ -28,6 +28,7 @@ import {
 import { recordTopazFill } from "@/lib/recordTopazFill";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
+import { SOLANA_BUY_FEE_RESERVE_LAMPORTS } from "@/lib/solanaBuyReserve";
 
 const CAMPAIGN_ABI = [
   ...((LaunchCampaignArtifact.abi as any[]) ?? []),
@@ -1210,7 +1211,10 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
   // Buy: 25% / 50% of the native balance, only while the amount is entered in native units (fills the field only).
   const setBuyPercent = (pct: bigint) => {
     if (bnbBalanceWei == null) return;
-    setTradeAmount(ethers.formatUnits((bnbBalanceWei * pct) / 100n, isSolanaCampaign ? 9 : 18));
+    // Solana: the buy spends every lamport entered, so keep rent for the token account and the network fee.
+    const reserve = isSolanaCampaign ? SOLANA_BUY_FEE_RESERVE_LAMPORTS : 0n;
+    const spendable = bnbBalanceWei > reserve ? bnbBalanceWei - reserve : 0n;
+    setTradeAmount(ethers.formatUnits((spendable * pct) / 100n, isSolanaCampaign ? 9 : 18));
   };
 
   return (

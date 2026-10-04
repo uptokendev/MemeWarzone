@@ -103,6 +103,7 @@ import {
 } from "@/lib/localTopazTrades";
 import { fetchTopazTradeReports, reportTopazTrade } from "@/lib/topazTradeReports";
 import { isValidTradeTxHash, mergeTradePoints, normalizeTradeTxHash, SYNTHETIC_LOG_INDEX_MIN, tradeDedupeKey } from "@/lib/tradeDedupe";
+import { SOLANA_BUY_FEE_RESERVE_SOL } from "@/lib/solanaBuyReserve";
 
 const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
@@ -6229,6 +6230,7 @@ const toSeconds = (ts: number): number => {
           nativeUsd={nativeUsd}
           priceNative={pageLivePriceNative}
           nativeBalance={Number.isFinite(nativeBalanceNum) ? nativeBalanceNum : 0}
+          nativeReserve={isSolanaPage ? SOLANA_BUY_FEE_RESERVE_SOL : 0}
           tokenBalance={Number.isFinite(tokenBalanceNum) ? tokenBalanceNum : 0}
           nativeBalanceLabel={formatBnbFromWei(bnbBalanceWei)}
           tokenBalanceLabel={`${formatTokenFromWei(tokenBalanceWei)} ${tokenData.ticker}`}
