@@ -292,3 +292,25 @@ Fail closed per chain: forwarder `nativeSink()` must be the known vault, `admin(
 WBNB/WETH, else the chain is refused until restart. One flush in flight per chain (receipt polled next tick).
 Turn on only after PF2 (router points at the forwarder): first `dry`, then `send` with a funded keeper key.
 Tests: `npm run test:protocol-forwarder-keeper` (12).
+
+### Finance finish: status checks, wallets from the map (2026-10-04, fix/finance-finish)
+
+- "Finance revenue chain is invalid." on every page: `laneDefinitions()` (financeRevenueLanes.js, #506) never set
+  `chain`, so every revenue aggregate lacked it and the dashboard's parser rejected each chain section. Fixed in
+  both: lanes carry `chain`, the dashboard parser falls back to the section's chain and skips single bad rows.
+- Overview / Reconciliation are `api/lib/financeStatus.js` checks (id, module, chainId, status ok|attention|blocked,
+  title, detail, action) from fee routing, payouts, the revenue lanes, the indexer LP read and the accounting
+  tables. Accounting checks are computed once per request (`buildOverviewScope`), not per chain.
+- Inventory and reward funding come from the fee-routing map; no `FINANCE_REWARD_CUSTODY_*` / `*_FACTORY_ADDRESS`
+  env lists any more. Reward funding = Solana `airdrop_vault` PDA / EVM airdrop distributor balance.
+- `DBC_REFERRAL_TOKEN_ACCOUNTS` is a JSON map `{quoteMint: tokenAccount}` (live app bundle: WSOL entry
+  `AYQNtghqVvzCUHr8Nkuap2Gpe6FZTuB42P7HvTy8K1tS`); fee routing read it as a comma list, so the referral account was
+  always "not set" (the 1 unread in Ours). Solana UP vote treasury on mainnet is `4AjT4LkVuf9mrgoPN4KisZnKKQwiPw7JbMUJckBEhy8j`
+  (tx 3eTrtQqr…, memo mwz-upvote). The indexer reports the LP-fee protocol treasury as the protocol_vault PDA
+  `BvQHb6qq…`; fee routing now uses that when `FINANCE_SOLANA_LP_PROTOCOL_TREASURY_ADDRESS` is unset.
+- BNB / Robinhood vote treasuries' `feeReceiver()` read the protocol vaults (0xc2d4E6f8… / 0x632061cA…) on
+  2026-10-04, so UP vote revenue is approved there from the deployment record (env optional). The only BNB vote is a
+  test coin.
+- The $698 BNB Home placements disappeared from revenue because both placements were set to `waived` at
+  2026-10-04 18:32 UTC (sponsored_placements.updated_at). Waived is not revenue.
+- Summary "Owed to users" = Payouts owed now (all payout types); `/rewards` is the airdrop ledger only.
