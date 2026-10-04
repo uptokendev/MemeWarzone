@@ -296,7 +296,8 @@ export function LeagueCard({ chainId, className = "" }: { chainId: number; class
     retry: 1,
   }).data as any;
   const prize = summary?.prize || {};
-  const raw = [prize.availablePotRaw, prize.potRaw, prize.totalLeagueFeeRaw].find((v) => v && String(v) !== "0");
+  // The weekly prize money across all leagues (sum of the pots settlement pays), not the raw fee total.
+  const raw = [prize.totalPotRaw].find((v) => v && String(v) !== "0");
   let pot = "—";
   try {
     if (raw) pot = formatNative(Number(ethers.formatUnits(BigInt(String(raw)), chainId === 101 ? 9 : Number(prize.nativeDecimals || 18))), chainId);

@@ -34,3 +34,24 @@ test("every graduated pool is indexed, not only the 50 most recent", () => {
   assert.match(src, /SOLANA_METEORA_POOL_LIMIT \|\| 2_000/);
   assert.match(src, /graduated pool limit \$\{limit\} reached/);
 });
+
+// 2026-10-04: the page showed Solana pots from the league vault balance and split every league's pot
+// over each board, so winners saw several times what settlement pays. Shown must equal paid.
+test("the API pot is the settlement pot: fee budget over the categories plus rollovers, never the vault balance", () => {
+  const api = read("frontend/api/league.js");
+  const meta = api.slice(api.indexOf("async function getPrizeMeta"), api.indexOf("export async function recruiterLeaguePrize"));
+  assert.match(meta, /const budget = \(total \* BigInt\(budgetBps\)\) \/ 10_000n;/);
+  assert.doesNotMatch(meta, /budget = vault/);
+  assert.match(meta, /if \(epochStartIso\) \{/, "rollovers apply to the live Solana epoch too");
+  const settle = read("realtime-indexer/src/jobs/finalizeEpochWinners.ts");
+  assert.match(settle, /const budget = \(totalLeagueFeeRaw \* BigInt\(budgetBps\)\) \/ 10_000n;/);
+  assert.match(settle, /pot \+= await getRolloverRaw\(/);
+});
+
+test("the league page pays each board from its own split and headlines its own pot", () => {
+  const page = read("frontend/src/pages/League.tsx");
+  assert.doesNotMatch(page, /calculatePayoutCurve\(Math\.max\(selectedEntrants, 1\), cappedPlayerPoolUsd/);
+  assert.match(page, /const boardPotNative = rawToNative\(getPotRaw\(selectedPrize\)/);
+  assert.match(page, /selectedPrize\.payoutsRaw/);
+  assert.doesNotMatch(page.slice(page.indexOf("function getPotRaw"), page.indexOf("function sumLeaguePotsRaw")), /totalLeagueFeeRaw/);
+});

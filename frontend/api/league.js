@@ -552,13 +552,14 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
   const weeklyBudgetBps = readBps("WEEKLY_PRIZE_BUDGET_BPS", DEFAULT_WEEKLY_PRIZE_BUDGET_BPS);
   const monthlyBudgetBps = readBps("MONTHLY_PRIZE_BUDGET_BPS", DEFAULT_MONTHLY_PRIZE_BUDGET_BPS);
   const budgetBps = periodNorm === "weekly" ? weeklyBudgetBps : periodNorm === "monthly" ? monthlyBudgetBps : 10_000;
-  let budget = (total * BigInt(budgetBps)) / 10_000n;
-  // Solana, live epoch: the pot is what the league vault actually holds (carry-overs included, net
-  // of payouts), not this epoch's fee estimate. Past epochs keep the fee-based history.
+  const budget = (total * BigInt(budgetBps)) / 10_000n;
+  // The pot is what settlement pays (realtime-indexer finalizeEpochWinners): this epoch's fee budget
+  // split over the categories, plus each category's own rollover. Founder 2026-10-04: show people what
+  // they will be paid. The Solana vault balance (2026-09-25 to 2026-10-04 the live pot) is reported
+  // next to it only; settlement never pays vault money that no rollover row records, so sizing the
+  // pot from the vault showed winners several times what they would receive.
   const solanaChain = Number(chainId) === 101 || Number(chainId) === 102;
   const vault = solanaChain && isLive ? await readSolanaLeagueVaultSpendable(periodNorm) : null;
-  const vaultMode = Boolean(vault);
-  if (vault) budget = vault.spendableRaw;
 
   const leagueCount = eligible.length;
   const base = leagueCount > 0 ? budget / BigInt(leagueCount) : 0n;
@@ -578,7 +579,7 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
   // Rollovers are a ledger of funds carried into this epoch from:
   // - expired, unclaimed prizes (swept into next epoch)
   // - no-clear-winner outcomes (e.g., ties / Perfect Run edge cases)
-  if (epochStartIso && !vaultMode) {
+  if (epochStartIso) {
     try {
       const { rows: rrows } = await pool.query(
         `select category, coalesce(sum(amount_raw::numeric), 0)::numeric(78,0) as amount_raw
@@ -652,15 +653,8 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
     }
   }
 
-  if (vaultMode) {
-    for (const cat of Object.keys(byCategory)) {
-      const potNow = BigInt(String(byCategory[cat].potRaw ?? "0"));
-      byCategory[cat] = { ...byCategory[cat], paidRaw: "0", availablePotRaw: potNow.toString(), availablePayoutsRaw: splitPotRaw(potNow) };
-    }
-  }
-
   const data = {
-    basis: vaultMode ? "onchain_vault_balance" : "league_fee_only",
+    basis: "league_fee_only",
     vaultAddress: vault?.address || null,
     vaultSpendableRaw: vault ? vault.spendableRaw.toString() : null,
     period: periodNorm,
@@ -676,7 +670,7 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
     byCategory
   };
 
-  prizeCache.set(key, { computedAtMs: now, data, ttlMs: vaultMode ? 60_000 : PRIZE_TTL_MS });
+  prizeCache.set(key, { computedAtMs: now, data, ttlMs: vault ? 60_000 : PRIZE_TTL_MS });
   return data;
 }
 
