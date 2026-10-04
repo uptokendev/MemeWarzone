@@ -115,7 +115,18 @@ export function harvestNetwork(req) {
   };
 }
 
-export const LP_HARVEST_SCOPE_ERROR = "LP harvest covers mainnets only: BNB 56, or Solana 101 with environment=production&solanaCluster=mainnet-beta. Testnets and devnet are refused.";
+export const LP_HARVEST_SCOPE_ERROR = "LP harvest runs on Solana mainnet only: chainId=101 with environment=production&solanaCluster=mainnet-beta. Testnets and devnet are refused.";
+
+// Founder decision 2026-10-04: harvest on BNB 56 and Robinhood 4663 is paused. Their protocol 20%
+// would land as WBNB/WETH in ProtocolRevenueVault, which has no ERC20 withdraw. Read-only fee
+// views stay; only the harvest write is refused.
+export const LP_HARVEST_EVM_PAUSED_ERROR = "Harvest on BNB and Robinhood is paused until the protocol share has a vault that can pay it out.";
+const LP_HARVEST_PAUSED_CHAIN_IDS = new Set([56, 4663]);
+
+/** True when the request names (or defaults to) BNB 56 or Robinhood 4663. */
+export function lpHarvestEvmPaused(req) {
+  return LP_HARVEST_PAUSED_CHAIN_IDS.has(Number(req.query?.chainId ?? defaultEvmChainId()));
+}
 
 /** The harvest network if it is a mainnet; null for BNB 97, Solana devnet or anything else. */
 export function lpHarvestMainnetOnly(network) {
@@ -962,6 +973,7 @@ export default async function financeAdmin(req, res) {
 
   // LP harvest: mainnets only. Pure input check; financeLpHarvest is unchanged.
   if (pathname === "/api/admin/finance/lp-harvest") {
+    if (lpHarvestEvmPaused(req)) return res.status(400).json({ ok: false, code: "LP_HARVEST_PAUSED", error: LP_HARVEST_EVM_PAUSED_ERROR });
     const network = lpHarvestMainnetOnly(harvestNetwork(req));
     if (!network) return res.status(400).json({ ok: false, error: LP_HARVEST_SCOPE_ERROR });
     try {

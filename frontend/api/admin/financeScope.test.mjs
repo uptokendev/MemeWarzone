@@ -95,7 +95,7 @@ test("LP harvest: mainnets pass the input check, BNB 97 and Solana devnet are re
   assert.equal(pick({ chainId: "46630" }), null);
   assert.equal(pick({ chainId: "101", environment: "staging", solanaCluster: "devnet" }), null);
   assert.equal(pick({ chainId: "101" }), null);
-  assert.match(LP_HARVEST_SCOPE_ERROR, /mainnets only/);
+  assert.match(LP_HARVEST_SCOPE_ERROR, /Solana mainnet only/);
 });
 
 test("LP harvest route answers a testnet with 400 and never calls the indexer", async () => {
@@ -117,7 +117,7 @@ test("LP harvest route answers a testnet with 400 and never calls the indexer", 
       await financeAdmin({ method: "POST", path: "/api/admin/finance/lp-harvest", url: "/api/admin/finance/lp-harvest", query, body: { pair: "0xabc" }, headers: { "x-ops-key": "test-ops-key" } }, res);
       if (res.statusCode === 401 || res.statusCode === 403) continue; // auth layer differs per env
       assert.equal(res.statusCode, 400);
-      assert.match(res.body.error, /mainnets only/);
+      assert.match(res.body.error, /Solana mainnet only/);
     }
     assert.equal(fetched, 0);
   } finally {

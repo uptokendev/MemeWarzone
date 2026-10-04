@@ -4,7 +4,7 @@ import { ethers } from "ethers";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
-import { harvestSolanaLpFees, listSolanaLpFees, solanaHarvestStatus } from "./solanaLpFees.js";
+import { harvestSolanaLpFees, listSolanaLpFees, solanaHarvestStatus, solanaMainnetHarvestBlocker } from "./solanaLpFees.js";
 
 const LOCKER_ABI = [
   "function poolInfo(address) view returns (address campaign,address creator,address creatorFeeRecipient,address pool,address token0,address token1,uint256 lockedLpAmount,uint16 creatorFeeBps,uint16 protocolFeeBps,bool registered)",
@@ -510,6 +510,10 @@ export function registerLpFeesRoutes(app: express.Application) {
         });
         res.status(200).json({
           ...payload,
+          // Mainnet only: why a manual collect would be refused right now (null = it would run).
+          harvestBlocker: authority.authority.cluster === "mainnet-beta"
+            ? solanaMainnetHarvestBlocker(process.env, solanaHarvestStatus().operatorAddress)
+            : null,
           chainId: 101,
           environment: authority.authority.environment,
           cluster: authority.authority.cluster,
@@ -648,8 +652,13 @@ export function registerLpFeesRoutes(app: express.Application) {
           res.status(authority.status).json({ ok: false, error: authority.error });
           return;
         }
+        const status = solanaHarvestStatus();
         res.status(200).json({
-          ...solanaHarvestStatus(),
+          ...status,
+          // Mainnet only: why a manual collect would be refused right now (null = it would run).
+          harvestBlocker: authority.authority.cluster === "mainnet-beta"
+            ? solanaMainnetHarvestBlocker(process.env, status.operatorAddress)
+            : null,
           chainId: 101,
           environment: authority.authority.environment,
           cluster: authority.authority.cluster,
@@ -685,11 +694,23 @@ export function registerLpFeesRoutes(app: express.Application) {
           res.status(authority.status).json({ ok: false, error: authority.error });
           return;
         }
+        // Mainnet fails closed before any database read or RPC call: the protocol 20% only goes to an
+        // explicit SOLANA_PROTOCOL_TREASURY_ADDRESS that is not the deployer, HuKfoF or the operator.
+        let expectedProtocolTreasury: string | null = null;
+        if (authority.authority.cluster === "mainnet-beta") {
+          const blocker = solanaMainnetHarvestBlocker(process.env, solanaHarvestStatus().operatorAddress);
+          if (blocker) {
+            res.status(503).json({ ok: false, error: blocker });
+            return;
+          }
+          expectedProtocolTreasury = String(process.env.SOLANA_PROTOCOL_TREASURY_ADDRESS).trim();
+        }
         try {
           const result = await harvestSolanaLpFees({
             pool,
             campaign: String(req.body?.campaign || req.body?.campaignAddress || "").trim() || null,
             pair: String(req.body?.pair || req.body?.pool || req.body?.pairAddress || "").trim() || null,
+            expectedProtocolTreasury,
           });
           res.status(200).json({
             ...result,
