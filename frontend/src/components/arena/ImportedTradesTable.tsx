@@ -4,6 +4,7 @@ import { PersonAvatar } from "@/components/ui-v2/PersonAvatar";
 import { Link } from "react-router-dom";
 
 import { fetchArenaImportTrades, type ArenaImportTrade } from "@/lib/arenaImports";
+import { IMPORT_TRADE_EVENT, type ImportTradeAnnouncement } from "@/lib/importTradeEvents";
 import { getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
 import { getExplorerBase } from "@/lib/profile/profileFormatters";
 import { fetchUserProfile, type UserProfile } from "@/lib/profileApi";
@@ -42,6 +43,9 @@ export function ImportedTradesTable({ chainId, tokenAddress, emptyState }: { cha
   const [profiles, setProfiles] = useState<Record<string, UserProfile | null>>({});
   const known = useRef(new Set<string>());
   const solana = isSolanaChainId(chainId);
+  // Your own trades from this page, shown at once until the indexed trade arrives.
+  const [pending, setPending] = useState<ImportTradeAnnouncement[]>([]);
+  const reloadRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     const controller = new AbortController();
@@ -63,11 +67,43 @@ export function ImportedTradesTable({ chainId, tokenAddress, emptyState }: { cha
         });
     };
     load();
+    reloadRef.current = () => {
+      if (timer) window.clearTimeout(timer);
+      load();
+    };
     return () => {
       controller.abort();
       if (timer) window.clearTimeout(timer);
     };
   }, [chainId, tokenAddress]);
+
+  useEffect(() => {
+    const sameToken = (a: string, b: string) => (solana ? a === b : a.toLowerCase() === b.toLowerCase());
+    const timers: number[] = [];
+    const onTrade = (event: Event) => {
+      const detail = (event as CustomEvent<ImportTradeAnnouncement>).detail;
+      if (!detail || Number(detail.chainId) !== Number(chainId) || !sameToken(detail.tokenAddress, tokenAddress)) return;
+      setPending((list) => [detail, ...list].slice(0, 5));
+      // Ask again a few times while the indexer catches up.
+      for (const ms of [8_000, 20_000, 45_000, 90_000, 150_000]) timers.push(window.setTimeout(() => reloadRef.current(), ms));
+    };
+    window.addEventListener(IMPORT_TRADE_EVENT, onTrade);
+    return () => {
+      window.removeEventListener(IMPORT_TRADE_EVENT, onTrade);
+      timers.forEach((t) => window.clearTimeout(t));
+    };
+  }, [chainId, tokenAddress, solana]);
+
+  // A pending row goes once the indexed list has it (same transaction, or same wallet and side
+  // from after it was sent), or after 10 minutes.
+  const sameWallet = (a?: string | null, b?: string | null) => (solana ? a === b : String(a || "").toLowerCase() === String(b || "").toLowerCase());
+  const openPending = pending.filter((p) => {
+    if (Date.now() - p.at > 10 * 60_000) return false;
+    return !trades.some((t) =>
+      (p.txHash && String(t.txHash || "").toLowerCase() === p.txHash.toLowerCase()) ||
+      (sameWallet(t.maker, p.maker) && t.side === p.side && t.blockTime * 1000 >= p.at - 120_000),
+    );
+  });
 
   // Same as our own page: resolve a handful of trader profiles for avatars and names.
   useEffect(() => {
@@ -87,7 +123,7 @@ export function ImportedTradesTable({ chainId, tokenAddress, emptyState }: { cha
     };
   }, [chainId, solana, trades]);
 
-  if (loaded && !trades.length) return <>{emptyState}</>;
+  if (loaded && !trades.length && !openPending.length) return <>{emptyState}</>;
 
   const explorer = getExplorerBase(chainId);
   return (
@@ -104,6 +140,36 @@ export function ImportedTradesTable({ chainId, tokenAddress, emptyState }: { cha
           </tr>
         </thead>
         <tbody>
+          {openPending.map((p) => {
+            const txUrl = p.txHash ? (solana ? `https://explorer.solana.com/tx/${p.txHash}` : explorer ? `${explorer}/tx/${p.txHash}` : "") : "";
+            return (
+              <tr key={`pending:${p.at}`} className="border-b border-border/40 bg-[#13171C]" data-pending-trade="true">
+                <td className="py-3 px-3">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <PersonAvatar wallet={p.maker} size={28} />
+                    <WalletLabel className="font-mono text-foreground truncate max-w-[140px]" wallet={p.maker} />
+                  </span>
+                </td>
+                <td className="py-3 px-3">
+                  <span className={`font-medium ${p.side === "buy" ? "text-emerald-400" : "text-red-400"}`}>{p.side === "buy" ? "Buy" : "Sell"}</span>
+                </td>
+                <td className="py-3 px-3 font-mono text-foreground">{p.side === "buy" ? p.amount : "—"}</td>
+                <td className="py-3 px-3 font-mono">
+                  <span className={p.side === "buy" ? "text-emerald-300" : "text-red-300"}>{p.side === "sell" ? compact(p.amount) : "—"}</span>
+                </td>
+                <td className="py-3 px-3 whitespace-nowrap text-[#FFB27A]">Just now · confirming</td>
+                <td className="py-3 px-3 text-right">
+                  {txUrl ? (
+                    <a href={txUrl} target="_blank" rel="noreferrer" className="font-mono text-muted-foreground hover:text-foreground hover:underline underline-offset-4">
+                      {`${String(p.txHash).slice(0, 6)}…${String(p.txHash).slice(-4)}`}
+                    </a>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
           {trades.map((tx) => {
             const key = (solana ? tx.maker : tx.maker?.toLowerCase()) || "";
             const prof = key ? profiles[key] : null;

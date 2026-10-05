@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { toast } from "sonner";
+import { announceImportTrade } from "@/lib/importTradeEvents";
 
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
@@ -235,6 +236,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         const quote = await quoteImportSwap({ chainId: item.chainId, token: item.tokenAddress, side, amountRaw: amountInRaw });
         const signature = await executeSolanaImportSwap({ token: item.tokenAddress, side, wallet: solanaAccount, quote });
         toast.success(`Swap confirmed: ${signature.slice(0, 10)}…`);
+        announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: solanaAccount, amount: raw, txHash: signature });
         setAmount("");
         return;
       }
@@ -252,6 +254,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         const quote = await quoteImportSwap({ chainId: 56, token: item.tokenAddress, side, amountRaw: amountInRaw });
         const hash = await executeBscImportSwap({ token: item.tokenAddress, side, account: tradeAccount, signer: tradeSigner, quote, amountRaw: amountInRaw });
         toast.success(`Swap confirmed: ${hash.slice(0, 10)}…`);
+        announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw, txHash: hash });
         setAmount("");
         return;
       }
@@ -262,6 +265,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         const quote = await quoteImportSwap4663({ provider: reads, token: item.tokenAddress, side, amountIn: amountInRaw, slippageBps: 100 });
         await executeImportSwap4663({ signer: tradeSigner, quote, token: item.tokenAddress });
         toast.success("Swap confirmed.");
+        announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw });
         setAmount("");
         return;
       }
@@ -285,6 +289,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
           if (receipt && Number(receipt.status) !== 1) throw new Error("Swap transaction reverted.");
         }
         toast.success("Swap confirmed.");
+        announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw });
         setAmount("");
         return;
       }
@@ -321,6 +326,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         await tx.wait();
       }
       toast.success("Swap confirmed.");
+      announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw });
     } catch (error) {
       toast.error(String((error as Error)?.message || "Swap failed."));
     } finally {
