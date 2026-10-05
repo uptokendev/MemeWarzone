@@ -1,5 +1,6 @@
 import { asBigInt, envInt } from "./config.mjs";
 import { scoreUnits } from "./usdRules.mjs";
+import { ownerWalletIndex } from "../../shared/ownerWallets.mjs";
 
 function isSolanaAirdropChain(chainId) {
   return Number(chainId) === 101 || Number(chainId) === 102;
@@ -97,7 +98,7 @@ export const AIRDROP_COOLDOWN_SQL = `select distinct %WALLET% wallet from public
           and coalesce(metadata->>'program','') <> all($3::text[])
           and coalesce(metadata->>'programCode','') <> $4`;
 
-export async function exclusionSets(client, { chainId, start, end }) {
+export async function exclusionSets(client, { chainId, start, end, env = process.env }) {
   const solana = isSolanaAirdropChain(chainId);
   const [risk, creators, recruiters, league, cooldown] = await Promise.all([
     client.query(
@@ -136,7 +137,11 @@ export async function exclusionSets(client, { chainId, start, end }) {
   for (const result of groups) {
     for (const row of result.rows) addWalletKeys(all, row.wallet, solana);
   }
-  return { all, securityCount: risk.rows.length, totalCount: all.size };
+  // Owner / internal wallets (shared/ownerWallets.mjs + OWNER_WALLETS env) never win an airdrop.
+  // Keyed lower-cased too, so isWalletExcluded matches whatever case the trade rows carry.
+  const owners = ownerWalletIndex(env);
+  for (const row of owners.values()) addWalletKeys(all, row.address, solana);
+  return { all, securityCount: risk.rows.length, ownerCount: owners.size, totalCount: all.size };
 }
 
 // Volume thresholds come from one USD rule set for every chain (usdRules.mjs), converted at this

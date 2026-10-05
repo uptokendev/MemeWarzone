@@ -11,13 +11,14 @@
 // them (Solana mwl_vault; EVM dedicated TreasuryVaultV2 vaults) and the Claims page lists them.
 //
 // Recipient = the coin's creator (graduated launch) or its verified import owner. A coin without a
-// valid owner wallet on that chain is skipped and the next coin moves up. If nobody can be paid
-// (no pot, no eligible owner, or a Solana prize below the minimum) the period is recorded as
-// rolled_over and its money stays unassigned for the next one.
+// valid owner wallet on that chain, or owned by one of our own wallets, is skipped and the next coin
+// moves up. If nobody can be paid (no pot, no eligible owner, or a Solana prize below the minimum)
+// the period is recorded as rolled_over and its money stays unassigned for the next one.
 import { PublicKey } from "@solana/web3.js";
 import { ethers } from "ethers";
 
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "../../shared/pokerPayout.mjs";
+import { isOwnerWallet, ownerWalletIndex } from "../../shared/ownerWallets.mjs";
 
 export const MWL_PAYOUT_CHAIN_IDS = Object.freeze([56, 101, 4663, 97, 46630]);
 export const MWL_CATEGORY = Object.freeze({ mwl_monthly: "mwl", quarterly: "championship" });
@@ -45,12 +46,13 @@ export function payoutWalletFor(chainId, wallet) {
 
 /**
  * Poker split of `pot` over `standings` (ordered by final rank, each with a resolved `wallet`).
- * Coins without a wallet are skipped and the next one moves up. On Solana a place below the minimum
- * payout is not paid on its own (the claim receipt rent would exceed it).
+ * Coins without a wallet, or owned by one of our own wallets (shared/ownerWallets.mjs, founder
+ * 2026-10-05), are skipped and the next one moves up; the field shrinks by the same count. On Solana
+ * a place below the minimum payout is not paid on its own (the claim receipt rent would exceed it).
  */
-export function planMwlPayout({ chainId, period, pot, standings, solanaMin = solanaMinPayoutLamports() }) {
+export function planMwlPayout({ chainId, period, pot, standings, solanaMin = solanaMinPayoutLamports(), owners = ownerWalletIndex() }) {
   const total = BigInt(pot);
-  const eligible = (standings || []).filter((row) => row.wallet && Number(row.points) > 0);
+  const eligible = (standings || []).filter((row) => row.wallet && Number(row.points) > 0 && !isOwnerWallet(row.wallet, owners));
   if (total <= 0n) return { status: "rolled_over", reason: "no-pot", winners: [] };
   if (!eligible.length) return { status: "rolled_over", reason: "no-eligible-owner", winners: [] };
   let places = pokerPaidPlaces(eligible.length, period);
