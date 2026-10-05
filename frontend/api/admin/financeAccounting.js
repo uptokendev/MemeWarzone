@@ -22,6 +22,13 @@
 //   PUT    distributions              replace the settings          finance.manage
 //   GET    distributions/safe-batch   unsigned Safe batch JSON      finance.view
 //   GET    distributions/squads-proposal  Squads proposal text      finance.view
+//          (both take ?week=YYYY-Www: the weekly amount of the decision week)
+//   GET    weekly?weeks=              weekly distribution view      finance.view
+//   GET    tax-rules                  researched rules + sources    finance.view
+//   PUT    tax-rules                  replace the rules             finance.manage
+//   GET    distributions/records      recorded distributions        finance.view
+//   POST   distributions/records      record the decision week      finance.manage
+//   PATCH  distributions/records/:id  status, tx hashes, tax dates  finance.manage
 //   GET    exports/:kind              CSV (revenue-events, costs, close-summaries, payouts)
 
 import { pool } from "../../server/db.js";
@@ -48,6 +55,8 @@ import {
   validateCostInput,
 } from "../lib/financeAccountingCosts.js";
 import { describeTaxChange, effectiveTaxRules, taxReserveSchedule, validateTaxRules } from "../lib/financeAccountingTax.js";
+import { addMonthsToDate, describeTaxRuleChange, effectiveTaxRuleSet, rulesTable, validateTaxRuleSet, vpbYear, withholdingFor } from "../lib/financeTaxRules.js";
+import { WEEK_RULE, computeWeeks, decideWeek, reconcileMonths, weekMonday, weekView } from "../lib/financeAccountingWeekly.js";
 import {
   BUFFER_LABEL,
   DIVIDEND_NOTE,
@@ -61,12 +70,18 @@ import {
   validateDistributionSettings,
 } from "../lib/financeAccountingDistributions.js";
 import { toCsv } from "../lib/financeAccountingCsv.js";
-import { currentBalances, monthlyRevenue, revenueEventRows } from "../lib/financeAccountingSources.js";
+import { currentBalances, dailyRevenue, monthlyRevenue, revenueEventRows } from "../lib/financeAccountingSources.js";
 import { buildPayoutsAllChains, cachedPayouts, payoutsDays } from "../lib/financePayouts.js";
 import { feeRoutingAllNetworks } from "../lib/financeFeeRouting.js";
 import {
   ACCOUNTING_MIGRATION,
+  DISTRIBUTIONS_MIGRATION,
   accountingTablesMissing,
+  distributionTablesMissing,
+  getDistribution,
+  insertDistribution,
+  listDistributions,
+  updateDistribution,
   assertAccountingTables,
   getCost,
   insertCost,
@@ -85,7 +100,7 @@ import {
 } from "../lib/financeAccountingStore.js";
 
 const BASE = "/api/admin/finance";
-const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|close|distributions|exports)(?:\/|$)/;
+const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|tax-rules|weekly|close|distributions|exports)(?:\/|$)/;
 const MAX_EXPORT_MONTHS = 36;
 const FIRST_MONTH = "2024-01";
 // Close order (founder 2026-10-04): closed months form an unbroken run from
@@ -98,7 +113,14 @@ function monthHasActivity(row) {
   return (row.lanes || []).length > 0 || (row.occurrences || []).length > 0 || (row.revenueUsd ?? 0) !== 0 || (row.costsUsd ?? 0) !== 0;
 }
 const PROPOSAL_LABEL = "Proposal only. Nothing is sent from this page.";
-const TAX_LABEL = "Default rates; no adviser has confirmed these yet. This is a reserve estimate, not tax advice.";
+function taxLabel(rules) {
+  return `Based on the Belastingdienst, wetten.overheid.nl and KVK, checked ${rules?.checkedOn || "2026-10-05"}. Each rule shows its source and confidence. This is a reserve estimate; any rule can be changed afterwards.`;
+}
+const WEEKLY_FORMULA = "Per week (EUR): revenue - VAT - costs = profit; profit - corporate tax reserve (marginal on the year-to-date profit) = profit after tax. Distributable = profit after tax + what earlier weeks left undistributed. Available to divide now = the lower of that (through the last complete week) and the cash in the multisig minus open costs, all tax reserves held and distributions approved but not paid. Each shareholder: gross = share %, minus dividend withholding from the rules for its entity type = net.";
+const MAX_WEEKS = 156;
+const EVM_TX = /^0x[0-9a-fA-F]{64}$/;
+const SOLANA_TX = /^[1-9A-HJ-NP-Za-km-z]{64,90}$/;
+const DIST_STATUSES = ["proposed", "approved", "paid", "cancelled"];
 
 export function isFinanceAccountingPath(pathname) {
   return ACCOUNTING_PATH.test(String(pathname || ""));
@@ -174,6 +196,8 @@ export function createFinanceAccountingHandler(deps = {}) {
   async function settings() {
     const row = await readSettings(db());
     return {
+      taxRules: effectiveTaxRuleSet(row?.tax_rules),
+      taxRulesColumnMissing: Boolean(row?.taxRulesColumnMissing),
       tax: effectiveTaxRules(row?.tax_reserve_rules),
       distribution: effectiveDistributionSettings(row?.distribution),
       updatedBy: row?.updated_by || null,
@@ -193,6 +217,16 @@ export function createFinanceAccountingHandler(deps = {}) {
    * Revenue, costs, profit and tax reserve per month of one year, up to the
    * current month. Closed months come from their snapshot; open months live.
    */
+  /**
+   * Bracket rules for one year: brackets saved on the Tax & Reserves form win;
+   * otherwise that year's researched brackets (financeTaxRules).
+   */
+  function yearTaxRules(s, year) {
+    if (!s.tax.isDefault) return s.tax;
+    const y = vpbYear(s.taxRules, year);
+    return { ...s.tax, name: `Dutch corporate income tax (vennootschapsbelasting) ${year}`, brackets: y.brackets, source: y.source, checkedOn: y.checkedOn, confidence: y.confidence, note: `Based on ${y.source}, checked ${y.checkedOn}. Can be changed afterwards.` };
+  }
+
   async function buildYear(year, { rules, costs } = {}) {
     const now = nowMs();
     const nowMonth = currentMonth(now);
@@ -201,7 +235,7 @@ export function createFinanceAccountingHandler(deps = {}) {
     const months = monthRange(first, last);
     const closes = await listCloses(db(), first, last);
     const allCosts = costs || (await listCosts(db()));
-    const taxRules = rules || (await settings()).tax;
+    const taxRules = rules || yearTaxRules(await settings(), year);
     const openMonths = months.filter((m) => closes.get(m)?.status !== "closed");
     const live = openMonths.length ? await revenue({ fromMonth: openMonths[0], toMonth: openMonths[openMonths.length - 1] }) : { months: {}, notes: [] };
 
@@ -394,14 +428,15 @@ export function createFinanceAccountingHandler(deps = {}) {
   async function getTax(req, res, principal) {
     const year = parseYear(req.query?.year, nowMs());
     const s = await settings();
-    const [data, history] = await Promise.all([buildYear(year, { rules: s.tax }), settingsHistory("settings.tax_reserve_rules", describeTaxChange)]);
+    const rules = yearTaxRules(s, year);
+    const [data, history] = await Promise.all([buildYear(year, { rules }), settingsHistory("settings.tax_reserve_rules", describeTaxChange)]);
     return res.status(200).json({
       schemaVersion: "finance-tax-reserves-v2",
       generatedAt: new Date(nowMs()).toISOString(),
       source: "dashboard-api",
-      label: TAX_LABEL,
+      label: taxLabel(s.taxRules),
       year,
-      rules: s.tax,
+      rules,
       months: data.months.map(({ lanes, occurrences, ...row }) => row),
       ytd: data.ytd,
       notes: data.notes,
@@ -455,7 +490,7 @@ export function createFinanceAccountingHandler(deps = {}) {
     const year = Number(month.slice(0, 4));
     const s = await settings();
     const costs = await listCosts(db());
-    const data = await buildYear(year, { rules: s.tax, costs });
+    const data = await buildYear(year, { rules: yearTaxRules(s, year), costs });
     const row = data.months.find((m) => m.month === month);
     if (!row) throw new HttpError(400, "That month is not in the year view.");
     const single = await revenue({ fromMonth: month, toMonth: month });
@@ -482,7 +517,7 @@ export function createFinanceAccountingHandler(deps = {}) {
       revenue: { totalUsd: single.months[month]?.totalUsd ?? row.revenueUsd, lanes: single.months[month]?.lanes || [], excludedTestCoinEvents: single.excludedTestCoinEvents, testCoinsExcluded: true, notes: single.notes, basis: "Each hour valued at that hour's Binance close (event time)." },
       costs: { totalUsd: totals.totalUsd, byCategory: totals.byCategory, occurrences },
       profitUsd: row.profitUsd,
-      tax: { rules: s.tax, usdPerEur: row.usdPerEur, ytdProfitUsd: row.ytdProfitUsd, reserveUsd: row.reserveUsd, ytdReserveUsd: row.ytdReserveUsd, label: TAX_LABEL },
+      tax: { rules: yearTaxRules(s, year), usdPerEur: row.usdPerEur, ytdProfitUsd: row.ytdProfitUsd, reserveUsd: row.reserveUsd, ytdReserveUsd: row.ytdReserveUsd, label: taxLabel(s.taxRules) },
       balances: bal,
       prices: await spotTable(),
       fx: eur ? { usdPerEur: eur.usdPerEur, date: eur.date, source: eur.source } : null,
@@ -579,16 +614,24 @@ export function createFinanceAccountingHandler(deps = {}) {
     const year = Number(currentMonth(nowMs()).slice(0, 4));
     const [bal, yearData, open] = await Promise.all([
       balances().catch((error) => ({ oursUsd: null, chains: [], errors: [String(error?.message || error).slice(0, 160)] })),
-      buildYear(year, { rules: s.tax, costs }),
+      buildYear(year, { rules: yearTaxRules(s, year), costs }),
       openCostsUsd(costs),
     ]);
     const distribution = computeDistribution({
       chains: bal.chains || [],
       taxReserveUsd: yearData.ytd.reserveUsd,
       openCostsUsd: open,
-      settings: s.distribution,
+      settings: resolvedSettings(s),
     });
     return { s, bal, yearData, distribution };
+  }
+
+  /** Distribution settings with each share's withholding % from the rules (or its override). */
+  function resolvedSettings(s) {
+    return { ...s.distribution, shares: s.distribution.shares.map((share) => {
+      const w = withholdingFor(share, s.taxRules);
+      return { ...share, entityType: w.entityType, withholdingPct: Math.round(w.rate * 10000) / 100, withholding: { reason: w.reason, source: w.source, confidence: w.confidence, override: w.override, fallbackRate: w.fallbackRate } };
+    }) };
   }
 
   async function getDistributions(req, res, principal) {
@@ -599,7 +642,7 @@ export function createFinanceAccountingHandler(deps = {}) {
       source: "dashboard-api",
       label: PROPOSAL_LABEL,
       dividendNote: DIVIDEND_NOTE,
-      settings: s.distribution,
+      settings: resolvedSettings(s),
       history,
       multisig: (bal.chains || []).map((c) => ({ chainId: c.chainId, chain: c.chain, asset: c.asset, address: c.multisigAddress, amountNative: c.multisigAmount ?? null, amountUsd: c.multisigUsd, priceUsd: c.priceUsd })),
       buffer: {
@@ -613,7 +656,7 @@ export function createFinanceAccountingHandler(deps = {}) {
       balances: { asOf: bal.asOf || null, oursUsd: bal.oursUsd ?? null, heldUsd: bal.heldUsd ?? null, owedUsd: bal.owedUsd ?? null, errors: bal.errors || [], note: bal.note || null },
       taxYear: yearData.year,
       distribution,
-      formula: "Distributable now = what the multisig holds (Squads vault on Solana, Safe on BNB and Robinhood; native coin, at spot) - tax reserve (this year to date) - open costs (costs dated up to today in months not yet closed). Each share gets its percentage, rounded down to the cent, minus its withholding % if the adviser set one; per chain it is paid from that chain's part of the multisig balance and never more than the multisig holds there.",
+      formula: "Distributable now = what the multisig holds (Squads vault on Solana, Safe on BNB and Robinhood; native coin, at spot) - tax reserve (this year to date) - open costs (costs dated up to today in months not yet closed). Each share gets its percentage, rounded down to the cent, minus the dividend withholding from the rules for its entity type (or the rate set by hand); per chain it is paid from that chain's part of the multisig balance and never more than the multisig holds there. The weekly view on this page divides profit after tax per week instead.",
       safeChains: Object.entries(SAFE_BATCH_CHAINS).map(([chainId, c]) => ({ chainId: Number(chainId), label: c.label, asset: c.asset, safe: (bal.chains || []).find((x) => x.chainId === Number(chainId))?.multisigAddress || null })),
       squadsVault: (bal.chains || []).find((x) => x.chainId === 101)?.multisigAddress || null,
       canManage: dashboardPrincipalCan(principal, "finance.manage"),
@@ -629,17 +672,286 @@ export function createFinanceAccountingHandler(deps = {}) {
     return res.status(200).json({ ok: true, settings: { ...next, isDefault: false } });
   }
 
+  /** ?week= given: the weekly decision for that week (must be the decision week). */
+  async function weeklyDistributionFor(week) {
+    if (!weekMonday(week)) throw new FinanceInputError("week must be an ISO week (YYYY-Www).", "week");
+    const model = await weeklyModel();
+    if (model.decision.week !== week) throw new FinanceInputError(`Only the decision week ${model.decision.week || "(none yet)"} can be proposed; earlier weeks that were not paid are included in it as carry-over.`, "week");
+    if (!model.decision.distribution || model.decision.availableEur == null) throw new FinanceInputError(`Nothing to propose for ${week}: ${model.decision.why}`);
+    const d = model.decision;
+    const summary = `Week ${week} (${d.weekStart} to ${d.weekEnd}): available to divide EUR ${d.availableEur.toFixed(2)} (~$${d.availableUsd.toFixed(2)} at ${d.usdPerEur} USD/EUR). ${d.why} The operator wallet (buffer, capped at $10,000) is not distributed.`;
+    return { bal: model.bal, distribution: d.distribution, summary };
+  }
+
   async function getSafeBatch(req, res) {
     const chainId = Number(req.query?.chainId);
-    const { bal, distribution } = await distributionModel();
-    const batch = buildSafeBatch({ chainId, distribution, chains: bal.chains || [], createdAtMs: nowMs() });
-    return sendFile(res, `mwz-distribution-proposal-${chainId}-${todayIso(nowMs())}.safe-batch.json`, "application/json; charset=utf-8", `${JSON.stringify(batch, null, 2)}\n`);
+    const week = req.query?.week ? String(req.query.week) : null;
+    const { bal, distribution } = week ? await weeklyDistributionFor(week) : await distributionModel();
+    const batch = buildSafeBatch({ chainId, distribution, chains: bal.chains || [], createdAtMs: nowMs(), week });
+    return sendFile(res, `mwz-distribution-proposal-${week ? `${week}-` : ""}${chainId}-${todayIso(nowMs())}.safe-batch.json`, "application/json; charset=utf-8", `${JSON.stringify(batch, null, 2)}\n`);
   }
 
   async function getSquadsProposal(req, res) {
-    const { bal, distribution } = await distributionModel();
-    const textBody = buildSquadsProposal({ distribution, chains: bal.chains || [], createdAtMs: nowMs() });
-    return sendFile(res, `mwz-distribution-proposal-solana-${todayIso(nowMs())}.txt`, "text/plain; charset=utf-8", `${textBody}\n`);
+    const week = req.query?.week ? String(req.query.week) : null;
+    const { bal, distribution, summary } = week ? await weeklyDistributionFor(week) : await distributionModel();
+    const textBody = buildSquadsProposal({ distribution, chains: bal.chains || [], createdAtMs: nowMs(), week, summary: summary || null });
+    return sendFile(res, `mwz-distribution-proposal-solana-${week ? `${week}-` : ""}${todayIso(nowMs())}.txt`, "text/plain; charset=utf-8", `${textBody}\n`);
+  }
+
+  // ---------------------------------------------------------------- weekly
+
+  async function distributionRecords() {
+    try {
+      return { records: await (deps.listDistributions || listDistributions)(db()), installed: true };
+    } catch (error) {
+      if (distributionTablesMissing(error)) return { records: [], installed: false };
+      throw error;
+    }
+  }
+
+  async function ratesByDate(fromDate, toDate) {
+    const map = new Map();
+    for (let d = fromDate; d <= toDate; d = new Date(Date.parse(`${d}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)) {
+      const r = await fx().rate(d).catch(() => null);
+      if (r?.usdPerEur) map.set(d, r.usdPerEur);
+    }
+    return map;
+  }
+
+  /** Everything the weekly view needs, computed once. */
+  async function weeklyModel() {
+    const s = await settings();
+    const today = todayIso(nowMs());
+    const costs = await listCosts(db());
+    const live = costs.filter((c) => !c.deletedAt);
+    const [rev, recs, bal, open] = await Promise.all([
+      (deps.dailyRevenue || dailyRevenue)({ db: db(), prices: prices(), fromDate: `${FIRST_MONTH}-01`, toDate: today }),
+      distributionRecords(),
+      balances().catch((error) => ({ chains: [], errors: [String(error?.message || error).slice(0, 160)] })),
+      openCostsUsd(costs),
+    ]);
+    const firstDates = [...Object.keys(rev.days), ...live.map((c) => c.incurredOn)].filter((d) => d <= today).sort();
+    const fromDate = firstDates[0] || today;
+    const firstYear = Number(fromDate.slice(0, 4));
+    const months = new Map();
+    const costsByMonth = new Map();
+    for (let year = firstYear; year <= Number(today.slice(0, 4)); year += 1) {
+      const data = await buildYear(year, { rules: yearTaxRules(s, year), costs });
+      const closes = await listCloses(db(), `${year}-01`, `${year}-12`);
+      for (const m of data.months) {
+        if (m.month < fromDate.slice(0, 7)) continue;
+        months.set(m.month, { status: m.status, revenueUsd: m.revenueUsd, costsUsd: m.costsUsd });
+        const snap = closes.get(m.month)?.status === "closed" ? closes.get(m.month).snapshot : null;
+        costsByMonth.set(m.month, snap ? snap.costs?.occurrences || [] : m.occurrences || live.flatMap((c) => expandCost(c, m.month, m.month)));
+      }
+    }
+    const rates = await ratesByDate(fromDate, today);
+    const latestRate = (await fx().rate(null).catch(() => null))?.usdPerEur ?? null;
+    const usdPerEur = (date) => rates.get(date) ?? latestRate;
+    const model = computeWeeks({ today, fromDate, days: rev.days, usdPerEur, costsByMonth, months, rules: s.taxRules, vpbOverride: s.tax.isDefault ? null : s.tax, records: recs.records });
+    const monthlyCostsUsd = live.filter((c) => c.recurring !== "none" && (!c.recurringUntil || c.recurringUntil >= today) && c.incurredOn <= today)
+      .reduce((sum, c) => sum + (c.recurring === "yearly" ? c.amountUsd / 12 : c.amountUsd), 0);
+    const decision = decideWeek({ model, chains: bal.chains || [], openCostsUsd: open, usdPerEurNow: latestRate, settings: s.distribution, rules: s.taxRules, records: recs.records, today, operatorUsd: bal.operatorUsd ?? null, monthlyCostsUsd });
+    return { s, today, model, months, decision, bal, records: recs.records, recordsInstalled: recs.installed, notes: rev.notes || [], latestRate };
+  }
+
+  async function getWeekly(req, res, principal) {
+    const n = req.query?.weeks == null || req.query.weeks === "" ? 12 : Number(req.query.weeks);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_WEEKS) throw new FinanceInputError(`weeks must be 1 to ${MAX_WEEKS}.`, "weeks");
+    const w = await weeklyModel();
+    const { decision } = w;
+    return res.status(200).json({
+      schemaVersion: "finance-weekly-v1",
+      generatedAt: new Date(nowMs()).toISOString(),
+      source: "dashboard-api",
+      label: PROPOSAL_LABEL,
+      taxLabel: taxLabel(w.s.taxRules),
+      weekRule: WEEK_RULE,
+      currency: "EUR",
+      formula: WEEKLY_FORMULA,
+      today: w.today,
+      usdPerEur: w.latestRate,
+      weeks: w.model.weeks.slice(-n).map(weekView).reverse(),
+      years: w.model.years,
+      reconciliation: reconcileMonths(w.model, w.months, w.today).slice(-6).reverse(),
+      decision: { ...decision, distribution: undefined, shares: decision.shares.map(({ evmAddress, solanaAddress, ...rest }) => ({ ...rest, hasEvmAddress: Boolean(evmAddress), hasSolanaAddress: Boolean(solanaAddress) })) },
+      safeChains: Object.entries(SAFE_BATCH_CHAINS).map(([chainId, c]) => ({ chainId: Number(chainId), label: c.label, asset: c.asset, safe: (w.bal.chains || []).find((x) => x.chainId === Number(chainId))?.multisigAddress || null })),
+      squadsVault: (w.bal.chains || []).find((x) => x.chainId === 101)?.multisigAddress || null,
+      records: w.records,
+      recordsInstalled: w.recordsInstalled,
+      migration: w.recordsInstalled ? null : `Recording distributions needs ${DISTRIBUTIONS_MIGRATION} on this database.`,
+      rulesCheckedOn: w.s.taxRules.checkedOn,
+      needsConfirmation: rulesTable(w.s.taxRules).filter((r) => r.needsConfirmation).map((r) => r.label),
+      warnings: [...w.model.warnings, ...(w.bal.errors || [])],
+      notes: w.notes,
+      canManage: dashboardPrincipalCan(principal, "finance.manage"),
+    });
+  }
+
+  // ---------------------------------------------------------------- tax rules
+
+  async function getTaxRules(req, res, principal) {
+    const s = await settings();
+    const history = await settingsHistory("settings.tax_rules", describeTaxRuleChange).catch(() => []);
+    return res.status(200).json({
+      schemaVersion: "finance-tax-rules-v1",
+      generatedAt: new Date(nowMs()).toISOString(),
+      source: "dashboard-api",
+      label: taxLabel(s.taxRules),
+      rules: s.taxRules,
+      table: rulesTable(s.taxRules),
+      bracketsOverride: s.tax.isDefault ? null : { name: s.tax.name, brackets: s.tax.brackets, note: "Brackets saved on the tax-reserve form are used for every year instead of the researched brackets." },
+      history,
+      installed: !s.taxRulesColumnMissing,
+      migration: s.taxRulesColumnMissing ? `Saving rules needs ${DISTRIBUTIONS_MIGRATION} on this database.` : null,
+      canManage: dashboardPrincipalCan(principal, "finance.manage"),
+    });
+  }
+
+  async function putTaxRules(req, res, actor) {
+    const rules = validateTaxRuleSet(req.body?.rules ?? req.body);
+    try {
+      await withTransaction(db(), async (client) => {
+        const previous = await saveSetting(client, "tax_rules", rules, actor);
+        await writeAudit(client, { actor, action: "settings.tax_rules", entityType: "finance_settings", entityId: "tax_rules", before: previous, after: rules });
+      });
+    } catch (error) {
+      if (distributionTablesMissing(error)) throw new HttpError(503, `Saving rules needs ${DISTRIBUTIONS_MIGRATION} on this database.`, { code: "FINANCE_DISTRIBUTIONS_NOT_INSTALLED" });
+      throw error;
+    }
+    return res.status(200).json({ ok: true, rules: { ...rules, isDefault: false } });
+  }
+
+  // ---------------------------------------------------------------- distribution records
+
+  function dateField(value, field, { notAfter = null } = {}) {
+    if (value == null || value === "") return null;
+    const text = String(value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(Date.parse(`${text}T00:00:00Z`))) throw new FinanceInputError(`${field} must be a date (YYYY-MM-DD).`, field);
+    if (notAfter && text > notAfter) throw new FinanceInputError(`${field} is in the future.`, field);
+    return text;
+  }
+
+  async function getRecords(req, res, principal) {
+    const recs = await distributionRecords();
+    return res.status(200).json({ schemaVersion: "finance-distribution-records-v1", source: "dashboard-api", records: recs.records, installed: recs.installed, migration: recs.installed ? null : `Recording distributions needs ${DISTRIBUTIONS_MIGRATION} on this database.`, canManage: dashboardPrincipalCan(principal, "finance.manage") });
+  }
+
+  async function createRecord(req, res, actor) {
+    const body = req.body || {};
+    const week = String(body.week || "");
+    if (!weekMonday(week)) throw new FinanceInputError("week must be an ISO week (YYYY-Www).", "week");
+    const note = typeof body.note === "string" ? body.note.trim() : "";
+    if (note.length > 1000) throw new FinanceInputError("note is longer than 1000 characters.", "note");
+    const today = todayIso(nowMs());
+    const availableOn = dateField(body.availableOn, "availableOn") || today;
+    const w = await weeklyModel();
+    if (!w.recordsInstalled) throw new HttpError(503, `Recording distributions needs ${DISTRIBUTIONS_MIGRATION} on this database.`, { code: "FINANCE_DISTRIBUTIONS_NOT_INSTALLED" });
+    const d = w.decision;
+    if (d.week !== week) throw new FinanceInputError(`Only the decision week ${d.week || "(none yet)"} can be recorded.`, "week");
+    if (d.alreadyRecorded.length) throw new HttpError(409, `${week} already has a distribution (${d.alreadyRecorded.map((r) => r.status).join(", ")}). Cancel it first to record a new one.`, { code: "WEEK_ALREADY_RECORDED" });
+    if (!(d.availableEur > 0)) throw new FinanceInputError(`Nothing to divide for ${week}: ${d.why}`);
+    const shares = d.shares.map((x) => ({ id: x.id, name: x.name, entity: x.entity, entityType: x.entityType, bps: x.bps, grossEur: x.grossEur, withholdingRate: x.withholdingRate, withholdingEur: x.withholdingEur, netEur: x.netEur, grossUsd: x.grossUsd, withholdingUsd: x.withholdingUsd, netUsd: x.netUsd, withholdingReason: x.withholding.reason, withholdingSource: x.withholding.source, evmAddress: x.evmAddress || "", solanaAddress: x.solanaAddress || "", perChain: x.perChain }));
+    const perChainTotals = new Map();
+    for (const x of d.shares) for (const p of x.perChain) {
+      const t = perChainTotals.get(p.chainId) || { chainId: p.chainId, chain: p.chain, asset: p.asset, units: 0n, amountUsd: 0 };
+      t.units += BigInt(p.units);
+      t.amountUsd += p.amountUsd;
+      perChainTotals.set(p.chainId, t);
+    }
+    const perChain = [...perChainTotals.values()].map((t) => ({ ...t, units: t.units.toString(), amountUsd: round2(t.amountUsd) }));
+    const needsFiling = d.totalWithholdingEur > 0 || d.shares.some((x) => x.entityType === "us_corporation" && x.withholdingRate === 0 && x.grossEur > 0);
+    const rec = {
+      week,
+      availableOn,
+      usdPerEur: d.usdPerEur,
+      totalGrossEur: round2(d.shares.reduce((a, x) => a + x.grossEur, 0)),
+      totalWithholdingEur: d.totalWithholdingEur,
+      totalNetEur: round2(d.shares.reduce((a, x) => a + x.netEur, 0)),
+      totalGrossUsd: round2(d.shares.reduce((a, x) => a + (x.grossUsd || 0), 0)),
+      totalNetUsd: round2(d.shares.reduce((a, x) => a + (x.netUsd || 0), 0)),
+      shares,
+      perChain,
+      checklist: { computed: d.checklist, why: d.why, shareholderResolution: false, boardApproval: false, balanceTest: false, liquidityTest: false },
+      dividendTaxDueOn: needsFiling ? addMonthsToDate(availableOn, w.s.taxRules.filing.returnDueMonths || 1) : null,
+      note,
+    };
+    try {
+      const created = await withTransaction(db(), async (client) => {
+        const row = await insertDistribution(client, rec, actor);
+        await writeAudit(client, { actor, action: "distribution.create", entityType: "finance_distribution", entityId: row.id, before: null, after: row });
+        return row;
+      });
+      return res.status(201).json({ ok: true, record: created });
+    } catch (error) {
+      if (error?.code === "23505") throw new HttpError(409, `${week} already has a distribution.`, { code: "WEEK_ALREADY_RECORDED" });
+      if (distributionTablesMissing(error)) throw new HttpError(503, `Recording distributions needs ${DISTRIBUTIONS_MIGRATION} on this database.`, { code: "FINANCE_DISTRIBUTIONS_NOT_INSTALLED" });
+      throw error;
+    }
+  }
+
+  async function patchRecord(req, res, actor, id) {
+    const body = req.body || {};
+    const today = todayIso(nowMs());
+    const result = await withTransaction(db(), async (client) => {
+      const before = await getDistribution(client, id, { forUpdate: true });
+      if (!before) throw new HttpError(404, "Distribution not found.");
+      const next = { ...before };
+      if ("note" in body) {
+        const note = typeof body.note === "string" ? body.note.trim() : "";
+        if (note.length > 1000) throw new FinanceInputError("note is longer than 1000 characters.", "note");
+        next.note = note;
+      }
+      if (before.status === "cancelled") throw new HttpError(409, "This distribution was cancelled and cannot be changed.", { code: "DISTRIBUTION_CANCELLED" });
+      if ("checklist" in body) {
+        if (before.status !== "proposed") throw new FinanceInputError("The checklist can only change while the distribution is proposed.", "checklist");
+        const c = body.checklist || {};
+        next.checklist = { ...before.checklist, shareholderResolution: c.shareholderResolution === true, boardApproval: c.boardApproval === true, balanceTest: c.balanceTest === true, liquidityTest: c.liquidityTest === true };
+      }
+      if ("availableOn" in body) {
+        if (before.status === "paid") throw new FinanceInputError("A paid distribution keeps its date.", "availableOn");
+        next.availableOn = dateField(body.availableOn, "availableOn") || today;
+        if (before.dividendTaxDueOn) next.dividendTaxDueOn = addMonthsToDate(next.availableOn, 1);
+      }
+      if ("txHashes" in body) {
+        if (!["approved", "paid"].includes(before.status) && body.status !== "approved" && body.status !== "paid") throw new FinanceInputError("Transaction hashes are added once the distribution is approved.", "txHashes");
+        const hashes = {};
+        for (const [chainId, value] of Object.entries(body.txHashes || {})) {
+          const text = String(value || "").trim();
+          if (!text) continue;
+          const chain = Number(chainId);
+          if (!before.perChain.some((p) => p.chainId === chain)) throw new FinanceInputError(`Chain ${chainId} is not part of this distribution.`, "txHashes");
+          if (chain === 101 ? !SOLANA_TX.test(text) : !EVM_TX.test(text)) throw new FinanceInputError(`Chain ${chainId}: that is not a transaction hash.`, "txHashes");
+          hashes[chain] = text;
+        }
+        next.txHashes = { ...before.txHashes, ...hashes };
+      }
+      if ("dividendTaxReturnFiledOn" in body) next.dividendTaxReturnFiledOn = dateField(body.dividendTaxReturnFiledOn, "dividendTaxReturnFiledOn", { notAfter: today });
+      if ("dividendTaxPaidOn" in body) next.dividendTaxPaidOn = dateField(body.dividendTaxPaidOn, "dividendTaxPaidOn", { notAfter: today });
+      if ("status" in body && body.status !== before.status) {
+        const to = String(body.status);
+        if (!DIST_STATUSES.includes(to)) throw new FinanceInputError("status must be proposed, approved, paid or cancelled.", "status");
+        const allowed = { proposed: ["approved", "cancelled"], approved: ["paid", "cancelled"], paid: [] }[before.status] || [];
+        if (!allowed.includes(to)) throw new HttpError(409, `A ${before.status} distribution cannot become ${to}.`, { code: "BAD_TRANSITION" });
+        if (to === "approved") {
+          const c = next.checklist || {};
+          const missing = [["shareholderResolution", "shareholder resolution"], ["boardApproval", "board approval"], ["balanceTest", "balance test"], ["liquidityTest", "liquidity test"]].filter(([k]) => c[k] !== true).map(([, label]) => label);
+          if (missing.length) throw new FinanceInputError(`Confirm first: ${missing.join(", ")}.`, "checklist");
+          next.decidedBy = actor.email;
+          next.decidedAt = new Date(nowMs()).toISOString();
+        }
+        if (to === "paid") {
+          const missing = before.perChain.filter((p) => p.units !== "0" && !next.txHashes?.[p.chainId]).map((p) => p.chain);
+          if (missing.length) throw new FinanceInputError(`Add the transaction hash for: ${missing.join(", ")}.`, "txHashes");
+          next.availableOn ||= today;
+        }
+        next.status = to;
+      }
+      const after = await updateDistribution(client, id, next, actor);
+      await writeAudit(client, { actor, action: "distribution.update", entityType: "finance_distribution", entityId: id, before, after });
+      return after;
+    });
+    return res.status(200).json({ ok: true, record: result });
   }
 
   // ---------------------------------------------------------------- exports
@@ -858,6 +1170,22 @@ export function createFinanceAccountingHandler(deps = {}) {
         if (read) return await getDistributions(req, res, principal);
         if (method === "PUT") return await putDistributions(req, res, actor);
         return allow(["GET", "PUT"]);
+      }
+      if (rel === "weekly") return read ? await getWeekly(req, res, principal) : allow(["GET"]);
+      if (rel === "tax-rules") {
+        if (read) return await getTaxRules(req, res, principal);
+        if (method === "PUT") return await putTaxRules(req, res, actor);
+        return allow(["GET", "PUT"]);
+      }
+      if (rel === "distributions/records") {
+        if (read) return await getRecords(req, res, principal);
+        if (method === "POST") return await createRecord(req, res, actor);
+        return allow(["GET", "POST"]);
+      }
+      if (parts[0] === "distributions" && parts[1] === "records" && parts.length === 3) {
+        if (!/^[1-9]\d{0,17}$/.test(parts[2])) return res.status(400).json({ ok: false, error: "Invalid distribution id." });
+        if (method === "PATCH") return await patchRecord(req, res, actor, parts[2]);
+        return allow(["PATCH"]);
       }
       if (rel === "distributions/safe-batch") return read ? await getSafeBatch(req, res) : allow(["GET"]);
       if (rel === "distributions/squads-proposal") return read ? await getSquadsProposal(req, res) : allow(["GET"]);

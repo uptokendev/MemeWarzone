@@ -12,15 +12,19 @@
 //                          - tax reserve (this year to date) - open costs)
 //
 // Each share gets distributable * bps / 10000, rounded down to the cent; the
-// rounding remainder stays in the multisig. A withholding % per shareholder
-// (default 0, set by the adviser, never computed here) is held back from that
-// share and also stays in the multisig. Per chain, a share is paid from that
+// rounding remainder stays in the multisig. Dividend withholding per
+// shareholder comes from the researched rules and the shareholder's entity
+// type (financeTaxRules.withholdingFor: Dutch holding BV and US corporation
+// with at least 5% are exempt under art. 4 Wet op de dividendbelasting 1965);
+// a per-shareholder override is possible. The withheld part is held back from
+// that share and stays in the multisig until it is paid to the Belastingdienst. Per chain, a share is paid from that
 // chain's part of the multisig balance (pro rata to its USD value), converted
 // to the native asset at the spot price shown, rounded down to 1e-9, and never
 // more than the multisig holds on that chain.
 
 import { ethers } from "ethers";
 import { FinanceInputError, roundUsd } from "./financeAccountingCosts.js";
+import { ENTITY_TYPES, ENTITY_TYPE_LABELS, inferEntityType } from "./financeTaxRules.js";
 
 const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 export const SAFE_BATCH_CHAINS = Object.freeze({
@@ -29,16 +33,17 @@ export const SAFE_BATCH_CHAINS = Object.freeze({
 });
 export const OPERATOR_CAP_USD = 10000;
 export const BUFFER_LABEL = "Buffer: operator wallet, capped at $10,000 (not distributed)";
-export const DIVIDEND_NOTE = "A distribution is a dividend from MemeWarzone BV to its shareholders. Before anything is paid it needs the go of the tax adviser and the notary: dividend withholding tax and the treaty rules for the US corporation, the participation exemption for the Dutch holdings, and the BV's distribution test. The batch generated here is a proposal only.";
+export const DIVIDEND_NOTE = "A distribution is a dividend from MemeWarzone BV to its shareholders. Each one needs a shareholder resolution and the board's approval after the balance and liquidity test (art. 2:216 BW). Withholding follows the rules on Tax & Reserves (art. 4 Wet op de dividendbelasting 1965: the Dutch holdings and the US corporation with at least 5% are exempt; the US exemption needs a notification within 1 month). The batch generated here is a proposal only.";
 
 // Shareholders (founder 2026-10-04): partners hold their shares through these
 // entities. Payout addresses start empty and must be entered before a batch
-// can be built; withholding stays 0 until the adviser sets it.
+// can be built. Withholding comes from the rules for the entity type unless
+// withholdingOverride is set.
 export const DEFAULT_DISTRIBUTION_SETTINGS = Object.freeze({
   shares: Object.freeze([
-    Object.freeze({ id: "a", name: "Patrick", entity: "Dutch personal holding (BV)", bps: 5000, withholdingPct: 0, evmAddress: "", solanaAddress: "" }),
-    Object.freeze({ id: "b", name: "Sven", entity: "Dutch personal holding (BV)", bps: 3000, withholdingPct: 0, evmAddress: "", solanaAddress: "" }),
-    Object.freeze({ id: "c", name: "Dough", entity: "US corporation", bps: 2000, withholdingPct: 0, evmAddress: "", solanaAddress: "" }),
+    Object.freeze({ id: "a", name: "Patrick", entity: "Dutch personal holding (BV)", entityType: "dutch_holding_bv", bps: 5000, withholdingPct: 0, withholdingOverride: false, evmAddress: "", solanaAddress: "" }),
+    Object.freeze({ id: "b", name: "Sven", entity: "Dutch personal holding (BV)", entityType: "dutch_holding_bv", bps: 3000, withholdingPct: 0, withholdingOverride: false, evmAddress: "", solanaAddress: "" }),
+    Object.freeze({ id: "c", name: "Dough", entity: "US corporation", entityType: "us_corporation", bps: 2000, withholdingPct: 0, withholdingOverride: false, evmAddress: "", solanaAddress: "" }),
   ]),
 });
 
@@ -74,10 +79,13 @@ export function validateDistributionSettings(body) {
     if (!Number.isFinite(withholdingPct) || withholdingPct < 0 || withholdingPct > 100 || Math.round(withholdingPct * 100) !== withholdingPct * 100) {
       throw new FinanceInputError(`Share ${n}: withholding % must be 0 to 100 with at most two decimals.`, "shares");
     }
+    const entityType = share?.entityType == null || share?.entityType === "" ? inferEntityType(entity) : String(share.entityType);
+    if (!ENTITY_TYPES.includes(entityType)) throw new FinanceInputError(`Share ${n}: entity type must be one of ${ENTITY_TYPES.join(", ")}.`, "shares");
+    const withholdingOverride = share?.withholdingOverride === true;
     const id = String(share?.id || `s${n}`).trim().slice(0, 32) || `s${n}`;
     if (ids.has(id)) throw new FinanceInputError(`Share ${n}: id is used twice.`, "shares");
     ids.add(id);
-    return { id, name, entity, bps, withholdingPct, evmAddress: evmAddress(share?.evmAddress, `Share ${n} EVM address`), solanaAddress: solanaAddress(share?.solanaAddress, `Share ${n} Solana address`) };
+    return { id, name, entity, entityType, bps, withholdingPct, withholdingOverride, evmAddress: evmAddress(share?.evmAddress, `Share ${n} EVM address`), solanaAddress: solanaAddress(share?.solanaAddress, `Share ${n} Solana address`) };
   });
   const total = shares.reduce((s, x) => s + x.bps, 0);
   if (total !== 10000) throw new FinanceInputError(`Shares add up to ${total / 100}%, they must add up to 100%.`, "shares");
@@ -100,7 +108,10 @@ export function describeDistributionChange(before, after) {
     if (old.name !== share.name) lines.push(`${show(old.name)} renamed to ${show(share.name)}`);
     if (old.bps !== share.bps) lines.push(`${share.name} share: ${old.bps / 100}% -> ${share.bps / 100}%`);
     if ((old.entity || "") !== (share.entity || "")) lines.push(`${share.name} legal entity: ${show(old.entity)} -> ${show(share.entity)}`);
-    if ((old.withholdingPct || 0) !== (share.withholdingPct || 0)) lines.push(`${share.name} withholding: ${old.withholdingPct || 0}% -> ${share.withholdingPct || 0}%`);
+    const oldType = old.entityType || inferEntityType(old.entity);
+    if (oldType !== share.entityType) lines.push(`${share.name} entity type: ${ENTITY_TYPE_LABELS[oldType] || oldType} -> ${ENTITY_TYPE_LABELS[share.entityType] || share.entityType}`);
+    const wText = (s) => (s.withholdingOverride ? `${s.withholdingPct || 0}% (set by hand)` : "from the rules");
+    if (wText(old) !== wText(share)) lines.push(`${share.name} withholding: ${wText(old)} -> ${wText(share)}`);
     if ((old.evmAddress || "") !== (share.evmAddress || "")) lines.push(`${share.name} EVM payout address: ${show(old.evmAddress)} -> ${show(share.evmAddress)}`);
     if ((old.solanaAddress || "") !== (share.solanaAddress || "")) lines.push(`${share.name} Solana payout address: ${show(old.solanaAddress)} -> ${show(share.solanaAddress)}`);
   }
@@ -141,9 +152,10 @@ export function unitsToDecimal(units, decimals) {
  *   multisigUsd:number|null, multisigRaw:string|null, priceUsd:number|null}>} input.chains
  * @param {number|null} input.taxReserveUsd
  * @param {number|null} input.openCostsUsd
- * @param {object} input.settings  effective distribution settings
+ * @param {object} input.settings  effective distribution settings (withholdingPct already resolved)
+ * @param {number|null} [input.distributableUsdOverride]  weekly view: the amount to divide
  */
-export function computeDistribution({ chains = [], taxReserveUsd, openCostsUsd, settings }) {
+export function computeDistribution({ chains = [], taxReserveUsd, openCostsUsd, settings, distributableUsdOverride = null }) {
   const blockers = [];
   for (const c of chains) {
     if (c.multisigUsd == null || c.multisigRaw == null) blockers.push(`The multisig balance on chain ${c.chainId} could not be read or valued.`);
@@ -155,7 +167,9 @@ export function computeDistribution({ chains = [], taxReserveUsd, openCostsUsd, 
   const deductions = { taxReserveUsd: taxReserveUsd == null ? null : Math.max(0, taxReserveUsd), openCostsUsd };
   if (blockers.length) return { multisigUsd, deductions, distributableUsd: null, retainedUsd: null, shares: [], blockers };
 
-  const raw = multisigUsd - deductions.taxReserveUsd - deductions.openCostsUsd;
+  // The weekly view passes its own amount (already capped by cash); otherwise
+  // what the multisig holds minus the reserve and open costs.
+  const raw = distributableUsdOverride != null ? Math.min(distributableUsdOverride, multisigUsd) : multisigUsd - deductions.taxReserveUsd - deductions.openCostsUsd;
   const distributableUsd = raw > 0 ? floorCents(raw) : 0;
   const priced = chains.filter((c) => c.multisigUsd > 0 && c.priceUsd > 0);
   const pricedTotal = priced.reduce((s, c) => s + c.multisigUsd, 0);
@@ -192,7 +206,7 @@ export function computeDistribution({ chains = [], taxReserveUsd, openCostsUsd, 
  * app (Transaction Builder) to review; the Safe owners decide whether to sign.
  * Throws when a share has no EVM address, so no shareholder is left out.
  */
-export function buildSafeBatch({ chainId, distribution, chains, createdAtMs = Date.now() }) {
+export function buildSafeBatch({ chainId, distribution, chains, createdAtMs = Date.now(), week = null }) {
   const meta = SAFE_BATCH_CHAINS[chainId];
   if (!meta) throw new FinanceInputError("Safe batches cover BNB 56 and Robinhood 4663.", "chainId");
   const safe = chains.find((c) => c.chainId === Number(chainId))?.multisigAddress;
@@ -214,8 +228,8 @@ export function buildSafeBatch({ chainId, distribution, chains, createdAtMs = Da
     chainId: String(chainId),
     createdAt: createdAtMs,
     meta: {
-      name: `MWZ distribution proposal ${new Date(createdAtMs).toISOString().slice(0, 10)} (${meta.label})`,
-      description: `Proposal only, generated unsigned by the Command Center. Dividend from MemeWarzone BV; needs the tax adviser's and notary's go before anyone signs. Native ${meta.asset} transfers from Safe ${safe}: ${lines.join("; ")}. Check every amount and address.`,
+      name: `MWZ distribution proposal ${week ? `${week} ` : ""}${new Date(createdAtMs).toISOString().slice(0, 10)} (${meta.label})`,
+      description: `Proposal only, generated unsigned by the Command Center. Dividend from MemeWarzone BV${week ? ` for week ${week}` : ""}; needs the shareholder resolution and the board's approval after the distribution test (art. 2:216 BW) before anyone signs. Native ${meta.asset} transfers from Safe ${safe}: ${lines.join("; ")}. Check every amount and address.`,
       txBuilderVersion: "1.16.5",
       createdFromSafeAddress: safe,
       createdFromOwnerAddress: "",
@@ -225,7 +239,7 @@ export function buildSafeBatch({ chainId, distribution, chains, createdAtMs = Da
 }
 
 /** Text for a Squads vault transaction proposal (Solana). Nothing is created on chain. */
-export function buildSquadsProposal({ distribution, chains, createdAtMs = Date.now() }) {
+export function buildSquadsProposal({ distribution, chains, createdAtMs = Date.now(), week = null, summary = null }) {
   if (distribution.distributableUsd == null) throw new FinanceInputError("Nothing to propose: the distributable amount could not be computed.");
   const vault = chains.find((c) => c.chainId === 101)?.multisigAddress;
   if (!vault) throw new FinanceInputError("No Squads vault is known.", "chainId");
@@ -236,7 +250,7 @@ export function buildSquadsProposal({ distribution, chains, createdAtMs = Date.n
     .filter(({ part }) => part && part.units !== "0");
   if (!rows.length) throw new FinanceInputError("Nothing to pay on Solana: the Squads vault holds nothing distributable.");
   const lines = [
-    `MWZ distribution proposal ${new Date(createdAtMs).toISOString().slice(0, 10)} (Solana)`,
+    `MWZ distribution proposal ${week ? `${week} ` : ""}${new Date(createdAtMs).toISOString().slice(0, 10)} (Solana)`,
     "",
     "PROPOSAL ONLY. Generated unsigned by the Command Center. Nothing was created, signed or sent.",
     DIVIDEND_NOTE,
@@ -245,7 +259,7 @@ export function buildSquadsProposal({ distribution, chains, createdAtMs = Date.n
     "",
     ...rows.map(({ share, part }) => `${share.name} (${share.entity || "entity not set"}, ${share.percent}%${share.withholdingPct ? `, ${share.withholdingPct}% withheld` : ""}): ${part.amountNative} SOL = ${part.units} lamports to ${share.solanaAddress} (~$${part.amountUsd.toFixed(2)} at $${part.priceUsd} per SOL)`),
     "",
-    `Distributable now: $${distribution.distributableUsd.toFixed(2)} = multisig $${distribution.multisigUsd.toFixed(2)} - tax reserve $${distribution.deductions.taxReserveUsd.toFixed(2)} - open costs $${distribution.deductions.openCostsUsd.toFixed(2)}. The operator wallet (buffer, capped at $10,000) is not distributed.`,
+    summary || `Distributable now: $${distribution.distributableUsd.toFixed(2)} = multisig $${distribution.multisigUsd.toFixed(2)} - tax reserve $${distribution.deductions.taxReserveUsd.toFixed(2)} - open costs $${distribution.deductions.openCostsUsd.toFixed(2)}. The operator wallet (buffer, capped at $10,000) is not distributed.`,
     "Check every amount and address before anyone approves.",
   ];
   return lines.join("\n");
