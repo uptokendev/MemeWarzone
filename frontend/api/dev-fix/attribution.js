@@ -526,16 +526,19 @@ export async function attributionWalletConnect(req, res) {
       });
     }
 
-    await pool.query("BEGIN");
+    // One connection for the whole link: BEGIN on the pool would land on an arbitrary
+    // connection, so the three writes were never really one transaction.
+    const client = await pool.connect();
     try {
-      await pool.query(
+      await client.query("BEGIN");
+      await client.query(
         `insert into public.wallet_recruiter_links (wallet_address, recruiter_id, link_source)
          values ($1, $2, 'referral_cookie')
          on conflict (wallet_address) where is_active = true
          do nothing`,
         [walletAddress, recruiter.id],
       );
-      await pool.query(
+      await client.query(
         `insert into public.wallet_squad_memberships (wallet_address, recruiter_id, member_role, link_source)
          values ($1, $2, $3, 'referral_cookie')
          on conflict (wallet_address) where is_active = true
@@ -551,11 +554,13 @@ export async function attributionWalletConnect(req, res) {
            updated_at = now()`,
         [walletAddress, recruiter.id, memberRole],
       );
-      await pool.query(`update public.wallet_referral_attribution_windows set wallet_address = coalesce(wallet_address, $1), consumed_at = now(), updated_at = now() where id = $2`, [walletAddress, window.id]);
-      await pool.query("COMMIT");
+      await client.query(`update public.wallet_referral_attribution_windows set wallet_address = coalesce(wallet_address, $1), consumed_at = now(), updated_at = now() where id = $2`, [walletAddress, window.id]);
+      await client.query("COMMIT");
     } catch (error) {
-      await pool.query("ROLLBACK");
+      await client.query("ROLLBACK").catch(() => {});
       throw error;
+    } finally {
+      client.release();
     }
 
     const updatedState = await findWalletAttributionState(walletAddress);
