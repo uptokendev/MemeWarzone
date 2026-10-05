@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import {
+  BNB_CHAIN_ID,
   BNB_TESTNET_CHAIN_ID,
   getActiveChainId,
   isEvmChainId,
@@ -170,11 +171,16 @@ export default function PublicProfile({
   const { fetchCampaigns, fetchCampaignSummary } = useLaunchpad();
   const anyWallet: any = wallet as any;
   const evmWalletChainId = anyWallet?.chainId ?? null;
+  // An EVM profile always reads with an EVM chain (founder, 2026-10-05: with Solana selected the page
+  // sent chainId 101 with a 0x address and every request failed with "Invalid address").
+  const selectedChainId = Number(getActiveChainId(evmWalletChainId) || 0);
   const activeChainId = isSolanaAddress(profileWallet)
     ? SOLANA_CHAIN_ID
     : isEvmChainId(evmWalletChainId)
       ? Number(evmWalletChainId)
-      : getActiveChainId(evmWalletChainId) || BNB_TESTNET_CHAIN_ID;
+      : isEvmChainId(selectedChainId)
+        ? selectedChainId
+        : BNB_CHAIN_ID;
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(false);

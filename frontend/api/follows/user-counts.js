@@ -1,37 +1,28 @@
 import { pool } from "../../server/db.js";
-import { badMethod, getQuery, isAddress, isSolanaChain, normalizeAddress, json } from "../../server/http.js";
-
-function socialChainId(chainId) {
-  return isSolanaChain(chainId) ? Number(chainId) : 0;
-}
+import { badMethod, getQuery, normalizeWalletFlexible, json } from "../../server/http.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return badMethod(res);
   try {
     const q = getQuery(req);
-    const rawChainId = Number(q.chainId ?? 0) || 0;
-    const chainId = socialChainId(rawChainId);
+    // The address by its own format, whatever chain the page sends (follows cross wallet types).
     const raw = String(q.address ?? "").trim();
-    const isSol = isSolanaChain(chainId);
-    const addr = normalizeAddress(raw, chainId);
+    const addr = normalizeWalletFlexible(raw);
     if (!addr) return json(res, 400, { error: "Invalid address" });
-    if (!isSol && !isAddress(addr)) return json(res, 400, { error: "Invalid address" });
 
     // Distinct counterparties so legacy multi-chain rows for the same pair count once.
     const [followersRes, followingRes] = await Promise.all([
       pool.query(
         `SELECT COUNT(DISTINCT follower_address)::int AS c
            FROM public.user_follows
-          WHERE following_address = $1
-            AND (chain_id = $2 OR ($2 = 0 AND chain_id IN (0, 56, 97)))`,
-        [addr, chainId],
+          WHERE following_address = $1`,
+        [addr],
       ),
       pool.query(
         `SELECT COUNT(DISTINCT following_address)::int AS c
            FROM public.user_follows
-          WHERE follower_address = $1
-            AND (chain_id = $2 OR ($2 = 0 AND chain_id IN (0, 56, 97)))`,
-        [addr, chainId],
+          WHERE follower_address = $1`,
+        [addr],
       ),
     ]);
 

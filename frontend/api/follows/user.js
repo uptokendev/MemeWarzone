@@ -1,5 +1,5 @@
 import { pool } from "../../server/db.js";
-import { badMethod, getQuery, isAddress, isSolanaChain, normalizeAddress, json, readJson } from "../../server/http.js";
+import { badMethod, getQuery, isSolanaAddress, normalizeWalletFlexible, json, readJson } from "../../server/http.js";
 import { createFeedSessionAuth } from "../lib/feedSessionAuth.js";
 import { notifyFollow } from "../lib/socialNotify.js";
 
@@ -16,49 +16,39 @@ async function verifiedFollower(req, follower) {
   return a.startsWith("0x") ? a.toLowerCase() === String(follower).toLowerCase() : a === follower;
 }
 
-// Social follows are wallet-to-wallet, not per-chain. Store EVM follows under chain_id=0 so
-// profile views on 56/97/unconnected wallets share the same graph. Solana keeps its chain id.
-function socialChainId(chainId) {
-  return isSolanaChain(chainId) ? Number(chainId) : 0;
+// Social follows are wallet-to-wallet, not per-chain, and may cross wallet types: a Solana wallet can
+// follow an EVM wallet (founder, 2026-10-05: that failed with "Invalid address" because both addresses
+// were read with one chain). Each address is read by its own format. A pair with a Solana side is
+// stored under 101, an EVM pair under 0; reads and unfollows look at the pair on any chain.
+function pairChainId(follower, following) {
+  return isSolanaAddress(follower) || isSolanaAddress(following) ? 101 : 0;
 }
 
 export default async function handler(req, res) {
   try {
     if (req.method === "GET") {
       const q = getQuery(req);
-      const rawChainId = Number(q.chainId ?? 0) || 0;
-      const chainId = socialChainId(rawChainId);
-      const rawFollower = String(q.follower ?? "").trim();
-      const rawFollowing = String(q.following ?? "").trim();
-      const isSol = isSolanaChain(chainId);
-      const follower = normalizeAddress(rawFollower, chainId);
-      const following = normalizeAddress(rawFollowing, chainId);
+      const follower = normalizeWalletFlexible(q.follower);
+      const following = normalizeWalletFlexible(q.following);
       if (!follower || !following) return json(res, 400, { error: "Invalid address" });
-      if (!isSol && (!isAddress(follower) || !isAddress(following))) return json(res, 400, { error: "Invalid address" });
 
-      // Accept legacy rows stored under the caller's chainId as well as canonical 0.
+      // The pair on any chain (legacy EVM rows under 56/97 included).
       const { rows } = await pool.query(
         `SELECT 1 FROM public.user_follows
           WHERE follower_address = $1 AND following_address = $2
-            AND (chain_id = $3 OR ($3 = 0 AND chain_id IN (0, 56, 97)))
           LIMIT 1`,
-        [follower, following, chainId]
+        [follower, following]
       );
       return json(res, 200, { isFollowing: rows.length > 0 });
     }
 
     if (req.method === "POST") {
       const body = await readJson(req);
-      const rawChainId = Number(body.chainId ?? 0) || 0;
-      const chainId = socialChainId(rawChainId);
       const action = String(body.action ?? "").toLowerCase();
-      const rawFollower = String(body.followerAddress ?? "").trim();
-      const rawFollowing = String(body.followingAddress ?? "").trim();
-      const isSol = isSolanaChain(chainId);
-      const follower = normalizeAddress(rawFollower, chainId);
-      const following = normalizeAddress(rawFollowing, chainId);
+      const follower = normalizeWalletFlexible(body.followerAddress);
+      const following = normalizeWalletFlexible(body.followingAddress);
       if (!follower || !following) return json(res, 400, { error: "Invalid address" });
-      if (!isSol && (!isAddress(follower) || !isAddress(following))) return json(res, 400, { error: "Invalid address" });
+      const chainId = pairChainId(follower, following);
       if (follower === following) return json(res, 400, { error: "Cannot follow self" });
       if (action !== "follow" && action !== "unfollow") return json(res, 400, { error: "Invalid action" });
       // Social follows intentionally skip wallet signatures: connect-wallet identity only.
@@ -84,9 +74,8 @@ export default async function handler(req, res) {
 
       await pool.query(
         `DELETE FROM public.user_follows
-          WHERE follower_address = $1 AND following_address = $2
-            AND (chain_id = $3 OR ($3 = 0 AND chain_id IN (0, 56, 97)))`,
-        [follower, following, chainId]
+          WHERE follower_address = $1 AND following_address = $2`,
+        [follower, following]
       );
       return json(res, 200, { ok: true });
     }
