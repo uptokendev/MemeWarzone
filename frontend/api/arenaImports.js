@@ -1,4 +1,6 @@
 import { pool } from "../server/db.js";
+import { createSolanaImportTrades, solanaRpcUrl } from "./lib/solanaImportTrades.js";
+import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
 import {
   badMethod,
   getQuery,
@@ -215,6 +217,9 @@ async function handleProfile(req, res) {
 }
 
 const candleSource = sharedCandleSource();
+const solanaTrades = solanaRpcUrl()
+  ? createSolanaImportTrades({ solUsdPrice: async () => (await resolveSolUsdPrice().catch(() => null))?.price || 0 })
+  : null;
 const PAIR_LOOKUP_TTL_MS = 10 * 60_000;
 const pairLookups = new Map();
 
@@ -281,6 +286,16 @@ async function handleTrades(req, res) {
   if (!found) return json(res, 404, { error: "Import not found", code: "IMPORT_NOT_FOUND" });
   const base = { source: "geckoterminal", window: "24h", pairAddress: found.pairAddress };
   if (!found.pairAddress) return json(res, 200, { ...base, items: [], reason: "NO_POOL" });
+  // Solana imports read their trades from the chain (founder, 2026-10-06): seconds instead of
+  // GeckoTerminal's minutes. GeckoTerminal stays the fallback, and the source for other chains.
+  if (Number(chainId) === 101 && solanaTrades) {
+    try {
+      const items = await solanaTrades.trades({ pairAddress: found.pairAddress, tokenAddress: found.tokenAddress });
+      return json(res, 200, { ...base, source: "onchain", window: "recent", items, stale: false, rateLimited: false });
+    } catch (error) {
+      console.warn("[arena/imports/trades] on-chain read failed, using GeckoTerminal", error?.message || error);
+    }
+  }
   try {
     const result = await candleSource.trades({ network, pairAddress: found.pairAddress, tokenAddress: found.tokenAddress, chainId });
     return json(res, 200, { ...base, items: result.trades, stale: result.stale, rateLimited: result.rateLimited });

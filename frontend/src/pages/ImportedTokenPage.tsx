@@ -29,7 +29,8 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
 import { postGradFlags } from "@/features/postgrad/config";
 import { buildAbuseReportPath } from "@/lib/abuseReportLink";
-import { fetchArenaImportCandles, fetchArenaTokenProfile, requestArenaImportReview, type ArenaImportCandleResponse, type ArenaImportItem } from "@/lib/arenaImports";
+import { fetchArenaImportCandles, fetchArenaImportTrades, fetchArenaTokenProfile, requestArenaImportReview, type ArenaImportCandleResponse, type ArenaImportItem, type ArenaImportTrade } from "@/lib/arenaImports";
+import { IMPORT_TRADE_EVENT, type ImportTradeAnnouncement } from "@/lib/importTradeEvents";
 import {
   canRequestImportManualReview,
   presentImportCompetitionEligibility,
@@ -39,6 +40,7 @@ import {
   clampImportResolution,
   importTradingBlocked,
   importUsdCandlesToChart,
+  mergeTradesIntoUsdCandles,
   presentImportChart,
 } from "@/lib/arena/importChartPresentation.mjs";
 import { SOLANA_CHAIN_ID, getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
@@ -215,6 +217,43 @@ export default function ImportedTokenPage({
     };
   }, [chartResolution, item.chainId, item.tokenAddress]);
 
+  // On-chain trades move the chart until GeckoTerminal's candles catch up (founder, 2026-10-06): the
+  // same shared server read as the Trades tab, so no extra RPC credits. After your own trade the page
+  // asks again a few times so your trade shows in the chart within seconds.
+  const [liveTrades, setLiveTrades] = useState<ArenaImportTrade[]>([]);
+  useEffect(() => {
+    if (item.chainId !== SOLANA_CHAIN_ID) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const bursts: number[] = [];
+    setLiveTrades([]);
+    const load = () => {
+      if (timer) window.clearTimeout(timer);
+      void fetchArenaImportTrades(item.tokenAddress, item.chainId, controller.signal)
+        .then((payload) => {
+          if (controller.signal.aborted) return;
+          if (payload?.source === "onchain" && Array.isArray(payload.items)) setLiveTrades(payload.items);
+          timer = window.setTimeout(load, payload?.source === "onchain" ? 12_000 : 60_000);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) timer = window.setTimeout(load, 60_000);
+        });
+    };
+    load();
+    const onTrade = (event: Event) => {
+      const detail = (event as CustomEvent<ImportTradeAnnouncement>).detail;
+      if (!detail || Number(detail.chainId) !== Number(item.chainId) || detail.tokenAddress !== item.tokenAddress) return;
+      for (const ms of [3_000, 8_000, 15_000, 30_000]) bursts.push(window.setTimeout(load, ms));
+    };
+    window.addEventListener(IMPORT_TRADE_EVENT, onTrade);
+    return () => {
+      controller.abort();
+      if (timer) window.clearTimeout(timer);
+      bursts.forEach((b) => window.clearTimeout(b));
+      window.removeEventListener(IMPORT_TRADE_EVENT, onTrade);
+    };
+  }, [item.chainId, item.tokenAddress]);
+
   const ownerWallet = String(item.projectOwnerWallet || item.ownerWallet || "").trim();
   const solana = item.chainId === SOLANA_CHAIN_ID;
 
@@ -253,7 +292,8 @@ export default function ImportedTokenPage({
   const telegramHref = useMemo(() => safeExternalUrl(item.telegramUrl), [item.telegramUrl]);
   const arenaItem = asArenaItem(item);
   const competition = presentImportCompetitionEligibility(arenaItem);
-  const candles = useMemo(() => importUsdCandlesToChart(usdCandles, nativeUsd), [nativeUsd, usdCandles]);
+  const liveCandles = useMemo(() => mergeTradesIntoUsdCandles(usdCandles, liveTrades, chartResolution), [usdCandles, liveTrades, chartResolution]);
+  const candles = useMemo(() => importUsdCandlesToChart(liveCandles, nativeUsd), [nativeUsd, liveCandles]);
   const chart = presentImportChart(profile, candles, item.chainId, item.tokenAddress, candleState);
   const tradingBlocked = importTradingBlocked(item.scan, null);
   const connectedImportWallet = isSolanaChainId(item.chainId) ? solanaWallet.solanaAccount : wallet.account;
