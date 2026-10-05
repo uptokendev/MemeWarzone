@@ -29,7 +29,19 @@
 //   GET    distributions/records      recorded distributions        finance.view
 //   POST   distributions/records      record the decision week      finance.manage
 //   PATCH  distributions/records/:id  status, tx hashes, tax dates  finance.manage
-//   GET    exports/:kind              CSV (revenue-events, costs, close-summaries, payouts)
+//   GET    exports/:kind              CSV (revenue-events, costs, close-summaries, payouts, treasury-movements)
+//   GET    treasury                   accounts, movements, cash, gains finance.view
+//   POST   treasury/accounts          add an account                finance.manage
+//   PATCH  treasury/accounts/:id      rename, IBAN, archive         finance.manage
+//   POST   treasury/movements         record a movement             finance.manage
+//   PATCH  treasury/movements/:id     correct a movement            finance.manage
+//   DELETE treasury/movements/:id     soft delete                   finance.manage
+//   GET    treasury/unmatched?days=   chain outflows not recorded   finance.view
+//   GET    treasury/value             EUR value preview             finance.view
+//   GET    tax                        obligations, deadlines, items finance.view
+//   POST   tax/items                  record a return/payment/...   finance.manage
+//   PATCH  tax/items/:id              correct it                    finance.manage
+//   DELETE tax/items/:id              soft delete                   finance.manage
 
 import { pool } from "../../server/db.js";
 import { dashboardPrincipalCan } from "../dashboard/_access.js";
@@ -70,6 +82,61 @@ import {
   validateDistributionSettings,
 } from "../lib/financeAccountingDistributions.js";
 import { toCsv } from "../lib/financeAccountingCsv.js";
+import {
+  ACCOUNT_KINDS,
+  ACCOUNT_KIND_LABELS,
+  CHAINS,
+  MOVEMENT_KINDS,
+  MOVEMENT_KIND_LABELS,
+  TREASURY_ASSETS,
+  TREASURY_METHOD,
+  bankPaidOccurrence,
+  cashPerAccount,
+  checkMovementAccounts,
+  lotAsset,
+  offChainCashEur,
+  revenueAcquisitions,
+  runLots,
+  treasuryByDay,
+  treasuryByMonth,
+  treasuryLotEvents,
+  validateAccountInput,
+  validateMovementInput,
+  valuationLeg,
+  valueInEur,
+} from "../lib/financeTreasury.js";
+import {
+  RESERVE_RELEASE_RULE,
+  TAX_ITEM_KINDS,
+  TAX_ITEM_KIND_LABELS,
+  TAX_TYPES,
+  TAX_TYPE_LABELS,
+  UPCOMING_DAYS,
+  checkMergedTaxItem,
+  taxObligations,
+  validateTaxItemInput,
+  vatByPeriodFrom,
+} from "../lib/financeTaxCalendar.js";
+import { unmatchedOutflows } from "../lib/financeTreasuryDetect.js";
+import { VAT_LANES } from "../lib/financeTaxRules.js";
+import {
+  TREASURY_MIGRATION,
+  getAccount,
+  getMovement,
+  getTaxItem,
+  insertAccount,
+  insertMovement,
+  insertTaxItem,
+  listAccounts,
+  listMovements,
+  listTaxItems,
+  softDeleteMovement,
+  softDeleteTaxItem,
+  treasuryTablesMissing,
+  updateAccount,
+  updateMovement,
+  updateTaxItem,
+} from "../lib/financeTreasuryStore.js";
 import { currentBalances, dailyRevenue, monthlyRevenue, revenueEventRows } from "../lib/financeAccountingSources.js";
 import { buildPayoutsAllChains, cachedPayouts, payoutsDays } from "../lib/financePayouts.js";
 import { feeRoutingAllNetworks } from "../lib/financeFeeRouting.js";
@@ -100,7 +167,7 @@ import {
 } from "../lib/financeAccountingStore.js";
 
 const BASE = "/api/admin/finance";
-const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|tax-rules|weekly|close|distributions|exports)(?:\/|$)/;
+const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|tax-rules|tax|weekly|close|distributions|exports|treasury)(?:\/|$)/;
 const MAX_EXPORT_MONTHS = 36;
 const FIRST_MONTH = "2024-01";
 // Close order (founder 2026-10-04): closed months form an unbroken run from
@@ -116,11 +183,14 @@ const PROPOSAL_LABEL = "Proposal only. Nothing is sent from this page.";
 function taxLabel(rules) {
   return `Based on the Belastingdienst, wetten.overheid.nl and KVK, checked ${rules?.checkedOn || "2026-10-05"}. Each rule shows its source and confidence. This is a reserve estimate; any rule can be changed afterwards.`;
 }
-const WEEKLY_FORMULA = "Per week (EUR): revenue - VAT - costs = profit; profit - corporate tax reserve (marginal on the year-to-date profit) = profit after tax. Distributable = profit after tax + what earlier weeks left undistributed. Available to divide now = the lower of that (through the last complete week) and the cash in the multisig minus open costs, all tax reserves held and distributions approved but not paid. Each shareholder: gross = share %, minus dividend withholding from the rules for its entity type = net.";
+const WEEKLY_FORMULA = "Per week (EUR): revenue - VAT - costs + treasury (realized gains on crypto - fees + revenue received in the bank - its VAT) = profit; profit - corporate tax reserve (marginal on the year-to-date profit) = profit after tax. Distributable = profit after tax + what earlier weeks left undistributed. Available to divide now = the lower of that (through the last complete week) and the cash in the multisig minus what it must hold: open costs (not yet paid from the bank) + tax still to pay (each reserve minus tax paid) + distributions approved but not paid, less what the bank and exchange accounts hold in EUR, USD and stablecoins to pay those. Each shareholder: gross = share %, minus dividend withholding from the rules for its entity type = net.";
 const MAX_WEEKS = 156;
 const EVM_TX = /^0x[0-9a-fA-F]{64}$/;
 const SOLANA_TX = /^[1-9A-HJ-NP-Za-km-z]{64,90}$/;
 const DIST_STATUSES = ["proposed", "approved", "paid", "cancelled"];
+
+const TREASURY_NOT_INSTALLED = `Recording treasury movements and tax items needs ${TREASURY_MIGRATION} on this database.`;
+const TREASURY_MEMO_MS = 20_000;
 
 export function isFinanceAccountingPath(pathname) {
   return ACCOUNTING_PATH.test(String(pathname || ""));
@@ -213,9 +283,73 @@ export function createFinanceAccountingHandler(deps = {}) {
     }
   }
 
+  // ---------------------------------------------------------------- treasury context
+
+  let treasuryMemo = null;
+  const invalidateTreasury = () => { treasuryMemo = null; };
+
+  /** Accounts, movements and tax items; empty (installed: false) before the migration. */
+  async function treasuryRows() {
+    try {
+      const [accounts, movements, taxItems] = await Promise.all([
+        (deps.listAccounts || listAccounts)(db()),
+        (deps.listMovements || listMovements)(db()),
+        (deps.listTaxItems || listTaxItems)(db()),
+      ]);
+      return { installed: true, accounts, movements, taxItems };
+    } catch (error) {
+      if (treasuryTablesMissing(error)) return { installed: false, accounts: [], movements: [], taxItems: [] };
+      throw error;
+    }
+  }
+
+  /**
+   * Treasury effects on the books: lots (fee revenue, opening balances,
+   * conversions in) against disposals (conversions out, crypto fees, crypto
+   * costs, distributions paid in crypto), realized gains per day, fees and fiat
+   * revenue. Daily revenue is only read when there is something to dispose of
+   * (or when the caller passes it). Memoized for a few seconds; any write clears it.
+   */
+  async function treasury({ costs = null, records = null, revDays = null, usdPerEur = null, rules = null } = {}) {
+    const memo = !revDays && !usdPerEur;
+    if (memo && treasuryMemo && Date.now() - treasuryMemo.at < TREASURY_MEMO_MS) return treasuryMemo.value;
+    const rows = await treasuryRows();
+    const taxRules = rules || (await settings()).taxRules;
+    const today = todayIso(nowMs());
+    const live = (costs || (await listCosts(db()))).filter((c) => !c.deletedAt);
+    const cryptoCosts = live.filter((c) => lotAsset(c.currency) && c.currency !== "USD").flatMap((c) => expandCost(c, monthOf(c.incurredOn), today.slice(0, 7), { onOrBefore: today }));
+    const recs = records || (await distributionRecords()).records;
+    const ev = treasuryLotEvents({ movements: rows.movements, costs: cryptoCosts, distributions: recs });
+    let days = revDays;
+    if (!days && ev.disposals.length) days = (await (deps.dailyRevenue || dailyRevenue)({ db: db(), prices: prices(), fromDate: `${FIRST_MONTH}-01`, toDate: today })).days;
+    let rate = usdPerEur;
+    if (!rate) {
+      const dates = [...Object.keys(days || {}), ...rows.movements.map((m) => m.occurredAt.slice(0, 10)), ...cryptoCosts.map((c) => c.date)].filter((d) => d <= today).sort();
+      const map = dates.length ? await ratesByDate(dates[0], today) : new Map();
+      const latest = (await fx().rate(null).catch(() => null))?.usdPerEur ?? null;
+      rate = (d) => map.get(d) ?? latest;
+    }
+    const method = taxRules.vpb?.cryptoCostMethod?.method || "fifo";
+    const lots = runLots({ acquisitions: [...revenueAcquisitions(days || {}, rate), ...ev.acquisitions], disposals: ev.disposals, method });
+    const byDay = treasuryByDay({ lotDisposals: lots.disposals, movements: rows.movements, rules: taxRules, usdPerEur: rate });
+    const value = { ...rows, lots, byDay, byMonth: treasuryByMonth(byDay), method, revenueRead: Boolean(days) };
+    if (memo) treasuryMemo = { at: Date.now(), value };
+    return value;
+  }
+
+  const treasuryMonthView = (t, usdPerEur) => (t ? {
+    realizedGainEur: round2(t.realizedGainEur),
+    feesEur: round2(t.feesEur),
+    otherRevenueEur: round2(t.otherRevenueEur),
+    otherVatEur: round2(t.otherVatEur),
+    netEur: round2(t.netEur),
+    netUsd: usdPerEur ? roundUsd(t.netEur * usdPerEur) : null,
+  } : null);
+
   /**
    * Revenue, costs, profit and tax reserve per month of one year, up to the
    * current month. Closed months come from their snapshot; open months live.
+   * Open months include the treasury effects (realized gains, fees, fiat revenue).
    */
   /**
    * Bracket rules for one year: brackets saved on the Tax & Reserves form win;
@@ -238,6 +372,7 @@ export function createFinanceAccountingHandler(deps = {}) {
     const taxRules = rules || yearTaxRules(await settings(), year);
     const openMonths = months.filter((m) => closes.get(m)?.status !== "closed");
     const live = openMonths.length ? await revenue({ fromMonth: openMonths[0], toMonth: openMonths[openMonths.length - 1] }) : { months: {}, notes: [] };
+    const tr = openMonths.length ? await treasury({ costs: allCosts }) : null;
 
     const rows = [];
     for (const month of months) {
@@ -251,6 +386,7 @@ export function createFinanceAccountingHandler(deps = {}) {
           revenueUsd: s.revenue?.totalUsd ?? null,
           costsUsd: s.costs?.totalUsd ?? null,
           profitUsd: s.profitUsd ?? null,
+          treasury: s.treasury ? { realizedGainEur: s.treasury.realizedGainEur, feesEur: s.treasury.feesEur, otherRevenueEur: s.treasury.otherRevenueEur, otherVatEur: s.treasury.otherVatEur, netEur: s.treasury.netEur, netUsd: s.treasury.netUsd } : null,
           usdPerEur: s.fx?.usdPerEur ?? null,
           frozenReserveUsd: s.tax?.reserveUsd ?? null,
           closedBy: close.closedBy,
@@ -262,13 +398,16 @@ export function createFinanceAccountingHandler(deps = {}) {
       const revenueUsd = live.months[month]?.totalUsd ?? (live.months[month] ? null : 0);
       const costsUsd = costTotals(occurrences).totalUsd;
       const eur = await fx().rate(month === nowMonth ? null : monthEnd(month)).catch(() => null);
+      const t = treasuryMonthView(tr?.byMonth.get(month), eur?.usdPerEur);
+      const treasuryUsd = !t || t.netEur === 0 ? 0 : t.netUsd;
       rows.push({
         month,
         status: "open",
         source: "live",
         revenueUsd,
         costsUsd,
-        profitUsd: revenueUsd == null ? null : roundUsd(revenueUsd - costsUsd),
+        profitUsd: revenueUsd == null || treasuryUsd == null ? null : roundUsd(revenueUsd - costsUsd + treasuryUsd),
+        treasury: t,
         usdPerEur: eur?.usdPerEur ?? null,
         eurSource: eur?.source ?? null,
         frozenReserveUsd: null,
@@ -503,6 +642,8 @@ export function createFinanceAccountingHandler(deps = {}) {
       bal = { error: `Balances could not be read: ${String(error?.message || error).slice(0, 160)}` };
     }
     const eur = await fx().rate(monthEnd(month)).catch(() => null);
+    const tr = await treasury({ costs });
+    const monthDays = Object.fromEntries([...tr.byDay].filter(([d]) => d.slice(0, 7) === month).map(([d, e]) => [d, { realizedGainEur: round2(e.realizedGainEur), feesEur: round2(e.feesEur), otherRevenueEur: round2(e.otherRevenueEur), otherVatEur: round2(e.otherVatEur), otherRevenueUsd: round2(e.otherRevenueUsd) }]));
     const warnings = [];
     const priorOpen = data.months.filter((m) => m.month < month && m.status !== "closed").map((m) => m.month);
     if (priorOpen.length) warnings.push(`Earlier months of ${year} are still open (${priorOpen.join(", ")}); this month's year-to-date tax uses their live figures.`);
@@ -517,6 +658,7 @@ export function createFinanceAccountingHandler(deps = {}) {
       revenue: { totalUsd: single.months[month]?.totalUsd ?? row.revenueUsd, lanes: single.months[month]?.lanes || [], excludedTestCoinEvents: single.excludedTestCoinEvents, testCoinsExcluded: true, notes: single.notes, basis: "Each hour valued at that hour's Binance close (event time)." },
       costs: { totalUsd: totals.totalUsd, byCategory: totals.byCategory, occurrences },
       profitUsd: row.profitUsd,
+      treasury: { ...(treasuryMonthView(tr.byMonth.get(month), eur?.usdPerEur ?? row.usdPerEur) || { realizedGainEur: 0, feesEur: 0, otherRevenueEur: 0, otherVatEur: 0, netEur: 0, netUsd: 0 }), byDay: monthDays, method: tr.method, cash: Object.fromEntries([...cashPerAccount(tr.movements, tr.taxItems)].map(([id, m]) => [id, Object.fromEntries([...m].map(([a, v]) => [a, roundUsd(v)]))])) },
       tax: { rules: yearTaxRules(s, year), usdPerEur: row.usdPerEur, ytdProfitUsd: row.ytdProfitUsd, reserveUsd: row.reserveUsd, ytdReserveUsd: row.ytdReserveUsd, label: taxLabel(s.taxRules) },
       balances: bal,
       prices: await spotTable(),
@@ -596,7 +738,8 @@ export function createFinanceAccountingHandler(deps = {}) {
 
   // ---------------------------------------------------------------- distributions
 
-  async function openCostsUsd(costs) {
+  /** Costs dated up to today in open months, less those already paid from the bank (a bank payment linked to the cost). */
+  async function openCostsUsd(costs, movements = []) {
     const today = todayIso(nowMs());
     const nowMonth = today.slice(0, 7);
     const live = costs.filter((c) => !c.deletedAt);
@@ -604,7 +747,7 @@ export function createFinanceAccountingHandler(deps = {}) {
     const earliest = live.reduce((m, c) => (monthOf(c.incurredOn) < m ? monthOf(c.incurredOn) : m), nowMonth);
     const from = earliest < addMonths(nowMonth, -(MAX_EXPORT_MONTHS * 3)) ? addMonths(nowMonth, -(MAX_EXPORT_MONTHS * 3)) : earliest;
     const closed = await closedMonthSet(from, nowMonth);
-    const open = live.flatMap((c) => expandCost(c, from, nowMonth, { onOrBefore: today })).filter((o) => !closed.has(o.month));
+    const open = live.flatMap((c) => expandCost(c, from, nowMonth, { onOrBefore: today })).filter((o) => !closed.has(o.month) && !bankPaidOccurrence(o, movements));
     return costTotals(open).totalUsd ?? 0;
   }
 
@@ -724,17 +867,17 @@ export function createFinanceAccountingHandler(deps = {}) {
     const today = todayIso(nowMs());
     const costs = await listCosts(db());
     const live = costs.filter((c) => !c.deletedAt);
-    const [rev, recs, bal, open] = await Promise.all([
+    const [rev, recs, bal] = await Promise.all([
       (deps.dailyRevenue || dailyRevenue)({ db: db(), prices: prices(), fromDate: `${FIRST_MONTH}-01`, toDate: today }),
       distributionRecords(),
       balances().catch((error) => ({ chains: [], errors: [String(error?.message || error).slice(0, 160)] })),
-      openCostsUsd(costs),
     ]);
     const firstDates = [...Object.keys(rev.days), ...live.map((c) => c.incurredOn)].filter((d) => d <= today).sort();
     const fromDate = firstDates[0] || today;
     const firstYear = Number(fromDate.slice(0, 4));
     const months = new Map();
     const costsByMonth = new Map();
+    const snapshotTreasury = new Map();
     for (let year = firstYear; year <= Number(today.slice(0, 4)); year += 1) {
       const data = await buildYear(year, { rules: yearTaxRules(s, year), costs });
       const closes = await listCloses(db(), `${year}-01`, `${year}-12`);
@@ -743,16 +886,25 @@ export function createFinanceAccountingHandler(deps = {}) {
         months.set(m.month, { status: m.status, revenueUsd: m.revenueUsd, costsUsd: m.costsUsd });
         const snap = closes.get(m.month)?.status === "closed" ? closes.get(m.month).snapshot : null;
         costsByMonth.set(m.month, snap ? snap.costs?.occurrences || [] : m.occurrences || live.flatMap((c) => expandCost(c, m.month, m.month)));
+        for (const [d, e] of Object.entries(snap?.treasury?.byDay || {})) snapshotTreasury.set(d, e);
       }
     }
     const rates = await ratesByDate(fromDate, today);
     const latestRate = (await fx().rate(null).catch(() => null))?.usdPerEur ?? null;
     const usdPerEur = (date) => rates.get(date) ?? latestRate;
-    const model = computeWeeks({ today, fromDate, days: rev.days, usdPerEur, costsByMonth, months, rules: s.taxRules, vpbOverride: s.tax.isDefault ? null : s.tax, records: recs.records });
+    // Treasury: live for open months, the close snapshot's for closed months (frozen).
+    const tr = await treasury({ costs, records: recs.records, revDays: rev.days, usdPerEur, rules: s.taxRules });
+    const byDay = new Map([...tr.byDay].filter(([d]) => months.get(d.slice(0, 7))?.status !== "closed"));
+    for (const [d, e] of snapshotTreasury) byDay.set(d, e);
+    const open = await openCostsUsd(costs, tr.movements);
+    const model = computeWeeks({ today, fromDate, days: rev.days, usdPerEur, costsByMonth, months, rules: s.taxRules, vpbOverride: s.tax.isDefault ? null : s.tax, records: recs.records, treasuryByDay: byDay });
+    const taxCal = taxObligations({ today, rules: s.taxRules, vatByPeriod: vatByPeriodFrom(model.segments, s.taxRules.calendar.vatPeriod.period), vpbYears: model.years, items: tr.taxItems, records: recs.records, firstActivityOn: fromDate });
+    const cash = cashPerAccount(tr.movements, tr.taxItems);
+    const offChain = offChainCashEur(tr.accounts, cash, latestRate);
     const monthlyCostsUsd = live.filter((c) => c.recurring !== "none" && (!c.recurringUntil || c.recurringUntil >= today) && c.incurredOn <= today)
       .reduce((sum, c) => sum + (c.recurring === "yearly" ? c.amountUsd / 12 : c.amountUsd), 0);
-    const decision = decideWeek({ model, chains: bal.chains || [], openCostsUsd: open, usdPerEurNow: latestRate, settings: s.distribution, rules: s.taxRules, records: recs.records, today, operatorUsd: bal.operatorUsd ?? null, monthlyCostsUsd });
-    return { s, today, model, months, decision, bal, records: recs.records, recordsInstalled: recs.installed, notes: rev.notes || [], latestRate };
+    const decision = decideWeek({ model, chains: bal.chains || [], openCostsUsd: open, usdPerEurNow: latestRate, settings: s.distribution, rules: s.taxRules, records: recs.records, today, operatorUsd: bal.operatorUsd ?? null, monthlyCostsUsd, held: taxCal.held, offChainCashEur: offChain.eur });
+    return { s, today, model, months, decision, bal, records: recs.records, recordsInstalled: recs.installed, notes: rev.notes || [], latestRate, tr, taxCal, cash, offChain, usdPerEur, revDays: rev.days };
   }
 
   async function getWeekly(req, res, principal) {
@@ -779,6 +931,8 @@ export function createFinanceAccountingHandler(deps = {}) {
       squadsVault: (w.bal.chains || []).find((x) => x.chainId === 101)?.multisigAddress || null,
       records: w.records,
       recordsInstalled: w.recordsInstalled,
+      tax: { next: w.taxCal.next, upcoming: w.taxCal.upcoming.length, overdue: w.taxCal.obligations.filter((o) => o.status === "overdue").length, held: { vatEur: w.taxCal.held.vatEur, vpbEur: w.taxCal.held.vpbEur, dividendTaxEur: w.taxCal.held.dividendTaxEur }, releaseRule: RESERVE_RELEASE_RULE },
+      treasury: { installed: w.tr.installed, realizedGainEur: round2(w.model.totals.realizedGainEur), offChainCashEur: w.offChain.eur, offChainLines: w.offChain.lines, method: w.tr.method },
       migration: w.recordsInstalled ? null : `Recording distributions needs ${DISTRIBUTIONS_MIGRATION} on this database.`,
       rulesCheckedOn: w.s.taxRules.checkedOn,
       needsConfirmation: rulesTable(w.s.taxRules).filter((r) => r.needsConfirmation).map((r) => r.label),
@@ -954,6 +1108,362 @@ export function createFinanceAccountingHandler(deps = {}) {
     return res.status(200).json({ ok: true, record: result });
   }
 
+  // ---------------------------------------------------------------- treasury
+
+  function requireTreasury(rows) {
+    if (!rows.installed) throw new HttpError(503, TREASURY_NOT_INSTALLED, { code: "FINANCE_TREASURY_NOT_INSTALLED" });
+  }
+
+  function treasuryWriteError(error) {
+    if (error?.code === "23505") return new HttpError(409, "That is already recorded (same name, address or transaction hash).", { code: "ALREADY_RECORDED" });
+    if (treasuryTablesMissing(error)) return new HttpError(503, TREASURY_NOT_INSTALLED, { code: "FINANCE_TREASURY_NOT_INSTALLED" });
+    return error;
+  }
+
+  async function guardMovementMonth(occurredAt) {
+    const month = occurredAt.slice(0, 7);
+    if ((await closedMonthSet(month, month)).has(month)) throw new HttpError(409, `The month ${month} is closed. Reopen it first.`, { code: "MONTH_CLOSED", month });
+  }
+
+  /** EUR value of the movement and its fee: typed in, or priced at the time (with the source). */
+  async function priceMovement(m, actor) {
+    const out = { ...m };
+    if (m.valueEur != null) {
+      out.valueSource = `entered by ${actor.email}`;
+      out.usdPerEur = null;
+      out.priceUsd = null;
+    } else {
+      const leg = valuationLeg(m);
+      const v = await valueInEur({ asset: leg.asset, amount: leg.amount, at: m.occurredAt, prices: prices(), fx: fx() });
+      Object.assign(out, { valueEur: v.eur, valueSource: v.source, usdPerEur: v.usdPerEur, priceUsd: v.priceUsd });
+    }
+    if (m.fee) {
+      if (m.feeEur != null) out.feeSource = `entered by ${actor.email}`;
+      else {
+        const v = await valueInEur({ asset: m.fee.asset, amount: m.fee.amount, at: m.occurredAt, prices: prices(), fx: fx() }).catch((error) => {
+          if (error instanceof FinanceInputError) throw new FinanceInputError(error.message.replace("valueEur", "feeEur"), "feeEur");
+          throw error;
+        });
+        out.feeEur = v.eur;
+        out.feeSource = v.source;
+      }
+    } else {
+      out.feeEur = null;
+      out.feeSource = null;
+    }
+    return out;
+  }
+
+  async function checkCostLink(m) {
+    if (!m.costId) return;
+    const cost = await getCost(db(), m.costId);
+    if (!cost || cost.deletedAt) throw new FinanceInputError("costId: no such cost.", "costId");
+  }
+
+  function walletBalance(account, chains) {
+    if (!account.address) return null;
+    const chain = chains.find((c) => c.chainId === account.chainId);
+    if (!chain) return null;
+    const same = (a) => a && (account.chainId === 101 ? a === account.address : String(a).toLowerCase() === account.address.toLowerCase());
+    if (same(chain.multisigAddress)) return { asset: chain.asset, amount: chain.multisigAmount ?? null, amountUsd: chain.multisigUsd ?? null, source: "fee-routing read (chain, now)" };
+    if (same(chain.operator?.address)) return { asset: chain.asset, amount: chain.operator.amount ?? null, amountUsd: chain.operator.amountUsd ?? null, source: "fee-routing read (chain, now)" };
+    return null;
+  }
+
+  async function marketEur(asset, amount, usdPerEurNow) {
+    if (asset === "EUR") return { eur: round2(amount), source: "EUR" };
+    if (!(usdPerEurNow > 0)) return { eur: null, source: "no EUR rate" };
+    if (asset === "USD" || asset === "USDC" || asset === "USDT") return { eur: round2(amount / usdPerEurNow), source: `${asset} at $1; ECB rate` };
+    const spot = await prices().spot(asset).catch(() => null);
+    return spot?.priceUsd ? { eur: round2((amount * spot.priceUsd) / usdPerEurNow), source: `${spot.source}; ECB rate` } : { eur: null, source: "no price" };
+  }
+
+  async function getTreasury(req, res, principal) {
+    const w = await weeklyModel();
+    const { tr, cash, latestRate } = w;
+    const chains = w.bal.chains || [];
+    const names = new Map(tr.accounts.map((a) => [a.id, a.name]));
+    const accounts = [];
+    for (const a of tr.accounts) {
+      const lines = [];
+      for (const [asset, amount] of cash.get(a.id) || []) {
+        if (Math.abs(amount) < 1e-12) continue;
+        const m = await marketEur(asset, amount, latestRate);
+        lines.push({ asset, amount: roundUsd(amount), marketEur: m.eur, source: m.source });
+      }
+      accounts.push({ ...a, kindLabel: ACCOUNT_KIND_LABELS[a.kind], chain: a.chainId ? CHAINS[a.chainId] : null, recorded: lines, chainBalance: walletBalance(a, chains) });
+    }
+    const known = new Set(tr.accounts.filter((a) => a.address && !a.archivedAt).map((a) => `${a.chainId}|${a.chainId === 101 ? a.address : a.address.toLowerCase()}`));
+    const suggested = [];
+    for (const c of chains) {
+      for (const [kind, address, label] of [["multisig", c.multisigAddress, c.chainId === 101 ? "Squads vault" : "Safe"], ["operator_wallet", c.operator?.address, "Operator wallet"]]) {
+        if (!address || known.has(`${c.chainId}|${c.chainId === 101 ? address : address.toLowerCase()}`)) continue;
+        suggested.push({ name: `${label} ${CHAINS[c.chainId] || c.chain}`, kind, chainId: c.chainId, address, currency: c.asset });
+      }
+    }
+    const holdings = [];
+    const cm = w.s.taxRules.vpb.cryptoCostMethod;
+    for (const [asset, h] of Object.entries(tr.lots.holdings)) {
+      const m = await marketEur(asset, h.amount, latestRate);
+      const book = m.eur == null || !cm.lowerOfCostOrMarket ? round2(h.costEur) : round2(Math.min(h.costEur, m.eur));
+      holdings.push({ asset, amount: roundUsd(h.amount), costEur: round2(h.costEur), marketEur: m.eur, bookEur: book, writeDownEur: m.eur == null ? null : round2(Math.max(0, h.costEur - m.eur)), source: m.source });
+    }
+    const byYear = new Map();
+    for (const d of tr.lots.disposals) byYear.set(d.date.slice(0, 4), (byYear.get(d.date.slice(0, 4)) || 0) + d.gainEur);
+    const live = tr.movements.filter((m) => !m.deletedAt);
+    const warnings = [];
+    if (!tr.installed) warnings.push(TREASURY_NOT_INSTALLED);
+    for (const u of tr.lots.uncovered) warnings.push(`${roundUsd(u.amount)} ${u.asset} left on ${u.date} (${u.ref}) without a recorded cost: counted at its proceeds (no gain, no loss). Add an opening balance for that account to fix it.`);
+    const unlinked = live.filter((m) => m.kind === "bank_payment" && !m.costId);
+    if (unlinked.length) warnings.push(`${unlinked.length} bank payment(s) are not linked to a cost: they move cash but are not a cost in the books. Link each one, or add the cost on the Costs page.`);
+    const costs = (await listCosts(db())).filter((c) => !c.deletedAt).slice(0, 300).map((c) => ({ id: c.id, label: `${c.incurredOn} ${c.vendor} ${c.amount} ${c.currency}${c.recurring !== "none" ? ` (${c.recurring})` : ""}` }));
+    return res.status(200).json({
+      schemaVersion: "finance-treasury-v1",
+      generatedAt: new Date(nowMs()).toISOString(),
+      source: "dashboard-api",
+      installed: tr.installed,
+      migration: tr.installed ? null : TREASURY_NOT_INSTALLED,
+      today: w.today,
+      usdPerEur: latestRate,
+      accounts,
+      suggestedAccounts: suggested,
+      movements: live.slice(0, 500).map((m) => ({ ...m, kindLabel: MOVEMENT_KIND_LABELS[m.kind], fromAccount: names.get(m.fromAccountId) || null, toAccount: names.get(m.toAccountId) || null })),
+      realized: {
+        method: tr.method,
+        rule: { condition: cm.condition, source: cm.source, checkedOn: cm.checkedOn, confidence: cm.confidence },
+        totalEur: round2(tr.lots.disposals.reduce((s2, d) => s2 + d.gainEur, 0)),
+        byYear: [...byYear].sort().map(([year, eur]) => ({ year, gainEur: round2(eur) })),
+        byMonth: [...tr.byMonth].sort(([a], [b]) => (a < b ? 1 : -1)).slice(0, 24).map(([month, t]) => ({ month, ...treasuryMonthView(t, null), netUsd: undefined })),
+        disposals: tr.lots.disposals.slice(-200).reverse().map((d) => ({ date: d.date, asset: d.asset, amount: roundUsd(d.amount), kind: d.kind, ref: d.ref, proceedsEur: round2(d.proceedsEur), costEur: round2(d.costEur), gainEur: round2(d.gainEur), uncoveredAmount: roundUsd(d.uncoveredAmount) })),
+        revenueLotsRead: tr.revenueRead,
+      },
+      holdings,
+      offChain: w.offChain,
+      kinds: MOVEMENT_KINDS.map((key) => ({ key, label: MOVEMENT_KIND_LABELS[key] })),
+      accountKinds: ACCOUNT_KINDS.map((key) => ({ key, label: ACCOUNT_KIND_LABELS[key] })),
+      assets: TREASURY_ASSETS,
+      revenueLanes: VAT_LANES,
+      costs,
+      method: TREASURY_METHOD,
+      warnings,
+      canManage: dashboardPrincipalCan(principal, "finance.manage"),
+    });
+  }
+
+  async function createAccount(req, res, actor) {
+    const input = validateAccountInput(req.body);
+    try {
+      const created = await withTransaction(db(), async (client) => {
+        const row = await insertAccount(client, input, actor);
+        await writeAudit(client, { actor, action: "account.create", entityType: "finance_account", entityId: row.id, before: null, after: row });
+        return row;
+      });
+      invalidateTreasury();
+      return res.status(201).json({ ok: true, account: created });
+    } catch (error) {
+      throw treasuryWriteError(error);
+    }
+  }
+
+  async function patchAccount(req, res, actor, id) {
+    const input = validateAccountInput(req.body, { partial: true });
+    try {
+      const result = await withTransaction(db(), async (client) => {
+        const before = await getAccount(client, id, { forUpdate: true });
+        if (!before) throw new HttpError(404, "Account not found.");
+        const next = { ...before, ...input };
+        if ("archived" in input) next.archivedAt = input.archived ? before.archivedAt || new Date(nowMs()).toISOString() : null;
+        if (next.kind !== "bank" && next.ibanMasked) throw new FinanceInputError("iban is only for bank accounts.", "iban");
+        const after = await updateAccount(client, id, next, actor);
+        await writeAudit(client, { actor, action: "account.update", entityType: "finance_account", entityId: id, before, after });
+        return after;
+      });
+      invalidateTreasury();
+      return res.status(200).json({ ok: true, account: result });
+    } catch (error) {
+      throw treasuryWriteError(error);
+    }
+  }
+
+  async function createMovement(req, res, actor) {
+    const input = validateMovementInput(req.body, { nowMs: nowMs() });
+    const rows = await treasuryRows();
+    requireTreasury(rows);
+    checkMovementAccounts(input, new Map(rows.accounts.map((a) => [a.id, a])));
+    await checkCostLink(input);
+    await guardMovementMonth(input.occurredAt);
+    const priced = await priceMovement(input, actor);
+    try {
+      const created = await withTransaction(db(), async (client) => {
+        const row = await insertMovement(client, priced, actor);
+        await writeAudit(client, { actor, action: "movement.create", entityType: "finance_treasury_movement", entityId: row.id, before: null, after: row });
+        return row;
+      });
+      invalidateTreasury();
+      return res.status(201).json({ ok: true, movement: created });
+    } catch (error) {
+      throw treasuryWriteError(error);
+    }
+  }
+
+  /** A correction is a full replacement: the body is validated as a new movement. */
+  async function patchMovement(req, res, actor, id) {
+    const before = await getMovement(db(), id);
+    if (!before || before.deletedAt) throw new HttpError(404, "Movement not found.");
+    const input = validateMovementInput(req.body, { nowMs: nowMs() });
+    const rows = await treasuryRows();
+    checkMovementAccounts(input, new Map(rows.accounts.map((a) => [a.id, a])), { allowArchived: true });
+    await checkCostLink(input);
+    await guardMovementMonth(before.occurredAt);
+    await guardMovementMonth(input.occurredAt);
+    const priced = await priceMovement(input, actor);
+    try {
+      const result = await withTransaction(db(), async (client) => {
+        const locked = await getMovement(client, id, { forUpdate: true });
+        if (!locked || locked.deletedAt) throw new HttpError(404, "Movement not found.");
+        const after = await updateMovement(client, id, priced, actor);
+        await writeAudit(client, { actor, action: "movement.update", entityType: "finance_treasury_movement", entityId: id, before: locked, after });
+        return after;
+      });
+      invalidateTreasury();
+      return res.status(200).json({ ok: true, movement: result });
+    } catch (error) {
+      throw treasuryWriteError(error);
+    }
+  }
+
+  async function deleteMovement(req, res, actor, id) {
+    const before = await getMovement(db(), id);
+    if (!before || before.deletedAt) throw new HttpError(404, "Movement not found.");
+    await guardMovementMonth(before.occurredAt);
+    const result = await withTransaction(db(), async (client) => {
+      const locked = await getMovement(client, id, { forUpdate: true });
+      if (!locked || locked.deletedAt) throw new HttpError(404, "Movement not found.");
+      const after = await softDeleteMovement(client, id, actor);
+      await writeAudit(client, { actor, action: "movement.delete", entityType: "finance_treasury_movement", entityId: id, before: locked, after });
+      return after;
+    });
+    invalidateTreasury();
+    return res.status(200).json({ ok: true, movement: result });
+  }
+
+  async function getUnmatched(req, res, principal) {
+    const days = req.query?.days == null || req.query.days === "" ? 30 : Number(req.query.days);
+    if (!Number.isInteger(days) || days < 1 || days > 365) throw new FinanceInputError("days must be 1 to 365.", "days");
+    const rows = await treasuryRows();
+    const result = rows.installed
+      ? await (deps.unmatchedOutflows || unmatchedOutflows)({ accounts: rows.accounts, movements: rows.movements, sinceMs: nowMs() - days * 86_400_000, nowMs: nowMs() })
+      : { wallets: [], unmatched: [], note: TREASURY_NOT_INSTALLED };
+    return res.status(200).json({ schemaVersion: "finance-treasury-unmatched-v1", generatedAt: new Date(nowMs()).toISOString(), source: "dashboard-api", days, installed: rows.installed, ...result, canManage: dashboardPrincipalCan(principal, "finance.manage") });
+  }
+
+  async function getValuePreview(req, res) {
+    const q = req.query || {};
+    const asset = String(q.asset || "").toUpperCase();
+    if (!TREASURY_ASSETS.includes(asset)) throw new FinanceInputError(`asset must be one of: ${TREASURY_ASSETS.join(", ")}.`, "asset");
+    const amount = String(q.amount || "1");
+    if (!/^\d{1,20}(\.\d{1,18})?$/.test(amount)) throw new FinanceInputError("amount must be a number.", "amount");
+    const at = q.at ? String(q.at) : new Date(nowMs()).toISOString();
+    const parsed = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(at) ? `${at}T12:00:00Z` : at);
+    if (!Number.isFinite(parsed)) throw new FinanceInputError("at must be a date or date-time.", "at");
+    const v = await valueInEur({ asset, amount, at: new Date(Math.min(parsed, nowMs())).toISOString(), prices: prices(), fx: fx() });
+    return res.status(200).json({ ok: true, asset, amount, at, ...v });
+  }
+
+  // ---------------------------------------------------------------- tax
+
+  async function getTaxCalendar(req, res, principal) {
+    const w = await weeklyModel();
+    const { taxCal, tr } = w;
+    const cal = w.s.taxRules.calendar;
+    return res.status(200).json({
+      schemaVersion: "finance-tax-v1",
+      generatedAt: new Date(nowMs()).toISOString(),
+      source: "dashboard-api",
+      installed: tr.installed,
+      migration: tr.installed ? null : TREASURY_NOT_INSTALLED,
+      label: taxLabel(w.s.taxRules),
+      today: w.today,
+      upcomingDays: UPCOMING_DAYS,
+      next: taxCal.next,
+      upcoming: taxCal.upcoming,
+      obligations: taxCal.obligations,
+      held: taxCal.held,
+      reserved: { vpbEur: w.decision.reserves.reservedEur.vpbEur, vatEur: w.decision.reserves.reservedEur.vatEur, dividendTaxEur: w.decision.reserves.reservedEur.dividendTaxEur },
+      releasedByPaymentsEur: w.decision.reserves.releasedByPaymentsEur,
+      releaseRule: RESERVE_RELEASE_RULE,
+      firstPeriodOn: taxCal.firstPeriodOn,
+      rules: [cal.vatPeriod, cal.vpbProvisional, cal.vpbReturn, cal.firstPeriodOn, w.s.taxRules.filing].map((r) => ({ condition: r.condition, source: r.source, checkedOn: r.checkedOn, confidence: r.confidence })),
+      items: tr.taxItems.map((t) => ({ ...t, kindLabel: TAX_ITEM_KIND_LABELS[t.kind], typeLabel: TAX_TYPE_LABELS[t.taxType] })),
+      types: TAX_TYPES.map((key) => ({ key, label: TAX_TYPE_LABELS[key] })),
+      kinds: TAX_ITEM_KINDS.map((key) => ({ key, label: TAX_ITEM_KIND_LABELS[key] })),
+      accounts: tr.accounts.filter((a) => !a.archivedAt && (a.kind === "bank" || a.kind === "exchange")).map((a) => ({ id: a.id, name: a.name })),
+      distributions: w.records.filter((r) => r.status === "approved" || r.status === "paid").map((r) => ({ id: r.id, week: r.week, status: r.status, availableOn: r.availableOn, totalWithholdingEur: r.totalWithholdingEur })),
+      canManage: dashboardPrincipalCan(principal, "finance.manage"),
+    });
+  }
+
+  async function checkTaxLinks(item, rows) {
+    if (item.accountId) {
+      const a = rows.accounts.find((x) => x.id === item.accountId);
+      if (!a) throw new FinanceInputError("accountId: no such account.", "accountId");
+      if (a.kind !== "bank" && a.kind !== "exchange") throw new FinanceInputError("Tax is paid from (or refunded to) a bank or exchange account.", "accountId");
+    }
+    if (item.distributionId) {
+      const d = await getDistribution(db(), item.distributionId);
+      if (!d) throw new FinanceInputError("distributionId: no such distribution.", "distributionId");
+      if (d.week !== item.period) throw new FinanceInputError(`That distribution is for ${d.week}; use that week as the period.`, "period");
+    }
+  }
+
+  async function createTaxItem(req, res, actor) {
+    const input = validateTaxItemInput(req.body, { today: todayIso(nowMs()) });
+    checkMergedTaxItem(input);
+    const rows = await treasuryRows();
+    requireTreasury(rows);
+    await checkTaxLinks(input, rows);
+    try {
+      const created = await withTransaction(db(), async (client) => {
+        const row = await insertTaxItem(client, input, actor);
+        await writeAudit(client, { actor, action: "tax_item.create", entityType: "finance_tax_item", entityId: row.id, before: null, after: row });
+        return row;
+      });
+      invalidateTreasury();
+      return res.status(201).json({ ok: true, item: created });
+    } catch (error) {
+      throw treasuryWriteError(error);
+    }
+  }
+
+  async function patchTaxItem(req, res, actor, id) {
+    const input = validateTaxItemInput(req.body, { partial: true, today: todayIso(nowMs()) });
+    const rows = await treasuryRows();
+    const result = await withTransaction(db(), async (client) => {
+      const before = await getTaxItem(client, id, { forUpdate: true });
+      if (!before || before.deletedAt) throw new HttpError(404, "Tax item not found.");
+      const next = { ...before, ...input };
+      checkMergedTaxItem(next);
+      await checkTaxLinks(next, rows);
+      const after = await updateTaxItem(client, id, next, actor);
+      await writeAudit(client, { actor, action: "tax_item.update", entityType: "finance_tax_item", entityId: id, before, after });
+      return after;
+    });
+    invalidateTreasury();
+    return res.status(200).json({ ok: true, item: result });
+  }
+
+  async function deleteTaxItem(req, res, actor, id) {
+    const result = await withTransaction(db(), async (client) => {
+      const before = await getTaxItem(client, id, { forUpdate: true });
+      if (!before || before.deletedAt) throw new HttpError(404, "Tax item not found.");
+      const after = await softDeleteTaxItem(client, id, actor);
+      await writeAudit(client, { actor, action: "tax_item.delete", entityType: "finance_tax_item", entityId: id, before, after });
+      return after;
+    });
+    invalidateTreasury();
+    return res.status(200).json({ ok: true, item: result });
+  }
+
   // ---------------------------------------------------------------- exports
 
   async function closeSummaryRows(from, to) {
@@ -1115,7 +1625,29 @@ export function createFinanceAccountingHandler(deps = {}) {
         { key: "usdPerEur", label: "usd_per_eur" }, { key: "fxSource", label: "fx_source" }, { key: "note", label: "note" },
       ], rows);
     }
-    return res.status(404).json({ ok: false, error: "Unknown export. Use revenue-events, costs, close-summaries or payouts." });
+    if (kind === "treasury-movements") {
+      const tr = await treasury();
+      const names = new Map(tr.accounts.map((x) => [x.id, x.name]));
+      const gains = new Map();
+      for (const d of tr.lots.disposals) {
+        const id = /^movement (\d+)/.exec(d.ref || "")?.[1];
+        if (id) gains.set(id, (gains.get(id) || 0) + d.gainEur);
+      }
+      const rows = tr.movements.filter((m) => m.occurredAt.slice(0, 7) >= from && m.occurredAt.slice(0, 7) <= to).reverse().map((m) => ({
+        occurredAt: m.occurredAt, kind: m.kind, from: names.get(m.fromAccountId) || "", to: names.get(m.toAccountId) || "",
+        assetOut: m.out?.asset || "", amountOut: m.out?.amount || "", assetIn: m.in?.asset || "", amountIn: m.in?.amount || "",
+        valueEur: m.valueEur, valueSource: m.valueSource, feeAsset: m.fee?.asset || "", feeAmount: m.fee?.amount || "", feeEur: m.feeEur ?? "", feeSource: m.feeSource || "",
+        realizedGainEur: gains.has(m.id) ? round2(gains.get(m.id)) : "", costMethod: tr.method, costId: m.costId || "", revenueLane: m.revenueLane || "", txHash: m.txHash || "", reference: m.reference, note: m.note, createdBy: m.createdBy,
+      }));
+      return sendCsv(res, `mwz-treasury-movements-${suffix}.csv`, [
+        { key: "occurredAt", label: "occurred_at" }, { key: "kind", label: "kind" }, { key: "from", label: "from_account" }, { key: "to", label: "to_account" },
+        { key: "assetOut", label: "asset_out" }, { key: "amountOut", label: "amount_out" }, { key: "assetIn", label: "asset_in" }, { key: "amountIn", label: "amount_in" },
+        { key: "valueEur", label: "value_eur" }, { key: "valueSource", label: "value_source" }, { key: "feeAsset", label: "fee_asset" }, { key: "feeAmount", label: "fee_amount" },
+        { key: "feeEur", label: "fee_eur" }, { key: "feeSource", label: "fee_source" }, { key: "realizedGainEur", label: "realized_gain_eur" }, { key: "costMethod", label: "cost_method" },
+        { key: "costId", label: "cost_id" }, { key: "revenueLane", label: "revenue_lane" }, { key: "txHash", label: "tx_hash" }, { key: "reference", label: "reference" }, { key: "note", label: "note" }, { key: "createdBy", label: "created_by" },
+      ], rows);
+    }
+    return res.status(404).json({ ok: false, error: "Unknown export. Use revenue-events, costs, close-summaries, payouts or treasury-movements." });
   }
 
   // ---------------------------------------------------------------- router
@@ -1189,6 +1721,29 @@ export function createFinanceAccountingHandler(deps = {}) {
       }
       if (rel === "distributions/safe-batch") return read ? await getSafeBatch(req, res) : allow(["GET"]);
       if (rel === "distributions/squads-proposal") return read ? await getSquadsProposal(req, res) : allow(["GET"]);
+      if (rel === "treasury") return read ? await getTreasury(req, res, principal) : allow(["GET"]);
+      if (rel === "treasury/accounts") return method === "POST" ? await createAccount(req, res, actor) : allow(["POST"]);
+      if (parts[0] === "treasury" && parts[1] === "accounts" && parts.length === 3) {
+        if (!/^[1-9]\d{0,17}$/.test(parts[2])) return res.status(400).json({ ok: false, error: "Invalid account id." });
+        return method === "PATCH" ? await patchAccount(req, res, actor, parts[2]) : allow(["PATCH"]);
+      }
+      if (rel === "treasury/movements") return method === "POST" ? await createMovement(req, res, actor) : allow(["POST"]);
+      if (parts[0] === "treasury" && parts[1] === "movements" && parts.length === 3) {
+        if (!/^[1-9]\d{0,17}$/.test(parts[2])) return res.status(400).json({ ok: false, error: "Invalid movement id." });
+        if (method === "PATCH") return await patchMovement(req, res, actor, parts[2]);
+        if (method === "DELETE") return await deleteMovement(req, res, actor, parts[2]);
+        return allow(["PATCH", "DELETE"]);
+      }
+      if (rel === "treasury/unmatched") return read ? await getUnmatched(req, res, principal) : allow(["GET"]);
+      if (rel === "treasury/value") return read ? await getValuePreview(req, res) : allow(["GET"]);
+      if (rel === "tax") return read ? await getTaxCalendar(req, res, principal) : allow(["GET"]);
+      if (rel === "tax/items") return method === "POST" ? await createTaxItem(req, res, actor) : allow(["POST"]);
+      if (parts[0] === "tax" && parts[1] === "items" && parts.length === 3) {
+        if (!/^[1-9]\d{0,17}$/.test(parts[2])) return res.status(400).json({ ok: false, error: "Invalid tax item id." });
+        if (method === "PATCH") return await patchTaxItem(req, res, actor, parts[2]);
+        if (method === "DELETE") return await deleteTaxItem(req, res, actor, parts[2]);
+        return allow(["PATCH", "DELETE"]);
+      }
       if (parts[0] === "exports" && parts.length === 2) return read ? await getExport(req, res, parts[1].replace(/\.csv$/, "")) : allow(["GET"]);
       return res.status(404).json({ ok: false, error: "Unknown finance accounting route." });
     } catch (error) {
