@@ -51,9 +51,8 @@
       "group": "Start here",
       "groupOrder": 10,
       "pageOrder": 50,
-      "status": "planned",
+      "status": "live",
       "source": "roadmap.md",
-      "statusNote": "This page covers announced work that is not part of the current live product.",
       "aliases": []
     },
     {

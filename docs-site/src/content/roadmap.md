@@ -3,28 +3,31 @@ title: Roadmap
 description: The current operating direction for the live product and the next expansion lanes.
 ---
 
-This roadmap reflects the live product as of August 12, 2026.
+This roadmap reflects the live product as of October 5, 2026.
 
-BNB Chain, Solana and Robinhood Chain are all part of the live operating picture. The roadmap from here is about expansion, polish, deeper cross chain consistency, and stronger post launch systems.
+## Live today
 
-## Current position
+MemeWarzone runs on BNB Chain, Solana and Robinhood Chain. On every chain you can:
 
-The product is live across the core launch, trading, discovery, and wallet management surfaces described in this manual.
+- prepare a coin in Prepare Mode and launch it on a bonding curve
+- trade coins before and after graduation
+- import a coin that launched elsewhere and trade it from the same coin page
+- back coins with UpVotes and climb the Battle Leagues
+- fight battles, join tournaments and compete in the Major War League
+- earn and claim league prizes, airdrops, squad and recruiter rewards, battle prizes and creator fees
+- post, reply, repost, quote and rocket on the Home feed, with usernames, profiles and notifications
 
-## Near term direction
+On Solana you can also launch on a Meteora curve with your own fee choice.
 
-The next work should strengthen:
+## Next up
 
-- cross chain consistency
-- profile and ranking depth
-- post graduation discovery and competition surfaces
-- richer media and campaign presentation
-- smoother creator and recruiter operations
-- stronger private wallet clarity around rewards and claims
+- the War Missions quest system for onboarding and growth
+- more chains: Tron, Base and Ethereum
+- a marketing growth engine with automated pushes, spaces, a podcast and recaps
 
 ## Long term direction
 
-The long term goal is a stronger multi chain campaign battlefield with one recognizable operating model across chains, even where route details differ.
+After the new chains, an internal bridge connects them into one interchain battlefield: shared discovery, profiles, rankings, reputation and one reward dashboard across chains. The year one target is 20% market share on each chain MemeWarzone runs on.
 
 ## Roadmap rule
 

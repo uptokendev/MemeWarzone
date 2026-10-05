@@ -66,59 +66,94 @@ export const roadmapMilestones: RoadmapMilestone[] = [
     status: 'completed'
   },
   {
-    id: 'war-missions',
-    month: 'Before May 12',
-    title: 'War Missions / Quest System',
-    shortText: 'Quest system deployment to drive onboarding, social growth, and recruiter applications before launch.',
-    status: 'incoming'
-  },
-  {
     id: 'prepare-mode-live',
-    month: 'May 12, 2026',
+    month: 'May 2026',
     title: 'Prepare Mode Live',
-    shortText: 'Creators, recruiters, squads, traders, and communities start preparing before full live deployment.',
-    status: 'incoming'
+    shortText: 'Creators, recruiters, squads, traders, and communities can prepare drafts and promotion pages before launch.',
+    status: 'completed'
   },
   {
     id: 'bnb-live-launch',
-    month: 'June 9, 2026',
+    month: 'June 2026',
     title: 'BNB Live Launch',
-    shortText: 'Full BNB battlefield opens with live campaign deployment, bonding-curve trading, UpVotes, Leagues, rewards, and claims.',
-    status: 'scheduled'
+    shortText: 'The BNB battlefield opened with live coin launches, bonding curve trading, UpVotes, Leagues, rewards, and claims.',
+    status: 'completed'
   },
   {
     id: 'solana-expansion',
-    month: 'End June 2026',
-    title: 'Solana Expansion',
-    shortText: 'MemeWarzone expands beyond BNB Chain into Solana and starts the multi-chain battlefield phase.',
-    status: 'scheduled'
+    month: '2026',
+    title: 'Solana Live',
+    shortText: 'MemeWarzone runs on Solana with launches, trading, Leagues, rewards, and claims, and the multi chain battlefield began.',
+    status: 'completed'
+  },
+  {
+    id: 'robinhood-chain',
+    month: 'September 2026',
+    title: 'Robinhood Chain Live',
+    shortText: 'Robinhood Chain joined BNB Chain and Solana: launches, trading, imports, battles, and claims, paid in ETH, with stock token pairing.',
+    status: 'completed'
+  },
+  {
+    id: 'warzone-battles',
+    month: 'September 2026',
+    title: 'Warzone & Battles',
+    shortText: 'Post graduation battles, vote battles, tournaments, the Major War League, and battle prize pools went live on every chain.',
+    status: 'completed'
+  },
+  {
+    id: 'imports',
+    month: 'September 2026',
+    title: 'Imported Coins',
+    shortText: 'Coins launched elsewhere can be imported, traded on their own DEX from the same coin page, and claimed by their owners.',
+    status: 'completed'
+  },
+  {
+    id: 'meteora-launch',
+    month: 'September 2026',
+    title: 'Meteora Launch Type',
+    shortText: 'A second Solana launch type on a Meteora curve, with your own fee choice.',
+    status: 'completed'
+  },
+  {
+    id: 'social-layer',
+    month: 'October 2026',
+    title: 'Social Layer & Redesign',
+    shortText: 'Home feed, posts with up to 4 images, rockets, reposts, quotes, replies, usernames, profiles, creator updates, notifications, and a simpler design everywhere.',
+    status: 'completed'
+  },
+  {
+    id: 'war-missions',
+    month: 'To be scheduled',
+    title: 'War Missions / Quest System',
+    shortText: 'A quest system to guide onboarding, social growth, and recruiter applications.',
+    status: 'planned'
   },
   {
     id: 'marketing-growth-engine',
-    month: 'June-July 2026',
+    month: 'Ongoing',
     title: 'Marketing Growth Engine',
-    shortText: 'Automated Telegram, Discord, and X pushes, Shill & Chill spaces, weekly podcast, and campaign recaps scale activity.',
+    shortText: 'Automated Telegram, Discord, and X pushes, Shill & Chill spaces, a weekly podcast, and campaign recaps to scale activity.',
     status: 'planned'
   },
   {
     id: 'tron-base-eth-expansion',
-    month: 'End August 2026',
+    month: 'To be scheduled',
     title: 'Tron, Base & Ethereum',
-    shortText: 'MemeWarzone expands to Tron, Base, and Ethereum to become a serious multi-chain launchpad.',
+    shortText: 'More chains after BNB Chain, Solana, and Robinhood Chain: Tron, Base, and Ethereum.',
     status: 'planned'
   },
   {
     id: 'internal-bridge',
-    month: 'Mid-October 2026',
+    month: 'After new chains',
     title: 'Internal Bridge',
-    shortText: 'The internal bridge target moves MemeWarzone from multi-chain presence toward one connected interchain battlefield.',
+    shortText: 'The internal bridge moves MemeWarzone from multi chain presence toward one connected interchain battlefield.',
     status: 'future'
   },
   {
     id: 'interchain-battlefield',
     month: 'After bridge',
     title: 'Full Interchain Battlefield',
-    shortText: 'Cross-chain discovery, profiles, rankings, reputation, chain choice, and unified reward dashboards expand the ecosystem.',
+    shortText: 'Cross chain discovery, profiles, rankings, reputation, chain choice, and unified reward dashboards expand the ecosystem.',
     status: 'future'
   },
   {
