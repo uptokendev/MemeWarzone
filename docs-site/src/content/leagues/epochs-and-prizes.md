@@ -1,45 +1,41 @@
 ---
 title: Epochs & Prizes
-description: How weekly and monthly League timing, prize pools, winner publication, and claims fit together.
+description: League timing, how the prize pool is split over the ranks, and how winners get paid.
 ---
 
-Leagues run on fixed windows so players know when activity counts and when results are expected.
+Leagues run in fixed windows called epochs, so you know when activity counts and when results come.
 
-That rhythm is what turns the platform into a recurring competition system instead of a loose stream of isolated launches.
+## Timing
 
-![League epochs and prizes board](/images/docs/league-epochs-prizes-board.png)
+| Epoch | Runs from | To |
+| --- | --- | --- |
+| Weekly | Monday 00:00 UTC | the next Monday 00:00 UTC |
+| Monthly | the 1st of the month 00:00 UTC | the next 1st, 00:00 UTC |
 
-## League timing
+The Leagues page shows the exact window in the header and counts down under **Ends in**. Standings move live while the epoch runs. When it ends, the result is fixed.
 
-| Window | Purpose |
-| --- | --- |
-| Weekly epoch | frequent competition and regular winner moments |
-| Monthly epoch | larger standings and stronger status moments |
+## Prize pool
 
-## Prize flow
+Each league's prize pool is funded through the platform fee system and split according to the league rules for that epoch.
 
-The prize pool is funded through the platform fee system and then allocated according to the active league rules for that epoch.
+The pool is shared over more than just first place:
 
-What matters to users is simple:
+- the higher the rank, the larger the share
+- at least the top 3 are paid in a weekly league, and at least the top 5 in a monthly league, when that many qualify
+- with more entrants, more ranks are paid; the standings say "Ranks 6 to N are paid too"
+- **Payout now** next to each rank shows what that place would get if the epoch ended now
 
-- the epoch closes
-- results are reviewed and published
-- winners become visible
-- eligible payouts move into the claim flow
+**Prize breakdown** on the page shows how the pool falls over the top 5. Monthly prizes can have a cap per player; the page warns you when it applies.
 
-## What users should expect on result pages
+## After the epoch closes
 
-A clean result page should show:
+1. the epoch closes
+2. results are checked and published
+3. winners show on the page and in the **Hall of fame**
+4. prizes move into the claim flow in your Command Center
 
-- which epoch closed
-- which category was used
-- who won
-- whether the result is final
-- where the winner should go next for claim status
+## When nobody qualifies
 
-## Rollover and no winner cases
+A category can close without a valid winner. The page then says so.
 
-Some categories can close without a valid winner.
-When that happens, the public page should make the outcome clear without exposing private review thresholds.
-
-Read: **[League Categories](/leagues/categories)** and **[Epochs & Claims](/rewards/epochs-and-claims)**.
+Read **[League Categories](/leagues/categories)** and **[Epochs & Claims](/rewards/epochs-and-claims)**.

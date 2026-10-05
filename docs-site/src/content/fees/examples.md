@@ -81,9 +81,9 @@ If a campaign receives 100 UpVotes:
 
 | Item | Amount |
 | --- | ---: |
-| UpVote price | 0.003 BNB |
+| UpVote price | $3, paid in the chain's native coin |
 | UpVotes | 100 |
-| Total UpVote spend | 0.300 BNB |
+| Total UpVote spend | $300 |
 
 UpVotes are paid visibility actions. They are not a safety label and do not guarantee graduation or price performance.
 

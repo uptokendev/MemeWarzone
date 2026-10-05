@@ -1,31 +1,17 @@
 ---
 title: Graduation for Creators
-description: What creators receive when a campaign graduates.
+description: What graduation means for a creator and what to do right after.
 ---
 
-Graduation is where creator economics settle.
+Graduation is when your coin's bonding curve completes and its liquidity moves into a DEX pool.
 
-## Threshold
+The graduation target, the graduation fee and what the creator receives follow the current fee model for your chain and launch. Read **[Graduation](/platform/graduation)** and **[Fee Model](/fees)**.
 
-- Graduation happens at 50 BNB raised.
-- A finalize action executes.
-- A 2.00% finalize fee is taken before liquidity is created.
+## What to do right after
 
-## Example at threshold
+- announce it through your official channels and as a post on your coin page
+- remind people that the coin page link stays the same
+- watch for impersonators and fake pool links
+- challenge other coins to battles to keep the momentum
 
-| Item | Amount |
-| --- | ---: |
-| Raised liquidity | 50 BNB |
-| Finalize fee, 2.00% | 1 BNB |
-| Remaining | 49 BNB |
-| Creator payout, 20% | 9.8 BNB |
-| LP liquidity, 80% | 39.2 BNB |
-
-## What to do immediately
-
-- announce graduation through official channels
-- pin the updated trading link
-- watch for impersonators
-- remind users to verify the official campaign page
-
-Read: **[Graduation](/platform/graduation)**.
+Read **[Live Battles](/arena/live-battles)**.

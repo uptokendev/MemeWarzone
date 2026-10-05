@@ -1,51 +1,30 @@
 ---
-title: Airdrops Console
-description: How current airdrop pools, countdowns, winner history, and claim status appear in Command Center.
+title: Airdrops
+description: The Airdrops tab: the current pool, the countdown to the next drop, whether you qualify this week, and past winners.
 ---
 
-Airdrops Console is the wallet view for active MemeWarzone airdrop cycles.
+The Airdrops tab shows the weekly airdrop for the chain you have selected. Its title follows the chain, for example **BNB Airdrops** or **SOL Airdrops**.
 
-Use it to check the current pool, the next draw window, recent winners, and the chain tied to each reward lane.
+## Top panel
 
-![Command Center airdrops](/images/docs/command-center-airdrops.png)
+- **Current prize pool**: what the next drop pays out, in the chain's own coin.
+- **Next drop in**: a countdown to the next drop. Drops happen on Mondays, UTC.
+- **You this epoch**: **Eligible** if your wallet is in this week's preview, or **Not in the preview yet**. Below it you see how many traders and creators qualify so far.
 
-## First things to check
+The preview is an estimate. The final list is made at the drop.
 
-Start with these signals:
+## Previous winners
 
-- current pool
-- next drop countdown
-- active chain
-- recent winners
-- claim status
+Past winners with their place and amount. Rows marked **Holder payout** are payouts to holders of a coin, not airdrop wins.
 
-Together they show what is running now and what has already settled.
+## Eligible this epoch (preview)
 
-## BNB and Solana
+When a preview is available, this card lists the qualifying wallets with an estimated share.
 
-MemeWarzone supports BNB and Solana as live product networks.
+## Claiming
 
-Airdrop entries remain chain specific. Always confirm the chain shown on the reward entry before you act or share a result.
+Airdrop wins are claimed in **Rewards and claims**, on the Airdrop Rewards row. You have 60 days. After that, unclaimed drops go back into the pot. See [Rewards and claims](/command-center/claims).
 
-## How to use the console
+A pool on screen does not mean your wallet will win. Eligibility depends on the rules of each weekly cycle.
 
-1. Connect the wallet tied to your MemeWarzone activity.
-2. Open Command Center.
-3. Select Airdrops.
-4. Check the current pool and countdown.
-5. Review recent winners and any reward status tied to your wallet.
-6. Move to Claims when a reward becomes claimable.
-
-## What the console does not mean
-
-A visible pool does not guarantee a reward for a specific wallet.
-Eligibility depends on the rules of that reward cycle.
-
-A winner entry is a record of the result. A claimable entry is the signal that your wallet can take action.
-
-## Good practice
-
-Use Airdrops Console for current wallet status.
-Use the rewards pages for the rules behind each cycle.
-
-Read: **[Warzone BNB Airdrops](/rewards/warzone-airdrops)** and **[Epochs & Claims](/rewards/epochs-and-claims)**.
+Read [Warzone BNB Airdrops](/rewards/warzone-airdrops) and [Epochs and claims](/rewards/epochs-and-claims).

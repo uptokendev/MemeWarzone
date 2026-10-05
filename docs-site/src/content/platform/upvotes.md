@@ -1,38 +1,37 @@
 ---
 title: UpVotes
-description: Paid discovery for campaigns, designed to make promotion visible instead of hidden.
+description: Paid visibility for coins, shown in the open instead of hidden.
 ---
 
-UpVotes are paid visibility actions.
+An UpVote is a paid push for a coin's visibility.
 
-They help campaigns compete for attention in the discovery surfaces that matter, such as featured views, trending lanes, and community attention boards.
+UpVotes help a coin rank higher on Coins, in Featured and Trending, and on the Warzone pages. You can sort Coins by UpVotes in the last 24 hours.
+
+## Where to UpVote
+
+Press **UpVote** on a coin card on Coins, on a Featured card, or on the coin page. The popup shows the price and asks your wallet to confirm the payment.
 
 ## What an UpVote means
 
-An UpVote means somebody spent money to push visibility.
-That is all.
+Somebody paid to push this coin's visibility. That is all.
 
-It does not mean the campaign is safe, approved, or guaranteed to perform well.
+It does not mean the coin is safe, approved or going to do well.
 
 ## Why UpVotes exist
 
-Most promotion systems are hidden.
-UpVotes make that pressure visible.
+Most promotion is hidden. UpVotes put that push in the open, so you can see when attention was bought.
 
-That gives creators, traders, and communities a way to see when attention is being pushed instead of guessing where it came from.
+## What not to read into an UpVote
 
-## What users should not assume
-
-Do not read an UpVote as:
+An UpVote is not:
 
 - a safety label
-- a quality guarantee
-- a platform endorsement
+- a quality mark
+- an endorsement by MemeWarzone
 - a promise of graduation
 
-## Where UpVotes matter most
+## UpVotes and leagues
 
-UpVotes affect discovery and community attention.
-They also matter in the Crowd Favorite competition lane.
+UpVotes from unique voters count in the **Crowd Favorite** league.
 
-Read: **[League Categories](/leagues/categories)**.
+Read **[League Categories](/leagues/categories)** and **[UpVotes for Traders](/traders/upvotes)**.

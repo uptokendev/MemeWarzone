@@ -1,38 +1,25 @@
 ---
-title: Squad Console
-description: How squad membership, contribution, standings, and reward context appear inside Command Center.
+title: Squad
+description: The Squad tab: your squad, its members, the pending pool and how squad rewards work.
 ---
 
-Squad Console shows how the connected wallet fits into squad activity.
+The Squad tab appears in Command Center only when your wallet is in a squad. You join a squad by signing up through a recruiter's link.
 
-Use it to confirm membership, contribution, and the reward context that belongs to your own account.
+## What the tab shows
 
-## What you can review here
+- **Tiles**: Squad status, Members, Eligible members and the Pending pool.
+- **Your squad**: the recruiter behind your squad, with **Squad page** and **Invite link**.
+- **Reward model**: squad rewards are based on weekly squad activity and your contribution. Fair-play rules apply before rewards are shown.
+- **Members**: the squad roster.
 
-- current squad membership
-- contribution context
-- estimated reward context where available
-- links to public squad standings
-- wallet specific details that do not belong on a public page
+**Public squads** at the top opens the public squad standings.
 
-## What this page does not do
+## Being a member is not enough
 
-This page does not change the reward rules.
+Membership alone does not earn a reward. Your own activity has to qualify, and the weekly rules and fair-play checks apply. The Eligible tile shows how many members qualify.
 
-A visible contribution record is a useful signal, but final reward outcomes still depend on the weekly program rules, exclusions, and published results.
+## Claiming
 
-## Public and private split
+Squad rewards are claimed in **Rewards and claims**, on the Squad Rewards row. See [Rewards and claims](/command-center/claims).
 
-Public squad standings stay on public leaderboards.
-Wallet specific reward detail stays in Command Center.
-
-## Best use
-
-Check this page when you want to answer four questions:
-
-- am I in a squad
-- is my squad active
-- is my contribution showing up
-- when should I review claims
-
-Read: **[Squad Pool](/rewards/squad-pool)** and **[Claims Console](/command-center/claims)**.
+Read [Squad Pool](/rewards/squad-pool).

@@ -1,48 +1,43 @@
 ---
 title: Arena Overview
-description: The post graduation battlefield for live battles, featured campaigns, events, and Major War League competition.
+description: Warzone, where coins fight in battles and tournaments and climb the Major War League.
 ---
 
-Arena is where graduated campaigns continue the fight for attention.
+Warzone is where coins fight after launch. It holds battles, tournaments and the Major War League.
 
-It brings live battles, upcoming matchups, featured campaigns, events, and Major War League standings into one battlefield after the launch phase.
+![The Warzone overview](/images/docs/warzone.png)
 
-![Arena overview](/images/docs/arena-overview.png)
+Open **Warzone** in the menu. It has four parts: **Overview**, **Battles**, **Tournaments** and **Major War League**.
 
-## Live battles
+## Overview
 
-Live Battles shows active matchups and the campaign information needed to follow them.
+The Overview shows, for the selected chain:
 
-Open a battle to inspect the campaigns involved and move into their public campaign views when you need trading or token details.
+- **Featured memecoins**, ranked by UpVotes in the last 24 hours
+- **Active battles**, with a link to all battles
+- **Tournaments** that are running
+- **Major War League** standings
+
+On a phone, quick links at the top take you to Battles, Leagues, Major War League and the War Trade Room.
+
+## Battles
+
+Two coins on the same chain fight for a set time. People vote and boost, and the winner's owner takes the prize pool. Read **[Live Battles](/arena/live-battles)**.
+
+## Tournaments
+
+Coins enter a bracket and fight round by round until one champion is left. Read **[Events and Tournaments](/arena/events)**.
 
 ## Major War League
 
-Major War League tracks the wider post graduation competition.
+Graduated coins earn points in ranked battles. The monthly table decides who reaches the quarterly finals. Read **[Major War League](/arena/major-war-league)**.
 
-Use the standings to see which campaigns are holding position and which campaigns are moving through the current competition period.
+## Featured coins and sponsorships
 
-![Major War League standings](/images/docs/arena-major-war-league.png)
+Warzone and Coins show Featured coins and paid ad spots next to the organic lists. A paid spot is visibility, not an endorsement. Check the coin and its chain before you trade. Read **[Sponsorship Application](/arena/sponsorships)**.
 
-## Events and tournaments
+## Between Warzone and the market
 
-Events group campaigns around scheduled competitions and special battlefield activity.
+Warzone is where coins compete. The coin page and the War Trade Room are where you trade.
 
-Check the event page for its timing, entry information, participating campaigns, and published rules.
-
-## Featured campaigns and sponsorships
-
-Arena can surface featured campaigns and sponsored placements alongside organic competition.
-
-Sponsored placement is visibility, not an endorsement or a guarantee of performance. Always verify the campaign and chain before trading.
-
-## War Pools
-
-War Pools have their own page because pool rules, custody, entry conditions, and settlement terms must be clear before a pool is activated.
-
-## Move between Arena and the market
-
-Arena is the competition layer.
-
-Token Details and the War Trade Room remain the operating surfaces for campaign state and market actions.
-
-Read **[Live Battles](/arena/live-battles)**, **[Major War League](/arena/major-war-league)**, and **[War Trade Room](/traders/war-trade-room)**.
+Read **[War Pools](/arena/war-pools)** for how battle prize pools work, and **[War Trade Room](/traders/war-trade-room)**.

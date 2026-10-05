@@ -1,76 +1,93 @@
 ---
 title: Campaign System
-description: The campaign path from creation to trading, graduation, post graduation markets, and rewards.
+description: The life of a coin on MemeWarzone, from draft to live trading, graduation, battles and rewards.
 ---
 
-A campaign is the core unit of MemeWarzone.
+Every coin on MemeWarzone has a coin page. It holds the token, the creator, the official links, the chart, trades, holders, posts and battle history in one public place.
 
-It combines the token, creator identity, official links, market state, trading activity, discovery signals, and competition history in one public record.
+![A coin page on a wide screen](/images/docs/coin-page.png)
 
-![Campaign lifecycle](/images/docs/campaign-lifecycle.png)
+![A coin page on a phone](/images/docs/coin-page-mobile.png)
 
 ## 1. Prepare
 
-The creator chooses BNB or Solana and prepares the campaign identity.
-
-A complete campaign normally includes:
+The creator picks a chain and prepares the coin:
 
 - name and ticker
-- logo and campaign media
-- description
+- image
+- short description and the Story
 - official website and social links
-- community plan
 - launch timing
 
-## 2. Choose Direct or Draft
+## 2. Direct or Draft
 
-**Direct** moves a ready campaign toward launch without a public staging period.
+**Direct** launches the coin right away.
 
-**Draft** creates the campaign first so the creator can prepare the public page, coordinate promotion, and choose when to push live.
+**Draft** creates a public draft page first, so the creator can gather a community and choose when to push live. Drafts show on the **Drafts** tab on Coins and as PRE-LAUNCH in search.
 
 Read **[Direct and Draft Launches](/creators/direct-and-draft)**.
 
-## 3. PRE trading
+## 3. Live on the bonding curve
 
-PRE is the launch market state.
+Once trading opens, the coin is **live**. Its card on Coins shows a LIVE chip and a Curve percentage.
 
-During PRE:
+While it is live:
 
-- traders can use the active buy and sell controls
-- the campaign advances through its launch market
+- traders buy and sell on the bonding curve
+- the coin page shows how far the curve is to graduation
 - trading fees follow the published fee routing
-- UpVotes and public activity can increase visibility
-- league and ranking signals can begin to move
+- UpVotes, posts and comments push visibility
+- league standings start to move
 
 Read **[Bonding Curve](/platform/bonding-curve)** and **[Fee Model](/fees)**.
 
 ## 4. Graduation
 
-Graduation ends the launch phase when the campaign reaches the graduation conditions shown by the product.
-
-The graduation transaction applies the published fee and routing rules, settles the launch phase, and moves the campaign toward its post graduation market state.
+When the bonding curve completes, the coin graduates. Its liquidity moves into a DEX pool and the coin card shows a DEX chip.
 
 Read **[Graduation](/platform/graduation)**.
 
-## 5. POST trading
+## 5. Graduated
 
-POST is the post graduation state on BNB and Solana.
+A graduated coin keeps the same coin page. The Buy/Sell panel now trades in the DEX pool, and the button names the DEX.
 
-The War Trade Room keeps the campaign visible after graduation and directs users to the market actions available for its chain.
+Graduated coins can:
 
-Read **[War Trade Room](/traders/war-trade-room)**.
+- challenge other coins to battles
+- enter tournaments
+- earn Major War League points
+- stay in the War Trade Room under **Graduated**
 
-## 6. Competition and rewards
+Read **[War Trade Room](/traders/war-trade-room)** and **[Arena Overview](/arena)**.
 
-A campaign can remain active across MemeWarzone after the launch phase through:
+## Imported coins
 
-- Arena battles
-- league standings
-- reward epochs
-- creator history
-- squad activity
-- community attention
+A coin launched somewhere else can be imported. It gets the same coin page and Buy/Sell panel, trades on its own DEX, and its owner can claim it. Read **[Import and claim a coin](/creators/imported-coins)**.
 
-The campaign page and Command Center provide the operating view for the wallet and campaign involved.
+## The coin page
 
-Read **[Arena Overview](/arena)** and **[Epochs & Claims](/rewards/epochs-and-claims)**.
+The coin page puts the chart first, then the metrics (market cap, price, holders and more) and the tabs:
+
+- **Posts**: updates from the coin's owner, auto updates such as launch, graduation and battle results, and comments
+- **Trades**: recent buys and sells
+- **Holders**: the biggest holders (launched coins)
+- **About**: details about the coin
+
+Next to the chart is the Buy/Sell panel, your position and the War Room chat. On a phone, **Buy** and **Sell** buttons sit at the bottom of the screen and open the trade panel as a sheet.
+
+Buttons on the page:
+
+- **Follow** the coin
+- **UpVote** it
+- **Challenge** it to a battle (graduated coins, when battles are on)
+- **Story** opens the coin's story
+- **Share card** makes an image of the coin to download or post on X
+- **Report** sits at the bottom of the page
+
+The owner can change links, tags, a pinned post and the Story from **Edit page**. Read **[Coin pages and creator updates](/social/creator-updates)**.
+
+## Rewards
+
+Coins stay part of MemeWarzone after launch through battles, league standings, reward epochs, the creator's profile and squad activity. Rewards are claimed from the Command Center.
+
+Read **[Epochs & Claims](/rewards/epochs-and-claims)**.

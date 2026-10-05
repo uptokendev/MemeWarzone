@@ -1,66 +1,60 @@
 ---
 title: Getting Started
-description: A simple first read guide for creators, traders, and recruiters entering MemeWarzone.
+description: First steps for creators, traders and recruiters on MemeWarzone.
 ---
 
-Use this page as your first briefing.
+Use this page as your first briefing. It shows where to start and which pages to read before you move money or launch a coin.
 
-It shows where to start, which path fits your role, and which pages matter before you move money or publish a campaign.
+## Step 1: Connect a wallet
 
-![Getting started role paths](/images/docs/getting-started-role-paths.png)
+Press **Connect Wallet** in the top right.
 
-## Step 1
+- For BNB Chain and Robinhood Chain, use an EVM wallet such as MetaMask.
+- For Solana, use a Solana wallet such as Phantom or Solflare.
 
-Read the system first.
+The first time you connect, MemeWarzone may ask you to pick a @username. You can press **Later** and set it in Settings any time. Read **[Profiles and usernames](/social/profiles)**.
 
-Start with **[How MemeWarzone Works](/how-memewarzone-works)** so you understand the full loop before you focus on one tool or one reward lane.
+## Step 2: Pick your chain
 
-## Step 2
+Use the chain buttons (BNB, Solana, Robinhood) on Coins, Leagues or the War Trade Room. Your choice is remembered, and Coins, Leagues, the Major War League, the War Trade Room and search all show that chain. Read **[Chain Readiness](/platform/chain-readiness)**.
 
-Choose your role.
+## Step 3: Look around
+
+- **Home** is the social feed. Read **[Home feed](/social/home-feed)**.
+- **Coins** lists every coin on your chain.
+- **Search** in the top bar finds coins, drafts and people. Press **/** to open it. Read **[Search](/platform/search)**.
+
+Read **[How MemeWarzone Works](/how-memewarzone-works)** for the full loop.
+
+## Step 4: Choose your path
 
 ### Creator
 
-Creators build and launch campaigns.
+You launch coins, or import a coin you already run, and post updates as that coin.
 
-Start here:
-
+- **[Create a Campaign](/creators/create-a-campaign)**
 - **[Direct and Draft Launches](/creators/direct-and-draft)**
 - **[Promotion and Push Live](/creators/promotion-and-push-live)**
-- **[Create a Campaign](/creators/create-a-campaign)**
+- **[Import and claim a coin](/creators/imported-coins)**
 
 ### Trader
 
-Traders follow campaigns, work the PRE market, and track reward opportunities.
-
-Start here:
+You find coins, trade them, UpVote them and back them in battles.
 
 - **[Trading Basics](/traders/trading-basics)**
 - **[Bonding Curve](/platform/bonding-curve)**
 - **[War Trade Room](/traders/war-trade-room)**
+- **[Live Battles](/arena/live-battles)**
 
 ### Recruiter
 
-Recruiters bring users into the platform and manage squad growth.
-
-Start here:
+You bring new people in through your referral link and build a squad.
 
 - **[Program Overview](/programs/recruiter-program)**
 - **[Attribution & Links](/programs/attribution-and-links)**
 - **[Squad Pool](/rewards/squad-pool)**
 
-## Step 3
-
-Confirm your network.
-
-BNB and Solana are both live.
-The wallet prompt, market path, and available controls can differ by chain, so verify the selected network before you sign any transaction.
-
-Read **[Chain Readiness](/platform/chain-readiness)** if you need a quick comparison.
-
-## Step 4
-
-Use only official domains.
+## Step 5: Use only official domains
 
 Main site:
 
@@ -74,4 +68,4 @@ Docs site:
 https://docs.memewar.zone
 ```
 
-If a link came through a random message, verify it before you connect a wallet.
+If a link came through a random message, check it before you connect a wallet. Read **[Avoid Scams](/security/avoid-scams)**.

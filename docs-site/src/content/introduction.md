@@ -1,57 +1,57 @@
 ---
 title: Introduction
-description: The fast path to understanding MemeWarzone across BNB and Solana.
+description: What MemeWarzone is, which chains it runs on, and where to start.
 ---
 
-MemeWarzone is a competitive on chain launch and trading platform built around campaigns, community attention, battles, and recurring rewards.
+MemeWarzone is a place to launch memecoins, trade them, follow the people behind them and make coins compete in battles and leagues.
 
-Creators can prepare and launch campaigns. Traders can discover campaigns early, trade through the active market route, back campaigns with UpVotes, and follow them into leagues and post graduation competition.
+![The MemeWarzone Home feed](/images/docs/home-feed.png)
 
-![MemeWarzone battlefield overview](/images/docs/introduction-battlefield-overview.png)
+Creators launch coins or import coins they already run. Traders find coins, trade them from the coin page, back them with UpVotes and follow them into battles. Everyone can post, reply and follow on the home feed.
 
-## The battlefield
+## What you find in the app
 
-MemeWarzone connects the full campaign life cycle in one place:
+The menu has these parts:
 
-- campaign creation and preparation
-- launch and early trading
-- discovery through UpVotes and public activity
-- graduation and post graduation markets
-- Arena battles and league competition
-- rewards, claims, squads, and recruiter programs
+| Menu item | What it is |
+| --- | --- |
+| Home | The social feed: posts, launches, battles and graduations |
+| Coins | Every coin on the selected chain, with Featured, Trending, New, Ending Soon, Graduated and Drafts |
+| Warzone | Battles, Tournaments and the Major War League |
+| Leagues | Weekly and monthly league standings and prizes |
+| War Trade Room | A trading table with a chart and a Buy/Sell panel in each row |
+| Profile | Your public profile, with a link to your Command Center |
+| Import memecoin | Bring an existing coin to MemeWarzone |
+| Launch a coin | Start the Create flow |
 
-A campaign does not stop being relevant after launch day. Its activity can continue through rankings, leagues, Arena surfaces, rewards, and community growth.
+Search sits in the top bar. Read **[Search](/platform/search)**.
 
-## BNB and Solana
+## Chains
 
-MemeWarzone operates on BNB and Solana.
+MemeWarzone runs on BNB Chain, Solana and Robinhood Chain.
 
-The chain is always shown in the product because addresses, wallets, transaction costs, and market routes differ between networks. The campaign experience remains familiar across both chains: find the campaign, verify the chain, check its current state, then use the actions available on that campaign.
+You pick a chain with the chain buttons. Coins, Leagues, the Major War League, the War Trade Room and search all follow that choice, so you see one chain at a time. Read **[Chain Readiness](/platform/chain-readiness)**.
 
 ## Who uses MemeWarzone
 
-| Role | Mission |
+| Role | What they do |
 | --- | --- |
-| Creators | build and launch campaigns, then lead the community |
-| Traders | discover campaigns, trade, vote, and compete |
-| Recruiters | bring new users into MemeWarzone and track attribution |
-| Squads | build coordinated communities and compete for rewards |
-| Communities | rally behind campaigns and keep attention moving |
+| Creators | launch or import coins, post updates, run their coin page |
+| Traders | find coins, trade, UpVote, vote and boost in battles |
+| Recruiters | bring new people in through a referral link |
+| Squads | groups around a recruiter that share a reward pool |
+| Communities | rally behind a coin on the feed, in chat and in battles |
 
-## Campaign states
+## Where a coin can be
 
-Campaign controls change as the campaign advances.
+**Draft** means the coin is being prepared. It has a public page but no trading.
 
-**DRAFT** means the campaign is being prepared.
+**Live** means the coin trades on its MemeWarzone bonding curve.
 
-**PRE** means launchpad trading is active.
+**Graduated** means the coin finished its bonding curve and now trades in a DEX pool. Graduated coins can fight in battles and the Major War League.
 
-**POST** means the campaign has graduated and uses its post graduation market route.
-
-Always read the state before submitting a transaction.
+Imported coins skip the first two: they already trade on their own DEX.
 
 ## Start here
 
-Read **[How MemeWarzone Works](/how-memewarzone-works)** for the full operating loop.
-
-Then use **[Getting Started](/getting-started)** to choose the path for creators, traders, recruiters, and squads.
+Read **[How MemeWarzone Works](/how-memewarzone-works)** for the full picture, then **[Getting Started](/getting-started)** for your first steps. New to the feed? Read **[Social overview](/social)**.

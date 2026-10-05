@@ -1,30 +1,27 @@
 ---
 title: UpVotes for Traders
-description: How traders use UpVotes to push visibility without confusing visibility with safety.
+description: How traders use UpVotes to push visibility, without mistaking visibility for safety.
 ---
 
-Traders can use UpVotes to push campaigns higher in the discovery fight.
-
-That can help a community gather momentum, but it should never be confused with proof of safety or proof of future price action.
+You can UpVote a coin to push it higher in discovery. It helps a community gather attention. It says nothing about safety or future price.
 
 ## Why a trader would UpVote
 
-A trader may use UpVotes to:
+- back a coin you believe in
+- push its visibility while it is trading
+- join a community push
+- help it in the **Crowd Favorite** league, which counts UpVotes from unique voters
 
-- back a campaign they believe in
-- push discovery while the market is active
-- support a community visibility move
-- help a campaign compete in attention driven lanes
+## How
+
+Press **UpVote** on the coin card, a Featured card or the coin page. The popup shows the price. Your wallet confirms the payment.
 
 ## What an UpVote does not do
 
-An UpVote does not certify the campaign.
-It does not remove market risk.
-It does not guarantee that other traders will follow.
+It does not certify the coin. It does not remove risk. It does not make other traders follow.
 
-## Best rule
+## Rule
 
-Use UpVotes as a visibility tool.
-Use your own judgment for risk.
+Use UpVotes for visibility. Use your own judgment for risk.
 
-Read: **[UpVotes](/platform/upvotes)** and **[League Categories](/leagues/categories)**.
+Read **[UpVotes](/platform/upvotes)** and **[League Categories](/leagues/categories)**.

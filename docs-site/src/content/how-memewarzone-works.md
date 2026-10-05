@@ -1,54 +1,53 @@
 ---
 title: How MemeWarzone Works
-description: The full ecosystem loop across campaigns, trading, UpVotes, Leagues, recruiters, squads, airdrops, fee routing, epochs, and claims.
+description: The full loop from launch to trading, graduation, battles, leagues, rewards and claims.
 ---
 
-MemeWarzone runs on one simple loop.
+MemeWarzone runs on one loop.
 
-A creator opens a campaign. Traders enter. Attention builds. Fees route into reward systems. Epochs close. Winners and eligible wallets claim. Then the next cycle starts.
+A creator launches a coin or imports one. Traders find it and trade. People post about it and UpVote it. The coin graduates, fights in battles and climbs the leagues. Epochs close, winners claim, and the next round starts.
 
-![MemeWarzone ecosystem loop](/images/docs/how-it-works-ecosystem-loop.png)
+## The loop
 
-## The operating loop
+1. A creator launches through Direct or Draft, or imports a coin that already trades elsewhere.
+2. The coin gets its own coin page and shows up on Coins, in search and on the home feed.
+3. Traders buy and sell from the coin page or the War Trade Room.
+4. UpVotes, posts, reposts and comments push visibility.
+5. League, recruiter, squad and airdrop programs track eligible activity.
+6. A launched coin graduates when its bonding curve completes and moves to a DEX pool.
+7. Graduated and imported coins can challenge each other to battles and earn Major War League points.
+8. Weekly and monthly epochs close.
+9. Rewards you earned show up in your Command Center, where you claim them.
 
-1. A creator opens through Direct or Draft.
-2. The campaign becomes visible and enters DRAFT or PRE state.
-3. Traders buy and sell while the campaign is live on the launchpad.
-4. UpVotes and community activity push visibility.
-5. League, recruiter, squad, and airdrop systems track eligible activity.
-6. A campaign can graduate and move into the POST market lane.
-7. Weekly or monthly epochs close.
-8. Eligible rewards become visible in the wallet tools and can be claimed.
+## The main places
 
-## The core surfaces
-
-| Surface | What it does |
+| Place | What it does |
 | --- | --- |
-| Launch flow | opens a new campaign |
-| Token Details | shows campaign state and trading context |
-| War Trade Room | brings DRAFT, PRE, and POST discovery into one board |
-| Arena | covers post graduation battles, events, and ladder context |
-| Command Center | handles private wallet actions and reward views |
+| Home | Social feed with posts, launches, battles and graduations |
+| Coins | Browse every coin on the selected chain |
+| Coin page | Chart, metrics, Buy/Sell panel, posts, trades, holders and the coin's Story |
+| War Trade Room | Trading table with an expandable chart and trade panel per coin |
+| Warzone | Battles, tournaments and the Major War League |
+| Leagues | Weekly and monthly standings with prize pools |
+| Profile | Your public profile: posts, coins, drafts, portfolio and badges |
+| Command Center | Your private tools: coins, battles, claims, airdrops, settings and notifications |
 
-## How rewards fit the system
+## The social side
 
-Rewards are one of the engines that keep the platform moving.
+Every wallet can have a profile, a display name and a unique @username. You can post, reply, repost, quote and rocket posts, follow people and coins, and get notifications. Coin owners post updates as their coin.
 
-Leagues create recurring competition.
-Recruiter and squad systems reward growth and contribution.
-Airdrops give active users another reward lane.
-Claims keep earned rewards visible inside the connected wallet flow.
+One wallet signature covers your social actions for 30 days. Read **[Social overview](/social)** and **[One signature for social actions](/social/signing)**.
 
-## BNB and Solana
+## How rewards fit
 
-BNB and Solana are both live MemeWarzone networks.
+Leagues give coins and traders a reason to keep competing every week and month. Battles pay the winning coin's owner from the battle prize pool. Recruiter and squad programs reward growth. Airdrops give active wallets another chance at a reward.
 
-The product model is shared across both chains, but wallet prompts and chain specific market controls can differ. Confirm the selected network before you create, trade, or claim.
+Nothing is paid out automatically. When a reward is ready, you claim it from your Command Center with the wallet that earned it.
 
-Use **[Chain Readiness](/platform/chain-readiness)** for the network overview and **[Solana Operations](/platform/solana-operations)** for the Solana flow.
+## Chains
+
+MemeWarzone runs on BNB Chain, Solana and Robinhood Chain. The loop is the same on each. Wallet prompts, the coin you pay with and the DEX a coin graduates to differ per chain. Read **[Chain Readiness](/platform/chain-readiness)** and **[Solana Operations](/platform/solana-operations)**.
 
 ## Where to go next
 
-Read **[Campaign System](/platform/campaign-lifecycle)** for the campaign states.
-Read **[War Trade Room](/traders/war-trade-room)** for discovery and market actions.
-Read **[Epochs & Claims](/rewards/epochs-and-claims)** for reward settlement.
+Read **[Campaign System](/platform/campaign-lifecycle)** for the life of a coin, **[War Trade Room](/traders/war-trade-room)** for trading, and **[Epochs & Claims](/rewards/epochs-and-claims)** for rewards.

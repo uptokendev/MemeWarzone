@@ -1,34 +1,36 @@
 ---
 title: Events and Tournaments
-description: How live events, scheduled events, tournament brackets, and archived results are presented in Arena.
+description: How tournaments work: entering, the bracket, voting and boosting, and results.
 ---
 
-Events and Tournaments collects the timed activity around Arena.
+A tournament is a bracket of coins. They fight round by round until one champion is left.
 
-This page is the calendar view for live events, upcoming windows, and tournament structures.
+Open **Warzone**, then **Tournaments**. The page lists running, upcoming and finished tournaments for the selected chain.
 
-## Live events
+## Enter a tournament
 
-Live events are the items that are active now.
+Only eligible graduated coins can enter. Connect the wallet that owns the coin, open the tournament and press **Enter tournament**. Pick your contender from your eligible coins.
 
-Check the event card for timing, participants, and the specific format being used.
+## The bracket
 
-## Upcoming events
+The bracket appears once the roster locks. Each matchup is a battle. A slot without an opponent advances automatically.
 
-Upcoming events show what is scheduled next.
+Use **View bracket** to follow the rounds, and **Watch live round** to see the battles that are running.
 
-Use this lane to see what is approaching, when it opens, and whether you need to watch for a bracket, battle, or featured campaign window.
+## Voting and boosting
 
-## Tournaments
+In a Vote Tournament:
 
-Tournament pages group campaigns into a structured competition.
+- each wallet has one free vote per matchup and round
+- a Tournament Boost costs $1 and adds 2 points
+- the score is free vote points plus boost points
 
-If a tournament is live, use the bracket view and the event timing together. If a tournament is only listed as planned, treat it as forward notice until the readiness banner changes.
+Some matchups go to a **Final Salvo**: short voting windows called shots. Only free votes count there, one per wallet per shot.
 
-## Archived results
+Connect a wallet on the tournament's chain to vote or boost.
 
-Archived results help players review what already closed.
+## Results
 
-They are useful for context, standings, and follow up, especially when you want to trace how an event or tournament unfolded over time.
+When a tournament ends, the results show the champion and how each round was decided. Finished tournaments stay listed so you can look back.
 
-Read: **[Arena Overview](/arena)** and **[Sponsorship Application](/arena/sponsorships)**.
+Read **[Live Battles](/arena/live-battles)** and **[Arena Overview](/arena)**.

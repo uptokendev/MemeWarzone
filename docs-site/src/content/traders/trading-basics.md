@@ -1,35 +1,47 @@
 ---
 title: Trading Basics
-description: The core checks traders should make before buying or selling a campaign.
+description: How to buy and sell from the coin page, and the checks to make first.
 ---
 
-Trading starts with discipline.
-
-Before you press buy or sell, confirm that you understand the chain, the campaign state, the page you are on, and the action the wallet is about to take.
+Before you press Buy or Sell, know the chain, the coin's state, the page you are on and what your wallet is about to do.
 
 ## First checks
 
-Before trading, verify:
+- the selected chain
+- the connected wallet, on the right network
+- the coin's state: live on the curve, graduated, or imported
+- the coin address and the official links
+- how much you are willing to lose
 
-- active chain
-- active wallet
-- campaign state
-- official links
-- the amount you are willing to risk
+## The Buy/Sell panel
 
-## What matters in PRE
+Every coin page has the same panel, for launched and imported coins:
 
-PRE is the live launchpad state.
+1. Pick **Buy** (green) or **Sell** (red).
+2. Type an amount. Some panels let you switch the unit you type in, and offer quick buttons such as **25%**, **50%** or **100%** of your balance.
+3. Check the quote: what you pay and about what you get.
+4. Check the slippage, where the panel shows it.
+5. Press the big button. On graduated and imported coins it names the market, for example **Buy on Meteora** or **Buy on Jupiter**.
+6. Read the wallet request and confirm.
 
-This is where price can move quickly and where a campaign can change character fast as attention builds or fades.
+On a phone, **Buy** and **Sell** sit at the bottom of the coin page. Each opens the panel as a sheet. If no wallet is connected, the bottom shows a connect button instead.
 
-## What matters after PRE
+The War Trade Room has a matching panel inside each expanded row.
 
-If the campaign has moved beyond PRE, make sure you understand which market lane you are in and which controls belong to that state.
+## Live coins
+
+A live coin trades on its bonding curve. Price can move fast, and one trade can move it a lot early on. Read **[Bonding Curve](/platform/bonding-curve)**.
+
+## Graduated and imported coins
+
+A graduated coin trades in its DEX pool. An imported coin trades on its own DEX: Jupiter on Solana, PancakeSwap on BNB Chain, Uniswap on Robinhood Chain. The panel looks the same; only the market underneath is different. Read **[Graduation](/platform/graduation)** and **[Import and claim a coin](/creators/imported-coins)**.
+
+## After a trade
+
+Your position shows next to the trade panel on the coin page. Your holdings also show in your portfolio on your profile and in the Command Center.
 
 ## Simple rule
 
-Do not trade because the page is loud.
-Trade only after the setup is clear.
+Do not trade because a page is loud. Trade when the setup is clear.
 
-Read: **[Bonding Curve](/platform/bonding-curve)**, **[Graduation](/platform/graduation)**, and **[Risk Disclosure](/security/risk-disclosure)**.
+Read **[Risk Disclosure](/security/risk-disclosure)**.

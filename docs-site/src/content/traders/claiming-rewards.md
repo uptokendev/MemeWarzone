@@ -12,14 +12,14 @@ This is a wallet side action. Treat it like a real financial action every time.
 Claim only from official MemeWarzone pages.
 Never trust copied claim links, random messages, or fake support prompts.
 
-## What users should expect
+## Where to claim
 
-When a reward is ready, the wallet flow should tell you:
+Open **Command Center > Rewards and claims**. It lists your rewards on the selected chain, each with an amount and a status. Claims are open on BNB Chain and Solana.
 
-- what program the row belongs to
-- which epoch or result window it belongs to
-- whether the reward is claimable now
-- what the next action is
+- Press the claim button on a row marked **Ready**. A **Failed** row shows **Retry Claim**.
+- With more than one ready row, **Claim all ready** claims them one after another. Your wallet asks you to confirm each one.
+- A failed or cancelled claim does not remove the reward. It stays on the row.
+- Battle wins are collected by the wallet that owns the winning coin.
 
 ## Before you confirm
 
@@ -32,4 +32,4 @@ Check:
 
 ## Best next pages
 
-Read **[Epochs & Claims](/rewards/epochs-and-claims)** and **[Claims Console](/command-center/claims)**.
+Read **[Epochs and claims](/rewards/epochs-and-claims)** and **[Rewards and claims](/command-center/claims)**.

@@ -1,21 +1,8 @@
 ---
-title: Warzone BNB Airdrops
-description: Legacy path for the Warzone BNB Airdrops reward system.
+title: Warzone Airdrops
+description: Where to read about the Warzone airdrops.
 ---
 
-Warzone BNB Airdrops now live in the Rewards & Incentives section.
+The Warzone airdrops are explained in the rewards section. Read **[Warzone BNB Airdrops](/rewards/warzone-airdrops)**.
 
-Read the current page: **[Warzone BNB Airdrops](/rewards/warzone-airdrops)**.
-
-## Quick summary
-
-Warzone BNB Airdrops are funded by unlinked recruiter and squad slices.
-
-The weekly airdrop pool is split:
-
-| Program | Share |
-| --- | ---: |
-| Trader airdrop | 50% |
-| Creator airdrop | 50% |
-
-Eligibility uses capped activity, weighted random selection, cooldowns, and anti-abuse checks.
+You can follow the current airdrop pool on the Weekly Airdrop card on Home and in Command Center, **Airdrops**.

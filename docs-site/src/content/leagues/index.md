@@ -1,38 +1,37 @@
 ---
 title: Leagues Overview
-description: How MemeWarzone Leagues turn campaign activity into weekly and monthly battles with recurring winners and prize pools.
+description: Weekly and monthly leagues that rank coins, traders and recruiters, with prize pools for each epoch.
 ---
 
-Leagues are the recurring competition engine inside MemeWarzone.
+Leagues are the recurring competition on MemeWarzone. Every week and every month, coins, traders and recruiters are ranked in six categories, and the top places share a prize pool.
 
-They turn campaign performance, trading activity, and community attention into scheduled battles that keep the platform moving beyond a single launch moment.
+![The Leagues page](/images/docs/leagues.png)
 
-![Leagues overview cycle](/images/docs/leagues-overview-cycle.png)
+You do not sign up. Coins are in automatically.
 
-## What Leagues do
+## The Leagues page
 
-Leagues create:
+Open **Leagues** in the menu. The page follows the selected chain.
 
-- weekly battles
-- monthly standings
-- public winner moments
-- repeat reasons to return
-- another path for campaigns to compete after launch day
+- **Weekly** or **Monthly**: pick the period
+- the season picker: look at earlier epochs
+- the category cards: switch between the six leagues
+- the header: the epoch window in UTC, the number of coins in, the prize pool and a Share button
+- **Standings**: rank, coin, the score and **Payout now** for each place
+- **Ends in**: a countdown to the end of the epoch
+- **Prize breakdown**: how the pool is split over the top places
+- **Current #1s** and the **Hall of fame**
 
-## Why they matter
-
-Without leagues, every campaign fights only for the first burst of attention.
-With leagues, the platform gets recurring reasons for creators, traders, and communities to keep pushing.
+Standings show the top 5 first. Press **Show top 25** to see more.
 
 ## What to read next
 
-Use the league pages in this order:
+1. **[League Categories](/leagues/categories)** for the six leagues
+2. **[Epochs & Prizes](/leagues/epochs-and-prizes)** for timing and prizes
+3. **[Epochs & Claims](/rewards/epochs-and-claims)** for claiming
 
-1. **[League Categories](/leagues/categories)** for the competition types
-2. **[Epochs & Prizes](/leagues/epochs-and-prizes)** for timing and winner flow
-3. **[Epochs & Claims](/rewards/epochs-and-claims)** for claim windows and reward follow through
+The **[Major War League](/arena/major-war-league)** is a separate monthly league for graduated coins, scored on battles.
 
-## One rule that matters
+## One rule
 
-League pages describe the competition lane.
-Claim and wallet actions still live in the reward manual and Command Center.
+The Leagues page shows the competition. Claiming happens in your Command Center.

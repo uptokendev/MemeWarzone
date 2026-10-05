@@ -1,54 +1,42 @@
 ---
-title: Command Center Overview
-description: Manage recruiter activity, squads, airdrops, claims, campaigns, and account settings from one wallet console.
+title: Command Center
+description: The private dashboard for your connected wallet, with one tab for each part of your account.
 ---
 
-Command Center is the private operating console for your connected wallet.
+Command Center is the private dashboard for your connected wallet. Your public profile is what other people see. Command Center is where you manage your own coins, rewards, profile and settings.
 
-Use it to manage the parts of MemeWarzone that belong to your account while public campaign and profile pages remain available for everyone to view.
+![Command Center with its tabs](/images/docs/command-center-overview.png)
 
-![Command Center overview](/images/docs/command-center-overview.png)
+Open it from **Profile** in the menu, or with **Open Command Center** on your own public profile.
 
-## Recruiter
+## Tabs
 
-The Recruiter console contains your referral link, attribution activity, roster information, and recruiter reward data.
+The tabs sit in one row under the header. On a phone the row scrolls sideways. Tap the ‹ and › arrows at the edges to reach the other tabs.
 
-Use it when you are building a network or checking whether activity is attached to your recruiter account.
+| Tab | What it is for |
+|---|---|
+| Overview | Wallet balance, portfolio value, top holdings and your league cabinet. See [Overview and portfolio](/command-center/overview). |
+| My coins | Coins you launched, drafts and imported coins. See [My coins](/command-center/coins). |
+| Battles | Challenges, offers and match status for your coins. Only shown when you own a coin that can battle. See [Live Battles](/arena/live-battles). |
+| Recruiter | Recruiter signup, or your code, links and referrals if you are a recruiter. See [Recruiter tab](/command-center/recruiter). |
+| Squad | Your squad, its members and how squad rewards work. Only shown when you are in a squad. See [Squad tab](/command-center/squad). |
+| Airdrops | The weekly airdrop pool, countdown and winners. See [Airdrops tab](/command-center/airdrops). |
+| Rewards and claims | Everything you can claim on the selected chain. See [Rewards and claims](/command-center/claims). |
+| Support and safety | Help search, Discord support and abuse reports. See [Support and safety](/command-center/support). |
+| Notifications | Your notification list. See [Notifications tab](/command-center/notifications). |
+| Edit profile | Picture, banner, name, @username, bio and links. See [Edit profile](/command-center/edit-profile). |
+| Settings | Wallet, challenge email, portfolio display, blocked accounts and notification settings. See [Settings](/command-center/settings). |
 
-## Squad
+## One chain at a time
 
-The Squad console shows your squad membership and the information attached to that squad.
+Balances, coins and rewards are listed for the chain you have selected. Switch chain to see the numbers on the other chain.
 
-Use it to follow your position inside the squad system and the reward activity connected to it.
-
-## Airdrops
-
-The Airdrops console shows active airdrop information, pool status, and winner information made available to your wallet.
-
-![Command Center airdrops](/images/docs/command-center-airdrops.png)
-
-## Claims
-
-The Claims console is where you check rewards that are pending, available, completed, or no longer claimable.
-
-Always connect the wallet that earned the reward before attempting a claim.
-
-## My Coins
-
-My Coins keeps your campaign activity together.
-
-Use it to find drafts, live campaigns, graduated campaigns, and the account actions attached to campaigns you created or control.
-
-![Command Center My Coins](/images/docs/command-center-my-coins.png)
-
-## Settings
-
-Settings contains account preferences, profile information, wallet related options, and notification controls exposed by the product.
+Your profile is the exception. One wallet has one profile, and it shows the same on every chain.
 
 ## Public profile or Command Center
 
-Use the public profile when you want other users to see your MemeWarzone identity.
+Use your public profile when you want others to see your coins, posts and standing.
 
-Use Command Center when you need to manage your own wallet, campaigns, rewards, or program activity.
+Use Command Center when you need to act: claim a reward, edit a draft, change your profile or file a report.
 
-Read **[Claims Console](/command-center/claims)** and **[My Coins Console](/command-center/coins)** next.
+Read [Rewards and claims](/command-center/claims) and [My coins](/command-center/coins) next.

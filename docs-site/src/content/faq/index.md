@@ -1,27 +1,20 @@
 ---
 title: FAQ
-description: Common questions and quick troubleshooting.
+description: Quick answers and troubleshooting.
 ---
 
-## Fees
-
-- Trading: 2.00% buy / 2.00% sell
-- LeagueTreasury: 0.75% of every buy and sell
-- Standard recruiter: 0.25% trade / 0.30% finalize
-- Squad Pool: 0.05% linked activity slice
-- UpVote: 0.003 BNB
-- Graduation: 2.00% finalize fee, then 80/20 split (LP/creator)
+The full FAQ is at **[FAQ](/faq)**.
 
 ## Claims
 
-- Weekly reward epochs close Monday 00:00 UTC
-- Standard reward claim deadline is 7 days after epoch end
-- Claim only through official MemeWarzone pages
+- Weekly league epochs close Monday 00:00 UTC.
+- Claim only through the official MemeWarzone site, in your Command Center.
+- Current fee and reward values are on the **[Fee Model](/fees)** and **[Epochs & Claims](/rewards/epochs-and-claims)** pages.
 
 ## Troubleshooting
 
-- Pending transaction: confirm wallet and network
-- Stats lag: indexer may lag during heavy activity
-- Missing campaign: verify network and official app link
+- Pending transaction: check your wallet and its network.
+- Numbers lag: market data can trail during heavy activity.
+- Coin missing: check the selected chain and that you are on the official site.
 
-Start here if lost: **[Getting Started](/getting-started)**.
+Start here if you are lost: **[Getting Started](/getting-started)**.

@@ -1,62 +1,27 @@
 ---
 title: War Room Chat
-description: How live campaign chat works during Prepare Mode and active MemeWarzone campaigns.
+description: The live chat on every coin page, how to join it, and what to check before acting on it.
 ---
 
-The War Room is MemeWarzone's campaign-level chat experience.
+The War Room is the live chat for one coin. Every coin page has one, next to the chart and the trade panel. Imported coins have one too.
 
-It is live for Prepare Mode and is designed to sit close to the campaign experience so users can follow community activity, launch preparation, safety reminders, and campaign discussion without relying only on scattered external chats.
+## Read and join
 
-## Simple version
+- Anyone can read the War Room, without a wallet.
+- To post, connect your wallet and press **Sign to join**. You sign once. After that, messages need no extra signatures.
+- Messages from the coin's creator carry a **Creator** label.
 
-The War Room is for live campaign conversation.
+The War Room uses the same signature as your other social actions. One signature covers posting, replies, comments and chat for 30 days. Read **[One signature for social actions](/social/signing)**.
 
-Use it to:
+## What to use it for
 
-- follow campaign discussion
-- ask basic questions
-- coordinate community attention
-- clarify official links
-- react to launch preparation
-- organize squad and recruiter activity
-- follow the battlefield mood in real time
+- follow what people say about the coin
+- ask questions
+- check the official links with the community
+- follow creator messages
+- rally for UpVotes, battles and league pushes
 
-Do **not** treat War Room activity as financial advice, proof of safety, or an endorsement by MemeWarzone.
-
-## During Prepare Mode
-
-During Prepare Mode, the War Room helps early users organize before full live deployment.
-
-It can be used for:
-
-- campaign briefings
-- creator updates
-- recruiter and squad coordination
-- questions from new traders
-- reminders about fees, claims, and reward rules
-- official-link clarification
-- safety education before users start chasing live activity
-
-Prepare Mode is about getting the battlefield ready. The War Room gives that preparation a live communication layer.
-
-Read: **[Prepare Mode](/prepare-mode)**.
-
-## During active campaigns
-
-When campaigns are live, the War Room becomes the campaign's battlefield chat.
-
-Users can follow:
-
-- live campaign sentiment
-- buy and sell reactions
-- UpVote pushes
-- graduation attempts
-- League category pushes
-- community coordination
-- creator updates
-- squad participation
-
-The War Room should make the campaign feel alive, but users should still verify everything before acting.
+Draft pages have comments instead of a live chat. Read **[Prepare Mode](/prepare-mode)**.
 
 ## What the War Room is not
 
@@ -64,58 +29,32 @@ The War Room is not:
 
 - financial advice
 - a safety label
-- an endorsement of a campaign
-- proof that a campaign will graduate
-- proof that a creator is trustworthy
-- a replacement for checking official campaign data
-- a place to trust random claim links
+- an endorsement of the coin
+- proof that a coin will graduate
+- proof that a creator can be trusted
+- a place to trust claim links
 
-A busy chat can still exist around a risky campaign.
+A busy chat can sit around a risky coin.
 
-## What users should still check
+## What to check before you act
 
-Before acting on anything discussed in chat, users should review:
+Before you act on anything said in chat, check on the coin page:
 
-- official campaign links
-- campaign details
-- creator or deployer information
-- bonding-curve state
-- graduation progress
-- token distribution where available
-- liquidity state where available
-- suspicious activity indicators
-- the exact wallet prompt before signing
+- the official links
+- the coin and creator details
+- the bonding curve progress or the DEX pool
+- the holders
+- the exact wallet request before you sign
 
-If something looks urgent, confusing, or too good to be true, slow down.
-
-## Signing and access
-
-The intended user experience is simple.
-
-Users should not need to sign every chat message. After wallet or session access is established, chat should feel like a normal live community experience.
-
-Users should still read wallet prompts carefully. Do not sign unknown messages from fake pages, fake claim links, or lookalike domains.
+If something feels urgent or too good to be true, slow down.
 
 ## Moderation
 
-War Room moderation protects the community layer from obvious abuse.
+Moderation removes obvious abuse: spam, phishing links, impersonation, fake support accounts, fake claim links and harassment. It cannot make every message safe. You are still responsible for what you click and sign.
 
-Moderation can target:
-
-- spam
-- phishing links
-- impersonation
-- malicious contract links
-- fake support accounts
-- fake claim links
-- coordinated scam messages
-- harassment or destructive behavior
-
-Moderation helps reduce obvious threats, but it cannot make every message safe. Users remain responsible for verifying what they click and sign.
+You can hide posts and comments and block accounts for yourself. Read **[Report, hide and block](/social/safety)**.
 
 ## Link safety
-
-Always verify official links before clicking anything shared in chat.
 
 Official site:
 
@@ -129,16 +68,16 @@ Official docs:
 https://docs.memewar.zone
 ```
 
-MemeWarzone support will not randomly DM users with urgent claim links, recovery offers, wallet verification requests, or secret airdrop pages.
+MemeWarzone support never sends you urgent claim links, recovery offers or wallet verification requests in a direct message.
 
-## Reporting suspicious activity
+## Report something
 
-If a user sees a fake link, impersonator, malicious contract, or suspicious campaign behavior in War Room:
+If you see a fake link, an impersonator or a malicious contract:
 
 1. Do not click the link.
-2. Do not sign any related wallet prompt.
-3. Capture the campaign URL, message, wallet, or screenshot if safe.
-4. Report it through official channels.
-5. Warn others without spreading the dangerous link further.
+2. Do not sign any related wallet request.
+3. Take a screenshot or copy the coin page link if it is safe to do so.
+4. Use **Report** at the bottom of the coin page.
+5. Warn others without sharing the dangerous link again.
 
-Read: **[Avoid Scams](/security/avoid-scams)** and **[Incident Response](/security/incident-response)**.
+Read **[Avoid Scams](/security/avoid-scams)** and **[Incident Response](/security/incident-response)**.

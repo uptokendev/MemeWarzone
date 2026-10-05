@@ -32,4 +32,4 @@ Use it to:
 The recruiter dashboard is not a public trophy wall.
 Public recognition belongs on the profile and leaderboard surfaces. The dashboard is for private operating work.
 
-Read: **[Recruiter Console](/command-center/recruiter)** and **[Claims Console](/command-center/claims)**.
+Read: **[Recruiter tab](/command-center/recruiter)** and **[Rewards and claims](/command-center/claims)**.

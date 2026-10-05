@@ -13,7 +13,7 @@ Choose a fixed weekly moment, such as Monday.
 
 Every week, execute the same order.
 
-## Step 1 — Ops normalization
+## Step 1: Ops normalization
 
 Bring the Ops Safe back to its target balance.
 
@@ -22,7 +22,7 @@ Target: **50 BNB**.
 - If Ops Safe is below 50 BNB, top it up.
 - If Ops Safe is above 50 BNB, sweep excess back to Owners Safe.
 
-## Step 2 — Treasury retention
+## Step 2: Treasury retention
 
 A fixed percentage stays in the Owners Safe.
 
@@ -35,7 +35,7 @@ This funds:
 - partnerships
 - infrastructure buffers
 
-## Step 3 — Founder payouts
+## Step 3: Founder payouts
 
 The remaining configured percentage is paid to predefined founder payout wallets according to the agreed split.
 

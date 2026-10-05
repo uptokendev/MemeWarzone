@@ -7,20 +7,16 @@ The reward dashboard is the private wallet view for reward status.
 
 Public pages show competition and winners. Private wallet pages show whether your own account is eligible, pending, claimable, claimed, or expired.
 
-![Rewards dashboard panels](/images/docs/rewards-dashboard-panels.png)
+## Where you see it
 
-## What a wallet should be able to see
+Your reward status lives in Command Center:
 
-A connected wallet should be able to inspect:
+- **Rewards and claims** shows one row per reward type (League, Airdrop, Squad, Recruiter) with the amount and a status: Ready, Pending, Failed, Expired or No rewards yet. Battle and tournament wins have their own rows. **Claim all ready** claims every ready row in turn, one wallet signature each.
+- **Airdrops** shows whether your wallet is in this week's preview, the countdown and past winners.
+- **Squad** shows your squad, its eligible members and the pending pool.
+- **Recruiter** shows your referrals, and recruiter rewards are claimed in Rewards and claims.
 
-- pending rewards
-- claimable rewards
-- claimed rewards
-- expired rewards
-- broad eligibility status
-- relevant reason messages
-- claim deadlines
-- squad and recruiter context where applicable
+See [Rewards and claims](/command-center/claims) for every status and claim window.
 
 ## Public and private split
 
@@ -41,4 +37,4 @@ The page should always make it clear:
 Users should claim only through the official MemeWarzone product pages.
 Do not trust claim prompts coming from random links or copied screenshots.
 
-Read: **[Command Center Overview](/command-center)** and **[Epochs & Claims](/rewards/epochs-and-claims)**.
+Read: **[Command Center Overview](/command-center)** and **[Epochs and claims](/rewards/epochs-and-claims)**.
