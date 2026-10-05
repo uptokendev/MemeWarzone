@@ -162,3 +162,15 @@ test("overview scope: accounting checks once for all chains, from every chain's 
   assert.deepEqual(seen[1], ["2026-08", "2026-09"], "a single-chain overview still closes months of every chain");
   assert.equal(one.modules.length, 8);
 });
+
+test("reconciliation: payout notes and info alerts stay off Status; a real recruiter warning still shows", () => {
+  const feeRouting = { wiring: [], alerts: [{ level: "info", message: "No router events on public coins are stored for chain 56 in this period. The indexer's scan of all 3 routers is current." }] };
+  const quiet = { warnings: [], types: [{ id: "recruiter", warnings: [], notes: ["0.00005 BNB held from test-coin trades before recording started (block 125566831). Not claimable by anyone; stays in the vault."] }] };
+  const ok = reconciliationChecks(BNB, { feeRouting, payouts: quiet });
+  assert.deepEqual(ok.map((c) => c.status), ["ok"]);
+  const loud = { warnings: [], types: [{ id: "recruiter", warnings: [{ level: "warning", message: "The recruiter vault holds 0.00005 BNB but no recruiter rewards are recorded for this chain, so nobody can claim it yet. The indexer's scan of router 0x8c81…ceaa has not moved for 4 hours." }], notes: [] }] };
+  const bad = reconciliationChecks(BNB, { feeRouting, payouts: loud });
+  assert.equal(bad.length, 1);
+  assert.equal(bad[0].status, "attention");
+  assert.match(bad[0].detail, /has not moved for 4 hours/);
+});

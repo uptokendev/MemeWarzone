@@ -32,6 +32,7 @@ import { EVM_FEE_ROUTING_CHAINS, evmFeeRoutingRegistry, evmGetterSelector } from
 import { destinationOwnership } from "./financeFeeRoutingOwnership.js";
 import { buildTotals, defaultPriceService, priceAssetFor } from "./financePrices.js";
 import { notPublicHiddenCampaignSql } from "./publicHiddenSql.js";
+import { preStartCoinsText, readRouterScan, routerScanVerdict } from "./financeRouterScan.js";
 
 export const FEE_ROUTING_SCHEMA = "finance-fee-routing-v1";
 const DEFAULT_DAYS = 30;
@@ -634,7 +635,19 @@ export async function buildFeeRouting({ network, days, db, env = process.env, fe
   if (!solana && inflowResult.extras?.routeEventCount === 0 && network.environment === "mainnet") {
     const funded = destinations.some((d) => ["weekly_league", "monthly_league", "recruiter_vault", "creator_vault_v2"].includes(d.id)
       && d.balances.some((b) => b.status === "ok" && b.asset === network.nativeSymbol && b.raw !== "0"));
-    alerts.push({ level: funded ? "warning" : "info", message: (funded ? "Trade-fee vaults hold money but the database has no router events for this chain, so routed fees are not being recorded (recruiter credit reads the same table). " : "") + `No treasury-router events are stored for chain ${network.chainId} in this period. The indexer scans the gen-6 TreasuryRouterV4 only when TREASURY_ROUTERS_EXTRA_${network.chainId} lists it (realtime-indexer/src/indexer.ts:1182-1188), so zero may mean "not indexed", not "no fees". Compare with the vault balances.` });
+    let alert = { level: funded ? "warning" : "info", message: (funded ? "Trade-fee vaults hold money but the database has no router events for this chain, so routed fees are not being recorded (recruiter credit reads the same table). " : "") + `No treasury-router events are stored for chain ${network.chainId} in this period. The indexer scans the gen-6 TreasuryRouterV4 only when TREASURY_ROUTERS_EXTRA_${network.chainId} lists it (realtime-indexer/src/indexer.ts:1182-1188), so zero may mean "not indexed", not "no fees". Compare with the vault balances.` };
+    if (funded) {
+      // Only claim "not recorded" when the indexer's router scan is actually missing or stuck.
+      const v = routerScanVerdict(await readRouterScan(db, network.chainId, { env }), { now: generatedAt });
+      if (v.status === "current" && v.preStartPublic.length === 0) {
+        alert = { level: "info", message: `No router events on public coins are stored for chain ${network.chainId} in this period. The indexer's scan of all ${v.routerCount} routers is current (cursors moved in the last 2 hours), so this means no public-coin trades with fees, not a missing scan. Vault balances include test-coin trades, which are left out${v.preStartHidden.length ? `; test coins that traded before recording started: ${preStartCoinsText(v.preStartHidden)}` : ""}.` };
+      } else if (v.status === "current") {
+        alert = { level: "warning", message: `Public coins traded on a router before the indexer started recording it, so their fee slices are not recorded: ${preStartCoinsText(v.preStartPublic)}.` };
+      } else if (v.problems.length > 0) {
+        alert = { level: "warning", message: `Trade-fee vaults hold money but the database has no router events for this chain. ${v.problems.join(" ")}` };
+      }
+    }
+    alerts.push(alert);
   }
 
   // A watch-only wallet holding money is worth seeing; it is not proof of a fee path.
