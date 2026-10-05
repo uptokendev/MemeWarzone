@@ -387,10 +387,16 @@ a { color: inherit; }
   50% { transform: translateX(-50%) scale(1.25); opacity: 1; }
 }
 
-.roadmap-node--completed .roadmap-beacon,
-.roadmap-node--completed .roadmap-status {
+.roadmap-node--completed .roadmap-beacon {
   background: rgba(var(--mb-nvg), 0.92);
   color: rgba(2,8,5,0.95);
+}
+
+/* Completed: green text on a light green tint (the dark text on the undefined background was unreadable). */
+.roadmap-node--completed .roadmap-status {
+  background: rgba(57,227,23,0.14);
+  border: 1px solid rgba(57,227,23,0.55);
+  color: rgb(110,240,90);
 }
 
 .roadmap-node--completed .roadmap-beacon {

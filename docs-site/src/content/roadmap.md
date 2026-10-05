@@ -16,6 +16,7 @@ MemeWarzone runs on BNB Chain, Solana and Robinhood Chain. On every chain you ca
 - fight battles, join tournaments and compete in the Major War League
 - earn and claim league prizes, airdrops, squad and recruiter rewards, battle prizes and creator fees
 - post, reply, repost, quote and rocket on the Home feed, with usernames, profiles and notifications
+- follow MemeWarzone's automated Telegram, Discord and X updates, Shill & Chill spaces, the weekly podcast and campaign recaps
 
 On Solana you can also launch on a Meteora curve with your own fee choice.
 
@@ -23,7 +24,6 @@ On Solana you can also launch on a Meteora curve with your own fee choice.
 
 - the War Missions quest system for onboarding and growth
 - more chains: Tron, Base and Ethereum
-- a marketing growth engine with automated pushes, spaces, a podcast and recaps
 
 ## Long term direction
 

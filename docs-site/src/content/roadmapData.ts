@@ -122,17 +122,17 @@ export const roadmapMilestones: RoadmapMilestone[] = [
     status: 'completed'
   },
   {
+    id: 'marketing-growth-engine',
+    month: '2026',
+    title: 'Marketing Growth Engine',
+    shortText: 'Automated Telegram, Discord, and X pushes, Shill & Chill spaces, a weekly podcast, and campaign recaps scale activity.',
+    status: 'completed'
+  },
+  {
     id: 'war-missions',
     month: 'To be scheduled',
     title: 'War Missions / Quest System',
     shortText: 'A quest system to guide onboarding, social growth, and recruiter applications.',
-    status: 'planned'
-  },
-  {
-    id: 'marketing-growth-engine',
-    month: 'Ongoing',
-    title: 'Marketing Growth Engine',
-    shortText: 'Automated Telegram, Discord, and X pushes, Shill & Chill spaces, a weekly podcast, and campaign recaps to scale activity.',
     status: 'planned'
   },
   {
