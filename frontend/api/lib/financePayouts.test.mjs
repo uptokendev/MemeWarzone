@@ -186,6 +186,8 @@ const EVM_READERS = {
   // ProtocolRevenueVault getters: every call answers $10,000 (18 decimals); enough for the shape.
   async readEvmCall() { return { hex: `0x${(10_000n * 10n ** 18n).toString(16)}`, rpc: "test" }; },
   async readEvmNative() { return { raw: "0", rpc: "test" }; },
+  // CreatorRewardsVaultV2 logs read from the chain: none, read to the head.
+  async readEvmCreatorV2Logs() { return { rows: [], complete: true, head: 1, scannedTo: 1 }; },
 };
 
 const BNB = { chainId: 56, chain: "bnb", environment: "mainnet", nativeSymbol: "BNB", nativeDecimals: 18 };
@@ -219,7 +221,9 @@ test("EVM build: monthly claims use the current vault (#505 resolver); short vau
   const creator = out.types.find((t) => t.id === "creator_fees");
   assert.equal(creator.owed.total.raw, "300");
   assert.equal(creator.coverage.status, "covered");
-  assert.equal(creator.paid.recorded, false);
+  // Claims are read (vault logs + getters): nothing claimed is "0 recorded", not "not recorded".
+  assert.equal(creator.paid.recorded, true);
+  assert.equal(creator.paid.allTime.raw, "0");
 
   // Operator fill is protocol revenue, not a user payout: out of the totals.
   assert.equal(out.types.find((t) => t.id === "operator_fill").excludedFromTotals, true);

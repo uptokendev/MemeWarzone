@@ -30,6 +30,8 @@ import {
   decodeRpcAccount,
   deriveCampaignFeeAccounts,
 } from "./solanaCreatorFeeMath.js";
+import { decodeCreatorFeeVault, readCreatorClaimHistory, reconcileCreatorFees } from "./solanaCreatorFeeClaims.js";
+import { CREATOR_VAULT_V2_DEPLOY_BLOCKS, V2_CLAIM_EVENTS, mergeV2Rows, readEvmCreatorVaultCoins, readV2LogsFromChain, summarizeV2Events } from "./evmCreatorFeeClaims.js";
 import { getRpcUrls } from "./getServerReadProvider.js";
 import { arenaPrizesType } from "./financePayoutsArena.js";
 import { SUPERSEDED_MONTHLY_LEAGUE_TREASURIES, monthlyLeagueTreasuryAddress } from "./evmMonthlyLeagueTreasury.js";
@@ -461,17 +463,43 @@ async function readSolanaCreatorClaimable(ctx, campaigns) {
   ]);
   let total = 0n;
   let withFees = 0;
+  const perCoin = [];
   for (let i = 0; i < derived.length; i += 50) {
     const chunk = derived.slice(i, i + 50);
     const result = await solanaJsonRpc(ctx, "getMultipleAccounts", [chunk.flatMap((d) => [d.feeEscrow, d.creatorFeeVault]), { encoding: "base64", commitment: "confirmed" }]);
     const values = result?.value || [];
-    chunk.forEach((_, j) => {
-      const computed = computeCreatorFeeClaimable({ escrow: decodeRpcAccount(values[j * 2]), vault: decodeRpcAccount(values[j * 2 + 1]), escrowRent, vaultRent, programId });
+    chunk.forEach((d, j) => {
+      const vault = decodeRpcAccount(values[j * 2 + 1]);
+      const computed = computeCreatorFeeClaimable({ escrow: decodeRpcAccount(values[j * 2]), vault, escrowRent, vaultRent, programId });
       total += computed.claimableLamports;
       if (computed.claimableLamports > 0n) withFees += 1;
+      // The vault's running total of everything the creator has claimed (claim_creator_fees adds to it).
+      const decoded = computed.vaultInitialized ? decodeCreatorFeeVault(vault.data) : null;
+      perCoin.push({
+        campaign: campaigns[i + j],
+        feeEscrow: d.feeEscrow,
+        creatorFeeVault: d.creatorFeeVault,
+        vaultInitialized: computed.vaultInitialized,
+        claimableRaw: computed.claimableLamports.toString(),
+        totalClaimedRaw: decoded ? decoded.totalClaimedLamports.toString() : "0",
+        creator: decoded ? decoded.creator : null,
+      });
     });
   }
-  return { status: "ok", raw: total.toString(), coins: campaigns.length, coinsWithFees: withFees };
+  return { status: "ok", raw: total.toString(), coins: campaigns.length, coinsWithFees: withFees, perCoin };
+}
+
+/** One vault's claim history from the chain (bounded, cached; solanaCreatorFeeClaims.js). */
+async function readSolanaCreatorClaimHistory(ctx, { vault, totalClaimedRaw }) {
+  return readCreatorClaimHistory({ rpc: (method, params) => solanaJsonRpc(ctx, method, params), vault, totalClaimedLamports: BigInt(totalClaimedRaw || "0") });
+}
+
+async function readEvmCreatorV2Logs(ctx, { vault }) {
+  return readV2LogsFromChain({ chainId: ctx.chainId, vault, urls: ctx.evmUrls, fetchImpl: ctx.fetchImpl });
+}
+
+async function readEvmCreatorCoins(ctx, { v1, v2, campaigns }) {
+  return readEvmCreatorVaultCoins({ readEvmCall: ctx.readers.readEvmCall, urls: ctx.evmUrls, fetchImpl: ctx.fetchImpl, v1, v2, campaigns });
 }
 
 // --------------------------------------------------------------------------
@@ -662,44 +690,310 @@ async function recruiterType(ctx) {
   return t;
 }
 
+// --------------------------------------------------------------------------
+// Creator fees: earned, paid (claims) and claimable, per coin.
+
+const CLAIM_LIST_MAX = 50;
+const MAX_HISTORY_READS = 25;
+
+function rawSum(values) {
+  return values.reduce((s, v) => s + rawBig(v), 0n);
+}
+
+async function claimRows(ctx, claims) {
+  const out = [];
+  for (const c of claims.slice(-CLAIM_LIST_MAX)) {
+    const amount = atomicToDecimal(c.amountRaw, ctx.decimals);
+    const usd = c.at ? await ctx.prices.valueEvents(ctx.asset, [{ hour: c.at, raw: c.amountRaw }], ctx.decimals) : await ctx.prices.valueAtSpot(ctx.asset, amount);
+    out.push({ at: c.at, amount, raw: c.amountRaw, amountUsd: usd.amountUsd ?? null, priceUsd: usd.priceUsd ?? null, priceBasis: usd.priceBasis ?? null, wallet: c.wallet || null, txHash: c.txHash || null, txUrl: explorerTxUrl(ctx.chainId, c.txHash) });
+  }
+  return out;
+}
+
+async function amountOf(ctx, raw) {
+  if (raw == null) return { amount: null, raw: null, amountUsd: null };
+  const amount = atomicToDecimal(String(raw), ctx.decimals);
+  const usd = await ctx.prices.valueAtSpot(ctx.asset, amount);
+  return { amount, raw: String(raw), amountUsd: usd.amountUsd ?? null };
+}
+
+/** One coin's row on the page: earned, paid (with each claim), claimable, and whether they add up. */
+async function creatorCoinRow(ctx, coin) {
+  const recon = reconcileCreatorFees({ earnedRaw: coin.earnedRaw, paidRaw: coin.paidRaw, claimableRaw: coin.claimableRaw });
+  return {
+    campaignAddress: coin.campaign,
+    tokenAddress: coin.token || null,
+    name: coin.name || null,
+    symbol: coin.symbol || null,
+    testCoin: Boolean(coin.testCoin),
+    creatorWallet: coin.creator || null,
+    earned: await amountOf(ctx, coin.earnedRaw),
+    paid: { ...(await amountOf(ctx, coin.paidRaw)), count: coin.claims.length },
+    claimable: await amountOf(ctx, coin.claimableRaw),
+    claims: await claimRows(ctx, coin.claims),
+    claimsComplete: coin.claimsComplete,
+    claimsSource: coin.claimsSource,
+    reconciliation: { ...recon, gap: recon.gapRaw == null ? null : (recon.gapRaw.startsWith("-") ? "-" : "") + atomicToDecimal(recon.gapRaw.replace(/^-/, ""), ctx.decimals) },
+    ...(coin.note ? { note: coin.note } : {}),
+  };
+}
+
+function testCoinTotals(coins) {
+  const sum = (key) => coins.reduce((s, c) => (c[key] == null ? s : s + rawBig(c[key])), 0n);
+  return { count: coins.length, earnedRaw: sum("earnedRaw"), paidRaw: sum("paidRaw"), claimableRaw: sum("claimableRaw"), claims: coins.reduce((s, c) => s + c.claims.length, 0) };
+}
+
+async function testCoinsBlock(ctx, coins) {
+  const t = testCoinTotals(coins);
+  return {
+    count: t.count,
+    earned: await amountOf(ctx, t.earnedRaw.toString()),
+    paid: { ...(await amountOf(ctx, t.paidRaw.toString())), count: t.claims },
+    claimable: await amountOf(ctx, t.claimableRaw.toString()),
+    note: "Hidden test coins. Left out of earned, paid and owed above.",
+  };
+}
+
+/** Paid accumulators from the public coins' claims; a claim without a list entry is valued at spot. */
+function paidAccumulators(ctx, coins) {
+  const all = acc();
+  const period = acc();
+  for (const coin of coins) {
+    for (const c of coin.claims) {
+      addTo(all, c.amountRaw, { at: c.at, tx: c.txHash });
+      if (c.at && c.at >= ctx.since) addTo(period, c.amountRaw, { at: c.at, tx: c.txHash });
+    }
+    if (coin.untrackedClaimRaw && rawBig(coin.untrackedClaimRaw) > 0n) addTo(all, coin.untrackedClaimRaw);
+  }
+  return { all, period };
+}
+
+async function solanaCreatorCoins(ctx, t) {
+  const campaigns = await safeQuery(ctx.db, `
+    select campaign_address, token_address, name, symbol, ${publicHiddenWhere("")} as test_coin
+      from public.campaigns
+     where chain_id = 101 and campaign_address is not null and coalesce(launch_type, 'launchpad') <> 'dbc'`, []);
+  if (campaigns.error) return { error: campaigns.error };
+  const earned = await safeQuery(ctx.db, `
+    select r.campaign_address, date_trunc('hour', r.occurred_at) as hour, not (${notPublicHiddenCampaignSql("r")}) as test_coin,
+           coalesce(sum(nullif(r.metadata->>'creatorLamports', '')::numeric), 0)::text as creator
+      from public.reward_events r
+     where r.chain_id = 101
+     group by 1, 2, 3`, []);
+  // Claims the indexer recorded (db/migrations/20261005_000002_creator_fee_claims.sql). Until that table
+  // exists or catches up, a coin's claims are read from the chain instead.
+  const recorded = await safeQuery(ctx.db, `
+    select campaign_address, creator_wallet, amount_raw::text as amount_raw, tx_signature, log_index, block_time
+      from public.creator_fee_claims where chain_id = 101`, []);
+  t.sources.push("db:campaigns", "db:reward_events (creator share)", recorded.error ? "rpc: creator fee vault signature history (cached; db:creator_fee_claims not readable)" : "db:creator_fee_claims (indexer), rpc fallback", "rpc: each coin's fee escrow and creator fee vault");
+
+  const rows = campaigns.rows || [];
+  let read;
+  try {
+    read = await ctx.readers.readSolanaCreatorClaimable(ctx, rows.map((r) => r.campaign_address));
+  } catch (error) {
+    read = { status: "unknown", error: String(error?.message || "read failed").slice(0, 200) };
+  }
+  const chain = new Map((read.perCoin || []).map((c) => [c.campaign, c]));
+  const earnedByCoin = new Map();
+  for (const r of earned.rows || []) earnedByCoin.set(r.campaign_address, (earnedByCoin.get(r.campaign_address) || 0n) + rawBig(r.creator));
+  const recordedByCoin = new Map();
+  for (const r of recorded.rows || []) {
+    if (!recordedByCoin.has(r.campaign_address)) recordedByCoin.set(r.campaign_address, []);
+    recordedByCoin.get(r.campaign_address).push({ at: toIso(r.block_time), amountRaw: String(r.amount_raw).split(".")[0], txHash: r.tx_signature, logIndex: Number(r.log_index || 0), wallet: r.creator_wallet });
+  }
+
+  const coins = [];
+  let historyReads = 0;
+  for (const r of rows) {
+    const onChain = chain.get(r.campaign_address);
+    const coin = {
+      campaign: r.campaign_address, token: r.token_address, name: r.name, symbol: r.symbol, testCoin: Boolean(r.test_coin),
+      creator: onChain?.creator || null,
+      earnedRaw: earned.error ? null : (earnedByCoin.get(r.campaign_address) || 0n).toString(),
+      claimableRaw: onChain ? onChain.claimableRaw : null,
+      paidRaw: onChain ? onChain.totalClaimedRaw : null,
+      claims: [], claimsComplete: onChain ? onChain.totalClaimedRaw === "0" : false, claimsSource: null, untrackedClaimRaw: "0",
+    };
+    if (onChain && onChain.totalClaimedRaw !== "0") {
+      const list = (recordedByCoin.get(r.campaign_address) || []).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+      if (rawSum(list.map((c) => c.amountRaw)) === rawBig(onChain.totalClaimedRaw)) {
+        coin.claims = list;
+        coin.claimsComplete = true;
+        coin.claimsSource = "db:creator_fee_claims";
+      } else if (!coin.testCoin && historyReads < MAX_HISTORY_READS) {
+        historyReads += 1;
+        try {
+          const history = await ctx.readers.readSolanaCreatorClaimHistory(ctx, { vault: onChain.creatorFeeVault, totalClaimedRaw: onChain.totalClaimedRaw });
+          coin.claims = history.claims.map((c) => ({ at: c.blockTime, amountRaw: c.amountLamports.toString(), txHash: c.signature, logIndex: c.logIndex, wallet: c.creator }));
+          coin.claimsComplete = history.complete;
+          coin.claimsSource = `rpc: vault ${onChain.creatorFeeVault} history${history.cached ? " (cached)" : ""}, read ${history.readAt}`;
+          if (!history.complete) coin.note = `The claim list adds up to ${atomicToDecimal(history.sumLamports.toString(), 9)} SOL of the ${atomicToDecimal(onChain.totalClaimedRaw, 9)} SOL the vault has paid. ${history.error || ""}`.trim();
+        } catch (error) {
+          coin.note = `Claim transactions could not be read: ${String(error?.message || "read failed").slice(0, 160)}. The total paid is the vault's own counter.`;
+          coin.claimsSource = "rpc (failed)";
+        }
+        const listed = rawSum(coin.claims.map((c) => c.amountRaw));
+        const counter = rawBig(onChain.totalClaimedRaw);
+        coin.untrackedClaimRaw = counter > listed ? (counter - listed).toString() : "0";
+      } else if (!coin.testCoin) {
+        coin.untrackedClaimRaw = onChain.totalClaimedRaw;
+        coin.note = "Too many coins to read claim transactions for in one go; the total paid is the vault's own counter.";
+      } else {
+        coin.claimsSource = "vault counter only (test coin)";
+      }
+    }
+    coins.push(coin);
+  }
+  // Earned all time / in the period: every recorded trade on a coin that is not a hidden test coin
+  // (the same rows as before per-coin reconciliation existed, DBC and unlisted campaigns included).
+  const earnedRows = (earned.rows || []).filter((r) => !r.test_coin);
+  return { coins, read, earnedRows, earnedError: earned.error, recordedError: recorded.error };
+}
+
+async function evmCreatorCoins(ctx, t) {
+  const v1 = ctx.destinations.get("creator_vault_v1")?.address || null;
+  const v2 = ctx.destinations.get("creator_vault_v2")?.address || null;
+  const campaigns = await safeQuery(ctx.db, `
+    select campaign_address, token_address, name, symbol, ${publicHiddenWhere("")} as test_coin
+      from public.campaigns
+     where chain_id = $1 and campaign_address is not null`, [ctx.chainId]);
+  if (campaigns.error) return { error: campaigns.error };
+  const events = await safeQuery(ctx.db, `
+    select contract_address, campaign_address, event_name, args, tx_hash, log_index, block_time
+      from public.evm_campaign_events
+     where chain_id = $1 and contract_kind = 'creator_vault' and event_name = any($2::text[])`, [ctx.chainId, V2_CLAIM_EVENTS]);
+  const cursor = v2 ? await safeQuery(ctx.db, `select last_indexed_block, updated_at from public.indexer_state where chain_id = $1 and cursor = $2`, [ctx.chainId, `gen5-aux:${v2.toLowerCase()}`]) : { rows: [], error: null };
+  t.sources.push("db:campaigns", "db:evm_campaign_events (CreatorRewardsVaultV2 claims and accruals, indexer)", "db:indexer_state (V2 scan cursor)", "rpc: CreatorRewardsVault lifetime/claimed/pending and CreatorRewardsVaultV2 creatorBalance per coin", "rpc: CreatorRewardsVaultV2 logs from its deploy block (cached 10 min)");
+  const rows = campaigns.rows || [];
+  let perCoin;
+  let readError = null;
+  try {
+    perCoin = await ctx.readers.readEvmCreatorCoins(ctx, { v1, v2, campaigns: rows.map((r) => r.campaign_address) });
+  } catch (error) {
+    readError = String(error?.message || "read failed").slice(0, 200);
+    perCoin = [];
+  }
+  const byCampaign = new Map(perCoin.map((c) => [c.campaign.toLowerCase(), c]));
+  // The indexer's rows, plus the vault's own logs read from its deploy block: the indexer can start
+  // scanning after the first trades (it did on Robinhood), and then its rows alone miss them.
+  let chainLogs = { rows: [], complete: false, error: "not read" };
+  if (v2) {
+    try {
+      chainLogs = await ctx.readers.readEvmCreatorV2Logs(ctx, { vault: v2 });
+    } catch (error) {
+      chainLogs = { rows: [], complete: false, error: String(error?.message || "log read failed").slice(0, 200) };
+    }
+  }
+  const v2Events = summarizeV2Events(mergeV2Rows(events.error ? [] : events.rows, chainLogs.rows), { vault: v2 });
+  const v2Indexed = !events.error && Boolean(cursor.rows?.[0]);
+  const v2Known = !v2 || chainLogs.complete || v2Indexed;
+  if (v2 && !chainLogs.complete) t.notes.push(`CreatorRewardsVaultV2 logs could not be read from the chain to the head (${chainLogs.error || "partial read"}); its claims come from the indexer${v2Indexed ? ` (scanned to block ${cursor.rows[0].last_indexed_block})` : ""} and can miss events from before the indexer started.`);
+  const coins = rows.map((r) => {
+    const key = r.campaign_address.toLowerCase();
+    const reads = byCampaign.get(key);
+    const ev = v2Events.get(key) || { claims: [], claimedRaw: 0n, earnedRaw: 0n, quoteClaims: 0 };
+    const v1 = reads?.v1 || { earnedRaw: "0", claimedRaw: "0", claimableRaw: "0" };
+    const known = Boolean(reads) && v2Known;
+    const notes = [];
+    if (rawBig(v1.claimedRaw) > 0n) notes.push(`${atomicToDecimal(v1.claimedRaw, 18)} ${ctx.asset} claimed from the older CreatorRewardsVault (its claims are not indexed, so they have no transaction link).`);
+    if (ev.quoteClaims > 0) notes.push(`${ev.quoteClaims} claim${ev.quoteClaims === 1 ? "" : "s"} paid in the coin's quote token, not counted here.`);
+    return {
+      campaign: r.campaign_address, token: r.token_address, name: r.name, symbol: r.symbol, testCoin: Boolean(r.test_coin), creator: ev.claims.at(-1)?.wallet || null,
+      earnedRaw: known ? (rawBig(v1.earnedRaw) + ev.earnedRaw).toString() : null,
+      paidRaw: known ? (rawBig(v1.claimedRaw) + ev.claimedRaw).toString() : null,
+      claimableRaw: reads ? (rawBig(v1.claimableRaw) + rawBig(reads.v2?.claimableRaw)).toString() : null,
+      claims: ev.claims,
+      claimsComplete: known && (!v2 || chainLogs.complete),
+      claimsSource: known ? (chainLogs.complete ? `rpc: CreatorRewardsVaultV2 logs from block ${CREATOR_VAULT_V2_DEPLOY_BLOCKS[ctx.chainId]} to ${chainLogs.head}, merged with db:evm_campaign_events` : "db:evm_campaign_events") : null,
+      untrackedClaimRaw: known ? v1.claimedRaw : "0",
+      ...(notes.length ? { note: notes.join(" ") } : {}),
+    };
+  });
+  const error = readError ? `Creator vault getters could not be read: ${readError}` : !v2Known ? `CreatorRewardsVaultV2 ${v2} claims are not known on this chain: the indexer has no scan cursor for it and its logs could not be read (${chainLogs.error || "partial read"}).` : null;
+  return { coins, error, v2Cursor: cursor.rows?.[0] || null };
+}
+
 async function creatorType(ctx) {
   const t = typeShell(ctx, "creator_fees");
-  t.paid = unrecordedPaid("Creator claims are made straight on chain and are not recorded in our database.");
+  if (!ctx.dbRowsAllowed) {
+    t.paid = unrecordedPaid("This API reads the test database; creator claims are read on the live API.");
+  }
+  const built = ctx.dbRowsAllowed ? (ctx.solana ? await solanaCreatorCoins(ctx, t) : await evmCreatorCoins(ctx, t)) : { coins: [] };
+  const coins = built.coins || [];
+  const publicCoins = coins.filter((c) => !c.testCoin);
+  const testCoins = coins.filter((c) => c.testCoin);
+  const paidKnown = ctx.dbRowsAllowed && !built.error && publicCoins.every((c) => c.paidRaw != null) && (!ctx.solana || built.read?.status === "ok");
+
+  if (ctx.dbRowsAllowed) {
+    if (paidKnown) {
+      const { all, period } = paidAccumulators(ctx, publicCoins);
+      const testPaid = testCoinTotals(testCoins).paidRaw;
+      t.paid = await paidBlock(period, all, ctx, {
+        note: ctx.solana
+          ? "Claims creators made on chain. The total is each coin's own running total on chain; the list shows every claim transaction."
+          : "Claims creators made on chain: CreatorRewardsVaultV2 claims from the indexer, older CreatorRewardsVault claims from its running totals.",
+        ...(testPaid > 0n ? { testCoinsLeftOut: atomicToDecimal(testPaid.toString(), ctx.decimals), testCoinsLeftOutCount: testCoins.filter((c) => rawBig(c.paidRaw) > 0n).length } : {}),
+      });
+    } else {
+      t.paid = unrecordedPaid(`Creator claims could not be read: ${built.error || built.read?.error || "a coin's fee accounts did not read"}.`);
+      if (built.error) t.warnings.push({ level: "warning", message: t.paid.note });
+    }
+  }
+
+  // Earned: Solana from recorded trades (reward_events, valued at the hour of each trade), EVM from the vaults.
+  const earnedAll = acc();
+  const earnedPeriod = acc();
   if (ctx.solana) {
-    t.sources.push("db:campaigns (public launchpad coins)", "rpc: each coin's fee escrow and creator fee vault", "db:reward_events (creator share)");
-    const campaigns = ctx.dbRowsAllowed ? await safeQuery(ctx.db, `
-      select campaign_address from public.campaigns
-       where chain_id = 101 and campaign_address is not null and coalesce(launch_type, 'launchpad') <> 'dbc'
-         and not (${publicHiddenWhere("")})`, []) : { rows: [] };
-    const earned = ctx.dbRowsAllowed ? await safeQuery(ctx.db, `
-      select date_trunc('hour', r.occurred_at) as hour, count(*)::int as n,
-             coalesce(sum(nullif(r.metadata->>'creatorLamports', '')::numeric), 0)::text as creator
-        from public.reward_events r
-       where r.chain_id = 101 and ${notPublicHiddenCampaignSql("r")}
-       group by 1`, []) : { rows: [] };
-    const earnedAll = acc();
-    const earnedPeriod = acc();
-    for (const row of earned.rows || []) {
+    for (const row of built.earnedRows || []) {
       if (rawBig(row.creator) === 0n) continue;
       addTo(earnedAll, row.creator, { at: row.hour });
       if (toIso(row.hour) >= ctx.since) addTo(earnedPeriod, row.creator, { at: row.hour });
     }
     t.earned = { period: await priced(earnedPeriod, ctx, { events: true }), allTime: await priced(earnedAll, ctx, { events: true }), note: "Creator share of trade fees on public coins, from recorded trades." };
-    let read;
-    try {
-      read = campaigns.error ? { status: "unknown", error: campaigns.error } : await ctx.readers.readSolanaCreatorClaimable(ctx, campaigns.rows.map((r) => r.campaign_address));
-    } catch (error) {
-      read = { status: "unknown", error: String(error?.message || "read failed").slice(0, 200) };
+  } else if (ctx.dbRowsAllowed && publicCoins.every((c) => c.earnedRaw != null) && !built.error) {
+    for (const coin of publicCoins) addTo(earnedAll, coin.earnedRaw);
+    t.earned = { period: unknownAmount("The vaults keep running totals, not dates, so there is no per-period figure."), allTime: await priced(earnedAll, ctx, { events: false }), note: "Creator share of trade fees on public coins: CreatorRewardsVault lifetime totals plus CreatorRewardsVaultV2 trade-fee accruals. Valued at the current price." };
+  }
+
+  if (ctx.dbRowsAllowed && !built.error) {
+    const sum = (list, key) => (list.every((c) => c[key] != null) ? list.reduce((s, c) => s + rawBig(c[key]), 0n).toString() : null);
+    const recon = reconcileCreatorFees({ earnedRaw: sum(publicCoins, "earnedRaw"), paidRaw: sum(publicCoins, "paidRaw"), claimableRaw: sum(publicCoins, "claimableRaw") });
+    const rowsOut = [];
+    for (const coin of publicCoins.filter((c) => [c.earnedRaw, c.paidRaw, c.claimableRaw].some((v) => v != null && v !== "0"))) rowsOut.push(await creatorCoinRow(ctx, coin));
+    t.creatorFees = {
+      coins: rowsOut,
+      testCoins: await testCoinsBlock(ctx, testCoins),
+      reconciliation: {
+        ...recon,
+        earned: recon.earnedRaw == null ? null : atomicToDecimal(recon.earnedRaw, ctx.decimals),
+        paid: recon.paidRaw == null ? null : atomicToDecimal(recon.paidRaw, ctx.decimals),
+        claimable: recon.claimableRaw == null ? null : atomicToDecimal(recon.claimableRaw, ctx.decimals),
+        gap: recon.gapRaw == null ? null : (recon.gapRaw.startsWith("-") ? "-" : "") + atomicToDecimal(recon.gapRaw.replace(/^-/, ""), ctx.decimals),
+        note: "Earned should equal paid plus still claimable. A gap means a trade or claim is missing from one of the records.",
+      },
+    };
+    if (recon.status === "earned_more" || recon.status === "accounted_more") {
+      t.warnings.push({ level: "warning", message: `Creator fees do not add up on public coins: earned ${t.creatorFees.reconciliation.earned} ${ctx.asset}, paid ${t.creatorFees.reconciliation.paid} + claimable ${t.creatorFees.reconciliation.claimable}, gap ${t.creatorFees.reconciliation.gap}.` });
     }
+  }
+
+  if (ctx.solana) {
+    const read = built.read || (ctx.dbRowsAllowed ? { status: "unknown", error: built.error || "not read" } : { status: "ok", raw: "0", coins: 0, coinsWithFees: 0 });
     const claimable = acc();
-    if (read.status === "ok") { claimable.raw = BigInt(read.raw); claimable.count = read.coinsWithFees; }
+    const testClaimable = acc();
+    if (read.status === "ok") {
+      for (const coin of publicCoins) if (coin.claimableRaw != null && coin.claimableRaw !== "0") addTo(claimable, coin.claimableRaw);
+      for (const coin of testCoins) if (coin.claimableRaw != null && coin.claimableRaw !== "0") addTo(testClaimable, coin.claimableRaw);
+    }
+    const publicRaw = claimable.raw.toString();
     t.owed = read.status === "ok"
-      ? await owedBlock(claimable, acc(), acc(), ctx, { note: `Still claimable by creators across ${read.coins} public coin${read.coins === 1 ? "" : "s"}, read from each coin's fee accounts. Test coins are left out.` })
+      ? await owedBlock(claimable, acc(), testClaimable, ctx, { note: `Still claimable by creators across ${publicCoins.length} public coin${publicCoins.length === 1 ? "" : "s"}, read from each coin's fee accounts. Test coins are shown apart.` })
       : unknownOwed(`Creator fee accounts could not be read: ${read.error}`);
-    const amount = read.status === "ok" ? atomicToDecimal(read.raw, 9) : null;
+    const amount = read.status === "ok" ? atomicToDecimal(publicRaw, 9) : null;
     const usd = amount != null ? await ctx.prices.valueAtSpot("SOL", amount) : {};
-    t.vaults = [{ id: "creator_fee_accounts", label: "Creator fee accounts (one per coin)", plain: VAULT_PLAIN.creator_fee_accounts, address: null, addressUrl: null, balance: read.status === "ok" ? { status: "ok", amount, raw: read.raw, ...usd, source: "rpc getMultipleAccounts", asOf: ctx.now } : { status: "unknown", amount: null, raw: null, amountUsd: null, error: read.error, source: "rpc", asOf: null } }];
-    t.coverage = await coverageBlock(ctx, read.status === "ok" ? read.raw : null, t.vaults, "Covered by design: what a creator can claim is what the coin's fee accounts hold above rent.");
+    t.vaults = [{ id: "creator_fee_accounts", label: "Creator fee accounts (one per coin)", plain: VAULT_PLAIN.creator_fee_accounts, address: null, addressUrl: null, balance: read.status === "ok" ? { status: "ok", amount, raw: publicRaw, ...usd, source: "rpc getMultipleAccounts", asOf: ctx.now } : { status: "unknown", amount: null, raw: null, amountUsd: null, error: read.error, source: "rpc", asOf: null } }];
+    t.coverage = await coverageBlock(ctx, read.status === "ok" ? publicRaw : null, t.vaults, "Covered by design: what a creator can claim is what the coin's fee accounts hold above rent.");
   } else {
     t.sources.push("rpc: CreatorRewardsVault (older coins) and CreatorRewardsVaultV2 (newer coins) balances");
     t.vaults = [vaultFromDestination(ctx, "creator_vault_v2"), vaultFromDestination(ctx, "creator_vault_v1")];
@@ -707,7 +1001,7 @@ async function creatorType(ctx) {
     if (reads.every((b) => b.status === "ok")) {
       const owed = acc();
       owed.raw = reads.reduce((s, b) => s + BigInt(b.raw), 0n);
-      t.owed = await owedBlock(owed, acc(), acc(), ctx, { note: "Everything in these two vaults belongs to creators (and, for newer coins, to holders or buybacks the creator chose), so what is owed equals what they hold. Balances are on chain and cannot be split by coin here, so test coins are included." });
+      t.owed = await owedBlock(owed, acc(), acc(), ctx, { note: "Everything in these two vaults belongs to creators (and, for newer coins, to holders or buybacks the creator chose), so what is owed equals what they hold. Balances are on chain and cannot be split by coin here, so test coins are included; the per-coin list below splits the creator part." });
       // A vault balance is not a count of claims.
       t.owed.claimable.count = null;
       t.owed.total.count = null;
@@ -821,7 +1115,7 @@ export async function buildPayouts({ network, days, db, env = process.env, fetch
     chainId: network.chainId, chain: network.chain,
     asset: network.nativeSymbol, decimals: network.nativeDecimals || (solana ? 9 : 18),
     prices: priceService,
-    readers: { readEvmCall, readEvmNative, readSolanaAccountData, readSolanaCreatorClaimable, ...(readers || {}) },
+    readers: { readEvmCall, readEvmNative, readSolanaAccountData, readSolanaCreatorClaimable, readSolanaCreatorClaimHistory, readEvmCreatorCoins, readEvmCreatorV2Logs, ...(readers || {}) },
     solanaUrls: solana ? solanaRpcUrls(env) : [],
     evmUrls: solana ? [] : getRpcUrls(network.chainId),
     feeRouting: routing,
