@@ -8,6 +8,7 @@ import { useCommandCenterData } from "@/components/command-center/CommandCenterC
 import { useWallet } from "@/contexts/WalletContext";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import { useProfileFollows } from "@/hooks/profile/useProfileFollows";
+import { FollowPeopleList } from "@/components/social/FollowPeopleList";
 import type { ProfileTab } from "@/types/profile";
 
 type CommandCenterSocialProps = {
@@ -125,52 +126,14 @@ export default function CommandCenterSocial({ mode }: CommandCenterSocialProps) 
 
       {mode === "followers" ? (
         <CommandCenterCard title="Followers" description={`${loadingFollows ? "Loading" : followersCount.toLocaleString()} wallets follow this profile.`}>
-          {loadingFollows ? (
-            <EmptyState>Loading followers...</EmptyState>
-          ) : followersList.length > 0 ? (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {followersList.map((item: any, index: number) => {
-                const rowWallet = resolveWallet(item, mode);
-                return (
-                  <Link
-                    key={`${rowWallet}-${index}`}
-                    to={rowWallet ? `/profile/${rowWallet}` : `/profile/${walletAddress}/command/followers`}
-                    className="rounded-[14px] border border-mw-border bg-mw-input p-4 transition hover:border-accent/50 hover:bg-card/35"
-                  >
-                    <div className="font-semibold text-sm text-mw-text">{shortenWallet(rowWallet) || "Unknown wallet"}</div>
-                    <div className="mt-2 break-all font-mono text-xs text-mw-muted">{rowWallet || "No wallet address returned"}</div>
-                  </Link>
-                );
-              })}
-            </div>
-          ) : (
-            <EmptyState>No followers to show yet.</EmptyState>
-          )}
+          {/* Founder 2026-10-05: people with picture, name and @username (the rows read a field the list
+              does not send, so every row showed "Unknown wallet"). */}
+          <FollowPeopleList wallet={walletAddress} mode="followers" emptyText="No followers to show yet." />
         </CommandCenterCard>
       ) : (
         <div className="space-y-4">
-          <CommandCenterCard title="Followed users" description={`${followingList.length.toLocaleString()} user profiles followed.`}>
-            {loadingFollows ? (
-              <EmptyState>Loading followed users...</EmptyState>
-            ) : followingList.length > 0 ? (
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {followingList.map((item: any, index: number) => {
-                  const rowWallet = resolveWallet(item, mode);
-                  return (
-                    <Link
-                      key={`${rowWallet}-${index}`}
-                      to={rowWallet ? `/profile/${rowWallet}` : `/profile/${walletAddress}/command/following`}
-                      className="rounded-[14px] border border-mw-border bg-mw-input p-4 transition hover:border-accent/50 hover:bg-card/35"
-                    >
-                      <div className="font-semibold text-sm text-mw-text">{shortenWallet(rowWallet) || "Unknown wallet"}</div>
-                      <div className="mt-2 break-all font-mono text-xs text-mw-muted">{rowWallet || "No wallet address returned"}</div>
-                    </Link>
-                  );
-                })}
-              </div>
-            ) : (
-              <EmptyState>No followed users yet.</EmptyState>
-            )}
+          <CommandCenterCard title="Followed users" description="People this wallet follows.">
+            <FollowPeopleList wallet={walletAddress} mode="following" emptyText="No followed users yet." />
           </CommandCenterCard>
 
           <CommandCenterCard title="Followed coins" description={`${followedCoinCards.length.toLocaleString()} live campaigns followed.`}>

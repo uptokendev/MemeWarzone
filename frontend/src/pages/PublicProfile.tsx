@@ -19,6 +19,7 @@ import {
 } from "@/lib/chainConfig";
 import { fetchUserProfile, fetchPublicPortfolio, fetchPublicPortfolioMetrics, type PortfolioHolding, type UserProfile } from "@/lib/profileApi";
 import { ProfileCoinsTab } from "@/components/profile/ProfileCoinsTab";
+import { FollowListDialog } from "@/components/social/FollowPeopleList";
 import { useDisplayPrefs } from "@/lib/displayPrefs";
 import { fetchOwnerCampaignDrafts, fetchPublicCampaignDrafts, type CampaignDraft } from "@/lib/draftApi";
 import { isSolanaAddress } from "@/lib/address";
@@ -227,6 +228,7 @@ export default function PublicProfile({
 
   const [portfolioMetrics, setPortfolioMetrics] = useState<PortfolioMetrics | null>(null);
   const [holdings, setHoldings] = useState<PortfolioHolding[] | null>(null);
+  const [followDialog, setFollowDialog] = useState<null | "followers" | "following">(null);
   const { prefs: displayPrefs } = useDisplayPrefs(profileWallet);
   const [loadingPortfolio, setLoadingPortfolio] = useState(true);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
@@ -959,8 +961,17 @@ export default function PublicProfile({
           <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-mw-muted">
             <span><b className="text-mw-text">{createdCoins.length}</b> coins created</span>
             <span><b className="text-mw-text">{visibleDrafts.length}</b> {visibleDrafts.length === 1 ? "draft" : "drafts"}</span>
-            <span><b className="text-mw-text">{followCounts ? formatCompactNumber(followCounts.followers) : "—"}</b> followers</span>
-            <span><b className="text-mw-text">{followCounts ? formatCompactNumber(followCounts.following) : "—"}</b> following</span>
+            {/* Founder 2026-10-05: tap to see the people, like on X. */}
+            <button type="button" onClick={() => setFollowDialog("followers")} className="mw-focus text-mw-muted hover:text-mw-text hover:underline" data-open-followers="true"><b className="text-mw-text">{followCounts ? formatCompactNumber(followCounts.followers) : "—"}</b> followers</button>
+            <button type="button" onClick={() => setFollowDialog("following")} className="mw-focus text-mw-muted hover:text-mw-text hover:underline" data-open-following="true"><b className="text-mw-text">{followCounts ? formatCompactNumber(followCounts.following) : "—"}</b> following</button>
+            <FollowListDialog
+              wallet={profileWallet}
+              title={nameText}
+              open={followDialog != null}
+              initialMode={followDialog || "followers"}
+              counts={followCounts}
+              onClose={() => setFollowDialog(null)}
+            />
             <span><b className="text-mw-text">{rank}</b> rank</span>
           </div>
         </div>
