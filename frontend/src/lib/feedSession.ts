@@ -83,3 +83,28 @@ export async function signFeedSession(input: {
     walletType: input.walletType,
   });
 }
+
+/** Any stored feed session for this wallet, whichever chain it was opened on (no prompt). */
+export function findStoredFeedSession(walletAddress: string): string {
+  const wallet = String(walletAddress || "").trim();
+  if (!wallet) return "";
+  const evm = wallet.startsWith("0x");
+  const matches = (key: string | null) => {
+    if (!key || !key.startsWith("mwz:feed-session:v1:")) return false;
+    const owner = key.split(":").slice(4).join(":");
+    return evm ? owner.toLowerCase() === wallet.toLowerCase() : owner === wallet;
+  };
+  for (const store of [() => localStorage, () => sessionStorage]) {
+    try {
+      const s = store();
+      for (let i = 0; i < s.length; i += 1) {
+        const key = s.key(i);
+        if (matches(key)) {
+          const token = s.getItem(String(key));
+          if (token) return token;
+        }
+      }
+    } catch {}
+  }
+  return "";
+}

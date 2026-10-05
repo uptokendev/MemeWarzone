@@ -4,7 +4,7 @@ import test from "node:test";
 process.env.DATABASE_URL ||= "postgres://user:pass@127.0.0.1:1/none";
 process.env.NOTIFICATION_UNSUBSCRIBE_SECRET = "test-secret";
 const { notifyWallet, signUnsubscribeToken, verifyUnsubscribeToken, unsubscribeUrl } = await import("./walletNotify.js");
-const { parseMentionHandles, notifySocialPost, notifyRepost, notifyRocket } = await import("./socialNotify.js");
+const { parseMentionHandles, notifySocialPost, notifyRepost, notifyRocket, notifyFollow } = await import("./socialNotify.js");
 const { scanRewardNotifications, scanCoinNotifications, buildDigestEmail, runNotificationDigest, tradeUsd, coinPath } = await import("./notificationProducers.js");
 
 const EVM_A = "0x" + "a".repeat(40);
@@ -92,6 +92,18 @@ test("social: quote tells the quoted author; repost tells the author once per re
   assert.equal(sent[1].dedupeKey, `social:repost:4:${EVM_A}`);
   const own = recordingPool(() => ({ rows: [{ author_address: EVM_A }] }));
   assert.equal((await notifyRepost(own, { postId: 4, actor: EVM_A, notify })).notified, 0, "reposting your own post");
+});
+
+test("notifyFollow: tells the followed wallet once per follower, links to the follower", async () => {
+  const sent = [];
+  const notify = async (_pool, input) => { sent.push(input); return { inserted: true }; };
+  const pool = recordingPool();
+  const r = await notifyFollow(pool, { follower: EVM_A, following: SOL, notify });
+  assert.equal(r.notified, 1);
+  assert.deepEqual([sent[0].wallet, sent[0].kind, sent[0].target], [SOL, "follow", `/profile/${EVM_A}`]);
+  assert.equal(sent[0].dedupeKey, `social:follow:${SOL}:${EVM_A}`);
+  assert.match(sent[0].title, /followed you$/);
+  assert.equal((await notifyFollow(pool, { follower: EVM_A, following: EVM_A, notify })).notified, 0, "following yourself");
 });
 
 test("notifyRocket: tells the author once per rocketer, never for your own post", async () => {

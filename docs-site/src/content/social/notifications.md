@@ -19,8 +19,9 @@ Activity on your posts and replies:
 - someone reposts your post
 - someone rockets your post
 - someone mentions your @username
+- someone follows you
 
-Reposts and rockets notify you once per person per post, so taking a rocket back and giving it again does not notify you twice. Your own actions on your own posts never notify you. Creator updates count as your posts too.
+Reposts and rockets notify you once per person per post, so taking a rocket back and giving it again does not notify you twice. Your own actions on your own posts never notify you. Creator updates count as your posts too. A follow notifies you once per person. You get it when the follower has signed in for social actions (the one signature every 30 days), so nobody can send a follow notification in someone else's name.
 
 You also get notified about battle challenges, rewards that are ready to claim and events on coins you created.
 
@@ -31,7 +32,7 @@ Open **Command Center > Settings** and find the **Notification settings** card. 
 | Category | What it covers |
 |---|---|
 | Battle challenges | Someone challenges your coin, declines or counters |
-| Replies, reposts, quotes, rockets and @mentions | Activity on your posts and when someone tags you |
+| Replies, reposts, quotes, rockets, follows and @mentions | Activity on your posts and when someone tags you |
 | Rewards ready to claim | League, airdrop, recruiter and battle payouts |
 | Your coin events | Drafts, launch, graduation and big moments for coins you created |
 

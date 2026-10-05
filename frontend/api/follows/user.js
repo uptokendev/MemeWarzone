@@ -1,5 +1,20 @@
 import { pool } from "../../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaChain, normalizeAddress, json, readJson } from "../../server/http.js";
+import { createFeedSessionAuth } from "../lib/feedSessionAuth.js";
+import { notifyFollow } from "../lib/socialNotify.js";
+
+const feedSession = createFeedSessionAuth({ pool });
+
+// "x followed you" only for a follower proven by their own feed session (follows themselves stay
+// unsigned). A missing or foreign session just means no notification; the follow still saves.
+async function verifiedFollower(req, follower) {
+  if (!/^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""))) return false;
+  const quiet = { status() { return this; }, json() { return this; } };
+  const session = await feedSession.requireSession(req, quiet).catch(() => null);
+  if (!session) return false;
+  const a = String(session.walletAddress || "");
+  return a.startsWith("0x") ? a.toLowerCase() === String(follower).toLowerCase() : a === follower;
+}
 
 // Social follows are wallet-to-wallet, not per-chain. Store EVM follows under chain_id=0 so
 // profile views on 56/97/unconnected wallets share the same graph. Solana keeps its chain id.
@@ -55,6 +70,7 @@ export default async function handler(req, res) {
            VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
           [chainId, follower, following]
         );
+        if (await verifiedFollower(req, follower)) void notifyFollow(pool, { follower, following });
         // Collapse legacy per-chain EVM duplicates into the canonical row.
         if (chainId === 0) {
           await pool.query(

@@ -7,7 +7,7 @@ import { cp } from "@/components/token/coinPageStyles";
 /** Same categories, channels and order as api/lib/notificationPrefs.js (the signed line must match). */
 const CATEGORIES = [
   { key: "battles", label: "Battle challenges", detail: "Someone challenges your coin, declines or counters." },
-  { key: "social", label: "Replies, reposts, quotes, rockets and @mentions", detail: "Activity on your posts and when someone tags you." },
+  { key: "social", label: "Replies, reposts, quotes, rockets, follows and @mentions", detail: "Activity on your posts, new followers and when someone tags you." },
   { key: "rewards", label: "Rewards ready to claim", detail: "League, airdrop, recruiter and battle payouts." },
   { key: "coin", label: "Your coin events", detail: "Drafts, launch, graduation and big moments for coins you created." },
 ] as const;

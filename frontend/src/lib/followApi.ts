@@ -1,5 +1,6 @@
 import { isAddress } from "ethers";
 import { apiFetch } from "@/lib/apiBase";
+import { findStoredFeedSession } from "@/lib/feedSession";
 import { isSolanaAddress } from "@/lib/address";
 import { isEvmChainId, isSolanaChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 
@@ -102,8 +103,11 @@ export async function followUser(
     followerAddress: follower,
     followingAddress: following,
   };
+  // The stored social signature, when there is one, lets the server send "x followed you" (never prompts).
+  const session = findStoredFeedSession(follower);
   await api<{ ok: true }>(`/api/follows/user`, {
     method: "POST",
+    headers: session ? { "content-type": "application/json", Authorization: `Bearer ${session}` } : { "content-type": "application/json" },
     body: JSON.stringify({ ...payload, action: "follow" }),
   });
 }

@@ -2,7 +2,7 @@ import { loadHandlesFor, missingHandlesTable, walletKey } from "./userHandles.js
 import { notifyWallet } from "./walletNotify.js";
 
 /**
- * Social notifications (CO-5): replies, quotes, reposts, rockets and @mentions. Category "social", so the
+ * Social notifications (CO-5): replies, quotes, reposts, rockets, follows and @mentions. Category "social", so the
  * bell shows them unless that toggle is off, and email goes out in the hourly digest (a viral post
  * never sends one email per reply). Fire-and-forget from the post handlers: never throws.
  */
@@ -162,6 +162,35 @@ export async function notifyRocket(pool, { postId, actor, notify = notifyWallet 
     return { notified: r?.inserted ? 1 : 0 };
   } catch (error) {
     console.warn("[socialNotify] rocket notification skipped", error?.message || error);
+    return { notified: 0 };
+  }
+}
+
+/**
+ * A new follower (founder, 2026-10-05). Follows are unsigned, so the caller only sends this when the
+ * follower is verified by their own feed session; otherwise anyone could fake "x followed you".
+ * Once per follower per wallet: unfollow + follow does not notify twice.
+ */
+export async function notifyFollow(pool, { follower, following, notify = notifyWallet } = {}) {
+  try {
+    const actorKey = walletKey(follower);
+    const target = walletKey(following);
+    if (!pool || !actorKey || !target || actorKey === target) return { notified: 0 };
+    const r = await notify(pool, {
+      wallet: target,
+      actorWallet: actorKey,
+      category: "social",
+      kind: "follow",
+      targetType: "profile",
+      targetId: actorKey,
+      dedupeKey: `social:follow:${target}:${actorKey}`,
+      title: `${await actorLabel(actorKey)} followed you`,
+      body: "",
+      target: `/profile/${actorKey}`,
+    });
+    return { notified: r?.inserted ? 1 : 0 };
+  } catch (error) {
+    console.warn("[socialNotify] follow notification skipped", error?.message || error);
     return { notified: 0 };
   }
 }

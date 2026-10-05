@@ -39,7 +39,7 @@ Each category has two switches: **Bell** for the notification bell and the Notif
 | Category | What it covers |
 |---|---|
 | Battle challenges | Someone challenges your coin, declines or counters. |
-| Replies, reposts, quotes, rockets and @mentions | Activity on your posts and when someone tags you. |
+| Replies, reposts, quotes, rockets, follows and @mentions | Activity on your posts and when someone tags you. |
 | Rewards ready to claim | League, airdrop, recruiter and battle payouts. |
 | Your coin events | Drafts, launch, graduation and big moments for coins you created. |
 

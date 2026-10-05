@@ -450,7 +450,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "notifications",
     title: "What notifications can I receive?",
-    body: "Battle challenges, replies, quotes, reposts, rockets and @mentions on your posts, rewards ready to claim, and events for coins you created such as drafts, launch and graduation. The bell shows the latest. View all opens Command Center > Notifications.",
+    body: "Battle challenges, replies, quotes, reposts, rockets and @mentions on your posts, new followers, rewards ready to claim, and events for coins you created such as drafts, launch and graduation. The bell shows the latest. View all opens Command Center > Notifications.",
     categories: ["community"],
     keywords: ["notifications", "alerts", "bell"],
   },
