@@ -27,6 +27,26 @@ const MAINNET_IDS = MODERATION_CHAINS.map((c) => c.chainId);
 export const MODERATION_TABS = Object.freeze(["airdrops", "leagues", "recruiters"]);
 
 export const EXPIRY_WARNING_DAYS = 7;
+
+// Test and internal recruiters (founder, 2026-10-05): our own squads and test
+// accounts. Each also signed up with an owner wallet (shared/ownerWallets.mjs),
+// which marks it on its own; the ids keep them marked if a wallet changes.
+// More without a deploy: MODERATION_TEST_RECRUITER_IDS (comma separated ids).
+export const TEST_RECRUITER_IDS = Object.freeze(["1", "16", "29", "107", "108", "114", "115", "124"]);
+
+export function testRecruiterIds(env = process.env) {
+  const extra = String(env?.MODERATION_TEST_RECRUITER_IDS || "").split(",").map((v) => v.trim()).filter((v) => /^\d+$/.test(v));
+  return new Set([...TEST_RECRUITER_IDS, ...extra]);
+}
+
+// Why a row counts as test or internal data. The page hides these rows unless
+// "Show test and internal" is on.
+export const TEST_DATA_REASONS = Object.freeze({
+  test_coin: "Prize from a hidden test coin",
+  internal_wallet: "Owner or internal wallet",
+  test_recruiter: "Test or internal recruiter",
+  voided: "Voided row",
+});
 export const REPEAT_WIN_THRESHOLD = 3;
 
 export const MODERATION_FLAGS = Object.freeze({
@@ -509,6 +529,7 @@ function buildLeagueRows(rows, ctx) {
       runReason: row.run_reason || null,
       txHash: row.pay_tx || null,
       txUrl: explorerTxUrl(chain?.chainId, row.pay_tx),
+      _recruiterId: payload.recruiterId != null ? String(payload.recruiterId) : null,
       claimedAt: toIso(row.claimed_at) || toIso(row.paid_at),
       deadline: toIso(row.expires_at),
       flags: [],
@@ -822,6 +843,36 @@ export function applyFlags({ airdrops, leagues, recruiters }, { internal, risk, 
   }
 }
 
+/**
+ * Marks test and internal rows (testData, testReasons). Winners: a prize on a
+ * hidden test coin, an owner/internal winning or payout wallet, a test
+ * recruiter's recruiter-league prize, or a voided row. Recruiters: an
+ * owner-wallet signup or payout wallet, or a listed test recruiter id. A
+ * recruiter that only links an internal wallet is not marked: that is a
+ * moderation finding, not test data.
+ */
+export function markTestData({ airdrops, leagues, recruiters }, { internal, testRecruiters }) {
+  const mark = (row, reasons) => {
+    row.testReasons = [...new Set(reasons)];
+    row.testData = row.testReasons.length > 0;
+  };
+  for (const row of [...airdrops, ...leagues]) {
+    const reasons = [];
+    if (row.testCoin) reasons.push("test_coin");
+    if (internal.has(lower(row.wallet)) || (row.recipient && internal.has(lower(row.recipient)))) reasons.push("internal_wallet");
+    if (row._recruiterId && testRecruiters.has(row._recruiterId)) reasons.push("test_recruiter");
+    if (row.status === "voided") reasons.push("voided");
+    mark(row, reasons);
+  }
+  for (const row of recruiters) {
+    const reasons = [];
+    const own = [row.wallet, ...row.payoutWallets.map((p) => p.address)].map(lower).filter(Boolean);
+    if (own.some((w) => internal.has(w))) reasons.push("internal_wallet");
+    if (row.recruiterId && testRecruiters.has(String(row.recruiterId))) reasons.push("test_recruiter");
+    mark(row, reasons);
+  }
+}
+
 // --------------------------------------------------------------------------
 // USD
 
@@ -925,8 +976,10 @@ export async function buildModerationDataset({ db, priceService, now = new Date(
     recruiters: buildRecruiterRows(src, ctx),
   };
   applyFlags(dataset, { internal, risk: riskIndex(src), now });
+  markTestData(dataset, { internal, testRecruiters: testRecruiterIds(env) });
   await priceRows(dataset, createModerationPricer(priceService));
   for (const row of dataset.recruiters) { delete row._earningWallets; delete row._testCoinRows; }
+  for (const row of dataset.leagues) delete row._recruiterId;
 
   return {
     generatedAt: now,
@@ -964,6 +1017,8 @@ export function parseModerationQuery(tab, query = {}) {
   const sort = SORT_KEYS[tab].includes(sortRaw) ? sortRaw : defaultKey;
   const dir = String(query.dir ?? "").toLowerCase() === "asc" ? "asc" : String(query.dir ?? "").toLowerCase() === "desc" ? "desc" : sortRaw ? "asc" : defaultDir;
   const limit = Math.max(1, Math.min(500, Number.parseInt(String(query.limit ?? "100"), 10) || 100));
+  // Test and internal rows are hidden unless asked for (off by default).
+  const includeTest = ["1", "true", "yes", "on"].includes(String(query.includeTest ?? "").trim().toLowerCase());
   const offset = Math.max(0, Number.parseInt(String(query.offset ?? "0"), 10) || 0);
   return {
     chainId,
@@ -976,6 +1031,7 @@ export function parseModerationQuery(tab, query = {}) {
     dir,
     limit,
     offset,
+    includeTest,
   };
 }
 
@@ -1141,9 +1197,16 @@ export function moderationFacets(tab, rows) {
   };
 }
 
-/** Full read for one tab: filtered, sorted, totals and facets; `page` slices. */
+/**
+ * Full read for one tab: filtered, sorted, totals and facets; `page` slices.
+ * Without `f.includeTest` the test and internal rows leave first (rows,
+ * totals, facets, flag counts and the CSV all follow), and `testHidden` says
+ * how many rows matching the other filters that hid.
+ */
 export function queryModerationTab(dataset, tab, f, { page = true } = {}) {
-  const all = dataset[tab] || [];
+  const everything = dataset[tab] || [];
+  const all = f.includeTest ? everything : everything.filter((row) => !row.testData);
+  const testHidden = f.includeTest ? 0 : filterModerationRows(tab, everything.filter((row) => row.testData), f).length;
   const filtered = filterModerationRows(tab, all, f);
   const sorted = sortModerationRows(filtered, f.sort, f.dir);
   const rows = page ? sorted.slice(f.offset, f.offset + f.limit) : sorted;
@@ -1156,6 +1219,8 @@ export function queryModerationTab(dataset, tab, f, { page = true } = {}) {
     totals: moderationTotals(tab, sorted),
     facets: moderationFacets(tab, all),
     flagCounts: Object.fromEntries(Object.keys(MODERATION_FLAGS).map((k) => [k, filtered.filter((r) => r.flags.includes(k)).length])),
+    includeTest: Boolean(f.includeTest),
+    testHidden,
   };
 }
 
@@ -1171,6 +1236,8 @@ function csvCell(value) {
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+const testText = (row) => (row.testReasons || []).map((r) => TEST_DATA_REASONS[r] || r).join(" | ");
+
 const flagText = (row) => row.flags.map((f) => (row.flagNotes[f] ? `${MODERATION_FLAGS[f]?.label || f}: ${row.flagNotes[f]}` : MODERATION_FLAGS[f]?.label || f)).join(" | ");
 
 export const CSV_COLUMNS = Object.freeze({
@@ -1179,7 +1246,7 @@ export const CSV_COLUMNS = Object.freeze({
     ["Wallet", (r) => r.wallet], ["Profile", (r) => r.profileName], ["Score", (r) => r.score], ["Reason", (r) => r.reason],
     ["Amount", (r) => r.amount], ["Asset", (r) => r.asset], ["USD", (r) => r.amountUsd], ["USD basis", (r) => r.usdBasis],
     ["Status", (r) => r.status], ["Batch status", (r) => r.batchStatus], ["Claim deadline", (r) => r.deadline],
-    ["Claimed at", (r) => r.claimedAt], ["Claim tx", (r) => r.txUrl || r.txHash], ["Flags", flagText],
+    ["Claimed at", (r) => r.claimedAt], ["Claim tx", (r) => r.txUrl || r.txHash], ["Flags", flagText], ["Test or internal", testText],
   ],
   leagues: [
     ["Period", (r) => r.periodLabel], ["Epoch start", (r) => r.epochStart], ["Chain", (r) => r.chain], ["Category", (r) => r.categoryLabel],
@@ -1187,7 +1254,7 @@ export const CSV_COLUMNS = Object.freeze({
     ["Coin", (r) => r.coinName || r.coinSymbol], ["Coin address", (r) => r.coinAddress], ["Test coin", (r) => (r.testCoin ? "yes" : "no")],
     ["Score", (r) => r.score], ["Reason", (r) => r.reason], ["Amount", (r) => r.amount], ["Asset", (r) => r.asset],
     ["USD", (r) => r.amountUsd], ["USD basis", (r) => r.usdBasis], ["Root posted", (r) => (r.rootPosted ? "yes" : "no")],
-    ["Status", (r) => r.status], ["Expires", (r) => r.deadline], ["Claimed at", (r) => r.claimedAt], ["Payout tx", (r) => r.txUrl || r.txHash], ["Flags", flagText],
+    ["Status", (r) => r.status], ["Expires", (r) => r.deadline], ["Claimed at", (r) => r.claimedAt], ["Payout tx", (r) => r.txUrl || r.txHash], ["Flags", flagText], ["Test or internal", testText],
   ],
   recruiters: [
     ["Recruiter id", (r) => r.recruiterId], ["Account id", (r) => r.accountId], ["Code", (r) => r.code], ["Name", (r) => r.name],
@@ -1196,7 +1263,7 @@ export const CSV_COLUMNS = Object.freeze({
     ["Linked wallets", (r) => r.linkedTotal], ["Active links", (r) => r.linkedActive], ["Detached links", (r) => r.linkedDetached],
     ["Earned USD", (r) => r.earnedUsd], ["Claimable USD", (r) => r.claimableUsd], ["Claimed USD", (r) => r.claimedUsd], ["Failed or voided USD", (r) => r.failedVoidedUsd],
     ["Native per chain", (r) => Object.values(r.chains).map((c) => `${c.chain}: earned ${c.earned} ${c.asset}, claimable ${c.claimable}, claimed ${c.claimed}, failed/voided ${c.failedVoided}`)],
-    ["Last activity", (r) => r.lastActivityAt], ["Flags", flagText],
+    ["Last activity", (r) => r.lastActivityAt], ["Flags", flagText], ["Test or internal", testText],
   ],
 });
 

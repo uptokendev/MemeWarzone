@@ -355,7 +355,8 @@ test("league categories exclude the DBC creator and keep other wallets", () => {
   ];
   const counted = trades.filter((t) => t.wallet !== creator);
   assert.deepEqual(counted.map((t) => t.note), ["public buy", "public sell"]);
-  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../jobs/finalizeEpochWinners.ts"), "utf8");
+  // League standings SQL: rewards/leagueLeaderboard.ts (moved out of jobs/finalizeEpochWinners.ts).
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../rewards/leagueLeaderboard.ts"), "utf8");
   assert.match(source, /t\.wallet <> c\.creator_address/);
   assert.match(source, /t\.wallet IS DISTINCT FROM c\.creator_address/);
 });

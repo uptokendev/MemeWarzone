@@ -227,35 +227,98 @@ test("recruiter rows: totals per chain, links, self-referral, internal, shared, 
   assert.ok(ops.flags.includes("internal"));
 });
 
-test("query: chain, status, flag and search filters, sorting, paging, totals", async () => {
+test("query (test and internal shown): chain, status, flag and search filters, sorting, paging, totals", async () => {
+  const T = { includeTest: "1" };
   const data = await dataset();
-  const all = queryModerationTab(data, "leagues", parseModerationQuery("leagues", {}));
+  const all = queryModerationTab(data, "leagues", parseModerationQuery("leagues", T));
   assert.equal(all.total, 5);
-  const bnb = queryModerationTab(data, "leagues", parseModerationQuery("leagues", { chainId: "56" }));
+  const bnb = queryModerationTab(data, "leagues", parseModerationQuery("leagues", { ...T, chainId: "56" }));
   assert.equal(bnb.total, 2);
   assert.deepEqual(bnb.totals.chains.map((c) => [c.chainId, c.amounts.amount]), [[56, "0.002"]]);
   assert.equal(bnb.totals.usd.amount, 1.2);
-  const flagged = queryModerationTab(data, "leagues", parseModerationQuery("leagues", { flag: "internal" }));
+  const flagged = queryModerationTab(data, "leagues", parseModerationQuery("leagues", { ...T, flag: "internal" }));
   assert.equal(flagged.total, 1);
-  const search = queryModerationTab(data, "leagues", parseModerationQuery("leagues", { q: "kaiju" }));
+  const search = queryModerationTab(data, "leagues", parseModerationQuery("leagues", { ...T, q: "kaiju" }));
   assert.equal(search.total, 2);
-  const sorted = queryModerationTab(data, "leagues", parseModerationQuery("leagues", { sort: "amount", dir: "desc", limit: "2" }));
+  const sorted = queryModerationTab(data, "leagues", parseModerationQuery("leagues", { ...T, sort: "amount", dir: "desc", limit: "2" }));
   assert.equal(sorted.rows.length, 2);
   assert.equal(sorted.nextOffset, 2);
   assert.equal(sorted.rows[0].amountRaw, "7000000", "0.007 SOL sorts above 0.001 BNB (native amount)");
-  const claimed = queryModerationTab(data, "airdrops", parseModerationQuery("airdrops", { status: "claimed" }));
+  const claimed = queryModerationTab(data, "airdrops", parseModerationQuery("airdrops", { ...T, status: "claimed" }));
   assert.equal(claimed.total, 1);
-  const recruitersSol = queryModerationTab(data, "recruiters", parseModerationQuery("recruiters", { chainId: "101" }));
+  const recruitersSol = queryModerationTab(data, "recruiters", parseModerationQuery("recruiters", { ...T, chainId: "101" }));
   assert.ok(recruitersSol.rows.every((r) => Object.keys(r.chains).every((k) => k === "101")));
-  const byLinked = queryModerationTab(data, "recruiters", parseModerationQuery("recruiters", { q: DEPLOYER.toLowerCase() }));
+  const byLinked = queryModerationTab(data, "recruiters", parseModerationQuery("recruiters", { ...T, q: DEPLOYER.toLowerCase() }));
   assert.deepEqual(byLinked.rows.map((r) => r.recruiterId), ["114"], "search finds a recruiter by a linked wallet");
-  assert.equal(parseModerationQuery("leagues", { chainId: "97" }).error.includes("Testnets"), true);
-  assert.ok(parseModerationQuery("leagues", { flag: "nope" }).error);
+  assert.equal(parseModerationQuery("leagues", { ...T, chainId: "97" }).error.includes("Testnets"), true);
+  assert.ok(parseModerationQuery("leagues", { ...T, flag: "nope" }).error);
+});
+
+test("test and internal rows are hidden by default and counted", async () => {
+  const data = await dataset();
+  // Leagues: the deployer's top_earner (internal) and both Kaiju88 rows (hidden test coin) are test data.
+  const leagues = queryModerationTab(data, "leagues", parseModerationQuery("leagues", {}));
+  assert.equal(parseModerationQuery("leagues", {}).includeTest, false, "off by default");
+  assert.equal(leagues.includeTest, false);
+  assert.equal(leagues.total, 2);
+  assert.equal(leagues.testHidden, 3);
+  assert.ok(leagues.rows.every((r) => r.chainId === 56 && r.testData === false));
+  assert.deepEqual(leagues.totals.chains.map((c) => c.chainId), [56], "totals leave the hidden rows out");
+  assert.deepEqual(leagues.facets.chains.map((c) => c.value), ["56"], "facets too");
+  const shown = queryModerationTab(data, "leagues", parseModerationQuery("leagues", { includeTest: "1" }));
+  assert.equal(shown.total, 5);
+  assert.equal(shown.testHidden, 0);
+  const crowd = shown.rows.find((r) => r.category === "crowd_favorite");
+  assert.deepEqual(crowd.testReasons, ["test_coin"]);
+  assert.ok(crowd.flags.includes("test_coin"), "badges stay when shown");
+  assert.deepEqual(shown.rows.find((r) => r.category === "top_earner" && r.chainId === 101).testReasons, ["internal_wallet"]);
+  // The count follows the other filters: on BNB nothing is hidden.
+  assert.equal(queryModerationTab(data, "leagues", parseModerationQuery("leagues", { chainId: "56" })).testHidden, 0);
+  assert.equal(queryModerationTab(data, "leagues", parseModerationQuery("leagues", { chainId: "101" })).testHidden, 3);
+  // Airdrops: the creator draw on the hidden coin is hidden, the trader draw stays.
+  const airdrops = queryModerationTab(data, "airdrops", parseModerationQuery("airdrops", {}));
+  assert.deepEqual(airdrops.rows.map((r) => r.program), ["airdrop_trader"]);
+  assert.equal(airdrops.testHidden, 1);
+  // Recruiters: 114 and 124 (owner-wallet signups, listed ids) and 29 (listed id) are hidden.
+  const recruiters = queryModerationTab(data, "recruiters", parseModerationQuery("recruiters", {}));
+  assert.deepEqual(recruiters.rows.map((r) => r.recruiterId ?? r.accountId).sort(), ["40", "acc-orphan"]);
+  assert.equal(recruiters.testHidden, 3);
+  const all = queryModerationTab(data, "recruiters", parseModerationQuery("recruiters", { includeTest: "true" }));
+  const r114 = all.rows.find((r) => r.recruiterId === "114");
+  assert.deepEqual(r114.testReasons, ["internal_wallet", "test_recruiter"]);
+  assert.deepEqual(all.rows.find((r) => r.recruiterId === "29").testReasons, ["test_recruiter"]);
+});
+
+test("voided winners and a test recruiter's league prize are test data; env adds recruiter ids", async () => {
+  const data = fixtures();
+  data.leagues.push(
+    { chain_id: 101, period: "weekly", epoch_start: "2026-09-21T00:00:00Z", epoch_end: "2026-09-28T00:00:00Z", category: "recruiter_league", rank: 1, recipient_address: TRADER, amount_raw: "1000", payload: { wallet: TRADER, recruiterId: 40 }, expires_at: "2026-12-28T00:00:00Z", root_at: "2026-09-28T00:15:00Z" },
+  );
+  data.airdrops.push({ id: "a3", reward_type: "airdrop", wallet_address: TRADER, chain: "101", amount_raw: "5", status: "voided", created_at: "2026-09-28T00:15:00Z", metadata: { program: "airdrop_trader" } });
+  const built = await buildModerationDataset({ db: fakeDb(data), priceService: fakePrices, now: NOW, env: { MODERATION_TEST_RECRUITER_IDS: "40, x" } });
+  const league = built.leagues.find((r) => r.category === "recruiter_league");
+  assert.deepEqual(league.testReasons, ["test_recruiter"]);
+  assert.equal("_recruiterId" in league, false, "internal field does not leak");
+  assert.deepEqual(built.airdrops.find((r) => r.id === "airdrop:a3").testReasons, ["voided"]);
+  assert.ok(built.recruiters.find((r) => r.recruiterId === "40").testData);
+});
+
+test("CSV follows the toggle and names the test reason", async () => {
+  const data = await dataset();
+  const hidden = queryModerationTab(data, "leagues", parseModerationQuery("leagues", {}), { page: false }).rows;
+  const shown = queryModerationTab(data, "leagues", parseModerationQuery("leagues", { includeTest: "1" }), { page: false }).rows;
+  const off = moderationCsv("leagues", hidden);
+  const on = moderationCsv("leagues", shown);
+  assert.equal(off.trim().split("\r\n").length, 1 + 2);
+  assert.equal(on.trim().split("\r\n").length, 1 + 5);
+  assert.match(on.split("\r\n")[0], /,Flags,Test or internal$/);
+  assert.match(on, /Prize from a hidden test coin/);
+  assert.doesNotMatch(off, /Kaiju88/);
 });
 
 test("CSV: header, escaping, formula guard, email column only when allowed", async () => {
   const data = await dataset();
-  const rows = queryModerationTab(data, "recruiters", parseModerationQuery("recruiters", {}), { page: false }).rows;
+  const rows = queryModerationTab(data, "recruiters", parseModerationQuery("recruiters", { includeTest: "1" }), { page: false }).rows;
   const withEmail = moderationCsv("recruiters", rows);
   assert.match(withEmail.split("\r\n")[0], /^Recruiter id,Account id,Code,Name,Handle,Email,Wallet,/);
   assert.match(withEmail, /owner@example\.test/);

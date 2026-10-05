@@ -21,7 +21,8 @@ test("the league pot skips swaps on a graduated Solana coin's pool (they pay no 
 });
 
 test("settlement top_earner excludes the coin itself, its creator and fee recipient, like the live board", () => {
-  const src = read("realtime-indexer/src/jobs/finalizeEpochWinners.ts");
+  // The settlement standings live in rewards/leagueLeaderboard.ts since 2026-10-05 (moved, unchanged).
+  const src = read("realtime-indexer/src/rewards/leagueLeaderboard.ts");
   const block = src.slice(src.indexOf('if (category === "top_earner")'), src.indexOf("return [];", src.indexOf('if (category === "top_earner")')));
   assert.match(block, /JOIN public\.campaigns c/);
   assert.match(block, /t\.wallet IS DISTINCT FROM c\.campaign_address/);

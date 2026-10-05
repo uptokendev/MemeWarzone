@@ -16,6 +16,7 @@ import {
   ensureActiveSeason,
 } from "./lib/arenaLeagueScore.js";
 import { utcDay } from "./lib/arenaLeagueScoreMath.js";
+import { publicHiddenWhere } from "./lib/publicHiddenSql.js";
 import { recordMwlFinalization } from "./lib/arenaMwlRollover.js";
 import {
   MwlIdentityError,
@@ -107,10 +108,19 @@ async function activeSeason(chainId) {
   const row = seasonResult.rows?.[0];
   if (!row) return null;
   validateMonthlySeason(row, id);
+  // Hidden test coins (campaigns.meta.publicHidden) are not on the board; the MWL payout skips them
+  // too (lib/arenaMwlPayouts.js), so the places shown are the places paid.
   const entries = await pool.query(
-    `select season_id, token_address, token_name, symbol, points, wins, losses, finished_fights, checkin_streak
-       from public.arena_league_entries where season_id = $1`,
-    [row.id],
+    `select e.season_id, e.token_address, e.token_name, e.symbol, e.points, e.wins, e.losses, e.finished_fights, e.checkin_streak
+       from public.arena_league_entries e
+      where e.season_id = $1
+        and not exists (
+          select 1 from public.campaigns hc
+           where hc.chain_id = $2
+             and (hc.token_address = e.token_address or lower(coalesce(hc.token_address::text, '')) = lower(e.token_address))
+             and ${publicHiddenWhere("hc")}
+        )`,
+    [row.id, id],
   );
   return mapSeason(row, entries.rows.map(mapEntry));
 }

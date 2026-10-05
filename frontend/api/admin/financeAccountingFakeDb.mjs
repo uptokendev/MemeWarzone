@@ -14,8 +14,9 @@ function missingColumn() {
 }
 
 // distributionsInstalled: false = 20261005_000001_finance_distributions.sql not applied yet.
-export function createFakeAccountingDb({ installed = true, distributionsInstalled = true } = {}) {
-  const state = { costs: [], audit: [], closes: new Map(), settings: null, distributions: [], nextId: 1, queries: [], installed, distributionsInstalled };
+// treasuryInstalled: false = 20261005_000002_finance_treasury_tax.sql not applied yet.
+export function createFakeAccountingDb({ installed = true, distributionsInstalled = true, treasuryInstalled = true } = {}) {
+  const state = { costs: [], audit: [], closes: new Map(), settings: null, distributions: [], accounts: [], movements: [], taxItems: [], nextId: 1, queries: [], installed, distributionsInstalled, treasuryInstalled };
   const nowIso = () => new Date().toISOString();
   const costRow = (c) => ({ ...c });
 
@@ -28,6 +29,18 @@ export function createFakeAccountingDb({ installed = true, distributionsInstalle
     if (text.startsWith("select (select 1 from public.finance_costs")) return { rows: [{}] };
     if (!state.distributionsInstalled && (/finance_distributions/.test(text) || /\btax_rules\b/.test(text))) throw /finance_distributions/.test(text) ? missingTable() : missingColumn();
     if (!state.distributionsInstalled && text.startsWith("insert into public.finance_audit_log") && /^(settings\.tax_rules|distribution\.)/.test(String(params[2]))) {
+      const error = new Error('new row violates check constraint "finance_audit_log_action_chk"');
+      error.code = "23514";
+      error.constraint = "finance_audit_log_action_chk";
+      throw error;
+    }
+
+    // treasury: accounts, movements, tax items
+    if (/finance_(accounts|treasury_movements|tax_items)/.test(text)) {
+      if (!state.treasuryInstalled) throw missingTable();
+      return treasuryQuery(text, params);
+    }
+    if (!state.treasuryInstalled && text.startsWith("insert into public.finance_audit_log") && /^(account|movement|tax_item)\./.test(String(params[2]))) {
       const error = new Error('new row violates check constraint "finance_audit_log_action_chk"');
       error.code = "23514";
       error.constraint = "finance_audit_log_action_chk";
@@ -146,6 +159,97 @@ export function createFakeAccountingDb({ installed = true, distributionsInstalle
       return { rows: [] };
     }
     throw new Error(`fake db: unhandled query: ${text.slice(0, 120)}`);
+  }
+
+  function duplicate() {
+    const error = new Error("duplicate key value violates unique constraint");
+    error.code = "23505";
+    return error;
+  }
+
+  function treasuryQuery(text, params) {
+    const by = (list, id) => list.find((r) => r.id === String(id));
+    // accounts
+    if (text.startsWith("insert into public.finance_accounts")) {
+      const [name, kind, chainId, address, iban, currency, note, actor] = params;
+      if (state.accounts.some((a) => !a.archived_at && (a.name.toLowerCase() === name.toLowerCase() || (address && a.chain_id === chainId && a.address?.toLowerCase() === address.toLowerCase())))) throw duplicate();
+      const row = { id: String(state.nextId++), name, kind, chain_id: chainId, address, iban_masked: iban, currency, note, archived_at: null, created_by: actor, created_at: nowIso(), updated_by: actor, updated_at: nowIso() };
+      state.accounts.push(row);
+      return { rows: [{ ...row }] };
+    }
+    if (text.startsWith("select id, name, kind") && text.includes("where id = $1")) {
+      const row = by(state.accounts, params[0]);
+      return { rows: row ? [{ ...row }] : [] };
+    }
+    if (text.startsWith("select id, name, kind")) return { rows: state.accounts.map((a) => ({ ...a })) };
+    if (text.startsWith("update public.finance_accounts")) {
+      const row = by(state.accounts, params[0]);
+      if (!row) return { rows: [] };
+      Object.assign(row, { name: params[1], iban_masked: params[2], currency: params[3], note: params[4], archived_at: params[5], updated_by: params[6], updated_at: nowIso() });
+      return { rows: [{ ...row }] };
+    }
+    // movements
+    const mvCols = ["occurred_at", "kind", "from_account_id", "to_account_id", "asset_out", "amount_out", "asset_in", "amount_in", "value_eur", "value_source", "usd_per_eur", "price_usd", "fee_asset", "fee_amount", "fee_eur", "fee_source", "cost_id", "revenue_lane", "tx_hash", "reference", "note"];
+    const str = (v) => (v == null ? null : String(v));
+    const mvFrom = (vals) => Object.fromEntries(mvCols.map((c, i) => [c, ["amount_out", "amount_in", "value_eur", "usd_per_eur", "price_usd", "fee_amount", "fee_eur"].includes(c) ? str(vals[i]) : vals[i]]));
+    const txTaken = (row, except = null) => row.tx_hash && state.movements.some((m) => m.id !== except && !m.deleted_at && m.tx_hash && m.tx_hash.toLowerCase() === row.tx_hash.toLowerCase() && String(m.from_account_id || 0) === String(row.from_account_id || 0));
+    if (text.startsWith("insert into public.finance_treasury_movements")) {
+      const row = { id: String(state.nextId++), ...mvFrom(params), created_by: params[21], created_at: nowIso(), updated_by: params[21], updated_at: nowIso(), deleted_by: null, deleted_at: null };
+      if (txTaken(row)) throw duplicate();
+      state.movements.push(row);
+      return { rows: [{ ...row }] };
+    }
+    if (text.startsWith("select id, occurred_at, kind") && text.includes("where id = $1")) {
+      const row = by(state.movements, params[0]);
+      return { rows: row ? [{ ...row }] : [] };
+    }
+    if (text.startsWith("select id, occurred_at, kind")) {
+      const list = text.includes("where deleted_at is null") ? state.movements.filter((m) => !m.deleted_at) : state.movements;
+      return { rows: [...list].sort((a, b) => (a.occurred_at < b.occurred_at ? 1 : -1)).map((m) => ({ ...m })) };
+    }
+    if (text.startsWith("update public.finance_treasury_movements set occurred_at")) {
+      const row = by(state.movements, params[0]);
+      if (!row || row.deleted_at) return { rows: [] };
+      const next = { ...row, ...mvFrom(params.slice(1)), updated_by: params[22], updated_at: nowIso() };
+      if (txTaken(next, row.id)) throw duplicate();
+      Object.assign(row, next);
+      return { rows: [{ ...row }] };
+    }
+    if (text.startsWith("update public.finance_treasury_movements set deleted_at")) {
+      const row = by(state.movements, params[0]);
+      if (!row || row.deleted_at) return { rows: [] };
+      Object.assign(row, { deleted_at: nowIso(), deleted_by: params[1], updated_at: nowIso() });
+      return { rows: [{ ...row }] };
+    }
+    // tax items
+    const taxCols = ["tax_type", "period", "kind", "amount_eur", "due_on", "done_on", "account_id", "distribution_id", "reference", "note"];
+    const taxFrom = (vals) => Object.fromEntries(taxCols.map((c, i) => [c, c === "amount_eur" ? String(vals[i]) : vals[i]]));
+    if (text.startsWith("insert into public.finance_tax_items")) {
+      const row = { id: String(state.nextId++), ...taxFrom(params), created_by: params[10], created_at: nowIso(), updated_by: params[10], updated_at: nowIso(), deleted_by: null, deleted_at: null };
+      state.taxItems.push(row);
+      return { rows: [{ ...row }] };
+    }
+    if (text.startsWith("select id, tax_type") && text.includes("where id = $1")) {
+      const row = by(state.taxItems, params[0]);
+      return { rows: row ? [{ ...row }] : [] };
+    }
+    if (text.startsWith("select id, tax_type")) {
+      const list = text.includes("where deleted_at is null") ? state.taxItems.filter((t) => !t.deleted_at) : state.taxItems;
+      return { rows: list.map((t) => ({ ...t })) };
+    }
+    if (text.startsWith("update public.finance_tax_items set tax_type")) {
+      const row = by(state.taxItems, params[0]);
+      if (!row || row.deleted_at) return { rows: [] };
+      Object.assign(row, taxFrom(params.slice(1)), { updated_by: params[11], updated_at: nowIso() });
+      return { rows: [{ ...row }] };
+    }
+    if (text.startsWith("update public.finance_tax_items set deleted_at")) {
+      const row = by(state.taxItems, params[0]);
+      if (!row || row.deleted_at) return { rows: [] };
+      Object.assign(row, { deleted_at: nowIso(), deleted_by: params[1], updated_at: nowIso() });
+      return { rows: [{ ...row }] };
+    }
+    throw new Error(`fake db: unhandled treasury query: ${text.slice(0, 120)}`);
   }
 
   return { query, state };

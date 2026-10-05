@@ -1,4 +1,8 @@
-// GET /api/admin/moderation/{airdrops|leagues|recruiters}[?format=csv]
+// GET /api/admin/moderation/{airdrops|leagues|recruiters}[?format=csv][&includeTest=1]
+//
+// Test and internal rows (hidden test coins, owner wallets, test recruiters,
+// voided rows) are left out unless includeTest=1; `testHidden` counts them.
+// The CSV follows the same switch.
 //
 // Command Center moderation lists (read-only): airdrop winners, league
 // winners and recruiters on the mainnets, with moderation flags. Readable with
@@ -8,7 +12,7 @@
 //
 // GET only. No payout, void or hold action lives here.
 
-import { buildModerationDataset, moderationCsv, MODERATION_FLAGS, MODERATION_TABS, MODERATION_CHAINS, parseModerationQuery, queryModerationTab } from "../lib/moderationLists.js";
+import { buildModerationDataset, moderationCsv, MODERATION_FLAGS, MODERATION_TABS, MODERATION_CHAINS, parseModerationQuery, queryModerationTab, TEST_DATA_REASONS } from "../lib/moderationLists.js";
 
 export const MODERATION_READ_PERMISSIONS = Object.freeze(["community.view", "finance.view"]);
 export const MODERATION_CACHE_MS = 60_000;
@@ -125,6 +129,7 @@ export function createModerationHandler({ getDb, getPriceService, resolvePrincip
       cacheSeconds: Math.round(cacheMs / 1000),
       chains: MODERATION_CHAINS.map(({ chainId, label, asset }) => ({ chainId, label, asset })),
       flagDefinitions: MODERATION_FLAGS,
+      testReasonLabels: TEST_DATA_REASONS,
       emailVisible: includeEmail,
       filters: { ...filters },
       ...result,
