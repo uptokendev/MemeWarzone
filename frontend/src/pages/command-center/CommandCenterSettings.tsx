@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/apiBase";
+import { useFeedSession } from "@/hooks/useFeedSession";
+import { readStoredFeedSession } from "@/lib/feedSession";
 import { BlockedAccountsCard } from "@/components/moderation/BlockedAccountsCard";
 import { Link, useNavigate } from "react-router-dom";
 import { Bell, ExternalLink, Image, Mail, Settings, ShieldCheck, Wallet } from "lucide-react";
@@ -61,6 +64,27 @@ export default function CommandCenterSettings({ section = "settings" }: { sectio
   const [arenaEmail, setArenaEmail] = useState("");
   const [arenaEmailStatus, setArenaEmailStatus] = useState<{ configured: boolean; verified: boolean; email?: string | null } | null>(null);
   const [savingEmail, setSavingEmail] = useState(false);
+  // Load the saved email status on every visit (founder, 2026-10-05: the email switches went grey after
+  // a reload). Uses the stored 30-day social signature, never a new prompt.
+  const feedSession = useFeedSession();
+  useEffect(() => {
+    if (!walletAddress) return;
+    const token = feedSession.account && feedSession.account.toLowerCase() === walletAddress.toLowerCase()
+      ? readStoredFeedSession(feedSession.account, feedSession.chainId)
+      : "";
+    if (!token) return;
+    let cancelled = false;
+    apiFetch(`/api/notification-prefs?wallet=${encodeURIComponent(walletAddress)}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (cancelled || !j?.email) return;
+        setArenaEmailStatus((current) => current ?? { configured: Boolean(j.email.configured), verified: Boolean(j.email.verified), email: j.email.email || null });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [walletAddress, feedSession.account, feedSession.chainId]);
   const {
     notifications: allNotifications,
     loading: loadingNotifications,
@@ -163,12 +187,14 @@ export default function CommandCenterSettings({ section = "settings" }: { sectio
       </>
       ) : null}
 
-      {showSettings && postGradFlags.arena ? (
-        <CommandCenterCard title="Arena challenge email">
+      {/* Shown without the arena feature too: this one address serves every email notification. */}
+      {showSettings ? (
+        <CommandCenterCard title="Notification email">
           <p className="m-0 flex items-center gap-2 text-sm text-mw-muted">
             <Mail className="h-4 w-4 shrink-0 text-mw-accent-soft" aria-hidden="true" />
-            Challenges also show in Command Center Battles. Add an email if you want a copy when someone challenges your coin.
+            Add an email to get notifications there too. Pick which ones under Notification settings below.
           </p>
+          {arenaEmailStatus?.email ? <p className="m-0 font-mw-mono text-[13px] text-mw-muted">Saved: {arenaEmailStatus.email}</p> : null}
           <label className="flex flex-col gap-1.5">
             <span className={lbl}>Email</span>
             <input

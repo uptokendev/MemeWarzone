@@ -2,10 +2,48 @@ import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { cleanPrefs, loadPrefs, prefsWalletKey } from "./lib/notificationPrefs.js";
+import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
+
+const feedSession = createFeedSessionAuth({ pool });
+
+function sameWallet(a, b) {
+  const x = String(a || "").trim();
+  const y = String(b || "").trim();
+  if (!x || !y) return false;
+  return x.startsWith("0x") || y.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+function maskEmail(email) {
+  const [name, domain] = String(email || "").split("@");
+  if (!name || !domain) return null;
+  return `${name.slice(0, 2)}${"*".repeat(Math.max(1, name.length - 2))}@${domain}`;
+}
+
+// The owner's own email status (founder, 2026-10-05: the email switches went grey after every reload
+// because the verified state was only known right after saving). Only with the owner's feed session.
+async function ownerEmailStatus(req, wallet) {
+  if (!/^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""))) return null;
+  const quiet = { status() { return this; }, json() { return this; } };
+  const session = await feedSession.requireSession(req, quiet).catch(() => null);
+  if (!session || !sameWallet(session.walletAddress, wallet)) return null;
+  try {
+    const { rows } = await pool.query(
+      `select email, verified_at from public.wallet_notification_emails
+        where wallet = $1 or lower(wallet) = lower($1) order by updated_at desc nulls last limit 1`,
+      [wallet],
+    );
+    const row = rows[0];
+    if (!row) return { configured: false, verified: false, email: null };
+    return { configured: true, verified: Boolean(row.verified_at), email: maskEmail(row.email) };
+  } catch (e) {
+    if (e?.code === "42P01") return null;
+    throw e;
+  }
+}
 
 /**
  * Notification toggles (CO-5, founder 2026-10-03).
- *   GET  /api/notification-prefs?wallet=W  -> { supported, prefs }
+ *   GET  /api/notification-prefs?wallet=W  -> { supported, prefs } (+ email status for the owner's feed session)
  *   POST /api/notification-prefs { walletAddress, chainId, prefs, auth } (wallet-signed, action notification_prefs_set)
  */
 export default async function handler(req, res) {
@@ -13,7 +51,8 @@ export default async function handler(req, res) {
     if (req.method === "GET") {
       const wallet = prefsWalletKey(getQuery(req).wallet);
       if (!wallet) return json(res, 400, { error: "wallet is required" });
-      return json(res, 200, await loadPrefs(wallet));
+      const [prefs, email] = await Promise.all([loadPrefs(wallet), ownerEmailStatus(req, wallet)]);
+      return json(res, 200, email ? { ...prefs, email } : prefs);
     }
     if (req.method === "POST") {
       const body = req.body && typeof req.body === "object" && Object.keys(req.body).length ? req.body : await readJson(req);

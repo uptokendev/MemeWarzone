@@ -4,7 +4,7 @@ import test from "node:test";
 process.env.DATABASE_URL ||= "postgres://user:pass@127.0.0.1:1/none";
 process.env.NOTIFICATION_UNSUBSCRIBE_SECRET = "test-secret";
 const { notifyWallet, signUnsubscribeToken, verifyUnsubscribeToken, unsubscribeUrl } = await import("./walletNotify.js");
-const { parseMentionHandles, notifySocialPost, notifyRepost } = await import("./socialNotify.js");
+const { parseMentionHandles, notifySocialPost, notifyRepost, notifyRocket } = await import("./socialNotify.js");
 const { scanRewardNotifications, scanCoinNotifications, buildDigestEmail, runNotificationDigest, tradeUsd, coinPath } = await import("./notificationProducers.js");
 
 const EVM_A = "0x" + "a".repeat(40);
@@ -92,6 +92,21 @@ test("social: quote tells the quoted author; repost tells the author once per re
   assert.equal(sent[1].dedupeKey, `social:repost:4:${EVM_A}`);
   const own = recordingPool(() => ({ rows: [{ author_address: EVM_A }] }));
   assert.equal((await notifyRepost(own, { postId: 4, actor: EVM_A, notify })).notified, 0, "reposting your own post");
+});
+
+test("notifyRocket: tells the author once per rocketer, never for your own post", async () => {
+  const sent = [];
+  const notify = async (_pool, input) => { sent.push(input); return { inserted: true }; };
+  const pool = recordingPool(() => ({ rows: [{ author_address: EVM_B }] }));
+  const r = await notifyRocket(pool, { postId: 7, actor: EVM_A, notify });
+  assert.equal(r.notified, 1);
+  assert.equal(sent[0].wallet, EVM_B);
+  assert.equal(sent[0].kind, "rocket");
+  assert.equal(sent[0].category, "social");
+  assert.equal(sent[0].dedupeKey, `social:rocket:7:${EVM_A}`);
+  assert.match(sent[0].title, /rocketed your post$/);
+  const own = recordingPool(() => ({ rows: [{ author_address: EVM_A }] }));
+  assert.equal((await notifyRocket(own, { postId: 7, actor: EVM_A, notify })).notified, 0, "rocketing your own post");
 });
 
 test("rewards scan: league, ledger, recruiter (weekly) and staked battle wins, each with a stable dedupe key", async () => {

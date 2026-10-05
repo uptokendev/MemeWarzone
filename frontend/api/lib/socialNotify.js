@@ -2,7 +2,7 @@ import { loadHandlesFor, missingHandlesTable, walletKey } from "./userHandles.js
 import { notifyWallet } from "./walletNotify.js";
 
 /**
- * Social notifications (CO-5): replies, quotes, reposts and @mentions. Category "social", so the
+ * Social notifications (CO-5): replies, quotes, reposts, rockets and @mentions. Category "social", so the
  * bell shows them unless that toggle is off, and email goes out in the hourly digest (a viral post
  * never sends one email per reply). Fire-and-forget from the post handlers: never throws.
  */
@@ -136,6 +136,32 @@ export async function notifyRepost(pool, { postId, actor, notify = notifyWallet 
     return { notified: r?.inserted ? 1 : 0 };
   } catch (error) {
     console.warn("[socialNotify] repost notification skipped", error?.message || error);
+    return { notified: 0 };
+  }
+}
+
+/** A rocket on someone's post (founder, 2026-10-05). Once per wallet per post: un-rocket + rocket does not notify twice. */
+export async function notifyRocket(pool, { postId, actor, notify = notifyWallet } = {}) {
+  try {
+    const actorKey = walletKey(actor);
+    if (!pool || !postId || !actorKey) return { notified: 0 };
+    const author = await authorOf(pool, postId);
+    if (!author || author === actorKey) return { notified: 0 };
+    const r = await notify(pool, {
+      wallet: author,
+      actorWallet: actorKey,
+      category: "social",
+      kind: "rocket",
+      targetType: "post",
+      targetId: String(postId),
+      dedupeKey: `social:rocket:${postId}:${actorKey}`,
+      title: `${await actorLabel(actorKey)} rocketed your post`,
+      body: "",
+      target: `/post/${postId}`,
+    });
+    return { notified: r?.inserted ? 1 : 0 };
+  } catch (error) {
+    console.warn("[socialNotify] rocket notification skipped", error?.message || error);
     return { notified: 0 };
   }
 }

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { attachHandles } from "../lib/userHandles.js";
-import { notifyRepost, notifySocialPost } from "../lib/socialNotify.js";
+import { notifyRepost, notifyRocket, notifySocialPost } from "../lib/socialNotify.js";
 import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { badMethod, getQuery, json, readJson } from "../../server/http.js";
@@ -920,6 +920,7 @@ async function handleFire(req, res) {
      on conflict do nothing`,
     [postId, address],
   );
+  void notifyRocket(pool, { postId, actor: address });
   const { rows } = await pool.query(`select count(*)::int as n from public.social_post_fires where post_id = $1`, [postId]);
   return json(res, 200, { ok: true, on: true, fireCount: Number(rows[0]?.n || 0) });
 }

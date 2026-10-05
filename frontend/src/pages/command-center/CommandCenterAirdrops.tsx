@@ -194,9 +194,9 @@ export default function CommandCenterAirdrops() {
         ) : winners.length === 0 ? (
           <div className="text-sm text-mw-muted">
             {isSolanaAirdrop(chainId)
-              ? "No published Solana winners yet. Estimates can appear from bonding volume; claims stay closed."
+              ? "No published Solana winners yet. Once a week is drawn, winners claim in Rewards and claims."
               : isRobinhoodAirdrop(chainId)
-                ? "No published Robinhood winners yet. Estimates can appear from Robinhood bonding volume; claims stay closed."
+                ? "No published Robinhood winners yet. Once a week is drawn, winners claim in Rewards and claims."
                 : "No previous winners yet."}
           </div>
         ) : (
