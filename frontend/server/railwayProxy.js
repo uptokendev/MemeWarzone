@@ -268,6 +268,15 @@ async function dispatchAdminFinance(pathname, req, res) {
   return true;
 }
 
+// Moderation lists (read-only): the handler checks community.view or
+// finance.view itself, so a principal with either one passes.
+async function dispatchAdminModeration(pathname, req, res) {
+  if (!/^\/api\/admin\/moderation(?:\/|$)/.test(pathname)) return false;
+  const moderationAdmin = (await import("../api/admin/moderation.js")).default;
+  await moderationAdmin(req, res);
+  return true;
+}
+
 async function dispatchAdminSponsorship(pathname, req, res) {
   if (!/^\/api\/admin\/sponsorship(?:\/|$|\?)/.test(pathname)) return false;
   const method = String(req.method || "GET").toUpperCase();
@@ -362,6 +371,7 @@ export function createRailwayProxyMiddleware(options = {}) {
     if (await dispatchDashboardLpFees(pathname, req, res)) return;
     if (await dispatchAdminAccess(pathname, req, res)) return;
     if (await dispatchAdminFinance(pathname, req, res)) return;
+    if (await dispatchAdminModeration(pathname, req, res)) return;
     if (await dispatchAdminSponsorship(pathname, req, res)) return;
     if (await dispatchAdminArenaImports(pathname, req, res)) return;
     if (await dispatchAdminArenaTournaments(pathname, req, res)) return;
