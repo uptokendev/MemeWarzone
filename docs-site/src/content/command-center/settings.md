@@ -13,11 +13,11 @@ Shows the owner wallet address and the chain your wallet is on. If the wallet is
 
 Two shortcuts sit below: **Public profile** and **Create coin**.
 
-## Arena challenge email
+## Notification email
 
-Add an email address if you want a copy when someone challenges your coin. Press **Save and verify**, sign the message in your wallet, then open the link in the email you receive. The chip next to the button shows **Awaiting verification** or **Verified**.
+Add an email address to get notifications by email too. Press **Save and verify**, sign the message in your wallet, then open the link in the email you receive. The chip next to the button shows **Awaiting verification** or **Verified**, and the card shows the saved address partly hidden, for example te****@example.com. That status stays when you come back later.
 
-Challenges always show in the Battles tab too, with or without an email.
+Pick which notifications go by email in the Notification settings card below. Challenges always show in the Battles tab too, with or without an email.
 
 ## Portfolio display
 
@@ -39,7 +39,7 @@ Each category has two switches: **Bell** for the notification bell and the Notif
 | Category | What it covers |
 |---|---|
 | Battle challenges | Someone challenges your coin, declines or counters. |
-| Replies, reposts and @mentions | Activity on your posts and when someone tags you. |
+| Replies, reposts, quotes, rockets and @mentions | Activity on your posts and when someone tags you. |
 | Rewards ready to claim | League, airdrop, recruiter and battle payouts. |
 | Your coin events | Drafts, launch, graduation and big moments for coins you created. |
 

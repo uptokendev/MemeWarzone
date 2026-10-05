@@ -18,7 +18,7 @@ If the list is empty, it says "No notifications yet".
 The switches are not on this tab. They are in **Settings > Notification settings**, with a Bell and an Email switch for each category:
 
 - Battle challenges
-- Replies, reposts and @mentions
+- Replies, reposts, quotes, rockets and @mentions
 - Rewards ready to claim
 - Your coin events
 
