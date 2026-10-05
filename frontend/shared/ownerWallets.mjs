@@ -61,6 +61,15 @@ export const OWNER_WALLETS = Object.freeze([
   { address: "0xd66f443a02c553cd7a50b74fdc8ac130d9fbd5e6", chain: "evm", label: "EVM graduation keeper" },
   { address: "0x20652bdb1d986220fec30f4733587f279403e773", chain: "evm", label: "EVM creator-choice operator" },
   { address: "0x632061ca786f7b585bbd46a792fda92b02f70671", chain: "evm", label: "ProtocolRevenueVault" },
+  // Founder-confirmed own wallets (2026-10-05): test wallets and the partners' recruiter wallets.
+  { address: "3SyuXsZfQB3JCjGFTpzioswp8ZkVuf7QGVEYwF6k8nG2", chain: "solana", label: "Founder test wallet (linked to test recruiter 114)" },
+  { address: "Bop7oDBz9DtaRTtdeBbP3iL1CCNG4uYbrHNt8mUDsPhT", chain: "solana", label: "Founder test wallet (linked to test recruiter 114)" },
+  { address: "0x3e2372ad05ffc35e6563dbc031a7299518d41ec8", chain: "evm", label: "Founder wallet (recruiter 16 signup)" },
+  { address: "0xb989a99823ea96552c3e3198a40cdbf682edf1aa", chain: "evm", label: "Robinhood route authority (linked to recruiter 1)" },
+  { address: "0x105b2b109a1970a56d3c53be269df2b4419a9f29", chain: "evm", label: "Founder wallet (recruiter 115 / therealmwzte)" },
+  { address: "0xf12871613f5cd35c4b520d37544b3ad6404643df", chain: "evm", label: "Founder test wallet (recruiter 107 tester)" },
+  { address: "0x38eea4ef1c501ae9e056cc7963120485515876ae", chain: "evm", label: "Founder test wallet (recruiter 107 tester)" },
+  { address: "0x587f58ac69be91b575de459a6f69958b8a4d1c77", chain: "evm", label: "Sven (recruiter 29 svenvth)" },
 ]);
 
 function envWallets(env) {

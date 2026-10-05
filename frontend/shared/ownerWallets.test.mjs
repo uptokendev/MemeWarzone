@@ -58,12 +58,12 @@ test("matching ignores case (recruiters.wallet_address stores Solana keys lowerc
 
 test("OWNER_WALLETS and MODERATION_INTERNAL_WALLETS extend the list, with optional labels", () => {
   const index = ownerWalletIndex({
-    OWNER_WALLETS: "3SyuXsZfQB3JCjGFTpzioswp8ZkVuf7QGVEYwF6k8nG2:Founder test, 0xF12871613F5CD35C4B520D37544B3AD6404643DF",
+    OWNER_WALLETS: "So1anaTestWa11etXXXXXXXXXXXXXXXXXXXXXXXXXXX:Founder test, 0xF00000000000000000000000000000000000BEEF",
     MODERATION_INTERNAL_WALLETS: "0xABC0000000000000000000000000000000000001:Ops test",
   });
-  assert.equal(ownerWalletLabel("3SyuXsZfQB3JCjGFTpzioswp8ZkVuf7QGVEYwF6k8nG2", index), "Founder test");
-  assert.equal(index.get("3syuxszfqb3jcjgftpzioswp8zkvuf7qgveywf6k8ng2").address, "3SyuXsZfQB3JCjGFTpzioswp8ZkVuf7QGVEYwF6k8nG2", "Solana case kept");
-  assert.equal(index.get("0xf12871613f5cd35c4b520d37544b3ad6404643df").address, "0xf12871613f5cd35c4b520d37544b3ad6404643df", "EVM lowercased");
+  assert.equal(ownerWalletLabel("So1anaTestWa11etXXXXXXXXXXXXXXXXXXXXXXXXXXX", index), "Founder test");
+  assert.equal(index.get("so1anatestwa11etxxxxxxxxxxxxxxxxxxxxxxxxxxx").address, "So1anaTestWa11etXXXXXXXXXXXXXXXXXXXXXXXXXXX", "Solana case kept");
+  assert.equal(index.get("0xf00000000000000000000000000000000000beef").address, "0xf00000000000000000000000000000000000beef", "EVM lowercased");
   assert.equal(ownerWalletLabel("0xabc0000000000000000000000000000000000001", index), "Ops test");
   assert.equal(index.size, OWNER_WALLETS.length + 3);
 });
