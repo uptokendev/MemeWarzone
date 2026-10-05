@@ -207,3 +207,37 @@ test("Solana: DB failure marks inflows unknown; live wiring compared with the pr
   assert.ok(out.alerts.some((a) => a.level === "critical" && /deployer/.test(a.message)));
   assert.equal(out.period.days, 7);
 });
+
+test("EVM: funded vaults with no router events say 'not recorded' only when the router scan is missing or stuck", async () => {
+  const readers = {
+    readEvmNative: async () => ({ raw: "5", rpc: "fake" }),
+    readEvmToken: async () => ({ raw: "0", rpc: "fake" }),
+    readEvmCall: async ({ to, data }) => {
+      const spec = evmFeeRoutingRegistry(56).wiring.find((w) => w.contract === to && evmGetterSelector(w.getter) === data);
+      return { hex: `0x${"0".repeat(24)}${String(spec?.expected || EVM_SAFE).slice(2).toLowerCase()}`, rpc: "fake" };
+    },
+  };
+  const network = feeRoutingNetwork({ chainId: 56 });
+  const routers = ["0xe635aa43fe5707561c8c3c655225da5c3e4c2239", "0xe157a6fdf19cab61f2eca048966f137a3240a921", "0x8c8141b84cdb4634829cf1936f1e8cc14c61ceaa"];
+  const dbWith = (updatedAt) => ({
+    async query(sql) {
+      if (/from public\.indexer_state/.test(sql)) return { rows: routers.map((router) => ({ router, block: "125760521", updated_at: updatedAt })) };
+      if (/unnest\(\$2::text\[\], \$3::bigint\[\]\)/.test(sql)) return { rows: [{ router: routers[2], start_block: "125566831", symbol: "MWZBNB", campaign: "0x49ac", hidden: true, trades: 2, last_block: "125140469" }] };
+      if (/fee_recipient_address is not null/.test(sql)) return { rows: [] };
+      if (/from public\.reward_events/.test(sql)) return { rows: [] };
+      return { rows: [{ n: 0, amount: "0", collector: "0", referral: "0" }] };
+    },
+  });
+  const nowMs = Date.parse(NOW);
+  let out = await buildFeeRouting({ network, days: 7, db: dbWith(new Date(nowMs - 30 * 60_000).toISOString()), readers, prices, env: {}, now: () => NOW });
+  let alert = out.alerts.find((a) => /router events/.test(a.message));
+  assert.equal(alert.level, "info");
+  assert.match(alert.message, /scan of all 3 routers is current/);
+  assert.match(alert.message, /MWZBNB/);
+  assert.ok(!out.alerts.some((a) => /not being recorded/.test(a.message)));
+
+  out = await buildFeeRouting({ network, days: 7, db: dbWith(new Date(nowMs - 4 * 3_600_000).toISOString()), readers, prices, env: {}, now: () => NOW });
+  alert = out.alerts.find((a) => /router events/.test(a.message));
+  assert.equal(alert.level, "warning");
+  assert.match(alert.message, /has not moved for 3 hours/);
+});

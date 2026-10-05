@@ -365,3 +365,108 @@ test("monthly league: a superseded vault in MONTHLY_LEAGUE_TREASURY_ADDRESS_<id>
   assert.throws(() => monthlyLeagueTreasuryAddress(56, { MONTHLY_LEAGUE_TREASURY_ADDRESS_56: PAYOUT_CODE_MONTHLY_FALLBACK[56] }), /superseded/);
   assert.equal(monthlyLeagueTreasuryAddress(56, {}).toLowerCase(), "0x42d254a7451808bb01df879d71bcafdc5d605a38");
 });
+
+// ---------------------------------------------------------------------------
+// Recruiter warnings (2026-10-05): voided lists, internal test recruiters, and
+// vault balances from test-coin trades before the router scan started.
+
+const HUKFOF = "HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9";
+const GEN6_BNB = "0x8c8141b84cdb4634829cf1936f1e8cc14c61ceaa";
+const FRESH = "2026-10-04T11:30:00.000Z"; // 30 minutes before NOW
+const cursorsAll = (updatedAt = FRESH) => [
+  { router: GEN6_BNB, block: "125760521", updated_at: updatedAt },
+  { router: "0xe635aa43fe5707561c8c3c655225da5c3e4c2239", block: "125765302", updated_at: FRESH },
+  { router: "0xe157a6fdf19cab61f2eca048966f137a3240a921", block: "125760521", updated_at: FRESH },
+];
+const scanDb = ({ cursors = cursorsAll(), preStart = [] } = {}) => fakeDb([
+  [/from public\.indexer_state/, cursors],
+  [/fee_recipient_address is not null/, [{ router: GEN6_BNB, coins: 1 }]],
+  [/unnest\(\$2::text\[\], \$3::bigint\[\]\)/, preStart],
+]);
+const MWZBNB = { router: GEN6_BNB, start_block: "125566831", symbol: "MWZBNB", campaign: "0x49ac80f9ccb0b4b88c2d98671a04cb146c0c6eb3", hidden: true, trades: 2, last_block: "125140469" };
+
+test("recruiter rows: a recruiter paid to one of our keys is internal/test, not owed; the vault check keeps it", () => {
+  const out = classifyRecruiterLedger([
+    { status: "claimable", amount_raw: "10", test_coin: false, recruiter_id: "a", recruiter_name: "Real" },
+    { status: "claimable", amount_raw: "7", test_coin: false, recruiter_id: "b", recruiter_name: "Solkillers", internal_wallet: HUKFOF.toLowerCase() },
+    { status: "failed", amount_raw: "99", test_coin: false, recruiter_id: "b", recruiter_name: "Solkillers", payout_wallet: HUKFOF },
+    { status: "claimable", amount_raw: "3", test_coin: false, recruiter_id: "c", recruiter_wallet: "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H" },
+  ], { since: SINCE });
+  assert.equal(out.claimable.raw, 10n);
+  assert.equal(out.internal.owed.raw, 10n);
+  assert.equal(out.internal.cancelled, 1);
+  assert.equal(out.owedAllRaw, 20n);
+  assert.deepEqual([...out.internal.recruiters.values()].map((r) => r.key), ["the devnet deployer key HuKfoF", "the deployer key 9YN7"]);
+});
+
+test("EVM recruiter: vault balance from test-coin trades before the scan start block is a note, not a warning", async () => {
+  const db = scanDb({ preStart: [MWZBNB] });
+  const out = await buildPayouts({ network: BNB, days: 30, db, env: {}, feeRouting: evmFeeRouting(), readers: EVM_READERS, prices: priceService(), now: () => NOW });
+  const recruiter = out.types.find((t) => t.id === "recruiter");
+  assert.equal(recruiter.warnings.length, 0);
+  assert.ok(!out.warnings.some((w) => w.typeId === "recruiter"));
+  const note = recruiter.notes.find((n) => /held from test-coin trades before recording started \(block 125566831\)/.test(n));
+  assert.ok(note, recruiter.notes.join("\n"));
+  assert.match(note, /^0\.000000000000000077 BNB held/);
+  assert.match(note, /Not claimable by anyone; stays in the vault\./);
+  assert.match(note, /MWZBNB \(2 trades/);
+  assert.ok(note.length <= 600);
+  assert.ok(!/not being recorded/.test(JSON.stringify(out.warnings)));
+});
+
+test("EVM recruiter: a router cursor that has not moved for over 2 hours keeps a warning", async () => {
+  const db = scanDb({ cursors: cursorsAll("2026-10-04T08:00:00.000Z"), preStart: [MWZBNB] });
+  const out = await buildPayouts({ network: BNB, days: 30, db, env: {}, feeRouting: evmFeeRouting(), readers: EVM_READERS, prices: priceService(), now: () => NOW });
+  const w = out.types.find((t) => t.id === "recruiter").warnings;
+  assert.equal(w.length, 1);
+  assert.match(w[0].message, /no recruiter rewards are recorded/);
+  assert.match(w[0].message, /router 0x8c81…ceaa has not moved for 4 hours \(last block 125760521\)/);
+});
+
+test("EVM recruiter: a missing router cursor keeps a warning", async () => {
+  const db = scanDb({ cursors: cursorsAll().slice(1), preStart: [MWZBNB] });
+  const out = await buildPayouts({ network: BNB, days: 30, db, env: {}, feeRouting: evmFeeRouting(), readers: EVM_READERS, prices: priceService(), now: () => NOW });
+  assert.match(out.types.find((t) => t.id === "recruiter").warnings[0].message, /no scan cursor for router 0x8c81…ceaa/);
+});
+
+test("EVM recruiter: a public coin that traded before recording started keeps a warning", async () => {
+  const db = scanDb({ preStart: [MWZBNB, { ...MWZBNB, symbol: "REAL", campaign: "0x1111111111111111111111111111111111111111", hidden: false, trades: 5 }] });
+  const out = await buildPayouts({ network: BNB, days: 30, db, env: {}, feeRouting: evmFeeRouting(), readers: EVM_READERS, prices: priceService(), now: () => NOW });
+  const recruiter = out.types.find((t) => t.id === "recruiter");
+  assert.equal(recruiter.warnings.length, 1);
+  assert.match(recruiter.warnings[0].message, /Public coins traded before recording started.*REAL \(5 trades/);
+  assert.ok(!recruiter.notes.some((n) => /test-coin trades/.test(n)));
+});
+
+function solanaBuild(db) {
+  const routing = { destinations: [{ id: "recruiter_vault", address: "FAKPndjQa3XppkNdk8SDGGWbZG2cPWJWhsDR2EWE9yWK", flags: [], balances: bal("1000000", "SOL").map((b) => ({ ...b, decimals: 9, amount: "0.001" })) }], wiring: [] };
+  return buildPayouts({
+    network: { chainId: 101, chain: "solana", environment: "production", cluster: "mainnet-beta", nativeSymbol: "SOL", nativeDecimals: 9 },
+    days: 30, db, env: { SOLANA_CLUSTER: "mainnet-beta" }, feeRouting: routing,
+    readers: { readSolanaAccountData: async () => { throw new Error("offline"); }, readSolanaCreatorClaimable: async () => ({ status: "ok", raw: "0", coins: 0, coinsWithFees: 0 }) },
+    prices: priceService(), now: () => NOW,
+  });
+}
+
+test("Solana recruiter: a voided payout list to HuKfoF is a note; only a prepared list raises the devnet key warning", async () => {
+  const voided = { status: "failed", total: "671407", epoch_start: "2026-09-21T00:00:00Z", epoch_end: "2026-09-28T00:00:00Z", voided_reason: "founder self-referral test", payout_wallets: HUKFOF };
+  const ledger = [{ status: "failed", amount_raw: "671407", test_coin: false, recruiter_id: "4e9b", recruiter_name: "Solkillers", recruiter_code: "solkillers2", internal_wallet: HUKFOF.toLowerCase() }];
+  let out = await solanaBuild(fakeDb([[/from public\.solana_reward_lane_batches b/, [voided]], [/recruiter_reward_ledger l/, ledger]]));
+  let recruiter = out.types.find((t) => t.id === "recruiter");
+  assert.equal(recruiter.warnings.length, 0, JSON.stringify(recruiter.warnings));
+  assert.ok(recruiter.notes.some((n) => /was cancelled \(founder self-referral test\)\. Nothing from it will be paid\./.test(n)));
+  assert.ok(recruiter.notes.some((n) => /^Internal\/test recruiter, left out of owed: Solkillers \(code solkillers2, paid to the devnet deployer key HuKfoF\)/.test(n)));
+  assert.equal(recruiter.batches[0].voided, true);
+  assert.equal(recruiter.owed.total.raw, "0");
+
+  // Voided by metadata alone (status not yet failed) is still ignored.
+  out = await solanaBuild(fakeDb([[/from public\.solana_reward_lane_batches b/, [{ ...voided, status: "prepared" }]]]));
+  recruiter = out.types.find((t) => t.id === "recruiter");
+  assert.equal(recruiter.warnings.length, 0);
+  assert.match(recruiter.upcoming[0].note, /Recruiters collect from a weekly list/);
+
+  out = await solanaBuild(fakeDb([[/from public\.solana_reward_lane_batches b/, [{ ...voided, status: "prepared", voided_reason: null }]]]));
+  recruiter = out.types.find((t) => t.id === "recruiter");
+  assert.equal(recruiter.warnings.length, 1);
+  assert.match(recruiter.warnings[0].message, /A prepared recruiter payout list \(0\.000671407 SOL\) pays the devnet deployer key HuKfoF/);
+});

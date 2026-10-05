@@ -34,6 +34,8 @@ import { decodeCreatorFeeVault, readCreatorClaimHistory, reconcileCreatorFees } 
 import { CREATOR_VAULT_V2_DEPLOY_BLOCKS, V2_CLAIM_EVENTS, mergeV2Rows, readEvmCreatorVaultCoins, readV2LogsFromChain, summarizeV2Events } from "./evmCreatorFeeClaims.js";
 import { getRpcUrls } from "./getServerReadProvider.js";
 import { arenaPrizesType } from "./financePayoutsArena.js";
+import { SOLANA_DEPLOYER, SOLANA_DEVNET_DEPLOYER, SOLANA_ROUTE_OPERATOR } from "./financeFeeRoutingSolana.js";
+import { preStartCoinsText, readRouterScan, routerScanVerdict, startBlocksText } from "./financeRouterScan.js";
 import { SUPERSEDED_MONTHLY_LEAGUE_TREASURIES, monthlyLeagueTreasuryAddress } from "./evmMonthlyLeagueTreasury.js";
 
 export const PAYOUTS_SCHEMA = "finance-payouts-v1";
@@ -380,19 +382,58 @@ export function classifyRewardLedger(rows, { since, now }) {
   return t;
 }
 
+// Our own keys. A recruiter paid to one of them is an internal test account
+// (recruiter 114 "Solkillers" is the founder's, paid to HuKfoF): shown apart as
+// internal/test, never as money owed to a recruiter.
+export const INTERNAL_PAYOUT_KEYS = Object.freeze({
+  [SOLANA_DEPLOYER.toLowerCase()]: "the deployer key 9YN7",
+  [SOLANA_DEVNET_DEPLOYER.toLowerCase()]: "the devnet deployer key HuKfoF",
+  [SOLANA_ROUTE_OPERATOR.toLowerCase()]: "the operator key 2AMfRaxS",
+});
+
+/** Which internal key a recruiter is paid to, or null. The ledger read matches the signup wallet, every linked payout wallet and the claim's payout wallet. */
+export function internalPayoutKey(row) {
+  for (const value of [row?.internal_wallet, row?.recruiter_wallet, row?.payout_wallet]) {
+    const label = INTERNAL_PAYOUT_KEYS[String(value || "").trim().toLowerCase()];
+    if (label) return label;
+  }
+  return null;
+}
+
 async function readRecruiterLedger(db, chainId) {
   return safeQuery(db, `
     select l.status, l.amount_raw::text as amount_raw, l.created_at, l.updated_at, c.tx_hash,
-           not (${notPublicHiddenCampaignSql("l", "metadata->>'campaign'")}) as test_coin
+           not (${notPublicHiddenCampaignSql("l", "metadata->>'campaign'")}) as test_coin,
+           l.recruiter_id::text as recruiter_id, ra.display_name as recruiter_name, ra.code as recruiter_code,
+           ra.signup_wallet as recruiter_wallet, c.payout_wallet,
+           (select k from unnest($2::text[]) as k
+             where k = lower(ra.signup_wallet) or k = lower(c.payout_wallet)
+                or exists (select 1 from public.recruiter_payout_wallets w where w.recruiter_id = l.recruiter_id and lower(w.wallet_address) = k)
+             limit 1) as internal_wallet
       from public.recruiter_reward_ledger l
       left join public.recruiter_reward_claims c on c.id = l.claim_id
-     where l.chain_id = $1`, [chainId]);
+      left join public.recruiter_accounts ra on ra.recruiter_id = l.recruiter_id
+     where l.chain_id = $1`, [chainId, Object.keys(INTERNAL_PAYOUT_KEYS)]);
 }
 
+const RECRUITER_OWED_STATUSES = ["claimable", "retriable", "pending", "pending_finality", "created", "submitted"];
+
 export function classifyRecruiterLedger(rows, { since }) {
-  const t = { paidPeriod: acc(), paidAll: acc(), claimable: acc(), pending: acc(), testOwed: acc(), testPaid: acc(), owedAllRaw: 0n };
+  const t = { paidPeriod: acc(), paidAll: acc(), claimable: acc(), pending: acc(), testOwed: acc(), testPaid: acc(), owedAllRaw: 0n, internal: { owed: acc(), paid: acc(), cancelled: 0, recruiters: new Map() } };
   for (const row of rows || []) {
     const status = String(row.status || "").toLowerCase();
+    const internalKey = internalPayoutKey(row);
+    if (internalKey) {
+      const id = String(row.recruiter_id ?? "");
+      if (!t.internal.recruiters.has(id)) t.internal.recruiters.set(id, { id, name: row.recruiter_name || null, code: row.recruiter_code || null, key: internalKey });
+      if (status === "claimed") addTo(t.internal.paid, row.amount_raw, { at: toIso(row.updated_at) || toIso(row.created_at) });
+      else if (RECRUITER_OWED_STATUSES.includes(status)) {
+        // The vault would still pay it if claimed, so the vault check keeps it.
+        t.owedAllRaw += rawBig(row.amount_raw);
+        addTo(t.internal.owed, row.amount_raw);
+      } else if (status === "failed") t.internal.cancelled += 1;
+      continue;
+    }
     if (status === "claimed") {
       const at = toIso(row.updated_at) || toIso(row.created_at);
       if (row.test_coin) { addTo(t.testPaid, row.amount_raw, { at }); continue; }
@@ -400,7 +441,7 @@ export function classifyRecruiterLedger(rows, { since }) {
       if (at && at >= since) addTo(t.paidPeriod, row.amount_raw, { at, tx: row.tx_hash });
       continue;
     }
-    if (!["claimable", "retriable", "pending", "pending_finality", "created", "submitted"].includes(status)) continue;
+    if (!RECRUITER_OWED_STATUSES.includes(status)) continue;
     t.owedAllRaw += rawBig(row.amount_raw);
     if (row.test_coin) { addTo(t.testOwed, row.amount_raw); continue; }
     addTo(status === "claimable" || status === "retriable" ? t.claimable : t.pending, row.amount_raw);
@@ -658,33 +699,49 @@ async function recruiterType(ctx) {
   const ledger = ctx.dbRowsAllowed ? await readRecruiterLedger(ctx.db, ctx.chainId) : { rows: [], error: null };
   if (ledger.error) t.warnings.push({ level: "warning", message: `Recruiter ledger could not be read: ${ledger.error}` });
   const c = classifyRecruiterLedger(ledger.rows, { since: ctx.since });
-  t.sources.push("db:recruiter_reward_ledger", "db:recruiter_reward_claims (transaction)");
+  t.sources.push("db:recruiter_reward_ledger", "db:recruiter_reward_claims (transaction)", "db:recruiter_accounts + recruiter_payout_wallets (internal keys)");
   t.paid = await paidBlock(c.paidPeriod, c.paidAll, ctx);
-  t.owed = await owedBlock(c.claimable, c.pending, c.testOwed, ctx, { note: "Earned by recruiters and not paid yet. Claimable: ready to collect. Waiting: still being confirmed or in a payout that has not landed." });
+  t.owed = await owedBlock(c.claimable, c.pending, c.testOwed, ctx, {
+    note: "Earned by recruiters and not paid yet. Claimable: ready to collect. Waiting: still being confirmed or in a payout that has not landed.",
+    internal: await priced(c.internal.owed, ctx, { events: false }),
+  });
   t.vaults = [vaultFromDestination(ctx, "recruiter_vault")];
-  t.coverage = await coverageBlock(ctx, c.owedAllRaw.toString(), t.vaults, "Compared with every recorded recruiter reward not yet paid, test coins included.");
+  t.coverage = await coverageBlock(ctx, c.owedAllRaw.toString(), t.vaults, "Compared with every recorded recruiter reward not yet paid, test coins and internal test recruiters included.");
+  if (c.internal.recruiters.size > 0) {
+    const who = [...c.internal.recruiters.values()].map((r) => `${r.name || "recruiter"} (${r.code ? `code ${r.code}, ` : ""}paid to ${r.key})`).join(", ");
+    t.notes.push(`Internal/test recruiter${c.internal.recruiters.size === 1 ? "" : "s"}, left out of owed: ${who}. Still open: ${atomicToDecimal(c.internal.owed.raw.toString(), ctx.decimals)} ${ctx.asset}. Paid: ${atomicToDecimal(c.internal.paid.raw.toString(), ctx.decimals)} ${ctx.asset}. Cancelled: ${c.internal.cancelled} reward${c.internal.cancelled === 1 ? "" : "s"}.`.slice(0, 600));
+  }
   if (ctx.solana) {
     t.sources.push("db:solana_reward_lane_batches");
     const batches = ctx.dbRowsAllowed ? await safeQuery(ctx.db, `
       select b.status, b.total_lamports::text as total, b.epoch_start, b.epoch_end, b.published_at, b.publish_tx_hash,
+             nullif(b.metadata->>'voidedReason', '') as voided_reason,
              (select string_agg(distinct c.payout_wallet, ',') from public.recruiter_reward_claims c
                where c.chain = 'solana' and c.amount_raw = b.total_lamports and c.created_at between b.created_at - interval '1 minute' and b.created_at + interval '1 minute') as payout_wallets
         from public.solana_reward_lane_batches b
        where b.chain_id = 101 and b.lane = 'recruiter'
        order by b.epoch_end desc nulls last limit 6`, []) : { rows: [] };
-    t.batches = (batches.rows || []).map((b) => ({ status: b.status, total: atomicToDecimal(String(b.total || "0").split(".")[0], 9), weekStart: toIso(b.epoch_start), weekEnd: toIso(b.epoch_end), postedAt: toIso(b.published_at), txHash: b.publish_tx_hash || null, txUrl: explorerTxUrl(101, b.publish_tx_hash) }));
-    const prepared = t.batches.find((b) => b.status === "prepared");
+    // A list that failed or was voided by hand pays nobody; only a prepared list can still go on chain.
+    const cancelled = (b) => String(b.status || "").toLowerCase() === "failed" || Boolean(b.voided_reason);
+    t.batches = (batches.rows || []).map((b) => ({ status: b.status, total: atomicToDecimal(String(b.total || "0").split(".")[0], 9), weekStart: toIso(b.epoch_start), weekEnd: toIso(b.epoch_end), postedAt: toIso(b.published_at), txHash: b.publish_tx_hash || null, txUrl: explorerTxUrl(101, b.publish_tx_hash), voided: cancelled(b), voidedReason: b.voided_reason || null }));
+    const prepared = t.batches.find((b) => b.status === "prepared" && !b.voided);
     t.upcoming = [{ label: "Next weekly recruiter payout list", at: ctx.schedule.weekEnd, note: prepared ? `A list of ${prepared.total} SOL for the week to ${prepared.weekEnd?.slice(0, 10)} is prepared but not on chain yet.` : "Recruiters collect from a weekly list posted on chain." }];
     for (const b of batches.rows || []) {
-      if (String(b.payout_wallets || "").split(",").includes("HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9")) {
-        t.warnings.push({ level: "warning", message: `A recruiter payout list (${atomicToDecimal(String(b.total).split(".")[0], 9)} SOL, status ${b.status}) pays the devnet deployer key HuKfoF. Check that this recruiter's payout wallet is right before it goes on chain.` });
+      const total = atomicToDecimal(String(b.total).split(".")[0], 9);
+      if (cancelled(b)) {
+        t.notes.push(`A recruiter payout list of ${total} SOL for the week to ${toIso(b.epoch_end)?.slice(0, 10) || "unknown"} was cancelled${b.voided_reason ? ` (${String(b.voided_reason).slice(0, 200)})` : ""}. Nothing from it will be paid.`);
+        continue;
+      }
+      if (String(b.status || "").toLowerCase() !== "prepared") continue;
+      if (String(b.payout_wallets || "").split(",").includes(SOLANA_DEVNET_DEPLOYER)) {
+        t.warnings.push({ level: "warning", message: `A prepared recruiter payout list (${total} SOL) pays the devnet deployer key HuKfoF. Check that this recruiter's payout wallet is right before it goes on chain.` });
       }
     }
   } else {
     t.upcoming = [{ label: "Paid when the recruiter claims", at: null, note: "The operator pays each claim from the recruiter vault, within its daily cap." }];
     const held = t.vaults[0].balance;
     if (held.status === "ok" && held.raw !== "0" && c.owedAllRaw === 0n && c.paidAll.count === 0) {
-      t.warnings.push({ level: "warning", message: `The recruiter vault holds ${held.amount} ${ctx.asset} but no recruiter rewards are recorded for this chain, so nobody can claim it yet. Trades on the newest router are not being recorded (see Fee routing).` });
+      await unexplainedRecruiterBalance(ctx, t, held);
     }
   }
   return t;
@@ -912,6 +969,27 @@ async function evmCreatorCoins(ctx, t) {
   });
   const error = readError ? `Creator vault getters could not be read: ${readError}` : !v2Known ? `CreatorRewardsVaultV2 ${v2} claims are not known on this chain: the indexer has no scan cursor for it and its logs could not be read (${chainLogs.error || "partial read"}).` : null;
   return { coins, error, v2Cursor: cursor.rows?.[0] || null };
+}
+
+// The recruiter vault holds money but no recruiter reward is recorded. A real
+// warning only when the router scan is missing or stuck, or public coins traded
+// before recording started; test-coin trades before the start block are a note.
+async function unexplainedRecruiterBalance(ctx, t, held) {
+  const base = `The recruiter vault holds ${held.amount} ${ctx.asset} but no recruiter rewards are recorded for this chain, so nobody can claim it yet.`;
+  const scan = ctx.dbRowsAllowed ? await readRouterScan(ctx.db, ctx.chainId, { env: ctx.env }) : null;
+  t.sources.push("db:indexer_state (rewards-router cursors)", "db:curve_trades (trades before recording started)");
+  const v = routerScanVerdict(scan, { now: ctx.now });
+  if (v.status === "unknown") {
+    t.warnings.push({ level: "warning", message: `${base} The indexer's router scan could not be checked: ${v.error}` });
+  } else if (v.problems.length > 0) {
+    t.warnings.push({ level: "warning", message: `${base} ${v.problems.join(" ")} See Fee routing.` });
+  } else if (v.preStartPublic.length > 0) {
+    t.warnings.push({ level: "warning", message: `${base} Public coins traded before recording started, so their recruiter share was never recorded: ${preStartCoinsText(v.preStartPublic)}.` });
+  } else if (v.preStartHidden.length > 0) {
+    t.notes.push(`${atomicToDecimal(held.raw, ctx.decimals) ?? held.amount} ${ctx.asset} held from test-coin trades before recording started (block ${startBlocksText(v.preStartHidden)}). Not claimable by anyone; stays in the vault. Test coins: ${preStartCoinsText(v.preStartHidden)}.`.slice(0, 600));
+  } else {
+    t.warnings.push({ level: "warning", message: `${base} The router scan is current and no coin traded before its start block, so check where this balance came from.` });
+  }
 }
 
 async function creatorType(ctx) {
