@@ -31,6 +31,7 @@ import {
   deriveCampaignFeeAccounts,
 } from "./solanaCreatorFeeMath.js";
 import { getRpcUrls } from "./getServerReadProvider.js";
+import { arenaPrizesType } from "./financePayoutsArena.js";
 import { SUPERSEDED_MONTHLY_LEAGUE_TREASURIES, monthlyLeagueTreasuryAddress } from "./evmMonthlyLeagueTreasury.js";
 
 export const PAYOUTS_SCHEMA = "finance-payouts-v1";
@@ -758,34 +759,9 @@ async function squadType(ctx) {
   return t;
 }
 
+// Read from each battle's pool on chain: financePayoutsArena.js.
 async function arenaType(ctx) {
-  const t = typeShell(ctx, "arena_prizes");
-  const deposits = ctx.dbRowsAllowed ? await safeQuery(ctx.db, `select purpose, created_at, amount_wei::text as amount_raw from public.arena_war_pool_deposits where chain_id = $1`, [ctx.chainId]) : { rows: [] };
-  const claims = ctx.dbRowsAllowed ? await safeQuery(ctx.db, `select created_at, amount_wei::text as amount_raw, tx_hash from public.arena_war_pool_claims where chain_id = $1`, [ctx.chainId]) : { rows: [] };
-  // Boosts are recorded per payment in arena_contest_actions (Solana and EVM), not in the deposits table.
-  const boosts = ctx.dbRowsAllowed ? await safeQuery(ctx.db, `select confirmed_at as created_at, gross_native_raw::text as amount_raw from public.arena_contest_actions where chain_id = $1 and action_type = 'boost' and confirmed_at is not null and coalesce(tx_hash, signature_reference) is not null and gross_native_raw > 0`, [ctx.chainId]) : { rows: [] };
-  t.sources.push("db:arena_war_pool_deposits", "db:arena_war_pool_claims", "db:arena_contest_actions");
-  const paidAll = acc();
-  const paidPeriod = acc();
-  for (const row of claims.rows || []) {
-    addTo(paidAll, row.amount_raw, { at: row.created_at, tx: row.tx_hash });
-    if (toIso(row.created_at) >= ctx.since) addTo(paidPeriod, row.amount_raw, { at: row.created_at, tx: row.tx_hash });
-  }
-  t.paid = await paidBlock(paidPeriod, paidAll, ctx, { note: "Prize claims recorded by the app." });
-  const inAll = acc();
-  for (const row of deposits.rows || []) addTo(inAll, row.amount_raw, { at: row.created_at });
-  for (const row of boosts.rows || []) addTo(inAll, row.amount_raw, { at: row.created_at });
-  t.paidIn = { allTime: await priced(inAll, ctx, { events: true }), note: "Stakes and boosts put into battle pools (recorded by the app). 90% of boosts and 75% of stakes are prize money; the protocol's 10% / 5% is in Revenue." };
-  t.owed = unknownOwed("Each winner's prize is worked out on chain when they claim, so it is not listed here. The pool balance below is the money still in play or unclaimed.");
-  if (ctx.solana) {
-    t.vaults = [];
-    t.coverage = await coverageBlock(ctx, null, [], "Each battle has its own pool account on Solana; they are not read here.");
-  } else {
-    t.vaults = [vaultFromDestination(ctx, "war_pool"), vaultFromDestination(ctx, "event_prize")];
-    t.coverage = await coverageBlock(ctx, null, t.vaults, null);
-  }
-  t.upcoming = [{ label: "Winners claim after each battle ends", at: null, note: null }];
-  return t;
+  return arenaPrizesType(ctx, { typeShell, acc, addTo, priced, paidBlock, owedBlock, unknownOwed, unrecordedPaid, coverageBlock, vaultFromDestination, explorerTxUrl, explorerAddressUrl, safeQuery });
 }
 
 async function operatorType(ctx) {

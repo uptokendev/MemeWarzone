@@ -286,7 +286,7 @@ test("tax brackets: Dutch default 19% to EUR 200k then 25.8%; zero for a loss", 
   assert.equal(Math.round(bracketTax(300000, b)), 38000 + 25800);
   assert.equal(bracketTax(-5000, b), 0);
   assert.equal(effectiveTaxRules(null).isDefault, true);
-  assert.match(effectiveTaxRules(null).note, /no adviser has confirmed these yet/);
+  assert.match(effectiveTaxRules(null).note, /Based on KVK and the Belastingdienst .*checked 2026-10-05/);
   assert.throws(() => validateTaxRules({ name: "x", currency: "EUR", brackets: [{ upTo: 100, rate: 0.1 }, { upTo: 50, rate: 0.2 }, { upTo: null, rate: 0.3 }] }), /higher than the bracket before/);
   assert.throws(() => validateTaxRules({ name: "x", currency: "EUR", brackets: [{ upTo: null, rate: 19 }] }), /between 0 and 1/);
   assert.throws(() => validateTaxRules({ name: "x", currency: "EUR", brackets: [{ upTo: 100, rate: 0.1 }] }), /last bracket has no upper limit/);
@@ -310,9 +310,11 @@ test("tax schedule: increments of year-to-date tax; loss month releases; frozen 
 test("tax page: label, default rules, editable by finance.manage with an audit row", async () => {
   const { call, db } = setup({ revenue: { value: { "2026-09": 10000 } } });
   const view = await call("GET", "/api/admin/finance/tax-reserves", { principal: VIEWER });
-  assert.match(view.body.label, /Default rates; no adviser has confirmed these yet/);
-  assert.match(view.body.label, /not tax advice/);
+  assert.match(view.body.label, /Based on the Belastingdienst, wetten.overheid.nl and KVK, checked 2026-10-05/);
+  assert.match(view.body.label, /can be changed afterwards/);
   assert.equal(view.body.rules.isDefault, true);
+  assert.equal(view.body.rules.name, "Dutch corporate income tax (vennootschapsbelasting) 2026");
+  assert.match(view.body.rules.source, /^https:\/\//);
   assert.equal(view.body.months.find((m) => m.month === "2026-09").reserveUsd, 1900);
   const put = await call("PUT", "/api/admin/finance/tax-reserves", { body: { name: "Flat 10%", currency: "USD", brackets: [{ upTo: null, rate: 0.1 }] } });
   assert.equal(put.status, 200);
@@ -418,7 +420,7 @@ const SETTINGS = effectiveDistributionSettings({
   shares: [
     { id: "a", name: "Patrick", entity: "Dutch personal holding (BV)", bps: 5000, evmAddress: "0x1111111111111111111111111111111111111111", solanaAddress: "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H" },
     { id: "b", name: "Sven", entity: "Dutch personal holding (BV)", bps: 3000, evmAddress: "0x2222222222222222222222222222222222222222", solanaAddress: "fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv" },
-    { id: "c", name: "Dough", entity: "US corporation", bps: 2000, withholdingPct: 15, evmAddress: "0x3333333333333333333333333333333333333333", solanaAddress: "So11111111111111111111111111111111111111112" },
+    { id: "c", name: "Dough", entity: "US corporation", bps: 2000, withholdingPct: 15, withholdingOverride: true, evmAddress: "0x3333333333333333333333333333333333333333", solanaAddress: "So11111111111111111111111111111111111111112" },
   ],
 });
 
@@ -472,7 +474,7 @@ test("Safe batch: Transaction Builder shape, net native transfers from the Safe 
   assert.equal(batch.meta.createdFromSafeAddress, SAFE);
   assert.equal(batch.meta.txBuilderVersion, "1.16.5");
   assert.match(batch.meta.description, /Proposal only/);
-  assert.match(batch.meta.description, /notary/);
+  assert.match(batch.meta.description, /shareholder resolution and the board's approval after the distribution test \(art\. 2:216 BW\)/);
   assert.match(batch.meta.description, /Dough \(US corporation\) 20%, 15% withheld/);
   assert.equal(batch.transactions.length, 3);
   for (const tx of batch.transactions) {
@@ -502,7 +504,10 @@ test("distributions route: labels, buffer shown, open costs, downloads; settings
   const view = await call("GET", "/api/admin/finance/distributions", { principal: VIEWER });
   assert.equal(view.body.label, "Proposal only. Nothing is sent from this page.");
   assert.match(view.body.dividendNote, /dividend from MemeWarzone BV/);
-  assert.match(view.body.dividendNote, /participation exemption/);
+  assert.match(view.body.dividendNote, /art\. 4 Wet op de dividendbelasting 1965/);
+  assert.equal(view.body.settings.shares[2].entityType, "us_corporation", "inferred from the legal entity text");
+  assert.equal(view.body.settings.shares[2].withholdingPct, 0, "US corporation with 20%: exempt under art. 4 lid 2");
+  assert.equal(view.body.settings.shares[2].withholding.fallbackRate, 0.05, "treaty rate if the exemption is refused");
   assert.equal(view.body.buffer.label, "Buffer: operator wallet, capped at $10,000 (not distributed)");
   assert.equal(view.body.buffer.totalUsd, 10000);
   assert.equal(view.body.buffer.capUsd, 10000);
@@ -523,7 +528,8 @@ test("distributions route: labels, buffer shown, open costs, downloads; settings
   assert.equal(after.body.history.length, 1, "who changed what is shown to every finance.view user");
   assert.equal(after.body.history[0].by, "manager@example.com");
   assert.ok(after.body.history[0].changes.includes("Patrick EVM payout address: not set -> 0x1111111111111111111111111111111111111111"));
-  assert.ok(after.body.history[0].changes.includes("Dough withholding: 0% -> 15%"));
+  assert.ok(after.body.history[0].changes.includes("Dough withholding: from the rules -> 15% (set by hand)"));
+  assert.equal(after.body.settings.shares[2].withholdingPct, 15, "the override wins");
   assert.equal(view.body.history.length, 0);
   const file = await call("GET", "/api/admin/finance/distributions/safe-batch", { principal: VIEWER, query: { chainId: "56" } });
   assert.equal(file.status, 200);

@@ -314,3 +314,26 @@ Tests: `npm run test:protocol-forwarder-keeper` (12).
 - The $698 BNB Home placements disappeared from revenue because both placements were set to `waived` at
   2026-10-04 18:32 UTC (sponsored_placements.updated_at). Waived is not revenue.
 - Summary "Owed to users" = Payouts owed now (all payout types); `/rewards` is the airdrop ledger only.
+
+### Finance payouts: war pool and arena prizes from chain (2026-10-05, feat/finance-arena-payouts)
+
+`frontend/api/lib/financePayoutsArena.js` (hooked into `financePayouts.js` `arenaType`). The DB only lists which
+pools exist (`arena_battles` with a stake or a boost, plus every `arena_tournaments` row; tournament match battles
+have no pool). Each pool is read on chain: Solana `arena_pool` + `arena_vault` PDAs (seeds + `battlePoolId`), claim
+receipts `arena_claim` (bucket 0 winner, 1 protocol, 2 MWL, 10+n place n) whose oldest signature is the claim tx;
+EVM `ArenaWarPoolTreasuryV2.pools(poolId)` (21 words) plus `placeCount`/`placeOf` for tournaments. Chain reads are
+cached 5 min, max 500 pools. Paid = winner/place claims; owed = unclaimed prizes + refunds of cancelled pools; held =
+everything in open/live pools (not owed); protocol / MWL pending shown apart. An unread pool makes every total
+`null` and the cover `unknown`.
+- Production 2026-10-05: Solana 3 listed battles. `arena-mugwhj11` resolved, all claimed (winner 0.112024541 SOL,
+  tx 5tSmpCDr…, protocol 0.009113837, MWL 0.02). `arena-muoo3g87` resolved 2026-10-02, winner 7ZkE… has NOT
+  claimed 1.437304278 SOL; its vault holds exactly that above rent (covered); protocol 0.146367141 and MWL 0.08
+  claimed. `arena-muhe0ykg` (expired, stake 0.2 in the DB) never opened a pool on chain: no money. BNB / Robinhood:
+  no battles, war pool contracts hold 0.
+- **`arena_war_pool_deposits` undercount, root cause:** the table is written only by
+  `POST /api/arena/war-pools/:id/stake-receipt` (`handleStakeReceipt`), which the browser calls after the deposit
+  confirms and after a second wallet message signature (`ArenaStakeButton.record`). Nothing reads the chain to fill
+  gaps. `arena-mugwhj11` owner B's `DepositStakeV2` (BVTK…, tx 3khothUk…, 2026-09-25 14:02 UTC) has no row; the
+  battle still went live because `GET /stake` promotes it from the chain read. Which client step failed cannot be
+  proven (`auth_nonces` keeps one row per wallet). Not fixed (needs a chain-side ingest); finance reads the chain.
+- `arena_war_pool_claims` is empty on production; claims are only on chain.

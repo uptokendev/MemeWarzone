@@ -1,6 +1,7 @@
 import { MWL_EVM_PERIOD_CODES, MWL_PAYOUT_CATEGORIES, isMwlPayoutPeriod, mwlVaultAddress } from "./lib/mwlPayoutVaults.js";
 import crypto from "crypto";
 import { readSolanaLeagueVaultSpendable } from "./lib/solanaLeagueVaultBalance.js";
+import { dbcLeagueCreditRaw } from "./lib/dbcLeagueCredit.js";
 import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../server/http.js";
@@ -472,6 +473,8 @@ async function computeTotalLeagueFeeRawInRange(chainId, startIso, endIso, protoc
         -- Same rule as the settlement job: Solana swaps on a graduated coin's pool (log_index
         -- 20000+) pay no league fee.
         AND NOT (t.chain_id = 101 AND t.log_index >= 20000)
+        -- DBC trades: their league share is credited from the chain (dbcLeagueCreditRaw), as settlement does.
+        AND coalesce(t.venue, '') <> 'dbc'
     ),
     base AS (
       SELECT
@@ -548,22 +551,27 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
   const weeklyBudgetBps = readBps("WEEKLY_PRIZE_BUDGET_BPS", DEFAULT_WEEKLY_PRIZE_BUDGET_BPS);
   const monthlyBudgetBps = readBps("MONTHLY_PRIZE_BUDGET_BPS", DEFAULT_MONTHLY_PRIZE_BUDGET_BPS);
   const budgetBps = periodNorm === "weekly" ? weeklyBudgetBps : periodNorm === "monthly" ? monthlyBudgetBps : 10_000;
-  let budget = (total * BigInt(budgetBps)) / 10_000n;
-  // Solana, live epoch: the pot is what the league vault actually holds (carry-overs included, net
-  // of payouts), not this epoch's fee estimate. Past epochs keep the fee-based history.
+  const budget = (total * BigInt(budgetBps)) / 10_000n;
+  // The pot is what settlement pays (realtime-indexer finalizeEpochWinners): this epoch's fee budget
+  // split over the categories, plus each category's own rollover. Founder 2026-10-04: show people what
+  // they will be paid. The Solana vault balance (2026-09-25 to 2026-10-04 the live pot) is reported
+  // next to it only; settlement never pays vault money that no rollover row records, so sizing the
+  // pot from the vault showed winners several times what they would receive.
   const solanaChain = Number(chainId) === 101 || Number(chainId) === 102;
   const vault = solanaChain && isLive ? await readSolanaLeagueVaultSpendable(periodNorm) : null;
-  const vaultMode = Boolean(vault);
-  if (vault) budget = vault.spendableRaw;
+  // Solana mainnet: the DBC league share that landed in this period's vault inside the epoch (live:
+  // up to now), split over the categories like the fee budget. null = chain unreadable (flagged).
+  const startMs = epochStartIso ? Date.parse(epochStartIso) : NaN;
+  const endMs = rangeEndIso ? Date.parse(rangeEndIso) : now;
+  const dbcCredit = Number(chainId) === 101 && Number.isFinite(startMs) ? await dbcLeagueCreditRaw(periodNorm, startMs, endMs) : 0n;
 
   const leagueCount = eligible.length;
-  const base = leagueCount > 0 ? budget / BigInt(leagueCount) : 0n;
-  const rem = leagueCount > 0 ? budget % BigInt(leagueCount) : 0n;
+  const share = (total, i) => (leagueCount > 0 ? total / BigInt(leagueCount) + (BigInt(i) < total % BigInt(leagueCount) ? 1n : 0n) : 0n);
 
   const byCategory = {};
   for (let i = 0; i < eligible.length; i++) {
     const cat = eligible[i];
-    const pot = base + (BigInt(i) < rem ? 1n : 0n); // spread dust evenly (<= 1 wei difference)
+    const pot = share(budget, i) + share(dbcCredit ?? 0n, i); // spread dust evenly (<= 1 wei difference)
     byCategory[cat] = {
       potRaw: pot.toString(),
       payoutsRaw: splitPotRaw(pot)
@@ -574,7 +582,7 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
   // Rollovers are a ledger of funds carried into this epoch from:
   // - expired, unclaimed prizes (swept into next epoch)
   // - no-clear-winner outcomes (e.g., ties / Perfect Run edge cases)
-  if (epochStartIso && !vaultMode) {
+  if (epochStartIso) {
     try {
       const { rows: rrows } = await pool.query(
         `select category, coalesce(sum(amount_raw::numeric), 0)::numeric(78,0) as amount_raw
@@ -601,6 +609,26 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
       }
     } catch {
       // If the rollover table isn't deployed yet, ignore (backward compatible).
+    }
+
+    // Late-indexed fees of earlier epochs credited to this one (settlement trueUpLateFees).
+    try {
+      const { rows: crows } = await pool.query(
+        `select category, coalesce(sum(amount_raw), 0)::numeric(78,0) as amount_raw
+           from public.league_late_fee_credits
+          where chain_id = $1 and period = $2 and target_epoch_start = $3::timestamptz
+          group by category`,
+        [chainId, periodNorm, epochStartIso]
+      );
+      for (const cr of crows) {
+        const cat = String(cr.category || "");
+        const credit = BigInt(String(cr.amount_raw ?? "0"));
+        if (!byCategory[cat] || credit <= 0n) continue;
+        const nextPot = BigInt(byCategory[cat].potRaw) + credit;
+        byCategory[cat] = { ...byCategory[cat], lateFeeCreditRaw: credit.toString(), potRaw: nextPot.toString(), payoutsRaw: splitPotRaw(nextPot) };
+      }
+    } catch {
+      // Table not migrated yet: no credits (settlement reads it the same way).
     }
 
     // Subtract payouts already executed for this epoch (so UI can show *available* pools).
@@ -648,17 +676,12 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
     }
   }
 
-  if (vaultMode) {
-    for (const cat of Object.keys(byCategory)) {
-      const potNow = BigInt(String(byCategory[cat].potRaw ?? "0"));
-      byCategory[cat] = { ...byCategory[cat], paidRaw: "0", availablePotRaw: potNow.toString(), availablePayoutsRaw: splitPotRaw(potNow) };
-    }
-  }
-
   const data = {
-    basis: vaultMode ? "onchain_vault_balance" : "league_fee_only",
+    basis: "league_fee_only",
     vaultAddress: vault?.address || null,
     vaultSpendableRaw: vault ? vault.spendableRaw.toString() : null,
+    dbcCreditRaw: dbcCredit == null ? null : dbcCredit.toString(),
+    dbcCreditUnavailable: dbcCredit == null,
     period: periodNorm,
     cutoff: epochStartIso,
     rangeEnd: rangeEndIso,
@@ -672,7 +695,7 @@ async function getPrizeMeta(chainId, periodNorm, epochStartIso, rangeEndIso, { i
     byCategory
   };
 
-  prizeCache.set(key, { computedAtMs: now, data, ttlMs: vaultMode ? 60_000 : PRIZE_TTL_MS });
+  prizeCache.set(key, { computedAtMs: now, data, ttlMs: vault || (isLive && Number(chainId) === 101) ? 60_000 : PRIZE_TTL_MS });
   return data;
 }
 

@@ -115,8 +115,9 @@ function formatEpochEnd(summary?: LeagueSummaryResponse) {
   });
 }
 
-function getPrizeRaw(prize?: LeaguePrizeMeta) {
-  const candidates = [prize?.availablePotRaw, prize?.potRaw, prize?.totalLeagueFeeRaw];
+/** A league's whole pot (what settlement splits); never the raw fee total, which is not prize money. */
+function getPotRaw(prize?: Pick<LeaguePrizeMeta, "potRaw" | "availablePotRaw"> | null) {
+  const candidates = [prize?.potRaw, prize?.availablePotRaw];
   for (const raw of candidates) {
     const s = String(raw ?? "").trim();
     if (!s || s === "0") continue;
@@ -127,6 +128,17 @@ function getPrizeRaw(prize?: LeaguePrizeMeta) {
     }
   }
   return "0";
+}
+
+/** Sum of the boards' pots for this period (Perfect Run on weekly carries the monthly pot: left out). */
+function sumLeaguePotsRaw(leagues: Array<{ key: LeagueKey; prize?: LeaguePrizeMeta | null }>, period: Period) {
+  let total = 0n;
+  for (const league of leagues) {
+    const def = LEAGUES.find((item) => item.key === league.key);
+    if (def && !def.supports.includes(period)) continue;
+    total += BigInt(getPotRaw(league.prize));
+  }
+  return total.toString();
 }
 
 function resolveGeneratedUsd(
@@ -304,7 +316,7 @@ function StandingsTable({
   pendingCopy,
   warningCopy,
   native,
-  payoutForRank,
+  payoutForRow,
   paidPlaces,
 }: {
   league: LeagueDef;
@@ -313,7 +325,7 @@ function StandingsTable({
   pendingCopy?: string;
   warningCopy?: string;
   native?: { decimals: number; symbol: string };
-  payoutForRank: (rank: number) => string;
+  payoutForRow: (rank: number, row?: unknown) => string;
   paidPlaces: number;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -351,7 +363,7 @@ function StandingsTable({
                   <td className={`${td} w-10 font-mw-mono font-bold text-mw-muted`}>{row.rank ?? index + 1}</td>
                   <td className={td}><div className="font-bold text-mw-text">{row.displayName || "Recruiter"}</div><div className="font-mw-mono text-[13px] text-mw-muted">{row.recruiterCode || row.code || shortAddr(row.wallet) || "Code pending"}</div></td>
                   <td className={`${td} text-right font-mw-mono`}>{Number(row.weightedScore ?? 0).toLocaleString()}</td>
-                  <td className={`${td} text-right font-mw-mono font-bold text-mw-accent-soft`}>{formatUsd(Number(row.estimatedPayoutUsd ?? 0))}</td>
+                  <td className={`${td} text-right font-mw-mono font-bold text-mw-accent-soft`}>{payoutForRow(Number(row.rank ?? index + 1), row)}</td>
                   <td className={`${td} text-mw-muted`}>{row.claimStatus || "Pending"}</td>
                   <td className={td}><RecruiterLinks wallet={row.wallet} code={row.recruiterCode} /></td>
                 </tr>
@@ -400,7 +412,7 @@ function StandingsTable({
                   <td className={`${td} w-10 font-mw-mono font-bold text-mw-muted`}>{rank}</td>
                   <td className={td}>{href ? <Link to={href} className="mw-focus block text-mw-text hover:text-mw-text">{ident}</Link> : ident}</td>
                   <td className={`${td} hidden text-right font-mw-mono sm:table-cell ${metricToneClass(league, row, native)}`}>{rowMetric(league, row, native)}</td>
-                  <td className={`${td} text-right font-mw-mono font-bold text-mw-accent-soft`}>{rank <= paidPlaces ? payoutForRank(rank) : "—"}</td>
+                  <td className={`${td} text-right font-mw-mono font-bold text-mw-accent-soft`}>{payoutForRow(rank, row)}</td>
                 </tr>
               );
             })}
@@ -523,19 +535,24 @@ export default function League() {
   const rows = useMemo(() => selectedCard?.rows ?? [], [selectedCard]);
   const selectedPrize = selectedCard?.prize;
   const summaryPrize = summary?.prize;
-  const hubPrizeRaw = getPrizeRaw(summaryPrize) !== "0" ? getPrizeRaw(summaryPrize) : getPrizeRaw(selectedPrize);
-  const categoryPrizeRaw = getPrizeRaw(selectedPrize);
   const nativeDecimals = isSolana ? 9 : Number(summaryPrize?.nativeDecimals || selectedPrize?.nativeDecimals || 18);
   const nativeSymbol = String(summaryPrize?.nativeSymbol || selectedPrize?.nativeSymbol || leagueNativeSymbol(chain));
-  const rawPrizeNative = rawToNative(hubPrizeRaw, nativeDecimals);
-  const categoryPrizeNative = rawToNative(categoryPrizeRaw, nativeDecimals);
-  const displayPrizeNative = rawPrizeNative > 0 ? rawPrizeNative : categoryPrizeNative;
   const nativeUsd = isSolana
     ? (summaryPrize?.solUsdPrice ?? summaryPrize?.nativeUsdPrice ?? null)
     : isRobinhood
       ? (summaryPrize?.nativeUsdPrice ?? null)
       : bnbUsd;
-  const rawGeneratedUsd = resolveGeneratedUsd(summaryPrize || selectedPrize, displayPrizeNative, nativeUsd);
+  const usdPrice = Number(nativeUsd || 0) > 0 ? Number(nativeUsd) : 0;
+  // Founder 2026-10-04: every number here is what settlement pays. The board shows its own pot, its
+  // own poker split and its own paid places (all from the API, which mirrors finalizeEpochWinners);
+  // the old page split every league's pot over each board and headlined the raw fee total.
+  const boardPotNative = rawToNative(getPotRaw(selectedPrize), nativeDecimals);
+  const boardPotUsd = boardPotNative * usdPrice;
+  const allPotRaw = getPotRaw({ potRaw: summaryPrize?.totalPotRaw }) !== "0"
+    ? String(summaryPrize?.totalPotRaw)
+    : sumLeaguePotsRaw(summary?.leagues || [], period);
+  const allPotNative = rawToNative(allPotRaw, nativeDecimals);
+  const rawGeneratedUsd = resolveGeneratedUsd(summaryPrize, allPotNative, nativeUsd);
   const policy = summary?.payoutPolicy || getPayoutPolicy(period);
   const playerPoolFromApi = Number(summaryPrize?.playerPrizePoolUsd);
   const cappedPlayerPoolUsd =
@@ -551,19 +568,17 @@ export default function League() {
       : period === "monthly"
         ? Math.max(0, rawGeneratedUsd - policy.monthlyPlayerPrizeCapUsd)
         : 0;
-  const maxLeagueEntrants = Math.max(
-    0,
-    ...(summary?.leagues || []).map((card) => Math.max(Number(card.entrants || 0), Array.isArray(card.rows) ? card.rows.length : 0)),
-    rows.length,
-  );
   const selectedEntrants = Math.max(Number(selectedCard?.entrants || 0), rows.length);
-  const paidFieldEntrants = Math.max(selectedEntrants, maxLeagueEntrants);
-  const computedPaidPlaces = calculatePaidPlaces(paidFieldEntrants, policy);
-  const activePaidPlaces = paidFieldEntrants > 0 ? Math.max(1, computedPaidPlaces) : 0;
-  const payoutCurve = activePaidPlaces > 0 ? calculatePayoutCurve(Math.max(selectedEntrants, 1), cappedPlayerPoolUsd, policy) : [];
-  const previewRanks = payoutCurve.filter(
-    (row) => row.rank === 1 || row.rank === Math.ceil(activePaidPlaces / 2) || row.rank === activePaidPlaces,
-  );
+  // The board's own poker split: payoutsRaw splits the whole pot, as settlement does.
+  const boardPayoutsRaw: string[] = Array.isArray(selectedPrize?.payoutsRaw) && selectedPrize.payoutsRaw.length
+    ? selectedPrize.payoutsRaw.map(String)
+    : Array.isArray(selectedPrize?.availablePayoutsRaw) ? selectedPrize.availablePayoutsRaw.map(String) : [];
+  const apiWinners = Number(selectedPrize?.winners);
+  const activePaidPlaces = Number.isFinite(apiWinners) && selectedPrize?.winners != null
+    ? Math.max(0, apiWinners)
+    : boardPayoutsRaw.filter((raw) => raw !== "0").length || (selectedEntrants > 0 ? Math.max(1, calculatePaidPlaces(selectedEntrants, policy)) : 0);
+  // Fallback only when the API sent no split (feed outage): the policy curve over this board's pot.
+  const payoutCurve = !boardPayoutsRaw.length && activePaidPlaces > 0 ? calculatePayoutCurve(Math.max(selectedEntrants, 1), boardPotUsd, policy) : [];
   const selectedStatus = selectedCard?.status || (isSolana ? "live" : undefined);
   const capReached = Boolean(summaryPrize?.capReached || charityReserveUsd > 0);
   const showCapNotification = period === "monthly" && capReached;
@@ -592,13 +607,27 @@ export default function League() {
   const dateMon = startDate && Number.isFinite(startDate.getTime()) ? startDate.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }).slice(0, 3).toUpperCase() : "—";
   const dateDay = startDate && Number.isFinite(startDate.getTime()) ? startDate.toLocaleDateString("en-GB", { day: "2-digit", timeZone: "UTC" }) : "—";
   const title = `${period === "weekly" ? "Weekly" : "Monthly"} League · ${selectedLeague.title}`;
-  const potLabel = displayPrizeNative > 0 ? formatNative(displayPrizeNative, nativeSymbol) : "No fees yet";
-  const payoutByRank = new Map(payoutCurve.map((row) => [row.rank, row]));
-  const payoutForRank = (rank: number) => {
-    const row = payoutByRank.get(rank);
-    return row ? formatUsd(row.payoutUsd) : "—";
+  const potLabel = boardPotNative > 0 ? formatNative(boardPotNative, nativeSymbol) : "No fees yet";
+  // USD when the price is known; otherwise the native amount, never a made-up $0.
+  const formatPrizeRaw = (raw?: string | null) => {
+    const amount = rawToNative(raw, nativeDecimals);
+    if (!(amount > 0)) return "—";
+    return usdPrice > 0 ? formatUsd(amount * usdPrice) : formatNative(amount, nativeSymbol);
   };
-  const breakdownBars = payoutCurve.slice(0, 5);
+  const payoutByRank = new Map(payoutCurve.map((row) => [row.rank, row]));
+  // A settled row carries its own amount (amount_raw); otherwise the board's split for that rank.
+  const payoutForRow = (rank: number, row?: any) => {
+    const own = row?.amount_raw ?? row?.payoutRaw;
+    if (own != null && String(own) !== "") return formatPrizeRaw(String(own));
+    if (rank > activePaidPlaces) return "—";
+    if (boardPayoutsRaw.length) return formatPrizeRaw(boardPayoutsRaw[rank - 1]);
+    const curveRow = payoutByRank.get(rank);
+    return curveRow ? formatUsd(curveRow.payoutUsd) : "—";
+  };
+  const boardSplit = boardPayoutsRaw.slice(0, activePaidPlaces).map((raw) => rawToNative(raw, nativeDecimals));
+  const breakdownBars = boardSplit.length
+    ? boardSplit.slice(0, 5).map((amount, index) => ({ rank: index + 1, percentage: boardPotNative > 0 ? amount / boardPotNative : 0 }))
+    : payoutCurve.slice(0, 5);
   const topShare = breakdownBars[0]?.percentage || 0;
   const fieldCopy =
     selectedLeague.rowType === "recruiter"
@@ -628,9 +657,9 @@ export default function League() {
   };
 
   const tiles: Array<{ label: string; value: string; mobile?: boolean }> = [
-    { label: "Prize pool", value: potLabel, mobile: false },
+    { label: "Prize pool", value: boardPotNative > 0 ? (boardPotUsd > 0 ? formatUsd(boardPotUsd) : potLabel) : "No fees yet", mobile: false },
     { label: "Player prize cap", value: period === "monthly" ? formatUsd(policy.monthlyPlayerPrizeCapUsd) : "No weekly cap" },
-    { label: "Player prize pool", value: rawGeneratedUsd > 0 ? formatUsd(cappedPlayerPoolUsd) : displayPrizeNative > 0 ? formatNative(displayPrizeNative, nativeSymbol) : "—" },
+    { label: "All leagues pool", value: rawGeneratedUsd > 0 ? formatUsd(cappedPlayerPoolUsd) : allPotNative > 0 ? formatNative(allPotNative, nativeSymbol) : "—" },
     { label: "Charity reserve", value: period === "monthly" ? formatUsd(charityReserveUsd) : formatUsd(0) },
     { label: "Active paid places", value: String(activePaidPlaces) },
   ];
@@ -751,7 +780,7 @@ export default function League() {
                 pendingCopy={selectedCard?.warning || selectedLeague.emptyStateCopy}
                 warningCopy={selectedCard?.warning}
                 native={{ decimals: nativeDecimals, symbol: nativeSymbol }}
-                payoutForRank={payoutForRank}
+                payoutForRow={payoutForRow}
                 paidPlaces={activePaidPlaces}
               />
             )}

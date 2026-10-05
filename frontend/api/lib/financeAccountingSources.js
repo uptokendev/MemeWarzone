@@ -141,6 +141,66 @@ export async function monthlyRevenue({ fromMonth, toMonth, db = pool, prices, up
 }
 
 /**
+ * Revenue per UTC day for [fromDate, toDate] (YYYY-MM-DD, inclusive), all
+ * mainnets, for the weekly distribution view. Same lanes, filters and
+ * event-hour valuation as monthlyRevenue, grouped by day instead of month, so
+ * the days of a month add up to that month (to the cent, up to rounding).
+ * Each day keeps its lanes (laneId, lane, source, chain, USD) so VAT can be
+ * applied per revenue lane.
+ * @returns {Promise<{days: Record<string, {totalUsd:number|null, lanes:object[]}>, notes:string[]}>}
+ */
+export async function dailyRevenue({ fromDate, toDate, db = pool, prices, upvotes = readNativeUpvoteRevenue, networks = accountingNetworks(), env = process.env, readLanes = sharedRevenueLanes }) {
+  const startMs = Date.parse(`${fromDate}T00:00:00.000Z`);
+  const endMs = Date.parse(`${toDate}T00:00:00.000Z`) + 24 * HOUR_MS;
+  const byDay = new Map();
+  const notes = [];
+  for (const network of networks) {
+    if (!solanaRowsAreMainnet(network, env)) {
+      notes.push("This API reads the test database, whose chain 101 rows are Solana devnet, so Solana revenue is left out here. Mainnet revenue is on the live API.");
+      continue;
+    }
+    const shared = await readLanes(db, network, { upvoteApproval: upvoteApprovalFrom(upvotes) });
+    notes.push(...(shared.notes || []));
+    for (const lane of shared.lanes) {
+      const decimals = laneDecimals(lane, network);
+      const grouped = new Map();
+      for (const b of lane.buckets) {
+        const hour = hourMs(b.hour);
+        const raw = String(b.raw || "0").split(".")[0];
+        if (hour == null || hour < startMs || hour >= endMs || !/^\d+$/.test(raw)) continue;
+        const day = new Date(hour).toISOString().slice(0, 10);
+        const list = grouped.get(day) || [];
+        list.push({ hour, raw });
+        grouped.set(day, list);
+      }
+      for (const [day, list] of grouped) {
+        const total = list.reduce((s, b) => s + BigInt(b.raw), 0n);
+        if (total === 0n) continue;
+        const usd = await prices.valueEvents(lane.aggregate.assetSymbol, list, decimals);
+        const entry = byDay.get(day) || [];
+        entry.push({
+          chainId: network.chainId,
+          chain: network.chain,
+          lane: lane.aggregate.lane,
+          laneId: lane.aggregate.id,
+          source: lane.aggregate.source ?? null,
+          asset: lane.aggregate.assetSymbol,
+          nativeAmount: atomicToDecimal(total.toString(), decimals),
+          amountUsd: usd.amountUsd,
+        });
+        byDay.set(day, entry);
+      }
+    }
+  }
+  const days = {};
+  for (const [day, lanes] of byDay) {
+    const unpriced = lanes.some((l) => l.amountUsd == null);
+    days[day] = { totalUsd: unpriced ? null : roundUsd(lanes.reduce((s, l) => s + l.amountUsd, 0)), lanes };
+  }
+  return { days, notes: [...new Set(notes)] };
+}
+
+/**
  * Per-event rows for the revenue CSV, oldest first: one row per event of every
  * shared revenue lane (same filters, amounts and test-coin rule as /revenue),
  * each at its hour's price. Capped per lane; `truncated` says so.
