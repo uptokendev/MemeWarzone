@@ -143,3 +143,35 @@ test("the proxy routes /api/admin/moderation to the handler, which refuses witho
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.code, "DASHBOARD_SIGN_IN_REQUIRED");
 });
+
+test("test and internal rows: hidden by default with a count, shown with includeTest=1, CSV follows", async () => {
+  const db = {
+    calls: [],
+    async query(sql) {
+      if (sql.includes("from public.recruiters")) {
+        return { rows: [
+          { id: "7", wallet_address: "0x1111000000000000000000000000000000000001", code: "r7", display_name: "R7", status: "active", created_at: "2026-09-01T00:00:00Z" },
+          { id: "16", wallet_address: "0x3e2372ad05ffc35e6563dbc031a7299518d41ec8", code: "memewarzone", display_name: "MWZ", status: "active", created_at: "2026-04-01T00:00:00Z" },
+        ] };
+      }
+      return { rows: [] };
+    },
+  };
+  const { h } = handler({ db });
+  const off = await call(h, "/api/admin/moderation/recruiters", { token: "finance" });
+  assert.equal(off.body.includeTest, false);
+  assert.equal(off.body.filters.includeTest, false);
+  assert.equal(off.body.testHidden, 1);
+  assert.deepEqual(off.body.rows.map((r) => r.recruiterId), ["7"]);
+  assert.equal(off.body.testReasonLabels.internal_wallet, "Owner or internal wallet");
+  const on = await call(h, "/api/admin/moderation/recruiters?includeTest=1", { token: "finance" });
+  assert.equal(on.body.testHidden, 0);
+  assert.deepEqual(on.body.rows.map((r) => r.recruiterId).sort(), ["16", "7"]);
+  assert.deepEqual(on.body.rows.find((r) => r.recruiterId === "16").testReasons, ["internal_wallet", "test_recruiter"]);
+  const csvOff = await call(h, "/api/admin/moderation/recruiters?format=csv", { token: "finance" });
+  const csvOn = await call(h, "/api/admin/moderation/recruiters?format=csv&includeTest=1", { token: "finance" });
+  assert.equal(csvOff.text.trim().split("\r\n").length, 2);
+  assert.equal(csvOn.text.trim().split("\r\n").length, 3);
+  assert.match(csvOn.text, /memewarzone/);
+  assert.doesNotMatch(csvOff.text, /memewarzone/);
+});

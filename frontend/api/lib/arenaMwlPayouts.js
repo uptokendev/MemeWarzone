@@ -19,6 +19,7 @@ import { ethers } from "ethers";
 
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "../../shared/pokerPayout.mjs";
 import { isOwnerWallet, ownerWalletIndex } from "../../shared/ownerWallets.mjs";
+import { publicHiddenWhere } from "./publicHiddenSql.js";
 
 export const MWL_PAYOUT_CHAIN_IDS = Object.freeze([56, 101, 4663, 97, 46630]);
 export const MWL_CATEGORY = Object.freeze({ mwl_monthly: "mwl", quarterly: "championship" });
@@ -46,13 +47,14 @@ export function payoutWalletFor(chainId, wallet) {
 
 /**
  * Poker split of `pot` over `standings` (ordered by final rank, each with a resolved `wallet`).
- * Coins without a wallet, or owned by one of our own wallets (shared/ownerWallets.mjs, founder
- * 2026-10-05), are skipped and the next one moves up; the field shrinks by the same count. On Solana
+ * Coins without a wallet, owned by one of our own wallets (shared/ownerWallets.mjs, founder
+ * 2026-10-05), or hidden test coins (campaigns.meta.publicHidden, `hidden: true`, founder 2026-10-05)
+ * are skipped and the next one moves up; the field shrinks by the same count. On Solana
  * a place below the minimum payout is not paid on its own (the claim receipt rent would exceed it).
  */
 export function planMwlPayout({ chainId, period, pot, standings, solanaMin = solanaMinPayoutLamports(), owners = ownerWalletIndex() }) {
   const total = BigInt(pot);
-  const eligible = (standings || []).filter((row) => row.wallet && Number(row.points) > 0 && !isOwnerWallet(row.wallet, owners));
+  const eligible = (standings || []).filter((row) => row.wallet && Number(row.points) > 0 && !row.hidden && !isOwnerWallet(row.wallet, owners));
   if (total <= 0n) return { status: "rolled_over", reason: "no-pot", winners: [] };
   if (!eligible.length) return { status: "rolled_over", reason: "no-eligible-owner", winners: [] };
   let places = pokerPaidPlaces(eligible.length, period);
@@ -155,6 +157,18 @@ async function ownerWallet(db, chainId, token) {
   return imported.rows[0]?.owner_wallet ? String(imported.rows[0].owner_wallet) : null;
 }
 
+/** True when the coin is one of our hidden test coins (any launch of it on this chain). */
+async function hiddenTestCoin(db, chainId, token) {
+  const result = await db.query(
+    `select 1 from public.campaigns
+      where chain_id = $1 and (token_address = $2 or lower(coalesce(token_address::text,'')) = lower($2))
+        and ${publicHiddenWhere()}
+      limit 1`,
+    [chainId, token],
+  );
+  return (result.rows?.length ?? 0) > 0;
+}
+
 /** Pays one period inside one transaction. Returns the run that was recorded. */
 export async function payMwlPeriod(client, due, { solanaMin } = {}) {
   const column = due.period === "mwl_monthly" ? "monthly" : "quarterly";
@@ -178,6 +192,7 @@ export async function payMwlPeriod(client, due, { solanaMin } = {}) {
         finalRank: Number(row.final_rank),
         points: Number(row.points || 0),
         wallet: payoutWalletFor(due.chainId, await ownerWallet(client, due.chainId, String(row.token_address))),
+        hidden: await hiddenTestCoin(client, due.chainId, String(row.token_address)),
       });
     }
     const plan = planMwlPayout({ chainId: due.chainId, period: due.period, pot, standings, solanaMin });

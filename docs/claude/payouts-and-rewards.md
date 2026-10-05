@@ -379,3 +379,22 @@ the indexer service. Matching is case-insensitive (recruiters store Solana keys 
   owner trade or an internal recruiter (fee event `failed`, recruiter_id null, never retried).
 - Data: `database/prod_detach_owner_wallets_and_test_recruiters_2026_10_05.sql` (test recruiters
   1, 16, 107, 108, 114, 124; 29 and 115 "check first").
+
+### Hidden test coins are out of the leagues; Moderation hides test data (founder, 2026-10-05)
+
+Rule: `campaigns.meta.publicHidden` (`frontend/api/lib/publicHiddenSql.js`, mirrored in
+`realtime-indexer/src/rewards/publicHiddenSql.ts`, a test fails on drift) marks a test coin.
+- Settlement: the standings SQL moved (unchanged otherwise) from `finalizeEpochWinners.ts` to
+  `realtime-indexer/src/rewards/leagueLeaderboard.ts`. Per-coin categories skip a hidden coin;
+  top_earner does not count its trades; `recruiterLeague.ts` counts neither its volume nor its
+  recruiter slices (a network that only traded test coins is not active). The pot is unchanged
+  (the fee is in the vault). MWL/quarterly (`arenaMwlPayouts.js`) skip a hidden token. Posted roots
+  are never rewritten. Proven on a throwaway Postgres: `hiddenTestCoinLeagues.integration.test.ts`.
+- Live boards: `league.js` (SQL, all categories), `leagueRecruiter.js`, the MWL season board in
+  `arenaLeague.js`; `frontend/api/leagueHiddenTestCoins.db.test.mjs` runs the real handler.
+- Moderation (`moderationLists.js`): rows get `testData` / `testReasons` (hidden test coin, owner
+  wallet, test recruiter ids 1, 16, 29, 107, 108, 114, 115, 124 plus `MODERATION_TEST_RECRUITER_IDS`,
+  voided winner rows). Hidden unless `includeTest=1`; `testHidden` counts them; the CSV follows.
+- Data: `database/prod_void_hidden_test_coin_league_winners_2026_10_05.sql` voids the 3 unposted
+  BNB monthly 2026-08 rows to 0x348f...dc15 (backup `league_epoch_winners_voided_20261005_testcoins`).
+  20 other hidden-coin rows (Solana 18, BNB weekly 2026-08-17 2) have posted roots and stay.

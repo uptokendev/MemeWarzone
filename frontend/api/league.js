@@ -1158,6 +1158,9 @@ export default async function handler(req, res) {
     const finishStandings = async (items, extra = {}) => {
       // Every campaign league passes through here, so this is where hidden
       // campaigns leave the standings -- before they are frozen as winners.
+      // The SQL above already leaves them out of the field (and top_earner does
+      // not count their trades), exactly as settlement does; this stays as a
+      // second guard.
       const loaded = items.length;
       const fieldCount = Number(items[0]?.field_count ?? loaded) || 0;
       items = withoutPublicHidden(items, chainId, await loadPublicHiddenCampaignKeys(chainId));
@@ -1259,6 +1262,7 @@ export default async function handler(req, res) {
             ) AS unique_buyers
           FROM campaigns c
           WHERE c.chain_id = $1
+            AND NOT ${publicHiddenWhere("c")}
             AND c.created_at_chain IS NOT NULL
             AND c.graduated_at_chain IS NOT NULL
             -- Prefer graduated_block when present, but do not drop grads that only have graduated_at_chain.
@@ -1326,6 +1330,7 @@ export default async function handler(req, res) {
             ) AS buy_total_raw
           FROM campaigns c
           WHERE c.chain_id = $1
+            AND NOT ${publicHiddenWhere("c")}
             AND c.created_at_chain IS NOT NULL
             AND c.graduated_at_chain IS NOT NULL
             AND ($2::timestamptz IS NULL OR c.graduated_at_chain >= $2::timestamptz)
@@ -1388,6 +1393,7 @@ export default async function handler(req, res) {
             ON c.chain_id = t.chain_id
            AND c.campaign_address = t.campaign_address
           WHERE t.chain_id = $1
+            AND NOT ${publicHiddenWhere("c")}
             AND t.side = 'buy'
             AND ($2::timestamptz IS NULL OR t.block_time >= $2::timestamptz)
             AND ($3::timestamptz IS NULL OR t.block_time < $3::timestamptz)
@@ -1467,6 +1473,7 @@ export default async function handler(req, res) {
         JOIN public.campaigns c
           ON c.chain_id = a.chain_id
          AND c.campaign_address = a.campaign_address
+        WHERE NOT ${publicHiddenWhere("c")}
         ORDER BY
           a.votes_count DESC,
           a.unique_voters DESC,
@@ -1518,6 +1525,8 @@ export default async function handler(req, res) {
            AND c.campaign_address = t.campaign_address
           WHERE t.chain_id = $1
             AND t.wallet IS NOT NULL
+            -- Trades on a hidden test coin count for nothing (settlement: rewards/leagueLeaderboard.ts).
+            AND NOT ${publicHiddenWhere("c")}
             AND ($2::timestamptz IS NULL OR t.block_time >= $2::timestamptz)
             AND ($3::timestamptz IS NULL OR t.block_time < $3::timestamptz)
             AND ${sqlWalletNeq("t.wallet", "c.campaign_address", isSolanaLeagueChain(chainId))}
