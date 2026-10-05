@@ -16,14 +16,21 @@
 //   owner_contribution  money put in by a shareholder (equity, not profit)
 //   owner_loan          a loan from a shareholder (to = received, from = repaid)
 //   fee                 an exchange or network fee on its own
+//   crypto_payment      a cost paid in crypto from one of our wallets (linked
+//                       to finance_costs; e.g. a support buy booked as marketing)
+//
+// Tokens: besides the core assets (EUR, USD, SOL, BNB, ETH, USDC, USDT) one leg
+// of a movement may be any other token (SPL or ERC-20, e.g. K88), kept as its
+// symbol plus its mint / contract address (assetAddress). Its lots are kept per
+// token address, so two coins with the same symbol never mix.
 //
 // Gains and losses: every non-EUR asset is held in lots (per asset, across all
 // accounts). A lot comes in with its EUR cost: fee revenue at its EUR value on
 // the day it was earned (the revenue lanes, event-hour price, ECB rate of the
 // day), an opening balance at the cost entered, the in leg of a conversion at
 // the conversion's EUR value. A disposal (conversion out leg, a fee paid in
-// crypto, a crypto cost, a distribution paid in crypto, an owner loan repaid in
-// crypto) takes units out by the rule's method (FIFO by default):
+// crypto, a crypto cost or crypto payment, a distribution paid in crypto, an
+// owner loan repaid in crypto) takes units out by the rule's method (FIFO by default):
 //   realized gain = proceeds EUR - cost EUR of the units taken
 // Units disposed beyond the known lots have no cost on record: they are counted
 // at their proceeds (no gain, no loss) and reported, so missing opening balances
@@ -32,7 +39,10 @@
 // Profit effect per day (EUR) = realized gains - fees + revenue received in
 // fiat (bank receipts with a revenue lane) - the VAT in it. A bank payment
 // linked to a cost is not a cost again (the cost is already in finance_costs);
-// it only moves cash. Transfers, opening balances and owner money never touch
+// it only moves cash. A crypto payment linked to a cost is the same, plus the
+// realized gain or loss on the crypto spent (cost EUR = its market value at the
+// time, the units leave at their FIFO cost); the cost's own crypto disposal is
+// then not counted a second time. Transfers, opening balances and owner money never touch
 // profit.
 
 import { FinanceInputError, isValidDate, round2, roundUsd } from "./financeAccountingCosts.js";
@@ -43,7 +53,7 @@ export const ACCOUNT_KINDS = Object.freeze(["multisig", "operator_wallet", "exch
 export const ACCOUNT_KIND_LABELS = Object.freeze({ multisig: "Multisig", operator_wallet: "Operator wallet (buffer)", exchange: "Exchange account", bank: "Bank account", wallet_other: "Other wallet" });
 export const TREASURY_ASSETS = Object.freeze(["EUR", "USD", "SOL", "BNB", "ETH", "USDC", "USDT"]);
 export const FIAT = Object.freeze(["EUR", "USD"]);
-export const MOVEMENT_KINDS = Object.freeze(["opening_balance", "transfer_internal", "conversion", "bank_payment", "bank_receipt", "owner_contribution", "owner_loan", "fee"]);
+export const MOVEMENT_KINDS = Object.freeze(["opening_balance", "transfer_internal", "conversion", "bank_payment", "bank_receipt", "owner_contribution", "owner_loan", "fee", "crypto_payment"]);
 export const MOVEMENT_KIND_LABELS = Object.freeze({
   opening_balance: "Opening balance",
   transfer_internal: "Transfer between our accounts",
@@ -53,7 +63,11 @@ export const MOVEMENT_KIND_LABELS = Object.freeze({
   owner_contribution: "Owner contribution",
   owner_loan: "Owner loan",
   fee: "Fee",
+  crypto_payment: "Cost paid in crypto",
 });
+/** A token leg: a symbol outside the core assets, with its mint / contract address. */
+export const TOKEN_SYMBOL = /^[A-Za-z0-9][A-Za-z0-9._$-]{0,19}$/;
+export const WALLET_KINDS = Object.freeze(["multisig", "operator_wallet", "wallet_other"]);
 export const CHAINS = Object.freeze({ 101: "Solana", 56: "BNB Chain", 4663: "Robinhood Chain" });
 export const LOT_METHODS = Object.freeze(["fifo", "lifo", "average"]);
 
@@ -106,6 +120,29 @@ function idOf(value, field) {
 
 export function isCrypto(asset) {
   return Boolean(asset) && asset !== "EUR";
+}
+
+export function isCoreAsset(asset) {
+  return TREASURY_ASSETS.includes(asset);
+}
+
+/** "K88@4VPt..." for a token leg, the asset itself otherwise: the key cash and lots are kept under. */
+export function assetKey(leg) {
+  if (!leg) return null;
+  return leg.address ? `${leg.asset}@${leg.address}` : leg.asset;
+}
+
+/** Splits an assetKey back into symbol and address. */
+export function splitAssetKey(key) {
+  const text = String(key || "");
+  const at = text.indexOf("@");
+  return at < 0 ? { asset: text, address: null } : { asset: text.slice(0, at), address: text.slice(at + 1) };
+}
+
+/** The lot key of a leg: a token by its address, a core asset as lotAsset(). */
+export function legLot(leg) {
+  if (!leg) return null;
+  return leg.address ? assetKey(leg) : lotAsset(leg.asset);
 }
 
 /** The asset the lots are kept in: WSOL counts as SOL and so on; EUR has no lots. */
@@ -175,7 +212,7 @@ export function validateAccountInput(body, { partial = false } = {}) {
 
 // ------------------------------------------------------------------ movements
 
-const MOVEMENT_FIELDS = ["occurredAt", "kind", "fromAccountId", "toAccountId", "assetOut", "amountOut", "assetIn", "amountIn", "valueEur", "feeAsset", "feeAmount", "feeEur", "costId", "revenueLane", "txHash", "reference", "note"];
+const MOVEMENT_FIELDS = ["occurredAt", "kind", "fromAccountId", "toAccountId", "assetOut", "amountOut", "assetIn", "amountIn", "assetAddress", "valueEur", "feeAsset", "feeAmount", "feeEur", "costId", "revenueLane", "txHash", "reference", "note"];
 
 function occurredAtOf(value, nowMs) {
   const raw = String(value ?? "").trim();
@@ -191,13 +228,24 @@ function occurredAtOf(value, nowMs) {
   return iso;
 }
 
-function legOf(body, assetKey, amountKey) {
-  const asset = body[assetKey];
-  const amount = body[amountKey];
+function legOf(body, assetField, amountField, { tokenAddress = null } = {}) {
+  const asset = body[assetField];
+  const amount = body[amountField];
   const none = (v) => v == null || v === "";
   if (none(asset) && none(amount)) return null;
-  if (none(asset) || none(amount)) throw new FinanceInputError(`${assetKey} and ${amountKey} go together.`, none(asset) ? assetKey : amountKey);
-  return { asset: enumOf(String(asset).toUpperCase(), TREASURY_ASSETS, assetKey), amount: amountOf(amount, amountKey) };
+  if (none(asset) || none(amount)) throw new FinanceInputError(`${assetField} and ${amountField} go together.`, none(asset) ? assetField : amountField);
+  const upper = String(asset).trim().toUpperCase();
+  if (TREASURY_ASSETS.includes(upper)) return { asset: upper, amount: amountOf(amount, amountField) };
+  if (!tokenAddress) throw new FinanceInputError(`${assetField} must be one of: ${TREASURY_ASSETS.join(", ")}, or a token symbol with its address (assetAddress).`, assetField);
+  if (!TOKEN_SYMBOL.test(upper)) throw new FinanceInputError(`${assetField}: a token symbol has letters, digits and . _ $ - only (up to 20).`, assetField);
+  return { asset: upper, amount: amountOf(amount, amountField), address: tokenAddress };
+}
+
+function tokenAddressOf(value) {
+  if (value == null || value === "") return null;
+  const out = String(value).trim();
+  if (!SOLANA_ADDRESS.test(out) && !EVM_ADDRESS.test(out)) throw new FinanceInputError("assetAddress must be a Solana mint or an EVM token contract address.", "assetAddress");
+  return out;
 }
 
 /**
@@ -210,13 +258,14 @@ export function validateMovementInput(body, { nowMs = Date.now() } = {}) {
   const unknown = Object.keys(body).filter((k) => !MOVEMENT_FIELDS.includes(k));
   if (unknown.length) throw new FinanceInputError(`Unknown field: ${unknown[0]}.`, unknown[0]);
   const kind = enumOf(body.kind, MOVEMENT_KINDS, "kind");
+  const tokenAddress = tokenAddressOf(body.assetAddress);
   const out = {
     occurredAt: occurredAtOf(body.occurredAt, nowMs),
     kind,
     fromAccountId: idOf(body.fromAccountId, "fromAccountId"),
     toAccountId: idOf(body.toAccountId, "toAccountId"),
-    out: legOf(body, "assetOut", "amountOut"),
-    in: legOf(body, "assetIn", "amountIn"),
+    out: legOf(body, "assetOut", "amountOut", { tokenAddress }),
+    in: legOf(body, "assetIn", "amountIn", { tokenAddress }),
     valueEur: eurOf(body.valueEur, "valueEur"),
     fee: legOf(body, "feeAsset", "feeAmount"),
     feeEur: eurOf(body.feeEur, "feeEur"),
@@ -226,6 +275,8 @@ export function validateMovementInput(body, { nowMs = Date.now() } = {}) {
     reference: text(body.reference, "reference", { max: 120 }),
     note: text(body.note, "note", { max: 1000 }),
   };
+  const tokenLegs = [out.out, out.in].filter((l) => l?.address).length;
+  if (tokenAddress && tokenLegs !== 1) throw new FinanceInputError("assetAddress is the address of the one token leg: exactly one of assetOut / assetIn is that token.", "assetAddress");
   if (out.txHash && !SOLANA_TX.test(out.txHash) && !EVM_TX.test(out.txHash)) throw new FinanceInputError("txHash must be a Solana signature or an EVM transaction hash.", "txHash");
   if (out.feeEur != null && !out.fee) throw new FinanceInputError("feeEur needs feeAsset and feeAmount.", "feeEur");
   const need = (cond, message, field) => { if (!cond) throw new FinanceInputError(message, field); };
@@ -270,11 +321,21 @@ export function validateMovementInput(body, { nowMs = Date.now() } = {}) {
       need(from && !to, "A fee has a from account only.", "fromAccountId");
       need(out.out && !out.in, "A fee is the out leg (assetOut, amountOut).", "assetOut");
       need(!out.fee, "A fee movement is the fee itself; leave feeAsset empty.", "feeAsset");
+      need(!out.out.address, "A fee is paid in a core asset.", "assetOut");
+      break;
+    case "crypto_payment":
+      need(from && !to, "A crypto payment has a from account only (the wallet it left).", "fromAccountId");
+      need(out.out && !out.in, "A crypto payment has an out leg only (assetOut, amountOut).", "assetOut");
+      need(!FIAT.includes(out.out.asset), "A crypto payment is in crypto; a cost paid in EUR or USD is a bank payment.", "assetOut");
+      need(out.costId, "A crypto payment pays a cost: link it (costId).", "costId");
       break;
     default:
       break;
   }
-  if (out.costId && kind !== "bank_payment") throw new FinanceInputError("costId is only for a bank payment.", "costId");
+  if (out.costId && kind !== "bank_payment" && kind !== "crypto_payment") throw new FinanceInputError("costId is only for a bank payment or a crypto payment.", "costId");
+  for (const [leg, field] of [[out.out, "assetOut"], [out.in, "assetIn"]]) {
+    if (leg?.address && (kind === "bank_payment" || kind === "bank_receipt")) throw new FinanceInputError("A bank movement is in EUR or USD.", field);
+  }
   if (out.revenueLane && kind !== "bank_receipt") throw new FinanceInputError("revenueLane is only for a bank receipt.", "revenueLane");
   return out;
 }
@@ -292,9 +353,14 @@ export function checkMovementAccounts(m, accountsById, { allowArchived = false }
   const to = pick(m.toAccountId, "toAccountId");
   if (m.kind === "bank_payment" && from.kind !== "bank") throw new FinanceInputError("A bank payment is paid from a bank account.", "fromAccountId");
   if (m.kind === "bank_receipt" && to.kind !== "bank") throw new FinanceInputError("A bank receipt arrives in a bank account.", "toAccountId");
-  const onChain = (a) => a && (a.kind === "multisig" || a.kind === "operator_wallet" || a.kind === "wallet_other");
+  if (m.kind === "crypto_payment" && !WALLET_KINDS.includes(from.kind)) throw new FinanceInputError("A crypto payment leaves one of our wallets (multisig, operator or other wallet).", "fromAccountId");
+  const onChain = (a) => a && WALLET_KINDS.includes(a.kind);
   for (const [a, leg, field] of [[from, m.out, "assetOut"], [to, m.in, "assetIn"]]) {
     if (onChain(a) && leg && FIAT.includes(leg.asset)) throw new FinanceInputError(`${a.name} is a wallet; it cannot hold ${leg.asset}.`, field);
+    if (a && leg?.address) {
+      if (a.kind === "bank") throw new FinanceInputError(`${a.name} is a bank account; it cannot hold ${leg.asset}.`, field);
+      if (a.chainId != null && (a.chainId === 101) !== SOLANA_ADDRESS.test(leg.address)) throw new FinanceInputError(`${leg.asset}: that address is not a ${CHAINS[a.chainId]} token, but ${a.name} is on ${CHAINS[a.chainId]}.`, "assetAddress");
+    }
   }
   return { from, to };
 }
@@ -306,7 +372,7 @@ export function checkMovementAccounts(m, accountsById, { allowArchived = false }
  * USD: at the ECB rate of the day. USDC/USDT: $1 at the ECB rate. SOL/BNB/ETH:
  * Binance 1h close of that hour (spot when the hour has no close yet).
  */
-export async function valueInEur({ asset, amount, at, prices, fx }) {
+export async function valueInEur({ asset, amount, at, prices, fx, address = null, chainId = null, tokenPrice = null }) {
   const n = Number(amount);
   if (asset === "EUR") return { eur: round2(n), usdPerEur: null, priceUsd: null, source: "EUR amount" };
   const day = String(at).slice(0, 10);
@@ -314,7 +380,14 @@ export async function valueInEur({ asset, amount, at, prices, fx }) {
   if (!rate?.usdPerEur) throw new FinanceInputError(`No USD/EUR rate for ${day}. Enter the EUR value by hand (valueEur).`, "valueEur");
   let priceUsd;
   let priceSource;
-  if (asset === "USD" || asset === "USDC" || asset === "USDT") {
+  if (address) {
+    // A token: the curve price of the last trade before that time (times the
+    // native coin's hourly close), or the market price when it is now.
+    const p = typeof tokenPrice === "function" ? await tokenPrice({ chainId, address, at }).catch(() => null) : null;
+    if (!p?.priceUsd) throw new FinanceInputError(`No ${asset} price for ${day} in our market data. Enter the EUR value by hand (valueEur).`, "valueEur");
+    priceUsd = p.priceUsd;
+    priceSource = p.source;
+  } else if (asset === "USD" || asset === "USDC" || asset === "USDT") {
     priceUsd = 1;
     priceSource = asset === "USD" ? "USD amount" : `${asset} counted as $1`;
   } else {
@@ -333,10 +406,27 @@ export async function valueInEur({ asset, amount, at, prices, fx }) {
   return { eur: round2((n * priceUsd) / rate.usdPerEur), usdPerEur: rate.usdPerEur, priceUsd, source: `${priceSource}; ${rate.source}` };
 }
 
-/** The leg that sets a movement's EUR value: the in leg of a conversion (the proceeds), else the out leg, else the in leg. */
+/**
+ * The leg that sets a movement's EUR value: the in leg of a conversion (the
+ * proceeds), but the out leg when the in leg is a token (a buy of a token is
+ * valued at what was paid for it); else the out leg, else the in leg.
+ */
 export function valuationLeg(m) {
-  if (m.kind === "conversion") return m.in.asset === "EUR" ? m.in : m.out.asset === "EUR" ? m.out : m.in;
+  if (m.kind === "conversion") {
+    if (m.in.asset === "EUR") return m.in;
+    if (m.out.asset === "EUR") return m.out;
+    return m.in.address && !m.out.address ? m.out : m.in;
+  }
   return m.out || m.in;
+}
+
+/** The chain a token leg lives on: the chain of the account it leaves or arrives in. */
+export function tokenChainOf(m, accountsById) {
+  const leg = [m.out, m.in].find((l) => l?.address);
+  if (!leg) return null;
+  const account = accountsById.get(String(leg === m.out ? m.fromAccountId : m.toAccountId));
+  if (account?.chainId) return account.chainId;
+  return SOLANA_ADDRESS.test(leg.address) ? 101 : null;
 }
 
 // ------------------------------------------------------------------ cash per account
@@ -357,8 +447,8 @@ export function cashPerAccount(movements, taxItems = []) {
   };
   for (const m of movements) {
     if (m.deletedAt) continue;
-    if (m.out) add(m.fromAccountId, m.out.asset, -Number(m.out.amount));
-    if (m.in) add(m.toAccountId, m.in.asset, Number(m.in.amount));
+    if (m.out) add(m.fromAccountId, assetKey(m.out), -Number(m.out.amount));
+    if (m.in) add(m.toAccountId, assetKey(m.in), Number(m.in.amount));
     if (m.fee) add(m.fromAccountId || m.toAccountId, m.fee.asset, -Number(m.fee.amount));
   }
   for (const t of taxItems) {
@@ -459,8 +549,8 @@ export function treasuryLotEvents({ movements = [], costs = [], distributions = 
   for (const m of movements) {
     if (m.deletedAt) continue;
     const date = m.occurredAt.slice(0, 10);
-    const inAsset = m.in ? lotAsset(m.in.asset) : null;
-    const outAsset = m.out ? lotAsset(m.out.asset) : null;
+    const inAsset = legLot(m.in);
+    const outAsset = legLot(m.out);
     const value = Number(m.valueEur);
     if (m.kind === "transfer_internal") {
       // Same units moving: not a sale. What did not arrive was spent as a fee.
@@ -469,7 +559,7 @@ export function treasuryLotEvents({ movements = [], costs = [], distributions = 
     } else if (m.kind === "conversion") {
       if (outAsset) disposals.push({ date, at: m.occurredAt, asset: outAsset, amount: Number(m.out.amount), proceedsEur: value, kind: "conversion", ref: `movement ${m.id}` });
       if (inAsset) acquisitions.push({ date, at: m.occurredAt, asset: inAsset, amount: Number(m.in.amount), eur: value, source: `movement ${m.id}` });
-    } else if (m.kind === "fee" || (m.kind === "owner_loan" && m.out) || m.kind === "bank_payment") {
+    } else if (m.kind === "fee" || (m.kind === "owner_loan" && m.out) || m.kind === "bank_payment" || m.kind === "crypto_payment") {
       if (outAsset) disposals.push({ date, at: m.occurredAt, asset: outAsset, amount: Number(m.out.amount), proceedsEur: value, kind: m.kind, ref: `movement ${m.id}` });
     } else if (m.in && inAsset) {
       // opening_balance, bank_receipt (USD), owner_contribution, owner_loan received
@@ -483,6 +573,8 @@ export function treasuryLotEvents({ movements = [], costs = [], distributions = 
   for (const c of costs) {
     const asset = lotAsset(c.currency);
     if (!asset || asset === "USD" || !(c.eurUsdRate > 0)) continue;
+    // Paid by a crypto payment: that movement takes the units out (at its own time).
+    if (paidOccurrence(c, movements, ["crypto_payment"])) continue;
     disposals.push({ date: c.date, asset, amount: Number(c.amount), proceedsEur: c.amountUsd / c.eurUsdRate, kind: "cost", ref: `cost ${c.costId}` });
   }
   for (const d of distributions) {
@@ -552,14 +644,17 @@ export function treasuryByMonth(byDay) {
 }
 
 /**
- * Cost occurrences already paid from the bank: a bank payment linked to the
- * cost, in the occurrence's month for a recurring cost, any time for a one-off.
- * These are not "open costs" for the multisig any more.
+ * Cost occurrences already paid: a bank payment or a crypto payment linked to
+ * the cost, in the occurrence's month for a recurring cost, any time for a
+ * one-off. These are not "open costs" for the multisig any more.
  */
-export function bankPaidOccurrence(occurrence, movements) {
-  return movements.some((m) => !m.deletedAt && m.kind === "bank_payment" && m.costId && String(m.costId) === String(occurrence.costId)
+export function paidOccurrence(occurrence, movements, kinds = ["bank_payment", "crypto_payment"]) {
+  return movements.some((m) => !m.deletedAt && kinds.includes(m.kind) && m.costId && String(m.costId) === String(occurrence.costId)
     && (occurrence.recurring === "none" || m.occurredAt.slice(0, 7) === occurrence.month));
 }
+
+/** Kept for callers of the earlier name: paid from the bank or in crypto. */
+export const bankPaidOccurrence = (occurrence, movements) => paidOccurrence(occurrence, movements);
 
 /**
  * Off-chain cash in EUR: fiat and stablecoins on bank and exchange accounts
@@ -583,6 +678,6 @@ export function offChainCashEur(accounts, balances, usdPerEurNow) {
   return { eur: round2(Math.max(0, eur)), lines };
 }
 
-export const TREASURY_METHOD = "Cash per account = opening balances + money in - money out - fees, from the recorded movements (and tax paid from or refunded to the account). Wallets also show the balance read from the chain now. Realized gain = EUR proceeds - EUR cost of the units taken out (method from the tax rules, FIFO by default, per asset across all accounts). Cost of fee revenue = its EUR value on the day it was earned. Profit includes realized gains, minus fees, plus revenue received in the bank minus its VAT. A bank payment linked to a cost is not counted again.";
+export const TREASURY_METHOD = "Cash per account = opening balances + money in - money out - fees, from the recorded movements (and tax paid from or refunded to the account). Wallets also show the balance read from the chain now. Realized gain = EUR proceeds - EUR cost of the units taken out (method from the tax rules, FIFO by default, per asset across all accounts). Cost of fee revenue = its EUR value on the day it was earned. Profit includes realized gains, minus fees, plus revenue received in the bank minus its VAT. A bank payment or crypto payment linked to a cost is not counted again; a crypto payment adds the gain or loss on the crypto spent (the cost at its market value at the time, the units at their FIFO cost). Tokens (e.g. a platform coin bought as a conversion) are held at cost or lower market value, priced from our market data (last curve trade or market stats) or by hand.";
 
 export { vatLaneOf };
