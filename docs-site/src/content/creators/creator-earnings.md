@@ -1,23 +1,25 @@
 ---
 title: Creator Earnings
-description: How creators benefit from active campaigns, live trading, and successful campaign execution.
+description: How creators earn from their coin and where to claim it.
 ---
 
-Creator earnings come from two places in the live model.
+Creator earnings come from two places.
 
-First, the creator can benefit from the active campaign while trading is happening.
-Second, the creator can benefit from a successful launch that carries the campaign forward into its next state.
+First, a share of the trading fees while your coin trades.
+Second, what the fee model gives the creator when the coin graduates.
+
+On chains and launch types that offer it, you choose in the **Bond** step of Create what happens to your share of the trade fee: keep it, give it to holders, split it, or use it for buyback and burn.
+
+You claim creator earnings from your Command Center, under **Rewards and claims**.
 
 ## What matters most
 
-This page should be read as a live operating guide, not as a historical math sheet.
-
-The exact distribution values belong to the active fee and economics policy. When those values change by deployment, the current economics pages take priority.
+The exact numbers belong to the current fee model. When they change, the fee pages are the reference.
 
 ## How creators should think about earnings
 
 The real creator goal is not one isolated payout.
-It is a clean launch, real attention, sustained activity, and a campaign that strengthens the creator profile for the next move.
+It is a clean launch, real attention, steady activity, and a coin that strengthens your profile for the next launch.
 
 ## What grows creator value
 
@@ -25,7 +27,7 @@ It is a clean launch, real attention, sustained activity, and a campaign that st
 - stronger community response
 - better discovery performance
 - stronger reputation over repeated campaigns
-- active participation in the live product surfaces
+- posting updates and taking part in battles and leagues
 
 ## Best next pages
 

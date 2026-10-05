@@ -1,52 +1,140 @@
 ---
 title: Glossary
-description: Common MemeWarzone terms explained in plain language.
+description: MemeWarzone terms in plain language.
 ---
 
 ## Arena
 
-The post graduation competition surface for battles, events, standings, and featured visibility.
+The older name for Warzone: battles, tournaments and the Major War League.
+
+## Auto update
+
+An update a coin page gets on its own: launch, graduation and battle results. The owner can turn them off.
+
+## Battle
+
+A timed fight between two coins on the same chain. Decided by votes and boosts (Vote Battle) or by market performance (metrics battle).
+
+## Block
+
+Hides an account's posts and comments for you only. Their coin pages and trading are not affected.
 
 ## Bonding Curve
 
-The PRE market mechanism used before a campaign moves beyond the launchpad phase.
+The market a launched coin trades on before graduation. Buys push the price up, sells push it down.
+
+## Boost
+
+A paid push for one side of a battle. $1 adds 2 points. Boosts go into the battle's prize pool.
 
 ## Campaign
 
-The main product object that carries the launch story, state, market context, and related signals for a token.
+The MemeWarzone launch record of a coin: token, creator, links, state and history.
+
+## Claim memecoin
+
+The button on an unclaimed imported coin. The real owner uses it to prove ownership and take over the coin page.
+
+## Coin page
+
+The page of one coin: chart, metrics, Buy/Sell panel, Posts, Trades, Holders, About, Story and War Room chat.
 
 ## Command Center
 
-The private wallet console for claims, account tools, and personal campaign management.
+Your private tools: coins, battles, recruiter, squad, airdrops, rewards and claims, notifications, edit profile and settings.
 
-## DRAFT
+## Creator update
 
-The staging state before live trading opens.
+A post a coin's owner writes as the coin. It shows on the coin page and can be shared to the home feed.
+
+## Draft
+
+A coin that has a public page but no trading yet.
 
 ## Epoch
 
-A fixed competition or reward window that the product uses for publication and claims.
+A fixed window for a league: weekly or monthly. Results are fixed when it closes.
 
-## POST
+## Graduated
 
-The state after the launchpad phase when a campaign has moved into the next market lane.
+A coin whose bonding curve completed. It now trades in a DEX pool. Older pages called this POST.
 
-## PRE
+## Hide
 
-The live launchpad trading state before graduation.
+Removes one post or comment from your own view.
+
+## Home feed
+
+The social feed on Home: posts, reposts, creator updates, launches, battles and graduations.
+
+## Imported coin
+
+A coin launched elsewhere and brought to MemeWarzone. It has the same coin page and trades on its own DEX.
+
+## Live
+
+A launched coin that trades on its bonding curve. Older pages called this PRE.
+
+## Major War League
+
+The monthly league for graduated coins, scored on battles. The top 8 play the quarterly finals.
+
+## Portfolio display
+
+Settings that choose which holdings your portfolio lists: hide native coins and stablecoins, hide holdings under $1. Total value still counts everything.
+
+## Quote post
+
+A repost with your own text, and an image if you like, on top.
 
 ## Recruiter
 
-A growth operator who brings users into the product through a tracked share path.
+Someone who brings new people in through a referral link and earns from it.
 
-## Solana Route
+## Repost
 
-The live Solana chain path inside the product.
+Sharing someone's post with your followers as it is.
+
+## Rocket
+
+The like on MemeWarzone posts.
+
+## Search
+
+The search box in the top bar. Finds coins, drafts and people. Opens with **/**.
+
+## Social signature
+
+One wallet signature that covers your posts, replies, reposts, rockets, comments and chat for 30 days.
+
+## Squad
+
+A group linked to a recruiter that shares a reward pool.
+
+## Story
+
+A short story page about a coin, opened with the Story button on the coin page.
 
 ## UpVote
 
-A paid visibility action used to push campaign discovery.
+A paid push for a coin's visibility. Not a safety label.
+
+## Username
+
+Your unique @name, 3 to 20 characters. One per wallet, the same on every chain, changeable once every 30 days.
+
+## Views
+
+How many people saw a post. Each person counts once per post.
+
+## War Room
+
+The live chat on a coin page.
 
 ## War Trade Room
 
-The state driven discovery and trading board across DRAFT, PRE, and POST.
+The trading table where each coin row opens a chart, its details and a trade panel.
+
+## Warzone
+
+The menu section for battles, tournaments and the Major War League.

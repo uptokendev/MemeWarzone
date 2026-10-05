@@ -7,7 +7,6 @@ Squad Pool is the weekly squad reward lane.
 
 It rewards eligible contribution from users who are part of a recruiter connected squad. It is not a flat split and it is not a reward for showing up once.
 
-![Squad Pool dashboard view](/images/docs/squad-pool-dashboard.png)
 
 ## Who this is for
 
@@ -33,4 +32,4 @@ If a wallet is detached from a squad path or becomes ineligible under the curren
 Use Command Center for your private squad and claim view.
 Use public leaderboards for the public competition view.
 
-Read: **[Squad Console](/command-center/squad)** and **[Epochs & Claims](/rewards/epochs-and-claims)**.
+Read: **[Squad tab](/command-center/squad)** and **[Epochs and claims](/rewards/epochs-and-claims)**.

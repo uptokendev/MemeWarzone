@@ -1,34 +1,29 @@
 ---
 title: League Categories
-description: The main MemeWarzone League categories and what each one rewards.
+description: The six league categories and what each one ranks.
 ---
 
-League categories make sure the battlefield rewards more than one kind of performance.
+Six categories make sure more than one kind of performance can win.
 
-Some categories reward speed. Some reward trader execution. Some reward community attention. Together they keep the ladder from turning into a one note volume board.
+## The categories
 
-![League categories grid](/images/docs/league-categories-grid.png)
+| Category | What it ranks | Period |
+| --- | --- | --- |
+| Perfect Run | coins that graduated with zero sells on the curve | monthly only |
+| Fastest Finish | time from launch to graduation | weekly and monthly |
+| Biggest Hit | the largest single buy on a bonding curve | weekly and monthly |
+| Top Earner | trader profit and loss inside the bonding curve | weekly and monthly |
+| Crowd Favorite | UpVotes from unique voters | weekly and monthly |
+| Recruiter League | referral score, across all chains | weekly and monthly |
 
-## The main categories
-
-| Category | What it rewards |
-| --- | --- |
-| Perfect Run | clean launch execution |
-| Fastest Finish | speed to graduation |
-| Biggest Hit | major single trade impact |
-| Top Earner | strong trader performance |
-| Crowd Favorite | community attention through UpVotes |
+If you pick Perfect Run while Weekly is selected, the page switches to Monthly.
 
 ## How to read them
 
-Each category highlights a different way to win.
-That gives more campaigns and more players a reason to compete.
+Each category is a different way to win, so more coins and more people have a reason to compete.
 
 ## What these pages do not show
 
-The public manual explains what each category rewards.
-It does not publish every private enforcement signal behind abuse checks or review rules.
+The docs explain what each category ranks. They do not publish every check behind abuse reviews. Honest users need to understand the rules; abusers should not get a map of the filters.
 
-That balance matters. Honest users need to understand the lane. Abusive users should not get a map of the internal filters.
-
-Read: **[UpVotes](/platform/upvotes)** and **[Epochs & Prizes](/leagues/epochs-and-prizes)**.
+Read **[UpVotes](/platform/upvotes)** and **[Epochs & Prizes](/leagues/epochs-and-prizes)**.

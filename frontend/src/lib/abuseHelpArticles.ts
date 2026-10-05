@@ -32,7 +32,7 @@ export const ABUSE_HELP_ARTICLES: AbuseHelpArticle[] = [
     id: "trading",
     title: "Trading",
     summary: "Bonding-curve buys and sells on Token Details and War Trade Room.",
-    body: "Pre-graduation trades run on the MemeWarzone bonding curve. After graduation, trading continues through the campaign's verified pool. Quotes, slippage and wallet signatures all stay inside MemeWarzone — not Discord.",
+    body: "Pre-graduation trades run on the MemeWarzone bonding curve. After graduation, trading continues through the campaign's verified pool. Quotes, slippage and wallet signatures all stay inside MemeWarzone, not in Discord.",
     keywords: ["trade", "buy", "sell", "chart", "war room"],
   },
   {
@@ -46,7 +46,7 @@ export const ABUSE_HELP_ARTICLES: AbuseHelpArticle[] = [
     id: "upvotes",
     title: "UpVotes",
     summary: "How UpVote support works on live campaigns.",
-    body: "UpVotes are on-platform support, not Discord tickets. Use the token page controls while the campaign is live. Failed or pending votes belong in Command Center / product help, not the Abuse desk.",
+    body: "UpVotes are on-platform support, not Discord tickets. Use the token page controls while the campaign is live. Failed or pending votes are product support (Discord), not the Abuse desk.",
     keywords: ["upvote", "vote", "support", "boost"],
   },
   {
@@ -67,14 +67,14 @@ export const ABUSE_HELP_ARTICLES: AbuseHelpArticle[] = [
     id: "rewards",
     title: "Rewards",
     summary: "Airdrops, claims, and reward status.",
-    body: "Command Center → Warzone Airdrops and Rewards / Claims show pool status, winners and claimable amounts. Always claim from the wallet that earned the reward. Claim failures are product support.",
+    body: "Command Center → Airdrops and Rewards and claims show pool status, winners and claimable amounts. Always claim from the wallet that earned the reward. Claim failures are product support.",
     keywords: ["reward", "claim", "airdrop", "payout"],
   },
   {
     id: "lp-fees",
     title: "LP Fees",
     summary: "Creator harvest after graduation.",
-    body: "Creators collect LP fees from Command Center → Coins when unharvested fees are available. Ops harvest lives in the private admin dashboard. Fee questions are product support, not Abuse.",
+    body: "Creators collect LP fees from Command Center → My coins when unclaimed fees are available. Fee questions are product support, not Abuse.",
     keywords: ["lp", "fees", "harvest", "creator"],
   },
 ];

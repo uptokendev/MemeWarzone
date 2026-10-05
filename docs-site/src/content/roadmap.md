@@ -5,7 +5,7 @@ description: The current operating direction for the live product and the next e
 
 This roadmap reflects the live product as of August 12, 2026.
 
-BNB and Solana are both part of the live operating picture. The roadmap from here is about expansion, polish, deeper cross chain consistency, and stronger post launch systems.
+BNB Chain, Solana and Robinhood Chain are all part of the live operating picture. The roadmap from here is about expansion, polish, deeper cross chain consistency, and stronger post launch systems.
 
 ## Current position
 

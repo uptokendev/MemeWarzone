@@ -1,63 +1,64 @@
 ---
 title: War Trade Room
-description: Find campaigns across BNB and Solana and act according to their current market state.
+description: The trading table where every coin row opens a chart, its details and a Buy/Sell panel.
 ---
 
-The War Trade Room is the cross chain campaign board for MemeWarzone.
+The War Trade Room is a trading table. Each row is a coin. Open a row to see its chart, its details and a trade panel, without leaving the table.
 
-It brings Draft, live launchpad, and post graduation campaigns into one view so you can find the market you want without jumping between separate lists.
+![The War Trade Room](/images/docs/war-trade-room.png)
 
-![War Trade Room campaign board](/images/docs/war-trade-room-board.png)
+Open it from **War Trade Room** in the menu.
 
-## Read the state first
+## Pick a chain and a mode
 
-Every campaign row carries a state. That state determines the actions available to you.
+The chain buttons at the top set the chain. The table shows one chain at a time and follows the chain you picked elsewhere.
 
-### DRAFT
+The mode tabs filter the table:
 
-DRAFT is the preparation state.
+| Mode | What it lists |
+| --- | --- |
+| Trending | The most active coins, including imported coins |
+| New | Recently launched coins |
+| Graduated | Coins that finished their bonding curve and trade in a DEX pool |
+| Imported | Imported coins only, trading on their own DEX |
+| Drafts | Coins that are not launched yet |
 
-Use the campaign row to inspect the identity, chain, timing, official links, and public campaign information before trading opens.
+## Search and sort
 
-### PRE
+Use the filter box to narrow the table by ticker, name, creator, token address or campaign address.
 
-PRE is the live launchpad state.
+On a computer, click a column header to sort by it: market cap, liquidity, volume, holders or all-time high. Click again to flip the order. On a phone or tablet, use **Sort by** and the direction button.
 
-The campaign is trading through its launch market. Open Token Details for the full campaign view and use the active buy, sell, quote, and discovery controls shown for that chain.
+## Read a row
 
-### POST
+A closed row shows the logo, name, `$TICKER`, status and age. On a computer it also shows market cap, liquidity, volume, holders and all-time high.
 
-POST is the post graduation state.
+Click a row to open it.
 
-The campaign has completed its launch phase and moved to its post graduation market route. Open the campaign to use the market controls and links shown for its chain.
+## The open row
 
-## Find a campaign
+An open row shows:
 
-Use search and filters to narrow the board by:
+- the **chart**
+- **Token details**: market cap, liquidity, volume, holders, the all-time high bar, the campaign and creator addresses, and links to the coin page, website and X
+- the **trade panel**: Buy or Sell, amount, quote and the button to confirm
 
-- BNB or Solana
-- campaign state
-- ticker
-- campaign name
-- creator
-- campaign or token address
+On a phone the order is chart, three tiles (liquidity, holders, all-time high), the trade panel, then the links.
 
-![War Trade Room filters](/images/docs/war-trade-room-filters.png)
+A draft row opens its details instead: image, description, founder note and a link to the draft page. There is no trade panel, because the coin is not launched yet.
 
-## Verify before you trade
+A live coin on Robinhood Chain shows a note to buy and sell it on its coin page.
 
-Before submitting a transaction:
+## Imported coins
 
-1. confirm the chain
-2. confirm the campaign state
-3. verify the ticker and address
-4. open Token Details when you need the full campaign record
-5. review the wallet transaction before signing
+Imported coins appear under **Imported** and rank with other coins under **Trending**. They trade on their own DEX: Jupiter on Solana, PancakeSwap on BNB Chain, Uniswap on Robinhood Chain. Read **[Import and claim a coin](/creators/imported-coins)**.
 
-## Operating rule
+## Check before you trade
 
-A campaign row confirms that the campaign is on the board.
+1. the chain
+2. the coin's state
+3. the ticker and the address
+4. open the coin page when you want the full picture
+5. the wallet request before you sign
 
-The chain and state tell you which market you are entering and which actions are available.
-
-Read **[Trading Basics](/traders/trading-basics)** and **[Campaign System](/platform/campaign-lifecycle)** before your first trade.
+Read **[Trading Basics](/traders/trading-basics)** and **[Campaign System](/platform/campaign-lifecycle)**.

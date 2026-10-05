@@ -1,61 +1,119 @@
 ---
 title: FAQ
-description: Fast answers for creators, traders, recruiters, and new MemeWarzone users.
+description: Short answers for creators, traders, recruiters and new MemeWarzone users.
 ---
 
-## What is MemeWarzone?
+## Getting started
 
-MemeWarzone is a competitive campaign platform that combines launch, PRE trading, post graduation competition, and recurring reward systems into one product.
+### What is MemeWarzone?
 
-## Which chains are live?
+A place to launch and import memecoins, trade them, post about them, and make them compete in battles and leagues with prize pools.
 
-BNB and Solana are both live MemeWarzone networks.
+### Which chains are live?
 
-The exact wallet flow and available controls can differ by chain, so confirm the selected network before you create, trade, claim, or share a campaign link.
+BNB Chain, Solana and Robinhood Chain. Wallet prompts and the coin you pay with differ per chain, so check the selected chain before you create, trade, claim or share. Read **[Chain Readiness](/platform/chain-readiness)**.
 
-## What is a campaign?
+### Where did "all chains" go?
 
-A campaign is the product object that holds the token story, launch state, trading context, and related reward or visibility signals.
+You now pick one chain with the chain buttons, and Coins, Leagues, the Major War League, the War Trade Room and search all follow it. The Battles list still has an all chains filter.
 
-## What is Direct?
+### Where is the coin list?
 
-Direct is the fast launch route for a campaign that is already ready to go live.
+Home is the social feed now. The coin list moved to **Coins** in the menu.
 
-## What is Draft?
+### How do I search?
 
-Draft is the staging route for a campaign that still needs preparation before the live move.
+Click the search box in the top bar or press **/**. You can search coins (launched and imported) by ticker, name or address, drafts, and people by display name or @username. Paste a wallet address to open that profile. Read **[Search](/platform/search)**.
 
-## What is Prepare Mode?
+## The feed and your profile
 
-Prepare Mode is the staging lane where a creator can tighten the page, links, timing, and message before launch.
+### What is a rocket?
 
-## What is PRE?
+A rocket is a like. Tap the rocket icon on a post to give it one; tap again to take it back. The post shows how many rockets it has.
 
-PRE is the live launchpad trading state before graduation.
+### What is a repost?
 
-## What is POST?
+A repost shares someone's post with your followers as it is. Tap the repost icon and choose **Repost**.
 
-POST is the post graduation state. The exact market path depends on the selected chain and campaign state.
+### What is a quote post?
 
-## Does an UpVote mean a campaign is safe?
+A quote post shares someone's post with your own text on top, and an image if you like. Tap the repost icon and choose **Quote post**.
 
-No.
-An UpVote is a paid visibility signal, not a safety label.
+### What is a creator update?
 
-## Are rewards automatic?
+A post written by a coin's owner as the coin. It shows on the coin page under **Posts** and, if the owner shares it, in the home feed as a Creator update card. Read **[Coin pages and creator updates](/social/creator-updates)**.
 
-No.
-Rewards move through the claim flow after the relevant epoch closes and results are published.
+### What is an auto update?
 
-## Where should I claim?
+An update MemeWarzone adds to a coin page on its own: the launch, the graduation and battle results. The coin's owner can turn them off on **Edit page**.
 
-Only through the official MemeWarzone product pages.
-Never trust random claim prompts from copied links or direct messages.
+### What are views?
 
-## Do fee and reward values stay fixed forever?
+The number of people who saw a post. Each person counts once per post, whether they are signed in or not. A view counts after the post was on screen for about a second, or when someone opens the post.
 
-No.
-Always use the current Fee Model, Treasury, and Rewards pages as the active reference for values and routing.
+### How do usernames work?
+
+A @username is 3 to 20 characters: lowercase letters, numbers and underscores. It is unique, belongs to one wallet and works on every chain. You can change it once every 30 days. Setting it is a signature, not a transaction. Read **[Profiles and usernames](/social/profiles)**.
+
+### Why do I sign only once?
+
+One wallet signature covers your social actions for 30 days: posts, replies, reposts, quotes, rockets, comments on coins and battles, War Room chat, reports, hiding and blocking. Things that tie something to your wallet, like your username, profile, settings, ownership claims and payments, still ask for their own signature. Read **[One signature for social actions](/social/signing)**.
+
+### How do I hide a post or block someone?
+
+Open the **…** menu on a post or comment and choose **Hide post** or **Hide comment**. Only you stop seeing it. You can block an account so their posts and comments are hidden for you; their coin pages and trading are not affected. Unblock in Settings, under **Blocked accounts**. Read **[Report, hide and block](/social/safety)**.
+
+### What is portfolio display?
+
+A setting in Command Center, **Settings**, that controls which holdings your portfolio lists, in the Command Center and on your public profile. You can hide native coins and stablecoins, and hide holdings under $1. Total value still counts everything.
+
+## Coins
+
+### What is a campaign?
+
+The MemeWarzone launch record of a coin: its token, creator, links, state, trades and history. Every coin has a coin page.
+
+### What are Direct and Draft?
+
+**Direct** launches a coin right away. **Draft** gives it a public page first and you push it live later.
+
+### What is Prepare Mode?
+
+The stage where a draft coin has a public page but no trading yet. Read **[Prepare Mode](/prepare-mode)**.
+
+### What do live and graduated mean?
+
+**Live** means the coin trades on its bonding curve. **Graduated** means the curve completed and the coin trades in a DEX pool. Older pages called these PRE and POST.
+
+### What is an imported coin?
+
+A coin launched somewhere else and brought to MemeWarzone. It gets the same coin page and Buy/Sell panel, but trades on its own DEX: Jupiter on Solana, PancakeSwap on BNB Chain, Uniswap on Robinhood Chain. Read **[Import and claim a coin](/creators/imported-coins)**.
+
+### What does CLAIM MEMECOIN do?
+
+It shows on imported coins that nobody has claimed yet. The real owner presses it to prove ownership: with the token's owner or authority wallet, with the project's X account, or by asking for a manual review. After that they can edit the coin page and post updates.
+
+### Does an UpVote mean a coin is safe?
+
+No. An UpVote is paid visibility, not a safety label.
+
+## Battles and rewards
+
+### How long does a battle last?
+
+A Vote Battle runs 6, 12, 24 or 48 hours. A metrics battle runs 24 hours, 3 days or 7 days. Read **[Live Battles](/arena/live-battles)**.
+
+### Are rewards paid automatically?
+
+No. Rewards move into the claim flow after the epoch or battle is settled. You claim them from your Command Center.
+
+### Where should I claim?
+
+Only on the official MemeWarzone site, in your Command Center. Never trust claim links from messages.
+
+### Do fee and reward values stay fixed?
+
+No. The fee, treasury and rewards pages are the reference for current values.
 
 ## Where should a new user start?
 

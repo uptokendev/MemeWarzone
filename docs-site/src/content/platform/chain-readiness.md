@@ -1,53 +1,57 @@
 ---
-title: BNB and Solana
-description: How BNB and Solana fit into MemeWarzone and what to verify before using either network.
+title: Chains
+description: The chains MemeWarzone runs on, how the chain choice works, and what to check before you switch.
 ---
 
-MemeWarzone operates on BNB and Solana.
+MemeWarzone runs on three chains: BNB Chain, Solana and Robinhood Chain.
 
-Both networks support the MemeWarzone campaign experience, but wallets, addresses, transaction fees, explorers, and market routes are chain specific.
+Each coin lives on one chain. Wallets, addresses, network fees and the DEX a coin graduates to are different per chain.
 
-![BNB and Solana network selector](/images/docs/bnb-solana-network-selector.png)
+## Pick a chain once
 
-## BNB
+Coins, Leagues, the Major War League, the War Trade Room and search show one chain at a time. There is no "all chains" view.
 
-Use the BNB network for BNB campaigns and BNB denominated transactions.
+Pick the chain with the chain buttons (BNB, Solana, Robinhood) on any of those pages. The choice is remembered and the other pages follow it. When you connect a wallet, MemeWarzone may follow the network that wallet is on.
 
-The BNB campaign path covers creation, launch trading, graduation, post graduation activity, leagues, rewards, and the account tools connected to those campaigns.
+A coin page always opens on the coin's own chain, whatever you selected.
 
-## Solana
+The Battles list has its own chain filter, which also offers all chains at once.
 
-Use the Solana network for Solana campaigns and Solana transactions.
+## The three chains
 
-The Solana path covers campaign creation, Direct and Draft launches, Token Details, trading, UpVotes, graduation, post graduation activity, and the campaign discovery surfaces connected to Solana.
+| | BNB Chain | Solana | Robinhood Chain |
+| --- | --- | --- | --- |
+| Wallet | EVM wallet, such as MetaMask | Solana wallet, such as Phantom or Solflare | EVM wallet, such as MetaMask |
+| You pay in | BNB | SOL | ETH |
+| Address format | starts with 0x | base58 mint address | starts with 0x |
+| Graduated coins trade on | Topaz | Meteora | a Uniswap V3 pool |
+| Imported coins trade on | PancakeSwap | Jupiter | Uniswap |
+| Launch a coin | Yes | Yes | Yes |
+| Battles, leagues and Major War League | Yes | Yes | Yes |
+| Import a coin | Yes | Yes | Yes |
+| Claim rewards | Yes | Yes | Yes |
 
-## What changes when you switch chains
+Some Solana and Robinhood coins are paired with another token after graduation, such as USDC or a stock token. Read **[Solana Operations](/platform/solana-operations)** and **[Create a Campaign](/creators/create-a-campaign)**.
 
-When moving between BNB and Solana, verify:
+## What to check when you switch chains
 
-- the selected network
-- the connected wallet
-- the campaign state
-- the campaign or token address
-- the asset used for the transaction
-- the wallet transaction before signing
+- the selected chain
+- the connected wallet, and the network it is on
+- the coin's state: draft, live or graduated
+- the coin or token address
+- the coin you pay with
+- the wallet request before you sign
 
-## Shared campaign states
+The same EVM wallet address works on BNB Chain and Robinhood Chain. Your wallet still has to be on the right network for the transaction.
 
-MemeWarzone uses campaign states to make the current stage clear.
+## Your profile is the same on every chain
 
-**DRAFT** is preparation.
+Your display name, @username, picture and bio belong to your wallet. Save them once and they show on every chain. Read **[Profiles and usernames](/social/profiles)**.
 
-**PRE** is launch market trading.
+## Sharing a coin
 
-**POST** is post graduation activity.
+Share the MemeWarzone coin page link when you can. It carries the chain, so the person opening it lands on the right coin.
 
-The controls shown by the campaign are based on its chain and state.
+When you share an address on its own, say which chain it is on.
 
-## Before sharing a campaign
-
-Share the MemeWarzone campaign link when possible. It gives the recipient the campaign context, chain, state, and product actions in one place.
-
-When sharing an address separately, label whether it is a BNB contract address, Solana mint address, or campaign reference.
-
-Read **[Campaign System](/platform/campaign-lifecycle)** and **[Solana Operations](/platform/solana-operations)**.
+Read **[Campaign System](/platform/campaign-lifecycle)**.

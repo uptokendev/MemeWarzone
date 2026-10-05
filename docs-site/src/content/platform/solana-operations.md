@@ -1,66 +1,61 @@
 ---
 title: Solana Operations
-description: Launch, trade, vote, graduate, and follow campaigns on the Solana side of MemeWarzone.
+description: Launch, trade, UpVote, graduate and battle with coins on Solana.
 ---
 
-Solana is a live MemeWarzone network alongside BNB.
+Solana works like the other MemeWarzone chains. You use a Solana wallet, pay in SOL, and addresses are Solana mint addresses.
 
-The product keeps the campaign flow familiar across both networks while using the wallet, addresses, transaction fees, and market route native to the selected chain.
+## Before you start
 
-![Solana campaign flow](/images/docs/solana-campaign-flow.png)
+- Select **Solana** with the chain buttons on Coins, Leagues or the War Trade Room.
+- Connect a Solana wallet, such as Phantom or Solflare.
+- Keep a little SOL for network fees.
 
-## Create a Solana campaign
+## Create a Solana coin
 
-Choose Solana before starting the campaign form.
+Open **Launch a coin** with Solana selected. Choose **Direct** to launch right away or **Draft** to prepare a public page first.
 
-Creators can use Direct for a campaign that is ready to launch or Draft when they want to prepare the campaign and promotion page before opening trading.
+In the **Market** step you choose what your coin is paired with after graduation: SOL or another token from the approved list, such as USDC. When the Meteora launch type is available, it has its own list and lets you choose what happens to the creator share of the trade fee.
 
-## Token Details
+Read **[Create a Campaign](/creators/create-a-campaign)** and **[Direct and Draft Launches](/creators/direct-and-draft)**.
 
-Token Details is the main campaign view after creation.
+## The coin page
 
-Use it to verify the campaign, read its current state, inspect public information, and use the actions available for that stage of the campaign.
-
-![Solana Token Details](/images/docs/solana-token-details.png)
+Every Solana coin has a coin page with the chart, metrics, the Buy/Sell panel, Posts, Trades, Holders and About. Use it to check the coin, read its state and trade.
 
 ## Buy and sell
 
-When the campaign is in PRE, use the active Solana trading controls shown by the product.
+While the coin is live on its bonding curve, you trade on the curve from the coin page or the War Trade Room. After graduation the same panel trades in the coin's Meteora pool, and the button says **Buy on Meteora**.
 
-Before signing:
+Imported Solana coins use the same panel. Their trades run through Jupiter.
 
-1. confirm Solana is selected
-2. confirm the campaign and mint information
-3. review the quoted transaction
-4. confirm the wallet request
-5. wait for the transaction result before submitting another action
+Before you sign:
+
+1. check that Solana is selected and your Solana wallet is connected
+2. check the coin name and mint address
+3. read the quote
+4. read the wallet request
+5. wait for the result before you send another trade
 
 ## UpVotes and discovery
 
-Solana campaigns participate in MemeWarzone discovery through the campaign surfaces available to them, including UpVotes and the War Trade Room.
-
-UpVotes increase visibility. They do not verify a campaign or guarantee its performance.
+Solana coins appear on Coins, in search, on the home feed and in the War Trade Room. UpVotes push a coin up in discovery. They do not verify a coin or say anything about its future.
 
 ## Campaign address and mint address
 
-These are different references.
+These are two different addresses.
 
-The campaign address identifies the MemeWarzone campaign record and its state.
+- The **campaign address** is the MemeWarzone launch record of a coin launched here.
+- The **mint address** is the Solana token itself.
 
-The mint address identifies the Solana token.
+Check which one a wallet, explorer or form asks for before you paste.
 
-Verify which address a wallet, explorer, or product field is asking for before copying it.
+## Graduation, battles and leagues
 
-## Graduation and POST
+When a Solana coin completes its bonding curve, it graduates to its DEX pool. Graduated Solana coins can challenge other coins to battles, enter tournaments and earn Major War League points.
 
-When a Solana campaign completes its launch phase, its state advances and the product exposes the post graduation route available to that campaign.
+## Wallet safety
 
-Use the campaign state and War Trade Room as the source for the next market action.
+Never approve a transaction because a post, direct message or copied link tells you to. Open MemeWarzone through the official site, check the coin, then read the wallet request before you sign.
 
-## Wallet discipline
-
-Never approve a transaction because a social post, direct message, or copied link tells you to.
-
-Open MemeWarzone through the official site, verify the chain and campaign, then review the wallet request before signing.
-
-Read **[Direct and Draft Launches](/creators/direct-and-draft)**, **[War Trade Room](/traders/war-trade-room)**, and **[Avoid Scams](/security/avoid-scams)**.
+Read **[War Trade Room](/traders/war-trade-room)** and **[Avoid Scams](/security/avoid-scams)**.

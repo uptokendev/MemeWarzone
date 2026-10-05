@@ -1,30 +1,32 @@
 ---
 title: Leagues for traders
-description: How trader leaderboards work and how to compete.
+description: How the trader leagues work and how to compete.
 ---
 
-Leagues are epoch-based competitions. Some leagues reward **campaigns/creators**, others reward **traders**.
+Leagues run in fixed windows called epochs. Some leagues rank coins, some rank traders, one ranks recruiters.
 
-Start with the basics: **[Core Concepts → Leagues](/core-concepts/leagues)**.
+Start with **[Leagues Overview](/leagues)**.
 
 ## Epoch timing
-- Weekly epochs run Monday 00:00 UTC → next Monday 00:00 UTC.
-- Monthly epochs run 1st of month 00:00 UTC → next 1st.
 
-Standings can change live, but winners are locked at cutoff.
+- Weekly epochs run from Monday 00:00 UTC to the next Monday 00:00 UTC.
+- Monthly epochs run from the 1st of the month 00:00 UTC to the next 1st.
 
-## What trader leagues measure
-The exact categories can vary by season, but common trader metrics include:
-- **Top earner** (realized/unrealized PnL, as defined by the league)
-- **Best single trade** (biggest win)
-- **Most active** (volume or number of trades)
+Standings move live. Winners are fixed when the epoch closes.
 
-Always rely on the league card/rules shown in-app for the current season.
+## Leagues that rank traders
 
-## How to compete (practical)
-- Trade on-campaigns you actually understand (narrative + community)
-- Keep a gas buffer so you can exit and claim
-- Don’t chase every move; trader leagues reward discipline over randomness
+- **Biggest Hit**: the largest single buy on a bonding curve
+- **Top Earner**: trader profit and loss inside the bonding curve
 
-## How rewards are paid
-Rewards are claimed on-chain by eligible wallets. See **[Claiming rewards](/traders/claiming-rewards)**.
+The league page shows the rules and prizes for the current epoch.
+
+## How to compete
+
+- trade coins you understand
+- keep some of the chain's coin for network fees and claims
+- do not chase every move
+
+## How prizes are paid
+
+Prizes are claimed by the winning wallet. Read **[Claiming Rewards](/traders/claiming-rewards)**.

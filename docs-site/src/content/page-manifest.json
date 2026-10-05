@@ -1,69 +1,835 @@
 {
   "pages": [
-    {"route":"/introduction","title":"Introduction","group":"Start here","groupOrder":10,"pageOrder":10,"status":"live","source":"introduction.md","aliases":["/what-is-memewarzone","/what-is-memebattles","/why-we-built-this","/problem-we-solve"]},
-    {"route":"/how-memewarzone-works","title":"How MemeWarzone Works","group":"Start here","groupOrder":10,"pageOrder":20,"status":"live","source":"how-memewarzone-works.md","aliases":[]},
-    {"route":"/getting-started","title":"Getting Started","group":"Start here","groupOrder":10,"pageOrder":30,"status":"live","source":"getting-started.md","aliases":[]},
-    {"route":"/prepare-mode","title":"Prepare Mode","group":"Start here","groupOrder":10,"pageOrder":40,"status":"live","source":"prepare-mode.md","aliases":[]},
-    {"route":"/roadmap","title":"Roadmap","group":"Start here","groupOrder":10,"pageOrder":50,"status":"planned","source":"roadmap.md","statusNote":"This page covers announced work that is not part of the current live product.","aliases":[]},
-    {"route":"/platform/campaign-lifecycle","title":"Campaign System","group":"Platform basics","groupOrder":20,"pageOrder":10,"status":"live","source":"platform/campaign-lifecycle.md","aliases":["/concepts","/core-concepts","/core-concepts/index","/core-concepts/campaigns","/how-it-works/lifecycle"]},
-    {"route":"/platform/chain-readiness","title":"Chain Readiness","group":"Platform basics","groupOrder":20,"pageOrder":15,"status":"live","source":"platform/chain-readiness.md","aliases":[]},
-    {"route":"/platform/bonding-curve","title":"Bonding Curve","group":"Platform basics","groupOrder":20,"pageOrder":20,"status":"live","source":"platform/bonding-curve.md","aliases":["/core-concepts/bonding-curve","/how-it-works/bonding-curve"]},
-    {"route":"/platform/graduation","title":"Graduation","group":"Platform basics","groupOrder":20,"pageOrder":30,"status":"live","source":"platform/graduation.md","aliases":["/core-concepts/graduation","/how-it-works/graduation","/fees/finalize"]},
-    {"route":"/platform/upvotes","title":"UpVotes","group":"Platform basics","groupOrder":20,"pageOrder":40,"status":"live","source":"platform/upvotes.md","aliases":["/core-concepts/upvotes","/fees/upvotes"]},
-    {"route":"/platform/war-room","title":"War Room Chat","group":"Platform basics","groupOrder":20,"pageOrder":50,"status":"live","source":"platform/war-room.md","aliases":[]},
-    {"route":"/platform/solana-operations","title":"Solana Operations","group":"Platform basics","groupOrder":20,"pageOrder":60,"status":"live","source":"platform/solana-operations.md","aliases":[]},
-    {"route":"/leagues","title":"Leagues Overview","group":"Battle Leagues","groupOrder":30,"pageOrder":10,"status":"live","source":"leagues/index.md","aliases":["/core-concepts/leagues","/leagues/overview"]},
-    {"route":"/leagues/categories","title":"League Categories","group":"Battle Leagues","groupOrder":30,"pageOrder":20,"status":"live","source":"leagues/categories.md","aliases":[]},
-    {"route":"/leagues/epochs-and-prizes","title":"Epochs & Prizes","group":"Battle Leagues","groupOrder":30,"pageOrder":30,"status":"live","source":"leagues/epochs-and-prizes.md","aliases":["/leagues/epochs"]},
-    {"route":"/arena","title":"Arena Overview","group":"Arena & post grad","groupOrder":35,"pageOrder":10,"status":"live","source":"arena/index.md","aliases":[]},
-    {"route":"/arena/live-battles","title":"Live Battles","group":"Arena & post grad","groupOrder":35,"pageOrder":20,"status":"live","source":"arena/live-battles.md","aliases":[]},
-    {"route":"/arena/major-war-league","title":"Major War League","group":"Arena & post grad","groupOrder":35,"pageOrder":30,"status":"live","source":"arena/major-war-league.md","aliases":[]},
-    {"route":"/arena/events","title":"Events and Tournaments","group":"Arena & post grad","groupOrder":35,"pageOrder":40,"status":"live","source":"arena/events.md","aliases":[]},
-    {"route":"/arena/war-pools","title":"War Pools","group":"Arena & post grad","groupOrder":35,"pageOrder":50,"status":"planned","source":"arena/war-pools.md","statusNote":"War Pools are listed here so the rules and custody model can be published before activation.","aliases":[]},
-    {"route":"/arena/sponsorships","title":"Sponsorship Application","group":"Arena & post grad","groupOrder":35,"pageOrder":60,"status":"live","source":"arena/sponsorships.md","aliases":[]},
-    {"route":"/rewards/squad-pool","title":"Squad Pool","group":"Rewards & incentives","groupOrder":40,"pageOrder":10,"status":"live","source":"rewards/squad-pool.md","aliases":[]},
-    {"route":"/rewards/warzone-airdrops","title":"Warzone BNB Airdrops","group":"Rewards & incentives","groupOrder":40,"pageOrder":20,"status":"live","source":"rewards/warzone-airdrops.md","aliases":["/leagues/airdrops"]},
-    {"route":"/rewards/epochs-and-claims","title":"Epochs & Claims","group":"Rewards & incentives","groupOrder":40,"pageOrder":30,"status":"live","source":"rewards/epochs-and-claims.md","aliases":["/core-concepts/claims","/leagues/claims"]},
-    {"route":"/rewards/dashboard-ux","title":"Reward Dashboard","group":"Rewards & incentives","groupOrder":40,"pageOrder":40,"status":"live","source":"rewards/dashboard-ux.md","aliases":[]},
-    {"route":"/creators","title":"Creator Overview","group":"For creators","groupOrder":50,"pageOrder":10,"status":"live","source":"creators/index.md","aliases":[]},
-    {"route":"/creators/create-a-campaign","title":"Create a Campaign","group":"For creators","groupOrder":50,"pageOrder":20,"status":"live","source":"creators/create-a-campaign.md","aliases":[]},
-    {"route":"/creators/direct-and-draft","title":"Direct and Draft Launches","group":"For creators","groupOrder":50,"pageOrder":25,"status":"live","source":"creators/direct-and-draft.md","aliases":[]},
-    {"route":"/creators/promotion-and-push-live","title":"Promotion and Push Live","group":"For creators","groupOrder":50,"pageOrder":27,"status":"live","source":"creators/promotion-and-push-live.md","aliases":[]},
-    {"route":"/creators/creator-earnings","title":"Creator Earnings","group":"For creators","groupOrder":50,"pageOrder":30,"status":"live","source":"creators/creator-earnings.md","aliases":[]},
-    {"route":"/creators/growth-loop","title":"Creator Growth Loop","group":"For creators","groupOrder":50,"pageOrder":40,"status":"live","source":"creators/growth-loop.md","aliases":[]},
-    {"route":"/traders","title":"Trader Overview","group":"For traders","groupOrder":60,"pageOrder":10,"status":"live","source":"traders/index.md","aliases":[]},
-    {"route":"/traders/trading-basics","title":"Trading Basics","group":"For traders","groupOrder":60,"pageOrder":20,"status":"live","source":"traders/trading-basics.md","aliases":[]},
-    {"route":"/traders/war-trade-room","title":"War Trade Room","group":"For traders","groupOrder":60,"pageOrder":25,"status":"live","source":"traders/war-trade-room.md","aliases":[]},
-    {"route":"/traders/upvotes","title":"UpVotes for Traders","group":"For traders","groupOrder":60,"pageOrder":30,"status":"live","source":"traders/upvotes.md","aliases":[]},
-    {"route":"/traders/claiming-rewards","title":"Claiming Rewards","group":"For traders","groupOrder":60,"pageOrder":40,"status":"live","source":"traders/claiming-rewards.md","aliases":[]},
-    {"route":"/command-center","title":"Command Center Overview","group":"Command Center","groupOrder":65,"pageOrder":10,"status":"live","source":"command-center/index.md","aliases":[]},
-    {"route":"/command-center/recruiter","title":"Recruiter Console","group":"Command Center","groupOrder":65,"pageOrder":20,"status":"live","source":"command-center/recruiter.md","aliases":[]},
-    {"route":"/command-center/squad","title":"Squad Console","group":"Command Center","groupOrder":65,"pageOrder":30,"status":"live","source":"command-center/squad.md","aliases":[]},
-    {"route":"/command-center/airdrops","title":"Airdrops Console","group":"Command Center","groupOrder":65,"pageOrder":40,"status":"live","source":"command-center/airdrops.md","aliases":[]},
-    {"route":"/command-center/claims","title":"Claims Console","group":"Command Center","groupOrder":65,"pageOrder":50,"status":"live","source":"command-center/claims.md","aliases":[]},
-    {"route":"/command-center/coins","title":"My Coins Console","group":"Command Center","groupOrder":65,"pageOrder":60,"status":"live","source":"command-center/coins.md","aliases":[]},
-    {"route":"/command-center/settings","title":"Settings Console","group":"Command Center","groupOrder":65,"pageOrder":70,"status":"live","source":"command-center/settings.md","aliases":[]},
-    {"route":"/programs/recruiter-program","title":"Program Overview","group":"Recruiter Program","groupOrder":70,"pageOrder":10,"status":"live","source":"programs/recruiter-program.md","aliases":[]},
-    {"route":"/programs/attribution-and-links","title":"Attribution & Links","group":"Recruiter Program","groupOrder":70,"pageOrder":20,"status":"live","source":"programs/attribution-and-links.md","aliases":[]},
-    {"route":"/programs/dashboard-and-payouts","title":"Dashboard & Payouts","group":"Recruiter Program","groupOrder":70,"pageOrder":30,"status":"live","source":"programs/dashboard-and-payouts.md","aliases":[]},
-    {"route":"/programs/og-recruiters","title":"OG Recruiters","group":"Recruiter Program","groupOrder":70,"pageOrder":40,"status":"live","source":"programs/og-recruiters.md","aliases":[]},
-    {"route":"/economics","title":"Economic Model","group":"Fees & treasury","groupOrder":80,"pageOrder":10,"status":"live","source":"economics.md","aliases":[]},
-    {"route":"/fees","title":"Fee Model","group":"Fees & treasury","groupOrder":80,"pageOrder":20,"status":"live","source":"fees/index.md","aliases":["/core-concepts/fees-and-treasury","/fees/trading"]},
-    {"route":"/fees/fee-routing","title":"Fee Routing","group":"Fees & treasury","groupOrder":80,"pageOrder":30,"status":"live","source":"fees/fee-routing.md","aliases":[]},
-    {"route":"/fees/where-fees-go","title":"Where Fees Go","group":"Fees & treasury","groupOrder":80,"pageOrder":40,"status":"live","source":"fees/where-fees-go.md","aliases":["/treasury/where-does-revenue-go"]},
-    {"route":"/fees/examples","title":"Fee Examples","group":"Fees & treasury","groupOrder":80,"pageOrder":50,"status":"live","source":"fees/examples.md","aliases":[]},
-    {"route":"/treasury","title":"Treasury Structure","group":"Fees & treasury","groupOrder":80,"pageOrder":60,"status":"live","source":"treasury/index.md","aliases":["/treasury/wallet-model"]},
-    {"route":"/treasury/weekly-distribution","title":"Weekly Distribution","group":"Fees & treasury","groupOrder":80,"pageOrder":70,"status":"live","source":"treasury/weekly-distribution.md","aliases":[]},
-    {"route":"/security/protection-model","title":"Protection Model","group":"Security & trust","groupOrder":90,"pageOrder":10,"status":"live","source":"security/protection-model.md","aliases":["/security/overview"]},
-    {"route":"/security/anti-abuse","title":"Anti-Abuse System","group":"Security & trust","groupOrder":90,"pageOrder":20,"status":"live","source":"security/anti-abuse.md","aliases":[]},
-    {"route":"/security/transparency","title":"Transparency","group":"Security & trust","groupOrder":90,"pageOrder":30,"status":"live","source":"security/transparency.md","aliases":[]},
-    {"route":"/security/avoid-scams","title":"Avoid Scams","group":"Security & trust","groupOrder":90,"pageOrder":40,"status":"live","source":"security/avoid-scams.md","aliases":[]},
-    {"route":"/security/risk-disclosure","title":"Risk Disclosure","group":"Security & trust","groupOrder":90,"pageOrder":50,"status":"live","source":"security/risk-disclosure.md","aliases":[]},
-    {"route":"/security/incident-response","title":"Incident Response","group":"Security & trust","groupOrder":90,"pageOrder":60,"status":"live","source":"security/incident-response.md","aliases":[]},
-    {"route":"/legal/privacy-policy","title":"Privacy Statement","group":"Legal","groupOrder":100,"pageOrder":10,"status":"live","source":"legal/privacy-policy.md","aliases":[]},
-    {"route":"/legal/terms-of-service","title":"Terms of Service","group":"Legal","groupOrder":100,"pageOrder":20,"status":"live","source":"legal/terms-of-service.md","aliases":[]},
-    {"route":"/faq","title":"FAQ","group":"FAQ","groupOrder":110,"pageOrder":10,"status":"live","source":"faq.md","aliases":[]},
-    {"route":"/glossary","title":"Glossary","group":"FAQ","groupOrder":110,"pageOrder":20,"status":"live","source":"glossary.md","aliases":[]},
-    {"route":"/ranking-system","title":"Ranking System & Profiles","group":"FAQ","groupOrder":110,"pageOrder":30,"status":"live","source":"ranking-system.md","aliases":[]}
+    {
+      "route": "/introduction",
+      "title": "Introduction",
+      "group": "Start here",
+      "groupOrder": 10,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "introduction.md",
+      "aliases": [
+        "/what-is-memewarzone",
+        "/what-is-memebattles",
+        "/why-we-built-this",
+        "/problem-we-solve"
+      ]
+    },
+    {
+      "route": "/how-memewarzone-works",
+      "title": "How MemeWarzone Works",
+      "group": "Start here",
+      "groupOrder": 10,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "how-memewarzone-works.md",
+      "aliases": []
+    },
+    {
+      "route": "/getting-started",
+      "title": "Getting Started",
+      "group": "Start here",
+      "groupOrder": 10,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "getting-started.md",
+      "aliases": []
+    },
+    {
+      "route": "/prepare-mode",
+      "title": "Prepare Mode",
+      "group": "Start here",
+      "groupOrder": 10,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "prepare-mode.md",
+      "aliases": []
+    },
+    {
+      "route": "/roadmap",
+      "title": "Roadmap",
+      "group": "Start here",
+      "groupOrder": 10,
+      "pageOrder": 50,
+      "status": "planned",
+      "source": "roadmap.md",
+      "statusNote": "This page covers announced work that is not part of the current live product.",
+      "aliases": []
+    },
+    {
+      "route": "/platform/campaign-lifecycle",
+      "title": "Campaign System",
+      "group": "Platform basics",
+      "groupOrder": 20,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "platform/campaign-lifecycle.md",
+      "aliases": [
+        "/concepts",
+        "/core-concepts",
+        "/core-concepts/index",
+        "/core-concepts/campaigns",
+        "/how-it-works/lifecycle"
+      ]
+    },
+    {
+      "route": "/platform/chain-readiness",
+      "title": "Chains",
+      "group": "Platform basics",
+      "groupOrder": 20,
+      "pageOrder": 15,
+      "status": "live",
+      "source": "platform/chain-readiness.md",
+      "aliases": []
+    },
+    {
+      "route": "/platform/bonding-curve",
+      "title": "Bonding Curve",
+      "group": "Platform basics",
+      "groupOrder": 20,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "platform/bonding-curve.md",
+      "aliases": [
+        "/core-concepts/bonding-curve",
+        "/how-it-works/bonding-curve"
+      ]
+    },
+    {
+      "route": "/platform/graduation",
+      "title": "Graduation",
+      "group": "Platform basics",
+      "groupOrder": 20,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "platform/graduation.md",
+      "aliases": [
+        "/core-concepts/graduation",
+        "/how-it-works/graduation",
+        "/fees/finalize"
+      ]
+    },
+    {
+      "route": "/platform/upvotes",
+      "title": "UpVotes",
+      "group": "Platform basics",
+      "groupOrder": 20,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "platform/upvotes.md",
+      "aliases": [
+        "/core-concepts/upvotes",
+        "/fees/upvotes"
+      ]
+    },
+    {
+      "route": "/platform/war-room",
+      "title": "War Room Chat",
+      "group": "Platform basics",
+      "groupOrder": 20,
+      "pageOrder": 50,
+      "status": "live",
+      "source": "platform/war-room.md",
+      "aliases": []
+    },
+    {
+      "route": "/platform/solana-operations",
+      "title": "Solana Operations",
+      "group": "Platform basics",
+      "groupOrder": 20,
+      "pageOrder": 60,
+      "status": "live",
+      "source": "platform/solana-operations.md",
+      "aliases": []
+    },
+    {
+      "route": "/leagues",
+      "title": "Leagues Overview",
+      "group": "Battle Leagues",
+      "groupOrder": 30,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "leagues/index.md",
+      "aliases": [
+        "/core-concepts/leagues",
+        "/leagues/overview"
+      ]
+    },
+    {
+      "route": "/leagues/categories",
+      "title": "League Categories",
+      "group": "Battle Leagues",
+      "groupOrder": 30,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "leagues/categories.md",
+      "aliases": []
+    },
+    {
+      "route": "/leagues/epochs-and-prizes",
+      "title": "Epochs & Prizes",
+      "group": "Battle Leagues",
+      "groupOrder": 30,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "leagues/epochs-and-prizes.md",
+      "aliases": [
+        "/leagues/epochs"
+      ]
+    },
+    {
+      "route": "/arena",
+      "title": "Arena Overview",
+      "group": "Arena & post grad",
+      "groupOrder": 35,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "arena/index.md",
+      "aliases": []
+    },
+    {
+      "route": "/arena/live-battles",
+      "title": "Live Battles",
+      "group": "Arena & post grad",
+      "groupOrder": 35,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "arena/live-battles.md",
+      "aliases": []
+    },
+    {
+      "route": "/arena/major-war-league",
+      "title": "Major War League",
+      "group": "Arena & post grad",
+      "groupOrder": 35,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "arena/major-war-league.md",
+      "aliases": []
+    },
+    {
+      "route": "/arena/events",
+      "title": "Events and Tournaments",
+      "group": "Arena & post grad",
+      "groupOrder": 35,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "arena/events.md",
+      "aliases": []
+    },
+    {
+      "route": "/arena/war-pools",
+      "title": "War Pools",
+      "group": "Arena & post grad",
+      "groupOrder": 35,
+      "pageOrder": 50,
+      "status": "live",
+      "source": "arena/war-pools.md",
+      "aliases": []
+    },
+    {
+      "route": "/arena/sponsorships",
+      "title": "Sponsorship Application",
+      "group": "Arena & post grad",
+      "groupOrder": 35,
+      "pageOrder": 60,
+      "status": "live",
+      "source": "arena/sponsorships.md",
+      "aliases": []
+    },
+    {
+      "route": "/rewards/squad-pool",
+      "title": "Squad Pool",
+      "group": "Rewards & incentives",
+      "groupOrder": 40,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "rewards/squad-pool.md",
+      "aliases": []
+    },
+    {
+      "route": "/rewards/warzone-airdrops",
+      "title": "Warzone Airdrops",
+      "group": "Rewards & incentives",
+      "groupOrder": 40,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "rewards/warzone-airdrops.md",
+      "aliases": [
+        "/leagues/airdrops"
+      ]
+    },
+    {
+      "route": "/rewards/epochs-and-claims",
+      "title": "Epochs and claims",
+      "group": "Rewards & incentives",
+      "groupOrder": 40,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "rewards/epochs-and-claims.md",
+      "aliases": [
+        "/core-concepts/claims",
+        "/leagues/claims"
+      ]
+    },
+    {
+      "route": "/rewards/dashboard-ux",
+      "title": "Reward Dashboard",
+      "group": "Rewards & incentives",
+      "groupOrder": 40,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "rewards/dashboard-ux.md",
+      "aliases": []
+    },
+    {
+      "route": "/creators",
+      "title": "Creator Overview",
+      "group": "For creators",
+      "groupOrder": 50,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "creators/index.md",
+      "aliases": []
+    },
+    {
+      "route": "/creators/create-a-campaign",
+      "title": "Create a Campaign",
+      "group": "For creators",
+      "groupOrder": 50,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "creators/create-a-campaign.md",
+      "aliases": []
+    },
+    {
+      "route": "/creators/direct-and-draft",
+      "title": "Direct and Draft Launches",
+      "group": "For creators",
+      "groupOrder": 50,
+      "pageOrder": 25,
+      "status": "live",
+      "source": "creators/direct-and-draft.md",
+      "aliases": []
+    },
+    {
+      "route": "/creators/promotion-and-push-live",
+      "title": "Promotion and Push Live",
+      "group": "For creators",
+      "groupOrder": 50,
+      "pageOrder": 27,
+      "status": "live",
+      "source": "creators/promotion-and-push-live.md",
+      "aliases": []
+    },
+    {
+      "route": "/creators/creator-earnings",
+      "title": "Creator Earnings",
+      "group": "For creators",
+      "groupOrder": 50,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "creators/creator-earnings.md",
+      "aliases": []
+    },
+    {
+      "route": "/creators/growth-loop",
+      "title": "Creator Growth Loop",
+      "group": "For creators",
+      "groupOrder": 50,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "creators/growth-loop.md",
+      "aliases": []
+    },
+    {
+      "route": "/traders",
+      "title": "Trader Overview",
+      "group": "For traders",
+      "groupOrder": 60,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "traders/index.md",
+      "aliases": []
+    },
+    {
+      "route": "/traders/trading-basics",
+      "title": "Trading Basics",
+      "group": "For traders",
+      "groupOrder": 60,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "traders/trading-basics.md",
+      "aliases": []
+    },
+    {
+      "route": "/traders/war-trade-room",
+      "title": "War Trade Room",
+      "group": "For traders",
+      "groupOrder": 60,
+      "pageOrder": 25,
+      "status": "live",
+      "source": "traders/war-trade-room.md",
+      "aliases": []
+    },
+    {
+      "route": "/traders/upvotes",
+      "title": "UpVotes for Traders",
+      "group": "For traders",
+      "groupOrder": 60,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "traders/upvotes.md",
+      "aliases": []
+    },
+    {
+      "route": "/traders/claiming-rewards",
+      "title": "Claiming Rewards",
+      "group": "For traders",
+      "groupOrder": 60,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "traders/claiming-rewards.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center",
+      "title": "Command Center",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "command-center/index.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center/recruiter",
+      "title": "Recruiter",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "command-center/recruiter.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center/squad",
+      "title": "Squad",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 50,
+      "status": "live",
+      "source": "command-center/squad.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center/airdrops",
+      "title": "Airdrops",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 60,
+      "status": "live",
+      "source": "command-center/airdrops.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center/claims",
+      "title": "Rewards and claims",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 70,
+      "status": "live",
+      "source": "command-center/claims.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center/coins",
+      "title": "My coins",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "command-center/coins.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center/settings",
+      "title": "Settings",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 110,
+      "status": "live",
+      "source": "command-center/settings.md",
+      "aliases": []
+    },
+    {
+      "route": "/programs/recruiter-program",
+      "title": "Program Overview",
+      "group": "Recruiter Program",
+      "groupOrder": 70,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "programs/recruiter-program.md",
+      "aliases": []
+    },
+    {
+      "route": "/programs/attribution-and-links",
+      "title": "Attribution & Links",
+      "group": "Recruiter Program",
+      "groupOrder": 70,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "programs/attribution-and-links.md",
+      "aliases": []
+    },
+    {
+      "route": "/programs/dashboard-and-payouts",
+      "title": "Dashboard & Payouts",
+      "group": "Recruiter Program",
+      "groupOrder": 70,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "programs/dashboard-and-payouts.md",
+      "aliases": []
+    },
+    {
+      "route": "/programs/og-recruiters",
+      "title": "OG Recruiters",
+      "group": "Recruiter Program",
+      "groupOrder": 70,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "programs/og-recruiters.md",
+      "aliases": []
+    },
+    {
+      "route": "/economics",
+      "title": "Economic Model",
+      "group": "Fees & treasury",
+      "groupOrder": 80,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "economics.md",
+      "aliases": []
+    },
+    {
+      "route": "/fees",
+      "title": "Fee Model",
+      "group": "Fees & treasury",
+      "groupOrder": 80,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "fees/index.md",
+      "aliases": [
+        "/core-concepts/fees-and-treasury",
+        "/fees/trading"
+      ]
+    },
+    {
+      "route": "/fees/fee-routing",
+      "title": "Fee Routing",
+      "group": "Fees & treasury",
+      "groupOrder": 80,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "fees/fee-routing.md",
+      "aliases": []
+    },
+    {
+      "route": "/fees/where-fees-go",
+      "title": "Where Fees Go",
+      "group": "Fees & treasury",
+      "groupOrder": 80,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "fees/where-fees-go.md",
+      "aliases": [
+        "/treasury/where-does-revenue-go"
+      ]
+    },
+    {
+      "route": "/fees/examples",
+      "title": "Fee Examples",
+      "group": "Fees & treasury",
+      "groupOrder": 80,
+      "pageOrder": 50,
+      "status": "live",
+      "source": "fees/examples.md",
+      "aliases": []
+    },
+    {
+      "route": "/treasury",
+      "title": "Treasury Structure",
+      "group": "Fees & treasury",
+      "groupOrder": 80,
+      "pageOrder": 60,
+      "status": "live",
+      "source": "treasury/index.md",
+      "aliases": [
+        "/treasury/wallet-model"
+      ]
+    },
+    {
+      "route": "/treasury/weekly-distribution",
+      "title": "Weekly Distribution",
+      "group": "Fees & treasury",
+      "groupOrder": 80,
+      "pageOrder": 70,
+      "status": "live",
+      "source": "treasury/weekly-distribution.md",
+      "aliases": []
+    },
+    {
+      "route": "/security/protection-model",
+      "title": "Protection Model",
+      "group": "Security & trust",
+      "groupOrder": 90,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "security/protection-model.md",
+      "aliases": [
+        "/security/overview"
+      ]
+    },
+    {
+      "route": "/security/anti-abuse",
+      "title": "Anti-Abuse System",
+      "group": "Security & trust",
+      "groupOrder": 90,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "security/anti-abuse.md",
+      "aliases": []
+    },
+    {
+      "route": "/security/transparency",
+      "title": "Transparency",
+      "group": "Security & trust",
+      "groupOrder": 90,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "security/transparency.md",
+      "aliases": []
+    },
+    {
+      "route": "/security/avoid-scams",
+      "title": "Avoid Scams",
+      "group": "Security & trust",
+      "groupOrder": 90,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "security/avoid-scams.md",
+      "aliases": []
+    },
+    {
+      "route": "/security/risk-disclosure",
+      "title": "Risk Disclosure",
+      "group": "Security & trust",
+      "groupOrder": 90,
+      "pageOrder": 50,
+      "status": "live",
+      "source": "security/risk-disclosure.md",
+      "aliases": []
+    },
+    {
+      "route": "/security/incident-response",
+      "title": "Incident Response",
+      "group": "Security & trust",
+      "groupOrder": 90,
+      "pageOrder": 60,
+      "status": "live",
+      "source": "security/incident-response.md",
+      "aliases": []
+    },
+    {
+      "route": "/legal/privacy-policy",
+      "title": "Privacy Statement",
+      "group": "Legal",
+      "groupOrder": 100,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "legal/privacy-policy.md",
+      "aliases": []
+    },
+    {
+      "route": "/legal/terms-of-service",
+      "title": "Terms of Service",
+      "group": "Legal",
+      "groupOrder": 100,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "legal/terms-of-service.md",
+      "aliases": []
+    },
+    {
+      "route": "/faq",
+      "title": "FAQ",
+      "group": "FAQ",
+      "groupOrder": 110,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "faq.md",
+      "aliases": []
+    },
+    {
+      "route": "/glossary",
+      "title": "Glossary",
+      "group": "FAQ",
+      "groupOrder": 110,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "glossary.md",
+      "aliases": []
+    },
+    {
+      "route": "/ranking-system",
+      "title": "Ranking System & Profiles",
+      "group": "FAQ",
+      "groupOrder": 110,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "ranking-system.md",
+      "aliases": []
+    },
+    {
+      "route": "/social",
+      "title": "Social overview",
+      "group": "Social",
+      "groupOrder": 15,
+      "pageOrder": 10,
+      "status": "live",
+      "source": "social/index.md",
+      "aliases": []
+    },
+    {
+      "route": "/social/home-feed",
+      "title": "Home feed",
+      "group": "Social",
+      "groupOrder": 15,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "social/home-feed.md",
+      "aliases": []
+    },
+    {
+      "route": "/social/posting",
+      "title": "Posting and reactions",
+      "group": "Social",
+      "groupOrder": 15,
+      "pageOrder": 30,
+      "status": "live",
+      "source": "social/posting.md",
+      "aliases": []
+    },
+    {
+      "route": "/social/profiles",
+      "title": "Profiles and usernames",
+      "group": "Social",
+      "groupOrder": 15,
+      "pageOrder": 40,
+      "status": "live",
+      "source": "social/profiles.md",
+      "aliases": []
+    },
+    {
+      "route": "/social/creator-updates",
+      "title": "Coin pages and creator updates",
+      "group": "Social",
+      "groupOrder": 15,
+      "pageOrder": 50,
+      "status": "live",
+      "source": "social/creator-updates.md",
+      "aliases": []
+    },
+    {
+      "route": "/social/notifications",
+      "title": "Notifications",
+      "group": "Social",
+      "groupOrder": 15,
+      "pageOrder": 60,
+      "status": "live",
+      "source": "social/notifications.md",
+      "aliases": []
+    },
+    {
+      "route": "/social/safety",
+      "title": "Report, hide and block",
+      "group": "Social",
+      "groupOrder": 15,
+      "pageOrder": 70,
+      "status": "live",
+      "source": "social/safety.md",
+      "aliases": []
+    },
+    {
+      "route": "/social/signing",
+      "title": "One signature for social actions",
+      "group": "Social",
+      "groupOrder": 15,
+      "pageOrder": 80,
+      "status": "live",
+      "source": "social/signing.md",
+      "aliases": []
+    },
+    {
+      "route": "/platform/search",
+      "title": "Search",
+      "group": "Platform basics",
+      "groupOrder": 20,
+      "pageOrder": 75,
+      "status": "live",
+      "source": "platform/search.md",
+      "aliases": []
+    },
+    {
+      "route": "/creators/imported-coins",
+      "title": "Import and claim a coin",
+      "group": "For creators",
+      "groupOrder": 50,
+      "pageOrder": 45,
+      "status": "live",
+      "source": "creators/imported-coins.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center/overview",
+      "title": "Overview and portfolio",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 20,
+      "status": "live",
+      "source": "command-center/overview.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center/notifications",
+      "title": "Notifications tab",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 90,
+      "status": "live",
+      "source": "command-center/notifications.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center/edit-profile",
+      "title": "Edit profile",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 100,
+      "status": "live",
+      "source": "command-center/edit-profile.md",
+      "aliases": []
+    },
+    {
+      "route": "/command-center/support",
+      "title": "Support and safety",
+      "group": "Command Center",
+      "groupOrder": 65,
+      "pageOrder": 80,
+      "status": "live",
+      "source": "command-center/support.md",
+      "aliases": []
+    }
   ]
 }

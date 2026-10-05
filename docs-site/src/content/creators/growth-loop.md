@@ -1,34 +1,38 @@
 ---
 title: Creator Growth Loop
-description: How creators use launch timing, attention, community action, and recurring competition to keep a campaign visible.
+description: How creators use posts, battles, leagues and community action to keep a coin visible after launch.
 ---
 
-A creator should think beyond launch day.
+Think beyond launch day. The growth loop is what keeps a coin visible long enough to build a market and a community.
 
-The real growth loop is what keeps the campaign visible long enough to build market memory and public momentum.
+## The loop
 
-## The growth loop
-
-1. prepare a clean campaign
+1. prepare a clean coin page
 2. launch on the right chain with the right wallet
-3. bring the first audience wave
-4. use discovery tools and community action to stay visible
-5. convert attention into trading and participation
-6. carry that result into future launches and profile strength
+3. bring your first wave of people
+4. post updates as the coin and answer people in the War Room
+5. use UpVotes, battles and leagues to stay visible
+6. turn attention into trading and participation
+7. carry the result into your profile and your next launch
 
 ## Where the loop shows up
 
-Creators work this loop through:
+- **Home**: your coin posts, launches, graduations and battle results appear in the feed
+- **Coin page**: posts, War Room chat, the Story and the share card
+- **Coins** and **search**: where new people find you
+- **UpVotes**: paid visibility, shown in the open
+- **Warzone**: battles, tournaments and the Major War League after graduation
+- **Profile**: your coins, posts, followers and track record
 
-- Token Details
-- War Trade Room
-- UpVotes
-- Arena and ladder surfaces where relevant
-- public profile reputation
+## Tools that help
+
+- **Share card**: an image of your coin to post on X
+- **Story**: a short story page about your coin, opened from the coin page
+- **Pinned post**: keep your most important update on top
+- **Auto updates**: launch, graduation and battle results appear on their own
 
 ## Rule of engagement
 
-Do not rely on noise alone.
-Real growth comes from clean links, clear message, real community action, and repeated execution.
+Noise alone does not last. Clean links, a clear message, real community action and repeated execution do.
 
-Read: **[UpVotes](/platform/upvotes)**, **[War Trade Room](/traders/war-trade-room)**, and **[Ranking System & Profiles](/ranking-system)**.
+Read **[UpVotes](/platform/upvotes)**, **[Coin pages and creator updates](/social/creator-updates)** and **[Ranking System & Profiles](/ranking-system)**.

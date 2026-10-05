@@ -1,35 +1,47 @@
 ---
-title: My Coins Console
-description: How creators track drafts, live coins, graduated coins, and fee recovery inside Command Center.
+title: My coins
+description: The My coins tab: coins you launched, your drafts and imported coins, with the actions for each.
 ---
 
-My Coins Console is the owner view for drafts and campaigns.
+My coins lists every coin your wallet owns on the selected chain: coins you launched, drafts you are still preparing and coins you imported.
 
-It keeps the creator working set in one place so you can move from preparation to live management without hunting through public pages.
+## Filters and buttons
 
-## What you will find here
+Filter chips at the top narrow the list:
 
-- drafts in preparation
-- live PRE campaigns
-- graduated campaigns
-- fee recovery context where that route is active
-- a quick path back into create
+- **All**
+- **Drafts**
+- **Coins** (launched and imported)
+- **Open for battle** and **In battles / challenged**, when battles are on
+
+On the right are **Import memecoin**, which opens the import form in place, and **New coin**, which opens Create.
+
+The list has two groups: **Live coins** and **Drafts (prepare mode)**. Tap a row to open its actions.
+
+## Live coins
+
+A coin you launched shows its status and market cap. Its actions:
+
+- **Coin page** opens the coin page.
+- **Claim LP fees** appears after graduation. The row shows the unclaimed LP fees, and 80% goes to your wallet when you claim. If the pool is not ready yet, or nothing is waiting, the row says so.
+- **Open for Battle**, **View Battle** or **Battle Details** when the coin can battle.
 
 ## Drafts
 
-Open draft rows when you want to continue preparation, update promotion copy, or push a campaign toward launch.
+A draft shows its status, visibility and last update. **Edit Draft** opens it so you can change the page, promote it or launch it. See [Direct and Draft Launches](/creators/direct-and-draft).
 
-## Live campaigns
+## Imported coins
 
-Open live rows when you need the current campaign state, Token Details, or the next action inside the launch flow.
+An imported coin carries an **Imported** label and an ownership status:
 
-## Graduated campaigns
+- **OWNER VERIFIED**: you proved you own the project.
+- **OWNERSHIP PENDING**: the import is listed, but ownership is not verified yet.
+- **MANUAL REVIEW**: the team is checking your ownership request.
 
-Graduated rows help you keep track of campaigns that have already moved beyond the launchpad. Recovery and post graduation options can differ by chain, so always read the page state before you act.
+Actions are **Open imported project** and, where battles are on, **Open for Battle**. See [Import and claim a coin](/creators/imported-coins).
 
-## Best use
+## Creator fees
 
-Use My Coins when you are managing your own inventory.
-Use public profile and token pages when you are sharing campaigns with everyone else.
+Trading fees you earn as a creator are claimed in **Rewards and claims**, under Creator fees. See [Rewards and claims](/command-center/claims).
 
-Read: **[Direct and Draft Launches](/creators/direct-and-draft)** and **[Promotion and Push Live](/creators/promotion-and-push-live)**.
+Read [Promotion and Push Live](/creators/promotion-and-push-live) and [Creator Earnings](/creators/creator-earnings).

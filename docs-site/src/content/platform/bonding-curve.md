@@ -1,37 +1,36 @@
 ---
 title: Bonding Curve
-description: How pre graduation trading works on the launchpad and what users should expect before a campaign graduates.
+description: How a launched coin trades before graduation and what to expect while it is live.
 ---
 
-Before graduation, campaigns trade through the launchpad curve.
-
-This is the PRE market. It is where a campaign proves demand, where traders enter early, and where the platform records the activity that feeds visibility and reward systems.
+A coin launched on MemeWarzone starts trading on its bonding curve. The curve sets the price: buys push it up, sells push it down.
 
 ## What the bonding curve phase does
 
-The bonding curve gives a campaign an active market before post graduation routing takes over.
+The curve gives a new coin a market from the first second, before any DEX pool exists.
 
-During this phase, users can:
+While a coin is live on its curve, you can:
 
-- buy and sell through the launchpad
-- watch campaign progress in real time
-- see whether momentum is building toward graduation
-- follow the campaign while visibility systems and rankings react
+- buy and sell from the coin page or the War Trade Room
+- watch the curve progress toward graduation on the coin page and the coin card
+- follow the coin as UpVotes, posts and league standings react
 
 ## What traders should expect
 
-PRE markets can move fast.
+Live coins move fast. Early on, one trade can move the price a lot. A busy page is not a safe page.
 
-Price impact is often stronger early in the campaign and conditions can change quickly. Do not mistake a live page for a safe page.
+Read the quote before you confirm. It shows what you pay and roughly what you get.
 
 ## What creators should focus on
 
-The bonding curve phase is where public demand becomes visible.
+This is where demand shows. Keep the links official, post updates as the coin, and answer questions in the War Room chat.
 
-A creator should keep the page clean, links official, and timing clear. Strong communication matters because this is the phase where attention converts into real market action.
+## What the coin is priced in
 
-## Fee note
+On BNB Chain the curve trades in BNB, on Solana in SOL, and on Robinhood Chain in ETH. The token a coin pairs with after graduation is chosen at launch and can be different. Read **[Create a Campaign](/creators/create-a-campaign)**.
 
-Trading during PRE uses the active fee model for buy and sell activity.
+## Fees
 
-Read: **[Fee Model](/fees)** and **[Fee Routing](/fees/fee-routing)**.
+Trades on the curve pay the trading fee from the current fee model.
+
+Read **[Fee Model](/fees)** and **[Fee Routing](/fees/fee-routing)**.

@@ -1,12 +1,8 @@
 ---
 title: Claims
-description: Legacy League claims page pointing to the unified Epochs & Claims system.
+description: Where league prizes are claimed.
 ---
 
-MemeWarzone uses a unified claim-based reward model.
+League prizes are claimed from your Command Center, under **Rewards and claims**, with the wallet that earned them. Nothing is paid out automatically.
 
-Weekly reward epochs close Monday 00:00 UTC. After an epoch is processed and published, eligible rewards become claimable through official dashboard/profile flows.
-
-The standard reward claim window is 7 days after epoch end.
-
-Read the current claims page: **[Epochs & Claims](/rewards/epochs-and-claims)**.
+Read **[Epochs & Claims](/rewards/epochs-and-claims)** for claim windows and **[Claiming Rewards](/traders/claiming-rewards)** for the steps.

@@ -3,7 +3,7 @@ title: Finalize fee
 description: Fee charged on graduation and finalization.
 ---
 
-The finalize fee is the fee applied when a campaign crosses out of the PRE stage and into the next market lane.
+The finalize fee is the fee applied when a coin graduates: it leaves the bonding curve and moves to its DEX pool.
 
 It is part of the graduation process, not a separate surprise action after the fact.
 

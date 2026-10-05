@@ -1,42 +1,37 @@
 ---
 title: Prepare Mode
-description: What creators, recruiters, traders, squads, and communities can do in the preparation lane before a campaign goes live.
+description: What happens on a draft coin's public page before trading opens.
 ---
 
-Prepare Mode is the staging lane before a campaign goes live.
+Prepare Mode is the stage before a coin goes live. A creator who chose **Draft** in Create gets a public page for the coin before trading opens.
 
-Use it to tighten the campaign brief, confirm the public page, line up the timing, and make sure the launch is clean before the live move.
+Use it to get the name, image, links, story and launch time right, and to gather a community before the first trade.
 
-![Prepare Mode command board](/images/docs/prepare-mode-command-board.png)
+## What a creator does here
 
-## What Prepare Mode is for
+- check the coin name, ticker and image
+- check the official links
+- set or confirm the launch time
+- write the promotion copy and founder note
+- share the draft page to build attention
+- push the coin live when it is ready
 
-Prepare Mode gives a creator room to work on the campaign before trading opens.
+Read **[Promotion and Push Live](/creators/promotion-and-push-live)**.
 
-That includes:
+## What everyone else can do
 
-- campaign name and ticker
-- logo and creative
-- official links
-- launch timing
-- promotion copy
-- public Prepare page review
+- open the draft page from the **Drafts** tab on Coins, from the War Trade Room, or through search (drafts show as PRE-LAUNCH)
+- read the details and the launch time
+- leave comments on the draft page
 
-## What other users do here
-
-Recruiters can prepare links and onboarding paths.
-Traders can inspect a draft campaign and watch the timing line.
-Communities can gather around the official page before the live move.
+There is no chart and no Buy button on a draft. Trading starts when the creator pushes the coin live.
 
 ## What Prepare Mode is not
 
-Prepare Mode is not the live trading phase.
-It is not a guarantee that the campaign will perform well after launch.
-It is the command table where you fix confusion before the public sees the full operation.
+Prepare Mode is not live trading. A good draft page does not guarantee how the coin performs after launch.
 
 ## Best use
 
-Do not rush out of Prepare Mode just because the page exists.
-Stay in the lane until the links are correct, the message is clean, and the wallet path is confirmed.
+Do not leave Prepare Mode just because the page exists. Stay until the links are correct, the message is clear and the right wallet is connected for the launch.
 
-Read: **[Direct and Draft Launches](/creators/direct-and-draft)** and **[Promotion and Push Live](/creators/promotion-and-push-live)**.
+Read **[Direct and Draft Launches](/creators/direct-and-draft)**.

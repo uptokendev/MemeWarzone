@@ -1,40 +1,47 @@
 ---
 title: Sponsorship Application
-description: How the public sponsorship intake page works for featured placements and rail scheduling.
+description: How to apply for a paid ad spot on Home or in the Featured row on Coins.
 ---
 
-The sponsorship application is the intake route for featured placement requests.
+Projects can apply for a paid ad spot on MemeWarzone. Open the application from a **Your ad here** spot on Home, from **Advertise here** in the Featured row on Coins, or from the sponsorship page.
 
-Projects use this page when they want to request a sponsored slot, a featured rail position, or another paid visibility placement inside the platform.
+## The spots
 
-## What to prepare before you apply
+| Spot | Where it shows |
+| --- | --- |
+| Home top row | A wide banner tile in the row at the top of Home. Up to 6 sponsors at once; the row scrolls when they do not all fit. |
+| Featured (Coins page) | A large card in the Featured row on Coins, with a Sponsored label. It rotates when several sponsors share the spot. |
 
-Have these items ready before you open the form:
+Each spot has its own packages and prices.
+
+## What to prepare
 
 - project name
-- contact channel
+- contact name and an email or Telegram
 - website
-- short public bio
-- creative asset
-- preferred slot or package
-- preferred dates
-- payment reference if requested
+- a short public bio for the placement
+- a creative image
+- the package you want
+- preferred start and end dates
+- a payment reference, only if the MemeWarzone team gave you one
+- an applicant wallet, if it helps verify the project
 
-## What happens after submission
+You see a preview of your placement while you fill in the form. Your draft is saved in your browser until you submit.
 
-A submitted form starts a review.
-It does not reserve the slot by itself.
+## What happens after you apply
 
-The normal flow is:
+Submitting starts a review. It does not book the spot, and no payment is due yet.
 
-1. send the request
-2. review the project and creative
-3. confirm placement timing
-4. confirm payment handling
-5. publish the placement after approval
+1. you send the application
+2. the team reviews the project and the creative
+3. the team confirms the dates
+4. you get payment details
+5. the placement goes live after approval and payment
 
 ## Good practice
 
-Make sure the bio, logo, and dates are final before you submit. Clean input speeds up review and reduces rework.
+Make sure the bio, image and dates are final before you submit. Clean input speeds up the review.
 
-Read: **[Arena Overview](/arena)**.
+A sponsored spot is paid visibility. It is not an endorsement by MemeWarzone.
+
+Read **[Arena Overview](/arena)**.

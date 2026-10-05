@@ -1,42 +1,46 @@
 ---
-title: Recruiter Console
-description: How recruiter code, recruiter links, squad images, and recruiter roster controls work inside Command Center.
+title: Recruiter
+description: The Recruiter tab: become a recruiter, or manage your code, links, squad image and referrals.
 ---
 
-Recruiter Console is the control room for recruiter tools.
+The Recruiter tab looks different depending on whether your wallet is a recruiter.
 
-If your wallet is approved for the recruiter program, this is where you manage the code, links, squad presentation, and roster view tied to that role.
+## Not a recruiter yet
 
-## What you can do here
+You see **Become a MemeWarzone Recruiter** with a short explanation and a **Become a recruiter** button that opens the signup. **How it works** explains the steps, and **Public leaderboard** opens the recruiter rankings.
 
-- confirm recruiter status
-- set or update the recruiter code
-- copy share links
-- upload a squad image
-- inspect the roster
-- open the public recruiter page
-- move into recruiter claim flows
+## Recruiter Management
 
-## Wallet check
+If your wallet is an approved recruiter, the tab shows your recruiter tools.
 
-Recruiter tools are tied to the approved wallet.
-If the wrong wallet is connected, switch first before you edit anything or share links.
+### Tiles
 
-## Share discipline
+Linked wallets, Creators, Traders, your Code and your Status.
 
-Keep one recruiter code and one clean share path in circulation.
-That makes it easier for creators and traders to arrive through the right route without confusion.
+### Your links
 
-## Roster view
+- **Referral link** and **Home link**, each with a copy button.
+- **Share on X** and **Share squad**.
+- **Public recruiter page** opens the page others see.
+- **Rewards and claims** opens the claims tab.
 
-The roster view helps you track:
+### Recruiter tools
 
-- total members
-- creator count
-- trader count
-- join timing
-- member wallet references
+Press **Sign in to manage** and sign with the approved recruiter wallet. Then you can:
 
-Roster size and activity are useful signals, but final reward eligibility still depends on the live program rules.
+- change your recruiter code and press **Save code**
+- upload a squad image (PNG, JPG or WebP). It shows on your public recruiter squad page.
+- copy your referral link
+- end the session with **Disconnect session**
 
-Read: **[Program Overview](/programs/recruiter-program)** and **[Claims Console](/command-center/claims)**.
+If the connected wallet is not the recruiter wallet, the tab tells you to switch first.
+
+### Recent referrals
+
+After you sign in, this list shows the wallets that joined through you, their role (creator or trader) and the date they joined.
+
+## Claiming recruiter rewards
+
+Recruiter rewards are claimed in **Rewards and claims**, in the Recruiter Rewards card. Sign once with your recruiter wallet to view and claim them. See [Rewards and claims](/command-center/claims).
+
+Read [Program Overview](/programs/recruiter-program) and [Attribution & Links](/programs/attribution-and-links).

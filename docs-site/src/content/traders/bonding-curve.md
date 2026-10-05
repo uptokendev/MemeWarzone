@@ -1,39 +1,35 @@
 ---
 title: Bonding curve (trader view)
-description: How to think about entries, exits, and sizing on curve markets.
+description: How to think about entries, exits and order size on a bonding curve.
 ---
 
-This page assumes you understand the mechanics from **[Core Concepts → Bonding Curve](/core-concepts/bonding-curve)**.
+This page builds on **[Bonding Curve](/platform/bonding-curve)**.
 
-## 1) Curve markets are reflexive
-On a bonding curve:
-- buys push price up
-- sells push price down
+## Curve markets feed on themselves
 
-That means momentum can snowball in either direction.
+On a bonding curve, buys push the price up and sells push it down. Momentum can snowball either way.
 
-## 2) Size matters more than you think
-Large orders create large price impact. Two practical rules:
-- Prefer **multiple smaller orders** instead of one huge order.
-- Always check the quote and price impact before confirming.
+## Size matters
 
-## 3) Early vs late curve tactics
-**Early curve**
-- spreads/impact can be higher due to thinner activity
-- momentum can be explosive (both up and down)
+Large orders move the price a lot.
 
-**Late curve**
-- closer to graduation, attention is higher
-- volatility is often higher because many traders are positioning for graduation
+- Several smaller orders often fill better than one large one.
+- Always read the quote before you confirm.
 
-## 4) Slippage discipline
-Slippage is not “a setting to make trades always work.” It is your protection.
-- Use the lowest slippage that reliably confirms.
-- If you have to use very high slippage, assume you can be filled worse than expected.
+## Early and late on the curve
 
-## 5) Common failure modes
-- **Chasing green**: buying after big move and becoming liquidity for earlier buyers
-- **Panic selling**: selling into a cascade and locking in the worst price
+**Early**: few trades, so each one moves the price more. Moves can be sharp in both directions.
+
+**Late**: closer to graduation there is more attention and often more swings, as traders position for graduation.
+
+## Slippage
+
+Slippage protects you. It is not a setting to make every trade go through. Use the lowest slippage that confirms. With very high slippage, expect a worse fill.
+
+## Common mistakes
+
+- **Chasing green**: buying after a big move and selling to earlier buyers at the top
+- **Panic selling**: selling into a drop at the worst price
 - **Over-sizing**: moving the curve against yourself
 
-Next: **[UpVotes](/traders/upvotes)**.
+Next: **[UpVotes for Traders](/traders/upvotes)**.

@@ -1,39 +1,56 @@
 ---
-title: Claims Console
-description: How claimable, pending, failed, and expired reward states work inside Command Center.
+title: Rewards and claims
+description: The Rewards and claims tab: which rewards you can claim, what each status means and how Claim all ready works.
 ---
 
-Claims Console is the payout board for the connected wallet.
+**Rewards and claims** is the tab where you collect what your wallet has earned. It shows the rewards for the connected wallet on the selected chain. The chain name sits at the top of the tab.
 
-It groups reward rows by state so you can see what is ready now, what is already moving, and what needs no action.
+![The Rewards and claims tab](/images/docs/command-center-claims.png)
 
-## Claim states
+Claims are open on BNB Chain, Solana and Robinhood Chain. Each claim is a wallet transaction that you confirm yourself.
 
-- Claimable means you can submit the claim now.
-- Pending means a claim request is already in flight.
-- Failed means the last attempt did not clear.
-- Expired means the claim window closed.
-- Empty means there is no reward ready on that lane.
+## Reward rows
 
-## Claim order
+Each reward type has its own row with the amount, a status chip and a claim button.
 
-Move in this order:
+| Row | What it pays |
+|---|---|
+| League Rewards | Weekly and monthly league places. Major War League prizes also land here, named like "Major War League September 2026 · #1", and so do Quarterly Championship prizes. |
+| Airdrop Rewards | Weekly airdrop wins. |
+| Squad Rewards | Your share of your squad's pool. Shown when you are in a squad or have a squad reward. |
+| Recruiter Rewards | Recruiter earnings. Shown when there is something to show. |
 
-1. read the state
-2. confirm the wallet and chain
-3. claim only the rows marked claimable
-4. recheck the board after confirmation
+Battle and tournament wins have their own rows below, one per battle, with the date and amount. A battle row says **Claimed** once you have collected it, or **Waiting for on-chain result** while the battle is still being settled. The owner of the winning coin collects the prize, so connect the wallet that owns that coin.
 
-## Chain status
+If you are a recruiter, a separate Recruiter Rewards card appears. Sign once with your recruiter wallet to view and claim. If you launched coins, a Creator fees card lists each coin with the amount you can claim.
 
-BNB claims are active.
-Solana reward records can appear before Solana claim buttons are enabled.
+## Statuses
 
-That distinction matters. A reward record is not the same thing as a live claim path.
+| Status | Meaning |
+|---|---|
+| Ready | You can claim now. |
+| Pending | A claim is already in progress. |
+| Failed | The last attempt did not finish. The button changes to **Retry Claim**. |
+| Expired | The claim window has closed. |
+| No rewards yet | Nothing to claim on this row. |
 
-## When something looks wrong
+A failed or cancelled claim does not remove the reward. It stays on the row until you claim it.
 
-Start with the state label.
-Do not assume funds are missing just because a row is not claimable yet.
+## Claim all ready
 
-Read: **[Epochs & Claims](/rewards/epochs-and-claims)** and **[Reward Dashboard](/rewards/dashboard-ux)**.
+When more than one row is Ready, a **Claim all ready** button appears at the top with the number of ready rows. It runs the claims one after another. Your wallet asks you to confirm each one, so expect one signature per reward. The button shows how far it is, for example "Claiming 2 of 3".
+
+## Before you claim
+
+1. Connect the wallet that earned the reward.
+2. Check that the chain at the top of the tab is the right one.
+3. Claim only rows marked Ready or Failed.
+4. Wait for the confirmation, then check the row again.
+
+On Solana, every claim pays a small network deposit of about 0.0013 SOL for its receipt. That is why Solana prizes have a minimum of 0.005 SOL. A smaller amount is not paid on its own: it rolls over or adds up until it is worth claiming.
+
+## Claim windows
+
+Airdrop wins can be claimed for 60 days. After that, unclaimed drops go back into the airdrop pot. Major War League prizes do not expire.
+
+Read [Epochs and claims](/rewards/epochs-and-claims) and [Claiming Rewards](/traders/claiming-rewards).
