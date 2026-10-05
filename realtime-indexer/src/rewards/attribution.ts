@@ -1,5 +1,6 @@
 import type { PoolClient, QueryResult } from "pg";
 import { pool } from "../db.js";
+import { internalRecruiterLabel, isOwnerWallet, ownerWalletIndex } from "./ownerWallets.js";
 
 export type RecruiterStatus = "active" | "inactive" | "closed" | "suspended";
 export type LinkSource = "referral_cookie" | "manual" | "admin_override" | "migration";
@@ -402,6 +403,16 @@ async function linkWalletToRecruiterDb(
 ): Promise<LinkWalletToRecruiterResult> {
   const walletAddress = normalizeAddress(input.walletAddress);
   await ensureRecruiterIsLinkableDb(db, input.recruiterId);
+  // Owner / internal wallets (ownerWallets.ts, founder 2026-10-05) are never linked to a recruiter,
+  // and an internal recruiter (signup or payout wallet is ours) takes no members. Nothing is written.
+  const owners = ownerWalletIndex();
+  if (isOwnerWallet(walletAddress, owners) || (await internalRecruiterLabel(db, input.recruiterId, owners))) {
+    return {
+      changed: false,
+      errorCode: isOwnerWallet(walletAddress, owners) ? "INTERNAL_WALLET_NOT_LINKABLE" : "INTERNAL_RECRUITER_NOT_LINKABLE",
+      state: await getWalletAttributionStateDb(db, walletAddress),
+    };
+  }
   await ensureWalletProfileDb(db, walletAddress, input.linkedAt);
 
   const profileRes = await db.query(

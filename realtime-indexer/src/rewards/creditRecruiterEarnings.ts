@@ -18,8 +18,14 @@
  * Idempotency: one recruiter_fee_events row per on-chain slice (source_chain, "<tx>:<log_index>").
  * A slice nobody can be attributed to is recorded with recruiter_id null and retried on every run;
  * it is never dropped and never given to someone else.
+ *
+ * Owner / internal wallets (ownerWallets.ts, founder 2026-10-05): a slice whose earning wallet is one
+ * of ours, or whose recruiter is internal (signup or payout wallet is one of ours), credits nobody.
+ * It is recorded once with recruiter_id null and claim_status 'failed' (metadata.excluded says why)
+ * and never retried; the slice stays in the recruiter vault. Rows credited before stay as they are.
  */
 import { pool } from "../db.js";
+import { internalRecruiterLabel, ownerWalletIndex, ownerWalletLabel } from "./ownerWallets.js";
 
 type Db = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
 
@@ -124,12 +130,24 @@ async function recruiterAccountId(db: Db, recruiterId: number): Promise<string |
   return upsert.rows[0]?.recruiter_id || null;
 }
 
-export type CreditSummary = { scanned: number; credited: number; creditedRaw: Record<string, string>; unattributed: number; unattributedRaw: Record<string, string>; retried: number };
+export type CreditSummary = { scanned: number; credited: number; creditedRaw: Record<string, string>; unattributed: number; unattributedRaw: Record<string, string>; retried: number; excluded: number; excludedRaw: Record<string, string> };
+
+/**
+ * Why this slice credits nobody, or null: the earning wallet is an owner wallet, or the recruiter it
+ * resolves to is internal (signup or payout wallet is an owner wallet).
+ */
+export async function internalExclusion(db: Db, who: { recruiterId: number | null; wallet: string | null }, owners = ownerWalletIndex()): Promise<string | null> {
+  const walletLabel = ownerWalletLabel(who.wallet, owners);
+  if (walletLabel) return `earning wallet is ours (${walletLabel})`;
+  if (who.recruiterId == null) return null;
+  const recruiterLabel = await internalRecruiterLabel(db, who.recruiterId, owners);
+  return recruiterLabel ? `recruiter ${who.recruiterId} is internal (${recruiterLabel})` : null;
+}
 
 export async function creditRecruiterEarnings(opts: { chainIds: number[]; dryRun?: boolean; limit?: number; db?: typeof pool }): Promise<CreditSummary> {
   const db = opts.db ?? pool;
   if (!db) throw new Error("DATABASE_URL is required");
-  const summary: CreditSummary = { scanned: 0, credited: 0, creditedRaw: {}, unattributed: 0, unattributedRaw: {}, retried: 0 };
+  const summary: CreditSummary = { scanned: 0, credited: 0, creditedRaw: {}, unattributed: 0, unattributedRaw: {}, retried: 0, excluded: 0, excludedRaw: {} };
   const add = (bucket: Record<string, string>, chain: string, amount: string) => {
     bucket[chain] = (BigInt(bucket[chain] || "0") + BigInt(amount)).toString();
   };
@@ -145,23 +163,40 @@ export async function creditRecruiterEarnings(opts: { chainIds: number[]; dryRun
         and f.tx_hash = re.tx_hash || ':' || re.log_index
       where re.chain_id = any($1::int[])
         and re.recruiter_amount > 0
-        and (f.id is null or f.recruiter_id is null)
+        and (f.id is null or (f.recruiter_id is null and f.claim_status <> 'failed'))
       order by re.occurred_at asc
       limit $2`,
     [opts.chainIds, Math.max(1, opts.limit ?? 5000)],
   );
 
+  const owners = ownerWalletIndex();
   for (const row of rows as Array<RewardEventRow & { fee_event_id: string | null }>) {
     summary.scanned += 1;
     const spec = RECRUITER_CHAIN_OF[row.chain_id];
     if (!spec) continue;
     const who = await resolveEarningRecruiter(db, row);
-    const accountId = who.recruiterId != null ? await recruiterAccountIdReadOnly(db, who.recruiterId, opts.dryRun) : null;
     const metadata = {
       chainId: row.chain_id, txHash: row.tx_hash, logIndex: row.log_index, routeKind: row.route_kind,
       routeProfile: row.route_profile, campaign: row.campaign_address, earningWallet: who.wallet,
       linksRecruiterId: who.recruiterId, attribution: who.source, occurredAt: new Date(row.occurred_at).toISOString(),
     };
+    const excluded = await internalExclusion(db, who, owners);
+    if (excluded) {
+      summary.excluded += 1;
+      add(summary.excludedRaw, spec.chain, row.recruiter_amount);
+      if (!opts.dryRun) {
+        await db.query(
+          `insert into public.recruiter_fee_events (recruiter_id, trader_wallet, source_chain, fee_token, raw_fee_amount, recruiter_share_raw, tx_hash, finality_status, claim_status, metadata)
+           values (null, $1, $2, $3, $4::numeric, $5::numeric, $6, 'confirmed', 'failed', $7::jsonb)
+           on conflict (source_chain, tx_hash) do update
+             set claim_status = 'failed', metadata = excluded.metadata, updated_at = now()
+             where public.recruiter_fee_events.recruiter_id is null`,
+          [who.wallet, spec.chain, spec.token, row.raw_amount, row.recruiter_amount, sliceKey(row.tx_hash, row.log_index), JSON.stringify({ ...metadata, excluded })],
+        );
+      }
+      continue;
+    }
+    const accountId = who.recruiterId != null ? await recruiterAccountIdReadOnly(db, who.recruiterId, opts.dryRun) : null;
     if (!accountId) {
       summary.unattributed += 1;
       add(summary.unattributedRaw, spec.chain, row.recruiter_amount);

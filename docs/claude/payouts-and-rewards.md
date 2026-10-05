@@ -360,3 +360,22 @@ everything in open/live pools (not owed); protocol / MWL pending shown apart. An
   battle still went live because `GET /stake` promotes it from the chain read. Which client step failed cannot be
   proven (`auth_nonces` keeps one row per wallet). Not fixed (needs a chain-side ingest); finance reads the chain.
 - `arena_war_pool_claims` is empty on production; claims are only on chain.
+
+
+### Owner wallets are out of leagues, airdrops and recruiters (founder, 2026-10-05)
+
+"Exclude all owner wallets from leagues and recruiters." One list: `frontend/shared/ownerWallets.mjs`
+(role keys only, Solana base58 in exact case, EVM lowercased, a label each), mirrored in
+`realtime-indexer/src/rewards/ownerWallets.ts` (a test fails on drift). Extra wallets via env
+`OWNER_WALLETS` (and the older `MODERATION_INTERNAL_WALLETS`), `address[:label]`, on BOTH the API and
+the indexer service. Matching is case-insensitive (recruiters store Solana keys lowercased).
+- Leagues: `finalizeEpochWinners.ts` drops owner rows before the poker field is sized (next wallet
+  moves up, field shrinks); the recruiter league skips internal recruiters (signup or payout wallet
+  is ours); MWL/quarterly (`arenaMwlPayouts.js`) skips owner-owned coins. A posted root is never
+  rewritten. Live boards (`league.js`, `leagueRecruiter.js`) hide the same rows.
+- Airdrops: `exclusionSets` adds the list (BNB, Robinhood, Solana runners).
+- Recruiters: owner wallets cannot be linked (API wallet-connect, indexer attribution, dashboard
+  re-link); internal recruiters take no members; `creditRecruiterEarnings` credits nobody for an
+  owner trade or an internal recruiter (fee event `failed`, recruiter_id null, never retried).
+- Data: `database/prod_detach_owner_wallets_and_test_recruiters_2026_10_05.sql` (test recruiters
+  1, 16, 107, 108, 114, 124; 29 and 115 "check first").

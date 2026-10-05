@@ -4,6 +4,7 @@ import { resolveBnbUsdPrice } from "./lib/bnbUsdPrice.js";
 import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
 import { resolveEthUsdPrice } from "./lib/ethUsdPrice.js";
 import { scoreUniversalRecruiter, toNumber, weiToNative } from "./leagueRecruiterScore.js";
+import { internalRecruiterLabel } from "../shared/ownerWallets.mjs";
 
 /**
  * Recruiter League is ONE universal All-Chains weekly/monthly board.
@@ -427,6 +428,31 @@ async function loadEpochLinksOnly(startIso, endIso, limit) {
   });
 }
 
+/**
+ * Board rows without internal recruiters: a recruiter whose signup wallet or any payout wallet is
+ * one of our own (shared/ownerWallets.mjs) is a founder test account. The settlement job leaves it
+ * out of the field too (realtime-indexer recruiterLeague.ts), so the places below move up the same way.
+ */
+export async function withoutInternalRecruiters(rows, db = pool) {
+  const codes = rows.map((row) => row.code).filter(Boolean);
+  const payoutByCode = new Map();
+  if (codes.length) {
+    const { rows: wallets } = await db.query(
+      `select a.code, w.wallet_address from public.recruiter_payout_wallets w
+         join public.recruiter_accounts a on a.recruiter_id = w.recruiter_id
+        where a.code = any($1::text[])`,
+      [codes],
+    ).catch(() => ({ rows: [] }));
+    for (const row of wallets) {
+      if (!payoutByCode.has(row.code)) payoutByCode.set(row.code, []);
+      payoutByCode.get(row.code).push(row.wallet_address);
+    }
+  }
+  return rows
+    .filter((row) => !internalRecruiterLabel({ walletAddress: row.walletAddress, signup: row.signupMetadata, payoutWallets: payoutByCode.get(row.code) }))
+    .map((row, index) => ({ ...row, rank: index + 1 }));
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") return badMethod(res);
 
@@ -460,6 +486,8 @@ export default async function handler(req, res) {
       rows = await loadEpochLinksOnly(startIso, endIso, limit);
       warning = "Epoch recruiter volume table unavailable; board ranks active links/squad members only.";
     }
+
+    rows = await withoutInternalRecruiters(rows);
 
     if (!rows.length) {
       warning = warning || "No active recruiters with a live network or epoch referred volume yet.";

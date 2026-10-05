@@ -1,5 +1,6 @@
 import { pool } from "../../server/db.js";
 import { requireDashboardPermission } from "./_access.js";
+import { ownerWalletLabel } from "../../shared/ownerWallets.mjs";
 
 const VALID_RECRUITER_STATUSES = new Set(["active", "inactive", "closed", "suspended"]);
 const VALID_MEMBER_ROLES = new Set(["creator", "trader", "member"]);
@@ -23,6 +24,16 @@ function requiredReason(value) {
   if (!reason) throw new Error("Reason is required.");
   if (reason.length > 500) throw new Error("Reason must be 500 characters or fewer.");
   return reason;
+}
+
+/**
+ * Owner / internal wallets (shared/ownerWallets.mjs) are never (re)linked to a recruiter. Detaching
+ * one (linkStatus "inactive") and role edits stay allowed. Returns the refusal message, or null.
+ */
+export function ownerRelinkRefusal(wallet, linkStatus, index) {
+  if (linkStatus !== "active") return null;
+  const ownerLabel = ownerWalletLabel(wallet, index);
+  return ownerLabel ? `This wallet is ours (${ownerLabel}) and cannot be linked to a recruiter.` : null;
 }
 
 function adminLabel(admin) {
@@ -277,6 +288,9 @@ export async function dashboardRecruiterMember(req, res) {
   if (memberRole === undefined && linkStatus === undefined) {
     return res.status(400).json({ ok: false, error: "No supported squad member fields supplied." });
   }
+
+  const ownerRefusal = ownerRelinkRefusal(wallet, linkStatus);
+  if (ownerRefusal) return res.status(409).json({ ok: false, error: ownerRefusal });
 
   const client = await pool.connect();
   try {
