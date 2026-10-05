@@ -239,9 +239,32 @@ them (the vault pays them). Facts read on production 2026-10-04:
   winners (0.0000123 BNB, no root) are therefore short against the old vault.
 - Solana recruiter: 1065542 lamports claimable in `recruiter_reward_ledger` (33 of 35 rows are test coins); the prepared
   weekly batch (671407 lamports, not posted) is in a `recruiter_reward_claims` row whose payout wallet is the devnet key HuKfoF.
-- Creator claims are not recorded anywhere; Solana "owed" is read live from each public coin's escrow + creator vault
-  (same math as `solanaCreatorFeeMath.js`), EVM owed = CreatorRewardsVault V1 + V2 balances.
+- Creator claims: see "Creator fee claims" below (paid is now read; was "not recorded" until 2026-10-05).
 - `ProtocolRevenueVault.operatorFillCapUsd/operatorFilledUsd` are 18-decimal USD (cap 10000e18); Solana `route_state` is USD micros.
+
+### Creator fee claims (2026-10-05, feat/creator-fee-claims)
+
+On-chain truth for K88 (`Hsa3rJRQ…`, creator `8doLGRWZ…`, vault `EGEoimru…`, escrow `14Ae1SyC…`), read 2026-10-05:
+three `ClaimCreatorFees` = 53,990,213 (2026-09-27 07:03) + 5,685,143 (09-29 04:48) + 2,265,956 (10-01 12:21) lamports
+= 0.061941312 SOL, $7.64 at each claim hour (Binance). The vault's `total_claimed` holds the same 61,941,312. Escrow
+`total_received` 1,279,930,139 (all fees), creator 5% = 63,996,466 = `reward_events` creator sum = claimed + still
+claimable 2,055,154, to the lamport. "Earned" was right. The founder's ~$30 is everything the wallet collected from us:
+creator fees $7.64 + airdrop 0.12155516 SOL ($14.31) + league 0.026378440 (weekly) + 0.045930533 + 0.027884308
+(monthly) SOL ($11.77) = 0.283690 SOL, $33.71.
+
+- Solana: `claim_creator_fees` adds to `CreatorFeeVault.total_claimed` (offset 88) and emits `CreatorFeeClaimed`
+  (campaign, creator, vault, amount, total_claimed; 120 bytes). Payouts reads the counter (exact, same getMultipleAccounts
+  as claimable) and lists claims from `creator_fee_claims` (indexer) when they add up to it, else from the vault's
+  signature history (bounded, cached per vault while the counter is unchanged, re-read at most every 10 min).
+- Indexer: `solanaCreatorFeeClaims.ts` decodes the event separately from `decodeEvents` (so no event index shifts)
+  and inserts into `creator_fee_claims`; `job:backfill-creator-fee-claims` fills history once. Migration
+  `20261005_000002_creator_fee_claims.sql` (founder runs it).
+- EVM: V1 `CreatorRewardsVault` has `lifetime/claimed/pendingCreatorFees(campaign)` getters (exact, no tx links). V2
+  has no claimed total: claims are `CreatorFeesClaimed` in `evm_campaign_events` (indexer, cursor `gen5-aux:<vault>`)
+  merged with a bounded log read from the deploy block (BNB 125085249, RH 77308016). The RH indexer cursor started
+  after the first trades (missed `TradeFeeAccrued` at 77560749/77563730); public BSC RPCs refuse `eth_getLogs`, so on
+  BNB the log read needs a keyed `BSC_RPC_HTTP_56` on the API, else the indexer rows are used with a note.
+- Test coins: shown apart (`creatorFees.testCoins`, `owed.testCoins`, `paid.testCoinsLeftOut`), never in totals.
 
 ### Finance fee coverage audit (2026-10-04, feat/finance-fee-coverage)
 
