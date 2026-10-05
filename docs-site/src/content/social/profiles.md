@@ -51,6 +51,8 @@ If you have no picture, your profile shows the default green operative.
 
 The top of a profile shows the banner, picture, name, @username, wallet address (tap to copy), an Explorer link, website, X and Telegram links, and the bio. Below that are counts for coins created, followers, following and rank.
 
+Tap **followers** or **following** to see the people. A list opens with a Followers and a Following tab. Each row shows the picture, name, @username and wallet, and a **Follow** or **Following** button so you can follow people straight from the list. Tap a row to open that profile. Your own lists are also in Command Center under Followers and Following.
+
 - On someone else's profile you see **Follow** or **Unfollow**, and a **…** menu to report or block. See [Report, hide and block](/social/safety).
 - On your own profile you see **Edit** and **Open Command Center**, and the composer to write a post.
 

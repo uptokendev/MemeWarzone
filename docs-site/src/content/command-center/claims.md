@@ -7,7 +7,7 @@ description: The Rewards and claims tab: which rewards you can claim, what each 
 
 ![The Rewards and claims tab](/images/docs/command-center-claims.png)
 
-Claims are open on BNB Chain and Solana. Each claim is a wallet transaction that you confirm yourself.
+Claims are open on BNB Chain, Solana and Robinhood Chain. Each claim is a wallet transaction that you confirm yourself.
 
 ## Reward rows
 

@@ -14,7 +14,7 @@ Never trust copied claim links, random messages, or fake support prompts.
 
 ## Where to claim
 
-Open **Command Center > Rewards and claims**. It lists your rewards on the selected chain, each with an amount and a status. Claims are open on BNB Chain and Solana.
+Open **Command Center > Rewards and claims**. It lists your rewards on the selected chain, each with an amount and a status. Claims are open on BNB Chain, Solana and Robinhood Chain.
 
 - Press the claim button on a row marked **Ready**. A **Failed** row shows **Retry Claim**.
 - With more than one ready row, **Claim all ready** claims them one after another. Your wallet asks you to confirm each one.

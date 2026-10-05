@@ -26,6 +26,10 @@ The Battles list has its own chain filter, which also offers all chains at once.
 | Address format | starts with 0x | base58 mint address | starts with 0x |
 | Graduated coins trade on | Topaz | Meteora | a Uniswap V3 pool |
 | Imported coins trade on | PancakeSwap | Jupiter | Uniswap |
+| Launch a coin | Yes | Yes | Yes |
+| Battles, leagues and Major War League | Yes | Yes | Yes |
+| Import a coin | Yes | Yes | Yes |
+| Claim rewards | Yes | Yes | Yes |
 
 Some Solana and Robinhood coins are paired with another token after graduation, such as USDC or a stock token. Read **[Solana Operations](/platform/solana-operations)** and **[Create a Campaign](/creators/create-a-campaign)**.
 

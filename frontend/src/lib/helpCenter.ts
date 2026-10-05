@@ -39,7 +39,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "which-chains",
     title: "Which chains does MemeWarzone support?",
-    body: "BNB Chain, Solana and Robinhood Chain. Each coin lives on one chain. Balances, coins and rewards are shown for the chain you have selected. Reward claims are open on BNB Chain and Solana in Command Center > Rewards and claims.",
+    body: "BNB Chain, Solana and Robinhood Chain. Each coin lives on one chain. Balances, coins and rewards are shown for the chain you have selected. Launching, trading, battles, imports and reward claims work on all three. Pick the chain at the top of the page.",
     categories: ["wallets", "create"],
     keywords: ["bnb", "solana", "chain", "network", "multichain"],
   },
@@ -130,11 +130,18 @@ export const HELP_ARTICLES: HelpArticle[] = [
     keywords: ["cannot create", "can't create", "blocked", "cooldown", "creator limit", "live token limit", "launch blocked", "deploy"],
   },
   {
+    id: "robinhood-chain",
+    title: "What can I do on Robinhood Chain?",
+    body: "Everything you can do on the other chains. Launch a coin, trade it on the curve and after graduation, import a coin, join battles, leagues and the Major War League, and claim rewards. The chain's coin is ETH. When you launch, you can pair your coin with ETH or an approved stock token for after graduation. Imported Robinhood coins trade through Uniswap.",
+    categories: ["wallets", "create", "trading"],
+    keywords: ["robinhood", "robinhood chain", "eth", "stock token", "uniswap"],
+  },
+  {
     id: "launch-both-chains",
-    title: "Can I launch on both BNB and Solana?",
-    body: "Yes. You pick the chain when you create. Each campaign lives on one chain.",
+    title: "Can I launch on BNB Chain, Solana and Robinhood Chain?",
+    body: "Yes. You pick the chain when you create. Each coin lives on one chain.",
     categories: ["create"],
-    keywords: ["launch both", "solana create", "bnb create"],
+    keywords: ["launch both", "solana create", "bnb create", "robinhood create"],
   },
   {
     id: "creator-initial-buy",
@@ -307,10 +314,10 @@ export const HELP_ARTICLES: HelpArticle[] = [
   },
   {
     id: "war-room-both-chains",
-    title: "Can I see both BNB and Solana projects in the War Trade Room?",
+    title: "Can I see projects from every chain in the War Trade Room?",
     body: "Yes. The War Trade Room shows the projects of the chain you have selected.",
     categories: ["trading"],
-    keywords: ["war room solana", "war room bnb"],
+    keywords: ["war room solana", "war room bnb", "war room robinhood"],
   },
   {
     id: "war-room-prepare",
@@ -626,7 +633,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "rewards",
     title: "Where can I see and claim my rewards?",
-    body: "Command Center > Rewards and claims. It lists League rewards (Major War League prizes included), Airdrop, Squad and Recruiter rewards, battle wins and creator fees for the selected chain. Claims are open on BNB Chain and Solana. Connect the wallet that earned the reward.",
+    body: "Command Center > Rewards and claims. It lists League rewards (Major War League prizes included), Airdrop, Squad and Recruiter rewards, battle wins and creator fees for the selected chain. Claims work on BNB Chain, Solana and Robinhood Chain. Connect the wallet that earned the reward.",
     categories: ["rewards"],
     keywords: ["claim", "rewards", "claim center", "solana claim", "mwl", "major war league"],
     popular: true,
