@@ -239,5 +239,5 @@ test("EVM: funded vaults with no router events say 'not recorded' only when the 
   out = await buildFeeRouting({ network, days: 7, db: dbWith(new Date(nowMs - 4 * 3_600_000).toISOString()), readers, prices, env: {}, now: () => NOW });
   alert = out.alerts.find((a) => /router events/.test(a.message));
   assert.equal(alert.level, "warning");
-  assert.match(alert.message, /has not moved for 3 hours/);
+  assert.match(alert.message, /has not moved for 4 hours/);
 });
