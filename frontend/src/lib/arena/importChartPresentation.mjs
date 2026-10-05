@@ -115,3 +115,54 @@ export function admissionPill(status) {
   if (value === "declined") return { label: "Arena: declined", tone: "default" };
   return { label: "Arena: scanning", tone: "default" };
 }
+
+const RESOLUTION_SECONDS = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400 };
+
+/**
+ * Newest on-chain trades folded into GeckoTerminal's USD candles (founder, 2026-10-06: the chart
+ * waited for GeckoTerminal after your own buy). A trade's USD price is volumeUsd / tokenAmount; the
+ * market cap follows the last candle's cap-to-price ratio. Trades in the last candle move its close,
+ * high and low; later trades open new candles. Older trades are left to GeckoTerminal.
+ */
+export function mergeTradesIntoUsdCandles(items, trades, resolution) {
+  const sec = RESOLUTION_SECONDS[resolution];
+  if (!sec || !Array.isArray(items) || !items.length || !Array.isArray(trades) || !trades.length) return items;
+  const out = items.map((row) => ({ ...row }));
+  const lastStart = Date.parse(out[out.length - 1].bucket_start);
+  if (!Number.isFinite(lastStart)) return items;
+  const ref = out[out.length - 1];
+  const supply = Number(ref.mcap_c) > 0 && Number(ref.c) > 0 ? Number(ref.mcap_c) / Number(ref.c) : null;
+  const cap = (price) => (supply ? String(price * supply) : null);
+  const fresh = trades
+    .filter((t) => Number(t?.volumeUsd) > 0 && Number(t?.tokenAmount) > 0 && Number(t?.blockTime) * 1000 >= lastStart)
+    .sort((a, b) => a.blockTime - b.blockTime);
+  for (const t of fresh) {
+    const price = Number(t.volumeUsd) / Number(t.tokenAmount);
+    const start = Math.floor(Number(t.blockTime) / sec) * sec * 1000;
+    const last = out[out.length - 1];
+    const lastMs = Date.parse(last.bucket_start);
+    if (start < lastMs) continue;
+    if (start === lastMs) {
+      last.h = String(Math.max(Number(last.h), price));
+      last.l = String(Math.min(Number(last.l), price));
+      last.c = String(price);
+      if (supply) {
+        last.mcap_h = String(Math.max(Number(last.mcap_h) || 0, price * supply));
+        last.mcap_l = String(Math.min(Number(last.mcap_l) || Infinity, price * supply));
+        last.mcap_c = cap(price);
+      }
+    } else {
+      out.push({
+        bucket_start: new Date(start).toISOString(),
+        o: last.c, h: String(Math.max(Number(last.c), price)), l: String(Math.min(Number(last.c), price)), c: String(price),
+        mcap_o: last.mcap_c ?? null,
+        mcap_h: supply ? String(Math.max(Number(last.mcap_c) || 0, price * supply)) : null,
+        mcap_l: supply ? String(Math.min(Number(last.mcap_c) || Infinity, price * supply)) : null,
+        mcap_c: cap(price),
+        volume_usd: String(Number(t.volumeUsd)),
+        trades_count: 1,
+      });
+    }
+  }
+  return out;
+}
