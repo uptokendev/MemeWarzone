@@ -12,9 +12,38 @@
 //
 // Gas-sized moves are left out (below the per-chain threshold): they are
 // network fees, not treasury movements.
+//
+// Program-mediated outflows: on Solana each row also carries the programs the
+// transaction called and the tokens the wallet received in it, so a buy of a
+// coin through our launchpad program is recognized (the handler then names the
+// coin from curve_trades by the transaction hash).
 
 import { solanaRpcUrls } from "./financeFeeRouting.js";
 import { atomicToDecimal } from "./financeFeeRouting.js";
+import { SOLANA_LAUNCHPAD_PROGRAM_ID } from "./financeFeeRoutingSolana.js";
+
+const SYSTEM_PROGRAMS = new Set(["11111111111111111111111111111111", "ComputeBudget111111111111111111111111111111"]);
+
+/** Programs a parsed Solana transaction called (top level), and the tokens `owner` received in it. */
+export function solanaTxDetails(tx, owner) {
+  const programs = [...new Set((tx?.transaction?.message?.instructions || []).map((ix) => ix.programId).filter((id) => id && !SYSTEM_PROGRAMS.has(id)))];
+  const balance = (list) => {
+    const out = new Map();
+    for (const b of list || []) {
+      if (b.owner !== owner) continue;
+      out.set(b.mint, { raw: BigInt(b.uiTokenAmount?.amount || "0"), decimals: Number(b.uiTokenAmount?.decimals || 0) });
+    }
+    return out;
+  };
+  const pre = balance(tx?.meta?.preTokenBalances);
+  const post = balance(tx?.meta?.postTokenBalances);
+  const tokensIn = [];
+  for (const [mint, p] of post) {
+    const delta = p.raw - (pre.get(mint)?.raw || 0n);
+    if (delta > 0n) tokensIn.push({ mint, amount: atomicToDecimal(delta.toString(), p.decimals) });
+  }
+  return { programs, tokensIn, viaLaunchpad: programs.includes(SOLANA_LAUNCHPAD_PROGRAM_ID) };
+}
 
 const TIMEOUT_MS = 8000;
 const CACHE_MS = 5 * 60_000;
@@ -81,7 +110,7 @@ export async function solanaOutflows({ address, sinceMs, fetchImpl = fetch, env 
           const d = Number(tx.meta.postBalances[j]) - Number(tx.meta.preBalances[j]);
           if (j !== i && d > 0 && (!best || d > best.delta)) best = { address: k, delta: d };
         });
-        out.push({ txHash: s.signature, at: new Date(s.blockTime * 1000).toISOString(), raw: String(-delta), to: best?.address || null });
+        out.push({ txHash: s.signature, at: new Date(s.blockTime * 1000).toISOString(), raw: String(-delta), to: best?.address || null, ...solanaTxDetails(tx, address) });
       }
       return { rows: out, source: `Solana RPC ${new URL(url).host}`, truncated: (sigs || []).length >= 200 || recent.length >= MAX_SOLANA_TX };
     } catch (error) {
@@ -167,8 +196,9 @@ export async function unmatchedOutflows({ accounts, movements, sinceMs, fetchImp
         const toKey = r.to ? `${a.chainId}|${a.chainId === 101 ? r.to : r.to.toLowerCase()}` : null;
         const toAccount = toKey ? byAddress.get(toKey) || null : null;
         unmatched.push({
-          accountId: a.id, account: a.name, chainId: a.chainId, asset: native.asset, amount, txHash: r.txHash, at: r.at, to: r.to,
+          accountId: a.id, account: a.name, accountKind: a.kind, chainId: a.chainId, asset: native.asset, amount, txHash: r.txHash, at: r.at, to: r.to,
           toAccountId: toAccount?.id || null, toAccount: toAccount?.name || null, source,
+          programs: r.programs || [], tokensIn: r.tokensIn || [], viaLaunchpad: Boolean(r.viaLaunchpad),
           prefill: { kind: toAccount ? "transfer_internal" : "conversion", occurredAt: r.at, fromAccountId: a.id, toAccountId: toAccount?.id || "", assetOut: native.asset, amountOut: amount, assetIn: toAccount ? native.asset : "", amountIn: toAccount ? amount : "", txHash: r.txHash },
         });
       }

@@ -15,20 +15,76 @@ function missingColumn() {
 
 // distributionsInstalled: false = 20261005_000001_finance_distributions.sql not applied yet.
 // treasuryInstalled: false = 20261005_000002_finance_treasury_tax.sql not applied yet.
-export function createFakeAccountingDb({ installed = true, distributionsInstalled = true, treasuryInstalled = true } = {}) {
-  const state = { costs: [], audit: [], closes: new Map(), settings: null, distributions: [], accounts: [], movements: [], taxItems: [], nextId: 1, queries: [], installed, distributionsInstalled, treasuryInstalled };
+// cryptoCostsInstalled: false = 20261005_000003_finance_crypto_costs.sql not applied yet.
+// market: { campaigns: [], curveTrades: [], marketStats: [] } read-only market data.
+export function createFakeAccountingDb({ installed = true, distributionsInstalled = true, treasuryInstalled = true, cryptoCostsInstalled = true, market = {} } = {}) {
+  const state = { costs: [], audit: [], closes: new Map(), settings: null, distributions: [], accounts: [], movements: [], taxItems: [], nextId: 1, queries: [], installed, distributionsInstalled, treasuryInstalled, cryptoCostsInstalled, market: { campaigns: [], curveTrades: [], marketStats: [], ...market } };
   const nowIso = () => new Date().toISOString();
   const costRow = (c) => ({ ...c });
 
   async function query(sql, params = []) {
     const text = String(sql).replace(/\s+/g, " ").trim();
     state.queries.push(text);
-    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(text)) return { rows: [] };
+    // A transaction keeps a copy of the tables; ROLLBACK puts it back.
+    if (text === "BEGIN") {
+      state.snapshot = structuredClone({ costs: state.costs, audit: state.audit, closes: state.closes, settings: state.settings, distributions: state.distributions, accounts: state.accounts, movements: state.movements, taxItems: state.taxItems, nextId: state.nextId });
+      return { rows: [] };
+    }
+    if (text === "ROLLBACK") {
+      if (state.snapshot) Object.assign(state, state.snapshot, { snapshot: null });
+      return { rows: [] };
+    }
+    if (text === "COMMIT") {
+      state.snapshot = null;
+      return { rows: [] };
+    }
     if (!state.installed && /finance_/.test(text)) throw missingTable();
 
     if (text.startsWith("select (select 1 from public.finance_costs")) return { rows: [{}] };
     if (!state.distributionsInstalled && (/finance_distributions/.test(text) || /\btax_rules\b/.test(text))) throw /finance_distributions/.test(text) ? missingTable() : missingColumn();
     if (!state.distributionsInstalled && text.startsWith("insert into public.finance_audit_log") && /^(settings\.tax_rules|distribution\.)/.test(String(params[2]))) {
+      const error = new Error('new row violates check constraint "finance_audit_log_action_chk"');
+      error.code = "23514";
+      error.constraint = "finance_audit_log_action_chk";
+      throw error;
+    }
+
+    // read-only market data
+    if (text.includes("from public.curve_trades t join public.campaigns c")) {
+      const hashes = params[0];
+      const rows = state.market.curveTrades.filter((t) => hashes.includes(t.tx_hash)).map((t) => {
+        const c = state.market.campaigns.find((x) => x.chain_id === t.chain_id && x.campaign_address === t.campaign_address);
+        return c ? { ...t, native_amount: t.bnb_amount, name: c.name, symbol: c.symbol, token_address: c.token_address } : null;
+      }).filter(Boolean);
+      return { rows };
+    }
+    if (text.startsWith("select chain_id, campaign_address, token_address, name, symbol, graduated_at_chain from public.campaigns")) {
+      const [chainId, address] = params;
+      const c = state.market.campaigns.find((x) => (chainId == null || x.chain_id === chainId) && (x.token_address === address || (address.startsWith("0x") && x.token_address.toLowerCase() === address.toLowerCase())));
+      return { rows: c ? [{ graduated_at_chain: null, ...c }] : [] };
+    }
+    if (text.startsWith("select price_bnb::text as price_native, block_time from public.curve_trades")) {
+      const [chainId, campaign, at] = params;
+      const t = state.market.curveTrades.filter((x) => x.chain_id === chainId && x.campaign_address === campaign && x.block_time <= at && Number(x.price_bnb) > 0).sort((a, b) => (a.block_time < b.block_time ? 1 : -1))[0];
+      return { rows: t ? [{ price_native: String(t.price_bnb), block_time: t.block_time }] : [] };
+    }
+    if (text.startsWith("select last_price_usd::text as last_price_usd")) {
+      const [chainId, campaign] = params;
+      const m = state.market.marketStats.find((x) => x.chain_id === chainId && x.campaign_address === campaign);
+      return { rows: m ? [{ ...m, last_price_usd: String(m.last_price_usd) }] : [] };
+    }
+    if (!state.cryptoCostsInstalled && (/\basset_address\b/.test(text) || /^select entity from|set entity =|select entity as value/.test(text))) {
+      const error = new Error(`column "${/asset_address/.test(text) ? "asset_address" : "entity"}" does not exist`);
+      error.code = "42703";
+      throw error;
+    }
+    if (!state.cryptoCostsInstalled && text.startsWith("insert into public.finance_treasury_movements") && params[1] === "crypto_payment") {
+      const error = new Error('new row violates check constraint "finance_treasury_movements_kind_chk"');
+      error.code = "23514";
+      error.constraint = "finance_treasury_movements_kind_chk";
+      throw error;
+    }
+    if (!state.cryptoCostsInstalled && text.startsWith("insert into public.finance_audit_log") && params[2] === "settings.entity") {
       const error = new Error('new row violates check constraint "finance_audit_log_action_chk"');
       error.code = "23514";
       error.constraint = "finance_audit_log_action_chk";
@@ -146,13 +202,14 @@ export function createFakeAccountingDb({ installed = true, distributionsInstalle
 
     // settings
     if (text.startsWith("select tax_reserve_rules, distribution")) return { rows: state.settings ? [{ ...state.settings }] : [] };
+    if (text.startsWith("select entity from public.finance_settings")) return { rows: state.settings ? [{ entity: state.settings.entity ?? null }] : [] };
     if (text.startsWith("insert into public.finance_settings")) {
       state.settings ||= { tax_reserve_rules: null, distribution: null, tax_rules: null, updated_by: null, updated_at: nowIso() };
       return { rows: [] };
     }
-    const settingSelect = /^select (tax_reserve_rules|distribution|tax_rules) as value from public.finance_settings/.exec(text);
+    const settingSelect = /^select (tax_reserve_rules|distribution|tax_rules|entity) as value from public.finance_settings/.exec(text);
     if (settingSelect) return { rows: [{ value: state.settings?.[settingSelect[1]] ?? null }] };
-    const settingUpdate = /^update public.finance_settings set (tax_reserve_rules|distribution|tax_rules) = \$1::jsonb/.exec(text);
+    const settingUpdate = /^update public.finance_settings set (tax_reserve_rules|distribution|tax_rules|entity) = \$1::jsonb/.exec(text);
     if (settingUpdate) {
       state.settings[settingUpdate[1]] = JSON.parse(params[0]);
       state.settings.updated_by = params[1];
@@ -193,8 +250,9 @@ export function createFakeAccountingDb({ installed = true, distributionsInstalle
     const str = (v) => (v == null ? null : String(v));
     const mvFrom = (vals) => Object.fromEntries(mvCols.map((c, i) => [c, ["amount_out", "amount_in", "value_eur", "usd_per_eur", "price_usd", "fee_amount", "fee_eur"].includes(c) ? str(vals[i]) : vals[i]]));
     const txTaken = (row, except = null) => row.tx_hash && state.movements.some((m) => m.id !== except && !m.deleted_at && m.tx_hash && m.tx_hash.toLowerCase() === row.tx_hash.toLowerCase() && String(m.from_account_id || 0) === String(row.from_account_id || 0));
+    if (text.startsWith("select asset_address from public.finance_treasury_movements limit 0")) return { rows: [] };
     if (text.startsWith("insert into public.finance_treasury_movements")) {
-      const row = { id: String(state.nextId++), ...mvFrom(params), created_by: params[21], created_at: nowIso(), updated_by: params[21], updated_at: nowIso(), deleted_by: null, deleted_at: null };
+      const row = { id: String(state.nextId++), ...mvFrom(params), asset_address: params[22] ?? null, created_by: params[21], created_at: nowIso(), updated_by: params[21], updated_at: nowIso(), deleted_by: null, deleted_at: null };
       if (txTaken(row)) throw duplicate();
       state.movements.push(row);
       return { rows: [{ ...row }] };
@@ -210,7 +268,7 @@ export function createFakeAccountingDb({ installed = true, distributionsInstalle
     if (text.startsWith("update public.finance_treasury_movements set occurred_at")) {
       const row = by(state.movements, params[0]);
       if (!row || row.deleted_at) return { rows: [] };
-      const next = { ...row, ...mvFrom(params.slice(1)), updated_by: params[22], updated_at: nowIso() };
+      const next = { ...row, ...mvFrom(params.slice(1)), ...(text.includes("asset_address = $24") ? { asset_address: params[23] } : {}), updated_by: params[22], updated_at: nowIso() };
       if (txTaken(next, row.id)) throw duplicate();
       Object.assign(row, next);
       return { rows: [{ ...row }] };

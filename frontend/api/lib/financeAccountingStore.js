@@ -198,9 +198,9 @@ export async function readSettings(db) {
   }
 }
 
-/** column: 'tax_reserve_rules' | 'distribution' | 'tax_rules'. Returns the previous value. */
+/** column: 'tax_reserve_rules' | 'distribution' | 'tax_rules' | 'entity'. Returns the previous value. */
 export async function saveSetting(client, column, value, actor) {
-  if (column !== "tax_reserve_rules" && column !== "distribution" && column !== "tax_rules") throw new Error("Unknown finance setting.");
+  if (column !== "tax_reserve_rules" && column !== "distribution" && column !== "tax_rules" && column !== "entity") throw new Error("Unknown finance setting.");
   await client.query(`insert into public.finance_settings (id) values (1) on conflict (id) do nothing`);
   const { rows } = await client.query(`select ${column} as value from public.finance_settings where id = 1 for update`);
   const before = rows[0]?.value ?? null;

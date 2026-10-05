@@ -38,6 +38,10 @@
 //   DELETE treasury/movements/:id     soft delete                   finance.manage
 //   GET    treasury/unmatched?days=   chain outflows not recorded   finance.view
 //   GET    treasury/value             EUR value preview             finance.view
+//   POST   treasury/crypto-costs      book an on-chain outflow as a cost
+//                                     (cost + crypto_payment, one transaction) finance.manage
+//   GET    entity                     BV status (in formation / registered) finance.view
+//   PUT    entity                     change it (label only)        finance.manage
 //   GET    tax                        obligations, deadlines, items finance.view
 //   POST   tax/items                  record a return/payment/...   finance.manage
 //   PATCH  tax/items/:id              correct it                    finance.manage
@@ -90,6 +94,7 @@ import {
   MOVEMENT_KIND_LABELS,
   TREASURY_ASSETS,
   TREASURY_METHOD,
+  WALLET_KINDS,
   bankPaidOccurrence,
   cashPerAccount,
   checkMovementAccounts,
@@ -97,6 +102,8 @@ import {
   offChainCashEur,
   revenueAcquisitions,
   runLots,
+  splitAssetKey,
+  tokenChainOf,
   treasuryByDay,
   treasuryByMonth,
   treasuryLotEvents,
@@ -119,8 +126,12 @@ import {
 } from "../lib/financeTaxCalendar.js";
 import { unmatchedOutflows } from "../lib/financeTreasuryDetect.js";
 import { VAT_LANES } from "../lib/financeTaxRules.js";
+import { ENTITY_STATUSES, ENTITY_STATUS_LABELS, describeEntityChange, effectiveEntity, validateEntityInput } from "../lib/financeEntity.js";
 import {
+  CRYPTO_COSTS_MIGRATION,
   TREASURY_MIGRATION,
+  cryptoCostsMissing,
+  curveTradesByTx,
   getAccount,
   getMovement,
   getTaxItem,
@@ -130,11 +141,14 @@ import {
   listAccounts,
   listMovements,
   listTaxItems,
+  movementTokenColumn,
+  readEntitySetting,
   softDeleteMovement,
   softDeleteTaxItem,
   treasuryTablesMissing,
   updateAccount,
   updateMovement,
+  tokenMarketData,
   updateTaxItem,
 } from "../lib/financeTreasuryStore.js";
 import { currentBalances, dailyRevenue, monthlyRevenue, revenueEventRows } from "../lib/financeAccountingSources.js";
@@ -167,7 +181,7 @@ import {
 } from "../lib/financeAccountingStore.js";
 
 const BASE = "/api/admin/finance";
-const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|tax-rules|tax|weekly|close|distributions|exports|treasury)(?:\/|$)/;
+const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|tax-rules|tax|weekly|close|distributions|exports|treasury|entity)(?:\/|$)/;
 const MAX_EXPORT_MONTHS = 36;
 const FIRST_MONTH = "2024-01";
 // Close order (founder 2026-10-04): closed months form an unbroken run from
@@ -190,6 +204,9 @@ const SOLANA_TX = /^[1-9A-HJ-NP-Za-km-z]{64,90}$/;
 const DIST_STATUSES = ["proposed", "approved", "paid", "cancelled"];
 
 const TREASURY_NOT_INSTALLED = `Recording treasury movements and tax items needs ${TREASURY_MIGRATION} on this database.`;
+const CRYPTO_COSTS_NOT_INSTALLED = `Costs paid in crypto, token movements and the BV status need ${CRYPTO_COSTS_MIGRATION} on this database.`;
+const NATIVE_OF_CHAIN = Object.freeze({ 101: "SOL", 56: "BNB", 4663: "ETH" });
+const shortText = (value) => (value ? `${String(value).slice(0, 4)}...${String(value).slice(-4)}` : "");
 const TREASURY_MEMO_MS = 20_000;
 
 export function isFinanceAccountingPath(pathname) {
@@ -738,7 +755,7 @@ export function createFinanceAccountingHandler(deps = {}) {
 
   // ---------------------------------------------------------------- distributions
 
-  /** Costs dated up to today in open months, less those already paid from the bank (a bank payment linked to the cost). */
+  /** Costs dated up to today in open months, less those already paid (a bank payment or crypto payment linked to the cost). */
   async function openCostsUsd(costs, movements = []) {
     const today = todayIso(nowMs());
     const nowMonth = today.slice(0, 7);
@@ -1116,6 +1133,7 @@ export function createFinanceAccountingHandler(deps = {}) {
 
   function treasuryWriteError(error) {
     if (error?.code === "23505") return new HttpError(409, "That is already recorded (same name, address or transaction hash).", { code: "ALREADY_RECORDED" });
+    if (cryptoCostsMissing(error)) return new HttpError(503, CRYPTO_COSTS_NOT_INSTALLED, { code: "FINANCE_CRYPTO_COSTS_NOT_INSTALLED" });
     if (treasuryTablesMissing(error)) return new HttpError(503, TREASURY_NOT_INSTALLED, { code: "FINANCE_TREASURY_NOT_INSTALLED" });
     return error;
   }
@@ -1125,8 +1143,40 @@ export function createFinanceAccountingHandler(deps = {}) {
     if ((await closedMonthSet(month, month)).has(month)) throw new HttpError(409, `The month ${month} is closed. Reopen it first.`, { code: "MONTH_CLOSED", month });
   }
 
+  /**
+   * A platform coin's USD price at a time, from our market data (read only):
+   * the last curve trade at or before that time times the native coin's
+   * Binance 1h close of that hour; when the time is now (within a day) the
+   * market_stats price also counts. Null when there is none: the EUR value
+   * is then entered by hand.
+   */
+  async function tokenPriceAt({ chainId, address, at, now = false }) {
+    const md = await (deps.tokenMarketData || tokenMarketData)(db(), { chainId, address, at });
+    if (!md?.coin) return null;
+    const chain = chainId || md.coin.chainId;
+    const native = NATIVE_OF_CHAIN[chain];
+    const recent = Math.abs(nowMs() - Date.parse(at)) < 86_400_000;
+    const label = md.coin.symbol || shortText(address);
+    // Market value now: the market_stats price first (it follows the pool after graduation too).
+    if (now && md.stats) return { priceUsd: md.stats.priceUsd, source: `${label} market_stats last price (${md.stats.source}, ${md.stats.at})` };
+    if (md.trade && native) {
+      const hour = Math.floor(Date.parse(at) / 3_600_000) * 3_600_000;
+      const closes = typeof prices().hourly === "function" ? await prices().hourly(native, [hour]).catch(() => new Map()) : new Map();
+      let nativeUsd = closes.get(hour) || null;
+      let nativeSource = `Binance ${native}USDT 1h close ${new Date(hour).toISOString().slice(0, 13)}:00 UTC`;
+      if (!nativeUsd && recent) {
+        const spot = await prices().spot(native).catch(() => null);
+        nativeUsd = spot?.priceUsd || null;
+        nativeSource = spot?.source || "spot";
+      }
+      if (nativeUsd) return { priceUsd: md.trade.priceNative * nativeUsd, source: `${label} curve price of the last trade at or before that time (${md.trade.at}) x ${nativeSource}` };
+    }
+    if (md.stats && recent) return { priceUsd: md.stats.priceUsd, source: `${label} market_stats last price (${md.stats.source}, ${md.stats.at})` };
+    return null;
+  }
+
   /** EUR value of the movement and its fee: typed in, or priced at the time (with the source). */
-  async function priceMovement(m, actor) {
+  async function priceMovement(m, actor, accountsById = new Map()) {
     const out = { ...m };
     if (m.valueEur != null) {
       out.valueSource = `entered by ${actor.email}`;
@@ -1134,7 +1184,7 @@ export function createFinanceAccountingHandler(deps = {}) {
       out.priceUsd = null;
     } else {
       const leg = valuationLeg(m);
-      const v = await valueInEur({ asset: leg.asset, amount: leg.amount, at: m.occurredAt, prices: prices(), fx: fx() });
+      const v = await valueInEur({ asset: leg.asset, amount: leg.amount, at: m.occurredAt, prices: prices(), fx: fx(), address: leg.address || null, chainId: leg.address ? tokenChainOf(m, accountsById) : null, tokenPrice: tokenPriceAt });
       Object.assign(out, { valueEur: v.eur, valueSource: v.source, usdPerEur: v.usdPerEur, priceUsd: v.priceUsd });
     }
     if (m.fee) {
@@ -1170,9 +1220,14 @@ export function createFinanceAccountingHandler(deps = {}) {
     return null;
   }
 
-  async function marketEur(asset, amount, usdPerEurNow) {
-    if (asset === "EUR") return { eur: round2(amount), source: "EUR" };
+  async function marketEur(key, amount, usdPerEurNow) {
+    const { asset, address } = splitAssetKey(key);
+    if (asset === "EUR" && !address) return { eur: round2(amount), source: "EUR" };
     if (!(usdPerEurNow > 0)) return { eur: null, source: "no EUR rate" };
+    if (address) {
+      const p = await tokenPriceAt({ chainId: null, address, at: new Date(nowMs()).toISOString(), now: true }).catch(() => null);
+      return p?.priceUsd ? { eur: round2((amount * p.priceUsd) / usdPerEurNow), source: `${p.source}; ECB rate` } : { eur: null, source: "no market price for this token in our market data" };
+    }
     if (asset === "USD" || asset === "USDC" || asset === "USDT") return { eur: round2(amount / usdPerEurNow), source: `${asset} at $1; ECB rate` };
     const spot = await prices().spot(asset).catch(() => null);
     return spot?.priceUsd ? { eur: round2((amount * spot.priceUsd) / usdPerEurNow), source: `${spot.source}; ECB rate` } : { eur: null, source: "no price" };
@@ -1186,10 +1241,11 @@ export function createFinanceAccountingHandler(deps = {}) {
     const accounts = [];
     for (const a of tr.accounts) {
       const lines = [];
-      for (const [asset, amount] of cash.get(a.id) || []) {
+      for (const [key, amount] of cash.get(a.id) || []) {
         if (Math.abs(amount) < 1e-12) continue;
-        const m = await marketEur(asset, amount, latestRate);
-        lines.push({ asset, amount: roundUsd(amount), marketEur: m.eur, source: m.source });
+        const m = await marketEur(key, amount, latestRate);
+        const { asset, address } = splitAssetKey(key);
+        lines.push({ asset, address, amount: roundUsd(amount), marketEur: m.eur, source: m.source });
       }
       accounts.push({ ...a, kindLabel: ACCOUNT_KIND_LABELS[a.kind], chain: a.chainId ? CHAINS[a.chainId] : null, recorded: lines, chainBalance: walletBalance(a, chains) });
     }
@@ -1203,10 +1259,11 @@ export function createFinanceAccountingHandler(deps = {}) {
     }
     const holdings = [];
     const cm = w.s.taxRules.vpb.cryptoCostMethod;
-    for (const [asset, h] of Object.entries(tr.lots.holdings)) {
-      const m = await marketEur(asset, h.amount, latestRate);
+    for (const [key, h] of Object.entries(tr.lots.holdings)) {
+      const m = await marketEur(key, h.amount, latestRate);
       const book = m.eur == null || !cm.lowerOfCostOrMarket ? round2(h.costEur) : round2(Math.min(h.costEur, m.eur));
-      holdings.push({ asset, amount: roundUsd(h.amount), costEur: round2(h.costEur), marketEur: m.eur, bookEur: book, writeDownEur: m.eur == null ? null : round2(Math.max(0, h.costEur - m.eur)), source: m.source });
+      const { asset, address } = splitAssetKey(key);
+      holdings.push({ asset, address, amount: roundUsd(h.amount), costEur: round2(h.costEur), marketEur: m.eur, bookEur: book, writeDownEur: m.eur == null ? null : round2(Math.max(0, h.costEur - m.eur)), source: m.source });
     }
     const byYear = new Map();
     for (const d of tr.lots.disposals) byYear.set(d.date.slice(0, 4), (byYear.get(d.date.slice(0, 4)) || 0) + d.gainEur);
@@ -1216,7 +1273,11 @@ export function createFinanceAccountingHandler(deps = {}) {
     for (const u of tr.lots.uncovered) warnings.push(`${roundUsd(u.amount)} ${u.asset} left on ${u.date} (${u.ref}) without a recorded cost: counted at its proceeds (no gain, no loss). Add an opening balance for that account to fix it.`);
     const unlinked = live.filter((m) => m.kind === "bank_payment" && !m.costId);
     if (unlinked.length) warnings.push(`${unlinked.length} bank payment(s) are not linked to a cost: they move cash but are not a cost in the books. Link each one, or add the cost on the Costs page.`);
-    const costs = (await listCosts(db())).filter((c) => !c.deletedAt).slice(0, 300).map((c) => ({ id: c.id, label: `${c.incurredOn} ${c.vendor} ${c.amount} ${c.currency}${c.recurring !== "none" ? ` (${c.recurring})` : ""}` }));
+    const allCosts = await listCosts(db());
+    const liveCostIds = new Set(allCosts.filter((c) => !c.deletedAt).map((c) => c.id));
+    const orphaned = live.filter((m) => m.costId && !liveCostIds.has(String(m.costId)));
+    if (orphaned.length) warnings.push(`${orphaned.length} payment(s) are linked to a cost that was deleted: the money left, but the cost is no longer in the books. Restore the cost or delete the payment.`);
+    const costs = allCosts.filter((c) => !c.deletedAt).slice(0, 300).map((c) => ({ id: c.id, label: `${c.incurredOn} ${c.vendor} ${c.amount} ${c.currency}${c.recurring !== "none" ? ` (${c.recurring})` : ""}` }));
     return res.status(200).json({
       schemaVersion: "finance-treasury-v1",
       generatedAt: new Date(nowMs()).toISOString(),
@@ -1242,7 +1303,10 @@ export function createFinanceAccountingHandler(deps = {}) {
       kinds: MOVEMENT_KINDS.map((key) => ({ key, label: MOVEMENT_KIND_LABELS[key] })),
       accountKinds: ACCOUNT_KINDS.map((key) => ({ key, label: ACCOUNT_KIND_LABELS[key] })),
       assets: TREASURY_ASSETS,
+      tokenRule: "Any other token (e.g. one of our platform coins) can be one leg of a movement: give its symbol and its mint or contract address. It is held at cost or lower market value, priced from our market data (last curve trade, market stats) or by hand.",
       revenueLanes: VAT_LANES,
+      costCategories: COST_CATEGORIES.map((key) => ({ key, label: COST_CATEGORY_LABELS[key] })),
+      entity: await entity(),
       costs,
       method: TREASURY_METHOD,
       warnings,
@@ -1289,10 +1353,11 @@ export function createFinanceAccountingHandler(deps = {}) {
     const input = validateMovementInput(req.body, { nowMs: nowMs() });
     const rows = await treasuryRows();
     requireTreasury(rows);
-    checkMovementAccounts(input, new Map(rows.accounts.map((a) => [a.id, a])));
+    const accountsById = new Map(rows.accounts.map((a) => [a.id, a]));
+    checkMovementAccounts(input, accountsById);
     await checkCostLink(input);
     await guardMovementMonth(input.occurredAt);
-    const priced = await priceMovement(input, actor);
+    const priced = await priceMovement(input, actor, accountsById);
     try {
       const created = await withTransaction(db(), async (client) => {
         const row = await insertMovement(client, priced, actor);
@@ -1312,16 +1377,19 @@ export function createFinanceAccountingHandler(deps = {}) {
     if (!before || before.deletedAt) throw new HttpError(404, "Movement not found.");
     const input = validateMovementInput(req.body, { nowMs: nowMs() });
     const rows = await treasuryRows();
-    checkMovementAccounts(input, new Map(rows.accounts.map((a) => [a.id, a])), { allowArchived: true });
+    const accountsById = new Map(rows.accounts.map((a) => [a.id, a]));
+    checkMovementAccounts(input, accountsById, { allowArchived: true });
     await checkCostLink(input);
     await guardMovementMonth(before.occurredAt);
     await guardMovementMonth(input.occurredAt);
-    const priced = await priceMovement(input, actor);
+    const priced = await priceMovement(input, actor, accountsById);
+    const tokenColumn = await movementTokenColumn(db());
     try {
       const result = await withTransaction(db(), async (client) => {
-        const locked = await getMovement(client, id, { forUpdate: true });
+        const locked = await getMovement(client, id, { forUpdate: true, tokenColumn });
         if (!locked || locked.deletedAt) throw new HttpError(404, "Movement not found.");
-        const after = await updateMovement(client, id, priced, actor);
+        const hadToken = Boolean(locked.out?.address || locked.in?.address);
+        const after = await updateMovement(client, id, priced, actor, { hadToken });
         await writeAudit(client, { actor, action: "movement.update", entityType: "finance_treasury_movement", entityId: id, before: locked, after });
         return after;
       });
@@ -1336,10 +1404,11 @@ export function createFinanceAccountingHandler(deps = {}) {
     const before = await getMovement(db(), id);
     if (!before || before.deletedAt) throw new HttpError(404, "Movement not found.");
     await guardMovementMonth(before.occurredAt);
+    const tokenColumn = await movementTokenColumn(db());
     const result = await withTransaction(db(), async (client) => {
-      const locked = await getMovement(client, id, { forUpdate: true });
+      const locked = await getMovement(client, id, { forUpdate: true, tokenColumn });
       if (!locked || locked.deletedAt) throw new HttpError(404, "Movement not found.");
-      const after = await softDeleteMovement(client, id, actor);
+      const after = await softDeleteMovement(client, id, actor, { tokenColumn });
       await writeAudit(client, { actor, action: "movement.delete", entityType: "finance_treasury_movement", entityId: id, before: locked, after });
       return after;
     });
@@ -1354,7 +1423,149 @@ export function createFinanceAccountingHandler(deps = {}) {
     const result = rows.installed
       ? await (deps.unmatchedOutflows || unmatchedOutflows)({ accounts: rows.accounts, movements: rows.movements, sinceMs: nowMs() - days * 86_400_000, nowMs: nowMs() })
       : { wallets: [], unmatched: [], note: TREASURY_NOT_INSTALLED };
-    return res.status(200).json({ schemaVersion: "finance-treasury-unmatched-v1", generatedAt: new Date(nowMs()).toISOString(), source: "dashboard-api", days, installed: rows.installed, ...result, canManage: dashboardPrincipalCan(principal, "finance.manage") });
+    const unmatched = await describeOutflows(result.unmatched || [], rows.accounts);
+    return res.status(200).json({ schemaVersion: "finance-treasury-unmatched-v1", generatedAt: new Date(nowMs()).toISOString(), source: "dashboard-api", days, installed: rows.installed, ...result, unmatched, costCategories: COST_CATEGORIES.map((key) => ({ key, label: COST_CATEGORY_LABELS[key] })), canManage: dashboardPrincipalCan(principal, "finance.manage") });
+  }
+
+  /**
+   * Names what an outflow paid for: a buy of one of our coins through the
+   * launchpad (from curve_trades by the transaction hash), or another program
+   * the transaction called. Adds the "book as cost" prefill, and for a coin
+   * bought, the alternative "conversion to the token" prefill. A buy of one of
+   * our own platform coins by the multisig or an operator wallet is suggested
+   * as a marketing cost (founder 2026-10-05: the K88 support buy).
+   */
+  async function describeOutflows(list, accounts) {
+    if (!list.length) return list;
+    const trades = await (deps.curveTradesByTx || curveTradesByTx)(db(), list.map((u) => u.txHash)).catch(() => new Map());
+    const byId = new Map(accounts.map((a) => [a.id, a]));
+    return list.map((u) => {
+      const account = byId.get(String(u.accountId));
+      const same = (x, y) => Boolean(x && y) && (u.chainId === 101 ? x === y : String(x).toLowerCase() === String(y).toLowerCase());
+      const found = trades.get(u.chainId === 101 ? u.txHash : String(u.txHash).toLowerCase()) || [];
+      const trade = found.find((t) => t.chainId === u.chainId && same(t.wallet, account?.address)) || found.find((t) => t.chainId === u.chainId) || null;
+      let description = null;
+      let token = null;
+      if (trade) {
+        const name = trade.symbol || shortText(trade.tokenAddress);
+        description = `${trade.side === "sell" ? "Sale" : "Buy"} of ${name} through the launchpad`;
+        token = { symbol: trade.symbol, name: trade.name, address: trade.tokenAddress, amount: trade.tokenAmount, chainId: trade.chainId, platformCoin: true, source: "curve_trades (our indexer) by transaction hash" };
+      } else if (u.viaLaunchpad) {
+        description = "Through the launchpad program (no trade found for this transaction in our indexer yet)";
+        const t = (u.tokensIn || [])[0];
+        if (t) token = { symbol: null, name: null, address: t.mint, amount: t.amount, chainId: u.chainId, platformCoin: true, source: "token balance change in the transaction" };
+      } else if ((u.programs || []).length) {
+        description = `Through program ${u.programs.map(shortText).join(", ")}`;
+      }
+      const wallet = account && (account.kind === "multisig" || account.kind === "operator_wallet");
+      const ownCoinBuy = Boolean(token?.platformCoin && (!trade || trade.side === "buy"));
+      const suggestion = ownCoinBuy && wallet ? { action: "book_cost", category: "marketing", label: "Book as marketing cost", why: "A buy of one of our own platform coins by our multisig or operator wallet is a support purchase: booked as a marketing cost (founder decision 2026-10-05, the K88 buy)." } : null;
+      const symbol = token?.symbol || null;
+      const bookCost = {
+        accountId: String(u.accountId), txHash: u.txHash, occurredAt: u.at, asset: u.asset, amount: u.amount,
+        category: suggestion ? "marketing" : "",
+        vendor: trade ? `${trade.name && trade.name !== symbol ? `${trade.name} ` : ""}${symbol ? `(${symbol}) ` : ""}support buy`.trim() : (u.toAccount || (u.to ? `Paid to ${shortText(u.to)}` : "On-chain payment")),
+        description: description ? `${description}${token?.amount ? `: ${token.amount} ${symbol || "tokens"}` : ""}` : "",
+      };
+      const conversion = token?.address && token.amount && symbol
+        ? { kind: "conversion", occurredAt: u.at, fromAccountId: String(u.accountId), toAccountId: String(u.accountId), assetOut: u.asset, amountOut: u.amount, assetIn: symbol, amountIn: token.amount, assetAddress: token.address, txHash: u.txHash, note: description || "" }
+        : null;
+      return { ...u, description, token, suggestion, bookCost, conversionPrefill: conversion };
+    });
+  }
+
+  const BOOK_FIELDS = ["accountId", "txHash", "occurredAt", "asset", "amount", "assetAddress", "category", "vendor", "description", "valueEur"];
+
+  /**
+   * Book an on-chain outflow from one of our wallets as a cost, in one
+   * transaction: the finance_costs row (category chosen, EUR value = market
+   * value at the time) and the crypto_payment movement linked to it (the
+   * crypto leaves the lots at its FIFO cost, the gain or loss is realized),
+   * each with its audit row. Records only; nothing is sent.
+   */
+  async function bookCryptoCost(req, res, actor) {
+    const body = req.body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new FinanceInputError("Send the outflow as a JSON object.");
+    const unknown = Object.keys(body).filter((k) => !BOOK_FIELDS.includes(k));
+    if (unknown.length) throw new FinanceInputError(`Unknown field: ${unknown[0]}.`, unknown[0]);
+    if (!body.txHash) throw new FinanceInputError("txHash is required: a cost booked from the chain names its transaction.", "txHash");
+    if (!COST_CATEGORIES.includes(body.category)) throw new FinanceInputError(`category must be one of: ${COST_CATEGORIES.join(", ")}.`, "category");
+    const description = String(body.description ?? "").trim();
+    if (description.length > 400) throw new FinanceInputError("description is longer than 400 characters.", "description");
+    // Placeholder cost id: the real one is the row inserted below.
+    const input = validateMovementInput({
+      kind: "crypto_payment", occurredAt: body.occurredAt, fromAccountId: body.accountId, assetOut: body.asset, amountOut: body.amount,
+      assetAddress: body.assetAddress, valueEur: body.valueEur, costId: "1", txHash: body.txHash, note: description,
+    }, { nowMs: nowMs() });
+    const rows = await treasuryRows();
+    requireTreasury(rows);
+    const accountsById = new Map(rows.accounts.map((a) => [a.id, a]));
+    const { from } = checkMovementAccounts(input, accountsById);
+    if (!WALLET_KINDS.includes(from.kind)) throw new FinanceInputError("Book from one of our wallets.", "accountId");
+    if ((from.chainId === 101) !== /^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(input.txHash)) throw new FinanceInputError(`That transaction hash is not a ${CHAINS[from.chainId]} transaction.`, "txHash");
+    const day = input.occurredAt.slice(0, 10);
+    const vendor = String(body.vendor ?? "").trim() || "On-chain payment";
+    const costShape = validateCostInput({ incurredOn: day, category: body.category, vendor, description: `${description}${description ? " " : ""}(tx ${input.txHash})`.slice(0, 500), amount: input.out.amount, currency: "USD" }, { nowMs: nowMs() });
+    await guardMovementMonth(input.occurredAt);
+    await guardClosed(costShape, "The month");
+    const priced = await priceMovement(input, actor, accountsById);
+    const usdPerEur = priced.usdPerEur ?? (await fx().rate(day).catch(() => null))?.usdPerEur ?? null;
+    if (!(usdPerEur > 0)) throw new FinanceInputError(`No USD/EUR rate for ${day}: the cost cannot be put in USD. Try again later.`, "valueEur");
+    const amountUsd = priced.priceUsd != null ? roundUsd(Number(input.out.amount) * priced.priceUsd) : roundUsd(priced.valueEur * usdPerEur);
+    const nativeCurrency = !input.out.address && COST_CURRENCIES.includes(input.out.asset);
+    const cost = {
+      ...costShape,
+      currency: nativeCurrency ? input.out.asset : "USD",
+      amount: nativeCurrency ? input.out.amount : String(amountUsd),
+      recurring: "none",
+      recurringUntil: null,
+      attachmentUrl: null,
+      amountUsd,
+      fxRate: nativeCurrency ? (priced.priceUsd ?? amountUsd / Number(input.out.amount)) : 1,
+      fxSource: nativeCurrency ? priced.valueSource : `${input.out.amount} ${input.out.asset}${input.out.address ? ` (${input.out.address})` : ""} paid; ${priced.valueSource}`,
+      fxAt: input.occurredAt,
+      eurUsdRate: usdPerEur,
+      eurUsdDate: day,
+    };
+    try {
+      const out = await withTransaction(db(), async (client) => {
+        const costRow = await insertCost(client, cost, actor);
+        await writeAudit(client, { actor, action: "cost.create", entityType: "finance_cost", entityId: costRow.id, before: null, after: costRow });
+        const movement = await insertMovement(client, { ...priced, costId: costRow.id }, actor);
+        await writeAudit(client, { actor, action: "movement.create", entityType: "finance_treasury_movement", entityId: movement.id, before: null, after: movement });
+        return { cost: costRow, movement };
+      });
+      invalidateTreasury();
+      return res.status(201).json({ ok: true, ...out, costEur: round2(out.cost.amountUsd / usdPerEur), rule: "The cost is the market value at the time. The crypto leaves at its FIFO cost; the difference is a realized gain or loss." });
+    } catch (error) {
+      throw treasuryWriteError(error);
+    }
+  }
+
+  // ---------------------------------------------------------------- entity
+
+  async function entity() {
+    const { value, columnMissing } = await (deps.readEntitySetting || readEntitySetting)(db()).catch(() => ({ value: null, columnMissing: true }));
+    return { ...effectiveEntity(value), installed: !columnMissing };
+  }
+
+  async function getEntity(req, res, principal) {
+    const [current, history] = await Promise.all([entity(), settingsHistory("settings.entity", describeEntityChange).catch(() => [])]);
+    return res.status(200).json({ schemaVersion: "finance-entity-v1", source: "dashboard-api", entity: current, statuses: ENTITY_STATUSES.map((key) => ({ key, label: ENTITY_STATUS_LABELS[key] })), history, migration: current.installed ? null : CRYPTO_COSTS_NOT_INSTALLED, canManage: dashboardPrincipalCan(principal, "finance.manage") });
+  }
+
+  async function putEntity(req, res, actor) {
+    const next = validateEntityInput(req.body?.entity ?? req.body, { today: todayIso(nowMs()) });
+    try {
+      await withTransaction(db(), async (client) => {
+        const previous = await saveSetting(client, "entity", next, actor);
+        await writeAudit(client, { actor, action: "settings.entity", entityType: "finance_settings", entityId: "entity", before: previous, after: next });
+      });
+    } catch (error) {
+      if (cryptoCostsMissing(error) || error?.code === "42703") throw new HttpError(503, CRYPTO_COSTS_NOT_INSTALLED, { code: "FINANCE_CRYPTO_COSTS_NOT_INSTALLED" });
+      throw error;
+    }
+    return res.status(200).json({ ok: true, entity: { ...effectiveEntity(next), installed: true } });
   }
 
   async function getValuePreview(req, res) {
@@ -1399,6 +1610,7 @@ export function createFinanceAccountingHandler(deps = {}) {
       kinds: TAX_ITEM_KINDS.map((key) => ({ key, label: TAX_ITEM_KIND_LABELS[key] })),
       accounts: tr.accounts.filter((a) => !a.archivedAt && (a.kind === "bank" || a.kind === "exchange")).map((a) => ({ id: a.id, name: a.name })),
       distributions: w.records.filter((r) => r.status === "approved" || r.status === "paid").map((r) => ({ id: r.id, week: r.week, status: r.status, availableOn: r.availableOn, totalWithholdingEur: r.totalWithholdingEur })),
+      entity: await entity(),
       canManage: dashboardPrincipalCan(principal, "finance.manage"),
     });
   }
@@ -1635,14 +1847,14 @@ export function createFinanceAccountingHandler(deps = {}) {
       }
       const rows = tr.movements.filter((m) => m.occurredAt.slice(0, 7) >= from && m.occurredAt.slice(0, 7) <= to).reverse().map((m) => ({
         occurredAt: m.occurredAt, kind: m.kind, from: names.get(m.fromAccountId) || "", to: names.get(m.toAccountId) || "",
-        assetOut: m.out?.asset || "", amountOut: m.out?.amount || "", assetIn: m.in?.asset || "", amountIn: m.in?.amount || "",
+        assetOut: m.out?.asset || "", amountOut: m.out?.amount || "", assetIn: m.in?.asset || "", amountIn: m.in?.amount || "", assetAddress: m.out?.address || m.in?.address || "",
         valueEur: m.valueEur, valueSource: m.valueSource, feeAsset: m.fee?.asset || "", feeAmount: m.fee?.amount || "", feeEur: m.feeEur ?? "", feeSource: m.feeSource || "",
         realizedGainEur: gains.has(m.id) ? round2(gains.get(m.id)) : "", costMethod: tr.method, costId: m.costId || "", revenueLane: m.revenueLane || "", txHash: m.txHash || "", reference: m.reference, note: m.note, createdBy: m.createdBy,
       }));
       return sendCsv(res, `mwz-treasury-movements-${suffix}.csv`, [
         { key: "occurredAt", label: "occurred_at" }, { key: "kind", label: "kind" }, { key: "from", label: "from_account" }, { key: "to", label: "to_account" },
         { key: "assetOut", label: "asset_out" }, { key: "amountOut", label: "amount_out" }, { key: "assetIn", label: "asset_in" }, { key: "amountIn", label: "amount_in" },
-        { key: "valueEur", label: "value_eur" }, { key: "valueSource", label: "value_source" }, { key: "feeAsset", label: "fee_asset" }, { key: "feeAmount", label: "fee_amount" },
+        { key: "assetAddress", label: "token_address" }, { key: "valueEur", label: "value_eur" }, { key: "valueSource", label: "value_source" }, { key: "feeAsset", label: "fee_asset" }, { key: "feeAmount", label: "fee_amount" },
         { key: "feeEur", label: "fee_eur" }, { key: "feeSource", label: "fee_source" }, { key: "realizedGainEur", label: "realized_gain_eur" }, { key: "costMethod", label: "cost_method" },
         { key: "costId", label: "cost_id" }, { key: "revenueLane", label: "revenue_lane" }, { key: "txHash", label: "tx_hash" }, { key: "reference", label: "reference" }, { key: "note", label: "note" }, { key: "createdBy", label: "created_by" },
       ], rows);
@@ -1736,6 +1948,12 @@ export function createFinanceAccountingHandler(deps = {}) {
       }
       if (rel === "treasury/unmatched") return read ? await getUnmatched(req, res, principal) : allow(["GET"]);
       if (rel === "treasury/value") return read ? await getValuePreview(req, res) : allow(["GET"]);
+      if (rel === "treasury/crypto-costs") return method === "POST" ? await bookCryptoCost(req, res, actor) : allow(["POST"]);
+      if (rel === "entity") {
+        if (read) return await getEntity(req, res, principal);
+        if (method === "PUT") return await putEntity(req, res, actor);
+        return allow(["GET", "PUT"]);
+      }
       if (rel === "tax") return read ? await getTaxCalendar(req, res, principal) : allow(["GET"]);
       if (rel === "tax/items") return method === "POST" ? await createTaxItem(req, res, actor) : allow(["POST"]);
       if (parts[0] === "tax" && parts[1] === "items" && parts.length === 3) {
