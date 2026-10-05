@@ -337,19 +337,23 @@ test("all chains: a failing chain is reported, the others still load", async () 
   assert.equal(out.prices.length, 1);
 });
 
-test("arena prizes: paid-in counts boosts from arena_contest_actions as well as stakes", async () => {
+test("arena prizes: read from each pool on chain (ArenaWarPoolTreasuryV2.pools), not from the deposits table", async () => {
   const db = fakeDb([
-    [/from public\.arena_war_pool_deposits/, [{ purpose: "stake", created_at: "2026-10-01T05:05:28Z", amount_raw: "200000000000000000" }]],
-    [/from public\.arena_contest_actions/, [{ created_at: "2026-10-02T11:35:21Z", amount_raw: "1304809797000000000" }]],
+    [/'battle' as kind/, [{ kind: "battle", id: "arena-bnb-1", chain_id: 56, app_state: "live", created_at: "2026-10-01T05:05:28Z", test_coin: false }]],
+    [/'deposit' as source/, [{ source: "deposit", ref: "x", purpose: "stake", n: 1, raw: "200000000000000000" }]],
   ]);
-  const out = await buildPayouts({ network: BNB, days: 30, db, env: {}, feeRouting: evmFeeRouting(), readers: EVM_READERS, prices: priceService(), now: () => NOW });
+  const word = (v) => BigInt(v).toString(16).padStart(64, "0");
+  const owner = "1".repeat(64);
+  // Live battle: both stakes of 0.2 BNB in, 0.01 BNB of boosts.
+  const live = [0, 1, owner, owner, 2n * 10n ** 17n, 0, 2n * 10n ** 17n, 2n * 10n ** 17n, 0, 10n ** 16n, 0, 0, 0, 0, 1, 1790000000, 0, 0, 0, 0, 0].map((v) => (v === owner ? v : word(v))).join("");
+  const readers = { ...EVM_READERS, async readEvmCall({ data }) { return data.startsWith("0xb5217bb4") ? { hex: `0x${live}`, rpc: "test" } : EVM_READERS.readEvmCall(); } };
+  const out = await buildPayouts({ network: BNB, days: 30, db, env: {}, feeRouting: evmFeeRouting(), readers, prices: priceService(), now: () => NOW });
   const arena = out.types.find((t) => t.id === "arena_prizes");
-  assert.equal(arena.paidIn.allTime.raw, "1504809797000000000");
-  assert.equal(arena.paidIn.allTime.count, 2);
-  assert.ok(arena.sources.includes("db:arena_contest_actions"));
-  const boostSql = db.seen.find((q) => /arena_contest_actions/.test(q.sql)).sql;
-  assert.match(boostSql, /action_type = 'boost'/);
-  assert.match(boostSql, /confirmed_at is not null/);
+  assert.equal(arena.arena.counts.live, 1);
+  assert.equal(arena.arena.totals.held, "0.41");
+  assert.equal(arena.owed.total.amount, "0");
+  assert.equal(arena.paidIn.allTime.raw, "410000000000000000");
+  assert.equal(arena.coverage.status, "short"); // the fake war pool holds 0
 });
 
 test("monthly league: a superseded vault in MONTHLY_LEAGUE_TREASURY_ADDRESS_<id> is reported as refused claims, not a mismatch", async () => {
