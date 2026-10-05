@@ -56,6 +56,8 @@
     "cron:generate-league-standings": "node --enable-source-maps dist/jobs/generateLeagueStandings.js",
     "cron:generate-platform-briefs": "node --enable-source-maps dist/jobs/generatePlatformBriefs.js",
     "cron:backfill-solana-reward-events": "node --enable-source-maps dist/jobs/backfillSolanaRewardEvents.js",
+    "job:backfill-creator-fee-claims": "node --enable-source-maps dist/jobs/backfillCreatorFeeClaims.js",
+    "test:creator-fee-claims": "tsx --test src/tests/solanaCreatorFeeClaims.test.ts",
     "cron:credit-recruiter-earnings": "node --enable-source-maps dist/jobs/creditRecruiterEarnings.js"
   },
   "dependencies": {

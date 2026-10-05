@@ -16,6 +16,7 @@ import {
   type TokensSoldEvent,
 } from "./solanaAnchorEvents.js";
 import { recordSolanaRewardEvent } from "./rewards/solanaRewardEvents.js";
+import { recordCreatorFeeClaims } from "./solanaCreatorFeeClaims.js";
 import { createCampaignLeaseRegistry, type CampaignLeaseState } from "./solanaCampaignLease.js";
 import { createIndexerSql } from "./solanaRepairSql.js";
 import { createSignatureMemory } from "./signatureMemory.js";
@@ -227,7 +228,7 @@ type RpcSignature = {
 type RpcTransaction = {
   slot: number;
   blockTime?: number | null;
-  meta?: { logMessages?: string[] | null } | null;
+  meta?: { logMessages?: string[] | null; err?: unknown } | null;
 } | null;
 
 
@@ -1514,6 +1515,21 @@ async function ingestSignature(item: IndexedSignature, signal?: AbortSignal) {
         throw error;
       }
     },
+  });
+  // Creator fee claims (finance Payouts). Decoded on the side, so trade event numbering is untouched,
+  // and never allowed to fail or retry the trade ingest.
+  await recordCreatorFeeClaims(pool, {
+    signature: item.signature,
+    slot,
+    blockTime: tx.blockTime ? blockTime : null,
+    logMessages: tx.meta?.logMessages,
+    programId: programId(),
+    failed: Boolean(tx.meta?.err),
+  }).catch((error: unknown) => {
+    console.warn("[solana-indexer] creator fee claim record failed", {
+      signature: item.signature,
+      error: error instanceof Error ? error.message : String(error),
+    });
   });
   return {
     fetched: true,
