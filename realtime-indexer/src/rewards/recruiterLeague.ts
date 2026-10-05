@@ -11,6 +11,9 @@
  *   - earnings are the chain's own recruiter slices (reward_events), never an estimate;
  *   - USD prices are captured once at settlement and stored with the winners, so a finalized epoch
  *     never re-ranks with the market.
+ * Hidden test coins (rewards/publicHiddenSql.ts, founder 2026-10-05) count for nothing here: their
+ * trades are not referred volume and their recruiter slices are not earnings, so a network that only
+ * traded test coins is not active.
  * Qualified field: active recruiters whose network traded in the epoch (like every other league, a
  * place is earned in the epoch). Per chain, a recruiter is paid at a wallet valid on that chain; one
  * with no such wallet is not in that chain's field (a wrong-format recipient would block the epoch).
@@ -18,6 +21,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { ethers } from "ethers";
 import { leagueExcludedFilter } from "../evm/curveTradeGen5Columns.js";
+import { notPublicHiddenCampaignSql, publicHiddenWhere } from "./publicHiddenSql.js";
 
 type Db = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -75,6 +79,7 @@ export async function recruiterLeagueStandings(db: Db, startIso: string, endIso:
          JOIN volume_wallets w
            ON (t.chain_id = $3 AND w.wallet_address = t.wallet) OR (t.chain_id <> $3 AND lower(w.wallet_address) = lower(t.wallet))
         WHERE t.chain_id = ANY($4::int[]) AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz${creatorBuys}
+          AND ${notPublicHiddenCampaignSql("t")}
         GROUP BY 1, 2
      ), earned AS (
        SELECT w.recruiter_id, re.chain_id, sum(re.recruiter_amount) AS raw
@@ -83,6 +88,7 @@ export async function recruiterLeagueStandings(db: Db, startIso: string, endIso:
            ON re.route_kind = 'trade' AND re.wallet_address IS NOT NULL
           AND ((re.chain_id = $3 AND w.wallet_address = re.wallet_address) OR (re.chain_id <> $3 AND lower(w.wallet_address) = lower(re.wallet_address)))
         WHERE re.chain_id = ANY($4::int[]) AND re.occurred_at >= $1::timestamptz AND re.occurred_at < $2::timestamptz
+          AND ${notPublicHiddenCampaignSql("re")}
         GROUP BY 1, 2
        UNION ALL
        SELECT w.recruiter_id, re.chain_id, sum(re.recruiter_amount)
@@ -91,6 +97,7 @@ export async function recruiterLeagueStandings(db: Db, startIso: string, endIso:
          JOIN volume_wallets w
            ON (re.chain_id = $3 AND w.wallet_address = c.creator_address) OR (re.chain_id <> $3 AND lower(w.wallet_address) = lower(c.creator_address))
         WHERE re.chain_id = ANY($4::int[]) AND re.occurred_at >= $1::timestamptz AND re.occurred_at < $2::timestamptz
+          AND NOT ${publicHiddenWhere("c")}
         GROUP BY 1, 2
      ), active AS (
        SELECT DISTINCT recruiter_id FROM volume WHERE raw > 0

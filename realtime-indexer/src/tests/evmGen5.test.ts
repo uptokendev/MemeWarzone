@@ -289,6 +289,8 @@ test("recruiter league referred volume excludes creator buys; the league pot pri
   assert.match(league, /\$\{creatorBuys\}/);
   const finalize = readFileSync(join(here, "../jobs/finalizeEpochWinners.ts"), "utf8");
   assert.match(finalize, /WHEN fee_raw IS NOT NULL THEN floor\(\(fee_raw \* \$5\) \/ NULLIF\(\$4, 0\)\)/);
-  // The creator-wallet exclusions that already cover gen-5 creator buys stay in place.
-  assert.match(finalize, /t\.wallet IS DISTINCT FROM c\.creator_address/);
+  // The creator-wallet exclusions that already cover gen-5 creator buys stay in place (the standings
+  // SQL moved to rewards/leagueLeaderboard.ts on 2026-10-05).
+  const standings = readFileSync(join(here, "../rewards/leagueLeaderboard.ts"), "utf8");
+  assert.match(standings, /t\.wallet IS DISTINCT FROM c\.creator_address/);
 });
