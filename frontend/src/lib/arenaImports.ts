@@ -184,7 +184,7 @@ export type ArenaImportTrade = {
 };
 
 /** The import's recent trades (24h) on its own DEX pool (GeckoTerminal via our API). */
-export async function fetchArenaImportTrades(tokenAddress: string, chainId: number, signal?: AbortSignal): Promise<{ items: ArenaImportTrade[]; reason?: string; rateLimited?: boolean } | null> {
+export async function fetchArenaImportTrades(tokenAddress: string, chainId: number, signal?: AbortSignal): Promise<{ items: ArenaImportTrade[]; reason?: string; rateLimited?: boolean; source?: string } | null> {
   const params = new URLSearchParams({ token: tokenAddress, chainId: String(chainId) });
   const res = await apiFetch(`/api/arena/imports/trades?${params.toString()}`, { cache: "no-store", signal });
   if (!res.ok) return null;
