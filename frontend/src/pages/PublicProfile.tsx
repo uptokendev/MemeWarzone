@@ -46,6 +46,8 @@ import { Award, Copy, Crown, ExternalLink,  Megaphone, Rocket, ShieldCheck, Trop
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { cp } from "@/components/token/coinPageStyles";
 import { toast } from "sonner";
+import { useProfileStream } from "@/hooks/useProfileStream";
+import { LiveTabLabel, ProfileLiveStream } from "@/components/profile/ProfileLiveStream";
 
 type PublicCoin = {
   id: number;
@@ -242,6 +244,7 @@ export default function PublicProfile({
   const [followBusy, setFollowBusy] = useState(false);
   const [followCounts, setFollowCounts] = useState<{ followers: number; following: number } | null>(null);
   const [tab, setTab] = useState("posts");
+  const profileStream = useProfileStream(profileWallet);
   const feedViewer = useActiveFeedWallet().address;
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [feedCursor, setFeedCursor] = useState<string | null>(null);
@@ -767,8 +770,12 @@ export default function PublicProfile({
     </div>
   );
 
-  const tabs: Array<{ value: string; label: string; content: ReactNode }> = [
+  // LIVE tab after Posts, only while the profile's Kick channel is live (founder, 2026-10-06).
+  const tabs: Array<{ value: string; label: ReactNode; content: ReactNode }> = [
     { value: "posts", label: "Posts", content: postsList },
+    ...(profileStream?.live === true
+      ? [{ value: "live", label: <LiveTabLabel />, content: <ProfileLiveStream stream={profileStream} /> }]
+      : []),
     {
       value: "coins",
       label: "Coins",

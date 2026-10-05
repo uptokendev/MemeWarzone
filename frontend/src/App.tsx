@@ -4,6 +4,7 @@
  * Sets up global providers for query client, tooltips, and toasts
  */
 
+import { CookieConsentBanner } from "@/components/consent/CookieConsentBanner";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -192,6 +193,7 @@ function AppShellLayout({
       <VictoryUnlockModal />
       <CreatorProtectionDialog />
       <CreatorArmEligibilityDialog />
+      <CookieConsentBanner />
 
       <main
         ref={mainRef}

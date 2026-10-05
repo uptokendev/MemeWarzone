@@ -54,6 +54,7 @@
     "verify:quote-catalog": "node scripts/verify-quote-catalog.mjs",
     "test:graduation-market": "node --test src/lib/graduationMarketPresentation.test.mjs src/lib/graduationMarketCreateRegression.test.mjs src/lib/graduationBindingRisks.test.mjs api/lib/quoteAssetCatalog.test.mjs api/lib/draftGraduationQuoteSelection.test.mjs",
     "test:e2e:isolation": "playwright test -c playwright.config.ts",
+    "test:kick-live": "node --test api/lib/kickLive.test.mjs",
     "test:solana-v0": "node --test src/lib/solanaV0Transaction.test.mjs",
     "test:solana-arena": "node --test src/lib/solanaArenaLayout.test.mjs src/lib/solanaArenaV0.test.mjs",
     "test:arena-mwl": "node --test api/lib/arenaLeagueScoreMath.test.mjs api/lib/arenaBattleSettle.test.mjs api/lib/arenaBattleLive.test.mjs api/lib/arena4aCertification.test.mjs api/lib/arena4dCertification.test.mjs api/lib/arenaLeagueIntegrationV2Certification.test.mjs",
