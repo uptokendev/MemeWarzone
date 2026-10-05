@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../../server/http.js";
+import { internalRecruiterLabel, isOwnerWallet } from "../../shared/ownerWallets.mjs";
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const BASE58_MAP = new Map([...BASE58_ALPHABET].map((char, index) => [char, index]));
@@ -443,6 +444,11 @@ export async function attributionWalletConnect(req, res) {
     const memberRole = normalizeMemberRole(body.memberRole);
     if (!walletAddress) return json(res, 400, { error: "Invalid or missing walletAddress" });
 
+    // Owner / internal wallets (shared/ownerWallets.mjs) are never squad members of anyone.
+    if (isOwnerWallet(walletAddress)) {
+      return json(res, 200, { linked: false, blocked: true, code: "INTERNAL_WALLET_NOT_LINKABLE", state: publicState({ walletAddress }), reason: "This wallet belongs to MemeWarzone and cannot be linked to a recruiter." });
+    }
+
     await pool.query(
       `insert into public.wallet_profiles (wallet_address)
        values ($1)
@@ -494,6 +500,11 @@ export async function attributionWalletConnect(req, res) {
     const window = await findLatestWindow({ sessionToken, clientFingerprint, walletAddress });
     const recruiter = window?.recruiter_id ? await findRecruiterByCode(window.code) : null;
     if (!window || !recruiter || recruiter.status !== "active") return json(res, 200, { linked: false, state: publicState({ walletAddress }), reason: "No active referral attribution window found for this wallet." });
+
+    // A recruiter tied to an owner wallet is internal (a founder test account): no new squad members.
+    if (internalRecruiterLabel({ walletAddress: recruiter.wallet_address, signup: recruiter.metadata?.signup })) {
+      return json(res, 200, { linked: false, blocked: true, code: "INTERNAL_RECRUITER_NOT_LINKABLE", state: publicState({ walletAddress }), reason: "This recruiter is an internal MemeWarzone account and does not take squad members." });
+    }
 
     if (await isSameWalletCluster(walletAddress, recruiter.wallet_address)) {
       return json(res, 409, {

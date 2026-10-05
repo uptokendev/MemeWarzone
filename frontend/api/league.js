@@ -10,6 +10,7 @@ import { monthIdForEpochStart } from "./lib/evmLeagueClaimVerification.js";
 import { monthlyLeagueTreasuryAddress, monthlyLeagueTreasuryForMonth } from "./lib/evmMonthlyLeagueTreasury.js";
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "./lib/pokerPayout.mjs";
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
+import { withoutOwnerWallets } from "../shared/ownerWallets.mjs";
 import {
   buildMerkleProof as buildSolanaMerkleProof,
   buildMerkleRoot as buildSolanaMerkleRoot,
@@ -107,6 +108,13 @@ function sqlDistinctWallet(expr, solana) {
 
 function sqlWalletGroup(expr, solana) {
   return solana ? expr : `lower(${expr})`;
+}
+
+/** The wallet a live standings row pays: the buyer (biggest hit), the trader (top earner), else the coin creator. */
+export function leagueRowWinner(category, row) {
+  if (category === "biggest_hit") return row?.buyer_address;
+  if (category === "top_earner") return row?.wallet;
+  return row?.creator_address;
 }
 
 function clampInt(v, lo, hi, def) {
@@ -1153,7 +1161,10 @@ export default async function handler(req, res) {
       const loaded = items.length;
       const fieldCount = Number(items[0]?.field_count ?? loaded) || 0;
       items = withoutPublicHidden(items, chainId, await loadPublicHiddenCampaignKeys(chainId));
-      // Whole qualified field (COUNT(*) OVER ()), less hidden campaigns on this page.
+      // Our own wallets (shared/ownerWallets.mjs) never place; the settlement job skips them too
+      // (finalizeEpochWinners.ts), so the next wallet moves up here exactly as it will there.
+      items = withoutOwnerWallets(items, (row) => leagueRowWinner(category, row));
+      // Whole qualified field (COUNT(*) OVER ()), less hidden campaigns and owner wallets on this page.
       const fieldSize = Math.max(items.length, fieldCount - (loaded - items.length));
       items = items.map(({ field_count: _fieldCount, ...row }) => row);
       const prize = pokerPrizeForField(prizeForCategory, pokerPaidPlaces(fieldSize, periodNorm), fieldSize, chainId);

@@ -25,6 +25,7 @@ import { fetchAirdropNativeUsd } from "../rewards/airdropThresholds.js";
 import { Connection } from "@solana/web3.js";
 import { dbcLeagueCreditRaw } from "../rewards/dbcLeagueCredit.js";
 import { categoryShare, getLateFeeCreditsRaw, recordBudgetBaseline, trueUpLateFees } from "../rewards/leagueTrueUp.js";
+import { internalRecruiterLabel, ownerWalletIndex, withoutOwnerRecipients } from "../rewards/ownerWallets.js";
 const DEFAULT_PROTOCOL_FEE_BPS = 200; // 2%
 const DEFAULT_LEAGUE_FEE_BPS = 75; // 0.75% slice of gross (carved out of the 2% protocol fee)
 
@@ -243,7 +244,10 @@ function recruiterStandingsFor(epochStartIso: string, epochEndIso: string) {
 async function recruiterLeaderboard(chainId: number, epochStartIso: string, epochEndIso: string, limit: number) {
   const { standings, prices } = await recruiterStandingsFor(epochStartIso, epochEndIso);
   const rows: Array<{ recipient: string; score: bigint; meta: any }> = [];
+  const owners = ownerWalletIndex();
   for (const standing of standings) {
+    // Internal recruiters (signup or payout wallet is one of ours) are not in the field at all.
+    if (await internalRecruiterLabel(pool, standing.recruiterId, owners)) continue;
     const recipient = await recruiterPrizeRecipient(pool, standing, chainId);
     if (!recipient) continue; // no wallet valid on this chain: not in this chain's field
     rows.push({
@@ -600,6 +604,14 @@ async function finalizeEpochFor(
       // Never roll a pot over because a price or read failed: leave it unfinalized and retry next run.
       console.error(`[finalizeEpochWinners] BLOCKED chain=${chainId} period=${period} category=${category}: ${(error as Error)?.message || error}`);
       continue;
+    }
+    // Owner / internal wallets (rewards/ownerWallets.ts, founder 2026-10-05) never place. They leave
+    // the field before places are counted, so every wallet below moves up one place per removed row
+    // and the paid-place count is taken over the remaining field.
+    const ownerRows = top.length;
+    top = withoutOwnerRecipients(top);
+    if (top.length !== ownerRows) {
+      console.log(`[finalizeEpochWinners] chain=${chainId} period=${period} category=${category}: ${ownerRows - top.length} owner wallet row(s) left out of the field`);
     }
     // Solana: no place below the minimum payout (a claim's receipt rent would exceed it). Fewer
     // places, the whole pot still paid; a pot too small for one place rolls over like "no winner".
