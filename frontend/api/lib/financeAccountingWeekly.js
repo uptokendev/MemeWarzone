@@ -16,7 +16,9 @@
 //   VAT        per revenue lane from the rules: fee * rate / (1 + rate) * taxable share
 //   costs      one-off costs on their date; a recurring cost spread evenly over
 //              the days of the month it falls in (so the month total is unchanged)
-//   profit     revenue - VAT - costs
+//   profit     revenue - VAT - costs + treasury (realized gains on crypto -
+//              fees + revenue received in the bank - its VAT;
+//              financeTreasury.js)
 //   VPB        marginal: tax(year-to-date taxable profit after the segment)
 //              - tax(year-to-date taxable profit before it), with that year's
 //              brackets. A loss releases reserve. A year that ends with a loss
@@ -30,14 +32,19 @@
 // Decision (the last complete week):
 //   available = min(entitlement, cash in the multisig - open costs - reserves held
 //               - distributions approved but not yet paid)
-//   reserves held = all VPB reserved so far + all VAT reserved so far + dividend
-//               tax withheld and not yet paid. Nothing records tax payments yet,
-//               so every reserve since the start stays held.
+//   reserves held = VPB + VAT + dividend tax still to pay: each reserve minus
+//               what was paid (financeTaxCalendar.js; a filed return or final
+//               assessment replaces the estimate). Without tax items recorded,
+//               every reserve since the start stays held.
+//   off-chain cash (EUR, USD and stablecoins on the bank and exchange
+//               accounts) covers reserves and open costs first: the multisig
+//               only holds what the bank cannot pay. Only the multisig is divided.
 
 import { round2, roundUsd } from "./financeAccountingCosts.js";
 import { bracketTax } from "./financeAccountingTax.js";
 import { addMonthsToDate, vatLaneOf, vpbYear, withholdingFor, DEFAULT_TAX_RULES } from "./financeTaxRules.js";
 import { computeDistribution } from "./financeAccountingDistributions.js";
+import { dayNetEur } from "./financeTreasury.js";
 
 const DAY_MS = 86_400_000;
 export const WEEK_RULE = "ISO weeks, Monday to Sunday, UTC days (the same day boundary as the monthly close; in Amsterdam a week starts Monday 01:00 in winter, 02:00 in summer). A week across a month or year end is split by date.";
@@ -129,8 +136,9 @@ function vatOfLanes(lanes, rules, usdPerEur) {
  * @param {object} input.rules                 effective tax rule set
  * @param {object|null} [input.vpbOverride]    brackets saved on the old Tax & Reserves form
  * @param {object[]} [input.records]           recorded distributions
+ * @param {Map<string, object>} [input.treasuryByDay]  financeTreasury.treasuryByDay (closed months: from the snapshot)
  */
-export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMonth = new Map(), months = new Map(), rules, vpbOverride = null, records = [] }) {
+export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMonth = new Map(), months = new Map(), rules, vpbOverride = null, records = [], treasuryByDay = new Map() }) {
   const warnings = [];
   const segments = weekSegments(fromDate, today);
   const rate = (date) => {
@@ -167,7 +175,20 @@ export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMon
       costsUsd += o.amountUsd * share;
       costsEur += r ? (o.amountUsd * share) / r : 0;
     }
-    Object.assign(seg, { revenueUsd, revenueEur, vatEur, vatByLane, costsUsd, costsEur, closeAdjustmentUsd: 0 });
+    let treasuryEur = 0;
+    let realizedGainEur = 0;
+    let treasuryFeesEur = 0;
+    let otherRevenueEur = 0;
+    let otherVatEur = 0;
+    for (const [d, t] of treasuryByDay) {
+      if (d < seg.start || d > seg.end || d > today) continue;
+      treasuryEur += dayNetEur(t);
+      realizedGainEur += t.realizedGainEur;
+      treasuryFeesEur += t.feesEur;
+      otherRevenueEur += t.otherRevenueEur;
+      otherVatEur += t.otherVatEur;
+    }
+    Object.assign(seg, { revenueUsd, revenueEur, vatEur, vatByLane, costsUsd, costsEur, closeAdjustmentUsd: 0, treasuryEur, realizedGainEur, treasuryFeesEur, otherRevenueEur, otherVatEur });
   }
   if (unpriced.length) warnings.push(`Some revenue could not be priced in USD on ${[...new Set(unpriced)].slice(0, 10).join(", ")}; it is counted as 0 there.`);
 
@@ -213,8 +234,8 @@ export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMon
     }
     const brackets = vpbYear(rules, seg.year, vpbOverride);
     if (brackets.fallback) warnings.push(`No corporate tax brackets for ${seg.year}; the ${brackets.fallbackFrom} brackets are used.`);
-    seg.profitEur = seg.revenueEur - seg.vatEur - seg.costsEur;
-    seg.profitUsd = seg.revenueUsd - seg.costsUsd - seg.vatEur * (rate(seg.end) || 0);
+    seg.profitEur = seg.revenueEur - seg.vatEur - seg.costsEur + seg.treasuryEur;
+    seg.profitUsd = seg.revenueUsd - seg.costsUsd - seg.vatEur * (rate(seg.end) || 0) + seg.treasuryEur * (rate(seg.end) || 0);
     const before = bracketTax(taxableAfterLoss(ytd, pool, lossRule), brackets.brackets);
     ytd += seg.profitEur;
     const after = bracketTax(taxableAfterLoss(ytd, pool, lossRule), brackets.brackets);
@@ -236,12 +257,12 @@ export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMon
   for (const seg of segments) {
     let w = byWeek.get(seg.week);
     if (!w) {
-      w = { week: seg.week, start: seg.weekStart, end: seg.weekEnd, status: seg.weekEnd < today ? "complete" : "in_progress", segments: [], revenueUsd: 0, revenueEur: 0, vatEur: 0, costsUsd: 0, costsEur: 0, profitEur: 0, profitUsd: 0, vpbEur: 0, closeAdjustmentUsd: 0 };
+      w = { week: seg.week, start: seg.weekStart, end: seg.weekEnd, status: seg.weekEnd < today ? "complete" : "in_progress", segments: [], revenueUsd: 0, revenueEur: 0, vatEur: 0, costsUsd: 0, costsEur: 0, profitEur: 0, profitUsd: 0, vpbEur: 0, closeAdjustmentUsd: 0, treasuryEur: 0, realizedGainEur: 0, treasuryFeesEur: 0, otherRevenueEur: 0, otherVatEur: 0 };
       byWeek.set(seg.week, w);
       weeks.push(w);
     }
     w.segments.push(seg);
-    for (const k of ["revenueUsd", "revenueEur", "vatEur", "costsUsd", "costsEur", "profitEur", "profitUsd", "vpbEur", "closeAdjustmentUsd"]) w[k] += seg[k];
+    for (const k of ["revenueUsd", "revenueEur", "vatEur", "costsUsd", "costsEur", "profitEur", "profitUsd", "vpbEur", "closeAdjustmentUsd", "treasuryEur", "realizedGainEur", "treasuryFeesEur", "otherRevenueEur", "otherVatEur"]) w[k] += seg[k];
   }
   let carry = 0;
   for (const w of weeks) {
@@ -260,7 +281,7 @@ export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMon
   }
 
   const sum = (key) => segments.reduce((s, x) => s + x[key], 0);
-  return { segments, weeks, years: yearSummaries, totals: { vpbEur: yearSummaries.reduce((s, y) => s + Math.max(0, y.reserveEur), 0), vatEur: sum("vatEur") }, warnings: [...new Set(warnings)] };
+  return { segments, weeks, years: yearSummaries, totals: { vpbEur: yearSummaries.reduce((s, y) => s + Math.max(0, y.reserveEur), 0), vatEur: sum("vatEur") + sum("otherVatEur"), realizedGainEur: sum("realizedGainEur") }, warnings: [...new Set(warnings)] };
 }
 
 /** Weeks vs the monthly close, per month: revenue and costs (USD) must match. */
@@ -305,8 +326,10 @@ export function reconcileMonths(model, months, today) {
  * @param {string} input.today
  * @param {number|null} [input.operatorUsd]   the buffer (never distributed), for the liquidity check
  * @param {number} [input.monthlyCostsUsd]   recurring costs per month, for the liquidity check
+ * @param {{vpbEur:number, vatEur:number, dividendTaxEur:number}|null} [input.held]  tax still to pay (financeTaxCalendar); null = every reserve held
+ * @param {number} [input.offChainCashEur]  fiat and stablecoins on bank and exchange accounts
  */
-export function decideWeek({ model, chains = [], openCostsUsd, usdPerEurNow, settings, rules, records = [], today, operatorUsd = null, monthlyCostsUsd = 0 }) {
+export function decideWeek({ model, chains = [], openCostsUsd, usdPerEurNow, settings, rules, records = [], today, operatorUsd = null, monthlyCostsUsd = 0, held = null, offChainCashEur = 0 }) {
   const blockers = [];
   const decision = [...model.weeks].reverse().find((w) => w.status === "complete") || null;
   if (!decision) blockers.push("No complete week yet.");
@@ -318,13 +341,22 @@ export function decideWeek({ model, chains = [], openCostsUsd, usdPerEurNow, set
   // Reserves the multisig must keep.
   const withheldUnpaidEur = records.filter((r) => COUNTED_STATUSES.includes(r.status) && !r.dividendTaxPaidOn).reduce((s, r) => s + Number(r.totalWithholdingEur || 0), 0);
   const approvedUnpaidEur = records.filter((r) => r.status === "approved").reduce((s, r) => s + Number(r.totalNetEur || 0), 0);
-  const reserves = { vpbEur: round2(model.totals.vpbEur), vatEur: round2(model.totals.vatEur), dividendTaxEur: round2(withheldUnpaidEur), approvedNotPaidEur: round2(approvedUnpaidEur) };
+  const reserved = { vpbEur: round2(model.totals.vpbEur), vatEur: round2(model.totals.vatEur), dividendTaxEur: round2(withheldUnpaidEur) };
+  const reserves = held
+    ? { vpbEur: round2(held.vpbEur), vatEur: round2(held.vatEur), dividendTaxEur: round2(held.dividendTaxEur), approvedNotPaidEur: round2(approvedUnpaidEur) }
+    : { ...reserved, approvedNotPaidEur: round2(approvedUnpaidEur) };
+  reserves.reservedEur = reserved;
+  reserves.releasedByPaymentsEur = round2(reserved.vpbEur + reserved.vatEur + reserved.dividendTaxEur - (reserves.vpbEur + reserves.vatEur + reserves.dividendTaxEur));
   const reservesHeldEur = reserves.vpbEur + reserves.vatEur + reserves.dividendTaxEur;
+  const offChainEur = Math.max(0, Number(offChainCashEur) || 0);
 
   const multisigUsd = multisigKnown ? chains.reduce((s, c) => s + c.multisigUsd, 0) : null;
   const multisigEur = multisigUsd != null && usdPerEurNow > 0 ? multisigUsd / usdPerEurNow : null;
   const openCostsEur = openCostsUsd != null && usdPerEurNow > 0 ? openCostsUsd / usdPerEurNow : null;
-  const cashCapEur = multisigEur != null && openCostsEur != null ? multisigEur - openCostsEur - reservesHeldEur - reserves.approvedNotPaidEur : null;
+  // Bank and exchange cash pays reserves and open costs first; the multisig holds the rest.
+  const mustHoldEur = openCostsEur != null ? openCostsEur + reservesHeldEur + reserves.approvedNotPaidEur : null;
+  const coveredOffChainEur = mustHoldEur != null ? Math.min(offChainEur, mustHoldEur) : 0;
+  const cashCapEur = multisigEur != null && mustHoldEur != null ? multisigEur - (mustHoldEur - coveredOffChainEur) : null;
   const alreadyThisWeek = decision ? records.filter((r) => r.week === decision.week && r.status !== "cancelled") : [];
   const entitlementEur = decision ? decision.distributableEur : null;
 
@@ -373,7 +405,7 @@ export function decideWeek({ model, chains = [], openCostsUsd, usdPerEurNow, set
   // Distribution test (art. 2:216 BW) inputs and the obligations a payout triggers.
   const freeReservesEur = decision ? decision.entitlementEur : null;
   const cashAfterUsd = multisigUsd != null && availableUsd != null ? multisigUsd - availableUsd : null;
-  const liquidAfterEur = cashAfterUsd != null ? (cashAfterUsd + (operatorUsd || 0)) / usdPerEurNow - reservesHeldEur - (openCostsEur || 0) - reserves.approvedNotPaidEur : null;
+  const liquidAfterEur = cashAfterUsd != null ? (cashAfterUsd + (operatorUsd || 0)) / usdPerEurNow + offChainEur - reservesHeldEur - (openCostsEur || 0) - reserves.approvedNotPaidEur : null;
   const monthlyCostsEur = usdPerEurNow > 0 ? monthlyCostsUsd / usdPerEurNow : 0;
   const filing = rules.filing;
   const payoutDate = today;
@@ -422,6 +454,8 @@ export function decideWeek({ model, chains = [], openCostsUsd, usdPerEurNow, set
     multisigEur: multisigEur == null ? null : round2(multisigEur),
     openCostsEur: openCostsEur == null ? null : round2(openCostsEur),
     reserves,
+    offChainCashEur: round2(offChainEur),
+    coveredOffChainEur: round2(coveredOffChainEur),
     cashCapEur: cashCapEur == null ? null : round2(cashCapEur),
     availableEur,
     availableUsd,
@@ -446,12 +480,17 @@ export function weekView(w) {
     start: w.start,
     end: w.end,
     status: w.status,
-    segments: w.segments.map((s) => ({ month: s.month, start: s.start, end: s.end, days: s.days, revenueUsd: r(s.revenueUsd), revenueEur: r(s.revenueEur), vatEur: r(s.vatEur), costsUsd: r(s.costsUsd), costsEur: r(s.costsEur), profitEur: r(s.profitEur), vpbEur: r(s.vpbEur), ytdProfitEur: r(s.ytdProfitEur), closeAdjustmentUsd: r(s.closeAdjustmentUsd) })),
+    segments: w.segments.map((s) => ({ month: s.month, start: s.start, end: s.end, days: s.days, revenueUsd: r(s.revenueUsd), revenueEur: r(s.revenueEur), vatEur: r(s.vatEur), costsUsd: r(s.costsUsd), costsEur: r(s.costsEur), treasuryEur: r(s.treasuryEur), profitEur: r(s.profitEur), vpbEur: r(s.vpbEur), ytdProfitEur: r(s.ytdProfitEur), closeAdjustmentUsd: r(s.closeAdjustmentUsd) })),
     revenueEur: r(w.revenueEur),
     revenueUsd: r(w.revenueUsd),
     vatEur: r(w.vatEur),
     costsEur: r(w.costsEur),
     costsUsd: r(w.costsUsd),
+    treasuryEur: r(w.treasuryEur),
+    realizedGainEur: r(w.realizedGainEur),
+    treasuryFeesEur: r(w.treasuryFeesEur),
+    otherRevenueEur: r(w.otherRevenueEur),
+    otherVatEur: r(w.otherVatEur),
     profitEur: r(w.profitEur),
     profitUsd: roundUsd(w.profitUsd) == null ? null : r(w.profitUsd),
     vpbEur: r(w.vpbEur),

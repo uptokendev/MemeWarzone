@@ -58,6 +58,11 @@ const SRC = Object.freeze({
   hedqvist: "https://curia.europa.eu/juris/liste.jsf?num=C-264/14",
   participation: "https://wetten.overheid.nl/BWBR0002672",
   irc245a: "https://www.law.cornell.edu/uscode/text/26/245A",
+  vatReturn: "https://www.belastingdienst.nl/wps/wcm/connect/bldcontentnl/belastingdienst/zakelijk/btw/btw_aangifte_doen_en_betalen/btw-aangifte-waar-moet-u-aan-denken",
+  vpbReturn: "https://www.belastingdienst.nl/wps/wcm/connect/bldcontentnl/belastingdienst/zakelijk/winst/vennootschapsbelasting/uitstel_aangifte_vennootschapsbelasting/uitstel_aangifte_vennootschapsbelasting",
+  stockValuation: "https://www.jongbloed-fiscaaljuristen.nl/databank/startende_ondernemer/fiscale_voorraadwaardering/",
+  stockConsistency: "https://www.taxlive.nl/nl/documenten/nieuws/fiscale-spelregels-bij-de-waardering-van-voorraad/",
+  cryptoLifo: "https://www.grantthornton.nl/insights/tax/cryptos-hoe-behandel-je-deze-fiscaal-optimaal/",
 });
 
 const rule = (value, source, confidence, extra = {}) => ({ ...value, source, checkedOn: RULES_CHECKED_ON, confidence, ...extra });
@@ -80,7 +85,14 @@ export const DEFAULT_TAX_RULES = Object.freeze({
     },
     lossCarryForward: rule({ fullOffsetUpToEur: 1000000, excessOffsetShare: 0.5, carryBackYears: 1, condition: "A loss is set off against later profits without a time limit (losses from 2022 on): in full up to EUR 1,000,000 taxable profit per year, and 50% of the profit above that (art. 20 Wet Vpb). A loss can also go back 1 year for a refund; this view does not count that refund in the reserve." }, SRC.vpbLoss, "high"),
     profitBasis: rule({ condition: "Crypto received as a fee is revenue at its EUR value on the day it is received (sound business practice). Held crypto stays on the books at cost or lower market value; a price rise is taxed only when the crypto is sold. Crypto is not treated as money, so there is no day-rate revaluation. Costs made for the business are deductible. This view books fees at the event-hour price and does not tax unrealised gains." }, SRC.crypto, "medium"),
+    cryptoCostMethod: rule({ method: "fifo", lowerOfCostOrMarket: true, condition: "Which units leave first when crypto is sold, converted, spent on fees or paid out. FIFO: the oldest units held by the BV, across all its wallets, exchange and bank accounts, per asset (SOL, BNB, ETH, USDC, USDT, USD). The cost of a unit is its EUR value on the day it came in (fee revenue: the event-hour price at the ECB rate of that day). Dutch tax practice (goed koopmansgebruik) clearly accepts LIFO per transaction and cost or lower market value; sources see grounds for FIFO as well. Average cost (average) and LIFO (lifo) can be chosen here instead; whatever is chosen must then be kept year after year (bestendige gedragslijn). Held crypto is shown at cost or lower market value; a write-down to a lower market value is a deductible loss at the balance date (year end) and is shown, not booked, until then." }, SRC.stockValuation, "medium"),
     payment: rule({ belastingrente2026: 0.05, condition: "A provisional assessment (voorlopige aanslag) received during the year can be paid in monthly instalments, all paid by 31 December. The return is due 5 months after the book year ends (1 June), with a standard 5-month extension on request. Tax interest (belastingrente) for corporate tax is 5% from 2026; it runs from 1 July after the year unless the return is filed before 1 June or a provisional assessment is requested before 1 May. The reserve here stays in the multisig until it is paid." }, SRC.vpbInstalments, "high"),
+  },
+  calendar: {
+    vatPeriod: rule({ period: "quarter", dueMonthsAfterPeriod: 1, condition: "VAT return per quarter (most businesses), filed and paid at the latest on the last day of the month after the quarter: Q1 by 30 April, Q2 by 31 July, Q3 by 31 October, Q4 by 31 January. The Belastingdienst can set a month instead (period: month)." }, SRC.vatReturn, "high"),
+    vpbProvisional: rule({ requestBeforeMonthDay: "05-01", shortRemainderWeeks: 6, condition: "A provisional corporate tax assessment for the current year is paid in equal monthly instalments; the number depends on the date on the assessment (dated 15 February: 10 instalments, March to December), all paid by 31 December. With less than 2 whole months left, one payment within 6 weeks. Asking for a provisional assessment before 1 May after the year avoids tax interest (belastingrente). An assessment received after the year: pay by the due date printed on it." }, SRC.vpbInstalments, "high"),
+    vpbReturn: rule({ dueMonthsAfterYear: 5, condition: "The corporate tax return is due 5 months after the book year ends (1 June for a calendar year); a 5-month extension can be requested." }, SRC.vpbReturn, "high"),
+    firstPeriodOn: rule({ date: "", condition: "First day the BV files VAT and corporate tax for (registration date). Empty: from the first revenue. Obligations for earlier periods are not listed; their reserve stays until a return is recorded." }, SRC.vatReturn, "low"),
   },
   dividendTax: rule({ rate: 0.15, condition: "Withheld by the BV on every dividend (including interim dividends) unless an exemption applies (art. 5 Wet op de dividendbelasting 1965)." }, SRC.divLaw, "high"),
   withholding: {
@@ -147,6 +159,10 @@ function conform(schema, value, path) {
     if (path.endsWith(".confidence") && !CONFIDENCE.includes(text)) throw new FinanceInputError(`${path} must be high, medium or low.`, path);
     if (path.endsWith(".treatment") && !["exempt", "taxable", "outside_scope", "uncertain"].includes(text)) throw new FinanceInputError(`${path} must be exempt, taxable, outside_scope or uncertain.`, path);
     if (path.endsWith(".source") && text && !/^https:\/\//.test(text)) throw new FinanceInputError(`${path} must be an https link.`, path);
+    if (path.endsWith(".method") && !["fifo", "lifo", "average"].includes(text)) throw new FinanceInputError(`${path} must be fifo, lifo or average.`, path);
+    if (path.endsWith(".period") && !["quarter", "month"].includes(text)) throw new FinanceInputError(`${path} must be quarter or month.`, path);
+    if (path.endsWith("firstPeriodOn.date") && text && !/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new FinanceInputError(`${path} must be a date (YYYY-MM-DD) or empty.`, path);
+    if (path.endsWith(".requestBeforeMonthDay") && !/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(text)) throw new FinanceInputError(`${path} must be MM-DD.`, path);
     if (path.endsWith("checkedOn") && text && !/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new FinanceInputError(`${path} must be a date (YYYY-MM-DD).`, path);
     return text;
   }
@@ -276,6 +292,13 @@ export function rulesTable(rules) {
   push("vpb.loss", "Loss carry-forward", `Unlimited in time; full up to EUR ${l.fullOffsetUpToEur.toLocaleString("en-US")}, ${pct(l.excessOffsetShare)} above`, l);
   push("vpb.basis", "Profit of a BV paid in crypto", "EUR value at receipt; held crypto at cost", rules.vpb.profitBasis);
   push("vpb.payment", "When corporate tax is paid", "Provisional assessment, monthly instalments", rules.vpb.payment);
+  const cm = rules.vpb.cryptoCostMethod;
+  push("vpb.cryptoCost", "Cost of crypto sold or spent", `${String(cm.method).toUpperCase()} per asset${cm.lowerOfCostOrMarket ? "; held at cost or lower market value" : ""}`, cm);
+  const cal = rules.calendar;
+  push("cal.vat", "VAT return period", `Per ${cal.vatPeriod.period}, file and pay within ${cal.vatPeriod.dueMonthsAfterPeriod} month after it`, cal.vatPeriod);
+  push("cal.vpbProvisional", "Corporate tax provisional assessment", "Monthly instalments to 31 December; ask before 1 May after the year", cal.vpbProvisional);
+  push("cal.vpbReturn", "Corporate tax return", `${cal.vpbReturn.dueMonthsAfterYear} months after the year ends`, cal.vpbReturn);
+  push("cal.firstPeriod", "First tax period", cal.firstPeriodOn.date || "From the first revenue", cal.firstPeriodOn);
   push("div.rate", "Dividend withholding tax", pct(rules.dividendTax.rate), rules.dividendTax);
   for (const type of ENTITY_TYPES) {
     const w = rules.withholding[type];
