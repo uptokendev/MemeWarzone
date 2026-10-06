@@ -2,6 +2,7 @@ import { AbiCoder, concat, getAddress, keccak256, toUtf8Bytes } from "ethers";
 
 import { pool } from "../../server/db.js";
 import { readJson } from "../../server/http.js";
+import { rewardLedgerHolds } from "../../shared/moderationHolds.mjs";
 
 const REWARD_TYPES = new Set(["airdrop", "league", "recruiter", "squad", "battle", "tournament", "campaign", "manual", "future"]);
 const BATCH_STATUSES = new Set(["draft", "calculating", "funding_check", "ready", "published", "claim_open", "paused", "failed", "closed", "archived"]);
@@ -459,6 +460,17 @@ async function updateBatchStatus(req, res, targetStatus, action, bodyOverride = 
     if (!before) {
       await client.query("rollback");
       return json(res, 404, { error: "Reward batch not found" });
+    }
+
+    // Moderation hold (B7): a batch with a held or voided item (or an item of a held wallet) is not
+    // published; nothing changes and the batch keeps its status.
+    if (targetStatus === "published" || targetStatus === "claim_open") {
+      const { rows: itemRows } = await client.query(`select reward_ledger_id::text as id from public.reward_batch_items where batch_id = $1::uuid and reward_ledger_id is not null`, [id]);
+      const held = await rewardLedgerHolds(client, itemRows.map((row) => row.id));
+      if (held.length) {
+        await client.query("rollback");
+        return json(res, 409, { error: "This batch has rewards on moderation hold. Release or void them first.", code: "MODERATION_HOLD", rewardLedgerIds: [...new Set(held.map((row) => row.id))] });
+      }
     }
 
     const { rows } = await client.query(

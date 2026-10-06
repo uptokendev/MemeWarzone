@@ -120,13 +120,16 @@ test("CSV export is an attachment of the filtered rows", async () => {
 test("the dataset is cached for 60 s", async () => {
   let t = Date.parse("2026-10-05T12:00:00Z");
   const { h, db } = handler({ clock: () => new Date(t) });
+  // The moderation hold states (B7) are read on every request (small table, never stale); only the
+  // dataset itself is cached.
+  const datasetReads = () => db.calls.filter((sql) => !sql.includes("moderation_holds")).length;
   const first = await call(h, "/api/admin/moderation/airdrops", { token: "finance" });
-  const reads = db.calls.length;
+  const reads = datasetReads();
   assert.equal(first.body.cached, false);
   t += 30_000;
   const second = await call(h, "/api/admin/moderation/leagues", { token: "finance" });
   assert.equal(second.body.cached, true);
-  assert.equal(db.calls.length, reads, "no new reads inside the window");
+  assert.equal(datasetReads(), reads, "no new dataset reads inside the window");
   t += 31_000;
   const third = await call(h, "/api/admin/moderation/recruiters", { token: "finance" });
   assert.equal(third.body.cached, false);

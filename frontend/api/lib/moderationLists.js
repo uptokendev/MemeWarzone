@@ -245,6 +245,7 @@ async function loadSources(db, notes) {
              (l.metadata - 'merkleProof' - 'solanaRewardLane' - 'claimVerification' - 'eligibleCampaigns') as metadata,
              l.metadata->'eligibleCampaigns' as eligible_campaigns,
              l.metadata->'claimVerification'->>'txHash' as verified_tx,
+             (l.metadata ? 'merkleRoot') or coalesce(b.metadata ? 'merkleRoot', false) as has_root,
              bi.status as item_status,
              b.id::text as batch_id, b.status as batch_status, b.published_at as batch_published_at, b.created_at as batch_created_at,
              b.metadata->>'nativeUsdAtDraw' as native_usd_at_draw,
@@ -314,7 +315,17 @@ async function loadSources(db, notes) {
       select wallet_address, risk_level, restricted, cluster_id, reason from public.wallet_risk_profiles
        where restricted or lower(coalesce(risk_level, '')) in ('medium', 'high', 'critical')`),
   ]);
-  return { airdrops, leagues, recruiters, accounts, payoutWallets, links, ledger, claims, laneClaims, clusterMembers, riskProfiles };
+  // Moderation voids (B7): only once db/migrations/20261006_000020_moderation_holds.sql is applied.
+  const backup = await db.query(`select to_regclass('public.league_epoch_winners_moderation_voided') is not null as ok`).catch(() => ({ rows: [] }));
+  const voidedLeagues = backup?.rows?.[0]?.ok
+    ? await read(db, notes, "Voided league winners", `
+      select v.chain_id, v.period, v.epoch_start, v.epoch_end, v.category, v.rank, v.recipient_address,
+             v.amount_raw::text as amount_raw, v.payload, v.computed_at, v.expires_at, v.swept_at,
+             null as claimed_at, null as pay_tx, null as paid_at, null as root_at, null as root_tx, null as run_status, null as run_reason
+        from public.league_epoch_winners_moderation_voided v
+       where v.chain_id = any($1::int[])`, [MAINNET_IDS])
+    : [];
+  return { airdrops, leagues, voidedLeagues, recruiters, accounts, payoutWallets, links, ledger, claims, laneClaims, clusterMembers, riskProfiles };
 }
 
 async function loadProfiles(db, notes, addresses) {
@@ -399,6 +410,8 @@ function airdropPeriod(meta, createdAt) {
   return (toIso(createdAt) || "").slice(0, 10) || null;
 }
 
+const AIRDROP_PUBLISHED_BATCH_STATUSES = new Set(["funding_check", "published", "claim_open", "paused", "closed", "archived", "failed"]);
+
 function buildAirdropRows(rows, ctx) {
   return rows.map((row) => {
     const chain = chainOf(row.chain);
@@ -438,6 +451,9 @@ function buildAirdropRows(rows, ctx) {
       _price: { drawPrice, at },
       status,
       ledgerStatus: row.status || null,
+      // Published: the allocation is in a Merkle root (built or on chain) or its batch is out. A
+      // published root never changes, so moderation can only guard the claim page (B7).
+      published: Boolean(row.has_root) || AIRDROP_PUBLISHED_BATCH_STATUSES.has(lower(row.batch_status)) || !["pending", "approved", ""].includes(lower(row.status)),
       batchId: row.batch_id || null,
       batchStatus: row.batch_status || null,
       candidateCount: num(row.candidate_count),
@@ -938,7 +954,7 @@ export async function buildModerationDataset({ db, priceService, now = new Date(
   };
   for (const row of internal.values()) remember(row.address);
   for (const row of src.airdrops) remember(row.wallet_address);
-  for (const row of src.leagues) { remember(row.recipient_address); remember(row.payload?.wallet); }
+  for (const row of [...src.leagues, ...src.voidedLeagues]) { remember(row.recipient_address); remember(row.payload?.wallet); }
   for (const row of src.recruiters) remember(row.solana_wallet);
   for (const row of src.accounts) remember(row.signup_wallet);
   for (const row of src.payoutWallets) remember(row.wallet_address);
@@ -952,7 +968,7 @@ export async function buildModerationDataset({ db, priceService, now = new Date(
 
   const walletList = [
     ...src.airdrops.map((r) => r.wallet_address),
-    ...src.leagues.flatMap((r) => [r.recipient_address, r.payload?.wallet]),
+    ...[...src.leagues, ...src.voidedLeagues].flatMap((r) => [r.recipient_address, r.payload?.wallet]),
     ...src.recruiters.map((r) => r.solana_wallet || r.wallet_address),
     ...src.accounts.map((r) => r.signup_wallet),
     ...src.links.map((r) => r.wallet_address),
@@ -970,16 +986,23 @@ export async function buildModerationDataset({ db, priceService, now = new Date(
   };
 
   const ctx = { now, notes, campaigns, profileName, restoreCase, internal };
+  // League prizes voided from this page (B7) left league_epoch_winners; their backup keeps them listed,
+  // as voided rows (hidden with the other test and internal rows unless asked for).
+  const voidedLeagues = buildLeagueRows(src.voidedLeagues, ctx).map((row) => ({ ...row, status: "voided", rootPosted: false, rootAt: null, rootTxUrl: null, voidedByModeration: true }));
   const dataset = {
     airdrops: buildAirdropRows(src.airdrops, ctx),
-    leagues: buildLeagueRows(src.leagues, ctx),
+    leagues: [...buildLeagueRows(src.leagues, ctx), ...voidedLeagues],
     recruiters: buildRecruiterRows(src, ctx),
   };
   applyFlags(dataset, { internal, risk: riskIndex(src), now });
   markTestData(dataset, { internal, testRecruiters: testRecruiterIds(env) });
   await priceRows(dataset, createModerationPricer(priceService));
   for (const row of dataset.recruiters) { delete row._earningWallets; delete row._testCoinRows; }
-  for (const row of dataset.leagues) delete row._recruiterId;
+  for (const row of dataset.leagues) {
+    // Kept for moderation: a blanket recruiter hold covers that recruiter's Recruiter League prizes.
+    row.recruiterId = row._recruiterId;
+    delete row._recruiterId;
+  }
 
   return {
     generatedAt: now,
@@ -1238,6 +1261,15 @@ function csvCell(value) {
 
 const testText = (row) => (row.testReasons || []).map((r) => TEST_DATA_REASONS[r] || r).join(" | ");
 
+// Hold state from the Moderation actions (B7): what blocks payment, else the item's own state.
+const moderationText = (row) => {
+  const m = row.moderation;
+  if (!m) return "";
+  const own = m.item ? `${m.item.state}: ${m.item.reason}` : "";
+  const blanket = (m.blanket || []).filter((h) => h.state === "held").map((h) => `${h.kind} held: ${h.reason}`);
+  return [own, ...blanket].filter(Boolean).join(" | ");
+};
+
 const flagText = (row) => row.flags.map((f) => (row.flagNotes[f] ? `${MODERATION_FLAGS[f]?.label || f}: ${row.flagNotes[f]}` : MODERATION_FLAGS[f]?.label || f)).join(" | ");
 
 export const CSV_COLUMNS = Object.freeze({
@@ -1246,7 +1278,7 @@ export const CSV_COLUMNS = Object.freeze({
     ["Wallet", (r) => r.wallet], ["Profile", (r) => r.profileName], ["Score", (r) => r.score], ["Reason", (r) => r.reason],
     ["Amount", (r) => r.amount], ["Asset", (r) => r.asset], ["USD", (r) => r.amountUsd], ["USD basis", (r) => r.usdBasis],
     ["Status", (r) => r.status], ["Batch status", (r) => r.batchStatus], ["Claim deadline", (r) => r.deadline],
-    ["Claimed at", (r) => r.claimedAt], ["Claim tx", (r) => r.txUrl || r.txHash], ["Flags", flagText], ["Test or internal", testText],
+    ["Claimed at", (r) => r.claimedAt], ["Claim tx", (r) => r.txUrl || r.txHash], ["Flags", flagText], ["Test or internal", testText], ["Moderation", moderationText],
   ],
   leagues: [
     ["Period", (r) => r.periodLabel], ["Epoch start", (r) => r.epochStart], ["Chain", (r) => r.chain], ["Category", (r) => r.categoryLabel],
@@ -1254,7 +1286,7 @@ export const CSV_COLUMNS = Object.freeze({
     ["Coin", (r) => r.coinName || r.coinSymbol], ["Coin address", (r) => r.coinAddress], ["Test coin", (r) => (r.testCoin ? "yes" : "no")],
     ["Score", (r) => r.score], ["Reason", (r) => r.reason], ["Amount", (r) => r.amount], ["Asset", (r) => r.asset],
     ["USD", (r) => r.amountUsd], ["USD basis", (r) => r.usdBasis], ["Root posted", (r) => (r.rootPosted ? "yes" : "no")],
-    ["Status", (r) => r.status], ["Expires", (r) => r.deadline], ["Claimed at", (r) => r.claimedAt], ["Payout tx", (r) => r.txUrl || r.txHash], ["Flags", flagText], ["Test or internal", testText],
+    ["Status", (r) => r.status], ["Expires", (r) => r.deadline], ["Claimed at", (r) => r.claimedAt], ["Payout tx", (r) => r.txUrl || r.txHash], ["Flags", flagText], ["Test or internal", testText], ["Moderation", moderationText],
   ],
   recruiters: [
     ["Recruiter id", (r) => r.recruiterId], ["Account id", (r) => r.accountId], ["Code", (r) => r.code], ["Name", (r) => r.name],
@@ -1263,7 +1295,7 @@ export const CSV_COLUMNS = Object.freeze({
     ["Linked wallets", (r) => r.linkedTotal], ["Active links", (r) => r.linkedActive], ["Detached links", (r) => r.linkedDetached],
     ["Earned USD", (r) => r.earnedUsd], ["Claimable USD", (r) => r.claimableUsd], ["Claimed USD", (r) => r.claimedUsd], ["Failed or voided USD", (r) => r.failedVoidedUsd],
     ["Native per chain", (r) => Object.values(r.chains).map((c) => `${c.chain}: earned ${c.earned} ${c.asset}, claimable ${c.claimable}, claimed ${c.claimed}, failed/voided ${c.failedVoided}`)],
-    ["Last activity", (r) => r.lastActivityAt], ["Flags", flagText], ["Test or internal", testText],
+    ["Last activity", (r) => r.lastActivityAt], ["Flags", flagText], ["Test or internal", testText], ["Moderation", moderationText],
   ],
 });
 

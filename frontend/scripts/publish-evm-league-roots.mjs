@@ -42,6 +42,7 @@ import {
   monthlyLeagueTreasuryAddress,
   monthlyLeagueTreasuryForMonth,
 } from "../api/lib/evmMonthlyLeagueTreasury.js";
+import { beginGuardedPublish, endGuardedPublish, heldLeagueWinners, leagueEpochLockKey } from "../shared/moderationHolds.mjs";
 
 const dryRun = process.argv.includes("--dry-run");
 const LOOKBACK_DAYS = Number(process.env.EVM_LEAGUE_ROOT_LOOKBACK_DAYS || 120);
@@ -102,10 +103,10 @@ async function epochList(chainId) {
   return rows;
 }
 
-async function buildRoot(chainId, period, epochStart) {
+async function buildRoot(chainId, period, epochStart, db = pool) {
   const epochDate = new Date(epochStart);
   const claimId = period === "monthly" ? monthIdFromDate(epochDate) : computeEpochId(chainId, period, Math.floor(epochDate.getTime() / 1000));
-  const { rows } = await pool.query(
+  const { rows } = await db.query(
     `select category, rank, recipient_address as "recipientAddress", amount_raw::text as "amountRaw"
        from public.league_epoch_winners
       where chain_id = $1 and period = $2 and epoch_start = $3::timestamptz
@@ -129,6 +130,26 @@ async function buildRoot(chainId, period, epochStart) {
 }
 
 /**
+ * Moderation hold (B7, shared/moderationHolds.mjs), checked right before a send: an epoch with a held
+ * prize is BLOCKED like any other reason and never posted without it -- the contracts take one root
+ * per epoch, so a prize left out could never be added. Released: posted unchanged. Voided: the row is
+ * gone and the list posts without it, the other places unchanged. The guard re-reads the list under
+ * the epoch lock and leaves a marker until the root is recorded, so a hold or void cannot land in
+ * between. A dry run only reads.
+ */
+async function guardModeration(chainId, period, epochStart, built) {
+  const problemsFor = async (db) => {
+    const problems = (await heldLeagueWinners(db, { chainId, period, epochStart }))
+      .map((h) => `${h.category} #${h.rank} (${h.subject_kind} ${h.state})`);
+    const again = await buildRoot(chainId, period, epochStart, db);
+    if (again.root.toLowerCase() !== built.root.toLowerCase()) problems.push("winner list changed since it was read");
+    return problems;
+  };
+  const problems = dryRun ? await problemsFor(pool) : ((await beginGuardedPublish(pool, leagueEpochLockKey(chainId, period, epochStart), problemsFor)).problems || []);
+  if (problems.length) throw new Error(`moderation hold: ${problems.join(", ")}; release or void it in Command Center -> Community -> Moderation`);
+}
+
+/**
  * Record a root that is on chain and equals the DB list. finalizeEpochWinners treats a recorded
  * root as a frozen winner set, and the claim API refuses a proof that does not rebuild it. Never
  * overwrites an existing record (the root on chain cannot change either). Not in a dry run.
@@ -143,6 +164,7 @@ async function recordPostedRoot(item, txHash, status) {
     [item.chainId, item.period, item.epochStart, item.root, item.total, item.winners, item.vault, txHash || null,
       JSON.stringify({ source: "publish-evm-league-roots", status, claimId: item.claimId })],
   );
+  await endGuardedPublish(pool, leagueEpochLockKey(item.chainId, item.period, item.epochStart));
 }
 
 /** Unclaimed remainder of every MWL epoch already posted to this vault (epochTotal - epochClaimedTotal). */
@@ -200,6 +222,7 @@ async function main() {
           const owed = isMwlPayoutPeriod(period) ? await mwlStillOwed(vault, chainId, period) : 0n;
           if (balance < built.total + owed) throw new Error(`vault holds ${balance}, the list pays ${built.total}${owed ? ` and ${owed} is still owed to earlier winners` : ""}; nothing shrunk -- fund or wait`);
           await vault.setEpochRoot.staticCall(built.claimId, built.root, built.total);
+          await guardModeration(chainId, period, at, built);
           if (dryRun) { report.push({ ...item, status: "would_publish" }); continue; }
           const tx = await vault.setEpochRoot(built.claimId, built.root, built.total);
           await tx.wait(1);
@@ -226,6 +249,7 @@ async function main() {
           // Dry run without the key: ask the contract as its own rootPoster, not as a random wallet.
           if (pk) await treasury.sealMonth.staticCall(built.claimId, built.root, built.total);
           else await treasury.connect(provider).sealMonth.staticCall(built.claimId, built.root, built.total, { from: await treasury.rootPoster() });
+          await guardModeration(chainId, period, at, built);
           if (dryRun) { report.push({ ...item, status: "would_seal" }); continue; }
           const tx = await treasury.sealMonth(built.claimId, built.root, built.total);
           await tx.wait(1);

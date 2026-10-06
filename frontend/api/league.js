@@ -11,6 +11,7 @@ import { monthlyLeagueTreasuryAddress, monthlyLeagueTreasuryForMonth } from "./l
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "./lib/pokerPayout.mjs";
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import { withoutOwnerWallets } from "../shared/ownerWallets.mjs";
+import { leagueWinnerHold, moderationClaimRefusal } from "../shared/moderationHolds.mjs";
 import {
   buildMerkleProof as buildSolanaMerkleProof,
   buildMerkleRoot as buildSolanaMerkleRoot,
@@ -887,6 +888,13 @@ export default async function handler(req, res) {
         // - action=claim  -> return proof payload; user sends on-chain claim() and pays gas
         // - action=record -> after tx is mined, record the txHash so rewards are suppressed
         if (action === "claim") {
+          // Moderation hold (B7): our API does not hand out the proof of a held or voided prize. This
+          // stops the claim card only; a posted root still verifies a proof built elsewhere.
+          const hold = await leagueWinnerHold(client, { chainId, period, epochStart, category, rank });
+          if (hold) {
+            await client.query("ROLLBACK");
+            return json(res, 409, moderationClaimRefusal(hold));
+          }
           const epochStartSec = Math.floor(new Date(epochStart).getTime() / 1000);
           const eid = evmMonthly ? monthIdForEpochStart(new Date(epochStart)) : computeEpochId(chainId, period, epochStartSec);
           const catHash = categoryHashFromString(category);

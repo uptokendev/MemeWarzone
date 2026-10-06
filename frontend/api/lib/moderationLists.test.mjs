@@ -311,7 +311,7 @@ test("CSV follows the toggle and names the test reason", async () => {
   const on = moderationCsv("leagues", shown);
   assert.equal(off.trim().split("\r\n").length, 1 + 2);
   assert.equal(on.trim().split("\r\n").length, 1 + 5);
-  assert.match(on.split("\r\n")[0], /,Flags,Test or internal$/);
+  assert.match(on.split("\r\n")[0], /,Flags,Test or internal,Moderation$/);
   assert.match(on, /Prize from a hidden test coin/);
   assert.doesNotMatch(off, /Kaiju88/);
 });

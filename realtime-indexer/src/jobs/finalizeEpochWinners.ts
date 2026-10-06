@@ -27,6 +27,7 @@ import { dbcLeagueCreditRaw } from "../rewards/dbcLeagueCredit.js";
 import { categoryShare, getLateFeeCreditsRaw, recordBudgetBaseline, trueUpLateFees } from "../rewards/leagueTrueUp.js";
 import { internalRecruiterLabel, ownerWalletIndex, withoutOwnerRecipients } from "../rewards/ownerWallets.js";
 import { leagueLeaderboard } from "../rewards/leagueLeaderboard.js";
+import { voidedLeagueCategory } from "../rewards/moderationHolds.js";
 const DEFAULT_PROTOCOL_FEE_BPS = 200; // 2%
 const DEFAULT_LEAGUE_FEE_BPS = 75; // 0.75% slice of gross (carved out of the 2% protocol fee)
 
@@ -314,6 +315,13 @@ async function finalizeEpochFor(
     const category = categories[i];
 
     if (await alreadyFinalized(chainId, period, epochStartIso, category)) {
+      continue;
+    }
+    // A prize voided from the Moderation page (moderation_holds, B7) removed its winner row. The
+    // category stays settled: never re-settled (that could pay the same wallet again), never rolled
+    // over; the voided amount stays in the league vault, unassigned, like the 2026-10-05 manual voids.
+    if (await voidedLeagueCategory(pool as any, { chainId, period, epochStart: epochStartIso, category })) {
+      console.log(`[finalizeEpochWinners] chain=${chainId} period=${period} category=${category}: a prize was voided by moderation; category stays settled`);
       continue;
     }
 

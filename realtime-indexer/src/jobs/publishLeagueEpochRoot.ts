@@ -46,6 +46,7 @@ import {
   i64le,
   u64le,
 } from "../rewards/solanaLeagueMerkle.js";
+import { beginGuardedPublish, endGuardedPublish, heldLeagueWinners, leagueEpochLockKey } from "../rewards/moderationHolds.js";
 
 const MAINNET_CHAIN_ID = 101;
 const PERIODS = ["weekly", "monthly", "quarterly", "mwl_monthly"] as const;
@@ -239,6 +240,7 @@ async function main() {
         chainId: MAINNET_CHAIN_ID, period, epochStart: epochStartIso, root, total, winners: winners.length,
         epochAddress: epochAddress.toBase58(), txHash: null, metadata: { source: "onchain-preexisting", recordedAt: new Date().toISOString() },
       });
+      await endGuardedPublish(pool, leagueEpochLockKey(MAINNET_CHAIN_ID, period, epochStartIso));
       reports.push({ period, epochStart: epochStartIso, status: "recorded", reason: "already-sealed-on-chain", root, total: total.toString() });
       continue;
     }
@@ -276,6 +278,31 @@ async function main() {
       continue;
     }
 
+    // Moderation (B7, rewards/moderationHolds.ts): a held prize is never posted and never cut from the
+    // list -- a sealed root cannot take it later, so leaving it out would strand it. The epoch waits
+    // until the hold is released (posted unchanged) or the prize voided (posted without it, the other
+    // places unchanged). The guard re-reads the list under the epoch lock and leaves a marker, so a
+    // hold or void can never land between this check and the root being recorded.
+    const epochKey = leagueEpochLockKey(MAINNET_CHAIN_ID, period, epochStartIso);
+    const guard = await beginGuardedPublish(pool as any, epochKey, async (client) => {
+      const problems: unknown[] = (await heldLeagueWinners(client, { chainId: MAINNET_CHAIN_ID, period, epochStart: epochStartIso }))
+        .map((h) => ({ category: h.category, rank: Number(h.rank), recipient: h.recipient_address, hold: h.subject_key, state: h.state }));
+      const { rows: now } = await client.query(
+        `select category, rank, recipient_address, amount_raw::text as amount_raw from public.league_epoch_winners
+          where chain_id=$1 and period=$2 and epoch_start=$3::timestamptz order by category asc, rank asc, recipient_address asc`,
+        [MAINNET_CHAIN_ID, period, epochStartIso],
+      );
+      if (epochRootFor(epochStartSec, period, now as WinnerRow[]).root.toLowerCase() !== root.toLowerCase()) problems.push({ reason: "winner-list-changed-since-read" });
+      return problems;
+    });
+    if (!guard.ok) {
+      reports.push({
+        period, epochStart: epochStartIso, status: "blocked", reason: "moderation-hold", held: guard.problems,
+        action: "release or void the held prize in Command Center -> Community -> Moderation, then re-run",
+      });
+      continue;
+    }
+
     const instruction = new TransactionInstruction({
       programId: pid,
       keys: [
@@ -303,6 +330,7 @@ async function main() {
       chainId: MAINNET_CHAIN_ID, period, epochStart: epochStartIso, root, total, winners: winners.length,
       epochAddress: epochAddress.toBase58(), txHash, metadata: { publishedAt: new Date().toISOString(), txHash },
     });
+    await endGuardedPublish(pool, epochKey);
     postedThisRun.add(period);
     reports.push({ period, epochStart: epochStartIso, status: "published", root, total: total.toString(), winners: winners.length, txHash });
   }

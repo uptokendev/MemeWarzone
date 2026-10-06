@@ -8,6 +8,7 @@ import {
   isSupersededMonthlyLeagueTreasury,
   monthlyLeagueTreasuryForMonth,
 } from "./lib/evmMonthlyLeagueTreasury.js";
+import { beginGuardedPublish, heldLeagueWinners, leagueEpochLockKey } from "../shared/moderationHolds.mjs";
 
 // POST /api/leagueRoot
 // Admin-only helper to publish a weekly epoch root or seal a monthly league root.
@@ -65,6 +66,7 @@ export default async function handler(req, res) {
 
     if (!rows?.length) return json(res, 404, { error: "No winners for epoch" });
 
+
     const leaves = [];
     let winnerTotal = 0n;
     for (const r of rows) {
@@ -91,6 +93,35 @@ export default async function handler(req, res) {
     }
 
     const root = buildMerkleRoot(leaves);
+
+    // Moderation hold (B7, shared/moderationHolds.mjs): an epoch with a held prize is not posted (one
+    // root per epoch, never shrunk). The guard re-checks under the epoch lock that nothing is held and
+    // the list is unchanged, then leaves a marker that publish-evm-league-roots clears when it records
+    // the root.
+    const guard = await beginGuardedPublish(pool, leagueEpochLockKey(chainId, period, epochDate), async (db) => {
+      const problems = (await heldLeagueWinners(db, { chainId, period, epochStart: epochDate }))
+        .map((h) => ({ category: h.category, rank: Number(h.rank), state: h.state, hold: h.subject_key }));
+      const { rows: again } = await db.query(
+        `SELECT category, rank, recipient_address AS "recipientAddress", amount_raw AS "amountRaw"
+           FROM league_epoch_winners
+          WHERE chain_id = $1 AND period = $2 AND epoch_start = $3::timestamptz
+          ORDER BY category ASC, rank ASC, recipient_address ASC`,
+        [chainId, period, epochStart]
+      );
+      const sameList = again.length === rows.length && again.every((r, i) => String(r.category) === String(rows[i].category)
+        && Number(r.rank) === Number(rows[i].rank) && String(r.recipientAddress).toLowerCase() === String(rows[i].recipientAddress).toLowerCase()
+        && String(r.amountRaw) === String(rows[i].amountRaw));
+      if (!sameList) problems.push({ reason: "winner list changed since it was read" });
+      return problems;
+    });
+    if (!guard.ok) {
+      return json(res, 409, {
+        error: "This epoch has a prize on moderation hold (or its list just changed). Release or void it in Command Center -> Moderation first. Nothing was sent.",
+        code: "MODERATION_HOLD",
+        held: guard.problems,
+      });
+    }
+
     const network = ethers.Network.from(Number(chainId));
     const provider = new ethers.JsonRpcProvider(rpc, network, {
       staticNetwork: network,
