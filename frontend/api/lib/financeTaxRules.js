@@ -88,7 +88,16 @@ const SRC = Object.freeze({
   stockValuation: "https://www.jongbloed-fiscaaljuristen.nl/databank/startende_ondernemer/fiscale_voorraadwaardering/",
   stockConsistency: "https://www.taxlive.nl/nl/documenten/nieuws/fiscale-spelregels-bij-de-waardering-van-voorraad/",
   cryptoLifo: "https://www.grantthornton.nl/insights/tax/cryptos-hoe-behandel-je-deze-fiscaal-optimaal/",
+  cryptoBv: "https://www.belastingdienst.nl/wps/wcm/connect/bldcontentnl/belastingdienst/zakelijk/winst/inkomstenbelasting/inkomstenbelasting_voor_ondernemers/bitcoins-en-andere-cryptovalutas",
+  bw387: "https://wetboekplus.nl/burgerlijk-wetboek-boek-2-artikel-387-waardeverminderingen/",
+  custody: "https://dart.deloitte.com/USDART/home/news/all-news/2025/jan/sec-rescinds-guidance-safeguarding-crypto-assets",
+  depositDeadline: "https://www.kvk.nl/deponeren/uiterste-termijn-deponeren-jaarrekening/",
+  bvInFormation: "https://www.taxence.nl/nieuws/handelen-voor-de-bv-in-oprichting/",
+  bvInFormationVat: "https://www.jongbloed-fiscaaljuristen.nl/databank/herstructurering/de_bv_in_oprichting/",
 });
+
+/** The year-end rules (write-down, user funds, annual accounts, BV in formation) were researched on this date. */
+export const YEAR_END_CHECKED_ON = "2026-10-06";
 
 const rule = (value, source, confidence, extra = {}) => ({ ...value, source, checkedOn: RULES_CHECKED_ON, confidence, ...extra });
 
@@ -170,6 +179,29 @@ export const DEFAULT_TAX_RULES = Object.freeze({
       dbc_referral: rule({ treatment: "outside_scope", rate: 0, taxableShare: 0, evidence: "none", ess: false, reason: "Referral fee paid by Meteora, a business outside the Netherlands: taxed where the customer is (art. 44), not in the Dutch return. If Meteora turns out to be an EU business with a VAT number: reverse charge (rubriek 3b + ICP)." }, SRC.vatB2bNonEu, "medium", { checkedOn: VAT_CHECKED_ON }),
       other: rule({ treatment: "uncertain", rate: 0.21, taxableShare: 1, evidence: "none", ess: false, reason: "Unknown lane: 21% reserved." }, SRC.vatB2c, "low", { checkedOn: VAT_CHECKED_ON }),
     },
+  },
+  // Year-end package (B8, research 2026-10-06): how the year-end figures are
+  // made, as data so a bookkeeper can see (and change) every assumption.
+  yearEnd: {
+    writeDown: rule({
+      perAsset: true,
+      reverses: true,
+      condition: "Crypto the BV holds is a current asset, valued at the balance date (31 December) at cost or lower market value (Belastingdienst: kostprijs of lagere bedrijfswaarde; art. 2:387 lid 2 BW: current assets at the lower actual value on the balance date). The write-down is a loss of the year it is made in and is deductible. Art. 2:387 lid 4 BW: a write-down is reversed as soon as the fall in value has ended, never above cost. So every year end compares the FIFO cost of what is held with its market value, per asset (all lots of one coin together), and the year's result carries the change: minus (write-down at this year end - write-down at the last year end). The FIFO lots themselves keep their original cost. Market value: the Binance 1h close of 31 December 23:00 UTC (stablecoins at $1, platform coins from our market data) at the ECB USD/EUR rate of that day.",
+    }, SRC.bw387, "medium", { checkedOn: YEAR_END_CHECKED_ON, alsoSource: SRC.cryptoBv }),
+    userFunds: rule({
+      onBalanceSheet: false,
+      condition: "Money owed to users (league and MWL prizes, recruiter rewards, creator fees, the airdrop pot, squad and war pool money) never was revenue of the BV: the contracts route it straight to its own vault, and the revenue lanes count only the protocol share. The BV has no right to it and does not carry its price risk, so it is not an asset of the BV and the matching debt to users is not a liability of the BV: it is shown off the balance sheet, with the amounts and whether each vault covers what it owes (rights and obligations not in the balance sheet, art. 2:381 BW). Only a shortfall the BV would have to make good from its own money is a liability, and only when that is probable and can be measured (IAS 37 / ASC 450-20, the rule the SEC staff returned to when it rescinded SAB 121 with SAB 122 in January 2025). The operator wallet and the protocol vault are the BV's own money and are on the balance sheet.",
+    }, SRC.custody, "medium", { checkedOn: YEAR_END_CHECKED_ON }),
+    annualAccounts: rule({
+      prepareMonths: 5,
+      extensionMonths: 5,
+      fileDaysAfterAdoption: 8,
+      fileWithinMonths: 12,
+      condition: "The board prepares the annual accounts within 5 months after the book year (art. 2:210 BW); the general meeting can extend that by up to 5 months. The accounts are filed with the KVK within 8 days after they are adopted, and in any case within 12 months after the book year (art. 2:394 BW). For a calendar year without extension the KVK gives 8 August as the last day; with the full extension 31 December. A micro BV files a balance sheet with a few notes only.",
+    }, SRC.depositDeadline, "high", { checkedOn: YEAR_END_CHECKED_ON }),
+    bvInFormation: rule({
+      condition: "Until the deed of incorporation is signed the BV does not exist: the founders who act for the BV in formation are jointly and severally liable until the BV, once incorporated, ratifies those acts (art. 2:203 BW). Results of that period (the voorperiode) are added to the BV's first book year and taxed with corporate income tax at the rates of the year of incorporation, not with income tax at the founders. For VAT a company is an entrepreneur only from its incorporation date, so VAT on activity before that date is a matter for the founders. These books are kept as if the BV is registered; the package says so on every page.",
+    }, SRC.bvInFormation, "medium", { checkedOn: YEAR_END_CHECKED_ON, alsoSource: SRC.bvInFormationVat }),
   },
   holdingSide: {
     dutch_holding_bv: rule({ condition: "A Dutch holding BV with at least 5% receives the dividend tax-free under the participation exemption (art. 13 Wet Vpb 1969). Box 2 at personal level is out of scope here." }, SRC.participation, "high"),
@@ -370,6 +402,13 @@ export function rulesTable(rules) {
   }
   push("vat.oss", "VAT: EU consumer threshold and OSS", `EUR ${Number(rules.vat.oss.thresholdEur).toLocaleString("en-US")} per calendar year; above it the customer's country rate through OSS`, rules.vat.oss);
   push("vat.evidence", "VAT: customer evidence", "VIES-checked VAT number (business) or two matching location items (consumer)", rules.vat.evidence);
+  const ye = rules.yearEnd;
+  if (ye) {
+    push("yearEnd.writeDown", "Year end: crypto at cost or lower market value", `Per ${ye.writeDown.perAsset ? "asset" : "lot"} at 31 December; ${ye.writeDown.reverses ? "reversed when the price recovers (never above cost)" : "not reversed"}`, ye.writeDown);
+    push("yearEnd.userFunds", "Year end: money owed to users", ye.userFunds.onBalanceSheet ? "On the balance sheet (asset and liability)" : "Off the balance sheet, disclosed with vault coverage", ye.userFunds);
+    push("yearEnd.annualAccounts", "Annual accounts", `Prepare within ${ye.annualAccounts.prepareMonths} months (+${ye.annualAccounts.extensionMonths}); file within ${ye.annualAccounts.fileDaysAfterAdoption} days of adoption, at most ${ye.annualAccounts.fileWithinMonths} months after the year`, ye.annualAccounts);
+    push("yearEnd.bvInFormation", "BV in formation", "Pre-incorporation results go to the first book year after ratification", ye.bvInFormation);
+  }
   for (const type of ["dutch_holding_bv", "us_corporation"]) push(`holding.${type}`, `On the shareholder's side: ${ENTITY_TYPE_LABELS[type]}`, "Informational", rules.holdingSide[type]);
   return rows;
 }

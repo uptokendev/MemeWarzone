@@ -49,6 +49,8 @@
 //   GET    vat/customers              known customers + VAT evidence finance.view
 //   PUT    vat/customers/:kind/:id    record evidence (VIES check)  finance.manage
 //   DELETE vat/customers/:kind/:id    remove evidence               finance.manage
+//   GET    year-end?year=&format=     year-end package (P&L, balance sheet, tax,
+//                                     schedules): json (default), csv&schedule=, zip  finance.view
 
 import { pool } from "../../server/db.js";
 import { dashboardPrincipalCan } from "../dashboard/_access.js";
@@ -176,6 +178,7 @@ import {
 } from "../lib/financeTreasuryStore.js";
 import { accountingNetworks, currentBalances, dailyRevenue, monthlyRevenue, revenueEventRows, solanaRowsAreMainnet } from "../lib/financeAccountingSources.js";
 import { buildPayoutsAllChains, cachedPayouts, payoutsDays } from "../lib/financePayouts.js";
+import { balanceDate, buildYearEnd, scheduleCsv, yearEndSchedules, yearEndZip } from "../lib/financeYearEnd.js";
 import { feeRoutingAllNetworks } from "../lib/financeFeeRouting.js";
 import {
   ACCOUNTING_MIGRATION,
@@ -204,7 +207,7 @@ import {
 } from "../lib/financeAccountingStore.js";
 
 const BASE = "/api/admin/finance";
-const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|tax-rules|tax|weekly|close|distributions|exports|treasury|entity|vat)(?:\/|$)/;
+const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|tax-rules|tax|weekly|close|distributions|exports|treasury|entity|vat|year-end)(?:\/|$)/;
 export const VAT_EVIDENCE_MIGRATION = "db/migrations/20261006_000003_finance_vat_evidence.sql";
 const MAX_EXPORT_MONTHS = 36;
 const FIRST_MONTH = "2024-01";
@@ -232,6 +235,44 @@ const CRYPTO_COSTS_NOT_INSTALLED = `Costs paid in crypto, token movements and th
 const NATIVE_OF_CHAIN = Object.freeze({ 101: "SOL", 56: "BNB", 4663: "ETH" });
 const shortText = (value) => (value ? `${String(value).slice(0, 4)}...${String(value).slice(-4)}` : "");
 const TREASURY_MEMO_MS = 20_000;
+
+const COST_EXPORT_COLUMNS = Object.freeze([
+  { key: "date", label: "date" }, { key: "month", label: "month" }, { key: "monthStatus", label: "month_status" }, { key: "costId", label: "cost_id" },
+  { key: "category", label: "category" }, { key: "vendor", label: "vendor" }, { key: "description", label: "description" }, { key: "recurring", label: "recurring" },
+  { key: "amountNative", label: "amount_native" }, { key: "currency", label: "currency" }, { key: "fxRateUsdPerUnit", label: "fx_rate_usd_per_unit" }, { key: "fxSource", label: "fx_source" },
+  { key: "amountUsd", label: "amount_usd" }, { key: "usdPerEur", label: "usd_per_eur" }, { key: "amountEur", label: "amount_eur" }, { key: "attachmentUrl", label: "attachment_url" }, { key: "createdBy", label: "created_by" },
+]);
+const CLOSE_SUMMARY_COLUMNS = Object.freeze([
+  { key: "month", label: "month" }, { key: "status", label: "status" }, { key: "source", label: "source" },
+  { key: "revenueUsd", label: "revenue_usd" }, { key: "costsUsd", label: "costs_usd" }, { key: "profitUsd", label: "profit_usd" },
+  { key: "taxReserveUsd", label: "tax_reserve_usd" }, { key: "ytdTaxReserveUsd", label: "ytd_tax_reserve_usd" },
+  { key: "revenueEur", label: "revenue_eur" }, { key: "costsEur", label: "costs_eur" }, { key: "profitEur", label: "profit_eur" },
+  { key: "usdPerEur", label: "usd_per_eur" }, { key: "fxSource", label: "fx_source" }, { key: "oursUsd", label: "ours_usd_at_close" }, { key: "owedUsd", label: "owed_usd_at_close" },
+  { key: "solUsd", label: "sol_usd_at_close" }, { key: "bnbUsd", label: "bnb_usd_at_close" }, { key: "ethUsd", label: "eth_usd_at_close" }, { key: "priceSources", label: "price_sources" },
+  { key: "closedBy", label: "closed_by" }, { key: "closedAt", label: "closed_at" },
+]);
+const REVENUE_EVENT_COLUMNS = Object.freeze([
+  { key: "occurredAt", label: "occurred_at" }, { key: "month", label: "month" }, { key: "chainId", label: "chain_id" }, { key: "chain", label: "chain" }, { key: "lane", label: "lane" },
+  { key: "source", label: "source" }, { key: "laneId", label: "lane_id" },
+  { key: "asset", label: "asset" }, { key: "amountNative", label: "amount_native" }, { key: "priceUsd", label: "price_usd" }, { key: "amountUsd", label: "amount_usd" }, { key: "priceSource", label: "price_source" },
+  { key: "usdPerEur", label: "usd_per_eur" }, { key: "amountEur", label: "amount_eur" }, { key: "fxSource", label: "fx_source" },
+  { key: "txHash", label: "tx_hash" }, { key: "logIndex", label: "log_index" }, { key: "campaignAddress", label: "campaign_address" },
+  { key: "reference", label: "reference" }, { key: "eventId", label: "event_id" },
+]);
+const MOVEMENT_EXPORT_COLUMNS = Object.freeze([
+  { key: "occurredAt", label: "occurred_at" }, { key: "kind", label: "kind" }, { key: "from", label: "from_account" }, { key: "to", label: "to_account" },
+  { key: "assetOut", label: "asset_out" }, { key: "amountOut", label: "amount_out" }, { key: "assetIn", label: "asset_in" }, { key: "amountIn", label: "amount_in" },
+  { key: "assetAddress", label: "token_address" }, { key: "valueEur", label: "value_eur" }, { key: "valueSource", label: "value_source" }, { key: "feeAsset", label: "fee_asset" }, { key: "feeAmount", label: "fee_amount" },
+  { key: "feeEur", label: "fee_eur" }, { key: "feeSource", label: "fee_source" }, { key: "realizedGainEur", label: "realized_gain_eur" }, { key: "costMethod", label: "cost_method" },
+  { key: "costId", label: "cost_id" }, { key: "revenueLane", label: "revenue_lane" }, { key: "txHash", label: "tx_hash" }, { key: "reference", label: "reference" }, { key: "note", label: "note" }, { key: "createdBy", label: "created_by" },
+]);
+const YEAR_END_TIMEOUT_MS = 90_000;
+
+/** Resolves to the promise's value, or rejects after ms (the year end never waits forever on a chain read). */
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} took longer than ${Math.round(ms / 1000)} s`)), ms); })]).finally(() => clearTimeout(timer));
+}
 
 export function isFinanceAccountingPath(pathname) {
   return ACCOUNTING_PATH.test(String(pathname || ""));
@@ -373,9 +414,11 @@ export function createFinanceAccountingHandler(deps = {}) {
       rate = (d) => map.get(d) ?? latest;
     }
     const method = taxRules.vpb?.cryptoCostMethod?.method || "fifo";
-    const lots = runLots({ acquisitions: [...revenueAcquisitions(days || {}, rate), ...ev.acquisitions], disposals: ev.disposals, method });
+    const lotInputs = { acquisitions: [...revenueAcquisitions(days || {}, rate), ...ev.acquisitions], disposals: ev.disposals };
+    const lots = runLots({ ...lotInputs, method });
     const byDay = treasuryByDay({ lotDisposals: lots.disposals, movements: rows.movements, rules: taxRules, usdPerEur: rate });
-    const value = { ...rows, lots, byDay, byMonth: treasuryByMonth(byDay), method, revenueRead: Boolean(days) };
+    // lotInputs: the same lots in and out, for a year-end cut-off (financeYearEnd.js).
+    const value = { ...rows, lots, lotInputs, byDay, byMonth: treasuryByMonth(byDay), method, revenueRead: Boolean(days) };
     if (memo) treasuryMemo = { at: Date.now(), value };
     return value;
   }
@@ -959,7 +1002,7 @@ export function createFinanceAccountingHandler(deps = {}) {
     const monthlyCostsUsd = live.filter((c) => c.recurring !== "none" && (!c.recurringUntil || c.recurringUntil >= today) && c.incurredOn <= today)
       .reduce((sum, c) => sum + (c.recurring === "yearly" ? c.amountUsd / 12 : c.amountUsd), 0);
     const decision = decideWeek({ model, chains: bal.chains || [], openCostsUsd: open, usdPerEurNow: latestRate, settings: s.distribution, rules: s.taxRules, records: recs.records, today, operatorUsd: bal.operatorUsd ?? null, monthlyCostsUsd, held: taxCal.held, offChainCashEur: offChain.eur });
-    return { s, today, model, months, decision, bal, records: recs.records, recordsInstalled: recs.installed, notes: [...(rev.notes || []), ...(evidenceRead.note ? [evidenceRead.note] : [])], latestRate, tr, taxCal, cash, offChain, usdPerEur, revDays: rev.days, vatReturns, vatResolved, vatEvidenceNote: evidenceRead.note || null };
+    return { s, today, model, months, costsByMonth, decision, bal, records: recs.records, recordsInstalled: recs.installed, notes: [...(rev.notes || []), ...(evidenceRead.note ? [evidenceRead.note] : [])], latestRate, tr, taxCal, cash, offChain, usdPerEur, revDays: rev.days, vatReturns, vatResolved, vatEvidenceNote: evidenceRead.note || null };
   }
 
   async function getWeekly(req, res, principal) {
@@ -1882,39 +1925,35 @@ export function createFinanceAccountingHandler(deps = {}) {
     return rows;
   }
 
+  /** Treasury movements of [from, to] (months) for the CSV, newest first, with the realized gain per movement. */
+  function movementExportRows(tr, from, to) {
+    const names = new Map(tr.accounts.map((x) => [x.id, x.name]));
+    const gains = new Map();
+    for (const d of tr.lots.disposals) {
+      const id = /^movement (\d+)/.exec(d.ref || "")?.[1];
+      if (id) gains.set(id, (gains.get(id) || 0) + d.gainEur);
+    }
+    return tr.movements.filter((m) => m.occurredAt.slice(0, 7) >= from && m.occurredAt.slice(0, 7) <= to).reverse().map((m) => ({
+      occurredAt: m.occurredAt, kind: m.kind, from: names.get(m.fromAccountId) || "", to: names.get(m.toAccountId) || "",
+      assetOut: m.out?.asset || "", amountOut: m.out?.amount || "", assetIn: m.in?.asset || "", amountIn: m.in?.amount || "", assetAddress: m.out?.address || m.in?.address || "",
+      valueEur: m.valueEur, valueSource: m.valueSource, feeAsset: m.fee?.asset || "", feeAmount: m.fee?.amount || "", feeEur: m.feeEur ?? "", feeSource: m.feeSource || "",
+      realizedGainEur: gains.has(m.id) ? round2(gains.get(m.id)) : "", costMethod: tr.method, costId: m.costId || "", revenueLane: m.revenueLane || "", txHash: m.txHash || "", reference: m.reference, note: m.note, createdBy: m.createdBy,
+    }));
+  }
+
   async function getExport(req, res, kind) {
     const { from, to } = parseRange(req.query || {}, nowMs(), { defaultMonths: 12 });
     const suffix = `${from}_${to}`;
     if (kind === "costs") {
-      return sendCsv(res, `mwz-costs-${suffix}.csv`, [
-        { key: "date", label: "date" }, { key: "month", label: "month" }, { key: "monthStatus", label: "month_status" }, { key: "costId", label: "cost_id" },
-        { key: "category", label: "category" }, { key: "vendor", label: "vendor" }, { key: "description", label: "description" }, { key: "recurring", label: "recurring" },
-        { key: "amountNative", label: "amount_native" }, { key: "currency", label: "currency" }, { key: "fxRateUsdPerUnit", label: "fx_rate_usd_per_unit" }, { key: "fxSource", label: "fx_source" },
-        { key: "amountUsd", label: "amount_usd" }, { key: "usdPerEur", label: "usd_per_eur" }, { key: "amountEur", label: "amount_eur" }, { key: "attachmentUrl", label: "attachment_url" }, { key: "createdBy", label: "created_by" },
-      ], await costExportRows(from, to));
+      return sendCsv(res, `mwz-costs-${suffix}.csv`, COST_EXPORT_COLUMNS, await costExportRows(from, to));
     }
     if (kind === "close-summaries") {
-      return sendCsv(res, `mwz-close-summaries-${suffix}.csv`, [
-        { key: "month", label: "month" }, { key: "status", label: "status" }, { key: "source", label: "source" },
-        { key: "revenueUsd", label: "revenue_usd" }, { key: "costsUsd", label: "costs_usd" }, { key: "profitUsd", label: "profit_usd" },
-        { key: "taxReserveUsd", label: "tax_reserve_usd" }, { key: "ytdTaxReserveUsd", label: "ytd_tax_reserve_usd" },
-        { key: "revenueEur", label: "revenue_eur" }, { key: "costsEur", label: "costs_eur" }, { key: "profitEur", label: "profit_eur" },
-        { key: "usdPerEur", label: "usd_per_eur" }, { key: "fxSource", label: "fx_source" }, { key: "oursUsd", label: "ours_usd_at_close" }, { key: "owedUsd", label: "owed_usd_at_close" },
-        { key: "solUsd", label: "sol_usd_at_close" }, { key: "bnbUsd", label: "bnb_usd_at_close" }, { key: "ethUsd", label: "eth_usd_at_close" }, { key: "priceSources", label: "price_sources" },
-        { key: "closedBy", label: "closed_by" }, { key: "closedAt", label: "closed_at" },
-      ], await closeSummaryRows(from, to));
+      return sendCsv(res, `mwz-close-summaries-${suffix}.csv`, CLOSE_SUMMARY_COLUMNS, await closeSummaryRows(from, to));
     }
     if (kind === "revenue-events") {
       const out = await revenueEvents({ fromMonth: from, toMonth: to });
       if (out.truncated) res.setHeader("X-Export-Truncated", "1");
-      return sendCsv(res, `mwz-revenue-events-${suffix}.csv`, [
-        { key: "occurredAt", label: "occurred_at" }, { key: "month", label: "month" }, { key: "chainId", label: "chain_id" }, { key: "chain", label: "chain" }, { key: "lane", label: "lane" },
-        { key: "source", label: "source" }, { key: "laneId", label: "lane_id" },
-        { key: "asset", label: "asset" }, { key: "amountNative", label: "amount_native" }, { key: "priceUsd", label: "price_usd" }, { key: "amountUsd", label: "amount_usd" }, { key: "priceSource", label: "price_source" },
-        { key: "usdPerEur", label: "usd_per_eur" }, { key: "amountEur", label: "amount_eur" }, { key: "fxSource", label: "fx_source" },
-        { key: "txHash", label: "tx_hash" }, { key: "logIndex", label: "log_index" }, { key: "campaignAddress", label: "campaign_address" },
-        { key: "reference", label: "reference" }, { key: "eventId", label: "event_id" },
-      ], out.rows);
+      return sendCsv(res, `mwz-revenue-events-${suffix}.csv`, REVENUE_EVENT_COLUMNS, out.rows);
     }
     if (kind === "payouts") {
       // The payouts read model (/api/admin/finance/payouts, financePayouts.js)
@@ -1970,28 +2009,141 @@ export function createFinanceAccountingHandler(deps = {}) {
       ], rows);
     }
     if (kind === "treasury-movements") {
-      const tr = await treasury();
-      const names = new Map(tr.accounts.map((x) => [x.id, x.name]));
-      const gains = new Map();
-      for (const d of tr.lots.disposals) {
-        const id = /^movement (\d+)/.exec(d.ref || "")?.[1];
-        if (id) gains.set(id, (gains.get(id) || 0) + d.gainEur);
-      }
-      const rows = tr.movements.filter((m) => m.occurredAt.slice(0, 7) >= from && m.occurredAt.slice(0, 7) <= to).reverse().map((m) => ({
-        occurredAt: m.occurredAt, kind: m.kind, from: names.get(m.fromAccountId) || "", to: names.get(m.toAccountId) || "",
-        assetOut: m.out?.asset || "", amountOut: m.out?.amount || "", assetIn: m.in?.asset || "", amountIn: m.in?.amount || "", assetAddress: m.out?.address || m.in?.address || "",
-        valueEur: m.valueEur, valueSource: m.valueSource, feeAsset: m.fee?.asset || "", feeAmount: m.fee?.amount || "", feeEur: m.feeEur ?? "", feeSource: m.feeSource || "",
-        realizedGainEur: gains.has(m.id) ? round2(gains.get(m.id)) : "", costMethod: tr.method, costId: m.costId || "", revenueLane: m.revenueLane || "", txHash: m.txHash || "", reference: m.reference, note: m.note, createdBy: m.createdBy,
-      }));
-      return sendCsv(res, `mwz-treasury-movements-${suffix}.csv`, [
-        { key: "occurredAt", label: "occurred_at" }, { key: "kind", label: "kind" }, { key: "from", label: "from_account" }, { key: "to", label: "to_account" },
-        { key: "assetOut", label: "asset_out" }, { key: "amountOut", label: "amount_out" }, { key: "assetIn", label: "asset_in" }, { key: "amountIn", label: "amount_in" },
-        { key: "assetAddress", label: "token_address" }, { key: "valueEur", label: "value_eur" }, { key: "valueSource", label: "value_source" }, { key: "feeAsset", label: "fee_asset" }, { key: "feeAmount", label: "fee_amount" },
-        { key: "feeEur", label: "fee_eur" }, { key: "feeSource", label: "fee_source" }, { key: "realizedGainEur", label: "realized_gain_eur" }, { key: "costMethod", label: "cost_method" },
-        { key: "costId", label: "cost_id" }, { key: "revenueLane", label: "revenue_lane" }, { key: "txHash", label: "tx_hash" }, { key: "reference", label: "reference" }, { key: "note", label: "note" }, { key: "createdBy", label: "created_by" },
-      ], rows);
+      return sendCsv(res, `mwz-treasury-movements-${suffix}.csv`, MOVEMENT_EXPORT_COLUMNS, movementExportRows(await treasury(), from, to));
     }
     return res.status(404).json({ ok: false, error: "Unknown export. Use revenue-events, costs, close-summaries, payouts or treasury-movements." });
+  }
+
+  // ---------------------------------------------------------------- year end
+
+  /**
+   * Market value in EUR of an amount of an asset key at the end of a day: the
+   * Binance 1h close of 23:00 UTC (past days; no spot fallback, so a missing
+   * close stays unknown), $1 for USD and stablecoins, our market data for a
+   * platform coin, at the ECB rate of that day. Today: the current price.
+   */
+  async function valueAtDate(key, amount, date) {
+    const { asset, address } = splitAssetKey(key);
+    if (asset === "EUR" && !address) return { eur: amount, source: "EUR" };
+    const today = todayIso(nowMs());
+    if (date >= today) return marketEur(key, amount, (await fx().rate(null).catch(() => null))?.usdPerEur ?? null);
+    const rate = (await fx().rate(date).catch(() => null))?.usdPerEur ?? null;
+    if (!(rate > 0)) return { eur: null, source: `no ECB rate for ${date}` };
+    if (address) {
+      const p = await tokenPriceAt({ chainId: null, address, at: `${date}T23:59:59.000Z` }).catch(() => null);
+      return p?.priceUsd ? { eur: (amount * p.priceUsd) / rate, source: `${p.source}; ECB ${date}` } : { eur: null, source: `no ${asset} price for ${date} in our market data` };
+    }
+    if (asset === "USD" || asset === "USDC" || asset === "USDT") return { eur: amount / rate, source: `${asset} at $1; ECB ${date}` };
+    const hour = Date.parse(`${date}T23:00:00.000Z`);
+    const closes = typeof prices().hourly === "function" ? await prices().hourly(asset, [hour]).catch(() => new Map()) : new Map();
+    const close = closes.get(hour);
+    return close ? { eur: (amount * close) / rate, source: `Binance ${asset}USDT 1h close ${date} 23:00 UTC; ECB ${date}` } : { eur: null, source: `no ${asset} close for ${date} 23:00 UTC` };
+  }
+
+  /** The year-end view (buildYearEnd) plus what the schedules need from the model. */
+  async function yearEndModel(year) {
+    const w = await weeklyModel();
+    const today = w.today;
+    const { asOf, provisional } = balanceDate(year, today);
+    const [closes, costs, ent] = await Promise.all([listCloses(db(), `${year}-01`, `${year}-12`), listCosts(db()), entity()]);
+    const owedRead = provisional
+      // "Owed now" does not depend on the window: the default window is the one the snapshot cron keeps warm.
+      ? withTimeout(payouts(payoutsDays(undefined)), YEAR_END_TIMEOUT_MS, "The payouts read").catch((error) => ({ error: `The payouts read failed: ${String(error?.message || error).slice(0, 160)}` }))
+      : Promise.resolve({ error: "Money owed to users is only read for the running year (the Payouts read model has no history at 31 December)." });
+    const wallets = w.tr.accounts.filter((a) => a.address && !a.archivedAt);
+    const unmatchedRead = !w.tr.installed || !wallets.length
+      ? Promise.resolve({ unmatched: [], note: "No wallets are recorded on the Treasury page, so outflows cannot be matched." })
+      : withTimeout((deps.unmatchedOutflows || unmatchedOutflows)({ accounts: w.tr.accounts, movements: w.tr.movements, sinceMs: Math.max(Date.parse(`${year}-01-01T00:00:00Z`), nowMs() - 365 * 86_400_000), nowMs: Math.min(nowMs(), Date.parse(`${asOf}T23:59:59Z`)) }), YEAR_END_TIMEOUT_MS, "The unmatched-outflow check")
+        .catch((error) => ({ unmatched: [], note: `The unmatched-outflow check failed: ${String(error?.message || error).slice(0, 160)}` }));
+    const [owed, unmatched] = await Promise.all([owedRead, unmatchedRead]);
+    const view = await buildYearEnd({
+      year,
+      today,
+      rules: w.s.taxRules,
+      vpbOverride: w.s.tax.isDefault ? null : w.s.tax,
+      entity: ent,
+      model: w.model,
+      revDays: w.revDays,
+      usdPerEur: w.usdPerEur,
+      latestUsdPerEur: w.latestRate,
+      costsByMonth: w.costsByMonth,
+      closeMonths: w.months,
+      closes,
+      costs: costs.filter((c) => !c.deletedAt),
+      treasury: { installed: w.tr.installed, accounts: w.tr.accounts, movements: w.tr.movements, taxItems: w.tr.taxItems, lotInputs: w.tr.lotInputs, method: w.tr.method },
+      records: w.records,
+      taxCal: w.taxCal,
+      valueAt: valueAtDate,
+      payouts: owed,
+      chainBalances: provisional ? (w.bal.chains || null) : null,
+      unmatched,
+      notes: w.notes,
+    });
+    if (!w.tr.installed) view.warnings.push({ level: "warning", area: "treasury", text: TREASURY_NOT_INSTALLED });
+    if (!w.recordsInstalled) view.warnings.push({ level: "warning", area: "distributions", text: `Recording distributions needs ${DISTRIBUTIONS_MIGRATION} on this database.` });
+    for (const e of w.bal.errors || []) view.warnings.push({ level: "info", area: "chain", text: e });
+    return { w, view };
+  }
+
+  /** Rows the schedules read besides the view: revenue events (only when asked), costs, movements, closes. */
+  async function yearEndExtra(year, w, { withEvents }) {
+    const from = `${year}-01`;
+    const nowMonth = currentMonth(nowMs());
+    const to = `${year}` === nowMonth.slice(0, 4) ? nowMonth : `${year}-12`;
+    const [events, costRows, closeRows] = await Promise.all([
+      withEvents ? revenueEvents({ fromMonth: from, toMonth: to }) : Promise.resolve({ rows: [], truncated: false }),
+      costExportRows(from, to),
+      closeSummaryRows(from, to),
+    ]);
+    return {
+      revenueEvents: events.rows,
+      revenueEventsTruncated: Boolean(events.truncated),
+      revenueEventColumns: REVENUE_EVENT_COLUMNS,
+      costs: costRows,
+      costColumns: COST_EXPORT_COLUMNS,
+      movements: movementExportRows(w.tr, from, to),
+      movementColumns: MOVEMENT_EXPORT_COLUMNS,
+      closeSummaries: closeRows,
+      closeColumns: CLOSE_SUMMARY_COLUMNS,
+      records: w.records,
+      taxItems: w.tr.taxItems,
+    };
+  }
+
+  async function getYearEnd(req, res, principal) {
+    const query = req.query || {};
+    const year = parseYear(query.year, nowMs());
+    const format = String(query.format || "json").toLowerCase();
+    if (!["json", "csv", "zip"].includes(format)) throw new FinanceInputError("format must be json, csv or zip.", "format");
+    const wanted = format === "csv" ? String(query.schedule || "").replace(/\.csv$/, "") : null;
+    if (format === "csv" && !/^\d{2}-[a-z-]+$/.test(wanted)) throw new FinanceInputError("schedule is required for format=csv (for example 01-profit-and-loss).", "schedule");
+    const { w, view } = await yearEndModel(year);
+    const generatedAt = new Date(nowMs()).toISOString();
+    if (format === "json") {
+      const { _lots, ...json } = view;
+      const schedules = yearEndSchedules(view, {});
+      return res.status(200).json({
+        ...json,
+        generatedAt,
+        source: "dashboard-api",
+        schedules: schedules.map((x) => ({ name: x.name.replace(/\.csv$/, ""), title: x.title, what: x.what })),
+        downloads: { zip: `${BASE}/year-end?year=${year}&format=zip`, csv: `${BASE}/year-end?year=${year}&format=csv&schedule=` },
+        canManage: dashboardPrincipalCan(principal, "finance.manage"),
+      });
+    }
+    const withEvents = format === "zip" || wanted === "06-revenue-events";
+    const extra = await yearEndExtra(year, w, { withEvents });
+    if (extra.revenueEventsTruncated) view.warnings.push({ level: "warning", area: "revenue", text: "The revenue events file is cut off at 20,000 rows per lane; the totals are not affected." });
+    const schedules = yearEndSchedules(view, extra);
+    const suffix = view.provisional ? `${year}-provisional-${view.asOf}` : String(year);
+    if (format === "csv") {
+      const schedule = schedules.find((x) => x.name === `${wanted}.csv`);
+      if (!schedule) throw new FinanceInputError(`Unknown schedule. Use one of: ${schedules.map((x) => x.name.replace(/\.csv$/, "")).join(", ")}.`, "schedule");
+      if (extra.revenueEventsTruncated) res.setHeader("X-Export-Truncated", "1");
+      return sendFile(res, `mwz-year-end-${suffix}-${schedule.name}`, "text/csv; charset=utf-8", scheduleCsv(schedule));
+    }
+    const zip = yearEndZip(view, schedules, { generatedAt, generatedBy: principal.email || null, date: new Date(nowMs()) });
+    return sendFile(res, `mwz-year-end-${suffix}.zip`, "application/zip", zip);
   }
 
   // ---------------------------------------------------------------- router
@@ -2100,6 +2252,7 @@ export function createFinanceAccountingHandler(deps = {}) {
         if (method === "DELETE") return await removeVatCustomer(req, res, actor, parts[2], parts[3]);
         return allow(["PUT", "DELETE"]);
       }
+      if (rel === "year-end") return read ? await getYearEnd(req, res, principal) : allow(["GET"]);
       if (parts[0] === "exports" && parts.length === 2) return read ? await getExport(req, res, parts[1].replace(/\.csv$/, "")) : allow(["GET"]);
       return res.status(404).json({ ok: false, error: "Unknown finance accounting route." });
     } catch (error) {

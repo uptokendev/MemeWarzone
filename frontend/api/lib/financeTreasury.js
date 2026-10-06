@@ -514,7 +514,10 @@ export function runLots({ acquisitions = [], disposals = [], method = "fifo" }) 
   const holdings = {};
   for (const [asset, lots] of pools) {
     const amount = lots.reduce((s, l) => s + l.amount, 0);
-    if (amount > EPS) holdings[asset] = { amount, costEur: lots.reduce((s, l) => s + l.costEur, 0) };
+    if (amount <= EPS) continue;
+    // openLots (not enumerable in JSON output): what is left of each lot, oldest first, for the year-end lot schedule.
+    holdings[asset] = { amount, costEur: lots.reduce((s, l) => s + l.costEur, 0) };
+    Object.defineProperty(holdings[asset], "openLots", { value: lots.filter((l) => l.amount > EPS).map((l) => ({ date: l.date, amount: l.amount, costEur: l.costEur })), enumerable: false });
   }
   return { disposals: results, holdings, uncovered };
 }
