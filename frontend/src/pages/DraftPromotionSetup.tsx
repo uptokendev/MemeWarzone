@@ -573,8 +573,9 @@ export default function DraftPromotionSetup() {
             <p className="mt-2 text-[13px] leading-5 text-mw-muted">Image, mission, launch plan, one comms channel, and visibility.</p>
             {isSolanaDraft ? <p className="mt-2 text-[13px] leading-5 text-mw-muted">Solana promotion setup uses Solana wallet signatures. After publish, Push Live deploys the campaign on Solana (V4 authorized create).</p> : null}
             <Button onClick={() => save({ publish: true })} disabled={saving || uploadingLogo || !ownerConnected} className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-3 w-full">
-              <Rocket className="h-4 w-4" /> Publish promotion
+              <Rocket className="h-4 w-4" /> Publish Promotion Page
             </Button>
+            <p className="mt-1.5 text-center text-xs text-mw-muted">(this is not a coin deploy)</p>
             {canPushLive && (
               DRAFT_PUSH_LIVE_ENABLED ? (
                 <Button asChild className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-2 w-full">
