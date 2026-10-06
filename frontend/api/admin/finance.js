@@ -15,6 +15,8 @@ import { effectiveDistributionSettings } from "../lib/financeAccountingDistribut
 import { buildFinanceSummary, cachedFinanceSummary, summaryMonths } from "../lib/financeSummary.js";
 import financeAccounting, { isFinanceAccountingPath } from "./financeAccounting.js";
 import { sharedRevenueLanes, summaryRevenueLanes, valueRevenueLanes } from "../lib/financeRevenueLanes.js";
+import { ageSnapshotMeta, runWithSnapshotUsage, snapshotCacheFor, snapshotKeys, snapshotMeta, trackSnapshots } from "../lib/financeSnapshots.js";
+import { refreshFinanceSnapshots } from "../lib/financeSnapshotJobs.js";
 
 // Finance shows mainnets only (founder decision 2026-10-04): nothing is earned
 // on a testnet. chainId=all reads all three and adds a cross-chain total.
@@ -512,7 +514,12 @@ function indexerHeaders() {
   return opsKey ? { Accept: "application/json", "x-ops-key": opsKey } : { Accept: "application/json" };
 }
 
-async function readIndexerLpFees(network) {
+// The indexer LP read from the stored snapshot (rebuilt by cron:finance-snapshots).
+function readIndexerLpFees(network) {
+  return snapshotCacheFor(pool).get(snapshotKeys.indexerLp(network), "indexer-lp", () => readIndexerLpFeesLive(network));
+}
+
+export async function readIndexerLpFeesLive(network) {
   if (!INDEXER_BASE) throw new Error("Indexer base URL is not configured.");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
@@ -948,16 +955,26 @@ export async function financeSummary(req, res, { build = defaultSummaryBuild } =
   }
   try {
     const months = summaryMonths(req.query?.months);
-    const payload = await cachedFinanceSummary(`months:${months}`, () => build(months));
+    const payload = build === defaultSummaryBuild
+      ? await snapshotCacheFor(pool).get(snapshotKeys.summary(months), "summary", () => build(months))
+      : await cachedFinanceSummary(`months:${months}`, () => build(months));
     res.setHeader("Cache-Control", "private, max-age=60");
-    return res.status(200).json(payload);
+    return res.status(200).json(payload?.snapshot ? { ...payload, snapshot: ageSnapshotMeta(payload.snapshot) } : payload);
   } catch (error) {
     console.error("[api/admin/finance/summary]", error);
     return res.status(500).json({ ok: false, error: "Finance summary read failed." });
   }
 }
 
-function defaultSummaryBuild(months) {
+// The summary is stored as a whole (snapshot summary:<months>, rebuilt by the
+// cron), so it carries the snapshot block of the chain reads it was built from.
+export async function defaultSummaryBuild(months) {
+  const { value, used } = await trackSnapshots(() => summaryBuild(months));
+  const meta = snapshotMeta(used);
+  return meta ? { ...value, snapshot: meta } : value;
+}
+
+function summaryBuild(months) {
   const prices = defaultPriceService();
   const days = feeRoutingDays(undefined);
   return buildFinanceSummary({
@@ -988,8 +1005,71 @@ function defaultSummaryBuild(months) {
   });
 }
 
+/**
+ * GET  /api/admin/finance/snapshots          when each stored chain read was built (finance.view)
+ * POST /api/admin/finance/snapshots/refresh  rebuild them now (finance.manage), body {chainId?}
+ * Bearer only, like fee routing. The refresh reads the chain (view calls only) and stores the result.
+ */
+export async function financeSnapshots(req, res, { db = pool, refresh = refreshFinanceSnapshots } = {}) {
+  const routePath = String(req.path || new URL(req.url, "http://localhost").pathname).replace(/\/+$/, "");
+  const method = String(req.method || "GET").toUpperCase();
+  if (!req.dashboardPrincipal || !dashboardPrincipalCan(req.dashboardPrincipal, "finance.view")) {
+    return res.status(401).json({ ok: false, error: "Dashboard sign-in with finance.view is required.", code: "FINANCE_VIEW_REQUIRED" });
+  }
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    if (routePath === "/api/admin/finance/snapshots") {
+      if (method !== "GET" && method !== "HEAD") {
+        res.setHeader("Allow", "GET");
+        return res.status(405).json({ ok: false, error: "Method not allowed." });
+      }
+      return res.status(200).json({ ok: true, ...(await snapshotCacheFor(db).list()) });
+    }
+    if (routePath === "/api/admin/finance/snapshots/refresh") {
+      if (method !== "POST") {
+        res.setHeader("Allow", "POST");
+        return res.status(405).json({ ok: false, error: "Refresh requires POST." });
+      }
+      if (!dashboardPrincipalCan(req.dashboardPrincipal, "finance.manage")) {
+        return res.status(403).json({ ok: false, error: "finance.manage is required to refresh the chain reads.", code: "FINANCE_MANAGE_REQUIRED" });
+      }
+      const raw = String(req.body?.chainId ?? req.query?.chainId ?? "all").trim().toLowerCase();
+      const chainIds = raw === "" || raw === "all" ? null : [Number(raw)];
+      if (chainIds && !FINANCE_MAINNETS.some((n) => n.chainId === chainIds[0])) {
+        return res.status(400).json({ ok: false, error: FINANCE_SCOPE_ERROR });
+      }
+      const { apiLpFeesSnapshotKey, lpFeesSnapshotBuild } = await import("../dashboard/lp-fees.js");
+      const result = await refresh({ db, chainIds, readIndexerLp: readIndexerLpFeesLive, readApiLpFees: { key: apiLpFeesSnapshotKey, build: (q) => lpFeesSnapshotBuild(q) }, buildSummary: chainIds ? null : defaultSummaryBuild, timeoutMs: 100_000 });
+      return res.status(200).json({ ok: true, ...result });
+    }
+    return res.status(404).json({ ok: false, error: "Unknown finance admin route." });
+  } catch (error) {
+    console.error("[api/admin/finance/snapshots]", error);
+    return res.status(500).json({ ok: false, error: "Finance snapshot request failed." });
+  }
+}
+
+/**
+ * Every finance response says how old its chain data is: `snapshot` (asOf,
+ * ageSeconds, stale, sources) when the request read any stored chain snapshot.
+ * Added to object payloads only; the figures are untouched.
+ */
 export default async function financeAdmin(req, res) {
+  const used = [];
+  const json = typeof res.json === "function" ? res.json.bind(res) : null;
+  if (json) {
+    res.json = (payload) => {
+      const meta = snapshotMeta(used);
+      const plain = payload && typeof payload === "object" && !Array.isArray(payload) && payload.ok !== false && payload.snapshot === undefined;
+      return json(meta && plain ? { ...payload, snapshot: meta } : payload);
+    };
+  }
+  return runWithSnapshotUsage(used, () => financeAdminRoutes(req, res));
+}
+
+async function financeAdminRoutes(req, res) {
   const routePath = String(req.path || new URL(req.url, "http://localhost").pathname);
+  if (routePath === "/api/admin/finance/snapshots" || routePath.startsWith("/api/admin/finance/snapshots/")) return financeSnapshots(req, res);
   if (routePath === "/api/admin/finance/fee-routing") return financeFeeRouting(req, res);
   // Payouts overview (read-only, bearer + finance.view): api/lib/financePayouts.js.
   if (routePath === "/api/admin/finance/payouts") return financePayouts(req, res, { db: pool, canView: (p) => dashboardPrincipalCan(p, "finance.view") });

@@ -33,6 +33,7 @@ import { destinationOwnership } from "./financeFeeRoutingOwnership.js";
 import { buildTotals, defaultPriceService, priceAssetFor } from "./financePrices.js";
 import { notPublicHiddenCampaignSql } from "./publicHiddenSql.js";
 import { preStartCoinsText, readRouterScan, routerScanVerdict } from "./financeRouterScan.js";
+import { snapshotCacheFor, snapshotKeys } from "./financeSnapshots.js";
 
 export const FEE_ROUTING_SCHEMA = "finance-fee-routing-v1";
 const DEFAULT_DAYS = 30;
@@ -681,13 +682,34 @@ export async function buildFeeRouting({ network, days, db, env = process.env, fe
   };
 }
 
+/**
+ * Fee routing for the finance pages: the stored snapshot (public.finance_snapshots,
+ * rebuilt in the background by cron:finance-snapshots), so a page never waits on
+ * the RPC reads. Without a database handle (tests, scripts) it is a 60 s
+ * process cache shared by concurrent callers, as before.
+ */
 export async function cachedFeeRouting(args) {
+  if (args.db && typeof args.db.query === "function" && !args.readers && !args.fetchImpl) {
+    return snapshotCacheFor(args.db).get(snapshotKeys.feeRouting(args.network, args.days), "fee-routing", () => buildFeeRouting(args));
+  }
   const key = `${args.network.chainId}:${args.network.cluster || ""}:${args.days}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
-  const value = await buildFeeRouting(args);
-  cache.set(key, { at: Date.now(), value });
-  return value;
+  if (hit && (hit.pending || Date.now() - hit.at < CACHE_TTL_MS)) return hit.pending || hit.value;
+  const pending = buildFeeRouting(args);
+  cache.set(key, { pending, at: 0 });
+  try {
+    const value = await pending;
+    cache.set(key, { at: Date.now(), value });
+    return value;
+  } catch (error) {
+    cache.delete(key);
+    throw error;
+  }
+}
+
+/** Rebuilds the fee-routing snapshot now (cron and "Refresh now"). */
+export function refreshFeeRoutingSnapshot(args) {
+  return snapshotCacheFor(args.db).refresh(snapshotKeys.feeRouting(args.network, args.days), "fee-routing", () => buildFeeRouting(args));
 }
 
 export function clearFeeRoutingCache() {

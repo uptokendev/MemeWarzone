@@ -8,9 +8,8 @@
 import { pool } from "../../server/db.js";
 import { normalizeSolanaCluster } from "../../shared/solanaCurrentAuthority.mjs";
 import { atomicToDecimal, cachedFeeRouting, feeRoutingAllNetworks } from "./financeFeeRouting.js";
-import { readNativeUpvoteRevenue } from "./financeVoteRevenue.js";
 import { mergeTotals, priceAssetFor } from "./financePrices.js";
-import { laneDecimals, revenueLaneEvents, sharedRevenueLanes } from "./financeRevenueLanes.js";
+import { laneDecimals, revenueLaneEvents, sharedRevenueLanes, snapshotUpvoteApproval } from "./financeRevenueLanes.js";
 import { notPublicHiddenCampaignSql } from "./publicHiddenSql.js";
 import { addMonths, monthOf, roundUsd } from "./financeAccountingCosts.js";
 
@@ -67,7 +66,7 @@ function groupByMonth(buckets) {
 }
 
 // The UP vote check of the shared lanes, from the injected `upvotes` reader
-// (financeVoteRevenue.readNativeUpvoteRevenue by default). Solana votes always
+// (the stored fee-receiver check, financeRevenueLanes.snapshotUpvoteApproval, by default). Solana votes always
 // count (founder 2026-10-04), as on /revenue.
 function upvoteApprovalFrom(upvotes) {
   return async (network) => {
@@ -84,7 +83,7 @@ function upvoteApprovalFrom(upvotes) {
  * Close, the tax reserve and Summary agree month by month.
  * @returns {Promise<{months: Record<string, {totalUsd:number|null, lanes:object[]}>, notes:string[], excludedTestCoinEvents:number}>}
  */
-export async function monthlyRevenue({ fromMonth, toMonth, db = pool, prices, upvotes = readNativeUpvoteRevenue, networks = accountingNetworks(), env = process.env, readLanes = sharedRevenueLanes }) {
+export async function monthlyRevenue({ fromMonth, toMonth, db = pool, prices, upvotes = snapshotUpvoteApproval(db), networks = accountingNetworks(), env = process.env, readLanes = sharedRevenueLanes }) {
   const { start, end } = windowBounds(fromMonth, toMonth);
   const startMs = Date.parse(start);
   const endMs = Date.parse(end);
@@ -97,14 +96,18 @@ export async function monthlyRevenue({ fromMonth, toMonth, db = pool, prices, up
     lanesByMonth.set(month, list);
   };
 
-  for (const network of networks) {
+  // The chains are read together; the results are applied in chain order as before.
+  const reads = await Promise.all(networks.map((network) => (solanaRowsAreMainnet(network, env)
+    ? Promise.all([readLanes(db, network, { upvoteApproval: upvoteApprovalFrom(upvotes) }), excludedCount(db, network, start, end)])
+    : null)));
+  for (const [index, network] of networks.entries()) {
     if (!solanaRowsAreMainnet(network, env)) {
       notes.push("This API reads the test database, whose chain 101 rows are Solana devnet, so Solana revenue is left out here. Mainnet revenue is on the live API.");
       continue;
     }
-    const shared = await readLanes(db, network, { upvoteApproval: upvoteApprovalFrom(upvotes) });
+    const [shared, excludedHere] = reads[index];
     notes.push(...(shared.notes || []));
-    excluded += await excludedCount(db, network, start, end);
+    excluded += excludedHere;
     for (const lane of shared.lanes) {
       const decimals = laneDecimals(lane, network);
       const buckets = lane.buckets
@@ -149,17 +152,20 @@ export async function monthlyRevenue({ fromMonth, toMonth, db = pool, prices, up
  * applied per revenue lane.
  * @returns {Promise<{days: Record<string, {totalUsd:number|null, lanes:object[]}>, notes:string[]}>}
  */
-export async function dailyRevenue({ fromDate, toDate, db = pool, prices, upvotes = readNativeUpvoteRevenue, networks = accountingNetworks(), env = process.env, readLanes = sharedRevenueLanes }) {
+export async function dailyRevenue({ fromDate, toDate, db = pool, prices, upvotes = snapshotUpvoteApproval(db), networks = accountingNetworks(), env = process.env, readLanes = sharedRevenueLanes }) {
   const startMs = Date.parse(`${fromDate}T00:00:00.000Z`);
   const endMs = Date.parse(`${toDate}T00:00:00.000Z`) + 24 * HOUR_MS;
   const byDay = new Map();
   const notes = [];
-  for (const network of networks) {
+  const reads = await Promise.all(networks.map((network) => (solanaRowsAreMainnet(network, env)
+    ? readLanes(db, network, { upvoteApproval: upvoteApprovalFrom(upvotes) })
+    : null)));
+  for (const [index, network] of networks.entries()) {
     if (!solanaRowsAreMainnet(network, env)) {
       notes.push("This API reads the test database, whose chain 101 rows are Solana devnet, so Solana revenue is left out here. Mainnet revenue is on the live API.");
       continue;
     }
-    const shared = await readLanes(db, network, { upvoteApproval: upvoteApprovalFrom(upvotes) });
+    const shared = reads[index];
     notes.push(...(shared.notes || []));
     for (const lane of shared.lanes) {
       const decimals = laneDecimals(lane, network);
@@ -205,7 +211,7 @@ export async function dailyRevenue({ fromDate, toDate, db = pool, prices, upvote
  * shared revenue lane (same filters, amounts and test-coin rule as /revenue),
  * each at its hour's price. Capped per lane; `truncated` says so.
  */
-export async function revenueEventRows({ fromMonth, toMonth, db = pool, prices, fx, upvotes = readNativeUpvoteRevenue, networks = accountingNetworks(), env = process.env, readEvents = revenueLaneEvents }) {
+export async function revenueEventRows({ fromMonth, toMonth, db = pool, prices, fx, upvotes = snapshotUpvoteApproval(db), networks = accountingNetworks(), env = process.env, readEvents = revenueLaneEvents }) {
   const { start, end } = windowBounds(fromMonth, toMonth);
   const raw = [];
   const notes = [];

@@ -38,6 +38,7 @@
 // campaign is left out; a row without a campaign passes.
 
 import { publicHiddenWhere } from "./publicHiddenSql.js";
+import { snapshotCacheFor, snapshotKeys } from "./financeSnapshots.js";
 
 export const USD_CENTS_DECIMALS = 2;
 
@@ -323,9 +324,26 @@ export function laneDefinitions(network, { includeCore = false } = {}) {
  */
 async function defaultUpvoteApproval(network) {
   if (network.chain === "solana") return { approved: true, reason: null };
-  const { readNativeUpvoteRevenue } = await import("./financeVoteRevenue.js");
-  const result = await readNativeUpvoteRevenue(network);
+  const { readUpvoteFeeReceiverApproval } = await import("./financeVoteRevenue.js");
+  const result = await readUpvoteFeeReceiverApproval(network);
   return { approved: Boolean(result?.approved), reason: result?.reason || null, message: result?.message || null };
+}
+
+/**
+ * The approval from the stored snapshot (finance_snapshots, rebuilt by
+ * cron:finance-snapshots), so a revenue read does not wait on the view call.
+ * A failed check is not stored: it throws, as before.
+ */
+export function snapshotUpvoteApproval(db) {
+  return (network) => {
+    if (network.chain === "solana" || !db || typeof db.query !== "function") return defaultUpvoteApproval(network);
+    return snapshotCacheFor(db).get(snapshotKeys.upvoteApproval(network), "upvote-approval", () => defaultUpvoteApproval(network));
+  };
+}
+
+/** Rebuilds the stored approval now (cron). */
+export function refreshUpvoteApprovalSnapshot(db, network) {
+  return snapshotCacheFor(db).refresh(snapshotKeys.upvoteApproval(network), "upvote-approval", () => defaultUpvoteApproval(network));
 }
 
 const CHAIN_NAMES = Object.freeze({ 101: "Solana", 56: "BNB", 4663: "Robinhood" });
@@ -347,38 +365,79 @@ export function upvoteNote(network, approval) {
  * logged and drops only that lane.
  * @returns {Promise<{lanes: object[], excludedEvents: number, notes: string[]}>}
  */
-export async function sharedRevenueLanes(db, network, { upvoteApproval = defaultUpvoteApproval, log = console } = {}) {
+export async function sharedRevenueLanes(db, network, { upvoteApproval = snapshotUpvoteApproval(db), log = console } = {}) {
   const lanes = [];
   const notes = [];
   let excludedEvents = 0;
-  for (const def of laneDefinitions(network, { includeCore: true })) {
-    try {
-      if (def.vote) {
-        const approval = await upvoteApproval(network);
-        if (!approval?.approved) {
-          notes.push(upvoteNote(network, approval));
-          continue;
-        }
-      }
-      const { rows } = await db.query(LANE_QUERIES[def.key], [network.chainId]);
-      const lane = laneFromHourlyRows(rows, def);
+  // The lane queries are independent: they run a few at a time and are then
+  // applied in definition order, with the same rules as one by one.
+  const defs = laneDefinitions(network, { includeCore: true });
+  const reads = await mapSettled(defs, LANE_QUERY_CONCURRENCY, async (def) => {
+    if (def.vote) {
+      const approval = await upvoteApproval(network);
+      if (!approval?.approved) return { denied: approval };
+    }
+    const { rows } = await laneQuery(db, def.key, network.chainId);
+    return { rows };
+  });
+  for (const [index, def] of defs.entries()) {
+    const read = reads[index];
+    if (read.status === "fulfilled") {
+      if (read.value.denied !== undefined) { notes.push(upvoteNote(network, read.value.denied)); continue; }
+      const lane = laneFromHourlyRows(read.value.rows, def);
       if (lane) lanes.push(lane);
-    } catch (error) {
-      if (isSchemaMissing(error)) continue;
-      if (def.key === "bonding") throw error;
-      log.warn?.(`[finance/revenue] ${def.key} lane omitted`, error?.message || error);
-      if (def.vote) notes.push(`UP vote revenue on chain ${network.chainId} could not be read (${String(error?.message || error).slice(0, 120)}).`);
+      continue;
     }
+    const error = read.reason;
+    if (isSchemaMissing(error)) continue;
+    if (def.key === "bonding") throw error;
+    log.warn?.(`[finance/revenue] ${def.key} lane omitted`, error?.message || error);
+    if (def.vote) notes.push(`UP vote revenue on chain ${network.chainId} could not be read (${String(error?.message || error).slice(0, 120)}).`);
   }
-  for (const key of ["bonding_excluded", "arena_boosts_excluded"]) {
-    try {
-      const { rows } = await db.query(LANE_QUERIES[key], [network.chainId]);
-      excludedEvents += Number(rows?.[0]?.n || 0);
-    } catch (error) {
-      if (!isSchemaMissing(error)) log.warn?.(`[finance/revenue] ${key} count omitted`, error?.message || error);
-    }
+  const counts = await mapSettled(["bonding_excluded", "arena_boosts_excluded"], 2, (key) => laneQuery(db, key, network.chainId));
+  for (const [index, key] of ["bonding_excluded", "arena_boosts_excluded"].entries()) {
+    const read = counts[index];
+    if (read.status === "fulfilled") excludedEvents += Number(read.value.rows?.[0]?.n || 0);
+    else if (!isSchemaMissing(read.reason)) log.warn?.(`[finance/revenue] ${key} count omitted`, read.reason?.message || read.reason);
   }
   return { lanes, excludedEvents, notes };
+}
+
+const LANE_QUERY_CONCURRENCY = 4;
+
+// On the API pool, one lane query result is shared for 20 s: a weekly or tax
+// read asks for the same lanes (full history, one chain) several times in one
+// request, and Overview, Revenue and Summary ask together. Other handles
+// (tests, scripts) always query.
+const LANE_MEMO_MS = 20_000;
+const laneMemo = new Map();
+function laneQuery(db, key, chainId) {
+  if (!db || db !== globalThis.__memewarzone_pool) return db.query(LANE_QUERIES[key], [chainId]);
+  const memoKey = `${key}:${chainId}`;
+  const hit = laneMemo.get(memoKey);
+  if (hit && Date.now() - hit.at < LANE_MEMO_MS) return hit.promise;
+  const promise = db.query(LANE_QUERIES[key], [chainId]);
+  laneMemo.set(memoKey, { at: Date.now(), promise });
+  promise.catch(() => { if (laneMemo.get(memoKey)?.promise === promise) laneMemo.delete(memoKey); });
+  return promise;
+}
+
+/** Promise.allSettled with at most `limit` running at once; results in input order. */
+async function mapSettled(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next++;
+      try {
+        results[index] = { status: "fulfilled", value: await fn(items[index], index) };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /** The lanes added by this module only (no bonding / UP votes). */
@@ -403,7 +462,7 @@ async function countArenaExcluded(db, network, { log = console } = {}) {
  * revenue CSV. Same specs (filters, amounts, test coins) as the hourly lanes.
  * @returns {Promise<{events: object[], notes: string[], truncated: boolean}>}
  */
-export async function revenueLaneEvents(db, network, { start, end, maxRowsPerLane, upvoteApproval = defaultUpvoteApproval, log = console } = {}) {
+export async function revenueLaneEvents(db, network, { start, end, maxRowsPerLane, upvoteApproval = snapshotUpvoteApproval(db), log = console } = {}) {
   const events = [];
   const notes = [];
   let truncated = false;

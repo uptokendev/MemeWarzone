@@ -388,8 +388,11 @@ export function createFinanceAccountingHandler(deps = {}) {
     const allCosts = costs || (await listCosts(db()));
     const taxRules = rules || yearTaxRules(await settings(), year);
     const openMonths = months.filter((m) => closes.get(m)?.status !== "closed");
-    const live = openMonths.length ? await revenue({ fromMonth: openMonths[0], toMonth: openMonths[openMonths.length - 1] }) : { months: {}, notes: [] };
-    const tr = openMonths.length ? await treasury({ costs: allCosts }) : null;
+    // Revenue and treasury are independent reads: together.
+    const [live, tr] = await Promise.all([
+      openMonths.length ? revenue({ fromMonth: openMonths[0], toMonth: openMonths[openMonths.length - 1] }) : { months: {}, notes: [] },
+      openMonths.length ? treasury({ costs: allCosts }) : null,
+    ]);
 
     const rows = [];
     for (const month of months) {
@@ -880,9 +883,8 @@ export function createFinanceAccountingHandler(deps = {}) {
 
   /** Everything the weekly view needs, computed once. */
   async function weeklyModel() {
-    const s = await settings();
+    const [s, costs] = await Promise.all([settings(), listCosts(db())]);
     const today = todayIso(nowMs());
-    const costs = await listCosts(db());
     const live = costs.filter((c) => !c.deletedAt);
     const [rev, recs, bal] = await Promise.all([
       (deps.dailyRevenue || dailyRevenue)({ db: db(), prices: prices(), fromDate: `${FIRST_MONTH}-01`, toDate: today }),
@@ -895,9 +897,14 @@ export function createFinanceAccountingHandler(deps = {}) {
     const months = new Map();
     const costsByMonth = new Map();
     const snapshotTreasury = new Map();
-    for (let year = firstYear; year <= Number(today.slice(0, 4)); year += 1) {
-      const data = await buildYear(year, { rules: yearTaxRules(s, year), costs });
-      const closes = await listCloses(db(), `${year}-01`, `${year}-12`);
+    // Every year is read together; the results are applied in year order as before.
+    const years = [];
+    for (let year = firstYear; year <= Number(today.slice(0, 4)); year += 1) years.push(year);
+    const perYear = await Promise.all(years.map((year) => Promise.all([
+      buildYear(year, { rules: yearTaxRules(s, year), costs }),
+      listCloses(db(), `${year}-01`, `${year}-12`),
+    ])));
+    for (const [data, closes] of perYear) {
       for (const m of data.months) {
         if (m.month < fromDate.slice(0, 7)) continue;
         months.set(m.month, { status: m.status, revenueUsd: m.revenueUsd, costsUsd: m.costsUsd });

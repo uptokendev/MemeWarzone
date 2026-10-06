@@ -35,6 +35,19 @@ export function upvoteRevenueAddresses(network, { readEnv = configuredAddress } 
 }
 
 export async function readNativeUpvoteRevenue(network, { readFeeReceiver } = {}) {
+  const approval = await readUpvoteFeeReceiverApproval(network, { readFeeReceiver });
+  if (!approval.approved) return approval;
+  const aggregate = await hourlyNativeVotes(network.chainId, ethers.ZeroAddress);
+  if (!aggregate) return { approved: true, aggregate: null, reason: null };
+  return { approved: true, reason: null, aggregate };
+}
+
+/**
+ * The fee-receiver check of readNativeUpvoteRevenue alone (one view call, no
+ * vote query): { approved, aggregate: null, reason, message? }. The revenue
+ * lanes only need this answer; they read the votes themselves.
+ */
+export async function readUpvoteFeeReceiverApproval(network, { readFeeReceiver } = {}) {
   if (network.chain !== "bnb" && network.chain !== "robinhood") return { approved: false, aggregate: null, reason: "CHAIN_NOT_SUPPORTED" };
 
   const { voteTreasury, protocolRevenueVault } = upvoteRevenueAddresses(network);
@@ -58,10 +71,7 @@ export async function readNativeUpvoteRevenue(network, { readFeeReceiver } = {})
       message: `the UP vote treasury ${voteTreasury} pays ${receiver}, not the protocol revenue vault ${protocolRevenueVault}`,
     };
   }
-
-  const aggregate = await hourlyNativeVotes(network.chainId, ethers.ZeroAddress);
-  if (!aggregate) return { approved: true, aggregate: null, reason: null };
-  return { approved: true, reason: null, aggregate };
+  return { approved: true, aggregate: null, reason: null };
 }
 
 // Solana paid UP votes: a plain System transfer to the vote treasury with memo

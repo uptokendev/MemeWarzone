@@ -52,6 +52,7 @@
     "cron:dbc-warm-configs": "node --import ./api/load-local-env.mjs scripts/dbc-warm-configs.mjs",
     "cron:notification-scan": "node scripts/run-notification-scan.mjs",
     "cron:notification-digest": "node scripts/run-notification-digest.mjs",
+    "cron:finance-snapshots": "node scripts/run-finance-snapshots.mjs",
     "verify:quote-catalog": "node scripts/verify-quote-catalog.mjs",
     "test:graduation-market": "node --test src/lib/graduationMarketPresentation.test.mjs src/lib/graduationMarketCreateRegression.test.mjs src/lib/graduationBindingRisks.test.mjs api/lib/quoteAssetCatalog.test.mjs api/lib/draftGraduationQuoteSelection.test.mjs",
     "test:e2e:isolation": "playwright test -c playwright.config.ts",
