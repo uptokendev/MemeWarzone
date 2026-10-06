@@ -2,6 +2,11 @@ import crypto from "crypto";
 import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, isSolanaChain, normalizeAddress, json, readJson } from "../server/http.js";
+import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
+
+// Profile saves ride on the 30-day sign-in when the client sends it (founder, 2026-10-06: only moving
+// money asks for its own signature). Without a session the signed save below still works.
+const feedSession = pool ? createFeedSessionAuth({ pool }) : null;
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -405,6 +410,24 @@ export default async function handler(req, res) {
       if (!address) return json(res, 400, { error: "Invalid address" });
       if (isSol && !isSolanaAddress(address)) return json(res, 400, { error: "Invalid address" });
       if (!isSol && !isAddress(address)) return json(res, 400, { error: "Invalid address" });
+      const bearer = /^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""));
+      if (bearer && Number(b.version) === 2) {
+        if (!feedSession) return json(res, 500, { error: "Server misconfigured: DATABASE_URL missing" });
+        const session = await feedSession.requireSession(req, res);
+        if (!session) return;
+        const sessionWallet = String(session.walletAddress || "").trim();
+        const same = isSol ? sessionWallet === address : sessionWallet.toLowerCase() === address.toLowerCase();
+        if (!same) return json(res, 403, { error: "Session wallet does not match this profile." });
+        const links = normalizeProfileLinks(b);
+        try {
+          await upsertUserProfileV2(chainId, address, { displayName, avatarUrl, bio, ...links }, !isSol);
+        } catch (e) {
+          if (e?.code === "42703") return json(res, 503, { error: "Profile links need a database update first.", code: "PROFILE_LINKS_UNAVAILABLE" });
+          throw e;
+        }
+        return json(res, 200, { ok: true, version: 2, ...links });
+      }
+
       if (!nonce) return json(res, 400, { error: "Nonce missing" });
       if (!signature) return json(res, 400, { error: "Signature missing" });
       if (!pool) return json(res, 500, { error: "Server misconfigured: DATABASE_URL missing" });

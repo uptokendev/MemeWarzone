@@ -13,7 +13,7 @@ function isSolanaChain(chainId?: number | null) {
 export async function uploadProfileImage(
   file: File,
   kind: "avatar" | "profile_banner",
-  opts: { chainId: number; address: string; signer?: { signMessage: (m: string) => Promise<string> } | null },
+  opts: { chainId: number; address: string; signer?: { signMessage: (m: string) => Promise<string> } | null; sessionToken?: string | null },
 ): Promise<string> {
   const maxBytes = (kind === "avatar" ? 3 : 5) * 1024 * 1024;
   if (file.size > maxBytes) throw new Error(`Image must be <= ${kind === "avatar" ? 3 : 5} MB.`);
@@ -24,6 +24,15 @@ export async function uploadProfileImage(
   const fd = new FormData();
   fd.append("file", file);
   const qs = new URLSearchParams({ kind, chainId: String(opts.chainId), address: addr });
+
+  // With the 30-day sign-in no extra signature is asked (founder, 2026-10-06).
+  if (opts.sessionToken) {
+    const res = await apiFetch(`/api/upload?${qs.toString()}`, { method: "POST", body: fd, headers: { Authorization: `Bearer ${opts.sessionToken}` } });
+    const j = await res.json().catch(() => null);
+    if (!res.ok) throw Object.assign(new Error(j?.error || `Upload failed (${res.status})`), { code: j?.code });
+    if (!j?.url) throw new Error("Upload did not return a URL.");
+    return String(j.url);
+  }
 
   const { signWalletAction } = await import("@/lib/walletActionAuth");
   const auth = sol

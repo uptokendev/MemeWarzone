@@ -190,8 +190,30 @@ export async function saveUserProfileV2(input: {
   avatarUrl: string | null;
   links: ProfileLinks;
   sign: (message: string) => Promise<string>;
+  /** The 30-day sign-in: saves without asking for another signature (founder, 2026-10-06). */
+  sessionToken?: string | null;
 }): Promise<void> {
   const address = normalizeAddress(input.address, input.chainId);
+  if (input.sessionToken) {
+    const res = await apiFetch(`/api/profile`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${input.sessionToken}` },
+      body: JSON.stringify({
+        version: 2,
+        chainId: input.chainId,
+        address,
+        displayName: input.displayName,
+        avatarUrl: input.avatarUrl,
+        bio: input.bio,
+        ...input.links,
+      }),
+    });
+    if (!res.ok) {
+      const j = await readJson(res);
+      throw Object.assign(new Error(j?.error || `Failed to save profile (${res.status})`), { code: j?.code });
+    }
+    return;
+  }
   const nonce = await requestNonce(input.chainId, address);
   const message = buildProfileMessageV2({
     chainId: input.chainId,

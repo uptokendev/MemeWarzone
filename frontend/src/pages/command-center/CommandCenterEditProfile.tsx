@@ -32,6 +32,23 @@ export default function CommandCenterEditProfile() {
     }
   }
 
+  // Signs in first when needed, so no signature comes right after the photo picker (founder, 2026-10-06).
+  function beforePick(): true | Promise<boolean> {
+    const ready = editor.readyForUpload();
+    if (ready === true) return true;
+    return ready.then((ok) => {
+      if (ok) toast.success("Signed in for 30 days. Pick your image.");
+      else toast.error("Signature cancelled.");
+      return ok;
+    });
+  }
+
+  function openAvatarPicker() {
+    const ready = beforePick();
+    if (ready === true) avatarRef.current?.click();
+    else void ready.then((ok) => ok && avatarRef.current?.click());
+  }
+
   async function save() {
     try {
       await editor.save();
@@ -63,6 +80,7 @@ export default function CommandCenterEditProfile() {
           onPick={(file) => void pick(file, "banner")}
           onPosition={(y) => set({ bannerPositionY: y })}
           onRemove={() => set({ bannerUrl: "", bannerPositionY: 50 })}
+          beforePick={beforePick}
         />
         ) : null}
 
@@ -70,7 +88,7 @@ export default function CommandCenterEditProfile() {
           <div className="h-20 w-20 shrink-0 overflow-hidden rounded-full border border-mw-border bg-mw-input">
             {draft.avatarUrl ? <img src={draft.avatarUrl} alt="Profile picture" className="h-full w-full object-cover" /> : <OperativeMark fill />}
           </div>
-          <button type="button" className={cp.btn} disabled={editor.uploading === "avatar"} onClick={() => avatarRef.current?.click()}>
+          <button type="button" className={cp.btn} disabled={editor.uploading === "avatar"} onClick={openAvatarPicker}>
             <ImagePlus className="h-4 w-4" aria-hidden="true" />
             {editor.uploading === "avatar" ? "Uploading..." : "Change picture"}
           </button>
@@ -145,7 +163,7 @@ export default function CommandCenterEditProfile() {
             </button>
           </div>
         </div>
-        <p className="m-0 text-xs text-mw-muted">Saving asks your wallet to sign a message. No transaction, no fee. The same profile shows on every chain.</p>
+        <p className="m-0 text-xs text-mw-muted">Saving uses your 30-day sign-in. If you are not signed in yet, your wallet asks for one signature. No transaction, no fee. The same profile shows on every chain.</p>
       </CommandCenterCard>
     </div>
   );

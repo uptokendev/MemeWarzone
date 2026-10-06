@@ -3,6 +3,15 @@ import { useWallet } from "@/contexts/WalletContext";
 import { buildProfileMessage, fetchUserProfile, normalizeProfileLinks, requestNonce, saveUserProfile, saveUserProfileV2, type UserProfile } from "@/lib/profileApi";
 import { uploadProfileImage } from "@/lib/profileUpload";
 import { signSolanaMessage } from "@/lib/solanaWallet";
+import { useFeedSession } from "@/hooks/useFeedSession";
+import { readStoredFeedSession } from "@/lib/feedSession";
+
+function sameWallet(a?: string | null, b?: string | null) {
+  const x = String(a || "").trim();
+  const y = String(b || "").trim();
+  if (!x || !y) return false;
+  return x.startsWith("0x") || y.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
 
 export type ProfileDraft = {
   displayName: string;
@@ -42,6 +51,10 @@ function toDraft(p: UserProfile | null): ProfileDraft {
  */
 export function useProfileEditor(walletAddress: string | null | undefined, chainId: number | null | undefined) {
   const wallet = useWallet() as any;
+  // Uploads and saves run on the 30-day sign-in when the connected wallet is this profile's wallet
+  // (founder, 2026-10-06). Otherwise they keep the signed path below.
+  const feed = useFeedSession();
+  const sessionUsable = sameWallet(feed.account, walletAddress);
   const [loaded, setLoaded] = useState<ProfileDraft>(EMPTY);
   const [draft, setDraft] = useState<ProfileDraft>(EMPTY);
   const [loading, setLoading] = useState(true);
@@ -82,19 +95,29 @@ export function useProfileEditor(walletAddress: string | null | undefined, chain
       if (!walletAddress || !chainId) throw new Error("Connect your wallet first.");
       setUploading(which);
       try {
-        const url = await uploadProfileImage(file, which === "avatar" ? "avatar" : "profile_banner", {
-          chainId: Number(chainId),
-          address: walletAddress,
-          signer: wallet?.signer ?? null,
-        });
+        const kind = which === "avatar" ? "avatar" : "profile_banner";
+        const opts = { chainId: Number(chainId), address: walletAddress, signer: wallet?.signer ?? null };
+        const url = sessionUsable
+          ? await feed.withSession((sessionToken) => uploadProfileImage(file, kind, { ...opts, sessionToken }))
+          : await uploadProfileImage(file, kind, opts);
         setDraft((d) => (which === "avatar" ? { ...d, avatarUrl: url } : { ...d, bannerUrl: url, bannerPositionY: 50 }));
         return url;
       } finally {
         setUploading(null);
       }
     },
-    [walletAddress, chainId, wallet?.signer],
+    [walletAddress, chainId, wallet?.signer, sessionUsable, feed.withSession],
   );
+
+  /**
+   * Before the photo picker opens: true when no signature will be needed. Without a stored sign-in it
+   * asks for it first, so the wallet never has to sign right after the picker (phone wallet browsers
+   * stalled there). Resolves false when that signature is declined.
+   */
+  const readyForUpload = useCallback((): true | Promise<boolean> => {
+    if (!sessionUsable || readStoredFeedSession(feed.account, feed.chainId)) return true;
+    return feed.ensureSession().then(() => true, () => false);
+  }, [sessionUsable, feed.account, feed.chainId, feed.ensureSession]);
 
   const save = useCallback(
     async (next: ProfileDraft = draft) => {
@@ -112,7 +135,7 @@ export function useProfileEditor(walletAddress: string | null | undefined, chain
           await reload();
           return;
         }
-        await saveUserProfileV2({
+        const input = {
           chainId: Number(chainId),
           address: walletAddress,
           displayName: next.displayName.trim() || null,
@@ -126,15 +149,17 @@ export function useProfileEditor(walletAddress: string | null | undefined, chain
             telegramUrl: next.telegramUrl,
           }),
           sign,
-        });
+        };
+        if (sessionUsable) await feed.withSession((sessionToken) => saveUserProfileV2({ ...input, sessionToken }));
+        else await saveUserProfileV2(input);
         await reload();
       } finally {
         setSaving(false);
       }
     },
-    [draft, walletAddress, chainId, sign, reload, linksSupported],
+    [draft, walletAddress, chainId, sign, reload, linksSupported, sessionUsable, feed.withSession],
   );
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(loaded);
-  return { draft, setDraft, loaded, loading, saving, uploading, dirty, upload, save, reload, linksSupported };
+  return { draft, setDraft, loaded, loading, saving, uploading, dirty, upload, readyForUpload, save, reload, linksSupported };
 }

@@ -7,6 +7,21 @@ import { isSolanaAddress, normalizeAddress } from "../server/http.js";
 import { ARENA_IMPORT_IMAGE_LIMITS, inspectImageFile } from "./lib/imageFileValidation.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { verifySolanaDirectSessionToken } from "./dev-fix/solana-direct-create.js";
+import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
+
+const feedSession = createFeedSessionAuth({ pool });
+
+// Profile picture and banner ride on the 30-day sign-in (founder, 2026-10-06: only moving money asks
+// for its own signature). Wallet browsers on phones could not finish a signature right after the
+// photo picker, so the upload stalled on the sign sheet.
+const FEED_SESSION_UPLOAD_KINDS = new Set(["avatar", "profile_banner"]);
+
+function sameUploadWallet(a, b) {
+  const x = String(a || "").trim();
+  const y = String(b || "").trim();
+  if (!x || !y) return false;
+  return x.startsWith("0x") || y.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
 
 export const config = {
   api: { bodyParser: false },
@@ -191,10 +206,20 @@ export default async function handler(req, res) {
       }
     }
 
+    // With a feed session the session's wallet must be the wallet whose image this is.
+    let feedSessionOk = false;
+    const bearer = /^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""));
+    if (bearer && address && FEED_SESSION_UPLOAD_KINDS.has(kind)) {
+      const session = await feedSession.requireSession(req, res);
+      if (!session) return;
+      if (!sameUploadWallet(session.walletAddress, address)) return bad(res, 403, "Session wallet does not match this profile.");
+      feedSessionOk = true;
+    }
+
     // Public sponsorship creatives may omit wallet (kind=sponsor|sponsorship).
     // Avatar/logo/squad/imported-token images require address + wallet action auth when enforce is on.
     const isPublicSponsorKind = kind === "sponsor" || kind === "sponsorship";
-    if (address && !isPublicSponsorKind && !directSession) {
+    if (address && !isPublicSponsorKind && !directSession && !feedSessionOk) {
       const verified = await requireWalletActionAuth({
         res,
         pool,

@@ -13,6 +13,7 @@ export function ProfileBannerEditor({
   onPick,
   onPosition,
   onRemove,
+  beforePick,
 }: {
   bannerUrl: string;
   positionY: number;
@@ -20,8 +21,15 @@ export function ProfileBannerEditor({
   onPick: (file: File) => void;
   onPosition: (y: number) => void;
   onRemove: () => void;
+  /** Runs before the picker opens; false keeps it closed. A sync true keeps the tap's activation. */
+  beforePick?: () => boolean | Promise<boolean>;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const openPicker = () => {
+    const ready = beforePick ? beforePick() : true;
+    if (ready === true) fileRef.current?.click();
+    else if (ready !== false) void ready.then((ok) => ok && fileRef.current?.click());
+  };
   return (
     <div className="flex flex-col gap-2" data-profile-banner-editor="true">
       <span className={cp.label}>Banner</span>
@@ -33,7 +41,7 @@ export function ProfileBannerEditor({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={cp.btn} disabled={uploading} onClick={() => fileRef.current?.click()}>
+        <button type="button" className={cp.btn} disabled={uploading} onClick={openPicker}>
           <ImagePlus className="h-4 w-4" aria-hidden="true" />
           {uploading ? "Uploading..." : bannerUrl ? "Replace banner" : "Upload banner"}
         </button>
