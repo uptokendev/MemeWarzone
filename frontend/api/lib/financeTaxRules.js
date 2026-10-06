@@ -29,6 +29,10 @@ export const VAT_LANES = Object.freeze(["trading_fees", "graduation_fees", "impo
 const LANE_ID_PREFIX = Object.freeze([
   ["bonding-route:", "trading_fees"],
   ["graduation-fee:", "graduation_fees"],
+  // DBC migration fee (partner share): paid out of the coin's raised SOL at
+  // migration, like the launchpad graduation fee. Meteora's program only holds
+  // it; Meteora does not pay it (unlike the referral fee, which is Meteora's).
+  ["dbc-migration-fee:", "graduation_fees"],
   ["import-swaps:", "import_swaps"],
   ["upvotes:", "upvotes"],
   ["arena-boosts:", "arena_boosts"],

@@ -24,6 +24,7 @@ const EVENTS = {
   graduation_fee: [[4663, "2026-09-30T23:59:00Z", "10000000000000000"]],
   sponsorships: [],
   dbc_referral: [],
+  dbc_migration_fee: [[101, "2026-10-06T10:15:00Z", "2252000000"]],
 };
 
 function fixtureDb() {

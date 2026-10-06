@@ -29,10 +29,26 @@
 //   dbc_referral      Meteora DBC referral fee (20% of Meteora's cut) on swaps
 //                     made on our site; swept weekly to protocol_vault
 //                     (realtime-indexer/src/dbc/dbcReferralSweep.ts:80-100).
+//   dbc_migration_fee Meteora DBC migration fee, partner share. At migration
+//                     the curve pays 22% of the threshold as migration fee,
+//                     90% creator / 10% partner (us). The indexer keeper
+//                     withdraws the partner 10% to the collector, pays the
+//                     creator Meteora's 0.2% liquidity cut from it (D7), then
+//                     routes the rest with the finalize split (recruiter /
+//                     squad / airdrop, protocol the remainder) and writes one
+//                     reward_events row: route_kind 'finalize', matched
+//                     'dbc_graduation' (realtime-indexer/src/dbc/
+//                     dbcGraduationKeeper.ts insertFinalizeRewardEvent,
+//                     dbcGraduationSplit.ts finalizeAfterCompensation). The
+//                     lane is that row's protocol_amount, which lands in
+//                     protocol_vault. Native-SOL coins only: for a bound-quote
+//                     coin the row is in quote units, so it is counted apart
+//                     (dbc_migration_fee_bound_quote) and named in a note.
 //   graduation_fee    EVM finalize protocol slice (RouteExecuted kind 1 ->
 //                     route_kind 'finalize', realtime-indexer/src/indexer.ts:1280).
-//                     Solana graduation (FeeSlicesRouted) is stored as
-//                     route_kind 'trade' and is already in the bonding lane.
+//                     Solana launchpad graduation (FeeSlicesRouted) is stored
+//                     as route_kind 'trade' and is already in the bonding lane;
+//                     Solana 'finalize' rows are DBC migrations (above).
 //   import_swaps      0.5% platform fee on imported-coin swaps (Jupiter on
 //                     Solana, KyberSwap on BNB, Universal Router on Robinhood),
 //                     read from the chain into finance_import_swap_fees by
@@ -52,7 +68,7 @@ export const USD_CENTS_DECIMALS = 2;
 
 /** Where each lane's money lands, per chain family (fee-routing destination ids). */
 const INVENTORY = Object.freeze({
-  solana: Object.freeze({ arena: "sol101-mainnet-protocol-vault", sponsorship: "sol101-mainnet-protocol-vault", dbcReferral: "sol101-mainnet-dbc-referral", importSwap: "sol101-mainnet-import-swap-fee" }),
+  solana: Object.freeze({ arena: "sol101-mainnet-protocol-vault", sponsorship: "sol101-mainnet-protocol-vault", dbcReferral: "sol101-mainnet-dbc-referral", dbcMigration: "sol101-mainnet-protocol-vault", importSwap: "sol101-mainnet-import-swap-fee" }),
   evm: Object.freeze({ arena: "safe", sponsorship: "protocol-vault", finalize: "treasury-router", importSwap: "protocol-vault" }),
 });
 
@@ -152,6 +168,24 @@ function campaignNotHiddenSql(chainExpr, ref) {
 // One spec per lane: FROM / WHERE / time / amount. The hourly query (/revenue,
 // /summary, Close) and the per-event query (revenue CSV) are both built from
 // it, so the two can never filter differently. $1 is always the chain id.
+const WSOL_MINT = "So11111111111111111111111111111111111111112";
+
+// The DBC campaign's quote is SOL (unset meta = SOL, the default launch).
+function dbcQuoteIsSolSql(chainExpr, ref, negate = false) {
+  return `${negate ? "" : "not "}exists (
+    select 1 from public.campaigns qc
+     where qc.chain_id = ${chainExpr}
+       and qc.campaign_address = ${ref}
+       and coalesce(nullif(qc.meta #>> '{dbc,quoteMint}', ''), '${WSOL_MINT}') <> '${WSOL_MINT}'
+  )`;
+}
+
+const DBC_MIGRATION_WHERE = `r.chain_id = $1
+       and $1::int = 101
+       and r.route_kind = 'finalize'
+       and r.matched_activity_source = 'dbc_graduation'
+       and r.protocol_amount > 0`;
+
 const NATIVE_VOTE_ASSET = { solana: "11111111111111111111111111111111", evm: "0x0000000000000000000000000000000000000000" };
 
 export const LANE_SPECS = Object.freeze({
@@ -234,6 +268,14 @@ export const LANE_SPECS = Object.freeze({
     time: "d.created_at", amount: "d.referral_fee",
     tx: "d.tx_hash", logIndex: "d.log_index", campaign: "d.pool", ref: "null::text", eventId: "d.id::text",
   },
+  dbc_migration_fee: {
+    from: "public.reward_events r",
+    where: `${DBC_MIGRATION_WHERE}
+       and ${dbcQuoteIsSolSql("r.chain_id", "r.campaign_address")}
+       and ${campaignNotHiddenSql("r.chain_id", "r.campaign_address")}`,
+    time: "r.occurred_at", amount: "r.protocol_amount",
+    tx: "r.tx_hash", logIndex: "r.log_index", campaign: "r.campaign_address", ref: "r.source_event", eventId: "r.id::text",
+  },
   import_swaps: {
     from: "public.finance_import_swap_fees f",
     where: `f.chain_id = $1
@@ -301,6 +343,14 @@ export const LANE_QUERIES = Object.freeze({
        and a.confirmed_at is not null
        and a.protocol_native_raw > 0
        and not ${battleNotHiddenSql("b")}`,
+  // DBC migrations on a bound quote (USDC, stocks): the row is in quote units,
+  // not lamports, so it is not in the SOL lane. Counted for a note.
+  dbc_migration_fee_bound_quote: `
+    select count(*)::int as n
+      from public.reward_events r
+     where ${DBC_MIGRATION_WHERE}
+       and ${dbcQuoteIsSolSql("r.chain_id", "r.campaign_address", true)}
+       and ${campaignNotHiddenSql("r.chain_id", "r.campaign_address")}`,
 });
 export const EVENT_QUERIES = mapSpecs(eventSql);
 
@@ -326,6 +376,7 @@ export function laneDefinitions(network, { includeCore = false } = {}) {
   defs.push({ key: "import_swaps", lane: "other_approved", source: "Import swaps 0.5%", ...native, sourceInventoryId: inventoryId(network, "importSwap") });
   if (solana) {
     defs.push({ key: "dbc_referral", lane: "other_approved", source: "Meteora DBC referral (20% of Meteora's cut)", ...native, sourceInventoryId: inventoryId(network, "dbcReferral") });
+    defs.push({ key: "dbc_migration_fee", lane: "bonding_curve_fee", source: "DBC migration fee (partner share)", ...native, sourceInventoryId: inventoryId(network, "dbcMigration") });
   } else {
     defs.push({ key: "graduation_fee", lane: "bonding_curve_fee", source: "Graduation fee (finalize) protocol share", ...native, sourceInventoryId: inventoryId(network, "finalize") });
   }
@@ -417,7 +468,23 @@ export async function sharedRevenueLanes(db, network, { upvoteApproval = snapsho
     if (read.status === "fulfilled") excludedEvents += Number(read.value.rows?.[0]?.n || 0);
     else if (!isSchemaMissing(read.reason)) log.warn?.(`[finance/revenue] ${key} count omitted`, read.reason?.message || read.reason);
   }
+  if (network.chain === "solana") {
+    const note = await dbcBoundQuoteNote(db, network, log);
+    if (note) notes.push(note);
+  }
   return { lanes, excludedEvents, notes };
+}
+
+/** Note for DBC migrations on a bound quote, which the SOL lane cannot count; null when there are none. */
+export async function dbcBoundQuoteNote(db, network, log = console) {
+  try {
+    const { rows } = await laneQuery(db, "dbc_migration_fee_bound_quote", network.chainId);
+    const n = Number(rows?.[0]?.n || 0);
+    return n > 0 ? `${n} DBC migration fee${n === 1 ? " is" : "s are"} on a coin with a non-SOL quote; recorded in quote units, so left out of the SOL lane.` : null;
+  } catch (error) {
+    if (!isSchemaMissing(error)) log.warn?.("[finance/revenue] dbc bound-quote count omitted", error?.message || error);
+    return null;
+  }
 }
 
 const LANE_QUERY_CONCURRENCY = 4;

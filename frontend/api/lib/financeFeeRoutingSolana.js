@@ -275,6 +275,28 @@ export function solanaFeeRoutingRegistry(env = process.env, { indexerLpTreasury 
         "Revenue: the protocol remainder is in the bonding lane (reward_events EvtSwap2); the referral fee is lane dbc-referral (dbc_fee_accruals.referral_fee).",
       ],
     },
+    {
+      id: "sol_dbc_migration",
+      label: "Meteora DBC migration fee",
+      trigger: "DBC graduation keeper (indexer dbc-grad worker): migrate -> partnerWithdrawMigrationFee -> D7 compensation -> kind-1 route",
+      router: "DBC pool migration fee → partner withdraw to the collector → dbcFeeRouter System transfers",
+      totalFee: "22% of the migration threshold, 90% creator / 10% partner (us)",
+      status: "live",
+      splits: [
+        { destinationId: "dbc_fee_collector", share: "The partner 10% (2.2% of the threshold)", note: "Withdrawn by the collector; the creator's 90% is claimed by the creator" },
+        { destinationId: "creator_fee_vaults", share: "D7 first: Meteora's 0.2% liquidity cut, back to the creator", note: "Paid to the creator wallet from the protocol slice (dbc_graduation_compensations)" },
+        { destinationId: "recruiter_vault", share: "15% linked / 17.5% OG of the partner fee" },
+        { destinationId: "squad_vault", share: "2.5% linked + OG" },
+        { destinationId: "airdrop_vault", share: "17.5% unlinked" },
+        { destinationId: "protocol_vault", share: "Remainder (82.5% / 80%) less the D7 compensation" },
+      ],
+      citation: "realtime-indexer/src/dbc/dbcGraduationKeeper.ts (withdraw, compensate, route, insertFinalizeRewardEvent); realtime-indexer/src/dbc/dbcGraduationSplit.ts:41-128; docs/claude/meteora-dbc.md",
+      notes: [
+        "No league or creator-pool slice: the finalize split, as on the launchpad (preview_bnb_route kind != trade).",
+        "Revenue: lane dbc-migration-fee (reward_events route_kind 'finalize', matched_activity_source 'dbc_graduation', protocol_amount). Native-SOL coins only; a bound-quote coin's row is in quote units and is named in a note instead.",
+        "After migration the DAMM v2 LP fees split 80% creator / 20% partner by liquidity; the partner position is the collector's, claimed hourly by the same worker (LP Harvest lists it read-only).",
+      ],
+    },
     homePlacementsFlow(),
   ];
 

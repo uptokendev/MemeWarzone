@@ -40,3 +40,21 @@ life of a coin and every check passed against the program's own accounting:
   referral account, every later swap naming it fails. The referral account must be one no claim closes.
 
 
+
+### Finance: migration fee lane and DBC pools in LP Harvest (2026-10-06)
+
+- Migration fee flow (code): keeper `dbcGraduationKeeper.ts` withdraw step calls
+  `partnerWithdrawMigrationFee` (partner 10% of the 22% fee to the collector, `partner_fee` = quote
+  vault outflow), compensate step pays D7 to the creator from the protocol slice
+  (`dbc_graduation_compensations`), route step sends the finalize split and writes one
+  `reward_events` row: `route_kind 'finalize'`, `matched_activity_source 'dbc_graduation'`,
+  `protocol_amount` = protocol remainder. Revenue lane `dbc-migration-fee:101` reads that row
+  (SOL-quote coins only; a bound-quote row is in quote units and only counted in a note). VAT lane:
+  graduation fees (paid from the coin's raised SOL, not by Meteora).
+- No DBC coin has migrated on production (2026-10-06: `dbc_graduation_jobs` empty, no finalize rows).
+  DAZILLA `CAfqx…` (config `6GdLrNUh…`, threshold 124.408 SOL, 25.8%) is the only non-hidden DBC
+  coin; its partner migration fee at graduation is 2.736984726 SOL. All 3 configs in use (6GdLrNUh…, CKqCXPAp…, FLBwmYah…) have
+  fee claimer `3NWtsXix…`.
+- LP Harvest shows DBC pools read-only from snapshot `dbc-pools:101:mainnet-beta`
+  (`frontend/api/lib/financeDbcPools.js`). No manual DBC harvest route exists; the dbc-fee and
+  dbc-grad indexer workers claim.

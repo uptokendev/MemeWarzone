@@ -48,10 +48,10 @@ function fakeDb(rowsByKey, { fail = {} } = {}) {
   };
 }
 
-test("lane definitions: arena, sponsorship and placements on every chain; DBC referral on Solana, finalize on EVM", () => {
+test("lane definitions: arena, sponsorship and placements on every chain; DBC referral and migration fee on Solana, finalize on EVM", () => {
   const sol = laneDefinitions(SOL()).map((d) => d.key);
   const bnb = laneDefinitions(BNB()).map((d) => d.key);
-  assert.deepEqual(sol, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "import_swaps", "dbc_referral"]);
+  assert.deepEqual(sol, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "import_swaps", "dbc_referral", "dbc_migration_fee"]);
   assert.deepEqual(bnb, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "import_swaps", "graduation_fee"]);
   const labels = Object.fromEntries(laneDefinitions(SOL()).map((d) => [d.key, d]));
   assert.equal(labels.arena_boosts.source, "Arena boosts 10%");
@@ -85,7 +85,7 @@ test("splits: only the protocol share is read, prize and MWL money never", () =>
 });
 
 test("test coins: every lane with a campaign filters hidden campaigns", () => {
-  for (const key of ["arena_boosts", "arena_entries", "home_placements", "dbc_referral", "graduation_fee"]) {
+  for (const key of ["arena_boosts", "arena_entries", "home_placements", "dbc_referral", "dbc_migration_fee", "dbc_migration_fee_bound_quote", "graduation_fee"]) {
     assert.match(LANE_QUERIES[key], /meta->>'publicHidden'/, key);
   }
   // Both battle sides are checked, by campaign address and token address.
@@ -197,3 +197,66 @@ test("fee routing map: import swaps on BNB, off-chain Home placements on every m
     for (const split of flow.splits) assert.ok(split.share.length <= 80, `${flow.id} share fits the dashboard`);
   }
 });
+
+test("DBC migration fee lane: the protocol slice of the keeper's finalize row, SOL coins only, into protocol_vault", () => {
+  const def = laneDefinitions(SOL()).find((d) => d.key === "dbc_migration_fee");
+  assert.equal(def.id, "dbc-migration-fee:101");
+  assert.equal(def.source, "DBC migration fee (partner share)");
+  assert.equal(def.lane, "bonding_curve_fee");
+  assert.equal(def.assetSymbol, "SOL");
+  assert.equal(def.decimals, 9);
+  assert.equal(def.sourceInventoryId, "sol101-mainnet-protocol-vault");
+  assert.equal(laneDefinitions(BNB()).some((d) => d.key === "dbc_migration_fee"), false, "Solana only");
+  const sql = LANE_QUERIES.dbc_migration_fee;
+  // realtime-indexer/src/dbc/dbcGraduationKeeper.ts insertFinalizeRewardEvent
+  assert.match(sql, /r\.route_kind = 'finalize'/);
+  assert.match(sql, /r\.matched_activity_source = 'dbc_graduation'/);
+  assert.match(sql, /sum\(r\.protocol_amount\)/);
+  assert.doesNotMatch(sql, /recruiter_amount|airdrop_amount|squad_amount|raw_amount/, "only the protocol slice");
+  assert.match(sql, /\$1::int = 101/);
+  assert.match(sql, /date_trunc\('hour', r\.occurred_at\)/, "event-time buckets");
+  // Bound-quote coins are counted apart, not mixed into SOL.
+  assert.match(sql, /'\{dbc,quoteMint\}'/);
+  assert.match(LANE_QUERIES.dbc_migration_fee_bound_quote, /count\(\*\)::int as n/);
+  // The launchpad bonding lane never reads finalize rows, so nothing is counted twice.
+  assert.match(LANE_QUERIES.bonding, /r\.route_kind = 'trade'/);
+});
+
+test("DBC migration fee: 2.252 SOL migration valued at its event hour; bound-quote rows give a note", async () => {
+  const network = SOL();
+  const db = fakeDb({ dbc_migration_fee: [hour("2026-10-06T10:00:00.000Z", "2252000000")], dbc_migration_fee_bound_quote: [{ n: 2 }] });
+  const { lanes, notes } = await sharedRevenueLanesFor(db, network);
+  const lane = lanes.find((l) => l.aggregate.id === "dbc-migration-fee:101");
+  assert.equal(lane.aggregate.nativeAmount, "2.252");
+  assert.equal(lane.buckets[0].hour, "2026-10-06T10:00:00.000Z");
+  const [valued] = await valueRevenueLanes([lane], network, fakePrices);
+  assert.equal(valued.amountUsd, 270.24);
+  assert.equal(valued.priceBasis, "event_time");
+  assert.ok(notes.some((n) => /2 DBC migration fees are on a coin with a non-SOL quote/.test(n)), notes.join("|"));
+  const none = await sharedRevenueLanesFor(fakeDb({ dbc_migration_fee_bound_quote: [{ n: 0 }] }), network);
+  assert.equal(none.notes.some((n) => /DBC migration/.test(n)), false);
+  const bnb = await sharedRevenueLanesFor(fakeDb({}), BNB());
+  assert.ok(!bnb.notes.some((n) => /DBC/.test(n)));
+});
+
+test("DBC migration fee VAT: graduation fees (paid from the coin's raised SOL), not the Meteora B2B referral rule", async () => {
+  const { vatLaneOf } = await import("./financeTaxRules.js");
+  assert.equal(vatLaneOf("dbc-migration-fee:101"), "graduation_fees");
+  assert.equal(vatLaneOf("dbc-referral:101"), "dbc_referral");
+});
+
+test("fee routing map: DBC migration flow pays the partner share into protocol_vault after D7", async () => {
+  const { solanaFeeRoutingRegistry } = await import("./financeFeeRoutingSolana.js");
+  const registry = solanaFeeRoutingRegistry({});
+  const flow = registry.flows.find((f) => f.id === "sol_dbc_migration");
+  assert.ok(flow);
+  const ids = new Set(registry.destinations.map((d) => d.id));
+  for (const split of flow.splits) assert.ok(ids.has(split.destinationId), split.destinationId);
+  assert.equal(flow.splits.at(-1).destinationId, "protocol_vault");
+  assert.ok(flow.notes.some((n) => /dbc-migration-fee/.test(n)));
+});
+
+async function sharedRevenueLanesFor(db, network) {
+  const { sharedRevenueLanes } = await import("./financeRevenueLanes.js");
+  return sharedRevenueLanes(db, network, { upvoteApproval: async () => ({ approved: true }), log: { warn() {} } });
+}

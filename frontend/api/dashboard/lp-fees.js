@@ -6,6 +6,7 @@ import { getServerReadProvider } from "../lib/getServerReadProvider.js";
 import { dashboardPrincipalCan, requireDashboardPermission } from "./_access.js";
 import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 import { loadPublicHiddenCampaignKeys, publicCampaignKey } from "../lib/publicHiddenCampaigns.js";
+import { readDbcPoolsSnapshot } from "../lib/financeDbcPools.js";
 
 const BNB_LOCKER_ABI = [
   "function poolInfo(address) view returns (address campaign,address creator,address creatorFeeRecipient,address pool,address token0,address token1,uint256 lockedLpAmount,uint16 creatorFeeBps,uint16 protocolFeeBps,bool registered)",
@@ -411,10 +412,33 @@ export default async function handler(req, res) {
       }
     }
     const { status, body } = await lpFeesPayload(q, auth);
-    return json(res, status, body);
+    if (status !== 200) return json(res, status, body);
+    const used = [];
+    const withDbc = await runWithSnapshotUsage(used, () => attachDbcPools(q, auth, body));
+    const meta = withDbc !== body ? snapshotMeta(used) : null;
+    return json(res, status, meta ? { ...withDbc, snapshot: meta } : withDbc);
   } catch (error) {
     console.error("[api/dashboard/lp-fees]", error);
     return json(res, Number(error?.status || 500), { error: String(error?.message || "Server error") });
+  }
+}
+
+/**
+ * Solana mainnet, Command Center read (LP Harvest): the Meteora DBC pools,
+ * read-only, from the stored snapshot (api/lib/financeDbcPools.js). DBC coins
+ * have no launchpad LP, so they are not in `items` and get no harvest button.
+ * A failed read leaves the LP items as they are and says why.
+ */
+export async function attachDbcPools(q, auth, body, { read = () => readDbcPoolsSnapshot(pool) } = {}) {
+  if (Number(q.chainId) !== 101 || !body || typeof body !== "object") return body;
+  if (auth?.mode !== "admin" && auth?.mode !== "ops-key") return body;
+  if (q.campaign || q.creator || q.pair || q.pool) return body;
+  const authority = resolveCurrentSolanaAuthority({ chainId: 101, environment: q.environment, cluster: q.solanaCluster ?? q.cluster });
+  if (!authority || authority.environment !== "production" || authority.cluster !== "mainnet-beta") return body;
+  try {
+    return { ...body, dbcPools: await read() };
+  } catch (error) {
+    return { ...body, dbcPools: { ok: false, error: String(error?.message || "DBC pool read failed.").slice(0, 300), items: [] } };
   }
 }
 

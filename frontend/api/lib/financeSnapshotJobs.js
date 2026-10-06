@@ -9,6 +9,8 @@
 //   indexer LP read         the LP fees the Summary and Status pages use
 //   API LP read             the LP fees the Revenue page adds (api/dashboard/lp-fees.js)
 //   UP vote fee receiver    BNB and Robinhood only
+//   DBC pools               Solana only: Meteora DBC fee counters, migration
+//                           fee and DAMM partner position (financeDbcPools.js)
 //   import swap fees        new 0.5% fee transfers from the chain into
 //                           finance_import_swap_fees (financeImportSwapFees.js)
 // Plus SOL, BNB and ETH spot and the ECB rates. Chains run in parallel; one
@@ -24,6 +26,7 @@ import { snapshotCacheFor, snapshotKeys } from "./financeSnapshots.js";
 import { freshPriceService } from "./financePrices.js";
 import { defaultEurUsdSource } from "./financeAccountingFx.js";
 import { ingestImportSwapFees } from "./financeImportSwapFees.js";
+import { DBC_POOLS_SNAPSHOT_KEY, refreshDbcPoolsSnapshot } from "./financeDbcPools.js";
 
 function message(error) {
   return String(error?.message || error || "failed").slice(0, 300);
@@ -51,7 +54,7 @@ async function step(results, key, fn) {
  * @param {number} [options.timeoutMs]  stop waiting after this long (the rebuilds still finish and store)
  * @param {((args) => Promise<object>)|null} [options.ingestImportSwaps]  the import swap fee scan; null skips it
  */
-export async function refreshFinanceSnapshots({ db, chainIds = null, readIndexerLp = null, readApiLpFees = null, buildSummary = null, summaryMonths = [12], timeoutMs = 0, prices = freshPriceService(), fx = defaultEurUsdSource(), ingestImportSwaps = ingestImportSwapFees } = {}) {
+export async function refreshFinanceSnapshots({ db, chainIds = null, readIndexerLp = null, readApiLpFees = null, buildSummary = null, summaryMonths = [12], timeoutMs = 0, prices = freshPriceService(), fx = defaultEurUsdSource(), ingestImportSwaps = ingestImportSwapFees, refreshDbcPools = refreshDbcPoolsSnapshot } = {}) {
   const started = Date.now();
   const results = [];
   const networks = feeRoutingAllNetworks().filter((n) => !chainIds || chainIds.includes(n.chainId));
@@ -83,6 +86,8 @@ export async function refreshFinanceSnapshots({ db, chainIds = null, readIndexer
       }
       if (network.chain !== "solana") {
         await step(results, snapshotKeys.upvoteApproval(network), () => refreshUpvoteApprovalSnapshot(db, network));
+      } else if (refreshDbcPools) {
+        await step(results, DBC_POOLS_SNAPSHOT_KEY, () => refreshDbcPools(db));
       }
     }),
   ]).then(async () => {
