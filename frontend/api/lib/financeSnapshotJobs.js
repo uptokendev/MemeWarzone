@@ -9,10 +9,13 @@
 //   indexer LP read         the LP fees the Summary and Status pages use
 //   API LP read             the LP fees the Revenue page adds (api/dashboard/lp-fees.js)
 //   UP vote fee receiver    BNB and Robinhood only
+//   import swap fees        new 0.5% fee transfers from the chain into
+//                           finance_import_swap_fees (financeImportSwapFees.js)
 // Plus SOL, BNB and ETH spot and the ECB rates. Chains run in parallel; one
 // failing step is reported and keeps the last good snapshot.
 //
-// Read-only towards the chain (view calls). The only writes are the snapshot rows.
+// Read-only towards the chain (view calls). The only writes are the snapshot
+// rows and the import swap fee rows.
 
 import { feeRoutingAllNetworks, feeRoutingDays, refreshFeeRoutingSnapshot } from "./financeFeeRouting.js";
 import { payoutsDays, refreshPayoutsSnapshot } from "./financePayouts.js";
@@ -20,6 +23,7 @@ import { refreshUpvoteApprovalSnapshot } from "./financeRevenueLanes.js";
 import { snapshotCacheFor, snapshotKeys } from "./financeSnapshots.js";
 import { freshPriceService } from "./financePrices.js";
 import { defaultEurUsdSource } from "./financeAccountingFx.js";
+import { ingestImportSwapFees } from "./financeImportSwapFees.js";
 
 function message(error) {
   return String(error?.message || error || "failed").slice(0, 300);
@@ -45,8 +49,9 @@ async function step(results, key, fn) {
  * @param {{key: Function, build: Function}} [options.readApiLpFees]  the API LP read (api/dashboard/lp-fees.js)
  * @param {(months) => Promise<object>} [options.buildSummary]  the Summary build (stored as summary:<months>)
  * @param {number} [options.timeoutMs]  stop waiting after this long (the rebuilds still finish and store)
+ * @param {((args) => Promise<object>)|null} [options.ingestImportSwaps]  the import swap fee scan; null skips it
  */
-export async function refreshFinanceSnapshots({ db, chainIds = null, readIndexerLp = null, readApiLpFees = null, buildSummary = null, summaryMonths = [12], timeoutMs = 0, prices = freshPriceService(), fx = defaultEurUsdSource() } = {}) {
+export async function refreshFinanceSnapshots({ db, chainIds = null, readIndexerLp = null, readApiLpFees = null, buildSummary = null, summaryMonths = [12], timeoutMs = 0, prices = freshPriceService(), fx = defaultEurUsdSource(), ingestImportSwaps = ingestImportSwapFees } = {}) {
   const started = Date.now();
   const results = [];
   const networks = feeRoutingAllNetworks().filter((n) => !chainIds || chainIds.includes(n.chainId));
@@ -62,6 +67,8 @@ export async function refreshFinanceSnapshots({ db, chainIds = null, readIndexer
       if (!(await fx.rate())) throw new Error("No ECB rate.");
     }),
     ...networks.map(async (network) => {
+      // Import swap fees first: the Summary built below counts them.
+      if (ingestImportSwaps) await step(results, `import-swap-fees:${network.chainId}`, () => ingestImportSwaps({ db, chainId: network.chainId }));
       const feeRouting = await step(results, snapshotKeys.feeRouting(network, feeDays), () => refreshFeeRoutingSnapshot({ network, days: feeDays, db, prices }));
       await step(results, snapshotKeys.payouts(network, payDays), () => refreshPayoutsSnapshot({ network, days: payDays, db, prices, ...(feeRouting && payDays === feeDays ? { feeRouting } : {}) }));
       if (readIndexerLp) {

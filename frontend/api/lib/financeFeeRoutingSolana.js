@@ -245,10 +245,10 @@ export function solanaFeeRoutingRegistry(env = process.env, { indexerLpTreasury 
       trigger: "Swap through Jupiter from an imported coin page",
       router: "Jupiter platform fee",
       totalFee: "0.5% (IMPORT_SWAP_FEE_BPS default 50)",
-      status: "live",
+      status: "live, recorded",
       splits: [{ destinationId: importSwapDest, share: "100% of the platform fee, as WSOL" }],
       citation: "frontend/api/importSwap.js:20,27",
-      notes: ["The API does not record import swaps, so this fee has no revenue lane yet: it shows only in the operator wallet's WSOL balance."],
+      notes: ["Recorded from the fee token account's transactions (finance_import_swap_fees, every 5 minutes); revenue lane Import swaps 0.5%."],
     },
     {
       id: "sol_dbc",

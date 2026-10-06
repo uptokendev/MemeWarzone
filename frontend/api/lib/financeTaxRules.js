@@ -22,10 +22,11 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
 });
 
 // VAT lanes: every revenue lane id (financeRevenueLanes.js) maps to one.
-export const VAT_LANES = Object.freeze(["trading_fees", "graduation_fees", "upvotes", "arena_boosts", "battle_entries", "sponsorships", "home_placements", "dbc_referral", "other"]);
+export const VAT_LANES = Object.freeze(["trading_fees", "graduation_fees", "import_swaps", "upvotes", "arena_boosts", "battle_entries", "sponsorships", "home_placements", "dbc_referral", "other"]);
 const LANE_ID_PREFIX = Object.freeze([
   ["bonding-route:", "trading_fees"],
   ["graduation-fee:", "graduation_fees"],
+  ["import-swaps:", "import_swaps"],
   ["upvotes:", "upvotes"],
   ["arena-boosts:", "arena_boosts"],
   ["arena-entries:", "battle_entries"],
@@ -113,6 +114,7 @@ export const DEFAULT_TAX_RULES = Object.freeze({
     lanes: {
       trading_fees: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Most likely a taxable electronically supplied service. The exemption for currency exchange (CJEU C-264/14 Hedqvist) needs a token used as a means of payment; memecoins are speculative tokens. No Dutch or EU guidance on launchpad fees exists. 21% reserved on the full fee because user location is unknown." }, SRC.hedqvist, "low"),
       graduation_fees: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Part of the trading flow; same as trading fees." }, SRC.hedqvist, "low"),
+      import_swaps: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Our 0.5% fee for routing a memecoin swap through Jupiter, KyberSwap or Uniswap; same as trading fees." }, SRC.hedqvist, "low"),
       upvotes: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Paid visibility (electronically supplied service). User location unknown, so 21% reserved." }, SRC.vatB2c, "low"),
       arena_boosts: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Paid visibility in the arena (electronically supplied service). User location unknown, so 21% reserved." }, SRC.vatB2c, "low"),
       battle_entries: rule({ treatment: "uncertain", rate: 0.21, taxableShare: 1, reason: "Our cut of battle stakes: a service fee (taxable) or part of a game of chance. 21% reserved until confirmed." }, SRC.vatB2c, "low"),

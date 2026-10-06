@@ -51,14 +51,19 @@ function fakeDb(rowsByKey, { fail = {} } = {}) {
 test("lane definitions: arena, sponsorship and placements on every chain; DBC referral on Solana, finalize on EVM", () => {
   const sol = laneDefinitions(SOL()).map((d) => d.key);
   const bnb = laneDefinitions(BNB()).map((d) => d.key);
-  assert.deepEqual(sol, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "dbc_referral"]);
-  assert.deepEqual(bnb, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "graduation_fee"]);
+  assert.deepEqual(sol, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "import_swaps", "dbc_referral"]);
+  assert.deepEqual(bnb, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "import_swaps", "graduation_fee"]);
   const labels = Object.fromEntries(laneDefinitions(SOL()).map((d) => [d.key, d]));
   assert.equal(labels.arena_boosts.source, "Arena boosts 10%");
   assert.match(labels.arena_entries.source, /^Battle entries 5%/);
   assert.equal(labels.sponsorships.source, "Sponsorships 10% + marketing 20%");
   assert.equal(labels.home_placements.assetSymbol, "USD");
   assert.equal(labels.home_placements.decimals, 2);
+  assert.equal(labels.import_swaps.source, "Import swaps 0.5%");
+  assert.equal(labels.import_swaps.id, "import-swaps:101");
+  assert.equal(labels.import_swaps.assetSymbol, "SOL");
+  assert.equal(labels.import_swaps.sourceInventoryId, "sol101-mainnet-import-swap-fee");
+  assert.equal(laneDefinitions(BNB()).find((d) => d.key === "import_swaps").sourceInventoryId, "bnb56-protocol-vault");
   // Lane values stay inside the dashboard's finance-revenue-v1 enum.
   const allowed = new Set(["bonding_curve_fee", "lp_protocol_share", "upvotes", "sponsorship", "other_approved"]);
   for (const d of [...laneDefinitions(SOL()), ...laneDefinitions(BNB())]) assert.ok(allowed.has(d.lane), d.key);
@@ -183,7 +188,7 @@ test("fee routing map: import swaps on BNB, off-chain Home placements on every m
   const rh = evmFeeRoutingRegistry(4663).flows.map((f) => f.id);
   const sol = solanaFeeRoutingRegistry({}).flows.map((f) => f.id);
   assert.ok(bnb.includes("evm_import_swaps"));
-  assert.ok(!rh.includes("evm_import_swaps"), "Robinhood has no import swap");
+  assert.ok(rh.includes("evm_import_swaps"), "Robinhood import swaps (Universal Router, 2026-10-03)");
   for (const ids of [bnb, rh, sol]) assert.ok(ids.includes("home_placements"));
   const swap = evmFeeRoutingRegistry(56).flows.find((f) => f.id === "evm_import_swaps");
   assert.deepEqual(swap.splits.map((s) => s.destinationId), ["protocol_vault"]);
