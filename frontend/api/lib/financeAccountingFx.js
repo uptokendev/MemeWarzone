@@ -2,13 +2,17 @@
 // this reads the ECB euro foreign exchange reference rates (public, no key):
 // https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml holds the
 // last ~90 business days, newest first, as USD per 1 EUR. Read with a plain
-// GET, cached in-process for 6 hours. A date without a rate (weekend, ECB
+// GET at most every 6 hours; every rate read is kept in finance_fx_daily
+// (financePriceStore.js), so a new API process reads the table instead of the
+// ECB and the history grows past the file's 90 days. A date without a rate (weekend, ECB
 // holiday) uses the latest earlier business day; a date older than the file
 // uses the oldest rate in it and says so. FINANCE_EUR_USD_RATE overrides
 // everything (operator setting, e.g. when the ECB cannot be reached).
 //
 // The rate used is stored on every cost row (fx_rate, fx_source, eur_usd_rate)
 // so a figure never changes after entry.
+
+import { createFxStore } from "./financePriceStore.js";
 
 const ECB_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml";
 const CACHE_TTL_MS = 6 * 3_600_000;
@@ -50,21 +54,49 @@ function overrideRate(env) {
  * @param {() => number} [options.nowMs]
  * @param {Record<string,string>} [options.env]
  */
-export function createEurUsdSource({ fetchImpl = fetch, nowMs = () => Date.now(), env = process.env } = {}) {
+/** Stored rows and fetched rows together, one per date (the fetched rate wins), newest first. */
+export function mergeRates(stored, fetched) {
+  const byDate = new Map();
+  for (const row of stored || []) byDate.set(row.date, row);
+  for (const row of fetched || []) byDate.set(row.date, row);
+  return [...byDate.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
+/**
+ * @param {{load: Function, save: Function}} [options.store]  finance_fx_daily (financePriceStore.js):
+ *        rates fetched within 6 hours are read from it instead of the ECB, and every fetched file is kept,
+ *        so the history grows past the ECB's 90 days.
+ */
+export function createEurUsdSource({ fetchImpl = fetch, nowMs = () => Date.now(), env = process.env, store = null } = {}) {
   let cache = null;
+  let pending = null;
 
   async function load() {
     if (cache && nowMs() - cache.at < CACHE_TTL_MS) return cache.rows;
+    pending ||= loadFresh().finally(() => { pending = null; });
+    return pending;
+  }
+
+  async function loadFresh() {
+    const stored = store ? await store.load().catch(() => null) : null;
+    if (stored?.rows?.length && nowMs() - stored.fetchedAt < CACHE_TTL_MS) {
+      cache = { at: stored.fetchedAt, rows: stored.rows };
+      return stored.rows;
+    }
+    const fallback = () => cache?.rows || stored?.rows || [];
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
       const res = await fetchImpl(ECB_URL, { method: "GET", signal: controller.signal, headers: { accept: "application/xml,text/xml" } });
-      if (!res.ok) return cache?.rows || [];
-      const rows = parseEcbUsdRates(await res.text());
-      if (rows.length) cache = { at: nowMs(), rows };
-      return rows.length ? rows : cache?.rows || [];
+      if (!res.ok) return fallback();
+      const fetched = parseEcbUsdRates(await res.text());
+      if (!fetched.length) return fallback();
+      const rows = mergeRates(stored?.rows, fetched);
+      cache = { at: nowMs(), rows };
+      if (store) await store.save(fetched).catch(() => undefined);
+      return rows;
     } catch {
-      return cache?.rows || [];
+      return fallback();
     } finally {
       clearTimeout(timer);
     }
@@ -90,6 +122,6 @@ export function createEurUsdSource({ fetchImpl = fetch, nowMs = () => Date.now()
 
 let defaultSource = null;
 export function defaultEurUsdSource() {
-  defaultSource ||= createEurUsdSource();
+  defaultSource ||= createEurUsdSource({ store: createFxStore() });
   return defaultSource;
 }

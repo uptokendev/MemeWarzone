@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { badMethod, getQuery, json } from "../../server/http.js";
+import { runWithSnapshotUsage, snapshotCacheFor, snapshotMeta } from "../lib/financeSnapshots.js";
 import { getServerReadProvider } from "../lib/getServerReadProvider.js";
 import { dashboardPrincipalCan, requireDashboardPermission } from "./_access.js";
 import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
@@ -397,6 +398,49 @@ export default async function handler(req, res) {
     if (!auth) return;
 
     const q = getQuery(req);
+    // snapshot=1 (finance Revenue page): the unfiltered Command Center read is
+    // served from the stored copy that cron:finance-snapshots rebuilds, so the
+    // page does not wait on the per-coin locker reads. Without it (LP Harvest),
+    // the read is live as before.
+    if (String(q.snapshot || "") === "1" && auth.mode === "admin" && !q.pair && !q.pool && !q.campaign && !q.creator) {
+      const key = apiLpFeesSnapshotKey(q);
+      if (key) {
+        const used = [];
+        const payload = await runWithSnapshotUsage(used, () => snapshotCacheFor(pool).get(key, "api-lp-fees", () => lpFeesSnapshotBuild(q, auth)));
+        return json(res, 200, { ...payload, snapshot: snapshotMeta(used) });
+      }
+    }
+    const { status, body } = await lpFeesPayload(q, auth);
+    return json(res, status, body);
+  } catch (error) {
+    console.error("[api/dashboard/lp-fees]", error);
+    return json(res, Number(error?.status || 500), { error: String(error?.message || "Server error") });
+  }
+}
+
+/** Snapshot key of the unfiltered admin read, or null for a chain that is not a finance mainnet. */
+export function apiLpFeesSnapshotKey(q) {
+  const chainId = Number(q.chainId ?? 97);
+  const limit = Math.max(1, Math.min(50, Number(q.limit ?? 20)));
+  if (chainId === 56 || chainId === 4663) return `api-lp-fees:${chainId}::${limit}`;
+  if (chainId !== 101) return null;
+  const authority = resolveCurrentSolanaAuthority({ chainId, environment: q.environment, cluster: q.solanaCluster ?? q.cluster });
+  if (!authority || authority.environment !== "production" || authority.cluster !== "mainnet-beta") return null;
+  return `api-lp-fees:101:mainnet-beta:${limit}`;
+}
+
+/** The live admin read for the snapshot: an error status is not stored. */
+export async function lpFeesSnapshotBuild(q, auth = { mode: "admin" }) {
+  const { status, body } = await lpFeesPayload(q, auth);
+  if (status !== 200) throw Object.assign(new Error(String(body?.error || `LP fee read failed (${status}).`)), { status });
+  return body;
+}
+
+/** The LP-fee read for a query: { status, body }. Unchanged from the handler it was taken out of. */
+export async function lpFeesPayload(q, auth) {
+  const res = { status: 200, body: null };
+  const json = (_res, status, body) => { res.status = status; res.body = body; return res; };
+  try {
     const chainId = Number(q.chainId ?? 97);
     const limit = Math.max(1, Math.min(50, Number(q.limit ?? 20)));
 

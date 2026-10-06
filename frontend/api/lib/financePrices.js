@@ -4,10 +4,11 @@
 // (bnbUsdPrice.js, ethUsdPrice.js, solUsdPrice.js): env override first, then
 // Binance spot, cached in-process for 60 s.
 //
-// History: the same Binance API (public, no key), hourly klines. There is no
+// History: the same Binance API (public, no key), hourly klines. There was no
 // native/USD history in the database (token_candles.reference_price_usd is
 // empty on production, market_stats only holds the latest value), so an event
-// is valued at the close of the hour it happened in. An hour that cannot be
+// is valued at the close of the hour it happened in. Each closed hour read is
+// kept in finance_price_hourly (financePriceStore.js) and never fetched again. An hour that cannot be
 // read falls back to spot and the figure says "at current price".
 //
 // Stablecoins (USDC, USDT) count as $1, the rule quoteAssetVerification.js
@@ -19,6 +20,7 @@
 import { resolveBnbUsdPrice } from "./bnbUsdPrice.js";
 import { resolveEthUsdPrice } from "./ethUsdPrice.js";
 import { resolveSolUsdPrice } from "./solUsdPrice.js";
+import { createHourlyPriceStore, createSpotStore } from "./financePriceStore.js";
 
 const HOUR_MS = 3_600_000;
 const KLINE_LIMIT = 1000;
@@ -80,6 +82,12 @@ const sharedHistory = new Map();
  * @param {() => number} [options.nowMs]
  * @param {Record<string, string>} [options.env]
  * @param {Map} [options.historyCache]  asset -> Map(hourMs -> close)
+ * @param {{load: Function, loadHours?: Function, save: Function}} [options.historyStore]
+ *        persisted hourly closes (finance_price_hourly): load(asset) -> Map(hourMs -> close) once,
+ *        loadHours(asset, hours) -> Map for hours this process has not seen, save(asset, [{hour, close}])
+ * @param {{load: Function, save: Function}} [options.spotStore]  last spot per asset (finance_snapshots)
+ * @param {number} [options.spotReuseMs]  a spot younger than this is reused without a read (0 = off)
+ * @param {number} [options.spotServeStaleMs]  an older spot up to this age is served while a read runs in the background (0 = off)
  */
 export function createPriceService({
   spotReaders,
@@ -87,8 +95,16 @@ export function createPriceService({
   nowMs = () => Date.now(),
   env = process.env,
   historyCache = sharedHistory,
+  historyStore = null,
+  spotStore = null,
+  spotReuseMs = 0,
+  spotServeStaleMs = 0,
 } = {}) {
   const readers = spotReaders || Object.fromEntries(Object.entries(PRICE_FEEDS).map(([asset, feed]) => [asset, feed.read]));
+  const spotMemo = new Map(); // asset -> { value, readAt }
+  const spotPending = new Map(); // asset -> Promise
+  const storeLoaded = new Map(); // asset -> Promise
+  const assetLocks = new Map(); // asset -> Promise (one history fetch per asset at a time)
 
   async function spot(asset) {
     if (asset === "USD") {
@@ -97,6 +113,41 @@ export function createPriceService({
     const feed = PRICE_FEEDS[asset];
     const reader = readers[asset];
     if (!feed || typeof reader !== "function") return null;
+    const memo = spotMemo.get(asset);
+    if (memo && spotReuseMs > 0 && nowMs() - memo.readAt < spotReuseMs) return memo.value;
+    if (memo && spotServeStaleMs > 0 && nowMs() - memo.readAt < spotServeStaleMs) {
+      if (!spotPending.has(asset)) readSpotShared(asset).catch(() => null);
+      return memo.value;
+    }
+    if (!memo && spotStore && spotServeStaleMs > 0) {
+      const stored = await spotStore.load(asset).catch(() => null);
+      if (stored?.value && Number.isFinite(stored.readAt) && nowMs() - stored.readAt < spotServeStaleMs) {
+        spotMemo.set(asset, stored);
+        if (!(spotReuseMs > 0 && nowMs() - stored.readAt < spotReuseMs) && !spotPending.has(asset)) readSpotShared(asset).catch(() => null);
+        return stored.value;
+      }
+    }
+    return readSpotShared(asset);
+  }
+
+  /** One spot read per asset at a time; concurrent callers share it. */
+  function readSpotShared(asset) {
+    if (spotPending.has(asset)) return spotPending.get(asset);
+    const job = readSpot(asset).then((value) => {
+      if (value) {
+        const entry = { value, readAt: nowMs() };
+        spotMemo.set(asset, entry);
+        spotStore?.save(asset, entry).catch(() => null);
+      }
+      return value;
+    }).finally(() => spotPending.delete(asset));
+    spotPending.set(asset, job);
+    return job;
+  }
+
+  async function readSpot(asset) {
+    const feed = PRICE_FEEDS[asset];
+    const reader = readers[asset];
     try {
       const result = await reader();
       const price = Number(result?.price);
@@ -129,6 +180,25 @@ export function createPriceService({
     }
   }
 
+  /** Loads the persisted closes of one asset into the process cache, once. */
+  function loadStored(asset, cache) {
+    if (!historyStore) return Promise.resolve();
+    if (!storeLoaded.has(asset)) {
+      storeLoaded.set(asset, historyStore.load(asset).then((rows) => {
+        for (const [hour, close] of rows || []) if (!cache.has(hour)) cache.set(hour, close);
+      }).catch(() => undefined));
+    }
+    return storeLoaded.get(asset);
+  }
+
+  /** Runs `fn` after any history fetch of the same asset in this process has finished. */
+  function withAssetLock(asset, fn) {
+    const previous = assetLocks.get(asset) || Promise.resolve();
+    const run = previous.then(fn, fn);
+    assetLocks.set(asset, run.catch(() => undefined));
+    return run;
+  }
+
   /** Hourly closes for the given hour starts. Missing hours are left out of the map. */
   async function hourly(asset, hours) {
     const feed = PRICE_FEEDS[asset];
@@ -138,7 +208,23 @@ export function createPriceService({
     historyCache.set(asset, cache);
     const now = nowMs();
     const wanted = [...new Set(hours.filter((h) => Number.isFinite(h) && h + HOUR_MS <= now))].sort((a, b) => a - b);
-    const missing = wanted.filter((h) => !cache.has(h));
+    if (wanted.some((h) => !cache.has(h))) {
+      await loadStored(asset, cache);
+      if (wanted.some((h) => !cache.has(h))) await withAssetLock(asset, () => fillHistory(asset, feed, cache, wanted, now));
+    }
+    for (const h of wanted) if (cache.has(h)) out.set(h, cache.get(h));
+    return out;
+  }
+
+  async function fillHistory(asset, feed, cache, wanted, now) {
+    let missing = wanted.filter((h) => !cache.has(h));
+    if (missing.length > 0 && historyStore?.loadHours) {
+      // Hours stored by another process (the cron) since this one loaded.
+      const rows = await historyStore.loadHours(asset, missing).catch(() => null);
+      for (const [hour, close] of rows || []) cache.set(hour, close);
+      missing = missing.filter((h) => !cache.has(h));
+    }
+    const fetched = [];
     if (missing.length > 0 && !fetchDisabled(feed, env)) {
       let cursor = missing[0];
       const last = missing[missing.length - 1];
@@ -150,15 +236,17 @@ export function createPriceService({
           const open = Number(row?.[0]);
           const close = Number(row?.[4]);
           // Only closed hours are cached: their close never changes.
-          if (Number.isFinite(open) && Number.isFinite(close) && close > 0 && open + HOUR_MS <= now) cache.set(open, close);
+          if (Number.isFinite(open) && Number.isFinite(close) && close > 0 && open + HOUR_MS <= now) {
+            if (!cache.has(open)) fetched.push({ hour: open, close });
+            cache.set(open, close);
+          }
         }
         const next = missing.find((h) => h > end);
         if (next == null) break;
         cursor = next;
       }
     }
-    for (const h of wanted) if (cache.has(h)) out.set(h, cache.get(h));
-    return out;
+    if (fetched.length > 0 && historyStore) await historyStore.save(asset, fetched).catch(() => undefined);
   }
 
   /**
@@ -244,10 +332,28 @@ export function createPriceService({
   return { spot, hourly, valueAtSpot, valueEvents, spotTable };
 }
 
+// The API's price service: closes persisted in finance_price_hourly, the last
+// spot in finance_snapshots. A spot under 60 s old is reused (the readers' own
+// cache time); one up to 15 minutes old is served while a fresh read runs in
+// the background, so a page never waits on Binance. Each figure still names the
+// time of its price (priceAt).
+export const DEFAULT_SPOT_REUSE_MS = 60_000;
+export const DEFAULT_SPOT_SERVE_STALE_MS = 15 * 60_000;
+
 let defaultService = null;
 export function defaultPriceService() {
-  defaultService ||= createPriceService();
+  defaultService ||= createPriceService({
+    historyStore: createHourlyPriceStore(),
+    spotStore: createSpotStore(),
+    spotReuseMs: DEFAULT_SPOT_REUSE_MS,
+    spotServeStaleMs: DEFAULT_SPOT_SERVE_STALE_MS,
+  });
   return defaultService;
+}
+
+/** A price service that always reads spot fresh (once per asset) and stores what it reads: for the snapshot cron. */
+export function freshPriceService() {
+  return createPriceService({ historyStore: createHourlyPriceStore(), spotStore: createSpotStore(), spotReuseMs: DEFAULT_SPOT_REUSE_MS });
 }
 
 // --------------------------------------------------------------------------

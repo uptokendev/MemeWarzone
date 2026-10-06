@@ -398,3 +398,27 @@ Rule: `campaigns.meta.publicHidden` (`frontend/api/lib/publicHiddenSql.js`, mirr
 - Data: `database/prod_void_hidden_test_coin_league_winners_2026_10_05.sql` voids the 3 unposted
   BNB monthly 2026-08 rows to 0x348f...dc15 (backup `league_epoch_winners_voided_20261005_testcoins`).
   20 other hidden-coin rows (Solana 18, BNB weekly 2026-08-17 2) have posted roots and stay.
+
+### Finance pages read the database, chain reads in the background (2026-10-06, perf/finance-db-snapshots)
+
+- Founder: "after a few new redeploys the financial system is very slow, it barely loads". Measured locally
+  against production (read-only): cold Overview 83 s, Payouts 81 s, Summary 15-61 s, Fee Routing 29 s, Weekly
+  14-36 s. SQL was never the cost (tables have < 1,000 rows, every query < 1 ms execution, ~30 ms round trip).
+  The time went to: (1) Binance spot read 100-140 times per request (no in-flight sharing, 60 s cache);
+  (2) Robinhood RPC ~1 s per call, fee routing 27 s + payouts 58 s on 4663 alone (creator V2 `eth_getLogs`,
+  balances, getters); (3) the 60 s in-process caches expired before a cold build finished, so the "warm" call
+  rebuilt; (4) the UP-vote `feeReceiver()` check (ethers, an RPC call plus an unused votes query) ran on every
+  revenue-lane read, 6-10 times per Weekly/Tax/Treasury request; (5) revenue lanes were read one query and one
+  chain at a time, twice per accounting request.
+- Now: `public.finance_snapshots` (migration `db/migrations/20261006_000001_finance_snapshots.sql`, RLS on, no
+  policies) holds the finished JSON of fee routing and payouts per chain (30 days), the indexer LP read, the
+  API LP read (`/api/dashboard/lp-fees?snapshot=1`, Revenue page only; LP Harvest stays live), the UP-vote
+  approval, spot prices and the Summary. `npm run cron:finance-snapshots` (Coolify scheduled task on the API
+  service, `*/5 * * * *`) rebuilds them with the same builders. Requests read the row (`api/lib/financeSnapshots.js`):
+  older than 5 min = served and rebuilt in the background; older than 15 min = served with `snapshot.stale: true`;
+  no row = built live once (shared by concurrent callers). Every finance response carries `snapshot`
+  {asOf, ageSeconds, stale, sources}. `GET /api/admin/finance/snapshots` lists them; `POST
+  /api/admin/finance/snapshots/refresh` (finance.manage) rebuilds now.
+- `finance_price_hourly` keeps Binance 1h closes (fetched once, ever); `finance_fx_daily` keeps ECB rates (the
+  history grows past the 90-day file; dates before the first stored row behave as before).
+- Without the migration the code works as before (process-only cache, now with in-flight sharing).
