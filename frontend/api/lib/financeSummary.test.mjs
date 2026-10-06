@@ -266,7 +266,7 @@ test("Solana paid UP votes are a revenue lane in /revenue and /summary alike, te
       assert.match(text, /not exists \(\s*select 1 from public\.campaigns hc/);
       return { rows: [{ hour: new Date("2026-09-26T20:00:00Z"), period_start: new Date("2026-09-26T20:07:47Z"), period_end: new Date("2026-09-26T20:07:47Z"), evidence_count: 1, amount_raw: "24770869" }] };
     }
-    if (/from public\.reward_events/.test(text) && /group by 1/.test(text)) {
+    if (/from public\.reward_events/.test(text) && /group by 1/.test(text) && /route_kind = 'trade'/.test(text)) {
       return { rows: [{ hour: new Date("2026-10-02T08:00:00Z"), period_start: new Date("2026-10-02T08:10:00Z"), period_end: new Date("2026-10-02T08:20:00Z"), evidence_count: 2, amount_raw: "17468840" }] };
     }
     if (/count\(\*\)::int as n/.test(text)) return { rows: [{ n: 0 }] };
