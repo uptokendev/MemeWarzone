@@ -19,7 +19,6 @@ import {
 } from "../dev-fix/ticker-reservation-service.js";
 import {
   DBC_DEVNET_TEST_TARGET_USD_MICROS,
-  DBC_FIRST_BUY_MAX_BPS,
   DBC_PROGRAM_ID,
   DBC_QUOTE_MINT,
   DBC_SOL_USD_MAX_STALE_MS,
@@ -32,6 +31,7 @@ import { parseFeeChoice } from "../lib/dbc/dbcFeeChoice.mjs";
 import { requireEnabledQuote, stableStep } from "../../shared/dbcQuotes.mjs";
 import { DbcStockQuoteError, dbcTokenBadgeAddress, stockPriceStep } from "../lib/dbc/dbcStockQuote.mjs";
 import { firstBuyExceedsCap, quoteFirstBuyOnConfig } from "../lib/dbc/dbcFirstBuyQuote.mjs";
+import { firstBuyCapCopy, loadCreatorFirstBuyCapBps } from "../lib/dbc/dbcFirstBuyCap.js";
 import { assertDbcCreatorLimits, loadDbcCreatorLimits } from "../lib/dbc/dbcCreateLimits.js";
 import { isDbcLaunchEnabled, dbcLaunchDisabledPayload } from "./launch-config.js";
 import {
@@ -527,13 +527,16 @@ export function createDbcCreateHandler(deps = {}) {
     });
     const quoteFn = deps.quoteFirstBuyOnConfig || quoteFirstBuyOnConfig;
     const firstBuy = quoteFn(ensured.configParams, firstBuyLamports);
-    if (firstBuyExceedsCap(firstBuy, DBC_FIRST_BUY_MAX_BPS)) {
+    // 20% by default; a creator listed in creator_first_buy_caps may go up to 50%.
+    const capBps = await (deps.loadCreatorFirstBuyCapBps || loadCreatorFirstBuyCapBps)(database, creatorWallet);
+    if (firstBuyExceedsCap(firstBuy, capBps)) {
       return json(res, 400, {
         ok: false,
-        error: "The first buy cannot be more than 10% of supply.",
+        error: firstBuyCapCopy(capBps),
         code: "DBC_FIRST_BUY_CAP",
         tokensOut: firstBuy.tokensOut.toString(),
         bps: firstBuy.bps.toString(),
+        capBps: String(capBps),
       });
     }
 
@@ -755,13 +758,16 @@ export function createDbcCreateHandler(deps = {}) {
     const firstBuyLamports = parseFirstBuyLamports(body.firstBuyLamports);
     const quoteFn = deps.quoteFirstBuyOnConfig || quoteFirstBuyOnConfig;
     const firstBuy = quoteFn(prepared.ensured.configParams, firstBuyLamports);
-    const capped = firstBuyExceedsCap(firstBuy, DBC_FIRST_BUY_MAX_BPS);
+    // The quote shows this creator's own cap; authorize checks it again server-side.
+    const capBps = await (deps.loadCreatorFirstBuyCapBps || loadCreatorFirstBuyCapBps)(await db(), body.creatorWallet);
+    const capped = firstBuyExceedsCap(firstBuy, capBps);
     return json(res, 200, {
       ok: true,
       tokensOut: firstBuy.tokensOut.toString(),
       bps: firstBuy.bps.toString(),
       totalSupply: firstBuy.totalSupply.toString(),
       exceedsCap: capped,
+      capBps: String(capBps),
     });
   }
 

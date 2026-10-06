@@ -13,7 +13,6 @@ import {
   DBC_ANTI_SNIPER_DURATION_SECONDS,
   DBC_ANTI_SNIPER_START_FEE_BPS,
   DBC_CREATOR_LOCK_COPY,
-  DBC_FIRST_BUY_MAX_BPS,
   DBC_LOCK_CLIFF_SECONDS,
   DBC_LOCK_FREQUENCY_SECONDS,
   DBC_LOCK_PERIODS,
@@ -27,8 +26,12 @@ export const EVM_GEN5_CAMPAIGN_GENERATION = 5;
 const MAX_BPS = 10_000n;
 const WAD = 10n ** 18n;
 
-/** LaunchCampaign.CREATOR_FIRST_BUY_MAX_SUPPLY_BPS (= DBC D11, 10% of supply). */
-export const EVM_FIRST_BUY_MAX_SUPPLY_BPS = BigInt(DBC_FIRST_BUY_MAX_BPS);
+/**
+ * LaunchCampaign.CREATOR_FIRST_BUY_MAX_SUPPLY_BPS: 10% of supply, fixed in the deployed contract.
+ * Pinned here, not taken from DBC_FIRST_BUY_MAX_BPS: the DBC cap is our server's and moved to 20%
+ * (50% for listed creators); the contract's cannot move without a new factory.
+ */
+export const EVM_FIRST_BUY_MAX_SUPPLY_BPS = 1000n;
 /** LaunchCampaign.CREATOR_FIRST_BUY_MAX_TARGET_BPS: cost before fee <= 50% of the native target (E8). */
 export const EVM_FIRST_BUY_MAX_TARGET_BPS = 5_000n;
 

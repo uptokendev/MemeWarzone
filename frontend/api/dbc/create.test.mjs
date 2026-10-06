@@ -204,9 +204,9 @@ test("fee choice keep maps to creator; others to platform", () => {
   assert.equal(parseFeeChoice("nope").ok, false);
 });
 
-test("first buy cap is 10% of supply", () => {
-  assert.equal(firstBuyExceedsCap({ bps: 1000n }), false);
-  assert.equal(firstBuyExceedsCap({ bps: 1001n }), true);
+test("default first buy cap is 20% of supply (founder 2026-10-06, was 10%)", () => {
+  assert.equal(firstBuyExceedsCap({ bps: 2000n }), false);
+  assert.equal(firstBuyExceedsCap({ bps: 2001n }), true);
 });
 
 test("preflight / begin / authorize / finalize write campaign and metadata", async () => {
@@ -254,10 +254,10 @@ test("preflight / begin / authorize / finalize write campaign and metadata", asy
   assert.equal(db.reservations[0].status, "LIVE");
 });
 
-test("first buy above 10% is refused", async () => {
+test("first buy above the 20% default is refused", async () => {
   const db = memoryDb();
   const handle = handlerFor(db, {
-    quoteFirstBuyOnConfig: () => ({ tokensOut: 1n, totalSupply: 10n, bps: 1001n, afterFeeLamports: 1n }),
+    quoteFirstBuyOnConfig: () => ({ tokensOut: 1n, totalSupply: 10n, bps: 2001n, afterFeeLamports: 1n }),
   });
   const begun = await post(handle, {
     operation: "begin",
@@ -277,6 +277,59 @@ test("first buy above 10% is refused", async () => {
   });
   assert.equal(auth.body.ok, false);
   assert.equal(auth.body.code, "DBC_FIRST_BUY_CAP");
+  assert.match(auth.body.error, /more than 20% of supply/);
+});
+
+test("a creator listed at 50% may take 35% at launch", async () => {
+  const db = memoryDb();
+  const handle = handlerFor(db, {
+    loadCreatorFirstBuyCapBps: async () => 5000,
+    quoteFirstBuyOnConfig: () => ({ tokensOut: 1n, totalSupply: 10n, bps: 3500n, afterFeeLamports: 1n }),
+  });
+  const begun = await post(handle, {
+    operation: "begin",
+    creatorWallet: SIGNER.publicKey.toBase58(),
+    ticker: "CAPTEST",
+    auth: {},
+  });
+  const auth = await post(handle, {
+    operation: "authorize",
+    sessionToken: begun.body.sessionToken,
+    mint: MINT.publicKey.toBase58(),
+    name: "Cap",
+    symbol: "CAPTEST",
+    targetUsd: 15000,
+    feeChoice: "holders",
+    firstBuyLamports: "1000000000",
+  });
+  assert.notEqual(auth.body.code, "DBC_FIRST_BUY_CAP");
+});
+
+test("a creator listed at 50% is still refused above 50%", async () => {
+  const db = memoryDb();
+  const handle = handlerFor(db, {
+    loadCreatorFirstBuyCapBps: async () => 5000,
+    quoteFirstBuyOnConfig: () => ({ tokensOut: 1n, totalSupply: 10n, bps: 5001n, afterFeeLamports: 1n }),
+  });
+  const begun = await post(handle, {
+    operation: "begin",
+    creatorWallet: SIGNER.publicKey.toBase58(),
+    ticker: "CAPTEST",
+    auth: {},
+  });
+  const auth = await post(handle, {
+    operation: "authorize",
+    sessionToken: begun.body.sessionToken,
+    mint: MINT.publicKey.toBase58(),
+    name: "Cap",
+    symbol: "CAPTEST",
+    targetUsd: 15000,
+    feeChoice: "holders",
+    firstBuyLamports: "1000000000",
+  });
+  assert.equal(auth.body.ok, false);
+  assert.equal(auth.body.code, "DBC_FIRST_BUY_CAP");
+  assert.match(auth.body.error, /more than 50% of supply/);
 });
 
 test("fee choice keep uses creator config mode", async () => {
@@ -781,4 +834,24 @@ test("live lookup reports tokens sold on the curve from the pool's base reserve 
   assert.equal(res.body.poolLive.curveSoldTokensRaw, "269217541966637", "757.68M placed - 488.47M left = 269.22M sold");
   assert.equal(res.body.poolLive.baseReserveRaw, "488465660118496");
   assert.equal(res.body.poolLive.progressBps, 2822);
+});
+
+test("the live first-buy quote reports the creator's own cap", async () => {
+  const db = memoryDb();
+  const seen = [];
+  const handle = handlerFor(db, {
+    loadCreatorFirstBuyCapBps: async (_db, wallet) => {
+      seen.push(wallet);
+      return wallet === SIGNER.publicKey.toBase58() ? 5000 : 2000;
+    },
+    quoteFirstBuyOnConfig: () => ({ tokensOut: 1n, totalSupply: 10n, bps: 3500n, afterFeeLamports: 1n }),
+  });
+  const listed = await post(handle, { operation: "quote-first-buy", targetUsd: 15000, feeChoice: "keep", firstBuyLamports: "1000000000", creatorWallet: SIGNER.publicKey.toBase58() });
+  assert.equal(listed.body.ok, true);
+  assert.equal(listed.body.capBps, "5000");
+  assert.equal(listed.body.exceedsCap, false);
+  const other = await post(handle, { operation: "quote-first-buy", targetUsd: 15000, feeChoice: "keep", firstBuyLamports: "1000000000" });
+  assert.equal(other.body.capBps, "2000");
+  assert.equal(other.body.exceedsCap, true);
+  assert.deepEqual(seen, [SIGNER.publicKey.toBase58(), undefined]);
 });

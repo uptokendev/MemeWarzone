@@ -58,3 +58,31 @@ life of a coin and every check passed against the program's own accounting:
 - LP Harvest shows DBC pools read-only from snapshot `dbc-pools:101:mainnet-beta`
   (`frontend/api/lib/financeDbcPools.js`). No manual DBC harvest route exists; the dbc-fee and
   dbc-grad indexer workers claim.
+
+### Creator first-buy cap: 20% default, 50% for listed creators (founder, 2026-10-06)
+
+- `DBC_FIRST_BUY_MAX_BPS` 1000 -> 2000 (everyone); `DBC_FIRST_BUY_PARTNER_MAX_BPS` = 5000 is the ceiling for
+  wallets in `public.creator_first_buy_caps` (migration `db/migrations/20261006_000030_creator_first_buy_caps.sql`).
+  Reason: creators want supply control; big partner launches drive traffic. Founder accepts the risk.
+- Ours only (server check on the launch-transaction first buy, `api/lib/dbc/dbcFirstBuyCap.js`); Meteora has no
+  creator cap. First-buy tokens land in the creator's wallet (DAZILLA: 2.65 SOL -> 77.76M = 10.00%), not the lock.
+- Cost at $120 SOL, $15k / $30k / $50k config: 10% 2.66 / 5.20 / 8.60 SOL; 20% 10.47 / 20.67 / 34.33 SOL;
+  50% 65.01 / 128.39 / 213.78 SOL. The price rises along the curve, so 5x the tokens costs ~24x the SOL.
+- EVM gen-6 `EVM_FIRST_BUY_MAX_SUPPLY_BPS` is pinned at 1000n (was derived from the DBC constant):
+  `LaunchCampaign.CREATOR_FIRST_BUY_MAX_SUPPLY_BPS = 1000` is fixed in the live contracts. A per-creator cap on
+  BNB/Robinhood needs a new factory (audit first, combined release). Our Solana launchpad already has a
+  per-creator cap on-chain (`sync_creator_profile`); its 10% default needs a program upgrade.
+- The first-buy quote now sends `quoteMint` (it was dropped, so non-SOL coins were quoted on the SOL curve).
+- Each listed wallet has its own `max_bps` (any share up to the ceiling). Default and ceiling are API
+  settings `DBC_FIRST_BUY_DEFAULT_BPS` / `DBC_FIRST_BUY_PARTNER_MAX_BPS` (unset = 2000 / 5000), so the
+  numbers can move without a release; the table only bounds `max_bps` to 1..10000.
+
+### Referral fee: the finance line overstates it (found 2026-10-07)
+
+- Our referral token account is `AYQNtghqVvzCUHr8Nkuap2Gpe6FZTuB42P7HvTy8K1tS` (WSOL, owner `4T7q9fkg…`).
+  Meteora pays it inside each swap that names it; nothing to claim. `dbcReferralSweep.ts` moves it weekly to
+  protocol_vault (last run 2026-10-01 19:07 UTC, cursor `solana:dbc:referral-sweep`; it sweeps once 7 days pass).
+- `dbc_fee_accruals.referral_fee` records the referral fee of EVERY DBC swap on our pools, whoever the
+  referral was. Terminals name their own: of 22 recent swaps with a referral fee, 5 paid our account, 17
+  paid ten other accounts. Finance showed 0.1275 SOL (10/6-10/7); our account held 0.0629 SOL on 2026-10-07
+  and received ~0.06 SOL in total since 10-01. Fix: store the referral account per accrual and count only ours.

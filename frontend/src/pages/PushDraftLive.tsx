@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { DBC_FIRST_BUY_MAX_BPS } from "../../shared/dbcEconomics.mjs";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Clock3, Rocket, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -164,7 +165,7 @@ export default function PushDraftLive() {
   // DBC first buy on Push live (founder, 2026-10-06): filled with the amount saved on the draft, and
   // editable here. Stock quotes keep the saved amount (their wallet multiplier is read on Create).
   const [dbcFirstBuyInput, setDbcFirstBuyInput] = useState("");
-  const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ bps: string; exceedsCap: boolean } | null>(null);
+  const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ bps: string; exceedsCap: boolean; capBps: number } | null>(null);
 
   const showArmBlock = (detail: Parameters<typeof emitCreatorArmBlocked>[0]) => {
     emitCreatorArmBlocked(detail);
@@ -544,7 +545,7 @@ export default function PushDraftLive() {
     return quoteUiToRaw(dbcFirstBuyInput, Number(dbcDraftQuote.decimals ?? 9)).toString();
   };
 
-  // Share of supply for the typed first buy, and the 10% cap (same quote call as Create).
+  // Share of supply for the typed first buy, and this creator's cap (same quote call as Create).
   const dbcLaunchDraft = isDbcLaunchEnabled() && String((draft as { launchType?: string } | undefined)?.launchType || "") === "dbc";
   useEffect(() => {
     const n = Number(dbcFirstBuyInput);
@@ -560,9 +561,16 @@ export default function PushDraftLive() {
         creatorSharePct: (draft as any)?.dbcFeeChoice === "split" ? Number((draft as any)?.dbcCreatorSharePct) : null,
         firstBuyLamports: dbcFirstBuyLamports(),
         quoteMint: (draft as any)?.dbcQuoteMint || WSOL_MINT,
+        creatorWallet: solanaWallet.solanaAccount,
       })
         .then((next) => {
-          if (!cancelled) setDbcFirstBuyQuote({ bps: String(next.bps || "0"), exceedsCap: Boolean(next.exceedsCap) });
+          if (!cancelled) {
+            setDbcFirstBuyQuote({
+              bps: String(next.bps || "0"),
+              exceedsCap: Boolean(next.exceedsCap),
+              capBps: Number(next.capBps) || DBC_FIRST_BUY_MAX_BPS,
+            });
+          }
         })
         .catch(() => {
           if (!cancelled) setDbcFirstBuyQuote(null);
@@ -573,11 +581,11 @@ export default function PushDraftLive() {
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dbcLaunchDraft, dbcFirstBuyEditable, dbcFirstBuyInput, graduationTargetWei, draft?.id]);
+  }, [dbcLaunchDraft, dbcFirstBuyEditable, dbcFirstBuyInput, graduationTargetWei, draft?.id, solanaWallet.solanaAccount]);
 
   const deployDbc = async () => {
     if (!draft) return;
-    if (dbcFirstBuyQuote?.exceedsCap) return toast.error("The first buy cannot be more than 10% of supply.");
+    if (dbcFirstBuyQuote?.exceedsCap) return toast.error(`The first buy cannot be more than ${dbcFirstBuyQuote.capBps / 100}% of supply.`);
     if (!solanaWallet.solanaAccount) return toast.error("Connect the draft owner Solana wallet first.");
     if (!ownerConnected) return toast.error("Only the draft owner Solana wallet can deploy this draft.");
     if (mode === "scheduled" && (!draft.scheduledLaunchAt || isScheduleLocked(new Date(launchAtInput).toISOString(), Date.now()))) {
@@ -974,7 +982,7 @@ export default function PushDraftLive() {
             {dbcFirstBuyQuote ? (
               <p className={`mt-1 text-xs ${dbcFirstBuyQuote.exceedsCap ? "text-mw-accent-soft" : "text-mw-muted"}`}>
                 About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
-                {dbcFirstBuyQuote.exceedsCap ? " (over the 10% cap)" : ""}.
+                {dbcFirstBuyQuote.exceedsCap ? ` (over the ${dbcFirstBuyQuote.capBps / 100}% cap)` : ""}.
               </p>
             ) : null}
           </div>

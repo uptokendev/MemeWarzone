@@ -4,6 +4,7 @@
  * Graduation Market selection is presentation-only; server validation remains authority.
  */
 import { Button } from "@/components/ui/button";
+import { DBC_FIRST_BUY_MAX_BPS } from "../../shared/dbcEconomics.mjs";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
@@ -232,7 +233,7 @@ const Create = () => {
   }, [dbcQuote?.kind, dbcQuote?.mint]);
   const dbcFirstBuyRaw = (): bigint => quoteUiToRaw(dbcFirstBuySol, Number(dbcQuote?.decimals ?? 9), dbcQuoteMultiplier);
   const chooseDbcQuote = (mint: string) => setDbcQuoteMint(mint);
-  const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ tokensOut: string; bps: string; exceedsCap: boolean } | null>(null);
+  const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ tokensOut: string; bps: string; exceedsCap: boolean; capBps: number } | null>(null);
   // EVM generation-6 factories only (E14: older factories keep today's create form).
   const [evmFeeChoice, setEvmFeeChoice] = useState<CreatorFeeChoice>("keep");
   const [evmCreatorSharePct, setEvmCreatorSharePct] = useState("50");
@@ -384,6 +385,7 @@ const Create = () => {
         creatorSharePct: dbcFeeChoice === "split" ? Number(dbcCreatorSharePct) : null,
         firstBuyLamports: lamports,
         quoteMint: dbcQuoteMint,
+        creatorWallet: solanaWallet.solanaAccount,
       })
         .then((next) => {
           if (!cancelled) {
@@ -391,6 +393,7 @@ const Create = () => {
               tokensOut: String(next.tokensOut || "0"),
               bps: String(next.bps || "0"),
               exceedsCap: Boolean(next.exceedsCap),
+              capBps: Number(next.capBps) || DBC_FIRST_BUY_MAX_BPS,
             });
           }
         })
@@ -402,7 +405,7 @@ const Create = () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [dbcLaunch, dbcFirstBuySol, dbcFeeChoice, dbcCreatorSharePct, graduationTargetWei, dbcQuoteMint, dbcQuote, dbcQuoteMultiplier]);
+  }, [dbcLaunch, dbcFirstBuySol, dbcFeeChoice, dbcCreatorSharePct, graduationTargetWei, dbcQuoteMint, dbcQuote, dbcQuoteMultiplier, solanaWallet.solanaAccount]);
 
   useEffect(() => {
     if (isSolanaCreator || !wallet.account || !wallet.signer || !isEvmChainId(chainId)) {
@@ -720,7 +723,7 @@ const Create = () => {
         const targetUsd = Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000;
         const firstBuyLamports = dbcFirstBuySol ? dbcFirstBuyRaw().toString() : "0";
         if (dbcFirstBuyQuote?.exceedsCap) {
-          throw new Error("The first buy cannot be more than 10% of supply.");
+          throw new Error(`The first buy cannot be more than ${dbcFirstBuyQuote.capBps / 100}% of supply.`);
         }
         toast.message("Checking that this wallet can launch…");
         const preflight = await preflightDbcCreate({ creatorWallet, targetUsd });
@@ -1405,7 +1408,7 @@ const Create = () => {
                     {dbcFirstBuyQuote ? (
                       <p className={cn("mt-1 text-xs", dbcFirstBuyQuote.exceedsCap ? "text-mw-accent-soft" : "text-mw-muted")}>
                         About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
-                        {dbcFirstBuyQuote.exceedsCap ? " (over the 10% cap)" : ""}.
+                        {dbcFirstBuyQuote.exceedsCap ? ` (over the ${dbcFirstBuyQuote.capBps / 100}% cap)` : ""}.
                       </p>
                     ) : null}
                   </div>

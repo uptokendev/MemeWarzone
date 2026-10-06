@@ -75,6 +75,8 @@ export async function quoteDbcFirstBuy(input: {
   creatorSharePct?: number | null;
   firstBuyLamports: string | number;
   quoteMint?: string | null;
+  /** The creator's own cap applies (20% default, up to 50% for listed creators). */
+  creatorWallet?: string | null;
 }) {
   return postDbc({
     operation: "quote-first-buy",
@@ -82,6 +84,9 @@ export async function quoteDbcFirstBuy(input: {
     feeChoice: input.feeChoice,
     creatorSharePct: input.creatorSharePct,
     firstBuyLamports: String(input.firstBuyLamports || "0"),
+    // The quote's curve is the config for this quote token; omitted, it was always quoted on SOL.
+    quoteMint: input.quoteMint || undefined,
+    creatorWallet: input.creatorWallet || undefined,
   });
 }
 
