@@ -42,6 +42,7 @@ export const SOLANA_OWNERSHIP = Object.freeze({
 
 export const EVM_OWNERSHIP = Object.freeze({
   protocol_vault: ours("ProtocolRevenueVault: native forwards on receive() to the operator (up to $10k) and the Safe (contracts/ProtocolRevenueVault.sol:40-81). Wrapped LP shares stay in it: the vault has no ERC20 withdraw, so that part is ours but cannot be moved."),
+  protocol_forwarder: ours("ProtocolRevenueForwarder: forwards native to the ProtocolRevenueVault on receive() and unwraps the LP protocol share into it through flush(); withdrawToken pays only the Safe (contracts/ProtocolRevenueForwarder.sol:88-124)."),
   protocol_operator: ours("ProtocolRevenueVault.operator / war pool operator fill: the first $10k of protocol revenue (contracts/ProtocolRevenueVault.sol:46-73)."),
   safe: ours("Safe multisig: ProtocolRevenueVault.overflowTreasury and ArenaWarPoolTreasuryV2.protocolReceiver (contracts/ArenaWarPoolTreasuryV2.sol claimProtocol). Airdrop recoveries pass through it to the community vault in one batch (scripts/make-airdrop-recovery-batch.ts)."),
   weekly_league: owed("Weekly league prizes, root-posted claims (contracts/TreasuryRouterV4.sol:475-480)."),

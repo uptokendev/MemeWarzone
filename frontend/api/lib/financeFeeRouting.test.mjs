@@ -241,3 +241,79 @@ test("EVM: funded vaults with no router events say 'not recorded' only when the 
   assert.equal(alert.level, "warning");
   assert.match(alert.message, /has not moved for 4 hours/);
 });
+
+test("EVM LP alert follows the router: pending, switched, waiting, and critical only when wrapped native is in the vault", async () => {
+  const { lpForwarderAlerts } = await import("./financeFeeRouting.js");
+  const { EVM_PROTOCOL_REVENUE_FORWARDERS } = await import("./financeFeeRoutingEvm.js");
+  const registry = evmFeeRoutingRegistry(56);
+  const lp = registry.lpForwarder;
+  assert.equal(lp.forwarder, EVM_PROTOCOL_REVENUE_FORWARDERS[56].address);
+  assert.equal(lp.vault, "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c");
+  assert.equal(evmFeeRoutingRegistry(4663).lpForwarder.forwarder, "0xaC65Db89209EC375a7847AA3B3eCF6EFbd57D1D6");
+  assert.ok(registry.destinations.some((d) => d.id === "protocol_forwarder" && d.assets.includes("WBNB")));
+  assert.ok(!registry.alerts.some((a) => /no ERC20 withdraw/.test(a.message)), "the static warning is gone");
+  const word = (value) => `0x${BigInt(value).toString(16).padStart(64, "0")}`;
+  const addr = (a) => `0x${"0".repeat(24)}${a.slice(2).toLowerCase()}`;
+  const ctxFor = ({ current, pending = "0x0000000000000000000000000000000000000000", since = 0, now = NOW }) => ({
+    urls: [], now: () => now,
+    readers: {
+      readEvmCall: async ({ to, data }) => {
+        assert.equal(to, lp.router);
+        const hex = {
+          [evmGetterSelector("protocolRevenueVault")]: addr(current),
+          [evmGetterSelector("pendingProtocolRevenueVault")]: addr(pending),
+          [evmGetterSelector("pendingProtocolRevenueVaultSince")]: word(since),
+          [evmGetterSelector("upgradeDelay")]: word(3600),
+        }[data];
+        return { hex, rpc: "fake" };
+      },
+    },
+  });
+  const dests = (vaultRaw, forwarderRaw = "0") => [
+    { id: "protocol_vault", balances: [{ asset: "WBNB", status: vaultRaw == null ? "unknown" : "ok", raw: vaultRaw, amount: vaultRaw == null ? null : atomicToDecimal(vaultRaw, 18) }] },
+    { id: "protocol_forwarder", balances: [{ asset: "WBNB", status: "ok", raw: forwarderRaw, amount: atomicToDecimal(forwarderRaw, 18) }] },
+  ];
+
+  let alerts = await lpForwarderAlerts(ctxFor({ current: lp.vault }), registry, dests("0"));
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].level, "warning");
+  assert.match(alerts[0].message, /^Fix deployed \(forwarder 0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D\)\. Waiting for the Safe to switch the router \(PF1, then PF2 after 1 hour\)\. Nothing stuck yet: the vault holds 0 WBNB\.$/);
+  assert.doesNotMatch(alerts[0].message, /—/, "no em dashes");
+
+  alerts = await lpForwarderAlerts(ctxFor({ current: lp.vault }), registry, dests("2500000000000000"));
+  assert.equal(alerts[0].level, "critical");
+  assert.match(alerts[0].message, /holds 0\.0025 WBNB/);
+
+  alerts = await lpForwarderAlerts(ctxFor({ current: lp.vault }), registry, dests(null));
+  assert.equal(alerts[0].level, "warning");
+  assert.match(alerts[0].message, /could not be read/);
+
+  const since = Math.floor(Date.parse(NOW) / 1000) - 600; // proposed 10 minutes ago
+  alerts = await lpForwarderAlerts(ctxFor({ current: lp.vault, pending: lp.forwarder, since }), registry, dests("0"));
+  assert.equal(alerts[0].level, "info");
+  assert.match(alerts[0].message, /Router switch to the forwarder 0x2ABd…641D proposed; can be accepted after 2026-10-03 12:50 UTC \(PF2\)/);
+
+  alerts = await lpForwarderAlerts(ctxFor({ current: lp.vault, pending: lp.forwarder, since: since - 3600 }), registry, dests("0"));
+  assert.match(alerts[0].message, /can be accepted now/);
+
+  alerts = await lpForwarderAlerts(ctxFor({ current: lp.forwarder }), registry, dests("0", "1000000000000000"));
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].level, "info");
+  assert.match(alerts[0].message, /^LP protocol share is unwrapped by the forwarder/);
+  assert.match(alerts[0].message, /0\.001 WBNB waits in the forwarder/);
+
+  alerts = await lpForwarderAlerts(ctxFor({ current: lp.forwarder }), registry, dests("5"));
+  assert.deepEqual(alerts.map((a) => a.level), ["info", "warning"], "wrapped native left in the vault from before the switch is stuck");
+
+  const failing = { urls: [], now: () => NOW, readers: { readEvmCall: async () => { throw new Error("rpc down"); } } };
+  alerts = await lpForwarderAlerts(failing, registry, dests("0"));
+  assert.equal(alerts[0].level, "warning");
+  assert.match(alerts[0].message, /Could not read/);
+});
+
+test("EVM wiring: the V4 protocol vault may be the vault or the forwarder", () => {
+  const spec = evmFeeRoutingRegistry(56).wiring.find((w) => w.id === "v4_protocolRevenueVault");
+  assert.deepEqual(spec.alsoAccepted, ["0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D"]);
+  const v3 = evmFeeRoutingRegistry(56).wiring.find((w) => w.id === "v3_protocolRevenueVault");
+  assert.equal(v3.alsoAccepted, undefined);
+});
