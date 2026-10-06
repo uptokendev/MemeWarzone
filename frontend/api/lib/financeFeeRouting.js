@@ -454,7 +454,7 @@ async function evmWiring(ctx, registry) {
     try {
       const call = await ctx.readers.readEvmCall({ urls: ctx.urls, to: spec.contract, data: evmGetterSelector(spec.getter), fetchImpl: ctx.fetchImpl });
       const actual = decodeAddressWord(call.hex);
-      const status = same(expected, actual, true) ? "match" : "mismatch";
+      const status = [expected, ...(spec.alsoAccepted || [])].some((value) => same(value, actual, true)) ? "match" : "mismatch";
       checks.push({ id: spec.id, label: spec.label, expected, actual, status, source: `rpc:${call.rpc} ${spec.getter}()` });
       if (status === "mismatch") {
         alerts.push({ level: "warning", message: `${spec.label} reads ${actual} on chain; the deployment record says ${expected}.` });
@@ -467,6 +467,83 @@ async function evmWiring(ctx, registry) {
     }
   }
   return { checks, alerts };
+}
+
+const ZERO_ADDRESS = /^0x0{40}$/i;
+
+function shortAddress(address) {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+function utcMinute(ms) {
+  return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+function delayText(seconds) {
+  if (seconds % 3600 === 0) return seconds === 3600 ? "1 hour" : `${seconds / 3600} hours`;
+  return `${Math.round(seconds / 60)} minutes`;
+}
+
+/**
+ * The LP protocol-share alert on BNB / Robinhood, from live reads: where
+ * TreasuryRouterV4 sends the protocol share (protocolRevenueVault), whether a
+ * switch to the ProtocolRevenueForwarder is pending, and how much wrapped
+ * native (WBNB / WETH) the vault and the forwarder hold (balances of the
+ * protocol_vault and protocol_forwarder destinations, already read).
+ *   router -> forwarder:        info; a warning only if wrapped native reached
+ *                               the vault before the switch (it stays there).
+ *   switch to forwarder pending: info with the time PF2 can be executed.
+ *   neither:                    calm warning (fix deployed, waiting for the Safe);
+ *                               critical only when the vault holds wrapped native.
+ */
+export async function lpForwarderAlerts(ctx, registry, destinations) {
+  const lp = registry.lpForwarder;
+  if (!lp) return [];
+  const wrappedOf = (id) => destinations.find((d) => d.id === id)?.balances.find((b) => b.asset === lp.wrapped) || null;
+  const vaultWrapped = wrappedOf("protocol_vault");
+  const forwarderWrapped = wrappedOf("protocol_forwarder");
+  const held = (b) => b?.status === "ok" && b.raw !== "0";
+  const fwd = shortAddress(lp.forwarder);
+  const read = async (getter) => (await ctx.readers.readEvmCall({ urls: ctx.urls, to: lp.router, data: evmGetterSelector(getter), fetchImpl: ctx.fetchImpl })).hex;
+
+  let current;
+  let pending;
+  let since;
+  let delay;
+  try {
+    [current, pending] = (await Promise.all([read("protocolRevenueVault"), read("pendingProtocolRevenueVault")])).map(decodeAddressWord);
+    [since, delay] = (await Promise.all([read("pendingProtocolRevenueVaultSince"), read("upgradeDelay")])).map((hex) => Number(BigInt(hex)));
+  } catch (error) {
+    return [{ level: "warning", message: `Could not read where TreasuryRouterV4 sends the protocol share (${String(error?.message || "rpc error").slice(0, 120)}). The forwarder fix is deployed (${fwd}); the Safe still has to switch the router (PF1, then PF2).` }];
+  }
+
+  const alerts = [];
+  if (same(current, lp.forwarder, true)) {
+    alerts.push({ level: "info", message: `LP protocol share is unwrapped by the forwarder (router.protocolRevenueVault() is ${fwd}).${held(forwarderWrapped) ? ` ${forwarderWrapped.amount} ${lp.wrapped} waits in the forwarder for flush(), which anyone can call.` : ""}` });
+    if (held(vaultWrapped)) {
+      alerts.push({ level: "warning", message: `${vaultWrapped.amount} ${lp.wrapped} reached the ProtocolRevenueVault before the router switch and stays there: the vault has no ERC20 withdraw.` });
+    }
+    return alerts;
+  }
+  if (!same(current, lp.vault, true)) return alerts; // a different vault: the wiring check already warns.
+
+  const stuck = held(vaultWrapped)
+    ? { level: "critical", text: `The vault holds ${vaultWrapped.amount} ${lp.wrapped} from LP harvests that it cannot forward (no ERC20 withdraw).` }
+    : vaultWrapped?.status === "ok"
+      ? { level: null, text: `Nothing stuck yet: the vault holds 0 ${lp.wrapped}.` }
+      : { level: null, text: `The vault's ${lp.wrapped} balance could not be read.` };
+
+  if (same(pending, lp.forwarder, true)) {
+    const acceptAt = (since + delay) * 1000;
+    const when = Date.parse(ctx.now()) >= acceptAt
+      ? `can be accepted now (PF2; the ${delayText(delay)} delay passed at ${utcMinute(acceptAt)})`
+      : `can be accepted after ${utcMinute(acceptAt)} (PF2)`;
+    alerts.push({ level: stuck.level || "info", message: `Router switch to the forwarder ${fwd} proposed; ${when}. ${stuck.text}` });
+    return alerts;
+  }
+  const otherPending = pending && !ZERO_ADDRESS.test(pending) ? ` The router has a different protocol vault pending: ${pending}.` : "";
+  alerts.push({ level: stuck.level || "warning", message: `Fix deployed (forwarder ${lp.forwarder}). Waiting for the Safe to switch the router (PF1, then PF2 after ${delayText(delay)}). ${stuck.text}${otherPending}` });
+  return alerts;
 }
 
 /** Testnet registries name a router getter instead of an address; read it. */
@@ -631,7 +708,7 @@ export async function buildFeeRouting({ network, days, db, env = process.env, fe
   const destinations = registry.destinations.map((d, i) => publicDestination(d, balances[i], inflowResult.inflows[d.id], network.chain));
   const priceService = prices || defaultPriceService();
   await attachUsd(destinations, inflowResult.extras?.escrowFlushed, priceService);
-  const alerts = [...staticAlerts(network, registry, env), ...wiring.alerts];
+  const alerts = [...staticAlerts(network, registry, env), ...wiring.alerts, ...(solana ? [] : await lpForwarderAlerts(ctx, registry, destinations))];
 
   if (!solana && inflowResult.extras?.routeEventCount === 0 && network.environment === "mainnet") {
     const funded = destinations.some((d) => ["weekly_league", "monthly_league", "recruiter_vault", "creator_vault_v2"].includes(d.id)

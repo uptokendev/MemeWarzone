@@ -25,6 +25,31 @@ export function evmGetterSelector(getter) {
   return keccakId(`${getter}()`).slice(0, 10);
 }
 
+// ProtocolRevenueForwarder: the fix for LP protocol shares that reach the
+// ProtocolRevenueVault as WBNB / WETH (the vault forwards native only). Deployed
+// 2026-10-04 by the deployer with admin = Safe, nativeSink = the chain's
+// ProtocolRevenueVault, wrappedNative = WBNB / WETH (constructor args verified on
+// chain). It becomes live when the Safe switches TreasuryRouterV4's protocol
+// vault: batch PF1 (proposeProtocolRevenueVault), then PF2
+// (acceptProtocolRevenueVault) once the router's upgradeDelay (3600 s) has passed.
+// Deployment records: deployments/<chain>/mainnet.protocol-revenue-forwarder.json
+// and the PF1 / PF2 Safe batches beside them (not committed when this was
+// written, so the addresses are pinned here with their deploy transactions).
+export const EVM_PROTOCOL_REVENUE_FORWARDERS = Object.freeze({
+  56: Object.freeze({
+    address: "0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D",
+    deployTx: "0x2ab804e0f59b75e4cfb96abc350d4f59f464c392aacdb8b174af4b03602a7842",
+    deployBlock: 125725183,
+    record: "deployments/bnb/mainnet.protocol-revenue-forwarder.json",
+  }),
+  4663: Object.freeze({
+    address: "0xaC65Db89209EC375a7847AA3B3eCF6EFbd57D1D6",
+    deployTx: "0x5bc18525abf3dc93d5d3b8a851445a6b70d1e22c7d7fc3e24c04b9eabec3d088",
+    deployBlock: 80155516,
+    record: "deployments/robinhood/mainnet.protocol-revenue-forwarder.json",
+  }),
+});
+
 const MAINNET = {
   56: {
     record: "deployments/bnb",
@@ -141,6 +166,7 @@ function mainnetRegistry(chainId) {
   const a = MAINNET[chainId];
   const network = EVM_FEE_ROUTING_CHAINS[chainId];
   const rec = a.record;
+  const forwarder = EVM_PROTOCOL_REVENUE_FORWARDERS[chainId];
   const native = ["native"];
   const withWrapped = ["native", a.wrapped];
 
@@ -164,6 +190,7 @@ function mainnetRegistry(chainId) {
     { id: "charity", label: "CharityTreasury", kind: "vault", address: a.charity, custody: "Immutable charity receiver of the monthly league", role: "Monthly league overflow above the USD cap", citation: "contracts/MonthlyLeagueTreasury.sol:189-211", assets: native },
     { id: "event_prize", label: "EventPrizeVaultV1", kind: "vault", address: a.eventPrize, custody: "Per-event prize pools", role: "70% of sponsorships", citation: "contracts/WarzoneSponsorshipRouterV1.sol:23-24,181-182", assets: native },
     { id: "lp_locker", label: a.lockerName, kind: "contract", address: a.locker, custody: "Permanently locked graduation liquidity; pendingProtocolToken holds refused shares", role: "Harvests LP fees 80% creator / 20% protocol", citation: "contracts/PermanentLpLocker.sol:45-46,403-441; contracts/PermanentV3PositionLocker.sol:74-75", assets: withWrapped },
+    { id: "protocol_forwarder", label: "ProtocolRevenueForwarder", kind: "contract", address: forwarder.address, custody: `Forwards native to ProtocolRevenueVault on receive(); flush() (anyone) unwraps ${a.wrapped} and forwards it. Admin = Safe.`, role: `Unwraps the LP protocol 20% once the router points at it (PF1, then PF2)`, citation: `contracts/ProtocolRevenueForwarder.sol; ${forwarder.record} (deploy tx ${forwarder.deployTx}, block ${forwarder.deployBlock})`, assets: withWrapped },
     { id: "router_v4", label: "TreasuryRouterV4 (should hold nothing)", kind: "contract", address: a.routerV4, custody: "Forwards in the same call", role: "Live fee router (gen-6)", citation: `${rec}/mainnet.evmgen-fees.json`, assets: native },
     { id: "deployer", label: "Deployer (watch only)", kind: "wallet", address: EVM_DEPLOYER, custody: "Deploy key; keeps only immutable adapter admin roles", role: "Must never hold user money. No fee path in contract code pays it.", citation: "docs/claude/evm-deployments.md (Mainnet inputs)", assets: native, flags: ["deployer", "watch"] },
   ];
@@ -202,7 +229,7 @@ function mainnetRegistry(chainId) {
       ],
       citation: "contracts/ProtocolRevenueVault.sol:40-81",
       notes: [
-        "The vault has no ERC20 withdraw: LP protocol shares routed as tokens (routeLpToken) stay in it. See the wrapped-token balance.",
+        `The vault has no ERC20 withdraw: ${a.wrapped} routed to it directly (routeLpToken while the router still points at the vault) stays in it. See the wrapped-token balance and the forwarder status alert.`,
         "A reverting operator or overflow address would revert every trade (strict routing).",
       ],
     },
@@ -218,7 +245,7 @@ function mainnetRegistry(chainId) {
         { destinationId: "protocol_vault", share: `20% (PROTOCOL_FEE_BPS 2000), as ${a.wrapped}`, note: "Refused or unset router parks it in the locker's pendingProtocolToken" },
       ],
       citation: "contracts/PermanentLpLocker.sol:403-441; contracts/TreasuryRouterV4.sol:178-185",
-      notes: [],
+      notes: [`routeLpToken pays whatever router.protocolRevenueVault() is. Once the Safe switches it to ProtocolRevenueForwarder ${forwarder.address} (PF1, then PF2), the ${a.wrapped} lands there and flush() unwraps it into the vault as native.`],
     },
     {
       id: "evm_arena",
@@ -292,7 +319,8 @@ function mainnetRegistry(chainId) {
   ];
 
   const wiring = [
-    ...ROUTER_GETTERS.map(([destId, getter]) => ({ id: `v4_${getter}`, label: `TreasuryRouterV4.${getter}`, contract: a.routerV4, getter, expected: destinations.find((d) => d.id === destId).address })),
+    // The V4 protocol vault may also be the forwarder (after PF2): both are expected.
+    ...ROUTER_GETTERS.map(([destId, getter]) => ({ id: `v4_${getter}`, label: `TreasuryRouterV4.${getter}`, contract: a.routerV4, getter, expected: destinations.find((d) => d.id === destId).address, ...(getter === "protocolRevenueVault" ? { alsoAccepted: [forwarder.address] } : {}) })),
     ...ROUTER_GETTERS.map(([destId, getter]) => ({ id: `v3_${getter}`, label: `TreasuryRouterV3.${getter}`, contract: a.routerV3, getter, expected: destId === "creator_vault_v2" ? a.creatorV1 : destinations.find((d) => d.id === destId).address })),
     { id: "prv_operator", label: "ProtocolRevenueVault.operator", contract: a.protocol, getter: "operator", expected: EVM_PROTOCOL_OPERATOR },
     { id: "prv_overflow", label: "ProtocolRevenueVault.overflowTreasury", contract: a.protocol, getter: "overflowTreasury", expected: EVM_SAFE },
@@ -317,8 +345,10 @@ function mainnetRegistry(chainId) {
       airdrop: "community_vault", squad: "community_vault", protocol: "protocol_vault",
       creator: "creator_vault_v2", votes: "protocol_vault", mwl: "post_grad_league",
     },
+    // Read live by financeFeeRouting.js (lpForwarderAlerts): router pointer,
+    // pending switch and the wrapped balance decide the LP alert.
+    lpForwarder: { router: a.routerV4, vault: a.protocol, forwarder: forwarder.address, wrapped: a.wrapped, deployTx: forwarder.deployTx, record: forwarder.record },
     alerts: [
-      { level: "warning", message: `LP protocol shares reach ProtocolRevenueVault as ${a.wrapped} (routeLpToken → safeTransferFrom). The vault only forwards native on receive() and has no ERC20 withdraw, so that 20% is neither operator-filled nor movable by the Safe once it lands. Contract code: ProtocolRevenueVault.sol, NativeTreasuryVaultBase.sol:27-33, TreasuryRouterV4.sol:178-185.` },
       { level: "info", message: "The first $10,000 of protocol revenue goes to operator EOA 0x4CB6…7810 (intended per Safe batch V3); everything after goes to the Safe." },
     ],
   };

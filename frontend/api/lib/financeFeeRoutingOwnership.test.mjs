@@ -16,7 +16,7 @@ const EXPECTED = {
     mixed: ["dbc_fee_collector"],
   },
   evm: {
-    ours: ["protocol_vault", "protocol_operator", "safe"],
+    ours: ["protocol_vault", "protocol_forwarder", "protocol_operator", "safe"],
     owed: ["weekly_league", "monthly_league", "monthly_league_old", "recruiter_vault", "community_vault", "creator_vault_v2", "creator_vault_v1", "post_grad_league", "mwl_monthly", "mwl_quarterly", "war_pool", "airdrop_distributor", "holder_distributor", "charity", "event_prize", "lp_locker", "router_v4"],
     watch: ["deployer"],
     mixed: ["war_pool", "lp_locker"],
