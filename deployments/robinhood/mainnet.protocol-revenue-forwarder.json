@@ -1,0 +1,16 @@
+{
+  "chainId": 4663,
+  "deployedAt": "2026-10-04T18:39:48.053Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "contract": "ProtocolRevenueForwarder",
+  "address": "0xaC65Db89209EC375a7847AA3B3eCF6EFbd57D1D6",
+  "deployTx": "0x5bc18525abf3dc93d5d3b8a851445a6b70d1e22c7d7fc3e24c04b9eabec3d088",
+  "deployBlock": 80155516,
+  "constructorArgs": {
+    "admin": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+    "nativeSink": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+    "wrappedNative": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+  },
+  "router": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d",
+  "note": "Router change pending: Safe batches PF1 (propose) then, >= 3600 s later, PF2 (accept)."
+}

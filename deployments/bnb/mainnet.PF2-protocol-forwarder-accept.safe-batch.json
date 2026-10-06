@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1791138905338,
+  "meta": {
+    "name": "MWZ PF2: protocol forwarder, accept",
+    "description": "TreasuryRouterV4 0x8C8141B8 on BNB: accept the pending protocol revenue vault (ProtocolRevenueForwarder 0x2ABd8970). Reverts \"delay\" before 3600 s since PF1 and \"no pending\" without PF1. After it: router.protocolRevenueVault() == 0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+      "value": "0",
+      "data": "0x4d2d1154",
+      "contractMethod": {
+        "inputs": [],
+        "name": "acceptProtocolRevenueVault",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    }
+  ]
+}

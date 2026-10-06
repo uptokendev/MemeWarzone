@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1791138905335,
+  "meta": {
+    "name": "MWZ PF1: protocol forwarder, propose",
+    "description": "TreasuryRouterV4 0x8C8141B8 on BNB: propose ProtocolRevenueForwarder 0x2ABd8970 as the protocol revenue vault. It forwards native to the current ProtocolRevenueVault 0xc2d4E6f8 and unwraps the LP protocol 20% (WBNB) through flush(). Nothing changes until PF2. Execute PF2 no earlier than 3600 s after this executes.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+      "value": "0",
+      "data": "0x7acae6bc0000000000000000000000002abd8970680d806e46ded9aeddaa6e12d866641d",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "proposeProtocolRevenueVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D"
+      }
+    }
+  ]
+}

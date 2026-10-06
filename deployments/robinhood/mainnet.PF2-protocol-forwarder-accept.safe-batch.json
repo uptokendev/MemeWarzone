@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1791139188075,
+  "meta": {
+    "name": "MWZ PF2: protocol forwarder, accept",
+    "description": "TreasuryRouterV4 0x49Ae38B1 on Robinhood Chain: accept the pending protocol revenue vault (ProtocolRevenueForwarder 0xaC65Db89). Reverts \"delay\" before 3600 s since PF1 and \"no pending\" without PF1. After it: router.protocolRevenueVault() == 0xaC65Db89209EC375a7847AA3B3eCF6EFbd57D1D6.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d",
+      "value": "0",
+      "data": "0x4d2d1154",
+      "contractMethod": {
+        "inputs": [],
+        "name": "acceptProtocolRevenueVault",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    }
+  ]
+}
