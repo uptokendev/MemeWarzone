@@ -48,6 +48,9 @@ type FeaturedItem = {
   marketcapBnb?: string | null;
   liveMarketcapBnb?: string | null;
   athMarketcapBnb?: string | null;
+  /** Solana launchpad coins: post-graduation supply; market cap is live price x this. */
+  fullyDilutedSupply?: string | null;
+  lastPriceBnb?: string | null;
   graduatedAtChain?: string | null;
   isDexTrading?: boolean;
 };
@@ -102,6 +105,8 @@ function normalizeItem(raw: any, fallbackChainId: number): FeaturedItem | null {
     votesAllTime: Number(raw?.votesAllTime ?? raw?.votes_all_time ?? 0),
     marketcapBnb: raw?.marketcapBnb ?? raw?.marketcap_bnb ?? null,
     athMarketcapBnb: raw?.athMarketcapBnb ?? raw?.ath_marketcap_bnb ?? null,
+    fullyDilutedSupply: raw?.fullyDilutedSupply ?? null,
+    lastPriceBnb: raw?.lastPriceBnb ?? null,
     graduatedAtChain: raw?.graduatedAtChain ?? raw?.graduated_at_chain ?? null,
     isDexTrading: Boolean(raw?.isDexTrading ?? raw?.is_dex_trading ?? raw?.status === "graduated"),
   };
@@ -162,6 +167,8 @@ function mergeFeaturedItems(prev: FeaturedItem[], incoming: FeaturedItem[], opts
         item.liveMarketcapBnb != null && item.liveMarketcapBnb !== ""
           ? item.liveMarketcapBnb
           : old.liveMarketcapBnb,
+      fullyDilutedSupply: item.fullyDilutedSupply || old.fullyDilutedSupply || null,
+      lastPriceBnb: item.lastPriceBnb || old.lastPriceBnb || null,
       // Vote and trade events carry no ATH; keep the one /api/featured returned.
       athMarketcapBnb: Math.max(Number(item.athMarketcapBnb) || 0, Number(old.athMarketcapBnb) || 0) > 0
         ? String(Math.max(Number(item.athMarketcapBnb) || 0, Number(old.athMarketcapBnb) || 0))
@@ -724,7 +731,13 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
         const patchKey = liveCampaignKey(item.chainId, String(item.campaignAddress || ""));
         const patch = patchByCampaign[patchKey] || patchByCampaign[String(item.campaignAddress || "")];
         const liveMcap = pickLiveNumeric(patch?.marketcapBnb, pickLiveNumeric(item.liveMarketcapBnb, NaN));
-        const mcapBnb = liveMcap > 0 ? liveMcap : pickLiveNumeric(item.marketcapBnb, NaN);
+        // Fixed-supply coins take live price x supply, as the grid does: the live patch values a
+        // Solana launchpad coin at price x curve sold, which would flip the card back to that basis.
+        const fdSupply = pickLiveNumeric(item.fullyDilutedSupply, NaN);
+        const fdPrice = pickLiveNumeric(patch?.lastPriceBnb, NaN) > 0 ? pickLiveNumeric(patch?.lastPriceBnb, NaN) : pickLiveNumeric(item.lastPriceBnb, NaN);
+        const mcapBnb = fdSupply > 0 && fdPrice > 0
+          ? fdPrice * fdSupply
+          : liveMcap > 0 ? liveMcap : pickLiveNumeric(item.marketcapBnb, NaN);
         const mcapUsd = Number.isFinite(mcapBnb) && mcapBnb > 0 && Number.isFinite(Number(nativeUsd)) && Number(nativeUsd) > 0
           ? mcapBnb * Number(nativeUsd)
           : null;

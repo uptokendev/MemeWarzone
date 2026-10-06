@@ -109,6 +109,9 @@ export type SolanaCampaignCurveState = {
   priceSlopeLamports: bigint;
   buyFeeBps: number;
   sellFeeBps: number;
+  /** Graduation: fee taken off net raised, then this share of the rest goes to the pool. */
+  finalizeFeeBps: number;
+  liquidityPostFinalizeBps: number;
   creatorBuyLockUntil: number;
   createdAt: number;
   soldTokens: bigint;
@@ -233,9 +236,9 @@ export function decodeSolanaCampaignAccount(
   const priceSlopeLamports = takeU64();
   const buyFeeBps = takeU16();
   const sellFeeBps = takeU16();
-  takeU16(); // finalize_fee_bps
+  const finalizeFeeBps = takeU16();
   takeU16(); // creator_post_finalize_bps
-  takeU16(); // liquidity_post_finalize_bps
+  const liquidityPostFinalizeBps = takeU16();
   takeU8(); // dex_adapter
   take32(); // trade_route_profile
   take32(); // finalize_route_profile
@@ -283,6 +286,8 @@ export function decodeSolanaCampaignAccount(
     priceSlopeLamports,
     buyFeeBps,
     sellFeeBps,
+    finalizeFeeBps,
+    liquidityPostFinalizeBps,
     creatorBuyLockUntil,
     createdAt,
     soldTokens,

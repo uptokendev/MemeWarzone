@@ -3,6 +3,8 @@ import { badMethod, getQuery, json } from "../server/http.js";
 import { reconcileScheduledDraftLifecycle } from "./dev-fix/scheduled-lifecycle.js";
 import { publicHiddenWhere } from "./lib/publicHiddenCampaigns.js";
 import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
+import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
+import { withSolanaLaunchpadMarketCap } from "./lib/solanaCampaignProgress.js";
 
 const SORT_MAP = {
   activity: "last_activity_at",
@@ -111,11 +113,13 @@ ${LIFECYCLE_SELECT}
        COALESCE(dl.scheduled_launch_at, c.created_at_chain) AS "createdAtChain",
        c.graduated_at_chain AS "graduatedAtChain",
        COALESCE(cc.mcap_c, ts.marketcap_bnb) AS "marketcapBnb",
+       COALESCE(cc.price_c, ts.last_price_bnb) AS "lastPriceBnb",
        COALESCE(vw.votes_1h, 0) AS "votes1h",
        COALESCE(vw.votes_24h, 0) AS "votes24h",
        COALESCE(vw.votes_7d, 0) AS "votes7d",
        COALESCE(va.votes_all_time, 0) AS "votesAllTime",
        athc.ath_mcap AS "athMarketcapBnb",
+       athc.ath_price AS "athPriceBnb",
        COALESCE(vw.trending_score, 0) AS "trendingScore",
        va.last_vote_at AS "lastVoteAt",
        ca.last_activity_at AS "lastActivityAt",
@@ -134,7 +138,7 @@ ${LIFECYCLE_JOIN}
        ON ts.chain_id = c.chain_id
       AND ts.campaign_address = c.campaign_address
      LEFT JOIN LATERAL (
-       SELECT tc.mcap_c
+       SELECT tc.mcap_c, tc.price_c
        FROM token_candles tc
        WHERE tc.chain_id = c.chain_id
          AND tc.campaign_address = c.campaign_address
@@ -147,7 +151,7 @@ ${LIFECYCLE_JOIN}
      -- ATH the same way /api/campaigns reads it (highest 1m candle market cap). Without it the
      -- featured card showed the current market cap as the ATH (K88: $7.12K for $8.11K).
      LEFT JOIN LATERAL (
-       SELECT max(tc.mcap_h) AS ath_mcap
+       SELECT max(tc.mcap_h) AS ath_mcap, max(tc.h) AS ath_price
        FROM token_candles tc
        WHERE tc.chain_id = c.chain_id
          AND tc.campaign_address = c.campaign_address
@@ -248,6 +252,11 @@ export default async function handler(req, res) {
 
     try {
       items = await readFeaturedFromVotes({ chainId, sortCol, limit });
+      // Solana launchpad coins: market cap and ATH on their post-graduation supply, as the cards show.
+      if (chainId === 101 && items.length) {
+        const solUsd = (await resolveSolUsdPrice().catch(() => null))?.price ?? null;
+        await withSolanaLaunchpadMarketCap(items, solUsd);
+      }
     } catch (error) {
       warning = "Featured UPvote aggregates are unavailable; using live campaign fallback.";
       console.warn("[api/featured] vote aggregate query unavailable; using campaign fallback", error);

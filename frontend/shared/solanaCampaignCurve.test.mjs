@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { decodeSolanaCampaignCurve, solanaBondingProgressPct, solanaCurveCloseLamports, solanaCurveCostLamports } from "./solanaCampaignCurve.mjs";
+import { decodeSolanaCampaignCurve, solanaBondingProgressPct, solanaCurveCloseLamports, solanaCurveCostLamports, solanaProjectedSupplyRaw } from "./solanaCampaignCurve.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // KAIJU88's real mainnet Campaign account (Hsa3rJ...9edA), read 2026-09-26: the $15k bonding choice.
@@ -46,4 +46,27 @@ test("a Meteora DBC pool account is not a Campaign: decodes to null instead of t
   const pool = Buffer.from(fs.readFileSync(path.join(here, "fixtures/dazilla-dbc-pool-account.b64"), "utf8").trim(), "base64");
   assert.equal(pool.length, 424);
   assert.equal(decodeSolanaCampaignCurve(pool), null);
+});
+
+test("projected supply: what KAIJU88 keeps after graduation burns its unsold curve and unused liquidity tokens", () => {
+  const curve = decodeSolanaCampaignCurve(kaiju);
+  // The account's own split of the 1B mint: 840M curve, 140M liquidity, 20M creator reserve; 2% finalize fee, 80% to liquidity.
+  assert.equal(curve.curveTokenSupply + curve.liquidityTokenSupply + curve.reserveTokenSupply, 1_000_000_000_000_000n);
+  assert.equal(curve.liquidityTokenSupply, 140_000_000_000_000n);
+  assert.equal(curve.reserveTokenSupply, 20_000_000_000_000n);
+  assert.equal(curve.finalizeFeeBps, 200);
+  assert.equal(curve.liquidityPostFinalizeBps, 8000);
+  const supply = solanaProjectedSupplyRaw(curve, 120.4);
+  // At $120.40 the $15k target closes the curve at ~124.58 SOL with ~540.25M sold; the pool takes all
+  // 140M liquidity tokens (97.7 SOL wants more at the final spot) and the 20M reserve stays: ~700.25M.
+  assert.ok(Math.abs(Number(supply) / 1e6 - 700_249_328) < 1, String(supply));
+  const close = solanaCurveCloseLamports(curve, 120.4);
+  const sold = supply - 160_000_000_000_000n;
+  assert.ok(solanaCurveCostLamports(curve, sold) <= close && solanaCurveCostLamports(curve, sold + 1n) > close, "sold is where the curve cost reaches the close");
+});
+
+test("projected supply after the curve closes uses what it actually sold", () => {
+  const curve = { ...decodeSolanaCampaignCurve(kaiju), graduated: true, soldTokens: 600_000_000_000_000n, netRaisedLamports: 150_000_000_000n };
+  const supply = solanaProjectedSupplyRaw(curve, 120.4);
+  assert.equal(supply, 600_000_000_000_000n + 140_000_000_000_000n + 20_000_000_000_000n);
 });

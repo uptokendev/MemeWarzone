@@ -3,7 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dbcProgressPct, readAccounts, solanaProgressRpcUrls } from "./solanaCampaignProgress.js";
+import { dbcProgressPct, readAccounts, solanaProgressRpcUrls, withSolanaLaunchpadMarketCap } from "./solanaCampaignProgress.js";
 
 test("RPC list: SOLANA_RPC_URL entries first, then the other mainnet names, http only, no duplicates", () => {
   const urls = solanaProgressRpcUrls({
@@ -64,4 +64,34 @@ test("a DBC pool in the list no longer blanks every Solana card: both coins get 
 test("a refused DBC config read leaves the launchpad coin's curve intact", async () => {
   const out = await readAccounts([KAIJU, DAZILLA_POOL], { urls: ["https://live.example"], fetchImpl: chain({ refuse: [DAZILLA_CONFIG] }) });
   assert.ok(out.get(KAIJU)?.curveTokenSupply > 0n);
+});
+
+test("launchpad market cap: price x post-graduation supply on the card, list and ATH; DBC coins untouched", async () => {
+  const items = [
+    { chainId: 101, campaignAddress: KAIJU, lastPriceBnb: "0.0000002247883802", athPriceBnb: "0.00000024", marketcapBnb: "59.18" },
+    { chainId: 101, campaignAddress: DAZILLA_POOL, lastPriceBnb: "0.00000023", marketcapBnb: "178.55", athMarketcapBnb: "274.49" },
+  ];
+  const fetchImpl = chain();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = fetchImpl;
+  process.env.SOLANA_RPC_URL = "https://live.example";
+  try {
+    await withSolanaLaunchpadMarketCap(items, 120.4);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  const [kaiju, dazilla] = items;
+  // 540.25M sold by the $15k close + 140M pool liquidity + 20M creator reserve = ~700.25M (not 1B, not 263M sold).
+  assert.ok(Math.abs(Number(kaiju.fullyDilutedSupply) - 700_249_328) < 1, kaiju.fullyDilutedSupply);
+  assert.ok(Math.abs(Number(kaiju.marketcapBnb) - 0.0000002247883802 * Number(kaiju.fullyDilutedSupply)) < 1e-9);
+  assert.ok(Math.abs(Number(kaiju.athMarketcapBnb) - 0.00000024 * Number(kaiju.fullyDilutedSupply)) < 1e-9);
+  assert.equal(dazilla.fullyDilutedSupply, undefined);
+  assert.equal(dazilla.marketcapBnb, "178.55");
+});
+
+test("no SOL price leaves launchpad market caps as they were", async () => {
+  const items = [{ chainId: 101, campaignAddress: KAIJU, lastPriceBnb: "0.0000002", marketcapBnb: "59.18" }];
+  await withSolanaLaunchpadMarketCap(items, null);
+  assert.equal(items[0].marketcapBnb, "59.18");
+  assert.equal(items[0].fullyDilutedSupply, undefined);
 });

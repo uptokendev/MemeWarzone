@@ -20,12 +20,17 @@ const OFF = (() => {
   o += 1; // curve_kind
   o += 8; // token_total_supply
   const curveTokenSupply = o; o += 8;
-  o += 8 + 8; // liquidity_token_supply, reserve_token_supply
+  const liquidityTokenSupply = o; o += 8;
+  const reserveTokenSupply = o; o += 8;
   const tokenDecimals = o; o += 1;
   o += 2 + 2; // curve_supply_bps, liquidity_token_bps
   const basePriceLamports = o; o += 8;
   const priceSlopeLamports = o; o += 8;
-  o += 2 * 5 + 1; // buy/sell/finalize fee bps, creator/liquidity post-finalize bps, dex_adapter
+  o += 2 + 2; // buy/sell fee bps
+  const finalizeFeeBps = o; o += 2;
+  o += 2; // creator_post_finalize_bps
+  const liquidityPostFinalizeBps = o; o += 2;
+  o += 1; // dex_adapter
   o += 32 * 5; // route/treasury/dex/oracle profiles
   o += 8 + 2 + 8; // creator_buy_lock_until, creator_buy_cap_bps, created_at
   const soldTokens = o; o += 8;
@@ -33,7 +38,7 @@ const OFF = (() => {
   o += 8 * 4; // total buy/sell volume, buyer_count, creator_bought_tokens
   o += 2 + 1; // asset_initialization_version, mint_authority_revoked
   const graduated = o;
-  return { graduationTargetUsdMicros, economicsVersion, curveTokenSupply, tokenDecimals, basePriceLamports, priceSlopeLamports, soldTokens, netRaisedLamports, graduated };
+  return { graduationTargetUsdMicros, economicsVersion, curveTokenSupply, liquidityTokenSupply, reserveTokenSupply, tokenDecimals, basePriceLamports, priceSlopeLamports, finalizeFeeBps, liquidityPostFinalizeBps, soldTokens, netRaisedLamports, graduated };
 })();
 
 export function decodeSolanaCampaignCurve(bytes) {
@@ -47,6 +52,10 @@ export function decodeSolanaCampaignCurve(bytes) {
     graduationTargetUsdMicros: u64(OFF.graduationTargetUsdMicros),
     economicsVersion: view.getUint16(OFF.economicsVersion, true),
     curveTokenSupply: u64(OFF.curveTokenSupply),
+    liquidityTokenSupply: u64(OFF.liquidityTokenSupply),
+    reserveTokenSupply: u64(OFF.reserveTokenSupply),
+    finalizeFeeBps: view.getUint16(OFF.finalizeFeeBps, true),
+    liquidityPostFinalizeBps: view.getUint16(OFF.liquidityPostFinalizeBps, true),
     tokenDecimals: view.getUint8(OFF.tokenDecimals),
     basePriceLamports: u64(OFF.basePriceLamports),
     priceSlopeLamports: u64(OFF.priceSlopeLamports),
@@ -81,4 +90,54 @@ export function solanaBondingProgressPct(curve, solUsd) {
   const closesAt = solanaCurveCloseLamports(curve, solUsd);
   if (closesAt <= 0n) return null;
   return Math.max(0, Math.min(100, Number((curve.netRaisedLamports * 1_000_000n) / closesAt) / 10_000));
+}
+
+/**
+ * Token supply this campaign will have after it graduates, in raw units: what the curve sells by its
+ * close, plus the liquidity tokens the pool takes, plus the creator reserve. Graduation burns the
+ * unsold curve tokens and unused liquidity tokens (programs/memewarzone_solana/src/graduation.rs), so
+ * this, not the 1B minted, is the supply a market cap should count -- the same thing a Meteora DBC
+ * coin's mint holds from launch. Mirrors graduation_quote: liquidity = (raised - finalize fee) x
+ * liquidity_post_finalize_bps, priced at the final spot, capped at liquidity_token_supply.
+ * A curve that has already closed uses what it actually sold. Null when the curve is unknown.
+ */
+export function solanaProjectedSupplyRaw(curve, solUsd) {
+  const curveSupply = BigInt(curve?.curveTokenSupply ?? 0n);
+  const liquiditySupply = BigInt(curve?.liquidityTokenSupply ?? 0n);
+  const reserveSupply = BigInt(curve?.reserveTokenSupply ?? 0n);
+  if (curveSupply <= 0n) return null;
+  const decimals = Math.max(0, Number(curve.tokenDecimals || 0));
+  const scale = 10n ** BigInt(decimals);
+  if (Number(curve.economicsVersion || 0) < 3) return null;
+
+  let sold;
+  let raised;
+  const closed = Boolean(curve.graduated) || BigInt(curve.soldTokens ?? 0n) >= curveSupply;
+  if (closed) {
+    sold = BigInt(curve.soldTokens ?? 0n);
+    raised = BigInt(curve.netRaisedLamports ?? 0n);
+  } else {
+    raised = solanaCurveCloseLamports(curve, solUsd);
+    if (raised <= 0n) return null;
+    // Tokens sold when net raised reaches the close amount: invert the curve cost by bisection.
+    let lo = 0n;
+    let hi = curveSupply;
+    while (lo < hi) {
+      const mid = (lo + hi + 1n) / 2n;
+      if (solanaCurveCostLamports(curve, mid) <= raised) lo = mid;
+      else hi = mid - 1n;
+    }
+    sold = lo;
+  }
+
+  // final_spot_nano_lamports: base x 1e9 + slope x sold / scale (nano-lamports per whole token).
+  const spot = BigInt(curve.basePriceLamports) * 1_000_000_000n + (BigInt(curve.priceSlopeLamports) * sold) / scale;
+  let liquidityTokens = liquiditySupply;
+  if (spot > 0n) {
+    const remaining = raised - (raised * BigInt(curve.finalizeFeeBps ?? 0)) / 10_000n;
+    const targetLiquidity = (remaining * BigInt(curve.liquidityPostFinalizeBps ?? 0)) / 10_000n;
+    const desired = (targetLiquidity * scale * 1_000_000_000n) / spot;
+    liquidityTokens = desired < liquiditySupply ? desired : liquiditySupply;
+  }
+  return sold + liquidityTokens + reserveSupply;
 }

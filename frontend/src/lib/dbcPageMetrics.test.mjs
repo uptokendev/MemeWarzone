@@ -61,7 +61,7 @@ test("launchpad reader refuses a non-Campaign account instead of reading past it
 test("TokenDetails values a DBC coin on its mint supply and indexed trades", () => {
   const source = fs.readFileSync(path.join(here, "../pages/TokenDetails.tsx"), "utf8");
   assert.match(source, /if \(isDbcPage\) return dbcMintSupplyWhole;/, "header/chart supply");
-  assert.match(source, /fixedSupplyWhole=\{dbcMintSupplyWhole\}/, "chart trade fallback");
+  assert.match(source, /fixedSupplyWhole=\{isDbcPage \? dbcMintSupplyWhole :/, "chart trade fallback");
   assert.match(source, /createdAt: dbcDeployedAtSec\(dbcLive\)/, "Deployed tile");
   const flywheel = source.slice(source.indexOf("const flywheel = useMemo"));
   assert.ok(flywheel.indexOf("if (isDbcPage)") < flywheel.indexOf("if (isSolanaPage && solanaCurve)"), "DBC flywheel branch first");

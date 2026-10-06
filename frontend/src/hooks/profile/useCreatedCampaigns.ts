@@ -12,6 +12,7 @@ import { getReadProvider } from "@/lib/readProvider";
 import { isEvmAddress, isSolanaAddress, normalizeAddress } from "@/lib/address";
 import { apiFetch } from "@/lib/apiBase";
 import { useSolUsdPrice } from "@/hooks/useSolUsdPrice";
+import { solanaProjectedSupplyRaw } from "../../../shared/solanaCampaignCurve.mjs";
 import {
   fetchSolanaCampaignCurveState,
   solanaMarginalSpotSol,
@@ -146,10 +147,13 @@ function normalizeNativeMarketCapLabel(value: unknown, chainId?: number): string
 }
 
 async function solanaMarketCapLabel(item: any, solUsd: number | null): Promise<string> {
+  // Launchpad coins: /api/campaigns sends the post-graduation supply market cap is valued on.
+  const fromSupply =
+    nativeAmount(item?.lastPriceBnb ?? item?.priceBnb) * nativeAmount(item?.fullyDilutedSupply);
   const fromStats = nativeAmount(item?.marketcapBnb ?? item?.marketCapBnb);
   const fromPriceSold =
     nativeAmount(item?.lastPriceBnb ?? item?.priceBnb) * nativeAmount(item?.soldTokens);
-  const native = fromStats || fromPriceSold;
+  const native = fromSupply || fromStats || fromPriceSold;
   if (native > 0 && solUsd && solUsd > 0) return formatCompactUsd(native * solUsd);
   if (native > 0) return `${native.toFixed(2)} SOL`;
 
@@ -157,7 +161,10 @@ async function solanaMarketCapLabel(item: any, solUsd: number | null): Promise<s
   if (!curve) return "—";
   const spot = solanaMarginalSpotSol(curve, curve.soldTokens);
   const decimals = Number(curve.tokenDecimals || 6);
-  const soldWhole = Number(curve.soldTokens) / 10 ** decimals;
+  const projected = solUsd && solUsd > 0 ? solanaProjectedSupplyRaw(curve, solUsd) : null;
+  const soldWhole = projected != null && projected > 0n
+    ? Number(projected) / 10 ** decimals
+    : Number(curve.soldTokens) / 10 ** decimals;
   if (!(spot > 0 && soldWhole > 0)) return "—";
   if (solUsd && solUsd > 0) return formatCompactUsd(spot * soldWhole * solUsd);
   return `${(spot * soldWhole).toFixed(2)} SOL`;

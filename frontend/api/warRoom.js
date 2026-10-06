@@ -1,4 +1,6 @@
 import { pool } from "../server/db.js";
+import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
+import { withSolanaLaunchpadMarketCap } from "./lib/solanaCampaignProgress.js";
 import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, isSolanaChain, json, normalizeAddress as normalizeChainAddress } from "../server/http.js";
 
@@ -108,6 +110,8 @@ function mapWarRoomRow(row) {
     vol24hBnb: row.vol24hBnb != null ? String(row.vol24hBnb) : null,
     holderCount: row.holderCount != null ? Number(row.holderCount) : 0,
     athMarketcapBnb: row.athMarketcapBnb != null ? String(row.athMarketcapBnb) : null,
+    // Solana launchpad coins: the post-graduation supply the client values live prices on.
+    fullyDilutedSupply: row.fullyDilutedSupply != null ? String(row.fullyDilutedSupply) : null,
     raisedTotalBnb: row.raisedTotalBnb != null ? String(row.raisedTotalBnb) : "0",
     raised10mBnb: row.raised10mBnb != null ? String(row.raised10mBnb) : "0",
     progressPct: row.progressPct != null ? Number(row.progressPct) : null,
@@ -324,6 +328,7 @@ async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, 
           when ath.ath_price_bnb is not null and coalesce(trade_stats.indexed_sold_tokens, b.sold_tokens) is not null then ath.ath_price_bnb * coalesce(trade_stats.indexed_sold_tokens, b.sold_tokens)
           else coalesce(trade_stats.indexed_marketcap_bnb, b.marketcap_bnb)
         end as ath_marketcap_bnb,
+        ath.ath_price_bnb,
         case
           when $2::numeric <= 0 then null
           else least(100, greatest(0, (rt.raised_total_bnb / $2::numeric) * 100))
@@ -364,6 +369,7 @@ async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, 
       current_vol_24h_bnb as "vol24hBnb",
       holder_count as "holderCount",
       ath_marketcap_bnb as "athMarketcapBnb",
+      ath_price_bnb as "athPriceBnb",
       raised_total_bnb as "raisedTotalBnb",
       raised_10m_bnb as "raised10mBnb",
       progress_pct as "progressPct",
@@ -457,6 +463,13 @@ export default async function handler(req, res) {
       console.error("[api/warRoom] rich query failed; trying basic fallback", richError);
       rows = await fetchBasicWarRoomRows({ chainIds, mode, search, detailAddress, limit, gradTargetBnb });
       warning = "War Room is showing basic coin data while live metrics sync.";
+    }
+
+    // Solana launchpad coins: market cap and ATH on their post-graduation supply, as the cards show.
+    if (rows.some((row) => Number(row.chainId) === 101)) {
+      const solUsd = (await resolveSolUsdPrice().catch(() => null))?.price ?? null;
+      for (const row of rows) row.chainId = Number(row.chainId);
+      await withSolanaLaunchpadMarketCap(rows, solUsd);
     }
 
     if (detailAddress) {

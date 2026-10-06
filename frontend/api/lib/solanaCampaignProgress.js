@@ -1,4 +1,9 @@
-import { decodeSolanaCampaignCurve, solanaBondingProgressPct, solanaCurveCloseLamports } from "../../shared/solanaCampaignCurve.mjs";
+import {
+  decodeSolanaCampaignCurve,
+  solanaBondingProgressPct,
+  solanaCurveCloseLamports,
+  solanaProjectedSupplyRaw,
+} from "../../shared/solanaCampaignCurve.mjs";
 
 /**
  * Solana bonding progress for the campaign list, exactly as Token Details computes it: each campaign's
@@ -129,13 +134,7 @@ export function dbcProgressPct(pool) {
 /** Adds progressPct + graduationCloseSol to Solana items (never throws; unknown stays null). */
 export async function withSolanaBondingProgress(items, solUsd) {
   try {
-    const now = Date.now();
-    const solana = items.filter((item) => item.chainId === 101 || item.chainId === 102);
-    const stale = solana.map((item) => item.campaignAddress).filter((address) => !(cache.get(address)?.at > now - CACHE_MS));
-    if (stale.length) {
-      const read = await readAccounts(stale);
-      for (const [address, curve] of read) cache.set(address, { at: now, curve });
-    }
+    const solana = await loadSolanaCurves(items);
     for (const item of solana) {
       const curve = cache.get(item.campaignAddress)?.curve;
       if (!curve) continue;
@@ -156,4 +155,48 @@ export async function withSolanaBondingProgress(items, solUsd) {
     console.warn("[campaigns] Solana bonding progress unavailable", error?.message || error);
   }
   return items;
+}
+
+async function loadSolanaCurves(items) {
+  const now = Date.now();
+  const solana = items.filter((item) => item.chainId === 101 || item.chainId === 102);
+  const stale = solana.map((item) => item.campaignAddress).filter((address) => !(cache.get(address)?.at > now - CACHE_MS));
+  if (stale.length) {
+    const read = await readAccounts(stale);
+    for (const [address, curve] of read) cache.set(address, { at: now, curve });
+  }
+  return solana;
+}
+
+/**
+ * Market cap of a Solana launchpad coin = price x the supply it keeps after graduation
+ * (solanaProjectedSupplyRaw), the same basis a Meteora DBC coin's full mint supply gives it. Sets
+ * fullyDilutedSupply so the cards value live prices on it too. Display only: market_stats, battles,
+ * league scoring and matchmaking keep their own basis. Never throws; unknown curves stay as they were.
+ */
+export async function withSolanaLaunchpadMarketCap(items, solUsd) {
+  if (!(Number(solUsd) > 0)) return items;
+  try {
+    const solana = await loadSolanaCurves(items);
+    for (const item of solana) {
+      const curve = cache.get(item.campaignAddress)?.curve;
+      if (!curve || curve.launchType === "dbc") continue;
+      const raw = solanaProjectedSupplyRaw(curve, solUsd);
+      if (raw == null || raw <= 0n) continue;
+      applyProjectedSupply(item, Number(raw) / 10 ** Number(curve.tokenDecimals || 0));
+    }
+  } catch (error) {
+    console.warn("[campaigns] Solana launchpad market cap unavailable", error?.message || error);
+  }
+  return items;
+}
+
+export function applyProjectedSupply(item, supplyWhole) {
+  if (!(supplyWhole > 0)) return item;
+  item.fullyDilutedSupply = String(supplyWhole);
+  const price = Number(item.lastPriceBnb);
+  if (price > 0) item.marketcapBnb = String(price * supplyWhole);
+  const athPrice = Number(item.athPriceBnb);
+  if (athPrice > 0) item.athMarketcapBnb = String(Math.max(athPrice * supplyWhole, Number(item.marketcapBnb) || 0));
+  return item;
 }

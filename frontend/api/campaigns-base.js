@@ -1,7 +1,7 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, defaultPublicChainId} from "../server/http.js";
 import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
-import { withSolanaBondingProgress } from "./lib/solanaCampaignProgress.js";
+import { withSolanaBondingProgress, withSolanaLaunchpadMarketCap } from "./lib/solanaCampaignProgress.js";
 import { withEvmBondingProgress } from "./lib/evmCampaignProgress.js";
 import { creatorMatchSql, normalizeCreatorQuery } from "./lib/campaignCreatorFilter.js";
 import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
@@ -166,6 +166,8 @@ function mapCampaignRow(row, gradTargetBnb) {
     vol24hBnb: row.vol_24h_bnb != null ? String(row.vol_24h_bnb) : null,
     holderCount: row.holder_count != null ? Number(row.holder_count) : 0,
     athMarketcapBnb: row.ath_marketcap_bnb != null ? String(row.ath_marketcap_bnb) : null,
+    // Highest candle price; a Solana launchpad coin's ATH is this x its projected supply.
+    athPriceBnb: row.ath_price_bnb != null ? String(row.ath_price_bnb) : null,
     votes24h: row.votes_24h != null ? Number(row.votes_24h) : 0,
     votesAllTime: row.votes_all_time != null ? Number(row.votes_all_time) : 0,
 
@@ -537,6 +539,7 @@ export default async function handler(req, res) {
           rt.raised_total_bnb,
           rt.raised_10m_bnb,
           rt.holder_count,
+          ath.ath_price_bnb,
           case
             when b.fully_diluted_supply is not null
               then coalesce(ath.ath_price_bnb * b.fully_diluted_supply, b.marketcap_bnb)
@@ -615,6 +618,7 @@ export default async function handler(req, res) {
     // Each campaign's own graduation target (the creator's $15k / $30k / $50k choice), read from
     // chain the way Token Details reads it -- never a single default.
     await withSolanaBondingProgress(payload.items, solUsd);
+    await withSolanaLaunchpadMarketCap(payload.items, solUsd);
     await withEvmBondingProgress(payload.items);
     return json(res, 200, payload);
   } catch (e) {

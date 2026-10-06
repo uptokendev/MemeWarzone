@@ -561,6 +561,7 @@ import { WSOL_MINT, formatScaledQuote, quoteUiToRaw } from "../../shared/dbcQuot
 import DbcCreatorRewardsPanel from "@/components/dbc/DbcCreatorRewardsPanel";
 import DbcFeeChoiceLine from "@/components/dbc/DbcFeeChoiceLine";
 import { fetchDbcToken } from "@/lib/dbcCreate";
+import { solanaProjectedSupplyRaw } from "../../shared/solanaCampaignCurve.mjs";
 import { useGen5Campaign } from "@/components/evm/useGen5Campaign";
 import { EvmGen5TradeNotes } from "@/components/evm/EvmGen5TradeNotes";
 import { EvmGen5CreatorPanel } from "@/components/evm/EvmGen5CreatorPanel";
@@ -2195,6 +2196,24 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     [dbcSupplyRaw, isDbcPage],
   );
 
+  const { price: liveSolUsdPrice, loading: solUsdLoading } = useSolUsdPrice(isSolanaPage);
+  // A launchpad coin's market cap counts the supply it keeps after graduation (sold by the close +
+  // pool liquidity tokens + creator reserve; graduation burns the rest), the basis a Meteora DBC
+  // coin's full mint supply gives it. Display only: battles and league scoring keep their own basis.
+  const solanaProjectedSupplyWhole = useMemo(() => {
+    if (!isSolanaPage || isDbcPage || !solanaCurve) return null;
+    const solUsd = Number(liveSolUsdPrice);
+    if (!(solUsd > 0)) return null;
+    try {
+      const raw = solanaProjectedSupplyRaw(solanaCurve, solUsd);
+      if (raw == null || raw <= 0n) return null;
+      const whole = Number(raw) / 10 ** Number(solanaCurve.tokenDecimals || 0);
+      return Number.isFinite(whole) && whole > 0 ? whole : null;
+    } catch {
+      return null;
+    }
+  }, [isDbcPage, isSolanaPage, liveSolUsdPrice, solanaCurve]);
+
   const solanaSoldWhole = useMemo(() => {
     if (!isSolanaPage) return null;
     if (isDbcPage) return dbcMintSupplyWhole;
@@ -2253,7 +2272,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
    * token showed a headline market cap far below its own candles.
    */
   const pageLiveSupplyWhole = useMemo(() => {
-    if (isSolanaPage) return solanaSoldWhole;
+    if (isSolanaPage) return solanaProjectedSupplyWhole ?? solanaSoldWhole;
     if (evmFullyDilutedSupply != null) return evmFullyDilutedSupply;
 
     const graduatedSupplyRaw = unifiedMarket.state?.graduation?.postBurnTotalSupplyRaw;
@@ -2276,6 +2295,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     isSolanaPage,
     metrics?.sold,
     solanaSoldWhole,
+    solanaProjectedSupplyWhole,
     tokenDecimals,
     unifiedMarket.state?.graduation?.postBurnTotalSupplyRaw,
   ]);
@@ -2430,7 +2450,8 @@ const toSeconds = (ts: number): number => {
     const topazLiquidity = contractGraduatedEarly ? topazMarket.liquidityBnb : null;
     const window24h = timeframeTiles?.["24h"]?.volume;
 
-    // Bonding and graduated Solana share one valuation: live price × curve sold.
+    // Bonding and graduated Solana share one valuation: live price × post-graduation supply
+    // (curve sold until that is known).
     // DEX buys must not grow circulating or the headline drifts from the chart.
     let bondingMcapLabel: string | null = null;
     let solanaDexMcapLabel: string | null = null;
@@ -2446,7 +2467,7 @@ const toSeconds = (ts: number): number => {
         const decimals = Number(solanaCurve?.tokenDecimals || tokenDecimals || 6);
         const supplyWhole = isDbcPage
           ? dbcMintSupplyWhole ?? 0
-          : sold > 0n ? Number(ethers.formatUnits(sold, decimals)) : 0;
+          : solanaProjectedSupplyWhole ?? (sold > 0n ? Number(ethers.formatUnits(sold, decimals)) : 0);
         const mcapNative = supplyWhole * solanaLivePrice;
         const label = Number.isFinite(mcapNative) && mcapNative > 0
           ? `${formatCompact(mcapNative)} ${nativeUnit}`
@@ -2558,13 +2579,12 @@ const toSeconds = (ts: number): number => {
       // Timeframe analytics (native volume + price change)
       metrics: timeframeTiles,
     };
-  }, [campaign, contractGraduatedEarly, evmFullyDilutedSupply, curveReserveWei, dbcMintSupplyWhole, dbcPoolLive?.quoteReserveLamports, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
+  }, [campaign, contractGraduatedEarly, evmFullyDilutedSupply, curveReserveWei, dbcMintSupplyWhole, dbcPoolLive?.quoteReserveLamports, solanaProjectedSupplyWhole, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
   // Native/USD reference for TokenDetails conversions: BNB on BNB Chain, SOL on
   // Solana, ETH on Robinhood. Treating every non-Solana chain as BNB priced a
   // Robinhood page in BNB/USD, so the header read about six times lower than the
   // chart, which converts with ETH/USD.
   const { price: bnbUsdPrice, loading: bnbUsdLoading } = useBnbUsdPrice(!isSolanaPage && !isRobinhoodPage);
-  const { price: liveSolUsdPrice, loading: solUsdLoading } = useSolUsdPrice(isSolanaPage);
   const { price: ethUsdPrice, loading: ethUsdLoading } = useEthUsdPrice(isRobinhoodPage);
   const nativeUsdPrice = isSolanaPage ? liveSolUsdPrice : isRobinhoodPage ? ethUsdPrice : bnbUsdPrice;
   const nativeUsdLoading = isSolanaPage ? solUsdLoading : isRobinhoodPage ? ethUsdLoading : bnbUsdLoading;
@@ -5369,7 +5389,7 @@ const toSeconds = (ts: number): number => {
                 canonicalAthUsd={canonicalAthUsd(
                   liveMarketCapNative != null && nativeUsd ? liveMarketCapNative * nativeUsd : 0,
                   nativeUsd
-                    ? canonicalAthNativeFromCandles(unifiedMarket.candles, liveMarketCapNative ?? 0, isDbcPage ? null : evmFullyDilutedSupply) * nativeUsd
+                    ? canonicalAthNativeFromCandles(unifiedMarket.candles, liveMarketCapNative ?? 0, isDbcPage ? null : isSolanaPage ? solanaProjectedSupplyWhole : evmFullyDilutedSupply) * nativeUsd
                     : 0,
                 )}
                 storageKey={`ath:${String(chainIdForStorage)}:${isSolanaPage ? String((campaignAddress ?? campaign?.campaign ?? "")) : String((campaignAddress ?? campaign?.campaign ?? "")).toLowerCase()}`}
@@ -5450,7 +5470,7 @@ const toSeconds = (ts: number): number => {
                   solanaGraduated={Boolean(isSolanaPage && solanaCurve?.graduated)}
                   livePriceNative={pageLivePriceNative}
                   liveSupplyWhole={pageLiveSupplyWhole}
-                  fixedSupplyWhole={isDbcPage ? dbcMintSupplyWhole : evmFullyDilutedSupply}
+                  fixedSupplyWhole={isDbcPage ? dbcMintSupplyWhole : isSolanaPage ? solanaProjectedSupplyWhole : evmFullyDilutedSupply}
                   liveMcapNative={liveMarketCapNative}
                   nativeUsdPrice={nativeUsd}
                   marketKey={`${chainIdForStorage}:${resolvedCampaignAddress || localTradeStorageAddress || ""}`}
