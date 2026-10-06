@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
+  ExternalLink,
   Loader2,
   RefreshCcw,
   Sparkles,
@@ -18,6 +19,8 @@ import { useWallet } from "@/contexts/WalletContext";
 import { setSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { getEvmReadChainIdForTokenPage, isAllowedChainId, isEvmChainId, isEvmTokenPath, isRobinhoodChainId, SOLANA_CHAIN_ID, type SupportedChainId } from "@/lib/chainConfig";
 import { evmConnectTargetChainId } from "@/lib/walletConnectTarget.mjs";
+import { buildOpenInWalletLinks, isMobileBrowser, LAST_OPEN_IN_WALLET_STORAGE_KEY } from "@/lib/mobileWalletLinks.mjs";
+import { WALLETCONNECT_RDNS } from "@/lib/walletConnect";
 import { WAKE_PROVIDER_DISCOVERY_DELAYS_MS } from "@/lib/injectedProviderDiscovery";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 
@@ -192,6 +195,62 @@ function WalletRow({
   );
 }
 
+function readLastOpenInWallet() {
+  try {
+    return window.localStorage.getItem(LAST_OPEN_IN_WALLET_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberOpenInWallet(id: string) {
+  try {
+    window.localStorage.setItem(LAST_OPEN_IN_WALLET_STORAGE_KEY, id);
+  } catch {
+    // storage blocked; the list just keeps its default order
+  }
+}
+
+/** Phone browser with no wallet in the page: reopen this page inside a wallet app. */
+function OpenInWalletList({ filter }: { filter?: "evm" | "solana" | null }) {
+  const links = useMemo(
+    () => buildOpenInWalletLinks({ currentUrl: window.location.href, filter: filter ?? null, lastUsedId: readLastOpenInWallet() }),
+    [filter],
+  );
+
+  return (
+    <div className="rounded-[14px] border border-mw-border bg-mw-input p-4">
+      <p className="m-0 font-mw-cond text-lg font-bold text-mw-text">Open this page in your wallet app</p>
+      <p className="m-0 mt-1 text-sm leading-relaxed text-mw-muted">
+        Phone browsers can't connect to wallet apps. Tap your wallet and this page opens inside it, ready to connect.
+      </p>
+      <div className="mt-3 space-y-2">
+        {links.map((link) => (
+          <a
+            key={link.id}
+            href={link.href}
+            rel="noopener noreferrer"
+            onClick={() => rememberOpenInWallet(link.id)}
+            className="mw-focus group flex w-full items-center gap-3 rounded-[14px] border border-mw-border bg-mw-surface px-3 py-3 text-left text-mw-text no-underline transition-colors hover:border-[#3A424C] hover:bg-[#171B20]"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-mw-border bg-mw-input font-mw-cond text-lg font-bold text-mw-accent-soft">
+              {getWalletInitial(link.name)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="m-0 truncate text-[15px] font-semibold text-mw-text">Open in {link.name}</p>
+              <p className="m-0 mt-0.5 line-clamp-1 text-[13px] text-mw-muted">{link.description}</p>
+            </div>
+            <ExternalLink className="h-4 w-4 text-mw-muted group-hover:text-mw-accent-soft" />
+          </a>
+        ))}
+      </div>
+      <p className="m-0 mt-3 text-xs leading-relaxed text-mw-muted">
+        App not installed? Phantom, Solflare, MetaMask and Trust Wallet send you to their download page. Binance Wallet has no link like this: open {window.location.host} from the Discover tab in Binance Wallet.
+      </p>
+    </div>
+  );
+}
+
 export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWalletModalProps) {
   const {
     account,
@@ -263,6 +322,16 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
       })
       .sort((a, b) => walletPriority(b) - walletPriority(a) || b.sortScore - a.sortScore || a.name.localeCompare(b.name));
   }, [availableSolanaWallets, detectedWallets, filter]);
+
+  // A phone browser has no wallet in the page. The WalletConnect placeholder is
+  // always announced when configured, so it does not count as one.
+  const showOpenInWallet = useMemo(
+    () =>
+      typeof navigator !== "undefined" &&
+      isMobileBrowser(navigator) &&
+      !walletOptions.some((option) => !(option.kind === "evm" && option.wallet.rdns === WALLETCONNECT_RDNS)),
+    [walletOptions],
+  );
 
   const visibleWallets = moreWalletsOpen ? walletOptions : walletOptions.slice(0, INITIAL_VISIBLE_WALLETS);
   const hiddenWalletCount = Math.max(0, walletOptions.length - visibleWallets.length);
@@ -460,7 +529,10 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
                 </div>
               )}
 
-              <div className="flex items-center justify-between gap-3">
+              {showOpenInWallet && <OpenInWalletList filter={filter} />}
+
+              {(!showOpenInWallet || visibleWallets.length > 0) && (
+              <div className={`flex items-center justify-between gap-3 ${showOpenInWallet ? "mt-4" : ""}`}>
                 <p className="m-0 font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-muted">Detected wallets</p>
                 <button
                   type="button"
@@ -472,6 +544,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
                   Refresh
                 </button>
               </div>
+              )}
 
               <div className="mt-3 space-y-2">
                 {visibleWallets.length > 0 ? (
@@ -488,7 +561,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
                       onConnect={handleUnifiedConnect}
                     />
                   ))
-                ) : (
+                ) : showOpenInWallet ? null : (
                   <div className="rounded-[14px] border border-dashed border-mw-edge bg-mw-input p-5 text-center">
                     <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-[#5A3416] bg-mw-accent-fill text-mw-accent-soft">
                       <AlertTriangle className="h-5 w-5" />
