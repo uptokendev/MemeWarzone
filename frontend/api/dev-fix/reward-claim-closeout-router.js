@@ -7,6 +7,7 @@ import {
   rewardClaimRecord as routedRewardClaimRecord,
 } from "./reward-claim-battle-router.js";
 import { canonicalSolanaClaimIdentity } from "../lib/solanaClaimEnvironment.js";
+import { moderationClaimRefusal, rewardLedgerHolds } from "../../shared/moderationHolds.mjs";
 
 const EVM_CHAINS = new Set([56, 97, 4663, 46630]);
 const EVM_TX_RE = /^0x[a-fA-F0-9]{64}$/;
@@ -231,6 +232,14 @@ export async function rewardClaimIntent(req, res) {
     return send(res, 409, { ok: false, error: "Solana reward program is not configured.", code: "MISSING_SOLANA_REWARDS_PROGRAM_ID" });
   }
   req.body = body;
+
+  // Moderation hold (B7): no claim intent (and so no proof) for a held or voided reward, or for any
+  // reward of a wallet under a blanket hold. Nothing is changed; the reward keeps its status. This
+  // stops our claim page only: the root on chain still accepts a proof obtained before the hold.
+  const held = await rewardLedgerHolds(pool, rewardIds(body));
+  if (held.length) {
+    return send(res, 409, { ok: false, ...moderationClaimRefusal(held[0]), rewardLedgerIds: [...new Set(held.map((row) => row.id))] });
+  }
 
   const captured = captureResponse();
   await routedRewardClaimIntent(req, captured.response);

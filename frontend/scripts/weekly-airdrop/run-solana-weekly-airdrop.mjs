@@ -51,6 +51,7 @@ import {
 } from "./solanaAirdrop.mjs";
 import { nativeUsdFor, thresholdsFor } from "./usdRules.mjs";
 import { solanaMinPayoutLamports } from "../../shared/pokerPayout.mjs";
+import { heldWalletKeys } from "../../shared/moderationHolds.mjs";
 
 const PROGRAMS = ["airdrop_trader", "airdrop_creator", "dbc_holders"];
 // Drawn programs. dbc_holders is not a draw: its leaves are the DBC holder rounds (step 5b) the
@@ -199,6 +200,23 @@ export function holderSelection(landedRounds) {
 }
 
 /**
+ * Moderation (B7): a DBC holder round is an amount already owed to every holder in it, so a round that
+ * pays a wallet under a blanket hold is not split -- the whole round waits (still reserved, not in this
+ * week's tree) and joins the first weekly tree after the hold is released. Rounds without a held
+ * wallet go out as usual.
+ */
+export function holderRoundsWithoutHeldWallets(landedRounds, heldWallets) {
+  if (!heldWallets?.size) return { ready: landedRounds, deferred: [] };
+  const ready = [];
+  const deferred = [];
+  for (const round of landedRounds) {
+    const owners = (round.leaves?.leaves || []).map((leaf) => String(leaf.owner || "").trim().toLowerCase());
+    (owners.some((owner) => heldWallets.has(owner)) ? deferred : ready).push(round);
+  }
+  return { ready, deferred };
+}
+
+/**
  * Founder rule: never pay out less than users are owed. A week above the poster cap is not shrunk;
  * it stays materialized (full list, full amounts) and this run stops with a critical alert. Raising
  * the cap and re-running posts exactly the stored list. At 70% of the cap we warn ahead of time.
@@ -287,7 +305,11 @@ export async function runSolanaWeeklyAirdrop({ chainId = 101 } = {}) {
     const holders = await pendingHolderRounds(client);
     const drawable = vault.available > holders.reserved ? vault.available - holders.reserved : 0n;
     const totalPool = (drawable * BigInt(distributionBps)) / 10_000n;
-    const holderItem = holderSelection(holders.landed);
+    const holderRounds = holderRoundsWithoutHeldWallets(holders.landed, await heldWalletKeys(client));
+    if (holderRounds.deferred.length) {
+      console.log(`[weekly-airdrop:solana] dbc_holders: rounds ${holderRounds.deferred.map((round) => round.week_id).join(",")} pay a wallet on moderation hold; they wait (still reserved)`);
+    }
+    const holderItem = holderSelection(holderRounds.ready);
     if (totalPool <= 0n && !holderItem) {
       return console.log(`[weekly-airdrop:solana] nothing to distribute for ${epochId}`, { spendable: vault.spendable.toString(), outstanding: vault.outstanding.toString(), holderReserved: holders.reserved.toString() });
     }

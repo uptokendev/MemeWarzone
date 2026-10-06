@@ -26,6 +26,7 @@ import {
 import { createHash } from "node:crypto";
 import { pool } from "../db.js";
 import { deriveRewardPosterPda, parseRewardPosterAccount } from "../rewards/solanaLeagueMerkle.js";
+import { beginGuardedPublish, endGuardedPublish, heldPreparedRecruiterClaims, recruiterBatchLockKey } from "../rewards/moderationHolds.js";
 
 const BATCH_SEED = Buffer.from("recruiter_batch");
 const BATCH_SIZE = 8 + 8 + 32 + 8 + 8 + 8 + 1 + 1;
@@ -236,6 +237,22 @@ async function main() {
         reports.push({ batchId: row.id, chainId, epochId, totalLamports: totalLamports.toString(), status: "blocked_above_poster_cap" });
         continue;
       }
+      // Moderation (B7, rewards/moderationHolds.ts): credit held or voided after this batch was
+      // prepared is not posted, and nothing is shrunk here: the next export run rebuilds the prepared
+      // batch without it. The guard re-checks under the batch lock and leaves a marker, so a hold or
+      // void cannot land between this check and claim_open.
+      const batchKey = recruiterBatchLockKey(chainId, epochId);
+      const guard = await beginGuardedPublish(pool as any, batchKey, async (client) => {
+        const problems: unknown[] = (await heldPreparedRecruiterClaims(client, String(row.id))).map((h) => ({ wallet: h.wallet, claim: h.source_ref }));
+        const { rows: current } = await client.query(`select status, merkle_root from public.solana_reward_lane_batches where id=$1`, [row.id]);
+        if (current[0]?.status !== "prepared" || String(current[0]?.merkle_root || "").toLowerCase() !== storedRoot.toLowerCase()) problems.push({ reason: "batch-rebuilt-since-read" });
+        return problems;
+      });
+      if (!guard.ok) {
+        console.error(`[publishRecruiterSettlementRoot] BLOCKED epoch ${epochId}: ${JSON.stringify(guard.problems)}; re-run cron:export-recruiter-settlement-batch to rebuild without held credit.`);
+        reports.push({ batchId: row.id, chainId, epochId, status: "blocked_moderation_hold", problems: guard.problems });
+        continue;
+      }
       const ix = new TransactionInstruction({
         programId: pid,
         keys: [
@@ -301,6 +318,7 @@ async function main() {
       client.release();
     }
 
+    await endGuardedPublish(pool, recruiterBatchLockKey(chainId, epochId));
     reports.push({
       batchId: row.id,
       chainId,

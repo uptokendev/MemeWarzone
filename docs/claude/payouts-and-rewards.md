@@ -422,3 +422,41 @@ Rule: `campaigns.meta.publicHidden` (`frontend/api/lib/publicHiddenSql.js`, mirr
 - `finance_price_hourly` keeps Binance 1h closes (fetched once, ever); `finance_fx_daily` keeps ECB rates (the
   history grows past the 90-day file; dates before the first stored row behave as before).
 - Without the migration the code works as before (process-only cache, now with in-flight sharing).
+
+### Moderation hold / release / void (B7, 2026-10-06, feat/moderation-hold-void)
+
+- Tables (`db/migrations/20261006_000020_moderation_holds.sql`, RLS on, no policies, founder applies):
+  `moderation_holds` (one row per subject: league_winner / airdrop_item / recruiter_ledger / recruiter /
+  wallet; state held / released / voided; reason 3-500 chars), `moderation_audit_log` (every change),
+  `moderation_publish_markers` (a root publication in flight), `league_epoch_winners_moderation_voided`
+  (backup of voided league rows). Without the migration nothing can be held and every job runs as before.
+- Rules in `frontend/shared/moderationHolds.mjs` (indexer copy `rewards/moderationHolds.ts`, drift test).
+  Held or voided item, held wallet (winner or payout address), held recruiter (credit + Recruiter League).
+- League (founder 2026-10-06: a hold drops only that winner): every publisher builds the leaf set with
+  `rootLeafRows` (held winners left out, nobody renumbered, amounts as settled) and, right before the send,
+  `beginGuardedLeaguePublish` stores the exclusions (`moderation_root_exclusions`) with the marker, so the
+  published leaf set is frozen; the claim API and the EVM/Solana publishers all use the same set. The held
+  amount stays in the vault. Release before publication: back in the root. Release after publication
+  (no program/contract change): **Solana** (all periods) the publisher carries it into the next settled
+  root of the same period/vault as a `moderation_release` leaf (`prepareLeagueCarries`; the program takes
+  any category hash; the original row moves to the backup, disposition `carried`); **BNB / Robinhood**
+  (weekly, monthly, MWL monthly, quarterly) a Safe proposal: `TreasuryVaultV2.withdraw` /
+  `MonthlyLeagueTreasury.withdrawNative` to the winner, built by `frontend/scripts/league-release-safe-batch.mjs`
+  (eth_calls each from the Safe, then `scripts/make-safe-batch.ts`; `--record <tx>` matches the events and
+  records it paid). All 8 mainnet vaults expose that withdraw with the Safe as multisig (read 2026-10-06).
+  Monthly caveat: `withdrawNative` only reaches unallocated money; a later `sealMonth` sends overflow above
+  the cap to charity, so release a held monthly prize before the next seal. Void = backup + delete, places
+  not renumbered, money stays in the vault; `finalizeEpochWinners` never re-settles a category with a void.
+- Airdrop: a held wallet is out of the draw (`candidates.mjs exclusionSets`, all chains); a DBC holder
+  round paying a held wallet waits whole. Allocations exist only with a root, so item holds are claim
+  guards (`/api/rewards/me/claim-intent`) and void is refused, except pending/approved rows in an
+  unpublished admin batch (void sets `cancelled`); admin batch publish refuses a batch with held items.
+- Recruiter: held / voided credit and held recruiters / payout wallets stay out of the Solana weekly
+  batch (`loadPortalPayouts`; a held row stays claimable and is picked up after release); the root
+  publisher does not post a prepared batch with held credit (re-run the export). EVM push payout
+  (`recruiter-payouts.js`) is a hard stop: held rows leave the sum, a held recruiter or wallet gets 409.
+  Void sets `failed` + `metadata.voidedReason` (like the earlier manual voids).
+- Concurrency: only transaction advisory locks (pooler-safe). Publisher: shared global + list lock, re-check
+  holds and list, write marker, commit, send, record, delete marker. Item action: shared global + list lock,
+  refuse while a marker exists. Blanket hold: exclusive global (warns about lists already in flight).
+  A marker left by a crash after a send is cleared by the next publisher run.

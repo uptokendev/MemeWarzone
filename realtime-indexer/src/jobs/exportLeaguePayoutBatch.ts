@@ -6,6 +6,7 @@ try {
 } catch {}
 
 import { pool } from "../db.js";
+import { leagueHoldMatchSql, moderationHoldsAvailable } from "../rewards/moderationHolds.js";
 
 // Exports a payout batch for league prizes that were CLAIMED (off-chain signature)
 // but not yet marked as PAID (multisig execution recorded in league_epoch_payouts).
@@ -21,6 +22,10 @@ const CHAIN_IDS = String(process.env.LEAGUE_EVM_PAYOUT_CHAIN_IDS || "56")
   .filter((value) => value === 56 || value === 97);
 
 async function runForChain(chainId: number) {
+  // Moderation (B7): a held or voided prize is never exported for a multisig payout.
+  const notHeld = (await moderationHoldsAvailable(pool as any))
+    ? `AND NOT EXISTS (SELECT 1 FROM public.moderation_holds h WHERE ${leagueHoldMatchSql("h", "w")})`
+    : "";
   const { rows } = await pool.query(
     `
     SELECT
@@ -48,6 +53,7 @@ async function runForChain(chainId: number) {
     WHERE w.chain_id = $1
       AND p.paid_at IS NULL
       AND (w.expires_at IS NULL OR w.expires_at > now())
+      ${notHeld}
     ORDER BY w.period DESC, w.epoch_start DESC, w.category ASC, w.rank ASC;
     `,
     [chainId]

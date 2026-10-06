@@ -1,6 +1,7 @@
 import { asBigInt, envInt } from "./config.mjs";
 import { scoreUnits } from "./usdRules.mjs";
 import { ownerWalletIndex } from "../../shared/ownerWallets.mjs";
+import { heldWalletKeys } from "../../shared/moderationHolds.mjs";
 
 function isSolanaAirdropChain(chainId) {
   return Number(chainId) === 101 || Number(chainId) === 102;
@@ -141,7 +142,12 @@ export async function exclusionSets(client, { chainId, start, end, env = process
   // Keyed lower-cased too, so isWalletExcluded matches whatever case the trade rows carry.
   const owners = ownerWalletIndex(env);
   for (const row of owners.values()) addWalletKeys(all, row.address, solana);
-  return { all, securityCount: risk.rows.length, ownerCount: owners.size, totalCount: all.size };
+  // Moderation (B7, shared/moderationHolds.mjs): a wallet under a blanket hold is not in this week's
+  // draw. A draw cannot be re-run for one wallet, so a release makes it eligible from the next draw on;
+  // nobody is moved or re-drawn this week (the draw has not happened yet when this runs).
+  const held = await heldWalletKeys(client);
+  for (const wallet of held) addWalletKeys(all, wallet, solana);
+  return { all, securityCount: risk.rows.length, ownerCount: owners.size, moderationHeldCount: held.size, totalCount: all.size };
 }
 
 // Volume thresholds come from one USD rule set for every chain (usdRules.mjs), converted at this

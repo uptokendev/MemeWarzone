@@ -1,5 +1,6 @@
 import { isMwlPayoutPeriod } from "./lib/mwlPayoutVaults.js";
 import { pool } from "../server/db.js";
+import { moderationHoldsAvailable } from "../shared/moderationHolds.mjs";
 import {
   badMethod,
   getQuery,
@@ -453,6 +454,13 @@ export default async function handler(req, res) {
     const recipientClause = isSolanaAddress(address)
       ? "(w.recipient_address = $2 OR lower(w.recipient_address) = lower($2))"
       : "lower(w.recipient_address) = $2";
+    // Moderation (B7): a prize whose leaf was left out of its published root is not claimable there; a
+    // released one shows up again as its own row once it moved into a later root.
+    const notHeldOut = (await moderationHoldsAvailable(pool))
+      ? `AND NOT EXISTS (SELECT 1 FROM public.moderation_root_exclusions x
+                          WHERE x.chain_id = w.chain_id AND x.period = w.period AND x.epoch_start = w.epoch_start
+                            AND x.category = w.category AND x.rank = w.rank)`
+      : "";
 
     const { rows } = await pool.query(
       `SELECT
@@ -482,6 +490,7 @@ export default async function handler(req, res) {
           AND ${recipientClause}
           AND c.claimed_at IS NULL
           AND (w.expires_at IS NULL OR w.expires_at > NOW())
+          ${notHeldOut}
         ORDER BY w.epoch_start DESC, w.period DESC, w.category ASC, w.rank ASC`,
       [chainId, address],
     );

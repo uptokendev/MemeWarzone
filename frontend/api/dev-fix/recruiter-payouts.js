@@ -4,6 +4,14 @@ import { pool } from "../../server/db.js";
 import { badMethod, json, readJson, isAddress, isSolanaAddress } from "../../server/http.js";
 import { solanaLaneAddresses, verifySolanaRewardLaneClaim } from "../lib/solanaRewardLane.js";
 import { preflightRecruiterPayout, recruiterEvmChainId, sendRecruiterPayout } from "../lib/recruiterEvmPayout.js";
+import {
+  moderationClaimRefusal,
+  moderationHoldsAvailable,
+  recruiterClaimHold,
+  recruiterLedgerNotHeldSql,
+  recruiterModerationLockKey,
+  recruiterPayoutHold,
+} from "../../shared/moderationHolds.mjs";
 
 const COOKIE_NAME = "mwz_recruiter_session";
 const CHAINS = { bnb: { token: "BNB" }, solana: { token: "SOL" }, robinhood: { token: "ETH" } };
@@ -469,6 +477,10 @@ export async function recruiterMeClaims(req, res) {
       if (!prepared) {
         return json(res, 409, { error: "SOL recruiter rewards are awaiting the next published weekly settlement batch.", code: "RECRUITER_SOLANA_BATCH_PENDING" });
       }
+      // Moderation hold (B7): no proof for held credit, a held recruiter or a held payout wallet. The
+      // batch is already posted, so this stops our claim card only, not a proof obtained before.
+      const solanaHold = (await recruiterPayoutHold(client, { accountId: account.recruiter_id, payoutWallet })) || (await recruiterClaimHold(client, prepared.recruiter_claim_id));
+      if (solanaHold) return json(res, 409, moderationClaimRefusal(solanaHold));
       const addresses = solanaLaneAddresses("recruiter", prepared.epoch_id, payoutWallet, prepared.program_id);
       return json(res, 200, {
         ok: true,
@@ -503,12 +515,27 @@ export async function recruiterMeClaims(req, res) {
     // Order: lock rows -> preflight every revert reason (no DB change if it fails) -> claim 'created'
     // -> broadcast -> 'submitted' + tx hash -> receipt -> 'confirmed'/'claimed'. A failure before
     // broadcast returns the rows to claimable; a sent tx is never reversed in the DB.
+    // Moderation (B7): this push is the only way EVM recruiter credit is paid, so a hold here is a hard
+    // stop. The advisory lock is the one a moderation action on this recruiter takes, so a hold either
+    // lands before this read (and is honoured) or waits until this claim has committed its rows.
+    // Held or voided rows stay out of the sum (they stay claimable); a held recruiter or payout wallet
+    // gets nothing.
+    const moderated = await moderationHoldsAvailable(client);
     const lockedRows = `select id, amount_raw::text as amount_raw
-         from public.recruiter_reward_ledger
+         from public.recruiter_reward_ledger l
         where recruiter_id = $1 and chain = $2 and token = $3 and status = 'claimable' and claim_id is null
           and (not $4::boolean or coalesce(chain_id, 0) not in (97, 102, 46630))
+          ${moderated ? `and ${recruiterLedgerNotHeldSql("l")}` : ""}
         for update`;
     await client.query("begin");
+    if (moderated) {
+      await client.query("select pg_advisory_xact_lock(hashtext($1))", [recruiterModerationLockKey(account.recruiter_id)]);
+      const payoutHold = await recruiterPayoutHold(client, { accountId: account.recruiter_id, payoutWallet });
+      if (payoutHold) {
+        await client.query("rollback");
+        return json(res, 409, moderationClaimRefusal(payoutHold));
+      }
+    }
     const ledgerResult = await client.query(lockedRows, [account.recruiter_id, chain, token, mainnetRuntime()]);
     const ledgerIds = ledgerResult.rows.map((row) => row.id);
     const amountRaw = ledgerResult.rows.reduce((sum, row) => sum + BigInt(rawAmount(row.amount_raw)), 0n).toString();

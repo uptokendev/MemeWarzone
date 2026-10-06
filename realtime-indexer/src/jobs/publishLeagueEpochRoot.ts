@@ -46,6 +46,7 @@ import {
   i64le,
   u64le,
 } from "../rewards/solanaLeagueMerkle.js";
+import { beginGuardedLeaguePublish, endGuardedPublish, leagueEpochLockKey, prepareLeagueCarries, rootLeafRows } from "../rewards/moderationHolds.js";
 
 const MAINNET_CHAIN_ID = 101;
 const PERIODS = ["weekly", "monthly", "quarterly", "mwl_monthly"] as const;
@@ -119,17 +120,8 @@ async function sendServerV0(connection: Connection, signer: Keypair, instruction
 
 type WinnerRow = { category: string; rank: number; recipient_address: string; amount_raw: string };
 
-/** Same order the API uses when it builds claim proofs (frontend/api/league.js). */
-async function winnersFor(chainId: number, period: string, epochStart: string): Promise<WinnerRow[]> {
-  const { rows } = await pool.query(
-    `select category, rank, recipient_address, amount_raw::text as amount_raw
-       from public.league_epoch_winners
-      where chain_id=$1 and period=$2 and epoch_start=$3::timestamptz
-      order by category asc, rank asc, recipient_address asc`,
-    [chainId, period, epochStart],
-  );
-  return rows as WinnerRow[];
-}
+// The winner rows come from rewards/moderationHolds.ts rootLeafRows: same order the API uses when it
+// builds claim proofs (frontend/api/league.js), with winners on moderation hold left out.
 
 export function epochRootFor(epochStartSec: number, period: string, winners: WinnerRow[]) {
   let total = 0n;
@@ -215,8 +207,17 @@ async function main() {
     const period = String(candidate.period);
     const epochStartIso = new Date(candidate.epoch_start).toISOString();
     const epochStartSec = Math.floor(new Date(candidate.epoch_start).getTime() / 1000);
-    const winners = await winnersFor(MAINNET_CHAIN_ID, period, epochStartIso);
-    if (!winners.length) continue;
+    // Moderation (B7, founder 2026-10-06): prizes released after their own root was published move into
+    // this root first (Solana has no other way to pay them without a program change); then the leaf set
+    // leaves out any winner on hold -- only that winner, every other place and amount stays as settled.
+    const carried = await prepareLeagueCarries(pool as any, { chainId: MAINNET_CHAIN_ID, period, epochStart: epochStartIso });
+    if (carried.length) console.log(`[publishLeagueEpochRoot] ${period} ${epochStartIso}: ${carried.length} released prize(s) moved into this root`, JSON.stringify(carried));
+    const leafSet = await rootLeafRows(pool as any, { chainId: MAINNET_CHAIN_ID, period, epochStart: epochStartIso });
+    const winners = leafSet.rows as WinnerRow[];
+    if (!winners.length) {
+      if (leafSet.excluded.length) reports.push({ period, epochStart: epochStartIso, status: "skipped", reason: "every-winner-on-hold", held: leafSet.excluded.length });
+      continue;
+    }
     const { root, total } = epochRootFor(epochStartSec, period, winners);
     const epochAddress = deriveLeagueEpochPda(pid, period, epochStartSec);
     const label = `${period} league epoch ${epochStartIso}`;
@@ -239,6 +240,7 @@ async function main() {
         chainId: MAINNET_CHAIN_ID, period, epochStart: epochStartIso, root, total, winners: winners.length,
         epochAddress: epochAddress.toBase58(), txHash: null, metadata: { source: "onchain-preexisting", recordedAt: new Date().toISOString() },
       });
+      await endGuardedPublish(pool, leagueEpochLockKey(MAINNET_CHAIN_ID, period, epochStartIso));
       reports.push({ period, epochStart: epochStartIso, status: "recorded", reason: "already-sealed-on-chain", root, total: total.toString() });
       continue;
     }
@@ -276,6 +278,17 @@ async function main() {
       continue;
     }
 
+    // Moderation (B7): the guard rebuilds the leaf set under the epoch lock, checks it still gives this
+    // root, stores the exclusions and leaves a marker, so the set is frozen before the send and no hold or
+    // void can land in between. A held winner gets no leaf; the vault keeps its amount.
+    const epochKey = leagueEpochLockKey(MAINNET_CHAIN_ID, period, epochStartIso);
+    const guard = await beginGuardedLeaguePublish(pool as any, { chainId: MAINNET_CHAIN_ID, period, epochStart: epochStartIso }, root,
+      (rows) => epochRootFor(epochStartSec, period, rows as WinnerRow[]).root);
+    if (!guard.ok) {
+      reports.push({ period, epochStart: epochStartIso, status: "waiting", reason: "moderation-changed-during-run", problems: guard.problems });
+      continue;
+    }
+
     const instruction = new TransactionInstruction({
       programId: pid,
       keys: [
@@ -303,8 +316,10 @@ async function main() {
       chainId: MAINNET_CHAIN_ID, period, epochStart: epochStartIso, root, total, winners: winners.length,
       epochAddress: epochAddress.toBase58(), txHash, metadata: { publishedAt: new Date().toISOString(), txHash },
     });
+    await endGuardedPublish(pool, epochKey);
     postedThisRun.add(period);
-    reports.push({ period, epochStart: epochStartIso, status: "published", root, total: total.toString(), winners: winners.length, txHash });
+    reports.push({ period, epochStart: epochStartIso, status: "published", root, total: total.toString(), winners: winners.length, txHash,
+      heldOut: (guard.excluded || []).map((x) => ({ category: x.category, rank: Number(x.rank) })) });
   }
 
   console.log(JSON.stringify({ ok: true, published: reports.filter((r) => r.status === "published").length, epochs: reports }, null, 2));

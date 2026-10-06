@@ -42,6 +42,7 @@ import {
   monthlyLeagueTreasuryAddress,
   monthlyLeagueTreasuryForMonth,
 } from "../api/lib/evmMonthlyLeagueTreasury.js";
+import { beginGuardedLeaguePublish, endGuardedPublish, leagueEpochLockKey, rootLeafRows } from "../shared/moderationHolds.mjs";
 
 const dryRun = process.argv.includes("--dry-run");
 const LOOKBACK_DAYS = Number(process.env.EVM_LEAGUE_ROOT_LOOKBACK_DAYS || 120);
@@ -102,22 +103,15 @@ async function epochList(chainId) {
   return rows;
 }
 
-async function buildRoot(chainId, period, epochStart) {
-  const epochDate = new Date(epochStart);
+/** Leaves and root of one epoch's rows (already in proof order). */
+function rootFromRows(chainId, period, epochDate, rows) {
   const claimId = period === "monthly" ? monthIdFromDate(epochDate) : computeEpochId(chainId, period, Math.floor(epochDate.getTime() / 1000));
-  const { rows } = await pool.query(
-    `select category, rank, recipient_address as "recipientAddress", amount_raw::text as "amountRaw"
-       from public.league_epoch_winners
-      where chain_id = $1 and period = $2 and epoch_start = $3::timestamptz
-      order by category asc, rank asc, recipient_address asc`,
-    [chainId, period, epochDate.toISOString()],
-  );
   const leaves = [];
   let total = 0n;
   for (const row of rows) {
-    const recipient = String(row.recipientAddress || "").toLowerCase();
+    const recipient = String(row.recipient_address || "").toLowerCase();
     const rank = Number(row.rank);
-    const amount = BigInt(row.amountRaw);
+    const amount = BigInt(row.amount_raw);
     // One bad leaf blocks the whole epoch: posting without it would pay that winner nothing.
     if (!ethers.isAddress(recipient)) throw new Error(`winner ${row.category} #${rank} has a non-EVM recipient ${recipient}`);
     if (!Number.isInteger(rank) || rank < 1 || rank > 255) throw new Error(`winner ${row.category} rank ${rank} outside 1..255`);
@@ -126,6 +120,34 @@ async function buildRoot(chainId, period, epochStart) {
     leaves.push(leafHash({ claimId, categoryHash: categoryHashFromString(String(row.category).toLowerCase().trim()), rank, recipient, amountRaw: amount }));
   }
   return { claimId, root: buildMerkleRoot(leaves), total, count: rows.length };
+}
+
+/**
+ * Moderation (B7, shared/moderationHolds.mjs, founder 2026-10-06): a winner on hold gets no leaf; every
+ * other place and amount stays exactly as settled and the epoch is posted on schedule. The held amount
+ * stays in the vault; a release after publication is paid by a Safe proposal
+ * (scripts/league-release-safe-batch.mjs). A voided row is gone already.
+ */
+async function buildRoot(chainId, period, epochStart, db = pool) {
+  const epochDate = new Date(epochStart);
+  const leaf = await rootLeafRows(db, { chainId, period, epochStart: epochDate });
+  return { ...rootFromRows(chainId, period, epochDate, leaf.rows), heldOut: leaf.excluded.map((x) => ({ category: x.category, rank: Number(x.rank) })) };
+}
+
+/**
+ * Right before a send: rebuild the leaf set under the epoch lock, check it still gives this root, store
+ * the exclusions and leave a marker until the root is recorded, so no hold or void can land in between.
+ * A dry run only reads.
+ */
+async function guardModeration(chainId, period, epochStart, built) {
+  const epochDate = new Date(epochStart);
+  if (dryRun) {
+    const again = await buildRoot(chainId, period, epochStart);
+    if (again.root.toLowerCase() !== built.root.toLowerCase()) throw new Error("moderation: winner list or holds changed since it was read; re-run");
+    return;
+  }
+  const guard = await beginGuardedLeaguePublish(pool, { chainId, period, epochStart: epochDate }, built.root, (rows) => rootFromRows(chainId, period, epochDate, rows).root);
+  if (!guard.ok) throw new Error("moderation: winner list or holds changed since it was read; re-run");
 }
 
 /**
@@ -143,6 +165,7 @@ async function recordPostedRoot(item, txHash, status) {
     [item.chainId, item.period, item.epochStart, item.root, item.total, item.winners, item.vault, txHash || null,
       JSON.stringify({ source: "publish-evm-league-roots", status, claimId: item.claimId })],
   );
+  await endGuardedPublish(pool, leagueEpochLockKey(item.chainId, item.period, item.epochStart));
 }
 
 /** Unclaimed remainder of every MWL epoch already posted to this vault (epochTotal - epochClaimedTotal). */
@@ -183,7 +206,8 @@ async function main() {
         base.vault = vaultAddress;
         if (!ethers.isAddress(vaultAddress)) throw new Error(`no ${period} league vault configured for chain ${chainId}`);
         const built = await buildRoot(chainId, period, epochStart);
-        const item = { ...base, claimId: built.claimId.toString(), root: built.root, total: built.total.toString(), winners: built.count };
+        const item = { ...base, claimId: built.claimId.toString(), root: built.root, total: built.total.toString(), winners: built.count, heldOut: built.heldOut };
+        if (built.count === 0) { report.push({ ...item, status: "skipped_every_winner_on_hold" }); continue; }
 
         if (period === "weekly" || isMwlPayoutPeriod(period)) {
           const vault = new ethers.Contract(vaultAddress, WEEKLY_ABI, signer);
@@ -200,6 +224,7 @@ async function main() {
           const owed = isMwlPayoutPeriod(period) ? await mwlStillOwed(vault, chainId, period) : 0n;
           if (balance < built.total + owed) throw new Error(`vault holds ${balance}, the list pays ${built.total}${owed ? ` and ${owed} is still owed to earlier winners` : ""}; nothing shrunk -- fund or wait`);
           await vault.setEpochRoot.staticCall(built.claimId, built.root, built.total);
+          await guardModeration(chainId, period, at, built);
           if (dryRun) { report.push({ ...item, status: "would_publish" }); continue; }
           const tx = await vault.setEpochRoot(built.claimId, built.root, built.total);
           await tx.wait(1);
@@ -226,6 +251,7 @@ async function main() {
           // Dry run without the key: ask the contract as its own rootPoster, not as a random wallet.
           if (pk) await treasury.sealMonth.staticCall(built.claimId, built.root, built.total);
           else await treasury.connect(provider).sealMonth.staticCall(built.claimId, built.root, built.total, { from: await treasury.rootPoster() });
+          await guardModeration(chainId, period, at, built);
           if (dryRun) { report.push({ ...item, status: "would_seal" }); continue; }
           const tx = await treasury.sealMonth(built.claimId, built.root, built.total);
           await tx.wait(1);

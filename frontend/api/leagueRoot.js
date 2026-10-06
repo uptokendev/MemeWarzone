@@ -8,6 +8,7 @@ import {
   isSupersededMonthlyLeagueTreasury,
   monthlyLeagueTreasuryForMonth,
 } from "./lib/evmMonthlyLeagueTreasury.js";
+import { beginGuardedLeaguePublish, rootLeafRows } from "../shared/moderationHolds.mjs";
 
 // POST /api/leagueRoot
 // Admin-only helper to publish a weekly epoch root or seal a monthly league root.
@@ -53,17 +54,12 @@ export default async function handler(req, res) {
       ? monthIdFromDate(epochDate)
       : computeEpochId(chainId, period, Math.floor(epochDate.getTime() / 1000));
 
-    // Load all winners for the period and compute the exact leaves expected by
-    // TreasuryVaultV2 (weekly) or MonthlyLeagueTreasury (monthly).
-    const { rows } = await pool.query(
-      `SELECT category, rank, recipient_address AS "recipientAddress", amount_raw AS "amountRaw"
-         FROM league_epoch_winners
-        WHERE chain_id = $1 AND period = $2 AND epoch_start = $3::timestamptz
-        ORDER BY category ASC, rank ASC, recipient_address ASC`,
-      [chainId, period, epochStart]
-    );
+    // Load the epoch's leaf set (winners on moderation hold left out, shared/moderationHolds.mjs) and
+    // compute the exact leaves expected by TreasuryVaultV2 (weekly) or MonthlyLeagueTreasury (monthly).
+    const toRow = (r) => ({ category: r.category, rank: r.rank, recipientAddress: r.recipient_address, amountRaw: r.amount_raw });
+    const rows = (await rootLeafRows(pool, { chainId, period, epochStart: epochDate })).rows.map(toRow);
 
-    if (!rows?.length) return json(res, 404, { error: "No winners for epoch" });
+    if (!rows?.length) return json(res, 404, { error: "No winners for epoch (or every winner is on moderation hold)" });
 
     const leaves = [];
     let winnerTotal = 0n;
@@ -91,6 +87,26 @@ export default async function handler(req, res) {
     }
 
     const root = buildMerkleRoot(leaves);
+
+    // Moderation (B7): a held winner gets no leaf; the guard rebuilds the leaf set under the epoch lock,
+    // checks it still gives this root, stores the exclusions and leaves a marker (cleared when
+    // publish-evm-league-roots records the root).
+    const rootOfRows = (leafRows) => buildMerkleRoot(leafRows.map((r) => leafHash({
+      claimId,
+      categoryHash: categoryHashFromString(String(r.category || "").toLowerCase().trim()),
+      rank: Number(r.rank),
+      recipient: String(r.recipient_address || "").toLowerCase(),
+      amountRaw: BigInt(String(r.amount_raw)),
+    })));
+    const guard = await beginGuardedLeaguePublish(pool, { chainId, period, epochStart: epochDate }, root, rootOfRows);
+    if (!guard.ok) {
+      return json(res, 409, {
+        error: "The winner list or a moderation hold changed while the root was built. Nothing was sent; try again.",
+        code: "MODERATION_CHANGED",
+        problems: guard.problems,
+      });
+    }
+
     const network = ethers.Network.from(Number(chainId));
     const provider = new ethers.JsonRpcProvider(rpc, network, {
       staticNetwork: network,

@@ -3,6 +3,7 @@ import { pool } from "../db.js";
 import { listRecruiterClaimableSettlements } from "./recruiterAdmin.js";
 import { buildRecruiterMerkle, i64leBytes, mergeRecruiterEntitlements } from "./recruiterMerkle.js";
 import { solanaMinPayoutLamports } from "./pokerPayout.js";
+import { heldWalletKeys, moderationHoldsAvailable, recruiterLedgerHoldMatchSql, walletHoldMatchSql } from "./moderationHolds.js";
 
 const CONFIG_SEED = Buffer.from("rewards_config");
 const VAULT_SEED = Buffer.from("recruiter_vault");
@@ -150,11 +151,23 @@ type PortalPayout = {
   ledgerIds: string[];
 };
 
-async function loadPortalPayouts(existingBatchId: string | null): Promise<{
+/**
+ * Moderation (B7): credit that is held or voided (moderation_holds: the ledger row, its recruiter, or
+ * its payout wallet) never enters a weekly batch. A held row stays claimable with no claim id, so the
+ * first export after the release picks it up again (the poster batch has no deadline); a voided row is
+ * status 'failed' and never comes back.
+ */
+export async function loadPortalPayouts(existingBatchId: string | null, db: { query: typeof pool.query } = pool): Promise<{
   payouts: PortalPayout[];
   excluded: Array<{ wallet: string; amountRaw: string }>;
 }> {
-  const { rows } = await pool.query(
+  const moderated = await moderationHoldsAvailable(db as any);
+  const notHeld = moderated
+    ? `and not exists (
+          select 1 from public.moderation_holds h
+           where ${recruiterLedgerHoldMatchSql("h", "l")} or ${walletHoldMatchSql("h", "w.wallet_address")})`
+    : "";
+  const { rows } = await db.query(
     `select l.recruiter_id::text as account_id,
             w.wallet_address as payout_wallet,
             coalesce(sum(l.amount_raw), 0)::numeric(78,0)::text as amount_raw,
@@ -180,6 +193,7 @@ async function loadPortalPayouts(existingBatchId: string | null): Promise<{
             )
           )
         )
+        ${notHeld}
       group by l.recruiter_id, w.wallet_address
      having coalesce(sum(l.amount_raw), 0) > 0`,
     [existingBatchId, CHAIN_ID],
@@ -319,6 +333,12 @@ export async function publishRecruiterSettlementBatchesV2(): Promise<{
       if (String(error?.code) !== "42P01") throw error;
       console.warn(`[exportRecruiterSettlementBatch] phase2 view missing: ${error?.message || error}`);
     }
+  }
+
+  // Moderation (B7): a payout wallet under a blanket hold is left out of the opt-in phase-2 list too.
+  if (phase2.length) {
+    const heldWallets = await heldWalletKeys(pool as any);
+    if (heldWallets.size) phase2 = phase2.filter((row) => !heldWallets.has(String(row.walletAddress || "").trim().toLowerCase()));
   }
 
   const portalByWallet = new Map(portal.map((row) => [row.payoutWallet, row]));
