@@ -178,7 +178,7 @@ function statusOf({ filed, paidEnough, dueOn, today, needsFiling = true }) {
  * @param {object[]} [input.records]      finance_distributions
  * @param {string|null} [input.firstActivityOn]
  */
-export function taxObligations({ today, rules, vatByPeriod = {}, vpbYears = [], items = [], records = [], firstActivityOn = null }) {
+export function taxObligations({ today, rules, vatByPeriod = {}, ossByPeriod = {}, vpbYears = [], items = [], records = [], firstActivityOn = null }) {
   const cal = rules.calendar;
   const firstOn = cal.firstPeriodOn?.date || firstActivityOn || null;
   const obligations = [];
@@ -204,10 +204,30 @@ export function taxObligations({ today, rules, vatByPeriod = {}, vpbYears = [], 
     obligations.push({
       key: `vat:${period}`, taxType: "vat", period, kind: "return_and_payment",
       title: `VAT return and payment ${period} (${start} to ${end})`,
-      amountEur: round2(dueAmount), amountBasis: filed ? `Return filed on ${filed.doneOn}` : "VAT reserved on taxable revenue lanes in the period (estimate)",
+      amountEur: round2(dueAmount), amountBasis: filed ? `Return filed on ${filed.doneOn}` : `VAT reserved on taxable revenue lanes in the period (estimate)${ossByPeriod[period] > 0 ? `; includes EUR ${round2(ossByPeriod[period]).toFixed(2)} for the OSS return` : ""}`,
       paidEur: paid, dueOn, filedOn: filed?.doneOn || null,
       status: statusOf({ filed: Boolean(filed), paidEnough: paid >= dueAmount - 0.005, dueOn, today }),
       ...vatSource,
+    });
+  }
+
+  // OSS (union scheme): a quarterly return of its own once EU cross-border
+  // consumer sales are over the threshold. Its VAT is part of the VAT reserve
+  // above (the weekly model reserves it per event), so it is listed, not held twice.
+  const oss = rules.vat?.oss;
+  for (const period of Object.keys(ossByPeriod).sort()) {
+    const amount = round2(ossByPeriod[period] || 0);
+    if (!(amount > 0)) continue;
+    const quarter = /Q[1-4]$/.test(period) ? period : quarterOf(`${period}-01`);
+    const { start, end } = vatPeriodBounds(quarter);
+    if (end >= today) continue;
+    const dueOn = vatDueOn(quarter, 1);
+    obligations.push({
+      key: `oss:${quarter}`, taxType: "vat", period: quarter, kind: "oss_return",
+      title: `OSS return and payment ${quarter} (${start} to ${end})`,
+      amountEur: amount, amountBasis: "VAT of other EU countries on consumer sales above the EUR 10,000 threshold (estimate; part of the VAT reserve)",
+      paidEur: 0, dueOn, filedOn: null, status: dueOn < today ? "overdue" : "open",
+      source: oss?.source || cal.vatPeriod.source, checkedOn: oss?.checkedOn || cal.vatPeriod.checkedOn, rule: oss?.condition || "",
     });
   }
 

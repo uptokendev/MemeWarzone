@@ -296,7 +296,7 @@ test("treasury in the weekly profit: a realized gain raises profit and the VPB r
 const fakeFx = { rate: async (date) => ({ usdPerEur: 1.1, date: date || "2026-10-02", source: "ECB test" }) };
 const fakePrices = { spot: async (asset) => (asset === "SOL" ? { priceUsd: 220, source: "spot test" } : null), hourly: async () => new Map(), spotTable: async () => [], valueEvents: async () => ({ amountUsd: 0 }) };
 
-function setup({ treasuryInstalled = true, multisigUsd = 5500, unmatched } = {}) {
+function setup({ treasuryInstalled = true, multisigUsd = 5500, unmatched, vatEvidenceEvents } = {}) {
   const db = createFakeAccountingDb({ treasuryInstalled });
   // 55 SOL of fee revenue on 22 September, 11,000 USD = 10,000 EUR: 181.82 EUR per SOL.
   const dayRows = { "2026-09-22": { totalUsd: 11000, lanes: [{ laneId: "dbc-referral:101", lane: "DBC referral", asset: "SOL", nativeAmount: "55", amountUsd: 11000 }] } };
@@ -313,6 +313,7 @@ function setup({ treasuryInstalled = true, multisigUsd = 5500, unmatched } = {})
     dailyRevenue: async () => ({ days: dayRows, notes: [] }),
     balances: async () => ({ chains: [{ ...chain(multisigUsd), operator: { address: OPERATOR, status: "ok", amount: "1", amountUsd: 220 } }], operatorUsd: 220, errors: [] }),
     unmatchedOutflows: unmatched,
+    vatEvidenceEvents,
   });
   async function call(method, path, { principal = MANAGER, body, query = {} } = {}) {
     let statusCode = 200;
@@ -496,4 +497,24 @@ test("rules: the new calendar and crypto cost rules are data with source, date a
   const eff = R.effectiveTaxRuleSet(old);
   assert.equal(eff.calendar.vpbReturn.dueMonthsAfterYear, 5);
   assert.equal(eff.vpb.cryptoCostMethod.method, "fifo");
+});
+
+test("tax page: VAT return figures per quarter and the reserve released by customer evidence", async () => {
+  const vatEvidenceEvents = async () => ({ events: [{ at: "2026-09-22T09:00:00Z", laneId: "home-placements:56", amountUsd: 1100, customer: { subjectKind: "sponsorship_application", subjectId: "7", customerType: "business", country: "DE", vatId: "DE123456789", viesStatus: "valid", evidence: [] } }], note: null });
+  const { call } = setup({ vatEvidenceEvents });
+  const page = await call("GET", "/api/admin/finance/tax", { principal: VIEWER });
+  assert.equal(page.status, 200, JSON.stringify(page.body));
+  assert.ok(page.body.vat, "VAT section");
+  assert.equal(page.body.vat.period, "quarter");
+  const q3 = page.body.vat.returns.find((r) => r.period === "2026-Q3");
+  assert.ok(q3, "Q3 figures");
+  assert.equal(q3.oss.vatDueEur, 0);
+  assert.equal(typeof q3.nl.r1a.vatEur, "number");
+  assert.ok(page.body.vat.lanes.some((l) => l.key === "import_swaps"));
+  assert.match(page.body.vat.boxes, /rubriek 1a/);
+  // A bad customer kind is refused before anything is read or written.
+  const bad = await call("PUT", "/api/admin/finance/vat/customers/wallet/1", { body: { customerType: "business", country: "DE" } });
+  assert.equal(bad.status, 400);
+  assert.equal((await call("PUT", "/api/admin/finance/vat/customers/sponsor_profile/1", { principal: VIEWER, body: {} })).status, 403);
+  assert.equal(isFinanceAccountingPath("/api/admin/finance/vat/customers"), true);
 });

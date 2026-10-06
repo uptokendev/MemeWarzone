@@ -46,6 +46,9 @@
 //   POST   tax/items                  record a return/payment/...   finance.manage
 //   PATCH  tax/items/:id              correct it                    finance.manage
 //   DELETE tax/items/:id              soft delete                   finance.manage
+//   GET    vat/customers              known customers + VAT evidence finance.view
+//   PUT    vat/customers/:kind/:id    record evidence (VIES check)  finance.manage
+//   DELETE vat/customers/:kind/:id    remove evidence               finance.manage
 
 import { pool } from "../../server/db.js";
 import { dashboardPrincipalCan } from "../dashboard/_access.js";
@@ -126,6 +129,26 @@ import {
 } from "../lib/financeTaxCalendar.js";
 import { unmatchedOutflows } from "../lib/financeTreasuryDetect.js";
 import { VAT_LANES } from "../lib/financeTaxRules.js";
+import {
+  EU_COUNTRIES,
+  VAT_EVIDENCE_KINDS,
+  VAT_SUBJECT_KINDS,
+  VAT_TREATMENT_LABELS,
+  checkVies,
+  deleteVatCustomer,
+  evidenceByDay,
+  evidenceLabel,
+  evidenceStatus,
+  listVatCustomers,
+  listVatSubjects,
+  readEvidenceEvents,
+  readVatCustomer,
+  resolveEvidenceEvents,
+  upsertVatCustomer,
+  validateVatCustomerInput,
+  vatReturnsByPeriod,
+} from "../lib/financeVat.js";
+import { laneDefinitions } from "../lib/financeRevenueLanes.js";
 import { ENTITY_STATUSES, ENTITY_STATUS_LABELS, describeEntityChange, effectiveEntity, validateEntityInput } from "../lib/financeEntity.js";
 import {
   CRYPTO_COSTS_MIGRATION,
@@ -151,7 +174,7 @@ import {
   tokenMarketData,
   updateTaxItem,
 } from "../lib/financeTreasuryStore.js";
-import { currentBalances, dailyRevenue, monthlyRevenue, revenueEventRows } from "../lib/financeAccountingSources.js";
+import { accountingNetworks, currentBalances, dailyRevenue, monthlyRevenue, revenueEventRows, solanaRowsAreMainnet } from "../lib/financeAccountingSources.js";
 import { buildPayoutsAllChains, cachedPayouts, payoutsDays } from "../lib/financePayouts.js";
 import { feeRoutingAllNetworks } from "../lib/financeFeeRouting.js";
 import {
@@ -181,7 +204,8 @@ import {
 } from "../lib/financeAccountingStore.js";
 
 const BASE = "/api/admin/finance";
-const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|tax-rules|tax|weekly|close|distributions|exports|treasury|entity)(?:\/|$)/;
+const ACCOUNTING_PATH = /^\/api\/admin\/finance\/(?:costs|fx|tax-reserves|tax-rules|tax|weekly|close|distributions|exports|treasury|entity|vat)(?:\/|$)/;
+export const VAT_EVIDENCE_MIGRATION = "db/migrations/20261006_000003_finance_vat_evidence.sql";
 const MAX_EXPORT_MONTHS = 36;
 const FIRST_MONTH = "2024-01";
 // Close order (founder 2026-10-04): closed months form an unbroken run from
@@ -278,6 +302,8 @@ export function createFinanceAccountingHandler(deps = {}) {
   const revenue = (args) => (deps.revenue || monthlyRevenue)({ db: db(), prices: prices(), ...args });
   const revenueEvents = (args) => (deps.revenueEvents || revenueEventRows)({ db: db(), prices: prices(), fx: fx(), ...args });
   const balances = () => (deps.balances || currentBalances)({ db: db() });
+  const vatEvidenceEvents = (args) => (deps.vatEvidenceEvents || readEvidenceEvents)({ db: db(), prices: prices(), networks: accountingNetworks().filter((n) => solanaRowsAreMainnet(n)), laneDefinitions, ...args });
+  const vies = (vatId) => (deps.checkVies || checkVies)(vatId);
   const payouts = (days) => (deps.payouts || ((d) => buildPayoutsAllChains(feeRoutingAllNetworks(), (network) => cachedPayouts({ network, days: d, db: db() }))))(days);
 
   async function settings() {
@@ -921,14 +947,19 @@ export function createFinanceAccountingHandler(deps = {}) {
     const byDay = new Map([...tr.byDay].filter(([d]) => months.get(d.slice(0, 7))?.status !== "closed"));
     for (const [d, e] of snapshotTreasury) byDay.set(d, e);
     const open = await openCostsUsd(costs, tr.movements);
-    const model = computeWeeks({ today, fromDate, days: rev.days, usdPerEur, costsByMonth, months, rules: s.taxRules, vpbOverride: s.tax.isDefault ? null : s.tax, records: recs.records, treasuryByDay: byDay });
-    const taxCal = taxObligations({ today, rules: s.taxRules, vatByPeriod: vatByPeriodFrom(model.segments, s.taxRules.calendar.vatPeriod.period), vpbYears: model.years, items: tr.taxItems, records: recs.records, firstActivityOn: fromDate });
+    // Customer VAT evidence (sponsors, Home placement buyers): per-event treatment.
+    const evidenceRead = await vatEvidenceEvents().catch((error) => ({ events: [], note: `Customer VAT evidence could not be read (${String(error?.message || error).slice(0, 120)}); every lane uses its default reserve.` }));
+    const vatResolved = resolveEvidenceEvents(evidenceRead.events, s.taxRules, usdPerEur);
+    const model = computeWeeks({ today, fromDate, days: rev.days, usdPerEur, costsByMonth, months, rules: s.taxRules, vpbOverride: s.tax.isDefault ? null : s.tax, records: recs.records, treasuryByDay: byDay, vatEvidence: evidenceByDay(vatResolved) });
+    const vatPeriod = s.taxRules.calendar.vatPeriod.period;
+    const vatReturns = vatReturnsByPeriod(model.segments, vatPeriod);
+    const taxCal = taxObligations({ today, rules: s.taxRules, vatByPeriod: vatByPeriodFrom(model.segments, vatPeriod), ossByPeriod: Object.fromEntries(vatReturns.filter((r) => r.oss.vatDueEur > 0).map((r) => [r.period, r.oss.vatDueEur])), vpbYears: model.years, items: tr.taxItems, records: recs.records, firstActivityOn: fromDate });
     const cash = cashPerAccount(tr.movements, tr.taxItems);
     const offChain = offChainCashEur(tr.accounts, cash, latestRate);
     const monthlyCostsUsd = live.filter((c) => c.recurring !== "none" && (!c.recurringUntil || c.recurringUntil >= today) && c.incurredOn <= today)
       .reduce((sum, c) => sum + (c.recurring === "yearly" ? c.amountUsd / 12 : c.amountUsd), 0);
     const decision = decideWeek({ model, chains: bal.chains || [], openCostsUsd: open, usdPerEurNow: latestRate, settings: s.distribution, rules: s.taxRules, records: recs.records, today, operatorUsd: bal.operatorUsd ?? null, monthlyCostsUsd, held: taxCal.held, offChainCashEur: offChain.eur });
-    return { s, today, model, months, decision, bal, records: recs.records, recordsInstalled: recs.installed, notes: rev.notes || [], latestRate, tr, taxCal, cash, offChain, usdPerEur, revDays: rev.days };
+    return { s, today, model, months, decision, bal, records: recs.records, recordsInstalled: recs.installed, notes: [...(rev.notes || []), ...(evidenceRead.note ? [evidenceRead.note] : [])], latestRate, tr, taxCal, cash, offChain, usdPerEur, revDays: rev.days, vatReturns, vatResolved, vatEvidenceNote: evidenceRead.note || null };
   }
 
   async function getWeekly(req, res, principal) {
@@ -1611,6 +1642,7 @@ export function createFinanceAccountingHandler(deps = {}) {
       releasedByPaymentsEur: w.decision.reserves.releasedByPaymentsEur,
       releaseRule: RESERVE_RELEASE_RULE,
       firstPeriodOn: taxCal.firstPeriodOn,
+      vat: vatView(w),
       rules: [cal.vatPeriod, cal.vpbProvisional, cal.vpbReturn, cal.firstPeriodOn, w.s.taxRules.filing].map((r) => ({ condition: r.condition, source: r.source, checkedOn: r.checkedOn, confidence: r.confidence })),
       items: tr.taxItems.map((t) => ({ ...t, kindLabel: TAX_ITEM_KIND_LABELS[t.kind], typeLabel: TAX_TYPE_LABELS[t.taxType] })),
       types: TAX_TYPES.map((key) => ({ key, label: TAX_TYPE_LABELS[key] })),
@@ -1620,6 +1652,99 @@ export function createFinanceAccountingHandler(deps = {}) {
       entity: await entity(),
       canManage: dashboardPrincipalCan(principal, "finance.manage"),
     });
+  }
+
+  /** The VAT section of the Tax page: return figures per period, release by evidence, evidence events. */
+  function vatView(w) {
+    const v = w.s.taxRules.vat;
+    const released = w.vatReturns.reduce((sum, r) => sum + r.releasedByEvidenceEur, 0);
+    return {
+      period: w.s.taxRules.calendar.vatPeriod.period,
+      returns: w.vatReturns.slice().reverse(),
+      releasedByEvidenceEur: round2(released),
+      reserveDefaultEur: round2(w.vatReturns.reduce((sum, r) => sum + r.reserveDefaultEur, 0)),
+      reserveEur: round2(w.vatReturns.reduce((sum, r) => sum + r.reserveEur, 0)),
+      evidenceEvents: w.vatResolved.slice(-200).reverse().map((e) => ({ at: e.at, laneId: e.laneId, vatLane: e.vatLane, eur: round2(e.eur), treatment: e.treatment, treatmentLabel: VAT_TREATMENT_LABELS[e.treatment] || e.treatment, country: e.country, vatEur: round2(e.vatEur), defaultVatEur: round2(e.defaultVatEur), reason: e.reason, subjectKind: e.customer?.subjectKind, subjectId: e.customer?.subjectId })),
+      lanes: VAT_LANES.map((key) => ({ key, ...v.lanes[key], treatmentLabel: VAT_TREATMENT_LABELS[v.lanes[key].treatment] || v.lanes[key].treatment })),
+      oss: { thresholdEur: v.oss.thresholdEur, condition: v.oss.condition, source: v.oss.source, checkedOn: v.oss.checkedOn, confidence: v.oss.confidence },
+      evidenceRule: { condition: v.evidence.condition, source: v.evidence.source, checkedOn: v.evidence.checkedOn, confidence: v.evidence.confidence },
+      boxes: "Dutch return: rubriek 1a = Dutch VAT at 21% (base and VAT), 3b = services to EU businesses under reverse charge (base) plus the ICP return per VAT number; services to businesses or consumers outside the EU and exempt services are not reported. OSS return: base and VAT per EU country, only once EU cross-border consumer sales go over EUR 10,000.",
+      note: w.vatEvidenceNote,
+    };
+  }
+
+  // ---------------------------------------------------------------- VAT customer evidence
+
+  function vatSubjectParams(kind, id) {
+    if (!VAT_SUBJECT_KINDS.includes(kind)) throw new FinanceInputError(`kind must be ${VAT_SUBJECT_KINDS.join(" or ")}.`, "kind");
+    if (!/^[A-Za-z0-9-]{1,40}$/.test(id)) throw new FinanceInputError("Invalid customer id.", "id");
+    return { subjectKind: kind, subjectId: id };
+  }
+
+  function vatTablesMissing(error) {
+    return error?.code === "42P01" && /finance_vat_customers/.test(String(error?.message || ""));
+  }
+
+  async function getVatCustomers(req, res, principal) {
+    let customers = [];
+    let installed = true;
+    try {
+      customers = await listVatCustomers(db());
+    } catch (error) {
+      if (!vatTablesMissing(error) && error?.code !== "42P01") throw error;
+      installed = false;
+    }
+    const subjects = await listVatSubjects(db());
+    const byKey = new Map(customers.map((c) => [`${c.subjectKind}:${c.subjectId}`, c]));
+    const rows = subjects.map((s) => {
+      const c = byKey.get(`${s.subjectKind}:${s.subjectId}`) || null;
+      byKey.delete(`${s.subjectKind}:${s.subjectId}`);
+      return { ...s, evidence: c, status: evidenceStatus(c) };
+    });
+    for (const c of byKey.values()) rows.push({ subjectKind: c.subjectKind, subjectId: c.subjectId, name: "", wallet: null, payments: 0, firstAt: null, lastAt: null, evidence: c, status: evidenceStatus(c) });
+    return res.status(200).json({
+      schemaVersion: "finance-vat-customers-v1",
+      generatedAt: new Date(nowMs()).toISOString(),
+      source: "dashboard-api",
+      installed,
+      migration: installed ? null : `Recording customer VAT evidence needs ${VAT_EVIDENCE_MIGRATION} on this database.`,
+      customers: rows,
+      euCountries: EU_COUNTRIES,
+      evidenceKinds: VAT_EVIDENCE_KINDS.map((key) => ({ key, label: evidenceLabel(key) })),
+      privacy: "Only what the VAT rules need: customer type, country, VAT or business number, the VIES result and name, and up to 6 location items (kind and country). No IP addresses or bank numbers.",
+      canManage: dashboardPrincipalCan(principal, "finance.manage"),
+    });
+  }
+
+  async function putVatCustomer(req, res, actor, kind, id) {
+    const subject = vatSubjectParams(kind, id);
+    const input = validateVatCustomerInput(req.body);
+    const before = await readVatCustomer(db(), subject.subjectKind, subject.subjectId).catch((error) => {
+      if (error?.code === "42P01") throw new HttpError(503, `Recording customer VAT evidence needs ${VAT_EVIDENCE_MIGRATION} on this database.`, { code: "FINANCE_VAT_NOT_INSTALLED" });
+      throw error;
+    });
+    // VIES only for an EU business number; a non-EU number is kept as business evidence.
+    const sameNumber = before && before.vatId === input.vatId && before.viesStatus === "valid" && !req.body?.recheck;
+    const result = input.customerType === "business" && input.vatId && EU_COUNTRIES.includes(input.country) && input.country !== "NL"
+      ? (sameNumber ? { status: before.viesStatus, name: before.viesName, checkedAt: before.viesCheckedAt } : await vies(input.vatId))
+      : { status: "not_checked", name: null, checkedAt: null };
+    const saved = await withTransaction(db(), async (client) => {
+      const row = await upsertVatCustomer(client, { ...subject, input, vies: result, actor });
+      await writeAudit(client, { actor, action: "vat_customer.update", entityType: "finance_vat_customer", entityId: `${subject.subjectKind}:${subject.subjectId}`, before, after: row });
+      return row;
+    });
+    return res.status(200).json({ ok: true, customer: saved, status: evidenceStatus(saved), vies: result });
+  }
+
+  async function removeVatCustomer(req, res, actor, kind, id) {
+    const subject = vatSubjectParams(kind, id);
+    const removed = await withTransaction(db(), async (client) => {
+      const row = await deleteVatCustomer(client, subject.subjectKind, subject.subjectId);
+      if (row) await writeAudit(client, { actor, action: "vat_customer.delete", entityType: "finance_vat_customer", entityId: `${subject.subjectKind}:${subject.subjectId}`, before: row, after: null });
+      return row;
+    });
+    if (!removed) return res.status(404).json({ ok: false, error: "No evidence recorded for this customer." });
+    return res.status(200).json({ ok: true });
   }
 
   async function checkTaxLinks(item, rows) {
@@ -1968,6 +2093,12 @@ export function createFinanceAccountingHandler(deps = {}) {
         if (method === "PATCH") return await patchTaxItem(req, res, actor, parts[2]);
         if (method === "DELETE") return await deleteTaxItem(req, res, actor, parts[2]);
         return allow(["PATCH", "DELETE"]);
+      }
+      if (rel === "vat/customers") return read ? await getVatCustomers(req, res, principal) : allow(["GET"]);
+      if (parts[0] === "vat" && parts[1] === "customers" && parts.length === 4) {
+        if (method === "PUT") return await putVatCustomer(req, res, actor, parts[2], parts[3]);
+        if (method === "DELETE") return await removeVatCustomer(req, res, actor, parts[2], parts[3]);
+        return allow(["PUT", "DELETE"]);
       }
       if (parts[0] === "exports" && parts.length === 2) return read ? await getExport(req, res, parts[1].replace(/\.csv$/, "")) : allow(["GET"]);
       return res.status(404).json({ ok: false, error: "Unknown finance accounting route." });

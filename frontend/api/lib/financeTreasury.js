@@ -47,7 +47,7 @@
 
 import { FinanceInputError, isValidDate, round2, roundUsd } from "./financeAccountingCosts.js";
 import { priceAssetFor } from "./financePrices.js";
-import { VAT_LANES, vatLaneOf } from "./financeTaxRules.js";
+import { VAT_LANES, vatFraction, vatLaneOf } from "./financeTaxRules.js";
 
 export const ACCOUNT_KINDS = Object.freeze(["multisig", "operator_wallet", "exchange", "bank", "wallet_other"]);
 export const ACCOUNT_KIND_LABELS = Object.freeze({ multisig: "Multisig", operator_wallet: "Operator wallet (buffer)", exchange: "Exchange account", bank: "Bank account", wallet_other: "Other wallet" });
@@ -614,7 +614,7 @@ export function treasuryByDay({ lotDisposals = [], movements = [], rules, usdPer
     if (m.kind === "bank_receipt" && m.revenueLane) {
       const r = rules.vat.lanes[m.revenueLane] || rules.vat.lanes.other;
       const eur = Number(m.valueEur);
-      const vat = r.treatment === "exempt" || r.treatment === "outside_scope" ? 0 : ((eur * r.rate) / (1 + r.rate)) * r.taxableShare;
+      const vat = eur * vatFraction(r);
       const day = get(date);
       day.otherRevenueEur += eur;
       day.otherVatEur += vat;
