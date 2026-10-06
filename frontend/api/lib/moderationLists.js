@@ -323,9 +323,16 @@ async function loadSources(db, notes) {
              v.amount_raw::text as amount_raw, v.payload, v.computed_at, v.expires_at, v.swept_at,
              null as claimed_at, null as pay_tx, null as paid_at, null as root_at, null as root_tx, null as run_status, null as run_reason
         from public.league_epoch_winners_moderation_voided v
-       where v.chain_id = any($1::int[])`, [MAINNET_IDS])
+       where v.chain_id = any($1::int[]) and coalesce(v.disposition, 'voided') = 'voided'`, [MAINNET_IDS])
     : [];
-  return { airdrops, leagues, voidedLeagues, recruiters, accounts, payoutWallets, links, ledger, claims, laneClaims, clusterMembers, riskProfiles };
+  // Winners left out of their published root by a hold, and where their release went (B7).
+  const exclusionsTable = await db.query(`select to_regclass('public.moderation_root_exclusions') is not null as ok`).catch(() => ({ rows: [] }));
+  const rootExclusions = exclusionsTable?.rows?.[0]?.ok
+    ? await read(db, notes, "League root exclusions", `
+      select chain_id, period, epoch_start, category, rank, release_path, release_status, carried_to, paid_tx
+        from public.moderation_root_exclusions where chain_id = any($1::int[])`, [MAINNET_IDS])
+    : [];
+  return { airdrops, leagues, voidedLeagues, rootExclusions, recruiters, accounts, payoutWallets, links, ledger, claims, laneClaims, clusterMembers, riskProfiles };
 }
 
 async function loadProfiles(db, notes, addresses) {
@@ -388,6 +395,7 @@ const CATEGORY_LABELS = Object.freeze({
   recruiter_league: "Recruiter league",
   mwl: "Major War League",
   championship: "Quarterly championship",
+  moderation_release: "Released prize (moved from an earlier root)",
 });
 
 function airdropReason(meta, chain) {
@@ -989,9 +997,16 @@ export async function buildModerationDataset({ db, priceService, now = new Date(
   // League prizes voided from this page (B7) left league_epoch_winners; their backup keeps them listed,
   // as voided rows (hidden with the other test and internal rows unless asked for).
   const voidedLeagues = buildLeagueRows(src.voidedLeagues, ctx).map((row) => ({ ...row, status: "voided", rootPosted: false, rootAt: null, rootTxUrl: null, voidedByModeration: true }));
+  const exclusionById = new Map(src.rootExclusions.map((x) => [`league:${x.chain_id}:${x.period}:${toIso(x.epoch_start)}:${x.category}:${x.rank}`, x]));
+  const leagueRows = buildLeagueRows(src.leagues, ctx).map((row) => {
+    const x = exclusionById.get(row.id);
+    if (!x) return row;
+    // No leaf in the posted root: not claimable there whatever the root says.
+    return { ...row, heldOutOfRoot: true, releasePath: x.release_path || null, releaseStatus: x.release_status || null, carriedTo: x.carried_to || null, paidTx: x.paid_tx || null, status: x.release_status === "paid" ? "claimed" : "pending" };
+  });
   const dataset = {
     airdrops: buildAirdropRows(src.airdrops, ctx),
-    leagues: [...buildLeagueRows(src.leagues, ctx), ...voidedLeagues],
+    leagues: [...leagueRows, ...voidedLeagues],
     recruiters: buildRecruiterRows(src, ctx),
   };
   applyFlags(dataset, { internal, risk: riskIndex(src), now });

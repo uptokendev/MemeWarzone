@@ -42,7 +42,7 @@ import {
   monthlyLeagueTreasuryAddress,
   monthlyLeagueTreasuryForMonth,
 } from "../api/lib/evmMonthlyLeagueTreasury.js";
-import { beginGuardedPublish, endGuardedPublish, heldLeagueWinners, leagueEpochLockKey } from "../shared/moderationHolds.mjs";
+import { beginGuardedLeaguePublish, endGuardedPublish, leagueEpochLockKey, rootLeafRows } from "../shared/moderationHolds.mjs";
 
 const dryRun = process.argv.includes("--dry-run");
 const LOOKBACK_DAYS = Number(process.env.EVM_LEAGUE_ROOT_LOOKBACK_DAYS || 120);
@@ -103,22 +103,15 @@ async function epochList(chainId) {
   return rows;
 }
 
-async function buildRoot(chainId, period, epochStart, db = pool) {
-  const epochDate = new Date(epochStart);
+/** Leaves and root of one epoch's rows (already in proof order). */
+function rootFromRows(chainId, period, epochDate, rows) {
   const claimId = period === "monthly" ? monthIdFromDate(epochDate) : computeEpochId(chainId, period, Math.floor(epochDate.getTime() / 1000));
-  const { rows } = await db.query(
-    `select category, rank, recipient_address as "recipientAddress", amount_raw::text as "amountRaw"
-       from public.league_epoch_winners
-      where chain_id = $1 and period = $2 and epoch_start = $3::timestamptz
-      order by category asc, rank asc, recipient_address asc`,
-    [chainId, period, epochDate.toISOString()],
-  );
   const leaves = [];
   let total = 0n;
   for (const row of rows) {
-    const recipient = String(row.recipientAddress || "").toLowerCase();
+    const recipient = String(row.recipient_address || "").toLowerCase();
     const rank = Number(row.rank);
-    const amount = BigInt(row.amountRaw);
+    const amount = BigInt(row.amount_raw);
     // One bad leaf blocks the whole epoch: posting without it would pay that winner nothing.
     if (!ethers.isAddress(recipient)) throw new Error(`winner ${row.category} #${rank} has a non-EVM recipient ${recipient}`);
     if (!Number.isInteger(rank) || rank < 1 || rank > 255) throw new Error(`winner ${row.category} rank ${rank} outside 1..255`);
@@ -130,23 +123,31 @@ async function buildRoot(chainId, period, epochStart, db = pool) {
 }
 
 /**
- * Moderation hold (B7, shared/moderationHolds.mjs), checked right before a send: an epoch with a held
- * prize is BLOCKED like any other reason and never posted without it -- the contracts take one root
- * per epoch, so a prize left out could never be added. Released: posted unchanged. Voided: the row is
- * gone and the list posts without it, the other places unchanged. The guard re-reads the list under
- * the epoch lock and leaves a marker until the root is recorded, so a hold or void cannot land in
- * between. A dry run only reads.
+ * Moderation (B7, shared/moderationHolds.mjs, founder 2026-10-06): a winner on hold gets no leaf; every
+ * other place and amount stays exactly as settled and the epoch is posted on schedule. The held amount
+ * stays in the vault; a release after publication is paid by a Safe proposal
+ * (scripts/league-release-safe-batch.mjs). A voided row is gone already.
+ */
+async function buildRoot(chainId, period, epochStart, db = pool) {
+  const epochDate = new Date(epochStart);
+  const leaf = await rootLeafRows(db, { chainId, period, epochStart: epochDate });
+  return { ...rootFromRows(chainId, period, epochDate, leaf.rows), heldOut: leaf.excluded.map((x) => ({ category: x.category, rank: Number(x.rank) })) };
+}
+
+/**
+ * Right before a send: rebuild the leaf set under the epoch lock, check it still gives this root, store
+ * the exclusions and leave a marker until the root is recorded, so no hold or void can land in between.
+ * A dry run only reads.
  */
 async function guardModeration(chainId, period, epochStart, built) {
-  const problemsFor = async (db) => {
-    const problems = (await heldLeagueWinners(db, { chainId, period, epochStart }))
-      .map((h) => `${h.category} #${h.rank} (${h.subject_kind} ${h.state})`);
-    const again = await buildRoot(chainId, period, epochStart, db);
-    if (again.root.toLowerCase() !== built.root.toLowerCase()) problems.push("winner list changed since it was read");
-    return problems;
-  };
-  const problems = dryRun ? await problemsFor(pool) : ((await beginGuardedPublish(pool, leagueEpochLockKey(chainId, period, epochStart), problemsFor)).problems || []);
-  if (problems.length) throw new Error(`moderation hold: ${problems.join(", ")}; release or void it in Command Center -> Community -> Moderation`);
+  const epochDate = new Date(epochStart);
+  if (dryRun) {
+    const again = await buildRoot(chainId, period, epochStart);
+    if (again.root.toLowerCase() !== built.root.toLowerCase()) throw new Error("moderation: winner list or holds changed since it was read; re-run");
+    return;
+  }
+  const guard = await beginGuardedLeaguePublish(pool, { chainId, period, epochStart: epochDate }, built.root, (rows) => rootFromRows(chainId, period, epochDate, rows).root);
+  if (!guard.ok) throw new Error("moderation: winner list or holds changed since it was read; re-run");
 }
 
 /**
@@ -205,7 +206,8 @@ async function main() {
         base.vault = vaultAddress;
         if (!ethers.isAddress(vaultAddress)) throw new Error(`no ${period} league vault configured for chain ${chainId}`);
         const built = await buildRoot(chainId, period, epochStart);
-        const item = { ...base, claimId: built.claimId.toString(), root: built.root, total: built.total.toString(), winners: built.count };
+        const item = { ...base, claimId: built.claimId.toString(), root: built.root, total: built.total.toString(), winners: built.count, heldOut: built.heldOut };
+        if (built.count === 0) { report.push({ ...item, status: "skipped_every_winner_on_hold" }); continue; }
 
         if (period === "weekly" || isMwlPayoutPeriod(period)) {
           const vault = new ethers.Contract(vaultAddress, WEEKLY_ABI, signer);

@@ -263,3 +263,143 @@ export async function endGuardedPublish(pool, key) {
   if (!(await moderationHoldsAvailable(pool))) return;
   await pool.query(`delete from public.moderation_publish_markers where lock_key = $1`, [key]);
 }
+
+// --------------------------------------------------------------------------
+// League roots without held winners (founder 2026-10-06: a hold drops only that one winner)
+
+export const MODERATION_CARRY_CATEGORY = "moderation_release";
+
+/** Which post-publication release path a chain has (no program or contract change needed for either). */
+export function leagueReleasePath(chainId) {
+  return Number(chainId) === 101 || Number(chainId) === 102 ? "solana_carry" : "evm_safe_withdraw";
+}
+
+const winnerKey = (row) => `${String(row.category)}|${Number(row.rank)}`;
+
+/**
+ * The winner rows of one epoch that belong in (or already are in) its Merkle root, in the order every
+ * proof builder uses (category, rank, recipient). Rows not in it come back in `excluded`.
+ *
+ *   frozen (a root is recorded, a publication is in flight, or exclusions were stored): exactly the
+ *     stored exclusions (moderation_root_exclusions) are left out -- a hold placed after publication
+ *     never changes a published leaf set.
+ *   not frozen: winners under a hold (item, wallet or recruiter) are left out; nobody else moves.
+ *
+ * Before the moderation migration: every row, nothing excluded.
+ */
+export async function rootLeafRows(db, { chainId, period, epochStart }) {
+  const iso = isoOf(epochStart);
+  const params = [Number(chainId), String(period), iso];
+  const { rows } = await db.query(
+    `select w.category, w.rank, w.recipient_address, w.amount_raw::text as amount_raw, w.epoch_end, w.expires_at, w.payload
+       from public.league_epoch_winners w
+      where w.chain_id = $1 and w.period = $2 and w.epoch_start = $3::timestamptz
+      order by w.category asc, w.rank asc, w.recipient_address asc`,
+    params,
+  );
+  const all = rows || [];
+  if (!(await moderationHoldsAvailable(db))) return { rows: all, excluded: [], frozen: false };
+  const state = await db.query(
+    `select exists (select 1 from public.league_epoch_roots r where r.chain_id = $1 and r.period = $2 and r.epoch_start = $3::timestamptz) as rooted,
+            exists (select 1 from public.moderation_publish_markers m where m.lock_key = $4) as marked,
+            exists (select 1 from public.moderation_root_exclusions x where x.chain_id = $1 and x.period = $2 and x.epoch_start = $3::timestamptz) as stored`,
+    [...params, leagueEpochLockKey(chainId, period, iso)],
+  );
+  const s = state.rows?.[0] || {};
+  const frozen = Boolean(s.rooted || s.marked || s.stored);
+  const reasons = new Map();
+  if (frozen) {
+    const stored = await db.query(
+      `select category, rank, hold_subject_key, release_status from public.moderation_root_exclusions
+        where chain_id = $1 and period = $2 and epoch_start = $3::timestamptz`,
+      params,
+    );
+    for (const row of stored.rows || []) reasons.set(winnerKey(row), { hold: row.hold_subject_key, releaseStatus: row.release_status, stored: true });
+  } else {
+    const held = await db.query(
+      `select distinct on (w.category, w.rank) w.category, w.rank, h.subject_key
+         from public.league_epoch_winners w
+         join public.moderation_holds h on ${leagueHoldMatchSql("h", "w")}
+        where w.chain_id = $1 and w.period = $2 and w.epoch_start = $3::timestamptz
+        order by w.category, w.rank, h.subject_key`,
+      params,
+    );
+    for (const row of held.rows || []) reasons.set(winnerKey(row), { hold: row.subject_key, releaseStatus: null, stored: false });
+  }
+  const included = [];
+  const excluded = [];
+  for (const row of all) {
+    const reason = reasons.get(winnerKey(row));
+    if (reason) excluded.push({ ...row, ...reason });
+    else included.push(row);
+  }
+  return { rows: included, excluded, frozen };
+}
+
+/**
+ * The league publish guard. One short transaction, right before the send: shared global lock, the epoch
+ * lock, rebuild the leaf set under the lock, check it still gives `root` (`rootOf(rows)` computes it the
+ * caller's way), then store the exclusions and the marker. From then on the leaf set is frozen and no
+ * moderation action can change it. Returns { ok, excluded } or { ok: false, problems }.
+ */
+export async function beginGuardedLeaguePublish(pool, { chainId, period, epochStart }, root, rootOf) {
+  if (!(await moderationHoldsAvailable(pool))) return { ok: true, guarded: false, excluded: [] };
+  const key = leagueEpochLockKey(chainId, period, epochStart);
+  const iso = isoOf(epochStart);
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock_shared(hashtext($1))", [MODERATION_GLOBAL_LOCK]);
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [key]);
+    const leaf = await rootLeafRows(client, { chainId, period, epochStart: iso });
+    if (String(rootOf(leaf.rows)).toLowerCase() !== String(root).toLowerCase()) {
+      await client.query("rollback");
+      return { ok: false, problems: [{ reason: "winner list or holds changed since it was read" }] };
+    }
+    for (const row of leaf.excluded) {
+      if (row.stored) continue;
+      await client.query(
+        `insert into public.moderation_root_exclusions (chain_id, period, epoch_start, category, rank, recipient_address, amount_raw, hold_subject_key)
+         values ($1, $2, $3::timestamptz, $4, $5, $6, $7::numeric, $8)
+         on conflict do nothing`,
+        [Number(chainId), String(period), iso, row.category, Number(row.rank), row.recipient_address, String(row.amount_raw), row.hold],
+      );
+    }
+    await client.query(
+      `insert into public.moderation_publish_markers (lock_key, started_at, details) values ($1, now(), $2::jsonb)
+       on conflict (lock_key) do update set started_at = now(), details = excluded.details`,
+      [key, JSON.stringify({ root: String(root), excluded: leaf.excluded.map((r) => ({ category: r.category, rank: Number(r.rank) })) })],
+    );
+    await client.query("commit");
+    return { ok: true, guarded: true, excluded: leaf.excluded };
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** The stored exclusion of one league winner (its leaf is not in the published root), or null. */
+export async function leagueRootExclusion(db, { chainId, period, epochStart, category, rank }) {
+  if (!(await moderationHoldsAvailable(db))) return null;
+  const { rows } = await db.query(
+    `select chain_id, period, epoch_start, category, rank, recipient_address, amount_raw::text as amount_raw, hold_subject_key,
+            release_path, release_status, released_at, carried_to, paid_tx
+       from public.moderation_root_exclusions
+      where chain_id = $1 and period = $2 and epoch_start = $3::timestamptz and category = $4 and rank = $5`,
+    [Number(chainId), String(period), isoOf(epochStart), String(category), Number(rank)],
+  );
+  return rows?.[0] || null;
+}
+
+/** Claim-page text for a prize whose leaf is not in its published root. */
+export function leagueExclusionRefusal(exclusion) {
+  const status = exclusion?.release_status;
+  if (status === "paid") return { code: "LEAGUE_PRIZE_PAID_BY_MULTISIG", error: "This prize was paid to your wallet by the team's multisig.", txHash: exclusion.paid_tx || null };
+  if (status === "carried") return { code: "LEAGUE_PRIZE_MOVED", error: "This prize was moved into a later league root. Claim it there.", movedTo: exclusion.carried_to || null };
+  if (status === "pending") return { code: "LEAGUE_PRIZE_MOVING", error: "This prize was released after review and goes into the next league root of this period. Claim it there once it is posted." };
+  if (status === "awaiting_multisig") return { code: "LEAGUE_PRIZE_MULTISIG", error: "This prize was released after review and is paid to your wallet by the team's multisig. Nothing to claim here." };
+  if (status === "voided") return { code: "MODERATION_HOLD", error: "This reward was voided after review. Nothing was sent." };
+  return { code: "MODERATION_HOLD", error: "This reward is on hold for review. Nothing was sent." };
+}

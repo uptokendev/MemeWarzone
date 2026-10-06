@@ -22,6 +22,7 @@ import {
   MODERATION_REASON_MIN,
   airdropSubjectKey,
   leagueEpochLockKey,
+  leagueReleasePath,
   leagueSubjectKey,
   moderationWalletKey,
   recruiterBatchLockKey,
@@ -156,6 +157,15 @@ async function loadLeagueWinner(client, ref, existing) {
     [ref.chainId, ref.period, ref.epochStart, ref.category, ref.rank],
   );
   const row = rows[0];
+  // Left out of its published root by an earlier hold (moderation_root_exclusions)?
+  const ex = await client.query(
+    `select * from public.moderation_root_exclusions
+      where chain_id = $1 and period = $2 and epoch_start = $3::timestamptz and category = $4 and rank = $5
+      for update`,
+    [ref.chainId, ref.period, ref.epochStart, ref.category, ref.rank],
+  );
+  const exclusion = ex.rows[0] || null;
+  if (exclusion?.release_status === "carried") fail(409, "ALREADY_MOVED", "This prize was released and moved into a later root; act on the moderation_release row there.", { movedTo: exclusion.carried_to });
   if (!row && existing?.state !== "voided") fail(404, "SUBJECT_NOT_FOUND", "This league prize no longer exists.");
   const root = await client.query(
     `select published_at from public.league_epoch_roots where chain_id = $1 and period = $2 and epoch_start = $3::timestamptz limit 1`,
@@ -177,15 +187,21 @@ async function loadLeagueWinner(client, ref, existing) {
     );
     categoryPaid = paid.rows.length > 0;
   }
-  const published = root.rows.length > 0;
-  const paid = claimed.rows.length > 0;
+  const rootPosted = root.rows.length > 0;
+  const excluded = Boolean(exclusion);
+  // Published = its leaf is in a posted root. A winner left out of the root (held at publication) has no
+  // leaf: it can still be voided, and a release pays it by the chain's release path.
+  const published = rootPosted && !excluded;
+  const paid = claimed.rows.length > 0 || exclusion?.release_status === "paid";
   const payload = row?.payload && typeof row.payload === "object" ? row.payload : {};
+  const voidable = !paid && (excluded ? true : !rootPosted && !categoryPaid);
   return {
     row,
+    exclusion,
     snapshot: plain(row),
     published,
     paid,
-    voidable: !published && !paid && !categoryPaid,
+    voidable,
     voidBlockReason: paid ? "This prize was already claimed or paid." : published ? "Its root is already published; a posted root can never change." : categoryPaid ? "Money of this category was already paid out." : null,
     columns: {
       chainId: ref.chainId,
@@ -208,11 +224,45 @@ async function voidLeagueWinner(client, ref, loaded, holdId) {
   const deleted = await client.query(
     `delete from public.league_epoch_winners
       where chain_id = $1 and period = $2 and epoch_start = $3::timestamptz and category = $4 and rank = $5
-        and not exists (select 1 from public.league_epoch_roots r where r.chain_id = $1 and r.period = $2 and r.epoch_start = $3::timestamptz)`,
+        and (not exists (select 1 from public.league_epoch_roots r where r.chain_id = $1 and r.period = $2 and r.epoch_start = $3::timestamptz)
+             or exists (select 1 from public.moderation_root_exclusions x
+                         where x.chain_id = $1 and x.period = $2 and x.epoch_start = $3::timestamptz and x.category = $4 and x.rank = $5))`,
     [ref.chainId, ref.period, ref.epochStart, ref.category, ref.rank],
   );
   if (deleted.rowCount !== 1) fail(409, "VOID_RACE", "The prize changed while it was being voided. Nothing was changed.");
   return { backup: "league_epoch_winners_moderation_voided", amountRaw: String(loaded.row.amount_raw), placesRenumbered: false, moneyStays: "league vault, unassigned" };
+}
+
+/**
+ * A league winner left out of its published root (held at publication). Release starts the chain's
+ * release path (Solana: carried into the next root of the period by the publisher; BNB / Robinhood: paid
+ * by a Safe proposal, scripts/league-release-safe-batch.mjs); a new hold stops that path; void ends it.
+ */
+async function updateExclusion(client, input, exclusion, state, warnings) {
+  if (["carried", "paid"].includes(exclusion.release_status)) fail(409, "ALREADY_MOVED", "This prize was already moved or paid.");
+  let path = exclusion.release_path;
+  let status = exclusion.release_status;
+  if (state === "released") {
+    path = leagueReleasePath(input.ref.chainId);
+    status = path === "solana_carry" ? "pending" : "awaiting_multisig";
+    warnings.push({
+      code: "RELEASED_AFTER_PUBLICATION",
+      message: path === "solana_carry"
+        ? "Released after its root was published: the prize moves into the next root of this period on Solana, automatically."
+        : "Released after its root was published: paid manually via a Safe multisig proposal (scripts/league-release-safe-batch.mjs).",
+    });
+  } else if (state === "held") {
+    status = null;
+  } else if (state === "voided") {
+    status = "voided";
+  }
+  await client.query(
+    `update public.moderation_root_exclusions
+        set release_path = $6, release_status = $7, released_at = case when $7 in ('pending', 'awaiting_multisig') then now() else released_at end, updated_at = now()
+      where chain_id = $1 and period = $2 and epoch_start = $3::timestamptz and category = $4 and rank = $5`,
+    [input.ref.chainId, input.ref.period, input.ref.epochStart, input.ref.category, input.ref.rank, path, status],
+  );
+  return { heldOutOfRoot: true, releasePath: path, releaseStatus: status };
 }
 
 const AIRDROP_PUBLISHED_BATCH = new Set(["funding_check", "published", "claim_open", "paused", "closed", "archived", "failed"]);
@@ -502,12 +552,13 @@ export async function applyModerationAction(db, { input, principal, requestId = 
 
     const hold = await writeHold(client, { existing, input, state: next.state, published: loaded.published, snapshot: loaded.snapshot, columns: loaded.columns, actor });
     let effects = {};
+    if (input.kind === "league_winner" && loaded.exclusion) effects = await updateExclusion(client, input, loaded.exclusion, next.state, warnings);
     if (next.state === "voided") {
-      effects = input.kind === "league_winner"
+      effects = { ...effects, ...(input.kind === "league_winner"
         ? await voidLeagueWinner(client, input.ref, loaded, hold.id)
         : input.kind === "airdrop_item"
           ? await voidAirdropItem(client, input.ref, loaded, hold.id, input.reason, actor.email)
-          : await voidRecruiterLedger(client, input.ref, loaded, hold.id, input.reason, actor.email);
+          : await voidRecruiterLedger(client, input.ref, loaded, hold.id, input.reason, actor.email)) };
     }
     const audit = await writeAudit(client, { hold, input, fromState: current, toState: next.state, published: loaded.published, actor, requestId, details: { ...effects, warnings } });
     await client.query("commit");
@@ -597,8 +648,9 @@ export function decorateModerationRows(tab, rows, state) {
         if (w && !blanket.includes(w)) blanket.push(w);
       }
       if (row.recruiterId && state.recruiters.get(String(row.recruiterId))) blanket.push(state.recruiters.get(String(row.recruiterId)));
-      published = Boolean(row.rootPosted);
-      paid = row.status === "claimed";
+      // A winner held out of its posted root has no leaf there, so it is not "published".
+      published = Boolean(row.rootPosted) && !row.heldOutOfRoot;
+      paid = row.status === "claimed" || row.releaseStatus === "paid";
     } else {
       item = state.bySubject.get(`recruiter|${row.id}`) || null;
       const viaAccount = row.accountId ? state.accounts.get(String(row.accountId)) : null;
@@ -609,19 +661,26 @@ export function decorateModerationRows(tab, rows, state) {
     const voided = itemState === "voided" || row.status === "voided";
     const effective = voided ? "voided" : itemState === "held" || blanket.some((h) => h.state === "held") ? "held" : null;
     const isRecruiter = tab === "recruiters";
+    const moved = row.heldOutOfRoot && ["carried", "paid"].includes(row.releaseStatus);
     const walletHold = tab === "recruiters" ? null : blanket.find((h) => h.subject_kind === "wallet") || null;
     const actions = {
-      hold: !voided && !paid && itemState !== "held" && state.available,
-      release: itemState === "held" && state.available,
-      void: state.available && !voided && (isRecruiter || (!published && !paid)),
+      hold: !voided && !paid && !moved && itemState !== "held" && state.available,
+      release: !moved && itemState === "held" && state.available,
+      void: state.available && !voided && !moved && (isRecruiter || (!published && !paid)),
       holdWallet: !isRecruiter && state.available && !walletHold && Boolean(row.wallet),
       releaseWallet: !isRecruiter && state.available && Boolean(walletHold),
     };
     let note = null;
     if (!state.available) note = "Moderation tables are not installed yet; actions are off.";
     else if (voided) note = "Voided: removed from payment. A void is final.";
+    else if (row.heldOutOfRoot && row.releaseStatus === "paid") note = `Released after publication and paid by the Safe multisig${row.paidTx ? ` (${row.paidTx})` : ""}.`;
+    else if (row.heldOutOfRoot && row.releaseStatus === "carried") note = "Released after publication and moved into a later root as a Released prize row.";
     else if (paid) note = "Already claimed or paid: nothing left to hold or void.";
+    else if (row.heldOutOfRoot && row.releaseStatus === "pending") note = "Released after publication: moves into the next root of this period on Solana, automatically. Hold stops that; void keeps the money in the vault.";
+    else if (row.heldOutOfRoot && row.releaseStatus === "awaiting_multisig") note = "Released after publication: paid manually via a Safe multisig proposal (scripts/league-release-safe-batch.mjs). Hold stops that; void keeps the money in the vault.";
+    else if (row.heldOutOfRoot) note = `Held out of the published root: it has no leaf, its amount stays in the vault. Release pays it ${Number(row.chainId) === 101 ? "through the next root of this period (Solana)" : "by a Safe multisig proposal"}; void keeps the money in the vault.`;
     else if (published) note = "Already published: the root cannot change. Hold only stops our claim page from preparing the claim; void is not possible.";
+    else if (tab === "leagues" && itemState === "held") note = "On hold: when its epoch root is posted it gets no leaf; the other winners are posted as settled. Release before then puts it back in the root.";
     else if (isRecruiter) note = "Hold covers all unpaid credit and Recruiter League prizes of this recruiter. Void voids its unpaid credit that is not in a published batch.";
     return {
       ...row,
@@ -632,6 +691,10 @@ export function decorateModerationRows(tab, rows, state) {
         blanket: blanket.map(holdView),
         published,
         paid,
+        chainId: row.chainId ?? null,
+        heldOutOfRoot: Boolean(row.heldOutOfRoot),
+        releasePath: row.releasePath || null,
+        releaseStatus: row.releaseStatus || null,
         actions,
         note,
         subjectKind: tab === "airdrops" ? "airdrop_item" : tab === "leagues" ? "league_winner" : "recruiter",

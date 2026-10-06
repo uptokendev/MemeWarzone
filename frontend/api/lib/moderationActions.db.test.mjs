@@ -150,22 +150,102 @@ test("published league prize: hold is a claim guard only, void is refused; a cla
   await act({ subjectKind: "league_winner", subjectId: id, action: "release", reason: "done" });
 });
 
-test("publish guard: a held prize blocks, a clean list leaves a marker that blocks moderation until cleared", async () => {
-  const epochKey = holds.leagueEpochLockKey(56, "weekly", E1);
-  await act({ subjectKind: "league_winner", subjectId: key(E1, "top_earner", 3), action: "hold", reason: "review" });
-  const check = (client) => holds.heldLeagueWinners(client, { chainId: 56, period: "weekly", epochStart: E1 });
-  const blocked = await holds.beginGuardedPublish(db, epochKey, check);
-  assert.equal(blocked.ok, false);
-  assert.equal(blocked.problems.length, 1);
-  assert.equal((await db.query(`select count(*)::int as n from public.moderation_publish_markers`)).rows[0].n, 0, "no marker when blocked");
+test("league publication drops only the held winner; release after publication follows the chain's path", async () => {
+  const { buildMerkleRoot, categoryHashFromString, computeEpochId, leafHash } = await import("../leagueRoot.js");
+  const { releaseCall, matchWithdrawLogs } = await import("../../scripts/league-release-safe-batch.mjs");
+  const E4 = "2026-08-31T00:00:00.000Z";
+  const B = "0x00000000000000000000000000000000000000e2";
+  const C = "0x00000000000000000000000000000000000000e3";
+  await winner(E4, "top_earner", 1, W1, "300");
+  await winner(E4, "top_earner", 2, B, "200");
+  await winner(E4, "top_earner", 3, C, "100");
+  const ref = { chainId: 56, period: "weekly", epochStart: E4 };
+  const claimId = computeEpochId(56, "weekly", Math.floor(Date.parse(E4) / 1000));
+  const leafOf = (r) => leafHash({ claimId, categoryHash: categoryHashFromString(r.category), rank: Number(r.rank), recipient: String(r.recipient_address).toLowerCase(), amountRaw: BigInt(r.amount_raw) });
+  const rootOf = (rows) => buildMerkleRoot(rows.map(leafOf));
+  const settled = (await holds.rootLeafRows(db, ref)).rows;
+  assert.equal(settled.length, 3);
 
-  await act({ subjectKind: "league_winner", subjectId: key(E1, "top_earner", 3), action: "release", reason: "cleared ok" });
-  const go = await holds.beginGuardedPublish(db, epochKey, check);
-  assert.deepEqual(go, { ok: true, guarded: true });
-  const during = await act({ subjectKind: "league_winner", subjectId: key(E1, "top_earner", 3), action: "void", reason: "late" });
-  assert.equal(during.code, "PUBLISH_IN_PROGRESS");
-  await holds.endGuardedPublish(db, epochKey);
-  assert.equal((await db.query(`select count(*)::int as n from public.moderation_publish_markers`)).rows[0].n, 0);
+  // Release before publication: the winner is back in the root as normal.
+  await act({ subjectKind: "league_winner", subjectId: key(E4, "top_earner", 3), action: "hold", reason: "quick check" });
+  assert.deepEqual((await holds.rootLeafRows(db, ref)).rows.map((r) => r.rank), [1, 2]);
+  await act({ subjectKind: "league_winner", subjectId: key(E4, "top_earner", 3), action: "release", reason: "fine after all" });
+  assert.deepEqual((await holds.rootLeafRows(db, ref)).rows.map((r) => r.rank), [1, 2, 3]);
+
+  // Held at publication: only that winner loses its leaf; the others keep their exact leaves.
+  await act({ subjectKind: "league_winner", subjectId: key(E4, "top_earner", 2), action: "hold", reason: "sybil review" });
+  const leaf = await holds.rootLeafRows(db, ref);
+  assert.deepEqual(leaf.rows.map((r) => [r.rank, r.recipient_address, r.amount_raw]), [[1, W1, "300"], [3, C, "100"]], "places and amounts as settled");
+  assert.deepEqual(leaf.rows.map(leafOf), [settled[0], settled[2]].map(leafOf), "unchanged leaves");
+  assert.deepEqual(leaf.excluded.map((r) => [r.rank, r.hold]), [[2, key(E4, "top_earner", 2)]]);
+  const root = rootOf(leaf.rows);
+  assert.notEqual(root, rootOf(settled));
+
+  const wrong = await holds.beginGuardedLeaguePublish(db, ref, rootOf(settled), rootOf);
+  assert.equal(wrong.ok, false, "a root built from another list is refused");
+  const guard = await holds.beginGuardedLeaguePublish(db, ref, root, rootOf);
+  assert.equal(guard.ok, true);
+  assert.deepEqual(guard.excluded.map((r) => r.rank), [2]);
+  const stored = await holds.leagueRootExclusion(db, { ...ref, category: "top_earner", rank: 2 });
+  assert.equal(stored.recipient_address, B);
+  assert.equal(stored.amount_raw, "200");
+  assert.equal((await act({ subjectKind: "league_winner", subjectId: key(E4, "top_earner", 2), action: "release", reason: "too early" })).code, "PUBLISH_IN_PROGRESS");
+  // The root is posted (recorded) and the marker cleared, as the publishers do after the send.
+  await db.query(`insert into public.league_epoch_roots (chain_id, period, epoch_start, root, total_lamports, winners, epoch_address) values (56, 'weekly', $1, $2, 400, 2, '0xvault')`, [E4, root]);
+  await holds.endGuardedPublish(db, holds.leagueEpochLockKey(56, "weekly", E4));
+
+  // Frozen: the published leaf set never changes, whatever is held or released later.
+  assert.deepEqual((await holds.rootLeafRows(db, ref)).rows.map((r) => r.rank), [1, 3]);
+  const releasedLate = await act({ subjectKind: "league_winner", subjectId: key(E4, "top_earner", 2), action: "release", reason: "cleared after publication" });
+  assert.equal(releasedLate.effects.releasePath, "evm_safe_withdraw");
+  assert.equal(releasedLate.effects.releaseStatus, "awaiting_multisig");
+  assert.equal(releasedLate.warnings[0].code, "RELEASED_AFTER_PUBLICATION");
+  assert.equal(rootOf((await holds.rootLeafRows(db, ref)).rows), root, "still the posted root");
+
+  // Claims: the free winner's proof rebuilds the posted root; the held-out one is told where its money goes.
+  const { default: league } = await import("../league.js");
+  const claim = async (rank, wallet, sign) => {
+    const nonce = `e4-${Date.now()}-${rank}`;
+    await db.query(`insert into public.auth_nonces (chain_id, address, nonce, expires_at) values (56, $1, $2, now() + interval '5 minutes') on conflict (chain_id, address) do update set nonce = excluded.nonce, used_at = null, expires_at = excluded.expires_at`, [wallet, nonce]);
+    const msg = ["MemeWarzone League", "Action: LEAGUE_CLAIM", "ChainId: 56", `Recipient: ${wallet}`, "Period: weekly", `EpochStart: ${E4}`, "Category: top_earner", `Rank: ${rank}`, `Nonce: ${nonce}`].join("\n");
+    const res = fakeRes();
+    await league({ method: "POST", body: { action: "claim", chainId: 56, period: "weekly", epochStart: E4, category: "top_earner", rank, recipient: wallet, nonce, signature: await sign.signMessage(msg) }, headers: {} }, res);
+    return res;
+  };
+  const okClaim = await claim(1, W1, signer);
+  assert.equal(okClaim.statusCode, 200, JSON.stringify(okClaim.body));
+  assert.equal(okClaim.body.root, root);
+  const bSigner = ethers.Wallet.createRandom();
+  const bWallet = bSigner.address.toLowerCase();
+  await db.query(`update public.league_epoch_winners set recipient_address = $1 where epoch_start = $2 and rank = 2`, [bWallet, E4]);
+  await db.query(`update public.moderation_root_exclusions set recipient_address = $1 where epoch_start = $2 and rank = 2`, [bWallet, E4]);
+  const bClaim = await claim(2, bWallet, bSigner);
+  assert.equal(bClaim.statusCode, 409);
+  assert.equal(bClaim.body.code, "LEAGUE_PRIZE_MULTISIG");
+
+  // BNB / Robinhood path: a Safe withdraw to the winner from the epoch's own vault, matched on the receipt.
+  const row = { ...(await holds.leagueRootExclusion(db, { ...ref, category: "top_earner", rank: 2 })), period: "weekly" };
+  const vault = "0xC9286EE3390A4dC642340bd703396E6B7b2521d5";
+  const call = releaseCall(row, vault);
+  assert.equal(call.fn, "withdraw");
+  assert.deepEqual(call.args, [ethers.getAddress(bWallet), "200"]);
+  assert.equal(releaseCall({ ...row, period: "monthly" }, vault).fn, "withdrawNative");
+  const ev = new ethers.Interface(["event Withdraw(address indexed to, uint256 amount)"]);
+  const log = (to, amount, address = vault) => ({ address, ...ev.encodeEventLog("Withdraw", [to, amount]) });
+  assert.equal(matchWithdrawLogs([log(bWallet, 199n)], [row], () => vault).length, 0, "wrong amount is not a payment");
+  assert.equal(matchWithdrawLogs([log(bWallet, 200n, W2)], [row], () => vault).length, 0, "other contract is not a payment");
+  assert.equal(matchWithdrawLogs([log(bWallet, 200n)], [row], () => vault).length, 1);
+
+  // Hold again stops the release; void ends it (row backed up and removed, the posted leaf set unchanged).
+  const reHold = await act({ subjectKind: "league_winner", subjectId: key(E4, "top_earner", 2), action: "hold", reason: "new evidence" });
+  assert.equal(reHold.effects.releaseStatus, null);
+  const v = await act({ subjectKind: "league_winner", subjectId: key(E4, "top_earner", 2), action: "void", reason: "confirmed sybil" });
+  assert.equal(v.hold.state, "voided");
+  assert.equal(v.effects.releaseStatus, "voided");
+  assert.equal(rootOf((await holds.rootLeafRows(db, ref)).rows), root);
+  assert.equal((await db.query(`select count(*)::int as n from public.league_epoch_winners where epoch_start = $1`, [E4])).rows[0].n, 2);
+  // A published winner that was in the root still cannot be voided.
+  assert.equal((await act({ subjectKind: "league_winner", subjectId: key(E4, "top_earner", 3), action: "void", reason: "too late" })).code, "ALREADY_PUBLISHED");
 });
 
 test("blanket holds: a wallet holds its league prizes and rewards; a recruiter holds its Recruiter League prize", async () => {
@@ -374,7 +454,7 @@ test("permissions: view sees states but cannot act; community.manage and finance
   assert.equal(published.moderation.actions.void, false);
   assert.match(published.moderation.note, /Already published/);
   const onlyVoided = await call(h, "/api/admin/moderation/leagues?includeTest=1&modState=voided", { token: "view" });
-  assert.deepEqual(onlyVoided.body.rows.map((r) => r.id), [key(E1, "top_earner", 2)]);
+  assert.deepEqual(onlyVoided.body.rows.map((r) => r.id).sort(), [key(E1, "top_earner", 2), key("2026-08-31T00:00:00.000Z", "top_earner", 2)].sort());
   assert.equal((await call(h, "/api/admin/moderation/leagues?modState=bogus", { token: "view" })).statusCode, 400);
 
   const log = await call(h, "/api/admin/moderation/log?limit=5", { token: "view" });
@@ -392,4 +472,22 @@ test("decorate: blanket wallet hold shows on airdrop rows with release-wallet, s
   assert.equal(rows[0].moderation.actions.void, false);
   assert.equal(rows[1].moderation.actions.void, true);
   await act({ subjectKind: "wallet", subjectId: W2, action: "release", reason: "done" });
+});
+
+test("decorate: a league winner held out of its posted root can be released or voided; moved or paid ones cannot", async () => {
+  const state = await loadModerationState(db);
+  const base = { wallet: W1, recipient: W1, rootPosted: true, heldOutOfRoot: true, chainId: 101 };
+  const [held, moving, paid, moved] = decorateModerationRows("leagues", [
+    { ...base, id: "league:a", status: "pending", releaseStatus: null },
+    { ...base, id: "league:b", status: "pending", releaseStatus: "pending" },
+    { ...base, id: "league:c", status: "claimed", releaseStatus: "paid", chainId: 56 },
+    { ...base, id: "league:d", status: "pending", releaseStatus: "carried" },
+  ], state);
+  assert.equal(held.moderation.published, false, "no leaf in the posted root");
+  assert.equal(held.moderation.actions.void, true);
+  assert.match(held.moderation.note, /Held out of the published root.*next root of this period \(Solana\)/);
+  assert.match(moving.moderation.note, /moves into the next root/);
+  assert.equal(paid.moderation.actions.hold, false);
+  assert.match(paid.moderation.note, /paid by the Safe multisig/);
+  assert.deepEqual([moved.moderation.actions.hold, moved.moderation.actions.release, moved.moderation.actions.void], [false, false, false]);
 });

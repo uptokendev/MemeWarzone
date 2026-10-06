@@ -55,7 +55,7 @@ async function hold(kind: string, key: string, state: string, extra: Record<stri
   );
 }
 
-test("league: a voided prize keeps its category settled; a held prize or wallet holds the epoch back", async () => {
+test("league: a voided prize keeps its category settled; held prizes and wallets are found per epoch", async () => {
   for (const [rank, wallet] of [[1, SOL_A], [2, SOL_B]] as const) {
     await db.query(
       `insert into public.league_epoch_winners (chain_id, period, epoch_start, epoch_end, category, rank, recipient_address, amount_raw, payload)
@@ -143,7 +143,9 @@ test("source order: each job asks before it settles or sends", () => {
   assert.ok(loop.indexOf("voidedLeagueCategory(") > 0 && loop.indexOf("voidedLeagueCategory(") < loop.indexOf("leagueLeaderboard(pool"), "settlement: voided check before the field is read");
 
   const league = src("../jobs/publishLeagueEpochRoot.ts");
-  assert.ok(league.indexOf("beginGuardedPublish(") > 0 && league.indexOf("beginGuardedPublish(") < league.indexOf("sendServerV0(connection, signer, instruction"), "league root: guard before send");
+  assert.ok(league.indexOf("beginGuardedLeaguePublish(") > 0 && league.indexOf("beginGuardedLeaguePublish(") < league.indexOf("sendServerV0(connection, signer, instruction"), "league root: guard before send");
+  assert.ok(league.indexOf("prepareLeagueCarries(") < league.indexOf("rootLeafRows(pool"), "league root: carries land before the leaf set is read");
+  assert.ok(league.indexOf("rootLeafRows(pool") < league.indexOf("epochRootFor(epochStartSec, period, winners)"), "league root: leaves from the leaf set");
   assert.ok(league.lastIndexOf("endGuardedPublish(") > league.indexOf("await recordRoot({\n        chainId: MAINNET_CHAIN_ID, period, epochStart: epochStartIso, root, total, winners: winners.length,\n        epochAddress: epochAddress.toBase58(), txHash, "), "league root: marker cleared after the record");
 
   const recruiter = src("../jobs/publishRecruiterSettlementRoot.ts");
@@ -151,4 +153,64 @@ test("source order: each job asks before it settles or sends", () => {
 
   const exportJob = src("../jobs/exportLeaguePayoutBatch.ts");
   assert.match(exportJob, /NOT EXISTS \(SELECT 1 FROM public\.moderation_holds h WHERE \$\{leagueHoldMatchSql\("h", "w"\)\}\)/);
+});
+
+test("Solana: only the held winner loses its leaf; released after publication it moves into the next root", async () => {
+  const { buildMerkleRoot, leagueLeaf } = await import("../rewards/solanaLeagueMerkle.js");
+  // @ts-ignore -- the API's merkle module, plain JS
+  const apiMerkle = await import("../../../frontend/api/solanaLeagueMerkle.js");
+  const P1 = "2026-09-07T00:00:00.000Z";
+  const P2 = "2026-09-14T00:00:00.000Z";
+  const W = ["9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", SOL_A, SOL_B];
+  const win = async (epoch: string, category: string, rank: number, wallet: string, amount: string) => db.query(
+    `insert into public.league_epoch_winners (chain_id, period, epoch_start, epoch_end, category, rank, recipient_address, amount_raw, payload, expires_at)
+     values (101, 'weekly', $1, $1::timestamptz + interval '7 days', $2, $3, $4, $5, $6::jsonb, $1::timestamptz + interval '97 days')`,
+    [epoch, category, rank, wallet, amount, JSON.stringify({ wallet })],
+  );
+  await win(P1, "biggest_hit", 1, W[0], "3000000");
+  await win(P1, "biggest_hit", 2, W[1], "2000000");
+  await win(P1, "biggest_hit", 3, W[2], "1000000");
+  const leafOf = (epoch: string) => (r: any) => leagueLeaf({ epochStartSec: Math.floor(Date.parse(epoch) / 1000), period: "weekly", category: r.category, rank: Number(r.rank), recipient: r.recipient_address, amountRaw: BigInt(r.amount_raw) });
+  const p1 = { chainId: 101, period: "weekly", epochStart: P1 };
+  const settled = (await holds.rootLeafRows(db, p1)).rows;
+
+  await hold("league_winner", "league:101:weekly:2026-09-07T00:00:00.000Z:biggest_hit:2", "held", { chainId: 101, subject: { period: "weekly", epochStart: P1, category: "biggest_hit", rank: 2 } });
+  const leaf = await holds.rootLeafRows(db, p1);
+  assert.deepEqual(leaf.rows.map((r) => Number(r.rank)), [1, 3]);
+  assert.deepEqual(leaf.rows.map(leafOf(P1)), [settled[0], settled[2]].map(leafOf(P1)), "the others keep their exact leaves");
+  // @ts-ignore -- API copy of the same rule
+  assert.deepEqual((await api.rootLeafRows(db, p1)).rows.map((r: any) => Number(r.rank)), [1, 3], "API and indexer agree");
+  const root = buildMerkleRoot(leaf.rows.map(leafOf(P1)));
+  const guard = await holds.beginGuardedLeaguePublish(db, p1, root, (rows) => buildMerkleRoot(rows.map(leafOf(P1))));
+  assert.equal(guard.ok, true);
+  await db.query(`insert into public.league_epoch_roots (chain_id, period, epoch_start, root, total_lamports, winners, epoch_address) values (101, 'weekly', $1, $2, 4000000, 2, 'pda')`, [P1, root]);
+  await holds.endGuardedPublish(db, holds.leagueEpochLockKey(101, "weekly", P1));
+
+  // Released after publication (what the API does): pending carry on Solana.
+  await hold("league_winner", "league:101:weekly:2026-09-07T00:00:00.000Z:biggest_hit:2", "released");
+  await db.query(`update public.moderation_root_exclusions set release_path = 'solana_carry', release_status = 'pending', released_at = now() where epoch_start = $1 and rank = 2`, [P1]);
+
+  const p2 = { chainId: 101, period: "weekly", epochStart: P2 };
+  assert.deepEqual(await holds.prepareLeagueCarries(db, p2), [], "no carry into an epoch that is not settled yet");
+  await win(P2, "top_earner", 1, W[2], "5000000");
+  const carried = await holds.prepareLeagueCarries(db, p2);
+  assert.deepEqual(carried.map((c) => [c.rank, c.recipient, c.amountRaw, c.from.rank]), [[1, W[1], "2000000", 2]]);
+  assert.deepEqual(await holds.prepareLeagueCarries(db, p2), [], "idempotent: carried once");
+
+  const next = await holds.rootLeafRows(db, p2);
+  assert.deepEqual(next.rows.map((r) => [r.category, Number(r.rank), r.recipient_address, String(r.amount_raw)]), [[holds.MODERATION_CARRY_CATEGORY, 1, W[1], "2000000"], ["top_earner", 1, W[2], "5000000"]]);
+  // The carry leaf is the one the API builds for the claim (same leaf function, category moderation_release).
+  const carryRow = next.rows[0];
+  const apiLeaf = apiMerkle.leagueLeaf({ epochStartSec: Math.floor(Date.parse(P2) / 1000), period: "weekly", category: carryRow.category, rank: 1, recipient: carryRow.recipient_address, amountRaw: 2000000n });
+  assert.equal(String(apiLeaf), String(leafOf(P2)(carryRow)));
+
+  // The first root's leaf set is unchanged (its held row moved to the backup, it was never a leaf).
+  assert.equal(buildMerkleRoot((await holds.rootLeafRows(db, p1)).rows.map(leafOf(P1))), root);
+  const moved = await db.query(`select disposition from public.league_epoch_winners_moderation_voided where epoch_start = $1 and rank = 2 and category = 'biggest_hit'`, [P1]);
+  assert.equal(moved.rows[0].disposition, "carried");
+  const x = await db.query(`select release_status, carried_to from public.moderation_root_exclusions where epoch_start = $1 and rank = 2`, [P1]);
+  assert.equal(x.rows[0].release_status, "carried");
+  assert.deepEqual(x.rows[0].carried_to, { epochStart: P2, category: holds.MODERATION_CARRY_CATEGORY, rank: 1 });
+  const exp = await db.query(`select expires_at from public.league_epoch_winners where epoch_start = $1 and category = $2`, [P2, holds.MODERATION_CARRY_CATEGORY]);
+  assert.equal(new Date(exp.rows[0].expires_at).toISOString(), "2026-12-20T00:00:00.000Z", "expires with its new epoch (end + 90 days, as settlement sets it)");
 });

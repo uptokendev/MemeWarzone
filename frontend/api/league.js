@@ -11,7 +11,7 @@ import { monthlyLeagueTreasuryAddress, monthlyLeagueTreasuryForMonth } from "./l
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "./lib/pokerPayout.mjs";
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import { withoutOwnerWallets } from "../shared/ownerWallets.mjs";
-import { leagueWinnerHold, moderationClaimRefusal } from "../shared/moderationHolds.mjs";
+import { MODERATION_CARRY_CATEGORY, leagueExclusionRefusal, leagueRootExclusion, leagueWinnerHold, moderationClaimRefusal, rootLeafRows } from "../shared/moderationHolds.mjs";
 import {
   buildMerkleProof as buildSolanaMerkleProof,
   buildMerkleRoot as buildSolanaMerkleRoot,
@@ -755,9 +755,14 @@ export default async function handler(req, res) {
       }
       if (!(period === "weekly" || period === "monthly" || isMwlPayoutPeriod(period))) return json(res, 400, { error: "Invalid period" });
       const mwlClaim = isMwlPayoutPeriod(period);
-      if (mwlClaim && category !== MWL_PAYOUT_CATEGORIES[period]) return json(res, 400, { error: "Invalid category" });
-      if (!mwlClaim && Object.values(MWL_PAYOUT_CATEGORIES).includes(category)) return json(res, 400, { error: "Invalid category" });
-      if (!CATEGORY_SET.has(category)) return json(res, 400, { error: "Invalid category" });
+      // A prize released after its own root was published moves into a later Solana root under its own
+      // category (moderation_release, shared/moderationHolds.mjs); it is claimed like any other leaf.
+      const carryClaim = category === MODERATION_CARRY_CATEGORY && solanaClaim;
+      if (!carryClaim) {
+        if (mwlClaim && category !== MWL_PAYOUT_CATEGORIES[period]) return json(res, 400, { error: "Invalid category" });
+        if (!mwlClaim && Object.values(MWL_PAYOUT_CATEGORIES).includes(category)) return json(res, 400, { error: "Invalid category" });
+        if (!CATEGORY_SET.has(category)) return json(res, 400, { error: "Invalid category" });
+      }
       if (!Number.isFinite(rank) || rank < 1 || rank > 255) return json(res, 400, { error: "Invalid rank" }); // poker payout: up to 255 paid places
       if (!epochStart) return json(res, 400, { error: "epochStart missing" });
       if (!nonce) return json(res, 400, { error: "Nonce missing" });
@@ -890,6 +895,13 @@ export default async function handler(req, res) {
         if (action === "claim") {
           // Moderation hold (B7): our API does not hand out the proof of a held or voided prize. This
           // stops the claim card only; a posted root still verifies a proof built elsewhere.
+          // A prize whose leaf was left out of the published root (it was on hold then) cannot be claimed
+          // from that root; say where it went instead (moved into a later root, or paid by the multisig).
+          const exclusion = await leagueRootExclusion(client, { chainId, period, epochStart, category, rank });
+          if (exclusion) {
+            await client.query("ROLLBACK");
+            return json(res, 409, leagueExclusionRefusal(exclusion));
+          }
           const hold = await leagueWinnerHold(client, { chainId, period, epochStart, category, rank });
           if (hold) {
             await client.query("ROLLBACK");
@@ -899,14 +911,10 @@ export default async function handler(req, res) {
           const eid = evmMonthly ? monthIdForEpochStart(new Date(epochStart)) : computeEpochId(chainId, period, epochStartSec);
           const catHash = categoryHashFromString(category);
 
-          // Build the merkle set from all winners for this epoch.
-          const { rows: arows } = await client.query(
-            `SELECT category, rank, recipient_address AS "recipientAddress", amount_raw AS "amountRaw"
-               FROM league_epoch_winners
-              WHERE chain_id = $1 AND period = $2 AND epoch_start = $3::timestamptz
-              ORDER BY category ASC, rank ASC, recipient_address ASC`,
-            [chainId, period, epochStart]
-          );
+          // Build the merkle set from this epoch's leaf set: every winner, less the ones left out of the
+          // root by a moderation hold (shared/moderationHolds.mjs rootLeafRows, the publishers' rule).
+          const arows = (await rootLeafRows(client, { chainId, period, epochStart })).rows
+            .map((r) => ({ category: r.category, rank: r.rank, recipientAddress: r.recipient_address, amountRaw: r.amount_raw }));
 
           if (!arows?.length) {
             await client.query("ROLLBACK");

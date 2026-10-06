@@ -27,13 +27,28 @@ test("EVM league roots: the moderation guard runs before every send and the reco
 
 test("admin league root: guarded before the wallet is even built", () => {
   const s = src("../leagueRoot.js");
-  before(s, "const guard = await beginGuardedPublish(", "const wallet = new ethers.Wallet(pk, provider);", "guard before the signer");
+  before(s, "const guard = await beginGuardedLeaguePublish(", "const wallet = new ethers.Wallet(pk, provider);", "guard before the signer");
+  assert.match(s, /const rows = \(await rootLeafRows\(pool, /, "held winners left out of the leaves");
 });
 
-test("league claim: the hold check runs before the proof is built", () => {
+test("league claim: exclusion and hold checks run before the proof, which uses the published leaf set", () => {
   const s = src("../league.js");
   const claim = s.slice(s.indexOf("if (action === \"claim\") {"));
+  before(claim, "await leagueRootExclusion(client,", "buildMerkleProof(leaves, leafIndex)", "exclusion check before proof");
   before(claim, "await leagueWinnerHold(client,", "buildMerkleProof(leaves, leafIndex)", "hold check before proof");
+  before(claim, "await rootLeafRows(client, { chainId, period, epochStart })", "buildMerkleProof(leaves, leafIndex)", "leaf set before proof");
+});
+
+test("EVM league roots: leaves come from the leaf set without held winners", () => {
+  const s = src("../../scripts/publish-evm-league-roots.mjs");
+  assert.match(s, /const leaf = await rootLeafRows\(db, \{ chainId, period, epochStart: epochDate \}\);/);
+  assert.match(s, /beginGuardedLeaguePublish\(pool, \{ chainId, period, epochStart: epochDate \}, built\.root,/);
+});
+
+test("rewards listing hides prizes held out of their posted root", () => {
+  const s = src("../rewards.js");
+  assert.match(s, /AND NOT EXISTS \(SELECT 1 FROM public\.moderation_root_exclusions x/);
+  assert.match(s, /\$\{notHeldOut\}/);
 });
 
 test("recruiter payout: lock, blanket hold check, then the held-row filter; Solana proof refused when held", () => {

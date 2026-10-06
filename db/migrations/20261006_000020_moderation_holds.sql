@@ -63,12 +63,43 @@ CREATE TABLE IF NOT EXISTS public.moderation_audit_log (
 CREATE INDEX IF NOT EXISTS moderation_audit_log_subject_idx ON public.moderation_audit_log (subject_kind, subject_key, created_at DESC);
 CREATE INDEX IF NOT EXISTS moderation_audit_log_created_idx ON public.moderation_audit_log (created_at DESC);
 
--- Backup of league winner rows voided from the Moderation page (same shape as the 2026-10-05 manual
+-- Backup of league winner rows voided from the Moderation page (disposition 'voided') or moved by a
+-- Solana release carry (disposition 'carried') (same shape as the 2026-10-05 manual
 -- backups league_epoch_winners_voided_20261005*). The voided row leaves league_epoch_winners; places
 -- of the other winners are not renumbered and its money stays in the league vault, unassigned.
 CREATE TABLE IF NOT EXISTS public.league_epoch_winners_moderation_voided (LIKE public.league_epoch_winners INCLUDING ALL);
 ALTER TABLE public.league_epoch_winners_moderation_voided ADD COLUMN IF NOT EXISTS voided_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE public.league_epoch_winners_moderation_voided ADD COLUMN IF NOT EXISTS moderation_hold_id uuid;
+
+-- A league winner on hold when its epoch root is published gets no leaf (founder 2026-10-06: a hold drops
+-- only that winner; the other places and amounts stay as settled). The publisher records the exclusion in
+-- the same transaction as its marker, before it sends, and every proof builder leaves exactly these rows
+-- out of a published epoch. Release after publication (no program or contract change):
+--   solana_carry       Solana: the prize moves as a new leaf (category moderation_release) into the next
+--                      root of the same period and vault; the original row moves to the backup table.
+--   evm_safe_withdraw  BNB / Robinhood: paid by a Safe proposal (vault withdraw / withdrawNative to the
+--                      winner), built by frontend/scripts/league-release-safe-batch.mjs.
+CREATE TABLE IF NOT EXISTS public.moderation_root_exclusions (
+  chain_id           integer NOT NULL,
+  period             text NOT NULL,
+  epoch_start        timestamptz NOT NULL,
+  category           text NOT NULL,
+  rank               integer NOT NULL,
+  recipient_address  text NOT NULL,
+  amount_raw         numeric NOT NULL,
+  hold_subject_key   text,
+  excluded_at        timestamptz NOT NULL DEFAULT now(),
+  release_path       text CHECK (release_path IS NULL OR release_path IN ('solana_carry', 'evm_safe_withdraw')),
+  release_status     text CHECK (release_status IS NULL OR release_status IN ('pending', 'awaiting_multisig', 'carried', 'paid', 'voided')),
+  released_at        timestamptz,
+  carried_to         jsonb,
+  paid_tx            text,
+  updated_at         timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (chain_id, period, epoch_start, category, rank)
+);
+CREATE INDEX IF NOT EXISTS moderation_root_exclusions_release_idx ON public.moderation_root_exclusions (release_path, release_status) WHERE release_status IN ('pending', 'awaiting_multisig');
+
+ALTER TABLE public.league_epoch_winners_moderation_voided ADD COLUMN IF NOT EXISTS disposition text NOT NULL DEFAULT 'voided';
 
 -- A root publisher writes a marker right before it sends a list (league epoch or recruiter batch) and
 -- deletes it once the root is recorded. A moderation action on an item of that list refuses while the
@@ -81,6 +112,8 @@ CREATE TABLE IF NOT EXISTS public.moderation_publish_markers (
 
 ALTER TABLE public.moderation_holds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.moderation_publish_markers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.moderation_root_exclusions ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.moderation_root_exclusions FROM anon, authenticated;
 REVOKE ALL ON public.moderation_publish_markers FROM anon, authenticated;
 ALTER TABLE public.moderation_audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.league_epoch_winners_moderation_voided ENABLE ROW LEVEL SECURITY;

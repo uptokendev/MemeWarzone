@@ -8,7 +8,7 @@ import {
   isSupersededMonthlyLeagueTreasury,
   monthlyLeagueTreasuryForMonth,
 } from "./lib/evmMonthlyLeagueTreasury.js";
-import { beginGuardedPublish, heldLeagueWinners, leagueEpochLockKey } from "../shared/moderationHolds.mjs";
+import { beginGuardedLeaguePublish, rootLeafRows } from "../shared/moderationHolds.mjs";
 
 // POST /api/leagueRoot
 // Admin-only helper to publish a weekly epoch root or seal a monthly league root.
@@ -54,18 +54,12 @@ export default async function handler(req, res) {
       ? monthIdFromDate(epochDate)
       : computeEpochId(chainId, period, Math.floor(epochDate.getTime() / 1000));
 
-    // Load all winners for the period and compute the exact leaves expected by
-    // TreasuryVaultV2 (weekly) or MonthlyLeagueTreasury (monthly).
-    const { rows } = await pool.query(
-      `SELECT category, rank, recipient_address AS "recipientAddress", amount_raw AS "amountRaw"
-         FROM league_epoch_winners
-        WHERE chain_id = $1 AND period = $2 AND epoch_start = $3::timestamptz
-        ORDER BY category ASC, rank ASC, recipient_address ASC`,
-      [chainId, period, epochStart]
-    );
+    // Load the epoch's leaf set (winners on moderation hold left out, shared/moderationHolds.mjs) and
+    // compute the exact leaves expected by TreasuryVaultV2 (weekly) or MonthlyLeagueTreasury (monthly).
+    const toRow = (r) => ({ category: r.category, rank: r.rank, recipientAddress: r.recipient_address, amountRaw: r.amount_raw });
+    const rows = (await rootLeafRows(pool, { chainId, period, epochStart: epochDate })).rows.map(toRow);
 
-    if (!rows?.length) return json(res, 404, { error: "No winners for epoch" });
-
+    if (!rows?.length) return json(res, 404, { error: "No winners for epoch (or every winner is on moderation hold)" });
 
     const leaves = [];
     let winnerTotal = 0n;
@@ -94,31 +88,22 @@ export default async function handler(req, res) {
 
     const root = buildMerkleRoot(leaves);
 
-    // Moderation hold (B7, shared/moderationHolds.mjs): an epoch with a held prize is not posted (one
-    // root per epoch, never shrunk). The guard re-checks under the epoch lock that nothing is held and
-    // the list is unchanged, then leaves a marker that publish-evm-league-roots clears when it records
-    // the root.
-    const guard = await beginGuardedPublish(pool, leagueEpochLockKey(chainId, period, epochDate), async (db) => {
-      const problems = (await heldLeagueWinners(db, { chainId, period, epochStart: epochDate }))
-        .map((h) => ({ category: h.category, rank: Number(h.rank), state: h.state, hold: h.subject_key }));
-      const { rows: again } = await db.query(
-        `SELECT category, rank, recipient_address AS "recipientAddress", amount_raw AS "amountRaw"
-           FROM league_epoch_winners
-          WHERE chain_id = $1 AND period = $2 AND epoch_start = $3::timestamptz
-          ORDER BY category ASC, rank ASC, recipient_address ASC`,
-        [chainId, period, epochStart]
-      );
-      const sameList = again.length === rows.length && again.every((r, i) => String(r.category) === String(rows[i].category)
-        && Number(r.rank) === Number(rows[i].rank) && String(r.recipientAddress).toLowerCase() === String(rows[i].recipientAddress).toLowerCase()
-        && String(r.amountRaw) === String(rows[i].amountRaw));
-      if (!sameList) problems.push({ reason: "winner list changed since it was read" });
-      return problems;
-    });
+    // Moderation (B7): a held winner gets no leaf; the guard rebuilds the leaf set under the epoch lock,
+    // checks it still gives this root, stores the exclusions and leaves a marker (cleared when
+    // publish-evm-league-roots records the root).
+    const rootOfRows = (leafRows) => buildMerkleRoot(leafRows.map((r) => leafHash({
+      claimId,
+      categoryHash: categoryHashFromString(String(r.category || "").toLowerCase().trim()),
+      rank: Number(r.rank),
+      recipient: String(r.recipient_address || "").toLowerCase(),
+      amountRaw: BigInt(String(r.amount_raw)),
+    })));
+    const guard = await beginGuardedLeaguePublish(pool, { chainId, period, epochStart: epochDate }, root, rootOfRows);
     if (!guard.ok) {
       return json(res, 409, {
-        error: "This epoch has a prize on moderation hold (or its list just changed). Release or void it in Command Center -> Moderation first. Nothing was sent.",
-        code: "MODERATION_HOLD",
-        held: guard.problems,
+        error: "The winner list or a moderation hold changed while the root was built. Nothing was sent; try again.",
+        code: "MODERATION_CHANGED",
+        problems: guard.problems,
       });
     }
 
