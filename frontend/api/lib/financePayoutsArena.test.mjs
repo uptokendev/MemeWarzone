@@ -222,11 +222,12 @@ function priceService() {
   };
 }
 
-function fakeDb(subjects, recorded = []) {
+function fakeDb(subjects, recorded = [], chainRows = []) {
   return {
     async query(sql) {
       if (/'battle' as kind/.test(sql)) return { rows: subjects };
       if (/'deposit' as source/.test(sql)) return { rows: recorded };
+      if (/'deposit' as kind/.test(sql)) return { rows: chainRows };
       return { rows: [] };
     },
   };
@@ -262,10 +263,10 @@ const SUBJECTS = [
   { kind: "battle", id: "arena-mugwhj11-9b1973", chain_id: 101, app_state: "finished", created_at: "2026-09-25T11:51:44Z", test_coin: false },
 ];
 
-async function arenaFor(subjects, rpc, recorded) {
+async function arenaFor(subjects, rpc, recorded, chainRows) {
   clearArenaPayoutsCache();
   const out = await buildPayouts({
-    network: SOLANA, days: 30, db: fakeDb(subjects, recorded), env: { SOLANA_CLUSTER: "mainnet-beta", SOLANA_RPC_URL: "https://rpc.test" },
+    network: SOLANA, days: 30, db: fakeDb(subjects, recorded, chainRows), env: { SOLANA_CLUSTER: "mainnet-beta", SOLANA_RPC_URL: "https://rpc.test" },
     fetchImpl: rpc.fetchImpl, feeRouting: { destinations: [], wiring: [] },
     readers: { readSolanaAccountData: async () => { throw new Error("offline"); }, readSolanaCreatorClaimable: async () => ({ status: "ok", raw: "0", coins: 0, coinsWithFees: 0 }) },
     prices: priceService(), now: () => NOW,
@@ -317,4 +318,33 @@ test("Solana: pools that cannot be read are unknown, never 0", async () => {
   assert.equal(t.arena.totals.prizeOwed, null);
   assert.ok(t.arena.pools.every((p) => p.status === "unknown" && p.prizeOwed === null));
   assert.ok(t.warnings.some((w) => /could not be read/.test(w.message)));
+});
+
+test("Solana: chain-indexed rows give the claim's transaction without an RPC lookup and time each deposit", async () => {
+  const pool = "0xc6e87fbb715159082bef6c682e926810ac47e6d893c8cc5cd4cb0c92edb6b8b7";
+  const chainRows = [
+    { kind: "deposit", pool_id: pool, part: "stake", place: null, refund_of: null, raw: "50000000", tx_hash: "495VDD", block_time: "2026-09-25T12:29:43Z" },
+    { kind: "deposit", pool_id: pool, part: "stake", place: null, refund_of: null, raw: "50000000", tx_hash: "3khoth", block_time: "2026-09-25T14:02:35Z" },
+    { kind: "deposit", pool_id: pool, part: "boost", place: null, refund_of: null, raw: "41138378", tx_hash: "wq3g1n", block_time: "2026-09-25T18:14:01Z" },
+    { kind: "claim", pool_id: pool, part: "winner", place: 1, refund_of: null, raw: "112024541", tx_hash: CLAIM_TX, block_time: "2026-09-27T21:36:55Z" },
+  ];
+  const recorded = [
+    { source: "deposit", ref: pool, purpose: "stake", n: 2, raw: "100000000" },
+    { source: "deposit", ref: pool, purpose: "boost", n: 5, raw: "41138378" },
+    { source: "boost", ref: "arena-mugwhj11-9b1973", purpose: "boost", n: 5, raw: "41138378" },
+  ];
+  const rpc = fakeSolanaRpc();
+  const t = await arenaFor(SUBJECTS, rpc, recorded, chainRows);
+  assert.ok(!rpc.calls.includes("getSignaturesForAddress"), "the claim transaction came from the database");
+  assert.equal(t.paid.allTime.amount, "0.112024541");
+  assert.equal(t.paid.lastPayout.txUrl, `https://solscan.io/tx/${CLAIM_TX}`);
+  assert.equal(t.paid.lastPayout.at, "2026-09-27T21:36:55.000Z");
+  assert.equal(t.paidIn.allTime.amount, "1.804809797");
+  assert.match(t.paidIn.note, /1 pool has every deposit indexed from chain/);
+  const row = t.arena.pools.find((p) => p.id === "arena-mugwhj11-9b1973");
+  assert.equal(row.chainIndexed, true);
+  // Boosts recorded as chain deposits replace the boost actions: counted once.
+  assert.equal(row.recorded.stakes, "0.1");
+  assert.equal(row.recorded.boosts, "0.041138378");
+  assert.equal(t.arena.pools.find((p) => p.id === "arena-muoo3g87-1efbe9").chainIndexed, false);
 });

@@ -134,3 +134,20 @@ removed `buildArenaCancelInstructions`.
 - **Graduation keeper** = Coolify "Graduation Operator" (`Dockerfile.graduation-keeper`).
 - resolve-due crash loop root cause: Coolify built it with Nixpacks (Node 22.11). Fixed twice:
   Dockerfile build pack, and root `overrides` pinning rpc-websockets' uuid to 11.1.0 (CJS).
+
+### War pool deposits and claims come from the chain (2026-10-06, branch `feat/arena-deposits-from-chain`)
+
+- Before: `arena_war_pool_deposits` got a row only when the staker's browser posted a stake receipt
+  (second signature). Owner B's 0.05 SOL in `arena-mugwhj11-9b1973` (tx `3khothUk...`) had no row;
+  `arena_war_pool_claims` was empty. Boosts had **no** gap: all 157 mainnet boost txs were in
+  `arena_contest_actions` with the same amounts (checked 2026-10-06).
+- Now: `scripts/solana/arena-war-pool-index.mjs` (lib `frontend/api/lib/arenaWarPoolChainIndex.js`)
+  reads every pool's transactions and writes `source = 'chain'` rows: stake / support / buy_in /
+  boost deposits from the program's events, winner / place / protocol / MWL claims and refunds from
+  the vault's balance change (receipt account when one tx moves the vault twice). EVM: the
+  `ArenaWarPoolTreasuryV2` events. Unique by `(chain_id, tx_hash, ix_index)`; a receipt row of the
+  same tx and purpose is replaced, and the receipt route skips its insert once a row exists.
+- Migration `db/migrations/20261006_000010_arena_war_pool_chain_index.sql`. Deploy the API first
+  (its receipt insert has no conflict target), then the migration, then the scheduled task.
+- Mainnet backfill (dry run 2026-10-06, 3 battles, 169 txs): 3 receipt rows replaced, 164 rows
+  added (owner B's stake, 157 boosts, 2 winner, 2 protocol, 2 MWL claims).

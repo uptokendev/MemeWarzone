@@ -5,15 +5,16 @@
 // + pool id, programs/mwz_rewards_treasury/src/arena.rs); on BNB and Robinhood
 // it is one entry in ArenaWarPoolTreasuryV2.pools(poolId). The database only
 // says which battles exist: what was staked, boosted, won, claimed and still
-// owed comes from the pool itself. The app's deposit table misses stakes (it is
-// written only when the browser posts a receipt after the deposit), so it is
-// shown as a cross-check, never as the figure.
+// owed comes from the pool itself. The deposit and claim tables are filled from
+// the chain by scripts/solana/arena-war-pool-index.mjs (source = 'chain'); where
+// a pool's chain rows add up to what the pool account holds, they give each
+// deposit's and claim's time and transaction. Otherwise the pool account alone
+// is used, as before (browser receipt rows are only a cross-check).
 //
 // Strictly read-only: SELECTs, getMultipleAccounts, getSignaturesForAddress,
 // getMinimumBalanceForRentExemption and eth_call. Nothing is built, signed or
 // sent. A pool that could not be read is "unknown" with no amount, never 0.
 
-import { createHash } from "node:crypto";
 import { PublicKey } from "@solana/web3.js";
 import { ethers } from "ethers";
 
@@ -21,6 +22,16 @@ import { atomicToDecimal } from "./financeFeeRouting.js";
 import { battlePoolId, tournamentPoolId } from "./arenaWarPoolEscrow.js";
 import { publicHiddenWhere } from "./publicHiddenSql.js";
 import { REWARDS_TREASURY_PROGRAM_ID, parseArenaPool } from "../../src/lib/solanaArenaLayout.mjs";
+import {
+  ARENA_CLAIM_RECEIPT_DISCRIMINATOR,
+  ARENA_REFUND_RECEIPT_DISCRIMINATOR,
+  decodeClaimReceipt,
+  decodeRefundReceipt,
+  deriveSolanaArenaAccounts,
+} from "./arenaPoolAccounts.js";
+
+// The receipt decoders and PDAs live in arenaPoolAccounts.js (shared with the chain indexer).
+export { ARENA_CLAIM_RECEIPT_DISCRIMINATOR, ARENA_REFUND_RECEIPT_DISCRIMINATOR, decodeClaimReceipt, decodeRefundReceipt, deriveSolanaArenaAccounts };
 
 // Shares (programs/mwz_rewards_treasury/src/arena.rs:36-41,
 // contracts/ArenaWarPoolTreasuryV2.sol:77-80): entries 75% prize / 20% MWL /
@@ -48,13 +59,6 @@ const readCache = new Map();
 export function clearArenaPayoutsCache() {
   readCache.clear();
 }
-
-function anchorDiscriminator(name) {
-  return createHash("sha256").update(`account:${name}`).digest().subarray(0, 8);
-}
-
-export const ARENA_CLAIM_RECEIPT_DISCRIMINATOR = anchorDiscriminator("ArenaClaimReceipt");
-export const ARENA_REFUND_RECEIPT_DISCRIMINATOR = anchorDiscriminator("ArenaRefundReceipt");
 
 function big(value) {
   if (typeof value === "bigint") return value;
@@ -196,44 +200,6 @@ export function normalizeSolanaPool(parsed) {
   };
 }
 
-/** ArenaClaimReceipt { pool_id, bucket u8, recipient, amount_lamports u64, bump }. */
-export function decodeClaimReceipt(data) {
-  const bytes = Buffer.from(data);
-  if (bytes.length < 8 + 32 + 1 + 32 + 8 || !bytes.subarray(0, 8).equals(ARENA_CLAIM_RECEIPT_DISCRIMINATOR)) return null;
-  return {
-    poolId: bytes.subarray(8, 40).toString("hex"),
-    bucket: bytes[40],
-    recipient: new PublicKey(bytes.subarray(41, 73)).toBase58(),
-    amount: bytes.readBigUInt64LE(73),
-  };
-}
-
-/** ArenaRefundReceipt { pool_id, wallet, identity, amount_lamports u64, kind u8, bump }. */
-export function decodeRefundReceipt(data) {
-  const bytes = Buffer.from(data);
-  if (bytes.length < 8 + 32 * 3 + 8 || !bytes.subarray(0, 8).equals(ARENA_REFUND_RECEIPT_DISCRIMINATOR)) return null;
-  return { poolId: bytes.subarray(8, 40).toString("hex"), wallet: new PublicKey(bytes.subarray(40, 72)).toBase58(), amount: bytes.readBigUInt64LE(104) };
-}
-
-function programKey() {
-  return new PublicKey(REWARDS_TREASURY_PROGRAM_ID);
-}
-
-function poolIdBytes(poolIdHex) {
-  return Buffer.from(String(poolIdHex).replace(/^0x/i, ""), "hex");
-}
-
-export function deriveSolanaArenaAccounts(poolIdHex) {
-  const id = poolIdBytes(poolIdHex);
-  const pda = (seeds) => PublicKey.findProgramAddressSync(seeds, programKey())[0].toBase58();
-  return {
-    pool: pda([Buffer.from("arena_pool"), id]),
-    vault: pda([Buffer.from("arena_vault"), id]),
-    claim: (bucket) => pda([Buffer.from("arena_claim"), id, Buffer.from([bucket])]),
-    refund: (wallet, kind) => pda([Buffer.from("arena_refund"), id, new PublicKey(wallet).toBuffer(), Buffer.from([kind])]),
-  };
-}
-
 // --------------------------------------------------------------------------
 // EVM decode
 
@@ -341,6 +307,72 @@ export const ARENA_RECORDED_SQL = `
   select 'claim' as source, pool_id as ref, bucket as purpose, count(*)::int as n, coalesce(sum(amount_wei), 0)::text as raw
     from public.arena_war_pool_claims where chain_id = $1 group by pool_id, bucket`;
 
+/**
+ * Same as ARENA_RECORDED_SQL once the chain index columns exist: a browser receipt row whose
+ * transaction already has a chain row is left out (never counted twice), and boosts recorded
+ * from chain come in as purpose 'boost'.
+ */
+export const ARENA_RECORDED_SQL_V2 = `
+  select 'deposit' as source, d.pool_id as ref, d.purpose, count(*)::int as n, coalesce(sum(d.amount_wei), 0)::text as raw
+    from public.arena_war_pool_deposits d
+   where d.chain_id = $1
+     and not (d.source = 'receipt' and exists (
+       select 1 from public.arena_war_pool_deposits c
+        where c.chain_id = d.chain_id and c.source = 'chain' and c.purpose = d.purpose
+          and (c.tx_hash = d.tx_hash or (c.tx_hash like '0x%' and lower(c.tx_hash) = lower(d.tx_hash)))))
+   group by d.pool_id, d.purpose
+  union all
+  select 'boost' as source, battle_id as ref, 'boost' as purpose, count(*)::int as n, coalesce(sum(gross_native_raw), 0)::text as raw
+    from public.arena_contest_actions
+   where chain_id = $1 and action_type = 'boost' and confirmed_at is not null and battle_id is not null
+     and coalesce(tx_hash, signature_reference) is not null and gross_native_raw > 0
+   group by battle_id
+  union all
+  select 'claim' as source, pool_id as ref, bucket as purpose, count(*)::int as n, coalesce(sum(amount_wei), 0)::text as raw
+    from public.arena_war_pool_claims where chain_id = $1 group by pool_id, bucket`;
+
+/** Every deposit and claim the chain indexer recorded, with its time and transaction. */
+export const ARENA_CHAIN_ROWS_SQL = `
+  select 'deposit' as kind, pool_id, purpose as part, null::smallint as place, null::text as refund_of,
+         amount_wei::text as raw, tx_hash, block_time
+    from public.arena_war_pool_deposits where chain_id = $1 and source = 'chain'
+  union all
+  select 'claim' as kind, pool_id, bucket as part, place, refund_of, amount_wei::text as raw, tx_hash, block_time
+    from public.arena_war_pool_claims where chain_id = $1 and source = 'chain'`;
+
+/** pool id -> { deposits: [...], claims: [...] } from ARENA_CHAIN_ROWS_SQL rows. */
+export function groupChainRows(rows) {
+  const out = new Map();
+  for (const r of rows || []) {
+    const key = String(r.pool_id || "").toLowerCase();
+    const entry = out.get(key) || { deposits: [], claims: [] };
+    const item = { part: r.part, place: r.place == null ? null : Number(r.place), refundOf: r.refund_of || null, raw: big(r.raw), tx: r.tx_hash || null, at: toIso(r.block_time) };
+    (r.kind === "claim" ? entry.claims : entry.deposits).push(item);
+    out.set(key, entry);
+  }
+  return out;
+}
+
+/**
+ * Whether the chain rows of one pool account for everything the pool took in: every deposit ever
+ * made equals what the pool still counts (paidIn, which adds stake refunds back) plus the support,
+ * buy-in and boost refunds (those lower the pool's totals on chain).
+ */
+export function chainDepositsComplete(money, chain) {
+  if (!money || !chain?.deposits?.length) return false;
+  const deposited = chain.deposits.reduce((s, d) => s + d.raw, 0n);
+  const otherRefunds = chain.claims.filter((c) => c.part === "refund" && c.refundOf && c.refundOf !== "stake").reduce((s, c) => s + c.raw, 0n);
+  return deposited === money.paidIn + otherRefunds;
+}
+
+/** The chain-indexed prize claims of one pool (winner and places), when they add up to what the pool says was claimed. */
+export function chainPrizeClaims(money, chain) {
+  const claims = (chain?.claims || []).filter((c) => c.part === "winner");
+  if (!money || !claims.length) return null;
+  const sum = claims.reduce((s, c) => s + c.raw, 0n);
+  return sum === money.prizeClaimed ? claims : null;
+}
+
 export function poolIdFor(subject) {
   return subject.kind === "tournament" ? tournamentPoolId(subject.id) : battlePoolId(subject.id);
 }
@@ -395,7 +427,7 @@ async function receiptTransaction(ctx, address) {
 }
 
 /** Reads every Solana pool. Returns one row per subject; a failed read is status "unknown". */
-export async function readSolanaArenaPools(ctx, subjects) {
+export async function readSolanaArenaPools(ctx, subjects, chainRows = new Map()) {
   const derived = subjects.map((s) => ({ subject: s, poolId: poolIdFor(s), accounts: deriveSolanaArenaAccounts(poolIdFor(s)) }));
   let values;
   let vaultRent;
@@ -452,8 +484,16 @@ export async function readSolanaArenaPools(ctx, subjects) {
   }
   let lookups = 0;
   for (const row of rows) {
+    const indexed = chainRows.get(String(row.poolId).toLowerCase())?.claims || [];
     for (const claim of row.claims || []) {
       if (claim.bucket !== CLAIM_WINNER && claim.bucket < CLAIM_PLACE_BASE) continue;
+      // The chain index already has this claim's transaction and time: no RPC lookup.
+      const place = claim.bucket === CLAIM_WINNER ? 1 : claim.bucket - CLAIM_PLACE_BASE;
+      const known = indexed.find((c) => c.part === "winner" && (c.place || 1) === place && c.raw === claim.amount && c.tx);
+      if (known) {
+        Object.assign(claim, { tx: known.tx, at: known.at });
+        continue;
+      }
       if (lookups >= MAX_CLAIM_TX_LOOKUPS) break;
       lookups += 1;
       try {
@@ -537,6 +577,7 @@ function poolRowOut(ctx, row, h) {
     cover: row.vaultAvailable == null || !m ? "shared" : vaultShort ? "short" : "covered",
     claims: userClaims.map((c) => ({ amount: dec(ctx, c.amount), recipient: c.recipient, at: c.at || null, txHash: c.tx || null, txUrl: h.explorerTxUrl(ctx.chainId, c.tx) })),
     recorded: row.recorded || null,
+    chainIndexed: Boolean(row.chainComplete),
   };
 }
 
@@ -564,7 +605,10 @@ export async function arenaPrizesType(ctx, h) {
   }
 
   const subjectsRead = await h.safeQuery(ctx.db, ARENA_SUBJECTS_SQL, [ctx.chainId, MAX_POOLS]);
-  const recordedRead = await h.safeQuery(ctx.db, ARENA_RECORDED_SQL, [ctx.chainId]);
+  let recordedRead = await h.safeQuery(ctx.db, ARENA_RECORDED_SQL_V2, [ctx.chainId]);
+  if (recordedRead.error) recordedRead = await h.safeQuery(ctx.db, ARENA_RECORDED_SQL, [ctx.chainId]);
+  const chainRead = await h.safeQuery(ctx.db, ARENA_CHAIN_ROWS_SQL, [ctx.chainId]);
+  const chainRows = groupChainRows(chainRead.error ? [] : chainRead.rows);
   t.sources.push("db:arena_battles + arena_tournaments (which pools exist)", ctx.solana ? "rpc: each battle's pool and vault account, claim receipts" : "rpc: ArenaWarPoolTreasuryV2.pools(poolId)");
   if (subjectsRead.error) {
     t.warnings.push({ level: "warning", message: `Battles could not be listed: ${subjectsRead.error}` });
@@ -578,21 +622,22 @@ export async function arenaPrizesType(ctx, h) {
   if (subjects.length >= MAX_POOLS) t.warnings.push({ level: "warning", message: `Only the newest ${MAX_POOLS} battles and tournaments are read.` });
 
   const treasury = ctx.solana ? null : ctx.destinations.get("war_pool")?.address || null;
-  const cacheKey = `${ctx.chainId}:${treasury || ""}:${subjects.map((s) => `${s.kind}:${s.id}`).join(",")}`;
+  const cacheKey = `${ctx.chainId}:${treasury || ""}:${chainRead.rows?.length || 0}:${subjects.map((s) => `${s.kind}:${s.id}`).join(",")}`;
   let rows;
   const hit = readCache.get(ctx.chainId);
   if (hit && hit.key === cacheKey && Date.now() - hit.at < READ_TTL_MS) {
     rows = hit.rows;
   } else {
-    rows = ctx.solana ? await readSolanaArenaPools(ctx, subjects) : await readEvmArenaPools(ctx, subjects, treasury);
+    rows = ctx.solana ? await readSolanaArenaPools(ctx, subjects, chainRows) : await readEvmArenaPools(ctx, subjects, treasury);
     if (!rows.some((r) => r.status === "unknown")) readCache.set(ctx.chainId, { key: cacheKey, at: Date.now(), rows });
   }
 
   const recorded = new Map();
   for (const r of recordedRead.rows || []) {
     const key = String(r.ref || "").toLowerCase();
-    const entry = recorded.get(key) || { stakes: 0n, stakeCount: 0, boosts: 0n, boostCount: 0, claims: 0 };
-    if (r.source === "deposit") { entry.stakes += big(r.raw); entry.stakeCount += Number(r.n) || 0; }
+    const entry = recorded.get(key) || { stakes: 0n, stakeCount: 0, boosts: 0n, boostCount: 0, claims: 0, chainBoosts: false };
+    if (r.source === "deposit" && r.purpose === "boost") { entry.boosts += big(r.raw); entry.boostCount += Number(r.n) || 0; entry.chainBoosts = true; }
+    else if (r.source === "deposit") { entry.stakes += big(r.raw); entry.stakeCount += Number(r.n) || 0; }
     if (r.source === "boost") { entry.boosts += big(r.raw); entry.boostCount += Number(r.n) || 0; }
     if (r.source === "claim") entry.claims += Number(r.n) || 0;
     recorded.set(key, entry);
@@ -600,12 +645,24 @@ export async function arenaPrizesType(ctx, h) {
 
   for (const row of rows) {
     if (row.pool) row.money = poolMoney(row.pool);
-    // Deposits are keyed by pool id, boosts by battle id.
-    const parts = [recorded.get(row.poolId.toLowerCase()), recorded.get(String(row.subject.id).toLowerCase())].filter(Boolean);
+    // Deposits are keyed by pool id, boosts by battle id. Boosts indexed from chain (deposit rows
+    // of purpose 'boost') replace the battle's boost actions, so a boost is not counted twice.
+    const byPool = recorded.get(row.poolId.toLowerCase());
+    const byBattle = recorded.get(String(row.subject.id).toLowerCase());
+    if (byPool?.chainBoosts && byBattle) {
+      recorded.set(String(row.subject.id).toLowerCase(), { ...byBattle, boosts: 0n, boostCount: 0 });
+    }
+    const parts = [byPool, recorded.get(String(row.subject.id).toLowerCase())].filter(Boolean);
     if (parts.length) {
       const add = (field) => parts.reduce((s, p) => s + (typeof p[field] === "bigint" ? p[field] : BigInt(p[field] || 0)), 0n);
       row.recorded = { stakes: dec(ctx, add("stakes")), stakeCount: Number(add("stakeCount")), boosts: dec(ctx, add("boosts")), boostCount: Number(add("boostCount")) };
     }
+  }
+  for (const row of rows) {
+    const chain = chainRows.get(String(row.poolId).toLowerCase());
+    row.chainComplete = chainDepositsComplete(row.money, chain);
+    row.chainDeposits = row.chainComplete ? chain.deposits : null;
+    row.chainPrizeClaims = chainPrizeClaims(row.money, chain);
   }
   const sum = summarizePools(rows);
 
@@ -619,7 +676,11 @@ export async function arenaPrizesType(ctx, h) {
   for (const row of rows) {
     if (row.status !== "resolved" || !row.money) continue;
     const claims = (row.claims || []).filter((c) => c.bucket === CLAIM_WINNER || c.bucket >= CLAIM_PLACE_BASE);
-    const events = claims.length ? claims.map((c) => ({ raw: c.amount, at: c.at || null, tx: c.tx || null })) : row.money.prizeClaimed > 0n ? [{ raw: row.money.prizeClaimed, at: null, tx: null }] : [];
+    const events = claims.length
+      ? claims.map((c) => ({ raw: c.amount, at: c.at || null, tx: c.tx || null }))
+      : row.chainPrizeClaims
+        ? row.chainPrizeClaims.map((c) => ({ raw: c.raw, at: c.at, tx: c.tx }))
+        : row.money.prizeClaimed > 0n ? [{ raw: row.money.prizeClaimed, at: null, tx: null }] : [];
     for (const e of events) {
       if (row.subject.test_coin) { h.addTo(testPaid, e.raw.toString(), { at: e.at }); continue; }
       h.addTo(paidAll, e.raw.toString(), { at: e.at, tx: e.tx });
@@ -651,8 +712,16 @@ export async function arenaPrizesType(ctx, h) {
 
   // Paid in, from chain: stakes, support, buy-ins and boosts in each pool.
   const inAll = h.acc();
+  let paidInFromChainRows = 0;
   for (const row of rows) {
     if (!row.money || row.subject.test_coin || row.money.paidIn === 0n) continue;
+    // Every deposit of this pool is indexed (and nothing was refunded out of its totals): value
+    // each deposit at its own time instead of the battle's creation time.
+    if (row.chainDeposits && row.chainDeposits.every((d) => d.at) && row.chainDeposits.reduce((s, d) => s + d.raw, 0n) === row.money.paidIn) {
+      paidInFromChainRows += 1;
+      for (const d of row.chainDeposits) h.addTo(inAll, d.raw.toString(), { at: d.at, tx: d.tx });
+      continue;
+    }
     h.addTo(inAll, row.money.paidIn.toString(), { at: toIso(row.subject.created_at) });
   }
   const recStakes = [...recorded.values()].reduce((s, r) => s + r.stakes, 0n);
@@ -661,7 +730,7 @@ export async function arenaPrizesType(ctx, h) {
     allTime: sum.unknownReal
       ? { amount: null, raw: null, count: null, amountUsd: null, priceUsd: null, priceSource: null, priceAt: null, priceBasis: null }
       : await h.priced(inAll, ctx, { events: true }),
-    note: `Stakes and boosts in battle pools, read from each pool on chain (test coins left out; valued at the price when the battle was created). 75% of stakes and 90% of boosts are prize money. The app's own records show ${dec(ctx, recStakes)} ${ctx.asset} of stakes and ${dec(ctx, recBoosts)} ${ctx.asset} of boosts.`,
+    note: `Stakes and boosts in battle pools, read from each pool on chain (test coins left out; ${paidInFromChainRows ? `${paidInFromChainRows} pool${paidInFromChainRows === 1 ? " has" : "s have"} every deposit indexed from chain and ${paidInFromChainRows === 1 ? "is" : "are"} valued at the price of each deposit, the rest` : "valued"} at the price when the battle was created). 75% of stakes and 90% of boosts are prize money. The app's own records show ${dec(ctx, recStakes)} ${ctx.asset} of stakes and ${dec(ctx, recBoosts)} ${ctx.asset} of boosts.`,
   };
 
   // Vault: Solana sums every pool's vault (rent left out); EVM is one contract.
@@ -695,10 +764,10 @@ export async function arenaPrizesType(ctx, h) {
   for (const r of shortPools) t.warnings.push({ level: "critical", message: `Pool of ${r.subject.kind} ${r.subject.id} holds ${dec(ctx, r.vaultAvailable)} ${ctx.asset} but has to pay ${dec(ctx, r.money.obligations)} ${ctx.asset}.` });
   for (const r of rows.filter((x) => x.status === "unknown")) t.warnings.push({ level: "warning", message: `Pool of ${r.subject.kind} ${r.subject.id} could not be read: ${r.error || "unknown error"}` });
   if (sum.real.stakes != null && sum.real.stakes > recStakes) {
-    t.notes.push(`The app's deposit table records ${dec(ctx, recStakes)} ${ctx.asset} of stakes; the pools hold ${dec(ctx, sum.real.stakes)} ${ctx.asset}. A stake is only recorded when the staker's browser sends a signed receipt after the deposit, so the chain figure is used.`);
+    t.notes.push(`The app's deposit table records ${dec(ctx, recStakes)} ${ctx.asset} of stakes; the pools hold ${dec(ctx, sum.real.stakes)} ${ctx.asset}. The chain figure is used; run the arena war pool indexer (scripts/solana/arena-war-pool-index.mjs) to fill the missing deposits.`);
   }
   if ((recordedRead.rows || []).every((r) => r.source !== "claim") && sum.real.prizeClaimed > 0n) {
-    t.notes.push("The app records no prize claims (arena_war_pool_claims is empty); claims are read from chain.");
+    t.notes.push("The app records no prize claims (arena_war_pool_claims is empty); claims are read from chain. The arena war pool indexer fills that table.");
   }
   for (const r of rows.filter((x) => x.status === "live" && x.pool?.resolveDeadline)) {
     t.upcoming.push({ label: `${r.subject.kind === "tournament" ? "Tournament" : "Battle"} ${r.subject.id} must be resolved by`, at: new Date(r.pool.resolveDeadline * 1000).toISOString(), note: "After this anyone can cancel the pool and everyone gets their money back." });

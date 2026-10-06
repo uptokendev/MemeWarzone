@@ -19,6 +19,7 @@ import { isSolanaWarzoneChainId, stakeToLamports, walletsEqual } from "./lib/sol
 import { promoteMatchedIfFunded } from "./arenaBattles.js";
 import { nativeSymbolFor } from "./lib/chainNative.js";
 import { ethers } from "ethers";
+import { receiptDepositSql } from "./lib/arenaWarPoolChainIndex.js";
 
 const STATES = new Set(["open", "locked", "settling", "paid"]);
 const TRANSITIONS = { open: ["locked"], locked: ["settling"], settling: ["paid"], paid: ["open"] };
@@ -521,9 +522,7 @@ async function handleSupport(req, res, subjectId) {
       if (!onchain.opened) return json(res, 503, { ok: false, error: "Tournament escrow is not open yet.", code: "WAR_POOL_NOT_OPEN" });
       try {
         await pool.query(
-          `insert into public.arena_war_pool_deposits (pool_id, purpose, wallet, amount_wei, tx_hash, chain_id)
-           values ($1,'support',$2,$3,$4,$5)
-           on conflict (chain_id, tx_hash) do nothing`,
+          receiptDepositSql("support"),
           [onchain.poolId, supporterAddress || "unknown", stakeToWei(amountNative || amountUsd).toString(), txHash, chainId],
         );
       } catch (error) {
@@ -553,9 +552,7 @@ async function handleSupport(req, res, subjectId) {
     if (!onchain.opened) return json(res, 503, { ok: false, error: "Battle escrow is not open yet.", code: "WAR_POOL_NOT_OPEN" });
     try {
       await pool.query(
-        `insert into public.arena_war_pool_deposits (pool_id, purpose, wallet, amount_wei, tx_hash, chain_id)
-         values ($1,'support',$2,$3,$4,$5)
-         on conflict (chain_id, tx_hash) do nothing`,
+        receiptDepositSql("support"),
         [onchain.poolId, supporterAddress || "unknown", stakeToWei(amountNative || amountUsd).toString(), txHash, chainId],
       );
     } catch (error) {
@@ -702,9 +699,7 @@ async function handleStakeReceipt(req, res, battleId) {
   const amount = onchain.stakeAmount || stakeToWei(row.offered_stake_native ?? row.stake_native).toString();
   try {
     await pool.query(
-      `insert into public.arena_war_pool_deposits (pool_id, purpose, wallet, amount_wei, tx_hash, chain_id)
-       values ($1,'stake',$2,$3,$4,$5)
-       on conflict (chain_id, tx_hash) do nothing`,
+      receiptDepositSql("stake"),
       [onchain.poolId || battleId, expected, amount || "0", txHash, chainId],
     );
   } catch (error) {
