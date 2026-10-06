@@ -17,7 +17,7 @@ type WalletConnectModule = {
 };
 
 const WALLETCONNECT_UUID = "6ba7b810-9dad-4f1e-8f9d-6f6d7b0c5a11";
-const WALLETCONNECT_RDNS = "com.walletconnect";
+export const WALLETCONNECT_RDNS = "com.walletconnect";
 const WALLETCONNECT_ICON =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%233B99FC'/%3E%3Cpath d='M16 25c8.8-8.6 23.2-8.6 32 0l1.1 1.1-4.4 4.3-1.1-1.1c-6.4-6.2-16.8-6.2-23.2 0l-1.1 1.1-4.4-4.3L16 25Zm7.8 7.6c4.5-4.4 11.9-4.4 16.4 0l1.1 1.1-4.4 4.3-1.1-1.1c-2.1-2-5.5-2-7.6 0L27.1 38l-4.4-4.3 1.1-1.1Zm7.1 7 1.1-1.1 1.1 1.1-1.1 1.1-1.1-1.1Z' fill='white'/%3E%3C/svg%3E";
 
