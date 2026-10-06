@@ -7,7 +7,8 @@ process.env.DATABASE_URL ||= "postgres://user:pass@127.0.0.1:1/none";
 
 const { EVENT_QUERIES, LANE_QUERIES, sharedRevenueLanes, summaryRevenueLanes } = await import("./financeRevenueLanes.js");
 const { buildFinanceSummary } = await import("./financeSummary.js");
-const { monthlyRevenue, revenueEventRows } = await import("./financeAccountingSources.js");
+const { dailyRevenue, monthlyRevenue, revenueEventRows } = await import("./financeAccountingSources.js");
+const { revenueByLane } = await import("./financeYearEnd.js");
 const { FINANCE_MAINNETS } = await import("../admin/finance.js");
 
 const HOUR = 3_600_000;
@@ -132,4 +133,36 @@ test("an unapproved EVM vote treasury drops BNB votes from Summary, Close and CS
   assert.equal(csv.rows.length, 0);
   assert.ok(!shared.lanes.some((l) => l.aggregate.lane === "upvotes"));
   assert.ok(close.notes.some((n) => /FEE_RECEIVER_NOT_PROTOCOL_REVENUE_VAULT/.test(n)));
+});
+
+test("year end: the daily revenue it reads adds up to Summary and Close per month, and its lanes to the year total", async () => {
+  const db = fixtureDb();
+  const summary = await buildFinanceSummary({
+    networks: networks(),
+    months: 3,
+    now: NOW,
+    prices,
+    readRevenue: async (network) => {
+      const read = await sharedRevenueLanes(db, network, { upvoteApproval: approveAll });
+      return { lanes: summaryRevenueLanes(read.lanes, network), excludedTestCoinEvents: read.excludedEvents };
+    },
+    readLpShare: async () => ({ entries: [], unpricedTokenCount: 0 }),
+    readFeeRouting: async () => ({ generatedAt: NOW, destinations: [] }),
+    readRewards: async (network) => ({ totals: { outstanding: { byChain: [{ chainId: network.chainId, assets: [] }] } } }),
+  });
+  const close = await monthlyRevenue({ fromMonth: "2026-08", toMonth: "2026-10", db, prices, upvotes: approveAll, networks: networks(), env: {} });
+  const daily = await dailyRevenue({ fromDate: "2026-01-01", toDate: "2026-10-20", db, prices, upvotes: approveAll, networks: networks(), env: {} });
+  const byMonth = new Map();
+  for (const [date, day] of Object.entries(daily.days)) byMonth.set(date.slice(0, 7), (byMonth.get(date.slice(0, 7)) || 0) + day.lanes.reduce((s, l) => s + l.amountUsd, 0));
+  const cents = (v) => Math.round(v * 100);
+  for (const { month, totals } of summary.revenue.months) {
+    assert.equal(cents(byMonth.get(month) || 0), cents(totals.amountUsd), `year-end days vs Summary ${month}`);
+    assert.equal(cents(byMonth.get(month) || 0), cents(close.months[month].totalUsd), `year-end days vs Close ${month}`);
+  }
+  // Every lane id of the Close is a lane of the year end (new lanes appear by themselves).
+  const lanes = revenueByLane({ revDays: daily.days, year: 2026, today: "2026-10-20", usdPerEur: () => 1.1, segments: [] });
+  const closeLaneIds = new Set(Object.values(close.months).flatMap((m) => m.lanes.map((l) => l.laneId)));
+  assert.deepEqual(new Set(lanes.rows.map((r) => r.laneId)), closeLaneIds);
+  const closeYearUsd = Object.values(close.months).reduce((s, m) => s + m.totalUsd, 0);
+  assert.equal(cents(lanes.rows.reduce((s, r) => s + r.grossUsd, 0)), cents(closeYearUsd));
 });
