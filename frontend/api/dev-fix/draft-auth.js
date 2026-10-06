@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { ethers } from "ethers";
 import { isSolanaChain, normalizeAddress, normalizeWalletFlexible, json } from "../../server/http.js";
+import { SESSION_DRAFT_ACTIONS, SESSION_SIGNATURE_PREFIX, sessionTokenFromSignature, sessionWalletForToken } from "../lib/sessionActions.js";
 
 const ENGAGEMENT_ACTIONS = new Set([
   "follow_draft",
@@ -203,6 +204,27 @@ export async function requireDraftActionAuth({
   if (expectedDraftId !== credentialDraftId) {
     json(res, 401, { error: "Wallet signature draft does not match this request." });
     return null;
+  }
+
+  // Follow, comment, like and alerts on a promotion page ride on the 30-day sign-in (founder, 2026-10-06).
+  if (SESSION_DRAFT_ACTIONS.has(action) && String(auth?.signature || "").trim().startsWith(SESSION_SIGNATURE_PREFIX)) {
+    let sessionWallet = "";
+    try {
+      sessionWallet = await sessionWalletForToken(pool, sessionTokenFromSignature(auth?.signature));
+    } catch (error) {
+      console.error("[draft-auth] session lookup failed", error?.message || error);
+      json(res, 503, { error: "Sign-in check is unavailable.", code: "FEED_AUTH_UNAVAILABLE" });
+      return null;
+    }
+    if (!sessionWallet) {
+      json(res, 401, { error: "Your sign-in expired. Sign in with your wallet again.", code: "FEED_SESSION_REQUIRED" });
+      return null;
+    }
+    if (resolveAuthWallet(sessionWallet, expectedChainId, action) !== wallet) {
+      json(res, 401, { error: "Your sign-in is for a different wallet.", code: "WALLET_MISMATCH" });
+      return null;
+    }
+    return { walletAddress: wallet, chainId: expectedChainId, session: true };
   }
 
   const nonce = String(auth?.nonce || "").trim();

@@ -472,6 +472,20 @@ export function apiUrl(path: string): string {
   return normalized;
 }
 
+/** Fired when the server turns a stored 30-day sign-in down; WalletSignInGate forgets it. */
+export const FEED_SESSION_INVALID_EVENT = "mwz:feed-session-invalid";
+
+function noticeRejectedSignIn(res: Response) {
+  if (res.status !== 401 || typeof window === "undefined") return;
+  res
+    .clone()
+    .json()
+    .then((j: { code?: string } | null) => {
+      if (j?.code === "FEED_SESSION_REQUIRED") window.dispatchEvent(new CustomEvent(FEED_SESSION_INVALID_EVENT));
+    })
+    .catch(() => {});
+}
+
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const effectiveInit = injectBnbGraduationQuoteSelection(path, init);
   const compatibilityFallback = buildPublicCompatibilityFallback(path, effectiveInit);
@@ -482,6 +496,7 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 
   try {
     const res = await fetch(url, effectiveInit);
+    noticeRejectedSignIn(res);
     if (!res.ok && isCampaignFeedPath(path)) {
       const fallback = await buildTokenDetailsCampaignFallback(path);
       if (fallback) return fallback;
