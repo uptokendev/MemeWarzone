@@ -1,4 +1,4 @@
-import { loadHandlesFor, missingHandlesTable, walletKey } from "./userHandles.js";
+import { loadActorLabels, missingHandlesTable, shortWallet, walletKey } from "./userHandles.js";
 import { notifyWallet } from "./walletNotify.js";
 
 /**
@@ -45,11 +45,9 @@ async function authorOf(pool, postId) {
 }
 
 async function actorLabel(actor) {
-  const handles = await loadHandlesFor([actor]).catch(() => new Map());
-  const handle = handles.get(walletKey(actor));
-  if (handle) return `@${handle}`;
-  const w = String(actor || "");
-  return w.length > 10 ? `${w.slice(0, 4)}…${w.slice(-4)}` : w || "Someone";
+  const key = walletKey(actor);
+  const labels = await loadActorLabels([key]).catch(() => new Map());
+  return labels.get(key) || shortWallet(actor) || "Someone";
 }
 
 function snippet(body) {

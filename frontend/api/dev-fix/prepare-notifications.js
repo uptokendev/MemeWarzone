@@ -13,6 +13,32 @@ function normalizeAddress(value, chainId) {
   return centralNormalize(value, chainId) || normalizeWalletFlexible(value);
 }
 
+// Social titles start with the actor's name as it was when the row was written ("7ZkE…zohv followed
+// you"). Swap that leading name for the actor's current @username / display name on read, so someone
+// who names themselves later shows by name in old notifications too. Rows without metadata.actor
+// (coin, battle, reward events) are untouched.
+const LEADING_ACTOR_RE = /^(?:@[A-Za-z0-9_]{3,20}|[1-9A-HJ-NP-Za-km-z]{4}(?:…|\.\.\.)[1-9A-HJ-NP-Za-km-z]{4}|0x[0-9a-fA-F]{2}(?:…|\.\.\.)[0-9a-fA-F]{4}|[1-9A-HJ-NP-Za-km-z]{32,44}|0x[0-9a-fA-F]{40})(?= )/;
+
+export function relabelActorTitle(title, label) {
+  const text = String(title || "");
+  if (!label || !LEADING_ACTOR_RE.test(text)) return text;
+  return text.replace(LEADING_ACTOR_RE, label);
+}
+
+async function withCurrentActorNames(rows) {
+  if (!rows.some((row) => row?.metadata_json?.actor)) return rows;
+  // Lazy like getPool: userHandles.js pulls in server/db.js, which throws without DATABASE_URL.
+  const { loadActorLabels, walletKey } = await import("../lib/userHandles.js");
+  const actors = rows.map((row) => walletKey(row?.metadata_json?.actor)).filter(Boolean);
+  if (!actors.length) return rows;
+  const labels = await loadActorLabels(actors).catch(() => new Map());
+  if (!labels.size) return rows;
+  return rows.map((row) => {
+    const label = labels.get(walletKey(row?.metadata_json?.actor));
+    return label ? { ...row, title: relabelActorTitle(row.title, label) } : row;
+  });
+}
+
 async function getPool() {
   if (!String(process.env.DATABASE_URL || "").trim()) return null;
   try {
@@ -65,7 +91,8 @@ export async function prepareNotifications(req, res) {
       [wallet, limit],
     );
 
-    return json(res, 200, { items: result.rows.map(mapNotification) });
+    const rows = await withCurrentActorNames(result.rows).catch(() => result.rows);
+    return json(res, 200, { items: rows.map(mapNotification) });
   }
 
   const body = await readJson(req);

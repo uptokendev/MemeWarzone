@@ -76,3 +76,41 @@ export async function attachHandles(items) {
     return next;
   });
 }
+
+export function shortWallet(wallet) {
+  const w = String(wallet || "");
+  return w.length > 10 ? `${w.slice(0, 4)}…${w.slice(-4)}` : w;
+}
+
+/**
+ * wallet_key -> how to name that wallet in a notification: @username, else the profile display name
+ * (profiles are chain-scoped, so the row that has a name wins), else the short wallet.
+ */
+export async function loadActorLabels(wallets, { db = pool } = {}) {
+  const keys = [...new Set((wallets || []).map(walletKey).filter(Boolean))];
+  const out = new Map();
+  if (!keys.length) return out;
+  const handles = await loadHandlesFor(keys).catch(() => new Map());
+  const names = new Map();
+  const needNames = keys.filter((k) => !handles.get(k));
+  if (needNames.length && db) {
+    try {
+      const { rows } = await db.query(
+        `select distinct on (lower(address)) lower(address) as address_key, btrim(display_name) as display_name
+           from public.user_profiles
+          where lower(address) = any($1::text[])
+            and display_name is not null and length(btrim(display_name)) > 0
+          order by lower(address), updated_at desc nulls last`,
+        [needNames.map((k) => k.toLowerCase())],
+      );
+      for (const r of rows) names.set(r.address_key, String(r.display_name).slice(0, 40));
+    } catch {
+      // No profile names: fall back to the short wallet.
+    }
+  }
+  for (const k of keys) {
+    const handle = handles.get(k);
+    out.set(k, handle ? `@${handle}` : names.get(k.toLowerCase()) || shortWallet(k));
+  }
+  return out;
+}
