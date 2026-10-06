@@ -178,8 +178,13 @@ test("withholding per entity: Dutch holding and US corporation exempt from 5%; t
 
 test("rules: validated against the default shape, unknown keys dropped, low confidence flagged", () => {
   const table = R.rulesTable(R.effectiveTaxRuleSet(null));
-  assert.ok(table.every((r) => /^https:\/\//.test(r.source) && r.checkedOn === "2026-10-05" && ["high", "medium", "low"].includes(r.confidence)));
-  assert.ok(table.find((r) => r.key === "vat.trading_fees").needsConfirmation);
+  assert.ok(table.every((r) => /^https:\/\//.test(r.source) && ["2026-10-05", "2026-10-06"].includes(r.checkedOn) && ["high", "medium", "low"].includes(r.confidence)));
+  assert.ok(table.find((r) => r.key === "vat.battle_entries").needsConfirmation);
+  assert.equal(table.find((r) => r.key === "vat.trading_fees").checkedOn, "2026-10-06");
+  assert.match(table.find((r) => r.key === "vat.sponsorships").value, /per customer from recorded evidence/);
+  assert.equal(R.validateTaxRuleSet({ vat: { lanes: { upvotes: { treatment: "taxable" } } } }).vat.lanes.upvotes.treatment, "taxable_nl", "the old name still loads");
+  assert.throws(() => R.validateTaxRuleSet({ vat: { lanes: { upvotes: { treatment: "free" } } } }), /must be one of taxable_nl/);
+  assert.throws(() => R.validateTaxRuleSet({ vat: { oss: { rates: { DE: 19 } } } }), /fraction between 0 and 1/);
   assert.equal(table.find((r) => r.key === "vpb.2026").value, "19% up to EUR 200,000, 25.8% above");
   const changed = R.validateTaxRuleSet({ dividendTax: { rate: 0.2 }, evil: 1, vpb: { years: { 2027: { brackets: [{ upTo: 100000, rate: 0.2 }, { upTo: null, rate: 0.3 }] } } } });
   assert.equal(changed.dividendTax.rate, 0.2);

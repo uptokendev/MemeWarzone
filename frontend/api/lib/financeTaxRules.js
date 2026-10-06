@@ -12,7 +12,10 @@
 import { FinanceInputError } from "./financeAccountingCosts.js";
 
 export const RULES_CHECKED_ON = "2026-10-05";
+/** The VAT rules were refined with the place-of-supply and evidence research on this date. */
+export const VAT_CHECKED_ON = "2026-10-06";
 export const CONFIDENCE = Object.freeze(["high", "medium", "low"]);
+const VAT_TREATMENT_KEYS = Object.freeze(["taxable_nl", "reverse_charge", "outside_scope", "exempt", "oss_destination", "uncertain"]);
 export const ENTITY_TYPES = Object.freeze(["dutch_holding_bv", "us_corporation", "natural_person", "other"]);
 export const ENTITY_TYPE_LABELS = Object.freeze({
   dutch_holding_bv: "Dutch holding BV",
@@ -22,10 +25,11 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
 });
 
 // VAT lanes: every revenue lane id (financeRevenueLanes.js) maps to one.
-export const VAT_LANES = Object.freeze(["trading_fees", "graduation_fees", "upvotes", "arena_boosts", "battle_entries", "sponsorships", "home_placements", "dbc_referral", "other"]);
+export const VAT_LANES = Object.freeze(["trading_fees", "graduation_fees", "import_swaps", "upvotes", "arena_boosts", "battle_entries", "sponsorships", "home_placements", "dbc_referral", "other"]);
 const LANE_ID_PREFIX = Object.freeze([
   ["bonding-route:", "trading_fees"],
   ["graduation-fee:", "graduation_fees"],
+  ["import-swaps:", "import_swaps"],
   ["upvotes:", "upvotes"],
   ["arena-boosts:", "arena_boosts"],
   ["arena-entries:", "battle_entries"],
@@ -38,6 +42,14 @@ const LANE_ID_PREFIX = Object.freeze([
 export function vatLaneOf(laneId) {
   const id = String(laneId || "");
   return LANE_ID_PREFIX.find(([prefix]) => id.startsWith(prefix))?.[1] || "other";
+}
+
+/** Share of a VAT-inclusive fee that is VAT under one lane rule (0 for reverse charge, outside scope and exempt). */
+export function vatFraction(rule) {
+  const t = rule?.treatment === "taxable" ? "taxable_nl" : rule?.treatment;
+  if (t === "exempt" || t === "outside_scope" || t === "reverse_charge") return 0;
+  const rate = Number(rule?.rate) || 0;
+  return rate > 0 ? (rate / (1 + rate)) * (Number(rule?.taxableShare ?? 1) || 0) : 0;
 }
 
 const SRC = Object.freeze({
@@ -55,6 +67,15 @@ const SRC = Object.freeze({
   conditional: "https://zoek.officielebekendmakingen.nl/stcrt-2026-24065.pdf",
   bw216: "https://wetten.overheid.nl/BWBR0003045",
   vatB2c: "https://www.belastingdienst.nl/wps/wcm/connect/bldcontentnl/belastingdienst/zakelijk/btw/zakendoen_met_het_buitenland/afstandsverkopen-zoals-e-commerce-en-diensten-voor-particulieren-in-andere-eu-landen/diensten-aan-particulieren-binnen-eu/",
+  vatDirective: "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02006L0112-20250101",
+  vatRegulation: "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02011R0282-20220701",
+  vatB2bEu: "https://www.belastingdienst.nl/wps/wcm/connect/bldcontentnl/belastingdienst/zakelijk/btw/zakendoen_met_het_buitenland/goederen_en_diensten_naar_andere_eu_landen/",
+  vatB2bNonEu: "https://www.belastingdienst.nl/wps/wcm/connect/bldcontentnl/belastingdienst/zakelijk/btw/zakendoen_met_het_buitenland/zakendoen_buiten_de_eu/aangifte_doen_als_u_zakendoet_buiten_de_eu/aangifte_doen_als_u_diensten_levert_aan_afnemers_in_niet_eu_landen",
+  vatOss: "https://www.belastingdienst.nl/wps/wcm/connect/bldcontentnl/belastingdienst/zakelijk/btw/zakendoen_met_het_buitenland/afstandsverkopen-zoals-e-commerce-en-diensten-voor-particulieren-in-andere-eu-landen/afstandsverkopen-zoals-e-commerce-binnen-de-eu/unieregeling-registratie-melding-betaling-en-administratie/",
+  vatCommittee: "https://taxation-customs.ec.europa.eu/system/files/2024-01/guidelines-vat-committee-meetings_en.pdf",
+  vatWetOb: "https://wetten.overheid.nl/BWBR0002629/2026-01-01",
+  kansspelbelasting: "https://wetten.overheid.nl/BWBR0002359/2026-01-01",
+  vatRates: "https://taxation-customs.ec.europa.eu/vat-rates_en",
   hedqvist: "https://curia.europa.eu/juris/liste.jsf?num=C-264/14",
   participation: "https://wetten.overheid.nl/BWBR0002672",
   irc245a: "https://www.law.cornell.edu/uscode/text/26/245A",
@@ -67,13 +88,28 @@ const SRC = Object.freeze({
 
 const rule = (value, source, confidence, extra = {}) => ({ ...value, source, checkedOn: RULES_CHECKED_ON, confidence, ...extra });
 
-// VAT conclusion (research 2026-10-05): every lane is most likely a taxable
-// electronically supplied service. Users are anonymous wallets, so their
-// country cannot be shown; the Belastingdienst may then treat the supply as
-// Dutch. The cautious reserve is 21% of the fee as VAT included (21/121)
-// on every lane except the Meteora referral (a business customer outside NL).
-// The reserve stays in the multisig and can be released once location data or
-// a ruling says otherwise.
+// VAT conclusion (research 2026-10-05, refined 2026-10-06 with the place of
+// supply and evidence rules, see financeVat.js):
+// - Trading, graduation and import swap fees: taxable. Memecoins are not a
+//   means of payment (CJEU C-264/14 Hedqvist paras 24, 52-56; VAT Committee
+//   guidelines 2022 and 2024) and carry no rights, so art. 135(1)(e)/(f) does
+//   not apply; an automated swap interface is not exempt negotiation (C-5/17
+//   DPAS para 38, C-235/00 CSC para 39).
+// - Upvotes, boosts: electronically supplied services (Annex I 3(h), art. 7
+//   Reg. 282/2011).
+// - All of these go to anonymous wallets: no VAT number, so consumers
+//   (art. 18(2)); Dutch VAT while EU cross-border consumer sales stay at or under
+//   EUR 10,000 (art. 59c); non-EU consumers are outside the scope but need two
+//   items of location evidence (art. 24b(d), 24f), which wallets do not give.
+//   So the reserve stays 21% of the fee as VAT included (21/121).
+// - Battle entries: possibly exempt as a game of chance (art. 11(1)(l) Wet OB,
+//   art. 2 Wet op de kansspelbelasting), which would bring gambling tax and
+//   licence questions; reserved at 21% until decided.
+// - Sponsorships and Home placements: per customer from recorded evidence
+//   (reverse charge for an EU business with a VIES-valid VAT number, outside
+//   the scope for a non-EU business with a business number, 21% otherwise).
+// - Meteora referral: B2B outside the Netherlands, outside the scope.
+// The reserve stays in the multisig until a return is filed and paid.
 export const DEFAULT_TAX_RULES = Object.freeze({
   version: 1,
   checkedOn: RULES_CHECKED_ON,
@@ -106,20 +142,30 @@ export const DEFAULT_TAX_RULES = Object.freeze({
   distributionLaw: rule({ condition: "Art. 2:216 BW: the general meeting decides (unless the articles say otherwise); only free equity above statutory and article reserves can be paid out (balance test); the board must approve and refuses if it knows or should foresee the BV cannot keep paying its due debts after the payment (liquidity test). Directors are jointly liable for the shortfall if they knew or should have foreseen it; a shareholder who knew or should have known must repay. Interim distributions are allowed. There is no legal minimum interval, so weekly is possible if each payment has its own shareholder resolution (in writing is fine, art. 2:238) and a dated board approval with the liquidity test (usually looking about 12 months ahead)." }, SRC.bw216, "high"),
   vat: {
     standardRate: 0.21,
-    condition: "Digital services to consumers in the EU are taxed where the consumer lives (Dutch VAT while cross-border EU consumer sales stay under EUR 10,000 a year, then OSS); consumers outside the EU: outside Dutch VAT; businesses: where the business is (reverse charge abroad, 21% for Dutch businesses). Users are anonymous wallets, so their country cannot be shown and the Belastingdienst may treat the supply as Dutch.",
+    condition: "Digital services to consumers in the EU are taxed where the consumer lives, but with Dutch VAT while cross-border EU consumer sales stay at or under EUR 10,000 this and last calendar year (then OSS); consumers outside the EU: outside Dutch VAT; businesses: where the business is (reverse charge for EU businesses with a valid VAT number, 21% for Dutch businesses). A consumer's country needs two items of evidence that agree; anonymous wallets give none, so their fees stay at 21%.",
     source: SRC.vatB2c,
-    checkedOn: RULES_CHECKED_ON,
-    confidence: "low",
+    checkedOn: VAT_CHECKED_ON,
+    confidence: "medium",
+    oss: rule({
+      thresholdEur: 10000,
+      // Standard rates 2026 (EC VAT rates / TEDB, cross-checked 2026-10-06; FI 25.5% since 2024-09, SK 23% 2025, EE 24% 2025-07, RO 21% 2025-08).
+      rates: { AT: 0.2, BE: 0.21, BG: 0.2, HR: 0.25, CY: 0.19, CZ: 0.21, DK: 0.25, EE: 0.24, FI: 0.255, FR: 0.2, DE: 0.19, GR: 0.24, HU: 0.27, IE: 0.23, IT: 0.22, LV: 0.21, LT: 0.21, LU: 0.17, MT: 0.18, NL: 0.21, PL: 0.23, PT: 0.23, RO: 0.21, SK: 0.23, SI: 0.22, ES: 0.21, SE: 0.25 },
+      condition: "Art. 59c Directive / art. 6k Wet OB: Dutch VAT on electronically supplied services to consumers in other EU countries while those sales (plus EU distance sales of goods) stay at or under EUR 10,000 in this and the last calendar year. From the sale that goes over it, the consumer's country's VAT applies, declared in one OSS (union scheme) return per quarter, due the last day of the month after the quarter (also when nil). Register for OSS before the first such sale (by the 10th of the next month at the latest).",
+    }, SRC.vatOss, "high", { checkedOn: VAT_CHECKED_ON }),
+    evidence: rule({
+      condition: "Business customer: a VAT number checked in VIES (EU) or a business or tax number (outside the EU) (art. 18 Reg. 282/2011). Consumer: two items of evidence that agree, from billing address, IP geolocation, bank country, SIM country, land line or other commercially relevant information (art. 24b(d) and 24f). The one-item rule for suppliers under EUR 100,000 needs the item to come from a third party such as a bank or payment provider, which wallet payments do not have. Without evidence the lane default applies.",
+    }, SRC.vatRegulation, "high", { checkedOn: VAT_CHECKED_ON }),
     lanes: {
-      trading_fees: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Most likely a taxable electronically supplied service. The exemption for currency exchange (CJEU C-264/14 Hedqvist) needs a token used as a means of payment; memecoins are speculative tokens. No Dutch or EU guidance on launchpad fees exists. 21% reserved on the full fee because user location is unknown." }, SRC.hedqvist, "low"),
-      graduation_fees: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Part of the trading flow; same as trading fees." }, SRC.hedqvist, "low"),
-      upvotes: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Paid visibility (electronically supplied service). User location unknown, so 21% reserved." }, SRC.vatB2c, "low"),
-      arena_boosts: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Paid visibility in the arena (electronically supplied service). User location unknown, so 21% reserved." }, SRC.vatB2c, "low"),
-      battle_entries: rule({ treatment: "uncertain", rate: 0.21, taxableShare: 1, reason: "Our cut of battle stakes: a service fee (taxable) or part of a game of chance. 21% reserved until confirmed." }, SRC.vatB2c, "low"),
-      sponsorships: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Advertising, mostly for businesses: reverse charge (no Dutch VAT) for EU businesses, outside scope outside the EU, 21% for Dutch businesses. Without the sponsor's VAT number and address, 21% reserved." }, SRC.vatB2c, "medium"),
-      home_placements: rule({ treatment: "taxable", rate: 0.21, taxableShare: 1, reason: "Paid Home placement (advertising). Same as sponsorships." }, SRC.vatB2c, "medium"),
-      dbc_referral: rule({ treatment: "outside_scope", rate: 0, taxableShare: 0, reason: "Referral fee paid by Meteora, a business outside the Netherlands: taxed where the customer is, so no Dutch VAT." }, SRC.vatB2c, "medium"),
-      other: rule({ treatment: "uncertain", rate: 0.21, taxableShare: 1, reason: "Unknown lane: 21% reserved." }, SRC.vatB2c, "low"),
+      trading_fees: rule({ treatment: "taxable_nl", rate: 0.21, taxableShare: 1, evidence: "none", ess: true, reason: "Taxable electronically supplied service: memecoins are not a means of payment (Hedqvist C-264/14 paras 52-56) and carry no rights, so no financial exemption. Paid by anonymous wallets (consumers, art. 18(2)) with no location evidence: Dutch VAT, 21% of the fee reserved." }, SRC.hedqvist, "medium", { checkedOn: VAT_CHECKED_ON }),
+      graduation_fees: rule({ treatment: "taxable_nl", rate: 0.21, taxableShare: 1, evidence: "none", ess: true, reason: "Part of the trading flow: same as trading fees." }, SRC.hedqvist, "medium", { checkedOn: VAT_CHECKED_ON }),
+      import_swaps: rule({ treatment: "taxable_nl", rate: 0.21, taxableShare: 1, evidence: "none", ess: true, reason: "Our 0.5% fee for routing a memecoin swap through Jupiter, KyberSwap or Uniswap. An automated interface is not exempt negotiation (C-5/17 DPAS para 38; C-235/00 CSC para 39). Same place of supply as trading fees." }, SRC.vatCommittee, "medium", { checkedOn: VAT_CHECKED_ON }),
+      upvotes: rule({ treatment: "taxable_nl", rate: 0.21, taxableShare: 1, evidence: "none", ess: true, reason: "Paid visibility on the site: electronically supplied service (Annex I 3(h), art. 7(2)(b) Reg. 282/2011). Anonymous wallets without location evidence: Dutch VAT." }, SRC.vatRegulation, "medium", { checkedOn: VAT_CHECKED_ON }),
+      arena_boosts: rule({ treatment: "taxable_nl", rate: 0.21, taxableShare: 1, evidence: "none", ess: true, reason: "Paid visibility in the arena: electronically supplied service. Anonymous wallets without location evidence: Dutch VAT." }, SRC.vatRegulation, "medium", { checkedOn: VAT_CHECKED_ON }),
+      battle_entries: rule({ treatment: "uncertain", rate: 0.21, taxableShare: 1, evidence: "none", ess: true, reason: "Our 5% of battle stakes: possibly exempt as a game of chance or prize contest (art. 11(1)(l) Wet OB, art. 2 Wet op de kansspelbelasting), which would bring gambling tax and a licence question; otherwise a taxable service. 21% reserved until decided." }, SRC.kansspelbelasting, "low", { checkedOn: VAT_CHECKED_ON }),
+      sponsorships: rule({ treatment: "taxable_nl", rate: 0.21, taxableShare: 1, evidence: "customer", ess: false, reason: "Advertising agreed with the sponsor (not automated, art. 7(3)(m)): B2B where the business is (art. 44): reverse charge for an EU business with a VIES-valid VAT number (rubriek 3b + ICP), outside the scope for a business outside the EU with a business number, 21% for Dutch businesses and for buyers without a VAT number (art. 45). Default 21% until the sponsor's evidence is recorded." }, SRC.vatB2bEu, "high", { checkedOn: VAT_CHECKED_ON }),
+      home_placements: rule({ treatment: "taxable_nl", rate: 0.21, taxableShare: 1, evidence: "customer", ess: false, reason: "Home placement sold by application and marked paid by an admin: same as sponsorships. Default 21% until the buyer's evidence is recorded." }, SRC.vatB2bEu, "high", { checkedOn: VAT_CHECKED_ON }),
+      dbc_referral: rule({ treatment: "outside_scope", rate: 0, taxableShare: 0, evidence: "none", ess: false, reason: "Referral fee paid by Meteora, a business outside the Netherlands: taxed where the customer is (art. 44), not in the Dutch return. If Meteora turns out to be an EU business with a VAT number: reverse charge (rubriek 3b + ICP)." }, SRC.vatB2bNonEu, "medium", { checkedOn: VAT_CHECKED_ON }),
+      other: rule({ treatment: "uncertain", rate: 0.21, taxableShare: 1, evidence: "none", ess: false, reason: "Unknown lane: 21% reserved." }, SRC.vatB2c, "low", { checkedOn: VAT_CHECKED_ON }),
     },
   },
   holdingSide: {
@@ -149,7 +195,7 @@ function conform(schema, value, path) {
   if (typeof schema === "number") {
     const n = Number(value);
     if (!Number.isFinite(n) || n < 0) throw new FinanceInputError(`${path} must be a number of 0 or more.`, path);
-    if (/rate|Share$/i.test(path.split(".").pop()) && n > 1) throw new FinanceInputError(`${path} is a fraction between 0 and 1 (0.15 = 15%).`, path);
+    if ((/rate|Share$/i.test(path.split(".").pop()) || path.includes(".oss.rates.")) && n > 1) throw new FinanceInputError(`${path} is a fraction between 0 and 1 (0.15 = 15%).`, path);
     return n;
   }
   if (typeof schema === "boolean") return value === true;
@@ -157,7 +203,12 @@ function conform(schema, value, path) {
     const text = String(value ?? "").trim();
     if (text.length > MAX_TEXT) throw new FinanceInputError(`${path} is longer than ${MAX_TEXT} characters.`, path);
     if (path.endsWith(".confidence") && !CONFIDENCE.includes(text)) throw new FinanceInputError(`${path} must be high, medium or low.`, path);
-    if (path.endsWith(".treatment") && !["exempt", "taxable", "outside_scope", "uncertain"].includes(text)) throw new FinanceInputError(`${path} must be exempt, taxable, outside_scope or uncertain.`, path);
+    if (path.endsWith(".treatment")) {
+      // "taxable" is the name before 2026-10-06: stored rules keep working as Dutch VAT.
+      if (text === "taxable") return "taxable_nl";
+      if (!VAT_TREATMENT_KEYS.includes(text)) throw new FinanceInputError(`${path} must be one of ${VAT_TREATMENT_KEYS.join(", ")}.`, path);
+    }
+    if (path.endsWith(".evidence") && !["none", "customer"].includes(text)) throw new FinanceInputError(`${path} must be none or customer.`, path);
     if (path.endsWith(".source") && text && !/^https:\/\//.test(text)) throw new FinanceInputError(`${path} must be an https link.`, path);
     if (path.endsWith(".method") && !["fifo", "lifo", "average"].includes(text)) throw new FinanceInputError(`${path} must be fifo, lifo or average.`, path);
     if (path.endsWith(".period") && !["quarter", "month"].includes(text)) throw new FinanceInputError(`${path} must be quarter or month.`, path);
@@ -310,8 +361,12 @@ export function rulesTable(rules) {
   push("bw.216", "Distribution test (art. 2:216 BW)", "Balance test + board liquidity test, per distribution", rules.distributionLaw);
   for (const lane of VAT_LANES) {
     const v = rules.vat.lanes[lane];
-    push(`vat.${lane}`, `VAT: ${lane.replaceAll("_", " ")}`, v.treatment === "exempt" || v.treatment === "outside_scope" ? `${v.treatment.replace("_", " ")} (0%)` : `${pct(v.rate)} on ${pct(v.taxableShare)} of the fee (${v.treatment})`, v);
+    const zero = ["exempt", "outside_scope", "reverse_charge"].includes(v.treatment);
+    const value = `${zero ? `${v.treatment.replaceAll("_", " ")} (0%)` : `${pct(v.rate)} on ${pct(v.taxableShare)} of the fee (${v.treatment.replaceAll("_", " ")})`}${v.evidence === "customer" ? "; per customer from recorded evidence" : ""}`;
+    push(`vat.${lane}`, `VAT: ${lane.replaceAll("_", " ")}`, value, v);
   }
+  push("vat.oss", "VAT: EU consumer threshold and OSS", `EUR ${Number(rules.vat.oss.thresholdEur).toLocaleString("en-US")} per calendar year; above it the customer's country rate through OSS`, rules.vat.oss);
+  push("vat.evidence", "VAT: customer evidence", "VIES-checked VAT number (business) or two matching location items (consumer)", rules.vat.evidence);
   for (const type of ["dutch_holding_bv", "us_corporation"]) push(`holding.${type}`, `On the shareholder's side: ${ENTITY_TYPE_LABELS[type]}`, "Informational", rules.holdingSide[type]);
   return rows;
 }

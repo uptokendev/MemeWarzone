@@ -33,6 +33,14 @@
 //                     route_kind 'finalize', realtime-indexer/src/indexer.ts:1280).
 //                     Solana graduation (FeeSlicesRouted) is stored as
 //                     route_kind 'trade' and is already in the bonding lane.
+//   import_swaps      0.5% platform fee on imported-coin swaps (Jupiter on
+//                     Solana, KyberSwap on BNB, Universal Router on Robinhood),
+//                     read from the chain into finance_import_swap_fees by
+//                     financeImportSwapFees.js (cron:finance-snapshots). Imported
+//                     coins are never our campaigns, so there is no test-coin
+//                     filter; swaps by our own wallets are counted (like the
+//                     deployer's test UP vote, founder 2026-10-05) and marked
+//                     internal_wallet in the table.
 //
 // Test coins: a row whose campaign (or either battle side) is a hidden test
 // campaign is left out; a row without a campaign passes.
@@ -44,8 +52,8 @@ export const USD_CENTS_DECIMALS = 2;
 
 /** Where each lane's money lands, per chain family (fee-routing destination ids). */
 const INVENTORY = Object.freeze({
-  solana: Object.freeze({ arena: "sol101-mainnet-protocol-vault", sponsorship: "sol101-mainnet-protocol-vault", dbcReferral: "sol101-mainnet-dbc-referral" }),
-  evm: Object.freeze({ arena: "safe", sponsorship: "protocol-vault", finalize: "treasury-router" }),
+  solana: Object.freeze({ arena: "sol101-mainnet-protocol-vault", sponsorship: "sol101-mainnet-protocol-vault", dbcReferral: "sol101-mainnet-dbc-referral", importSwap: "sol101-mainnet-import-swap-fee" }),
+  evm: Object.freeze({ arena: "safe", sponsorship: "protocol-vault", finalize: "treasury-router", importSwap: "protocol-vault" }),
 });
 
 function evmPrefix(network) {
@@ -226,6 +234,13 @@ export const LANE_SPECS = Object.freeze({
     time: "d.created_at", amount: "d.referral_fee",
     tx: "d.tx_hash", logIndex: "d.log_index", campaign: "d.pool", ref: "null::text", eventId: "d.id::text",
   },
+  import_swaps: {
+    from: "public.finance_import_swap_fees f",
+    where: `f.chain_id = $1
+       and f.fee_raw > 0`,
+    time: "f.occurred_at", amount: "f.fee_raw",
+    tx: "f.tx_hash", logIndex: "f.log_index", campaign: "f.token_address", ref: "f.side", eventId: "f.id::text",
+  },
   graduation_fee: {
     from: "public.reward_events r",
     where: `r.chain_id = $1
@@ -307,6 +322,7 @@ export function laneDefinitions(network, { includeCore = false } = {}) {
     { key: "sponsorships", lane: "sponsorship", source: "Sponsorships 10% + marketing 20%", ...native, sourceInventoryId: inventoryId(network, "sponsorship") },
     { key: "home_placements", lane: "sponsorship", source: "Home placements (marked paid by admin, off-chain)", assetSymbol: "USD", decimals: USD_CENTS_DECIMALS, sourceInventoryId: "off-chain-sponsorship-applications" },
   );
+  defs.push({ key: "import_swaps", lane: "other_approved", source: "Import swaps 0.5%", ...native, sourceInventoryId: inventoryId(network, "importSwap") });
   if (solana) {
     defs.push({ key: "dbc_referral", lane: "other_approved", source: "Meteora DBC referral (20% of Meteora's cut)", ...native, sourceInventoryId: inventoryId(network, "dbcReferral") });
   } else {

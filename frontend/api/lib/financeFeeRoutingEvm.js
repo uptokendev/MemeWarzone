@@ -304,17 +304,27 @@ function mainnetRegistry(chainId) {
       citation: `contracts/WarzoneSponsorshipRouterV1.sol:23-24,181-182; ${rec}/mainnet.sponsorship-v1.json`,
       notes: ["Revenue lane: sponsorships (marketing 20% + protocol 10% of confirmed sponsorship_payments). No refund path in the router."],
     },
-    ...(chainId === 56 ? [{
+    chainId === 56 ? {
       id: "evm_import_swaps",
       label: "Imported-coin swaps",
       trigger: "Swap from an imported coin page (KyberSwap, PancakeSwap pools only)",
       router: "KyberSwap aggregator fee (feeReceiver checked by the API)",
       totalFee: "0.5% (IMPORT_SWAP_FEE_BPS default 50), always in BNB",
-      status: "live, not indexed",
+      status: "live, recorded",
       splits: [{ destinationId: "protocol_vault", share: "100% of the swap fee (IMPORT_SWAP_FEE_RECEIVER_56)" }],
-      citation: "frontend/api/importSwap.js:10-21,36,204-231",
-      notes: ["The API does not record import swaps, so this fee has no revenue lane yet: it is only visible as part of the protocol vault's forwarded balance."],
-    }] : []),
+      citation: "frontend/api/importSwap.js:10-21,36,204-231; frontend/api/lib/financeImportSwapFees.js",
+      notes: ["Recorded from the vault's Deposit events sent by the Kyber router 0x6131…37b5 (finance_import_swap_fees, every 5 minutes); revenue lane Import swaps 0.5%."],
+    } : {
+      id: "evm_import_swaps",
+      label: "Imported-coin swaps",
+      trigger: "Swap from an imported coin page (Uniswap V3 pools)",
+      router: "Universal Router 0x8876…0904 PAY_PORTION",
+      totalFee: "0.5% (IMPORT_SWAP_FEE_BPS 50), always in ETH",
+      status: "live, recorded",
+      splits: [{ destinationId: "protocol_vault", share: "100% of the swap fee (IMPORT_SWAP_FEE_RECEIVER_4663)" }],
+      citation: "frontend/src/lib/robinhoodImportSwap.mjs:1-24; frontend/api/lib/financeImportSwapFees.js",
+      notes: ["Recorded from the vault's Deposit events sent by the Universal Router (finance_import_swap_fees, every 5 minutes); revenue lane Import swaps 0.5%."],
+    },
     homePlacementsFlow(),
   ];
 

@@ -42,7 +42,8 @@
 
 import { round2, roundUsd } from "./financeAccountingCosts.js";
 import { bracketTax } from "./financeAccountingTax.js";
-import { addMonthsToDate, vatLaneOf, vpbYear, withholdingFor, DEFAULT_TAX_RULES } from "./financeTaxRules.js";
+import { addMonthsToDate, vpbYear, withholdingFor, DEFAULT_TAX_RULES } from "./financeTaxRules.js";
+import { mergeReturns, vatOfDay } from "./financeVat.js";
 import { computeDistribution } from "./financeAccountingDistributions.js";
 import { dayNetEur } from "./financeTreasury.js";
 
@@ -110,20 +111,6 @@ export function taxableAfterLoss(profit, lossPool, rule = DEFAULT_TAX_RULES.vpb.
   return profit - Math.min(lossPool, room);
 }
 
-function vatOfLanes(lanes, rules, usdPerEur) {
-  let vatEur = 0;
-  const byLane = {};
-  for (const lane of lanes || []) {
-    if (lane.amountUsd == null) continue;
-    const key = vatLaneOf(lane.laneId);
-    const r = rules.vat.lanes[key] || rules.vat.lanes.other;
-    const eur = lane.amountUsd / usdPerEur;
-    const vat = r.treatment === "exempt" || r.treatment === "outside_scope" ? 0 : (eur * r.rate) / (1 + r.rate) * r.taxableShare;
-    vatEur += vat;
-    byLane[key] = (byLane[key] || 0) + vat;
-  }
-  return { vatEur, byLane };
-}
 
 /**
  * @param {object} input
@@ -137,8 +124,9 @@ function vatOfLanes(lanes, rules, usdPerEur) {
  * @param {object|null} [input.vpbOverride]    brackets saved on the old Tax & Reserves form
  * @param {object[]} [input.records]           recorded distributions
  * @param {Map<string, object>} [input.treasuryByDay]  financeTreasury.treasuryByDay (closed months: from the snapshot)
+ * @param {Map<string, object[]>} [input.vatEvidence]  resolved customer-evidence events per day (financeVat.js)
  */
-export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMonth = new Map(), months = new Map(), rules, vpbOverride = null, records = [], treasuryByDay = new Map() }) {
+export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMonth = new Map(), months = new Map(), rules, vpbOverride = null, records = [], treasuryByDay = new Map(), vatEvidence = new Map() }) {
   const warnings = [];
   const segments = weekSegments(fromDate, today);
   const rate = (date) => {
@@ -152,7 +140,9 @@ export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMon
     let revenueUsd = 0;
     let revenueEur = 0;
     let vatEur = 0;
+    let vatDefaultEur = 0;
     const vatByLane = {};
+    const dayReturns = [];
     for (let d = seg.start; d <= seg.end && d <= today; d = addDays(d, 1)) {
       const day = days[d];
       if (!day) continue;
@@ -162,8 +152,10 @@ export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMon
       const usd = (day.lanes || []).reduce((s, l) => s + (l.amountUsd ?? 0), 0);
       revenueUsd += usd;
       revenueEur += usd / r;
-      const vat = vatOfLanes(day.lanes, rules, r);
+      const vat = vatOfDay(day.lanes, rules, r, vatEvidence.get(d) || []);
       vatEur += vat.vatEur;
+      vatDefaultEur += vat.defaultVatEur;
+      dayReturns.push(vat.ret);
       for (const [k, v] of Object.entries(vat.byLane)) vatByLane[k] = (vatByLane[k] || 0) + v;
     }
     let costsUsd = 0;
@@ -188,7 +180,7 @@ export function computeWeeks({ today, fromDate, days = {}, usdPerEur, costsByMon
       otherRevenueEur += t.otherRevenueEur;
       otherVatEur += t.otherVatEur;
     }
-    Object.assign(seg, { revenueUsd, revenueEur, vatEur, vatByLane, costsUsd, costsEur, closeAdjustmentUsd: 0, treasuryEur, realizedGainEur, treasuryFeesEur, otherRevenueEur, otherVatEur });
+    Object.assign(seg, { revenueUsd, revenueEur, vatEur, vatDefaultEur, vatReturn: mergeReturns(dayReturns), vatByLane, costsUsd, costsEur, closeAdjustmentUsd: 0, treasuryEur, realizedGainEur, treasuryFeesEur, otherRevenueEur, otherVatEur });
   }
   if (unpriced.length) warnings.push(`Some revenue could not be priced in USD on ${[...new Set(unpriced)].slice(0, 10).join(", ")}; it is counted as 0 there.`);
 
