@@ -560,6 +560,7 @@ import { dbcDeployedAtSec, dbcFlywheel, dbcSpotSolFromSqrt, dbcSupplyWhole } fro
 import { WSOL_MINT, formatScaledQuote, quoteUiToRaw } from "../../shared/dbcQuotes.mjs";
 import DbcCreatorRewardsPanel from "@/components/dbc/DbcCreatorRewardsPanel";
 import DbcFeeChoiceLine from "@/components/dbc/DbcFeeChoiceLine";
+import { fetchDbcToken } from "@/lib/dbcCreate";
 import { useGen5Campaign } from "@/components/evm/useGen5Campaign";
 import { EvmGen5TradeNotes } from "@/components/evm/EvmGen5TradeNotes";
 import { EvmGen5CreatorPanel } from "@/components/evm/EvmGen5CreatorPanel";
@@ -665,6 +666,25 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   const dbcQuoteMint = String(dbcLive?.meta?.quoteMint || dbcLive?.meta?.dbc?.quoteMint || "So11111111111111111111111111111111111111112");
   const dbcQuoteDecimals = Number(dbcLive?.meta?.quoteDecimals || dbcLive?.meta?.dbc?.quoteDecimals || 9);
   const dbcQuoteSymbol = String(dbcLive?.meta?.quoteSymbol || dbcLive?.meta?.dbc?.quoteSymbol || "SOL");
+  // The pool's reserve and tokens sold move with every trade, but dbcLive is read once when the page
+  // opens. Refresh just these numbers here: replacing dbcLive would rerun the page's whole load.
+  const [dbcPoolLive, setDbcPoolLive] = useState<Record<string, any> | null>(dbcLive?.poolLive ?? null);
+  useEffect(() => {
+    setDbcPoolLive(dbcLive?.poolLive ?? null);
+    if (!isDbcPage || !dbcMint) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void fetchDbcToken(dbcMint)
+        .then((next) => {
+          if (!cancelled && next?.poolLive) setDbcPoolLive(next.poolLive);
+        })
+        .catch(() => undefined);
+    }, 20_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [dbcLive?.poolLive, dbcMint, isDbcPage]);
   // xStock quotes: wallets display raw x the mint's ScaledUiAmount multiplier; 1 for every other quote.
   const [dbcQuoteMultiplier, setDbcQuoteMultiplier] = useState(1);
   useEffect(() => {
@@ -987,7 +1007,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   // Exact Solana holder count from the chain (server-side token-account scan, 60 s cache).
   const [solanaHolderCount, setSolanaHolderCount] = useState<number | null>(null);
   const solanaHolderMint = isSolanaPage ? String(solanaCurve?.mint || campaign?.token || "").trim() : "";
-  const solanaHolderCampaign = isSolanaPage ? String(solanaCurve?.campaignAddress || "").trim() : "";
+  // A DBC coin has no launchpad curve; its pool is the campaign the holder count leaves out.
+  const solanaHolderCampaign = isSolanaPage ? String(solanaCurve?.campaignAddress || dbcPool || "").trim() : "";
   useEffect(() => {
     if (!solanaHolderMint) {
       setSolanaHolderCount(null);
@@ -2520,6 +2541,10 @@ const toSeconds = (ts: number): number => {
           ? `${formatCompact(solanaMeteora.spot.liquiditySol)} ${nativeUnit}`
           : topazLiquidity != null && Number.isFinite(topazLiquidity) && topazLiquidity > 0
           ? `${formatCompact(topazLiquidity)} ${nativeUnit}`
+          : isDbcPage && dbcPoolLive?.quoteReserveLamports != null
+          ? // The pool's quote reserve. Summing trade amounts counted the fees the pool never kept
+            // (DAZILLA: 38.62 SOL from trades against 35.11 SOL in the pool).
+            formatBnbFromWei(BigInt(String(dbcPoolLive.quoteReserveLamports)))
           : formatBnbFromWei(
               curveReserveWei && curveReserveWei > 0n
                 ? curveReserveWei
@@ -2533,7 +2558,7 @@ const toSeconds = (ts: number): number => {
       // Timeframe analytics (native volume + price change)
       metrics: timeframeTiles,
     };
-  }, [campaign, contractGraduatedEarly, evmFullyDilutedSupply, curveReserveWei, dbcMintSupplyWhole, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
+  }, [campaign, contractGraduatedEarly, evmFullyDilutedSupply, curveReserveWei, dbcMintSupplyWhole, dbcPoolLive?.quoteReserveLamports, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
   // Native/USD reference for TokenDetails conversions: BNB on BNB Chain, SOL on
   // Solana, ETH on Robinhood. Treating every non-Solana chain as BNB priced a
   // Robinhood page in BNB/USD, so the header read about six times lower than the
@@ -3290,7 +3315,7 @@ const toSeconds = (ts: number): number => {
     // Graduates when sold >= curveSupply OR reserve >= graduationTarget (chain-specific).
 
     // Prefer live Solana curve snapshot when present (TokenDetails zeros EVM metrics on Solana shell).
-    const sold = isSolanaPage
+    const soldFromCurve = isSolanaPage
       ? ((solanaCurve?.soldTokens && solanaCurve.soldTokens > 0n
           ? solanaCurve.soldTokens
           : null) ??
@@ -3298,13 +3323,19 @@ const toSeconds = (ts: number): number => {
         latestSoldFromTrades ??
         0n)
       : (metrics?.sold ?? 0n);
-    const curveSupply = isSolanaPage
+    // A DBC coin has no launchpad curve account and zeroed metrics; its progress is the pool's quote
+    // reserve against the config's migration threshold (both in quote raw units). Its tokens sold
+    // are the curve tokens the pool has handed out (the live lookup computes them from the config).
+    const dbcSold = isDbcPage ? BigInt(String(dbcPoolLive?.curveSoldTokensRaw || "0")) : 0n;
+    const dbcCurveTokens = isDbcPage ? BigInt(String(dbcPoolLive?.curveTokensRaw || "0")) : 0n;
+    const sold = isDbcPage ? dbcSold : soldFromCurve;
+    const curveSupply = isDbcPage
+      ? dbcCurveTokens
+      : isSolanaPage
       ? (solanaCurve?.curveTokenSupply ?? metrics?.curveSupply ?? 0n)
       : (metrics?.curveSupply ?? 0n);
-    // A DBC coin has no launchpad curve account and zeroed metrics; its progress is the pool's quote
-    // reserve against the config's migration threshold (both in quote raw units).
-    const dbcThreshold = isDbcPage ? BigInt(String(dbcLive?.poolLive?.migrationQuoteThresholdLamports || "0")) : 0n;
-    const dbcReserve = isDbcPage ? BigInt(String(dbcLive?.poolLive?.quoteReserveLamports || "0")) : 0n;
+    const dbcThreshold = isDbcPage ? BigInt(String(dbcPoolLive?.migrationQuoteThresholdLamports || "0")) : 0n;
+    const dbcReserve = isDbcPage ? BigInt(String(dbcPoolLive?.quoteReserveLamports || "0")) : 0n;
     const targetWei = dbcThreshold > 0n ? dbcThreshold : (metrics?.graduationNativeTarget ?? 0n);
     const reserveWei = dbcThreshold > 0n
       ? dbcReserve
@@ -3322,7 +3353,8 @@ const toSeconds = (ts: number): number => {
     const raisedPct =
       targetWei > 0n ? Number(reserveWei * 1_000_000n / targetWei) / 10_000 : 0;
 
-    const reachedSold = curveSupply > 0n && sold >= curveSupply;
+    // A DBC pool graduates on its quote threshold only; selling every curve token gets it there too.
+    const reachedSold = !isDbcPage && curveSupply > 0n && sold >= curveSupply;
     const reachedRaised = targetWei > 0n && reserveWei >= targetWei;
 
     // When we are in DEX stage, always show 100%.
@@ -3342,7 +3374,7 @@ const toSeconds = (ts: number): number => {
     // Show whichever progress is “more complete”, because graduation triggers on either.
     let pct = Math.max(
       0,
-      Math.min(100, Math.max(soldPct, raisedPct))
+      Math.min(100, isDbcPage ? raisedPct : Math.max(soldPct, raisedPct))
     );
     // Solana: the curve closes when net SOL raised reaches the smaller of the native target and the
     // cost of the whole curve. On a linear curve tokens-sold % runs far ahead of that, so measure the
@@ -3378,8 +3410,10 @@ const toSeconds = (ts: number): number => {
     latestSoldFromTrades,
     solanaCurve,
     isDbcPage,
-    dbcLive?.poolLive?.migrationQuoteThresholdLamports,
-    dbcLive?.poolLive?.quoteReserveLamports,
+    dbcPoolLive?.migrationQuoteThresholdLamports,
+    dbcPoolLive?.quoteReserveLamports,
+    dbcPoolLive?.curveSoldTokensRaw,
+    dbcPoolLive?.curveTokensRaw,
   ]);
 
     const remainingCurveWei = useMemo(() => {
@@ -3441,6 +3475,17 @@ const toSeconds = (ts: number): number => {
     isDexStage,
     metrics?.graduationTarget,
   ]);
+
+  // "In curve" follows the same denomination as "to target" beside it; it read SOL next to a dollar
+  // target ("35.1101 SOL in curve · $10.7K to target").
+  const inCurveLabel = useMemo(() => {
+    const nativeLabel = formatBnbFromWei(curveProgress.reserveWei ?? undefined);
+    if (displayDenom !== "USD") return nativeLabel;
+    const native = parseBnbLabel(nativeLabel);
+    if (native == null || native < 0) return nativeLabel;
+    if (!nativeUsd) return nativeUsdLoading ? "…" : nativeLabel;
+    return formatCompactUsd(native * nativeUsd);
+  }, [curveProgress.reserveWei, displayDenom, nativeUsd, nativeUsdLoading, isSolanaPage, isDbcPage, dbcQuoteMultiplier]);
 
   const liquidityLabel = isDexStage ? "Liquidity" : "Reserve";
   const liquidityValue = (() => {
@@ -5308,7 +5353,7 @@ const toSeconds = (ts: number): number => {
               </div>
               {contractGraduated ? null : (
                 <p className="m-0 font-mw-mono text-xs text-mw-muted">
-                  {formatBnbFromWei(curveProgress.reserveWei ?? undefined)} in curve · {remainingCurveLabel.primary} to target · {curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01 ? curveProgress.soldPct.toFixed(6) : curveProgress.soldPct.toFixed(2)}% of tokens sold
+                  {inCurveLabel} in curve · {remainingCurveLabel.primary} to target · {curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01 ? curveProgress.soldPct.toFixed(6) : curveProgress.soldPct.toFixed(2)}% of tokens sold
                 </p>
               )}
             </div>

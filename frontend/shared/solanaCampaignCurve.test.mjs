@@ -41,3 +41,9 @@ test("the card shows the API's per-campaign number; neither divides by a default
   assert.match(api, /withSolanaBondingProgress/);
   assert.match(api, /withEvmBondingProgress/);
 });
+
+test("a Meteora DBC pool account is not a Campaign: decodes to null instead of throwing", () => {
+  const pool = Buffer.from(fs.readFileSync(path.join(here, "fixtures/dazilla-dbc-pool-account.b64"), "utf8").trim(), "base64");
+  assert.equal(pool.length, 424);
+  assert.equal(decodeSolanaCampaignCurve(pool), null);
+});

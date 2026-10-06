@@ -756,3 +756,29 @@ test("lookup returns the coin's created time for the token page's Deployed tile"
   const source = read(new URL("./create.js", import.meta.url), "utf8");
   assert.match(source, /coalesce\(c\.created_at_chain, c\.created_at\) as created_at/);
 });
+
+test("live lookup reports tokens sold on the curve from the pool's base reserve and its config", async () => {
+  const db = memoryDb();
+  db.campaigns.push({
+    chain_id: 101, campaign_address: POOL.publicKey.toBase58(), token_address: MINT.publicKey.toBase58(),
+    creator_address: SIGNER.publicKey.toBase58(), name: "DAZILLA", symbol: "DAZILLA", launch_type: "dbc",
+    meta: { dbc: { config: CONFIG.publicKey.toBase58() } }, is_active: true, created_at: new Date(),
+  });
+  // DAZILLA on mainnet 2026-10-06: config 6GdLrN... swap 546.68M + migration 211.01M, base reserve 488.47M.
+  const handle = handlerFor(db, {
+    readPool: async () => ({
+      config: CONFIG.publicKey,
+      quoteReserve: 35_110_079_047n,
+      baseReserve: 488_465_660_118_496n,
+      migrationQuoteThreshold: 124_408_396_605n,
+    }),
+    readConfig: async () => ({ swapBaseAmount: 546_677_609_369_617n, migrationBaseThreshold: 211_005_592_715_516n }),
+  });
+  const res = fakeRes();
+  await handle(getReq({ token: MINT.publicKey.toBase58(), live: "1" }), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.poolLive.curveTokensRaw, "546677609369617");
+  assert.equal(res.body.poolLive.curveSoldTokensRaw, "269217541966637", "757.68M placed - 488.47M left = 269.22M sold");
+  assert.equal(res.body.poolLive.baseReserveRaw, "488465660118496");
+  assert.equal(res.body.poolLive.progressBps, 2822);
+});

@@ -2,6 +2,7 @@ import { pool } from "../server/db.js";
 import { badMethod, getQuery, json } from "../server/http.js";
 import { reconcileScheduledDraftLifecycle } from "./dev-fix/scheduled-lifecycle.js";
 import { publicHiddenWhere } from "./lib/publicHiddenCampaigns.js";
+import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 
 const SORT_MAP = {
   activity: "last_activity_at",
@@ -94,7 +95,9 @@ const LOGO_JOINS = `
 const LIFECYCLE_JOIN = LOGO_JOINS;
 
 async function readFeaturedFromVotes({ chainId, sortCol, limit }) {
-  const orderByExpr = sortCol === "last_activity_at" ? "ca.last_activity_at" : `va.${sortCol}`;
+  // Windowed columns come from the live recount (vw); the stored ones never decay.
+  const orderByExpr =
+    sortCol === "last_activity_at" ? "ca.last_activity_at" : sortCol === "votes_all_time" ? "va.votes_all_time" : `vw.${sortCol}`;
   const { rows } = await pool.query(
     `SELECT
        va.chain_id AS "chainId",
@@ -108,11 +111,12 @@ ${LIFECYCLE_SELECT}
        COALESCE(dl.scheduled_launch_at, c.created_at_chain) AS "createdAtChain",
        c.graduated_at_chain AS "graduatedAtChain",
        COALESCE(cc.mcap_c, ts.marketcap_bnb) AS "marketcapBnb",
-       COALESCE(va.votes_1h, 0) AS "votes1h",
-       COALESCE(va.votes_24h, 0) AS "votes24h",
-       COALESCE(va.votes_7d, 0) AS "votes7d",
+       COALESCE(vw.votes_1h, 0) AS "votes1h",
+       COALESCE(vw.votes_24h, 0) AS "votes24h",
+       COALESCE(vw.votes_7d, 0) AS "votes7d",
        COALESCE(va.votes_all_time, 0) AS "votesAllTime",
-       COALESCE(va.trending_score, 0) AS "trendingScore",
+       athc.ath_mcap AS "athMarketcapBnb",
+       COALESCE(vw.trending_score, 0) AS "trendingScore",
        va.last_vote_at AS "lastVoteAt",
        ca.last_activity_at AS "lastActivityAt",
        'upvote'::text AS "featuredSource"
@@ -140,6 +144,16 @@ ${LIFECYCLE_JOIN}
        ORDER BY tc.bucket_start DESC
        LIMIT 1
      ) cc ON true
+     -- ATH the same way /api/campaigns reads it (highest 1m candle market cap). Without it the
+     -- featured card showed the current market cap as the ATH (K88: $7.12K for $8.11K).
+     LEFT JOIN LATERAL (
+       SELECT max(tc.mcap_h) AS ath_mcap
+       FROM token_candles tc
+       WHERE tc.chain_id = c.chain_id
+         AND tc.campaign_address = c.campaign_address
+         AND tc.timeframe = '1m'
+     ) athc ON true
+     ${liveVoteWindowsJoin("va.chain_id", "va.campaign_address")}
      LEFT JOIN campaign_activity ca
        ON ca.chain_id = c.chain_id
       AND ca.campaign_address = c.campaign_address
@@ -151,7 +165,7 @@ ${LIFECYCLE_JOIN}
        AND NOT ${publicHiddenWhere("c")}
        AND (dl.scheduled_launch_at IS NULL OR dl.scheduled_launch_at <= now())
      ORDER BY ${orderByExpr} DESC NULLS LAST,
-       COALESCE(va.votes_24h, 0) DESC,
+       COALESCE(vw.votes_24h, 0) DESC,
        COALESCE(va.votes_all_time, 0) DESC,
        COALESCE(dl.scheduled_launch_at, c.created_at_chain) DESC NULLS LAST
      LIMIT $2`,

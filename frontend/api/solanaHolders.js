@@ -11,6 +11,8 @@ import { countSolanaHolders } from "./lib/arenaImportMarketFeed.js";
  * RPC scan.
  */
 const CACHE_MS = 60_000;
+// PDA ["pool_authority"] of the DBC program dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN (pinned in the test).
+export const DBC_POOL_AUTHORITY = "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM";
 const cache = new Map();
 const inflight = new Map();
 
@@ -32,19 +34,13 @@ export async function resolveExcludeOwners(mint, campaign, deps = {}) {
     );
     const row = found.rows?.[0];
     if (row && String(row.launch_type) === "dbc") {
-      const url = rpcUrl();
-      if (!url) return [];
-      const { Connection, PublicKey } = await import("@solana/web3.js");
-      const { DynamicBondingCurveClient } = await import("@meteora-ag/dynamic-bonding-curve-sdk");
-      const client = new DynamicBondingCurveClient(new Connection(url, "confirmed"), "confirmed");
-      const pool = await client.state.getPool(new PublicKey(row.campaign_address));
-      const state = pool?.poolState ?? pool;
-      const vault = state?.baseVault || state?.base_vault;
-      const vaultStr = vault?.toBase58?.() || String(vault || "");
-      return vaultStr ? [vaultStr] : [];
+      // The count is by owner, so the pool's base vault is excluded through its owner: the DBC
+      // program's pool_authority PDA, the same for every DBC pool. Excluding the vault's own
+      // address matched no owner and left the pool counted as a holder (DAZILLA: 48 for 47).
+      return [DBC_POOL_AUTHORITY];
     }
   } catch (error) {
-    console.warn("[api/solana/holders] DBC vault lookup failed", error?.message || error);
+    console.warn("[api/solana/holders] launch type lookup failed", error?.message || error);
   }
   return [campaign];
 }

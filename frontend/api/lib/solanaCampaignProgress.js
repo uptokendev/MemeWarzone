@@ -43,18 +43,87 @@ async function readBatch(urls, batch, fetchImpl) {
   throw lastError || new Error("no Solana RPC configured");
 }
 
+const DBC_PROGRAM_ID = "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN";
+const dbcThresholds = new Map(); // config address -> migration quote threshold (a config never changes)
+let dbcCoderPromise = null;
+
+/** The DBC SDK's account coder (decodes bytes only; the connection is never used). */
+async function dbcAccountCoder() {
+  dbcCoderPromise ||= (async () => {
+    const { Connection } = await import("@solana/web3.js");
+    const { DynamicBondingCurveClient } = await import("@meteora-ag/dynamic-bonding-curve-sdk");
+    return new DynamicBondingCurveClient(new Connection("http://127.0.0.1:8899"), "confirmed").state.program.coder.accounts;
+  })();
+  return dbcCoderPromise;
+}
+
+/** A DBC pool's quote reserve, config and migration flag from its account bytes. */
+export async function decodeDbcPool(bytes) {
+  const decoded = (await dbcAccountCoder()).decode("virtualPool", bytes);
+  const pool = decoded?.poolState ?? decoded;
+  return {
+    launchType: "dbc",
+    quoteReserve: BigInt(String(pool.quoteReserve)),
+    config: String(pool.config),
+    isMigrated: Number(pool.isMigrated) !== 0,
+  };
+}
+
+/** A DBC config's migration quote threshold (quote raw units) from its account bytes. */
+export async function decodeDbcConfigThreshold(bytes) {
+  return BigInt(String((await dbcAccountCoder()).decode("poolConfig", bytes).migrationQuoteThreshold));
+}
+
+async function decodeAccount(value) {
+  const data = value?.data?.[0];
+  if (!data) return null;
+  const bytes = Buffer.from(data, "base64");
+  try {
+    // A Meteora DBC coin's campaign address is its pool, not a launchpad Campaign account.
+    if (String(value.owner || "") === DBC_PROGRAM_ID) return await decodeDbcPool(bytes);
+    return decodeSolanaCampaignCurve(bytes);
+  } catch {
+    return null;
+  }
+}
+
+async function readRaw(addresses, { urls, fetchImpl }) {
+  const out = [];
+  for (let i = 0; i < addresses.length; i += 100) out.push(...(await readBatch(urls, addresses.slice(i, i + 100), fetchImpl)));
+  return out;
+}
+
 export async function readAccounts(addresses, { urls = solanaProgressRpcUrls(), fetchImpl = fetch } = {}) {
   if (!urls.length || !addresses.length) return new Map();
+  const values = await readRaw(addresses, { urls, fetchImpl });
   const out = new Map();
-  for (let i = 0; i < addresses.length; i += 100) {
-    const batch = addresses.slice(i, i + 100);
-    const values = await readBatch(urls, batch, fetchImpl);
-    batch.forEach((address, index) => {
-      const data = values[index]?.data?.[0];
-      out.set(address, data ? decodeSolanaCampaignCurve(Buffer.from(data, "base64")) : null);
-    });
+  for (let index = 0; index < addresses.length; index += 1) out.set(addresses[index], await decodeAccount(values[index]));
+  // DBC progress is the pool's quote reserve against its config's migration threshold.
+  const configs = [...new Set([...out.values()].filter((v) => v?.launchType === "dbc" && !dbcThresholds.has(v.config)).map((v) => v.config))];
+  if (configs.length) {
+    // A failed config read leaves only the DBC coins without progress, never the launchpad ones.
+    const raw = await readRaw(configs, { urls, fetchImpl }).catch(() => []);
+    for (let index = 0; index < configs.length; index += 1) {
+      const data = raw[index]?.data?.[0];
+      if (!data) continue;
+      try {
+        dbcThresholds.set(configs[index], await decodeDbcConfigThreshold(Buffer.from(data, "base64")));
+      } catch {
+        // unknown threshold leaves that coin's progress null
+      }
+    }
+  }
+  for (const value of out.values()) {
+    if (value?.launchType === "dbc") value.threshold = dbcThresholds.get(value.config) ?? 0n;
   }
   return out;
+}
+
+/** DBC progress in percent (4 decimals), as the coin page shows it; null when the threshold is unknown. */
+export function dbcProgressPct(pool) {
+  if (pool.isMigrated) return 100;
+  if (!(pool.threshold > 0n)) return null;
+  return Math.max(0, Math.min(100, Number((pool.quoteReserve * 1_000_000n) / pool.threshold) / 10_000));
 }
 
 /** Adds progressPct + graduationCloseSol to Solana items (never throws; unknown stays null). */
@@ -72,6 +141,10 @@ export async function withSolanaBondingProgress(items, solUsd) {
       if (!curve) continue;
       if (item.isDexTrading) {
         item.progressPct = 100;
+        continue;
+      }
+      if (curve.launchType === "dbc") {
+        item.progressPct = dbcProgressPct(curve);
         continue;
       }
       const closes = solanaCurveCloseLamports(curve, solUsd);

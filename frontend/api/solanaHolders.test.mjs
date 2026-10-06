@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveExcludeOwners } from "./solanaHolders.js";
+import { PublicKey } from "@solana/web3.js";
+import { DBC_POOL_AUTHORITY, resolveExcludeOwners } from "./solanaHolders.js";
 
-test("DBC coins exclude the pool base vault instead of the campaign PDA", async () => {
-  const vault = "Vault1111111111111111111111111111111111111";
+test("DBC coins exclude the pool authority, the owner of the pool's base vault", async () => {
   const owners = await resolveExcludeOwners("Mint11111111111111111111111111111111111111", "Pool11111111111111111111111111111111111111", {
     db: {
       async query() {
@@ -11,9 +11,14 @@ test("DBC coins exclude the pool base vault instead of the campaign PDA", async 
       },
     },
   });
-  // Without RPC the vault lookup fails closed to [] rather than excluding the pool PDA.
-  assert.ok(Array.isArray(owners));
-  assert.ok(!owners.includes("Pool11111111111111111111111111111111111111") || owners[0] === vault);
+  // Holders are counted by owner. DAZILLA's base vault iEd2Hg... is owned by this PDA, so it is
+  // what keeps the pool out of the count (the vault's own address matched no owner: 48 for 47).
+  assert.deepEqual(owners, [DBC_POOL_AUTHORITY]);
+});
+
+test("the pool authority is the DBC program's pool_authority PDA", () => {
+  const [pda] = PublicKey.findProgramAddressSync([Buffer.from("pool_authority")], new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"));
+  assert.equal(pda.toBase58(), DBC_POOL_AUTHORITY);
 });
 
 test("launchpad coins still exclude the campaign PDA", async () => {

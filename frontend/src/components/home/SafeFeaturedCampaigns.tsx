@@ -47,6 +47,7 @@ type FeaturedItem = {
   votesAllTime?: number | null;
   marketcapBnb?: string | null;
   liveMarketcapBnb?: string | null;
+  athMarketcapBnb?: string | null;
   graduatedAtChain?: string | null;
   isDexTrading?: boolean;
 };
@@ -100,6 +101,7 @@ function normalizeItem(raw: any, fallbackChainId: number): FeaturedItem | null {
     votes24h: Number(raw?.votes24h ?? raw?.votes_24h ?? 0),
     votesAllTime: Number(raw?.votesAllTime ?? raw?.votes_all_time ?? 0),
     marketcapBnb: raw?.marketcapBnb ?? raw?.marketcap_bnb ?? null,
+    athMarketcapBnb: raw?.athMarketcapBnb ?? raw?.ath_marketcap_bnb ?? null,
     graduatedAtChain: raw?.graduatedAtChain ?? raw?.graduated_at_chain ?? null,
     isDexTrading: Boolean(raw?.isDexTrading ?? raw?.is_dex_trading ?? raw?.status === "graduated"),
   };
@@ -160,6 +162,10 @@ function mergeFeaturedItems(prev: FeaturedItem[], incoming: FeaturedItem[], opts
         item.liveMarketcapBnb != null && item.liveMarketcapBnb !== ""
           ? item.liveMarketcapBnb
           : old.liveMarketcapBnb,
+      // Vote and trade events carry no ATH; keep the one /api/featured returned.
+      athMarketcapBnb: Math.max(Number(item.athMarketcapBnb) || 0, Number(old.athMarketcapBnb) || 0) > 0
+        ? String(Math.max(Number(item.athMarketcapBnb) || 0, Number(old.athMarketcapBnb) || 0))
+        : null,
       // Keep optimistic local bumps from going backwards when indexer lags a few seconds.
       votes24h: opts?.preferIncomingVotes ? inV24 : Math.max(oldV24, inV24),
       votesAllTime: opts?.preferIncomingVotes ? inVAll : Math.max(oldVAll, inVAll),
@@ -723,10 +729,15 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
           ? mcapBnb * Number(nativeUsd)
           : null;
 
+        const athBnb = pickLiveNumeric(item.athMarketcapBnb, NaN);
+        const athUsd = Number.isFinite(athBnb) && athBnb > 0 && Number.isFinite(Number(nativeUsd)) && Number(nativeUsd) > 0
+          ? athBnb * Number(nativeUsd)
+          : null;
+
         return {
           ...item,
           mcapUsdLabel: mcapUsd != null ? formatCompactUsd(mcapUsd) : null,
-          athUsdLabel: getAthLabel(item.chainId, item.campaignAddress, mcapUsd),
+          athUsdLabel: getAthLabel(item.chainId, item.campaignAddress, mcapUsd, athUsd),
         };
       });
   }, [items, nativeUsd, patchByCampaign]);

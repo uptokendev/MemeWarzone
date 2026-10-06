@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 
 import { pool } from "../server/db.js";
+import { liveArenaVotes24hJoin } from "./lib/liveVoteWindows.js";
 import { badMethod, getQuery, isSolanaAddress, json, readJson } from "../server/http.js";
 import { getServerReadProvider } from "./lib/getServerReadProvider.js";
 import { resolveArenaVoteToken } from "./lib/arenaEligibility.js";
@@ -225,14 +226,16 @@ async function handleFeatured(req, res) {
   let where = "";
   if (Number.isFinite(chainId) && chainId > 0) {
     params.push(chainId);
-    where = "where chain_id = $1";
+    where = "where ava.chain_id = $1";
   }
   params.push(Math.max(limit * 4, 40));
   const result = await pool.query(
-    `select chain_id, token_address, votes_24h, votes_all_time, updated_at
-       from public.arena_vote_aggregates
+    // The 24h window is recounted here: the stored one is rewritten only when a new vote lands.
+    `select ava.chain_id, ava.token_address, coalesce(avw.votes_24h, 0) as votes_24h, ava.votes_all_time, ava.updated_at
+       from public.arena_vote_aggregates ava
+       ${liveArenaVotes24hJoin("ava.chain_id", "ava.token_address")}
       ${where}
-      order by votes_24h desc, votes_all_time desc, updated_at desc
+      order by coalesce(avw.votes_24h, 0) desc, ava.votes_all_time desc, ava.updated_at desc
       limit $${params.length}`,
     params,
   );

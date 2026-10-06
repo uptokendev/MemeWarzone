@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readAccounts, solanaProgressRpcUrls } from "./solanaCampaignProgress.js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { dbcProgressPct, readAccounts, solanaProgressRpcUrls } from "./solanaCampaignProgress.js";
 
 test("RPC list: SOLANA_RPC_URL entries first, then the other mainnet names, http only, no duplicates", () => {
   const urls = solanaProgressRpcUrls({
@@ -27,4 +30,38 @@ test("a refusing first RPC falls through to the next one instead of leaving ever
 test("every RPC refusing throws, so the caller logs it instead of silently reporting nothing", async () => {
   const fetchImpl = async () => ({ ok: false, status: 403, json: async () => ({}) });
   await assert.rejects(readAccounts(["x"], { urls: ["https://dead.example"], fetchImpl }), /HTTP 403/);
+});
+
+const fixture = (name) =>
+  fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../shared/fixtures", name), "utf8").trim();
+// Real mainnet accounts read 2026-10-06: KAIJU88's launchpad Campaign, DAZILLA's Meteora DBC pool and config.
+const KAIJU = "Hsa3rJRQHVs8hB9psXipLjRz66kKr9Nhcrc8wGmH9edA";
+const DAZILLA_POOL = "CAfqxMHTZc4YHdApxgxbMbUpV6U8CTKo8uoixa92DcaS";
+const DAZILLA_CONFIG = "6GdLrNUhNWe2vqp3Hr75pcfMzzc65qruPjRoCERDeHAy";
+const accounts = {
+  [KAIJU]: { owner: "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt", data: [fixture("kaiju88-campaign-account.b64"), "base64"] },
+  [DAZILLA_POOL]: { owner: "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN", data: [fixture("dazilla-dbc-pool-account.b64"), "base64"] },
+  [DAZILLA_CONFIG]: { owner: "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN", data: [fixture("dazilla-dbc-config-account.b64"), "base64"] },
+};
+const chain = (overrides = {}) => async (_url, init) => {
+  const [addresses] = JSON.parse(init.body).params;
+  if (overrides.refuse?.some((a) => addresses.includes(a))) return { ok: false, status: 429, json: async () => ({}) };
+  return { ok: true, status: 200, json: async () => ({ result: { value: addresses.map((a) => accounts[a] ?? null) } }) };
+};
+
+test("a DBC pool in the list no longer blanks every Solana card: both coins get their own progress", async () => {
+  const out = await readAccounts([KAIJU, DAZILLA_POOL], { urls: ["https://live.example"], fetchImpl: chain() });
+  assert.ok(out.get(KAIJU)?.curveTokenSupply > 0n, "KAIJU88 still decodes as a launchpad curve");
+  const pool = out.get(DAZILLA_POOL);
+  assert.equal(pool.launchType, "dbc");
+  // The fixture pool holds 28.530175447 SOL against its config's 124.408396605 SOL threshold, the
+  // same pair /api/dbc/create?live=1 hands the coin page (which then read 35.11 SOL = 28.22%).
+  assert.equal(pool.quoteReserve, 28_530_175_447n);
+  assert.equal(pool.threshold, 124_408_396_605n);
+  assert.equal(dbcProgressPct(pool), 22.9326, "floored to 4 decimals, the coin page's own rounding");
+});
+
+test("a refused DBC config read leaves the launchpad coin's curve intact", async () => {
+  const out = await readAccounts([KAIJU, DAZILLA_POOL], { urls: ["https://live.example"], fetchImpl: chain({ refuse: [DAZILLA_CONFIG] }) });
+  assert.ok(out.get(KAIJU)?.curveTokenSupply > 0n);
 });

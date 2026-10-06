@@ -38,7 +38,9 @@ const OFF = (() => {
 
 export function decodeSolanaCampaignCurve(bytes) {
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  if (data.length < DISCRIMINATOR + 400) return null;
+  // Every field read below must be inside the account; a shorter account (a Meteora DBC pool is 424
+  // bytes) is not a Campaign and threw here, which blanked progress for every Solana card.
+  if (data.length <= OFF.graduated) return null;
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const u64 = (o) => view.getBigUint64(o, true);
   return {

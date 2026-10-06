@@ -1,5 +1,6 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, json } from "../server/http.js";
+import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 
 /**
  * Batch vote counts for a set of campaigns.
@@ -20,6 +21,8 @@ const HOUR_MS = 60 * 60 * 1000;
  * vote_aggregates is recomputed only when a vote lands, so a window count goes stale once the
  * campaign stops receiving votes (a Solana coin last voted 5 days ago still read votes24h=1).
  * If the last vote is older than the window, the window is empty for certain.
+ * The query now recounts the windows (liveVoteWindowsJoin), which also covers a window that is
+ * only partly expired; this stays as a guard on that count.
  */
 export function windowCount(stored, lastVoteAt, windowMs, nowMs = Date.now()) {
   const value = Number(stored ?? 0) || 0;
@@ -54,16 +57,17 @@ export default async function handler(req, res) {
 
     const { rows } = await pool.query(
       `SELECT
-         campaign_address AS "campaignAddress",
-         votes_1h AS "votes1h",
-         votes_24h AS "votes24h",
-         votes_7d AS "votes7d",
-         votes_all_time AS "votesAllTime",
-         trending_score AS "trendingScore",
-         last_vote_at AS "lastVoteAt"
-       FROM vote_aggregates
-       WHERE chain_id = $1
-         AND campaign_address = ANY($2::text[])`,
+         va.campaign_address AS "campaignAddress",
+         vw.votes_1h AS "votes1h",
+         vw.votes_24h AS "votes24h",
+         vw.votes_7d AS "votes7d",
+         va.votes_all_time AS "votesAllTime",
+         vw.trending_score AS "trendingScore",
+         va.last_vote_at AS "lastVoteAt"
+       FROM vote_aggregates va
+       ${liveVoteWindowsJoin("va.chain_id", "va.campaign_address")}
+       WHERE va.chain_id = $1
+         AND va.campaign_address = ANY($2::text[])`,
       [chainId, valid]
     );
 

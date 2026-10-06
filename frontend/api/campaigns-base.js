@@ -4,6 +4,7 @@ import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
 import { withSolanaBondingProgress } from "./lib/solanaCampaignProgress.js";
 import { withEvmBondingProgress } from "./lib/evmCampaignProgress.js";
 import { creatorMatchSql, normalizeCreatorQuery } from "./lib/campaignCreatorFilter.js";
+import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 
 /**
  * Market cap of EVM generation 6/5 coins is fully diluted (founder decision 2026-10-01): price x total
@@ -400,7 +401,7 @@ export default async function handler(req, res) {
             else coalesce(cc.mcap_c, ts.marketcap_bnb)
           end as marketcap_bnb,
           ts.vol_24h_bnb,
-          va.votes_24h,
+          vw.votes_24h,
           va.votes_all_time
         from public.campaigns c
         left join public.campaign_market_state cms
@@ -468,6 +469,7 @@ export default async function handler(req, res) {
            or lower(va.campaign_address) = lower(c.campaign_address)
            or (c.token_address is not null and lower(va.campaign_address) = lower(c.token_address))
          )
+        ${liveVoteWindowsJoin("va.chain_id", "va.campaign_address")}
         where c.chain_id = $1
           and ($3::text is null or (
             c.name ilike $3

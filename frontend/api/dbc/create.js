@@ -363,6 +363,9 @@ async function insertDbcCampaign(db, row) {
   );
 }
 
+// config address -> { swap, migration } base amounts (a DBC config is immutable).
+const dbcConfigCurveTokens = new Map();
+
 export function createDbcCreateHandler(deps = {}) {
   const env = deps.env || process.env;
   const now = deps.now || (() => new Date());
@@ -933,8 +936,32 @@ export function createDbcCreateHandler(deps = {}) {
               threshold = BigInt(onChainConfig?.migrationQuoteThreshold?.toString?.() || 0);
             }
           }
+          // Tokens sold on the curve: the pool starts with swapBaseAmount + migrationBaseThreshold
+          // and baseReserve counts down from it. Both amounts live on the config, which never changes.
+          let curveTokens = null;
+          if (configAddress && (deps.readConfig || !deps.readPool)) {
+            curveTokens = dbcConfigCurveTokens.get(configAddress) || null;
+            if (!curveTokens) {
+              const cfg = await (deps.readConfig
+                ? deps.readConfig(configAddress)
+                : client.state.getPoolConfig(new PublicKey(configAddress))
+              ).catch(() => null);
+              const swap = BigInt(cfg?.swapBaseAmount?.toString?.() || cfg?.swap_base_amount || 0);
+              const migration = BigInt(cfg?.migrationBaseThreshold?.toString?.() || cfg?.migration_base_threshold || 0);
+              if (swap > 0n) {
+                curveTokens = { swap, migration };
+                dbcConfigCurveTokens.set(configAddress, curveTokens);
+              }
+            }
+          }
+          const baseReserve = BigInt(onChain.baseReserve?.toString?.() || onChain.base_reserve || 0);
           payload.poolLive = {
             quoteReserveLamports: quoteReserve.toString(),
+            baseReserveRaw: baseReserve.toString(),
+            curveTokensRaw: curveTokens ? curveTokens.swap.toString() : null,
+            curveSoldTokensRaw: curveTokens
+              ? (curveTokens.swap + curveTokens.migration > baseReserve ? curveTokens.swap + curveTokens.migration - baseReserve : 0n).toString()
+              : null,
             migrationQuoteThresholdLamports: threshold.toString(),
             progressBps: threshold > 0n ? Number((quoteReserve * 10_000n) / threshold) : 0,
             sqrtPrice: String(onChain.sqrtPrice || onChain.sqrt_price || ""),

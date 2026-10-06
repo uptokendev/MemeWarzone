@@ -1,4 +1,5 @@
 import { pool } from "../server/db.js";
+import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, isSolanaChain, json, normalizeAddress as normalizeChainAddress } from "../server/http.js";
 
 const DEFAULT_GRAD_TARGET_BNB = 50;
@@ -197,15 +198,16 @@ async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, 
         ts.sold_tokens,
         ts.marketcap_bnb,
         ts.vol_24h_bnb,
-        va.votes_24h,
+        vw.votes_24h,
         va.votes_all_time,
-        coalesce(va.trending_score, 0) as vote_trending_score,
+        coalesce(vw.trending_score, 0) as vote_trending_score,
         ca.last_activity_at
       from public.campaigns c
       left join public.token_stats ts
         on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address
       left join public.vote_aggregates va
         on va.chain_id = c.chain_id and va.campaign_address = c.campaign_address
+      ${liveVoteWindowsJoin("va.chain_id", "va.campaign_address")}
       left join public.campaign_activity ca
         on ca.chain_id = c.chain_id and ca.campaign_address = c.campaign_address
       where ${filters.join(" and ")}
