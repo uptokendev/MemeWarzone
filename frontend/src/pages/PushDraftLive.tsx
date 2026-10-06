@@ -51,8 +51,10 @@ import {
   beginDbcCreate,
   finalizeDbcCreate,
   preflightDbcCreate,
+  quoteDbcFirstBuy,
   scheduleDbcDraft,
 } from "@/lib/dbcCreate";
+import { enabledQuotes, quoteRawToUi, quoteUiToRaw, WSOL_MINT } from "../../shared/dbcQuotes.mjs";
 import { submitDbcCreateTransaction } from "@/lib/dbcCreateSubmit";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 import { isScheduleLocked } from "../../shared/dbcSchedule.mjs";
@@ -159,6 +161,10 @@ export default function PushDraftLive() {
   const [evmFirstBuyInput, setEvmFirstBuyInput] = useState("");
   const [evmGen6FactoryAddress, setEvmGen6FactoryAddress] = useState("");
   const [evmSavedFirstBuyTokens, setEvmSavedFirstBuyTokens] = useState(0n);
+  // DBC first buy on Push live (founder, 2026-10-06): filled with the amount saved on the draft, and
+  // editable here. Stock quotes keep the saved amount (their wallet multiplier is read on Create).
+  const [dbcFirstBuyInput, setDbcFirstBuyInput] = useState("");
+  const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ bps: string; exceedsCap: boolean } | null>(null);
 
   const showArmBlock = (detail: Parameters<typeof emitCreatorArmBlocked>[0]) => {
     emitCreatorArmBlocked(detail);
@@ -185,6 +191,13 @@ export default function PushDraftLive() {
           if (saved?.feeChoiceName) setEvmFeeChoice(saved.feeChoiceName);
           if (saved?.feeChoiceName === "split" && saved.feeCreatorPct) setEvmCreatorSharePct(String(saved.feeCreatorPct));
           if (saved?.firstBuyTokens && BigInt(saved.firstBuyTokens) > 0n) setEvmSavedFirstBuyTokens(BigInt(saved.firstBuyTokens));
+          const savedDbcFirstBuy = String((data.draft as { dbcFirstBuyLamports?: string | null }).dbcFirstBuyLamports || "");
+          const savedQuote = enabledQuotes(String(import.meta.env.VITE_SOLANA_CLUSTER || "solana-mainnet-beta")).find(
+            (q) => q.mint === ((data.draft as { dbcQuoteMint?: string | null }).dbcQuoteMint || WSOL_MINT),
+          );
+          if (dbc && /^\d+$/.test(savedDbcFirstBuy) && BigInt(savedDbcFirstBuy) > 0n && savedQuote) {
+            setDbcFirstBuyInput(String(quoteRawToUi(savedDbcFirstBuy, Number(savedQuote.decimals ?? 9))));
+          }
           // A scheduled DBC draft shows the time it was saved with, not a fresh default.
           const savedAt = dbc && data.draft.scheduledLaunchAt ? new Date(String(data.draft.scheduledLaunchAt)) : null;
           if (savedAt && Number.isFinite(savedAt.getTime())) setLaunchAtInput(toLocalInputValue(savedAt));
@@ -517,8 +530,54 @@ export default function PushDraftLive() {
     }
   };
 
+  const dbcDraftQuote = draft
+    ? enabledQuotes(String(import.meta.env.VITE_SOLANA_CLUSTER || "solana-mainnet-beta")).find(
+        (q) => q.mint === ((draft as { dbcQuoteMint?: string | null }).dbcQuoteMint || WSOL_MINT),
+      ) || null
+    : null;
+  const dbcFirstBuyEditable = Boolean(dbcDraftQuote && dbcDraftQuote.kind !== "stock");
+  /** Raw first-buy amount for the launch: the field when it is editable, else the saved draft amount. */
+  const dbcFirstBuyLamports = (): string => {
+    if (!dbcFirstBuyEditable || !dbcDraftQuote) return String((draft as any)?.dbcFirstBuyLamports || "0");
+    const n = Number(dbcFirstBuyInput);
+    if (!dbcFirstBuyInput.trim() || !Number.isFinite(n) || n <= 0) return "0";
+    return quoteUiToRaw(dbcFirstBuyInput, Number(dbcDraftQuote.decimals ?? 9)).toString();
+  };
+
+  // Share of supply for the typed first buy, and the 10% cap (same quote call as Create).
+  const dbcLaunchDraft = isDbcLaunchEnabled() && String((draft as { launchType?: string } | undefined)?.launchType || "") === "dbc";
+  useEffect(() => {
+    const n = Number(dbcFirstBuyInput);
+    if (!dbcLaunchDraft || !dbcFirstBuyEditable || !Number.isFinite(n) || n <= 0) {
+      setDbcFirstBuyQuote(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void quoteDbcFirstBuy({
+        targetUsd: Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000,
+        feeChoice: (draft as any)?.dbcFeeChoice || "keep",
+        creatorSharePct: (draft as any)?.dbcFeeChoice === "split" ? Number((draft as any)?.dbcCreatorSharePct) : null,
+        firstBuyLamports: dbcFirstBuyLamports(),
+        quoteMint: (draft as any)?.dbcQuoteMint || WSOL_MINT,
+      })
+        .then((next) => {
+          if (!cancelled) setDbcFirstBuyQuote({ bps: String(next.bps || "0"), exceedsCap: Boolean(next.exceedsCap) });
+        })
+        .catch(() => {
+          if (!cancelled) setDbcFirstBuyQuote(null);
+        });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbcLaunchDraft, dbcFirstBuyEditable, dbcFirstBuyInput, graduationTargetWei, draft?.id]);
+
   const deployDbc = async () => {
     if (!draft) return;
+    if (dbcFirstBuyQuote?.exceedsCap) return toast.error("The first buy cannot be more than 10% of supply.");
     if (!solanaWallet.solanaAccount) return toast.error("Connect the draft owner Solana wallet first.");
     if (!ownerConnected) return toast.error("Only the draft owner Solana wallet can deploy this draft.");
     if (mode === "scheduled" && (!draft.scheduledLaunchAt || isScheduleLocked(new Date(launchAtInput).toISOString(), Date.now()))) {
@@ -543,7 +602,7 @@ export default function PushDraftLive() {
           targetUsd: Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000,
           feeChoice: (draft as any).dbcFeeChoice || "keep",
           creatorSharePct: (draft as any).dbcCreatorSharePct,
-          firstBuyLamports: (draft as any).dbcFirstBuyLamports,
+          firstBuyLamports: dbcFirstBuyLamports(),
         });
         toast.success("Launch time saved. Nothing is created on chain until you deploy.");
         navigate(`/prepare/${draft.slug}`);
@@ -594,7 +653,7 @@ export default function PushDraftLive() {
         targetUsd,
         feeChoice: (draft as any).dbcFeeChoice || "keep",
         creatorSharePct: (draft as any).dbcCreatorSharePct,
-        firstBuyLamports: (draft as any).dbcFirstBuyLamports || "0",
+        firstBuyLamports: dbcFirstBuyLamports(),
         draftId: draft.id,
         quoteMint: (draft as any).dbcQuoteMint || undefined,
       });
@@ -894,6 +953,29 @@ export default function PushDraftLive() {
                     : "This timestamp controls only when trading opens. It is not reserved, queued, or made exclusive to this campaign."}
                 </p>
               </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {dbcDraft && dbcFirstBuyEditable ? (
+          <div className="mt-4" data-push-live-dbc-first-buy="true">
+            <div className="text-sm font-semibold text-mw-text">Your first buy (optional)</div>
+            <p className="mt-0.5 text-xs text-mw-muted">Buys in the same transaction as the launch, at the normal 2% fee. Leave empty for no first buy.</p>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              inputMode="decimal"
+              value={dbcFirstBuyInput}
+              onChange={(e) => setDbcFirstBuyInput(e.target.value)}
+              placeholder={`${dbcDraftQuote?.symbol || "SOL"} amount`}
+              className="mt-2 max-w-[12rem]"
+            />
+            {dbcFirstBuyQuote ? (
+              <p className={`mt-1 text-xs ${dbcFirstBuyQuote.exceedsCap ? "text-mw-accent-soft" : "text-mw-muted"}`}>
+                About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
+                {dbcFirstBuyQuote.exceedsCap ? " (over the 10% cap)" : ""}.
+              </p>
             ) : null}
           </div>
         ) : null}
