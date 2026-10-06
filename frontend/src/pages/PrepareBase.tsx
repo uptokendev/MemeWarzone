@@ -312,6 +312,16 @@ function TokenLogo({ src, ticker }: { src?: string | null; ticker: string }) {
     </div>
   );
 }
+
+// Long coin names shrink to fit the tablet screen instead of being cut off.
+function hudNameSizeClass(name: string) {
+  const length = String(name || "").length;
+  if (length <= 14) return "text-2xl md:text-3xl";
+  if (length <= 22) return "text-xl md:text-2xl";
+  if (length <= 32) return "text-lg md:text-xl";
+  return "text-base md:text-lg";
+}
+
 function WarzoneHudPreview({
   imageUrl,
   ticker,
@@ -344,7 +354,7 @@ function WarzoneHudPreview({
           </div>
 
           <div className="flex min-h-[4.8rem] items-center justify-center border-t border-orange-400/30 bg-black/95 px-4 py-3 text-center md:min-h-[5.6rem]">
-            <div className="line-clamp-2 font-mw-cond font-bold text-2xl uppercase leading-[0.9] tracking-[0.06em] text-orange-100 drop-shadow-[0_0_14px_rgba(255,122,26,0.35)] md:text-3xl">
+            <div className={`line-clamp-3 break-words font-mw-cond font-bold uppercase leading-[0.95] tracking-[0.06em] text-orange-100 drop-shadow-[0_0_14px_rgba(255,122,26,0.35)] ${hudNameSizeClass(name)}`}>
               {name}
             </div>
           </div>

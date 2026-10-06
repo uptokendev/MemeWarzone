@@ -24,8 +24,8 @@ export function CookieConsentBanner() {
       >
         <div className="mx-auto flex max-w-[1180px] flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <p className="m-0 text-[13px] leading-snug text-mw-muted">
-            Live streams on MemeWarzone play in Kick's player, and Kick sets its own cookies when it loads.
-            Accept to watch streams here. Decline and the player stays off. You can change this any time with
+            Our website uses third-party cookies to make your experience better and more fun, like watching live
+            streams right here. If you decline, those features stay off. You can change your choice any time with
             the cookie button in the bottom right corner.
             {consent ? <span className="ml-1 text-mw-text">Current setting: {consent === "accepted" ? "accepted" : "declined"}.</span> : null}
           </p>
