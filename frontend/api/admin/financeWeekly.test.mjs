@@ -179,7 +179,9 @@ test("withholding per entity: Dutch holding and US corporation exempt from 5%; t
 test("rules: validated against the default shape, unknown keys dropped, low confidence flagged", () => {
   const table = R.rulesTable(R.effectiveTaxRuleSet(null));
   assert.ok(table.every((r) => /^https:\/\//.test(r.source) && ["2026-10-05", "2026-10-06"].includes(r.checkedOn) && ["high", "medium", "low"].includes(r.confidence)));
-  assert.ok(table.find((r) => r.key === "vat.battle_entries").needsConfirmation);
+  // Battle entries: founder decision 2026-10-06 (taxable, not a game of chance), no longer open.
+  assert.ok(!table.find((r) => r.key === "vat.battle_entries").needsConfirmation);
+  assert.ok(table.find((r) => r.key === "cal.firstPeriod").needsConfirmation, "low-confidence rules stay flagged");
   assert.equal(table.find((r) => r.key === "vat.trading_fees").checkedOn, "2026-10-06");
   assert.match(table.find((r) => r.key === "vat.sponsorships").value, /per customer from recorded evidence/);
   assert.equal(R.validateTaxRuleSet({ vat: { lanes: { upvotes: { treatment: "taxable" } } } }).vat.lanes.upvotes.treatment, "taxable_nl", "the old name still loads");

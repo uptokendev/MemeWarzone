@@ -37,13 +37,15 @@ const WRAPPED = { 56: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", 4663: "0x0bd
 
 /**
  * Scan settings per chain. startBlock: the block at 00:00 UTC of the day before
- * import swaps went live there (BNB 2026-09-25, commit 5628a348; Robinhood
- * 2026-10-03, commit 6f60665b), read from the chain by block timestamp.
+ * import swaps went live there (Robinhood 2026-10-03, commit 6f60665b), read
+ * from the chain by block timestamp. BNB starts at 2026-10-01 00:00 UTC (block
+ * 125000755): nothing was earned there in September (founder 2026-10-06), and a
+ * later start keeps the scan within the log history the BSC RPC serves.
  */
 export function importSwapFeeSources(env = process.env) {
   return {
     101: { chainId: 101, kind: "solana", asset: "SOL", decimals: 9, feeOwner: String(env.SOLANA_IMPORT_SWAP_FEE_OWNER || "2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB").trim() },
-    56: { chainId: 56, kind: "evm", asset: "BNB", decimals: 18, receiver: String(env.IMPORT_SWAP_FEE_RECEIVER_56 || "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c").trim().toLowerCase(), payer: KYBER_ROUTER.toLowerCase(), startBlock: 123849165, maxRange: 5000, maxBlocksPerRun: 300000, confirmations: 15 },
+    56: { chainId: 56, kind: "evm", asset: "BNB", decimals: 18, receiver: String(env.IMPORT_SWAP_FEE_RECEIVER_56 || "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c").trim().toLowerCase(), payer: KYBER_ROUTER.toLowerCase(), startBlock: 125000755, maxRange: 5000, maxBlocksPerRun: 300000, confirmations: 15 },
     4663: { chainId: 4663, kind: "evm", asset: "ETH", decimals: 18, receiver: IMPORT_SWAP_FEE_RECEIVER_4663, payer: UNIVERSAL_ROUTER_4663, startBlock: 77787156, maxRange: 500000, maxBlocksPerRun: 5000000, confirmations: 20 },
   };
 }

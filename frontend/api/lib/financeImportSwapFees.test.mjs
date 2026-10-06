@@ -193,3 +193,11 @@ test("revenue lane: import swaps read the fee table per chain, CSV events from t
   assert.match(EVENT_QUERIES.import_swaps, /f\.tx_hash as tx_hash/);
   assert.equal(vatLaneOf("import-swaps:56"), "import_swaps");
 });
+
+test("founder 2026-10-06: own-wallet import swaps are left out of revenue; BNB scan starts 2026-10-01", async () => {
+  const fs = await import("node:fs");
+  const lanes = fs.readFileSync(new URL("./financeRevenueLanes.js", import.meta.url), "utf8");
+  assert.match(lanes, /from: "public\.finance_import_swap_fees f",\s*where: `f\.chain_id = \$1\s*and f\.fee_raw > 0\s*and not f\.internal_wallet`/);
+  const { importSwapFeeSources } = await import("./financeImportSwapFees.js");
+  assert.equal(importSwapFeeSources({})[56].startBlock, 125000755);
+});

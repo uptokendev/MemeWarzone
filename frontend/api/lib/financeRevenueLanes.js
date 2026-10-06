@@ -38,9 +38,9 @@
 //                     read from the chain into finance_import_swap_fees by
 //                     financeImportSwapFees.js (cron:finance-snapshots). Imported
 //                     coins are never our campaigns, so there is no test-coin
-//                     filter; swaps by our own wallets are counted (like the
-//                     deployer's test UP vote, founder 2026-10-05) and marked
-//                     internal_wallet in the table.
+//                     filter. Swaps by our own wallets (internal_wallet) are
+//                     left out of revenue (founder 2026-10-06); they stay in
+//                     the table.
 //
 // Test coins: a row whose campaign (or either battle side) is a hidden test
 // campaign is left out; a row without a campaign passes.
@@ -237,7 +237,8 @@ export const LANE_SPECS = Object.freeze({
   import_swaps: {
     from: "public.finance_import_swap_fees f",
     where: `f.chain_id = $1
-       and f.fee_raw > 0`,
+       and f.fee_raw > 0
+       and not f.internal_wallet`,
     time: "f.occurred_at", amount: "f.fee_raw",
     tx: "f.tx_hash", logIndex: "f.log_index", campaign: "f.token_address", ref: "f.side", eventId: "f.id::text",
   },
