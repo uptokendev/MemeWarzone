@@ -104,7 +104,17 @@ import {
 } from "@/lib/localTopazTrades";
 import { fetchTopazTradeReports, reportTopazTrade } from "@/lib/topazTradeReports";
 import { isValidTradeTxHash, mergeTradePoints, normalizeTradeTxHash, SYNTHETIC_LOG_INDEX_MIN, tradeDedupeKey } from "@/lib/tradeDedupe";
-import { SOLANA_BUY_FEE_RESERVE_LAMPORTS, SOLANA_BUY_FEE_RESERVE_SOL, evmBuyGasReserveWei, solanaBuyFeeMessage } from "@/lib/tradeBalanceReserve";
+import {
+  DBC_CREATOR_BUY_RESERVE_SOL,
+  DBC_CREATOR_MAX_HEADROOM_PCT,
+  SOLANA_BUY_FEE_RESERVE_LAMPORTS,
+  SOLANA_BUY_FEE_RESERVE_SOL,
+  dbcCreatorBuyMessage,
+  dbcCreatorBuyNeedLamports,
+  dbcCreatorMaxSpendLamports,
+  evmBuyGasReserveWei,
+  solanaBuyFeeMessage,
+} from "@/lib/tradeBalanceReserve";
 
 const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
@@ -4318,6 +4328,16 @@ const toSeconds = (ts: number): number => {
             return;
           }
           const creatorBuy = tradeTab === "buy" && dbcCreator && trader === dbcCreator;
+          // Check the wallet covers the buy before the wallet opens: a creator buy takes up to 5% more
+          // plus lock rent, a normal buy the amount plus the token account and network fee.
+          if (tradeTab === "buy" && solanaQuote.native && bnbBalanceWei != null) {
+            if (creatorBuy && dbcCreatorBuyNeedLamports(amountIn) > bnbBalanceWei) {
+              throw new Error(dbcCreatorBuyMessage(dbcCreatorMaxSpendLamports(bnbBalanceWei)));
+            }
+            if (!creatorBuy && amountIn + SOLANA_BUY_FEE_RESERVE_LAMPORTS > bnbBalanceWei) {
+              throw new Error(solanaBuyFeeMessage(bnbBalanceWei > SOLANA_BUY_FEE_RESERVE_LAMPORTS ? bnbBalanceWei - SOLANA_BUY_FEE_RESERVE_LAMPORTS : 0n));
+            }
+          }
           const tokensOut = creatorBuy ? lockAmountDivisible(effectiveTokenWei) : 0n;
           const result = await submitDbcBondingTrade({
             pool,
@@ -6323,7 +6343,16 @@ const toSeconds = (ts: number): number => {
           nativeBalance={Number.isFinite(nativeBalanceNum) ? nativeBalanceNum : 0}
           nativeReserve={(() => {
             // Buy MAX / % must leave what the trade pays on top of the amount entered.
-            if (isSolanaPage) return solanaQuote.native ? SOLANA_BUY_FEE_RESERVE_SOL : 0;
+            if (isSolanaPage) {
+              if (!solanaQuote.native) return 0;
+              // DBC creator buys take up to 5% over the quote plus lock rent; MAX leaves 8%: (balance - reserve) / 1.08.
+              if (isDbcPage && !dbcMigratedPool && dbcCreator && solanaAccount === dbcCreator) {
+                const bal = Number.isFinite(nativeBalanceNum) ? nativeBalanceNum : 0;
+                const afterReserve = Math.max(0, bal - DBC_CREATOR_BUY_RESERVE_SOL);
+                return DBC_CREATOR_BUY_RESERVE_SOL + (afterReserve * DBC_CREATOR_MAX_HEADROOM_PCT) / (100 + DBC_CREATOR_MAX_HEADROOM_PCT);
+              }
+              return SOLANA_BUY_FEE_RESERVE_SOL;
+            }
             const gas = Number(ethers.formatEther(evmBuyGasReserveWei(isRobinhoodPage)));
             if (isDexStage) return gas;
             // Bonding buys send cost + SLIPPAGE_PCT headroom, so the spendable part is (balance - gas) / (1 + slippage).
