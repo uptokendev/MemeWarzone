@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1791139188072,
+  "meta": {
+    "name": "MWZ PF1: protocol forwarder, propose",
+    "description": "TreasuryRouterV4 0x49Ae38B1 on Robinhood Chain: propose ProtocolRevenueForwarder 0xaC65Db89 as the protocol revenue vault. It forwards native to the current ProtocolRevenueVault 0x632061cA and unwraps the LP protocol 20% (WETH) through flush(). Nothing changes until PF2. Execute PF2 no earlier than 3600 s after this executes.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d",
+      "value": "0",
+      "data": "0x7acae6bc000000000000000000000000ac65db89209ec375a7847aa3b3ecf6efbd57d1d6",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "proposeProtocolRevenueVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0xaC65Db89209EC375a7847AA3B3eCF6EFbd57D1D6"
+      }
+    }
+  ]
+}
