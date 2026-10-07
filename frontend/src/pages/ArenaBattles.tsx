@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Swords } from "lucide-react";
 import { toast } from "sonner";
+import { BattleImportCta } from "@/components/arena/BattleImportCta";
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
 import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { CreatorChallengeCarousel } from "@/components/arena/CreatorChallengeCarousel";
@@ -271,6 +272,12 @@ export default function ArenaBattles() {
             <span className="lg:hidden">Challenge</span>
             <span className="hidden lg:inline">Challenge a coin</span>
           </Button>
+          <BattleImportCta
+            placement="header"
+            walletConnected={Boolean(feedWallet.address)}
+            loading={feed.loading}
+            creatorStatuses={feed.creatorStatuses}
+          />
           <span className="hidden flex-1 lg:block" />
           <span
             className={`hidden h-[26px] items-center gap-1.5 rounded-full border px-2.5 text-[13px] font-semibold lg:inline-flex ${feed.source === "api" ? "border-[#1F5133] bg-[#171B20] text-[#6EE7A0]" : "border-mw-edge bg-[#171B20] text-[#C9CED4]"}`}
@@ -343,6 +350,13 @@ export default function ArenaBattles() {
         walletAddress={feedWallet.address}
         chainId={feedWallet.chainId}
         onSent={() => void feed.refreshFeed()}
+      />
+
+      <BattleImportCta
+        placement="banner"
+        walletConnected={Boolean(feedWallet.address)}
+        loading={feed.loading}
+        creatorStatuses={feed.creatorStatuses}
       />
 
       <CreatorChallengeCarousel
