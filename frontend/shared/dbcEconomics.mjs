@@ -79,15 +79,18 @@ export const DBC_CREATOR_LOCK_COPY =
 export const DBC_ENABLE_FIRST_SWAP_WITH_MIN_FEE = true;
 
 /**
- * D11: first buy in the launch transaction, at most this share of the config supply by default
- * (founder 2026-10-06: 20%, was 10%). Our own server check; Meteora has no creator cap.
+ * D11: first buy in the launch transaction, at most this share of the config supply by default.
+ * Founder + team 2026-10-07: 60% (was 10%, briefly 20%); the anti-rug cap is dropped to follow the
+ * market. Our own server check; Meteora has no creator cap. At $120 SOL, 60% on a $15k config costs
+ * ~93 SOL and fills ~73% of the curve.
  */
-export const DBC_FIRST_BUY_MAX_BPS = 2000;
+export const DBC_FIRST_BUY_MAX_BPS = 6000;
 /**
- * Ceiling for wallets granted a higher cap in public.creator_first_buy_caps (founder 2026-10-06:
- * partner launches that drive traffic). A 50% first buy on a $15k config costs ~65 SOL at $120 SOL.
+ * Ceiling for wallets granted a higher cap in public.creator_first_buy_caps: 70% (founder 2026-10-07,
+ * exclusive partner wallets, a marketing decision). 70% is ~98-99% of the curve (~126 SOL on a $15k
+ * config): the first buy all but completes the curve at launch.
  */
-export const DBC_FIRST_BUY_PARTNER_MAX_BPS = 5000;
+export const DBC_FIRST_BUY_PARTNER_MAX_BPS = 7000;
 
 /** Creator limits for DBC (same numbers as today's CreatorProfile defaults). */
 export const DBC_MAX_LIVE_BONDING = 3;

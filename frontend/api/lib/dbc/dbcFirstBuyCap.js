@@ -8,7 +8,7 @@ function bpsSetting(raw, fallback) {
 /**
  * The two numbers founders may still change without a release (2026-10-06: "the numbers are up for
  * debate"): the default every creator gets and the ceiling a listed wallet can reach. API env
- * DBC_FIRST_BUY_DEFAULT_BPS / DBC_FIRST_BUY_PARTNER_MAX_BPS, else the shared constants (20% / 50%).
+ * DBC_FIRST_BUY_DEFAULT_BPS / DBC_FIRST_BUY_PARTNER_MAX_BPS, else the shared constants (60% / 70%).
  * The ceiling is never below the default.
  */
 export function firstBuyCapSettings(env = process.env) {

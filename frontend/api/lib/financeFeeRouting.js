@@ -289,7 +289,7 @@ export async function solanaInflows(db, { days, now }) {
     select date_trunc('hour', created_at) as hour,
            count(*)::int as n,
            coalesce(sum(collector_amount), 0)::text as collector,
-           coalesce(sum(referral_fee), 0)::text as referral
+           coalesce(sum(referral_fee) filter (where referral_ours is true), 0)::text as referral
       from public.dbc_fee_accruals
      where created_at >= $1
      group by 1`, [since]);

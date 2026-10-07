@@ -28,8 +28,8 @@ const WAD = 10n ** 18n;
 
 /**
  * LaunchCampaign.CREATOR_FIRST_BUY_MAX_SUPPLY_BPS: 10% of supply, fixed in the deployed contract.
- * Pinned here, not taken from DBC_FIRST_BUY_MAX_BPS: the DBC cap is our server's and moved to 20%
- * (50% for listed creators); the contract's cannot move without a new factory.
+ * Pinned here, not taken from DBC_FIRST_BUY_MAX_BPS: the DBC cap is our server's and moved to 60%
+ * (70% for listed creators); the contract's cannot move without a new factory.
  */
 export const EVM_FIRST_BUY_MAX_SUPPLY_BPS = 1000n;
 /** LaunchCampaign.CREATOR_FIRST_BUY_MAX_TARGET_BPS: cost before fee <= 50% of the native target (E8). */

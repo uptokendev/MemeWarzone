@@ -17,6 +17,7 @@ import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { notPublicHiddenSql } from "./publicHidden.js";
 import { jupiterRawUnitUsd, solUsdPrice } from "./solanaMarketStats.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
+import { referralAccountsFromEnv } from "./dbc/dbcReferralSweep.js";
 
 const SOLANA_CHAIN_ID = 101;
 const DBC_PROGRAM_ID = "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN";
@@ -90,6 +91,12 @@ export type DbcCurveTradeRow = {
   sol_usd_source?: string | null;
   quote_usd_micros?: string | null;
   quote_usd_source?: string | null;
+  /**
+   * Whether the swap's referral fee went to our referral token account. Terminals name their own
+   * referral on our pools, and the swap event only says that a referral was named. Null = unknown
+   * (no referral accounts configured on this indexer).
+   */
+  referral_ours?: boolean | null;
 };
 
 function parseRpcList(value: string): string[] {
@@ -263,6 +270,16 @@ export function decodeEvtSwap2FromTransaction(tx: any): DecodedEvtSwap2[] {
     if (decoded) found.push(decoded);
   }
   return found;
+}
+
+/**
+ * True when one of our referral token accounts is in the transaction. A DBC swap names at most one
+ * referral account, so its presence means the referral fee was paid to us. Null when none configured.
+ */
+export function referralPaidToUs(tx: any, ourAccounts: string[]): boolean | null {
+  if (!ourAccounts.length) return null;
+  const keys = new Set(messageKeys(tx));
+  return ourAccounts.some((account) => keys.has(account));
 }
 
 export function swapPayerFromTransaction(tx: any): string {
@@ -647,6 +664,7 @@ async function insertActivity(db: Queryable, row: DbcCurveTradeRow, event: Decod
         trading_fee: event.tradingFee.toString(),
         protocol_fee: event.protocolFee.toString(),
         referral_fee: event.referralFee.toString(),
+        referral_ours: event.referralFee > 0n ? (row.referral_ours ?? null) : false,
         priceSol: row.price_bnb,
         quoteMint: row.quote_mint || null,
         quoteAmountRaw: row.quote_amount_raw || null,
@@ -985,6 +1003,7 @@ export async function indexDbcPool(
     }
     const events = decodeEvtSwap2FromTransaction(tx);
     const wallet = swapPayerFromTransaction(tx);
+    const referralOurs = referralPaidToUs(tx, referralAccountsFromEnv().map((account) => account.tokenAccount));
     const blockTime = new Date(Number(item.blockTime || tx.blockTime || Math.floor(Date.now() / 1000)) * 1000);
     for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
       const event = events[eventIndex];
@@ -1001,6 +1020,7 @@ export async function indexDbcPool(
         ...(solUsd ? { solUsdMicros: solUsd.micros, priceSource: solUsd.source } : {}),
         ...(quoteUsd ? { quoteUsdMicros: quoteUsd.micros, quoteUsdSource: quoteUsd.source } : {}),
       });
+      trade.referral_ours = event.hasReferral ? referralOurs : false;
       if (await insertDbcSwap(db, trade, event, { mint: row.token, quoteDecimals })) ingested += 1;
     }
     maxSlot = Math.max(maxSlot, item.slot);

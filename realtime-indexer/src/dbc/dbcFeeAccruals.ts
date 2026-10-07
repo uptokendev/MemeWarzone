@@ -85,8 +85,18 @@ function bigintMeta(meta: Record<string, unknown>, ...keys: string[]): bigint {
   return 0n;
 }
 
+let referralColumnReady = false;
+
+/** referral_ours (db/migrations/20261007_000010_dbc_referral_ours.sql), added here too so a deploy before the migration still writes. */
+async function ensureReferralOursColumn(db: Queryable) {
+  if (referralColumnReady) return;
+  await db.query(`alter table public.dbc_fee_accruals add column if not exists referral_ours boolean`);
+  referralColumnReady = true;
+}
+
 export async function accrueDbcFees(db: Queryable, opts: { limit?: number } = {}): Promise<{ scanned: number; accrued: number; skipped: number; missingActivity: number }> {
   const limit = Math.max(1, Math.min(5_000, opts.limit ?? 500));
+  await ensureReferralOursColumn(db);
   const missing = await db.query(
     `select count(*)::int as n
        from public.curve_trades t
@@ -131,6 +141,9 @@ export async function accrueDbcFees(db: Queryable, opts: { limit?: number } = {}
     const tradingFee = bigintMeta(meta, "trading_fee", "tradingFee");
     const protocolFee = bigintMeta(meta, "protocol_fee", "protocolFee");
     const referralFee = bigintMeta(meta, "referral_fee", "referralFee");
+    // Whether that referral fee reached our account (dbcIndexer referralPaidToUs); null = unknown.
+    const rawOurs = meta?.referral_ours ?? meta?.referralOurs;
+    const referralOurs = referralFee <= 0n ? false : typeof rawOurs === "boolean" ? rawOurs : null;
     if (tradingFee + protocolFee + referralFee <= 0n) {
       skipped += 1;
       console.warn("[dbc-fee] activity row has no EvtSwap2 fees; not accruing", {
@@ -159,8 +172,9 @@ export async function accrueDbcFees(db: Queryable, opts: { limit?: number } = {}
       `insert into public.dbc_fee_accruals(
          pool, tx_hash, log_index, trader, profile, fee_total,
          trading_fee, protocol_fee, referral_fee, collector_amount,
-         league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool, status
-       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'accrued')
+         league_weekly, league_monthly, recruiter, squad, airdrop, protocol, creator_pool, status,
+         referral_ours
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'accrued',$18)
        on conflict (tx_hash, log_index) do nothing`,
       [
         String(row.campaign_address),
@@ -180,6 +194,7 @@ export async function accrueDbcFees(db: Queryable, opts: { limit?: number } = {}
         slices.airdrop.toString(),
         slices.protocol.toString(),
         slices.creatorPool.toString(),
+        referralOurs,
       ],
     );
     await db.query(

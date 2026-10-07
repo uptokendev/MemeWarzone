@@ -1,8 +1,8 @@
 BEGIN;
 
--- Creator first-buy caps (founder, 2026-10-06). Every creator's first buy at launch may take up to
--- the default share of supply (20%). A row here gives one wallet its own share (max_bps), up to the
--- ceiling (50%): big launches that bring traffic. Default and ceiling are API settings
+-- Creator first-buy caps (founder, 2026-10-06; numbers 2026-10-07). Every creator's first buy at
+-- launch may take up to the default share of supply (60%). A row here gives one wallet its own share
+-- (max_bps), up to the ceiling (70%): exclusive partner wallets. Default and ceiling are API settings
 -- (DBC_FIRST_BUY_DEFAULT_BPS / DBC_FIRST_BUY_PARTNER_MAX_BPS); the API clamps every row to them, so the
 -- table only bounds max_bps to a real share.
 -- Read by POST /api/dbc/create (authorize + quote-first-buy) for Solana DBC coins (chain 101). The

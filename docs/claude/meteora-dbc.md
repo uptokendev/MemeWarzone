@@ -86,3 +86,22 @@ life of a coin and every check passed against the program's own accounting:
   referral was. Terminals name their own: of 22 recent swaps with a referral fee, 5 paid our account, 17
   paid ten other accounts. Finance showed 0.1275 SOL (10/6-10/7); our account held 0.0629 SOL on 2026-10-07
   and received ~0.06 SOL in total since 10-01. Fix: store the referral account per accrual and count only ours.
+
+### Anti-rug cap dropped: 60% for everyone, 70% for listed wallets (founder + team, 2026-10-07)
+
+- `DBC_FIRST_BUY_MAX_BPS` = 6000, `DBC_FIRST_BUY_PARTNER_MAX_BPS` = 7000 (API settings can still override).
+  Reason: follow the market; the 70% latch is for exclusive partner wallets, a marketing decision.
+- Curve reality at $120 SOL: 60% costs 93 / 184 / 306 SOL ($15k / $30k / $50k) and fills ~72-73% of the
+  curve; 70% costs 126 / 250 / 415 SOL, ~98-99% of the curve: the first buy all but completes bonding at
+  launch. A full-curve first buy inside the create transaction has not been proven on a validator yet.
+- pump.fun for comparison (public curve, 30 SOL / 1.073B virtual, 793.1M on the curve): 60% ~38 SOL, 70% ~56 SOL
+  of the 85 SOL it raises. Their curve keeps more supply on the curve and starts cheaper.
+
+### Referral fee fix (2026-10-07)
+
+- Indexer: `referralPaidToUs` (dbcIndexer.ts) records `referral_ours` in the activity meta from the swap's
+  accounts (our accounts = `DBC_REFERRAL_TOKEN_ACCOUNT(S)` on the indexer); `dbc_fee_accruals.referral_ours`
+  (migration 20261007_000010, also added by the indexer). Finance lanes count only `referral_ours is true`.
+- Backfill: `frontend/scripts/backfill-dbc-referral-ours.mjs <out.sql>` (read-only, writes SQL for the SQL
+  editor). Run 2026-10-07: ours 25 rows / 0.062921655 SOL (= account 0.062891652 + 0.000030003 swept 10-01),
+  not ours 87 rows / 0.064994601 SOL.

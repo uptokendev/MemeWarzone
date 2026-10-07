@@ -260,3 +260,12 @@ async function sharedRevenueLanesFor(db, network) {
   const { sharedRevenueLanes } = await import("./financeRevenueLanes.js");
   return sharedRevenueLanes(db, network, { upvoteApproval: async () => ({ approved: true }), log: { warn() {} } });
 }
+
+test("the DBC referral lane counts only fees paid to our referral account", async () => {
+  const fs = await import("node:fs");
+  for (const file of ["./financeRevenueLanes.js", "./financeFeeRouting.js", "./financeDbcPools.js"]) {
+    const src = fs.readFileSync(new URL(file, import.meta.url), "utf8");
+    // Terminals name their own referral on our pools (2026-10-07: 5 of 22 swaps paid us).
+    assert.match(src, /referral_ours is true/, file);
+  }
+});

@@ -66,7 +66,7 @@ export const DBC_POOLS_SQL = `
     left join lateral (
       select count(*)::int as trades,
              coalesce(sum(d.collector_amount), 0)::text as collector_total,
-             coalesce(sum(d.referral_fee), 0)::text as referral_total,
+             coalesce(sum(d.referral_fee) filter (where d.referral_ours is true), 0)::text as referral_total,
              coalesce(sum(d.protocol), 0)::text as protocol_total,
              count(*) filter (where d.status <> 'routed')::int as unrouted,
              max(d.created_at) as last_at

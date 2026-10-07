@@ -260,10 +260,13 @@ export const LANE_SPECS = Object.freeze({
     time: "coalesce(a.paid_at, p.approved_at, p.starts_at)", amount: "round(coalesce(p.package_price_usd, a.package_price_usd, a.payment_due_usd) * 100)",
     tx: "null::text", logIndex: "null::int", campaign: "p.campaign_address", ref: "p.project_name", eventId: "p.id::text",
   },
+  // Only referral fees paid to our account: terminals name their own referral on our pools
+  // (dbc_fee_accruals.referral_ours, recorded by the indexer from the swap's accounts).
   dbc_referral: {
     from: "public.dbc_fee_accruals d",
     where: `$1::int = 101
        and d.referral_fee > 0
+       and d.referral_ours is true
        and ${campaignNotHiddenSql("101", "d.pool")}`,
     time: "d.created_at", amount: "d.referral_fee",
     tx: "d.tx_hash", logIndex: "d.log_index", campaign: "d.pool", ref: "null::text", eventId: "d.id::text",
