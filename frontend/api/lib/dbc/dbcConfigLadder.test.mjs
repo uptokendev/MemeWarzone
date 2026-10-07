@@ -125,7 +125,7 @@ function fakeChain({ mismatch = false, creations = { n: 0 } } = {}) {
       },
       state: {
         async getPoolConfig(address) {
-          const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], 118_000_000n, "creator");
+          const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], 118_000_000n, "creator");
           const extra = { feeClaimer: COLLECTOR.publicKey, leftoverReceiver: COLLECTOR.publicKey, quoteMint: new PublicKey("So11111111111111111111111111111111111111112") };
           const fields = (await import("./dbcConfigLadder.js")).expectedOnChainFields(built.configParams, extra);
           if (mismatch) fields.creatorTradingFeePercentage = 99;
@@ -185,13 +185,13 @@ test("ensureLaunchConfig creates once and returns the active row", async () => {
   const chain = fakeChain();
   const ladder = ladderFor(db, chain);
   const a = await ladder.ensureLaunchConfig({
-    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    targetUsdMicros: DBC_TARGET_USD_MICROS[30000],
     stepIndex: 241,
     stepUsdMicros: 118_000_000n,
     creatorFeeMode: "creator",
   });
   const b = await ladder.ensureLaunchConfig({
-    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    targetUsdMicros: DBC_TARGET_USD_MICROS[30000],
     stepIndex: 241,
     stepUsdMicros: 118_000_000n,
     creatorFeeMode: "creator",
@@ -206,7 +206,7 @@ test("readback mismatch marks the row failed and it is not served", async () => 
   const chain = fakeChain({ mismatch: true });
   const ladder = ladderFor(db, chain);
   const args = {
-    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    targetUsdMicros: DBC_TARGET_USD_MICROS[30000],
     stepIndex: 241,
     stepUsdMicros: 118_000_000n,
     creatorFeeMode: "creator",
@@ -225,7 +225,7 @@ test("a confirm failure after send persists failed and does not create again", a
     confirmTransaction: async () => { throw new Error("confirm dropped"); },
   });
   const args = {
-    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    targetUsdMicros: DBC_TARGET_USD_MICROS[30000],
     stepIndex: 241,
     stepUsdMicros: 118_000_000n,
     creatorFeeMode: "creator",
@@ -242,7 +242,7 @@ test("an error before the transaction is sent does not insert a row", async () =
   chain.client.partner.createConfig = async () => { throw new Error("build failed"); };
   const ladder = ladderFor(db, chain);
   await assert.rejects(() => ladder.ensureLaunchConfig({
-    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    targetUsdMicros: DBC_TARGET_USD_MICROS[30000],
     stepIndex: 241,
     stepUsdMicros: 118_000_000n,
     creatorFeeMode: "creator",
@@ -256,7 +256,7 @@ test("two concurrent calls create the config once", async () => {
   const chain = fakeChain();
   const ladder = ladderFor(db, chain);
   const args = {
-    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    targetUsdMicros: DBC_TARGET_USD_MICROS[30000],
     stepIndex: 241,
     stepUsdMicros: 118_000_000n,
     creatorFeeMode: "creator",
@@ -271,14 +271,14 @@ test("a persisted failed config is 503 on the HTTP route", async () => {
   const chain = fakeChain({ mismatch: true });
   const ladder = ladderFor(db, chain);
   const args = {
-    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    targetUsdMicros: DBC_TARGET_USD_MICROS[30000],
     stepIndex: 241,
     stepUsdMicros: 118_000_000n,
     creatorFeeMode: "creator",
   };
   await assert.rejects(() => ladder.ensureLaunchConfig(args));
   const res = fakeRes();
-  await handleDbcLaunchConfig(fakeReq({ query: { chainId: "101", targetUsd: "15000", creatorFeeMode: "creator" } }), res, {
+  await handleDbcLaunchConfig(fakeReq({ query: { chainId: "101", targetUsd: "30000", creatorFeeMode: "creator" } }), res, {
     env: { DBC_LAUNCH_ENABLED: "true", SOLANA_CLUSTER: "devnet", DBC_FEE_COLLECTOR: COLLECTOR.publicKey.toBase58() },
     cluster: "devnet",
     ladder,
@@ -291,7 +291,7 @@ test("a persisted failed config is 503 on the HTTP route", async () => {
 
 test("flag off returns the disabled payload; bad target/mode 400; $150 refused off devnet; stale price 503", async () => {
   const disabled = fakeRes();
-  await handleDbcLaunchConfig(fakeReq({ query: { chainId: "101", targetUsd: "15000", creatorFeeMode: "creator" } }), disabled, {
+  await handleDbcLaunchConfig(fakeReq({ query: { chainId: "101", targetUsd: "30000", creatorFeeMode: "creator" } }), disabled, {
     env: { DBC_LAUNCH_ENABLED: "false", SOLANA_CLUSTER: "devnet" },
   });
   assert.equal(disabled.statusCode, 200);
@@ -304,7 +304,7 @@ test("flag off returns the disabled payload; bad target/mode 400; $150 refused o
   assert.equal(badTarget.statusCode, 400);
 
   const badMode = fakeRes();
-  await handleDbcLaunchConfig(fakeReq({ query: { chainId: "101", targetUsd: "15000", creatorFeeMode: "nope" } }), badMode, {
+  await handleDbcLaunchConfig(fakeReq({ query: { chainId: "101", targetUsd: "30000", creatorFeeMode: "nope" } }), badMode, {
     env: { DBC_LAUNCH_ENABLED: "true", SOLANA_CLUSTER: "devnet" },
   });
   assert.equal(badMode.statusCode, 400);
@@ -318,7 +318,7 @@ test("flag off returns the disabled payload; bad target/mode 400; $150 refused o
   assert.equal(testTarget.body.code, "DBC_TEST_TARGET_REFUSED");
 
   const stale = fakeRes();
-  await handleDbcLaunchConfig(fakeReq({ query: { chainId: "101", targetUsd: "15000", creatorFeeMode: "creator" } }), stale, {
+  await handleDbcLaunchConfig(fakeReq({ query: { chainId: "101", targetUsd: "30000", creatorFeeMode: "creator" } }), stale, {
     env: { DBC_LAUNCH_ENABLED: "true", SOLANA_CLUSTER: "devnet" },
     cluster: "devnet",
     async readSolUsdMicros() { throw new Error("SOL/USD unavailable from every source: x"); },
@@ -328,7 +328,7 @@ test("flag off returns the disabled payload; bad target/mode 400; $150 refused o
 });
 
 test("diffOnChainConfig reports a field mismatch", () => {
-  const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], 118_000_000n, "creator");
+  const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], 118_000_000n, "creator");
   const extra = { feeClaimer: COLLECTOR.publicKey, leftoverReceiver: COLLECTOR.publicKey };
   const onChain = {
     ...built.configParams,
@@ -353,7 +353,7 @@ test("readback ignores the program's zero-liquidity padding of the curve (20-poi
   // Devnet 2026-09-28: a real config read back 20 curve points (15 built + 5 zero padding) and was
   // marked failed. The padding is not part of the curve.
   const { default: BN } = await import("bn.js");
-  const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], 118_000_000n, "creator");
+  const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], 118_000_000n, "creator");
   const extra = { feeClaimer: COLLECTOR.publicKey, leftoverReceiver: COLLECTOR.publicKey };
   const padding = Array.from({ length: 20 - built.configParams.curve.length }, () => ({ sqrtPrice: new BN(0), liquidity: new BN(0) }));
   const onChain = {
@@ -415,7 +415,7 @@ test("a stock quote config names Meteora's DBC badge and reads back as Token-202
   const { NVDAX_MINT } = await import("../../../shared/dbcQuotes.mjs");
   const { dbcTokenBadgeAddress } = await import("./dbcStockQuote.mjs");
   const args = {
-    targetUsdMicros: DBC_TARGET_USD_MICROS[15000],
+    targetUsdMicros: DBC_TARGET_USD_MICROS[30000],
     stepIndex: 275,
     stepUsdMicros: 231_109_000n,
     creatorFeeMode: "creator",
@@ -429,7 +429,12 @@ test("a stock quote config names Meteora's DBC badge and reads back as Token-202
   assert.equal(sent.tokenBadge.toBase58(), dbcTokenBadgeAddress(NVDAX_MINT).toBase58());
   assert.equal(sent.tokenBadge.toBase58(), "mfacWnGh1Kn5ttHMMaNZhRZbCjvGrDQyDyZgqaR9vBM"); // read on mainnet 2026-09-29
   assert.equal(sent.quoteMint.toBase58(), NVDAX_MINT);
-  assert.equal(BigInt(sent.migrationQuoteThreshold.toString()), (15_000_000_000n * 100_000_000n + 231_109_000n - 1n) / 231_109_000n);
+  // v2: a $30K market cap raises $30K x 13 / 98 of NVDAx at its price per 10^8 raw units (rounded up;
+  // buildCurve's decimal round trip may move it by a unit).
+  const usd = (30_000_000_000n * 13n + 97n) / 98n;
+  const want = (usd * 100_000_000n + 231_109_000n - 1n) / 231_109_000n;
+  const got = BigInt(sent.migrationQuoteThreshold.toString());
+  assert.ok(got >= want - 2n && got <= want + 2n, `${got} vs ${want}`);
 
   const wrongFlag = stockChain({ quoteTokenFlag: 0 });
   const ladder2 = ladderFor(memoryDb(), wrongFlag, { cluster: "mainnet-beta", env: { SOLANA_CLUSTER: "mainnet-beta" } });
@@ -443,7 +448,7 @@ test("a SOL config names no badge", async () => {
   const original = chain.client.partner.createConfig;
   chain.client.partner.createConfig = async (params) => { seen = params; return original(params); };
   await ladderFor(memoryDb(), chain).ensureLaunchConfig({
-    targetUsdMicros: DBC_TARGET_USD_MICROS[15000], stepIndex: 241, stepUsdMicros: 118_000_000n, creatorFeeMode: "creator",
+    targetUsdMicros: DBC_TARGET_USD_MICROS[30000], stepIndex: 241, stepUsdMicros: 118_000_000n, creatorFeeMode: "creator",
   });
   assert.equal("tokenBadge" in seen, false);
 });

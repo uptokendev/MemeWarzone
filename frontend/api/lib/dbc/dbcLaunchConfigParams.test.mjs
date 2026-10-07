@@ -9,20 +9,21 @@ import {
   U128_MAX,
   getDeltaAmountBaseUnsigned256,
   getInitialLiquidityFromDeltaQuote,
-  getTotalSupplyFromCurve,
+  getPriceFromSqrtPrice,
   validateConfigParameters,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import BN from "bn.js";
 import {
   DBC_DEVNET_TEST_TARGET_USD_MICROS,
-  DBC_PRICE_SLOPE_LAMPORTS,
+  DBC_FIRST_BUY_MAX_BPS,
+  DBC_POOL_SUPPLY_PCT,
+  DBC_CURVE_SUPPLY_PCT,
   DBC_QUOTE_MINT,
   DBC_RESERVE_RAW,
   DBC_SUPPLY_CEILING_RAW,
   DBC_TARGET_USD_MICROS,
   DBC_TOKEN_SCALE,
   migrationSplitLamports,
-  roundUpToWholeTokens,
 } from "../../../shared/dbcEconomics.mjs";
 import { stepUsdMicrosFromIndex, solPriceStepIndex } from "./dbcPriceSteps.mjs";
 import {
@@ -30,226 +31,110 @@ import {
   buildLaunchConfigParams,
   curveQuoteFull,
   feeBpsAtSeconds,
-  linearCostLamports,
-  linearSoldForCost,
   liquidityBitLength,
   paramsHashOf,
   quoteAlongDbcCurve,
   programMigrationQuoteLamports,
   programSupplyMinimums,
-  soldPointsEqualPriceRatio,
-  soldPointsPackedStart,
 } from "./dbcLaunchConfigParams.mjs";
 
 const SOL_PRICES = [50, 100, 118, 150, 200, 250, 400];
-const TARGETS = [15_000, 30_000, 50_000];
+// v2 (founder 2026-10-08): graduation market caps; $15K is gone.
+const TARGETS = [30_000, 50_000];
 
 function stepForSol(usd) {
   const micros = BigInt(Math.round(usd * 1_000_000));
   return { micros, index: solPriceStepIndex(micros), step: stepUsdMicrosFromIndex(solPriceStepIndex(micros)) };
 }
 
-test("price path, supply, graduation and anti-sniper tables", () => {
-  const priceRows = [];
-  const supplyRows = [];
-  const gradRows = [];
-  const steepened = [];
-
+test("v2: graduates at the chosen market cap, 85/13/2 split, 2% fee to us, room for a 70% first buy", () => {
+  const rows = [];
   for (const targetUsd of TARGETS) {
-    const target = DBC_TARGET_USD_MICROS[targetUsd];
     for (const sol of SOL_PRICES) {
       const { step } = stepForSol(sol);
-      const { configParams, expected, paramsHash } = buildLaunchConfigParams(target, step, "creator");
-      validateConfigParameters({ ...configParams, leftoverReceiver: DBC_VALIDATE_LEFTOVER_RECEIVER });
+      for (const mode of ["creator", "platform"]) {
+        const { configParams, expected } = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[targetUsd], step, mode);
+        validateConfigParameters({ ...configParams, leftoverReceiver: DBC_VALIDATE_LEFTOVER_RECEIVER });
+        assert.equal(configParams.curve.length, 1, "one segment, ending at the graduation price");
+        assert.deepEqual(configParams.migrationFee, { feePercentage: 2, creatorFeePercentage: 0 });
 
-      let worstPct = 0;
-      let worstI = 0;
-      let worstPctTail = 0;
-      if (!expected.steepened) {
-        for (let i = 1; i <= 50; i += 1) {
-          const linear = (expected.thresholdLamports * BigInt(i)) / 50n;
-          const s = linearSoldForCost(linear, expected.slopeUsed);
-          const dbc = quoteAlongDbcCurve(configParams, s);
-          if (linear === 0n) continue;
-          const diff = dbc > linear ? dbc - linear : linear - dbc;
-          const pct = Number(diff) / Number(linear);
-          if (pct > worstPct) {
-            worstPct = pct;
-            worstI = i;
-          }
-          if (i >= 10 && pct > worstPctTail) worstPctTail = pct;
+        // Graduation market cap: curve end price x 1B x the step's SOL price.
+        const endPrice = Number(getPriceFromSqrtPrice(configParams.curve[0].sqrtPrice, 6, 9));
+        const mcUsd = endPrice * 1e9 * (Number(step) / 1e6);
+        assert.ok(Math.abs(mcUsd / targetUsd - 1) < 0.003, `${targetUsd} @ $${sol}: graduates at $${mcUsd.toFixed(0)}`);
+
+        // Supply: 1B minted, 85% sold on the curve, 13% to the pool, 20M reserve, no swap buffer.
+        const pre = BigInt(configParams.tokenSupply.preMigrationTokenSupply.toString());
+        const post = BigInt(configParams.tokenSupply.postMigrationTokenSupply.toString());
+        assert.equal(pre, DBC_SUPPLY_CEILING_RAW);
+        assert.equal(post, expected.circulatingAfterGraduation);
+        assert.ok(expected.minWithBuffer <= pre && expected.minWithoutBuffer <= post);
+        assert.equal(expected.minWithBuffer, expected.minWithoutBuffer, "no swap buffer when the curve ends at graduation");
+        assert.ok(expected.bufferTokens < 100n * DBC_TOKEN_SCALE, `unused ${expected.bufferTokens}`);
+        const pct = (raw) => Number((raw * 10_000n) / DBC_SUPPLY_CEILING_RAW) / 100;
+        assert.ok(Math.abs(pct(expected.soldRaw) - DBC_CURVE_SUPPLY_PCT) <= 0.02, `curve ${pct(expected.soldRaw)}%`);
+        assert.ok(Math.abs(pct(expected.poolTokens) - DBC_POOL_SUPPLY_PCT) <= 0.02, `pool ${pct(expected.poolTokens)}%`);
+        assert.equal(expected.reserveTokens, DBC_RESERVE_RAW);
+
+        // Graduation fee: 2% of the threshold, all ours; the pool gets ceil(98%).
+        const split = migrationSplitLamports(expected.thresholdLamports);
+        assert.equal(expected.creatorGraduationLamports, 0n);
+        assert.equal(expected.ourGraduationLamports, split.feeLamports);
+        assert.equal(expected.poolLamports, (expected.thresholdLamports * 98n + 99n) / 100n);
+        assert.equal(expected.migrationQuote, expected.poolLamports);
+
+        // A 70% first buy fits on the curve and leaves 15% of supply for the public.
+        const firstBuyRaw = (DBC_SUPPLY_CEILING_RAW * BigInt(DBC_FIRST_BUY_MAX_BPS)) / 10_000n;
+        assert.ok(firstBuyRaw < expected.soldRaw);
+        const firstBuyCost = quoteAlongDbcCurve(configParams, firstBuyRaw);
+        assert.ok(firstBuyCost < expected.thresholdLamports, "70% does not graduate the coin");
+        assert.ok(Math.abs(pct(expected.soldRaw - firstBuyRaw) - 15) <= 0.02);
+        assert.ok(curveQuoteFull(configParams) >= expected.thresholdLamports - 1n);
+
+        assert.ok(expected.liquidityBits.every((b) => b > 0 && b <= 128));
+        if (mode === "creator") {
+          rows.push({
+            targetUsd, sol,
+            thresholdSol: (Number(expected.thresholdLamports) / 1e9).toFixed(3),
+            firstBuy70Sol: (Number(firstBuyCost) / 0.98 / 1e9).toFixed(3),
+            ourFeeSol: (Number(expected.ourGraduationLamports) / 1e9).toFixed(4),
+            graduatesAtUsd: mcUsd.toFixed(0),
+          });
         }
       }
-      const qFull = curveQuoteFull(configParams);
-      const dT = qFull > expected.thresholdLamports ? qFull - expected.thresholdLamports : expected.thresholdLamports - qFull;
-
-      assert.ok(expected.totalTokenSupply <= DBC_SUPPLY_CEILING_RAW, "supply ceiling");
-      const pre = BigInt(configParams.tokenSupply.preMigrationTokenSupply.toString());
-      const post = BigInt(configParams.tokenSupply.postMigrationTokenSupply.toString());
-      const linearCirculating = roundUpToWholeTokens(expected.soldRaw + expected.poolTokens + DBC_RESERVE_RAW);
-      assert.equal(post, expected.circulatingAfterGraduation);
-      assert.equal(pre, expected.totalTokenSupply);
-      assert.equal(pre - post, expected.bufferTokens);
-      assert.ok(post >= linearCirculating, "post is at least sold + pool + 20M reserve, rounded up");
-      assert.ok(pre >= post, "pre-migration supply covers circulating");
-      assert.ok(expected.minWithoutBuffer <= post);
-      assert.ok(expected.minWithBuffer <= pre);
-      assert.equal(expected.migrationQuote, (expected.thresholdLamports * 78n + 99n) / 100n);
-      if (expected.steepened) {
-        assert.ok(expected.slopeUsed > DBC_PRICE_SLOPE_LAMPORTS);
-        steepened.push({
-          targetUsd,
-          sol,
-          slope: expected.slopeUsed.toString(),
-          totalWhole: (expected.totalTokenSupply / DBC_TOKEN_SCALE).toString(),
-        });
-      }
-
-      const split = migrationSplitLamports(expected.thresholdLamports);
-      assert.equal(expected.creatorGraduationLamports, split.creatorGraduationLamports);
-      assert.equal(expected.ourGraduationLamports, split.ourGraduationLamports);
-      assert.equal(expected.poolLamports, split.poolLamports);
-      const creatorPct = Number(expected.creatorGraduationLamports * 10000n / expected.thresholdLamports) / 100;
-      const ourPct = Number(expected.ourGraduationLamports * 10000n / expected.thresholdLamports) / 100;
-      const poolPct = Number(expected.poolLamports * 10000n / expected.thresholdLamports) / 100;
-      assert.ok(Math.abs(creatorPct - 19.8) < 0.05);
-      assert.ok(Math.abs(ourPct - 2.2) < 0.05);
-      assert.ok(Math.abs(poolPct - 78) < 0.05);
-
-      const maxBits = Math.max(...expected.liquidityBits);
-      assert.ok(maxBits <= 128, `${targetUsd} @ $${sol}: liquidity ${maxBits} bits`);
-      assert.ok(expected.liquidityBits.every((b) => b > 0 && b <= 128));
-
-      priceRows.push({
-        targetUsd,
-        sol,
-        steepened: expected.steepened,
-        worstPct: expected.steepened ? "steepened" : `${(worstPct * 100).toFixed(3)}%`,
-        worstI,
-        tailPct: expected.steepened ? "steepened" : `${(worstPctTail * 100).toFixed(3)}%`,
-        dT: dT.toString(),
-        maxBits,
-        firstBits: expected.liquidityBits[0],
-      });
-      supplyRows.push({
-        targetUsd,
-        sol,
-        slope: expected.slopeUsed.toString(),
-        steepened: expected.steepened,
-        soldWhole: (expected.soldRaw / DBC_TOKEN_SCALE).toString(),
-        totalWhole: (expected.totalTokenSupply / DBC_TOKEN_SCALE).toString(),
-      });
-      gradRows.push({
-        targetUsd,
-        sol,
-        creator: expected.creatorGraduationLamports.toString(),
-        us: expected.ourGraduationLamports.toString(),
-        pool: expected.poolLamports.toString(),
-        creatorPct: creatorPct.toFixed(2),
-        ourPct: ourPct.toFixed(2),
-        poolPct: poolPct.toFixed(2),
-      });
-      void paramsHash;
     }
   }
+  console.log("\nv2 configs (creator mode)");
+  console.table(rows);
 
-  const sample = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], stepForSol(118).step, "creator");
-  const fees = [0, 5, 30, 60, 120].map((s) => ({ s, bps: feeBpsAtSeconds(sample.configParams, s) }));
-  assert.equal(fees[0].bps, 9000);
-  assert.equal(fees[1].bps, 8266);
-  assert.equal(fees[2].bps, 4600);
-  assert.equal(fees[3].bps, 200);
-  assert.equal(fees[4].bps, 200);
-
-  console.log("\nprice path (worst deviation vs linear, 50 points)");
-  console.table(priceRows);
-  console.log("\nliquidity bit lengths (must be <= 128)");
-  console.table(priceRows.map((r) => ({
-    targetUsd: r.targetUsd,
-    sol: r.sol,
-    maxBits: r.maxBits,
-    firstBits: r.firstBits,
-  })));
-  console.log("\nsupply / steepened");
-  console.table(supplyRows);
-  console.log("\ngraduation split");
-  console.table(gradRows);
-  console.log("\nanti-sniper fee (linear 90% -> 2% over 60s)");
-  console.table(fees);
-  console.log("\nsteepened configs", steepened);
-  for (const row of priceRows) {
-    assert.ok(BigInt(row.dT) <= 1n, `${row.targetUsd} @ $${row.sol}: threshold off by ${row.dT}`);
-    if (!row.steepened) {
-      const tail = Number(String(row.tailPct).replace("%", "")) / 100;
-      // 16 CP segments cannot hold 1% against the 1-lamport linear start (see hand-in).
-      assert.ok(tail <= 0.08, `${row.targetUsd} @ $${row.sol}: tail deviation ${row.tailPct}`);
-    }
-  }
+  const sample = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], stepForSol(118).step, "creator");
+  const fees = [0, 5, 30, 60, 120].map((s) => feeBpsAtSeconds(sample.configParams, s));
+  assert.deepEqual(fees, [9000, 8266, 4600, 200, 200], "anti-sniper unchanged");
 });
 
-test("pool quote is ceil(T * 78 / 100)", () => {
-  const T = 127_118_644_068n;
+test("pool quote is ceil(T * 98 / 100)", () => {
+  const T = 33_053_088_348n;
   const split = migrationSplitLamports(T);
-  assert.equal(split.poolLamports, (T * 78n + 99n) / 100n);
+  assert.equal(split.poolLamports, (T * 98n + 99n) / 100n);
   assert.equal(split.feeLamports, T - split.poolLamports);
+  assert.equal(split.creatorGraduationLamports, 0n);
   assert.equal(split.poolLamports + split.feeLamports, T);
-});
-
-test("equal price-ratio spacing vs packed-start: keep the lower tail error", () => {
-  const packingRows = [];
-  let packedTail = 0;
-  let ratioTail = 0;
-  for (const targetUsd of TARGETS) {
-    const target = DBC_TARGET_USD_MICROS[targetUsd];
-    for (const sol of SOL_PRICES) {
-      const { step } = stepForSol(sol);
-      const packed = buildLaunchConfigParams(target, step, "creator", { soldPoints: soldPointsPackedStart });
-      const ratio = buildLaunchConfigParams(target, step, "creator", { soldPoints: soldPointsEqualPriceRatio });
-      function tailOf(built) {
-        if (built.expected.steepened) return null;
-        let worst = 0;
-        for (let i = 10; i <= 50; i += 1) {
-          const linear = (built.expected.thresholdLamports * BigInt(i)) / 50n;
-          const s = linearSoldForCost(linear, built.expected.slopeUsed);
-          const dbc = quoteAlongDbcCurve(built.configParams, s);
-          if (linear === 0n) continue;
-          const diff = dbc > linear ? dbc - linear : linear - dbc;
-          const pct = Number(diff) / Number(linear);
-          if (pct > worst) worst = pct;
-        }
-        return worst;
-      }
-      const pTail = tailOf(packed);
-      const rTail = tailOf(ratio);
-      packingRows.push({
-        targetUsd,
-        sol,
-        packed: pTail == null ? "steepened" : `${(pTail * 100).toFixed(3)}%`,
-        equalRatio: rTail == null ? "steepened" : `${(rTail * 100).toFixed(3)}%`,
-      });
-      if (pTail != null && pTail > packedTail) packedTail = pTail;
-      if (rTail != null && rTail > ratioTail) ratioTail = rTail;
-    }
-  }
-  console.log("\npacking comparison (tail 20-100% of raise)");
-  console.table(packingRows);
-  console.log(`worst tail packed-start ${(packedTail * 100).toFixed(3)}%  equal-ratio ${(ratioTail * 100).toFixed(3)}%`);
-  assert.ok(ratioTail <= packedTail + 1e-12, "production packing is equal price-ratio only if it is not worse");
 });
 
 test("paramsHash is stable for equal input and changes when economics change", () => {
   const step = stepForSol(118).step;
-  const a = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], step, "creator");
-  const b = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], step, "creator");
+  const a = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], step, "creator");
+  const b = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], step, "creator");
   assert.equal(a.paramsHash, b.paramsHash);
-  const c = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], step, "creator");
+  const c = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[50000], step, "creator");
   assert.notEqual(a.paramsHash, c.paramsHash);
-  const d = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], step, "platform");
+  const d = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], step, "platform");
   assert.notEqual(a.paramsHash, d.paramsHash);
-  const e = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], stepForSol(200).step, "creator");
+  const e = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], stepForSol(200).step, "creator");
   assert.notEqual(a.paramsHash, e.paramsHash);
   assert.equal(a.paramsHash, paramsHashOf({
-    targetUsdMicros: DBC_TARGET_USD_MICROS[15000].toString(),
+    economics: "v2-market-cap",
+    targetUsdMicros: DBC_TARGET_USD_MICROS[30000].toString(),
     stepUsdMicros: step.toString(),
     creatorFeeMode: "creator",
     configParams: a.configParams,
@@ -259,7 +144,7 @@ test("paramsHash is stable for equal input and changes when economics change", (
 test("validateConfigParameters passes for both fee modes and the $150 test target", () => {
   const step = stepForSol(118).step;
   for (const mode of ["creator", "platform"]) {
-    const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], step, mode);
+    const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], step, mode);
     validateConfigParameters({ ...built.configParams, leftoverReceiver: new PublicKey("11111111111111111111111111111112") });
     assert.equal(built.configParams.creatorTradingFeePercentage, mode === "creator" ? 7 : 0);
     assert.equal(built.configParams.partnerPermanentLockedLiquidityPercentage, mode === "platform" ? 100 : 20);
@@ -269,11 +154,11 @@ test("validateConfigParameters passes for both fee modes and the $150 test targe
   validateConfigParameters({ ...testTarget.configParams, leftoverReceiver: DBC_VALIDATE_LEFTOVER_RECEIVER });
 });
 
-test("program supply minimums use ceil quote and Rounding.Up base (the SDK total is lower)", () => {
-  const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], stepForSol(118).step, "creator");
+test("program supply minimums use ceil quote and Rounding.Up base, with no swap buffer", () => {
+  const built = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], stepForSol(118).step, "creator");
   const T = built.expected.thresholdLamports;
   const quote = programMigrationQuoteLamports(T);
-  assert.equal(quote, (T * 78n + 99n) / 100n);
+  assert.equal(quote, (T * 98n + 99n) / 100n);
   assert.equal(quote, built.expected.migrationQuote);
   const mins = programSupplyMinimums({
     thresholdLamports: T,
@@ -300,16 +185,8 @@ test("program supply minimums use ceil quote and Rounding.Up base (the SDK total
   assert.ok(built.expected.circulatingAfterGraduation <= built.expected.totalTokenSupply);
   assert.ok(mins.minWithBuffer <= built.expected.totalTokenSupply);
 
-  const sdkTotal = BigInt(getTotalSupplyFromCurve(
-    new BN(T.toString()),
-    built.configParams.sqrtStartPrice,
-    built.configParams.curve,
-    built.configParams.lockedVesting,
-    1,
-    new BN(0),
-    22,
-  ).toString());
-  assert.ok(sdkTotal < mins.minWithBuffer, `SDK ${sdkTotal} should be below program minWithBuffer ${mins.minWithBuffer}`);
+  // The curve ends at the graduation price, so the program's 25% swap buffer is capped to zero.
+  assert.equal(mins.swapBuffer, mins.swapBase);
 });
 
 test("createConfig serializes for every ladder case", async () => {
@@ -379,7 +256,7 @@ test("createConfig serializes for every ladder case", async () => {
 test("SOL params are unchanged when quote is omitted or native; USDC keeps D6/reserve/supply", async () => {
   const { findQuote, nativeQuote, USDC_MINT_MAINNET } = await import("../../../shared/dbcQuotes.mjs");
   const { DBC_RESERVE_RAW, migrationSplitLamports } = await import("../../../shared/dbcEconomics.mjs");
-  const target = DBC_TARGET_USD_MICROS[15000];
+  const target = DBC_TARGET_USD_MICROS[30000];
   const { step } = stepForSol(118);
   const solDefault = buildLaunchConfigParams(target, step, "creator");
   const solNative = buildLaunchConfigParams(target, step, "creator", { quote: nativeQuote("mainnet-beta") });
@@ -388,7 +265,9 @@ test("SOL params are unchanged when quote is omitted or native; USDC keeps D6/re
   assert.equal(solDefault.expected.reserveTokens, DBC_RESERVE_RAW);
   const usdc = findQuote("mainnet-beta", USDC_MINT_MAINNET);
   const usdcBuilt = buildLaunchConfigParams(target, 1_000_000n, "creator", { quote: usdc });
-  assert.equal(usdcBuilt.expected.thresholdLamports, 15_000n * 1_000_000n);
+  // A $30K market cap raises $30K x 13 / 98 = $3,979.59 of USDC (6 decimals).
+  const usdcThreshold = Number(usdcBuilt.expected.thresholdLamports);
+  assert.ok(Math.abs(usdcThreshold - 3_979_591_837) <= 2, String(usdcThreshold));
   assert.equal(usdcBuilt.expected.reserveTokens, DBC_RESERVE_RAW);
   const d6sol = migrationSplitLamports(solDefault.expected.thresholdLamports);
   const d6usdc = migrationSplitLamports(usdcBuilt.expected.thresholdLamports);
@@ -401,6 +280,6 @@ test("SOL params are unchanged when quote is omitted or native; USDC keeps D6/re
 
 test("the trade box fee equals the chain's fee every second of the anti-sniper window", async () => {
   const { antiSniperFeeBps } = await import("../../../shared/dbcAntiSniper.mjs");
-  const sample = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[15000], stepForSol(118).step, "creator");
+  const sample = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], stepForSol(118).step, "creator");
   for (let s = 0; s <= 61; s += 1) assert.equal(antiSniperFeeBps(s), feeBpsAtSeconds(sample.configParams, s), `t=${s}`);
 });

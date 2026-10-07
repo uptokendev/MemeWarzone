@@ -270,7 +270,7 @@ export function solanaFeeRoutingRegistry(env = process.env, { indexerLpTreasury 
       ],
       citation: "frontend/shared/dbcEconomics.mjs:52-104; realtime-indexer/src/dbc/dbcFeeSplit.ts:7-60; docs/claude/meteora-dbc.md",
       notes: [
-        "Migration fee 22% of the threshold, split 90% creator / 10% partner. Graduated DAMM v2 LP fees 80% creator / 20% partner.",
+        "Migration fee per pool config: v1 22% of the threshold, 90% creator / 10% partner; v2 (2026-10-08) 2%, all partner. Graduated DAMM v2 LP fees 80% creator / 20% partner.",
         "The referral account is swept weekly into protocol_vault.",
         "Revenue: the protocol remainder is in the bonding lane (reward_events EvtSwap2); the referral fee is lane dbc-referral (dbc_fee_accruals.referral_fee).",
       ],
@@ -278,17 +278,17 @@ export function solanaFeeRoutingRegistry(env = process.env, { indexerLpTreasury 
     {
       id: "sol_dbc_migration",
       label: "Meteora DBC migration fee",
-      trigger: "DBC graduation keeper (indexer dbc-grad worker): migrate -> partnerWithdrawMigrationFee -> D7 compensation -> kind-1 route",
+      trigger: "DBC graduation keeper (indexer dbc-grad worker): migrate -> partnerWithdrawMigrationFee -> D7 compensation (v1 pools only) -> kind-1 route",
       router: "DBC pool migration fee → partner withdraw to the collector → dbcFeeRouter System transfers",
-      totalFee: "22% of the migration threshold, 90% creator / 10% partner (us)",
+      totalFee: "v2 pools (2026-10-08): 2% of the migration threshold, all partner (us). v1 pools: 22%, 90% creator / 10% partner",
       status: "live",
       splits: [
-        { destinationId: "dbc_fee_collector", share: "The partner 10% (2.2% of the threshold)", note: "Withdrawn by the collector; the creator's 90% is claimed by the creator" },
-        { destinationId: "creator_fee_vaults", share: "D7 first: Meteora's 0.2% liquidity cut, back to the creator", note: "Paid to the creator wallet from the protocol slice (dbc_graduation_compensations)" },
+        { destinationId: "dbc_fee_collector", share: "v2: the whole 2% of the threshold; v1: the partner 10% (2.2%)", note: "Withdrawn by the collector; a v1 creator claims their 90% themselves" },
+        { destinationId: "creator_fee_vaults", share: "v1 only, D7 first: Meteora's 0.2% liquidity cut, back to the creator", note: "Paid to the creator wallet from the protocol slice (dbc_graduation_compensations)" },
         { destinationId: "recruiter_vault", share: "15% linked / 17.5% OG of the partner fee" },
         { destinationId: "squad_vault", share: "2.5% linked + OG" },
         { destinationId: "airdrop_vault", share: "17.5% unlinked" },
-        { destinationId: "protocol_vault", share: "Remainder (82.5% / 80%) less the D7 compensation" },
+        { destinationId: "protocol_vault", share: "Remainder (82.5% / 80%), less the D7 compensation on v1 pools" },
       ],
       citation: "realtime-indexer/src/dbc/dbcGraduationKeeper.ts (withdraw, compensate, route, insertFinalizeRewardEvent); realtime-indexer/src/dbc/dbcGraduationSplit.ts:41-128; docs/claude/meteora-dbc.md",
       notes: [

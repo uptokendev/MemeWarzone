@@ -30,6 +30,7 @@ const {
   jobFromRow,
   lockerNeeded,
   nextGraduationStep,
+  compensationApplies,
   partnerWithdrawn,
   readConfigSnapshot,
   readPoolSnapshot,
@@ -340,4 +341,21 @@ test("bound D7 is TransferChecked; graduation route and LP claims swap first", (
   const router = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../dbc/dbcFeeRouter.ts"), "utf8");
   assert.match(router, /splitSolFromQuoteSwap/);
   assert.match(router, /swapClaimedQuoteIfNeeded/);
+});
+
+test("v2 configs (2% fee, creator 0%) skip the D7 compensation and route the whole partner fee; v1 keeps it", () => {
+  const v1 = config({ migrationFeePercentage: 22, creatorMigrationFeePercentage: 90 });
+  const v2 = config({ migrationFeePercentage: 2, creatorMigrationFeePercentage: 0 });
+  const legacy = config(); // a snapshot without the fields keeps the v1 numbers
+  assert.equal(compensationApplies(v1), true);
+  assert.equal(compensationApplies(legacy), true);
+  assert.equal(compensationApplies(v2), false);
+  const withdrawn = pool({ isMigrated: 1, migrationProgress: 3, migrationFeeWithdrawStatus: PARTNER_WITHDRAW_BIT });
+  const job = { ...idleJob, marked: true };
+  assert.equal(nextGraduationStep(withdrawn, v1, job), "compensate");
+  assert.equal(nextGraduationStep(withdrawn, v2, job), "route");
+  // Fallback partner fee from the config's own numbers: v1 10% of 22%, v2 all of 2%.
+  const T = 33_053_088_348n;
+  assert.equal(expectedPartnerMigrationFee(T, v1.migrationFeePercentage, v1.creatorMigrationFeePercentage), (T - (T * 78n + 99n) / 100n) - ((T - (T * 78n + 99n) / 100n) * 90n) / 100n);
+  assert.equal(expectedPartnerMigrationFee(T, v2.migrationFeePercentage, v2.creatorMigrationFeePercentage), T - (T * 98n + 99n) / 100n);
 });

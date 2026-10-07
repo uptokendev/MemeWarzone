@@ -61,6 +61,8 @@ life of a coin and every check passed against the program's own accounting:
 
 ### Creator first-buy cap: 20% default, 50% for listed creators (founder, 2026-10-06)
 
+**Superseded by DBC v2 economics (2026-10-08) below: 70% for everyone, no latch, the table and env settings are gone.**
+
 - `DBC_FIRST_BUY_MAX_BPS` 1000 -> 2000 (everyone); `DBC_FIRST_BUY_PARTNER_MAX_BPS` = 5000 is the ceiling for
   wallets in `public.creator_first_buy_caps` (migration `db/migrations/20261006_000030_creator_first_buy_caps.sql`).
   Reason: creators want supply control; big partner launches drive traffic. Founder accepts the risk.
@@ -89,6 +91,8 @@ life of a coin and every check passed against the program's own accounting:
 
 ### Anti-rug cap dropped: 60% for everyone, 70% for listed wallets (founder + team, 2026-10-07)
 
+**Superseded by DBC v2 economics (2026-10-08) below: 70% for everyone, no latch, the table and env settings are gone.**
+
 - `DBC_FIRST_BUY_MAX_BPS` = 6000, `DBC_FIRST_BUY_PARTNER_MAX_BPS` = 7000 (API settings can still override).
   Reason: follow the market; the 70% latch is for exclusive partner wallets, a marketing decision.
 - Curve reality at $120 SOL: 60% costs 93 / 184 / 306 SOL ($15k / $30k / $50k) and fills ~72-73% of the
@@ -105,3 +109,32 @@ life of a coin and every check passed against the program's own accounting:
 - Backfill: `frontend/scripts/backfill-dbc-referral-ours.mjs <out.sql>` (read-only, writes SQL for the SQL
   editor). Run 2026-10-07: ours 25 rows / 0.062921655 SOL (= account 0.062891652 + 0.000030003 swept 10-01),
   not ours 87 rows / 0.064994601 SOL.
+
+### DBC v2 economics (founder + team, 2026-10-08) -- built, proven on a local validator
+
+Decisions: graduation by MARKET CAP, only $30K (fast) and $50K (normal, preselected), $15K gone; 1B supply =
+85% curve / 13% pool / 2% creator reserve; graduation (migration) fee 2%, creator 0%, all through our finalize
+fee routing (dbcGraduationSplit: recruiter / squad / airdrop, protocol the rest); Meteora's 0.2% liquidity
+migration fee no longer compensated (D7 off for v2); creator first buy 70% for everyone, no per-wallet latch.
+Everything else unchanged (2% trade fee, 90%->2% anti-sniper, fee choices, LP split, creator lock on later buys).
+Modelled after stonk.xyz (Raydium LaunchLab, pump.fun curve: 30 SOL / 1.073B virtual, 793.1M on the curve,
+graduates at 85 SOL = ~411 SOL MC, 0 migration fee).
+
+- Builder (`api/lib/dbc/dbcLaunchConfigParams.mjs`): threshold = MC x 13 / 98 (`thresholdUsdMicrosForMarketCap`),
+  Meteora `buildCurve` with `percentageSupplyOnMigration: 13`, `leftover: 1`, then ONLY its first segment.
+  buildCurve's extra segment up to MAX_SQRT_PRICE makes the program demand a 25% swap buffer
+  (`getSwapAmountWithBuffer`) that does not fit in 1B; ending at graduation the buffer is 0. SDK field for the
+  graduation fee is `migrationFee: { feePercentage, creatorFeePercentage }`.
+- Numbers at $120.40 SOL: $30K threshold 33.05 SOL, start MC $731, 70% first buy 14.2 SOL, public 15% for 19.5 SOL,
+  our fee 0.661 SOL; $50K threshold 55.09 SOL, start MC $1,218, 70% 23.7 SOL, public 32.5 SOL, fee 1.102 SOL.
+  The pool opens at the curve's last price; mint supply stays 1B (~10-14 tokens unused).
+- Keeper (`dbcGraduationState.compensationApplies`): D7 only when the config gives the creator a share (v1 22/90);
+  v2 goes withdraw -> route -> done. `expectedPartnerMigrationFee` and finance read each config's own percentages
+  (`financeDbcPools` had `|| 90`, which read a v2 0% as 90%). `loadCreatorRewards` returns
+  `creatorGraduationShare`; the rewards panel hides the payout row for v2 coins. Old coins keep v1 everywhere.
+- Proofs (local validator with current mainnet DBC / DAMM v2 / locker / Metaplex; DBC pool authority must be
+  funded, it pays the locker rent): `scripts/dbc/rehearse-v2-economics-local.sh` runs
+  `prove-v2-economics-local.mjs` (SDK only) and, with `MWZ_DBC_V2_PROOF=prove-v2-flow-local.mjs`, our create API
+  (ladder, quote, authorize 70% cap, finalize), browser submit + trade builder, indexer, fee accrual and the
+  graduation keeper end to end. Both ALL CHECKS PASS (2026-10-08). Launch tx with first buy: 915 B / 18 accounts / 2 signers.
+- `prove-stock-quote-local.mjs` still asks for the removed $15K target; update it before its next run.

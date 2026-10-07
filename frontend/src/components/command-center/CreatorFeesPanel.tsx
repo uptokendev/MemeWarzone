@@ -140,7 +140,7 @@ export function CreatorFeesPanel() {
                 </p>
               </div>
               <p className="mt-1 text-xs text-mw-muted">
-                {DBC_FEE_CHOICE_NOTE[String(item.feeChoice || "")] || "Fee choice set at launch."} Your graduation payout is claimable on the coin page once the coin graduates.
+                {DBC_FEE_CHOICE_NOTE[String(item.feeChoice || "")] || "Fee choice set at launch."} Graduation rewards are claimable on the coin page once the coin graduates.
               </p>
             </div>
             <Button asChild type="button" size="sm" variant="outline">

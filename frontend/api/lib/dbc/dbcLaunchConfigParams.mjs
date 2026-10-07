@@ -1,6 +1,7 @@
 /**
  * Pure (targetUsdMicros, stepUsdMicros, creatorFeeMode) -> DBC config params.
- * Builds a 16-point curve that follows today's linear price path (D9).
+ * v2 (2026-10-08): target = graduation market cap; one constant-product segment from Meteora's
+ * buildCurve. The linear-path helpers below are kept for the economics v3 tests and old proofs.
  */
 import { createHash } from "node:crypto";
 import BN from "bn.js";
@@ -18,15 +19,12 @@ import {
   TokenDecimal,
   TokenType,
   buildCurve,
-  buildCurveWithCustomSqrtPrices,
   feeNumeratorToBps,
   getBaseFeeNumerator,
   getDeltaAmountBaseUnsigned,
   getDeltaAmountBaseUnsigned256,
   getDeltaAmountQuoteUnsigned,
-  getInitialLiquidityFromDeltaBase,
   getInitialLiquidityFromDeltaQuote,
-  getLockedVestingParams,
   getNextSqrtPriceFromBaseAmountOutRoundingUp,
   getSqrtPriceFromPrice,
   getSwapAmountWithBuffer,
@@ -55,7 +53,6 @@ import {
   liquidityDistributionFor,
   DBC_QUOTE_DECIMALS,
   DBC_RESERVE_RAW,
-  DBC_RESERVE_WHOLE,
   DBC_SUPPLY_CEILING_RAW,
   DBC_TOKEN_DECIMALS,
   DBC_TOKEN_SCALE,
@@ -64,6 +61,8 @@ import {
   migrationSplitLamports,
   roundUpToWholeTokens,
   thresholdLamportsFor,
+  thresholdUsdMicrosForMarketCap,
+  DBC_POOL_SUPPLY_PCT,
 } from "../../../shared/dbcEconomics.mjs";
 import { thresholdQuoteRaw } from "../../../shared/dbcQuotes.mjs";
 
@@ -138,24 +137,6 @@ export function linearSoldForCost(costLamports, slope = DBC_PRICE_SLOPE_LAMPORTS
   return lo;
 }
 
-function linearEconomics(thresholdLamports, slope) {
-  const soldRaw = linearSoldForCost(thresholdLamports, slope);
-  const pEnd = linearMarginalLamports(soldRaw, slope);
-  const { poolLamports, creatorGraduationLamports, ourGraduationLamports } = migrationSplitLamports(thresholdLamports);
-  const poolTokens = pEnd > 0n ? (poolLamports * DBC_TOKEN_SCALE) / pEnd : 0n;
-  const mintedRaw = soldRaw + poolTokens + DBC_RESERVE_RAW;
-  return {
-    soldRaw,
-    pEnd,
-    poolLamports,
-    poolTokens,
-    creatorGraduationLamports,
-    ourGraduationLamports,
-    mintedRaw,
-    slope,
-  };
-}
-
 function finalizeSoldPoints(soldAt, soldRaw) {
   const out = soldAt.filter((s, i) => i === 0 || s > soldAt[i - 1]);
   out[0] = 0n;
@@ -198,81 +179,10 @@ export function soldPointsEqualPriceRatio(soldRaw, slope) {
 /** Review 1 item 4: equal price-ratio had the lower tail error (see the packing table in the test). */
 export const PRODUCTION_SOLD_POINTS = soldPointsEqualPriceRatio;
 
-function curveFromSoldPoints(soldRaw, slope, soldAt, quoteDecimals = DBC_QUOTE_DECIMALS) {
-  const pts = [];
-  for (const s of soldAt) {
-    const sqrt = sqrtPriceFromExactLamports(exactMarginalLamports(s, slope), quoteDecimals);
-    if (pts.length && !sqrt.gt(pts[pts.length - 1].sqrt)) continue;
-    pts.push({ s, sqrt });
-  }
-  if (!pts.length) throw curveOverflow("DBC curve has no sqrt prices");
-  const endSqrt = sqrtPriceFromExactLamports(exactMarginalLamports(soldRaw, slope), quoteDecimals);
-  if (pts[pts.length - 1].s !== soldRaw) {
-    if (!endSqrt.gt(pts[pts.length - 1].sqrt)) {
-      throw curveOverflow("DBC end sqrt price is not strictly greater than the previous point");
-    }
-    pts.push({ s: soldRaw, sqrt: endSqrt });
-  }
-  if (pts.length < 2) throw curveOverflow("DBC curve needs at least two distinct sqrt prices");
-
-  for (const [i, pt] of pts.entries()) assertSqrtInRange(i === 0 ? "sqrtStartPrice" : `curve[${i - 1}].sqrtPrice`, pt.sqrt);
-
-  const curve = [];
-  for (let i = 0; i < pts.length - 1; i += 1) {
-    const ds = pts[i + 1].s - pts[i].s;
-    let L;
-    try {
-      L = getInitialLiquidityFromDeltaBase(
-        new BN((ds > 0n ? ds : 1n).toString()),
-        pts[i + 1].sqrt,
-        pts[i].sqrt,
-      );
-    } catch (error) {
-      throw curveOverflow(`curve[${i}].liquidity overflow: ${error.message}`);
-    }
-    assertLiquidityU128(`curve[${i}].liquidity`, L);
-    curve.push({ sqrtPrice: pts[i + 1].sqrt, liquidity: L });
-  }
-  let qFull = 0n;
-  let lower = pts[0].sqrt;
-  for (const pt of curve) {
-    qFull += BigInt(getDeltaAmountQuoteUnsigned(lower, pt.sqrtPrice, pt.liquidity, Rounding.Down).toString());
-    lower = pt.sqrtPrice;
-  }
-  return { sqrtStartPrice: pts[0].sqrt, curve, qFull };
-}
-
-function buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints = PRODUCTION_SOLD_POINTS, quoteDecimals = DBC_QUOTE_DECIMALS) {
-  const T = BigInt(thresholdLamports);
-  const soldAt = soldPoints(soldRaw, slope);
-  const built = curveFromSoldPoints(soldRaw, slope, soldAt, quoteDecimals);
-  if (built.curve.length) {
-    const last = built.curve[built.curve.length - 1];
-    const prev = built.curve.length > 1 ? built.curve[built.curve.length - 2].sqrtPrice : built.sqrtStartPrice;
-    let qPrev = new BN(0);
-    let lower = built.sqrtStartPrice;
-    for (let i = 0; i < built.curve.length - 1; i += 1) {
-      qPrev = qPrev.add(getDeltaAmountQuoteUnsigned(lower, built.curve[i].sqrtPrice, built.curve[i].liquidity, Rounding.Down));
-      lower = built.curve[i].sqrtPrice;
-    }
-    const lastQ = new BN(T.toString()).sub(qPrev);
-    if (lastQ.gtn(0)) {
-      let L;
-      try {
-        L = getInitialLiquidityFromDeltaQuote(lastQ, prev, last.sqrtPrice);
-      } catch (error) {
-        throw curveOverflow(`last-segment liquidity overflow: ${error.message}`);
-      }
-      assertLiquidityU128("curve[last].liquidity", L);
-      last.liquidity = L;
-    }
-  }
-  return { sqrtStartPrice: built.sqrtStartPrice, curve: built.curve, sqrtPrices: [built.sqrtStartPrice, ...built.curve.map((p) => p.sqrtPrice)] };
-}
-
-function feeEnvelope({ creatorFeePct, quoteDecimals = DBC_QUOTE_DECIMALS }) {
+/** Everything buildCurve needs except the split and threshold: today's fees, anti-sniper, DAMM v2, LP split. */
+function curveInput({ creatorFeePct, quoteDecimals = DBC_QUOTE_DECIMALS }) {
   const creatorFeeMode = Number(creatorFeePct) === 0 ? "platform" : "creator";
-  return buildCurve({
+  return {
     token: {
       tokenType: TokenType.SPLToken,
       tokenBaseDecimal: TokenDecimal.SIX,
@@ -310,20 +220,7 @@ function feeEnvelope({ creatorFeePct, quoteDecimals = DBC_QUOTE_DECIMALS }) {
     liquidityDistribution: liquidityDistributionFor(creatorFeeMode),
     lockedVesting: { ...DBC_LOCKED_VESTING },
     activationType: ActivationType.Timestamp,
-    percentageSupplyOnMigration: 20,
-    migrationQuoteThreshold: 1.5,
-  });
-}
-
-function lockedVestingParams() {
-  return getLockedVestingParams(
-    DBC_LOCKED_VESTING.totalLockedVestingAmount,
-    DBC_LOCKED_VESTING.numberOfVestingPeriod,
-    DBC_LOCKED_VESTING.cliffUnlockAmount,
-    DBC_LOCKED_VESTING.totalVestingDuration,
-    DBC_LOCKED_VESTING.cliffDurationFromMigrationTime,
-    DBC_TOKEN_DECIMALS,
-  );
+  };
 }
 
 /**
@@ -370,92 +267,6 @@ export function programSupplyMinimums({ thresholdLamports, sqrtStartPrice, curve
   };
 }
 
-function customSqrtInput({ creatorFeePct, totalWhole, sqrtPrices, leftover = 0, quoteDecimals = DBC_QUOTE_DECIMALS }) {
-  const creatorFeeMode = Number(creatorFeePct) === 0 ? "platform" : "creator";
-  return {
-    token: {
-      tokenType: TokenType.SPLToken,
-      tokenBaseDecimal: TokenDecimal.SIX,
-      tokenQuoteDecimal: Number(quoteDecimals),
-      tokenAuthorityOption: TokenAuthorityOption.Immutable,
-      totalTokenSupply: Number(totalWhole),
-      leftover,
-    },
-    fee: {
-      baseFeeParams: {
-        baseFeeMode: BaseFeeMode.FeeSchedulerLinear,
-        feeSchedulerParam: {
-          startingFeeBps: DBC_ANTI_SNIPER_START_FEE_BPS,
-          endingFeeBps: DBC_ANTI_SNIPER_END_FEE_BPS,
-          numberOfPeriod: DBC_ANTI_SNIPER_PERIODS,
-          totalDuration: DBC_ANTI_SNIPER_DURATION_SECONDS,
-        },
-      },
-      dynamicFeeEnabled: false,
-      collectFeeMode: CollectFeeMode.QuoteToken,
-      creatorTradingFeePercentage: creatorFeePct,
-      poolCreationFee: 0,
-      enableFirstSwapWithMinFee: DBC_ENABLE_FIRST_SWAP_WITH_MIN_FEE,
-    },
-    migration: {
-      migrationOption: MigrationOption.MET_DAMM_V2,
-      migrationFeeOption: MigrationFeeOption.Customizable,
-      migrationFee: { feePercentage: DBC_MIGRATION_FEE_PCT, creatorFeePercentage: DBC_CREATOR_MIGRATION_FEE_PCT },
-      migratedPoolFee: {
-        collectFeeMode: MigratedCollectFeeMode.QuoteToken,
-        dynamicFee: DammV2DynamicFeeMode.Disabled,
-        poolFeeBps: DBC_GRADUATED_POOL_FEE_BPS,
-      },
-    },
-    liquidityDistribution: liquidityDistributionFor(creatorFeeMode),
-    lockedVesting: { ...DBC_LOCKED_VESTING },
-    activationType: ActivationType.Timestamp,
-    sqrtPrices,
-  };
-}
-
-function assembleParams({ thresholdLamports, soldRaw, slope, creatorFeePct, poolTokens, soldPoints, quoteDecimals = DBC_QUOTE_DECIMALS }) {
-  const { sqrtStartPrice, curve, sqrtPrices } = buildLinearCurve(thresholdLamports, soldRaw, slope, soldPoints, quoteDecimals);
-  const vesting = lockedVestingParams();
-  const mins = programSupplyMinimums({
-    thresholdLamports,
-    sqrtStartPrice,
-    curve,
-    vesting,
-  });
-  const poolForCirculating = mins.includedBase > poolTokens ? mins.includedBase : poolTokens;
-  const linearCirculating = roundUpToWholeTokens(soldRaw + poolForCirculating + DBC_RESERVE_RAW);
-  const circulatingRaw = linearCirculating > mins.minWithoutBuffer ? linearCirculating : mins.minWithoutBuffer;
-  const preRaw = circulatingRaw > mins.minWithBuffer ? circulatingRaw : mins.minWithBuffer;
-  if (preRaw > DBC_SUPPLY_CEILING_RAW) {
-    return { configParams: null, totalRaw: preRaw, circulatingRaw, sqrtPrices, mins };
-  }
-  const totalWhole = (preRaw + DBC_TOKEN_SCALE - 1n) / DBC_TOKEN_SCALE;
-  let envelope = feeEnvelope({ creatorFeePct, quoteDecimals });
-  try {
-    envelope = buildCurveWithCustomSqrtPrices(customSqrtInput({
-      creatorFeePct,
-      totalWhole: totalWhole > 0n ? totalWhole : 1n,
-      sqrtPrices,
-      leftover: 0,
-      quoteDecimals,
-    }));
-  } catch {
-    // SDK allocation can refuse leftover:0 when the 25% swap buffer overruns; we keep the fee envelope.
-  }
-  const configParams = {
-    ...envelope,
-    sqrtStartPrice,
-    curve,
-    migrationQuoteThreshold: new BN(thresholdLamports.toString()),
-    tokenSupply: {
-      preMigrationTokenSupply: new BN(preRaw.toString()),
-      postMigrationTokenSupply: new BN(circulatingRaw.toString()),
-    },
-    lockedVesting: vesting,
-  };
-  return { configParams, totalRaw: preRaw, circulatingRaw, sqrtPrices, mins };
-}
 
 export function curveQuoteFull(configParams) {
   let q = 0n;
@@ -528,99 +339,79 @@ export function paramsHashOf(payload) {
   return createHash("sha256").update(JSON.stringify(canonicalJson(payload))).digest("hex");
 }
 
-export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorFeeMode, { soldPoints = PRODUCTION_SOLD_POINTS, quote = null } = {}) {
+/**
+ * v2 (founder 2026-10-08): a config that graduates at `targetUsdMicros` MARKET CAP (at the SOL price of
+ * `stepUsdMicros`), with 85% of the 1B supply on the curve, 13% into the graduated pool, the 2% creator
+ * reserve, and a 2% graduation fee with no creator share. The curve is the first segment of Meteora's
+ * buildCurve (one constant-product segment from the start price to the graduation price). buildCurve's
+ * extra segment up to the maximum price is dropped: with it the program demands a 25% swap buffer
+ * (getSwapAmountWithBuffer) that does not fit in 1B; ending at graduation, the buffer is zero.
+ * Proven end to end on a local validator: scripts/dbc/prove-v2-economics-local.mjs.
+ */
+export function buildLaunchConfigParams(targetUsdMicros, stepUsdMicros, creatorFeeMode, { quote = null } = {}) {
   if (!isCreatorFeeMode(creatorFeeMode)) {
     throw Object.assign(new Error("creatorFeeMode must be creator or platform"), { code: "DBC_BAD_FEE_MODE" });
   }
   const target = BigInt(targetUsdMicros);
   const step = BigInt(stepUsdMicros);
   const quoteDecimals = Number(quote?.decimals ?? DBC_QUOTE_DECIMALS);
-  const thresholdLamports = quote && quote.kind !== "native"
-    ? thresholdQuoteRaw(target, quote, step)
-    : thresholdLamportsFor(target, step);
+  const thresholdUsd = thresholdUsdMicrosForMarketCap(target);
+  const thresholdRaw = quote && quote.kind !== "native"
+    ? thresholdQuoteRaw(thresholdUsd, quote, step)
+    : thresholdLamportsFor(thresholdUsd, step);
   const creatorFeePct = creatorTradingFeePct(creatorFeeMode);
-  let slope = DBC_PRICE_SLOPE_LAMPORTS;
-  let steepened = false;
-  let assembled;
-  let econ;
-  for (let i = 0; i < 48; i += 1) {
-    econ = linearEconomics(thresholdLamports, slope);
-    assembled = assembleParams({
-      thresholdLamports,
-      soldRaw: econ.soldRaw,
-      poolTokens: econ.poolTokens,
-      slope,
-      creatorFeePct,
-      soldPoints,
-      quoteDecimals,
-    });
-    if (assembled.totalRaw <= DBC_SUPPLY_CEILING_RAW) break;
-    steepened = true;
-    if (i === 0) {
-      let lo = DBC_PRICE_SLOPE_LAMPORTS;
-      let hi = DBC_PRICE_SLOPE_LAMPORTS * 50_000n;
-      while (lo < hi) {
-        const mid = (lo + hi) / 2n;
-        const trial = linearEconomics(thresholdLamports, mid);
-        const built = assembleParams({
-          thresholdLamports,
-          soldRaw: trial.soldRaw,
-          poolTokens: trial.poolTokens,
-          slope: mid,
-          creatorFeePct,
-          soldPoints,
-          quoteDecimals,
-        });
-        if (built.totalRaw <= DBC_SUPPLY_CEILING_RAW) hi = mid;
-        else lo = mid + 1n;
-      }
-      slope = lo;
-      continue;
-    }
-    slope = (slope * 11n) / 10n + 1n;
-  }
-  if (assembled.totalRaw > DBC_SUPPLY_CEILING_RAW) {
-    throw Object.assign(new Error("DBC config would mint more than 1B tokens"), { code: "DBC_SUPPLY_CEILING" });
-  }
 
-  const { configParams, totalRaw, circulatingRaw, mins } = assembled;
-  if (!configParams) {
+  const built = buildCurve({
+    ...curveInput({ creatorFeePct, quoteDecimals }),
+    // 1 token of slack so the program's rounded-up pool amount still fits inside 1B.
+    token: { ...curveInput({ creatorFeePct, quoteDecimals }).token, leftover: 1 },
+    percentageSupplyOnMigration: DBC_POOL_SUPPLY_PCT,
+    migrationQuoteThreshold: Number(thresholdRaw) / 10 ** quoteDecimals,
+  });
+  const curve = [built.curve[0]];
+  const T = BigInt(built.migrationQuoteThreshold.toString());
+  const mins = programSupplyMinimums({ thresholdLamports: T, sqrtStartPrice: built.sqrtStartPrice, curve, vesting: built.lockedVesting });
+  const preRaw = DBC_SUPPLY_CEILING_RAW;
+  if (mins.minWithBuffer > preRaw || mins.minWithoutBuffer > preRaw) {
     throw Object.assign(new Error("DBC config would mint more than 1B tokens"), { code: "DBC_SUPPLY_CEILING" });
   }
+  const configParams = {
+    ...built,
+    curve,
+    migrationQuoteThreshold: new BN(T.toString()),
+    tokenSupply: {
+      preMigrationTokenSupply: new BN(preRaw.toString()),
+      postMigrationTokenSupply: new BN(mins.minWithoutBuffer.toString()),
+    },
+  };
   validateConfigParameters({ ...configParams, leftoverReceiver: DUMMY_LEFTOVER });
-  const postRaw = BigInt(configParams.tokenSupply.postMigrationTokenSupply.toString());
-  const preRaw = BigInt(configParams.tokenSupply.preMigrationTokenSupply.toString());
-  if (mins.minWithoutBuffer > postRaw || postRaw > preRaw || mins.minWithBuffer > preRaw) {
-    throw Object.assign(new Error("DBC tokenSupply is below the program minimums"), { code: "DBC_TOKEN_SUPPLY" });
-  }
-
-  const liquidityBits = configParams.curve.map((pt) => liquidityBitLength(pt.liquidity));
   assertSqrtInRange("sqrtStartPrice", configParams.sqrtStartPrice);
   for (const [i, pt] of configParams.curve.entries()) {
     assertSqrtInRange(`curve[${i}].sqrtPrice`, pt.sqrtPrice);
     assertLiquidityU128(`curve[${i}].liquidity`, pt.liquidity);
   }
 
+  const split = migrationSplitLamports(T);
   const expected = {
-    thresholdLamports,
-    soldRaw: econ.soldRaw,
-    poolLamports: econ.poolLamports,
-    poolTokens: econ.poolTokens,
-    creatorGraduationLamports: econ.creatorGraduationLamports,
-    ourGraduationLamports: econ.ourGraduationLamports,
+    thresholdLamports: T,
+    graduationMarketCapUsdMicros: target,
+    soldRaw: mins.swapBase,
+    poolLamports: split.poolLamports,
+    poolTokens: mins.includedBase,
+    creatorGraduationLamports: split.creatorGraduationLamports,
+    ourGraduationLamports: split.ourGraduationLamports,
     reserveTokens: DBC_RESERVE_RAW,
-    totalTokenSupply: totalRaw,
-    circulatingAfterGraduation: circulatingRaw,
-    bufferTokens: preRaw - postRaw,
-    slopeUsed: slope,
-    steepened,
-    liquidityBits,
+    totalTokenSupply: preRaw,
+    circulatingAfterGraduation: mins.minWithoutBuffer,
+    bufferTokens: preRaw - mins.minWithoutBuffer,
+    liquidityBits: configParams.curve.map((pt) => liquidityBitLength(pt.liquidity)),
     includedBase: mins.includedBase,
     minWithoutBuffer: mins.minWithoutBuffer,
     minWithBuffer: mins.minWithBuffer,
     migrationQuote: mins.migrationQuote,
   };
   const paramsHash = paramsHashOf({
+    economics: "v2-market-cap",
     targetUsdMicros: target.toString(),
     stepUsdMicros: step.toString(),
     creatorFeeMode,

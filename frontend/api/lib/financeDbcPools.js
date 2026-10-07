@@ -6,8 +6,8 @@
 //   before migration  the partner and creator trading-fee counters still on the
 //                     pool (claimable now), what the indexer already claimed
 //                     and routed (dbc_fee_accruals), and the partner migration
-//                     fee the pool will pay at graduation (config: 22% of the
-//                     threshold, 10% of it ours).
+//                     fee the pool will pay at graduation (from the config:
+//                     v1 22% of the threshold, 10% of it ours; v2 2%, all ours).
 //   after migration   the keeper job (withdraw / compensate / route) and the
 //                     collector's DAMM v2 partner position: unclaimed LP fees.
 //
@@ -304,7 +304,12 @@ export function dbcPoolItems(rows, { pools = new Map(), configs = new Map(), dam
       };
     }
     if (config && !config.error && BigInt(config.migrationQuoteThreshold || "0") > 0n) {
-      const split = expectedMigrationSplit(config.migrationQuoteThreshold, config.migrationFeePercentage || 22, config.creatorMigrationFeePercentage || 90);
+      // Each config's own numbers (v1 22 / 90, v2 2 / 0). `|| 90` read a v2 creator share of 0 as 90.
+      const split = expectedMigrationSplit(
+        config.migrationQuoteThreshold,
+        config.migrationFeePercentage ?? 22,
+        config.creatorMigrationFeePercentage ?? 90,
+      );
       const threshold = BigInt(config.migrationQuoteThreshold);
       const reserve = chain && !chain.error ? BigInt(chain.quoteReserve) : null;
       item.migrationFee = {
@@ -366,7 +371,7 @@ export function dbcPoolTotals(items) {
 export const DBC_POOLS_NOTES = Object.freeze([
   "Read-only. Partner trading fees are claimed by the indexer dbc-fee worker and re-split to the treasury vaults (dbcFeeClaimer.ts, dbcFeeRouter.ts); after migration the collector's DAMM v2 LP fees are claimed hourly by the dbc-grad worker (runDbcLpClaimsOnce). There is no manual harvest for DBC pools.",
   "Partner unclaimed: Meteora's partner counter on the pool (80% of the trading fee, less the creator's 7% of it). Creator unclaimed: the creator's own counter, claimed by the creator.",
-  "Migration fee: 22% of the threshold at graduation, 90% creator / 10% partner. The partner 10% first pays the creator Meteora's 0.2% liquidity cut (D7), then the finalize split; the protocol remainder is revenue lane DBC migration fee (partner share).",
+  "Migration fee, from each pool's config. v1 pools (before 2026-10-08): 22% of the threshold, 90% creator / 10% partner; the partner 10% first pays the creator Meteora's 0.2% liquidity cut (D7). v2 pools: 2% of the threshold, all partner, no D7. Then the finalize split; the protocol remainder is revenue lane DBC migration fee (partner share).",
   "Test coins (hidden from public listings) are listed apart and left out of the totals.",
 ]);
 

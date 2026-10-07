@@ -250,6 +250,11 @@ const Playbook = () => {
               The target is part of the launch and does not change afterwards. Test networks also show a small rehearsal
               target. It never appears on mainnet.
             </p>
+            <p>
+              The Meteora launch type uses market caps instead: <span className={STRONG}>$30K</span> (fast grad) or{" "}
+              <span className={STRONG}>$50K</span> (normal). 85% of the supply is sold on the curve, so a creator can buy
+              up to 70% at launch and 15% stays for everyone else.
+            </p>
             <div className={INSET}>
               <div className={BOX_TITLE}>Creator fee</div>
               <p className="mt-1">
@@ -434,8 +439,8 @@ const Playbook = () => {
                 </Rule>
                 <Rule>
                   <span className={STRONG}>Meteora launch type</span>: a <span className={MONO}>$TICKER / quote</span>{" "}
-                  pool on Meteora with the liquidity locked. Create shows your share at graduation as 19.8% of what the
-                  curve raised.
+                  pool on Meteora with the liquidity locked. Your 2% creator reserve (20M tokens) unlocks. The 2%
+                  graduation fee goes to MemeWarzone&apos;s fee routing, not to the creator.
                 </Rule>
               </ul>
             </div>

@@ -10,6 +10,8 @@ import {
 type Rewards = {
   graduationPayout: string;
   graduationPayoutClaimable?: boolean;
+  /** False for v2 coins: the creator has no share of the graduation fee. */
+  creatorGraduationShare?: boolean;
   reserve: string;
   lpFees: string;
   locker: string;
@@ -90,7 +92,8 @@ export default function DbcCreatorRewardsPanel({
   if (!pool || !creator) return null;
 
   const rows = [
-    {
+    // v2 coins (2026-10-08) give the creator no share of the graduation fee: no payout row.
+    ...(rewards?.creatorGraduationShare === false ? [] : [{
       key: "payout",
       title: "Graduation payout",
       detail: rewards?.graduationPayoutClaimable
@@ -102,7 +105,7 @@ export default function DbcCreatorRewardsPanel({
       unit: "quote",
       disabled: !rewards?.graduationPayoutClaimable,
       run: () => submitDbcGraduationPayout({ pool, creator }),
-    },
+    }]),
     {
       key: "reserve",
       title: "Creator reserve",

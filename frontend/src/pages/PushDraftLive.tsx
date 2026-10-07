@@ -37,7 +37,7 @@ import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmi
 import { signSolanaDraftAction } from "@/lib/solanaWallet";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { isDbcLaunchEnabled } from "@/lib/dbcLaunchEnabled";
-import { getDbcGraduationTiers } from "@/lib/dbcGraduationTiers";
+import { DBC_DEFAULT_GRADUATION_TARGET_WEI, getDbcGraduationTiers } from "@/lib/dbcGraduationTiers";
 import type { CreatorFeeChoice } from "@/components/create/CreatorFeeChoicePicker";
 import {
   EvmGen6LaunchOptions,
@@ -183,11 +183,13 @@ export default function PushDraftLive() {
         try {
           const persistedTarget = BigInt(String(data.draft.graduationTargetWei || DEFAULT_GRADUATION_TARGET_WEI));
           const dbc = String((data.draft as { launchType?: string }).launchType || "") === "dbc";
-          // A DBC draft keeps its own target ($15K/$30K/$50K, or $150 on devnet).
+          // A DBC draft keeps its own target ($30K/$50K market cap, or $150 on devnet). A draft saved
+          // with the old $15K target is not supported any more and falls back to the page default.
           const supported = dbc
             ? getDbcGraduationTiers().some((tier) => tier.targetWei === persistedTarget)
             : isSupportedGraduationTarget(Number(data.draft.chainId), persistedTarget);
           if (supported) setGraduationTargetWei(persistedTarget);
+          else if (dbc) setGraduationTargetWei(DBC_DEFAULT_GRADUATION_TARGET_WEI);
           const saved = data.draft.evmLaunchOptions;
           if (saved?.feeChoiceName) setEvmFeeChoice(saved.feeChoiceName);
           if (saved?.feeChoiceName === "split" && saved.feeCreatorPct) setEvmCreatorSharePct(String(saved.feeCreatorPct));

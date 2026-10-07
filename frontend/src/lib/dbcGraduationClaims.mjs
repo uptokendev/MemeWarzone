@@ -64,11 +64,15 @@ export async function loadCreatorRewards(connection, { pool, creator, includeLp 
   const cfgWrap = await client.state.getPoolConfig(state.config);
   const cfg = cfgWrap?.poolConfig ?? cfgWrap;
   const threshold = BigInt(String(cfg?.migrationQuoteThreshold ?? cfg?.migration_quote_threshold ?? 0));
-  const intoPool = (threshold * 78n + 99n) / 100n;
+  // Each config's own graduation fee and creator share: v1 configs 22% / 90%, v2 (2026-10-08) 2% / 0%.
+  const feePct = BigInt(String(cfg?.migrationFeePercentage ?? cfg?.migration_fee_percentage ?? 22));
+  const creatorPct = BigInt(String(cfg?.creatorMigrationFeePercentage ?? cfg?.creator_migration_fee_percentage ?? 90));
+  const intoPool = (threshold * (100n - feePct) + 99n) / 100n;
   const fee = threshold - intoPool;
   // The migration fee only exists once the pool has migrated; before that this is the expected
   // amount, shown but not claimable.
-  const graduationPayout = withdrawn ? 0n : (fee * 90n) / 100n;
+  const graduationPayout = withdrawn ? 0n : (fee * creatorPct) / 100n;
+  const creatorGraduationShare = creatorPct > 0n;
   const graduationPayoutClaimable = migrated && !withdrawn && graduationPayout > 0n;
   const mint = String(state.baseMint?.toBase58?.() || state.base_mint || "");
   const locker = deriveDbcLockerEscrow(poolPk);
@@ -107,6 +111,7 @@ export async function loadCreatorRewards(connection, { pool, creator, includeLp 
     migrated,
     graduationPayout: graduationPayout.toString(),
     graduationPayoutClaimable,
+    creatorGraduationShare,
     reserve: reserve.toString(),
     lpFees: lpFees.toString(),
     locker: locker.toBase58(),

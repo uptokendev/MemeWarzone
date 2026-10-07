@@ -34,6 +34,9 @@ export type ConfigSnapshot = {
   migrationQuoteThreshold: bigint;
   lockedVestingAmount: bigint;
   quoteMint: string;
+  /** The config's own graduation fee and the creator's share of it (v1 22 / 90, v2 2026-10-08: 2 / 0). */
+  migrationFeePercentage: bigint;
+  creatorMigrationFeePercentage: bigint;
 };
 
 export type JobSnapshot = {
@@ -101,11 +104,25 @@ export function readConfigSnapshot(config: Record<string, unknown> | null | unde
   const lockedVestingAmount =
     big(vesting.amountPerPeriod ?? vesting.amount_per_period) * big(vesting.numberOfPeriod ?? vesting.number_of_period)
     + big(vesting.cliffUnlockAmount ?? vesting.cliff_unlock_amount);
+  const feePct = inner.migrationFeePercentage ?? inner.migration_fee_percentage;
+  const creatorPct = inner.creatorMigrationFeePercentage ?? inner.creator_migration_fee_percentage;
   return {
     migrationQuoteThreshold: big(inner.migrationQuoteThreshold ?? inner.migration_quote_threshold),
     lockedVestingAmount,
     quoteMint: key(inner.quoteMint ?? inner.quote_mint),
+    // A config that does not say keeps the v1 numbers every pool before 2026-10-08 was born with.
+    migrationFeePercentage: feePct == null ? 22n : big(feePct),
+    creatorMigrationFeePercentage: creatorPct == null ? 90n : big(creatorPct),
   };
+}
+
+/**
+ * D7 (pay the creator back for Meteora's 0.2% migration liquidity fee) applies to v1 configs only,
+ * where the creator takes 90% of the graduation fee. v2 configs (founder 2026-10-08) give the creator
+ * 0% of a 2% fee and do not compensate: Meteora's 0.2% simply comes on top.
+ */
+export function compensationApplies(config: ConfigSnapshot): boolean {
+  return config.creatorMigrationFeePercentage > 0n;
 }
 
 export function curveComplete(pool: PoolSnapshot, config: ConfigSnapshot): boolean {
@@ -137,7 +154,7 @@ export function nextGraduationStep(pool: PoolSnapshot, config: ConfigSnapshot, j
   }
   if (!job.marked) return "mark";
   if (!partnerWithdrawn(pool)) return "withdraw";
-  if (!job.compensationPaid) return "compensate";
+  if (!job.compensationPaid && compensationApplies(config)) return "compensate";
   if (!job.routed) return "route";
   return "done";
 }

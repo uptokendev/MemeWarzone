@@ -53,7 +53,7 @@ export async function handleDbcLaunchConfig(req, res, deps = {}) {
 
   const targetUsdMicros = parseTargetUsdToMicros(q.targetUsd);
   if (targetUsdMicros == null) {
-    return json(res, 400, { ok: false, error: "targetUsd must be 15000, 30000 or 50000", code: "DBC_BAD_TARGET" });
+    return json(res, 400, { ok: false, error: "targetUsd must be 30000 or 50000 (graduation market cap)", code: "DBC_BAD_TARGET" });
   }
   if (targetUsdMicros === DBC_DEVNET_TEST_TARGET_USD_MICROS && cluster !== "devnet") {
     return json(res, 400, { ok: false, error: "the $150 target is only for devnet", code: "DBC_TEST_TARGET_REFUSED" });

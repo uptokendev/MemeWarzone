@@ -35,7 +35,7 @@ import { isDbcLaunchEnabled } from "@/lib/dbcLaunchEnabled";
 import { enabledQuotes, quoteUiToRaw, WSOL_MINT } from "../../shared/dbcQuotes.mjs";
 import { readQuoteUiMultiplier } from "@/lib/dbcQuoteMultiplier.mjs";
 import { DbcStockRiskDialog } from "@/components/create/DbcStockRiskDialog";
-import { getDbcGraduationTiers } from "@/lib/dbcGraduationTiers";
+import { DBC_DEFAULT_GRADUATION_TARGET_WEI, getDbcGraduationTiers } from "@/lib/dbcGraduationTiers";
 import {
   authorizeDbcCreate,
   beginDbcCreate,
@@ -354,17 +354,19 @@ const Create = () => {
 
   useEffect(() => {
     const selectedStillAvailable = graduationOptions.some((option) => option.targetWei === graduationTargetWei);
+    // DBC preselects its normal tier ($50K MC); the other launch types keep their own default.
+    const defaultTarget = dbcLaunch ? DBC_DEFAULT_GRADUATION_TARGET_WEI : getDefaultGraduationTargetWei(chainId);
     if (!selectedStillAvailable) {
-      setGraduationTargetWei(getDefaultGraduationTargetWei(chainId));
+      setGraduationTargetWei(defaultTarget);
       return;
     }
     if (!graduationTouchedRef.current) {
-      const preferred = getDefaultGraduationTargetWei(chainId);
+      const preferred = defaultTarget;
       if (preferred !== graduationTargetWei && graduationOptions.some((o) => o.targetWei === preferred)) {
         setGraduationTargetWei(preferred);
       }
     }
-  }, [graduationOptions, graduationTargetWei, chainId]);
+  }, [graduationOptions, graduationTargetWei, chainId, dbcLaunch]);
 
   useEffect(() => {
     if (!dbcLaunch) {
@@ -1330,7 +1332,7 @@ const Create = () => {
                 left={<div className="flex w-full flex-col items-center gap-2">{preview}{selectedGraduation ? <p className="text-center text-xs text-mw-muted">Graduation: <span className="text-accent">{selectedGraduation.label}</span> · {selectedGraduation.title}</p> : null}</div>}
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1">
-                    <div><div className="text-sm font-semibold text-mw-text">Graduation threshold</div><p className="mt-0.5 text-xs text-mw-muted">Bonding volume before DEX graduation.</p></div>
+                    <div><div className="text-sm font-semibold text-mw-text">{dbcLaunch ? "Graduation market cap" : "Graduation threshold"}</div><p className="mt-0.5 text-xs text-mw-muted">{dbcLaunch ? "The market cap at which the coin moves to a Meteora pool." : "Bonding volume before DEX graduation."}</p></div>
                     <div className="grid grid-cols-2 gap-1.5">
                       {graduationOptions.map((option) => {
                         const selected = graduationTargetWei === option.targetWei;
@@ -1426,7 +1428,7 @@ const Create = () => {
                   ) : null}
                   <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
                     <div className="flex justify-between gap-3"><span className="text-mw-muted">Pool after graduation</span><span className="text-mw-text">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora, liquidity locked</span></div>
-                    <div className="flex justify-between gap-3"><span className="text-mw-muted">Your share at graduation</span><span className="text-mw-text">19.8% of what the curve raised</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-mw-muted">Your share at graduation</span><span className="text-mw-text">The 2% creator reserve (20M tokens)</span></div>
                   </div>
                   <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11 shrink-0" onClick={goNext}>Next</Button>
                 </div>

@@ -30,10 +30,11 @@
 //                     made on our site; swept weekly to protocol_vault
 //                     (realtime-indexer/src/dbc/dbcReferralSweep.ts:80-100).
 //   dbc_migration_fee Meteora DBC migration fee, partner share. At migration
-//                     the curve pays 22% of the threshold as migration fee,
-//                     90% creator / 10% partner (us). The indexer keeper
-//                     withdraws the partner 10% to the collector, pays the
-//                     creator Meteora's 0.2% liquidity cut from it (D7), then
+//                     the curve pays the config's migration fee: v1 pools 22%
+//                     of the threshold, 90% creator / 10% partner (us); v2 pools
+//                     (2026-10-08) 2%, all ours. The indexer keeper withdraws
+//                     the partner share to the collector, pays a v1 creator
+//                     Meteora's 0.2% liquidity cut from it (D7), then
 //                     routes the rest with the finalize split (recruiter /
 //                     squad / airdrop, protocol the remainder) and writes one
 //                     reward_events row: route_kind 'finalize', matched

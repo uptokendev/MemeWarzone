@@ -79,18 +79,13 @@ export const DBC_CREATOR_LOCK_COPY =
 export const DBC_ENABLE_FIRST_SWAP_WITH_MIN_FEE = true;
 
 /**
- * D11: first buy in the launch transaction, at most this share of the config supply by default.
- * Founder + team 2026-10-07: 60% (was 10%, briefly 20%); the anti-rug cap is dropped to follow the
- * market. Our own server check; Meteora has no creator cap. At $120 SOL, 60% on a $15k config costs
- * ~93 SOL and fills ~73% of the curve.
+ * D11: first buy in the launch transaction, at most 70% of the config supply, for every creator
+ * (founder + team 2026-10-08; was 10%, no per-wallet latch). Our own server check; Meteora has no
+ * creator cap. With 85% of supply on the curve (DBC_CURVE_SUPPLY_PCT) a 70% first buy leaves 15% for
+ * the public: ~14.2 SOL on a $30K config and ~23.7 SOL on a $50K config at $120.40 SOL (proven on a
+ * local validator, scripts/dbc/prove-v2-economics-local.mjs).
  */
-export const DBC_FIRST_BUY_MAX_BPS = 6000;
-/**
- * Ceiling for wallets granted a higher cap in public.creator_first_buy_caps: 70% (founder 2026-10-07,
- * exclusive partner wallets, a marketing decision). 70% is ~98-99% of the curve (~126 SOL on a $15k
- * config): the first buy all but completes the curve at launch.
- */
-export const DBC_FIRST_BUY_PARTNER_MAX_BPS = 7000;
+export const DBC_FIRST_BUY_MAX_BPS = 7000;
 
 /** Creator limits for DBC (same numbers as today's CreatorProfile defaults). */
 export const DBC_MAX_LIVE_BONDING = 3;
@@ -104,10 +99,22 @@ export const DBC_CREATOR_TRADING_FEE_PCT_PLATFORM = 0;
 
 export const DBC_CREATOR_FEE_MODES = Object.freeze(["creator", "platform"]);
 
-/** D6: migration fee 22%, creator 90% of it → creator 19.8%, us 2.2%, pool 78%. */
-export const DBC_MIGRATION_FEE_PCT = 22;
-export const DBC_CREATOR_MIGRATION_FEE_PCT = 90;
+/**
+ * D6 v2 (founder 2026-10-08): graduation (migration) fee 2%, creator 0% of it: all 2% to our side,
+ * through the graduation fee routing (realtime-indexer dbcGraduationSplit). Pool gets 98%. Meteora's
+ * own 0.2% liquidity migration fee comes on top and is no longer compensated to the creator.
+ * Configs created before this keep their 22% / 90% (a config never changes).
+ */
+export const DBC_MIGRATION_FEE_PCT = 2;
+export const DBC_CREATOR_MIGRATION_FEE_PCT = 0;
 export const DBC_POOL_AFTER_MIGRATION_PCT = 100 - DBC_MIGRATION_FEE_PCT;
+
+/**
+ * v2 supply split of the 1B mint: 85% sold on the curve, 13% into the graduated pool, 2% creator
+ * reserve (DBC_RESERVE_WHOLE, unlocked at graduation). The pool opens at the curve's last price.
+ */
+export const DBC_CURVE_SUPPLY_PCT = 85;
+export const DBC_POOL_SUPPLY_PCT = 13;
 
 /** D8: graduated pool 0.25%, SOL-only fees, 80/20 permanently locked (`keep`). */
 export const DBC_GRADUATED_POOL_FEE_BPS = 25;
@@ -134,14 +141,17 @@ export function liquidityDistributionFor(creatorFeeMode) {
   };
 }
 
-/** D9: dollar targets of raised SOL. Micros. */
+/**
+ * D9 v2 (founder 2026-10-08): targets are the GRADUATION MARKET CAP, in USD micros at the SOL price
+ * the config is built for: $30K (fast) and $50K (normal). $15K is gone. Before v2 these were dollars
+ * of raised SOL; existing coins keep their configs.
+ */
 export const DBC_TARGET_USD_MICROS = Object.freeze({
-  15000: 15_000_000_000n,
   30000: 30_000_000_000n,
   50000: 50_000_000_000n,
 });
 
-/** $150 test target — a real target costs ~130 SOL to fill; devnet cannot. */
+/** $150 market-cap test target for devnet, where a real target's SOL is hard to come by. */
 export const DBC_DEVNET_TEST_TARGET_USD_MICROS = 150_000_000n;
 
 export const DBC_USD_MICROS = 1_000_000n;
@@ -173,7 +183,6 @@ export function isCreatorFeeMode(mode) {
 
 export function allowedTargetUsdMicros(cluster) {
   const targets = [
-    DBC_TARGET_USD_MICROS[15000],
     DBC_TARGET_USD_MICROS[30000],
     DBC_TARGET_USD_MICROS[50000],
   ];
@@ -190,8 +199,8 @@ export function parseTargetUsdToMicros(targetUsd) {
 }
 
 /**
- * D6 integer split, matching the program: pool = ceil(T * 78 / 100) (Rounding::Up),
- * fee = T - pool, then creator 90% of the fee.
+ * D6 integer split, matching the program: pool = ceil(T * (100 - fee%) / 100) (Rounding::Up),
+ * fee = T - pool, then the creator's share of the fee (0% in v2).
  */
 export function migrationSplitLamports(thresholdLamports) {
   const T = BigInt(thresholdLamports);
@@ -213,4 +222,17 @@ export function thresholdLamportsFor(targetUsdMicros, stepUsdMicros) {
   const step = BigInt(stepUsdMicros);
   if (target <= 0n || step <= 0n) throw new Error("target and step must be positive");
   return (target * DBC_LAMPORTS_PER_SOL + step - 1n) / step;
+}
+
+/**
+ * v2: the SOL (in USD micros) a curve must raise to graduate at `marketCapUsdMicros`. The pool opens at
+ * the curve's last price with 98% of the raise against 13% of the supply, so
+ * marketCap = 1B x price = raise x 98% / 13%  ->  raise = marketCap x 13 / 98 (rounded up).
+ */
+export function thresholdUsdMicrosForMarketCap(marketCapUsdMicros) {
+  const mc = BigInt(marketCapUsdMicros);
+  if (mc <= 0n) throw new Error("market cap must be positive");
+  const num = mc * BigInt(DBC_POOL_SUPPLY_PCT);
+  const den = BigInt(DBC_POOL_AFTER_MIGRATION_PCT);
+  return (num + den - 1n) / den;
 }

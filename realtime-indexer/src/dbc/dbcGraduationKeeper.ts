@@ -48,6 +48,7 @@ import {
   type DbcFinalizeSlices,
 } from "./dbcGraduationSplit.js";
 import {
+  compensationApplies,
   jobFromRow,
   nextGraduationStep,
   readConfigSnapshot,
@@ -277,14 +278,17 @@ async function applyLandedJob(input: {
     const wrap = await input.client.state.getPool(poolPk);
     const pool = readPoolSnapshot(unwrapPool(wrap));
     const claimed = quoteVaultOutflow(input.confirmed, pool!.quoteVault);
+    // v2 pools (creator 0% of the fee) have no D7 compensation: go straight to route.
+    const config = readConfigSnapshot((await input.client.state.getPoolConfig(new PublicKey(pool!.config))) as any);
+    const next = config && !compensationApplies(config) ? "route" : "compensate";
     await updateJob(
       input.db,
       input.row.id,
       `update public.dbc_graduation_jobs
-          set status = 'ready', step = 'compensate', partner_fee = $2, signature = null,
+          set status = 'ready', step = $3, partner_fee = $2, signature = null,
               last_valid_block_height = null, attempt = 0, backoff_until = null, updated_at = now()
         where id = $1`,
-      [claimed.toString()],
+      [claimed.toString(), next],
     );
     return;
   }
@@ -768,7 +772,7 @@ export async function advanceGraduationJob(input: {
     });
     const partnerFee = job.partner_fee != null
       ? BigInt(String(job.partner_fee))
-      : expectedPartnerMigrationFee(config.migrationQuoteThreshold);
+      : expectedPartnerMigrationFee(config.migrationQuoteThreshold, config.migrationFeePercentage, config.creatorMigrationFeePercentage);
     const profile = await creatorProfile(input.db, pool.creator, new Date());
     const applied = finalizeAfterCompensation(partnerFee, profile, due.due);
     await updateJob(
@@ -854,8 +858,9 @@ export async function advanceGraduationJob(input: {
   if (step === "route") {
     const partnerFee = job.partner_fee != null
       ? BigInt(String(job.partner_fee))
-      : expectedPartnerMigrationFee(config.migrationQuoteThreshold);
-    const paid = BigInt(String(job.compensation || "0"));
+      : expectedPartnerMigrationFee(config.migrationQuoteThreshold, config.migrationFeePercentage, config.creatorMigrationFeePercentage);
+    // v2 configs skip the compensate step, so nothing was paid and the whole partner fee routes.
+    const paid = compensationApplies(config) ? BigInt(String(job.compensation || "0")) : 0n;
     const profile = await creatorProfile(input.db, pool.creator, new Date());
     const applied = finalizeAfterCompensation(partnerFee, profile, paid);
     const slices = applied.slices;

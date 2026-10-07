@@ -19,6 +19,7 @@ import {
 } from "../dev-fix/ticker-reservation-service.js";
 import {
   DBC_DEVNET_TEST_TARGET_USD_MICROS,
+  DBC_FIRST_BUY_MAX_BPS,
   DBC_PROGRAM_ID,
   DBC_QUOTE_MINT,
   DBC_SOL_USD_MAX_STALE_MS,
@@ -31,7 +32,6 @@ import { parseFeeChoice } from "../lib/dbc/dbcFeeChoice.mjs";
 import { requireEnabledQuote, stableStep } from "../../shared/dbcQuotes.mjs";
 import { DbcStockQuoteError, dbcTokenBadgeAddress, stockPriceStep } from "../lib/dbc/dbcStockQuote.mjs";
 import { firstBuyExceedsCap, quoteFirstBuyOnConfig } from "../lib/dbc/dbcFirstBuyQuote.mjs";
-import { firstBuyCapCopy, loadCreatorFirstBuyCapBps } from "../lib/dbc/dbcFirstBuyCap.js";
 import { assertDbcCreatorLimits, loadDbcCreatorLimits } from "../lib/dbc/dbcCreateLimits.js";
 import { isDbcLaunchEnabled, dbcLaunchDisabledPayload } from "./launch-config.js";
 import {
@@ -405,7 +405,7 @@ export function createDbcCreateHandler(deps = {}) {
     const cluster = requiredCluster(env);
     const targetUsdMicros = parseTargetUsdToMicros(body.targetUsd);
     if (targetUsdMicros == null) {
-      return json(res, 400, { ok: false, error: "targetUsd must be 15000, 30000 or 50000", code: "DBC_BAD_TARGET" });
+      return json(res, 400, { ok: false, error: "targetUsd must be 30000 or 50000 (graduation market cap)", code: "DBC_BAD_TARGET" });
     }
     if (targetUsdMicros === DBC_DEVNET_TEST_TARGET_USD_MICROS && cluster !== "devnet") {
       return json(res, 400, { ok: false, error: "the $150 target is only for devnet", code: "DBC_TEST_TARGET_REFUSED" });
@@ -487,7 +487,7 @@ export function createDbcCreateHandler(deps = {}) {
     const fee = parseFeeChoice(body.feeChoice, body.creatorSharePct);
     if (!fee.ok) return json(res, 400, { ok: false, error: fee.error, code: fee.code });
     const targetUsdMicros = parseTargetUsdToMicros(body.targetUsd);
-    if (targetUsdMicros == null) return json(res, 400, { ok: false, error: "targetUsd must be 15000, 30000 or 50000", code: "DBC_BAD_TARGET" });
+    if (targetUsdMicros == null) return json(res, 400, { ok: false, error: "targetUsd must be 30000 or 50000 (graduation market cap)", code: "DBC_BAD_TARGET" });
     if (targetUsdMicros === DBC_DEVNET_TEST_TARGET_USD_MICROS && cluster !== "devnet") {
       return json(res, 400, { ok: false, error: "the $150 target is only for devnet", code: "DBC_TEST_TARGET_REFUSED" });
     }
@@ -527,12 +527,12 @@ export function createDbcCreateHandler(deps = {}) {
     });
     const quoteFn = deps.quoteFirstBuyOnConfig || quoteFirstBuyOnConfig;
     const firstBuy = quoteFn(ensured.configParams, firstBuyLamports);
-    // 20% by default; a creator listed in creator_first_buy_caps may go up to 50%.
-    const capBps = await (deps.loadCreatorFirstBuyCapBps || loadCreatorFirstBuyCapBps)(database, creatorWallet);
+    // One cap for every creator (founder 2026-10-08: 70%, no per-wallet latch).
+    const capBps = DBC_FIRST_BUY_MAX_BPS;
     if (firstBuyExceedsCap(firstBuy, capBps)) {
       return json(res, 400, {
         ok: false,
-        error: firstBuyCapCopy(capBps),
+        error: `The first buy cannot be more than ${capBps / 100}% of supply.`,
         code: "DBC_FIRST_BUY_CAP",
         tokensOut: firstBuy.tokensOut.toString(),
         bps: firstBuy.bps.toString(),
@@ -728,7 +728,7 @@ export function createDbcCreateHandler(deps = {}) {
     if (!fee.ok) return { error: fee };
     const targetUsdMicros = parseTargetUsdToMicros(body.targetUsd);
     if (targetUsdMicros == null) {
-      return { error: { ok: false, error: "targetUsd must be 15000, 30000 or 50000", code: "DBC_BAD_TARGET" } };
+      return { error: { ok: false, error: "targetUsd must be 30000 or 50000 (graduation market cap)", code: "DBC_BAD_TARGET" } };
     }
     if (targetUsdMicros === DBC_DEVNET_TEST_TARGET_USD_MICROS && cluster !== "devnet") {
       return { error: { ok: false, error: "the $150 target is only for devnet", code: "DBC_TEST_TARGET_REFUSED" } };
@@ -758,8 +758,8 @@ export function createDbcCreateHandler(deps = {}) {
     const firstBuyLamports = parseFirstBuyLamports(body.firstBuyLamports);
     const quoteFn = deps.quoteFirstBuyOnConfig || quoteFirstBuyOnConfig;
     const firstBuy = quoteFn(prepared.ensured.configParams, firstBuyLamports);
-    // The quote shows this creator's own cap; authorize checks it again server-side.
-    const capBps = await (deps.loadCreatorFirstBuyCapBps || loadCreatorFirstBuyCapBps)(await db(), body.creatorWallet);
+    // The cap the quote shows; authorize checks it again server-side.
+    const capBps = DBC_FIRST_BUY_MAX_BPS;
     const capped = firstBuyExceedsCap(firstBuy, capBps);
     return json(res, 200, {
       ok: true,

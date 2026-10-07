@@ -68,7 +68,7 @@ test("enabled quotes: SOL, stables and the four stocks on mainnet; no stocks on 
 });
 
 test("threshold conversion: USDC 6, SOL 9, same dollar target", () => {
-  const target = DBC_TARGET_USD_MICROS[15000];
+  const target = 15_000_000_000n;
   const solStep = 118_000_000n;
   const sol = nativeQuote("mainnet-beta");
   const usdc = findQuote("mainnet-beta", USDC_MINT_MAINNET);
@@ -94,10 +94,10 @@ test("stock threshold: target over the price per 10^8 raw, rounded up; no step r
   assert.equal(quoteScale(nvda), 100_000_000n);
   // $15,000 at $231.109 per 1e8 raw = 64.9048... NVDAx = 6,490,488,471 raw after rounding up
   const step = 231_109_000n;
-  const raw = thresholdQuoteRaw(DBC_TARGET_USD_MICROS[15000], nvda, step);
+  const raw = thresholdQuoteRaw(15_000_000_000n, nvda, step);
   assert.equal(raw, (15_000_000_000n * 100_000_000n + step - 1n) / step);
   assert.ok(raw * step >= 15_000_000_000n * 100_000_000n);
-  assert.throws(() => thresholdQuoteRaw(DBC_TARGET_USD_MICROS[15000], nvda), /price step/);
+  assert.throws(() => thresholdQuoteRaw(15_000_000_000n, nvda), /price step/);
 });
 
 test("quotesForCluster never drops SOL", () => {

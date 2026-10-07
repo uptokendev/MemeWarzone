@@ -204,15 +204,15 @@ test("fee choice keep maps to creator; others to platform", () => {
   assert.equal(parseFeeChoice("nope").ok, false);
 });
 
-test("default first buy cap is 60% of supply (founder 2026-10-07, was 10%)", () => {
-  assert.equal(firstBuyExceedsCap({ bps: 6000n }), false);
-  assert.equal(firstBuyExceedsCap({ bps: 6001n }), true);
+test("first buy cap is 70% of supply for every creator (founder 2026-10-08, was 10%)", () => {
+  assert.equal(firstBuyExceedsCap({ bps: 7000n }), false);
+  assert.equal(firstBuyExceedsCap({ bps: 7001n }), true);
 });
 
 test("preflight / begin / authorize / finalize write campaign and metadata", async () => {
   const db = memoryDb();
   const handle = handlerFor(db);
-  const pre = await post(handle, { operation: "preflight", creatorWallet: SIGNER.publicKey.toBase58(), targetUsd: 15000 });
+  const pre = await post(handle, { operation: "preflight", creatorWallet: SIGNER.publicKey.toBase58(), targetUsd: 30000 });
   assert.equal(pre.body.ok, true);
   assert.equal(pre.body.preflight.allowed, true);
 
@@ -235,7 +235,7 @@ test("preflight / begin / authorize / finalize write campaign and metadata", asy
     logoUrl: "https://example.com/logo.png",
     website: "https://example.com",
     x: "https://x.com/memewarzone",
-    targetUsd: 15000,
+    targetUsd: 30000,
     feeChoice: "keep",
     firstBuyLamports: "0",
   });
@@ -254,61 +254,9 @@ test("preflight / begin / authorize / finalize write campaign and metadata", asy
   assert.equal(db.reservations[0].status, "LIVE");
 });
 
-test("first buy above the 60% default is refused", async () => {
+test("a first buy above 70% is refused", async () => {
   const db = memoryDb();
   const handle = handlerFor(db, {
-    quoteFirstBuyOnConfig: () => ({ tokensOut: 1n, totalSupply: 10n, bps: 6001n, afterFeeLamports: 1n }),
-  });
-  const begun = await post(handle, {
-    operation: "begin",
-    creatorWallet: SIGNER.publicKey.toBase58(),
-    ticker: "CAPTEST",
-    auth: {},
-  });
-  const auth = await post(handle, {
-    operation: "authorize",
-    sessionToken: begun.body.sessionToken,
-    mint: MINT.publicKey.toBase58(),
-    name: "Cap",
-    symbol: "CAPTEST",
-    targetUsd: 15000,
-    feeChoice: "holders",
-    firstBuyLamports: "1000000000",
-  });
-  assert.equal(auth.body.ok, false);
-  assert.equal(auth.body.code, "DBC_FIRST_BUY_CAP");
-  assert.match(auth.body.error, /more than 60% of supply/);
-});
-
-test("a creator listed at 70% may take 65% at launch", async () => {
-  const db = memoryDb();
-  const handle = handlerFor(db, {
-    loadCreatorFirstBuyCapBps: async () => 7000,
-    quoteFirstBuyOnConfig: () => ({ tokensOut: 1n, totalSupply: 10n, bps: 6500n, afterFeeLamports: 1n }),
-  });
-  const begun = await post(handle, {
-    operation: "begin",
-    creatorWallet: SIGNER.publicKey.toBase58(),
-    ticker: "CAPTEST",
-    auth: {},
-  });
-  const auth = await post(handle, {
-    operation: "authorize",
-    sessionToken: begun.body.sessionToken,
-    mint: MINT.publicKey.toBase58(),
-    name: "Cap",
-    symbol: "CAPTEST",
-    targetUsd: 15000,
-    feeChoice: "holders",
-    firstBuyLamports: "1000000000",
-  });
-  assert.notEqual(auth.body.code, "DBC_FIRST_BUY_CAP");
-});
-
-test("a creator listed at 70% is still refused above 70%", async () => {
-  const db = memoryDb();
-  const handle = handlerFor(db, {
-    loadCreatorFirstBuyCapBps: async () => 7000,
     quoteFirstBuyOnConfig: () => ({ tokensOut: 1n, totalSupply: 10n, bps: 7001n, afterFeeLamports: 1n }),
   });
   const begun = await post(handle, {
@@ -323,13 +271,37 @@ test("a creator listed at 70% is still refused above 70%", async () => {
     mint: MINT.publicKey.toBase58(),
     name: "Cap",
     symbol: "CAPTEST",
-    targetUsd: 15000,
+    targetUsd: 30000,
     feeChoice: "holders",
     firstBuyLamports: "1000000000",
   });
   assert.equal(auth.body.ok, false);
   assert.equal(auth.body.code, "DBC_FIRST_BUY_CAP");
   assert.match(auth.body.error, /more than 70% of supply/);
+});
+
+test("any creator may take 65% at launch", async () => {
+  const db = memoryDb();
+  const handle = handlerFor(db, {
+    quoteFirstBuyOnConfig: () => ({ tokensOut: 1n, totalSupply: 10n, bps: 6500n, afterFeeLamports: 1n }),
+  });
+  const begun = await post(handle, {
+    operation: "begin",
+    creatorWallet: SIGNER.publicKey.toBase58(),
+    ticker: "CAPTEST",
+    auth: {},
+  });
+  const auth = await post(handle, {
+    operation: "authorize",
+    sessionToken: begun.body.sessionToken,
+    mint: MINT.publicKey.toBase58(),
+    name: "Cap",
+    symbol: "CAPTEST",
+    targetUsd: 30000,
+    feeChoice: "holders",
+    firstBuyLamports: "1000000000",
+  });
+  assert.notEqual(auth.body.code, "DBC_FIRST_BUY_CAP");
 });
 
 test("fee choice keep uses creator config mode", async () => {
@@ -353,7 +325,7 @@ test("fee choice keep uses creator config mode", async () => {
     mint: MINT.publicKey.toBase58(),
     name: "Keep",
     symbol: "KEEPMOD",
-    targetUsd: 15000,
+    targetUsd: 30000,
     feeChoice: "keep",
   });
   assert.equal(seenMode, "creator");
@@ -376,7 +348,7 @@ test("finalize refuses a pool with a different config, creator or mint", async (
     mint: MINT.publicKey.toBase58(),
     name: "Mismatch",
     symbol: "MISMATCH",
-    targetUsd: 15000,
+    targetUsd: 30000,
     feeChoice: "keep",
   });
   const fin = await post(handle, { operation: "finalize", finalizeToken: auth.body.finalizeToken, signature: "x" });
@@ -395,7 +367,7 @@ test("creator limits from the DB refuse a fourth live DBC coin", async () => {
     });
   }
   const handle = handlerFor(db);
-  const pre = await post(handle, { operation: "preflight", creatorWallet: SIGNER.publicKey.toBase58(), targetUsd: 15000 });
+  const pre = await post(handle, { operation: "preflight", creatorWallet: SIGNER.publicKey.toBase58(), targetUsd: 30000 });
   assert.equal(pre.body.preflight.allowed, false);
   assert.equal(pre.body.preflight.liveLimitReached, true);
 });
@@ -404,7 +376,7 @@ test("built transaction is 2 signers for every target, with and without first bu
   const db = memoryDb();
   const handle = handlerFor(db);
   const sizes = {};
-  for (const targetUsd of [15000, 30000, 50000, 150]) {
+  for (const targetUsd of [30000, 50000, 150]) {
     for (const firstBuyLamports of ["0", "1000000"]) {
       const begun = await post(handle, {
         operation: "begin",
@@ -483,7 +455,7 @@ test("authorize refuses a scheduled draft before the time and accepts after", as
     mint: MINT.publicKey.toBase58(),
     name: "Lock",
     symbol: "LOCKME",
-    targetUsd: 15000,
+    targetUsd: 30000,
     feeChoice: "keep",
     draftId: "draft-lock",
   });
@@ -546,7 +518,7 @@ test("malformed firstBuyLamports is 400, not 500", async () => {
     mint: MINT.publicKey.toBase58(),
     name: "Bad",
     symbol: "BADBUY",
-    targetUsd: 15000,
+    targetUsd: 30000,
     feeChoice: "keep",
     firstBuyLamports: "1.5",
   });
@@ -578,7 +550,7 @@ test("authorize re-checks creator limits after begin", async () => {
     mint: MINT.publicKey.toBase58(),
     name: "Race",
     symbol: "RACE4",
-    targetUsd: 15000,
+    targetUsd: 30000,
     feeChoice: "keep",
   });
   assert.equal(auth.body.ok, false);
@@ -601,7 +573,7 @@ test("finalize fails closed when owner, config, creator or mint is missing", asy
       mint: MINT.publicKey.toBase58(),
       name: "Fin",
       symbol: "FIN",
-      targetUsd: 15000,
+      targetUsd: 30000,
       feeChoice: "keep",
     });
     return post(handle, { operation: "finalize", finalizeToken: auth.body.finalizeToken, signature: "x" });
@@ -655,7 +627,7 @@ test("buyback is offered for a coin paired with USDC too", async () => {
   const handle = handlerFor(memoryDb());
   const res = await post(handle, {
     operation: "quote-first-buy",
-    targetUsd: 15000,
+    targetUsd: 30000,
     feeChoice: "buyback",
     firstBuyLamports: "1000000",
     quoteMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
@@ -695,7 +667,7 @@ test("a stock launch is priced by the stock step and names Meteora's DBC badge o
     mint: MINT.publicKey.toBase58(),
     name: "Stocky",
     symbol: "STOCKY",
-    targetUsd: 15000,
+    targetUsd: 30000,
     feeChoice: "keep",
     quoteMint: NVDAX,
   });
@@ -712,7 +684,7 @@ test("a stock the chain says cannot be used is refused with the reason", async (
     env: MAINNET_ENV,
     stockPriceStep: async () => { throw new DbcStockQuoteError("The issuer has paused this stock token. Pick another pairing.", "DBC_QUOTE_PAUSED"); },
   });
-  const res = await post(handle, { operation: "quote-first-buy", targetUsd: 15000, feeChoice: "keep", firstBuyLamports: "0", quoteMint: NVDAX });
+  const res = await post(handle, { operation: "quote-first-buy", targetUsd: 30000, feeChoice: "keep", firstBuyLamports: "0", quoteMint: NVDAX });
   assert.equal(res.statusCode, 400);
   assert.equal(res.body.code, "DBC_QUOTE_PAUSED");
 });
@@ -739,7 +711,7 @@ async function beginAndAuthorize(handle, ticker) {
     mint: MINT.publicKey.toBase58(),
     name: ticker,
     symbol: ticker,
-    targetUsd: 15000,
+    targetUsd: 30000,
     feeChoice: "keep",
     firstBuyLamports: "0",
   });
@@ -750,7 +722,7 @@ async function beginAndAuthorize(handle, ticker) {
 test("canary: an allowlisted wallet runs the whole DBC create", async () => {
   const db = memoryDb();
   const handle = canaryHandler(db, ` ${OTHER.publicKey.toBase58()} , ${SIGNER.publicKey.toBase58()} `);
-  const pre = await post(handle, { operation: "preflight", creatorWallet: SIGNER.publicKey.toBase58(), targetUsd: 15000 });
+  const pre = await post(handle, { operation: "preflight", creatorWallet: SIGNER.publicKey.toBase58(), targetUsd: 30000 });
   assert.equal(pre.body.ok, true);
   const { finalizeToken } = await beginAndAuthorize(handle, "CANARY");
   const fin = await post(handle, { operation: "finalize", finalizeToken, signature: "sigcanary" });
@@ -766,9 +738,9 @@ test("canary: a wallet not on the list gets 403 CREATE_CANARY_ONLY at every DBC 
   const handle = canaryHandler(db, OTHER.publicKey.toBase58());
   const wallet = SIGNER.publicKey.toBase58();
   const refusals = [
-    { operation: "preflight", creatorWallet: wallet, targetUsd: 15000 },
+    { operation: "preflight", creatorWallet: wallet, targetUsd: 30000 },
     { operation: "begin", creatorWallet: wallet, ticker: "NOPE", auth: {} },
-    { operation: "authorize", sessionToken, mint: MINT.publicKey.toBase58(), name: "N", symbol: "N", targetUsd: 15000, feeChoice: "keep" },
+    { operation: "authorize", sessionToken, mint: MINT.publicKey.toBase58(), name: "N", symbol: "N", targetUsd: 30000, feeChoice: "keep" },
     { operation: "finalize", finalizeToken, signature: "x" },
     { operation: "schedule", creatorWallet: wallet, draftId: "d1", scheduledLaunchAt: 1, auth: {} },
   ];
@@ -836,22 +808,27 @@ test("live lookup reports tokens sold on the curve from the pool's base reserve 
   assert.equal(res.body.poolLive.progressBps, 2822);
 });
 
-test("the live first-buy quote reports the creator's own cap", async () => {
+test("the live first-buy quote reports the 70% cap, the same for every wallet", async () => {
   const db = memoryDb();
-  const seen = [];
   const handle = handlerFor(db, {
-    loadCreatorFirstBuyCapBps: async (_db, wallet) => {
-      seen.push(wallet);
-      return wallet === SIGNER.publicKey.toBase58() ? 7000 : 6000;
-    },
-    quoteFirstBuyOnConfig: () => ({ tokensOut: 1n, totalSupply: 10n, bps: 6500n, afterFeeLamports: 1n }),
+    quoteFirstBuyOnConfig: (_, paid) => ({ tokensOut: 1n, totalSupply: 10n, bps: BigInt(paid) > 1_000_000_000n ? 7001n : 6500n, afterFeeLamports: 1n }),
   });
-  const listed = await post(handle, { operation: "quote-first-buy", targetUsd: 15000, feeChoice: "keep", firstBuyLamports: "1000000000", creatorWallet: SIGNER.publicKey.toBase58() });
-  assert.equal(listed.body.ok, true);
-  assert.equal(listed.body.capBps, "7000");
-  assert.equal(listed.body.exceedsCap, false);
-  const other = await post(handle, { operation: "quote-first-buy", targetUsd: 15000, feeChoice: "keep", firstBuyLamports: "1000000000" });
-  assert.equal(other.body.capBps, "6000");
-  assert.equal(other.body.exceedsCap, true);
-  assert.deepEqual(seen, [SIGNER.publicKey.toBase58(), undefined]);
+  const within = await post(handle, { operation: "quote-first-buy", targetUsd: 30000, feeChoice: "keep", firstBuyLamports: "1000000000", creatorWallet: SIGNER.publicKey.toBase58() });
+  assert.equal(within.body.ok, true);
+  assert.equal(within.body.capBps, "7000");
+  assert.equal(within.body.exceedsCap, false);
+  const over = await post(handle, { operation: "quote-first-buy", targetUsd: 30000, feeChoice: "keep", firstBuyLamports: "2000000000" });
+  assert.equal(over.body.capBps, "7000");
+  assert.equal(over.body.exceedsCap, true);
+});
+
+test("the $15K target is gone (founder 2026-10-08): only $30K and $50K graduation market caps", async () => {
+  const db = memoryDb();
+  const handle = handlerFor(db);
+  const begun = await post(handle, { operation: "begin", creatorWallet: SIGNER.publicKey.toBase58(), ticker: "OLD15K", auth: {} });
+  const auth = await post(handle, {
+    operation: "authorize", sessionToken: begun.body.sessionToken, mint: MINT.publicKey.toBase58(),
+    name: "Old", symbol: "OLD15K", targetUsd: 15000, feeChoice: "keep", firstBuyLamports: "0",
+  });
+  assert.equal(auth.body.ok, false);
 });
