@@ -6,7 +6,8 @@
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Copy, ExternalLink, Flag, Globe, Share2, Star } from "lucide-react";
+import { Copy, ExternalLink, Flag, Globe, Info, Share2, Star } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { buildAbuseReportPath } from "@/lib/abuseReportLink";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -5333,7 +5334,23 @@ const toSeconds = (ts: number): number => {
 
             <div className="grid grid-cols-3 gap-3 border-t border-mw-border pt-3 md:grid-cols-5">
               <div className="min-w-0">
-                <p className={cp.label}>Market cap</p>
+                {/* Launchpad coins are valued on the supply they keep after graduation (2026-10-06); a tap
+                    explains it, since early buyers saw the old price x sold numbers. */}
+                {isSolanaPage && !isDbcPage ? (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button type="button" className={`${cp.label} mw-focus inline-flex items-center gap-1`} aria-label="How market cap is counted" data-mcap-basis-info="true">
+                        Market cap
+                        <Info className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-64 font-mw-body text-xs leading-5 text-mw-text" align="start">
+                      Counts the supply this coin keeps after graduation. Unsold tokens are burned when it moves to Meteora, so this matches what Axiom, GMGN and DexScreener show after the move.
+                    </PopoverContent>
+                  </Popover>
+                ) : (
+                  <p className={cp.label}>Market cap</p>
+                )}
                 <p className={cp.metricValue}>{marketCapDisplay}</p>
               </div>
               <div className="min-w-0">
