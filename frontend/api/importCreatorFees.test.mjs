@@ -38,3 +38,9 @@ test("testnets 97 / 46630 are readable so the gen-7 testnet run shows the notice
   assert.equal(summarizeCreatorFees({ chainId: 97, token: "0xabc", now, owner: null, totals: [] }).asset, "tBNB");
   assert.equal(summarizeCreatorFees({ chainId: 46630, token: "0xabc", now, owner: null, totals: [] }).asset, "ETH");
 });
+
+test("owner view: per-coin totals, payouts start 7 days after verification", async () => {
+  const { summarizeOwnerCreatorFees } = await import("./importCreatorFees.js");
+  const [item] = summarizeOwnerCreatorFees([{ chain_id: 101, token_address: "Mint", name: "N", symbol: "S", image_url: null, ownership_verified_at: "2026-10-15T00:00:00Z", waiting: "550000", paying: "0", paid: "10", expired: "0" }], new Date("2026-10-20T00:00:00Z"));
+  assert.deepEqual([item.asset, item.waitingRaw, item.paidRaw, item.payoutsOpen, item.payoutsFrom], ["SOL", "550000", "10", false, "2026-10-22T00:00:00.000Z"]);
+});
