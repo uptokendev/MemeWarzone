@@ -1,5 +1,5 @@
 // Analytics rollups against a throwaway Postgres: the rollup answers must equal the raw-query answers
-// (the SQL the admin routes ran before the rollups) for 24h / 7d / 30d windows that start and end
+// (the SQL the admin routes ran before the rollups) for 24h / 7d / 30d / 90d windows, hourly and daily series, that start and end
 // mid-hour, for public / admin / both, before and after the job ran, with partial coverage, after a
 // late event, after web vital retention, and on an empty schema. Events go in through the real ingest
 // persistEvent, including a retried (duplicate) delivery.
@@ -133,6 +133,26 @@ async function rawReference(from, to, app) {
   };
 }
 
+// Daily reference: one raw query, calendar days in the given zone, distinct sessions per day.
+async function rawDaily(from, to, app, timeZone) {
+  const params = [from, to];
+  const extra = appFilter(app, params);
+  params.push(timeZone);
+  const tz = `$${params.length}::text`;
+  const result = await db.query(
+    `select date_trunc('day', ts at time zone ${tz}) at time zone ${tz} as bucket,
+            count(*) filter (where name = '$pageview')::int as pageviews,
+            count(distinct session_id)::int as sessions
+       from public.analytics_events
+      where ts >= $1 and ts < $2 ${extra}
+      group by 1 order by 1`,
+    params,
+  );
+  return result.rows.map((row) => ({ bucket: new Date(row.bucket).toISOString(), pageviews: row.pageviews, sessions: row.sessions }));
+}
+
+const ZONES = ["UTC", "Europe/Amsterdam", "America/New_York"];
+
 async function rollupAnswer(from, to, app) {
   const coverage = await rollups.readRollupCoverage(db);
   const [dau, series, topEvents, events, vitals] = await Promise.all([
@@ -151,7 +171,7 @@ function assertClose(actual, expected, label) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: ${actual} vs ${expected}`);
 }
 
-const WINDOWS = { "24h": 1, "7d": 7, "30d": 30 };
+const WINDOWS = { "24h": 1, "7d": 7, "30d": 30, "90d": 90 };
 const APPS = ["public", "admin", "both"];
 
 async function assertMatchesRaw(label, { to = NOW, windows = WINDOWS } = {}) {
@@ -173,6 +193,14 @@ async function assertMatchesRaw(label, { to = NOW, windows = WINDOWS } = {}) {
         }
         for (const key of ["p50", "p75", "p95"]) assertClose(actual[key], expected[key], `${tag} vitals ${expected.metric} ${key}`);
       });
+      const coverage = await rollups.readRollupCoverage(db);
+      for (const timeZone of ZONES) {
+        const [rawDays, rolledDays] = await Promise.all([
+          rawDaily(from, toIso, app, timeZone),
+          rollups.dailySeries(db, { from, to: toIso, app, coverage, timeZone }),
+        ]);
+        assert.deepEqual(rolledDays, rawDays, `${tag} daily series ${timeZone}`);
+      }
     }
   }
 }
@@ -311,6 +339,41 @@ test("a late event shows after the next job run; a stale coverage only costs spe
   const next = await rollups.plannedRange(db, { nowMs: NOW });
   await rollups.buildHourlyRollups({ db, startMs: next.startMs, endMs: next.endMs, nowMs: NOW });
   await assertMatchesRaw("after late event");
+});
+
+test("daily sessions are distinct over the day, not a sum of hourly counts", { skip }, async () => {
+  // One session active in four different hours of one Amsterdam day, plus a second session in two of them.
+  const dayStart = Date.parse("2026-10-01T22:00:00.000Z"); // 2026-10-02 00:00 in Europe/Amsterdam
+  const sessionA = uuid();
+  const sessionB = uuid();
+  const anonymousId = uuid();
+  const events = [];
+  for (const hour of [0, 5, 13, 23]) {
+    events.push(makeEvent(dayStart + hour * HOUR + 10 * 60e3, "public", { name: "$pageview", session_id: sessionA, anonymous_id: anonymousId }));
+  }
+  for (const hour of [5, 13]) {
+    events.push(makeEvent(dayStart + hour * HOUR + 20 * 60e3, "public", { name: "$pageview", session_id: sessionB, anonymous_id: anonymousId }));
+  }
+  await ingest(events);
+  const next = await rollups.plannedRange(db, { nowMs: NOW, since: new Date(dayStart - DAY).toISOString() });
+  await rollups.buildHourlyRollups({ db, startMs: next.startMs, endMs: next.endMs, nowMs: NOW });
+
+  const from = new Date(dayStart).toISOString();
+  const to = new Date(dayStart + DAY).toISOString();
+  const coverage = await rollups.readRollupCoverage(db);
+  const [days, hours, raw] = await Promise.all([
+    rollups.dailySeries(db, { from, to, app: "public", coverage, timeZone: "Europe/Amsterdam" }),
+    rollups.hourlySeries(db, { from, to, app: "public", coverage }),
+    rawDaily(from, to, "public", "Europe/Amsterdam"),
+  ]);
+  assert.equal(days.length, 1, "one Amsterdam day");
+  assert.equal(days[0].bucket, from);
+  assert.deepEqual(days, raw, "the fixture already has traffic that day; the answer must equal the raw query");
+  const hourlySum = hours.reduce((sum, row) => sum + row.sessions, 0);
+  assert.ok(days[0].sessions < hourlySum, `daily ${days[0].sessions} must be below the hourly sum ${hourlySum}`);
+  assert.ok(hourlySum - days[0].sessions >= 4, "sessions A and B counted once each, not once per hour");
+  // The day is fully covered by the rollup, so the session set really came from analytics_hourly_sessions.
+  assert.ok(coverage.from <= dayStart && coverage.until >= dayStart + DAY);
 });
 
 test("backfill rebuild removes the old double counts from analytics_hourly_events", { skip }, async () => {
