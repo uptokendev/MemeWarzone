@@ -16,6 +16,8 @@
  * IMPORT_FEE_TOPAZ_TOKEN pins the coin (default: the Topaz volatile WBNB pool with the most WBNB).
  */
 import { expect } from "chai";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { ethers, network } from "hardhat";
 import { assertLocalFork } from "../scripts/lib/forkRehearsal";
 import { deployVaultOnFork, freshWallet, rpc, vaultDeposits } from "./helpers/importFeeVaultFork";
@@ -163,6 +165,47 @@ d("CI4: ImportSwapFeeRouter (100/0 bps, both receivers = ImportFeeVault) on a re
     await expect(tx).to.emit(router, "ImportSwap").withArgs(trader.address, token, 2, false, gross, fee, 0n, amountIn, recipient);
     await routerHoldsNothing();
     results.sell = `tokens ${amountIn}, gross ${gross} (== direct Topaz swap), vault Deposit ${fee} from router, recipient ${net}, gas ${rc.gasUsed}`;
+  });
+
+  it("the app's module (importSwapFeeRouter.mjs) trades it: 0-slippage minimums are exact; finance attributes from the real ImportSwap", async function () {
+    const esmImport = new Function("s", "return import(s)") as (s: string) => Promise<any>;
+    const lib = await esmImport(pathToFileURL(path.resolve(__dirname, "..", "frontend", "src", "lib", "importSwapFeeRouter.mjs")).href);
+    const fin = await esmImport(pathToFileURL(path.resolve(__dirname, "..", "frontend", "api", "lib", "financeImportSwapFees.js")).href);
+    // The shape resolveImportedTopazRoute returns (arenaImportedTopaz.ts), volatile pool.
+    const resolved = { routerAddress: TOPAZ_ROUTER, factoryAddress: factory, wrappedNativeAddress: wbnb, tokenAddress: token, route: [{ from: wbnb, to: token, stable: false, factory }] };
+    const nowSeconds = (await ethers.provider.getBlock("latest"))!.timestamp;
+    const value = ethers.parseEther("0.02");
+    const qb = await lib.quoteFeeRouterTrade({ provider: ethers.provider, routerAddress, resolved, side: "buy", amountIn: value, slippageBps: 0, nowSeconds });
+    expect(qb.feeBps).to.equal(100);
+    expect(qb.feeWei).to.equal((value * BPS) / 10_000n);
+    expect(qb.minOut).to.equal(qb.amountOut);
+    const t0 = await bal(token, trader.address);
+    const buyHash = await lib.executeFeeRouterTrade({ signer: trader, account: trader.address, quote: qb });
+    const rcBuy = (await ethers.provider.getTransactionReceipt(buyHash))!;
+    expect((await bal(token, trader.address)) - t0).to.equal(qb.amountOut);
+    expect(vaultDeposits(vault, rcBuy).map((d: any) => d.amount)).to.deep.equal([qb.feeWei]);
+
+    const amountIn = (await bal(token, trader.address)) / 3n;
+    const qs = await lib.quoteFeeRouterTrade({ provider: ethers.provider, routerAddress, resolved, side: "sell", amountIn, slippageBps: 0, nowSeconds });
+    expect(qs.minOut).to.equal(qs.amountOut);
+    const sellHash = await lib.executeFeeRouterTrade({ signer: trader, account: trader.address, quote: qs });
+    const rcSell = (await ethers.provider.getTransactionReceipt(sellHash))!;
+    expect(vaultDeposits(vault, rcSell).map((d: any) => d.amount)).to.deep.equal([qs.feeWei]);
+    const swap = rcSell.logs.map((l: any) => { try { return router.interface.parseLog(l); } catch { return null; } }).find((e: any) => e?.name === "ImportSwap");
+    expect(swap!.args.nativeGross).to.equal(qs.grossOut);
+    expect(await new ethers.Contract(token, ["function allowance(address,address) view returns (uint256)"], ethers.provider).allowance(trader.address, routerAddress)).to.equal(0n, "exact approval, nothing left standing");
+
+    // Finance: the split source with the router as payer reads both Deposits and attributes them from ImportSwap.
+    const [source] = fin.importSwapFeeSplitSources({ IMPORT_FEE_VAULT_56: vaultAddress, IMPORT_FEE_VAULT_START_BLOCK_56: String(rcBuy.blockNumber), IMPORT_SWAP_FEE_ROUTER_56: routerAddress });
+    expect(source.feeRouters).to.deep.equal([routerAddress.toLowerCase()]);
+    const scan = await fin.scanEvmImportSwapFees({ source: { ...source, confirmations: 0 }, rpc: (m: string, p: unknown[]) => ethers.provider.send(m, p), fromBlock: rcBuy.blockNumber, maxBlocks: rcSell.blockNumber - rcBuy.blockNumber + 1 });
+    const rows = scan.rows.filter((r: any) => [buyHash.toLowerCase(), sellHash.toLowerCase()].includes(r.txHash));
+    expect(rows.map((r: any) => [r.txHash, r.side, r.tokenAddress, r.wallet, r.feeRaw, r.router])).to.deep.equal([
+      [buyHash.toLowerCase(), "buy", token.toLowerCase(), trader.address.toLowerCase(), qb.feeWei.toString(), routerAddress.toLowerCase()],
+      [sellHash.toLowerCase(), "sell", token.toLowerCase(), trader.address.toLowerCase(), qs.feeWei.toString(), routerAddress.toLowerCase()],
+    ]);
+    await routerHoldsNothing();
+    results.module = `buy ${value} -> ${qb.amountOut} tokens (min exact), fee ${qb.feeWei}; sell ${amountIn} -> gross ${qs.grossOut}, net ${qs.amountOut} (min exact), fee ${qs.feeWei}; finance rows attributed buy/sell to ${trader.address}`;
   });
 
   it("V3 venue is off (v3Router = 0)", async function () {

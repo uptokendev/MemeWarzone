@@ -1,8 +1,9 @@
 /**
  * CO-IMP rev 2 CI2 proof on a local anvil fork of BNB 56: a REAL KyberSwap route (PancakeSwap pools only), quoted and
  * built by frontend/api/importSwap.js's own handlers (importSwapQuote / importSwapBuild, the API the app calls) with the
- * fee terms set the CI2 way in-process (IMPORT_SWAP_FEE_BPS=100, IMPORT_SWAP_FEE_RECEIVER_56 = an ImportFeeVault deployed
- * on this fork by scripts/deploy-import-fee-vault.ts, its IF1 batch executed as the impersonated Safe). The built
+ * fee terms set the CI2 way in-process (IMPORT_FEE_VAULT_56 = IMPORT_SWAP_FEE_RECEIVER_56 = an ImportFeeVault deployed
+ * on this fork by scripts/deploy-import-fee-vault.ts, its IF1 batch executed as the impersonated Safe; importSwapFeeBps(56)
+ * then gives 100 bps by itself, no IMPORT_SWAP_FEE_BPS override). The built
  * transaction is sent from a throwaway funded wallet. Proven to the wei:
  *   buy:  ONE vault Deposit, from = Kyber router 0x6131B5fa, amount = amountIn * 100 / 10_000 (fee in BNB on the input)
  *   sell: ONE vault Deposit, from = Kyber router, amount = gross * 100 / 10_000 where gross = what the wallet got + fee
@@ -54,10 +55,13 @@ d("CI2: Kyber BNB import swaps pay exactly 1% to ImportFeeVault (BSC fork, real 
     console.log(`      fork of 56 at block ${fork.forkBlock} (${fork.forkUrl})`);
     ({ vault, vaultAddress, operator } = await deployVaultOnFork(56));
     // CI2 env, set before importSwap.js reads it at module load.
-    process.env.IMPORT_SWAP_FEE_BPS = String(BPS);
+    // The switch: the vault AND the Kyber fee receiver set to it. The legacy IMPORT_SWAP_FEE_BPS stays at its default.
+    delete process.env.IMPORT_SWAP_FEE_BPS;
+    process.env.IMPORT_FEE_VAULT_56 = vaultAddress;
     process.env.IMPORT_SWAP_FEE_RECEIVER_56 = vaultAddress;
     api = await esmImport(pathToFileURL(path.resolve(__dirname, "..", "frontend", "api", "importSwap.js")).href);
-    expect(api.IMPORT_SWAP_FEE_BPS).to.equal(100);
+    expect(api.IMPORT_SWAP_FEE_BPS).to.equal(50); // legacy rate untouched
+    expect(api.importSwapFeeBps(56)).to.equal(Number(BPS));
   });
 
   after(() => {
@@ -72,6 +76,7 @@ d("CI2: Kyber BNB import swaps pay exactly 1% to ImportFeeVault (BSC fork, real 
     const amountRaw = ethers.parseEther("0.1");
     const quote = await callHandler(api.importSwapQuote, { chainId: 56, side: "buy", token: TOKEN, amountRaw: amountRaw.toString() });
     expect(quote.feeBps).to.equal(100);
+    expect(quote.creatorShareBps).to.equal(50);
     expect(quote.quote.extraFee).to.deep.include({ feeAmount: "100", chargeFeeBy: "currency_in", isInBps: true });
     expect(String(quote.quote.extraFee.feeReceiver).toLowerCase()).to.equal(vaultAddress.toLowerCase());
     // The API's own guard, with the CI2 terms passed explicitly and from the env defaults.

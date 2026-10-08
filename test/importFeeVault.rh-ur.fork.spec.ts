@@ -1,18 +1,16 @@
 /**
  * CO-IMP rev 2 CI3 proof on a local anvil fork of Robinhood 4663: imported-coin swaps through Uniswap's Universal Router
- * 0x88767899 with the command list of frontend/src/lib/robinhoodImportSwap.mjs and PAY_PORTION at 100 bps to an
- * ImportFeeVault deployed on this fork by scripts/deploy-import-fee-vault.ts (IF1 executed as the impersonated Safe).
- *
- * robinhoodImportSwap.mjs hard-codes the bps (IMPORT_SWAP_FEE_BPS = 50 inside encodeImportBuy / encodeImportSell /
- * importSwapFee), so the 100 bps call is assembled here from the module's exported pieces (encodeV3SwapExactIn,
- * encodeV3Path, resolveImportPool, minimumOut-style math) with the module's command bytes, and the test proves it is
- * the module's own output for feeReceiver = vault with ONLY the PAY_PORTION bps word (and, on sells, the SWEEP minimum
- * derived from it) changed. Proven to the wei, against quotes taken from the same state:
+ * 0x88767899 run by frontend/src/lib/robinhoodImportSwap.mjs itself (quoteImportSwap4663 + executeImportSwap4663, the
+ * code the app runs), with the switch set the CI3 way in-process: IMPORT_FEE_VAULT_4663 = IMPORT_SWAP_FEE_RECEIVER_4663 =
+ * an ImportFeeVault deployed on this fork by scripts/deploy-import-fee-vault.ts (IF1 executed as the impersonated Safe).
+ * The module then produces PAY_PORTION at 100 bps to the vault by itself. Proven to the wei, against quotes taken from
+ * the same state:
  *   buy:  PAY_PORTION before the swap: ONE vault Deposit, from = Universal Router, of value * 100 / 10_000; tokens ==
- *         QuoterV2(value - fee); minTokensOut = that passes, + 1 reverts
+ *         QuoterV2(value - fee); minTokensOut = that passes (the module's own call), + 1 reverts
  *   sell: PAY_PORTION after UNWRAP_WETH: ONE vault Deposit, from = Universal Router, of gross * 100 / 10_000 (gross ==
- *         QuoterV2); the wallet gets gross - fee; SWEEP minimum = gross - fee passes, + 1 reverts (min-out is checked
- *         after the fee)
+ *         QuoterV2); the wallet gets gross - fee; the module's SWEEP minimum (gross - fee) passes, + 1 reverts (min-out
+ *         is checked after the fee; the + 1 call is the module's encodeImportSell with only the SWEEP word raised)
+ *   gas:  executeImportSwap4663 sends estimate * 1.2 (one earlier run went out of gas at exactly the estimate)
  * Then the operator sweeps to the real Robinhood ProtocolRevenueVault with payout(). Nothing is sent to Robinhood Chain.
  *
  *   anvil --fork-url https://rpc.mainnet.chain.robinhood.com --chain-id 4663 --port 8646 --accounts 0 --no-rate-limit
@@ -32,11 +30,9 @@ import { deployVaultOnFork, freshWallet, gasCost, rpc, vaultDeposits } from "./h
 const TOKEN = ethers.getAddress(process.env.IMPORT_FEE_RH_TOKEN || "0xfbed2d0698b3140358816969789559745efe600d");
 const PROTOCOL_REVENUE_VAULT_4663 = "0x632061cA786f7B585Bbd46A792FDA92B02f70671";
 const BPS = 100n;
-// The module's command bytes and recipient sentinels (robinhoodImportSwap.mjs:24-27; not exported).
+// The module's command bytes and recipient sentinels (robinhoodImportSwap.mjs, not exported), for the checks only.
 const CMD = { V3_SWAP_EXACT_IN: 0x00, SWEEP: 0x04, PAY_PORTION: 0x06, PERMIT2_PERMIT: 0x0a, WRAP_ETH: 0x0b, UNWRAP_WETH: 0x0c };
 const MSG_SENDER = "0x0000000000000000000000000000000000000001";
-const ADDRESS_THIS = "0x0000000000000000000000000000000000000002";
-const CONTRACT_BALANCE = 1n << 255n;
 const ETH = ethers.ZeroAddress;
 const coder = ethers.AbiCoder.defaultAbiCoder();
 const esmImport = new Function("s", "return import(s)") as (s: string) => Promise<any>;
@@ -58,7 +54,6 @@ async function expectRevertWith(promise: Promise<unknown>, signature: string) {
   }
   throw new Error(`expected a revert with ${signature}`);
 }
-const GAS = { gasLimit: 1_500_000n }; // anvil's estimate on this fork came out short once (OOG at the last PAY_PORTION hop)
 
 const d = network.name === "robinhoodForkRehearsal" ? describe : describe.skip;
 
@@ -82,7 +77,7 @@ d("CI3: Robinhood Universal Router import swaps pay exactly 1% to ImportFeeVault
     const fork = await assertLocalFork(4663);
     console.log(`      fork of 4663 at block ${fork.forkBlock}`);
     m = await esmImport(pathToFileURL(path.resolve(__dirname, "..", "frontend", "src", "lib", "robinhoodImportSwap.mjs")).href);
-    expect(m.IMPORT_SWAP_FEE_BPS).to.equal(50); // today's module value: CI3 changes it
+    expect(m.activeImportSwapFeeTerms4663().feeBps).to.equal(50); // switch off until the env names the vault
     ({ vault, vaultAddress, operator } = await deployVaultOnFork(4663));
     route = await m.resolveImportPool(ethers.provider, TOKEN);
     expect(route, "no WETH V3 pool for the token").to.not.equal(null);
@@ -92,39 +87,20 @@ d("CI3: Robinhood Universal Router import swaps pay exactly 1% to ImportFeeVault
     // PAY_PORTION takes a share of the router's whole ETH balance: it must start empty for the fee to be 1% of value.
     expect(await ethers.provider.getBalance(m.UNIVERSAL_ROUTER_4663)).to.equal(0n);
     wallet = await freshWallet("2");
+    // The CI3 switch, read by the module at call time.
+    process.env.IMPORT_FEE_VAULT_4663 = vaultAddress;
+    process.env.IMPORT_SWAP_FEE_RECEIVER_4663 = vaultAddress;
+    const terms = m.activeImportSwapFeeTerms4663();
+    expect(terms).to.deep.equal({ feeBps: 100, feeReceiver: ethers.getAddress(vaultAddress), creatorShareBps: 50, split: true });
   });
 
   after(() => {
+    delete process.env.IMPORT_FEE_VAULT_4663;
+    delete process.env.IMPORT_SWAP_FEE_RECEIVER_4663;
     for (const [k, v] of Object.entries(results)) console.log(`      ${k}: ${v}`);
   });
 
-  function buyCall(amountInWei: bigint, minTokensOut: bigint) {
-    return {
-      commands: ethers.hexlify(Uint8Array.from([CMD.PAY_PORTION, CMD.WRAP_ETH, CMD.V3_SWAP_EXACT_IN])),
-      inputs: [
-        coder.encode(["address", "address", "uint256"], [ETH, vaultAddress, BPS]),
-        coder.encode(["address", "uint256"], [ADDRESS_THIS, CONTRACT_BALANCE]),
-        m.encodeV3SwapExactIn(MSG_SENDER, CONTRACT_BALANCE, minTokensOut, m.encodeV3Path(m.WETH_4663, route.fee, TOKEN), false),
-      ],
-      value: amountInWei,
-    };
-  }
-
-  function sellCall(amountIn: bigint, minGross: bigint, minNet: bigint, permit: any) {
-    return {
-      commands: ethers.hexlify(Uint8Array.from([CMD.PERMIT2_PERMIT, CMD.V3_SWAP_EXACT_IN, CMD.UNWRAP_WETH, CMD.PAY_PORTION, CMD.SWEEP])),
-      inputs: [
-        coder.encode(["tuple(tuple(address token,uint160 amount,uint48 expiration,uint48 nonce) details,address spender,uint256 sigDeadline)", "bytes"], [permit.permitSingle, permit.signature]),
-        m.encodeV3SwapExactIn(ADDRESS_THIS, amountIn, minGross, m.encodeV3Path(TOKEN, route.fee, m.WETH_4663), true),
-        coder.encode(["address", "uint256"], [ADDRESS_THIS, minGross]),
-        coder.encode(["address", "address", "uint256"], [ETH, vaultAddress, BPS]),
-        coder.encode(["address", "address", "uint256"], [ETH, MSG_SENDER, minNet]),
-      ],
-      value: 0n,
-    };
-  }
-
-  /** The module's sellPermit (not exported), same typed data. */
+  /** The module's sellPermit (not exported), same typed data; only for the + 1 revert check. */
   async function signPermit(amount: bigint) {
     const [, , nonce] = await new ethers.Contract(m.PERMIT2, PERMIT2_ABI, ethers.provider).allowance(wallet.address, TOKEN, m.UNIVERSAL_ROUTER_4663);
     const now = (await ethers.provider.getBlock("latest"))!.timestamp;
@@ -140,39 +116,39 @@ d("CI3: Robinhood Universal Router import swaps pay exactly 1% to ImportFeeVault
     return { permitSingle, signature };
   }
 
-  it("the 100 bps command list is the module's own, with only the PAY_PORTION bps (and the SWEEP minimum) changed", async function () {
-    const mod = m.encodeImportBuy({ token: TOKEN, fee: route.fee, amountInWei: 10n ** 16n, minTokensOut: 123n, feeReceiver: vaultAddress });
-    const mine = buyCall(10n ** 16n, 123n);
-    expect(mine.commands).to.equal(mod.commands);
-    expect(mine.inputs.slice(1)).to.deep.equal(mod.inputs.slice(1));
-    expect(coder.decode(["address", "address", "uint256"], mod.inputs[0]).map(String)).to.deep.equal([ETH, vaultAddress, "50"]);
-    expect(coder.decode(["address", "address", "uint256"], mine.inputs[0]).map(String)).to.deep.equal([ETH, vaultAddress, "100"]);
+  it("the module's own calls carry PAY_PORTION 100 bps to the vault; command lists unchanged", async function () {
+    const buy = m.encodeImportBuy({ token: TOKEN, fee: route.fee, amountInWei: 10n ** 16n, minTokensOut: 123n });
+    expect(buy.commands).to.equal(ethers.hexlify(Uint8Array.from([CMD.PAY_PORTION, CMD.WRAP_ETH, CMD.V3_SWAP_EXACT_IN])));
+    expect(coder.decode(["address", "address", "uint256"], buy.inputs[0]).map(String)).to.deep.equal([ETH, ethers.getAddress(vaultAddress), "100"]);
     const permit = { permitSingle: { details: { token: TOKEN, amount: 5n, expiration: 1n, nonce: 0n }, spender: m.UNIVERSAL_ROUTER_4663, sigDeadline: 1n }, signature: "0x" + "11".repeat(65) };
     const minGross = 10_000_000n;
-    const modSell = m.encodeImportSell({ token: TOKEN, fee: route.fee, amountIn: 5n, minGrossEthOut: minGross, permit, feeReceiver: vaultAddress });
-    const mineSell = sellCall(5n, minGross, minGross - (minGross * BPS) / 10_000n, permit);
-    expect(mineSell.commands).to.equal(modSell.commands);
-    expect(mineSell.inputs.slice(0, 3)).to.deep.equal(modSell.inputs.slice(0, 3));
-    expect(coder.decode(["address", "address", "uint256"], modSell.inputs[3]).map(String)).to.deep.equal([ETH, vaultAddress, "50"]);
-    expect(coder.decode(["address", "address", "uint256"], mineSell.inputs[3]).map(String)).to.deep.equal([ETH, vaultAddress, "100"]);
-    expect(modSell.minNetEthOut).to.equal(minGross - (minGross * 50n) / 10_000n);
-    expect(coder.decode(["address", "address", "uint256"], mineSell.inputs[4])[2]).to.equal(minGross - (minGross * 100n) / 10_000n);
+    const sell = m.encodeImportSell({ token: TOKEN, fee: route.fee, amountIn: 5n, minGrossEthOut: minGross, permit });
+    expect(sell.commands).to.equal(ethers.hexlify(Uint8Array.from([CMD.PERMIT2_PERMIT, CMD.V3_SWAP_EXACT_IN, CMD.UNWRAP_WETH, CMD.PAY_PORTION, CMD.SWEEP])));
+    expect(coder.decode(["address", "address", "uint256"], sell.inputs[3]).map(String)).to.deep.equal([ETH, ethers.getAddress(vaultAddress), "100"]);
+    expect(sell.minNetEthOut).to.equal(minGross - (minGross * BPS) / 10_000n);
+    expect(coder.decode(["address", "address", "uint256"], sell.inputs[4])[2]).to.equal(minGross - (minGross * BPS) / 10_000n);
   });
 
   it("buy: PAY_PORTION before the swap, one Deposit from the Universal Router of exactly 1% of the ETH in", async function () {
     const value = ethers.parseEther("0.01");
     const fee = (value * BPS) / 10_000n;
     const expected = await quote(m.WETH_4663, TOKEN, value - fee);
+    // The module's quote at 0 slippage: its minimum is exactly the QuoterV2 output.
+    const q = await m.quoteImportSwap4663({ provider: ethers.provider, token: TOKEN, side: "buy", amountIn: value, slippageBps: 0 });
+    expect(q.feeBps).to.equal(100);
+    expect(q.creatorShareBps).to.equal(50);
+    expect(q.feeWei).to.equal(fee);
+    expect(q.minOut).to.equal(expected);
     const ur = new ethers.Contract(m.UNIVERSAL_ROUTER_4663, ROUTER_ABI, wallet);
-    const tooMuch = buyCall(value, expected + 1n);
+    const tooMuch = m.encodeImportBuy({ token: TOKEN, fee: route.fee, amountInWei: value, minTokensOut: expected + 1n });
     await expectRevertWith(ur.execute.staticCall(tooMuch.commands, tooMuch.inputs, await deadline(), { value }), "V3TooLittleReceived()");
-    const call = buyCall(value, expected);
     const erc20 = new ethers.Contract(TOKEN, ERC20_ABI, ethers.provider);
     const t0 = await erc20.balanceOf(wallet.address);
     const b0 = await ethers.provider.getBalance(wallet.address);
     const v0 = await ethers.provider.getBalance(vaultAddress);
-    const rc = await (await ur.execute(call.commands, call.inputs, await deadline(), { value, ...GAS })).wait();
-    expect(rc.status).to.equal(1);
+    const rc = await m.executeImportSwap4663({ signer: wallet, quote: q, token: TOKEN });
+    expect(Number(rc.status)).to.equal(1);
+    const tx = await ethers.provider.getTransaction(rc.hash);
     const got = (await erc20.balanceOf(wallet.address)) - t0;
     expect(got).to.equal(expected);
     const deposits = vaultDeposits(vault, rc);
@@ -182,29 +158,35 @@ d("CI3: Robinhood Universal Router import swaps pay exactly 1% to ImportFeeVault
     expect((await ethers.provider.getBalance(vaultAddress)) - v0).to.equal(fee);
     expect(b0 - (await ethers.provider.getBalance(wallet.address))).to.equal(value + gasCost(rc));
     expect(await ethers.provider.getBalance(m.UNIVERSAL_ROUTER_4663)).to.equal(0n);
-    results.buy = `value ${value}, vault Deposit ${fee} from ${deposits[0].from}, tokens ${got} == QuoterV2(${value - fee}), min ${expected} ok / ${expected + 1n} reverts, gas ${rc.gasUsed}`;
+    results.buy = `value ${value}, vault Deposit ${fee} from ${deposits[0].from}, tokens ${got} == QuoterV2(${value - fee}), min ${expected} ok / ${expected + 1n} reverts, gas used ${rc.gasUsed} of limit ${tx!.gasLimit}`;
   });
 
   it("sell: PAY_PORTION after UNWRAP_WETH, one Deposit of exactly 1% of the gross; SWEEP minimum checked after the fee", async function () {
     const erc20 = new ethers.Contract(TOKEN, ERC20_ABI, wallet);
     const amountIn = (await erc20.balanceOf(wallet.address)) / 2n;
-    await (await erc20.approve(m.PERMIT2, amountIn)).wait();
     const gross = await quote(TOKEN, m.WETH_4663, amountIn);
     const fee = (gross * BPS) / 10_000n;
     const net = gross - fee;
+    const q = await m.quoteImportSwap4663({ provider: ethers.provider, token: TOKEN, side: "sell", amountIn, slippageBps: 0 });
+    expect(q.grossOut).to.equal(gross);
+    expect(q.feeWei).to.equal(fee);
+    expect(q.amountOut).to.equal(net);
+    // + 1 on the SWEEP minimum (the module's call with only that word raised) reverts after the fee.
+    await (await erc20.approve(m.PERMIT2, amountIn)).wait();
     const ur = new ethers.Contract(m.UNIVERSAL_ROUTER_4663, ROUTER_ABI, wallet);
     const permit = await signPermit(amountIn);
-    const tooMuch = sellCall(amountIn, gross, net + 1n, permit);
+    const tooMuch = m.encodeImportSell({ token: TOKEN, fee: route.fee, amountIn, minGrossEthOut: gross, permit });
+    expect(tooMuch.minNetEthOut).to.equal(net);
+    tooMuch.inputs[4] = coder.encode(["address", "address", "uint256"], [ETH, MSG_SENDER, net + 1n]);
     await expectRevertWith(ur.execute.staticCall(tooMuch.commands, tooMuch.inputs, await deadline()), "InsufficientETH()");
-    const call = sellCall(amountIn, gross, net, permit);
     const b0 = await ethers.provider.getBalance(wallet.address);
     const t0 = await erc20.balanceOf(wallet.address);
     const v0 = await ethers.provider.getBalance(vaultAddress);
-    const estimate = await ur.execute.estimateGas(call.commands, call.inputs, await deadline()).catch((e: any) => `estimate failed: ${e?.shortMessage || e}`);
-    const rc = await (await ur.execute(call.commands, call.inputs, await deadline(), GAS)).wait();
-    results.sellGas = `eth_estimateGas ${estimate}, used ${rc.gasUsed}`;
-    expect(rc.status).to.equal(1);
+    const rc = await m.executeImportSwap4663({ signer: wallet, quote: q, token: TOKEN });
+    expect(Number(rc.status)).to.equal(1);
+    const tx = await ethers.provider.getTransaction(rc.hash);
     expect(t0 - (await erc20.balanceOf(wallet.address))).to.equal(amountIn);
+    // The approval to Permit2 already covers the amount, so the module sends only the swap.
     const received = (await ethers.provider.getBalance(wallet.address)) - b0 + gasCost(rc);
     expect(received).to.equal(net);
     const deposits = vaultDeposits(vault, rc);
@@ -213,7 +195,7 @@ d("CI3: Robinhood Universal Router import swaps pay exactly 1% to ImportFeeVault
     expect(deposits[0].amount).to.equal(fee);
     expect((await ethers.provider.getBalance(vaultAddress)) - v0).to.equal(fee);
     expect(await ethers.provider.getBalance(m.UNIVERSAL_ROUTER_4663)).to.equal(0n);
-    results.sell = `tokens ${amountIn}, gross ${gross} == QuoterV2, vault Deposit ${fee} from ${deposits[0].from}, wallet ${net}, SWEEP min ${net} ok / ${net + 1n} reverts, gas ${rc.gasUsed}`;
+    results.sell = `tokens ${amountIn}, gross ${gross} == QuoterV2, vault Deposit ${fee} from ${deposits[0].from}, wallet ${net}, SWEEP min ${net} ok / ${net + 1n} reverts, gas used ${rc.gasUsed} of limit ${tx!.gasLimit}`;
   });
 
   it("operator sweeps to the real Robinhood ProtocolRevenueVault with payout()", async function () {

@@ -8,8 +8,10 @@
  *   mint, sell: SOL is the output mint, so one WSOL account collects both. Proven by simulation on
  *   mainnet: 0.01 SOL buy -> 50000 lamports to the fee account; a sell -> exactly quote.platformFee.
  * BNB (56): KyberSwap aggregator restricted to PancakeSwap pools (v2, v3, Infinity, legacy). The
- *   0.5% is charged in BNB inside the swap (buy: from the input, sell: from the output) and paid to
- *   the BNB ProtocolRevenueVault, which enforces the $10k operator cap and overflows to the Safe.
+ *   fee is charged in BNB inside the swap (buy: from the input, sell: from the output). Until the
+ *   ImportFeeVault switch it is 0.5% to the BNB ProtocolRevenueVault (the $10k operator cap,
+ *   overflow to the Safe); from the switch (IMPORT_FEE_VAULT_56 set and IMPORT_SWAP_FEE_RECEIVER_56
+ *   equal to it) it is 1% to the ImportFeeVault, half of it the coin creator's (CO-IMP CI2).
  *
  * The API owns the fee terms: build re-checks every fee field of the quote it is handed, so the
  * app cannot be talked into a fee-free or re-routed fee swap. (A user can still call Jupiter or
@@ -38,6 +40,11 @@ export function importSwapFeeBps(chainId, env = process.env) {
   if (Number(chainId) === 101 && String(env.SOLANA_IMPORT_FEE_COLLECTOR || "").trim()) {
     return Math.max(0, Math.min(200, Number(env.IMPORT_SWAP_FEE_BPS_101 || 100)));
   }
+  // BNB: same coupling as Solana. 1% only while the Kyber fee receiver IS the ImportFeeVault, so 1%
+  // never goes to the old protocol-only vault and the ImportFeeVault never takes the old 0.5%.
+  if (Number(chainId) === 56 && bscImportFeeVault(env)) {
+    return Math.max(0, Math.min(200, Number(env.IMPORT_SWAP_FEE_BPS_56 || 100)));
+  }
   return legacy;
 }
 const SOLANA_FEE_BPS = importSwapFeeBps(101);
@@ -50,6 +57,15 @@ export const KYBER_ROUTER = "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5";
 const KYBER_BASE = "https://aggregator-api.kyberswap.com/bsc/api/v1";
 const KYBER_PANCAKE_SOURCES = "pancake,pancake-v3,pancake-infinity-cl,pancake-infinity-bin,pancake-legacy";
 const BSC_FEE_RECEIVER = String(process.env.IMPORT_SWAP_FEE_RECEIVER_56 || "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c").trim().toLowerCase();
+
+/** The BNB ImportFeeVault while the switch is on (IMPORT_FEE_VAULT_56 set and the Kyber fee receiver equal to it), else "". */
+export function bscImportFeeVault(env = process.env) {
+  const vault = String(env.IMPORT_FEE_VAULT_56 || "").trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(vault)) return "";
+  return String(env.IMPORT_SWAP_FEE_RECEIVER_56 || "").trim().toLowerCase() === vault ? vault : "";
+}
+const BSC_FEE_BPS = importSwapFeeBps(56);
+const BSC_IMPORT_FEE_VAULT = bscImportFeeVault();
 
 const MAX_SLIPPAGE_BPS = 1500;
 
@@ -218,7 +234,7 @@ function bscPair(token, side) {
 }
 
 /** Throws unless the route is exactly the swap we fee: BNB<->token, our fee in BNB to the vault. */
-export function assertBscRouteTerms(summary, { token, side, feeBps = IMPORT_SWAP_FEE_BPS, feeReceiver = BSC_FEE_RECEIVER }) {
+export function assertBscRouteTerms(summary, { token, side, feeBps = BSC_FEE_BPS, feeReceiver = BSC_FEE_RECEIVER }) {
   const expected = bscPair(token, side);
   if (!summary || typeof summary !== "object") throw Object.assign(new Error("Missing Kyber route"), { status: 400 });
   if (String(summary.tokenIn || "").toLowerCase() !== expected.tokenIn.toLowerCase() || String(summary.tokenOut || "").toLowerCase() !== expected.tokenOut.toLowerCase()) {
@@ -242,7 +258,7 @@ async function bscQuote({ token, side, amountRaw }) {
     tokenOut,
     amountIn: amountRaw.toString(),
     includedSources: KYBER_PANCAKE_SOURCES,
-    feeAmount: String(IMPORT_SWAP_FEE_BPS),
+    feeAmount: String(BSC_FEE_BPS),
     chargeFeeBy: side === "buy" ? "currency_in" : "currency_out",
     isInBps: "true",
     feeReceiver: BSC_FEE_RECEIVER,
@@ -260,8 +276,9 @@ async function bscQuote({ token, side, amountRaw }) {
     amountOut: summary.amountOut,
     minAmountOut: null,
     priceImpactPct: null,
-    feeBps: IMPORT_SWAP_FEE_BPS,
-    feeNativeRaw: side === "buy" ? ((amountIn * BigInt(IMPORT_SWAP_FEE_BPS)) / 10_000n).toString() : null,
+    feeBps: BSC_FEE_BPS,
+    feeNativeRaw: side === "buy" ? ((amountIn * BigInt(BSC_FEE_BPS)) / 10_000n).toString() : null,
+    creatorShareBps: BSC_IMPORT_FEE_VAULT ? Math.floor(BSC_FEE_BPS / 2) : 0,
     route: (summary.route || []).flat().map((hop) => hop?.exchange).filter(Boolean),
     quote: summary,
   };
