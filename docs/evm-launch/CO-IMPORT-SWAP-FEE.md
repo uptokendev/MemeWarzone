@@ -120,3 +120,97 @@ post-graduation trading on Robinhood) ends every sell with `require(token.balanc
 `require(address(this).balance == 0)`. One unit of a token sent to it makes every later sell of that token revert;
 forced native (selfdestruct) bricks every sell. No rescue path exists. Mitigation: a new adapter instance; the app
 can point at it by env.
+
+## Results 2026-10-08 (CI1 script, CI2 / CI3 / CI4 fork proofs)
+
+Nothing was sent to any public network. Forks are local anvil forks (BNB 56 at block 126453702, Robinhood 4663 at
+83362798, BSC testnet 97 at 135601505) or the in-process hardhat fork (46630); the deployer `0x77F96A7d` and the Safe
+`0x1edcEdf5` are impersonated; traders are throwaway wallets funded on the fork. Kyber was called read-only (quote +
+build over HTTP); the built transactions ran only on the fork.
+
+### CI1: `scripts/deploy-import-fee-vault.ts`
+
+Deploys `RecruiterRewardsVault(admin)` as `ImportFeeVault`, records it, and sets operator + caps + unpause:
+- 56 / 4663: admin = Safe; writes Safe batch IF1 `deployments/<bnb|robinhood>/mainnet.IF1-import-fee-vault.safe-batch.json`
+  (`setOperator`, `setPayoutCaps`, `setPayoutsPaused(false)`; the first two simulated as the Safe, the third needs them)
+  and the record `deployments/<dir>/mainnet.import-fee-vault.json`. Needs `CONFIRM_IMPORT_FEE_VAULT=I_UNDERSTAND_MAINNET`
+  and an interactive terminal. The new vault's runtime code is checked byte for byte against the live recruiter vault
+  (`0x40ac5cD7` on 56, `0xBd7EB35d` on 4663, both admin = Safe): **identical** on both forks (2,190 bytes).
+- 97 / 46630: admin = the deployer (must be `0x77F96A7d`, as the gen-6 / gen-7 testnet records); the three calls are
+  sent by the deployer and read back; `CONFIRM_IMPORT_FEE_VAULT=I_UNDERSTAND_TESTNET`.
+- Operator: `IMPORT_FEE_PAYOUT_OPERATOR_<chainId>` is required; the existing payout operator
+  `0xdcf07EB07e6D6722c246161e7530dc905F9eaA50`, the Safe, a contract and (mainnet) the deployer are refused.
+- Caps (ether units): `IMPORT_FEE_MAX_PAYOUT_PER_TX_<chainId>` / `IMPORT_FEE_DAILY_PAYOUT_CAP_<chainId>`, defaults
+  56: 2 / 10 BNB, 4663: 0.5 / 3 ETH (= the live recruiter vault's P1 caps), testnets 0.5 / 2. The protocol sweep also
+  goes through `payout()`, so the daily cap must cover a full day of import fees. Measured volume: Robinhood
+  `ProtocolRevenueVault` received **zero** `Deposit(from = Universal Router)` in blocks 77787156..83350031 (6.56 days);
+  BNB could not be measured with free public RPCs (archive `eth_getLogs` refused); `finance_import_swap_fees` has the
+  numbers. Revisit the BNB cap with that table before the mainnet batch.
+- `IMPORT_FEE_DEPLOY_TOPAZ_ROUTER=1` (56 / 97) also deploys the unchanged `ImportSwapFeeRouter(wrapped = Topaz.weth(),
+  vault, vault, 100, 0, v3 = 0, v2 = Topaz)` and reads every immutable back. 97 rehearsal: router on Topaz
+  `0xa241AEd1` (30 bps, from `testnet.gen6.json`), factory `0xb9F2b64D`, mock WBNB `0xcd2c3492`.
+- Rehearsal: `scripts/rehearse-import-fee-vault-fork.ts` (97 anvil fork and 46630 in-process fork both ran clean:
+  vault open, operator and caps read back).
+- `test/ImportFeeVault.spec.ts` (11): paused at deploy; Deposit from an EOA and from a contract; admin-only setters;
+  unpause needs operator and both caps; operator-only payout; per-tx and daily caps inclusive; daily reset on the next
+  UTC day; reverting receiver spends nothing; sweep to a `ProtocolRevenueVault` lands as its `Deposit(from = vault)`;
+  admin withdraw; script refusals; IF1 encoding; local deploy + resume without a second vault.
+
+### CI2: BNB Kyber (`test/importFeeVault.bnb-kyber.fork.spec.ts`)
+
+Quote and build through `importSwap.js`'s own handlers with `IMPORT_SWAP_FEE_BPS=100` and
+`IMPORT_SWAP_FEE_RECEIVER_56 = <fork vault>` set in-process. `assertBscRouteTerms` accepts the 100 bps / vault terms
+(explicit and env defaults) and refuses 50 bps.
+
+| Coin (route) | Side | Amount | Vault `Deposit` (from = Kyber router `0x6131B5fa`) | Check |
+|---|---|---|---|---|
+| TST `0x86Bb94Dd` (pancake) | buy | 0.1 BNB in | 1,000,000,000,000,000 wei | = 1% of the input, exactly one Deposit |
+| TST | sell | 2,099,192,418,686,193,719,623 tokens | 491,680,893,088,786 wei | gross 49,168,089,308,878,676 = wallet 48,676,408,415,789,890 + fee; fee = gross * 100 / 10,000 |
+| Mubarak `0x5C85D6C6` (pancake-v3) | buy | 0.1 BNB in | 1,000,000,000,000,000 wei | = 1% |
+| Mubarak | sell | 521,847,726,949,246,644,392 tokens | 489,891,089,812,257 wei | gross 48,989,108,981,225,777; fee = gross * 100 / 10,000 |
+
+Then the operator swept half the vault to the real `ProtocolRevenueVault 0xc2d4E6f8` with `payout()`: one
+`Deposit(from = ImportFeeVault)` of exactly that amount.
+
+### CI3: Robinhood Universal Router (`test/importFeeVault.rh-ur.fork.spec.ts`)
+
+`robinhoodImportSwap.mjs` hard-codes 50 bps, so the 100 bps call is built from its exported pieces; the test proves it
+equals the module's own `encodeImportBuy` / `encodeImportSell` output (feeReceiver = vault) except the PAY_PORTION bps
+word and, on sells, the SWEEP minimum derived from it. Token HOODFUN `0xfbeD2D06` (1% WETH V3 pool `0x4FbA3580`):
+
+| Side | Amount | Vault `Deposit` (from = UR `0x88767899`) | Check |
+|---|---|---|---|
+| buy | 0.01 ETH | 100,000,000,000,000 wei (1%) | tokens 7,787,668,178,826,216,118,046,671 = QuoterV2(0.0099 ETH); that minimum passes, + 1 reverts `V3TooLittleReceived` |
+| sell | 3,893,834,089,413,108,059,023,335 tokens | 48,714,200,579,085 wei | gross 4,871,420,057,908,597 = QuoterV2; wallet 4,822,705,857,329,512 = gross - fee; SWEEP min = that passes, + 1 reverts `InsufficientETH` (min-out checked after the fee) |
+
+SPY `0x117cc213` (the live rehearsal's stand-in) passes the same proof (buy fee 100,000,000,000,000; sell gross
+4,945,054,796,289,333, fee 49,450,547,962,893). Sweep to the real `ProtocolRevenueVault 0x632061cA` with `payout()`
+lands as one `Deposit(from = ImportFeeVault)`. The Universal Router held 0 ETH before and after each swap.
+
+### CI4: `ImportSwapFeeRouter` on Topaz (`test/ImportSwapFeeRouter.bnb-topaz.fork.spec.ts`)
+
+Router deployed by the CI1 script unchanged (100 / 0 bps, both receivers = vault, v3 off). Each side compared with a
+direct Topaz swap from the same EVM snapshot:
+
+| Pool | Side | Amount | Vault `Deposit` (from = router) | Recipient |
+|---|---|---|---|---|
+| Airo `0x019078cA` / WBNB `0x01D7023d` | buyV2 | 0.05 BNB | 500,000,000,000,000 | 4,306,109,699,848,024,373,017,220 tokens = direct Topaz swap of 0.0495 BNB |
+| Airo | sellV2 | 2,153,054,849,924,012,186,508,610 tokens | 247,439,125,182,894 | 24,496,473,393,106,586 wei = gross 24,743,912,518,289,480 (direct Topaz) - fee |
+| TOPAZ `0xdf002282` / WBNB `0x29EFe69c` (deepest) | buyV2 | 0.05 BNB | 500,000,000,000,000 | 23,984,949,276,820,194,714,785 tokens = direct of 0.0495 BNB |
+| TOPAZ | sellV2 | 11,992,474,638,410,097,357,392 tokens | 240,923,894,915,735 | 23,851,465,596,657,773 wei = gross 24,092,389,491,573,508 - fee |
+
+Exactly one Deposit per swap (creatorBps 0 sends nothing to the second receiver); `ImportSwap` fields as listed in
+A.1 (venue 2, feeCreator 0); minimum = the exact output passes, + 1 reverts `InsufficientOutput`; router holds no BNB,
+token or WBNB after; `buyV3` reverts `VenueNotConfigured`.
+
+### Regression
+
+`npx hardhat test test/ImportSwapFeeRouter.spec.ts $(ls test/evmgen7-*.spec.ts | grep -v fork) test/ImportFeeVault.spec.ts`
+plus the three fork specs without a fork network: 151 passing (22 + 118 + 11), 10 pending (the fork specs skip).
+
+Run the fork proofs:
+
+    anvil --fork-url https://bsc-mainnet.public.blastapi.io --chain-id 56 --port 8645 --accounts 0 --no-rate-limit
+    npx hardhat test test/importFeeVault.bnb-kyber.fork.spec.ts test/ImportSwapFeeRouter.bnb-topaz.fork.spec.ts --network bscForkRehearsal
+    anvil --fork-url https://rpc.mainnet.chain.robinhood.com --chain-id 4663 --port 8646 --accounts 0 --no-rate-limit
+    npx hardhat test test/importFeeVault.rh-ur.fork.spec.ts --network robinhoodForkRehearsal

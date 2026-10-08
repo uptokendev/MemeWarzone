@@ -102,3 +102,7 @@ DogeOS (`docs/build_plans/DogeOS/DOGEOS_FULL_INTEGRATION_PLAN.md`) builds on gen
   2% to the router, 0 to the creator): 32 / 32 checks.
 - Open for later steps: gen-7 lockers into `evmLpHarvestCrank.js` and the finance locker lists after deploy; DogeOS
   6281971 route authorisation; scheduled arm takes the factory generation from the client (fails closed on chain).
+
+## 7. Change orders
+
+- `CO-IMPORT-SWAP-FEE.md` (2026-10-08, rev. 2): 1% fee on imported-coin swaps into an `ImportFeeVault` (existing `RecruiterRewardsVault` bytecode), split 50/50 afterwards; no new contract for BNB/Robinhood; wired before step 4.
