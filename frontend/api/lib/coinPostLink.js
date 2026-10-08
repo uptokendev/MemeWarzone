@@ -1,4 +1,5 @@
 import { pool } from "../../server/db.js";
+import { hasSystemEventLink } from "./systemEventLink.js";
 
 /**
  * Creator updates (coin_posts) carry a linked social_posts row (social_posts.coin_post_id) so they take
@@ -23,9 +24,13 @@ export function hasCoinPostLink() {
   return ready;
 }
 
-/** SQL fragment that keeps linked rows out of regular post lists ("" before the migration). */
+/**
+ * SQL fragment that keeps linked rows out of regular post lists ("" before the migration): creator
+ * update rows (coin_post_id) and, since 2026-10-08, auto update rows (system_event_key).
+ */
 export async function notCoinPostSql(alias = "p") {
-  return (await hasCoinPostLink()) ? ` and ${alias}.coin_post_id is null` : "";
+  const [coin, system] = await Promise.all([hasCoinPostLink(), hasSystemEventLink()]);
+  return `${coin ? ` and ${alias}.coin_post_id is null` : ""}${system ? ` and ${alias}.system_event_key is null` : ""}`;
 }
 
 /** Creates the linked row for a new coin post. Never fails the coin post itself. */
