@@ -93,11 +93,13 @@ async function orderedFollowUsers(from, to, app, firstName, secondName) {
 }
 
 export async function analyticsFunnels({ from, to, app }) {
-  const funnels = [];
-  for (const funnel of FUNNELS) {
-    const first = await distinctEventUsers(from, to, app, funnel.steps[0].name);
-    const second = await orderedFollowUsers(from, to, app, funnel.steps[0].name, funnel.steps[1].name);
-    funnels.push({
+  // The funnels are independent; run them in parallel instead of 10 sequential round trips.
+  const funnels = await Promise.all(FUNNELS.map(async (funnel) => {
+    const [first, second] = await Promise.all([
+      distinctEventUsers(from, to, app, funnel.steps[0].name),
+      orderedFollowUsers(from, to, app, funnel.steps[0].name, funnel.steps[1].name),
+    ]);
+    return {
       id: funnel.id,
       label: funnel.label,
       steps: [
@@ -114,8 +116,8 @@ export async function analyticsFunnels({ from, to, app }) {
           conversionFromPrevious: first ? second / first : null,
         },
       ],
-    });
-  }
+    };
+  }));
 
   return { from, to, app, funnels };
 }

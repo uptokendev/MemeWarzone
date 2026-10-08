@@ -123,8 +123,8 @@ export function sanitizeEvent(raw, req) {
   };
 }
 
-async function persistEvent(client, event) {
-  await client.query(
+export async function persistEvent(client, event) {
+  const inserted = await client.query(
     `insert into public.analytics_events
       (event_id, ts, name, app, anonymous_id, session_id, user_id, path_raw, path_template, properties, context)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb)
@@ -143,6 +143,10 @@ async function persistEvent(client, event) {
       JSON.stringify(event.context),
     ],
   );
+  // A retried delivery (the client re-sends a batch when it did not see the response) carries the
+  // same event_id. The row already exists and was already counted: stop here so the session and
+  // hourly counters are not incremented twice.
+  if (inserted.rowCount === 0) return;
 
   const isPageview = event.name === "$pageview";
   await client.query(

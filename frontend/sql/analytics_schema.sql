@@ -97,6 +97,48 @@ create table if not exists public.analytics_hourly_vitals (
   primary key (bucket, app, metric)
 );
 
+-- Job-built rollups (npm run cron:analytics-rollup). The admin analytics reads use them for the
+-- finished hours inside analytics_rollup_state and read raw analytics_events for the rest, so the
+-- numbers equal a raw query. See frontend/api/analytics/rollups.js.
+
+-- Distinct visitors per hour (set, not a count, so a 7d / 30d distinct stays exact).
+create table if not exists public.analytics_hourly_visitors (
+  bucket timestamptz not null,
+  app text not null,
+  anonymous_id uuid not null,
+  primary key (bucket, app, anonymous_id)
+);
+
+-- Distinct sessions per hour (the overview series).
+create table if not exists public.analytics_hourly_sessions (
+  bucket timestamptz not null,
+  app text not null,
+  session_id uuid not null,
+  primary key (bucket, app, session_id)
+);
+
+-- Web vital values per hour with their multiplicity, so p50 / p75 / p95 over any window stay exact.
+-- value is null for events without a measurement (counted in n, not in the percentiles).
+create table if not exists public.analytics_hourly_vital_values (
+  bucket timestamptz not null,
+  app text not null,
+  metric text not null,
+  rating text not null default '',
+  value double precision,
+  n integer not null default 0
+);
+
+create index if not exists analytics_hourly_vital_values_bucket_idx
+  on public.analytics_hourly_vital_values (bucket, app, metric);
+
+-- The contiguous range of finished hours the job has built.
+create table if not exists public.analytics_rollup_state (
+  name text primary key,
+  covered_from timestamptz not null,
+  covered_until timestamptz not null,
+  updated_at timestamptz not null default now()
+);
+
 do $$
 declare
   t text;
@@ -107,7 +149,11 @@ begin
     'analytics_hourly_pages',
     'analytics_hourly_events',
     'analytics_hourly_functions',
-    'analytics_hourly_vitals'
+    'analytics_hourly_vitals',
+    'analytics_hourly_visitors',
+    'analytics_hourly_sessions',
+    'analytics_hourly_vital_values',
+    'analytics_rollup_state'
   ]
   loop
     execute format('alter table public.%I enable row level security', t);
