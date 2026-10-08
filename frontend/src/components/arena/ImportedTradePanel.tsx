@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { ethers } from "ethers";
-import { PublicKey } from "@solana/web3.js";
 import { toast } from "sonner";
 import { announceImportTrade } from "@/lib/importTradeEvents";
 
 import { Button } from "@/components/ui/button";
 import { cp } from "@/components/token/coinPageStyles";
-import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
+import { useImportWalletBalances } from "@/lib/useImportWalletBalances";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { getNativeSymbol, isRobinhoodChainId, isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
@@ -75,6 +74,11 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
   const [preview, setPreview] = useState<ImportSwapQuote | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [noAggregatorRoute, setNoAggregatorRoute] = useState(false);
+  // "Switch to $TOKEN" on buys: type a token amount, the native amount is estimated from quotes and the
+  // buy then runs exactly as a native-amount buy (same quote, build and fee checks). "(est.)", never exact.
+  const [tokenMode, setTokenMode] = useState(false);
+  const [estNativeRaw, setEstNativeRaw] = useState<bigint | null>(null);
+  const [estimating, setEstimating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,47 +92,10 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
 
   // Wallet balances for the Balance row (reads only; the swap itself does not use them).
   const account = solana ? (solanaAccount ? String(solanaAccount) : null) : wallet.account ? String(wallet.account) : null;
-  const [balances, setBalances] = useState<{ nativeRaw: bigint; tokenRaw: bigint } | null>(null);
-  useEffect(() => {
-    if (!account) {
-      setBalances(null);
-      return;
-    }
-    let cancelled = false;
-    const load = async () => {
-      try {
-        let nativeRaw: bigint;
-        let tokenRaw = 0n;
-        if (solana) {
-          const connection = getSolanaReadConnection();
-          const owner = new PublicKey(account);
-          const [lamports, accounts] = await Promise.all([
-            connection.getBalance(owner, "confirmed"),
-            connection.getParsedTokenAccountsByOwner(owner, { mint: new PublicKey(item.tokenAddress) }, "confirmed"),
-          ]);
-          nativeRaw = BigInt(lamports);
-          for (const entry of accounts.value) tokenRaw += BigInt((entry.account.data as { parsed?: { info?: { tokenAmount?: { amount?: string } } } }).parsed?.info?.tokenAmount?.amount || "0");
-        } else {
-          if (!readProvider) return;
-          const erc20 = new ethers.Contract(item.tokenAddress, ["function balanceOf(address) view returns (uint256)"], readProvider);
-          const [native, token] = await Promise.all([readProvider.getBalance(account), erc20.balanceOf(account) as Promise<bigint>]);
-          nativeRaw = BigInt(native);
-          tokenRaw = BigInt(token);
-        }
-        if (!cancelled) setBalances({ nativeRaw, tokenRaw });
-      } catch {
-        if (!cancelled) setBalances(null);
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 15_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [account, item.tokenAddress, readProvider, solana]);
+  const balances = useImportWalletBalances({ chainId: item.chainId, tokenAddress: item.tokenAddress, account });
 
   function amountRaw(): bigint | null {
+    if (side === "buy" && tokenMode) return estNativeRaw;
     const text = String(amount || "").trim();
     if (!text || !(Number(text) > 0)) return null;
     try {
@@ -167,7 +134,63 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aggregated, robinhood, amount, side, decimals, item.chainId, item.tokenAddress]);
+  }, [aggregated, robinhood, amount, side, decimals, item.chainId, item.tokenAddress, tokenMode, estNativeRaw]);
+
+  // Token-amount buys: native amount for about `amount` tokens. A small probe quote gives the rate, two more
+  // quotes correct for price impact and the fee. Only routes whose buy reads amountRaw() offer the switch.
+  const tokenModeAvailable = side === "buy" && ((aggregated && !noAggregatorRoute) || robinhoodFee);
+  useEffect(() => {
+    if (!(tokenMode && side === "buy")) {
+      setEstNativeRaw(null);
+      return;
+    }
+    let target: bigint;
+    try {
+      target = ethers.parseUnits(String(amount || "").trim() || "0", decimals);
+    } catch {
+      setEstNativeRaw(null);
+      return;
+    }
+    if (target <= 0n) {
+      setEstNativeRaw(null);
+      return;
+    }
+    let cancelled = false;
+    const outFor = async (nativeRaw: bigint) => {
+      const quote = robinhood ? await quoteRobinhoodPreview(nativeRaw) : await quoteImportSwap({ chainId: item.chainId, token: item.tokenAddress, side: "buy", amountRaw: nativeRaw });
+      return BigInt(quote.amountOut);
+    };
+    const timer = window.setTimeout(async () => {
+      setEstimating(true);
+      try {
+        const probe = 10n ** BigInt(solana ? 9 : 18) / 100n;
+        const probeOut = await outFor(probe);
+        if (probeOut <= 0n) throw new Error("No price for this token.");
+        let guess = (target * probe) / probeOut + 1n;
+        for (let step = 0; step < 2; step += 1) {
+          const out = await outFor(guess);
+          if (out <= 0n) break;
+          guess = (guess * target + out - 1n) / out;
+        }
+        if (!cancelled) setEstNativeRaw(guess);
+      } catch (error) {
+        if (!cancelled) {
+          setEstNativeRaw(null);
+          setPreviewError(String((error as Error)?.message || "No quote for that token amount"));
+        }
+      } finally {
+        if (!cancelled) setEstimating(false);
+      }
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenMode, side, amount, decimals, item.chainId, item.tokenAddress]);
+  useEffect(() => {
+    if (!tokenModeAvailable && tokenMode) setTokenMode(false);
+  }, [tokenModeAvailable, tokenMode]);
 
   /** Robinhood quotes on chain (QuoterV2 through the coin's deepest Uniswap V3 pool), same preview shape. */
   async function quoteRobinhoodPreview(raw: bigint): Promise<ImportSwapQuote> {
@@ -383,7 +406,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
   // UI redesign: the same panel look as a launched coin (founder: "we shouldn't see any difference");
   // the route underneath (Jupiter / PancakeSwap via KyberSwap / Uniswap V3) is unchanged.
   const dex = aggregated && !noAggregatorRoute ? (solana ? "Jupiter" : "PancakeSwap") : robinhood ? "Uniswap" : poolLabel || "the DEX";
-  const unit = side === "buy" ? native : item.symbol || "token";
+  const unit = side === "buy" && !tokenMode ? native : item.symbol || "token";
   const nativeDecimals = solana ? 9 : 18;
   const fmt = (raw: string | bigint, units: number, digits: number) => Number(ethers.formatUnits(raw, units)).toLocaleString(undefined, { maximumFractionDigits: digits });
   const quoted = (aggregated && !noAggregatorRoute) || robinhoodFee;
@@ -401,9 +424,27 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
       </div>
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate text-xs text-mw-muted">
-            {aggregated && !noAggregatorRoute ? `Best price via ${solana ? "Jupiter" : "PancakeSwap"}` : `Pool ${poolLabel || "resolving…"}`}
-          </span>
+          {tokenModeAvailable ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cp.smallButton}
+              onClick={() => {
+                setAmount("");
+                setPreview(null);
+                setPreviewError(null);
+                setTokenMode((on) => !on);
+              }}
+              data-import-token-mode="true"
+            >
+              {tokenMode ? `Switch to ${native}` : `Switch to $${item.symbol || "token"}`}
+            </Button>
+          ) : (
+            <span className="min-w-0 truncate text-xs text-mw-muted">
+              {aggregated && !noAggregatorRoute ? `Best price via ${solana ? "Jupiter" : "PancakeSwap"}` : `Pool ${poolLabel || "resolving…"}`}
+            </span>
+          )}
           {aggregated || robinhood ? <span className="whitespace-nowrap text-xs text-mw-muted">Slippage: 1%</span> : null}
         </div>
         <div className="relative">
@@ -426,7 +467,17 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
           </div>
           <div className={row}>
             <span className="text-mw-muted">Pay</span>
-            <span className="font-mw-mono text-mw-text">{amount && Number(amount) > 0 ? `${amount} ${unit}` : "—"}</span>
+            <span className="font-mw-mono text-mw-text">
+              {side === "buy" && tokenMode
+                ? estimating
+                  ? "…"
+                  : estNativeRaw
+                    ? `≈ ${fmt(estNativeRaw, nativeDecimals, 6)} ${native}`
+                    : "—"
+                : amount && Number(amount) > 0
+                  ? `${amount} ${unit}`
+                  : "—"}
+            </span>
           </div>
           <div className={row}>
             <span className="text-mw-muted">Receive</span>

@@ -12,6 +12,7 @@ import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { ImportedTradesTable } from "@/components/arena/ImportedTradesTable";
 import { SwapWidgetEmbedLink } from "@/components/imports/SwapWidgetEmbedDialog";
+import { ImportPositionCard } from "@/components/imports/ImportPositionCard";
 import { ImportCreatorEarnings } from "@/components/imports/ImportCreatorEarnings";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
 import { MobileTradeDock, useXlUp } from "@/components/token/MobileTradeSheet";
@@ -690,6 +691,7 @@ export default function ImportedTokenPage({
             </div>
             {isXlUp ? tradePanel : null}
           </section>
+          <ImportPositionCard chainId={Number(item.chainId)} tokenAddress={item.tokenAddress} symbol={item.symbol} account={connectedImportWallet ? String(connectedImportWallet) : null} priceUsd={profile?.priceUsd ?? null} />
           {warRoomOpen ? (
             <section aria-label="War Room" className={`${cp.card} p-4`}>
               <h3 className={`${cp.title} m-0`}>War Room</h3>
