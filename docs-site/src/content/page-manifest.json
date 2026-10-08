@@ -791,6 +791,16 @@
       "aliases": []
     },
     {
+      "route": "/creators/swap-widget",
+      "title": "Swap box for your website",
+      "group": "For creators",
+      "groupOrder": 50,
+      "pageOrder": 46,
+      "status": "live",
+      "source": "creators/swap-widget.md",
+      "aliases": []
+    },
+    {
       "route": "/command-center/overview",
       "title": "Overview and portfolio",
       "group": "Command Center",
