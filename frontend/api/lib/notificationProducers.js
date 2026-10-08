@@ -374,3 +374,87 @@ export async function runNotificationDigest(pool, { send = sendEmailNotification
   }
   return out;
 }
+
+/* --------------------------- league check-in --------------------------- */
+
+/** Reminders go out from this UTC hour on, so owners who check in early are not pinged. */
+export const DEFAULT_CHECKIN_REMINDER_HOUR_UTC = 12;
+
+/**
+ * Daily check-in reminder (founder, 2026-10-08): owners of a coin in this month's Major War League who
+ * have not checked in today get one bell row per UTC day. Same eligibility as the check-in itself
+ * (api/arenaLeague.js ownedLeagueCoins): a league entry this month, owned as a graduated launchpad coin
+ * by its creator or as a passed import. Seasons whose scoring is closed are skipped. Read-only on the
+ * league tables; one row per wallet per day through the dedupe key.
+ */
+export async function scanCheckinReminders(pool, { now = new Date(), hourUtc = Number(process.env.NOTIFY_CHECKIN_REMINDER_HOUR_UTC ?? DEFAULT_CHECKIN_REMINDER_HOUR_UTC), notify = notifyWallet } = {}) {
+  const out = { checkin: 0 };
+  if (now.getUTCHours() < Math.max(0, Math.min(23, Number(hourUtc) || 0))) return out;
+  const day = now.toISOString().slice(0, 10);
+  const yesterday = new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10);
+  const monthIndex = now.getUTCFullYear() * 12 + (now.getUTCMonth() + 1);
+  const { rows } = await pool.query(
+    `select s.chain_id, e.token_address, e.symbol, e.token_name, e.points, o.wallet,
+            last.utc_day::text as last_day, last.streak_days
+       from public.arena_league_seasons s
+       join public.arena_league_entries e on e.season_id = s.id
+       cross join lateral (
+         select c.creator_address::text as wallet
+           from public.campaigns c
+          where c.chain_id = s.chain_id
+            and c.graduated_at_chain is not null
+            and (lower(coalesce(c.token_address::text, '')) = lower(e.token_address) or lower(c.campaign_address::text) = lower(e.token_address))
+         union
+         select i.owner_wallet
+           from public.arena_token_imports i
+          where i.chain_id = s.chain_id and i.status = 'passed' and lower(i.token_address) = lower(e.token_address)
+       ) o
+       left join lateral (
+         select k.utc_day, k.streak_days from public.arena_creator_checkins k
+          where lower(k.wallet) = lower(o.wallet)
+          order by k.utc_day desc limit 1
+       ) last on true
+      where s.active = true
+        and s.month is not null
+        and s.year * 12 + s.month = $1
+        and coalesce(s.regular_season_closed, false) = false
+        and s.frozen_at is null
+        and s.state not in ('quarter_finals', 'completed')
+        and coalesce(o.wallet, '') <> ''
+        and (last.utc_day is null or last.utc_day::text <> $2)
+      order by e.points desc
+      limit 2000`,
+    [monthIndex, day],
+  );
+
+  // One reminder per wallet, naming its highest-scoring coin.
+  const byWallet = new Map();
+  for (const row of rows) {
+    const wallet = notificationWalletKey(row.wallet);
+    if (!wallet) continue;
+    const entry = byWallet.get(wallet) || { row, coins: 0 };
+    entry.coins += 1;
+    byWallet.set(wallet, entry);
+  }
+  for (const [wallet, { row, coins }] of byWallet) {
+    const continuing = row.last_day === yesterday;
+    const streakDay = continuing ? Number(row.streak_days || 0) + 1 : 1;
+    const coinLabel = ticker(row.symbol, row.token_name);
+    const streakLine = continuing
+      ? ` Day ${streakDay} in a row${streakDay % 7 === 0 ? ": today adds the 0.5 streak bonus." : "; every 7th day adds 0.5."}`
+      : " Every 7 days in a row adds 0.5.";
+    const r = await notify(pool, {
+      wallet,
+      category: "battles",
+      kind: "league_checkin",
+      targetType: "league_checkin",
+      targetId: `${row.chain_id}:${day}`,
+      dedupeKey: `league:checkin:${wallet}:${day}`,
+      title: "Daily check-in is open",
+      body: `Check in for ${coinLabel}${coins > 1 ? ` (or one of your ${coins} league coins)` : ""} in Command Center: +0.1 league point.${streakLine}`,
+      target: commandPath(wallet, "overview"),
+    });
+    if (r.inserted) out.checkin += 1;
+  }
+  return out;
+}
