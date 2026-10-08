@@ -266,3 +266,102 @@ export async function submitSolanaRewardV0Claim(input: {
   }
   return signature;
 }
+
+export type RewardClaimBatchResult = { signature: string; alreadyPaid?: boolean } | { error: Error };
+
+/**
+ * Several reward claims with one wallet approval (founder, 2026-10-08: three league prizes took nine
+ * prompts). Each claim is built, checked and simulated exactly like submitSolanaRewardV0Claim, so
+ * every transaction is the same as a single claim. The wallet approves them together through
+ * signAllTransactions (Phantom, Solflare, Backpack); a wallet without it signs them one by one.
+ * A claim that fails its checks or simulation gets its own error and is not sent; the others go on.
+ * Results are in input order.
+ */
+export async function submitSolanaRewardV0Claims(
+  inputs: Array<{
+    web3: SolanaWeb3Module;
+    chainId: number;
+    addresses: RewardClaimAddresses;
+    canonical: RewardClaimCanonicalInput;
+    instruction: TransactionInstruction;
+    label: string;
+  }>,
+): Promise<RewardClaimBatchResult[]> {
+  const results: RewardClaimBatchResult[] = inputs.map(() => ({ error: new Error("Not sent.") }));
+  if (!inputs.length) return results;
+  const provider = getSolanaProvider();
+  if (!provider?.publicKey || typeof provider.signTransaction !== "function") {
+    throw new Error("Connect a Solana wallet that can sign these claims.");
+  }
+  const connected = String(provider.publicKey.toString?.() || provider.publicKey);
+
+  type Ready = {
+    index: number;
+    input: (typeof inputs)[number];
+    connection: Connection;
+    intent: Parameters<typeof compileSolanaUserV0WithLatestBlockhash>[2];
+    final: Awaited<ReturnType<typeof compileSolanaUserV0WithLatestBlockhash>>;
+  };
+  const ready: Ready[] = [];
+  for (let index = 0; index < inputs.length; index += 1) {
+    const input = inputs[index];
+    try {
+      if (!isSolanaRewardChainId(input.chainId)) throw new Error("Wrong Solana chain for reward claim.");
+      if (connected !== String(input.addresses.recipient || "").trim()) throw new Error("Connected Solana wallet does not own this reward.");
+      assertCanonicalSolanaRewardClaim(input.web3, input.addresses, input.canonical);
+      const connection = new input.web3.Connection(getSolanaRewardRpcUrl(input.chainId), "confirmed");
+      if (await claimReceiptExists(input.web3, connection, input.addresses.claimReceiptAddress)) {
+        const paid = input.canonical.kind === "league"
+          ? await claimSignatureForReceipt(input.web3, connection, input.addresses.claimReceiptAddress)
+          : null;
+        results[index] = paid
+          ? { signature: paid, alreadyPaid: true }
+          : { error: new Error("This Solana reward is already claimed on-chain. Refresh rewards before retrying.") };
+        continue;
+      }
+      const intent = {
+        payer: connected,
+        instructions: [input.instruction],
+        walletRewriteBudgetBytes: SOLANA_WALLET_REWRITE_BUDGET_BYTES,
+      };
+      const simulated = await compileSolanaUserV0WithLatestBlockhash(input.web3, connection, intent);
+      try {
+        await simulateSolanaUserV0OrThrow(connection, simulated.transaction, input.label);
+      } catch (error) {
+        throw await explainClaimFailure(input.web3, connection, connected, input.canonical.kind, error);
+      }
+      const final = await compileSolanaUserV0WithLatestBlockhash(input.web3, connection, intent);
+      ready.push({ index, input, connection, intent, final });
+    } catch (error) {
+      results[index] = { error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+  if (!ready.length) return results;
+
+  const unsigned = ready.map((entry) => entry.final.transaction);
+  const signedAll =
+    ready.length > 1 && typeof (provider as { signAllTransactions?: unknown }).signAllTransactions === "function"
+      ? await (provider as { signAllTransactions: (txs: typeof unsigned) => Promise<typeof unsigned> }).signAllTransactions(unsigned)
+      : null;
+
+  for (let i = 0; i < ready.length; i += 1) {
+    const entry = ready[i];
+    try {
+      const signed = signedAll ? signedAll[i] : await provider.signTransaction(entry.final.transaction);
+      assertSolanaUserV0Intent(entry.input.web3, signed, { ...entry.intent, allowAdditionalInstructions: true });
+      const signature = await entry.connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
+      const confirmation = await confirmLaunchpadSignature(entry.connection, {
+        signature,
+        lastValidBlockHeight: entry.final.latest.lastValidBlockHeight,
+        recover: () => claimReceiptExists(entry.input.web3, entry.connection, entry.input.addresses.claimReceiptAddress),
+      });
+      if (confirmation.err) throw new Error(`${entry.input.label} failed: ${JSON.stringify(confirmation.err)}`);
+      results[entry.index] = { signature };
+    } catch (error) {
+      // A declined approval stops the rest: the wallet said no to the batch.
+      if (/reject|denied|cancel/i.test(String((error as Error)?.message || ""))) throw error;
+      results[entry.index] = { error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+  return results;
+}
