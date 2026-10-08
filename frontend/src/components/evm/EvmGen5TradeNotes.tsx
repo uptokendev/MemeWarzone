@@ -3,7 +3,6 @@ import type { Gen5CampaignState } from "@/lib/evmGen6Client";
 import {
   EVM_ANTI_SNIPER_WINDOW_SECONDS,
   EVM_CREATOR_BUY_LOCK_COPY,
-  evmAntiSniperLine,
   evmFeeChoiceLine,
   evmGraduationStatus,
 } from "@/lib/evmGen6.mjs";
@@ -19,8 +18,7 @@ function useNowSeconds(active: boolean) {
 }
 
 /**
- * Trade-panel lines for a generation-5 EVM coin: the launch fee (the DBC wording),
- * the creator's lock notice before they buy, the graduation state and where the
+ * Trade-panel lines for a generation-5 EVM coin: the creator's lock notice before they buy, the graduation state and where the
  * creator fees go. Quotes themselves come from the campaign's quote functions,
  * which already include the current fee.
  */
@@ -53,11 +51,7 @@ export function EvmGen5TradeNotes({
 
   return (
     <div className="mt-2 space-y-1 text-center text-xs" data-testid="evm-gen5-trade-notes">
-      {graduation.phase === "trading" ? (
-        <p className="text-muted-foreground">
-          {evmAntiSniperLine({ launchAt: state.launchAt, nowUnix: now })}
-        </p>
-      ) : null}
+      {/* The launch-fee line is not shown on the coin page (founder, 2026-10-08); it is explained in the docs. */}
       {graduation.phase === "trading" && viewerIsCreator && tradeTab === "buy" ? (
         <p className="text-orange-200">{EVM_CREATOR_BUY_LOCK_COPY}</p>
       ) : null}
