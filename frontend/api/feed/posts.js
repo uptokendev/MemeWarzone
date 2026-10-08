@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { SYSTEM_EVENT_TYPES, ensureSystemEventPosts } from "../lib/systemEventLink.js";
 import { attachHandles } from "../lib/userHandles.js";
 import { notifyRepost, notifyRocket, notifySocialPost } from "../lib/socialNotify.js";
 import { ethers } from "ethers";
@@ -436,6 +437,36 @@ async function attachCoinPostEngagement(items, viewer) {
   });
 }
 
+// Auto updates take reactions through their linked social_posts row (founder, 2026-10-08): the card
+// gets that row's id (postId) and its counts, so the action row works like on any post. The rows are
+// created the first time an update is shown.
+async function attachSystemEventEngagement(items, viewer) {
+  const events = items.filter((item) => SYSTEM_EVENT_TYPES.has(item.type) && item.id);
+  if (!events.length) return items;
+  const linked = await ensureSystemEventPosts(events);
+  if (!linked.size) return items;
+  const params = [];
+  const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
+  const ids = Array.from(new Set(linked.values()));
+  const { rows } = await pool.query(`${postSelect(viewerSql)} ${POST_FROM} where p.id = any($${params.push(ids)}::bigint[])`, params);
+  const byId = new Map(rows.map((row) => [Number(row.id), row]));
+  return items.map((item) => {
+    const postId = linked.get(String(item.id));
+    const row = postId ? byId.get(postId) : null;
+    if (!row) return item;
+    return {
+      ...item,
+      postId,
+      body: item.body || row.body,
+      fireCount: Number(row.fire_count || 0),
+      replyCount: Number(row.reply_count || 0),
+      repostCount: Number(row.repost_count || 0),
+      firedByMe: Boolean(row.fired_by_me),
+      repostedByMe: Boolean(row.reposted_by_me),
+    };
+  });
+}
+
 async function loadSharedCoinPosts(limit, { before = null, authors = null, viewer = null } = {}) {
   try {
     const params = [limit];
@@ -574,6 +605,7 @@ async function loadTimelinePage({ before, limit, authors, viewer, ownPostsOnly =
     ownPostsOnly ? [] : loadBattleEvents({ before, limit: take, authors }),
   ]);
   const page = mergeTimelinePage(sources, limit);
+  page.items = await attachSystemEventEngagement(page.items, viewer);
   const views = await loadViewCounts(page.items.map((item) => item.postId).filter(Boolean));
   page.items = page.items.map((item) => (item.postId ? { ...item, viewCount: views.get(Number(item.postId)) || 0 } : item));
   return page;
