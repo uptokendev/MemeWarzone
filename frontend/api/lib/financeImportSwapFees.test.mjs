@@ -14,6 +14,10 @@ import {
   scanSolanaImportSwapFees,
   solanaFeeRow,
   storeImportSwapFees,
+  creatorHalf,
+  importSwapFeeSplitSources,
+  storeSplitImportSwapFees,
+  IMPORT_CREATOR_FEE_WINDOW_DAYS,
 } from "./financeImportSwapFees.js";
 import { EVENT_QUERIES, LANE_QUERIES } from "./financeRevenueLanes.js";
 import { vatLaneOf } from "./financeTaxRules.js";
@@ -189,7 +193,8 @@ test("rpc client: retries with backoff, then falls back to the next URL", async 
 test("revenue lane: import swaps read the fee table per chain, CSV events from the same spec, VAT lane mapped", () => {
   assert.match(LANE_QUERIES.import_swaps, /from public\.finance_import_swap_fees f/);
   assert.match(LANE_QUERIES.import_swaps, /f\.chain_id = \$1/);
-  assert.match(LANE_QUERIES.import_swaps, /sum\(f\.fee_raw\)/);
+  // From the 1% switch half of a fee row is the creator's: revenue is fee_raw - creator_raw.
+  assert.match(LANE_QUERIES.import_swaps, /sum\(\(f\.fee_raw - f\.creator_raw\)\)/);
   assert.match(EVENT_QUERIES.import_swaps, /f\.tx_hash as tx_hash/);
   assert.equal(vatLaneOf("import-swaps:56"), "import_swaps");
 });
@@ -200,4 +205,92 @@ test("founder 2026-10-06: own-wallet import swaps are left out of revenue; BNB s
   assert.match(lanes, /from: "public\.finance_import_swap_fees f",\s*where: `f\.chain_id = \$1\s*and f\.fee_raw > 0\s*and not f\.internal_wallet`/);
   const { importSwapFeeSources } = await import("./financeImportSwapFees.js");
   assert.equal(importSwapFeeSources({})[56].startBlock, 125000755);
+});
+
+// ------------------------------------------------------------------ 1% split receivers (founder, 2026-10-08)
+
+test("split: creator half is floor(fee / 2), the odd unit stays with the protocol", () => {
+  assert.equal(creatorHalf("100"), "50");
+  assert.equal(creatorHalf("101"), "50");
+  assert.equal(creatorHalf("1"), "0");
+  assert.equal(IMPORT_CREATOR_FEE_WINDOW_DAYS, 90);
+});
+
+test("split sources: only what the env switches on; EVM needs vault + start block; payers default to the swap router", () => {
+  assert.deepEqual(importSwapFeeSplitSources({}), []);
+  const sol = importSwapFeeSplitSources({ SOLANA_IMPORT_FEE_COLLECTOR: "2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB" });
+  assert.equal(sol.length, 1);
+  assert.equal(sol[0].chainId, 101);
+  assert.equal(sol[0].split, true);
+  const vault = "0x00000000000000000000000000000000000000AA";
+  assert.deepEqual(importSwapFeeSplitSources({ IMPORT_FEE_VAULT_56: vault }), [], "no start block: off");
+  const [bnb] = importSwapFeeSplitSources({ IMPORT_FEE_VAULT_56: vault, IMPORT_FEE_VAULT_START_BLOCK_56: "130000000" });
+  assert.equal(bnb.receiver, vault.toLowerCase());
+  assert.deepEqual(bnb.payers, [KYBER_ROUTER.toLowerCase()]);
+  assert.equal(bnb.startBlock, 130000000);
+  assert.equal(bnb.payer, undefined, "a split source never carries the old single payer");
+  const [rh] = importSwapFeeSplitSources({ IMPORT_FEE_VAULT_4663: vault, IMPORT_FEE_VAULT_START_BLOCK_4663: "80000000", IMPORT_FEE_VAULT_PAYERS_4663: `${UNIVERSAL_ROUTER_4663},0x00000000000000000000000000000000000000BB` });
+  assert.deepEqual(rh.payers, [UNIVERSAL_ROUTER_4663, "0x00000000000000000000000000000000000000bb"]);
+});
+
+test("split EVM scan: payer topic is an OR-list and the row's router is the actual payer", async () => {
+  const vault = "0x00000000000000000000000000000000000000aa";
+  const [source] = importSwapFeeSplitSources({ IMPORT_FEE_VAULT_56: vault, IMPORT_FEE_VAULT_START_BLOCK_56: "100" });
+  const seen = [];
+  const payer = KYBER_ROUTER.toLowerCase();
+  const rpc = async (method, params) => {
+    if (method === "eth_blockNumber") return "0x80";
+    if (method === "eth_getLogs") {
+      seen.push(params[0].topics);
+      return [{ removed: false, data: `0x${(1000n).toString(16).padStart(64, "0")}`, blockNumber: "0x64", logIndex: "0x1", transactionHash: "0xAB", topics: [VAULT_DEPOSIT_TOPIC, `0x${"0".repeat(24)}${payer.slice(2)}`] }];
+    }
+    if (method === "eth_getTransactionByHash") return { from: USER_EVM };
+    if (method === "eth_getTransactionReceipt") return { logs: [] };
+    if (method === "eth_getBlockByNumber") return { timestamp: "0x6700" };
+    return null;
+  };
+  const out = await scanEvmImportSwapFees({ source, rpc, fromBlock: null });
+  assert.ok(Array.isArray(seen[0][1]), "OR-list of payers");
+  assert.equal(out.rows[0].router, payer);
+  assert.equal(out.rows[0].feeReceiver, vault);
+});
+
+test("split store: fee rows with creator_raw and their 90-day accruals in one statement, receiver cursor upserted", async () => {
+  const statements = [];
+  const client = {
+    query: async (sql, params) => {
+      statements.push([sql.trim().split(/\s+/).slice(0, 3).join(" "), params]);
+      return /^with ins/i.test(sql.trim()) ? { rows: [{ inserted: 1, accrued: 1 }] } : { rowCount: 1 };
+    },
+    release() { statements.push(["release"]); },
+  };
+  const db = { connect: async () => client };
+  const [source] = importSwapFeeSplitSources({ SOLANA_IMPORT_FEE_COLLECTOR: "2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB" });
+  const rows = [{ chainId: 101, txHash: "sig", logIndex: 0, blockNumber: 1, occurredAt: "2026-10-09T00:00:00.000Z", wallet: "w", tokenAddress: "mint", side: "buy", feeRaw: "1001", feeAsset: "SOL", feeReceiver: "acct", router: JUPITER_PROGRAM, source: "solana_fee_account", internalWallet: false, creatorRaw: creatorHalf("1001") }];
+  const out = await storeSplitImportSwapFees(db, source, rows, "sig");
+  assert.deepEqual(out, { inserted: 1, accrued: 1 });
+  assert.deepEqual(statements.map(([s]) => s), ["begin", "with ins as", "insert into public.finance_import_swap_fee_receiver_cursors", "commit", "release"]);
+  const params = statements[1][1];
+  assert.deepEqual(params[14], ["500"], "creator_raw column");
+  assert.equal(params[15], 90, "window days");
+  assert.deepEqual(statements[2][1], [101, solanaFeeAccount("2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB"), "sig"]);
+});
+
+test("split ingest: runs after the old receiver, from its own cursor; none configured = old behaviour only", async () => {
+  const reads = [];
+  const db = { query: async (sql) => { reads.push(sql.trim()); return { rows: [] }; } };
+  const rpc = async (method) => (method === "getSignaturesForAddress" ? [] : null);
+  const plain = await ingestImportSwapFees({ db, chainId: 101, env: {}, dryRun: true, rpc });
+  assert.equal(plain.split, undefined);
+  const both = await ingestImportSwapFees({ db, chainId: 101, env: { SOLANA_IMPORT_FEE_COLLECTOR: "2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB" }, dryRun: true, rpc });
+  assert.equal(both.split.length, 1);
+  assert.equal(both.split[0].split, true);
+  assert.ok(reads.some((sql) => /finance_import_swap_fee_receiver_cursors/.test(sql)));
+});
+
+test("revenue: creator halves nobody claimed in 90 days count when they expire, VAT lane import_swaps", () => {
+  assert.match(LANE_QUERIES.import_swaps_expired, /from public\.import_creator_fees c join public\.finance_import_swap_fees f/);
+  assert.match(LANE_QUERIES.import_swaps_expired, /c\.status = 'expired'/);
+  assert.match(LANE_QUERIES.import_swaps_expired, /sum\(c\.creator_raw\)/);
+  assert.equal(vatLaneOf("import-swaps-expired:101"), "import_swaps");
 });

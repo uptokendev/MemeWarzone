@@ -68,6 +68,7 @@ import shareCard from "./shareCard.js";
 import prepareShareCard from "./prepare-share-card.js";
 import tokenShareCard from "./token-share-card.js";
 import { importSwapBuild, importSwapQuote } from "./importSwap.js";
+import importCreatorFees from "./importCreatorFees.js";
 import airdropPool from "./airdropPool.js";
 import battleShareCard from "./battle-share-card.js";
 import status from "./status.js";
@@ -515,6 +516,7 @@ router.get("/solana/holders", wrap(solanaHolders));
 // Imported memecoins: Jupiter (Solana) / KyberSwap on PancakeSwap pools (BNB), 0.5% platform fee.
 router.post("/imports/swap/quote", wrap(importSwapQuote));
 router.post("/imports/swap/build", wrap(importSwapBuild));
+router.get("/imports/creator-fees", wrap(importCreatorFees));
 router.all("/solana/direct-create", wrap(solanaDirectCreateV4));
 router.all("/solana/trade-authorize", wrap(solanaTradeAuthorizationV1));
 router.all("/solana/graduation-authorize", wrap(solanaGraduationAuthorizationV1));

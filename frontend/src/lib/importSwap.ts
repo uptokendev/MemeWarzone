@@ -13,6 +13,11 @@ import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import { getSolanaProvider, getStoredSolanaWalletId } from "@/lib/solanaWallet";
 
 export const IMPORT_SWAP_FEE_LABEL = "0.5%";
+
+/** "1%", "0.5%": the fee the API priced into the quote (Solana moves to 1% at the collector switch). */
+export function importSwapFeeLabel(feeBps: number) {
+  return `${Number((feeBps / 100).toFixed(2))}%`;
+}
 const JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 const KYBER_ROUTER = "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5";
 // Programs a Jupiter swap may invoke at the top level; anything else is refused before signing.
@@ -36,6 +41,8 @@ export type ImportSwapQuote = {
   minAmountOut: string | null;
   priceImpactPct: number | null;
   feeBps: number;
+  /** Part of feeBps that goes to the coin's creator (half of the 1% fee); 0 or absent before the switch. */
+  creatorShareBps?: number;
   feeNativeRaw: string | null;
   route: string[];
   quote: unknown;
