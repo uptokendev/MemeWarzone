@@ -6,7 +6,7 @@
  *   npx hardhat run scripts/rehearse-evm-gen7-rh-fork.ts --network robinhoodForkRehearsal
  *
  * Upstream (read-only) RPC: ROBINHOOD_MAINNET_RPC_URL / ROBINHOOD_MAINNET_RPC, else the public endpoint. The script
- * starts its own anvil (port 8646, `--accounts 0`, forked at the latest block) and stops it at the end;
+ * starts its own anvil (port 8646, `--accounts 0`, forked at the latest block, or REHEARSAL_FORK_BLOCK) and stops it at the end;
  * REHEARSAL_KEEP_ANVIL=1 leaves it running. Records and batches land in deployments/fork-rehearsal/<network>/
  * (wiped at the start), the report in .../rehearsal-gen7-rh-report.json.
  *
@@ -23,7 +23,11 @@
  *      signs): create, buy after the anti-sniper window, sell, buy to sell-out (Pending in that buy, partial fill),
  *      graduate() from a third wallet, DEX round trip on the locked pool, harvest() 80/20
  *   9. the live gen-6 coin still buys and sells after C11; gen-6 create is refused
- *  10. gas per phase x the current mainnet gas price, plus the Nitro L1 data component of every deployer tx
+ *  10. the gen-7 airdrop pot (wired + 12 weeks pre-authorized by A7): the runner's runway check reports 12 weeks; time
+ *      warped to the first authorized Monday; one weekly draw through the runner's own modules (potRun.runPot,
+ *      materialize, chain.mjs funding with the impersonated airdrop operator) out of the gen-7 vault balance the
+ *      phase-8 trades filled; a winner claims from the gen-7 distributor; the main pot untouched
+ *  11. gas per phase x the current mainnet gas price, plus the Nitro L1 data component of every deployer tx
  *      (NodeInterface.gasEstimateL1Component on the upstream RPC)
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -36,6 +40,7 @@ import { assertLocalFork } from "./lib/forkRehearsal";
 import { writeSafeBatch } from "./lib/safeCallPlan";
 import { BATCH_FILES, RECORD_MAINNET, RH_MAINNET, main as gen7Main } from "./deploy-robinhood-gen7-generation";
 import { transferOwnershipToSafe } from "./transfer-evm-ownership-to-safe";
+import { rehearseGen7AirdropPot } from "./lib/gen7AirdropPot";
 
 const ROOT = path.resolve(__dirname, "..");
 const WAD = 10n ** 18n;
@@ -68,6 +73,9 @@ async function startAnvil(): Promise<ChildProcess> {
   const probe = async () => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] }) }).then((r) => r.ok, () => false);
   if (await probe()) throw new Error(`${url} already answers; stop that node first (the rehearsal needs a fresh fork)`);
   const args = ["--fork-url", UPSTREAM, "--port", String(PORT), "--accounts", "0", "--retries", "20", "--fork-retry-backoff", "1000", "--timeout", "60000", "--silent"];
+  // REHEARSAL_FORK_BLOCK pins the fork (e.g. to replay a run when live pool liquidity moved since).
+  const pinned = String(process.env.REHEARSAL_FORK_BLOCK || "").trim();
+  if (pinned) args.push("--fork-block-number", pinned);
   const child = spawn("anvil", args, { stdio: ["ignore", "ignore", "inherit"] });
   for (let i = 0; i < 120; i++) {
     if (await probe()) return child;
@@ -313,6 +321,43 @@ async function lifecycle(rec: any, authority: any) {
   const splitOk = paired.every((e: any) => e.args.creatorPaid === (e.args.collected * 8000n) / BPS && e.args.creatorPaid + e.args.protocolRouted === e.args.collected);
   check("harvest(): LP fees collected, paired side paid exactly 80/20 creator/protocol", paired.length > 0 && splitOk, { harvested: paired.map((e: any) => ({ token: e.args.token, collected: e.args.collected, creatorPaid: e.args.creatorPaid, protocolRouted: e.args.protocolRouted })), memeSold: sold?.args.memeSold, memeCarried: sold?.args.memeCarried, gas: hRc.gasUsed });
   report.coin = { campaign: campaignAddr, token: created.args.token, pool, raise: raiseTarget, startVsCurveBps: startBps };
+  return { creator, buyer, third };
+}
+
+/**
+ * Fork only, opt-in (REHEARSAL_TOPUP_THIN_STOCK_ROUTES=1): a route whose pool holds less STOCK than the policy floor
+ * makes Q7 refuse (configure-robinhood-stock-routes.ts verifyRouteFacts), which is a live-market fact, not a release
+ * fault. To rehearse the rest, the pool's STOCK balance is raised to 2x the floor by writing the token's balance slot
+ * (found by probing) on the fork. Every route touched is named in the report; on mainnet that route needs depth first.
+ */
+async function topUpThinStockRoutes() {
+  const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "config", "robinhood", "mainnet-stock-routes.json"), "utf8"));
+  const floor = Number(cfg.policy.minimumRouteLiquidityUsd);
+  const touched: any[] = [];
+  for (const r of cfg.routes) {
+    const token = new ethers.Contract(r.stockToken, ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"], ethers.provider);
+    const feed = new ethers.Contract(r.oracleFeed, ["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)", "function decimals() view returns (uint8)"], ethers.provider);
+    const [bal, dec, [, answer], fdec] = await Promise.all([token.balanceOf(r.acquisitionPool), token.decimals(), feed.latestRoundData(), feed.decimals()]);
+    const price = Number(answer) / 10 ** Number(fdec);
+    const usd = (Number(bal) / 10 ** Number(dec)) * price;
+    if (usd >= floor * 1.02) continue;
+    const want = BigInt(Math.ceil(((2 * floor) / price) * 10 ** Math.min(Number(dec), 12))) * 10n ** BigInt(Math.max(0, Number(dec) - 12));
+    const namespaced = "0x52c63247e1f47db19d5ce0460030c497f067ca4cebf71ba98eeadabe20bace00"; // OZ v5 ERC20Storage
+    const bases = [...Array.from({ length: 64 }, (_, i) => ethers.toBeHex(i, 32)), namespaced];
+    let slot: string | null = null;
+    for (const base of bases) {
+      const key = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address", "uint256"], [r.acquisitionPool, base]));
+      const prev = await rpc("eth_getStorageAt", [r.stockToken, key, "latest"]);
+      await rpc("anvil_setStorageAt", [r.stockToken, key, ethers.toBeHex(want, 32)]);
+      if ((await token.balanceOf(r.acquisitionPool)) === want) { slot = base; break; }
+      await rpc("anvil_setStorageAt", [r.stockToken, key, prev]);
+    }
+    if (!slot) throw new Error(`${r.symbol}: pool holds ~$${Math.round(usd)} < $${floor} and its balance slot was not found; cannot rehearse Q7 on this fork`);
+    touched.push({ symbol: r.symbol, pool: r.acquisitionPool, liveStockSideUsd: Math.round(usd), floorUsd: floor, forkStockSideUsd: 2 * floor });
+  }
+  if (touched.length) report.notes.push({ forkOnlyStockTopUp: touched, why: "live pool below the Q7 floor at the fork block; on mainnet these routes are refused by Q7 until the pool is deeper" });
+  console.log(`[rehearsal] fork-only stock top-up: ${JSON.stringify(touched)}`);
+  return touched;
 }
 
 /** Nitro: the L1 data part of each transaction, priced by NodeInterface on the upstream RPC. */
@@ -359,9 +404,16 @@ async function main() {
       return gen6CoinRoundTrip("before gen-7", authority);
     });
 
-    await phase("1 fees stack (deployer)", () => { process.env.RH_GEN7_STEP = "fees"; return gen7Main(); });
+    const feesRec: any = await phase("1 fees stack (deployer)", () => { process.env.RH_GEN7_STEP = "fees"; return gen7Main(); });
+    const a7 = JSON.parse(fs.readFileSync(rel(BATCH_FILES.A), "utf8")).transactions as any[];
+    const ad = feesRec.fees.airdrop;
+    const a7Air = a7.filter((t) => same(t.to, feesRec.fees.communityRewardsVault) || same(t.to, ad.distributor));
+    const a7Auth = a7Air.filter((t) => t.contractMethod?.name === "authorizeBatch");
+    check("A7 carries the gen-7 airdrop pot: setRewardDistributor + setAirdropOperator(main pot's operator) + setBatchOperator + 24 authorizeBatch (12 weeks x trader/creator, main pot's cap), simulated as the Safe", a7Air.length === 27 && a7Auth.length === 24 && a7Auth.every((t) => t.contractInputsValues.maxAmount === String(ad.cap)) && a7Air.some((t) => t.contractMethod?.name === "setAirdropOperator" && same(t.contractInputsValues.newOperator, ad.operator)) && a7Air.some((t) => t.contractMethod?.name === "setBatchOperator" && same(t.contractInputsValues.newOperator, feesRec.fees.communityRewardsVault)), { distributor: ad.distributor, operator: ad.operator, operatorSource: ad.operatorSource, cap: `${ethers.formatEther(ad.cap)} ETH`, capSource: ad.capSource, calls: a7Air.length });
     report.batchA7 = await phase("1 batch A7 (Safe)", () => executeBatchAsSafe(rel(BATCH_FILES.A)));
 
+    // Q7 is planned from the generation step on (writeMainnetBatches), so a thin live route is topped up before it.
+    if (process.env.REHEARSAL_TOPUP_THIN_STOCK_ROUTES === "1") await topUpThinStockRoutes();
     await phase("2 generation (deployer)", () => { process.env.RH_GEN7_STEP = "generation"; return gen7Main(); });
     report.batchB7 = await phase("2 batch B7 (Safe)", () => executeBatchAsSafe(rel(BATCH_FILES.B)));
     const rec = JSON.parse(fs.readFileSync(rel(RECORD_MAINNET), "utf8"));
@@ -385,7 +437,7 @@ async function main() {
     const g7 = await ethers.getContractAt("LaunchFactoryGen7", rec.deployed.LaunchFactoryGen7);
     check("H7: gen-7 live and open, gen-6 create paused (C11), gen-6 still live (its coins trade)", (await g7.live()) === true && (await g7.createPaused()) === false && (await g6.createPaused()) === true && (await g6.live()) === true, {});
 
-    await phase("8 one coin: create (70% first buy), trade, sell-out, graduate, DEX trade, harvest", () => lifecycle(rec, authority));
+    const wallets = await phase("8 one coin: create (70% first buy), trade, sell-out, graduate, DEX trade, harvest", () => lifecycle(rec, authority));
 
     report.gen6After = await phase("9 gen-6 coin after C11", () => gen6CoinRoundTrip("after C11", authority));
     check("the live gen-6 coin still buys and sells after C11 (or is past its curve on both sides: same outcome before and after)", JSON.stringify([report.gen6Before.buy.ok, report.gen6Before.sell?.ok]) === JSON.stringify([report.gen6After.buy.ok, report.gen6After.sell?.ok]) && report.gen6After.buy.ok === true && report.gen6After.sell.ok === true, { before: report.gen6Before, after: report.gen6After });
@@ -397,6 +449,11 @@ async function main() {
     const gen6Create = await revertReason(() => (g6.connect(c6) as any).createCampaignAuthorized.staticCall(r6, { tradeRouteProfile: 1, finalizeRouteProfile: 1, deadline: dl6, signature: sig6 }));
     const createPausedSel = g6.interface.getError("CreatePaused")!.selector;
     check("gen-6 create refused after C11 (CreatePaused), with an otherwise valid signed request", gen6Create !== null && (gen6Create.includes("CreatePaused") || gen6Create.includes(createPausedSel)), { revert: gen6Create, createPausedSelector: createPausedSel });
+
+    report.airdrop = await phase("10 gen-7 airdrop pot: runway, one weekly draw funded by the impersonated operator, a claim", () => rehearseGen7AirdropPot({
+      chainId: 4663, vault: rec.fees.communityRewardsVault, setup: rec.fees.airdrop, admin: SAFE, traders: [wallets.buyer, wallets.third], creators: [wallets.creator],
+      nativeUsd: 2500, check, fork: true, symbol: "ETH",
+    }));
 
     // Gas and funding.
     const deployerTxs = phaseTxs.filter((t) => same(t.from, DEPLOYER));

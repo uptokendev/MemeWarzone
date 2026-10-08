@@ -15,9 +15,14 @@
  *   router (`onlyRouter` deposits, contracts/CommunityRewardsVault.sol:41-44,74-84) and re-pointing the live one
  *   would revert every gen-6 trade ("airdrop route failed", TreasuryRouterV4.sol _routeTrade). Weekly, monthly,
  *   recruiter and protocol vaults take plain value from any sender and are reused, read from the live router V4.
- *   This is the same shape the gen-6 testnet cuts used (deploy-robinhood-testnet-gen6-fees.ts). FOUNDER DECISION
- *   still open: the new community vault's airdrop distributor / operator (left unset: its balance is withdrawable
- *   by the Safe; the live airdrop RewardDistributor serves one batchOperator).
+ *   This is the same shape the gen-6 testnet cuts used (deploy-robinhood-testnet-gen6-fees.ts).
+ *   GEN-7 AIRDROP POT (founder, 2026-10-08: two pots per chain, everything automated; scripts/lib/gen7AirdropPot.ts):
+ *   the live airdrop RewardDistributor serves one batchOperator, so the fees step also deploys a gen-7 airdrop
+ *   RewardDistributor (owner = the Safe); A7 wires it (community vault setRewardDistributor + setAirdropOperator(= the
+ *   live community vault's airdropOperator()), distributor setBatchOperator(community vault)) and pre-authorizes 12
+ *   weeks x {airdrop_trader, airdrop_creator} with the runner's own ids at the main pot's current per-batch cap
+ *   (GEN7_AIRDROP_CAP / GEN7_AIRDROP_OPERATOR override). After A7: COMMUNITY_REWARDS_VAULT_ADDRESS_GEN7_<id> +
+ *   REWARD_DISTRIBUTOR_ADDRESS_GEN7_<id> on the API and the weekly airdrop job (printed by the fees step).
  *
  * What is new, and why (contract evidence):
  *   LaunchCampaignGen7 / RobinhoodStockLaunchCampaignGen7   the implementations the factory clones.
@@ -33,8 +38,10 @@
  * and live-coin counts span both generations), the Uniswap V3 stack, WETH, the Safe.
  *
  * Mainnet order (each step a founder go; every Safe batch is simulated as the Safe before it is written):
- *   1. RH_GEN7_STEP=fees        deployer: router V4 + vault V2 + distributor + community vault -> batch A7
- *   2. Safe executes A7         router vaults, distributor <-> vault, vault operator + caps (mirrors gen-6 live)
+ *   1. RH_GEN7_STEP=fees        deployer: router V4 + vault V2 + distributor + community vault + gen-7 airdrop
+ *                               distributor -> batch A7
+ *   2. Safe executes A7         router vaults, distributor <-> vault, vault operator + caps (mirrors gen-6 live),
+ *                               gen-7 airdrop pot wiring + 12 weeks pre-authorized
  *   3. RH_GEN7_STEP=generation  deployer: impls, adapters, locker + factory, create path, stock impl (R5
  *                               folded in: the deployer still owns the factory), registries, createPaused
  *                               -> batch B7 (locker on V4, vault pin, both adapter binds, launch recorder)
@@ -81,6 +88,7 @@ import {
 } from "./deploy-robinhood-quote-generation";
 import { ADAPTER_ABI, VAULT_ABI, planRoutes } from "./configure-robinhood-stock-routes";
 import { refreshMockFeed } from "./deploy-robinhood-testnet-gen6-fees";
+import { deployGen7AirdropDistributor, planGen7AirdropCalls, printGen7AirdropEnv, resolveGen7AirdropSetup, type Gen7AirdropSetup } from "./lib/gen7AirdropPot";
 
 const ROOT = path.resolve(__dirname, "..");
 const DEPLOYMENTS = path.join(ROOT, "deployments", "robinhood");
@@ -146,6 +154,9 @@ export type Gen7Fees = {
   vault: string;
   holderDistributor: string;
   communityRewardsVault: string;
+  /** The gen-7 AIRDROP RewardDistributor (batchOperator = communityRewardsVault), not the holder distributor. */
+  airdropDistributor: string;
+  airdrop: Gen7AirdropSetup;
   reusedVaults: { weekly: string; monthly: string; recruiter: string; protocol: string };
   operator: string;
   caps: Record<string, string>;
@@ -227,7 +238,10 @@ export function batchA7Calls(pins: ChainPins, d: { router: string; vault: string
   );
 }
 
-/** Step 1: the gen-7 fees stack. Admin = the Safe on 4663 (deployer only deploys), the deployer on 46630. */
+/**
+ * Step 1: the gen-7 fees stack + the gen-7 airdrop distributor. Admin = the Safe on 4663 (deployer only deploys), the
+ * deployer on 46630 (`send`: the deployer sends A7 itself, the airdrop pot included).
+ */
 export async function deployGen7Fees(opts: { admin: string; liveRouter: string; dexFactory: string; weth: string; operator?: string; send: boolean }) {
   const [deployer] = await ethers.getSigners();
   const live = await readLiveFeesStack(opts.liveRouter);
@@ -253,7 +267,11 @@ export async function deployGen7Fees(opts: { admin: string; liveRouter: string; 
   const communityAddress = ethers.getAddress(await community.getAddress());
   pins.community = communityAddress;
   log(`TreasuryRouterV4 ${d.router}  CreatorRewardsVaultV2 ${d.vault}  RewardDistributor ${d.holderDistributor}  CommunityRewardsVault ${communityAddress}`);
-  const calls = batchA7Calls(pins, d, live.caps);
+  const airdropDist = await deployGen7AirdropDistributor(deployer, opts.admin);
+  const chainId = Number((await ethers.provider.getNetwork()).chainId);
+  const airdrop = await resolveGen7AirdropSetup({ chainId, mainVault: live.liveCommunity, distributor: airdropDist.address, testnetAdmin: opts.send ? opts.admin : undefined });
+  log(`RewardDistributor (gen-7 airdrop) ${airdrop.distributor}: operator ${airdrop.operator} (${airdrop.operatorSource}); cap ${ethers.formatEther(airdrop.cap)} ETH per batch (${airdrop.capSource})`);
+  const calls = [...batchA7Calls(pins, d, live.caps), ...(await planGen7AirdropCalls({ chainId, vault: communityAddress, setup: airdrop }))];
   if (opts.send) {
     for (const c of calls) {
       const target = await ethers.getContractAt(c.contract, c.to, deployer);
@@ -266,13 +284,15 @@ export async function deployGen7Fees(opts: { admin: string; liveRouter: string; 
     vault: d.vault,
     holderDistributor: d.holderDistributor,
     communityRewardsVault: communityAddress,
+    airdropDistributor: airdrop.distributor,
+    airdrop,
     reusedVaults: { weekly: live.weekly, monthly: live.monthly, recruiter: live.recruiter, protocol: live.protocol },
     operator: pins.payoutOperator,
     caps: Object.fromEntries(Object.entries(live.caps).map(([k, v]) => [k, v.toString()])),
     liveRouter: opts.liveRouter,
     liveVaultPinnedTo: live.liveVaultPinnedTo,
   };
-  return { fees, pins, calls, deployBlocks };
+  return { fees, pins, calls, deployBlocks: { ...deployBlocks, airdropDistributor: airdropDist.block } };
 }
 
 /** Everything step 3 needs, per chain. */
@@ -484,11 +504,16 @@ export async function writeMainnetBatches(recordFile: string) {
     setOperator: same(await vault.operator(), pins.payoutOperator),
     setCaps: BigInt(lim[1]) === caps.maxBuyPerTx && BigInt(lim[2]) === caps.maxBuybackPerCampaignWeek && BigInt(lim[3]) === caps.minBuyInterval && BigInt(lim[4]) === caps.maxImpactBps && BigInt(lim[5]) === caps.maxHolderBatchPerWeek,
   };
-  const aCalls = batchA7Calls(pins, { router: rec.fees.router, vault: rec.fees.vault, holderDistributor: rec.fees.holderDistributor }, caps).filter((c) => !done[c.fn]);
+  if (!rec.fees.airdrop?.distributor) throw new Error(`${recordFile} has no gen-7 airdrop pot (fees.airdrop); the fees step records it`);
+  const aCalls = [
+    ...batchA7Calls(pins, { router: rec.fees.router, vault: rec.fees.vault, holderDistributor: rec.fees.holderDistributor }, caps).filter((c) => !done[c.fn]),
+    // The gen-7 airdrop pot: wiring + 12 weeks pre-authorized, only what chain state still lacks.
+    ...(await planGen7AirdropCalls({ chainId, vault: rec.fees.communityRewardsVault, setup: rec.fees.airdrop })),
+  ];
   if (aCalls.length) {
     await simulateAsAdmin(safe, aCalls, (l) => log(l.trim()));
     const file = rehearsalPath(BATCH_FILES.A);
-    writeSafeBatch(file, chainId, "MWZ gen7 A7: fees stack wiring", "gen-7 TreasuryRouterV4 vaults (shared weekly/monthly/recruiter/protocol, new community + creator vault), holder distributor, vault operator + caps mirrored from the live gen-6 vault", aCalls);
+    writeSafeBatch(file, chainId, "MWZ gen7 A7: fees stack wiring", "gen-7 TreasuryRouterV4 vaults (shared weekly/monthly/recruiter/protocol, new community + creator vault), holder distributor, vault operator + caps mirrored from the live gen-6 vault, gen-7 airdrop pot (distributor wiring + weekly pre-authorizations)", aCalls);
     out.A = { file, calls: aCalls };
   }
 
@@ -540,6 +565,7 @@ function verificationEntries(rec: any) {
     { name: "CreatorRewardsVaultV2 (gen-7)", address: f.vault, contract: "contracts/CreatorRewardsVaultV2.sol:CreatorRewardsVaultV2", args: [f.admin, f.router, r.weth, "2", r.v3Factory, "86400"] },
     { name: "RewardDistributor (gen-7 holders)", address: f.holderDistributor, contract: "contracts/RewardDistributor.sol:RewardDistributor", args: [f.admin] },
     { name: "CommunityRewardsVault (gen-7)", address: f.communityRewardsVault, contract: "contracts/CommunityRewardsVault.sol:CommunityRewardsVault", args: [f.admin, f.router] },
+    { name: "RewardDistributor (gen-7 airdrop)", address: f.airdropDistributor, contract: "contracts/RewardDistributor.sol:RewardDistributor", args: [f.admin] },
     ...(d
       ? [
           { name: "LaunchCampaignGen7", address: d.LaunchCampaignGen7Implementation, contract: "contracts/gen7/LaunchCampaignGen7.sol:LaunchCampaignGen7", args: [] },
@@ -579,8 +605,10 @@ async function mainnetMain(step: string) {
     rec = { network: network.name, chainId: 4663, safe, deployer: deployerAddress, status: "fees-deployed", fees: { ...fees, deployedAt: new Date().toISOString(), deployBlocks } };
     writeJson(recordFile, rec);
     await simulateAsAdmin(safe, calls, (l) => log(l.trim()));
-    writeSafeBatch(rehearsalPath(BATCH_FILES.A), 4663, "MWZ gen7 A7: fees stack wiring", "gen-7 TreasuryRouterV4 vaults, holder distributor, vault operator + caps mirrored from the live gen-6 vault", calls);
+    writeSafeBatch(rehearsalPath(BATCH_FILES.A), 4663, "MWZ gen7 A7: fees stack wiring", `gen-7 TreasuryRouterV4 vaults, holder distributor, vault operator + caps mirrored from the live gen-6 vault; gen-7 airdrop pot: community vault ${fees.communityRewardsVault} -> airdrop distributor ${fees.airdropDistributor}, operator ${fees.airdrop.operator}, ${calls.filter((c) => c.fn === "authorizeBatch").length} weekly authorizations at ${ethers.formatEther(fees.airdrop.cap)} ETH each`, calls);
     log(`batch A7 -> ${rehearsalPath(BATCH_FILES.A)} (${calls.length} calls). STOP: the Safe executes A7 before RH_GEN7_STEP=generation.`);
+    for (const c of calls) log(`    A7 ${c.contract}.${c.fn}(${c.args.map(String).join(", ")}) -> ${c.to}${c.note ? `  # ${c.note}` : ""}`);
+    printGen7AirdropEnv(4663, fees.communityRewardsVault, fees.airdropDistributor, log);
     return rec;
   }
 
@@ -640,6 +668,7 @@ export async function testnetMain(opts: { recordFile?: string; admin?: string } 
     next: ["scripts/test-robinhood-testnet-gen7-lifecycle.ts (opens create, pauses gen-6b create = C11 on testnet)", "stock routes on the testnet stock adapter if a stock coin is to be tested"],
   };
   writeJson(RECORD_OUT, rec);
+  printGen7AirdropEnv(46630, fees.communityRewardsVault, fees.airdropDistributor, log);
   log("STOP. testnet gen-7 is createPaused and not live.");
   return rec;
 }

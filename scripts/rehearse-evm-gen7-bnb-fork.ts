@@ -25,7 +25,11 @@
  *      ~13% of supply in the pool, LP locked in the gen-7 locker) -> Topaz round trip -> harvest() 80/20 (and the
  *      second harvest after 30 min of pool history when the first one carried the MEME side)
  *   7. the live gen-6 coin still buys and sells after C11; a gen-6 create is refused (CreatePaused)
- *   8. gas per phase x the live BNB gas price
+ *   8. the gen-7 airdrop pot (wired + 12 weeks pre-authorized by batch B): the runner's runway check reports 12 weeks;
+ *      time warped to the first authorized Monday; one weekly draw through the runner's own modules (potRun.runPot,
+ *      materialize, chain.mjs funding with the impersonated airdrop operator) out of the gen-7 vault balance the
+ *      phase-6 trades filled; a winner claims from the gen-7 distributor; the main pot untouched
+ *   9. gas per phase x the live BNB gas price
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
@@ -37,6 +41,7 @@ import { assertLocalFork } from "./lib/forkRehearsal";
 import { writeSafeBatch } from "./lib/safeCallPlan";
 import { transferOwnershipToSafe } from "./transfer-evm-ownership-to-safe";
 import { main as gen7Main, writeGen7Batches } from "./deploy-bnb-gen7-generation";
+import { rehearseGen7AirdropPot } from "./lib/gen7AirdropPot";
 
 const ROOT = path.resolve(__dirname, "..");
 const WAD = 10n ** 18n;
@@ -383,6 +388,7 @@ async function lifecycle(rec: any, authority: any) {
     report.harvest2 = { observations: await lp.observationLength().then(String, () => "n/a"), memeSold: memeSold2, pairedOut: sold2?.args.pairedOut ?? 0n, carriedBefore: carried1, carriedAfter: carried2, impactBoundBps: impactBps, priceMoveBps: moveBps, gas: h2.gasUsed, harvested: paired2.map((e: any) => ({ collected: e.args.collected, creatorPaid: e.args.creatorPaid, protocolRouted: e.args.protocolRouted })) };
     check("second harvest after > 30 min of pool history: carried MEME sold within the locker's bound, paired side (incl. proceeds) 80/20 exact", memeSold2 > 0n && carried2 < carried1 && paired2.length > 0 && paired2.every((e: any) => e.args.creatorPaid === (e.args.collected * 8000n) / BPS && e.args.creatorPaid + e.args.protocolRouted === e.args.collected) && memeSold2 <= (mA * impactBps) / (2n * BPS) && moveBps > 0 && moveBps <= Number(impactBps), report.harvest2);
   }
+  return { creator, buyer, third };
 }
 
 async function main() {
@@ -420,6 +426,8 @@ async function main() {
     process.env.EVMGEN7_BATCHES_ONLY = "1";
     const rebuilt: any = await gen7Main();
     delete process.env.EVMGEN7_BATCHES_ONLY;
+    const airdropCalls = rebuilt.b.filter((c: any) => c.contract === "CommunityRewardsVault" || (c.contract === "RewardDistributor" && same(c.to, rec.airdrop.distributor)));
+    check("batch B carries the gen-7 airdrop pot: setRewardDistributor + setAirdropOperator(main pot's operator) + setBatchOperator + 24 authorizeBatch (12 weeks x trader/creator, main pot's cap), simulated as the Safe", airdropCalls.length === 27 && airdropCalls.filter((c: any) => c.fn === "authorizeBatch").length === 24 && airdropCalls.filter((c: any) => c.fn === "authorizeBatch").every((c: any) => String(c.args[1]) === String(rec.airdrop.cap)) && airdropCalls.some((c: any) => c.fn === "setAirdropOperator" && same(c.args[0], rec.airdrop.operator)), { distributor: rec.airdrop.distributor, operator: rec.airdrop.operator, operatorSource: rec.airdrop.operatorSource, cap: `${ethers.formatEther(rec.airdrop.cap)} BNB`, capSource: rec.airdrop.capSource, calls: airdropCalls.length });
     report.batchB = await phase("2 batch B (Safe)", () => executeBatchAsSafe(rebuilt.bFile, SAFE));
     await phase("3 ownership of the gen-7 factory to the Safe (deployer)", () => transferOwnershipToSafe({ contracts: [rec.contracts.BnbBasicLaunchFactoryGen7], newOwner: SAFE, senderAddress: DEPLOYER, requireContractOwner: true }));
     await readBacks(rec);
@@ -436,7 +444,7 @@ async function main() {
     const f7 = await ethers.getContractAt("BnbBasicLaunchFactoryGen7", rec.contracts.BnbBasicLaunchFactoryGen7);
     check("after H: gen-7 live and creating, gen-6 create paused (C11)", (await f7.live()) && !(await f7.createPaused()) && (await f6.createPaused()), {});
 
-    await phase("6 one gen-7 coin: create 70%, trade, sell-out, graduate, DEX, harvest", () => lifecycle(rec, authority));
+    const wallets = await phase("6 one gen-7 coin: create 70%, trade, sell-out, graduate, DEX, harvest", () => lifecycle(rec, authority));
 
     report.gen6CoinAfter = await phase("7 gen-6 coin after C11", () => gen6CoinRoundTrip("after C11", GEN6_FACTORY, SAFE, authority));
     const signer = await signerMod;
@@ -447,6 +455,11 @@ async function main() {
     const sig6 = await signer.signCreateAuthorization({ signer: authority, chainId: 56n, factoryAddress: GEN6_FACTORY, creator: creator.address, request: r6, factoryGeneration: 6, tradeRouteProfileId: 1, finalizeRouteProfileId: 1, deadline: dl });
     const why6 = await revertReason(() => gen6Factory.connect(creator).createCampaignAuthorized.staticCall(r6, { tradeRouteProfile: 1, finalizeRouteProfile: 1, deadline: dl, signature: sig6 }));
     check("C11: the gen-6 coin still buys and sells after the gen-6 create pause; a new gen-6 create is refused CreatePaused", report.gen6CoinBefore.buy.ok && report.gen6CoinBefore.sell.ok && report.gen6CoinAfter.buy.ok && report.gen6CoinAfter.sell.ok && report.gen6CoinAfter.factoryCreatePaused === true && /CreatePaused|0x2d4e6abe/.test(String(why6)) /* 0x2d4e6abe = CreatePaused() */, { gen6Create: why6 });
+
+    report.airdrop = await phase("8 gen-7 airdrop pot: runway, one weekly draw funded by the impersonated operator, a claim", () => rehearseGen7AirdropPot({
+      chainId: 56, vault: rec.fees.community, setup: rec.airdrop, admin: SAFE, traders: [wallets.buyer, wallets.third], creators: [wallets.creator],
+      nativeUsd: 600, check, fork: true, symbol: "BNB",
+    }));
 
     const deployerTxs = phaseTxs.filter((t) => same(t.from, DEPLOYER));
     const safeTxs = phaseTxs.filter((t) => same(t.from, SAFE) && /batch [BH] \(Safe\)/.test(t.phase));

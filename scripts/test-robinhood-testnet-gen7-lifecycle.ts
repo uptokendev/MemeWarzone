@@ -12,6 +12,11 @@
  *          position locked -> pool buy + sell -> harvest 80/20 in WETH
  *   coin B (griefed): a griefer pre-makes MEME/WETH at 1000x the curve price with WETH bids; graduation repairs it
  *   coin C (holders): trade fees accrue to the vault's holder balance, none to the creator
+ *   gen-7 airdrop pot (wired + 12 weeks pre-authorized by the deploy's A7): the runner's runway check reports 12
+ *          weeks; one weekly draw through the runner's own modules (potRun.runPot, materialize, chain.mjs funding) out
+ *          of the gen-7 community vault the coins above filled; a winner claims from the gen-7 distributor; the main
+ *          pot untouched. Dry run: operator impersonated, time warped to the first authorized Monday; on 46630 the
+ *          deployer (admin) authorizes the week that just ended with the runner's ids and funds it.
  *   C11 on testnet: the gen-6b factory's create is paused (it already is after its own acceptance); the gen-7 factory
  *   is opened for the run (enableLive is one-way) and create is paused again at the end.
  *
@@ -32,6 +37,7 @@ import { pathToFileURL } from "node:url";
 import { ethers, network } from "hardhat";
 import { RECORD_TESTNET, testnetMain } from "./deploy-robinhood-gen7-generation";
 import { refreshMockFeed } from "./deploy-robinhood-testnet-gen6-fees";
+import { rehearseGen7AirdropPot } from "./lib/gen7AirdropPot";
 
 const CHAIN_ID = 46630n;
 const WAD = 10n ** 18n;
@@ -513,6 +519,11 @@ async function main() {
   // Close the run: create paused again (live latch stays), wallets swept.
   await send("factory.setCreatePaused(true)", factory.setCreatePaused(true));
   check("create paused again after the run (live latch stays); gen-6b create still paused", (await factory.createPaused()) && (await factory.live()) && (await gen6.createPaused()), {});
+  report.airdrop = await rehearseGen7AirdropPot({
+    chainId: 46630, vault: A.community, setup: rec.fees.airdrop, admin: rec.admin, traders: [buyer, third], creators: [creatorA, creatorB],
+    nativeUsd: 2500, check, fork: DRY, testnetAdminSigner: deployer, symbol: "ETH",
+  });
+
   if (!DRY) await sweep(deployer, ws, weth);
   report.deployerAfter = (await ethers.provider.getBalance(deployerAddr)).toString();
   report.finishedAt = new Date().toISOString();

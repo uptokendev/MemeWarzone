@@ -14,6 +14,11 @@
  *   coin B (no first buy, griefed): a griefer pre-creates MEME/WBNB with a synced 1-wei donation; graduation absorbs it
  *   coin C (holders): trade fees accrue to the vault's holder balance; the creator cannot claim them
  *   audit: 2-day trade signature refused, plain native transfer to the factory refused, create paused again at the end
+ *   gen-7 airdrop pot (wired + 12 weeks pre-authorized by the deploy's batch B): the runner's runway check reports 12
+ *        weeks; one weekly draw through the runner's own modules (potRun.runPot, materialize, chain.mjs funding) out of
+ *        the gen-7 community vault the coins above filled; a winner claims from the gen-7 distributor; the main pot
+ *        untouched. On the fork the operator is impersonated and time warped to the first authorized Monday; on 97
+ *        the deployer (admin) authorizes the week that just ended with the runner's ids and funds it.
  *
  * Every send asserts chain 97 first (the deployer key is also the BNB mainnet deployer). Throwaway wallets (keys in
  * GEN7_WALLETS_FILE, outside the repo) are funded from the deployer and swept back at the end.
@@ -32,6 +37,7 @@ import { pathToFileURL } from "node:url";
 import { ethers, network } from "hardhat";
 import { gen7Path, isGen7ForkNetwork } from "./deploy-bnb-gen7-generation";
 import { assertLocalFork } from "./lib/forkRehearsal";
+import { rehearseGen7AirdropPot } from "./lib/gen7AirdropPot";
 
 const CHAIN_ID = 97n;
 const WAD = 10n ** 18n;
@@ -470,6 +476,11 @@ async function main() {
     await send("factory.setCreatePaused(true) after the run", () => factory.setCreatePaused(true));
     check("create paused again after the run (live latch stays)", (await retry(async () => { if (!(await factory.createPaused())) throw new Error("lag"); return true; }, "createPaused")) && (await factory.live()), {});
   }
+
+  report.airdrop = await rehearseGen7AirdropPot({
+    chainId: 97, vault: A.community, setup: rec.airdrop, admin: rec.admin, traders: [buyer, third], creators: [creatorA, creatorB],
+    nativeUsd: 600, check, fork: isGen7ForkNetwork(), testnetAdminSigner: deployer, symbol: "tBNB",
+  });
 
   await sweep(deployer, ws, wbnb);
   report.deployerAfter = (await ethers.provider.getBalance(deployerAddr)).toString();

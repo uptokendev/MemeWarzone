@@ -17,6 +17,13 @@
  *     StandardUnlinked trade sends it 15% (TreasuryRouterV4.sol:196-197, :420-427 `require(ok, "airdrop route failed")`).
  *     Re-pointing the live one 0xB6ccAc81 to the gen-7 router would revert every gen-6 trade, so gen-7 gets a fresh one
  *     (the BSC testnet gen-6 run did the same for the same reason, deployments/bscTestnet/testnet.gen6.json).
+ * GEN-7 AIRDROP POT (founder, 2026-10-08: two pots per chain, everything automated; scripts/lib/gen7AirdropPot.ts):
+ * the gen-7 community vault gets its own airdrop RewardDistributor (owner = admin), deployed in the fees stage; batch B
+ * wires it (vault.setRewardDistributor, vault.setAirdropOperator(= the live gen-6 vault's airdropOperator()),
+ * distributor.setBatchOperator(vault)) and pre-authorizes 12 weeks x {airdrop_trader, airdrop_creator} with the
+ * runner's own ids (make-airdrop-setup-calls.mjs, pot "gen7") at the main pot's current per-batch cap
+ * (GEN7_AIRDROP_CAP / GEN7_AIRDROP_OPERATOR override). After B: COMMUNITY_REWARDS_VAULT_ADDRESS_GEN7_<id> +
+ * REWARD_DISTRIBUTOR_ADDRESS_GEN7_<id> on the API and the weekly airdrop job (printed at the end).
  * Reused unchanged: weekly league vault, monthly league treasury, recruiter vault (read from the live gen-6 router),
  * protocol revenue: the ProtocolRevenueForwarder 0x2ABd8970 (deployments/bnb/mainnet.protocol-revenue-forwarder.json;
  * not router-bound, forwards to the same ProtocolRevenueVault 0xc2d4E6f8), GraduationOracle, CreatorRegistry,
@@ -58,6 +65,7 @@ import { assertCreatorVaultServesGeneration, VAULT_DEX_TOPAZ_V2, wireGenerationC
 import { simulateAsAdmin, writeSafeBatch, encodePlannedCall, type PlannedCall } from "./lib/safeCallPlan";
 import { deployFeesStack, UPGRADE_DELAY_SECONDS, HOLDER_BATCH_DELAY_SECONDS, type Caps } from "./deploy-evm-treasury-router-v4";
 import { assertTopazRoutersFit } from "./deploy-bnb-quote-generation";
+import { deployGen7AirdropDistributor, planGen7AirdropCalls, printGen7AirdropEnv, resolveGen7AirdropSetup, type Gen7AirdropSetup } from "./lib/gen7AirdropPot";
 
 const ROOT = path.resolve(__dirname, "..");
 const DEPLOYMENTS = path.join(ROOT, "deployments");
@@ -109,7 +117,7 @@ export type Gen7Inputs = {
   mainnet: boolean;
   confirm: string;
   admin: string; // Safe on 56; the deployer on 97
-  gen6: { factory: string; router: string; vault: string };
+  gen6: { factory: string; router: string; vault: string; community: string };
   topazAdapter: string; // answers poolFactory()/WETH() (factory constructor)
   topazRouter: string; // Topaz's own router (quote adapter)
   graduationOracle: string;
@@ -145,7 +153,8 @@ export async function resolveInputs(profile: "bscMainnet" | "bscTestnet", deploy
     const fees = readJson(path.join(DEPLOYMENTS, "bnb", "mainnet.evmgen-fees.json"));
     const fwd = readJson(path.join(DEPLOYMENTS, "bnb", "mainnet.protocol-revenue-forwarder.json"));
     const safe = ethers.getAddress(gen.owner);
-    const gen6 = { factory: ethers.getAddress(gen.contracts.BnbBasicLaunchFactory), router: ethers.getAddress(fees.contracts.router), vault: ethers.getAddress(fees.contracts.vault) };
+    const router6 = ethers.getAddress(fees.contracts.router);
+    const gen6 = { factory: ethers.getAddress(gen.contracts.BnbBasicLaunchFactory), router: router6, vault: ethers.getAddress(fees.contracts.vault), community: ethers.getAddress(await view(router6, "communityRewardsVault() view returns (address)")) };
     // Cross-check the records against the chain: the gen-6 factory pays the recorded router, which pays the recorded
     // vault, which is pinned to that factory (the reason this generation needs its own stack).
     if (!same(await view(gen6.factory, "feeRecipient() view returns (address)"), gen6.router)) throw new Error("gen-6 factory feeRecipient != recorded router V4");
@@ -186,7 +195,8 @@ export async function resolveInputs(profile: "bscMainnet" | "bscTestnet", deploy
   // BSC testnet: the gen-6 testnet record. Its router/vault serve the gen-6 testnet factory only (vault pinned), so
   // gen-7 gets its own stack there too; the reused vaults, Topaz, oracle and registries come from the record.
   const rec = readJson(path.join(DEPLOYMENTS, "bscTestnet", "testnet.gen6.json"));
-  const gen6 = { factory: ethers.getAddress(rec.generation.contracts.BnbBasicLaunchFactory), router: ethers.getAddress(rec.fees.router), vault: ethers.getAddress(rec.fees.creatorRewardsVaultV2) };
+  const router6 = ethers.getAddress(rec.fees.router);
+  const gen6 = { factory: ethers.getAddress(rec.generation.contracts.BnbBasicLaunchFactory), router: router6, vault: ethers.getAddress(rec.fees.creatorRewardsVaultV2), community: ethers.getAddress(await view(router6, "communityRewardsVault() view returns (address)")) };
   if (!same(await view(gen6.factory, "feeRecipient() view returns (address)"), gen6.router)) throw new Error("gen-6 testnet factory feeRecipient != recorded router");
   for (const [fn, want] of [["weeklyLeagueVault", rec.fees.reusedVaults.weekly], ["monthlyLeagueTreasury", rec.fees.reusedVaults.monthly], ["recruiterRewardsVault", rec.fees.reusedVaults.recruiter], ["protocolRevenueVault", rec.fees.reusedVaults.protocol]] as const) {
     if (!same(await view(gen6.router, `${fn}() view returns (address)`), want)) throw new Error(`gen-6 testnet router ${fn} != record`);
@@ -250,15 +260,20 @@ function writeRecord(file: string, rec: any) {
   fs.writeFileSync(file, `${JSON.stringify(rec, big, 2)}\n`);
 }
 
-/** Stage 1: TreasuryRouterV4 + CreatorRewardsVaultV2 + holder RewardDistributor (shared deployer) + a fresh CommunityRewardsVault. */
+/**
+ * Stage 1: TreasuryRouterV4 + CreatorRewardsVaultV2 + holder RewardDistributor (shared deployer) + a fresh
+ * CommunityRewardsVault + the gen-7 AIRDROP RewardDistributor (owner = admin; batch B wires it to the community vault).
+ */
 async function deployGen7Fees(deployer: any, inp: Gen7Inputs, wbnb: string, topazPoolFactory: string) {
   await assertChain(inp.chainId);
   const d = await deployFeesStack(deployer, { safe: inp.admin, weekly: inp.weekly, monthly: inp.monthly, wrappedNative: wbnb, dexKind: 1, dexFactory: topazPoolFactory });
   await assertChain(inp.chainId);
   const community = await (await ethers.getContractFactory("CommunityRewardsVault", deployer)).deploy(inp.admin, d.router);
   await community.waitForDeployment();
-  const fees = { ...d, community: await community.getAddress() };
-  console.log(`[bnb-gen7] TreasuryRouterV4 ${fees.router}\n[bnb-gen7] CreatorRewardsVaultV2 ${fees.vault}\n[bnb-gen7] RewardDistributor ${fees.holderDistributor}\n[bnb-gen7] CommunityRewardsVault ${fees.community}`);
+  await assertChain(inp.chainId);
+  const airdrop = await deployGen7AirdropDistributor(deployer, inp.admin);
+  const fees = { ...d, community: await community.getAddress(), airdropDistributor: airdrop.address };
+  console.log(`[bnb-gen7] TreasuryRouterV4 ${fees.router}\n[bnb-gen7] CreatorRewardsVaultV2 ${fees.vault}\n[bnb-gen7] RewardDistributor ${fees.holderDistributor}\n[bnb-gen7] CommunityRewardsVault ${fees.community}\n[bnb-gen7] RewardDistributor (gen-7 airdrop) ${fees.airdropDistributor}`);
   const view = (to: string, sig: string) => new ethers.Contract(to, [`function ${sig}`], ethers.provider)[sig.split("(")[0]]();
   await readBack(() => view(fees.router, "admin() view returns (address)"), inp.admin, "router.admin");
   await readBack(() => view(fees.router, "upgradeDelay() view returns (uint64)"), BigInt(UPGRADE_DELAY_SECONDS), "router.upgradeDelay");
@@ -268,6 +283,7 @@ async function deployGen7Fees(deployer: any, inp: Gen7Inputs, wbnb: string, topa
   await readBack(() => view(fees.holderDistributor, "owner() view returns (address)"), inp.admin, "distributor.owner");
   await readBack(() => view(fees.community, "admin() view returns (address)"), inp.admin, "community.admin");
   await readBack(() => view(fees.community, "router() view returns (address)"), fees.router, "community.router");
+  await readBack(() => view(fees.airdropDistributor, "owner() view returns (address)"), inp.admin, "airdropDistributor.owner");
   return fees;
 }
 
@@ -380,6 +396,9 @@ export async function planBatchB(rec: any): Promise<PlannedCall[]> {
     const doneOnChain = await p.call({ from: rec.admin, to: a.to, data: a.data }).then(() => false, () => true);
     if (!doneOnChain) throw new Error(`owner action ${a.to} ${String(a.data).slice(0, 10)} (${a.why}) is not in batch B`);
   }
+  // The gen-7 airdrop pot: wiring + 12 weeks pre-authorized (only what chain state still lacks).
+  if (!rec.airdrop?.distributor) throw new Error("record has no gen-7 airdrop pot (rec.airdrop); re-run the deploy, which resumes and adds it");
+  calls.push(...(await planGen7AirdropCalls({ chainId: Number(rec.chainId), vault: C, setup: rec.airdrop as Gen7AirdropSetup })));
   return calls;
 }
 
@@ -408,7 +427,7 @@ export async function writeGen7Batches(rec: any) {
   console.log(`[bnb-gen7] batch B: ${b.length} call(s)`);
   if (b.length) {
     await simulate(rec.admin, b);
-    writeSafeBatch(gen7Path(rec.batchFiles.B), rec.chainId, "MWZ gen7 B: bind", `gen-7 BNB: router ${rec.fees.router} vaults + creator vault + locker, holder distributor, operator, caps, vault factory pin, launch recorder, quote adapter -> factory ${rec.contracts.BnbBasicLaunchFactoryGen7}`, b);
+    writeSafeBatch(gen7Path(rec.batchFiles.B), rec.chainId, "MWZ gen7 B: bind", `gen-7 BNB: router ${rec.fees.router} vaults + creator vault + locker, holder distributor, operator, caps, vault factory pin, launch recorder, quote adapter -> factory ${rec.contracts.BnbBasicLaunchFactoryGen7}; gen-7 airdrop pot: community vault ${rec.fees.community} -> airdrop distributor ${rec.airdrop.distributor}, operator ${rec.airdrop.operator}, ${b.filter((c) => c.fn === "authorizeBatch").length} weekly authorizations at ${ethers.formatEther(rec.airdrop.cap)} BNB each`, b);
   }
   const h = await planBatchH(rec);
   const factoryOwner = await (await ethers.getContractAt("BnbBasicLaunchFactoryGen7", rec.contracts.BnbBasicLaunchFactoryGen7)).owner();
@@ -477,6 +496,17 @@ export async function main() {
   } else {
     console.log(`[bnb-gen7] fees stage already recorded: router ${rec.fees.router}`);
   }
+  if (!rec.fees.airdropDistributor) {
+    // A fees stage recorded before the gen-7 airdrop pot existed: add its distributor now.
+    await assertChain(inp.chainId);
+    rec.fees.airdropDistributor = (await deployGen7AirdropDistributor(deployer, inp.admin)).address;
+    writeRecord(recordFile, rec);
+  }
+  if (!rec.airdrop) {
+    rec.airdrop = await resolveGen7AirdropSetup({ chainId: inp.chainId, mainVault: inp.gen6.community, distributor: rec.fees.airdropDistributor, testnetAdmin: inp.mainnet ? undefined : inp.admin });
+    console.log(`[bnb-gen7] gen-7 airdrop pot: operator ${rec.airdrop.operator} (${rec.airdrop.operatorSource}); cap ${ethers.formatEther(rec.airdrop.cap)} BNB per batch (${rec.airdrop.capSource})`);
+    writeRecord(recordFile, rec);
+  }
 
   const gen = await deployGen7Generation(deployer, deployerAddress, inp, rec.fees, topaz);
   Object.assign(rec, gen, { factoryStartBlock: await ethers.provider.getBlockNumber(), status: "deployed-create-paused" });
@@ -498,8 +528,9 @@ export async function main() {
   rec.finishedAt = new Date().toISOString();
   writeRecord(recordFile, rec);
   console.log(`[bnb-gen7] wrote ${recordFile}; deployer spent ${rec.spent} BNB`);
+  printGen7AirdropEnv(inp.chainId, rec.fees.community, rec.airdrop.distributor, (l) => console.log(`[bnb-gen7] ${l}`));
   console.log(inp.mainnet
-    ? "[bnb-gen7] STOP. The gen-7 factory is create-paused and not live. Next: Safe batch B, ownership to the Safe, Safe batch H."
+    ? "[bnb-gen7] STOP. The gen-7 factory is create-paused and not live. Next: Safe batch B (incl. the gen-7 airdrop pot), ownership to the Safe, Safe batch H; then the two GEN7 env vars above."
     : "[bnb-gen7] STOP. Bound, create-paused, not live. Next: scripts/test-bnb-testnet-gen7-lifecycle.ts with GEN7_ENABLE_LIVE=true.");
   return { record: rec, ...out };
 }
