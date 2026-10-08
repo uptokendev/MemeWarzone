@@ -41,6 +41,8 @@ export async function scanContractLogs(input: {
   toBlock?: number;
   chunkSize?: number;
   signal?: AbortSignal;
+  /** Called once with the range this scan covered; `complete` is false when a chunk failed or the scan was aborted. */
+  onScanned?: (range: { fromBlock: number; toBlock: number; complete: boolean }) => void;
 }): Promise<ethers.Log[]> {
   const address = String(input.address || "").toLowerCase();
   if (!ethers.isAddress(address)) return [];
@@ -70,6 +72,7 @@ export async function scanContractLogs(input: {
     ? Math.max(0, Number(input.fromBlock))
     : Math.max(0, toBlock - lookback);
   const logs: ethers.Log[] = [];
+  let holes = false;
 
   for (let end = toBlock; end >= fromBlock; end -= chunkSize) {
     if (input.signal?.aborted) break;
@@ -99,6 +102,7 @@ export async function scanContractLogs(input: {
       }
     }
     if (!gotChunk) {
+      holes = true;
       // Keep walking older history. Never treat a hole as end-of-scan.
       await sleep(200);
     } else {
@@ -106,6 +110,7 @@ export async function scanContractLogs(input: {
     }
   }
 
+  input.onScanned?.({ fromBlock, toBlock, complete: !holes && !input.signal?.aborted });
   return logs;
 }
 

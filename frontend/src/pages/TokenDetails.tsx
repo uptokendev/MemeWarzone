@@ -3,6 +3,7 @@
  * Displays comprehensive information about a specific token including
  * chart, trading interface, transactions, and holder distribution
  */
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { CreatorStreakBadge } from "@/components/social/CreatorStreakBadge";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -2947,10 +2948,11 @@ const toSeconds = (ts: number): number => {
     };
 
     loadReserve();
-    const timer = isSolanaPage ? 0 : window.setInterval(() => void loadReserve(), 5_000);
+    // Paused while the tab is hidden; one catch-up read when it shows again.
+    const stopPolling = isSolanaPage ? null : setVisibleInterval(() => void loadReserve(), 5_000);
     return () => {
       cancelled = true;
-      if (timer) window.clearInterval(timer);
+      stopPolling?.();
     };
   }, [readProvider, campaign?.campaign, isSolanaPage]);
 
@@ -2967,10 +2969,11 @@ const toSeconds = (ts: number): number => {
       }
     };
     void loadMetrics();
-    const timer = window.setInterval(() => void loadMetrics(), 5_000);
+    // Paused while the tab is hidden; one catch-up read when it shows again.
+    const stopPolling = setVisibleInterval(() => void loadMetrics(), 5_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [campaign?.campaign, fetchCampaignMetrics, isSolanaPage]);
 
@@ -2994,10 +2997,11 @@ const toSeconds = (ts: number): number => {
     };
 
     loadActivity();
-    const t = setInterval(loadActivity, 60_000);
+    // Paused while the tab is hidden; one catch-up read when it shows again.
+    const stopPolling = setVisibleInterval(loadActivity, 60_000);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      stopPolling();
     };
   }, [campaign?.campaign, fetchCampaignActivity, isSolanaPage]);
 

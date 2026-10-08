@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import { getPublicRpcUrls, type SupportedChainId } from "./chainConfig";
+import { makeFailoverReadProvider } from "./readProviderFailover.mjs";
 
 // Cache 1 read provider per chain id
 const providerCache = new Map<number, ethers.AbstractProvider>();
@@ -28,24 +29,19 @@ export function getReadProvider(chainId: SupportedChainId): ethers.AbstractProvi
   const network = ethers.Network.from(chainId);
   (network as any).name = networkName(chainId);
 
-  const mk = (url: string) =>
-    new ethers.JsonRpcProvider(
-      url,
-      network,
-      {
-        // IMPORTANT: In ethers v6, set staticNetwork to the Network object (not boolean).
-        staticNetwork: network,
-        // Disable batching to reduce "-32005 rate limit" issues
-        batchMaxCount: 1,
-        batchStallTime: 0,
-      } as any
-    );
+  const options = {
+    // IMPORTANT: In ethers v6, set staticNetwork to the Network object (not boolean).
+    staticNetwork: network,
+    // Disable batching to reduce "-32005 rate limit" issues
+    batchMaxCount: 1,
+    batchStallTime: 0,
+  } as any;
 
-  // Use one stable RPC endpoint in the browser. ethers FallbackProvider can throw
-  // "quorum not met" on BSC when one public RPC replies and another lags/fails,
-  // even if the returned data is valid. For UI reads we prefer a quiet, deterministic
-  // provider over quorum aggregation.
-  const provider: ethers.AbstractProvider = mk(urls[0]);
+  // One answer per request, no quorum: ethers FallbackProvider can throw "quorum not met"
+  // on BSC when one public RPC replies and another lags/fails, even if the returned data is
+  // valid. The list is tried in order only when a URL fails or rate-limits the request
+  // (readProviderFailover.mjs); with one URL this is a plain JsonRpcProvider as before.
+  const provider: ethers.AbstractProvider = makeFailoverReadProvider(ethers, urls, network, options);
 
   providerCache.set(chainId, provider);
   return provider;

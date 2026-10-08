@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 import type { AbstractProvider } from "ethers";
 import {
   readGen5Campaign,
@@ -49,11 +50,12 @@ export function useGen5Campaign(provider: AbstractProvider | null, chainId: numb
     void refresh();
     const onTx = () => void refresh();
     window.addEventListener("memewarzone:txConfirmed", onTx);
-    const timer = window.setInterval(() => void refresh(false), POLL_MS);
+    // Paused while the tab is hidden; one catch-up read when it shows again.
+    const stopPolling = setVisibleInterval(() => void refresh(false), POLL_MS);
     return () => {
       seq.current += 1;
       window.removeEventListener("memewarzone:txConfirmed", onTx);
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [refresh]);
 

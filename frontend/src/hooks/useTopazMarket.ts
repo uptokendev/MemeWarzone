@@ -4,6 +4,7 @@ import type { CurveTradePoint } from "@/hooks/useCurveTrades";
 import { getReadProvider } from "@/lib/readProvider";
 import { fetchTopazMarketSnapshot, type TopazMarketSnapshot } from "@/lib/topazMarketData";
 import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, type SupportedChainId } from "@/lib/chainConfig";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 const NO_TRADES: CurveTradePoint[] = [];
 
@@ -77,10 +78,10 @@ export function useTopazMarket(input: {
   useEffect(() => {
     if (!enabled) return;
     const pollMs = Math.max(5_000, Number(input.pollMs || 8_000));
-    const timer = window.setInterval(() => {
+    // Paused while the tab is hidden; one catch-up read when it shows again.
+    return setVisibleInterval(() => {
       void refresh();
     }, pollMs);
-    return () => window.clearInterval(timer);
   }, [enabled, input.pollMs, refresh]);
 
   // A fresh [] on every render made TokenDetails' trade points, and with them the chart's candles,
