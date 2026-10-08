@@ -10,12 +10,14 @@ import {
 } from "./performance.js";
 import { analyticsCacheKey, createAnalyticsCache, withRequestWindow } from "./cache.js";
 import {
+  dailySeries,
   distinctVisitors,
   eventCounts,
   hourlySeries,
   readRollupCoverage,
   vitalStats,
 } from "./rollups.js";
+import { AnalyticsWindowError, parseWindow } from "./window.js";
 
 const responseCache = createAnalyticsCache();
 // Realtime is "the last 5 minutes"; a minute-old answer would hide arrivals, so it gets a short TTL.
@@ -31,17 +33,6 @@ function appFilter(app, params) {
     return `and app = $${params.length}`;
   }
   return "";
-}
-
-function parseWindow(req) {
-  const fromRaw = String(req.query?.from || "").trim();
-  const toRaw = String(req.query?.to || "").trim();
-  const app = String(req.query?.app || "public").trim() || "public";
-  const to = toRaw && !Number.isNaN(new Date(toRaw).getTime()) ? new Date(toRaw) : new Date();
-  const from = fromRaw && !Number.isNaN(new Date(fromRaw).getTime())
-    ? new Date(fromRaw)
-    : new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
-  return { from: from.toISOString(), to: to.toISOString(), app };
 }
 
 function routeTail(req) {
@@ -61,7 +52,7 @@ async function liveUsers(app) {
   return result.rows[0]?.n || 0;
 }
 
-async function overview(from, to, app) {
+async function overview(from, to, app, { granularity = "hour", timeZone = "UTC" } = {}) {
   const params = [from, to];
   const extra = appFilter(app, params);
   const coverage = await readRollupCoverage(pool);
@@ -101,7 +92,9 @@ async function overview(from, to, app) {
     ),
     eventCounts(pool, { from, to, app, limit: 10, excludeNames: ["$heartbeat"] }),
     vitalStats(pool, { from, to, app, coverage }),
-    hourlySeries(pool, { from, to, app, coverage }),
+    granularity === "day"
+      ? dailySeries(pool, { from, to, app, coverage, timeZone })
+      : hourlySeries(pool, { from, to, app, coverage }),
   ]);
 
   const bounced = bounce.rows[0]?.bounced || 0;
@@ -118,6 +111,8 @@ async function overview(from, to, app) {
     topPages: topPages.rows.map((row) => ({ path: row.path, views: row.views, uniques: row.uniques })),
     topEvents,
     vitals: vitals.map((row) => ({ metric: row.metric, p75: row.p75 })),
+    granularity,
+    timeZone: granularity === "day" ? timeZone : "UTC",
     series,
   };
 }
@@ -336,11 +331,18 @@ async function sessionDetail(sessionId) {
 export async function analyticsAdmin(req, res) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
-  const { from, to, app } = parseWindow(req);
   const tail = routeTail(req);
   const permission = tail === "launchpad" ? "launchpad.view" : "analytics.view";
   const principal = await requireDashboardPermission(req, res, permission);
   if (!principal) return;
+  let window;
+  try {
+    window = parseWindow(req.query || {});
+  } catch (error) {
+    if (error instanceof AnalyticsWindowError) return res.status(400).json({ error: error.message });
+    throw error;
+  }
+  const { from, to, app, granularity, timeZone } = window;
   const q = String(req.query?.q || "").trim();
   const name = String(req.query?.name || "").trim();
 
@@ -350,11 +352,11 @@ export async function analyticsAdmin(req, res) {
     from,
     to,
     app,
-    extra: { q, name, chainId: String(req.query?.chainId ?? "") },
+    extra: { q, name, chainId: String(req.query?.chainId ?? ""), granularity, tz: timeZone },
   });
 
   try {
-    const payload = await cache.wrap(key, () => routePayload({ tail, from, to, app, q, name, chainId: req.query?.chainId }));
+    const payload = await cache.wrap(key, () => routePayload({ tail, from, to, app, q, name, chainId: req.query?.chainId, granularity, timeZone }));
     if (payload === NOT_FOUND) return res.status(404).json({ error: "Unknown analytics route." });
     if (payload === SESSION_NOT_FOUND) return res.status(404).json({ error: "Session not found." });
     return res.status(200).json(withRequestWindow(payload, { from, to, app }));
@@ -394,8 +396,8 @@ function SCHEMA_MISSING(from, to, app) {
   };
 }
 
-async function routePayload({ tail, from, to, app, q, name, chainId }) {
-  if (!tail || tail === "overview") return overview(from, to, app);
+async function routePayload({ tail, from, to, app, q, name, chainId, granularity, timeZone }) {
+  if (!tail || tail === "overview") return overview(from, to, app, { granularity, timeZone });
   if (tail === "pages") return pages(from, to, app);
   if (tail === "events") return events(from, to, app);
   if (tail === "events/details") return eventDetails(from, to, app, name);
@@ -415,5 +417,8 @@ async function routePayload({ tail, from, to, app, q, name, chainId }) {
   }
   return NOT_FOUND;
 }
+
+// For the read-only production timing script and tests; the route itself is analyticsAdmin.
+export { routePayload as analyticsRoutePayload };
 
 export default analyticsAdmin;

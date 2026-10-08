@@ -178,6 +178,58 @@ export async function hourlySeries(db, { from, to, app, coverage }) {
   }));
 }
 
+/**
+ * Daily series: one row per calendar day in `timeZone` that has any event, with $pageview count and
+ * distinct sessions. Same shape as hourlySeries; bucket is the instant the local day starts.
+ * Sessions stay exact: the session ids of the rollup hours (analytics_hourly_sessions) and of the
+ * raw edges go into one set per day and are counted distinct, never summed per hour.
+ * Pageviews are counted from raw $pageview rows over the whole window, as in hourlySeries.
+ * Rollup hours are assigned to the day their start hour falls in; for zones with whole-hour offsets
+ * (all of Europe and the Americas) that is exact.
+ */
+export async function dailySeries(db, { from, to, app, coverage, timeZone = "UTC" }) {
+  const plan = readPlan(from, to, coverage, app);
+  plan.params.push(timeZone);
+  const tz = `$${plan.params.length}::text`;
+  const day = (col) => `(date_trunc('day', ${col} at time zone ${tz}) at time zone ${tz})`;
+  const rolled = plan.useRollup
+    ? `select ${day("bucket")} as day, session_id
+           from public.analytics_hourly_sessions
+          where ${plan.rollupHours}
+         union all
+         `
+    : "";
+  const result = await db.query(
+    `with s as (
+       ${rolled}select ${day("ts")} as day, session_id
+         from (
+           ${plan.raw("ts, session_id")}
+         ) e
+     ),
+     sd as (
+       select day, count(distinct session_id)::int as sessions
+         from s
+        group by day
+     ),
+     pv as (
+       select ${day("ts")} as day, count(*)::int as pageviews
+         from public.analytics_events
+        where name = '$pageview' and ts >= $1 and ts < $2 ${plan.extra}
+        group by 1
+     )
+     select sd.day as bucket, coalesce(pv.pageviews, 0)::int as pageviews, sd.sessions
+       from sd
+       left join pv on pv.day = sd.day
+      order by 1`,
+    plan.params,
+  );
+  return result.rows.map((row) => ({
+    bucket: new Date(row.bucket).toISOString(),
+    pageviews: row.pageviews,
+    sessions: row.sessions,
+  }));
+}
+
 /** Event counts by name from analytics_hourly_events (whole hours) plus the raw partial hours. */
 export async function eventCounts(db, { from, to, app, limit, excludeNames = [] }) {
   const plan = readPlan(from, to, INGEST_COVERAGE, app);
