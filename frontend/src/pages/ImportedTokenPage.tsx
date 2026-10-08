@@ -454,6 +454,7 @@ export default function ImportedTokenPage({
               <span className={cp.chip} data-project-chain="true">{chainLabel === "BNB" ? "BNB Chain" : chainLabel}</span>
               <span className={cp.chipGood}>DEX</span>
             </div>
+            <ImportCreatorEarnings chainId={Number(item.chainId)} tokenAddress={item.tokenAddress} canClaim={canClaim} onClaim={onClaimMemecoin} />
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-sm text-mw-muted">
               {ownerWallet ? (
                 <span className="inline-flex min-w-0 items-center gap-1.5">
@@ -517,8 +518,6 @@ export default function ImportedTokenPage({
           <Button type="button" className={`${cp.btn} mt-3 border-mw-accent bg-mw-accent text-[#140A02] hover:bg-[#FF8F3D] hover:text-[#140A02]`} onClick={onClaimMemecoin}>CLAIM MEMECOIN</Button>
         </section>
       ) : null}
-
-      <ImportCreatorEarnings chainId={Number(item.chainId)} tokenAddress={item.tokenAddress} canClaim={canClaim} onClaim={onClaimMemecoin} />
 
       {!item.imageUrl && canEdit ? (
         <p className="m-0 text-sm text-mw-muted">Add a project image from the owner tools. The page stays public without one.</p>
