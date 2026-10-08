@@ -30,14 +30,14 @@ BNB and Robinhood: change order `docs/evm-launch/CO-IMPORT-SWAP-FEE.md` on `buil
 1. **Production SQL** (Supabase SQL editor, production `ellkfgoxnzykxqybajtn`):
    `db/migrations/20261008_000020_import_creator_fees.sql`. Idempotent; applied twice on staging 2026-10-08.
    Must run **before** the merge: the revenue lane reads `creator_raw`.
-2. **Mainnet accounts** (founder terminal; the only on-chain step):
-   ```bash
-   # fund the collector for fees and the temporary unwrap account (about 0.002 SOL each payout, returned)
-   solana transfer F12Pd3f67e1jFQ1Ny5pZNPkgPZWqbfPCsWUUy7dsXCAw 0.05 --allow-unfunded-recipient --url mainnet-beta --keypair <your wallet>
-   # create its wrapped-SOL account (the API refuses to quote until it exists)
-   spl-token create-account So11111111111111111111111111111111111111112 --owner F12Pd3f67e1jFQ1Ny5pZNPkgPZWqbfPCsWUUy7dsXCAw --fee-payer <your wallet> --url mainnet-beta
-   ```
-   Check: `spl-token accounts --owner F12Pd3f67e1jFQ1Ny5pZNPkgPZWqbfPCsWUUy7dsXCAw --url mainnet-beta` lists WSOL at `Di768Lkp…`.
+2. **Mainnet accounts** (founder; the only on-chain step):
+   - Send about 0.05 SOL to `F12Pd3f67e1jFQ1Ny5pZNPkgPZWqbfPCsWUUy7dsXCAw` from any wallet (Phantom is fine).
+   - Create its wrapped-SOL account (the API refuses to quote until it exists):
+     ```bash
+     cd ~/mwz-wt/import-creator-fees/frontend
+     node scripts/create-import-fee-collector-account.mjs          # read-only check
+     node scripts/create-import-fee-collector-account.mjs --send   # creates Di768Lkp... (idempotent)
+     ```
 3. **Merge** the PR (API + indexer + app deploy). Nothing changes yet: no env set.
 4. **Indexer env** (dry run first):
    ```
