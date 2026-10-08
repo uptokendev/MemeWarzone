@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import { useEffect, useState } from "react";
 import { isEvmChainId, type SupportedChainId } from "@/lib/chainConfig";
 import { scanContractLogs } from "@/lib/rpcLogScan";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 const TRANSFER_TOPIC = ethers.id("Transfer(address,address,uint256)");
 
@@ -45,6 +46,8 @@ export function useTokenTransferHolders(args: {
     
     // Track the highest block we've scanned to avoid redundant fetching
     let highestBlockScanned = 0;
+    // Head block of the last scan that read every chunk.
+    let scannedHead = 0;
     
     const load = async () => {
       setLoading(true);
@@ -60,6 +63,11 @@ export function useTokenTransferHolders(args: {
           fromBlock: isDelta ? highestBlockScanned + 1 : undefined,
           chunkSize: 2_500,
           signal: ac.signal,
+          onScanned: (range) => {
+            // The next delta starts after the head this scan covered, not after the last Transfer:
+            // on a quiet token the old rule re-read every block since that Transfer on each tick.
+            if (range.complete) scannedHead = Math.max(scannedHead, range.toBlock);
+          },
         });
         const balances = new Map<string, bigint>();
         const iface = new ethers.Interface(["event Transfer(address indexed from, address indexed to, uint256 value)"]);
@@ -94,6 +102,9 @@ export function useTokenTransferHolders(args: {
         if (maxBlockInBatch > highestBlockScanned) {
           highestBlockScanned = maxBlockInBatch;
         }
+        if (scannedHead > highestBlockScanned) {
+          highestBlockScanned = scannedHead;
+        }
 
         // A delta scan never sees the mint; it extends a history that is already complete or not.
         setComplete((prev) => (isDelta ? prev : sawMint));
@@ -124,7 +135,8 @@ export function useTokenTransferHolders(args: {
     };
 
     void load();
-    const timer = window.setInterval(() => {
+    // Paused while the tab is hidden; one catch-up scan when it shows again.
+    const stopPolling = setVisibleInterval(() => {
       // Re-initialize AbortController if it was aborted
       if (ac.signal.aborted) {
         ac = new AbortController();
@@ -135,7 +147,7 @@ export function useTokenTransferHolders(args: {
     return () => {
       cancelled = true;
       ac.abort();
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [args.chainId, args.enabled, args.tokenAddress, excludeKey]);
 

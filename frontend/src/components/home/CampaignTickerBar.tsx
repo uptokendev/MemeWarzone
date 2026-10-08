@@ -9,6 +9,7 @@ import { isPublicHiddenCampaign, isPublicHiddenSymbol, loadPublicHiddenCampaigns
 import { getReadProvider } from "@/lib/readProvider";
 import { apiFetch } from "@/lib/apiBase";
 import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 type CampaignTickerItem = {
   campaignAddress: string;
@@ -247,10 +248,11 @@ export function CampaignTickerBar({ className }: { className?: string }) {
     }
 
     load();
-    const id = window.setInterval(load, 60_000);
+    // Paused while the tab is hidden; one catch-up read when it shows again.
+    const stopPolling = setVisibleInterval(load, 60_000);
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      stopPolling();
     };
   }, [pickedChainId]);
 
