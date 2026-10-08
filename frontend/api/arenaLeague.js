@@ -18,6 +18,7 @@ import {
 import { utcDay } from "./lib/arenaLeagueScoreMath.js";
 import { publicHiddenWhere } from "./lib/publicHiddenSql.js";
 import { recordMwlFinalization } from "./lib/arenaMwlRollover.js";
+import { creatorStreakStatus, hasCreatorStreaks, recordCreatorCheckin } from "./lib/creatorStreak.js";
 import {
   MwlIdentityError,
   assertMwlSeasonIdentity,
@@ -296,6 +297,76 @@ async function ownedLeagueCoins(chainId, wallet, seasonId) {
   return result.rows.map(mapEntry);
 }
 
+/**
+ * League check-in status that never blocks the streak: when the month's league cannot be read (for
+ * example a month that ended and is not finalized yet), league points are off and the streak goes on.
+ */
+async function safeCheckinStatus(chainId, wallet) {
+  try {
+    return await checkinStatus({ chainId, wallet });
+  } catch (error) {
+    if (!(await hasCreatorStreaks())) throw error;
+    console.warn("[arena/league/checkin] league season unavailable", error?.code || error?.message || error);
+    return { utcDay: utcDay(), seasonId: null, frozen: true, due: false, alreadyCheckedIn: false, alreadyDispatched: false, streak: 0, lastDay: null };
+  }
+}
+
+/**
+ * Every coin this wallet can check in for (founder, 2026-10-08): coins it launched here, at any stage,
+ * and imports it verified it owns. `league` marks the ones in this month's Major War League (the only
+ * ones that earn league points); the rest keep the streak and its rewards.
+ */
+async function ownedCheckinCoins(chainId, wallet, seasonId) {
+  const id = requiredMwlChainId(chainId);
+  const owner = ident(wallet);
+  if (!owner) return [];
+  const league = seasonId ? await ownedLeagueCoins(id, owner, seasonId) : [];
+  const inLeague = new Set(league.map((coin) => String(coin.tokenAddress).toLowerCase()));
+  const { rows } = await pool.query(
+    `select token_address, name, symbol from (
+       select coalesce(c.token_address::text, c.campaign_address::text) as token_address, c.name, c.symbol,
+              coalesce(c.created_at_chain, c.created_at) as at
+         from public.campaigns c
+        where c.chain_id = $1
+          and lower(c.creator_address::text) = lower($2)
+          and not (${publicHiddenWhere("c")})
+       union all
+       select i.token_address, i.name, i.symbol, i.created_at as at
+         from public.arena_token_imports i
+        where i.chain_id = $1 and lower(i.owner_wallet) = lower($2) and i.status = 'passed'
+     ) x
+     order by at desc nulls last
+     limit 25`,
+    [id, owner],
+  );
+  const others = rows
+    .filter((row) => row.token_address && !inLeague.has(String(row.token_address).toLowerCase()))
+    .map((row) => ({
+      ...mapEntry({ token_address: row.token_address, token_name: row.name, symbol: row.symbol }),
+      league: false,
+    }));
+  return [...league.map((coin) => ({ ...coin, league: true })), ...others];
+}
+
+/** A coin this wallet launched here (any stage) or verified as an import; null otherwise. */
+async function ownedCheckinCoin(chainId, wallet, token) {
+  const league = await ownedCoin(chainId, wallet, token);
+  if (league) return league;
+  const id = requiredMwlChainId(chainId);
+  const { rows } = await pool.query(
+    `select coalesce(c.token_address::text, c.campaign_address::text) as token_address, c.name, c.symbol
+       from public.campaigns c
+      where c.chain_id = $1
+        and (lower(coalesce(c.token_address::text, '')) = lower($2) or lower(c.campaign_address::text) = lower($2))
+        and lower(c.creator_address::text) = lower($3)
+      limit 1`,
+    [id, ident(token), ident(wallet)],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return { chainId: id, tokenAddress: ident(row.token_address), name: row.name || row.symbol || "Unknown", symbol: row.symbol || "---", origin: "native" };
+}
+
 async function handleFeed(req, res) {
   const url = new URL(req.url, "http://localhost");
   const chainId = requiredMwlChainId(url.searchParams.get("chainId"));
@@ -406,9 +477,25 @@ async function handleCheckinStatus(req, res) {
   const query = getQuery(req);
   const chainId = requiredMwlChainId(query.chainId);
   const wallet = ident(query.wallet || query.address);
-  const status = await checkinStatus({ chainId, wallet });
+  const status = await safeCheckinStatus(chainId, wallet);
   if (status.seasonId && !(await seasonRowForChain(status.seasonId, chainId))) {
     throw new MwlIdentityError("MWL_SEASON_CHAIN_MISMATCH", "Check-in status resolved a different chain season", 409);
+  }
+  if (await hasCreatorStreaks()) {
+    // Every creator checks in for the streak; league points stay with league coins (2026-10-08).
+    const coins = wallet ? await ownedCheckinCoins(chainId, wallet, status.seasonId) : [];
+    const streak = await creatorStreakStatus(wallet);
+    return json(res, 200, {
+      ok: true,
+      chainIdentity: mwlChainIdentity(chainId),
+      ...status,
+      due: !streak.checkedInToday,
+      alreadyCheckedIn: streak.checkedInToday,
+      streak: streak.checkedInToday ? streak.streak : streak.nextStreak,
+      // The creator streak and its rewards (lib/creatorStreak.js), kept apart from league scoring.
+      creatorStreak: streak,
+      coins,
+    });
   }
   const coins = wallet && status.seasonId ? await ownedLeagueCoins(chainId, wallet, status.seasonId) : [];
   return json(res, 200, { ok: true, chainIdentity: mwlChainIdentity(chainId), ...status, coins });
@@ -421,11 +508,15 @@ async function handleCheckin(req, res) {
   const wallet = ident(body.auth?.walletAddress || body.walletAddress || body.wallet);
   if (!token || !wallet) return json(res, 400, { ok: false, error: "wallet and tokenAddress are required" });
 
-  const coin = await ownedCoin(chainId, wallet, token);
+  const streaks = await hasCreatorStreaks();
+  const coin = streaks ? await ownedCheckinCoin(chainId, wallet, token) : await ownedCoin(chainId, wallet, token);
   if (!coin) return json(res, 403, { ok: false, error: "Only the coin owner can check in." });
   if (coin.chainId !== chainId) return json(res, 409, { ok: false, error: "Coin chain identity mismatch", code: "MWL_TOKEN_CHAIN_MISMATCH" });
+  // League points need a league coin; the streak does not (2026-10-08).
+  let leagueCoin = Boolean(await ownedCoin(chainId, wallet, token));
   if (!(await tokenEligible(pool, chainId, coin.tokenAddress))) {
-    return json(res, 409, { ok: false, error: "Coin is not Arena eligible." });
+    if (!streaks) return json(res, 409, { ok: false, error: "Coin is not Arena eligible." });
+    leagueCoin = false;
   }
 
   const verified = await requireWalletActionAuth({
@@ -440,6 +531,30 @@ async function handleCheckin(req, res) {
   });
   if (!verified) return;
 
+  if (streaks) {
+    const streak = await recordCreatorCheckin({ wallet: verified.walletAddress || wallet, chainId, token: coin.tokenAddress });
+    if (!streak.ok) return json(res, 409, streak);
+    // League points as before, for a league coin only. "Fight at least once" and a closed month are
+    // not errors here: the check-in still counts for the streak.
+    const league = leagueCoin
+      ? await creditCheckin({ chainId, wallet: verified.walletAddress || wallet, token: coin.tokenAddress, name: coin.name, symbol: coin.symbol })
+          .catch((error) => {
+            console.warn("[arena/league/checkin] league points skipped", error?.code || error?.message || error);
+            return { ok: false };
+          })
+      : { ok: false };
+    return json(res, 200, {
+      ok: true,
+      already: streak.already,
+      streakDays: streak.streak,
+      streakRewardEarned: streak.credit,
+      points: league.ok ? league.points : 0,
+      bonus: league.ok ? league.bonus : 0,
+      ...(await feed(chainId).catch(() => ({}))),
+      ...(await handleCheckinPayload(chainId, wallet)),
+    });
+  }
+
   const result = await creditCheckin({
     chainId,
     wallet: verified.walletAddress || wallet,
@@ -452,9 +567,22 @@ async function handleCheckin(req, res) {
 }
 
 async function handleCheckinPayload(chainId, wallet) {
-  const status = await checkinStatus({ chainId, wallet });
+  const status = await safeCheckinStatus(chainId, wallet);
   if (status.seasonId && !(await seasonRowForChain(status.seasonId, chainId))) {
     throw new MwlIdentityError("MWL_SEASON_CHAIN_MISMATCH", "Check-in payload resolved a different chain season", 409);
+  }
+  if (await hasCreatorStreaks()) {
+    const coins = await ownedCheckinCoins(chainId, wallet, status.seasonId);
+    const streak = await creatorStreakStatus(wallet);
+    return {
+      ...status,
+      due: !streak.checkedInToday,
+      alreadyCheckedIn: streak.checkedInToday,
+      streak: streak.checkedInToday ? streak.streak : streak.nextStreak,
+      // The creator streak and its rewards (lib/creatorStreak.js), kept apart from league scoring.
+      creatorStreak: streak,
+      coins,
+    };
   }
   const coins = status.seasonId ? await ownedLeagueCoins(chainId, wallet, status.seasonId) : [];
   return { ...status, coins };

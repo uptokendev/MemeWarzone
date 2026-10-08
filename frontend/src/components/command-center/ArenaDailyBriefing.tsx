@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { CreatorStreakRewardLine, streakRewardToastLine } from "@/components/social/CreatorStreakRewards";
 import { toast } from "sonner";
 
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
@@ -47,7 +48,7 @@ export function ArenaDailyBriefing() {
   );
 
   if (!postGradFlags.league || !walletAddress) return null;
-  if (status.frozen) return null;
+  // A closed league month only stops league points; creators still check in for the streak (2026-10-08).
   if (!loading && !coins.length) return null;
   if (loading && !coins.length) return null;
 
@@ -76,7 +77,7 @@ export function ArenaDailyBriefing() {
 
   async function handleCheckin() {
     if (!current) {
-      toast.error("Finish a battle this quarter before check-in points land.");
+      toast.error("Launch or verify a coin to check in.");
       return;
     }
     const token = tokenKey(current);
@@ -84,11 +85,13 @@ export function ArenaDailyBriefing() {
     try {
       const auth = await signAuth("arena_league_checkin", [`Token: ${token}`, `Day: ${status.utcDay}`]);
       const result = await checkIn({ chainId, tokenAddress: token, auth });
-      toast.success(
-        Number(result.bonus)
-          ? `Checked in. ${result.points} pts including a 7-day streak bonus.`
-          : `Checked in. +${result.points} pts. Streak ${result.streak}.`,
-      );
+      const days = Number(result.streakDays ?? result.streak ?? 0);
+      const points = Number(result.points || 0);
+      const parts = [`Checked in. Streak ${days} day${days === 1 ? "" : "s"}.`];
+      if (points > 0) parts.push(Number(result.bonus) ? `+${points} league pts with the 7-day bonus.` : `+${points} league pts.`);
+      const rewardLine = streakRewardToastLine(result.streakRewardEarned);
+      if (rewardLine) parts.push(rewardLine);
+      toast.success(parts.join(" "));
       await refresh();
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not check in."));
@@ -140,9 +143,17 @@ export function ArenaDailyBriefing() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="font-mw-cond text-xs font-semibold uppercase tracking-[0.08em] text-mw-accent-soft">Daily briefing</div>
-          <h2 className="mt-1 font-semibold text-sm text-mw-text">Check in and dispatch</h2>
+          <h2 className="mt-1 font-semibold text-sm text-mw-text">{current?.league ? "Check in and dispatch" : "Daily check-in"}</h2>
+          <CreatorStreakRewardLine
+            streak={status.streak}
+            alreadyCheckedIn={status.alreadyCheckedIn}
+            daysToReward={status.daysToStreakReward}
+            rewardsReady={status.streakRewards}
+          />
           <p className="mt-1 max-w-2xl text-xs text-mw-muted">
-            Streak {status.streak} day{status.streak === 1 ? "" : "s"}. Check-in 0.1 pts, 7-day streak +0.5, War Dispatch 0.25. One of each per UTC day.
+            {current?.league
+              ? `$${String(current.symbol).replace(/^\$/, "")} is in this month's Major War League: check-in +0.1 pts, 7 days in a row +0.5, War Dispatch +0.25.`
+              : `$${String(current?.symbol || "").replace(/^\$/, "")} is not in this month's Major War League, so it earns no league points. A battle puts it in.`}
           </p>
         </div>
         {coins.length > 1 ? (
@@ -153,7 +164,7 @@ export function ArenaDailyBriefing() {
           >
             {coins.map((coin) => (
               <option key={tokenKey(coin)} value={tokenKey(coin)}>
-                {coin.symbol} · {coin.points} pts
+                {coin.symbol}{coin.league ? ` · ${coin.points} pts` : ""}
               </option>
             ))}
           </select>
@@ -168,15 +179,17 @@ export function ArenaDailyBriefing() {
         >
           {busy === "checkin" ? "Checking in..." : status.alreadyCheckedIn ? "Checked in" : "Daily check-in"}
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="font-semibold"
-          disabled={Boolean(busy) || status.alreadyDispatched}
-          onClick={() => void handleDispatch()}
-        >
-          {busy === "dispatch" ? "Opening X..." : status.alreadyDispatched ? "Dispatched" : "War Dispatch"}
-        </Button>
+        {current?.league ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="font-semibold"
+            disabled={Boolean(busy) || status.alreadyDispatched}
+            onClick={() => void handleDispatch()}
+          >
+            {busy === "dispatch" ? "Opening X..." : status.alreadyDispatched ? "Dispatched" : "War Dispatch"}
+          </Button>
+        ) : null}
       </div>
     </section>
   );
