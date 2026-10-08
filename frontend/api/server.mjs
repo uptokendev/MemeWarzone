@@ -531,6 +531,10 @@ router.get("/widget/swap/balances", wrap(widgetBalances));
 router.post("/widget/swap/quote", wrap(widgetQuote));
 router.post("/widget/swap/build", wrap(widgetBuild));
 router.get("/widget/swap/status", wrap(widgetStatus));
+// Bonding coins in the widget: the same handlers as the app's /solana/* routes, reached through the
+// widget's open CORS (no credentials, rate limited). The app's own routes and their CORS are unchanged.
+router.all("/widget/solana/campaign-account", wrap(solanaCampaignAccount));
+router.post("/widget/solana/trade-authorize", wrap(solanaTradeAuthorizationV1));
 router.all("/solana/direct-create", wrap(solanaDirectCreateV4));
 router.all("/solana/trade-authorize", wrap(solanaTradeAuthorizationV1));
 router.all("/solana/graduation-authorize", wrap(solanaGraduationAuthorizationV1));
