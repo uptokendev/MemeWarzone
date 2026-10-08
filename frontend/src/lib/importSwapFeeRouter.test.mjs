@@ -7,7 +7,7 @@ import { AbiCoder, Interface, ethers } from "ethers";
 
 import {
   IMPORT_SWAP_FEE_ROUTER_ABI,
-  NO_PANCAKESWAP_ROUTE,
+  NO_IMPORT_SWAP_ROUTE,
   buildFeeRouterCall,
   executeFeeRouterTrade,
   feeRouterBuyAmounts,
@@ -44,7 +44,7 @@ test("router address only from VITE_IMPORT_SWAP_FEE_ROUTER_<56|97>; nothing set 
   assert.equal(importSwapFeeRouterAddress(4663, { VITE_IMPORT_SWAP_FEE_ROUTER_4663: ROUTER.toLowerCase() }), null, "BNB chains only");
   assert.equal(importSwapFeeRouterAddress(56, { VITE_IMPORT_SWAP_FEE_ROUTER_56: ethers.ZeroAddress }), null);
   assert.equal(importSwapFeeRouterAddress(56, { VITE_IMPORT_SWAP_FEE_ROUTER_56: "nope" }), null);
-  assert.equal(NO_PANCAKESWAP_ROUTE, "No PancakeSwap route for this coin");
+  assert.equal(NO_IMPORT_SWAP_ROUTE, "No DEX route for this coin");
 });
 
 test("fee maths = the contract's feeSplit total (floor), buys on msg.value, sells on the gross", () => {
@@ -115,7 +115,7 @@ test("sell quote: gross for the tokens, fee on the gross, minimum on gross - fee
 
 test("refuses a pool off the router's Topaz factory / router / wrapped BNB, and a dust amount", async () => {
   for (const bad of [{ v2Factory: "0x00000000000000000000000000000000000000f0" }, { v2Router: "0x00000000000000000000000000000000000000f1" }, { wrapped: "0x00000000000000000000000000000000000000f2" }]) {
-    await assert.rejects(quoteFeeRouterTrade({ provider: fakeProvider(bad), routerAddress: ROUTER, resolved, side: "buy", amountIn: 10_000n }), new RegExp(NO_PANCAKESWAP_ROUTE));
+    await assert.rejects(quoteFeeRouterTrade({ provider: fakeProvider(bad), routerAddress: ROUTER, resolved, side: "buy", amountIn: 10_000n }), new RegExp(NO_IMPORT_SWAP_ROUTE));
   }
   await assert.rejects(quoteFeeRouterTrade({ provider: fakeProvider(), routerAddress: ROUTER, resolved, side: "buy", amountIn: 99n }), /too small/, "fee would be 0: the router refuses it too");
   await assert.rejects(quoteFeeRouterTrade({ provider: fakeProvider({ protocolBps: 0n }), routerAddress: ROUTER, resolved, side: "buy", amountIn: 10_000n }), /no fee/);

@@ -120,3 +120,54 @@ test("switch off (receiver not the vault): the old 50 bps to the old receiver, n
   assert.equal(plain.urls[0].searchParams.get("feeReceiver"), OLD_RECEIVER);
   assert.equal(plain.body.creatorShareBps, 0);
 });
+
+test("Kyber is asked for every allowed pool source (not PancakeSwap only); a Topaz-only answer quotes at 1% to the vault", async () => {
+  const api = await loadWith({ IMPORT_FEE_VAULT_56: VAULT, IMPORT_SWAP_FEE_RECEIVER_56: VAULT }, "venues");
+  const topaz = (url) => ({ ...kyberSummary({ side: "buy", feeAmount: url.searchParams.get("feeAmount"), feeReceiver: url.searchParams.get("feeReceiver") }), route: [[{ exchange: "topazdex-v2" }]] });
+  const buy = await quoteThrough(api, { side: "buy", answer: topaz });
+  assert.equal(buy.status, 200, JSON.stringify(buy.body));
+  const sources = buy.urls[0].searchParams.get("includedSources").split(",");
+  assert.deepEqual(sources, [...api.KYBER_BSC_POOL_SOURCES]);
+  for (const id of ["pancake", "pancake-v3", "topazdex-v2", "topazdex-v3", "uniswap", "uniswapv3", "uniswap-v4", "thena", "thena-fusion", "biswap", "babydogeswap"]) assert.ok(sources.includes(id), id);
+  assert.equal(buy.body.provider, "kyberswap");
+  assert.deepEqual(buy.body.route, ["topazdex-v2"]);
+  assert.equal(buy.body.feeBps, 100);
+  assert.equal(buy.body.feeNativeRaw, "1000000000000000");
+  // Kyber's answer through a source we do not allow is refused before it reaches the app.
+  const rfq = await quoteThrough(api, { side: "buy", answer: (url) => ({ ...topaz(url), route: [[{ exchange: "bebop" }]] }) });
+  assert.equal(rfq.status, 400);
+  assert.match(rfq.body.error, /on-chain DEX pools/);
+  // No route at all: the app's IMPORT_SWAP_NO_ROUTE (it then tries the Topaz fee router, never a fee-free swap).
+  const none = await quoteThrough(api, { side: "buy", answer: () => null });
+  assert.equal(none.status, 422);
+  assert.equal(none.body.code, "IMPORT_SWAP_NO_ROUTE");
+  assert.equal(none.body.error, "No DEX route for this token");
+});
+
+test("Kyber's 'no route' answers (HTTP 400, code 4008 / 40011) reach the app as IMPORT_SWAP_NO_ROUTE; other errors do not", async () => {
+  const api = await loadWith({ IMPORT_FEE_VAULT_56: VAULT, IMPORT_SWAP_FEE_RECEIVER_56: VAULT }, "noroute");
+  const realFetch = globalThis.fetch;
+  const call = async (status, body) => {
+    globalThis.fetch = async () => ({ ok: status === 200, status, json: async () => body });
+    try {
+      let code = 0;
+      let payload = "";
+      const res = { statusCode: 0, setHeader() {}, end(s) { payload = s; code = this.statusCode; } };
+      await api.importSwapQuote({ method: "POST", body: { chainId: 56, side: "buy", token: TOKEN, amountRaw: "100000000000000000" } }, res);
+      return { status: code, body: JSON.parse(payload) };
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  };
+  for (const kyberCode of [4008, 40011]) {
+    const out = await call(400, { code: kyberCode, message: "route not found" });
+    assert.equal(out.status, 422);
+    assert.equal(out.body.code, "IMPORT_SWAP_NO_ROUTE", String(kyberCode));
+  }
+  const other = await call(400, { code: 4001, message: "invalid tokenIn" });
+  assert.equal(other.status, 422);
+  assert.equal(other.body.code, null, "a bad request is not a missing route");
+  const down = await call(503, { message: "unavailable" });
+  assert.equal(down.status, 502);
+  assert.equal(down.body.code, null, "Kyber down is not a missing route: no fallback on an outage");
+});

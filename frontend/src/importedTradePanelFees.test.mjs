@@ -8,7 +8,7 @@ const panel = fs.readFileSync(new URL("./components/arena/ImportedTradePanel.tsx
 
 test("no fee-free Topaz trade: the Topaz path goes through ImportSwapFeeRouter or does not trade", () => {
   assert.doesNotMatch(panel, /executeTopazBuy|executeTopazSell|ensureTopazSellAllowance|quoteTopazBuy|quoteTopazSell/);
-  assert.match(panel, /if \(!feeRouter\) throw new Error\(NO_PANCAKESWAP_ROUTE\);/);
+  assert.match(panel, /if \(!feeRouter\) throw new Error\(NO_IMPORT_SWAP_ROUTE\);/);
   assert.match(panel, /executeFeeRouterTrade\(\{ signer: tradeSigner, account: tradeAccount, quote \}\)/);
   assert.match(panel, /const feeRouter = importSwapFeeRouterAddress\(item\.chainId\)/);
   assert.match(panel, /disabled=\{busy \|\| !amount \|\| noFeeRoute\}/);
@@ -21,4 +21,13 @@ test("fee chip and preview carry the quote's feeBps on every path", () => {
   assert.match(panel, /provider: "uniswap-universal-router",[\s\S]*?feeBps: quote\.feeBps,\s*creatorShareBps: quote\.creatorShareBps,/);
   assert.match(panel, /provider: "import-swap-fee-router",[\s\S]*?feeBps: quote\.feeBps,\s*creatorShareBps: quote\.creatorShareBps,/);
   assert.doesNotMatch(panel, /IMPORT_SWAP_FEE_LABEL/);
+});
+
+test("BNB imports: no PancakeSwap-only copy; the venue comes from the Kyber route (founder 2026-10-08: trade wherever the pool is)", () => {
+  assert.doesNotMatch(panel, /NO_PANCAKESWAP_ROUTE|"PancakeSwap"/);
+  assert.match(panel, /Best price via \$\{solana \? "Jupiter" : "KyberSwap"\}/);
+  assert.match(panel, /preview\?\.provider === "kyberswap"/);
+  assert.match(panel, /preview\.route\.map\(importSwapVenueLabel\)/);
+  // The fee-router fallback still only runs on Kyber's no-route answer, and only with a router.
+  assert.match(panel, /code === "IMPORT_SWAP_NO_ROUTE" && Number\(item\.chainId\) === 56 && feeRouter\) return quoteFeeRouterPreview\(raw\)/);
 });

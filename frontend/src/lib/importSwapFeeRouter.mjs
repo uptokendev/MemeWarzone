@@ -1,5 +1,6 @@
 /**
- * BNB imports that only trade on Topaz (no PancakeSwap route through KyberSwap): the swap goes
+ * BNB imports that only trade on Topaz and have no KyberSwap route (always on testnet 97, where Kyber
+ * does not exist; on 56 Kyber routes Topaz V2 / V3 itself since 2026-10-08): the swap goes
  * through ImportSwapFeeRouter (contracts/integrations/ImportSwapFeeRouter.sol, CO-IMP rev 2 CI4), so
  * an import swap never runs without the fee. The router takes its fee in BNB inside the swap and pays
  * it to the ImportFeeVault (deployment: protocolBps 100, creatorBps 0, both receivers = the vault);
@@ -18,7 +19,8 @@
 import { Contract, Interface, ethers } from "ethers";
 
 export const IMPORT_SWAP_FEE_ROUTER_CHAINS = Object.freeze([56, 97]);
-export const NO_PANCAKESWAP_ROUTE = "No PancakeSwap route for this coin";
+/** Shown when no fee-taking route exists (no Kyber route and no fee router / Topaz pool): no trade. */
+export const NO_IMPORT_SWAP_ROUTE = "No DEX route for this coin";
 
 /** The functions and the event of ImportSwapFeeRouter the app uses (checked against src/abi/ImportSwapFeeRouter.json by the tests). */
 export const IMPORT_SWAP_FEE_ROUTER_ABI = Object.freeze([
@@ -92,7 +94,7 @@ export async function readImportSwapFeeRouter(provider, routerAddress) {
 /** Throws unless the coin's resolved Topaz route is on the router's Topaz router, factory and wrapped BNB. */
 export function assertRouteOnFeeRouter(info, resolved) {
   if (!same(info.v2Router, resolved.routerAddress) || !same(info.v2Factory, resolved.factoryAddress) || !same(info.wrappedNative, resolved.wrappedNativeAddress)) {
-    throw new Error(NO_PANCAKESWAP_ROUTE);
+    throw new Error(NO_IMPORT_SWAP_ROUTE);
   }
 }
 

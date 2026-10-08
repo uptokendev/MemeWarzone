@@ -313,3 +313,29 @@ and `arenaImportedRobinhood.ts`, used by ImportedTradePanel's adapter path) trad
 (`frontend/src/lib/robinhoodNativeSwapAdapterEnv.mjs`). Chain-suffixed only. The app still checks the adapter's
 `swapRouter()` / `wrappedNative()` against the market route; a trader's first V2 sell asks for a new token approval.
 The 4663 imported-coin default path (Universal Router, `robinhoodImportSwap.mjs`) is not affected.
+
+## Every BNB venue (founder 2026-10-08: "if it can't be traded on Topaz, it should be traded on Pancake or anywhere else it has its pool")
+
+Facts (2026-10-08): KyberSwap lists 185 BNB sources (`ks-setting.kyberswap.com/api/v1/dexes?chain=bsc`), including
+`topazdex-v2` / `topazdex-v3` (Topaz router `0x1E98c822` uses canonical WBNB `0xbb4CdB9C`), `uniswap` / `uniswapv3` /
+`uniswap-v4*`, `thena*`, `biswap`, `babydogeswap`. The old Kyber request named the five PancakeSwap ids only, so a
+Topaz-only coin (Airo `0x019078cA`) got `route not found` although Kyber routes it. The restriction (commit `5628a348`)
+gave no reason beyond "PancakeSwap-only hops"; its intent, every hop a public on-chain pool, is kept by
+`KYBER_BSC_POOL_SOURCES` in `frontend/api/importSwap.js`: an explicit allow-list of AMM pool ids (exact match per hop in
+`assertBscRouteTerms`), no RFQ / PMM / prop-AMM / order book / limit order / lending-backed / stable / wrapper / bridge
+sources. The fee checks are unchanged (bps, `isInBps`, charge side, receiver = the vault, router pinned).
+
+Also fixed: Kyber answers "no route" with HTTP 400 code 4008 / 40011, which reached the app as a plain 422 without
+`IMPORT_SWAP_NO_ROUTE`, so the Topaz fee-router fallback (CI4) never ran on 56. Those two codes now map to
+`IMPORT_SWAP_NO_ROUTE`; an outage or a bad request does not.
+
+Fork proof (`test/importFeeVault.bnb-kyber-venues.fork.spec.ts`, anvil fork of 56 at 126495251, importSwap.js's own
+handlers, 1% to a fork ImportFeeVault, one `Deposit` from the Kyber router per swap, buy = 1% of the BNB in, sell = 1%
+of the gross BNB out): Topaz V2 (Airo, the API's own source list), Topaz V3 (TOPAZ), Uniswap V2 (CAKE), Uniswap V3
+(TST), Uniswap V4 (TST), THENA (THE), Biswap (BSW), BabyDogeSwap (CAKE), BabyDoge (own list, routed via PancakeSwap):
+9 passing. Finding: the BabyDoge token's sell on its BabyDogeSwap pair reverts through Kyber ("Call failed"; the buy
+passes); token-specific, CAKE on BabyDogeSwap passes both ways.
+
+Not covered: coins still on a launchpad bonding curve. Four.meme is not a Kyber source; `flap`, `genius-fun`,
+`loong-fun`, `printr` are listed but Kyber answered 40011 for every probe. Project imports refuse bonding coins
+(`PROJECT_IMPORT_STILL_BONDING`), so this only matters for arena imports of a coin that has not graduated.
