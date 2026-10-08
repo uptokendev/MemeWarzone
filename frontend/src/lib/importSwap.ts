@@ -8,22 +8,19 @@ import { Contract, ethers, type JsonRpcSigner } from "ethers";
 import { PublicKey, VersionedTransaction } from "@solana/web3.js";
 
 import { apiFetch } from "@/lib/apiBase";
+import { assertJupiterSwapForWallet } from "@/lib/jupiterSwapGuard";
 import { confirmLaunchpadSignature, type LaunchpadConfirmConnection } from "@/lib/solanaConfirmSignature";
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import { getSolanaProvider, getStoredSolanaWalletId } from "@/lib/solanaWallet";
 
 export const IMPORT_SWAP_FEE_LABEL = "0.5%";
-const JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
+
+/** "1%", "0.5%": the fee the API priced into the quote (Solana moves to 1% at the collector switch). */
+export function importSwapFeeLabel(feeBps: number) {
+  return `${Number((feeBps / 100).toFixed(2))}%`;
+}
 const KYBER_ROUTER = "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5";
-// Programs a Jupiter swap may invoke at the top level; anything else is refused before signing.
-const SOLANA_ALLOWED_PROGRAMS = new Set([
-  JUPITER_PROGRAM,
-  "ComputeBudget111111111111111111111111111111",
-  "11111111111111111111111111111111",
-  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-  "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
-  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
-]);
+export { assertJupiterSwapForWallet };
 
 export type ImportSwapSide = "buy" | "sell";
 
@@ -36,6 +33,8 @@ export type ImportSwapQuote = {
   minAmountOut: string | null;
   priceImpactPct: number | null;
   feeBps: number;
+  /** Part of feeBps that goes to the coin's creator (half of the 1% fee); 0 or absent before the switch. */
+  creatorShareBps?: number;
   feeNativeRaw: string | null;
   route: string[];
   quote: unknown;
@@ -79,17 +78,6 @@ function decodeBase64(value: string) {
   return bytes;
 }
 
-/** Refuses anything but the wallet's own Jupiter swap before the wallet is asked to sign. */
-export function assertJupiterSwapForWallet(tx: VersionedTransaction, wallet: string, feeAccount: string) {
-  const keys = tx.message.staticAccountKeys.map((key) => key.toBase58());
-  if (keys[0] !== wallet) throw new Error("Swap fee payer is not your wallet.");
-  if (Number(tx.message.header.numRequiredSignatures) !== 1) throw new Error("Swap asks for more than your signature.");
-  const programs = tx.message.compiledInstructions.map((ix) => keys[ix.programIdIndex]);
-  if (!programs.includes(JUPITER_PROGRAM)) throw new Error("Swap does not route through Jupiter.");
-  const unexpected = programs.find((program) => !SOLANA_ALLOWED_PROGRAMS.has(program));
-  if (unexpected) throw new Error(`Swap calls an unexpected program (${unexpected.slice(0, 6)}…).`);
-  if (!keys.includes(feeAccount)) throw new Error("Swap is missing the platform fee account.");
-}
 
 export async function executeSolanaImportSwap(input: { token: string; side: ImportSwapSide; wallet: string; quote: ImportSwapQuote; slippageBps?: number }) {
   const provider = getSolanaProvider(getStoredSolanaWalletId() || null);

@@ -8,6 +8,18 @@ import {
   analyticsPerformancePages,
   analyticsPerformanceVitals,
 } from "./performance.js";
+import { analyticsCacheKey, createAnalyticsCache, withRequestWindow } from "./cache.js";
+import {
+  distinctVisitors,
+  eventCounts,
+  hourlySeries,
+  readRollupCoverage,
+  vitalStats,
+} from "./rollups.js";
+
+const responseCache = createAnalyticsCache();
+// Realtime is "the last 5 minutes"; a minute-old answer would hide arrivals, so it gets a short TTL.
+const realtimeCache = createAnalyticsCache({ ttlMs: 15_000 });
 
 function isMissingSchema(error) {
   return error?.code === "42P01" || error?.code === "42703";
@@ -52,13 +64,9 @@ async function liveUsers(app) {
 async function overview(from, to, app) {
   const params = [from, to];
   const extra = appFilter(app, params);
+  const coverage = await readRollupCoverage(pool);
   const [dau, sessions, pageviews, bounce, live, topPages, topEvents, vitals, series] = await Promise.all([
-    pool.query(
-      `select count(distinct anonymous_id)::int as n
-         from public.analytics_events
-        where ts >= $1 and ts < $2 ${extra}`,
-      params,
-    ),
+    distinctVisitors(pool, { from, to, app, coverage }),
     pool.query(
       `select count(*)::int as n
          from public.analytics_sessions
@@ -91,37 +99,9 @@ async function overview(from, to, app) {
         limit 10`,
       params,
     ),
-    pool.query(
-      `select name, count(*)::int as count
-         from public.analytics_events
-        where ts >= $1 and ts < $2 ${extra}
-          and name not in ('$heartbeat')
-        group by name
-        order by count desc
-        limit 10`,
-      params,
-    ),
-    pool.query(
-      `select properties->>'metric' as metric,
-              percentile_cont(0.75) within group (
-                order by coalesce(nullif(properties->>'measurement',''), nullif(properties->>'value',''))::double precision
-              ) filter (where coalesce(nullif(properties->>'measurement',''), nullif(properties->>'value','')) is not null) as p75
-         from public.analytics_events
-        where name = '$web_vital' and ts >= $1 and ts < $2 ${extra}
-          and properties ? 'metric'
-        group by 1`,
-      params,
-    ),
-    pool.query(
-      `select date_trunc('hour', ts) as bucket,
-              count(*) filter (where name = '$pageview')::int as pageviews,
-              count(distinct session_id)::int as sessions
-         from public.analytics_events
-        where ts >= $1 and ts < $2 ${extra}
-        group by 1
-        order by 1`,
-      params,
-    ),
+    eventCounts(pool, { from, to, app, limit: 10, excludeNames: ["$heartbeat"] }),
+    vitalStats(pool, { from, to, app, coverage }),
+    hourlySeries(pool, { from, to, app, coverage }),
   ]);
 
   const bounced = bounce.rows[0]?.bounced || 0;
@@ -130,26 +110,22 @@ async function overview(from, to, app) {
     from,
     to,
     app,
-    dau: dau.rows[0]?.n || 0,
+    dau,
     sessions: sessions.rows[0]?.n || 0,
     pageviews: pageviews.rows[0]?.n || 0,
     bounceRate: total ? bounced / total : 0,
     liveUsers: live,
     topPages: topPages.rows.map((row) => ({ path: row.path, views: row.views, uniques: row.uniques })),
-    topEvents: topEvents.rows.map((row) => ({ name: row.name, count: row.count })),
-    vitals: vitals.rows.map((row) => ({ metric: row.metric, p75: row.p75 == null ? null : Number(row.p75) })),
-    series: series.rows.map((row) => ({
-      bucket: new Date(row.bucket).toISOString(),
-      pageviews: row.pageviews,
-      sessions: row.sessions,
-    })),
+    topEvents,
+    vitals: vitals.map((row) => ({ metric: row.metric, p75: row.p75 })),
+    series,
   };
 }
 
 async function pages(from, to, app) {
   const params = [from, to];
   const extra = appFilter(app, params);
-  const views = await pool.query(
+  const [views, durations] = await Promise.all([pool.query(
     `select path_template as path,
             count(*)::int as views,
             count(distinct anonymous_id)::int as uniques
@@ -159,15 +135,14 @@ async function pages(from, to, app) {
       order by views desc
       limit 200`,
     params,
-  );
-  const durations = await pool.query(
+  ), pool.query(
     `select path_template as path,
             avg((properties->>'duration_ms')::double precision) as avg_ms
        from public.analytics_events
       where name = '$pageleave' and ts >= $1 and ts < $2 ${extra}
       group by path_template`,
     params,
-  );
+  )]);
   const durationByPath = new Map(durations.rows.map((row) => [row.path, row.avg_ms == null ? null : Number(row.avg_ms)]));
   return {
     rows: views.rows.map((row) => ({
@@ -180,18 +155,7 @@ async function pages(from, to, app) {
 }
 
 async function events(from, to, app) {
-  const params = [from, to];
-  const extra = appFilter(app, params);
-  const result = await pool.query(
-    `select name, count(*)::int as count
-       from public.analytics_events
-      where ts >= $1 and ts < $2 ${extra}
-      group by name
-      order by count desc
-      limit 200`,
-    params,
-  );
-  return { rows: result.rows.map((row) => ({ name: row.name, count: row.count })) };
+  return { rows: await eventCounts(pool, { from, to, app, limit: 200 }) };
 }
 
 async function eventDetails(from, to, app, name) {
@@ -380,60 +344,76 @@ export async function analyticsAdmin(req, res) {
   const q = String(req.query?.q || "").trim();
   const name = String(req.query?.name || "").trim();
 
+  const cache = tail === "realtime" ? realtimeCache : responseCache;
+  const key = analyticsCacheKey({
+    route: tail || "overview",
+    from,
+    to,
+    app,
+    extra: { q, name, chainId: String(req.query?.chainId ?? "") },
+  });
+
   try {
-    if (!tail || tail === "overview") {
-      return res.status(200).json(await overview(from, to, app));
-    }
-    if (tail === "pages") return res.status(200).json(await pages(from, to, app));
-    if (tail === "events") return res.status(200).json(await events(from, to, app));
-    if (tail === "events/details") return res.status(200).json(await eventDetails(from, to, app, name));
-    if (tail === "geography") return res.status(200).json(await analyticsGeography({ pool, from, to, app }));
-    if (tail === "performance/functions") return res.status(200).json(await functions(from, to, app));
-    if (tail === "performance/vitals") return res.status(200).json(await analyticsPerformanceVitals({ pool, from, to, app }));
-    if (tail === "performance/pages") return res.status(200).json(await analyticsPerformancePages({ pool, from, to, app }));
-    if (tail === "performance/environment") return res.status(200).json(await analyticsPerformanceEnvironment({ pool, from, to, app }));
-    if (tail === "realtime") return res.status(200).json(await realtime(app));
-    if (tail === "launchpad") {
-      return res.status(200).json(await launchpadKpis({ from, to, chainId: req.query?.chainId }));
-    }
-    if (tail === "funnels") {
-      return res.status(200).json(await analyticsFunnels({ from, to, app }));
-    }
-    if (tail === "sessions") return res.status(200).json(await sessions(app, q));
-    const sessionMatch = tail.match(/^sessions\/([0-9a-f-]{36})$/i);
-    if (sessionMatch) {
-      const detail = await sessionDetail(sessionMatch[1]);
-      if (!detail) return res.status(404).json({ error: "Session not found." });
-      return res.status(200).json(detail);
-    }
-    return res.status(404).json({ error: "Unknown analytics route." });
+    const payload = await cache.wrap(key, () => routePayload({ tail, from, to, app, q, name, chainId: req.query?.chainId }));
+    if (payload === NOT_FOUND) return res.status(404).json({ error: "Unknown analytics route." });
+    if (payload === SESSION_NOT_FOUND) return res.status(404).json({ error: "Session not found." });
+    return res.status(200).json(withRequestWindow(payload, { from, to, app }));
   } catch (error) {
     if (isMissingSchema(error)) {
-      return res.status(200).json({
-        schemaMissing: true,
-        from,
-        to,
-        app,
-        dau: 0,
-        sessions: 0,
-        pageviews: 0,
-        bounceRate: 0,
-        liveUsers: 0,
-        topPages: [],
-        topEvents: [],
-        vitals: [],
-        series: [],
-        rows: [],
-        pages: [],
-        recent: [],
-        funnels: [],
-        countries: [],
-        regions: [],
-        coverage: { pageviews: 0, locatedPageviews: 0, rate: 0 },
-      });
+      return res.status(200).json(SCHEMA_MISSING(from, to, app));
     }
     throw error;
   }
+}
+
+const NOT_FOUND = Symbol("not-found");
+const SESSION_NOT_FOUND = Symbol("session-not-found");
+
+function SCHEMA_MISSING(from, to, app) {
+  return {
+    schemaMissing: true,
+    from,
+    to,
+    app,
+    dau: 0,
+    sessions: 0,
+    pageviews: 0,
+    bounceRate: 0,
+    liveUsers: 0,
+    topPages: [],
+    topEvents: [],
+    vitals: [],
+    series: [],
+    rows: [],
+    pages: [],
+    recent: [],
+    funnels: [],
+    countries: [],
+    regions: [],
+    coverage: { pageviews: 0, locatedPageviews: 0, rate: 0 },
+  };
+}
+
+async function routePayload({ tail, from, to, app, q, name, chainId }) {
+  if (!tail || tail === "overview") return overview(from, to, app);
+  if (tail === "pages") return pages(from, to, app);
+  if (tail === "events") return events(from, to, app);
+  if (tail === "events/details") return eventDetails(from, to, app, name);
+  if (tail === "geography") return analyticsGeography({ pool, from, to, app });
+  if (tail === "performance/functions") return functions(from, to, app);
+  if (tail === "performance/vitals") return analyticsPerformanceVitals({ pool, from, to, app });
+  if (tail === "performance/pages") return analyticsPerformancePages({ pool, from, to, app });
+  if (tail === "performance/environment") return analyticsPerformanceEnvironment({ pool, from, to, app });
+  if (tail === "realtime") return realtime(app);
+  if (tail === "launchpad") return launchpadKpis({ from, to, chainId });
+  if (tail === "funnels") return analyticsFunnels({ from, to, app });
+  if (tail === "sessions") return sessions(app, q);
+  const sessionMatch = tail.match(/^sessions\/([0-9a-f-]{36})$/i);
+  if (sessionMatch) {
+    const detail = await sessionDetail(sessionMatch[1]);
+    return detail || SESSION_NOT_FOUND;
+  }
+  return NOT_FOUND;
 }
 
 export default analyticsAdmin;

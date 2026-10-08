@@ -83,6 +83,17 @@ export class AnalyticsClient {
   private lastPath = ''
   private flushing = false
   private identifiedUser: string | null = null
+  // Web vitals for the current page view. CLS and INP are reported once per page view with their
+  // final value (web-vitals library semantics): when the page is hidden or unloaded, or on an SPA
+  // route change. LCP and TTFB are reported once.
+  private vitalsObserved = false
+  private vitalsReported = false
+  private vitalsPath = ''
+  private clsValue = 0
+  private clsSessionValue = 0
+  private clsSessionFirst = 0
+  private clsSessionLast = 0
+  private inpByInteraction = new Map<number, number>()
 
   init(options: AnalyticsInitOptions) {
     this.options = options
@@ -93,9 +104,13 @@ export class AnalyticsClient {
         void this.flush()
       }, FLUSH_INTERVAL_MS)
       window.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') void this.flush()
+        if (document.visibilityState === 'hidden') {
+          this.reportPageVitals()
+          void this.flush()
+        }
       })
       window.addEventListener('pagehide', () => {
+        this.reportPageVitals()
         void this.flush()
       })
     }
@@ -136,6 +151,12 @@ export class AnalyticsClient {
 
   page(path?: string) {
     const nextPath = path || (typeof window !== 'undefined' ? window.location.pathname : '/')
+    if (this.lastPath && this.lastPath !== nextPath) {
+      this.reportPageVitals()
+      this.resetPageVitals(nextPath)
+    } else if (!this.lastPath) {
+      this.vitalsPath = nextPath
+    }
     if (this.lastPath && this.lastPath !== nextPath && this.pageEnteredAt) {
       this.enqueue('$pageleave', {
         path: templatePath(this.lastPath),
@@ -181,33 +202,29 @@ export class AnalyticsClient {
 
   observeWebVitals() {
     if (typeof PerformanceObserver === 'undefined') return
-    const sent = new Set<string>()
-    const send = (metric: string, value: number) => {
-      if (sent.has(metric) && metric !== 'CLS' && metric !== 'INP') return
-      if (metric !== 'CLS' && metric !== 'INP') sent.add(metric)
-      this.enqueue('$web_vital', {
-        metric,
-        value: Math.round(value * (metric === 'CLS' ? 1000 : 1)) / (metric === 'CLS' ? 1000 : 1),
-        rating: rateVital(metric, value),
-      })
+    if (this.vitalsObserved) return
+    this.vitalsObserved = true
+    if (!this.vitalsPath && typeof window !== 'undefined') this.vitalsPath = window.location.pathname
+    const sentOnce = new Set<string>()
+    const sendOnce = (metric: string, value: number) => {
+      if (sentOnce.has(metric)) return
+      sentOnce.add(metric)
+      this.sendVital(metric, value)
     }
 
     try {
       const lcp = new PerformanceObserver((list) => {
         const entry = list.getEntries().at(-1)
-        if (entry) send('LCP', entry.startTime)
+        if (entry) sendOnce('LCP', entry.startTime)
       })
       lcp.observe({ type: 'largest-contentful-paint', buffered: true })
     } catch { /* unsupported */ }
 
     try {
       const cls = new PerformanceObserver((list) => {
-        let total = 0
         for (const entry of list.getEntries()) {
-          const shift = entry as PerformanceEntry & { hadRecentInput?: boolean; value?: number }
-          if (!shift.hadRecentInput) total += Number(shift.value || 0)
+          this.recordLayoutShift(entry as PerformanceEntry & { hadRecentInput?: boolean; value?: number })
         }
-        if (total) send('CLS', total)
       })
       cls.observe({ type: 'layout-shift', buffered: true })
     } catch { /* unsupported */ }
@@ -215,8 +232,7 @@ export class AnalyticsClient {
     try {
       const inp = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
-          const ev = entry as PerformanceEntry & { duration?: number }
-          send('INP', Number(ev.duration || 0))
+          this.recordInteraction(entry as PerformanceEntry & { duration?: number; interactionId?: number })
         }
       })
       inp.observe({ type: 'event', buffered: true, durationThreshold: 40 } as PerformanceObserverInit)
@@ -224,8 +240,75 @@ export class AnalyticsClient {
 
     try {
       const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
-      if (nav) send('TTFB', nav.responseStart)
+      if (nav) sendOnce('TTFB', nav.responseStart)
     } catch { /* unsupported */ }
+  }
+
+  /** CLS: largest session window (shifts < 1 s apart, window < 5 s), ignoring shifts after input. */
+  recordLayoutShift(entry: { startTime: number; hadRecentInput?: boolean; value?: number }) {
+    if (entry.hadRecentInput) return
+    const value = Number(entry.value || 0)
+    if (!(value > 0)) return
+    if (
+      this.clsSessionValue > 0
+      && entry.startTime - this.clsSessionLast < 1000
+      && entry.startTime - this.clsSessionFirst < 5000
+    ) {
+      this.clsSessionValue += value
+      this.clsSessionLast = entry.startTime
+    } else {
+      this.clsSessionValue = value
+      this.clsSessionFirst = entry.startTime
+      this.clsSessionLast = entry.startTime
+    }
+    if (this.clsSessionValue > this.clsValue) this.clsValue = this.clsSessionValue
+  }
+
+  /** INP: longest duration per interaction; with many interactions, one outlier per 50 is skipped. */
+  recordInteraction(entry: { duration?: number; interactionId?: number }) {
+    const id = Number(entry.interactionId || 0)
+    if (!id) return
+    const duration = Number(entry.duration || 0)
+    const previous = this.inpByInteraction.get(id)
+    if (previous == null || duration > previous) this.inpByInteraction.set(id, duration)
+  }
+
+  currentInp(): number | null {
+    if (this.inpByInteraction.size === 0) return null
+    const longest = Array.from(this.inpByInteraction.values()).sort((a, b) => b - a)
+    return longest[Math.min(longest.length - 1, Math.floor(longest.length / 50))]
+  }
+
+  currentCls(): number | null {
+    return this.clsValue > 0 ? this.clsValue : null
+  }
+
+  /** Sends the final CLS and INP of the current page view, once. */
+  reportPageVitals() {
+    if (!this.vitalsObserved || this.vitalsReported) return
+    this.vitalsReported = true
+    const cls = this.currentCls()
+    if (cls != null) this.sendVital('CLS', cls, this.vitalsPath)
+    const inp = this.currentInp()
+    if (inp != null) this.sendVital('INP', inp, this.vitalsPath)
+  }
+
+  private resetPageVitals(path: string) {
+    this.vitalsReported = false
+    this.vitalsPath = path
+    this.clsValue = 0
+    this.clsSessionValue = 0
+    this.clsSessionFirst = 0
+    this.clsSessionLast = 0
+    this.inpByInteraction.clear()
+  }
+
+  private sendVital(metric: string, value: number, pagePath?: string) {
+    this.enqueue('$web_vital', {
+      metric,
+      value: Math.round(value * (metric === 'CLS' ? 1000 : 1)) / (metric === 'CLS' ? 1000 : 1),
+      rating: rateVital(metric, value),
+    }, pagePath)
   }
 
   async flush() {
@@ -265,10 +348,10 @@ export class AnalyticsClient {
     }, HEARTBEAT_MS)
   }
 
-  private enqueue(name: string, properties: Record<string, AnalyticsPrimitive>) {
+  private enqueue(name: string, properties: Record<string, AnalyticsPrimitive>, pagePathOverride?: string) {
     if (!this.options?.endpoint || !this.options.writeKey) return
     if (!isCatalogEventName(name) || isForbiddenEventName(name)) return
-    const pagePath = typeof window !== 'undefined' ? window.location.pathname : '/'
+    const pagePath = pagePathOverride || (typeof window !== 'undefined' ? window.location.pathname : '/')
     const search = typeof window !== 'undefined' ? window.location.search : ''
     const storedUser = this.identifiedUser || readStorage(UID_KEY) || undefined
     const event: AnalyticsEvent = {

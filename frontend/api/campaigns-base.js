@@ -164,7 +164,12 @@ function mapCampaignRow(row, gradTargetBnb) {
     // Set for fully diluted coins: the card recomputes market cap as live price x this supply.
     fullyDilutedSupply: row.fully_diluted_supply != null ? String(row.fully_diluted_supply) : null,
     vol24hBnb: row.vol_24h_bnb != null ? String(row.vol_24h_bnb) : null,
-    holderCount: row.holder_count != null ? Number(row.holder_count) : 0,
+    // Wallets holding the coin now (indexer); before the indexer has a figure, the count of buyers.
+    holderCount: row.indexed_holders != null ? Number(row.indexed_holders) : row.holder_count != null ? Number(row.holder_count) : 0,
+    priceChange24hPct:
+      Number(row.price_24h_ago) > 0 && Number(row.last_price_bnb) > 0
+        ? (Number(row.last_price_bnb) / Number(row.price_24h_ago) - 1) * 100
+        : null,
     athMarketcapBnb: row.ath_marketcap_bnb != null ? String(row.ath_marketcap_bnb) : null,
     // Highest candle price; a Solana launchpad coin's ATH is this x its projected supply.
     athPriceBnb: row.ath_price_bnb != null ? String(row.ath_price_bnb) : null,
@@ -403,6 +408,10 @@ export default async function handler(req, res) {
             else coalesce(cc.mcap_c, ts.marketcap_bnb)
           end as marketcap_bnb,
           ts.vol_24h_bnb,
+          -- Holders right now, from the indexer (2026-10-08); the buyer count below only fills in when absent.
+          ms.holders as indexed_holders,
+          -- Last price 24 hours ago (or the first price of a younger coin), for the ticker's 24h change.
+          p24.price_24h_ago,
           vw.votes_24h,
           va.votes_all_time
         from public.campaigns c
@@ -410,6 +419,24 @@ export default async function handler(req, res) {
           on cms.chain_id = c.chain_id and cms.campaign_address = c.campaign_address
         left join public.token_stats ts
           on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address
+        left join public.market_stats ms
+          on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
+        left join lateral (
+          select coalesce(
+            -- The last price at or before 24 hours ago. Canonical (v2) candles first; DBC coins write v0 with the legacy c/o columns.
+            (select coalesce(tc.price_c, tc.c) from public.token_candles tc
+              where tc.chain_id = c.chain_id and tc.campaign_address = c.campaign_address
+                and tc.timeframe = '5s' and coalesce(tc.price_c, tc.c) is not null
+                and tc.bucket_start <= now() - interval '24 hours'
+              order by (coalesce(tc.canonical_version, 0) >= 2) desc, tc.bucket_start desc limit 1),
+            -- A coin younger than 24 hours compares with its first price.
+            (select coalesce(tc.price_o, tc.o) from public.token_candles tc
+              where tc.chain_id = c.chain_id and tc.campaign_address = c.campaign_address
+                and tc.timeframe = '5s' and coalesce(tc.price_o, tc.o) is not null
+                and coalesce(c.created_at_chain, c.created_at) > now() - interval '24 hours'
+              order by (coalesce(tc.canonical_version, 0) >= 2) desc, tc.bucket_start asc limit 1)
+          ) as price_24h_ago
+        ) p24 on true
         left join lateral (
           select tc.price_c, tc.mcap_c
           from public.token_candles tc

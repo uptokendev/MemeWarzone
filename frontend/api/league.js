@@ -6,7 +6,9 @@ import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../server/http.js";
 import { persistFinalizedCategory, readFinalizedCategory } from "./lib/finalizeLeagueEpoch.js";
-import { monthIdForEpochStart } from "./lib/evmLeagueClaimVerification.js";
+import { monthIdForEpochStart, verifyEvmLeagueClaimTransaction } from "./lib/evmLeagueClaimVerification.js";
+import { verifySolanaLeagueClaimTransaction } from "./lib/solanaLeagueClaimVerification.js";
+import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
 import { monthlyLeagueTreasuryAddress, monthlyLeagueTreasuryForMonth } from "./lib/evmMonthlyLeagueTreasury.js";
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "./lib/pokerPayout.mjs";
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
@@ -749,6 +751,11 @@ export default async function handler(req, res) {
 
       const txHash = String(b.txHash ?? "").trim();
 
+      // The 30-day sign-in replaces the two message signatures (founder, 2026-10-08: claiming three prizes
+      // took nine wallet prompts). The payout transaction itself is the money step and is still signed;
+      // with the sign-in, `record` stores a payout only after reading that transaction on-chain.
+      const sessionAuth = /^Bearer\s+\S+/i.test(String(req.headers?.authorization || ""));
+
       if (!Number.isFinite(chainId)) return json(res, 400, { error: "Invalid chainId" });
       if (solanaClaim ? !isSolanaAddress(recipient) : !isAddress(recipient)) {
         return json(res, 400, { error: "Invalid recipient" });
@@ -765,8 +772,8 @@ export default async function handler(req, res) {
       }
       if (!Number.isFinite(rank) || rank < 1 || rank > 255) return json(res, 400, { error: "Invalid rank" }); // poker payout: up to 255 paid places
       if (!epochStart) return json(res, 400, { error: "epochStart missing" });
-      if (!nonce) return json(res, 400, { error: "Nonce missing" });
-      if (!signature) return json(res, 400, { error: "Signature missing" });
+      if (!sessionAuth && !nonce) return json(res, 400, { error: "Nonce missing" });
+      if (!sessionAuth && !signature) return json(res, 400, { error: "Signature missing" });
       if (action === "record") {
         const evmTx = /^0x[0-9a-fA-F]{64}$/.test(txHash);
         const solTx = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(txHash);
@@ -774,14 +781,24 @@ export default async function handler(req, res) {
       }
       if (!pool) return json(res, 500, { error: "Server misconfigured: DATABASE_URL missing" });
 
-      const msg = buildClaimMessage({ chainId, recipient, period, epochStart, category, rank, nonce });
-      if (solanaClaim) {
-        const ok = verifySolanaLeagueSignature(recipient, msg, signature);
-        if (!ok) return json(res, 401, { error: "Invalid signature" });
+      if (sessionAuth) {
+        const session = await createFeedSessionAuth({ pool }).requireSession(req, res);
+        if (!session) return;
+        if (!walletsEqual(session.walletAddress, recipient, solanaClaim)) {
+          return json(res, 403, { error: "Your sign-in is for a different wallet.", code: "WALLET_MISMATCH" });
+        }
       } else {
-        const recovered = ethers.verifyMessage(msg, signature).toLowerCase();
-        if (recovered !== recipient) return json(res, 401, { error: "Invalid signature" });
+        const msg = buildClaimMessage({ chainId, recipient, period, epochStart, category, rank, nonce });
+        if (solanaClaim) {
+          const ok = verifySolanaLeagueSignature(recipient, msg, signature);
+          if (!ok) return json(res, 401, { error: "Invalid signature" });
+        } else {
+          const recovered = ethers.verifyMessage(msg, signature).toLowerCase();
+          if (recovered !== recipient) return json(res, 401, { error: "Invalid signature" });
+        }
       }
+      // league_epoch_claims keeps the claim's signature; a sign-in claim stores this marker instead.
+      const claimSignature = sessionAuth ? "feed-session" : signature;
 
       if (!solanaClaim && !mwlClaim) {
         const vaultAddress = getTreasuryVaultV2Address(chainId);
@@ -827,8 +844,8 @@ export default async function handler(req, res) {
         const lockKey = `${chainId}:${period}:${epochStart}:${category}:${rank}`;
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [lockKey]);
 
-        // Nonce must match the *recipient* (wallet) signing the claim.
-        await consumeNonceWithClient(client, chainId, recipient, nonce);
+        // Nonce must match the *recipient* (wallet) signing the claim. A sign-in claim has no nonce.
+        if (!sessionAuth) await consumeNonceWithClient(client, chainId, recipient, nonce);
 
         // Winner must exist, and must belong to recipient.
         const { rows: wrows } = await client.query(
@@ -882,7 +899,7 @@ export default async function handler(req, res) {
              VALUES ($1, $2, $3::timestamptz, $4, $5, $6, $7)
              ON CONFLICT (chain_id, period, epoch_start, category, rank)
              DO NOTHING`,
-            [chainId, period, epochStart, category, rank, recipient, signature]
+            [chainId, period, epochStart, category, rank, recipient, claimSignature]
           );
           await client.query("COMMIT");
           return json(res, 200, { ok: true, claimedAt: already.paidAt ? new Date(already.paidAt).toISOString() : null, amountRaw: w.amountRaw, txHash: already.txHash });
@@ -1026,13 +1043,25 @@ export default async function handler(req, res) {
         }
 
         // action === "record"
-        // Record the txHash after the user successfully claimed on-chain.
+        // Record the txHash after the user successfully claimed on-chain. Without a signature the
+        // transaction itself is the proof: it must be the confirmed claim of exactly this prize.
+        if (sessionAuth) {
+          try {
+            const proof = { chainId, period, epochStart, category, rank, recipient, amountRaw: String(w.amountRaw), txHash };
+            if (solanaClaim) await verifySolanaLeagueClaimTransaction(proof);
+            else await verifyEvmLeagueClaimTransaction(proof);
+          } catch (error) {
+            await client.query("ROLLBACK");
+            const status = Number(error?.status || error?.httpStatus || error?.statusCode) || 409;
+            return json(res, status, { error: String(error?.message || "Claim transaction could not be verified."), code: error?.code || "LEAGUE_TX_UNVERIFIED" });
+          }
+        }
         await client.query(
           `INSERT INTO league_epoch_claims (chain_id, period, epoch_start, category, rank, recipient_address, signature)
            VALUES ($1, $2, $3::timestamptz, $4, $5, $6, $7)
            ON CONFLICT (chain_id, period, epoch_start, category, rank)
            DO NOTHING`,
-          [chainId, period, epochStart, category, rank, recipient, signature]
+          [chainId, period, epochStart, category, rank, recipient, claimSignature]
         );
 
         await client.query(

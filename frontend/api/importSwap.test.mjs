@@ -57,3 +57,12 @@ test("a Kyber route must be BNB<->token on PancakeSwap pools, 0.5% in BNB to the
   assert.throws(() => assertBscRouteTerms({ ...sell, extraFee: buy.extraFee }, { token, side: "sell" }), /platform fee/);
   assert.throws(() => assertBscRouteTerms({ ...buy, route: [[{ exchange: "biswap" }]] }, { token, side: "buy" }), /PancakeSwap/);
 });
+
+test("1% switch (founder 2026-10-08): the Solana rate moves with the collector, never alone", async () => {
+  const { importSwapFeeBps } = await import("./importSwap.js");
+  assert.equal(importSwapFeeBps(101, {}), 50, "no collector: the old 0.5% to the protocol account");
+  assert.equal(importSwapFeeBps(101, { IMPORT_SWAP_FEE_BPS_101: "100" }), 50, "a rate alone never moves the fee to 1%");
+  assert.equal(importSwapFeeBps(101, { SOLANA_IMPORT_FEE_COLLECTOR: "Coll1111111111111111111111111111111111111111" }), 100);
+  assert.equal(importSwapFeeBps(101, { SOLANA_IMPORT_FEE_COLLECTOR: "x", IMPORT_SWAP_FEE_BPS_101: "999" }), 200, "capped at 2%");
+  assert.equal(importSwapFeeBps(56, { SOLANA_IMPORT_FEE_COLLECTOR: "x" }), 50, "BNB untouched (change order CO-IMP CI2)");
+});

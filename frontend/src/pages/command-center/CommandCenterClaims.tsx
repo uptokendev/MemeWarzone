@@ -21,7 +21,8 @@ import {
   recordRewardClaimTx,
 } from "@/lib/rewardDistributor";
 import { fetchRecruiterSignupStatus } from "@/lib/recruiterApi";
-import { submitSolanaLeagueClaim } from "@/lib/solanaLeagueClaim";
+import { submitSolanaLeagueClaim, submitSolanaLeagueClaims } from "@/lib/solanaLeagueClaim";
+import { useFeedSession } from "@/hooks/useFeedSession";
 import { submitSolanaAirdropClaim } from "@/lib/solanaRewardClaim";
 import { getConfiguredSolanaRewardChainId, isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
 import { signSolanaMessage } from "@/lib/solanaWallet";
@@ -384,11 +385,38 @@ function buildLeagueClaimMessage(input: {
   ].join("\n");
 }
 
+/** League claim/record body; with the 30-day sign-in no nonce or signature is sent (2026-10-08). */
+function leagueClaimRequest(action: "claim" | "record", metadata: LeagueRewardMetadata, walletAddress: string, chainId: number, sessionToken: string, txHash?: string) {
+  return apiFetch("/api/league", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
+    body: JSON.stringify({
+      action,
+      chainId,
+      period: metadata.period,
+      epochStart: metadata.epochStart,
+      category: metadata.category,
+      rank: metadata.rank,
+      recipient: walletAddress,
+      ...(txHash ? { txHash } : {}),
+    }),
+  });
+}
+
 async function prepareLeagueRewardClaim(
   metadata: LeagueRewardMetadata,
   walletAddress: string,
   chainId: number,
+  sessionToken = "",
 ): Promise<PreparedSolanaLeagueClaim | { alreadyPaid: true; txHash: string }> {
+  if (sessionToken) {
+    const json = await parseApiJson(await leagueClaimRequest("claim", metadata, walletAddress, chainId, sessionToken));
+    if (json?.mode !== "solana_treasury") {
+      if (json?.txHash) return { alreadyPaid: true, txHash: String(json.txHash) };
+      throw new Error("The server did not return claim data for this prize. Refresh and try again.");
+    }
+    return { ...json, chainId } as PreparedSolanaLeagueClaim;
+  }
   const nonce = await fetchWalletNonce(chainId, walletAddress);
   const message = buildLeagueClaimMessage({
     chainId,
@@ -430,7 +458,23 @@ async function recordLeagueRewardClaim(
   walletAddress: string,
   chainId: number,
   txHash: string,
+  sessionToken = "",
 ) {
+  if (sessionToken) {
+    // The server reads the payout on-chain before it records it; right after confirmation an RPC can
+    // lag, so a "not confirmed yet" answer is retried a few times.
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        return await parseApiJson(await leagueClaimRequest("record", metadata, walletAddress, chainId, sessionToken, txHash));
+      } catch (error) {
+        lastError = error;
+        if (!/not confirmed|missing or failed|not available yet|CONFIRMATIONS_PENDING/i.test(String((error as Error)?.message || ""))) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+      }
+    }
+    throw lastError;
+  }
   const nonce = await fetchWalletNonce(chainId, walletAddress);
   const message = buildLeagueClaimMessage({
     chainId,
@@ -538,6 +582,7 @@ export default function CommandCenterClaims() {
   const { attribution, chainId, walletAddress } = useCommandCenterData();
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
+  const feedSession = useFeedSession();
   const [items, setItems] = useState<RewardLedgerItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [claimingType, setClaimingType] = useState<string | null>(null);
@@ -626,6 +671,131 @@ export default function CommandCenterClaims() {
       setClaimingType(card.rewardType);
       setMessage(null);
       const completed: string[] = [];
+
+      // With the 30-day sign-in the server steps need no signature, and Solana prizes go to the wallet
+      // as one approval (signAllTransactions). Founder, 2026-10-08: three prizes took nine prompts with
+      // no word on what each one was. Declining the sign-in keeps the old flow below.
+      let sessionToken = "";
+      if (addressesMatch(feedSession.account, walletAddress)) {
+        sessionToken = await feedSession.ensureSession().catch(() => "");
+      }
+      if (sessionToken) {
+        const total = leagueClaimable.length;
+        const toastId = toast.loading(total === 1 ? "Getting your prize ready..." : `Getting ${total} prizes ready...`);
+        const failed: string[] = [];
+        const paidItems: RewardLedgerItem[] = [];
+        try {
+          const queue: Array<{ item: RewardLedgerItem; metadata: LeagueRewardMetadata; claimChainId: number; prepared?: PreparedSolanaLeagueClaim }> = [];
+          for (const item of leagueClaimable) {
+            const metadata = readLeagueRewardMetadata(item);
+            if (!metadata) throw new Error("League reward claim metadata is missing.");
+            const claimChainId = Number(item.chainId || rewardChainId || 0);
+            if (isSolanaRewardChainId(claimChainId)) {
+              const prepared = await prepareLeagueRewardClaim(metadata, walletAddress, claimChainId, sessionToken);
+              if ("alreadyPaid" in prepared) {
+                completed.push(item.id);
+                paidItems.push(item);
+              } else {
+                queue.push({ item, metadata, claimChainId, prepared });
+              }
+            } else {
+              queue.push({ item, metadata, claimChainId });
+            }
+          }
+
+          const solanaQueue = queue.filter((entry) => entry.prepared);
+          if (solanaQueue.length) {
+            toast.loading(
+              solanaQueue.length === 1
+                ? `Approve the ${formatNativeAmount(solanaQueue[0].item.amount, solanaQueue[0].claimChainId, solanaQueue[0].item.tokenSymbol)} claim in your wallet...`
+                : `Approve ${solanaQueue.length} prize claims in your wallet. One approval covers all of them.`,
+              { id: toastId },
+            );
+            const results = await submitSolanaLeagueClaims(solanaQueue.map((entry) => entry.prepared!));
+            for (let i = 0; i < solanaQueue.length; i += 1) {
+              const entry = solanaQueue[i];
+              const result = results[i];
+              if ("error" in result) {
+                failed.push(`${entry.item.sourceLabel || "Prize"}: ${result.error.message}`);
+                continue;
+              }
+              toast.loading(solanaQueue.length === 1 ? "Saving your claim..." : `Saving claim ${i + 1} of ${solanaQueue.length}...`, { id: toastId });
+              try {
+                await recordLeagueRewardClaim(entry.metadata, walletAddress, entry.claimChainId, result.signature, sessionToken);
+              } catch (error) {
+                // Paid on-chain; the record catches up on the next load (the receipt is found again).
+                console.warn("[claims] league record after payout failed", error);
+              }
+              completed.push(entry.item.id);
+              paidItems.push(entry.item);
+            }
+          }
+
+          const evmQueue = queue.filter((entry) => !entry.prepared);
+          for (let i = 0; i < evmQueue.length; i += 1) {
+            const { item, metadata, claimChainId } = evmQueue[i];
+            const { recordLeagueClaimTx, submitLeagueClaim } = await import("@/lib/rewardsApi");
+            const params = { chainId: claimChainId, period: metadata.period, epochStart: metadata.epochStart, category: metadata.category, rank: metadata.rank, recipient: walletAddress };
+            try {
+              const prepared = await submitLeagueClaim({ ...params, sessionToken });
+              let txHash = "txHash" in prepared ? String(prepared.txHash || "") : "";
+              if ("mode" in prepared && prepared.mode === "merkle") {
+                toast.loading(
+                  evmQueue.length === 1
+                    ? `Confirm the ${formatNativeAmount(item.amount, claimChainId, item.tokenSymbol)} claim in your wallet...`
+                    : `Prize ${i + 1} of ${evmQueue.length}: confirm ${formatNativeAmount(item.amount, claimChainId, item.tokenSymbol)} in your wallet...`,
+                  { id: toastId },
+                );
+                const treasury = new Contract(
+                  prepared.vaultAddress,
+                  ["function claim(uint256 epochId, bytes32 categoryHash, uint8 rank, address recipient, uint256 amount, bytes32[] proof)"],
+                  wallet.signer,
+                );
+                const tx = await treasury.claim(prepared.epochId, prepared.categoryHash, prepared.rank, prepared.recipient, prepared.amountRaw, prepared.proof);
+                await tx.wait();
+                txHash = tx.hash;
+                await recordLeagueClaimTx({ ...params, txHash, sessionToken }).catch((error) => console.warn("[claims] league record after payout failed", error));
+              }
+              completed.push(item.id);
+              paidItems.push(item);
+            } catch (error: any) {
+              if (/reject|denied|cancel/i.test(String(error?.shortMessage || error?.message || ""))) throw error;
+              failed.push(`${item.sourceLabel || "Prize"}: ${String(error?.shortMessage || error?.message || error)}`);
+            }
+          }
+
+          toast.dismiss(toastId);
+          const count = completed.length;
+          const first = paidItems[0];
+          const totalLabel = first ? formatNativeAmount(String(amountSum(paidItems)), first.chainId, first.tokenSymbol) : "";
+          if (count) toast.success(count === 1 ? `Prize claimed · ${totalLabel}` : `${count} prizes claimed · ${totalLabel} in total`);
+          if (failed.length) toast.error(failed.length === 1 ? "One prize was not claimed. See the note on this page." : `${failed.length} prizes were not claimed. See the note on this page.`);
+          setMessage(
+            [
+              count ? (count === 1 ? `Prize claimed: ${totalLabel}, sent to your wallet.` : `${count} prizes claimed: ${totalLabel} in total, sent to your wallet.`) : "",
+              ...failed.map((line) => `Not claimed. ${line}`),
+            ].filter(Boolean).join("\n") || null,
+          );
+          loadClaims();
+          setClaimingType(null);
+          return;
+        } catch (err: any) {
+          toast.dismiss(toastId);
+          const raw = String(err?.shortMessage || err?.message || err || "League claim request failed");
+          // An API from before the sign-in claim asks for the signed request: use the old flow below.
+          if (!completed.length && /Nonce missing|Signature missing/i.test(raw)) {
+            sessionToken = "";
+          } else {
+            const reason = /reject|denied|cancel/i.test(raw) ? "Approval cancelled in your wallet. Nothing was claimed." : raw;
+            setMessage(reason);
+            toast.error(reason);
+            if (completed.length) loadClaims();
+            setClaimingType(null);
+            return;
+          }
+        }
+      }
+      if (!sessionToken) {
 
       try {
         for (const item of leagueClaimable) {
@@ -722,6 +892,7 @@ export default function CommandCenterClaims() {
         toast.error(reason);
       } finally {
         setClaimingType(null);
+      }
       }
       return;
     }
@@ -885,6 +1056,18 @@ export default function CommandCenterClaims() {
               </span>
               <span className="font-mw-mono font-bold">{loading ? "..." : card.amountLabel}</span>
               <span className={`${chip} ${chipTone(stateCopy.label)}`}>{stateCopy.label}</span>
+              {card.rewardType === "league" && card.items.some((item) => item.status === "claimable" || item.status === "failed") ? (
+                <ul className="m-0 w-full list-none space-y-1 p-0 text-xs text-mw-muted" data-league-prize-list="true">
+                  {card.items
+                    .filter((item) => item.status === "claimable" || item.status === "failed")
+                    .map((item) => (
+                      <li key={item.id} className="flex justify-between gap-3">
+                        <span className="truncate">{item.sourceLabel || "League prize"}</span>
+                        <span className="shrink-0 font-mw-mono text-mw-text">{formatNativeAmount(item.amount, item.chainId, item.tokenSymbol)}</span>
+                      </li>
+                    ))}
+                </ul>
+              ) : null}
               <Button
                 disabled={stateCopy.disabled || claimingType === card.rewardType}
                 className="min-h-9 rounded-[10px] border border-mw-accent bg-mw-accent px-3 text-sm font-bold text-[#140A02] hover:bg-[#FF8A3D] disabled:border-mw-edge disabled:bg-mw-raised disabled:text-mw-muted"

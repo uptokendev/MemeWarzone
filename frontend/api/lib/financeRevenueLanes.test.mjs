@@ -51,8 +51,8 @@ function fakeDb(rowsByKey, { fail = {} } = {}) {
 test("lane definitions: arena, sponsorship and placements on every chain; DBC referral and migration fee on Solana, finalize on EVM", () => {
   const sol = laneDefinitions(SOL()).map((d) => d.key);
   const bnb = laneDefinitions(BNB()).map((d) => d.key);
-  assert.deepEqual(sol, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "import_swaps", "dbc_referral", "dbc_migration_fee"]);
-  assert.deepEqual(bnb, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "import_swaps", "graduation_fee"]);
+  assert.deepEqual(sol, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "import_swaps", "import_swaps_expired", "dbc_referral", "dbc_migration_fee"]);
+  assert.deepEqual(bnb, ["arena_boosts", "arena_entries", "sponsorships", "home_placements", "import_swaps", "import_swaps_expired", "graduation_fee"]);
   const labels = Object.fromEntries(laneDefinitions(SOL()).map((d) => [d.key, d]));
   assert.equal(labels.arena_boosts.source, "Arena boosts 10%");
   assert.match(labels.arena_entries.source, /^Battle entries 5%/);

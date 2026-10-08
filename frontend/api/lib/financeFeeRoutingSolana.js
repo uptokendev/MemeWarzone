@@ -248,7 +248,10 @@ export function solanaFeeRoutingRegistry(env = process.env, { indexerLpTreasury 
       status: "live, recorded",
       splits: [{ destinationId: importSwapDest, share: "100% of the platform fee, as WSOL" }],
       citation: "frontend/api/importSwap.js:20,27",
-      notes: ["Recorded from the fee token account's transactions (finance_import_swap_fees, every 5 minutes); revenue lane Import swaps 0.5%."],
+      notes: [
+        "Recorded from the fee token account's transactions (finance_import_swap_fees, every 5 minutes); revenue lane Import swaps 0.5%.",
+        "From the 1% switch (SOLANA_IMPORT_FEE_COLLECTOR set, founder 2026-10-08): 1% to the import fee collector's WSOL account. Half is the coin creator's (import_creator_fees: paid to the verified owner, else ours after 90 days, lane import_swaps_expired); the indexer sweeps our half to this account.",
+      ],
     },
     {
       id: "sol_dbc",

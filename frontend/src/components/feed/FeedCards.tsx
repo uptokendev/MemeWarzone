@@ -636,6 +636,8 @@ export function FeedSystemCard({ item }: { item: FeedItem }) {
             ) : null}
           </div>
         ) : null}
+        {/* Founder 2026-10-08: auto updates take views, rockets, reposts, quotes and comments through their linked post. */}
+        {item.postId ? <FeedPostActions item={item} /> : null}
       </div>
     </article>
   );
@@ -679,6 +681,7 @@ export function FeedBattleCard({ item }: { item: FeedItem }) {
         <Swords className="h-4 w-4" aria-hidden="true" />
         {item.type === "battle_finished" ? "See the result" : "Open fight"}
       </Link>
+      {item.postId ? <FeedPostActions item={item} /> : null}
     </article>
   );
 }

@@ -13,6 +13,7 @@ import { startSolanaFeeEscrowWorker } from "./solanaFeeEscrowWorker.js";
 import { startSolanaIndexerLoop } from "./solanaIndexer.js";
 import { startSolanaLpHarvestLoop } from "./solanaLpHarvestLoop.js";
 import { startProtocolForwarderKeeper } from "./protocolForwarderKeeper.js";
+import { startImportCreatorFeeWorker } from "./importCreatorFeeWorker.js";
 
 startSupportedFactoryDiscoveryLoop();
 startSolanaIndexerLoop();
@@ -23,6 +24,8 @@ startDbcCreatorChoiceWorker();
 startDbcGraduationWorker();
 startEvmGraduationKeeperWorker();
 startEvmCreatorChoiceWorker();
+// Off unless IMPORT_FEE_WORKER_ENABLED; dry run unless IMPORT_FEE_PAYOUT_SEND.
+startImportCreatorFeeWorker();
 // Off unless PROTOCOL_FORWARDER_KEEPER=dry|send; never blocks startup (own timers, errors stay in its status).
 void startProtocolForwarderKeeper().catch((error) => console.error("[forwarder-keeper] start failed", error));
 startMeteoraSwapIndexerLoop();

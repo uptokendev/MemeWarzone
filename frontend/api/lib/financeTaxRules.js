@@ -34,6 +34,7 @@ const LANE_ID_PREFIX = Object.freeze([
   // it; Meteora does not pay it (unlike the referral fee, which is Meteora's).
   ["dbc-migration-fee:", "graduation_fees"],
   ["import-swaps:", "import_swaps"],
+  ["import-swaps-expired:", "import_swaps"],
   ["upvotes:", "upvotes"],
   ["arena-boosts:", "arena_boosts"],
   ["arena-entries:", "battle_entries"],

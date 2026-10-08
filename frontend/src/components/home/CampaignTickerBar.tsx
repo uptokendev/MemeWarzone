@@ -17,6 +17,8 @@ type CampaignTickerItem = {
   name: string;
   marketcapBnb: number | null;
   votes24h: number;
+  /** Price change over the last 24 hours in percent; null when unknown. */
+  change24h?: number | null;
 };
 
 type FactoryCampaignRow = {
@@ -154,6 +156,7 @@ async function fetchIndexedTickerItems(chainId: number): Promise<CampaignTickerI
         name: String(row?.name ?? "").trim() || "Unknown",
         marketcapBnb: asNumber(row?.marketcapBnb ?? row?.marketcap_bnb),
         votes24h: Number(asNumber(row?.votes24h ?? row?.votes_24h) ?? 0),
+        change24h: asNumber(row?.priceChange24hPct),
       };
     }).filter(Boolean) as CampaignTickerItem[];
   } catch {
@@ -183,6 +186,7 @@ async function fetchTickerItems(chainId: number): Promise<CampaignTickerItem[]> 
       name: String(row?.name ?? "").trim() || previous?.name || "Unknown",
       marketcapBnb: previous?.marketcapBnb ?? null,
       votes24h: previous?.votes24h ?? 0,
+      change24h: previous?.change24h ?? null,
     });
   }
 
@@ -274,7 +278,13 @@ export function CampaignTickerBar({ className }: { className?: string }) {
             <span className="font-bold">${item.symbol}</span>
             <span className="hidden max-w-[140px] truncate text-mw-muted sm:inline">{item.name}</span>
             <span className="font-mw-mono">{formatMc(item.marketcapBnb, nativeUsd, chainId)}</span>
-            <span className="font-mw-mono text-mw-accent-soft">▲ {item.votes24h || 0}</span>
+            {/* 24h price change (founder, 2026-10-08), in place of the upvote count. */}
+            {item.change24h != null && Number.isFinite(item.change24h) ? (
+              <span className={`font-mw-mono ${item.change24h >= 0 ? "text-[#6EE7A0]" : "text-mw-sell"}`}>
+                {item.change24h >= 0 ? "+" : ""}
+                {Math.abs(item.change24h) >= 1000 ? Math.round(item.change24h) : item.change24h.toFixed(1)}%
+              </span>
+            ) : null}
           </Link>
         ))}
       </div>

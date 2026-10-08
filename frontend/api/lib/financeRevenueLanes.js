@@ -57,7 +57,12 @@
 //                     coins are never our campaigns, so there is no test-coin
 //                     filter. Swaps by our own wallets (internal_wallet) are
 //                     left out of revenue (founder 2026-10-06); they stay in
-//                     the table.
+//                     the table. From the 1% switch (2026-10-08) half of a fee
+//                     row is the coin creator's (creator_raw): the lane counts
+//                     fee_raw - creator_raw.
+//   import_swaps_expired  creator halves nobody claimed within 90 days
+//                     (import_creator_fees status 'expired'), counted on the day
+//                     they expire.
 //
 // Test coins: a row whose campaign (or either battle side) is a hidden test
 // campaign is left out; a row without a campaign passes.
@@ -285,8 +290,17 @@ export const LANE_SPECS = Object.freeze({
     where: `f.chain_id = $1
        and f.fee_raw > 0
        and not f.internal_wallet`,
-    time: "f.occurred_at", amount: "f.fee_raw",
+    time: "f.occurred_at", amount: "(f.fee_raw - f.creator_raw)",
     tx: "f.tx_hash", logIndex: "f.log_index", campaign: "f.token_address", ref: "f.side", eventId: "f.id::text",
+  },
+  // A creator half that nobody claimed within 90 days is ours from the day it expires.
+  import_swaps_expired: {
+    from: "public.import_creator_fees c join public.finance_import_swap_fees f on f.id = c.fee_id",
+    where: `c.chain_id = $1
+       and c.status = 'expired'
+       and not f.internal_wallet`,
+    time: "c.expired_at", amount: "c.creator_raw",
+    tx: "f.tx_hash", logIndex: "f.log_index", campaign: "c.token_address", ref: "f.side", eventId: "c.fee_id::text",
   },
   graduation_fee: {
     from: "public.reward_events r",
@@ -378,6 +392,7 @@ export function laneDefinitions(network, { includeCore = false } = {}) {
     { key: "home_placements", lane: "sponsorship", source: "Home placements (marked paid by admin, off-chain)", assetSymbol: "USD", decimals: USD_CENTS_DECIMALS, sourceInventoryId: "off-chain-sponsorship-applications" },
   );
   defs.push({ key: "import_swaps", lane: "other_approved", source: "Import swaps 0.5%", ...native, sourceInventoryId: inventoryId(network, "importSwap") });
+  defs.push({ key: "import_swaps_expired", lane: "other_approved", source: "Import swaps: creator halves unclaimed after 90 days", ...native, sourceInventoryId: inventoryId(network, "importSwap") });
   if (solana) {
     defs.push({ key: "dbc_referral", lane: "other_approved", source: "Meteora DBC referral (20% of Meteora's cut)", ...native, sourceInventoryId: inventoryId(network, "dbcReferral") });
     defs.push({ key: "dbc_migration_fee", lane: "bonding_curve_fee", source: "DBC migration fee (partner share)", ...native, sourceInventoryId: inventoryId(network, "dbcMigration") });
