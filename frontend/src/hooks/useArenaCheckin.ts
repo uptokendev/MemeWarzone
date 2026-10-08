@@ -30,6 +30,8 @@ export type ArenaCheckinStatus = {
   streakRewards: number;
   /** Check-ins until the next free upvote, today's included. */
   daysToStreakReward: number;
+  /** The live streak right now (before today's check-in); `streak` is what it becomes after it. */
+  currentStreak: number;
   coins: ArenaCheckinCoin[];
 };
 
@@ -42,6 +44,7 @@ const EMPTY: ArenaCheckinStatus = {
   streak: 0,
   streakRewards: 0,
   daysToStreakReward: 7,
+  currentStreak: 0,
   coins: [],
 };
 
@@ -66,6 +69,7 @@ export function useArenaCheckin(walletAddress?: string, chainId?: number) {
         streak: Number(json?.streak || 0),
         streakRewards: Number(json?.creatorStreak?.freeUpvotes || 0),
         daysToStreakReward: Number(json?.creatorStreak?.daysToFreeUpvote || 7),
+        currentStreak: Number(json?.creatorStreak?.streak ?? json?.streak ?? 0),
         coins: Array.isArray(json?.coins) ? json.coins : [],
       };
       setStatus(next);

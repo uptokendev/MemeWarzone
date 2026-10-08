@@ -146,6 +146,7 @@ export function ArenaDailyBriefing() {
           <h2 className="mt-1 font-semibold text-sm text-mw-text">{current?.league ? "Check in and dispatch" : "Daily check-in"}</h2>
           <CreatorStreakRewardLine
             streak={status.streak}
+            currentStreak={status.currentStreak}
             alreadyCheckedIn={status.alreadyCheckedIn}
             daysToReward={status.daysToStreakReward}
             rewardsReady={status.streakRewards}
@@ -173,7 +174,7 @@ export function ArenaDailyBriefing() {
       <div className="mt-3 flex flex-wrap gap-2">
         <Button
           size="sm"
-          className="font-semibold"
+          className={`font-semibold ${status.alreadyCheckedIn ? "" : "border border-mw-accent bg-mw-accent text-[#140A02] hover:bg-[#FF8F3D]"}`}
           disabled={Boolean(busy) || status.alreadyCheckedIn}
           onClick={() => void handleCheckin()}
         >
