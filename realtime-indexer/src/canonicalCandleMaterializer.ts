@@ -105,7 +105,8 @@ function bigintRatio(value: bigint, denominator: bigint): number {
   return Number(whole) + Number(remainder) / Number(denominator);
 }
 
-function bscRpcUrls(chainId: number): string[] {
+/** EVM curve-chain RPC list: Robinhood RPCs for 4663/46630, BNB RPCs otherwise. Shared with indexer.ts. */
+export function bscRpcUrls(chainId: number): string[] {
   if (chainId === 46630) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630);
   if (chainId === 4663) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663);
   return parseRpcList(chainId === 56 ? ENV.BSC_RPC_HTTP_56 : ENV.BSC_RPC_HTTP_97);

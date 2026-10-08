@@ -68,12 +68,40 @@ function isTruthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
-function readVerifiedGenerations(chainId, body) {
-  const factoryGeneration = Number(body?.onChainPreflight?.factoryGeneration || 0);
-  const campaignGeneration = Number(body?.onChainPreflight?.campaignGeneration || 0);
+const FACTORY_GENERATION_ABI = [
+  "function FACTORY_GENERATION() view returns (uint32)",
+  "function CAMPAIGN_GENERATION() view returns (uint32)",
+];
+
+/** FACTORY_GENERATION() / CAMPAIGN_GENERATION() of `factoryAddress`, read with the API's provider for the chain. */
+export async function readFactoryGenerationsOnChain({ chainId, factoryAddress }) {
+  const provider = await getServerReadProvider(chainId);
+  const factory = new ethers.Contract(factoryAddress, FACTORY_GENERATION_ABI, provider);
+  const [factoryGeneration, campaignGeneration] = await Promise.all([factory.FACTORY_GENERATION(), factory.CAMPAIGN_GENERATION()]);
+  return { factoryGeneration: Number(factoryGeneration), campaignGeneration: Number(campaignGeneration) };
+}
+
+export class ScheduledGenerationMismatchError extends Error {}
+
+/**
+ * The generation pair the scheduled request is signed for: read from the factory on the draft's chain,
+ * never taken from the request. An onChainPreflight pair in the body (set by draft-deploy.js) must
+ * match the read. `deps.readGenerations` is injectable for tests.
+ */
+export async function readVerifiedGenerations(chainId, body, { factoryAddress, readGenerations = readFactoryGenerationsOnChain } = {}) {
+  let factoryGeneration = 0;
+  let campaignGeneration = 0;
+  try {
+    const onChain = await readGenerations({ chainId, factoryAddress });
+    factoryGeneration = Number(onChain?.factoryGeneration || 0);
+    campaignGeneration = Number(onChain?.campaignGeneration || 0);
+  } catch {
+    // An unreadable factory leaves 0/0 and is refused below.
+  }
+  let verified;
   try {
     const { factoryGen, campaignGen } = assertSupportedGenerations(chainId, factoryGeneration, campaignGeneration);
-    return { factoryGeneration: factoryGen, campaignGeneration: campaignGen };
+    verified = { factoryGeneration: factoryGen, campaignGeneration: campaignGen };
   } catch (error) {
     throw new Error(
       `Verified on-chain factory generation is required before scheduled authorization; ` +
@@ -81,6 +109,18 @@ function readVerifiedGenerations(chainId, body) {
         `got ${factoryGeneration}/${campaignGeneration}.`,
     );
   }
+  const preflight = body?.onChainPreflight;
+  if (preflight && (preflight.factoryGeneration != null || preflight.campaignGeneration != null)) {
+    const claimedFactory = Number(preflight.factoryGeneration || 0);
+    const claimedCampaign = Number(preflight.campaignGeneration || 0);
+    if (claimedFactory !== verified.factoryGeneration || claimedCampaign !== verified.campaignGeneration) {
+      throw new ScheduledGenerationMismatchError(
+        `Factory generation mismatch: the request says ${claimedFactory}/${claimedCampaign}, ` +
+          `the factory on chain ${chainId} reports ${verified.factoryGeneration}/${verified.campaignGeneration}.`,
+      );
+    }
+  }
+  return verified;
 }
 
 /**
@@ -232,9 +272,12 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
 
   let generations;
   try {
-    generations = readVerifiedGenerations(chainId, body);
+    generations = await readVerifiedGenerations(chainId, body, { factoryAddress });
   } catch (error) {
-    return json(res, 409, { error: error.message, code: "SCHEDULED_CREATE_GENERATION_NOT_VERIFIED" });
+    const code = error instanceof ScheduledGenerationMismatchError
+      ? "SCHEDULED_CREATE_GENERATION_MISMATCH"
+      : "SCHEDULED_CREATE_GENERATION_NOT_VERIFIED";
+    return json(res, 409, { error: error.message, code });
   }
   const { factoryGeneration, campaignGeneration } = generations;
 

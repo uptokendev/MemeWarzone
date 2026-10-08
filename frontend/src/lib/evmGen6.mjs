@@ -10,14 +10,11 @@
  * factories stay on their existing create/trade code (E14).
  */
 import {
-  DBC_ANTI_SNIPER_DURATION_SECONDS,
-  DBC_ANTI_SNIPER_START_FEE_BPS,
   DBC_CREATOR_LOCK_COPY,
   DBC_LOCK_CLIFF_SECONDS,
   DBC_LOCK_FREQUENCY_SECONDS,
   DBC_LOCK_PERIODS,
 } from "../../shared/dbcEconomics.mjs";
-import { antiSniperFeeLine } from "../../shared/dbcAntiSniper.mjs";
 import { creatorLockBadge } from "../../shared/dbcLockSchedule.mjs";
 
 export const EVM_GEN6_FACTORY_GENERATION = 6;
@@ -35,9 +32,12 @@ export const EVM_FIRST_BUY_MAX_SUPPLY_BPS = 1000n;
 /** LaunchCampaign.CREATOR_FIRST_BUY_MAX_TARGET_BPS: cost before fee <= 50% of the native target (E8). */
 export const EVM_FIRST_BUY_MAX_TARGET_BPS = 5_000n;
 
-/** C2: the same 50% -> 2% over 60 s as DBC D14. */
-export const EVM_ANTI_SNIPER_START_BPS = DBC_ANTI_SNIPER_START_FEE_BPS;
-export const EVM_ANTI_SNIPER_WINDOW_SECONDS = DBC_ANTI_SNIPER_DURATION_SECONDS;
+/**
+ * C2: LaunchCampaign.ANTI_SNIPER_START_BPS and ANTI_SNIPER_WINDOW, 50% -> base fee over 60 s.
+ * Pinned here, not taken from DBC: the DBC start fee moved to 90%; the deployed contract's cannot move.
+ */
+export const EVM_ANTI_SNIPER_START_BPS = 5000;
+export const EVM_ANTI_SNIPER_WINDOW_SECONDS = 60;
 
 /** C4: 20% at 30 days after each buy, then 20% every 7 days (DBC D12). */
 export const EVM_ESCROW_CLIFF_SECONDS = DBC_LOCK_CLIFF_SECONDS;
@@ -232,9 +232,21 @@ export function evmTradeFeeBps({ launchAt, nowUnix, baseFeeBps = 200 }) {
   return base + Math.floor(((EVM_ANTI_SNIPER_START_BPS - base) * left) / EVM_ANTI_SNIPER_WINDOW_SECONDS);
 }
 
-/** "Launch fee: X% now, 2% from HH:MM:SS.": the DBC line, with trading start = launchAt. */
-export function evmAntiSniperLine({ launchAt, nowUnix, timeZone } = {}) {
-  return antiSniperFeeLine({ activationUnix: Number(launchAt || 0), nowUnix, timeZone });
+/** "Launch fee: X% now, 2% from HH:MM:SS.": the DBC wording, from the gen-6 contract formula (evmTradeFeeBps). */
+export function evmAntiSniperLine({ launchAt, nowUnix, baseFeeBps = 200, timeZone } = {}) {
+  const now = Number(nowUnix ?? Math.floor(Date.now() / 1000));
+  const start = Number(launchAt || 0);
+  const bps = evmTradeFeeBps({ launchAt: start, nowUnix: now, baseFeeBps });
+  const pct = Math.round(bps / 100);
+  const basePct = Math.round(Number(baseFeeBps) / 100);
+  if (bps <= Number(baseFeeBps)) return `Launch fee: ${pct}% now.`;
+  const when = new Date((start + EVM_ANTI_SNIPER_WINDOW_SECONDS) * 1000).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone,
+  });
+  return `Launch fee: ${pct}% now, ${basePct}% from ${when}.`;
 }
 
 // ---------------------------------------------------------------- creator escrow (C4)

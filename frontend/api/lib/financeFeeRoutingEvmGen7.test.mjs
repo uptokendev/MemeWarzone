@@ -30,3 +30,29 @@ test("gen-6 lanes keep their text and their place", () => {
   assert.deepEqual(mainnetIds.slice(0, 3), ["evm_trade_v4", "evm_trade_v3", "evm_finalize"]);
   assert.deepEqual(evmFeeRoutingRegistry(97).flows.map((f) => f.id).slice(0, 2), ["evm_trade_v4", "evm_finalize"]);
 });
+
+test("gen-7 lockers from EVM_GEN7_LOCKER_<id> are appended after the pinned locker; unset changes nothing", () => {
+  const L1 = "0x6666666666666666666666666666666666666666";
+  const L2 = "0x7777777777777777777777777777777777777777";
+  for (const chainId of [56, 4663, 97, 46630]) {
+    assert.deepEqual(evmFeeRoutingRegistry(chainId, {}), evmFeeRoutingRegistry(chainId, { EVM_GEN7_LOCKER_1: L1 }), "other chains' env is ignored");
+  }
+  const plain = evmFeeRoutingRegistry(56, {});
+  assert.ok(!plain.destinations.some((d) => d.id.startsWith("lp_locker_gen7")));
+  const reg = evmFeeRoutingRegistry(56, { EVM_GEN7_LOCKER_56: `${L1},${L2},bogus` });
+  const ids = reg.destinations.map((d) => d.id);
+  const at = ids.indexOf("lp_locker");
+  assert.deepEqual(ids.slice(at, at + 3), ["lp_locker", "lp_locker_gen7_1", "lp_locker_gen7_2"]);
+  assert.deepEqual(reg.destinations.filter((d) => d.id !== "lp_locker_gen7_1" && d.id !== "lp_locker_gen7_2"), plain.destinations, "existing entries unchanged");
+  assert.equal(reg.destinations[at + 1].address, L1);
+  assert.equal(reg.destinations[at + 1].label, "PermanentLpLocker (gen-7) 1");
+  assert.deepEqual(reg.destinations[at + 1].assets, ["native", "WBNB"]);
+  const wiring = reg.wiring.filter((w) => w.id.startsWith("lp_locker_gen7"));
+  assert.deepEqual(wiring.map((w) => [w.contract, w.getter, w.expected]), [[L1, "treasuryRouter", plain.wiring.find((w) => w.id === "locker_router").expected], [L2, "treasuryRouter", plain.wiring.find((w) => w.id === "locker_router").expected]]);
+  assert.equal(reg.alerts.filter((a) => /EVM_GEN7_LOCKER_56/.test(a.message)).length, 1, "the bad entry is reported");
+
+  const rh = evmFeeRoutingRegistry(46630, { EVM_GEN7_LOCKER_46630: L1 });
+  const d = rh.destinations.find((x) => x.id === "lp_locker_gen7_1");
+  assert.equal(d.label, "PermanentV3PositionLocker (gen-7)");
+  assert.deepEqual(d.assets, ["native", "WETH"]);
+});

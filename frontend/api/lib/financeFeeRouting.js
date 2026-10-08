@@ -694,7 +694,7 @@ export async function buildFeeRouting({ network, days, db, env = process.env, fe
   const r = readers || { readEvmNative, readEvmToken, readEvmCall, readSolanaLamports, readSolanaTokenByOwner, readSolanaAccountData };
   const solana = network.chain === "solana";
   const indexerLpTreasury = solana ? await lpTreasuryReader({ env }) : "";
-  const registry = solana ? solanaFeeRoutingRegistry(env, { indexerLpTreasury }) : evmFeeRoutingRegistry(network.chainId);
+  const registry = solana ? solanaFeeRoutingRegistry(env, { indexerLpTreasury }) : evmFeeRoutingRegistry(network.chainId, env);
   const ctx = { urls: solana ? solanaRpcUrls(env) : getRpcUrls(network.chainId), fetchImpl, readers: r, now };
 
   if (!solana) await resolveRouterDestinations(registry, ctx);

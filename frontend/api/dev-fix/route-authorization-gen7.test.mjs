@@ -18,7 +18,8 @@ import { Gen6CreateOptionError, quoteGen6CreatorFirstBuy } from "../lib/evmLaunc
 // route-auth.js and draft-deploy-base.js import the DB module, which needs a URL (never connected here).
 process.env.DATABASE_URL ||= "postgresql://test:test@127.0.0.1:1/test";
 const { applyGenerationCreateFields, validateGraduationTargetForGeneration } = await import("./route-auth.js");
-const { normalizeTargetForGeneration, resolveScheduledGen6Fields } = await import("./draft-deploy-base.js");
+const { normalizeTargetForGeneration, readVerifiedGenerations, resolveScheduledGen6Fields, ScheduledGenerationMismatchError } =
+  await import("./draft-deploy-base.js");
 
 const FACTORY = "0x1111111111111111111111111111111111111111";
 const CREATOR = "0x2222222222222222222222222222222222222222";
@@ -178,4 +179,43 @@ test("scheduled arm: gen-7 drafts get the CP-curve cost plus slack; gen-6 drafts
   const { cost } = quoteGen6CreatorFirstBuy({ tokens: 3_000_000n * WAD, ...context6 });
   assert.equal(out6.requestFields.firstBuyMaxCost, (cost + (cost * 500n) / 10_000n).toString());
   assert.equal(out6.firstBuy.curve, undefined, "gen-6 quote shape unchanged");
+});
+
+test("scheduled arm: the generation pair is read from the factory on the draft's chain, not from the request", async () => {
+  const calls = [];
+  const reader = (pair) => async (args) => {
+    calls.push(args);
+    return pair;
+  };
+  // On-chain 7/6, preflight agrees.
+  assert.deepEqual(
+    await readVerifiedGenerations(97, { onChainPreflight: { factoryGeneration: 7, campaignGeneration: 6 } }, { factoryAddress: FACTORY, readGenerations: reader({ factoryGeneration: 7, campaignGeneration: 6 }) }),
+    { factoryGeneration: 7, campaignGeneration: 6 },
+  );
+  assert.deepEqual(calls[0], { chainId: 97, factoryAddress: FACTORY });
+  // No preflight in the body: the on-chain pair is used.
+  assert.deepEqual(
+    await readVerifiedGenerations(56, {}, { factoryAddress: FACTORY, readGenerations: reader({ factoryGeneration: 6, campaignGeneration: 5 }) }),
+    { factoryGeneration: 6, campaignGeneration: 5 },
+  );
+  // The request claims gen-6, the factory is gen-7: refused as a mismatch.
+  await assert.rejects(
+    readVerifiedGenerations(97, { onChainPreflight: { factoryGeneration: 6, campaignGeneration: 5 } }, { factoryAddress: FACTORY, readGenerations: reader({ factoryGeneration: 7, campaignGeneration: 6 }) }),
+    (error) => error instanceof ScheduledGenerationMismatchError && /says 6\/5/.test(error.message) && /reports 7\/6/.test(error.message),
+  );
+  // An unsupported on-chain pair keeps the existing message (not a mismatch error).
+  await assert.rejects(
+    readVerifiedGenerations(56, { onChainPreflight: { factoryGeneration: 5, campaignGeneration: 4 } }, { factoryAddress: FACTORY, readGenerations: reader({ factoryGeneration: 5, campaignGeneration: 4 }) }),
+    (error) => !(error instanceof ScheduledGenerationMismatchError) && /^Verified on-chain factory generation is required before scheduled authorization; chain 56 requires .*got 5\/4\.$/.test(error.message),
+  );
+  // An unreadable factory is refused, even when the request carries a supported pair.
+  await assert.rejects(
+    readVerifiedGenerations(97, { onChainPreflight: { factoryGeneration: 7, campaignGeneration: 6 } }, {
+      factoryAddress: FACTORY,
+      readGenerations: async () => {
+        throw new Error("call revert");
+      },
+    }),
+    (error) => !(error instanceof ScheduledGenerationMismatchError) && /got 0\/0\.$/.test(error.message),
+  );
 });

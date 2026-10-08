@@ -79,3 +79,48 @@ test("dry and no-gas never send", async () => {
   assert.equal(poor.sent.length, 0);
   assert.deepEqual(await harvestLpFees({ db: { query: async () => { throw new Error("must not query"); } }, mode: "off" }), []);
 });
+
+const GEN7_LOCKER = "0x6666666666666666666666666666666666666666";
+
+test("gen-7 lockers from EVM_GEN7_LOCKER_<id> are harvested after the pinned locker, with their own skip keys", async () => {
+  const base = fakeChain({ fees: { [POOL_A]: [10n, 0n] } });
+  const gen7 = fakeChain({ fees: { [POOL_B]: [0n, 3n] } });
+  const asked = [];
+  const skip = new Map();
+  const out = await harvestLpFees({
+    db,
+    env: { EVM_GEN7_LOCKER_56: ` ${GEN7_LOCKER}, not-an-address ` },
+    mode: "send",
+    skip,
+    nowMs: 1000,
+    chainFor: (id) => (id === 56 ? base.c : null),
+    gen7ChainFor: (id, locker) => {
+      asked.push([id, locker]);
+      return gen7.c;
+    },
+  });
+  assert.deepEqual(asked, [[56, GEN7_LOCKER]], "only the valid address, only on its chain");
+  assert.deepEqual(base.sent.map((s) => s.args[0].toLowerCase()), [POOL_A]);
+  assert.deepEqual(gen7.sent.map((s) => s.args[0].toLowerCase()), [POOL_B]);
+  const fromGen7 = out.find((o) => o.pool.toLowerCase() === POOL_B);
+  assert.equal(fromGen7.locker, GEN7_LOCKER);
+  assert.equal(out.find((o) => o.pool.toLowerCase() === POOL_A).locker, undefined, "pinned-locker outcomes keep their shape");
+  // Each locker skips the pools it does not know under its own key.
+  assert.ok(skip.get(`56:${POOL_B}`) > 1000, "POOL_B is not on the pinned locker");
+  assert.ok(skip.get(`56:${GEN7_LOCKER.toLowerCase()}:${POOL_A}`) > 1000, "POOL_A is not on the gen-7 locker");
+  assert.ok(skip.get(`56:${OLD}`) > 1000);
+});
+
+test("without EVM_GEN7_LOCKER_<id> no extra locker is built", async () => {
+  const base = fakeChain({ fees: { [POOL_A]: [10n, 0n], [POOL_B]: [0n, 0n] } });
+  await harvestLpFees({
+    db,
+    env: {},
+    mode: "send",
+    chainFor: (id) => (id === 56 ? base.c : null),
+    gen7ChainFor: () => {
+      throw new Error("must not be called");
+    },
+  });
+  assert.deepEqual(base.sent.map((s) => s.args[0].toLowerCase()), [POOL_A]);
+});

@@ -9,6 +9,7 @@
 // are resolved from the live router getters and labelled as such.
 
 import { id as keccakId } from "ethers";
+import { evmGen7Lockers } from "./evmGen7Lockers.js";
 
 export const EVM_FEE_ROUTING_CHAINS = Object.freeze({
   56: { chain: "bnb", environment: "mainnet", nativeSymbol: "BNB", nativeDecimals: 18, tokens: { WBNB: { address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", decimals: 18 } } },
@@ -206,8 +207,29 @@ function finalizeFlowGen7(router) {
   };
 }
 
-function mainnetRegistry(chainId) {
+/**
+ * Gen-7 lockers from EVM_GEN7_LOCKER_<chainId> (evmGen7Lockers.js): destinations appended after the
+ * pinned locker, one warning per entry that is not an address. Unset: nothing.
+ */
+function gen7LockerEntries(chainId, env) {
+  const { lockers, invalid } = evmGen7Lockers(chainId, env);
+  const name = chainId === 4663 || chainId === 46630 ? "PermanentV3PositionLocker" : "PermanentLpLocker";
+  const destinations = lockers.map((address, i) => ({
+    id: `lp_locker_gen7_${i + 1}`,
+    label: lockers.length > 1 ? `${name} (gen-7) ${i + 1}` : `${name} (gen-7)`,
+    kind: "contract",
+    address,
+    custody: "Permanently locked graduation liquidity of gen-7 coins; pendingProtocolToken holds refused shares",
+    role: "Harvests LP fees 80% creator / 20% protocol",
+    citation: `EVM_GEN7_LOCKER_${chainId}; contracts/PermanentLpLocker.sol:45-46,403-441; contracts/PermanentV3PositionLocker.sol:74-75`,
+  }));
+  const alerts = invalid.map((entry) => ({ level: "warning", message: `EVM_GEN7_LOCKER_${chainId} has an entry that is not an address and was ignored: ${entry}` }));
+  return { destinations, alerts };
+}
+
+function mainnetRegistry(chainId, env) {
   const a = MAINNET[chainId];
+  const gen7 = gen7LockerEntries(chainId, env);
   const network = EVM_FEE_ROUTING_CHAINS[chainId];
   const rec = a.record;
   const forwarder = EVM_PROTOCOL_REVENUE_FORWARDERS[chainId];
@@ -234,6 +256,7 @@ function mainnetRegistry(chainId) {
     { id: "charity", label: "CharityTreasury", kind: "vault", address: a.charity, custody: "Immutable charity receiver of the monthly league", role: "Monthly league overflow above the USD cap", citation: "contracts/MonthlyLeagueTreasury.sol:189-211", assets: native },
     { id: "event_prize", label: "EventPrizeVaultV1", kind: "vault", address: a.eventPrize, custody: "Per-event prize pools", role: "70% of sponsorships", citation: "contracts/WarzoneSponsorshipRouterV1.sol:23-24,181-182", assets: native },
     { id: "lp_locker", label: a.lockerName, kind: "contract", address: a.locker, custody: "Permanently locked graduation liquidity; pendingProtocolToken holds refused shares", role: "Harvests LP fees 80% creator / 20% protocol", citation: "contracts/PermanentLpLocker.sol:45-46,403-441; contracts/PermanentV3PositionLocker.sol:74-75", assets: withWrapped },
+    ...gen7.destinations.map((d) => ({ ...d, assets: withWrapped })),
     { id: "protocol_forwarder", label: "ProtocolRevenueForwarder", kind: "contract", address: forwarder.address, custody: `Forwards native to ProtocolRevenueVault on receive(); flush() (anyone) unwraps ${a.wrapped} and forwards it. Admin = Safe.`, role: `Unwraps the LP protocol 20% once the router points at it (PF1, then PF2)`, citation: `contracts/ProtocolRevenueForwarder.sol; ${forwarder.record} (deploy tx ${forwarder.deployTx}, block ${forwarder.deployBlock})`, assets: withWrapped },
     { id: "router_v4", label: "TreasuryRouterV4 (should hold nothing)", kind: "contract", address: a.routerV4, custody: "Forwards in the same call", role: "Live fee router (gen-6)", citation: `${rec}/mainnet.evmgen-fees.json`, assets: native },
     { id: "deployer", label: "Deployer (watch only)", kind: "wallet", address: EVM_DEPLOYER, custody: "Deploy key; keeps only immutable adapter admin roles", role: "Must never hold user money. No fee path in contract code pays it.", citation: "docs/claude/evm-deployments.md (Mainnet inputs)", assets: native, flags: ["deployer", "watch"] },
@@ -388,6 +411,7 @@ function mainnetRegistry(chainId) {
     { id: "sponsor_protocol", label: "SponsorshipRouter.protocolReceiver", contract: a.sponsorship, getter: "protocolReceiver", expected: a.protocol },
     { id: "sponsor_marketing", label: "SponsorshipRouter.marketingReceiver", contract: a.sponsorship, getter: "marketingReceiver", expected: a.protocol },
     { id: "locker_router", label: `${a.lockerName}.treasuryRouter`, contract: a.locker, getter: "treasuryRouter", expected: a.routerV4 },
+    ...gen7.destinations.map((d) => ({ id: `${d.id}_router`, label: `${d.label}.treasuryRouter`, contract: d.address, getter: "treasuryRouter", expected: a.routerV4 })),
   ];
 
   return {
@@ -406,12 +430,14 @@ function mainnetRegistry(chainId) {
     lpForwarder: { router: a.routerV4, vault: a.protocol, forwarder: forwarder.address, wrapped: a.wrapped, deployTx: forwarder.deployTx, record: forwarder.record },
     alerts: [
       { level: "info", message: "The first $10,000 of protocol revenue goes to operator EOA 0x4CB6…7810 (intended per Safe batch V3); everything after goes to the Safe." },
+      ...gen7.alerts,
     ],
   };
 }
 
-function testnetRegistry(chainId) {
+function testnetRegistry(chainId, env) {
   const t = TESTNET_ROUTERS[chainId];
+  const gen7 = gen7LockerEntries(chainId, env);
   const network = EVM_FEE_ROUTING_CHAINS[chainId];
   const wrapped = Object.keys(network.tokens)[0];
   const labels = {
@@ -423,6 +449,7 @@ function testnetRegistry(chainId) {
     custody: "Resolved live from the router (no pinned record in this view)", role: "", citation: `${t.record}; TreasuryRouterV4.${getter}()`,
     assets: destId === "protocol_vault" ? ["native", wrapped] : ["native"],
   }));
+  destinations.push(...gen7.destinations.map((d) => ({ ...d, assets: ["native", wrapped] })));
   return {
     network,
     deployer: EVM_DEPLOYER,
@@ -430,7 +457,7 @@ function testnetRegistry(chainId) {
     flows: [tradeFlowV4(t.router, wrapped), finalizeFlow(`TreasuryRouterV4 ${t.router}`), tradeFlowV4Gen7(t.router), finalizeFlowGen7(`TreasuryRouterV4 ${t.router}`)],
     wiring: [],
     inflowDestinations: { weekly: "weekly_league", monthly: "monthly_league", recruiter: "recruiter_vault", airdrop: "community_vault", squad: "community_vault", protocol: "protocol_vault", creator: "creator_vault_v2" },
-    alerts: [{ level: "info", message: "Testnet: destinations are read from the gen-6 router's getters at request time. The live API reads the production database, which holds no testnet routing events." }],
+    alerts: [{ level: "info", message: "Testnet: destinations are read from the gen-6 router's getters at request time. The live API reads the production database, which holds no testnet routing events." }, ...gen7.alerts],
   };
 }
 
@@ -462,8 +489,8 @@ export function evmMainnetVoteAddresses(chainId) {
   return a ? { voteTreasury: a.upvote, protocolRevenueVault: a.protocol } : null;
 }
 
-export function evmFeeRoutingRegistry(chainId) {
-  if (MAINNET[chainId]) return mainnetRegistry(chainId);
-  if (TESTNET_ROUTERS[chainId]) return testnetRegistry(chainId);
+export function evmFeeRoutingRegistry(chainId, env = process.env) {
+  if (MAINNET[chainId]) return mainnetRegistry(chainId, env);
+  if (TESTNET_ROUTERS[chainId]) return testnetRegistry(chainId, env);
   throw new Error(`No EVM fee routing registry for chain ${chainId}.`);
 }

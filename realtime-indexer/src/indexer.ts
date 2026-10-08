@@ -9,6 +9,7 @@ import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/attribution.js";
 import { upsertRewardEvent } from "./rewards/ingest.js";
 import { createStaticJsonRpcProvider, createWorkingProvider, parseRpcList } from "./rpcProvider.js";
+import { bscRpcUrls } from "./canonicalCandleMaterializer.js";
 import { healRobinhoodGraduatedCms } from "./robinhoodCmsHeal.js";
 import {
   BNB_CURVE_PARAM_FRAGMENTS,
@@ -19,6 +20,7 @@ import {
 } from "./bnbCurvePricing.js";
 import { campaignScanChunks } from "./campaignScanChunks.js";
 import { checkMilestones } from "./milestones.js";
+import { createEvmMilestoneProgress, type EvmMilestoneView } from "./evm/evmMilestoneProgress.js";
 import { notifyCampaignCreated, notifyCampaignGraduated } from "./campaignLifecycleNotifications.js";
 import { resolveCampaignGeneration, type CampaignGenerationInfo } from "./evm/evmGen5Store.js";
 import { auxTopics, configuredGen5AuxContracts, recordGen5AuxLog, type AuxContract } from "./evm/evmGen5Aux.js";
@@ -611,7 +613,7 @@ async function insertTrade(row: {
   }
 
   await touchCampaignActivity(row.chainId, row.campaign, row.blockTime);
-  await checkMilestones(pool, row.chainId, row.campaign);
+  await checkMilestones(pool, row.chainId, row.campaign, evmMilestoneProgress);
 
   return { inserted: isInsert, tokenAmount, bnbAmount, priceBnb };
 }
@@ -809,6 +811,27 @@ async function upsertCandle(
   await publishCandle(chainId, campaign, candleUpsertPayload(tf, bucketSec, row));
 }
 
+// Near-graduation alerts: each campaign's own target (evm/evmMilestoneProgress.ts), read on the chain's RPC.
+const MILESTONE_VIEW_ABI = [
+  "function graduationNativeTarget() view returns (uint256)",
+  "function curveSupply() view returns (uint256)",
+];
+const milestoneProviders = new Map<number, ethers.JsonRpcProvider>();
+const evmMilestoneProgress = createEvmMilestoneProgress({
+  db: pool,
+  read: async (chainId: number, campaign: string, view: EvmMilestoneView) => {
+    let provider = milestoneProviders.get(chainId);
+    if (!provider) {
+      const url = bscRpcUrls(chainId)[0];
+      if (!url) throw new Error(`no RPC for chain ${chainId}`);
+      provider = createStaticJsonRpcProvider(url, chainId, { timeoutMs: 8_000 });
+      milestoneProviders.set(chainId, provider);
+    }
+    const contract = new ethers.Contract(campaign, MILESTONE_VIEW_ABI, provider) as any;
+    return BigInt(await contract[view]());
+  },
+});
+
 // basePrice/priceSlope, plus virtualNative/virtualToken for gen-7 (LaunchCampaignGen7 has no linear params).
 const BNB_CURVE_PARAM_ABI = BNB_CURVE_PARAM_FRAGMENTS;
 const BNB_CURVE_PARAM_TTL_MS = 5 * 60 * 1000;
@@ -820,7 +843,8 @@ async function loadBnbCurveParams(chainId: number, campaign: string): Promise<Bn
   if (cached && Date.now() - cached.at < BNB_CURVE_PARAM_TTL_MS) {
     return cached.params;
   }
-  const urls = parseRpcList(chainId === 56 ? ENV.BSC_RPC_HTTP_56 : ENV.BSC_RPC_HTTP_97);
+  // Robinhood campaigns are read on the Robinhood RPCs (before this, 4663/46630 went to BSC_RPC_HTTP_97).
+  const urls = bscRpcUrls(chainId);
   if (!urls.length) return null;
   try {
     const { provider } = await createWorkingProvider(urls, chainId, {
