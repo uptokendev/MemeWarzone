@@ -8,10 +8,14 @@
  * Optional: --chain 101|56|4663 for one chain.
  */
 import "../api/load-local-env.mjs";
+import { installRpcUsageCounters } from "../api/lib/rpcUsage.js";
 import { pool } from "../server/db.js";
 import { refreshFinanceSnapshots } from "../api/lib/financeSnapshotJobs.js";
 import { defaultSummaryBuild, readIndexerLpFeesLive } from "../api/admin/finance.js";
 import { apiLpFeesSnapshotKey, lpFeesSnapshotBuild } from "../api/dashboard/lp-fees.js";
+
+// One [finance-snapshots-rpc] line at exit: the JSON-RPC requests this run sent, per chain and method.
+installRpcUsageCounters({ once: true, label: "finance-snapshots-rpc" });
 
 const chainArg = process.argv.indexOf("--chain");
 const chainIds = chainArg > -1 ? [Number(process.argv[chainArg + 1])] : null;

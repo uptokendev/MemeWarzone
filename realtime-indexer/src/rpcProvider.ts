@@ -1,4 +1,8 @@
 import { ethers, FetchRequest, Network } from "ethers";
+import { countRpcRequest, hookEthersRpcCounter } from "./rpcUsage.js";
+
+// Count every JSON-RPC request this process sends (by chain and method; never the URL).
+hookEthersRpcCounter();
 
 /**
  * Shared JSON-RPC helpers for BSC indexers.
@@ -93,7 +97,9 @@ export async function rawRpcCall(
   method: string,
   params: unknown[] = [],
   timeoutMs = 5_000,
+  chainId: number | null = null,
 ): Promise<unknown> {
+  countRpcRequest(chainId ?? "unknown", method);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
   try {
@@ -135,8 +141,8 @@ export async function probeRpcUrl(
   const started = Date.now();
   try {
     const [chainHex, blockHex] = await Promise.all([
-      rawRpcCall(rpcUrl, "eth_chainId", [], timeoutMs),
-      rawRpcCall(rpcUrl, "eth_blockNumber", [], timeoutMs),
+      rawRpcCall(rpcUrl, "eth_chainId", [], timeoutMs, expectedChainId),
+      rawRpcCall(rpcUrl, "eth_blockNumber", [], timeoutMs, expectedChainId),
     ]);
     const chainId =
       typeof chainHex === "string" && chainHex.startsWith("0x") ? parseInt(chainHex, 16) : NaN;
@@ -209,17 +215,18 @@ export async function createWorkingProvider(
   );
 }
 
-/** Redact API keys from RPC URLs in logs. */
+/**
+ * Redact API keys from RPC URLs in logs and status output: scheme and host
+ * only. Providers put the key in the path (Chainstack: one path segment,
+ * Infura/Alchemy: /v3/<key>, BlockPI: /v1/rpc/<key>) or in the query, so
+ * neither is ever shown.
+ */
 export function maskRpcUrl(url: string): string {
   try {
     const parsed = new URL(url);
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    if (parts.length >= 2 && parts[parts.length - 1].length > 20) {
-      parts[parts.length - 1] = `${parts[parts.length - 1].slice(0, 6)}…`;
-      parsed.pathname = `/${parts.join("/")}`;
-    }
-    return parsed.toString();
+    const hidden = (parsed.pathname && parsed.pathname !== "/") || parsed.search || parsed.username || parsed.password;
+    return `${parsed.protocol}//${parsed.host}${hidden ? "/…" : ""}`;
   } catch {
-    return url.slice(0, 48) + (url.length > 48 ? "…" : "");
+    return "rpc";
   }
 }

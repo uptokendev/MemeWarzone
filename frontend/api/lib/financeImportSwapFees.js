@@ -64,7 +64,31 @@ export function solanaImportSwapRpcUrls(env = process.env) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** JSON-RPC with URL fallback: the first URL that answers wins; each round of URLs is retried with backoff (rate limits). */
+/** Host of an RPC URL for error messages: never the path or query (they carry the provider key). */
+export function rpcHost(url) {
+  try {
+    return new URL(url).host || "rpc";
+  } catch {
+    return "rpc";
+  }
+}
+
+// eth_getLogs refusals that a smaller block range can fix: range caps, result
+// caps, and the "limit exceeded" (-32005) public BSC nodes answer to any getLogs.
+const RANGE_LIMIT_ERROR = /block range|range (is )?too (large|wide|big)|range limit|limit exceeded|exceeds? (the )?(max|limit)|exceeded (the )?(max|limit)|too many (results|blocks|logs)|more than \d+ (results|logs)|query returned more than|response size|max(imum)? (block )?range|-32005/i;
+
+/** True when an eth_getLogs error says the block range (or its result) was too big. */
+export function isRangeLimitError(error) {
+  return Boolean(error?.rangeLimited) || RANGE_LIMIT_ERROR.test(String(error?.message || error || ""));
+}
+
+/**
+ * JSON-RPC with URL fallback: the first URL that answers wins; each round of
+ * URLs is retried with backoff (rate limits). An error names the host of every
+ * URL that refused (host only, never the key in the path). An eth_getLogs that
+ * a URL refused for its range is not retried at the same range: the caller
+ * shrinks the range instead.
+ */
 export function rpcClient(urls, { fetchImpl = fetch, timeoutMs = 20_000, retries = 3, backoffMs = 1000 } = {}) {
   return async function call(method, params) {
     let lastError = null;
@@ -73,26 +97,38 @@ export function rpcClient(urls, { fetchImpl = fetch, timeoutMs = 20_000, retries
       const result = await once(method, params);
       if (result.ok) return result.value;
       lastError = result.error;
+      if (lastError?.rangeLimited) break;
     }
     throw lastError || new Error(`${method}: no RPC configured`);
   };
   async function once(method, params) {
-    let lastError = null;
+    const refusals = [];
     for (const url of urls) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await fetchImpl(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: controller.signal });
-        const body = await response.json();
-        if (body?.error) throw new Error(`${method}: ${String(body.error.message || JSON.stringify(body.error)).slice(0, 200)}`);
+        let body = null;
+        try {
+          body = await response.json();
+        } catch (error) {
+          if (response?.ok === false) throw new Error(`HTTP ${response.status}`);
+          throw error;
+        }
+        if (body?.error) throw new Error(String(body.error.message || JSON.stringify(body.error)).slice(0, 200));
+        if (response?.ok === false) throw new Error(`HTTP ${response.status}`);
         return { ok: true, value: body.result };
       } catch (error) {
-        lastError = error;
+        refusals.push({ host: rpcHost(url), message: String(error?.name === "AbortError" ? "timeout" : error?.message || error).slice(0, 200) });
       } finally {
         clearTimeout(timer);
       }
     }
-    return { ok: false, error: lastError };
+    if (!refusals.length) return { ok: false, error: null };
+    const error = new Error(`${method}: ${refusals.map((r) => `${r.host} refused: ${r.message}`).join(" | ")}`);
+    error.hosts = refusals.map((r) => r.host);
+    error.rangeLimited = method === "eth_getLogs" && refusals.some((r) => RANGE_LIMIT_ERROR.test(r.message));
+    return { ok: false, error };
   }
 }
 
@@ -185,7 +221,13 @@ export function evmSwapTokenSide(receipt, wallet, wrapped) {
   return { token: null, side: null };
 }
 
-/** New fee rows on BNB / Robinhood from block `fromBlock`, oldest first, and the next block to scan. */
+/**
+ * New fee rows on BNB / Robinhood from block `fromBlock`, oldest first, and the next block to scan.
+ * A getLogs range the RPC refuses is halved (down to source.minRange, default 50 blocks) and the
+ * scan goes on at that size. When even the smallest range is refused, or another getLogs error
+ * hits after some ranges were read, the scan stops there and returns what it read with `error`
+ * set, so the cursor still moves past the finished ranges.
+ */
 export async function scanEvmImportSwapFees({ source, rpc, fromBlock, maxBlocks = source.maxBlocksPerRun }) {
   const head = Number(hexToBig(await rpc("eth_blockNumber", []))) - source.confirmations;
   const start = Math.max(Number(fromBlock ?? source.startBlock), source.startBlock);
@@ -193,11 +235,25 @@ export async function scanEvmImportSwapFees({ source, rpc, fromBlock, maxBlocks 
   const rows = [];
   if (end < start) return { rows, nextBlock: start, scanned: 0, head, complete: true };
   const blockTimes = new Map();
-  for (let from = start; from <= end; from += source.maxRange) {
-    const to = Math.min(end, from + source.maxRange - 1);
-    // A split receiver (ImportFeeVault) can be paid by several routers: topic OR-list.
-    const payerTopic = source.payers ? source.payers.map(padTopic) : padTopic(source.payer);
-    const logs = await rpc("eth_getLogs", [{ address: source.receiver, topics: [VAULT_DEPOSIT_TOPIC, payerTopic], fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }]);
+  const minRange = Math.max(1, Math.min(source.maxRange, Number(source.minRange || 50)));
+  let range = source.maxRange;
+  // A split receiver (ImportFeeVault) can be paid by several routers: topic OR-list.
+  const payerTopic = source.payers ? source.payers.map(padTopic) : padTopic(source.payer);
+  let from = start;
+  while (from <= end) {
+    const to = Math.min(end, from + range - 1);
+    let logs;
+    try {
+      logs = await rpc("eth_getLogs", [{ address: source.receiver, topics: [VAULT_DEPOSIT_TOPIC, payerTopic], fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }]);
+    } catch (error) {
+      if (isRangeLimitError(error) && range > minRange) {
+        range = Math.max(minRange, Math.floor(range / 2));
+        continue;
+      }
+      const reason = `eth_getLogs ${from}-${to} (${to - from + 1} blocks): ${String(error?.message || error).slice(0, 400)}`;
+      if (from === start) throw new Error(reason);
+      return { rows, nextBlock: from, scanned: from - start, head, complete: false, range, error: reason };
+    }
     for (const log of logs || []) {
       if (log.removed) continue;
       const amount = hexToBig(String(log.data).slice(0, 66));
@@ -215,8 +271,9 @@ export async function scanEvmImportSwapFees({ source, rpc, fromBlock, maxBlocks 
         internalWallet: Boolean(wallet && isOwnerWallet(wallet)),
       });
     }
+    from = to + 1;
   }
-  return { rows, nextBlock: end + 1, scanned: end - start + 1, head, complete: end >= head };
+  return { rows, nextBlock: end + 1, scanned: end - start + 1, head, complete: end >= head, range };
 }
 
 // ------------------------------------------------------------------ store
@@ -281,12 +338,15 @@ export async function ingestImportSwapFees({ db, chainId, env = process.env, fet
   const nextCursor = source.kind === "solana" ? scan.cursor : String(scan.nextBlock);
   const inserted = dryRun ? 0 : await storeImportSwapFees(db, chainId, scan.rows, nextCursor);
   const feeRaw = scan.rows.reduce((sum, r) => sum + BigInt(r.feeRaw), 0n).toString();
-  const summary = { chainId, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: scan.rows.length, inserted, feeRaw, asset: source.asset, complete: scan.complete };
+  const summary = { chainId, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: scan.rows.length, inserted, feeRaw, asset: source.asset, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };
   log?.(summary, scan.rows);
   const split = [];
   for (const splitSource of importSwapFeeSplitSources(env).filter((s) => s.chainId === chainId)) {
     split.push(await ingestSplitReceiver({ db, source: splitSource, env, fetchImpl, dryRun, fromScratch, rpc, log }));
   }
+  // A scan that stopped early stored what it read; the step still reports the refusal.
+  const stopped = [scan.error && `stopped at block ${nextCursor}: ${scan.error}`, ...split.filter((s) => s.error).map((s) => `${s.receiver} stopped at block ${s.cursorAfter}: ${s.error}`)].filter(Boolean);
+  if (stopped.length) throw Object.assign(new Error(stopped.join(" || ")), { summary: { ...summary, ...(split.length ? { split } : {}) } });
   return { ...summary, rows: scan.rows, ...(split.length ? { split } : {}) };
 }
 
@@ -394,7 +454,7 @@ async function ingestSplitReceiver({ db, source, env, fetchImpl, dryRun, fromScr
   const rows = scan.rows.map((row) => ({ ...row, creatorRaw: creatorHalf(row.feeRaw) }));
   const nextCursor = source.kind === "solana" ? scan.cursor : String(scan.nextBlock);
   const stored = dryRun ? { inserted: 0, accrued: 0 } : await storeSplitImportSwapFees(db, source, rows, nextCursor);
-  const summary = { chainId: source.chainId, receiver, split: true, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: rows.length, ...stored, complete: scan.complete };
+  const summary = { chainId: source.chainId, receiver, split: true, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: rows.length, ...stored, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };
   log?.(summary, rows);
   return summary;
 }

@@ -1,4 +1,9 @@
 import express from "express";
+import { installRpcUsageCounters, rpcUsageSnapshot } from "./lib/rpcUsage.js";
+
+// Count every JSON-RPC request this process sends (by chain and method, never the URL):
+// GET /health rpcUsage, and one [rpc-usage] log line every RPC_USAGE_LOG_MINUTES (default 15).
+installRpcUsageCounters();
 
 // One stray promise rejection in any request or background task used to end the whole process
 // (Node 20 default), and every restart took the API down for ~45 s (2026-09-25). Log it loudly with
@@ -399,6 +404,8 @@ app.get("/health", async (_req, res) => {
           return "unset";
         }
       })(),
+      // JSON-RPC requests this process sent since it started, by chain and method (no URLs).
+      rpcUsage: rpcUsageSnapshot(),
     });
   } catch (err) {
     console.error("[api/server] health db check failed", err);

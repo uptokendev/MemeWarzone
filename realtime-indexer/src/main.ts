@@ -14,7 +14,10 @@ import { startSolanaIndexerLoop } from "./solanaIndexer.js";
 import { startSolanaLpHarvestLoop } from "./solanaLpHarvestLoop.js";
 import { startProtocolForwarderKeeper } from "./protocolForwarderKeeper.js";
 import { startImportCreatorFeeWorker } from "./importCreatorFeeWorker.js";
+import { startRpcUsageLog } from "./rpcUsage.js";
 
+// One [rpc-usage] line per RPC_USAGE_LOG_MINUTES (default 15) with the requests per chain and method.
+startRpcUsageLog();
 startSupportedFactoryDiscoveryLoop();
 startSolanaIndexerLoop();
 startSolanaFeeEscrowWorker();
