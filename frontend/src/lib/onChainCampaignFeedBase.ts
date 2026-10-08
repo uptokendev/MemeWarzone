@@ -1,4 +1,5 @@
 import { Contract, ethers } from "ethers";
+import { isPublicHiddenCampaign, isPublicHiddenSymbol, loadPublicHiddenCampaigns } from "@/lib/publicHiddenCampaigns";
 import LaunchFactoryArtifact from "@/abi/LaunchFactory.json";
 import {
   getFactoryAddress,
@@ -14,34 +15,6 @@ const LEGACY_FACTORY_ABI = [
   "function getCampaignPage(uint256 offset,uint256 limit) view returns ((address campaign,address token,address creator,string name,string symbol,string logoURI,string xAccount,string website,string extraLink,uint64 createdAt)[] page)",
 ] as const;
 
-// Temporary launch hygiene: keep claim-upgrade/test campaigns operational/indexed,
-// but never surface them through any public on-chain fallback path.
-const PUBLIC_HIDDEN_CAMPAIGNS = new Map<number, Set<string>>([
-  [
-    101,
-    new Set([
-      "9t72mNAVpnJCn42Z2quJTqoS8wsBTGR9aG2CvbeumXEF",
-      "Bv2EZEznfuHNHcoC5DXJJtJH8x7mAjCUagsPGeXK3Jms",
-      "EFUF3bPBaN3MzSBpm4MfXMdbXDmesPWcKaoNsLzn45VH",
-    ]),
-  ],
-]);
-
-const PUBLIC_HIDDEN_SYMBOLS = new Map<number, Set<string>>([
-  [56, new Set(["BWT"])],
-]);
-
-function isPublicHiddenCampaign(chainId: SupportedChainId, campaignAddress: string): boolean {
-  const hidden = PUBLIC_HIDDEN_CAMPAIGNS.get(Number(chainId));
-  if (!hidden) return false;
-  return hidden.has(String(campaignAddress || "").trim());
-}
-
-function isPublicHiddenSymbol(chainId: SupportedChainId, symbol: string): boolean {
-  const hidden = PUBLIC_HIDDEN_SYMBOLS.get(Number(chainId));
-  if (!hidden) return false;
-  return hidden.has(String(symbol || "").trim().toUpperCase());
-}
 
 export type OnChainCampaignPage = {
   campaigns: CampaignInfo[];
@@ -94,8 +67,8 @@ async function fetchFactoryCampaignPage(
       const campaign = campaignRaw.toLowerCase();
       const symbol = String(row?.symbol ?? "");
       if (!ethers.isAddress(campaign)) return null;
-      if (isPublicHiddenCampaign(chainId, campaignRaw)) return null;
-      if (isPublicHiddenSymbol(chainId, symbol)) return null;
+      if (isPublicHiddenCampaign(Number(chainId), campaignRaw)) return null;
+      if (isPublicHiddenSymbol(Number(chainId), symbol)) return null;
       return {
         id: offset + index,
         campaign,
@@ -139,6 +112,9 @@ export async function fetchOnChainCampaignPage(
   if (!factoryList.length) {
     return { campaigns: [], nextCursor: null, total: 0 };
   }
+
+  // The API's hidden list (test coins) before any row is read, so the filter below sees it.
+  await loadPublicHiddenCampaigns(Number(chainId));
 
   const pages = await Promise.all(
     factoryList.map((factoryAddress) =>

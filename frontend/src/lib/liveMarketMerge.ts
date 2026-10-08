@@ -1,30 +1,5 @@
-/** Campaigns kept operational for internal claim/upgrade acceptance but hidden from all public feed merges. */
-const PUBLIC_HIDDEN_CAMPAIGNS = new Map<number, Set<string>>([
-  [
-    101,
-    new Set([
-      "9t72mNAVpnJCn42Z2quJTqoS8wsBTGR9aG2CvbeumXEF",
-      "Bv2EZEznfuHNHcoC5DXJJtJH8x7mAjCUagsPGeXK3Jms",
-      "EFUF3bPBaN3MzSBpm4MfXMdbXDmesPWcKaoNsLzn45VH",
-    ]),
-  ],
-]);
+import { isPublicHiddenCampaign, isPublicHiddenSymbol } from "@/lib/publicHiddenCampaigns";
 
-const PUBLIC_HIDDEN_SYMBOLS = new Map<number, Set<string>>([
-  [56, new Set(["BWT"])],
-]);
-
-function isPublicHiddenCampaign(chainId: number, address: string): boolean {
-  const cid = Number(chainId);
-  const raw = String(address ?? "").trim();
-  return Boolean(raw && PUBLIC_HIDDEN_CAMPAIGNS.get(cid)?.has(raw));
-}
-
-function isPublicHiddenSymbol(chainId: number, symbol: unknown): boolean {
-  const cid = Number(chainId);
-  const normalized = String(symbol ?? "").trim().toUpperCase();
-  return Boolean(normalized && PUBLIC_HIDDEN_SYMBOLS.get(cid)?.has(normalized));
-}
 
 /** Canonical campaign key: EVM lowercase, Solana base58 preserved. */
 export function liveCampaignKey(chainId: number, address: string): string {
