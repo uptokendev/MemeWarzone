@@ -1,5 +1,5 @@
 import { isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
-import { submitSolanaRewardV0Claim } from "@/lib/solanaRewardV0Claim";
+import { submitSolanaRewardV0Claim, submitSolanaRewardV0Claims, type RewardClaimBatchResult } from "@/lib/solanaRewardV0Claim";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
@@ -42,6 +42,8 @@ function claimLeagueDiscriminator(): Uint8Array {
   return new Uint8Array([0x88, 0xcc, 0x21, 0xf3, 0xeb, 0x4f, 0xcb, 0xa6]);
 }
 
+export type PreparedSolanaLeagueClaimInput = Parameters<typeof submitSolanaLeagueClaim>[0];
+
 export async function submitSolanaLeagueClaim(prepared: {
   chainId?: number;
   programId: string;
@@ -57,6 +59,10 @@ export async function submitSolanaLeagueClaim(prepared: {
   proof: string[];
   recipient: string;
 }): Promise<string> {
+  return submitSolanaRewardV0Claim(await buildSolanaLeagueClaimInput(prepared));
+}
+
+async function buildSolanaLeagueClaimInput(prepared: PreparedSolanaLeagueClaimInput) {
   const chainId = Number(prepared.chainId || 101);
   if (!isSolanaRewardChainId(chainId)) throw new Error("Wrong Solana reward chain for league claim.");
 
@@ -99,7 +105,7 @@ export async function submitSolanaLeagueClaim(prepared: {
     data,
   });
 
-  return submitSolanaRewardV0Claim({
+  return {
     web3,
     chainId,
     addresses: {
@@ -111,7 +117,7 @@ export async function submitSolanaLeagueClaim(prepared: {
       recipient: prepared.recipient,
     },
     canonical: {
-      kind: "league",
+      kind: "league" as const,
       periodCode: prepared.periodCode,
       epochStartSec: prepared.epochStartSec,
       categoryHash,
@@ -119,5 +125,11 @@ export async function submitSolanaLeagueClaim(prepared: {
     },
     instruction: ix,
     label: "Solana league claim",
-  });
+  };
+}
+
+/** Several league prizes, one wallet approval (signAllTransactions); results in input order. */
+export async function submitSolanaLeagueClaims(prepared: PreparedSolanaLeagueClaimInput[]): Promise<RewardClaimBatchResult[]> {
+  const inputs = await Promise.all(prepared.map((item) => buildSolanaLeagueClaimInput(item)));
+  return submitSolanaRewardV0Claims(inputs);
 }

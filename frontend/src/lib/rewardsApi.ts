@@ -107,8 +107,10 @@ export async function submitLeagueClaim(params: {
   category: string;
   rank: number;
   recipient: string;
-  nonce: string;
-  signature: string;
+  nonce?: string;
+  signature?: string;
+  /** The 30-day sign-in instead of nonce + signature (2026-10-08). */
+  sessionToken?: string;
 }): Promise<
   | { ok: true; txHash: string; claimedAt?: string | null; amountRaw?: string }
   | {
@@ -144,10 +146,11 @@ export async function submitLeagueClaim(params: {
     }
 > {
   const { apiFetch } = await import("@/lib/apiBase");
+  const { sessionToken, ...body } = params;
   const r = await apiFetch(`/api/league`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "claim", ...params }),
+    headers: { "content-type": "application/json", ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}) },
+    body: JSON.stringify({ action: "claim", ...body }),
   });
   const j = await r.json();
   if (!r.ok) throw new Error(j?.error || "Claim failed");
@@ -161,15 +164,18 @@ export async function recordLeagueClaimTx(params: {
   category: string;
   rank: number;
   recipient: string;
-  nonce: string;
-  signature: string;
+  nonce?: string;
+  signature?: string;
   txHash: string;
+  /** With the sign-in the server checks the claim transaction on-chain instead (2026-10-08). */
+  sessionToken?: string;
 }): Promise<{ ok: boolean; txHash?: string | null }> {
   const { apiFetch } = await import("@/lib/apiBase");
+  const { sessionToken, ...body } = params;
   const r = await apiFetch(`/api/league`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "record", ...params }),
+    headers: { "content-type": "application/json", ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}) },
+    body: JSON.stringify({ action: "record", ...body }),
   });
   const j = await r.json();
   if (!r.ok) throw new Error(j?.error || "Record failed");
