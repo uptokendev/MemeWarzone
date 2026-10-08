@@ -119,7 +119,55 @@ sells, `tokenAmount` is the recipient's delta on buys and the tokens that actual
 post-graduation trading on Robinhood) ends every sell with `require(token.balanceOf(this) == 0)` and
 `require(address(this).balance == 0)`. One unit of a token sent to it makes every later sell of that token revert;
 forced native (selfdestruct) bricks every sell. No rescue path exists. Mitigation: a new adapter instance; the app
-can point at it by env.
+can point at it by env. Built as `RobinhoodV3NativeSwapAdapterV2` (A.2).
+
+### A.2 `RobinhoodV3NativeSwapAdapterV2`: audit of the diff against the live adapter (written 2026-10-08, before tests)
+
+Founder go 2026-10-08. New file `contracts/integrations/RobinhoodV3NativeSwapAdapterV2.sol`; the live
+`RobinhoodV3NativeSwapAdapter.sol` is not touched (its two interfaces are imported from it, so they are not declared
+twice). ABI byte-identical to the old artifact (same functions, arguments, returns, events, `receive`), so the app only
+swaps the address. 4,655 bytes deployed (old: 3,421). solc 0.8.24, the repo profile (viaIR, runs 1). Constructor
+`(swapRouter, wrappedNative)`, both read from the live adapter by the deploy script.
+
+Live instances it replaces (read-only `eth_call`, 2026-10-08): 4663 `0xDfd381EC…3296` (gen 6, the one the gen-7 scripts
+reuse) and `0xffF3aFBC…C1DF` (gen 4), both `swapRouter = 0xCaf681a6…5cb2` (SwapRouter02), `wrappedNative =
+0x0Bd7D308…AD73`; 46630 `0x116f9Bfe…7069` (gen 6b), router `0xDfd381EC…` (testnet SwapRouter, same address by nonce),
+WETH `0x52A47A33…9670`. The older 46630 adapter `0x1BE64fC0…` predates the deadline argument (it has the 4/5-argument
+selectors `0x60a79ac9` / `0x49f421fb`, not `0x1da7d616` / `0xbb592133`), so the current app ABI cannot call it at all.
+
+The diff, line by line:
+
+| # | Old | New | Why |
+|---|---|---|---|
+| D1 | buy: `require(WETH.balanceOf(this) == 0, "wrapped dust")` | `wrappedBefore` read before `deposit`; end check `== wrappedBefore` | 1 wei of WETH sent to the old adapter makes every buy revert. The check still proves the router spent the whole `msg.value` (a V3 swap that stops on a price limit leaves input behind; that still reverts) |
+| D2 | sell: three exact-zero checks after the native send | `tokenBefore`, `wrappedBefore`, `nativeBefore` read before the pull; `token == tokenBefore` and `WETH == wrappedBefore` checked **before** the native send, `native == nativeBefore + amountOut` after the unwrap and before the send | One token unit sent to the old adapter bricks every sell of that token; forced native bricks every sell. Moving the checks ahead of the only untrusted external call is also stricter CEI |
+| D3 | sell: `amountOut` = router's return value, unwrapped and paid | `amountOut` = WETH balance delta of the swap, `>= amountOutMinimum` checked on it ("insufficient output"); router return ignored | Pays exactly what arrived, measured by us. Equal to the router value for SwapRouter02 + WETH9 (the fork proof checks that) |
+| D4 | sell: router swaps `amountIn` after `safeTransferFrom` | adds `require(balance delta == amountIn, "token in mismatch")` | With a donation sitting in the adapter, a fee-on-transfer token would otherwise let the router spend donated units. V3 pools reject fee-on-transfer input anyway (callback balance check), so no working sell is lost |
+| D5 | - | buy and sell: `require(recipient != address(this), "invalid recipient")` | Old: a buy to the adapter strands the tokens there, which then bricks sells of that token (the D2 bug, self-inflicted). New: refused up front |
+
+Unchanged: `nonReentrant` on both entry points; deadline, zero input, zero minimum out, `token != 0 && != WETH`, zero
+recipient, zero fee checks with the same revert strings; router-level `amountOutMinimum` (kept, so a failing minimum
+still reverts inside the router exactly as before); `forceApprove(router, exact)` then `forceApprove(router, 0)`;
+`receive()` only from WETH; buy `amountOut` = router return (the pool's transfer, as the old event reported);
+events and their field order; no owner, setter, rescue or upgrade.
+
+Per function:
+
+| Function | Guard | Order (CEI) | Reachable states | Over/underflow | Griefing |
+|---|---|---|---|---|---|
+| `buyExactNativeIn` | `nonReentrant` | checks -> read `wrappedBefore` -> `deposit` (WETH9, trusted) -> exact approve -> router swap (pool pays `recipient`; token transfer hooks run here) -> approve 0 -> `WETH == wrappedBefore` -> event | Any WETH / token / native already held (donations) is never read into an amount and never moved: the router's allowance is exactly `msg.value` and reset to 0 | none: no subtraction; `msg.value` deposit cannot overflow WETH | A donation no longer blocks anything. A malicious `tokenOut` can re-enter only into the guard (reverts) or call the router itself (the router pulls from its own `msg.sender`, never from the adapter). Partial fill reverts the caller's own trade |
+| `sellExactTokenIn` | `nonReentrant` | checks -> read three start balances -> `safeTransferFrom(caller)` -> exact-amount check -> exact approve -> router swap to `this` -> approve 0 -> token back at start -> `amountOut` = WETH delta, `>= min` -> `withdraw(amountOut)` -> WETH back at start, native = start + `amountOut` -> pay `recipient` (the only untrusted call, last) -> event | Donated token / WETH / native are excluded from every amount and stay; `withdraw` unwraps only the delta | `balance - before` (token and WETH): balances can only fall below `before` if the adapter's own tokens leave, which needs an allowance it never grants on that asset in this call (token allowance = `amountIn`, consumed by the router; WETH allowance 0 during a sell); checked arithmetic reverts if a hostile token lies. `nativeBefore + amountOut` cannot overflow (bounded by WETH supply) | A recipient that reverts or re-enters only fails its own trade (re-entry hits the guard). A recipient that force-sends native during the payout changes nothing (no check after the send). A token whose `balanceOf` lies harms only its own traders. A donation no longer blocks anything |
+| `receive` | - | - | accepts only WETH9 (the unwrap) | - | forced native (selfdestruct, coinbase) bypasses it: harmless now, it is never counted |
+| constructor | - | - | non-zero router and WETH, immutable | - | - |
+
+Informational (accepted, same as the old adapter): the event is emitted after the recipient call (both functions are
+`nonReentrant`, so no re-entered state can be logged out of order); buy `amountOut` for a fee-on-transfer `tokenOut`
+is the pool's output, not the recipient's receipt (the app quotes and sets the minimum on the pool output too).
+
+Stuck funds: only donations and forced native, by design (no admin, as the old adapter). The adapter holds nothing of
+any trader between calls. Residual trust: the immutable SwapRouter02 and WETH9, as before. Migration note: a trader's
+token allowance is per adapter, so the first sell through V2 asks for a new approval (`ensureRobinhoodV3SellAllowance`
+already checks the allowance against the route's adapter address).
 
 ## Results 2026-10-08 (CI1 script, CI2 / CI3 / CI4 fork proofs)
 
@@ -214,3 +262,54 @@ Run the fork proofs:
     npx hardhat test test/importFeeVault.bnb-kyber.fork.spec.ts test/ImportSwapFeeRouter.bnb-topaz.fork.spec.ts --network bscForkRehearsal
     anvil --fork-url https://rpc.mainnet.chain.robinhood.com --chain-id 4663 --port 8646 --accounts 0 --no-rate-limit
     npx hardhat test test/importFeeVault.rh-ur.fork.spec.ts --network robinhoodForkRehearsal
+
+## Results 2026-10-08: `RobinhoodV3NativeSwapAdapterV2` (A.2)
+
+Nothing was sent to any public network; the live adapter source file is unchanged.
+
+Unit tests `test/RobinhoodV3NativeSwapAdapterV2.spec.ts` (13, on `MockImportV3Router` + `MockWETH9`, plus one parity case
+on the Uniswap-V3 math mock of the old spec): ABI byte-identical to the old artifact; buy / sell exact amounts and
+events; min-out exact passes, + 1 reverts (buy and sell); deadline second passes, + 1 reverts; zero input / minimum,
+token 0 or WETH, zero or self recipient, zero fee refused; `receive()` only from WETH; 1 token unit + 1 wei WETH + 1 wei
+selfdestruct-forced native do not brick two rounds of buys and sells and stay untouched; **regression: the old adapter
+under the same donations reverts "token dust" (sell), "native dust" (sell), "wrapped dust" (buy)**; re-entry through a
+token hook on buy and on sell hits the guard and the outer trade completes; a reverting recipient fails only its trade;
+a fee-on-transfer sell reverts "token in mismatch" and the parked donation is untouched; old vs new on the V3 math mock
+return the same buy and sell amounts.
+
+Fork proof `test/RobinhoodV3NativeSwapAdapterV2.rh.fork.spec.ts` (3; in-process fork of 4663 at block 83530593, V2
+deployed by the script below from the live adapter's immutables). Each pair from the same EVM snapshot:
+
+| Coin | Pool | Side | Live `0xDfd381EC` | V2 |
+|---|---|---|---|---|
+| HOODFUN `0xfbeD2D06` (import) | `0x4FbA3580`, 1% | buy 0.01 ETH | 7,865,687,985,461,411,824,609,708 tokens | same |
+| HOODFUN | | sell all of it | 9,801,801,840,205,701 wei | same (WETH delta == router return) |
+| MWZRH `0x3765d716` (gen 6, graduated on the fork: factory impersonated for `setRequireAuthorizedTrading(false)`, one buy to the 6.1375 ETH target, `graduate()`) | `0x8589E849`, 0.3% | buy 0.05 ETH | 459,330,763,200,050,210,138,336 tokens | same |
+| MWZRH | | sell all of it | 49,701,838,463,854,776 wei | same |
+
+Then 1 token unit donated to both adapters: live sell reverts "token dust" on both coins; V2 sells (HOODFUN
+1,966,421,996,365,352,956,152,426 tokens -> 2,465,426,811,122,418 wei; MWZRH 114,832,690,800,012,552,534,583 tokens ->
+12,512,587,375,747,857 wei) and keeps the unit. HOODFUN also: + 1 wei WETH -> live buy reverts "wrapped dust", V2 buys;
++ 1 wei forced native -> live sell reverts "native dust" (separate case without a token donation), V2 sells; V2 ends
+holding exactly the three donations. No gen-6 coin has graduated on 4663 yet (the gen-6 factory has one campaign), so
+MWZRH graduated on the fork is the only real gen-6 pool available.
+
+Deploy `scripts/deploy-robinhood-swap-adapter-v2.ts`: constructor args read from the live adapter (4663 `0xDfd381EC`,
+46630 the gen-6b record's `0x116f9Bfe`, `RH_SWAP_ADAPTER_V2_SOURCE` overrides), which must carry the deadline selectors
+(`0x1BE64fC0` on 46630 is refused: "has no buyExactNativeIn with a deadline"). 4663 needs
+`CONFIRM_RH_SWAP_ADAPTER_V2=I_UNDERSTAND_MAINNET` and an interactive terminal; 46630 `I_UNDERSTAND_TESTNET` and the
+deployer `0x77F96A7d`. Record `deployments/robinhood/<mainnet|testnet>.native-swap-adapter-v2.json` (rehearsals under
+`deployments/fork-rehearsal/`); a re-run resumes. Rehearsed on the in-process 4663 fork (inside the fork spec) and
+46630 fork (`hardhat.rh-gen7-testnet-fork.config.ts`: router `0xDfd381EC`, WETH `0x52A47A33`, 4,655 bytes).
+
+    CONFIRM_RH_SWAP_ADAPTER_V2=I_UNDERSTAND_TESTNET npx hardhat run scripts/deploy-robinhood-swap-adapter-v2.ts --network robinhoodTestnet
+    CONFIRM_RH_SWAP_ADAPTER_V2=I_UNDERSTAND_MAINNET npx hardhat run scripts/deploy-robinhood-swap-adapter-v2.ts --network robinhoodMainnet
+    npx hardhat --config hardhat.rh-fork.config.ts test test/RobinhoodV3NativeSwapAdapterV2.rh.fork.spec.ts
+
+App switch: `VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_V2_ADDRESS_<chainId>` on the APP service (build-time). Set: the
+direct-native Robinhood V3 path (`robinhoodV3Trade.ts` `resolveRobinhoodV3Route`, used by RobinhoodWarRoomTradePanel,
+and `arenaImportedRobinhood.ts`, used by ImportedTradePanel's adapter path) trades through V2; unset or empty: today's
+`VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS[_<chainId>]`, looked up exactly as before
+(`frontend/src/lib/robinhoodNativeSwapAdapterEnv.mjs`). Chain-suffixed only. The app still checks the adapter's
+`swapRouter()` / `wrappedNative()` against the market route; a trader's first V2 sell asks for a new token approval.
+The 4663 imported-coin default path (Universal Router, `robinhoodImportSwap.mjs`) is not affected.

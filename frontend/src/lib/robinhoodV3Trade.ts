@@ -6,6 +6,7 @@ import {
   type RobinhoodRouteKind,
 } from "@/lib/marketContinuityApi";
 import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import { robinhoodNativeSwapAdapterAddress } from "@/lib/robinhoodNativeSwapAdapterEnv.mjs";
 
 const V3_QUOTER_ABI = [
   "function quoteExactInputSingle(address tokenIn,address tokenOut,uint24 fee,uint256 amountIn) returns (uint256 amountOut)",
@@ -279,7 +280,7 @@ export async function resolveRobinhoodV3Route(input: {
       throw new Error("Robinhood direct-native route quote asset mismatch.");
     }
     const nativeSwapAdapterAddress = normalizeAddress(
-      envAddress("VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS", input.chainId),
+      robinhoodNativeSwapAdapterAddress(import.meta.env, input.chainId),
       "Robinhood V3 native swap adapter",
     );
     await requireCode(input.provider, nativeSwapAdapterAddress, "Robinhood V3 native swap adapter");

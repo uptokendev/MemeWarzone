@@ -8,6 +8,7 @@ import {
   type RobinhoodV3ResolvedRoute,
 } from "@/lib/robinhoodV3Trade";
 import { isRobinhoodChainId } from "@/lib/chainConfig";
+import { robinhoodNativeSwapAdapterAddress } from "@/lib/robinhoodNativeSwapAdapterEnv.mjs";
 import type { MarketRoute } from "@/lib/marketContinuityApi";
 
 const V3_FACTORY_ABI = ["function getPool(address tokenA,address tokenB,uint24 fee) view returns (address pool)"] as const;
@@ -30,7 +31,7 @@ export async function resolveImportedRobinhoodV3Route(input: {
 }): Promise<RobinhoodV3ResolvedRoute | null> {
   if (!isRobinhoodChainId(input.chainId) || !ethers.isAddress(input.tokenAddress)) return null;
   const factoryAddress = envAddress("VITE_ROBINHOOD_V3_FACTORY_ADDRESS", input.chainId);
-  const adapterAddress = envAddress("VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS", input.chainId);
+  const adapterAddress = robinhoodNativeSwapAdapterAddress(import.meta.env, input.chainId);
   if (!ethers.isAddress(factoryAddress) || !ethers.isAddress(adapterAddress)) return null;
 
   const adapter = new Contract(adapterAddress, ADAPTER_ABI, input.provider);
