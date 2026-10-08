@@ -436,6 +436,43 @@ export async function scanCheckinReminders(pool, { now = new Date(), hourUtc = N
     entry.coins += 1;
     byWallet.set(wallet, entry);
   }
+  // Creators with a live streak (checked in yesterday, not yet today) are reminded too, whatever their
+  // coin (2026-10-08): every 7th day in a row earns a free upvote. Same dedupe key: one reminder a day.
+  const streakers = new Map();
+  const streakTable = await pool.query(`select to_regclass('public.creator_checkins') is not null as ok`).catch(() => ({ rows: [] }));
+  if (streakTable.rows[0]?.ok) {
+    const { rows: live } = await pool.query(
+      `select distinct on (lower(wallet)) wallet, utc_day::text as utc_day, streak_days
+         from public.creator_checkins
+        where utc_day >= $1::date - 1
+        order by lower(wallet), utc_day desc
+        limit 5000`,
+      [day],
+    );
+    for (const row of live) {
+      const wallet = notificationWalletKey(row.wallet);
+      if (!wallet || row.utc_day !== yesterday || byWallet.has(wallet)) continue;
+      streakers.set(wallet, Number(row.streak_days || 0));
+    }
+  }
+  for (const [wallet, streakDays] of streakers) {
+    const next = streakDays + 1;
+    const r = await notify(pool, {
+      wallet,
+      category: "battles",
+      kind: "creator_checkin",
+      targetType: "league_checkin",
+      targetId: `streak:${day}`,
+      dedupeKey: `league:checkin:${wallet}:${day}`,
+      title: `Keep your ${streakDays}-day streak`,
+      body: next % 7 === 0
+        ? `Check in today in Command Center to make it ${next} days and earn a free upvote.`
+        : `Check in today in Command Center to make it ${next} days. Every 7th day in a row earns a free upvote.`,
+      target: commandPath(wallet, "overview"),
+    });
+    if (r.inserted) out.checkin += 1;
+  }
+
   for (const [wallet, { row, coins }] of byWallet) {
     const continuing = row.last_day === yesterday;
     const streakDay = continuing ? Number(row.streak_days || 0) + 1 : 1;

@@ -4,6 +4,7 @@
  * chart, trading interface, transactions, and holder distribution
  */
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
+import { CreatorStreakBadge } from "@/components/social/CreatorStreakBadge";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Copy, ExternalLink, Flag, Globe, Info, Share2, Star } from "lucide-react";
@@ -5116,6 +5117,7 @@ const toSeconds = (ts: number): number => {
                         </Avatar>
                         <WalletLabel className="truncate" wallet={creator} displayName={creatorProfile?.displayName} />
                       </Link>
+                      <CreatorStreakBadge wallet={creator} />
                     </span>
 
                     <span className="whitespace-nowrap">

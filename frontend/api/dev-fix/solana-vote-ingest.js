@@ -588,6 +588,8 @@ export async function solanaVoteIngest(req, res) {
 }
 
 export {
+  // Also used after a free upvote (api/creatorStreaks.js): the same counts for every chain.
+  patchVoteAggregates,
   describeVoterTransfers,
   extractSolTransfer,
   fetchSolUsdMicros,

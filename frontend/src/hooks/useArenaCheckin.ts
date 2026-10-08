@@ -15,6 +15,8 @@ export type ArenaCheckinCoin = {
   wins: number;
   losses: number;
   finishedFights?: number;
+  /** In this month's Major War League: the only coins whose check-in earns league points. */
+  league?: boolean;
 };
 
 export type ArenaCheckinStatus = {
@@ -24,6 +26,10 @@ export type ArenaCheckinStatus = {
   alreadyCheckedIn: boolean;
   alreadyDispatched: boolean;
   streak: number;
+  /** Free upvotes earned by 7-day streaks and not used yet (2026-10-08). */
+  streakRewards: number;
+  /** Check-ins until the next free upvote, today's included. */
+  daysToStreakReward: number;
   coins: ArenaCheckinCoin[];
 };
 
@@ -34,6 +40,8 @@ const EMPTY: ArenaCheckinStatus = {
   alreadyCheckedIn: false,
   alreadyDispatched: false,
   streak: 0,
+  streakRewards: 0,
+  daysToStreakReward: 7,
   coins: [],
 };
 
@@ -56,6 +64,8 @@ export function useArenaCheckin(walletAddress?: string, chainId?: number) {
         alreadyCheckedIn: Boolean(json?.alreadyCheckedIn),
         alreadyDispatched: Boolean(json?.alreadyDispatched),
         streak: Number(json?.streak || 0),
+        streakRewards: Number(json?.creatorStreak?.freeUpvotes || 0),
+        daysToStreakReward: Number(json?.creatorStreak?.daysToFreeUpvote || 7),
         coins: Array.isArray(json?.coins) ? json.coins : [],
       };
       setStatus(next);

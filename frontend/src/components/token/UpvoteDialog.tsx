@@ -1,4 +1,5 @@
 import "@/polyfills";
+import { useFeedSession } from "@/hooks/useFeedSession";
 import { useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 
@@ -145,6 +146,50 @@ export function UpvoteDialog({
   const [estTotalWei, setEstTotalWei] = useState<bigint | null>(null);
   const [insufficient, setInsufficient] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Free upvotes from 7-day check-in streaks (founder, 2026-10-08); launchpad coins only.
+  const feedSession = useFeedSession();
+  const [freeUpvotes, setFreeUpvotes] = useState(0);
+  useEffect(() => {
+    if (!open || isArena || !feedSession.account) {
+      setFreeUpvotes(0);
+      return;
+    }
+    let cancelled = false;
+    void apiFetch(`/api/creator-streaks?wallet=${encodeURIComponent(feedSession.account)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (!cancelled) setFreeUpvotes(Number(body?.freeUpvotes || 0));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isArena, feedSession.account]);
+
+  const handleFreeUpvote = async () => {
+    if (submitting || !voteIdentity) return;
+    setSubmitting(true);
+    try {
+      const body = await feedSession.withSession(async (token) => {
+        const res = await apiFetch("/api/votes/free", {
+          method: "POST",
+          headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ chainId, campaignAddress: voteIdentity }),
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok) throw Object.assign(new Error(json?.error || "Could not use the free upvote."), { code: json?.code });
+        return json;
+      });
+      setFreeUpvotes(Number(body?.left || 0));
+      toast({ title: "Upvoted", description: "Your free upvote has been recorded." });
+      setOpen(false);
+      window.dispatchEvent(new CustomEvent("memewarzone:upvoteConfirmed", { detail: { chainId, campaignAddress: voteIdentity, tokenAddress: voteIdentity } }));
+    } catch (error) {
+      toast({ title: "Free upvote failed", description: String((error as Error)?.message || error), variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const lockDialog = submitting;
   const priceUsd = nativeUsdPrice;
@@ -650,6 +695,11 @@ export function UpvoteDialog({
 
         <DialogFooter className="gap-2">
           <Button variant="secondary" onClick={() => setOpen(false)} disabled={submitting} className="mw-focus min-h-11 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830]">Cancel</Button>
+          {!isArena && freeUpvotes > 0 ? (
+            <Button onClick={() => void handleFreeUpvote()} disabled={submitting} className="mw-focus min-h-11 rounded-[10px] border border-[#7A3A0C] bg-[#2A1609] px-4 text-[15px] font-semibold text-mw-accent-soft hover:bg-[#3A1E0C]" data-free-upvote="true">
+              Use free upvote ({freeUpvotes} left)
+            </Button>
+          ) : null}
           <Button onClick={handleUpvote} disabled={!canUpvote || submitting || loadingCfg} className="mw-focus min-h-11 rounded-[10px] border border-mw-accent bg-mw-accent px-5 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50">
             {submitting ? "Voting…" : `${voteLabel} (${nativeUnit})`}
           </Button>
