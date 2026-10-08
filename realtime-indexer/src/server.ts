@@ -399,6 +399,8 @@ app.get("/health", async (_req, res) => {
       },
       solana: solanaIndexerPublicHealth(),
       protocolForwarderKeeper: (await import("./protocolForwarderKeeper.js")).protocolForwarderKeeperHealth(),
+      // JSON-RPC requests this process sent since it started, by chain and method (no URLs).
+      rpcUsage: (await import("./rpcUsage.js")).rpcUsageSnapshot(),
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -2899,10 +2901,10 @@ async function getRpcDiagnostics(chainId: number, campaign?: string | null) {
   if (working) {
     try {
       factoryCode = factory
-        ? await rawRpcCall(working.url, "eth_getCode", [factory, "latest"], 4_000)
+        ? await rawRpcCall(working.url, "eth_getCode", [factory, "latest"], 4_000, chainId)
         : null;
       campaignCode = campaign
-        ? await rawRpcCall(working.url, "eth_getCode", [campaign, "latest"], 4_000)
+        ? await rawRpcCall(working.url, "eth_getCode", [campaign, "latest"], 4_000, chainId)
         : null;
     } catch {
       // leave codes null; head is still useful

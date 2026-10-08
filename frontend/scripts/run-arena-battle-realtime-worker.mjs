@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { pool } from "../server/db.js";
+import { installRpcUsageCounters } from "../api/lib/rpcUsage.js";
 import { publishBattleFinished, startArenaBattleRealtimeWorker, stopArenaBattleRealtimeWorker } from "../api/lib/arenaBattleRealtime.js";
 import { settleDueNormalBattles } from "../api/lib/arenaBattleSettlementRuntime.js";
 import { advanceDueFinalSalvo, finalizeDueVoteTournamentBattle, voteTournamentRuntimeEnabled } from "../api/lib/arenaVoteTournamentFinalizationService.js";
@@ -13,6 +14,9 @@ import { runMwlPayouts } from "../api/lib/arenaMwlPayouts.js";
 
 // Vote Battles (challenge, queue and tournament) settle only through this runtime, so it defaults
 // on: with ARENA_VOTE_TOURNAMENT_RUNTIME unset no Vote Battle ever finished. Set it to false to stop it.
+// [arena-worker-rpc] line every RPC_USAGE_LOG_MINUTES: this worker's JSON-RPC requests per chain and method.
+installRpcUsageCounters({ label: "arena-worker-rpc" });
+
 const voteRuntimeEnabled = voteTournamentRuntimeEnabled({ ARENA_VOTE_TOURNAMENT_RUNTIME: process.env.ARENA_VOTE_TOURNAMENT_RUNTIME ?? "true" });
 const started = startArenaBattleRealtimeWorker();
 if (!started.started && !voteRuntimeEnabled) {

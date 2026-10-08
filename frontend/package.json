@@ -26,6 +26,7 @@
     "check:featured-feed": "node scripts/check-featured-feed.mjs",
     "check:security-schema": "node --import ./api/load-local-env.mjs scripts/check-security-schema.mjs",
     "check:security-api": "node scripts/check-security-api-smoke.mjs",
+    "test:rpc-usage": "node --test api/lib/rpcUsage.test.mjs api/lib/getServerReadProviderPing.test.mjs api/lib/financeImportSwapFees.test.mjs",
     "test:draft-auth": "node --test api/dev-fix/draft-auth.test.mjs",
     "test:session-actions": "node --test api/lib/sessionActions.test.mjs",
     "test:campaigns-upsert": "node --import ./api/campaigns/upsert.test.register.mjs --test api/campaigns/upsert.test.mjs",
