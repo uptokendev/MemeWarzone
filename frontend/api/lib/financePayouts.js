@@ -1171,9 +1171,13 @@ async function airdropType(ctx) {
   // need the recovery batch, per pot (scripts/weekly-airdrop/authorizationHorizon.mjs). Listed here so
   // the Finance status shows them until the runner sees them fixed and resolves them.
   if (!ctx.solana && ctx.dbRowsAllowed) {
+    // Plus the payout watchdog's own open alerts (Safe module that renews these authorizations;
+    // realtime-indexer/src/evm/payoutWatchdogWorker.ts, reward_type 'payout_watchdog').
     const open = await safeQuery(ctx.db, `select severity, title, message from public.reward_alerts
-      where status = 'open' and reward_type = 'airdrop'
-        and metadata->>'kind' in ('airdrop_authorization_runway', 'airdrop_recovery_due', 'airdrop_authorization_runway_read_failed')
+      where status = 'open'
+        and ((reward_type = 'airdrop'
+              and metadata->>'kind' in ('airdrop_authorization_runway', 'airdrop_recovery_due', 'airdrop_authorization_runway_read_failed'))
+          or reward_type = 'payout_watchdog')
         and metadata->>'chainId' = any($1::text[])
       order by created_at desc limit 10`, [ctx.rewardChains]);
     for (const row of open.rows || []) {

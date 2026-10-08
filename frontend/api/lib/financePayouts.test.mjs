@@ -486,4 +486,5 @@ test("EVM airdrop: the weekly runner's open runway / recovery alerts (both pots)
   const sql = db.seen.find((q) => /from public\.reward_alerts/.test(q.sql)).sql;
   assert.match(sql, /status = 'open'/);
   assert.match(sql, /airdrop_authorization_runway/);
+  assert.match(sql, /or reward_type = 'payout_watchdog'/, "the payout watchdog's own alerts are listed too");
 });

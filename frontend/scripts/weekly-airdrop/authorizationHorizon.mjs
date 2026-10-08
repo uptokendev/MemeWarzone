@@ -18,6 +18,12 @@
  * Alerts land in public.reward_alerts (reward ops + the Finance Payouts page read them) and, when
  * AIRDROP_ALERT_EMAIL is set, go out by email through the existing notify provider (api/lib/notify.js).
  * A failed read is itself an alert; the check never blocks the draw.
+ *
+ * Payout watchdog (founder 2026-10-08, Safe module; realtime-indexer/src/evm/payoutWatchdogWorker.ts): when its
+ * heartbeat in public.payout_watchdog_state is fresh and it is active (module enabled, role held, sends on), it
+ * keeps every pot's ids authorized `weeks` (12) weeks ahead. Then the warning fires only when the runway is 2 weeks
+ * below that (it is behind: allowance used up, refused, out of gas), and says so; this week unauthorized stays
+ * critical. A stale heartbeat changes nothing here (the Finance alerts report "watchdog down").
  */
 import { Contract } from "ethers";
 import { DAY_MS } from "./config.mjs";
@@ -83,16 +89,30 @@ export async function authorizationRunway({ chainId, pot = MAIN_POT, currentEnd,
   };
 }
 
-/** ok | warning | critical, and the words for the alert. */
-export function runwayVerdict(runway, threshold = DEFAULT_ALERT_WEEKS) {
+/** ok | warning | critical, and the words for the alert. `watchdog`: readPayoutWatchdogState() when it is active. */
+export function runwayVerdict(runway, threshold = DEFAULT_ALERT_WEEKS, watchdog = null) {
   const label = POT_LABELS[runway.pot] || `${runway.pot} pot`;
   const fix = `Renew from the Safe: node scripts/make-airdrop-setup-calls.mjs --chain ${runway.chainId} --vault .. --distributor .. [--gen7-vault .. --gen7-distributor ..] --cap .. --skip-wiring writes one batch that renews every pot.`;
+  const active = Boolean(watchdog?.active);
+  const watchFix = active ? `The payout watchdog should have authorized it and has not (allowance used up, refused by the module, or out of gas; see its alerts). ` : "";
   if (runway.coveredWeeks === 0) {
     return {
       level: "critical",
       title: `Airdrop ${label} on chain ${runway.chainId}: this week (${runway.currentEpochId}) is NOT pre-authorized`,
-      message: `The Safe has not authorized this week's batch ids on the ${label} distributor, so this week's draw cannot be funded. ${fix}`,
+      message: `The Safe has not authorized this week's batch ids on the ${label} distributor, so this week's draw cannot be funded. ${watchFix}${fix}`,
     };
+  }
+  if (active) {
+    const keep = Math.max(1, Number(watchdog.weeks) || 12);
+    const behind = Math.max(threshold, keep - 2);
+    if (runway.weeksAhead < behind) {
+      return {
+        level: "warning",
+        title: `Airdrop ${label} on chain ${runway.chainId}: the payout watchdog is behind, authorized through ${runway.lastCoveredEpochId}`,
+        message: `${runway.weeksAhead} authorized week(s) left after this one although the watchdog keeps ${keep}. ${watchFix}${fix}`,
+      };
+    }
+    return { level: "ok", title: null, message: null };
   }
   if (runway.weeksAhead < threshold) {
     return {
@@ -129,8 +149,8 @@ async function emailAlert({ title, message }, env) {
  * Writes (or clears) the runway alert of one pot. writeAlert is candidates.mjs writeRewardAlert.
  * Returns the verdict. dryRun logs only.
  */
-export async function syncRunwayAlert(client, { runway, threshold, writeAlert, dryRun = false, env = process.env, log = console }) {
-  const verdict = runwayVerdict(runway, threshold);
+export async function syncRunwayAlert(client, { runway, threshold, writeAlert, dryRun = false, env = process.env, log = console, watchdog = null }) {
+  const verdict = runwayVerdict(runway, threshold, watchdog);
   const metadata = {
     kind: AUTH_RUNWAY_ALERT_KIND,
     chainId: runway.chainId,
@@ -140,6 +160,7 @@ export async function syncRunwayAlert(client, { runway, threshold, writeAlert, d
     lastCoveredEpochId: runway.lastCoveredEpochId,
     firstMissing: runway.firstMissing,
     threshold,
+    watchdogActive: Boolean(watchdog?.active),
   };
   if (verdict.level === "ok") {
     log.log(`[weekly-airdrop] ${runway.pot} pot chain ${runway.chainId}: authorized through ${runway.lastCoveredEpochId} (${runway.weeksAhead} week(s) after this one)`);
@@ -208,12 +229,33 @@ async function expiredWithMoney(client, { chainId, pot, distributor, nowSec }) {
 }
 
 /**
+ * The payout watchdog's heartbeat for a chain (public.payout_watchdog_state; the same rule as
+ * frontend/api/lib/financeHolderBatchAlerts.js readPayoutWatchdog): null when it never ran or cannot be read.
+ */
+export async function readPayoutWatchdogState(client, chainId, { now = new Date(), env = process.env } = {}) {
+  try {
+    const { rows } = await client.query(
+      `select send, module_enabled, role_ok, last_tick_at, status from public.payout_watchdog_state where chain_id = $1`,
+      [Number(chainId)],
+    );
+    const r = rows?.[0];
+    if (!r || r.last_tick_at == null) return null;
+    const staleMin = Number(env.PAYOUT_WATCHDOG_STALE_MINUTES) >= 2 ? Number(env.PAYOUT_WATCHDOG_STALE_MINUTES) : 15;
+    const fresh = now.getTime() - Date.parse(new Date(r.last_tick_at).toISOString()) <= staleMin * 60_000;
+    return { fresh, weeks: Number(r.status?.weeks) > 0 ? Number(r.status.weeks) : 12, active: fresh && Boolean(r.send) && Boolean(r.module_enabled) && Boolean(r.role_ok) };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The runner's entry point: every pot's runway and recovery check, alerts written. Never throws; a
  * failed read becomes a warning alert so the draw still runs.
  */
 export async function checkAirdropRunway(client, { chainId, pots, currentEnd, writeAlert, providerFor, dryRun = false, now = new Date(), env = process.env, log = console }) {
   const threshold = alertWeeks(env);
   const results = [];
+  const watchdog = await readPayoutWatchdogState(client, chainId, { now, env });
   for (const potConfig of pots) {
     const pot = potConfig.pot || MAIN_POT;
     try {
@@ -226,7 +268,7 @@ export async function checkAirdropRunway(client, { chainId, pots, currentEnd, wr
         now,
         readAuth: (batchId) => distributor.batchAuthorization(batchId),
       });
-      const verdict = await syncRunwayAlert(client, { runway, threshold, writeAlert, dryRun, env, log });
+      const verdict = await syncRunwayAlert(client, { runway, threshold, writeAlert, dryRun, env, log, watchdog });
       const expired = await expiredWithMoney(client, { chainId, pot, distributor, nowSec: Math.floor(now.getTime() / 1000) });
       await syncRecoveryDueAlert(client, { chainId, pot, expired, writeAlert, dryRun, env, log });
       results.push({ pot, runway, verdict, expiredCount: expired.length });

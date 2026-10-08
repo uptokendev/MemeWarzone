@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { id as keccakId } from "ethers";
 import {
+  readPayoutWatchdog,
   batchAuthorizationCallData,
   decodeBatchAuthorization,
   holderBatchAlerts,
@@ -48,10 +49,12 @@ function reader(covered, { fail = false } = {}) {
   };
 }
 
-function db({ batches = [], holderCoins = {} } = {}) {
+function db({ batches = [], holderCoins = {}, watchdog = null, watchdogAlerts = [] } = {}) {
   return {
     async query(sql, params) {
       assert.match(sql.trim(), /^select/i);
+      if (/from public\.payout_watchdog_state/.test(sql)) return { rows: watchdog ? [watchdog] : [] };
+      if (/reward_type = 'payout_watchdog'/.test(sql)) return { rows: watchdogAlerts };
       if (/from public\.evm_holder_batches/.test(sql)) return { rows: batches.filter((b) => b.vault_address === params[1]) };
       if (/from public\.evm_campaign_gen5_state/.test(sql)) return { rows: [{ n: holderCoins[params[1]] ?? 0 }] };
       return { rows: [] };
@@ -144,4 +147,55 @@ test("unreadable chain or database: a warning, never silence and never a throw; 
   const quiet = await holderBatchAlerts({ db: missing, ctx: ctxOf(reader({ [D6]: 12, [D7]: 12 })), registry, chainId: 56, env: {}, nowMs: NOW });
   assert.deepEqual(quiet, []);
   assert.deepEqual(await holderBatchAlerts({ db: db(), ctx: ctxOf(reader({})), registry: { holderLanes: [] }, chainId: 56, env: {}, nowMs: NOW }), []);
+});
+
+// ------------------------------------------------------------------------------------ payout watchdog (Safe module)
+
+const WATCH = (over = {}) => ({ watchdog_address: "0xw", roles_address: "0xr", send: true, module_enabled: true, role_ok: true, last_tick_at: new Date(NOW - 2 * 60_000).toISOString(), last_ok_at: null, last_error: null, status: { weeks: 12 }, ...over });
+const bWait = (vault, created) => ({ vault_address: vault.toLowerCase(), week_id: "2026-10-05", batch_id: "0xb", status: "proposed", attempt: 0, last_reason: "waiting for the Safe to approve this root and total", created_at: created, updated_at: created });
+
+test("watchdog active: a proposed batch is its job; alert (critical) only when it has not approved within the grace", async () => {
+  const r = reader({ [D6]: 12, [D7]: 12 });
+  const quiet = await holderBatchAlerts({ db: db({ watchdog: WATCH(), batches: [bWait(V6, "2026-10-08T11:00:00Z")] }), ctx: ctxOf(r), registry, chainId: 56, env: {}, nowMs: NOW });
+  assert.deepEqual(quiet, [], "1 h: the watchdog has time");
+  const late = await holderBatchAlerts({ db: db({ watchdog: WATCH(), batches: [bWait(V6, "2026-10-08T09:00:00Z")] }), ctx: ctxOf(reader({ [D6]: 12, [D7]: 12 })), registry, chainId: 56, env: {}, nowMs: NOW });
+  assert.equal(late.length, 1);
+  assert.equal(late[0].level, "critical");
+  assert.match(late[0].message, /payout watchdog has not approved it/);
+  assert.match(late[0].message, /evm-holder-batch-verify\.mjs --chain 56/);
+  assert.doesNotMatch(late[0].message, /—/);
+  const env = await holderBatchAlerts({ db: db({ watchdog: WATCH(), batches: [bWait(V6, "2026-10-08T09:00:00Z")] }), ctx: ctxOf(reader({ [D6]: 12, [D7]: 12 })), registry, chainId: 56, env: { PAYOUT_WATCHDOG_APPROVE_GRACE_HOURS: "6" }, nowMs: NOW });
+  assert.deepEqual(env, []);
+});
+
+test("watchdog active: the runway alert fires only when it falls 2 weeks behind its horizon (critical under the warn weeks)", async () => {
+  assert.deepEqual(await holderBatchAlerts({ db: db({ watchdog: WATCH() }), ctx: ctxOf(reader({ [D6]: 12, [D7]: 10 })), registry, chainId: 56, env: {}, nowMs: NOW }), []);
+  const behind = await holderBatchAlerts({ db: db({ watchdog: WATCH() }), ctx: ctxOf(reader({ [D6]: 12, [D7]: 9 })), registry, chainId: 56, env: {}, nowMs: NOW });
+  assert.equal(behind.length, 1);
+  assert.equal(behind[0].level, "warning");
+  assert.match(behind[0].message, /although the payout watchdog keeps 12: it is not authorizing/);
+  const gone = await holderBatchAlerts({ db: db({ watchdog: WATCH() }), ctx: ctxOf(reader({ [D6]: 12, [D7]: 2 })), registry, chainId: 56, env: {}, nowMs: NOW });
+  assert.equal(gone[0].level, "critical");
+});
+
+test("watchdog heartbeat: stale = down (critical) and the Safe-by-hand rules apply again; dry run = info; its own alerts listed", async () => {
+  const stale = WATCH({ last_tick_at: new Date(NOW - 60 * 60_000).toISOString() });
+  const down = await holderBatchAlerts({ db: db({ watchdog: stale, batches: [bWait(V6, "2026-10-08T09:00:00Z")] }), ctx: ctxOf(reader({ [D6]: 12, [D7]: 2 })), registry, chainId: 56, env: {}, nowMs: NOW });
+  assert.equal(down[0].level, "critical");
+  assert.match(down[0].message, /payout watchdog on chain 56 is down: last heartbeat 60 min ago/);
+  // 3 h waiting is under the Safe's own 24 h rule; the gen-7 runway warning is the old one.
+  assert.equal(down.length, 2);
+  assert.match(down[1].message, /run out after week 2026-10-12 \(2 weeks left, alert at 3\)/);
+  const dry = await holderBatchAlerts({ db: db({ watchdog: WATCH({ send: false }) }), ctx: ctxOf(reader({ [D6]: 12, [D7]: 12 })), registry, chainId: 56, env: {}, nowMs: NOW });
+  assert.deepEqual(dry.map((a) => a.level), ["info"]);
+  const disabled = await holderBatchAlerts({ db: db({ watchdog: WATCH({ module_enabled: false }) }), ctx: ctxOf(reader({ [D6]: 12, [D7]: 12 })), registry, chainId: 56, env: {}, nowMs: NOW });
+  assert.match(disabled[0].message, /Roles module is not enabled on the Safe/);
+  const own = await holderBatchAlerts({ db: db({ watchdog: WATCH(), watchdogAlerts: [{ severity: "critical", title: "Payout watchdog on chain 56: holder batch 0xab… does NOT match", message: "root differs" }] }), ctx: ctxOf(reader({ [D6]: 12, [D7]: 12 })), registry, chainId: 56, env: {}, nowMs: NOW });
+  assert.deepEqual(own.map((a) => a.level), ["critical"]);
+  assert.match(own[0].message, /does NOT match\. root differs/);
+  const expected = await holderBatchAlerts({ db: db(), ctx: ctxOf(reader({ [D6]: 12, [D7]: 12 })), registry, chainId: 56, env: { PAYOUT_WATCHDOG_EXPECTED_56: "true" }, nowMs: NOW });
+  assert.match(expected[0].message, /never reported on chain 56/);
+  const state = await readPayoutWatchdog(db({ watchdog: WATCH() }), 56, { env: {}, nowMs: NOW });
+  assert.equal(state.active, true);
+  assert.equal(state.weeks, 12);
 });

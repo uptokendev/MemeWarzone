@@ -4,7 +4,7 @@ import test from "node:test";
 import { getAddress, keccak256, toUtf8Bytes } from "ethers";
 import {
   AUTH_RUNWAY_ALERT_KIND, RECOVERY_DUE_ALERT_KIND, alertWeeks, authorizationCovers, authorizationRunway,
-  checkAirdropRunway, runwayVerdict, syncRecoveryDueAlert, syncRunwayAlert,
+  checkAirdropRunway, readPayoutWatchdogState, runwayVerdict, syncRecoveryDueAlert, syncRunwayAlert,
 } from "./authorizationHorizon.mjs";
 import { weeklyContractBatchId } from "./materialize.mjs";
 import { epochWindow } from "./config.mjs";
@@ -253,4 +253,27 @@ test("setup calls: --wiring gen7 wires only the new pot (gen-7 deploy), --skip-w
   assert.throws(() => airdropSetupCalls({ ...parseSetupArgs([...base.slice(0, -4), "--gen7-vault", MAIN_VAULT, "--gen7-distributor", GEN7_DIST]), now: SETUP_NOW }), /used twice/);
   assert.throws(() => airdropSetupCalls({ ...parseSetupArgs(["--chain", "56", "--vault", MAIN_VAULT, "--distributor", MAIN_DIST, "--cap", "1", "--gen7-vault", GEN7_VAULT, "--gen7-distributor", GEN7_DIST]), now: SETUP_NOW }), /--operator/);
   assert.equal(airdropSetupCalls({ ...parseSetupArgs([...base.filter((_, i) => i !== base.indexOf("--weeks") && i !== base.indexOf("--weeks") + 1), "--skip-wiring", "--weeks", "40"]), now: SETUP_NOW }).length, 2 * 26 * 2, "max 26 weeks");
+});
+
+test("payout watchdog active: the runway warning fires only 2 weeks below its horizon; this week missing stays critical; stale = old rules", async () => {
+  const watchdog = { active: true, fresh: true, weeks: 12 };
+  const r = (weeks) => authorizationRunway({ chainId: 56, currentEnd: CURRENT_END, now: NOW, readAuth: authBook({ weeks }) });
+  assert.equal(runwayVerdict(await r(11), 3, watchdog).level, "ok", "10 weeks ahead: on track");
+  const behind = runwayVerdict(await r(9), 3, watchdog);
+  assert.equal(behind.level, "warning");
+  assert.match(behind.title, /payout watchdog is behind/);
+  assert.match(behind.message, /8 authorized week\(s\) left after this one although the watchdog keeps 12/);
+  assert.equal(runwayVerdict(await r(9), 3, null).level, "ok", "without the watchdog 8 weeks ahead is fine");
+  const none = runwayVerdict(await r(0), 3, watchdog);
+  assert.equal(none.level, "critical");
+  assert.match(none.message, /payout watchdog should have authorized it/);
+  assert.equal(runwayVerdict(await r(9), 3, { active: false, fresh: false, weeks: 12 }).level, "ok");
+
+  const state = (row) => ({ async query(sql) { assert.match(sql, /payout_watchdog_state/); return { rows: row ? [row] : [] }; } });
+  const fresh = { send: true, module_enabled: true, role_ok: true, last_tick_at: new Date(NOW.getTime() - 60_000).toISOString(), status: { weeks: 12 } };
+  assert.deepEqual(await readPayoutWatchdogState(state(fresh), 56, { now: NOW, env: {} }), { fresh: true, weeks: 12, active: true });
+  assert.equal((await readPayoutWatchdogState(state({ ...fresh, last_tick_at: new Date(NOW.getTime() - 3_600_000).toISOString() }), 56, { now: NOW, env: {} })).active, false);
+  assert.equal((await readPayoutWatchdogState(state({ ...fresh, send: false }), 56, { now: NOW, env: {} })).active, false);
+  assert.equal(await readPayoutWatchdogState(state(null), 56, { now: NOW, env: {} }), null);
+  assert.equal(await readPayoutWatchdogState({ async query() { throw Object.assign(new Error("no table"), { code: "42P01" }); } }, 56, { now: NOW, env: {} }), null);
 });

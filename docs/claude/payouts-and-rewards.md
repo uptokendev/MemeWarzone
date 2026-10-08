@@ -498,3 +498,17 @@ batch id and Claim Center batch); `evm_holder_batches` is keyed per vault (migra
 Holder batches need a weekly Safe `approveHolderBatch` per vault (cannot be given ahead); the distributor
 `authorizeBatch` can be pre-authorized (`scripts/make-holder-batch-preauth-calls.mjs`). Fee routing alerts when a batch
 waits for the Safe over 24 h and 3 weeks before the pre-authorizations run out (`financeHolderBatchAlerts.js`).
+
+### Payout watchdog Safe module (2026-10-08, build/evm-gen7, not deployed)
+
+Founder: "Safe module: yes" (replaces a gen-7 vault change; that WIP stays in `git stash`). A Zodiac Roles v2.1.0 proxy on
+the treasury Safe (owner = avatar = target = Safe; same address on 56 and 4663, `0xEeeE0082257bc4A3189e38f0a2881f129E101c70`)
+gives ONE role, `payout-watchdog`, to a new key: `approveHolderBatch` on the creator vaults (total <= weekly holder cap) and
+`authorizeBatch` on the holder and airdrop distributors (maxAmount <= per-id cap, within a Roles allowance of 2 weeks of
+authorizations, refilled one week per week). Nothing else, value 0, no delegatecall. The watchdog (indexer,
+`payoutWatchdogWorker.ts`, `PAYOUT_WATCHDOG_*`) recomputes each proposed holder batch from chain data before approving and
+keeps 12 weeks of ids authorized. Mastercopy verified (CREATE2, runtime on 56/4663/97/46630, byte-identical recompile).
+Proven on forks of 56 and 4663 with the real Safe (owners via approveHash + MultiSendCallOnly). Heartbeat table
+`payout_watchdog_state` (migration `20261008_000050`, founder runs it); when it is active the holder-batch and airdrop runway
+alerts fire only when the watchdog falls behind, and a stale heartbeat is a critical "watchdog down". Audit:
+`docs/evm-launch/audit/PAYOUT_ROLES_MODULE.md`; founder steps: `docs/runbooks/payout-watchdog.md`.

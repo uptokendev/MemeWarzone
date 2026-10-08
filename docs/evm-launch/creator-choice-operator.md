@@ -150,3 +150,13 @@ then writes Safe batch H (`approveHolderBatch` + `authorizeBatch`, from `holderW
 
 A stolen API secret alone gets signatures whose actor is the vault; only the vault's `buybackCurve`, behind the
 operator, can use them.
+
+## Payout watchdog (Safe module, 2026-10-08)
+
+The weekly `approveHolderBatch` and the distributor `authorizeBatch` renewals can be done by the payout watchdog, a separate
+key with one Zodiac Roles role on the Safe (`docs/evm-launch/audit/PAYOUT_ROLES_MODULE.md`, founder steps
+`docs/runbooks/payout-watchdog.md`). Nothing changes for this worker: it proposes and executes exactly as before, for both
+vaults; the watchdog approves a proposal only after rebuilding it from chain data (the proposing calldata, the vault, the
+token Transfer logs, this worker's own allocation and merkle functions), using the published leaf file only for the snapshot
+block and pot per coin. A proposal the watchdog does not approve within 2 h raises a critical Fee routing alert and is the
+Safe signers' again (`evm-holder-batch-verify.mjs`, batch H).
