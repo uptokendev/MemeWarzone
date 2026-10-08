@@ -3,10 +3,10 @@ import { Link } from "react-router-dom";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { Contract } from "ethers";
 import { cn } from "@/lib/utils";
-import { getFactoryAddress, isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
-import { getTickerFeedChainId } from "@/lib/feedChainConfig";
+import { BNB_CHAIN_ID, ROBINHOOD_CHAIN_ID, SOLANA_CHAIN_ID, getFactoryAddress, isAllowedChainId, isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
+import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
+import { isPublicHiddenCampaign, isPublicHiddenSymbol, loadPublicHiddenCampaigns } from "@/lib/publicHiddenCampaigns";
 import { getReadProvider } from "@/lib/readProvider";
-import { useWallet } from "@/contexts/WalletContext";
 import { apiFetch } from "@/lib/apiBase";
 import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
 
@@ -165,6 +165,7 @@ async function fetchTickerItems(chainId: number): Promise<CampaignTickerItem[]> 
   const [indexed, factoryRows] = await Promise.all([
     fetchIndexedTickerItems(chainId),
     fetchFactoryRows(chainId).catch(() => []),
+    loadPublicHiddenCampaigns(chainId),
   ]);
 
   const merged = new Map<string, CampaignTickerItem>();
@@ -172,6 +173,8 @@ async function fetchTickerItems(chainId: number): Promise<CampaignTickerItem[]> 
   for (const row of factoryRows) {
     const campaignAddress = normalizeAddress(row?.campaign);
     if (!isAddress(campaignAddress)) continue;
+    // Factory rows skip the API's hidden filter, so test coins are dropped here (2026-10-08).
+    if (isPublicHiddenCampaign(chainId, campaignAddress) || isPublicHiddenSymbol(chainId, row?.symbol)) continue;
     const previous = merged.get(campaignAddress);
     merged.set(campaignAddress, {
       campaignAddress,
@@ -204,9 +207,12 @@ function buildRepeatedTickerItems(items: CampaignTickerItem[]) {
 }
 
 export function CampaignTickerBar({ className }: { className?: string }) {
-  const wallet = useWallet();
-  const chainId = getTickerFeedChainId((wallet as any)?.chainId ?? (wallet as any)?.network?.chainId);
-  const { price: nativeUsd } = useNativeUsdPrice(chainId);
+  // Follows the chain picked on Explore (BNB / Solana / Robinhood), like the grid under it.
+  const [pickedChainId] = useSelectedFeedChainId();
+  // The chain the ticker shows: the picked one, or the first other mainnet with coins when the picked
+  // chain has none (BNB and Robinhood had only hidden test coins on 2026-10-08).
+  const [chainId, setChainId] = useState<number>(Number(pickedChainId));
+  const { price: nativeUsd } = useNativeUsdPrice(chainId as any);
   const [items, setItems] = useState<CampaignTickerItem[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -215,8 +221,19 @@ export function CampaignTickerBar({ className }: { className?: string }) {
 
     async function load() {
       try {
-        const next = await fetchTickerItems(chainId);
-        if (!cancelled) setItems(next);
+        const picked = Number(pickedChainId);
+        const order = [picked, ...[SOLANA_CHAIN_ID, BNB_CHAIN_ID, ROBINHOOD_CHAIN_ID].map(Number).filter((id) => id !== picked && isAllowedChainId(id))];
+        let shown = picked;
+        let next: CampaignTickerItem[] = [];
+        for (const id of order) {
+          next = await fetchTickerItems(id);
+          shown = id;
+          if (next.length) break;
+        }
+        if (!cancelled) {
+          setChainId(next.length ? shown : picked);
+          setItems(next);
+        }
       } catch (error) {
         console.warn("[CampaignTickerBar] failed to load ticker campaigns", error);
         if (!cancelled) setItems([]);
@@ -231,7 +248,7 @@ export function CampaignTickerBar({ className }: { className?: string }) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [chainId]);
+  }, [pickedChainId]);
 
   const loopItems = useMemo(() => buildRepeatedTickerItems(items), [items]);
 
