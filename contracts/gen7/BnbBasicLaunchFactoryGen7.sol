@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {LaunchFactoryGen7} from "./LaunchFactoryGen7.sol";
+import {LaunchCampaignGen7} from "./LaunchCampaignGen7.sol";
+
+import {IBnbQuoteRouteRegistry, IBnbQuoteCampaignImplementation, IBnbQuoteCatalogBoundCampaign} from "../BnbBasicLaunchFactory.sol";
+
+/// @notice New BNB factory-generation extension for BASIC approved quote markets.
+/// @dev Native BNB/WBNB creation and bonding behavior remain inherited from LaunchFactoryGen7.
+/// The backend Quote Asset Catalog remains the eligibility authority. This contract only
+/// verifies and persists the signed immutable catalog-selection commitment.
+contract BnbBasicLaunchFactoryGen7 is LaunchFactoryGen7 {
+    uint32 public constant BASIC_FACTORY_GENERATION = 7;
+    uint32 public constant BASIC_QUOTE_CAMPAIGN_GENERATION = 6;
+
+    address public immutable bnbQuoteCampaignImplementation;
+    address public bnbQuoteGraduationAdapter;
+
+    event BnbQuoteGraduationAdapterUpdated(address indexed adapter);
+    event BasicQuoteCampaignConfigured(
+        address indexed campaign,
+        address indexed token,
+        address indexed quoteToken,
+        address adapter,
+        bytes32 quoteCatalogBindingHash,
+        uint32 factoryGeneration,
+        uint32 campaignGeneration
+    );
+
+    error BnbQuoteGraduationAdapterUnavailable();
+    error BnbQuoteCampaignImplementationUnavailable();
+    error UnsupportedBnbQuoteToken();
+    error QuoteCatalogBindingRequired();
+
+    constructor(
+        address topazRouter_,
+        address treasuryRouter_,
+        address nativeCampaignImplementation_,
+        address graduationOracle_,
+        address bnbQuoteCampaignImplementation_,
+        address permanentLpLocker_
+    ) LaunchFactoryGen7(topazRouter_, treasuryRouter_, nativeCampaignImplementation_, graduationOracle_, permanentLpLocker_) {
+        if (bnbQuoteCampaignImplementation_ == address(0) || bnbQuoteCampaignImplementation_.code.length == 0) {
+            revert BnbQuoteCampaignImplementationUnavailable();
+        }
+        try IBnbQuoteCampaignImplementation(bnbQuoteCampaignImplementation_).isBnbQuoteCampaignImplementation() returns (bool supported) {
+            if (!supported) revert BnbQuoteCampaignImplementationUnavailable();
+        } catch {
+            revert BnbQuoteCampaignImplementationUnavailable();
+        }
+        bnbQuoteCampaignImplementation = bnbQuoteCampaignImplementation_;
+    }
+
+    /// @notice Set once during the pre-live generation wiring phase.
+    /// @dev Inherited `whenMutable` prevents changing this after the first campaign exists.
+    function setBnbQuoteGraduationAdapter(address newAdapter) external onlyOwner whenMutable {
+        if (newAdapter == address(0) || newAdapter.code.length == 0) revert BnbQuoteGraduationAdapterUnavailable();
+        bnbQuoteGraduationAdapter = newAdapter;
+        emit BnbQuoteGraduationAdapterUpdated(newAdapter);
+    }
+
+    /// @param quoteCatalogBindingHash Backend-authorized commitment over the exact Agent 1
+    /// Quote Asset Catalog selection: deployment id, quote address, provider identity,
+    /// policy key/version, deployment stateVersion, and this 5/4 factory/campaign generation.
+    function createBasicQuoteCampaignAuthorized(
+        CampaignRequest calldata req,
+        address quoteToken,
+        bytes32 quoteCatalogBindingHash,
+        RouteAuthorization calldata routeAuth
+    ) external payable nonReentrant returns (address campaignAddr, address tokenAddr) {
+        address adapter = bnbQuoteGraduationAdapter;
+        if (adapter == address(0)) revert BnbQuoteGraduationAdapterUnavailable();
+        if (quoteCatalogBindingHash == bytes32(0)) revert QuoteCatalogBindingRequired();
+        _requireBasicQuoteRouteEnabled(adapter, quoteToken);
+        _verifyBasicQuoteRouteAuthorization(msg.sender, req, quoteToken, quoteCatalogBindingHash, adapter, routeAuth);
+
+        LaunchCampaignGen7.ScheduleParams memory schedule = _immediateSchedule(msg.sender);
+        schedule.factoryGeneration = BASIC_FACTORY_GENERATION;
+        schedule.campaignGeneration = BASIC_QUOTE_CAMPAIGN_GENERATION;
+        (campaignAddr, tokenAddr) = _createCampaign(
+            req,
+            routeAuth.tradeRouteProfile,
+            routeAuth.finalizeRouteProfile,
+            schedule,
+            bnbQuoteCampaignImplementation
+        );
+
+        campaignGraduationQuoteToken[campaignAddr] = quoteToken;
+        LaunchCampaignGen7(payable(campaignAddr)).configureStockGraduation(quoteToken, adapter);
+        IBnbQuoteCatalogBoundCampaign(campaignAddr).configureQuoteCatalogBinding(quoteCatalogBindingHash);
+        emit BasicQuoteCampaignConfigured(
+            campaignAddr,
+            tokenAddr,
+            quoteToken,
+            adapter,
+            quoteCatalogBindingHash,
+            BASIC_FACTORY_GENERATION,
+            BASIC_QUOTE_CAMPAIGN_GENERATION
+        );
+        _creatorFirstBuy(campaignAddr, req);
+    }
+
+    function _verifyBasicQuoteRouteAuthorization(
+        address creator,
+        CampaignRequest calldata req,
+        address quoteToken,
+        bytes32 quoteCatalogBindingHash,
+        address adapter,
+        RouteAuthorization calldata routeAuth
+    ) internal {
+        _consumeCreateAuthorization(
+            keccak256(
+                abi.encode(
+                    "MWZ_CREATE_BNB_BASIC_QUOTE_AUTH_V2",
+                    block.chainid,
+                    address(this),
+                    creator,
+                    _hashCampaignRequest(req),
+                    quoteToken,
+                    quoteCatalogBindingHash,
+                    adapter,
+                    bnbQuoteCampaignImplementation,
+                    BASIC_FACTORY_GENERATION,
+                    BASIC_QUOTE_CAMPAIGN_GENERATION,
+                    routeAuth.tradeRouteProfile,
+                    routeAuth.finalizeRouteProfile,
+                    routeAuth.deadline
+                )
+            ),
+            routeAuth
+        );
+    }
+
+    function _requireBasicQuoteRouteEnabled(address adapter, address quoteToken) internal view {
+        if (quoteToken == address(0) || quoteToken.code.length == 0) revert UnsupportedBnbQuoteToken();
+        (,,,,,,, bool enabled) = IBnbQuoteRouteRegistry(adapter).quoteRoutes(quoteToken);
+        if (!enabled) revert UnsupportedBnbQuoteToken();
+    }
+}
