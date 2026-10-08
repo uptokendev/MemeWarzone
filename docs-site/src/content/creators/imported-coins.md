@@ -62,7 +62,7 @@ An imported coin has the same Buy and Sell panel as a coin launched here. The di
 | BNB Chain | PancakeSwap pools |
 | Robinhood Chain | Uniswap |
 
-The coin page shows a "Trading on" line with the DEX, and the button says which DEX it uses, for example **Buy on Jupiter**. A platform fee (0.5% today) is included in the quote and shown in the panel. Read the quote before you confirm.
+The coin page shows a "Trading on" line with the DEX, and the button says which DEX it uses, for example **Buy on Jupiter**. A platform fee is included in the quote and shown in the panel: 1% on Solana, of which half goes to the coin's creator, and 0.5% on BNB Chain and Robinhood Chain today. Read the quote before you confirm. Creators can also put a swap box for their coin on their own website: see [Swap box for your website](/creators/swap-widget).
 
 Trading is switched off on a coin when the safety scan reports a honeypot or a blocked transfer.
 
