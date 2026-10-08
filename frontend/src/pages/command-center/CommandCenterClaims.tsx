@@ -777,18 +777,25 @@ export default function CommandCenterClaims() {
             ].filter(Boolean).join("\n") || null,
           );
           loadClaims();
+          setClaimingType(null);
+          return;
         } catch (err: any) {
           toast.dismiss(toastId);
           const raw = String(err?.shortMessage || err?.message || err || "League claim request failed");
-          const reason = /reject|denied|cancel/i.test(raw) ? "Approval cancelled in your wallet. Nothing was claimed." : raw;
-          setMessage(reason);
-          toast.error(reason);
-          if (completed.length) loadClaims();
-        } finally {
-          setClaimingType(null);
+          // An API from before the sign-in claim asks for the signed request: use the old flow below.
+          if (!completed.length && /Nonce missing|Signature missing/i.test(raw)) {
+            sessionToken = "";
+          } else {
+            const reason = /reject|denied|cancel/i.test(raw) ? "Approval cancelled in your wallet. Nothing was claimed." : raw;
+            setMessage(reason);
+            toast.error(reason);
+            if (completed.length) loadClaims();
+            setClaimingType(null);
+            return;
+          }
         }
-        return;
       }
+      if (!sessionToken) {
 
       try {
         for (const item of leagueClaimable) {
@@ -885,6 +892,7 @@ export default function CommandCenterClaims() {
         toast.error(reason);
       } finally {
         setClaimingType(null);
+      }
       }
       return;
     }
