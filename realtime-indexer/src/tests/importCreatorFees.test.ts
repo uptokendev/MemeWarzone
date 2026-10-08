@@ -49,7 +49,7 @@ test("owner must be a wallet on the curve, not a program account", () => {
 
 type Call = { sql: string; params: unknown[] };
 
-function fakeDb(state: { sending?: any[]; payable?: any[]; paidToday?: string; due?: { halves: string; expired: string; swept: string }; markCount?: number }) {
+function fakeDb(state: { sending?: any[]; payable?: any[]; paidToday?: string; due?: { halves: string; expired: string; swept: string }; markCount?: number; held?: string[] }) {
   const calls: Call[] = [];
   const db = {
     calls,
@@ -57,6 +57,8 @@ function fakeDb(state: { sending?: any[]; payable?: any[]; paidToday?: string; d
       calls.push({ sql, params });
       const s = sql.replace(/\s+/g, " ").trim();
       if (s.startsWith("select id, signature")) return { rows: state.sending || [] };
+      if (s.includes("to_regclass('public.moderation_holds')")) return { rows: [{ ok: Boolean(state.held) }] };
+      if (s.startsWith("select wallet_key from public.moderation_holds")) return { rows: (state.held || []).map((w) => ({ wallet_key: w })) };
       if (s.startsWith("update public.import_creator_fees set status = 'expired'")) return { rows: [], rowCount: 0 };
       if (s.includes("as paid from public.import_fee_transfers")) return { rows: [{ paid: state.paidToday || "0" }] };
       if (s.startsWith("with owners as")) return { rows: state.payable || [] };
@@ -138,4 +140,17 @@ test("protocol sweep: our due part when no creator was paid, capped by the balan
   const out = await runImportCreatorFeePass({ db, connection, collector: Keypair.generate(), send: true, settings, now: NOW });
   assert.equal(out.sweep?.amount, "300");
   assert.equal(connection.sent.length, 1);
+});
+
+test("never pays one of our own wallets or a wallet held by moderation; their accruals keep waiting", async () => {
+  const own = "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H"; // deployer, in shared owner wallets
+  const ownRows = payable([["1", "300"]]).map((r) => ({ ...r, project_owner_wallet: own }));
+  const connection = fakeConnection();
+  const ours = await runImportCreatorFeePass({ db: fakeDb({ payable: ownRows }), connection, collector: Keypair.generate(), send: true, settings, now: NOW });
+  assert.equal(ours.payouts.length, 0);
+  assert.ok(ours.skipped.some((s) => /our own wallets/.test(s)));
+  const held = await runImportCreatorFeePass({ db: fakeDb({ payable: payable([["1", "300"]]), held: [OWNER.toLowerCase()] }), connection, collector: Keypair.generate(), send: true, settings, now: NOW });
+  assert.equal(held.payouts.length, 0);
+  assert.ok(held.skipped.some((s) => /held by moderation/.test(s)));
+  assert.equal(connection.sent.length, 0);
 });

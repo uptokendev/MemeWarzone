@@ -33,3 +33,8 @@ test("a verified status without a wallet is not claimed", () => {
   assert.equal(out.claimed, false);
   assert.equal(out.asset, "BNB");
 });
+
+test("testnets 97 / 46630 are readable so the gen-7 testnet run shows the notice", () => {
+  assert.equal(summarizeCreatorFees({ chainId: 97, token: "0xabc", now, owner: null, totals: [] }).asset, "tBNB");
+  assert.equal(summarizeCreatorFees({ chainId: 46630, token: "0xabc", now, owner: null, totals: [] }).asset, "ETH");
+});

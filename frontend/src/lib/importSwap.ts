@@ -1,6 +1,7 @@
 /**
- * Swaps for imported memecoins (founder, 2026-09-25). The API quotes and builds (it owns the 0.5%
- * fee terms -- api/importSwap.js); this module checks what came back and has the wallet sign it.
+ * Swaps for imported memecoins (founder, 2026-09-25). The API quotes and builds (it owns the fee
+ * terms -- api/importSwap.js: 0.5%, 1% with half to the coin's creator once a chain switches); this
+ * module checks what came back and has the wallet sign it.
  * Solana: Jupiter. BNB: KyberSwap restricted to PancakeSwap pools. Our launchpad CREATE/BUY/SELL
  * never come through here.
  */
@@ -13,6 +14,7 @@ import { confirmLaunchpadSignature, type LaunchpadConfirmConnection } from "@/li
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import { getSolanaProvider, getStoredSolanaWalletId } from "@/lib/solanaWallet";
 
+/** Label for routes priced client-side at the old 0.5% (Robinhood until CO-IMPORT-SWAP-FEE); quoted routes use importSwapFeeLabel(quote.feeBps). */
 export const IMPORT_SWAP_FEE_LABEL = "0.5%";
 
 /** "1%", "0.5%": the fee the API priced into the quote (Solana moves to 1% at the collector switch). */

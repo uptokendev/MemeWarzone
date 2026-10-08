@@ -41,3 +41,12 @@ id = "generic-api-key"
     '''^frontend/api/lib/projectImportAssessment\.js$''',
     '''^frontend/api/lib/projectImportAssessment\.test\.mjs$''',
   ]
+
+  # BONK's public Solana mint in the import fee runbook's example quote request
+  # ("token":"<mint>"). It is not a credential. Scoped to the exact mint and the
+  # one runbook.
+  [[rules.allowlists]]
+  description = "Known false positive: BONK public Solana mint in the import fee runbook"
+  condition = "AND"
+  regexes = [ '''DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263''' ]
+  paths = [ '''^docs/release/IMPORT_CREATOR_FEES_GO_LIVE\.md$''' ]
