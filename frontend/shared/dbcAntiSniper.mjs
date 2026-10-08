@@ -48,3 +48,7 @@ export function solanaQuoteSource({ launchType, migrated } = {}) {
 export function shouldUseLaunchpadBondingQuote(launchType) {
   return String(launchType || "launchpad") !== "dbc";
 }
+
+/** The launch-fee note on the DBC create page, from the config's own numbers (90% -> 2% in 60 s). */
+export const DBC_LAUNCH_FEE_NOTE =
+  `The fee starts at ${DBC_ANTI_SNIPER_START_FEE_BPS / 100}% and falls to ${DBC_ANTI_SNIPER_END_FEE_BPS / 100}% within ${DBC_ANTI_SNIPER_DURATION_SECONDS} seconds, so bots that buy at launch pay for it. Your own first buy does not.`;

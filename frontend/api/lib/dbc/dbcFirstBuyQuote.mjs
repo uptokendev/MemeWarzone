@@ -28,6 +28,23 @@ export function firstBuyExceedsCap(quote, maxBps = DBC_FIRST_BUY_MAX_BPS) {
   return quote.bps > BigInt(maxBps);
 }
 
+/**
+ * The most quote (fee included) a launch first buy can spend and stay within `maxBps` of the supply:
+ * the curve cost of exactly that many tokens, grossed up by the 2% fee, then checked with the same
+ * quote the authorize step uses and walked down if rounding puts it a hair over.
+ */
+export function firstBuyCapLamports(configParams, maxBps = DBC_FIRST_BUY_MAX_BPS, quoteFn = quoteFirstBuyOnConfig) {
+  const totalSupply = totalSupplyOf(configParams);
+  if (totalSupply <= 0n) return 0n;
+  const tokens = (totalSupply * BigInt(maxBps)) / 10_000n;
+  const cost = quoteAlongDbcCurve(configParams, tokens);
+  let paid = (cost * 10_000n) / BigInt(10_000 - DBC_TRADE_FEE_BPS);
+  for (let i = 0; i < 64 && paid > 0n && firstBuyExceedsCap(quoteFn(configParams, paid), maxBps); i += 1) {
+    paid -= paid / 10_000n + 1n;
+  }
+  return paid > 0n ? paid : 0n;
+}
+
 function totalSupplyOf(configParams) {
   return BigInt(configParams?.tokenSupply?.preMigrationTokenSupply?.toString?.() || "0");
 }

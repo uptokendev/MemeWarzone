@@ -51,3 +51,22 @@ export function dbcCreatorBuyMessage(maxSpendLamports: bigint): string {
   const maxLabel = max > 0 ? ` You can buy with up to ${max.toFixed(4).replace(/\.?0+$/, "")} SOL.` : "";
   return `Not enough SOL. A creator buy keeps ${DBC_CREATOR_BUY_BUFFER_PCT}% extra for price movement plus about ${DBC_CREATOR_BUY_RESERVE_SOL} SOL for the lock and network fees.${maxLabel}`;
 }
+
+// DBC launch (create page / push-live): the creator pays the first buy (2% fee included) plus rent for
+// the mint, its metadata, the pool, the pool's vaults and the creator's token account, and the network
+// fee. Measured 0.026 SOL on a local validator through our create API (2026-10-08,
+// scripts/dbc/prove-v2-flow-local.mjs: 14.239 SOL spent for a 14.213 SOL first buy); 0.03 keeps a margin.
+export const DBC_LAUNCH_RESERVE_LAMPORTS = 30_000_000n;
+export const DBC_LAUNCH_RESERVE_SOL = 0.03;
+
+/** The most SOL a launch first buy can use from this balance, before the 70% cap. */
+export function dbcLaunchMaxFirstBuyLamports(balanceLamports: bigint): bigint {
+  const left = balanceLamports - DBC_LAUNCH_RESERVE_LAMPORTS;
+  return left > 0n ? left : 0n;
+}
+
+export function dbcLaunchBalanceMessage(maxFirstBuyLamports: bigint): string {
+  const max = Number(maxFirstBuyLamports) / 1e9;
+  if (max <= 0) return `Not enough SOL. A launch needs about ${DBC_LAUNCH_RESERVE_SOL} SOL for rent and network fees.`;
+  return `Not enough SOL. A launch keeps about ${DBC_LAUNCH_RESERVE_SOL} SOL for rent and network fees. Your first buy can be up to ${max.toFixed(4).replace(/\.?0+$/, "")} SOL.`;
+}

@@ -283,3 +283,15 @@ test("the trade box fee equals the chain's fee every second of the anti-sniper w
   const sample = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[30000], stepForSol(118).step, "creator");
   for (let s = 0; s <= 61; s += 1) assert.equal(antiSniperFeeBps(s), feeBpsAtSeconds(sample.configParams, s), `t=${s}`);
 });
+
+test("firstBuyCapLamports: the most SOL that stays within 70%, the create page's MAX", async () => {
+  const { firstBuyCapLamports, quoteFirstBuyOnConfig, firstBuyExceedsCap } = await import("./dbcFirstBuyQuote.mjs");
+  for (const targetUsd of TARGETS) {
+    for (const sol of [100, 118, 200]) {
+      const { configParams } = buildLaunchConfigParams(DBC_TARGET_USD_MICROS[targetUsd], stepForSol(sol).step, "creator");
+      const cap = firstBuyCapLamports(configParams, 7000);
+      assert.equal(firstBuyExceedsCap(quoteFirstBuyOnConfig(configParams, cap), 7000), false, `${targetUsd} @ $${sol}`);
+      assert.equal(firstBuyExceedsCap(quoteFirstBuyOnConfig(configParams, cap + cap / 1000n), 7000), true, `${targetUsd} @ $${sol}: +0.1% must be over`);
+    }
+  }
+});

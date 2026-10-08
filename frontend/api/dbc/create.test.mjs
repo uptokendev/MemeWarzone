@@ -820,6 +820,8 @@ test("the live first-buy quote reports the 70% cap, the same for every wallet", 
   const over = await post(handle, { operation: "quote-first-buy", targetUsd: 30000, feeChoice: "keep", firstBuyLamports: "2000000000" });
   assert.equal(over.body.capBps, "7000");
   assert.equal(over.body.exceedsCap, true);
+  // The SOL that buys exactly the cap comes back for the create page's MAX button.
+  assert.match(String(within.body.capLamports), /^\d+$/);
 });
 
 test("the $15K target is gone (founder 2026-10-08): only $30K and $50K graduation market caps", async () => {

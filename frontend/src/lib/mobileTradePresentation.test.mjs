@@ -88,7 +88,15 @@ test("buy MAX / % and the check before signing keep fees and gas back", () => {
   assert.match(reserve, /ETH_BUY_GAS_RESERVE_WEI = 200_000_000_000_000n/);
   // MAX / %
   assert.match(sheet, /percentOf\(Math\.max\(0, nativeBalance - reserve\), pct\)/);
-  assert.match(page, /if \(isSolanaPage\) return solanaQuote\.native \? SOLANA_BUY_FEE_RESERVE_SOL : 0;/);
+  // Solana MAX / %: 0.005 SOL; a DBC creator buy leaves 8% + 0.015 SOL (locked ExactOut buy + escrow rent).
+  assert.match(page, /if \(!solanaQuote\.native\) return 0;/);
+  assert.match(page, /return DBC_CREATOR_BUY_RESERVE_SOL \+ \(afterReserve \* DBC_CREATOR_MAX_HEADROOM_PCT\) \/ \(100 \+ DBC_CREATOR_MAX_HEADROOM_PCT\);/);
+  assert.match(page, /return SOLANA_BUY_FEE_RESERVE_SOL;/);
+  // Meteora (DBC) bonding buys are checked before the wallet opens too, creator buys with their larger need.
+  assert.match(page, /creatorBuy && dbcCreatorBuyNeedLamports\(amountIn\) > bnbBalanceWei/);
+  assert.match(page, /!creatorBuy && amountIn \+ SOLANA_BUY_FEE_RESERVE_LAMPORTS > bnbBalanceWei/);
+  // Create / push-live: first buy plus ~0.03 SOL of launch costs must fit, or Next / launch is blocked.
+  assert.match(reserve, /DBC_LAUNCH_RESERVE_LAMPORTS = 30_000_000n/);
   assert.match(page, /return gas \+ \(afterGas \* SLIPPAGE_PCT\) \/ \(100 \+ SLIPPAGE_PCT\);/);
   assert.match(warRoom, /isSolanaCampaign \? SOLANA_BUY_FEE_RESERVE_LAMPORTS : evmBuyGasReserveWei\(false\)/);
   // Typed amounts: checked before signing
@@ -101,4 +109,16 @@ test("buy MAX / % and the check before signing keep fees and gas back", () => {
   assert.match(trade, /insufficient lamports\|Program 1\{32\} failed: custom program error: 0x1/);
   // 100% of 0.128754 SOL with the reserve leaves 0.005 SOL in the wallet.
   assert.equal(percentOf(0.128754 - 0.005, 100), "0.123754");
+});
+
+test("DBC launch: an over-cap or unaffordable first buy blocks Next and the launch button", () => {
+  const create = fs.readFileSync(new URL("../pages/Create.tsx", import.meta.url), "utf8");
+  const push = fs.readFileSync(new URL("../pages/PushDraftLive.tsx", import.meta.url), "utf8");
+  assert.match(create, /const dbcFirstBuyBlocked = Boolean\(dbcLaunch && \(dbcFirstBuyQuote\?\.exceedsCap \|\| dbcFirstBuyOverBalance\)\);/);
+  assert.match(create, /if \(fromStep === 5\) return dbcLaunch \? !dbcFirstBuyBlocked : graduationMarketReady;/);
+  assert.match(create, /disabled=\{!canGoNext\(5\)\} onClick=\{goNext\}>Next<\/Button>/);
+  assert.match(create, /spend \+ DBC_LAUNCH_RESERVE_LAMPORTS > solBalance/);
+  assert.match(push, /const dbcFirstBuyBlocked = Boolean\(dbcDraft && \(dbcFirstBuyQuote\?\.exceedsCap \|\| dbcFirstBuyOverBalance\)\);/);
+  assert.match(push, /\|\| dbcFirstBuyBlocked;/);
+  assert.match(push, /spend \+ DBC_LAUNCH_RESERVE_LAMPORTS > solBalance/);
 });

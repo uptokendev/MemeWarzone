@@ -268,8 +268,8 @@ const Playbook = () => {
                 <Rule><span className={STRONG}>Buyback and burn.</span> Bought back at random times each week and burned.</Rule>
               </ul>
               <p className="mt-2">
-                The launch fee starts at 50% and falls to 2% within 60 seconds, so bots that buy at launch pay for it.
-                Your own first buy does not.
+                The launch fee falls to 2% within 60 seconds, starting at 90% on the Meteora launch type and 50% on BNB
+                and Robinhood, so bots that buy at launch pay for it. Your own first buy does not.
               </p>
               <p className="mt-2">
                 On BNB and Robinhood, the same panel has an optional first buy. It is made in the launch transaction at

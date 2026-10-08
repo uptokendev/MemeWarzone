@@ -54,7 +54,7 @@ export const EVM_GRADUATION_CREATOR_BPS = 1980;
 /** The creator lock sentence shown before a creator buys (same as DBC). */
 export const EVM_CREATOR_BUY_LOCK_COPY = DBC_CREATOR_LOCK_COPY;
 
-/** The launch fee note on the create page (same sentence as the DBC create page). */
+/** The launch fee note on the EVM create page: LaunchCampaign starts at 50% (DBC starts at 90%, DBC_LAUNCH_FEE_NOTE). */
 export const LAUNCH_FEE_NOTE =
   "The fee starts at 50% and falls to 2% within 60 seconds, so bots that buy at launch pay for it. Your own first buy does not.";
 

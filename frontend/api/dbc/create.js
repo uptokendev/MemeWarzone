@@ -31,7 +31,7 @@ import { requiredCluster, createDbcConfigLadder } from "../lib/dbc/dbcConfigLadd
 import { parseFeeChoice } from "../lib/dbc/dbcFeeChoice.mjs";
 import { requireEnabledQuote, stableStep } from "../../shared/dbcQuotes.mjs";
 import { DbcStockQuoteError, dbcTokenBadgeAddress, stockPriceStep } from "../lib/dbc/dbcStockQuote.mjs";
-import { firstBuyExceedsCap, quoteFirstBuyOnConfig } from "../lib/dbc/dbcFirstBuyQuote.mjs";
+import { firstBuyCapLamports, firstBuyExceedsCap, quoteFirstBuyOnConfig } from "../lib/dbc/dbcFirstBuyQuote.mjs";
 import { assertDbcCreatorLimits, loadDbcCreatorLimits } from "../lib/dbc/dbcCreateLimits.js";
 import { isDbcLaunchEnabled, dbcLaunchDisabledPayload } from "./launch-config.js";
 import {
@@ -768,6 +768,8 @@ export function createDbcCreateHandler(deps = {}) {
       totalSupply: firstBuy.totalSupply.toString(),
       exceedsCap: capped,
       capBps: String(capBps),
+      // The most quote a first buy can spend and stay within the cap: the create page's MAX.
+      capLamports: firstBuyCapLamports(prepared.ensured.configParams, capBps, quoteFn).toString(),
     });
   }
 

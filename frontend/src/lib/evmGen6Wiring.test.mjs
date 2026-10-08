@@ -64,10 +64,13 @@ test("the create pages only show and send gen-6 fields for a generation-6 factor
   }
 });
 
-test("the DBC create form uses the same fee-choice component and launch-fee sentence", () => {
+test("the DBC create form uses the same fee-choice component and its own launch-fee sentence", async () => {
   assert.match(create, /<CreatorFeeChoicePicker value=\{dbcFeeChoice\} onChange=\{setDbcFeeChoice\}/);
   // Founder 2026-10-03: the Create page is in the redesign; the sentence keeps its place, new muted colour.
-  assert.match(create, /<p className="text-xs text-mw-muted">\{LAUNCH_FEE_NOTE\}<\/p>/);
+  // DBC's launch fee starts at 90% (EVM LaunchCampaign at 50%), so the DBC form has its own sentence.
+  assert.match(create, /<p className="text-xs text-mw-muted">\{DBC_LAUNCH_FEE_NOTE\}<\/p>/);
+  const { DBC_LAUNCH_FEE_NOTE } = await import("../../shared/dbcAntiSniper.mjs");
+  assert.match(DBC_LAUNCH_FEE_NOTE, /starts at 90% and falls to 2% within 60 seconds/);
 });
 
 test("the coin page renders gen-5 lines only when the campaign reads as generation 5", () => {

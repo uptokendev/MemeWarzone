@@ -5,6 +5,8 @@
  */
 import { Button } from "@/components/ui/button";
 import { DBC_FIRST_BUY_MAX_BPS } from "../../shared/dbcEconomics.mjs";
+import { DBC_LAUNCH_RESERVE_LAMPORTS, DBC_LAUNCH_RESERVE_SOL, dbcLaunchBalanceMessage, dbcLaunchMaxFirstBuyLamports } from "@/lib/tradeBalanceReserve";
+import { readSolBalanceLamports } from "@/lib/solanaBalance";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
@@ -32,7 +34,7 @@ import {
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { isDbcLaunchEnabled } from "@/lib/dbcLaunchEnabled";
-import { enabledQuotes, quoteUiToRaw, WSOL_MINT } from "../../shared/dbcQuotes.mjs";
+import { enabledQuotes, quoteRawToUi, quoteUiToRaw, WSOL_MINT } from "../../shared/dbcQuotes.mjs";
 import { readQuoteUiMultiplier } from "@/lib/dbcQuoteMultiplier.mjs";
 import { DbcStockRiskDialog } from "@/components/create/DbcStockRiskDialog";
 import { DBC_DEFAULT_GRADUATION_TARGET_WEI, getDbcGraduationTiers } from "@/lib/dbcGraduationTiers";
@@ -52,7 +54,8 @@ import {
   parseNativeInput,
   type EvmFirstBuyPlan,
 } from "@/components/create/EvmGen6LaunchOptions";
-import { gen6CreateFields, LAUNCH_FEE_NOTE } from "@/lib/evmGen6.mjs";
+import { gen6CreateFields } from "@/lib/evmGen6.mjs";
+import { DBC_LAUNCH_FEE_NOTE } from "../../shared/dbcAntiSniper.mjs";
 import { isGen6Factory } from "@/lib/evmGen6Client";
 import { getReadProvider } from "@/lib/readProvider";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
@@ -261,6 +264,57 @@ const Create = () => {
   const creatorWallet = isSolanaCreator ? solanaWallet.solanaAccount : wallet.account || "";
   const chainId = isSolanaCreator ? SOLANA_CHAIN_ID : getActiveChainId(wallet.chainId ?? feedChainId);
   const dbcLaunch = Boolean(dbcEnabled && isSolanaCreator);
+  // The creator's SOL: a SOL first buy plus about 0.03 SOL of launch rent and fees must fit in it.
+  const dbcQuoteIsSol = (dbcQuote?.kind ?? "native") === "native";
+  const [dbcSolBalance, setDbcSolBalance] = useState<bigint | null>(null);
+  useEffect(() => {
+    if (!dbcLaunch || !solanaWallet.solanaAccount) {
+      setDbcSolBalance(null);
+      return;
+    }
+    let cancelled = false;
+    void readSolBalanceLamports(solanaWallet.solanaAccount).then((lamports) => {
+      if (!cancelled) setDbcSolBalance(lamports);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [dbcLaunch, solanaWallet.solanaAccount]);
+  const [dbcMaxPending, setDbcMaxPending] = useState(false);
+  // MAX: the smaller of what the wallet can spend after launch costs and the SOL that buys exactly 70%.
+  const fillDbcFirstBuyMax = async () => {
+    if (!solanaWallet.solanaAccount) return;
+    setDbcMaxPending(true);
+    try {
+      const [balance, quote] = await Promise.all([
+        readSolBalanceLamports(solanaWallet.solanaAccount),
+        quoteDbcFirstBuy({
+          targetUsd: Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000,
+          feeChoice: dbcFeeChoice,
+          creatorSharePct: dbcFeeChoice === "split" ? Number(dbcCreatorSharePct) : null,
+          firstBuyLamports: "1",
+          quoteMint: dbcQuoteMint,
+          creatorWallet: solanaWallet.solanaAccount,
+        }),
+      ]);
+      if (balance != null) setDbcSolBalance(balance);
+      let max = BigInt(String(quote?.capLamports || "0"));
+      if (dbcQuoteIsSol && balance != null) {
+        const fits = dbcLaunchMaxFirstBuyLamports(balance);
+        if (fits < max) max = fits;
+      }
+      if (max <= 0n) {
+        toast.error(dbcLaunchBalanceMessage(0n));
+        return;
+      }
+      const ui = quoteRawToUi(max.toString(), Number(dbcQuote?.decimals ?? 9), dbcQuoteMultiplier);
+      setDbcFirstBuySol(String(Math.floor(ui * 10_000) / 10_000));
+    } catch {
+      toast.error("Could not read your balance. Try again.");
+    } finally {
+      setDbcMaxPending(false);
+    }
+  };
   const graduationOptions: GraduationTier[] = useMemo(
     () => (dbcLaunch ? getDbcGraduationTiers(String(import.meta.env.VITE_SOLANA_CLUSTER || "")) : getGraduationTiers(chainId)),
     [chainId, dbcLaunch],
@@ -727,6 +781,14 @@ const Create = () => {
         if (dbcFirstBuyQuote?.exceedsCap) {
           throw new Error(`The first buy cannot be more than ${dbcFirstBuyQuote.capBps / 100}% of supply.`);
         }
+        // Before the wallet opens: the first buy (SOL quote) plus launch rent and fees must fit.
+        const solBalance = await readSolBalanceLamports(solanaWallet.solanaAccount);
+        if (solBalance != null) {
+          const spend = dbcQuoteIsSol ? BigInt(firstBuyLamports) : 0n;
+          if (spend + DBC_LAUNCH_RESERVE_LAMPORTS > solBalance) {
+            throw new Error(dbcLaunchBalanceMessage(dbcQuoteIsSol ? dbcLaunchMaxFirstBuyLamports(solBalance) : 0n));
+          }
+        }
         toast.message("Checking that this wallet can launch…");
         const preflight = await preflightDbcCreate({ creatorWallet, targetUsd });
         if (!preflight?.preflight?.allowed) {
@@ -1109,13 +1171,22 @@ const Create = () => {
       !tickerCheckError,
   );
   const storyReady = Boolean(formData.description.trim().length > 0);
+  // A first buy the launch would refuse or could not pay for blocks Next: over the 70% cap, or a SOL
+  // first buy plus ~0.03 SOL of launch rent and fees above the wallet balance.
+  const dbcFirstBuyLamportsNow = dbcFirstBuySol ? dbcFirstBuyRaw() : 0n;
+  const dbcFirstBuyOverBalance = Boolean(
+    dbcLaunch && dbcQuoteIsSol && dbcSolBalance != null && dbcFirstBuyLamportsNow > 0n
+      && dbcFirstBuyLamportsNow + DBC_LAUNCH_RESERVE_LAMPORTS > dbcSolBalance,
+  );
+  const dbcFirstBuyBlocked = Boolean(dbcLaunch && (dbcFirstBuyQuote?.exceedsCap || dbcFirstBuyOverBalance));
+
   const canGoNext = (fromStep: number) => {
     if (fromStep === 1) return mode === "draft" || mode === "deploy";
     if (fromStep === 2) return identityReady;
     if (fromStep === 3) return storyReady;
     if (fromStep === 4) return true;
     // A DBC coin graduates into its own Meteora pool: no Graduation Market catalog choice.
-    if (fromStep === 5) return dbcLaunch || graduationMarketReady;
+    if (fromStep === 5) return dbcLaunch ? !dbcFirstBuyBlocked : graduationMarketReady;
     return false;
   };
 
@@ -1130,6 +1201,8 @@ const Create = () => {
         else if (checkingTicker) toast.error("Wait for ticker availability check to finish.");
         else toast.error(tickerAvailability?.reason || "Ticker must be available before continuing.");
       } else if (step === 3) toast.error("Add a short description before continuing.");
+      else if (step === 5 && dbcLaunch && dbcFirstBuyQuote?.exceedsCap) toast.error(`The first buy cannot be more than ${dbcFirstBuyQuote.capBps / 100}% of supply. Lower it or press MAX.`);
+      else if (step === 5 && dbcLaunch && dbcFirstBuyOverBalance && dbcSolBalance != null) toast.error(dbcLaunchBalanceMessage(dbcLaunchMaxFirstBuyLamports(dbcSolBalance)));
       else if (step === 5) toast.error("Choose a Graduation Market first.");
       return;
     }
@@ -1348,7 +1421,7 @@ const Create = () => {
                     {dbcLaunch ? (
                       <div className="space-y-3 rounded-xl border border-border/50 bg-background/25 p-3">
                         <CreatorFeeChoicePicker value={dbcFeeChoice} onChange={setDbcFeeChoice} sharePct={dbcCreatorSharePct} onSharePctChange={setDbcCreatorSharePct} />
-                        <p className="text-xs text-mw-muted">{LAUNCH_FEE_NOTE}</p>
+                        <p className="text-xs text-mw-muted">{DBC_LAUNCH_FEE_NOTE}</p>
                       </div>
                     ) : null}
                     {evmGen6 ? (
@@ -1406,7 +1479,19 @@ const Create = () => {
                   <div>
                     <div className="text-sm font-semibold text-mw-text">Your first buy (optional)</div>
                     <p className="mt-0.5 text-xs text-mw-muted">Buys in the same transaction as the launch, at the normal 2% fee.</p>
-                    <Input type="number" min={0} step="0.01" value={dbcFirstBuySol} onChange={(e) => setDbcFirstBuySol(e.target.value)} placeholder={`${dbcQuote?.symbol || "SOL"} amount`} className="mt-2 max-w-[12rem]" />
+                    <div className="mt-2 flex items-center gap-2">
+                      <Input type="number" min={0} step="0.01" value={dbcFirstBuySol} onChange={(e) => setDbcFirstBuySol(e.target.value)} placeholder={`${dbcQuote?.symbol || "SOL"} amount`} className="max-w-[12rem]" />
+                      <Button type="button" variant="outline" size="sm" disabled={dbcMaxPending || !solanaWallet.solanaAccount} onClick={() => void fillDbcFirstBuyMax()}>
+                        {dbcMaxPending ? "…" : "MAX"}
+                      </Button>
+                    </div>
+                    {dbcFirstBuyOverBalance && dbcSolBalance != null ? (
+                      <p className="mt-1 text-xs text-mw-accent-soft">{dbcLaunchBalanceMessage(dbcLaunchMaxFirstBuyLamports(dbcSolBalance))}</p>
+                    ) : dbcQuoteIsSol && dbcSolBalance != null ? (
+                      <p className="mt-1 text-xs text-mw-muted">
+                        Balance {(Number(dbcSolBalance) / 1e9).toFixed(4)} SOL. About {DBC_LAUNCH_RESERVE_SOL} SOL stays in your wallet for launch rent and fees.
+                      </p>
+                    ) : null}
                     {dbcFirstBuyQuote ? (
                       <p className={cn("mt-1 text-xs", dbcFirstBuyQuote.exceedsCap ? "text-mw-accent-soft" : "text-mw-muted")}>
                         About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
@@ -1430,7 +1515,7 @@ const Create = () => {
                     <div className="flex justify-between gap-3"><span className="text-mw-muted">Pool after graduation</span><span className="text-mw-text">{normalizedTicker || "TICKER"}/{dbcQuote?.symbol || "SOL"} on Meteora, liquidity locked</span></div>
                     <div className="flex justify-between gap-3"><span className="text-mw-muted">Your share at graduation</span><span className="text-mw-text">The 2% creator reserve (20M tokens)</span></div>
                   </div>
-                  <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11 shrink-0" onClick={goNext}>Next</Button>
+                  <Button type="button" className="mw-focus inline-flex items-center justify-center rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-auto h-11 shrink-0" disabled={!canGoNext(5)} onClick={goNext}>Next</Button>
                 </div>
               </CreateFullPane>
             ) : null}

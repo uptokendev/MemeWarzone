@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DBC_FIRST_BUY_MAX_BPS } from "../../shared/dbcEconomics.mjs";
+import { DBC_LAUNCH_RESERVE_LAMPORTS, DBC_LAUNCH_RESERVE_SOL, dbcLaunchBalanceMessage, dbcLaunchMaxFirstBuyLamports } from "@/lib/tradeBalanceReserve";
+import { readSolBalanceLamports } from "@/lib/solanaBalance";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Clock3, Rocket, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -585,9 +587,77 @@ export default function PushDraftLive() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbcLaunchDraft, dbcFirstBuyEditable, dbcFirstBuyInput, graduationTargetWei, draft?.id, solanaWallet.solanaAccount]);
 
+  // The creator's SOL: a SOL first buy plus about 0.03 SOL of launch rent and fees must fit in it.
+  const dbcDraftQuoteIsSol = (dbcDraftQuote?.kind ?? "native") === "native";
+  const [dbcSolBalance, setDbcSolBalance] = useState<bigint | null>(null);
+  useEffect(() => {
+    if (!dbcLaunchDraft || !solanaWallet.solanaAccount) {
+      setDbcSolBalance(null);
+      return;
+    }
+    let cancelled = false;
+    void readSolBalanceLamports(solanaWallet.solanaAccount).then((lamports) => {
+      if (!cancelled) setDbcSolBalance(lamports);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [dbcLaunchDraft, solanaWallet.solanaAccount]);
+  const dbcFirstBuyLamportsNow = (() => {
+    const raw = dbcFirstBuyLamports();
+    return /^\d+$/.test(raw) ? BigInt(raw) : 0n;
+  })();
+  const dbcFirstBuyOverBalance = Boolean(
+    dbcLaunchDraft && dbcDraftQuoteIsSol && dbcSolBalance != null && dbcFirstBuyLamportsNow > 0n
+      && dbcFirstBuyLamportsNow + DBC_LAUNCH_RESERVE_LAMPORTS > dbcSolBalance,
+  );
+  const [dbcMaxPending, setDbcMaxPending] = useState(false);
+  // MAX: the smaller of what the wallet can spend after launch costs and the SOL that buys exactly 70%.
+  const fillDbcFirstBuyMax = async () => {
+    if (!solanaWallet.solanaAccount || !dbcDraftQuote) return;
+    setDbcMaxPending(true);
+    try {
+      const [balance, quote] = await Promise.all([
+        readSolBalanceLamports(solanaWallet.solanaAccount),
+        quoteDbcFirstBuy({
+          targetUsd: Number(graduationTargetToUsdMicros(graduationTargetWei)) / 1_000_000,
+          feeChoice: (draft as any)?.dbcFeeChoice || "keep",
+          creatorSharePct: (draft as any)?.dbcFeeChoice === "split" ? Number((draft as any)?.dbcCreatorSharePct) : null,
+          firstBuyLamports: "1",
+          quoteMint: (draft as any)?.dbcQuoteMint || WSOL_MINT,
+          creatorWallet: solanaWallet.solanaAccount,
+        }),
+      ]);
+      if (balance != null) setDbcSolBalance(balance);
+      let max = BigInt(String(quote?.capLamports || "0"));
+      if (dbcDraftQuoteIsSol && balance != null) {
+        const fits = dbcLaunchMaxFirstBuyLamports(balance);
+        if (fits < max) max = fits;
+      }
+      if (max <= 0n) {
+        toast.error(dbcLaunchBalanceMessage(0n));
+        return;
+      }
+      const ui = quoteRawToUi(max.toString(), Number(dbcDraftQuote.decimals ?? 9));
+      setDbcFirstBuyInput(String(Math.floor(ui * 10_000) / 10_000));
+    } catch {
+      toast.error("Could not read your balance. Try again.");
+    } finally {
+      setDbcMaxPending(false);
+    }
+  };
+
   const deployDbc = async () => {
     if (!draft) return;
     if (dbcFirstBuyQuote?.exceedsCap) return toast.error(`The first buy cannot be more than ${dbcFirstBuyQuote.capBps / 100}% of supply.`);
+    if (solanaWallet.solanaAccount) {
+      // Before the wallet opens: the first buy (SOL quote) plus launch rent and fees must fit.
+      const solBalance = await readSolBalanceLamports(solanaWallet.solanaAccount);
+      const spend = dbcDraftQuoteIsSol ? dbcFirstBuyLamportsNow : 0n;
+      if (solBalance != null && spend + DBC_LAUNCH_RESERVE_LAMPORTS > solBalance) {
+        return toast.error(dbcLaunchBalanceMessage(dbcDraftQuoteIsSol ? dbcLaunchMaxFirstBuyLamports(solBalance) : 0n));
+      }
+    }
     if (!solanaWallet.solanaAccount) return toast.error("Connect the draft owner Solana wallet first.");
     if (!ownerConnected) return toast.error("Only the draft owner Solana wallet can deploy this draft.");
     if (mode === "scheduled" && (!draft.scheduledLaunchAt || isScheduleLocked(new Date(launchAtInput).toISOString(), Date.now()))) {
@@ -857,7 +927,9 @@ export default function PushDraftLive() {
   const dbcDraft = isDbcLaunchEnabled() && String((draft as { launchType?: string }).launchType || "") === "dbc";
   const dbcLocked = dbcDraft && isScheduleLocked(draft.scheduledLaunchAt, Date.now());
   const dbcDue = dbcDraft && Boolean(draft.scheduledLaunchAt) && !dbcLocked;
-  const blocked = submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: dbcDraft, due: dbcDue }) || (draftIsSolana ? !ownerConnected : false) || (dbcDraft && mode === "now" && dbcLocked);
+  // A first buy the launch would refuse (over 70%) or could not pay for also blocks the button.
+  const dbcFirstBuyBlocked = Boolean(dbcDraft && (dbcFirstBuyQuote?.exceedsCap || dbcFirstBuyOverBalance));
+  const blocked = submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: dbcDraft, due: dbcDue }) || (draftIsSolana ? !ownerConnected : false) || (dbcDraft && mode === "now" && dbcLocked) || dbcFirstBuyBlocked;
 
   return (
     <div className="mx-auto w-full max-w-[1480px] px-1 py-8 md:px-2">
@@ -971,16 +1043,28 @@ export default function PushDraftLive() {
           <div className="mt-4" data-push-live-dbc-first-buy="true">
             <div className="text-sm font-semibold text-mw-text">Your first buy (optional)</div>
             <p className="mt-0.5 text-xs text-mw-muted">Buys in the same transaction as the launch, at the normal 2% fee. Leave empty for no first buy.</p>
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              inputMode="decimal"
-              value={dbcFirstBuyInput}
-              onChange={(e) => setDbcFirstBuyInput(e.target.value)}
-              placeholder={`${dbcDraftQuote?.symbol || "SOL"} amount`}
-              className="mt-2 max-w-[12rem]"
-            />
+            <div className="mt-2 flex items-center gap-2">
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                inputMode="decimal"
+                value={dbcFirstBuyInput}
+                onChange={(e) => setDbcFirstBuyInput(e.target.value)}
+                placeholder={`${dbcDraftQuote?.symbol || "SOL"} amount`}
+                className="max-w-[12rem]"
+              />
+              <Button type="button" variant="outline" size="sm" disabled={dbcMaxPending || !solanaWallet.solanaAccount} onClick={() => void fillDbcFirstBuyMax()}>
+                {dbcMaxPending ? "…" : "MAX"}
+              </Button>
+            </div>
+            {dbcFirstBuyOverBalance && dbcSolBalance != null ? (
+              <p className="mt-1 text-xs text-mw-accent-soft">{dbcLaunchBalanceMessage(dbcLaunchMaxFirstBuyLamports(dbcSolBalance))}</p>
+            ) : dbcDraftQuoteIsSol && dbcSolBalance != null ? (
+              <p className="mt-1 text-xs text-mw-muted">
+                Balance {(Number(dbcSolBalance) / 1e9).toFixed(4)} SOL. About {DBC_LAUNCH_RESERVE_SOL} SOL stays in your wallet for launch rent and fees.
+              </p>
+            ) : null}
             {dbcFirstBuyQuote ? (
               <p className={`mt-1 text-xs ${dbcFirstBuyQuote.exceedsCap ? "text-mw-accent-soft" : "text-mw-muted"}`}>
                 About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
