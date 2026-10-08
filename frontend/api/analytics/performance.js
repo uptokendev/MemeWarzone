@@ -1,3 +1,5 @@
+import { readRollupCoverage, vitalStats } from "./rollups.js";
+
 function appFilter(app, params) {
   if (app === "public" || app === "admin") {
     params.push(app);
@@ -6,45 +8,11 @@ function appFilter(app, params) {
   return "";
 }
 
-function metricValueSql() {
-  return `coalesce(nullif(properties->>'measurement',''), nullif(properties->>'value',''))`;
-}
-
+// Reads analytics_hourly_vital_values for the finished hours the rollup job covers and raw
+// $web_vital rows for the rest; percentiles are exact (see rollups.js vitalStats).
 export async function analyticsPerformanceVitals({ pool, from, to, app }) {
-  const params = [from, to];
-  const extra = appFilter(app, params);
-  const valueExpr = metricValueSql();
-  const result = await pool.query(
-    `select properties->>'metric' as metric,
-            count(*)::int as n,
-            count(*) filter (where ${valueExpr} is not null)::int as measured_n,
-            count(*) filter (where lower(coalesce(properties->>'rating','')) = 'good')::int as good_n,
-            count(*) filter (where lower(coalesce(properties->>'rating','')) in ('needs-improvement','needs_improvement','needs improvement'))::int as needs_improvement_n,
-            count(*) filter (where lower(coalesce(properties->>'rating','')) = 'poor')::int as poor_n,
-            percentile_cont(0.5) within group (order by (${valueExpr})::double precision) filter (where ${valueExpr} is not null) as p50,
-            percentile_cont(0.75) within group (order by (${valueExpr})::double precision) filter (where ${valueExpr} is not null) as p75,
-            percentile_cont(0.95) within group (order by (${valueExpr})::double precision) filter (where ${valueExpr} is not null) as p95
-       from public.analytics_events
-      where name = '$web_vital' and ts >= $1 and ts < $2 ${extra}
-        and coalesce(properties->>'metric', '') <> ''
-      group by 1
-      order by metric`,
-    params,
-  );
-
-  return {
-    rows: result.rows.map((row) => ({
-      metric: row.metric,
-      n: Number(row.n || 0),
-      measuredN: Number(row.measured_n || 0),
-      goodN: Number(row.good_n || 0),
-      needsImprovementN: Number(row.needs_improvement_n || 0),
-      poorN: Number(row.poor_n || 0),
-      p50: row.p50 == null ? null : Number(row.p50),
-      p75: row.p75 == null ? null : Number(row.p75),
-      p95: row.p95 == null ? null : Number(row.p95),
-    })),
-  };
+  const coverage = await readRollupCoverage(pool);
+  return { rows: await vitalStats(pool, { from, to, app, coverage }) };
 }
 
 export async function analyticsPerformancePages({ pool, from, to, app }) {
