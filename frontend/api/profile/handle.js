@@ -1,6 +1,7 @@
 import { pool } from "../../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, isSolanaChain, json, normalizeAddress, readJson } from "../../server/http.js";
 import { consumeNonce, verifyProfileSignature } from "../profile.js";
+import { SESSION_SIGNATURE_PREFIX, sessionTokenFromSignature, sessionWalletForToken } from "../lib/sessionActions.js";
 import { HANDLE_CHANGE_COOLDOWN_DAYS, handleProblem, missingHandlesTable, walletKey } from "../lib/userHandles.js";
 
 /**
@@ -141,17 +142,30 @@ async function handlePost(req, res) {
   const problem = handleProblem(handle);
   if (problem === "format") return json(res, 400, { error: "Usernames are 3 to 20 characters: letters, numbers and _.", code: "HANDLE_FORMAT" });
   if (problem === "reserved") return json(res, 400, { error: "That username is reserved.", code: "HANDLE_RESERVED" });
-  if (!nonce) return json(res, 400, { error: "Nonce missing" });
-  if (!signature) return json(res, 400, { error: "Signature missing" });
   if (!pool) return json(res, 500, { error: "Server misconfigured: DATABASE_URL missing" });
 
-  try {
-    await consumeNonce(chainId, address, nonce);
-  } catch (e) {
-    return json(res, 401, { error: String(e?.message || "Nonce error") });
+  // The 30-day sign-in in place of a signature (founder, 2026-10-06), sent as `session:<token>`.
+  if (signature.startsWith(SESSION_SIGNATURE_PREFIX)) {
+    let sessionWallet = "";
+    try {
+      sessionWallet = await sessionWalletForToken(pool, sessionTokenFromSignature(signature));
+    } catch (e) {
+      console.error("[api/profile/handle] session lookup failed", e?.message || e);
+      return json(res, 503, { error: "Sign-in check is unavailable.", code: "FEED_AUTH_UNAVAILABLE" });
+    }
+    if (!sessionWallet) return json(res, 401, { error: "Your sign-in expired. Sign in with your wallet again.", code: "FEED_SESSION_REQUIRED" });
+    if (normalizeAddress(sessionWallet, chainId) !== address) return json(res, 401, { error: "Your sign-in is for a different wallet.", code: "WALLET_MISMATCH" });
+  } else {
+    if (!nonce) return json(res, 400, { error: "Nonce missing" });
+    if (!signature) return json(res, 400, { error: "Signature missing" });
+    try {
+      await consumeNonce(chainId, address, nonce);
+    } catch (e) {
+      return json(res, 401, { error: String(e?.message || "Nonce error") });
+    }
+    const msg = buildHandleMessage({ chainId, address, nonce, handle });
+    if (!verifyProfileSignature({ chainId, address, message: msg, signature })) return json(res, 401, { error: "Invalid signature" });
   }
-  const msg = buildHandleMessage({ chainId, address, nonce, handle });
-  if (!verifyProfileSignature({ chainId, address, message: msg, signature })) return json(res, 401, { error: "Invalid signature" });
 
   const key = walletKey(address);
   try {

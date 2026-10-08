@@ -11,6 +11,10 @@ import {
 } from "@/lib/feedSession";
 import { signSolanaMessage } from "@/lib/solanaWallet";
 
+// One wallet prompt per wallet and chain at a time: the sign-in at connect and an action started in
+// the same moment share it.
+const SIGN_IN_IN_FLIGHT = new Map<string, Promise<string>>();
+
 export function useFeedSession() {
   const wallet = useWallet();
   const solanaWallet = useSolanaWallet();
@@ -28,9 +32,12 @@ export function useFeedSession() {
     }
     const existing = readStoredFeedSession(account, chainId);
     if (existing) return existing;
+    const flightKey = `${chainId}:${account}`;
+    const inFlight = SIGN_IN_IN_FLIGHT.get(flightKey);
+    if (inFlight) return inFlight;
 
     setBusy(true);
-    try {
+    const signing = (async () => {
       const solana = isSolanaChainId(chainId) || isSolanaAddress(account);
       const auth = await signFeedSession({
         walletAddress: account,
@@ -42,10 +49,15 @@ export function useFeedSession() {
         signer: solana ? undefined : wallet.signer,
       });
       return await openFeedSession({ walletAddress: account, chainId, auth });
+    })();
+    SIGN_IN_IN_FLIGHT.set(flightKey, signing);
+    try {
+      return await signing;
     } catch (error) {
       clearFeedSession(account, chainId);
       throw error;
     } finally {
+      SIGN_IN_IN_FLIGHT.delete(flightKey);
       setBusy(false);
     }
   }, [account, chainId, wallet.signer]);

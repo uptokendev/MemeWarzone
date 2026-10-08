@@ -1,3 +1,4 @@
+import { SESSION_DRAFT_ACTIONS, sessionSignature, storedSessionToken } from "@/lib/sessionActions";
 import { verifyMessage } from "ethers";
 import { apiFetch, apiUrl } from "@/lib/apiBase";
 import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
@@ -488,6 +489,11 @@ async function signPrepareEngagement(input: {
     if (isEvmWallet && (draftChainId === 101 || draftChainId === 102 || !Number.isFinite(draftChainId))) {
       chainId = await resolveConnectedEvmChainId();
     }
+  }
+  // Signed in (30 days): follow, comment, like and alerts need no wallet prompt (founder, 2026-10-06).
+  const sessionToken = SESSION_DRAFT_ACTIONS.has(input.action) ? storedSessionToken(walletAddress, chainId) : "";
+  if (sessionToken) {
+    return { action: input.action, walletAddress, chainId, draftId: input.draftId, nonce: "session", message: "", signature: sessionSignature(sessionToken) };
   }
   return signDraftActionWithKnownChain({ action: input.action, draftId: input.draftId, walletAddress, chainId });
 }
