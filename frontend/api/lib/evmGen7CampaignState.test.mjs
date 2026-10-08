@@ -214,3 +214,33 @@ test("campaign-state: older factories stay unsupported", async () => {
   assert.equal(state.supported, false);
   assert.equal(state.curve, undefined);
 });
+
+test("campaign-state: a gen-7 coin's creator claims come from the vault its own factory names (gen-7's own vault), never a per-chain one", async () => {
+  const VAULT7 = "0x00000000000000000000000000000000000007aa";
+  const mc = 80n * WAD;
+  const { virtualNative, virtualToken } = curveForMarketCap(mc, SUPPLY, 8500n, 1300n);
+  const curveSupply = (SUPPLY * 8500n) / 10_000n;
+  const provider = fakeProvider({
+    [CAMPAIGN]: {
+      abi: [...GEN5_CAMPAIGN_ABI, ...EXTRA_CAMPAIGN_ABI],
+      handlers: campaignHandlers({ sold: 0n, curveSupply, nativeTarget: graduationRaise(virtualNative, virtualToken, curveSupply), extra: { virtualNative: () => virtualNative, virtualToken: () => virtualToken, totalSupply: () => SUPPLY } }),
+    },
+    [FACTORY]: {
+      abi: FACTORY_ABI,
+      handlers: { FACTORY_GENERATION: () => 7n, CAMPAIGN_GENERATION: () => 6n, campaignFeeChoice: () => [VAULT7, 1n, 0n] },
+    },
+    [VAULT7]: {
+      abi: [
+        "function cfg(address) view returns (address creator, uint8 choice, uint8 creatorPct, address pool, address quote)",
+        "function creatorBalance(address) view returns (uint256)",
+        "function creatorQuoteBalance(address) view returns (uint256)",
+      ],
+      handlers: { cfg: () => [CREATOR, 1n, 0n, ZERO, ZERO], creatorBalance: () => 777n, creatorQuoteBalance: () => 0n },
+    },
+  });
+  const state = await readGen5CampaignState({ provider, campaignAddress: CAMPAIGN, wallet: CREATOR });
+  assert.equal(state.creatorClaims.feeChoice.vault, ethers.getAddress(VAULT7));
+  assert.equal(state.creatorClaims.vault.address, ethers.getAddress(VAULT7));
+  assert.equal(state.creatorClaims.vault.creatorClaimableWei, "777");
+  assert.equal(state.viewer.canClaimVaultFees, true);
+});

@@ -106,3 +106,25 @@ DogeOS (`docs/build_plans/DogeOS/DOGEOS_FULL_INTEGRATION_PLAN.md`) builds on gen
 ## 7. Change orders
 
 - `CO-IMPORT-SWAP-FEE.md` (2026-10-08, rev. 2): 1% fee on imported-coin swaps into an `ImportFeeVault` (existing `RecruiterRewardsVault` bytecode), split 50/50 afterwards; no new contract for BNB/Robinhood; wired before step 4.
+
+## 8. Gen-7 fees stack: off-chain wiring (2026-10-08, local only)
+
+Founder decision 2026-10-08: gen-7 gets its own TreasuryRouterV4, CreatorRewardsVaultV2 (pinned to the gen-7 factory),
+holder RewardDistributor (batchOperator = the gen-7 vault) and CommunityRewardsVault per chain; weekly, monthly,
+recruiter and protocol vaults are reused. The app, API and indexer read them from one variable per contract and chain
+(the same names on the API and the indexer):
+
+| Variable | Value | Read by |
+|---|---|---|
+| `EVM_GEN7_ROUTER_<id>` | `0xaddr@startBlock` | indexer RouteExecuted scan (reward_events, recruiter credit), finance router scan, Fee routing |
+| `EVM_GEN7_CREATOR_VAULT_<id>` | `0xaddr@startBlock` | indexer vault event scan (own `gen5-aux:` cursor), creator-choice operator, buyback signature endpoint, Fee routing, Payouts creator fees |
+| `EVM_GEN7_HOLDER_DISTRIBUTOR_<id>` | `0xaddr@deployBlock` | Fee routing (destination, wiring, holder batch alerts), payout bounds check |
+| `EVM_GEN7_COMMUNITY_VAULT_<id>` | `0xaddr` (or the airdrop runner's `COMMUNITY_REWARDS_VAULT_ADDRESS_GEN7_<id>`) | Fee routing (destination, wiring, gen-7 airdrop / squad inflows) |
+| `EVM_GEN7_HOLDER_BATCH_MAX_WEI[_<id>]` | wei | creator-choice operator, gen-7 weekly holder batch ceiling |
+
+Which stack a coin uses is never taken from these lists: the coin page and campaign-state read
+`factory.campaignFeeChoice(campaign).vault`, the indexer records each coin's vault from the vault's own
+`CampaignChoiceSet`, holder claims carry their distributor in the Claim Center row. Unset variables leave every gen-6
+path exactly as it was. Operator, nonce and alert design: `docs/evm-launch/creator-choice-operator.md` ("Two vaults per
+chain, one key", "Holder batch authorizations"). Migration `db/migrations/20261008_000040_evm_holder_batches_per_vault.sql`
+must run before the gen-7 vault is operated.

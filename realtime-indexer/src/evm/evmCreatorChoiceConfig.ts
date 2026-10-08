@@ -2,6 +2,8 @@
 import { ethers } from "ethers";
 import { FORBIDDEN_KEEPER_ADDRESSES } from "./evmGraduationKeeper.js";
 import { DEFAULT_CHOICE_CONFIG, type BuybackAuthClient, type ChoiceConfig } from "./evmCreatorChoicePass.js";
+import { DEFAULT_HOLDER_PROGRAM } from "./evmCreatorChoice.js";
+import { EVM_GEN7_HOLDER_PROGRAM, evmGen7FeesStack } from "./evmGen7Fees.js";
 
 export function truthy(value: unknown): boolean {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -43,6 +45,24 @@ export function vaultAddress(chainId: number, env: NodeJS.ProcessEnv = process.e
   return ethers.isAddress(address) ? ethers.getAddress(address) : null;
 }
 
+export type OperatedVault = { vault: string; program: string; label: "gen-6" | "gen-7" };
+
+/**
+ * Every CreatorRewardsVaultV2 the operator key works for on a chain: the gen-6 vault (EVM_CREATOR_VAULT_V2_<id>, first
+ * entry, program "airdrop_holders") and gen-7's own vault (EVM_GEN7_CREATOR_VAULT_<id>, program
+ * "airdrop_holders_gen7"). The same address twice is operated once, as gen-6.
+ */
+export function operatedVaults(chainId: number, env: NodeJS.ProcessEnv = process.env): OperatedVault[] {
+  const out: OperatedVault[] = [];
+  const gen6 = vaultAddress(chainId, env);
+  if (gen6) out.push({ vault: gen6, program: DEFAULT_HOLDER_PROGRAM, label: "gen-6" });
+  const gen7 = evmGen7FeesStack(chainId, env).creatorVault;
+  if (gen7 && !out.some((v) => v.vault.toLowerCase() === gen7.address.toLowerCase())) {
+    out.push({ vault: gen7.address, program: EVM_GEN7_HOLDER_PROGRAM, label: "gen-7" });
+  }
+  return out;
+}
+
 const DEFAULT_MIN_SPEND: Record<number, bigint> = { 56: 3_000_000_000_000_000n, 97: 3_000_000_000_000_000n, 4663: 1_000_000_000_000_000n, 46630: 1_000_000_000_000_000n };
 const DEFAULT_MIN_PAYOUT: Record<number, bigint> = { 56: 1_300_000_000_000_000n, 97: 1_300_000_000_000_000n, 4663: 370_000_000_000_000n, 46630: 370_000_000_000_000n };
 
@@ -70,6 +90,17 @@ export function choiceConfig(chainId: number, env: NodeJS.ProcessEnv = process.e
     excluded,
     maxGas: uintEnv(perChain(env, "EVM_CREATOR_CHOICE_MAX_GAS", chainId), DEFAULT_CHOICE_CONFIG.maxGas),
   };
+}
+
+/**
+ * The configuration of one vault on the chain. Gen-6 keeps the chain's values. Gen-7's own vault has its own Safe
+ * authorization max on its own holder distributor, so EVM_GEN7_HOLDER_BATCH_MAX_WEI[_<id>] caps its weekly batch
+ * (falling back to EVM_HOLDER_BATCH_MAX_WEI[_<id>] when unset, the deploy default of equal caps).
+ */
+export function vaultChoiceConfig(base: ChoiceConfig, chainId: number, vault: OperatedVault, env: NodeJS.ProcessEnv = process.env): ChoiceConfig {
+  if (vault.program === DEFAULT_HOLDER_PROGRAM) return base;
+  const raw = perChain(env, "EVM_GEN7_HOLDER_BATCH_MAX_WEI", chainId);
+  return /^\d+$/.test(raw) ? { ...base, holderBatchMaxWei: BigInt(raw) } : base;
 }
 
 /** HTTP client for the API's internal buyback authorization endpoint. */

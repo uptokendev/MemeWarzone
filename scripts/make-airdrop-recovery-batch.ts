@@ -20,6 +20,12 @@
  * Batch ids are the runner's own deterministic ids (weeklyContractBatchId), read straight from the
  * distributor -- no log scan. Read-only unless there is something to recover; then it writes the file.
  *
+ * Two pots (founder, 2026-10-08): the gen-7 pot is its own CommunityRewardsVault + airdrop
+ * RewardDistributor. When COMMUNITY_REWARDS_VAULT_ADDRESS_GEN7_<chainId> and
+ * REWARD_DISTRIBUTOR_ADDRESS_GEN7_<chainId> are set, the same file carries a second block of the four
+ * steps for that pot: its expired money goes back into ITS vault, with ITS router restored. Each block
+ * is the same audited shape; one Safe transaction, all or nothing.
+ *
  *   npx hardhat run scripts/make-airdrop-recovery-batch.ts --network bscMainnet
  *   npx hardhat run scripts/make-airdrop-recovery-batch.ts --network robinhoodMainnet
  */
@@ -39,9 +45,23 @@ export const CHAINS: Record<number, { dir: string; native: string; distributor: 
   4663: { dir: "robinhood", native: "ETH", distributor: "0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D", vault: "0xdE9Ec7c679FD260D76A390eEC00FA8ab1E621D2a" },
 };
 
-/** Same id the weekly runner funds (frontend/scripts/weekly-airdrop/materialize.mjs). */
-export function weeklyContractBatchId(chainId: number, epochId: string, program: string) {
-  return ethers.keccak256(ethers.toUtf8Bytes(`mwz-weekly-airdrop:${chainId}:${epochId}:${program}`));
+/** Same id the weekly runner funds (frontend/scripts/weekly-airdrop/materialize.mjs); main pot = no suffix. */
+export function weeklyContractBatchId(chainId: number, epochId: string, program: string, pot = "main") {
+  const base = `mwz-weekly-airdrop:${chainId}:${epochId}:${program}`;
+  return ethers.keccak256(ethers.toUtf8Bytes(pot === "main" ? base : `${base}:${pot}`));
+}
+
+export type Pot = { pot: string; distributor: string; vault: string };
+
+/** The pots of a chain: main from the table above, gen-7 from the runner's env names when both are set. */
+export function recoveryPots(chainId: number, env: Record<string, string | undefined> = process.env): Pot[] {
+  const chain = CHAINS[chainId];
+  const pots: Pot[] = chain ? [{ pot: "main", distributor: chain.distributor, vault: chain.vault }] : [];
+  const vault = String(env[`COMMUNITY_REWARDS_VAULT_ADDRESS_GEN7_${chainId}`] || "").trim();
+  const distributor = String(env[`REWARD_DISTRIBUTOR_ADDRESS_GEN7_${chainId}`] || "").trim();
+  if (Boolean(vault) !== Boolean(distributor)) throw new Error(`set both COMMUNITY_REWARDS_VAULT_ADDRESS_GEN7_${chainId} and REWARD_DISTRIBUTOR_ADDRESS_GEN7_${chainId}, or neither`);
+  if (vault) pots.push({ pot: "gen7", distributor: ethers.getAddress(distributor), vault: ethers.getAddress(vault) });
+  return pots;
 }
 
 export function epochIdsUntil(nowSec: number, first = FIRST_EPOCH): string[] {
@@ -63,45 +83,55 @@ export function recoveryCalls(input: { safe: string; distributor: string; vault:
   ];
 }
 
-async function main() {
-  const chainId = Number((await ethers.provider.getNetwork()).chainId);
-  const chain = CHAINS[chainId];
-  if (!chain) throw new Error(`chain ${chainId} is not BNB (56) or Robinhood mainnet (4663)`);
-  const distributor = new ethers.Contract(chain.distributor, [
+async function potRecovery(chainId: number, chain: { native: string }, pot: Pot, now: number) {
+  const distributor = new ethers.Contract(pot.distributor, [
     "function owner() view returns (address)",
     "function batches(bytes32) view returns (bytes32 merkleRoot, uint256 totalFunded, uint256 totalClaimed, uint64 claimDeadline, bool paused, bool exists)",
   ], ethers.provider);
-  const vault = new ethers.Contract(chain.vault, ["function admin() view returns (address)", "function router() view returns (address)"], ethers.provider);
-  if (ethers.getAddress(await distributor.owner()) !== ethers.getAddress(SAFE)) throw new Error("RewardDistributor owner is not the Safe");
-  if (ethers.getAddress(await vault.admin()) !== ethers.getAddress(SAFE)) throw new Error("CommunityRewardsVault admin is not the Safe");
+  const vault = new ethers.Contract(pot.vault, ["function admin() view returns (address)", "function router() view returns (address)"], ethers.provider);
+  if (ethers.getAddress(await distributor.owner()) !== ethers.getAddress(SAFE)) throw new Error(`${pot.pot} pot: RewardDistributor owner is not the Safe`);
+  if (ethers.getAddress(await vault.admin()) !== ethers.getAddress(SAFE)) throw new Error(`${pot.pot} pot: CommunityRewardsVault admin is not the Safe`);
   const router = ethers.getAddress(await vault.router());
-  if (router === ethers.getAddress(SAFE)) throw new Error("vault router is the Safe -- a previous recovery did not restore it; fix that first");
-  if ((await ethers.provider.getCode(router)) === "0x") throw new Error(`vault router ${router} has no code`);
+  if (router === ethers.getAddress(SAFE)) throw new Error(`${pot.pot} pot: vault router is the Safe -- a previous recovery did not restore it; fix that first`);
+  if ((await ethers.provider.getCode(router)) === "0x") throw new Error(`${pot.pot} pot: vault router ${router} has no code`);
 
-  const now = Number((await ethers.provider.getBlock("latest"))!.timestamp);
+  console.log(`[airdrop-recovery] ${pot.pot} pot: distributor ${pot.distributor}, vault ${pot.vault}`);
   const expired: Expired[] = [];
   for (const epochId of epochIdsUntil(now)) {
     for (const program of PROGRAMS) {
-      const batchId = weeklyContractBatchId(chainId, epochId, program);
+      const batchId = weeklyContractBatchId(chainId, epochId, program, pot.pot);
       const b = await distributor.batches(batchId);
       if (!b.exists) continue;
       const unclaimed = BigInt(b.totalFunded) - BigInt(b.totalClaimed);
       const deadline = Number(b.claimDeadline);
       const state = unclaimed === 0n ? "fully claimed / recovered" : deadline !== 0 && now > deadline ? "EXPIRED" : `open until ${new Date(deadline * 1000).toISOString()}`;
       console.log(`  ${epochId} ${program.padEnd(15)} unclaimed ${ethers.formatEther(unclaimed)} ${chain.native}  ${state}`);
-      if (unclaimed > 0n && deadline !== 0 && now > deadline) expired.push({ batchId, label: `${epochId} ${program}`, unclaimed });
+      const label = pot.pot === "main" ? `${epochId} ${program}` : `${epochId} ${program} (${pot.pot} pot)`;
+      if (unclaimed > 0n && deadline !== 0 && now > deadline) expired.push({ batchId, label, unclaimed });
     }
   }
+  return { expired, router, calls: recoveryCalls({ safe: SAFE, distributor: pot.distributor, vault: pot.vault, router, expired }) };
+}
 
-  const calls = recoveryCalls({ safe: SAFE, distributor: chain.distributor, vault: chain.vault, router, expired });
+async function main() {
+  const chainId = Number((await ethers.provider.getNetwork()).chainId);
+  const chain = CHAINS[chainId];
+  if (!chain) throw new Error(`chain ${chainId} is not BNB (56) or Robinhood mainnet (4663)`);
+  const now = Number((await ethers.provider.getBlock("latest"))!.timestamp);
+  const results = [];
+  for (const pot of recoveryPots(chainId)) results.push({ pot, ...(await potRecovery(chainId, chain, pot, now)) });
+
+  const calls = results.flatMap((r) => r.calls);
   if (!calls.length) {
     console.log(`\n[airdrop-recovery] chain ${chainId}: nothing expired with money left. No batch written.`);
     return;
   }
+  const expired = results.flatMap((r) => r.expired);
   const total = expired.reduce((sum, item) => sum + item.unclaimed, 0n);
+  const restored = results.filter((r) => r.calls.length).map((r) => `${r.pot.pot} pot router restored to ${r.router}`).join("; ");
   const file = path.resolve(__dirname, "..", "deployments", chain.dir, `mainnet.airdrop-recovery-${new Date(now * 1000).toISOString().slice(0, 10)}.safe-batch.json`);
   const batch = buildBatch(chainId, `Airdrop recovery: ${ethers.formatEther(total)} ${chain.native} back into the pot`,
-    `${expired.length} expired batch(es) (${expired.map((e) => e.label).join("; ")}) -> Safe -> CommunityRewardsVault.depositAirdrop; router restored to ${router}. One transaction, all or nothing.`, calls);
+    `${expired.length} expired batch(es) (${expired.map((e) => e.label).join("; ")}) -> Safe -> each pot's CommunityRewardsVault.depositAirdrop; ${restored}. One transaction, all or nothing.`, calls);
   fs.writeFileSync(file, `${JSON.stringify(batch, null, 2)}\n`);
   console.log(`\n[airdrop-recovery] ${ethers.formatEther(total)} ${chain.native} from ${expired.length} batch(es) -> ${path.relative(process.cwd(), file)}`);
   for (const call of calls) console.log(`    ${call.fn}(${call.args.map(String).join(", ")})${"value" in call ? ` value ${ethers.formatEther((call as any).value)} ${chain.native}` : ""}`);

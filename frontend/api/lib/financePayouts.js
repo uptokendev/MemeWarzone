@@ -32,6 +32,7 @@ import {
 } from "./solanaCreatorFeeMath.js";
 import { decodeCreatorFeeVault, readCreatorClaimHistory, reconcileCreatorFees } from "./solanaCreatorFeeClaims.js";
 import { CREATOR_VAULT_V2_DEPLOY_BLOCKS, V2_CLAIM_EVENTS, mergeV2Rows, readEvmCreatorVaultCoins, readV2LogsFromChain, summarizeV2Events } from "./evmCreatorFeeClaims.js";
+import { evmGen7FeesStack } from "./evmGen7Fees.js";
 import { getRpcUrls } from "./getServerReadProvider.js";
 import { arenaPrizesType } from "./financePayoutsArena.js";
 import { SOLANA_DEPLOYER, SOLANA_DEVNET_DEPLOYER, SOLANA_ROUTE_OPERATOR } from "./financeFeeRoutingSolana.js";
@@ -90,6 +91,7 @@ const VAULT_PLAIN = Object.freeze({
   recruiter_vault: "Holds recruiter rewards until they are paid out.",
   creator_fee_accounts: "One fee account per coin; the creator's share stays there until the creator claims it.",
   creator_vault_v2: "Holds creator, holder and buyback balances for each newer coin.",
+  creator_vault_v2_gen7: "Holds creator, holder and buyback balances for each coin launched on the newest launchpad (generation 7).",
   creator_vault_v1: "Holds unclaimed creator fees for older coins.",
   airdrop_vault: "Program-held account that holds the weekly airdrop pot.",
   airdrop_distributor: "Contract that pays each week's airdrop winners.",
@@ -536,8 +538,8 @@ async function readSolanaCreatorClaimHistory(ctx, { vault, totalClaimedRaw }) {
   return readCreatorClaimHistory({ rpc: (method, params) => solanaJsonRpc(ctx, method, params), vault, totalClaimedLamports: BigInt(totalClaimedRaw || "0") });
 }
 
-async function readEvmCreatorV2Logs(ctx, { vault }) {
-  return readV2LogsFromChain({ chainId: ctx.chainId, vault, urls: ctx.evmUrls, fetchImpl: ctx.fetchImpl });
+async function readEvmCreatorV2Logs(ctx, { vault, fromBlock = null }) {
+  return readV2LogsFromChain({ chainId: ctx.chainId, vault, urls: ctx.evmUrls, fetchImpl: ctx.fetchImpl, fromBlock });
 }
 
 async function readEvmCreatorCoins(ctx, { v1, v2, campaigns }) {
@@ -909,6 +911,47 @@ async function solanaCreatorCoins(ctx, t) {
   return { coins, read, earnedRows, earnedError: earned.error, recordedError: recorded.error };
 }
 
+/**
+ * Gen-7's own CreatorRewardsVaultV2 (founder decision 2026-10-08): per-coin creatorBalance, its claim and accrual
+ * events (indexer rows + its own logs from its deploy block). A coin is in exactly one V2 vault, so the gen-6 and
+ * gen-7 figures add up per coin. Null without a gen-7 vault in the registry.
+ */
+async function evmGen7CreatorReads(ctx, campaigns, events) {
+  const vault = ctx.destinations.get("creator_vault_v2_gen7")?.address || null;
+  if (!vault) return null;
+  const fromBlock = evmGen7FeesStack(ctx.chainId, ctx.env || {}).creatorVault?.startBlock || null;
+  const cursor = await safeQuery(ctx.db, `select last_indexed_block, updated_at from public.indexer_state where chain_id = $1 and cursor = $2`, [ctx.chainId, `gen5-aux:${vault.toLowerCase()}`]);
+  let perCoin = [];
+  let readError = null;
+  try {
+    perCoin = await ctx.readers.readEvmCreatorCoins(ctx, { v1: null, v2: vault, campaigns });
+  } catch (error) {
+    readError = String(error?.message || "read failed").slice(0, 200);
+  }
+  let chainLogs = { rows: [], complete: false, error: "not read" };
+  if (fromBlock) {
+    try {
+      chainLogs = await ctx.readers.readEvmCreatorV2Logs(ctx, { vault, fromBlock });
+    } catch (error) {
+      chainLogs = { rows: [], complete: false, error: String(error?.message || "log read failed").slice(0, 200) };
+    }
+  } else {
+    chainLogs = { rows: [], complete: false, error: `no deploy block in EVM_GEN7_CREATOR_VAULT_${ctx.chainId} (0xaddr@block)` };
+  }
+  const indexed = !events.error && Boolean(cursor.rows?.[0]);
+  return {
+    vault,
+    fromBlock,
+    claimable: new Map(perCoin.map((c) => [c.campaign.toLowerCase(), c.v2?.claimableRaw ?? "0"])),
+    events: summarizeV2Events(mergeV2Rows(events.error ? [] : events.rows, chainLogs.rows), { vault }),
+    chainLogs,
+    indexed,
+    known: chainLogs.complete || indexed,
+    readError,
+    cursor: cursor.rows?.[0] || null,
+  };
+}
+
 async function evmCreatorCoins(ctx, t) {
   const v1 = ctx.destinations.get("creator_vault_v1")?.address || null;
   const v2 = ctx.destinations.get("creator_vault_v2")?.address || null;
@@ -947,12 +990,19 @@ async function evmCreatorCoins(ctx, t) {
   const v2Indexed = !events.error && Boolean(cursor.rows?.[0]);
   const v2Known = !v2 || chainLogs.complete || v2Indexed;
   if (v2 && !chainLogs.complete) t.notes.push(`CreatorRewardsVaultV2 logs could not be read from the chain to the head (${chainLogs.error || "partial read"}); its claims come from the indexer${v2Indexed ? ` (scanned to block ${cursor.rows[0].last_indexed_block})` : ""} and can miss events from before the indexer started.`);
+  const g7 = await evmGen7CreatorReads(ctx, rows.map((r) => r.campaign_address), events);
+  if (g7) {
+    t.sources.push("rpc: gen-7 CreatorRewardsVaultV2 creatorBalance per coin and its logs from its deploy block");
+    if (!g7.chainLogs.complete) t.notes.push(`Gen-7 CreatorRewardsVaultV2 logs could not be read from the chain to the head (${g7.chainLogs.error || "partial read"}); its claims come from the indexer${g7.indexed ? ` (scanned to block ${g7.cursor.last_indexed_block})` : ""}.`);
+  }
   const coins = rows.map((r) => {
     const key = r.campaign_address.toLowerCase();
     const reads = byCampaign.get(key);
-    const ev = v2Events.get(key) || { claims: [], claimedRaw: 0n, earnedRaw: 0n, quoteClaims: 0 };
+    const ev6 = v2Events.get(key) || { claims: [], claimedRaw: 0n, earnedRaw: 0n, quoteClaims: 0 };
+    const ev7 = g7?.events.get(key) || null;
+    const ev = ev7 ? { claims: [...ev6.claims, ...ev7.claims], claimedRaw: ev6.claimedRaw + ev7.claimedRaw, earnedRaw: ev6.earnedRaw + ev7.earnedRaw, quoteClaims: ev6.quoteClaims + ev7.quoteClaims } : ev6;
     const v1 = reads?.v1 || { earnedRaw: "0", claimedRaw: "0", claimableRaw: "0" };
-    const known = Boolean(reads) && v2Known;
+    const known = Boolean(reads) && v2Known && (!g7 || (g7.known && !g7.readError));
     const notes = [];
     if (rawBig(v1.claimedRaw) > 0n) notes.push(`${atomicToDecimal(v1.claimedRaw, 18)} ${ctx.asset} claimed from the older CreatorRewardsVault (its claims are not indexed, so they have no transaction link).`);
     if (ev.quoteClaims > 0) notes.push(`${ev.quoteClaims} claim${ev.quoteClaims === 1 ? "" : "s"} paid in the coin's quote token, not counted here.`);
@@ -960,15 +1010,19 @@ async function evmCreatorCoins(ctx, t) {
       campaign: r.campaign_address, token: r.token_address, name: r.name, symbol: r.symbol, testCoin: Boolean(r.test_coin), creator: ev.claims.at(-1)?.wallet || null,
       earnedRaw: known ? (rawBig(v1.earnedRaw) + ev.earnedRaw).toString() : null,
       paidRaw: known ? (rawBig(v1.claimedRaw) + ev.claimedRaw).toString() : null,
-      claimableRaw: reads ? (rawBig(v1.claimableRaw) + rawBig(reads.v2?.claimableRaw)).toString() : null,
+      claimableRaw: reads && (!g7 || !g7.readError) ? (rawBig(v1.claimableRaw) + rawBig(reads.v2?.claimableRaw) + rawBig(g7?.claimable.get(key))).toString() : null,
       claims: ev.claims,
-      claimsComplete: known && (!v2 || chainLogs.complete),
+      claimsComplete: known && (!v2 || chainLogs.complete) && (!g7 || g7.chainLogs.complete),
       claimsSource: known ? (chainLogs.complete ? `rpc: CreatorRewardsVaultV2 logs from block ${CREATOR_VAULT_V2_DEPLOY_BLOCKS[ctx.chainId]} to ${chainLogs.head}, merged with db:evm_campaign_events` : "db:evm_campaign_events") : null,
       untrackedClaimRaw: known ? v1.claimedRaw : "0",
       ...(notes.length ? { note: notes.join(" ") } : {}),
     };
   });
-  const error = readError ? `Creator vault getters could not be read: ${readError}` : !v2Known ? `CreatorRewardsVaultV2 ${v2} claims are not known on this chain: the indexer has no scan cursor for it and its logs could not be read (${chainLogs.error || "partial read"}).` : null;
+  const error = readError ? `Creator vault getters could not be read: ${readError}`
+    : !v2Known ? `CreatorRewardsVaultV2 ${v2} claims are not known on this chain: the indexer has no scan cursor for it and its logs could not be read (${chainLogs.error || "partial read"}).`
+    : g7?.readError ? `Gen-7 creator vault getters could not be read: ${g7.readError}`
+    : g7 && !g7.known ? `Gen-7 CreatorRewardsVaultV2 ${g7.vault} claims are not known on this chain: the indexer has no scan cursor for it and its logs could not be read (${g7.chainLogs.error || "partial read"}).`
+    : null;
   return { coins, error, v2Cursor: cursor.rows?.[0] || null };
 }
 
@@ -1075,12 +1129,16 @@ async function creatorType(ctx) {
     t.coverage = await coverageBlock(ctx, read.status === "ok" ? publicRaw : null, t.vaults, "Covered by design: what a creator can claim is what the coin's fee accounts hold above rent.");
   } else {
     t.sources.push("rpc: CreatorRewardsVault (older coins) and CreatorRewardsVaultV2 (newer coins) balances");
-    t.vaults = [vaultFromDestination(ctx, "creator_vault_v2"), vaultFromDestination(ctx, "creator_vault_v1")];
+    t.vaults = [
+      vaultFromDestination(ctx, "creator_vault_v2"),
+      ...(ctx.destinations.has("creator_vault_v2_gen7") ? [vaultFromDestination(ctx, "creator_vault_v2_gen7", { plainId: "creator_vault_v2_gen7" })] : []),
+      vaultFromDestination(ctx, "creator_vault_v1"),
+    ];
     const reads = t.vaults.map((v) => v.balance);
     if (reads.every((b) => b.status === "ok")) {
       const owed = acc();
       owed.raw = reads.reduce((s, b) => s + BigInt(b.raw), 0n);
-      t.owed = await owedBlock(owed, acc(), acc(), ctx, { note: "Everything in these two vaults belongs to creators (and, for newer coins, to holders or buybacks the creator chose), so what is owed equals what they hold. Balances are on chain and cannot be split by coin here, so test coins are included; the per-coin list below splits the creator part." });
+      t.owed = await owedBlock(owed, acc(), acc(), ctx, { note: `Everything in these ${["", "", "two", "three"][t.vaults.length] || t.vaults.length} vaults belongs to creators (and, for newer coins, to holders or buybacks the creator chose), so what is owed equals what they hold. Balances are on chain and cannot be split by coin here, so test coins are included; the per-coin list below splits the creator part.` });
       // A vault balance is not a count of claims.
       t.owed.claimable.count = null;
       t.owed.total.count = null;
@@ -1109,6 +1167,19 @@ async function airdropType(ctx) {
   t.coverage = await coverageBlock(ctx, (c.claimable.raw + c.pending.raw).toString(), ctx.solana ? t.vaults : t.vaults.slice(0, 1), ctx.solana
     ? "The airdrop vault also holds next week's pot."
     : "Compared with the distributor, which holds each week's winnings. The community vault beside it holds the pot for coming weeks and the squad share.");
+  // The weekly runner's open alerts on the Safe pre-authorization runway and on expired batches that
+  // need the recovery batch, per pot (scripts/weekly-airdrop/authorizationHorizon.mjs). Listed here so
+  // the Finance status shows them until the runner sees them fixed and resolves them.
+  if (!ctx.solana && ctx.dbRowsAllowed) {
+    const open = await safeQuery(ctx.db, `select severity, title, message from public.reward_alerts
+      where status = 'open' and reward_type = 'airdrop'
+        and metadata->>'kind' in ('airdrop_authorization_runway', 'airdrop_recovery_due', 'airdrop_authorization_runway_read_failed')
+        and metadata->>'chainId' = any($1::text[])
+      order by created_at desc limit 10`, [ctx.rewardChains]);
+    for (const row of open.rows || []) {
+      t.warnings.push({ level: row.severity === "critical" ? "critical" : "warning", message: `${row.title}. ${row.message}` });
+    }
+  }
   const lastRun = ctx.dbRowsAllowed ? await safeQuery(ctx.db, `select max(created_at) as at, count(*)::int as n from public.reward_batches where chain::text = any($1::text[]) and reward_type = 'airdrop'`, [ctx.rewardChains]) : { rows: [] };
   const lastAt = toIso(lastRun.rows?.[0]?.at);
   t.upcoming = [

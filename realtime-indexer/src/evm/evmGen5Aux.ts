@@ -8,12 +8,14 @@
  * Addresses come from env, "0xaddr@startBlock" entries, comma separated:
  *   EVM_CREATOR_VAULT_V2_<chainId>   the generation's CreatorRewardsVaultV2
  *   EVM_GEN5_LP_LOCKERS_<chainId>    the generation's PermanentLpLocker (BNB) / PermanentV3PositionLocker (RH)
+ *   EVM_GEN7_CREATOR_VAULT_<chainId> gen-7's own CreatorRewardsVaultV2 (evmGen7Fees.ts), appended
  * TreasuryRouterV4's RouteExecuted has the V3 topic and is scanned by the reward-router scan
  * (TREASURY_ROUTERS_<id> / TREASURY_ROUTERS_EXTRA_<id>).
  */
 import { ethers } from "ethers";
 import { CREATOR_REWARDS_VAULT_V2_EVENTS, LP_LOCKER_EVENTS, V3_LOCKER_EVENTS } from "./evmGen5Abi.js";
 import { recordEvmEvent, serializeEventArgs, setGen5FeeChoice, type EvmContractKind, type Queryable } from "./evmGen5Store.js";
+import { evmGen7FeesStack } from "./evmGen7Fees.js";
 
 export const CREATOR_VAULT_V2_IFACE = new ethers.Interface(CREATOR_REWARDS_VAULT_V2_EVENTS as unknown as string[]);
 export const GEN5_LOCKER_IFACE = new ethers.Interface([...LP_LOCKER_EVENTS, ...V3_LOCKER_EVENTS] as unknown as string[]);
@@ -44,9 +46,12 @@ function parseEntries(raw: string | undefined, kind: AuxContract["kind"]): AuxCo
 }
 
 export function configuredGen5AuxContracts(chainId: number, env: NodeJS.ProcessEnv = process.env): AuxContract[] {
+  const gen7Vault = evmGen7FeesStack(chainId, env).creatorVault;
   const out = [
     ...parseEntries(env[`EVM_CREATOR_VAULT_V2_${chainId}`], "creator_vault"),
     ...parseEntries(env[`EVM_GEN5_LP_LOCKERS_${chainId}`], "lp_locker"),
+    // Gen-7's own CreatorRewardsVaultV2 (EVM_GEN7_CREATOR_VAULT_<id>): same events, its own cursor.
+    ...(gen7Vault ? [{ address: gen7Vault.address.toLowerCase(), startBlock: gen7Vault.startBlock, kind: "creator_vault" as const }] : []),
   ];
   const seen = new Set<string>();
   return out.filter((c) => (seen.has(c.address) ? false : (seen.add(c.address), true)));

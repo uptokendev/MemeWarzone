@@ -118,6 +118,33 @@ vault.setRouter(Safe), depositAirdrop{value}, setRouter(router). Rehearsed in
 First weeks expire late November 2026; run the script monthly from then. `buildBatch` now takes an
 optional `value` for payable calls only.
 
+### Airdrop: two EVM pots, main + gen-7, fully automated (founder, 2026-10-08, build/evm-gen7)
+
+Gen-7 has its own fees stack per chain, incl. its own `CommunityRewardsVault` (onlyRouter = the gen-7
+TreasuryRouterV4). Founder chose two pots over a weekly Safe merge. A pot = vault + its own airdrop
+`RewardDistributor` (`batchOperator` is one address, `createBatch` is onlyOwnerOrBatchOperator, so one
+distributor serves one vault; the gen-7 holder distributor's operator is the CreatorRewardsVaultV2).
+
+- **Env:** `COMMUNITY_REWARDS_VAULT_ADDRESS_GEN7_<chainId>` + `REWARD_DISTRIBUTOR_ADDRESS_GEN7_<chainId>`
+  (both or neither; neither = the old single-pot run). Same operator key on both vaults by default
+  (`AIRDROP_OPERATOR_PRIVATE_KEY_GEN7_<chainId>` overrides). Code: `scripts/weekly-airdrop/pots.mjs`.
+- **Ids:** `weeklyContractBatchId(chain, epoch, program, pot)`: main = the original string (every
+  pre-authorized P1 id still matches, pinned in `airdropPots.test.mjs`), gen-7 appends `:gen7`. Gen-7 DB
+  rows carry `metadata.airdropPot='gen7'`; main rows carry nothing new.
+- **Draw:** same eligibility and rules per pot; main draws first exactly as before, gen-7 next from the
+  wallets the main pot did not draw (a wallet wins from at most one pot a week, so one claim per win).
+  No wallet left = gen-7 rolls over (balance stays in its vault). One pot failing never stops the other.
+  Claims: each ledger row carries its own distributor, so Rewards and claims claims each from the right one.
+- **Pool endpoint** `/api/airdrops/pool`: `poolRaw/poolUsd` = sum, `pots[]` per pot.
+- **Only recurring Safe step:** `make-airdrop-setup-calls.mjs --gen7-vault/--gen7-distributor` writes ONE
+  batch renewing both pots (`--skip-wiring` renew, `--wiring gen7 --only gen7` at the gen-7 deploy, `--from` to start
+  after the last authorized week). Every weekly run checks each pot's `batchAuthorization` runway
+  (`authorizationHorizon.mjs`): this week unauthorized = critical, fewer than `AIRDROP_AUTH_ALERT_WEEKS`
+  (3) weeks after it = warning, expired batches with money left = recovery-due warning. Alerts go to
+  `reward_alerts` (auto-resolved when fixed), the Finance Payouts airdrop warnings (so Finance status), and
+  `AIRDROP_ALERT_EMAIL` via Resend if set. Recovery batch handles both pots (a block of 4 calls per pot).
+- Rehearsed on contracts in `test/AirdropTwoPots.spec.ts`.
+
 
 
 ### Major War League payouts (built 2026-10-02)
@@ -460,3 +487,14 @@ Rule: `campaigns.meta.publicHidden` (`frontend/api/lib/publicHiddenSql.js`, mirr
   holds and list, write marker, commit, send, record, delete marker. Item action: shared global + list lock,
   refuse while a marker exists. Blanket hold: exclusive global (warns about lists already in flight).
   A marker left by a crash after a send is cleared by the next publisher run.
+
+### Gen-7 creator / holder fees stack (2026-10-08, build/evm-gen7, not deployed)
+
+Gen-7 has its own TreasuryRouterV4, CreatorRewardsVaultV2 and holder RewardDistributor per chain (the gen-6 vault is
+pinned to the gen-6 factory). Env `EVM_GEN7_ROUTER_<id>`, `EVM_GEN7_CREATOR_VAULT_<id>`, `EVM_GEN7_HOLDER_DISTRIBUTOR_<id>`,
+`EVM_GEN7_COMMUNITY_VAULT_<id>` (table: `docs/evm-launch/EVM_GEN7_V2_PLAN.md` section 8). One operator key works both
+vaults, one transaction in flight per chain across them; gen-7 holder batches use program `airdrop_holders_gen7` (own
+batch id and Claim Center batch); `evm_holder_batches` is keyed per vault (migration `20261008_000040`, founder runs it).
+Holder batches need a weekly Safe `approveHolderBatch` per vault (cannot be given ahead); the distributor
+`authorizeBatch` can be pre-authorized (`scripts/make-holder-batch-preauth-calls.mjs`). Fee routing alerts when a batch
+waits for the Safe over 24 h and 3 weeks before the pre-authorizations run out (`financeHolderBatchAlerts.js`).

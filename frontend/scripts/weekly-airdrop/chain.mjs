@@ -1,11 +1,12 @@
 import { Contract, JsonRpcProvider, Network, Wallet, getAddress } from "ethers";
 import { asBigInt, envText, requireEnv } from "./config.mjs";
+import { MAIN_POT, isMainPot, potOperatorKey } from "./pots.mjs";
 
 function rpcUrl(chainId) {
   return envText(`BSC_RPC_HTTP_${chainId}`) || envText("BSC_RPC_HTTP") || envText("RPC_URL");
 }
 
-function providerFor(chainId) {
+export function providerFor(chainId) {
   const raw = rpcUrl(chainId);
   if (!raw) throw new Error(`BSC_RPC_HTTP_${chainId} is required`);
   const url = raw.split(",").map((value) => value.trim()).find(Boolean);
@@ -17,7 +18,17 @@ export function configuredVaultAddress(chainId) {
   return envText(`COMMUNITY_REWARDS_VAULT_ADDRESS_${chainId}`) || envText("COMMUNITY_REWARDS_VAULT_ADDRESS") || null;
 }
 
-export async function resolvePoolWei(chainId) {
+/**
+ * The pot's available balance. The main pot reads exactly as before (incl. the AIRDROP_WEEKLY_POOL_WEI
+ * test override); another pot always reads its own vault's warzoneAirdropBalance.
+ */
+export async function resolvePoolWei(chainId, potConfig = null) {
+  if (potConfig && !isMainPot(potConfig.pot)) {
+    if (!potConfig.vaultAddress) throw new Error(`CommunityRewardsVault address is required for the ${potConfig.pot} pot`);
+    const vault = new Contract(potConfig.vaultAddress, ["function warzoneAirdropBalance() view returns (uint256)"], providerFor(chainId));
+    const availableWei = BigInt(await vault.warzoneAirdropBalance());
+    return { availableWei: availableWei > 0n ? availableWei : 0n, source: "community_rewards_vault", vaultAddress: potConfig.vaultAddress };
+  }
   const fixed = envText("AIRDROP_WEEKLY_POOL_WEI");
   if (fixed) {
     const availableWei = asBigInt(fixed, -1n);
@@ -174,7 +185,7 @@ async function requestFundingExecution(payload) {
   return result;
 }
 
-export async function ensureOnChainBatch({ batchId, chainId, distributorAddress, vaultAddress, poolSource, batchMetadata }) {
+export async function ensureOnChainBatch({ batchId, chainId, distributorAddress, vaultAddress, poolSource, batchMetadata, pot = MAIN_POT }) {
   const contractBatchId = String(batchMetadata?.contractBatchId || batchMetadata?.merkleBatchId || "");
   const merkleRoot = String(batchMetadata?.merkleRoot || "");
   const total = asBigInt(batchMetadata?.merkleTotalAmount, 0n);
@@ -201,9 +212,10 @@ export async function ensureOnChainBatch({ batchId, chainId, distributorAddress,
   // Own-server mode (founder, 2026-09-25): the Coolify job funds with the vault's airdropOperator
   // key. Its reach is what the Safe pre-authorized on the RewardDistributor (batch id + max amount +
   // publish window), checked here before sending so a refusal is explained, not just reverted.
-  const operatorKey = envText(`AIRDROP_OPERATOR_PRIVATE_KEY_${chainId}`);
+  // The gen-7 pot uses the same key unless AIRDROP_OPERATOR_PRIVATE_KEY_GEN7_<chainId> overrides it.
+  const operatorKey = potOperatorKey(chainId, pot);
   const execution = operatorKey
-    ? await fundDirect({ chainId, operatorKey, vaultAddress, distributorAddress, contractBatchId, merkleRoot, deadline, total })
+    ? await fundDirect({ chainId, operatorKey, vaultAddress, distributorAddress, contractBatchId, merkleRoot, deadline, total, pot })
     : await requestFundingExecution({
     action: "fund_airdrop_batch",
     idempotencyKey: `mwz-airdrop:${chainId}:${contractBatchId}`,
@@ -240,7 +252,7 @@ export async function ensureOnChainBatch({ batchId, chainId, distributorAddress,
 }
 
 
-async function fundDirect({ chainId, operatorKey, vaultAddress, distributorAddress, contractBatchId, merkleRoot, deadline, total }) {
+async function fundDirect({ chainId, operatorKey, vaultAddress, distributorAddress, contractBatchId, merkleRoot, deadline, total, pot = MAIN_POT }) {
   const provider = providerFor(chainId);
   const signer = new Wallet(operatorKey, provider);
   const distributor = new Contract(distributorAddress, [
@@ -257,9 +269,14 @@ async function fundDirect({ chainId, operatorKey, vaultAddress, distributorAddre
     vault.warzoneAirdropBalance(),
   ]);
   if (getAddress(operator) !== getAddress(signer.address)) {
-    throw new Error(`AIRDROP_OPERATOR_PRIVATE_KEY_${chainId} is ${signer.address}, but the vault's airdropOperator is ${operator}`);
+    const keyName = isMainPot(pot) ? `AIRDROP_OPERATOR_PRIVATE_KEY_${chainId}` : `the ${pot} pot's operator key`;
+    throw new Error(`${keyName} is ${signer.address}, but the vault's airdropOperator is ${operator}`);
   }
-  if (!auth.authorized || auth.consumed) throw new Error(`Batch ${contractBatchId} is not pre-authorized by the Safe (or already used)`);
+  if (!auth.authorized || auth.consumed) {
+    throw new Error(isMainPot(pot)
+      ? `Batch ${contractBatchId} is not pre-authorized by the Safe (or already used)`
+      : `Batch ${contractBatchId} (${pot} pot, distributor ${distributorAddress}) is not pre-authorized by the Safe (or already used)`);
+  }
   // Never shrink: above the Safe's max the batch stays materialized (full amounts) and funding waits
   // for a higher authorizeBatch; the runner resumes it unchanged.
   if (total > BigInt(auth.maxAmount)) {

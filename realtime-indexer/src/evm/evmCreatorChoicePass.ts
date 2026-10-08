@@ -28,6 +28,7 @@ import { ethers } from "ethers";
 import {
   CHOICE,
   DEAD,
+  DEFAULT_HOLDER_PROGRAM,
   allocateToHolders,
   buildLeafFile,
   buybackBudget,
@@ -212,12 +213,18 @@ function isBenignBroadcastError(message: string): boolean {
   return /already known|known transaction|nonce too low|replacement transaction underpriced|already imported/i.test(message);
 }
 
-async function finishJob(db: Queryable, chain: ChoiceChain, chainId: number, row: any, status: "confirmed" | "reverted" | "dropped", block: number | null) {
+async function finishJob(db: Queryable, chain: ChoiceChain | null, chainId: number, row: any, status: "confirmed" | "reverted" | "dropped", block: number | null) {
   await db.query(
     `update public.evm_creator_choice_jobs set status = $2, receipt_block = $3, updated_at = now() where id = $1`,
     [row.id, status, block],
   );
   const action = String(row.action);
+  if (!chain) {
+    if (action === "propose_holder_batch" || action === "execute_holder_batch") {
+      console.error("[evm-choice] holder batch job of a vault this worker does not operate: batch left for a person", { chainId, vault: row.vault_address, batchId: row.subject, status });
+    }
+    return;
+  }
   if (action === "propose_holder_batch") {
     const batch = (await db.query(`select * from public.evm_holder_batches where chain_id = $1 and batch_id = $2`, [chainId, String(row.subject)])).rows[0];
     if (!batch) return;
@@ -230,46 +237,57 @@ async function finishJob(db: Queryable, chain: ChoiceChain, chainId: number, row
         // taken on chain); the Safe vetoes it and a person looks.
         await db.query(
           `update public.evm_holder_batches set status = 'failed', attempt = 1000, last_reason = $3, updated_at = now()
-            where chain_id = $1 and week_id = $2`,
-          [chainId, batch.week_id, "the proposal on chain does not match the published leaf file: veto it"],
+            where chain_id = $1 and week_id = $2 and vault_address = $4`,
+          [chainId, batch.week_id, "the proposal on chain does not match the published leaf file: veto it", lc(String(batch.vault_address))],
         );
         await archiveRewardBatch(db, batch.reward_batch_id, "proposal on chain does not match the leaf file");
         return;
       }
       await db.query(
         `update public.evm_holder_batches set status = 'proposed', executable_at = to_timestamp($3), last_reason = null, updated_at = now()
-          where chain_id = $1 and week_id = $2`,
-        [chainId, batch.week_id, Number(ev!.executableAt)],
+          where chain_id = $1 and week_id = $2 and vault_address = $4`,
+        [chainId, batch.week_id, Number(ev!.executableAt), lc(String(batch.vault_address))],
       );
     } else {
-      await setBatch(db, chainId, batch.week_id, "failed", `propose ${status}`);
+      await setBatch(db, chainId, String(batch.vault_address), batch.week_id, "failed", `propose ${status}`);
       await archiveRewardBatch(db, batch.reward_batch_id, `holder batch proposal ${status}`);
     }
   } else if (action === "execute_holder_batch") {
     const batch = (await db.query(`select * from public.evm_holder_batches where chain_id = $1 and batch_id = $2`, [chainId, String(row.subject)])).rows[0];
     if (!batch) return;
     if (status === "confirmed") {
-      await setBatch(db, chainId, batch.week_id, "executed", null);
+      await setBatch(db, chainId, String(batch.vault_address), batch.week_id, "executed", null);
       await openRewardBatch(db, batch.reward_batch_id, String(row.tx_hash), block);
     } else {
-      await setBatch(db, chainId, batch.week_id, "proposed", `execute ${status}`);
+      await setBatch(db, chainId, String(batch.vault_address), batch.week_id, "proposed", `execute ${status}`);
     }
   }
 }
 
-export async function resolveSendingJobs(input: { db: Queryable; chainId: number; chain: ChoiceChain; sender: ChoiceSender; send: boolean }): Promise<ResolveResult> {
+/**
+ * Resolves every 'sending' job of the chain, whichever vault it was for: one operator key signs for every creator
+ * vault of the chain (gen-6 and gen-7), so they share one nonce sequence and one transaction in flight per chain
+ * (the evm_creator_choice_jobs_one_in_flight_idx unique index). A job's batch effects are read through its own
+ * vault's chain (`chainFor`); a job for a vault this worker no longer operates gets its status only.
+ */
+export async function resolveSendingJobs(input: { db: Queryable; chainId: number; chain: ChoiceChain; sender: ChoiceSender; send: boolean; chainFor?: (vault: string) => ChoiceChain | null }): Promise<ResolveResult> {
   const out: ResolveResult = { confirmed: 0, reverted: 0, dropped: 0, rebroadcast: 0, waiting: 0 };
   const { rows } = await input.db.query(
     `select * from public.evm_creator_choice_jobs where chain_id = $1 and status = 'sending' order by id`,
     [input.chainId],
   );
+  const chainOf = (vault: string): ChoiceChain | null => {
+    if (lc(vault) === lc(input.chain.vault)) return input.chain;
+    return input.chainFor ? input.chainFor(vault) : null;
+  };
   for (const row of rows) {
+    const jobChain = chainOf(String(row.vault_address));
     let receipt = await input.sender.getReceipt(String(row.tx_hash));
     if (!receipt && (await input.sender.getNonce("latest")) > Number(row.nonce)) {
       // Nonce used, no receipt yet for our hash: check once more before calling it dropped.
       receipt = await input.sender.getReceipt(String(row.tx_hash));
       if (!receipt) {
-        await finishJob(input.db, input.chain, input.chainId, row, "dropped", null);
+        await finishJob(input.db, jobChain, input.chainId, row, "dropped", null);
         await input.db.query(`update public.evm_creator_choice_jobs set last_error = 'nonce used by another transaction' where id = $1`, [row.id]);
         out.dropped += 1;
         continue;
@@ -277,7 +295,7 @@ export async function resolveSendingJobs(input: { db: Queryable; chainId: number
     }
     if (receipt) {
       const ok = Number(receipt.status) === 1;
-      await finishJob(input.db, input.chain, input.chainId, row, ok ? "confirmed" : "reverted", receipt.blockNumber);
+      await finishJob(input.db, jobChain, input.chainId, row, ok ? "confirmed" : "reverted", receipt.blockNumber);
       if (ok) out.confirmed += 1;
       else out.reverted += 1;
       continue;
@@ -309,24 +327,27 @@ async function liveMomentKeys(db: Queryable, chainId: number, subject: string, a
 }
 
 /** Chain time (unix seconds) of the last live (sending / confirmed) job for this key and actions, or null. */
-async function lastConfirmedAt(db: Queryable, chainId: number, column: "subject" | "interval_key", key: string, actions: ChoiceAction[]): Promise<number | null> {
+async function lastConfirmedAt(db: Queryable, chainId: number, column: "subject" | "interval_key", key: string, actions: ChoiceAction[], vault?: string): Promise<number | null> {
+  // `vault`: the vault's own interval (lastBuybackAt is per vault on chain); a route pool two vaults share does not
+  // hold one vault back for the other's conversion.
   const { rows } = await db.query(
     `select chain_time as at from public.evm_creator_choice_jobs
       where chain_id = $1 and ${column} = $2 and action = any($3::text[]) and status in ('sending', 'confirmed')
+        ${vault ? "and vault_address = $4" : ""}
       order by chain_time desc, id desc limit 1`,
-    [chainId, key, actions],
+    vault ? [chainId, key, actions, lc(vault)] : [chainId, key, actions],
   );
   return rows[0] ? Number(rows[0].at) : null;
 }
 
 // ------------------------------------------------------------------------------------ Claim Center tables
 
-async function setBatch(db: Queryable, chainId: number, weekId: string, status: string, reason: string | null) {
+async function setBatch(db: Queryable, chainId: number, vault: string, weekId: string, status: string, reason: string | null) {
   await db.query(
     `update public.evm_holder_batches
         set status = $3, last_reason = $4, attempt = attempt + (case when $3 = 'failed' then 1 else 0 end), updated_at = now()
-      where chain_id = $1 and week_id = $2`,
-    [chainId, weekId, status, reason],
+      where chain_id = $1 and week_id = $2 and vault_address = $5`,
+    [chainId, weekId, status, reason, lc(vault)],
   );
 }
 
@@ -341,19 +362,22 @@ function nativeSymbol(chainId: number) {
  * executeHolderBatch has funded the distributor.
  */
 export async function publishRewardBatch(db: Queryable, file: LeafFile): Promise<string | null> {
+  // gen-6 "airdrop_holders"; gen-7's vault "airdrop_holders_gen7": one Claim Center batch per vault and week (the
+  // reward_batches unique index is chain + epochId + program).
+  const program = file.program ?? DEFAULT_HOLDER_PROGRAM;
   const entries = file.leaves.map((l) => ({ account: l.account, amount: BigInt(l.amount) }));
   const { leaves, proofs, root } = merklePlan(entries);
   return withTx(db, async (db) => {
     const dup = await db.query(
       `select id from public.reward_batches
-        where reward_type='airdrop' and chain::text=$1 and metadata->>'epochId'=$2 and metadata->>'program'='airdrop_holders'
+        where reward_type='airdrop' and chain::text=$1 and metadata->>'epochId'=$2 and metadata->>'program'=$3
           and status<>'archived' limit 1 for update`,
-      [String(file.chainId), file.weekId],
+      [String(file.chainId), file.weekId, program],
     );
     if (dup.rows[0]) return String(dup.rows[0].id);
     const metadata = {
       epochId: file.weekId,
-      program: "airdrop_holders",
+      program,
       automated: true,
       source: "evm_creator_choice_operator",
       claimMode: "reward_distributor_merkle",
@@ -383,7 +407,7 @@ export async function publishRewardBatch(db: Queryable, file: LeafFile): Promise
     for (let i = 0; i < entries.length; i += 1) {
       const wallet = entries[i].account.toLowerCase();
       const meta = {
-        role: "Holder", program: "airdrop_holders", epochId: file.weekId, batchId: batch.id, batchIndex: i,
+        role: "Holder", program, epochId: file.weekId, batchId: batch.id, batchIndex: i,
         claimMode: metadata.claimMode, claimContract: metadata.claimContract,
         distributorAddress: file.holderDistributor, rewardDistributorAddress: file.holderDistributor,
         contractBatchId: file.batchId, merkleBatchId: file.batchId, merkleRoot: root,
@@ -395,7 +419,7 @@ export async function publishRewardBatch(db: Queryable, file: LeafFile): Promise
             (reward_type,source_id,source_label,wallet_address,chain,token_symbol,amount,status,metadata)
            values ('airdrop',$1,'evm_creator_choice_operator',$2,$3,$6,$4::numeric,'approved',$5::jsonb)
            returning id`,
-          [`${file.weekId}:airdrop_holders:${i + 1}`, wallet, String(file.chainId), entries[i].amount.toString(), JSON.stringify(meta), nativeSymbol(file.chainId)],
+          [`${file.weekId}:${program}:${i + 1}`, wallet, String(file.chainId), entries[i].amount.toString(), JSON.stringify(meta), nativeSymbol(file.chainId)],
         )
       ).rows[0];
       await db.query(
@@ -568,6 +592,7 @@ async function buildWeekBatch(input: {
   holderDistributor: string;
   holderBatchDelay: bigint;
   blockTime: bigint;
+  program: string;
 }): Promise<{ file: LeafFile | null; reason: string }> {
   const pots = new Map<string, bigint>();
   const runs = new Map<string, { token: string; block: number; holders: number }>();
@@ -611,6 +636,7 @@ async function buildWeekBatch(input: {
     perCoin,
     minPayout: input.cfg.minPayoutWei,
     snapshots: [...fitted.entries()].map(([campaign, pot]) => ({ campaign, pot, ...runs.get(campaign)! })),
+    program: input.program,
   });
   return { file, reason: file ? "built" : "every holder is below the minimum payout" };
 }
@@ -635,6 +661,7 @@ async function holderBatchCandidates(input: {
   holderDistributor: string;
   holderBatchDelay: bigint;
   blockTime: bigint;
+  program: string;
 }): Promise<{ reports: StepReport[]; candidates: Candidate[] }> {
   const reports: StepReport[] = [];
   const candidates: Candidate[] = [];
@@ -643,34 +670,50 @@ async function holderBatchCandidates(input: {
   // Build the week just finished, once the new week is five minutes old.
   if (weeklyRunDue(input.now)) {
     const week = previousWeek(input.now);
-    const row = (await db.query(`select * from public.evm_holder_batches where chain_id = $1 and week_id = $2`, [chainId, week.weekId])).rows[0];
+    // One batch per vault and week (a chain can have the gen-6 and the gen-7 vault).
+    const row = (await db.query(`select * from public.evm_holder_batches where chain_id = $1 and week_id = $2 and vault_address = $3`, [chainId, week.weekId, lc(chain.vault)])).rows[0];
     const rebuild = row && row.status === "failed" && Number(row.attempt) < 3;
     if (!row || rebuild) {
       const built = await buildWeekBatch({ ...input, weekId: week.weekId });
       if (!input.send) {
         reports.push({ kind: "holders", subject: week.weekId, decision: "dry-run", reason: built.file ? `would publish and propose ${built.file.total} wei to ${built.file.leaves.length} holders (root ${built.file.root})` : built.reason });
       } else if (!built.file) {
-        await db.query(
-          `insert into public.evm_holder_batches (chain_id, week_id, vault_address, batch_id, status, last_reason)
-           values ($1,$2,$3,$4,'empty',$5)
-           on conflict (chain_id, week_id) do update set status = 'empty', last_reason = excluded.last_reason, updated_at = now()`,
-          [chainId, week.weekId, lc(chain.vault), holderBatchId(chainId, week.weekId), built.reason],
-        );
+        // Insert or update by (chain, vault, week) without an ON CONFLICT target, so it runs the same before and
+        // after migration 20261008_000040 moves the primary key to (chain_id, vault_address, week_id).
+        if (row) {
+          await db.query(
+            `update public.evm_holder_batches set status = 'empty', last_reason = $4, updated_at = now()
+              where chain_id = $1 and week_id = $2 and vault_address = $3`,
+            [chainId, week.weekId, lc(chain.vault), built.reason],
+          );
+        } else {
+          await db.query(
+            `insert into public.evm_holder_batches (chain_id, week_id, vault_address, batch_id, status, last_reason)
+             values ($1,$2,$3,$4,'empty',$5)`,
+            [chainId, week.weekId, lc(chain.vault), holderBatchId(chainId, week.weekId, input.program), built.reason],
+          );
+        }
         reports.push({ kind: "holders", subject: week.weekId, decision: "skip", reason: built.reason });
       } else {
         // Published before anything is sent: the leaf file is what the Safe signers check.
         const f = built.file;
-        await db.query(
-          `insert into public.evm_holder_batches (chain_id, week_id, vault_address, batch_id, root, total_raw, claim_deadline, leaf_file, status)
-           values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'built')
-           on conflict (chain_id, week_id) do update set root = excluded.root, total_raw = excluded.total_raw,
-             claim_deadline = excluded.claim_deadline, leaf_file = excluded.leaf_file, status = 'built', reward_batch_id = null,
-             last_reason = null, updated_at = now()`,
-          [chainId, week.weekId, lc(chain.vault), f.batchId, f.root, f.total, f.claimDeadline, JSON.stringify(f)],
-        );
+        if (row) {
+          await db.query(
+            `update public.evm_holder_batches set root = $4, total_raw = $5, claim_deadline = $6, leaf_file = $7::jsonb, status = 'built',
+                    reward_batch_id = null, last_reason = null, updated_at = now()
+              where chain_id = $1 and week_id = $2 and vault_address = $3`,
+            [chainId, week.weekId, lc(chain.vault), f.root, f.total, f.claimDeadline, JSON.stringify(f)],
+          );
+        } else {
+          await db.query(
+            `insert into public.evm_holder_batches (chain_id, week_id, vault_address, batch_id, root, total_raw, claim_deadline, leaf_file, status)
+             values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'built')`,
+            [chainId, week.weekId, lc(chain.vault), f.batchId, f.root, f.total, f.claimDeadline, JSON.stringify(f)],
+          );
+        }
         if (input.cfg.publishRewardBatches) {
           const rewardBatchId = await publishRewardBatch(db, f);
-          await db.query(`update public.evm_holder_batches set reward_batch_id = $3 where chain_id = $1 and week_id = $2`, [chainId, week.weekId, rewardBatchId]);
+          await db.query(`update public.evm_holder_batches set reward_batch_id = $3 where chain_id = $1 and week_id = $2 and vault_address = $4`, [chainId, week.weekId, rewardBatchId, lc(chain.vault)]);
         }
         reports.push({ kind: "holders", subject: week.weekId, decision: "sent", reason: `published ${f.total} wei to ${f.leaves.length} holders, root ${f.root}` });
       }
@@ -687,14 +730,14 @@ async function holderBatchCandidates(input: {
       if (input.send && input.cfg.publishRewardBatches && !batch.reward_batch_id) {
         // Published before it is proposed, also when an earlier pass stopped between the two.
         const rewardBatchId = await publishRewardBatch(db, batch.leaf_file as LeafFile);
-        await db.query(`update public.evm_holder_batches set reward_batch_id = $3 where chain_id = $1 and week_id = $2`, [chainId, batch.week_id, rewardBatchId]);
+        await db.query(`update public.evm_holder_batches set reward_batch_id = $3 where chain_id = $1 and week_id = $2 and vault_address = $4`, [chainId, batch.week_id, rewardBatchId, lc(chain.vault)]);
         batch.reward_batch_id = rewardBatchId;
       }
       const call = proposeCall(batch.leaf_file as LeafFile);
       const sim = await chain.simulate(call);
       if (!sim.ok) {
         // The vault refused the content (cap, balances): fail, rebuild on a later pass (up to 3 attempts).
-        await setBatch(db, chainId, batch.week_id, "failed", `propose refused: ${sim.revert}`);
+        await setBatch(db, chainId, chain.vault, batch.week_id, "failed", `propose refused: ${sim.revert}`);
         await archiveRewardBatch(db, batch.reward_batch_id, `propose refused: ${sim.revert}`);
         reports.push({ kind: "holders", subject, decision: "blocked", action: "propose_holder_batch", reason: sim.revert });
         continue;
@@ -703,7 +746,7 @@ async function holderBatchCandidates(input: {
         report: { kind: "holders", subject, decision: "send", action: "propose_holder_batch", reason: `propose ${batch.total_raw} wei` },
         call, momentKey: `week:${batch.week_id}:${batch.attempt}`, intervalKey: null, amount: BigInt(String(batch.total_raw)), gas: sim.gas,
         onRecorded: async () => {
-          await db.query(`update public.evm_holder_batches set status = 'proposing', updated_at = now() where chain_id = $1 and week_id = $2`, [chainId, batch.week_id]);
+          await db.query(`update public.evm_holder_batches set status = 'proposing', updated_at = now() where chain_id = $1 and week_id = $2 and vault_address = $3`, [chainId, batch.week_id, lc(chain.vault)]);
         },
       });
       continue;
@@ -716,7 +759,7 @@ async function holderBatchCandidates(input: {
         report: { kind: "holders", subject, decision: "send", action: "execute_holder_batch", reason: "approved by the Safe, veto window over" },
         call, momentKey: `week:${batch.week_id}`, intervalKey: null, amount: BigInt(String(batch.total_raw)), gas: sim.gas,
         onRecorded: async () => {
-          await db.query(`update public.evm_holder_batches set status = 'executing', updated_at = now() where chain_id = $1 and week_id = $2`, [chainId, batch.week_id]);
+          await db.query(`update public.evm_holder_batches set status = 'executing', updated_at = now() where chain_id = $1 and week_id = $2 and vault_address = $3`, [chainId, batch.week_id, lc(chain.vault)]);
         },
       });
       continue;
@@ -728,12 +771,12 @@ async function holderBatchCandidates(input: {
       BatchTooEarly: "the distributor authorization opens later",
     };
     if (waitReasons[sim.revert]) {
-      if (batch.last_reason !== waitReasons[sim.revert] && input.send) await db.query(`update public.evm_holder_batches set last_reason = $3 where chain_id = $1 and week_id = $2`, [chainId, batch.week_id, waitReasons[sim.revert]]);
+      if (batch.last_reason !== waitReasons[sim.revert] && input.send) await db.query(`update public.evm_holder_batches set last_reason = $3 where chain_id = $1 and week_id = $2 and vault_address = $4`, [chainId, batch.week_id, waitReasons[sim.revert], lc(chain.vault)]);
       reports.push({ kind: "holders", subject, decision: "wait", reason: waitReasons[sim.revert] });
     } else if (sim.revert === "BadBatch") {
       // Status on chain is no longer "proposed" and we never executed it: the Safe vetoed it.
       if (input.send) {
-        await setBatch(db, chainId, batch.week_id, "vetoed", "vetoed by the Safe; the amounts are back in the coins' holder balances");
+        await setBatch(db, chainId, chain.vault, batch.week_id, "vetoed", "vetoed by the Safe; the amounts are back in the coins' holder balances");
         await archiveRewardBatch(db, batch.reward_batch_id, "holder batch vetoed by the Safe");
       }
       reports.push({ kind: "holders", subject, decision: "skip", reason: "vetoed by the Safe" });
@@ -805,8 +848,8 @@ async function spentThisVaultWeek(db: Queryable, chainId: number, campaign: stri
   return vaultWeek(last) === vaultWeek(blockTime) ? counter : 0n;
 }
 
-async function intervalOpen(db: Queryable, chainId: number, key: string, limits: VaultLimits, blockTime: bigint): Promise<boolean> {
-  const last = await lastConfirmedAt(db, chainId, "interval_key", key, [...BUY_ACTIONS, "convert_holder_quote"]);
+async function intervalOpen(db: Queryable, chainId: number, key: string, limits: VaultLimits, blockTime: bigint, vault: string): Promise<boolean> {
+  const last = await lastConfirmedAt(db, chainId, "interval_key", key, [...BUY_ACTIONS, "convert_holder_quote"], vault);
   return last == null || BigInt(last) + limits.buyInterval <= blockTime;
 }
 
@@ -884,7 +927,7 @@ async function buybackCandidates(input: {
       reports.push({ kind: "buyback", subject: coin.campaign, decision: "skip", reason: `vault choice is ${cfg.choice}, not buyback` });
       continue;
     }
-    if (!(await intervalOpen(input.db, input.chainId, coin.campaign, input.limits, input.blockTime))) {
+    if (!(await intervalOpen(input.db, input.chainId, coin.campaign, input.limits, input.blockTime, input.chain.vault))) {
       reports.push({ kind: "buyback", subject: coin.campaign, decision: "wait", reason: "the vault's minimum interval since the last buyback" });
       continue;
     }
@@ -923,7 +966,7 @@ async function buybackCandidates(input: {
         reports.push({ kind: "buyback", subject: coin.campaign, decision: "blocked", reason: "no quote route pool set by the Safe (setQuoteRoute)" });
         continue;
       }
-      if (!(await intervalOpen(input.db, input.chainId, lc(route), input.limits, input.blockTime))) {
+      if (!(await intervalOpen(input.db, input.chainId, lc(route), input.limits, input.blockTime, input.chain.vault))) {
         reports.push({ kind: "buyback", subject: coin.campaign, decision: "wait", reason: "the route pool's minimum interval" });
         continue;
       }
@@ -961,7 +1004,7 @@ async function conversionCandidates(input: { db: Queryable; chainId: number; cha
       reports.push({ kind: "convert", subject: coin.campaign, decision: "blocked", reason: "no quote route pool set by the Safe (setQuoteRoute)" });
       continue;
     }
-    if (!(await intervalOpen(input.db, input.chainId, lc(route), input.limits, input.blockTime))) {
+    if (!(await intervalOpen(input.db, input.chainId, lc(route), input.limits, input.blockTime, input.chain.vault))) {
       reports.push({ kind: "convert", subject: coin.campaign, decision: "wait", reason: "the route pool's minimum interval" });
       continue;
     }
@@ -989,8 +1032,16 @@ export async function runEvmCreatorChoicePass(input: {
   api: BuybackAuthClient | null;
   now?: Date;
   coins?: PlatformCoin[];
+  /**
+   * The vault's holder program: "airdrop_holders" (gen-6, default) or "airdrop_holders_gen7" (gen-7's own vault). The
+   * holder batch id and the Claim Center batch are derived from it, so two vaults never collide.
+   */
+  program?: string;
+  /** The other vaults this operator key signs for on the chain, to resolve their in-flight jobs (shared nonce). */
+  chainFor?: (vault: string) => ChoiceChain | null;
 }): Promise<PassReport> {
   const { db, chainId, chain, sender, cfg } = input;
+  const program = input.program ?? DEFAULT_HOLDER_PROGRAM;
   const now = input.now ?? new Date();
   const steps: StepReport[] = [];
   const info = await chain.vaultInfo();
@@ -1007,7 +1058,7 @@ export async function runEvmCreatorChoicePass(input: {
   }
 
   await ensureWeekSecrets(db, chainId, cfg.masterSecret, now);
-  const resolved = await resolveSendingJobs({ db, chainId, chain, sender, send });
+  const resolved = await resolveSendingJobs({ db, chainId, chain, sender, send, chainFor: input.chainFor });
   const inFlight = resolved.waiting > 0;
   if (resolved.confirmed || resolved.reverted || resolved.dropped) {
     steps.push({ kind: "resolve", subject: chain.vault, decision: "sent", reason: JSON.stringify(resolved) });
@@ -1019,7 +1070,7 @@ export async function runEvmCreatorChoicePass(input: {
 
   const holders = await holderBatchCandidates({
     db, chainId, chain, coins, cfg, now, send, limits: info.limits, holderDistributor: info.holderDistributor,
-    holderBatchDelay: info.holderBatchDelay, blockTime: block.timestamp,
+    holderBatchDelay: info.holderBatchDelay, blockTime: block.timestamp, program,
   });
   const fs = await flushAndSyncCandidates({ db, chainId, chain, coins, cfg, blockTime: block.timestamp });
   const buys = await buybackCandidates({ db, chainId, chain, coins, cfg, now, send, limits: info.limits, blockTime: block.timestamp, api: input.api });

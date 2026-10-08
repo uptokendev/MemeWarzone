@@ -29,6 +29,7 @@ import {
   solanaFeeRoutingRegistry,
 } from "./financeFeeRoutingSolana.js";
 import { EVM_FEE_ROUTING_CHAINS, evmFeeRoutingRegistry, evmGetterSelector } from "./financeFeeRoutingEvm.js";
+import { holderBatchAlerts } from "./financeHolderBatchAlerts.js";
 import { destinationOwnership } from "./financeFeeRoutingOwnership.js";
 import { buildTotals, defaultPriceService, priceAssetFor } from "./financePrices.js";
 import { notPublicHiddenCampaignSql } from "./publicHiddenSql.js";
@@ -341,6 +342,35 @@ export async function evmInflows(db, network, registry, { days, now }) {
      group by 1`, [network.chainId, since]);
   const reRow = re.error ? null : rollupHourly(re.rows, ["weekly", "monthly", "recruiter", "airdrop", "squad", "protocol"]).get("_") || { n: 0 };
   const reOpts = { ...base, source: "db:reward_events", note: "Treasury router RouteExecuted events" };
+  // Gen-7's own router pays its own community vault (founder decision 2026-10-08). Its airdrop and squad slices are
+  // counted there and taken out of the gen-6 community vault's figure; without a gen-7 router nothing changes.
+  let g7Row = null;
+  let restRow = null;
+  let g7Error = null;
+  if (ids.gen7?.router && !re.error) {
+    const g7 = await safeQuery(db, `
+      select date_trunc('hour', r.occurred_at) as hour,
+             count(*)::int as n,
+             coalesce(sum(airdrop_amount), 0)::text as airdrop,
+             coalesce(sum(squad_amount), 0)::text as squad
+        from public.reward_events r
+       where r.chain_id = $1 and r.occurred_at >= $2 and lower(r.source_contract) = $3
+         and ${notPublicHiddenCampaignSql("r")}
+       group by 1`, [network.chainId, since, String(ids.gen7.router).toLowerCase()]);
+    if (g7.error) g7Error = g7.error;
+    else {
+      g7Row = rollupHourly(g7.rows, ["airdrop", "squad"]).get("_") || { n: 0 };
+      // The gen-6 community vault's part: every router's hour minus the gen-7 router's hour (buckets stay hourly).
+      const hourKey = (h) => (h == null ? "" : new Date(h).toISOString());
+      const g7ByHour = new Map(g7.rows.map((r) => [hourKey(r.hour), r]));
+      const sub = (a, b) => (BigInt(String(a ?? "0").split(".")[0]) - BigInt(String(b ?? "0").split(".")[0])).toString();
+      const restRows = re.rows.map((r) => {
+        const g = g7ByHour.get(hourKey(r.hour));
+        return g ? { ...r, n: Number(r.n ?? 0) - Number(g.n ?? 0), airdrop: sub(r.airdrop, g.airdrop), squad: sub(r.squad, g.squad) } : r;
+      });
+      restRow = rollupHourly(restRows, ["airdrop", "squad"]).get("_") || { n: 0 };
+    }
+  }
   const columns = [
     ["weekly", ids.weekly, "League slice x weeklyLeagueBps 3000 (the router's split), derived per event"],
     ["monthly", ids.monthly, "League slice minus the weekly part, derived per event"],
@@ -351,10 +381,24 @@ export async function evmInflows(db, network, registry, { days, now }) {
   ];
   for (const [column, id, note] of columns) {
     if (!id) continue;
+    const gen7Id = ids.gen7?.router ? ids.gen7[column] : null;
+    if (gen7Id && gen7Id !== id && (column === "airdrop" || column === "squad")) {
+      if (re.error || g7Error) {
+        add(id, inflowError(re.error || g7Error, reOpts));
+        add(gen7Id, inflowError(re.error || g7Error, reOpts));
+        continue;
+      }
+      add(id, inflowFrom(restRow, column, { ...reOpts, note: `${note || "Treasury router RouteExecuted events"} (gen-6 and older routers)` }));
+      add(gen7Id, inflowFrom(g7Row, column, { ...reOpts, note: `${note || "Treasury router RouteExecuted events"} (gen-7 router)` }));
+      continue;
+    }
     add(id, re.error ? inflowError(re.error, reOpts) : inflowFrom(reRow, column, { ...reOpts, ...(note ? { note } : {}) }));
   }
   if (ids.creator) {
     add(ids.creator, inflowError("reward_events has no creator column; the indexer drops RouteExecuted.creatorAmount (realtime-indexer/src/indexer.ts:1273-1289).", reOpts));
+  }
+  if (ids.gen7?.router && ids.gen7.creator && ids.gen7.creator !== ids.creator) {
+    add(ids.gen7.creator, inflowError("reward_events has no creator column; the indexer drops RouteExecuted.creatorAmount (realtime-indexer/src/indexer.ts:1273-1289).", reOpts));
   }
   const routeEventCount = re.error ? null : Number(reRow?.n || 0);
 
@@ -709,9 +753,14 @@ export async function buildFeeRouting({ network, days, db, env = process.env, fe
   const priceService = prices || defaultPriceService();
   await attachUsd(destinations, inflowResult.extras?.escrowFlushed, priceService);
   const alerts = [...staticAlerts(network, registry, env), ...wiring.alerts, ...(solana ? [] : await lpForwarderAlerts(ctx, registry, destinations))];
+  // Weekly holder batches of each creator vault (gen-6, gen-7): Safe approval waiting, distributor pre-authorization
+  // running out (financeHolderBatchAlerts.js).
+  if (!solana && db && registry.holderLanes?.length) {
+    alerts.push(...(await holderBatchAlerts({ db, ctx, registry, chainId: network.chainId, env, nowMs: Date.parse(generatedAt) || Date.now() })));
+  }
 
   if (!solana && inflowResult.extras?.routeEventCount === 0 && network.environment === "mainnet") {
-    const funded = destinations.some((d) => ["weekly_league", "monthly_league", "recruiter_vault", "creator_vault_v2"].includes(d.id)
+    const funded = destinations.some((d) => ["weekly_league", "monthly_league", "recruiter_vault", "creator_vault_v2", "creator_vault_v2_gen7"].includes(d.id)
       && d.balances.some((b) => b.status === "ok" && b.asset === network.nativeSymbol && b.raw !== "0"));
     let alert = { level: funded ? "warning" : "info", message: (funded ? "Trade-fee vaults hold money but the database has no router events for this chain, so routed fees are not being recorded (recruiter credit reads the same table). " : "") + `No treasury-router events are stored for chain ${network.chainId} in this period. The indexer scans the gen-6 TreasuryRouterV4 only when TREASURY_ROUTERS_EXTRA_${network.chainId} lists it (realtime-indexer/src/indexer.ts:1182-1188), so zero may mean "not indexed", not "no fees". Compare with the vault balances.` };
     if (funded) {

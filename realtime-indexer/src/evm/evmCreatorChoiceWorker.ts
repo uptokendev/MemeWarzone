@@ -7,6 +7,8 @@
  *   EVM_CREATOR_CHOICE_OPERATOR_PRIVATE_KEY[_<chainId>] the vault operator key (never the deployer, the Safe or the
  *                                                      route authority: refused)
  *   EVM_CREATOR_VAULT_V2_<chainId>                     the vault, "0xaddr@startBlock" (same variable the indexer uses)
+ *   EVM_GEN7_CREATOR_VAULT_<chainId>                   gen-7's own vault, "0xaddr@startBlock" (evmGen7Fees.ts); operated by
+ *                                                      the same key, holder program "airdrop_holders_gen7"
  *   EVM_BUYBACK_SEED_SECRET                            master secret of the weekly moments (never logged)
  *   EVM_CREATOR_CHOICE_API_URL                         API base, for the buybackCurve route authority signature
  *   EVM_CREATOR_CHOICE_API_SECRET                      shared secret header for that internal endpoint
@@ -16,6 +18,7 @@
  *   EVM_HOLDER_MIN_PAYOUT_WEI[_<chainId>]              smallest weekly holder payout; default 56: 0.0013 BNB, 4663: 0.00037 ETH
  *   EVM_HOLDER_CLAIM_WINDOW_DAYS                       default 60
  *   EVM_HOLDER_BATCH_MAX_WEI[_<chainId>]               optional ceiling per weekly batch (match EVMGEN_HOLDER_BATCH_AUTH_MAX)
+ *   EVM_GEN7_HOLDER_BATCH_MAX_WEI[_<chainId>]          the same for gen-7's own vault (default: the line above)
  *   EVM_HOLDER_EXCLUDED_WALLETS[_<chainId>]            comma list of wallets that never count as holders
  *   EVM_CREATOR_CHOICE_MAX_GAS[_<chainId>]             default 3,000,000
  *   EVM_CREATOR_CHOICE_FORBIDDEN_ADDRESSES             extra refused operator addresses
@@ -27,10 +30,11 @@ import { createStaticJsonRpcProvider } from "../rpcProvider.js";
 import { catchUpTokenHolders } from "../tokenHolders.js";
 import { keeperRpc } from "./evmGraduationKeeperWorker.js";
 import { createEthersChoiceChain, createEthersChoiceSender, type Census } from "./evmCreatorChoiceChain.js";
-import { choiceConfig, createHttpBuybackAuthClient, enabledChoiceChains, operatorWallet, truthy, vaultAddress } from "./evmCreatorChoiceConfig.js";
-import { runEvmCreatorChoicePass } from "./evmCreatorChoicePass.js";
+import { choiceConfig, createHttpBuybackAuthClient, enabledChoiceChains, operatedVaults, operatorWallet, truthy, vaultChoiceConfig } from "./evmCreatorChoiceConfig.js";
+import { runChoiceLanes, type ChoiceLane } from "./evmCreatorChoiceLanes.js";
 
-export { assertOperatorKeyAllowed, choiceConfig, createHttpBuybackAuthClient, enabledChoiceChains, operatorWallet, vaultAddress } from "./evmCreatorChoiceConfig.js";
+export { assertOperatorKeyAllowed, choiceConfig, createHttpBuybackAuthClient, enabledChoiceChains, operatedVaults, operatorWallet, vaultAddress } from "./evmCreatorChoiceConfig.js";
+export { holderBatchesKeyedByVault, runChoiceLanes, type ChoiceLane } from "./evmCreatorChoiceLanes.js";
 
 /**
  * The indexer's holder census (token_holder_balances, replayed from Transfer logs by tokenHolders.ts), brought up
@@ -70,7 +74,7 @@ export function startEvmCreatorChoiceWorker() {
 
   for (const chainId of chains) {
     const cfg = choiceConfig(chainId);
-    const vault = vaultAddress(chainId);
+    const vaults = operatedVaults(chainId);
     const url = keeperRpc(chainId);
     let wallet: ethers.Wallet | null = null;
     try {
@@ -79,25 +83,36 @@ export function startEvmCreatorChoiceWorker() {
       console.error("[evm-choice] operator key refused", { chainId, error: error instanceof Error ? error.message : String(error) });
       continue;
     }
-    if (!cfg.masterSecret || !vault || !url || !wallet) {
-      console.warn("[evm-choice] chain skipped (needs EVM_BUYBACK_SEED_SECRET, EVM_CREATOR_VAULT_V2_<id>, its RPC and EVM_CREATOR_CHOICE_OPERATOR_PRIVATE_KEY)", { chainId });
+    if (!cfg.masterSecret || !vaults.length || !url || !wallet) {
+      console.warn("[evm-choice] chain skipped (needs EVM_BUYBACK_SEED_SECRET, EVM_CREATOR_VAULT_V2_<id> and/or EVM_GEN7_CREATOR_VAULT_<id>, its RPC and EVM_CREATOR_CHOICE_OPERATOR_PRIVATE_KEY)", { chainId });
       continue;
     }
     if (send && !api) console.warn("[evm-choice] no EVM_CREATOR_CHOICE_API_URL / _SECRET: curve buybacks are skipped", { chainId });
     const provider = createStaticJsonRpcProvider(url, chainId, { timeoutMs: ENV.RPC_REQUEST_TIMEOUT_MS });
-    const chain = createEthersChoiceChain(provider, vault, wallet.address);
-    const sender = createEthersChoiceSender(provider, wallet, chainId, vault);
+    const lanes: ChoiceLane[] = vaults.map((v) => ({
+      ...v,
+      chain: createEthersChoiceChain(provider, v.vault, wallet!.address),
+      sender: createEthersChoiceSender(provider, wallet!, chainId, v.vault),
+      cfg: vaultChoiceConfig(cfg, chainId, v),
+    }));
     const census = createDbCensus(provider as ethers.JsonRpcProvider, chainId);
     let running = false;
-    console.log("[evm-choice] enabled", { chainId, send, vault, operator: wallet.address, intervalMs });
+    let round = 0;
+    console.log("[evm-choice] enabled", { chainId, send, vaults: vaults.map((v) => `${v.label} ${v.vault}`), operator: wallet.address, intervalMs });
 
     const tick = async () => {
       if (running) return;
       running = true;
       try {
-        const report = await runEvmCreatorChoicePass({ db: pool, chainId, chain, sender, cfg, send, census, api });
-        const acted = report.steps.filter((s) => s.decision !== "skip");
-        if (acted.length) console.log("[evm-choice] pass", JSON.stringify({ chainId, send: report.send, operatorOk: report.operatorOk, steps: acted }));
+        const reports = await runChoiceLanes({ db: pool, chainId, lanes, cfg, send, census, api, round: round++ });
+        for (const { lane, report, error } of reports) {
+          if (error) {
+            console.error("[evm-choice] pass failed", { chainId, vault: lane.vault, label: lane.label, error });
+            continue;
+          }
+          const acted = report!.steps.filter((s) => s.decision !== "skip");
+          if (acted.length) console.log("[evm-choice] pass", JSON.stringify({ chainId, vault: lane.vault, label: lane.label, send: report!.send, operatorOk: report!.operatorOk, steps: acted }));
+        }
       } catch (error) {
         console.error("[evm-choice] pass failed", { chainId, error: error instanceof Error ? error.message : String(error) });
       } finally {

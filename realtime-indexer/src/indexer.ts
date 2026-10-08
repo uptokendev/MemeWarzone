@@ -24,6 +24,7 @@ import { createEvmMilestoneProgress, type EvmMilestoneView } from "./evm/evmMile
 import { notifyCampaignCreated, notifyCampaignGraduated } from "./campaignLifecycleNotifications.js";
 import { resolveCampaignGeneration, type CampaignGenerationInfo } from "./evm/evmGen5Store.js";
 import { auxTopics, configuredGen5AuxContracts, recordGen5AuxLog, type AuxContract } from "./evm/evmGen5Aux.js";
+import { withGen7Router } from "./evm/evmGen7Fees.js";
 import {
   GEN5_ALL_TOPICS,
   GEN5_CAMPAIGN_IFACE,
@@ -1221,16 +1222,18 @@ function parseRouterEntries(raw: string): Array<{ address: string; startBlock: n
 /**
  * TREASURY_ROUTERS_<id> replaces the known list (as before). TREASURY_ROUTERS_EXTRA_<id> is appended to
  * whichever list applies: the launch generation's TreasuryRouterV4 goes there, so the V3/V2 routers of
- * the old generation keep being scanned (E14). V4's RouteExecuted has the V3 topic.
+ * the old generation keep being scanned (E14). V4's RouteExecuted has the V3 topic. EVM_GEN7_ROUTER_<id>
+ * (gen-7's own TreasuryRouterV4) is appended last.
  */
-export function configuredTreasuryRouters(chainId: number): Array<{ address: string; startBlock: number }> {
-  const raw = String(process.env[`TREASURY_ROUTERS_${chainId}`] || "").trim();
+export function configuredTreasuryRouters(chainId: number, env: NodeJS.ProcessEnv = process.env): Array<{ address: string; startBlock: number }> {
+  const raw = String(env[`TREASURY_ROUTERS_${chainId}`] || "").trim();
   const base = raw ? parseRouterEntries(raw) : [...(KNOWN_TREASURY_ROUTERS[chainId] ?? [])];
-  const extra = parseRouterEntries(String(process.env[`TREASURY_ROUTERS_EXTRA_${chainId}`] || "").trim());
+  const extra = parseRouterEntries(String(env[`TREASURY_ROUTERS_EXTRA_${chainId}`] || "").trim());
   for (const router of extra) {
     if (!base.some((r) => r.address === router.address)) base.push(router);
   }
-  return base;
+  // Generation 7's own TreasuryRouterV4 (EVM_GEN7_ROUTER_<id>, evm/evmGen7Fees.ts): scanned beside the gen-6 one.
+  return withGen7Router(chainId, base, env);
 }
 
 async function resolveTreasuryRouters(
