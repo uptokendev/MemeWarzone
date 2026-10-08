@@ -339,3 +339,17 @@ passes); token-specific, CAKE on BabyDogeSwap passes both ways.
 Not covered: coins still on a launchpad bonding curve. Four.meme is not a Kyber source; `flap`, `genius-fun`,
 `loong-fun`, `printr` are listed but Kyber answered 40011 for every probe. Project imports refuse bonding coins
 (`PROJECT_IMPORT_STILL_BONDING`), so this only matters for arena imports of a coin that has not graduated.
+
+## Import payout operators (founder, 2026-10-08)
+
+New dedicated keys, one per chain, set as `IMPORT_FEE_PAYOUT_OPERATOR_<chainId>` for `scripts/deploy-import-fee-vault.ts`
+(they become `setOperator(...)` in Safe batch IF1). Read on chain 2026-10-08: plain wallets (no code), nonce 0, not
+`0xdcf0…`, funded for gas.
+
+| Chain | Operator | Gas at check |
+|---|---|---|
+| BNB 56 | `0xCB83b1297E4198e37bBf050eE9Cb6E87E8252aD1` | 0.008 BNB |
+| Robinhood 4663 | `0x03F9deC9961033c0CaA7a66373B004D36D375e83` | 0.002 ETH |
+
+Their private keys go only into Coolify (indexer: `IMPORT_FEE_PAYOUT_OPERATOR_PK_56` / `_4663`). Caps: the defaults
+(BNB 2 per payout / 10 per day, ETH 0.5 / 3), founder-approved 2026-10-08.
