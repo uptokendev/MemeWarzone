@@ -10,7 +10,13 @@ import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/at
 import { upsertRewardEvent } from "./rewards/ingest.js";
 import { createStaticJsonRpcProvider, createWorkingProvider, parseRpcList } from "./rpcProvider.js";
 import { healRobinhoodGraduatedCms } from "./robinhoodCmsHeal.js";
-import { bnbCurveState, parseRawTokenAmount } from "./bnbCurvePricing.js";
+import {
+  BNB_CURVE_PARAM_FRAGMENTS,
+  bnbCurveStateFor,
+  parseRawTokenAmount,
+  readBnbCurveParams,
+  type BnbCurveParams,
+} from "./bnbCurvePricing.js";
 import { campaignScanChunks } from "./campaignScanChunks.js";
 import { checkMilestones } from "./milestones.js";
 import { notifyCampaignCreated, notifyCampaignGraduated } from "./campaignLifecycleNotifications.js";
@@ -803,18 +809,16 @@ async function upsertCandle(
   await publishCandle(chainId, campaign, candleUpsertPayload(tf, bucketSec, row));
 }
 
-const BNB_CURVE_PARAM_ABI = [
-  "function basePrice() view returns (uint256)",
-  "function priceSlope() view returns (uint256)",
-];
+// basePrice/priceSlope, plus virtualNative/virtualToken for gen-7 (LaunchCampaignGen7 has no linear params).
+const BNB_CURVE_PARAM_ABI = BNB_CURVE_PARAM_FRAGMENTS;
 const BNB_CURVE_PARAM_TTL_MS = 5 * 60 * 1000;
-const bnbCurveParamCache = new Map<string, { base: bigint; slope: bigint; at: number }>();
+const bnbCurveParamCache = new Map<string, { params: BnbCurveParams; at: number }>();
 
-async function loadBnbCurveParams(chainId: number, campaign: string): Promise<{ base: bigint; slope: bigint } | null> {
+async function loadBnbCurveParams(chainId: number, campaign: string): Promise<BnbCurveParams | null> {
   const key = `${chainId}:${campaign.toLowerCase()}`;
   const cached = bnbCurveParamCache.get(key);
   if (cached && Date.now() - cached.at < BNB_CURVE_PARAM_TTL_MS) {
-    return { base: cached.base, slope: cached.slope };
+    return cached.params;
   }
   const urls = parseRpcList(chainId === 56 ? ENV.BSC_RPC_HTTP_56 : ENV.BSC_RPC_HTTP_97);
   if (!urls.length) return null;
@@ -824,13 +828,9 @@ async function loadBnbCurveParams(chainId: number, campaign: string): Promise<{ 
       label: `bnb-curve-params-${chainId}`,
     });
     const contract = new ethers.Contract(campaign, BNB_CURVE_PARAM_ABI, provider) as any;
-    const [basePriceRaw, priceSlopeRaw] = await Promise.all([
-      contract.basePrice() as Promise<bigint>,
-      contract.priceSlope() as Promise<bigint>,
-    ]);
-    const next = { base: BigInt(basePriceRaw), slope: BigInt(priceSlopeRaw), at: Date.now() };
-    bnbCurveParamCache.set(key, next);
-    return next;
+    const params = await readBnbCurveParams(contract);
+    bnbCurveParamCache.set(key, { params, at: Date.now() });
+    return params;
   } catch (error) {
     console.warn("[indexer] BNB curve params unavailable", {
       chainId,
@@ -879,7 +879,7 @@ async function patchStats(chainId: number, campaign: string) {
 
   const soldRaw = parseRawTokenAmount(soldRes.rows[0]?.sold_raw);
   const params = await loadBnbCurveParams(chainId, campaign);
-  const curve = params ? bnbCurveState(params.base, params.slope, soldRaw) : null;
+  const curve = params ? bnbCurveStateFor(params, soldRaw) : null;
   // Current token price is curve marginal spot. Fill VWAP stays on
   // curve_trades.price_bnb and is never used to derive marketcap_bnb.
   const lastPrice: number | null =
@@ -1790,7 +1790,8 @@ async function scanCampaignRange(
             actor: campaign,
             pair: recorded.graduatedPool || "",
             meta: {
-              generation: 5,
+              // Campaign generation: 5 (gen-6 contracts) or 6 (gen-7); 5 when unknown, as before.
+              generation: gen5Ctx.info.campaignGeneration ?? 5,
               raise: String(a.raise),
               protocolShare: String(a.protocolShare),
               creatorShare: String(a.creatorShare),

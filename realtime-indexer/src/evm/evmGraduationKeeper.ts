@@ -29,7 +29,8 @@
  *      Permissionless on chain. At most EVM_KEEPER_HARVEST_MAX_PER_PASS pools are looked at per pass.
  * Due but not Pending (the crossing buy's oracle read failed, or nobody traded since): the indexed net
  * raise (sum of gen-5 gross buys minus gross sells) is compared with the campaign's native target (a
- * cached view) and the indexed sold amount with curveSupply; a campaign that passes this cheap filter
+ * cached view) and the indexed sold amount with curveSupply (gen-7, campaign generation 6: sold amount
+ * only, its sole trigger is sell-out); a campaign that passes this cheap filter
  * gets an eth_call graduate(), which runs the contract's own due check and enters Pending. GraduationNotDue
  * or TradingNotOpen from that call is "not due" (idle), never "blocked".
  * All four entry points are permissionless on chain; the keeper only saves everyone the wait.
@@ -43,6 +44,7 @@
 import { ethers } from "ethers";
 import { GEN5_CAMPAIGN_ABI } from "./evmGen5Abi.js";
 import { configuredGen5AuxContracts } from "./evmGen5Aux.js";
+import { isEvmGen7CampaignGeneration } from "./evmGen7Curve.js";
 
 export const NATIVE_FALLBACK_DELAY_SECONDS = 7n * 86_400n;
 export const GEN5_CAMPAIGN_IFACE_FULL = new ethers.Interface(GEN5_CAMPAIGN_ABI as unknown as string[]);
@@ -220,8 +222,14 @@ export function isLikelyDue(input: {
   curveSupply: bigint;
   nativeTarget: bigint | null;
   slackBps: number;
+  /**
+   * Gen-7 (LaunchCampaignGen7): graduation is due only when the curve sells out (sold == curveSupply);
+   * there is no raise trigger, so the net-raise branch is skipped. Absent/false: gen-6 rules, unchanged.
+   */
+  soldOutOnly?: boolean;
 }): boolean {
   if (input.curveSupply > 0n && input.soldRaw >= input.curveSupply) return true;
+  if (input.soldOutOnly) return false;
   if (input.nativeTarget === null || input.nativeTarget <= 0n || input.netRaisedWei <= 0n) return false;
   const slack = BigInt(Math.max(0, Math.min(10_000, Math.floor(input.slackBps))));
   return input.netRaisedWei * 10_000n >= input.nativeTarget * (10_000n - slack);
@@ -550,13 +558,14 @@ export async function listTradingDueCandidates(
   db: Queryable,
   chainId: number,
   limit: number,
-): Promise<Array<{ campaign: string; netRaisedWei: bigint; soldRaw: bigint }>> {
+): Promise<Array<{ campaign: string; netRaisedWei: bigint; soldRaw: bigint; soldOutOnly?: true }>> {
   const { rows } = await db.query(
     `select c.campaign_address,
             (coalesce(sum(case when t.side = 'buy' then coalesce(t.gross_raw, t.bnb_amount_raw::numeric) end), 0)
              - coalesce(sum(case when t.side = 'sell' then coalesce(t.gross_raw, t.bnb_amount_raw::numeric) end), 0))::text as net_raised_raw,
             (coalesce(sum(case when t.side = 'buy' then t.token_amount_raw::numeric end), 0)
-             - coalesce(sum(case when t.side = 'sell' then t.token_amount_raw::numeric end), 0))::text as sold_raw
+             - coalesce(sum(case when t.side = 'sell' then t.token_amount_raw::numeric end), 0))::text as sold_raw,
+            max(c.campaign_generation) as campaign_generation
        from public.campaigns c
        join public.curve_trades t
          on t.chain_id = c.chain_id and t.campaign_address = c.campaign_address
@@ -581,6 +590,10 @@ export async function listTradingDueCandidates(
     campaign: String(r.campaign_address).toLowerCase(),
     netRaisedWei: big(r.net_raised_raw),
     soldRaw: big(r.sold_raw),
+    // Gen-7 coins graduate only at sell-out; gen-6 rows carry no flag (unchanged).
+    ...(isEvmGen7CampaignGeneration(r.campaign_generation == null ? null : Number(r.campaign_generation))
+      ? { soldOutOnly: true as const }
+      : {}),
   }));
 }
 
@@ -611,6 +624,7 @@ export async function listDueCampaigns(input: {
         curveSupply: due.curveSupply,
         nativeTarget: due.nativeTarget,
         slackBps: input.cfg.dueSlackBps ?? 200,
+        ...(c.soldOutOnly ? { soldOutOnly: true } : {}),
       })
     ) {
       out.push(c.campaign);

@@ -30,6 +30,7 @@ import {
 } from "./ticker-reservation-service.js";
 import { upsertCampaignFromDraft } from "./campaign-registry.js";
 import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
+import { EVM_GEN7_FACTORY_GENERATION, GEN7_TARGET_TEST_USD, isGen7TargetAllowed } from "../../shared/evmGen7Curve.mjs";
 
 const MIN_SCHEDULE_SECONDS = 5 * 60;
 const MAX_SCHEDULE_SECONDS = 30 * 24 * 60 * 60;
@@ -40,6 +41,8 @@ const STANDARD_TARGETS = new Set([
   (50_000n * WAD).toString(),
 ]);
 const TEST_TARGET = (6n * WAD).toString();
+// Generation 7 market-cap test tier ($150, LaunchFactoryGen7 on 97 / 46630).
+const GEN7_TEST_TARGET = GEN7_TARGET_TEST_USD.toString();
 
 function methodAllowed(req, res, allowed) {
   if (allowed.includes(req.method)) return true;
@@ -78,6 +81,29 @@ function readVerifiedGenerations(chainId, body) {
         `got ${factoryGeneration}/${campaignGeneration}.`,
     );
   }
+}
+
+/**
+ * The scheduled create's target for the factory's generation. Generation 7 graduates at a USD market
+ * cap: $30K / $50K, $150 on the testnets (isGen7TargetAllowed, as LaunchFactoryGen7), so its $15K / $6
+ * are refused here instead of reverting on chain. Every other generation keeps normalizeTarget as it was.
+ */
+export function normalizeTargetForGeneration(chainId, value, factoryGeneration) {
+  if (Number(factoryGeneration) !== EVM_GEN7_FACTORY_GENERATION) return normalizeTarget(chainId, value);
+  let target;
+  try {
+    target = BigInt(String(value ?? 0)).toString();
+  } catch {
+    throw new Error("graduationTarget must be a uint-compatible value");
+  }
+  const testEnabled = isTruthy(
+    process.env.VITE_ENABLE_TEST_GRADUATION_THRESHOLD || process.env.ENABLE_TEST_GRADUATION_THRESHOLD || "true",
+  );
+  const cid = Number(chainId);
+  // 31337 (any target on chain) is held to the same tiers as the testnets here.
+  const tierChainId = cid === 31337 ? 97 : cid;
+  if (target !== "0" && isGen7TargetAllowed(tierChainId, target) && (target !== GEN7_TEST_TARGET || testEnabled)) return target;
+  throw new Error("Generation 7 coins graduate at a $30,000 or $50,000 market cap ($150 on testnets).");
 }
 
 function normalizeTarget(chainId, value) {
@@ -173,7 +199,7 @@ export async function resolveScheduledGen6Fields({ body, pool, draftId, chainId,
   const readContext =
     deps.readContext ||
     (async ({ graduationTarget: target }) =>
-      readGen6FactoryCreateContext({ provider: await getServerReadProvider(chainId), factoryAddress, graduationTarget: target }));
+      readGen6FactoryCreateContext({ provider: await getServerReadProvider(chainId), factoryAddress, graduationTarget: target, factoryGeneration }));
   let optionSource = source;
   let autoMaxCost = false;
   if (!hasGen6CreateFields(source)) {
@@ -214,7 +240,7 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
 
   let graduationTarget;
   try {
-    graduationTarget = normalizeTarget(chainId, body.graduationTargetWei);
+    graduationTarget = normalizeTargetForGeneration(chainId, body.graduationTargetWei, factoryGeneration);
   } catch (error) {
     return json(res, 400, { error: error.message });
   }

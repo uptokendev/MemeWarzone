@@ -7,6 +7,8 @@ export function GraduationTierSelector({
   onChange,
   disabled = false,
   tiers: tierOverride,
+  title = "Graduation threshold",
+  description = "Select the fixed USD target that this campaign must reach before DEX graduation.",
 }: {
   chainId: number;
   value: bigint;
@@ -14,15 +16,18 @@ export function GraduationTierSelector({
   disabled?: boolean;
   /** A launch type with its own tiers (DBC) passes them; otherwise the chain's launchpad tiers. */
   tiers?: GraduationTier[];
+  /** A launch type whose target is a market cap (EVM gen-7) passes its own heading. */
+  title?: string;
+  description?: string;
 }) {
   const tiers = useMemo(() => tierOverride || getGraduationTiers(chainId), [chainId, tierOverride]);
 
   return (
     <div className="mwz-card p-4">
       <div className="mb-3">
-        <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Graduation threshold</div>
+        <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{title}</div>
         <p className="mt-1 text-sm text-muted-foreground">
-          Select the fixed USD target that this campaign must reach before DEX graduation.
+          {description}
         </p>
       </div>
 

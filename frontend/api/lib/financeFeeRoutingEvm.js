@@ -162,6 +162,50 @@ function finalizeFlow(router) {
   };
 }
 
+// Generation 7 (contracts/gen7, docs/evm-launch/EVM_GEN7_V2_PLAN.md): same TreasuryRouterV4 and trade
+// split as gen-6 (G8); the launch fee starts at 90% (G6) and graduation pays 2% to the router and nothing
+// to the creator (G4). Shown beside the gen-6 flows, which stay for the coins created on gen-6 (G9).
+function tradeFlowV4Gen7(routerAddress) {
+  return {
+    id: "evm_trade_v4_gen7",
+    label: "Bonding-curve buy / sell (gen-7)",
+    trigger: "Every buy and sell on a gen-7 campaign",
+    router: `TreasuryRouterV4 ${routerAddress}`,
+    totalFee: "2% (protocolFeeBps 200); 90% falling to 2% over the first 60 s (anti-sniper)",
+    status: "staged, not deployed",
+    splits: [
+      { destinationId: "weekly_league", share: "11.25%", note: "Same split as gen-6" },
+      { destinationId: "monthly_league", share: "26.25%" },
+      { destinationId: "creator_vault_v2", share: "5.6% (CREATOR_TRADE_BPS 560)", note: "Then by creator choice: keep / split / holders / buyback" },
+      { destinationId: "recruiter_vault", share: "12.5% linked / 15% OG / 0% unlinked" },
+      { destinationId: "community_vault", share: "2.5% squad (linked + OG); 15% airdrop (unlinked)" },
+      { destinationId: "protocol_vault", share: "41.9% (OG 39.4%), remainder" },
+    ],
+    citation: "contracts/gen7/LaunchCampaignGen7.sol:106 (ANTI_SNIPER_START_BPS 9000); contracts/TreasuryRouterV4.sol:186-210",
+    notes: ["The creator's first buy at create pays the flat 2%, not the launch fee."],
+  };
+}
+
+function finalizeFlowGen7(router) {
+  return {
+    id: "evm_finalize_gen7",
+    label: "Graduation (finalize, gen-7)",
+    trigger: "graduate() once the gen-7 curve has sold out (85% of supply)",
+    router,
+    totalFee: "2% of the raise (GRAD_PROTOCOL_BPS 200) to the router; 0% to the creator (GRAD_CREATOR_BPS 0); about 98% to the pool",
+    status: "staged, not deployed",
+    splits: [
+      { destinationId: "recruiter_vault", share: "15% linked / 17.5% OG" },
+      { destinationId: "community_vault", share: "2.5% squad (linked + OG); 17.5% airdrop (unlinked)" },
+      { destinationId: "protocol_vault", share: "82.5% (OG 80%), remainder" },
+    ],
+    citation: "contracts/gen7/LaunchCampaignGen7.sol:115-116; contracts/TreasuryRouterV4.sol:212-232",
+    notes: [
+      "No creator graduation payout: pendingCreatorGraduation only collects adapter refunds. If the router refuses, the 2% waits in pendingProtocolGraduationFee (permissionless flush).",
+    ],
+  };
+}
+
 function mainnetRegistry(chainId) {
   const a = MAINNET[chainId];
   const network = EVM_FEE_ROUTING_CHAINS[chainId];
@@ -216,6 +260,8 @@ function mainnetRegistry(chainId) {
       notes: [],
     },
     finalizeFlow(`TreasuryRouterV4 ${a.routerV4} (gen-4: V3, same split)`),
+    tradeFlowV4Gen7(a.routerV4),
+    finalizeFlowGen7(`TreasuryRouterV4 ${a.routerV4}`),
     {
       id: "evm_protocol_drain",
       label: "ProtocolRevenueVault forwarding",
@@ -381,7 +427,7 @@ function testnetRegistry(chainId) {
     network,
     deployer: EVM_DEPLOYER,
     destinations,
-    flows: [tradeFlowV4(t.router, wrapped), finalizeFlow(`TreasuryRouterV4 ${t.router}`)],
+    flows: [tradeFlowV4(t.router, wrapped), finalizeFlow(`TreasuryRouterV4 ${t.router}`), tradeFlowV4Gen7(t.router), finalizeFlowGen7(`TreasuryRouterV4 ${t.router}`)],
     wiring: [],
     inflowDestinations: { weekly: "weekly_league", monthly: "monthly_league", recruiter: "recruiter_vault", airdrop: "community_vault", squad: "community_vault", protocol: "protocol_vault", creator: "creator_vault_v2" },
     alerts: [{ level: "info", message: "Testnet: destinations are read from the gen-6 router's getters at request time. The live API reads the production database, which holds no testnet routing events." }],

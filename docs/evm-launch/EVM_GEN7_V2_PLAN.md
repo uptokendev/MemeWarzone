@@ -1,6 +1,6 @@
 # EVM launch generation 7: BNB and Robinhood matched to Solana DBC v2
 
-Status: plan, 2026-10-08. Nothing built. Every step below needs an explicit founder go.
+Status 2026-10-08: steps 1-3 done on `build/evm-gen7` (local only, nothing deployed). Every step below needs an explicit founder go.
 Authority for gen-6: `docs/evm-launch/EVM_LAUNCH_GENERATION_PLAN.md` (E1-E21). Solana reference:
 `docs/claude/meteora-dbc.md` ("DBC v2 economics").
 
@@ -85,3 +85,20 @@ over/underflow and griefing.
 6. Mainnet deploy through Safe batches (lands `createPaused`), canary coin, then `enableLive` + C11.
 
 DogeOS (`docs/build_plans/DogeOS/DOGEOS_FULL_INTEGRATION_PLAN.md`) builds on gen-7, not gen-6.
+
+## 6. Step 3 result (2026-10-08, local hardhat node only)
+
+- Shared maths `frontend/shared/evmGen7Curve.mjs`, checked to the wei against the contracts
+  (`test/evmgen7-offchain-mirror.spec.ts`, 5 price / target pairs incl. DOGE $0.03).
+- API (`frontend/api`): 7/6 pair accepted on 56 / 97 / 4663 / 46630 / 31337; first buy priced on the curve the factory
+  sizes now (cross-checked with the factory's `curveForMarketCap` view, any mismatch refuses to sign); targets per
+  generation; campaign-state gains `curve` and `economics`; finance lanes `evm_trade_v4_gen7` / `evm_finalize_gen7`.
+- App (`frontend/src`): create and push-live with $30K / $50K market-cap tiers, 70% first buy with MAX and balance
+  block, 90% launch-fee line, coin page price / market cap on the CP curve, creator panel without the 19.8% row.
+- Indexer: CP spot and market cap, candles, 9000 bps launch-fee annotation, keeper due filter = sell-out only,
+  buyback impact estimate on the CP curve, `EVM_GEN7_FACTORIES_<chainId>` force list.
+- End to end on a local node: `scripts/local-gen7-stack.ts` then `scripts/check-gen7-local-offchain.ts`
+  (API prices and signs a 70% first buy, create, campaign-state, indexer reader, sell-out to Pending, graduation:
+  2% to the router, 0 to the creator): 32 / 32 checks.
+- Open for later steps: gen-7 lockers into `evmLpHarvestCrank.js` and the finance locker lists after deploy; DogeOS
+  6281971 route authorisation; scheduled arm takes the factory generation from the client (fails closed on chain).

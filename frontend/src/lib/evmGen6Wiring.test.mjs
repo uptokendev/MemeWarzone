@@ -52,13 +52,16 @@ test("older factories keep today's create request and call exactly", () => {
   assert.match(stockCreate, /uint256 graduationTarget\) req,address stockToken/);
   assert.match(stockCreate, /: await factory\.createStockCampaignAuthorized\(campaignRequest, stockTokenAddress, routeAuth\);/);
   // scheduled create: the legacy factory contract is used unless the factory reports 6/5.
-  assert.match(scheduled, /const gen6Factory = isEvmGen6Pair\(eligibility\.factoryGeneration, eligibility\.campaignGeneration\);/);
+  // Generation 7/6 (same request) is accepted next to 6/5.
+  assert.match(scheduled, /const gen6Factory = isEvmGen6Pair\(eligibility\.factoryGeneration, eligibility\.campaignGeneration\) \|\| gen7Factory;/);
   assert.match(scheduled, /: legacyFactory;/);
 });
 
 test("the create pages only show and send gen-6 fields for a generation-6 factory", () => {
   for (const page of [create, pushDraft]) {
-    assert.match(page, /isGen6Factory\(getReadProvider/);
+    // readEvmLaunchGeneration answers 6 for 6/5, 7 for 7/6 and null for every older factory.
+    assert.match(page, /readEvmLaunchGeneration\(getReadProvider/);
+    assert.match(page, /setEvmGen6FactoryAddress\(generation \? (factoryAddress|deployFactoryAddress) : ""\)/);
     assert.match(page, /\{evmGen6[^}]*\? \(\s*(<div className="mt-4">\s*)?<EvmGen6LaunchOptions/);
     assert.match(page, /\.\.\.\(gen6Fields \? \{ gen6: gen6Fields \} : \{\}\)/);
   }

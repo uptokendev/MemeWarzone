@@ -58,6 +58,7 @@ import {
   type SimResult,
   type VaultCall,
 } from "./evmCreatorChoiceChain.js";
+import { gen7CurvePriceAfter, isEvmGen7CampaignGeneration } from "./evmGen7Curve.js";
 
 export type Queryable = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }> };
 
@@ -89,6 +90,8 @@ export type PlatformCoin = {
   choice: number; // 2 holders, 3 split, 4 buyback
   stage: "trading" | "pending" | "graduated";
   pool: string | null;
+  /** evm_campaign_gen5_state.campaign_generation; 6 = gen-7 (constant-product curve). Absent: gen-6 rules. */
+  campaignGeneration?: number | null;
 };
 
 export type ChoiceConfig = {
@@ -155,7 +158,8 @@ const lc = (a: string) => a.toLowerCase();
 export async function listPlatformCoins(db: Queryable, chainId: number, vault: string): Promise<PlatformCoin[]> {
   const { rows } = await db.query(
     `select s.campaign_address, s.graduation_stage, s.graduated_pool, s.fee_choice,
-            c.token_address, c.creator_address, coalesce(c.created_block, 0)::bigint as created_block
+            c.token_address, c.creator_address, coalesce(c.created_block, 0)::bigint as created_block,
+            s.campaign_generation
        from public.evm_campaign_gen5_state s
        left join public.campaigns c on c.chain_id = s.chain_id and lower(c.campaign_address) = s.campaign_address
       where s.chain_id = $1 and s.fee_choice in (2, 3, 4) and s.fee_vault = $2
@@ -170,6 +174,7 @@ export async function listPlatformCoins(db: Queryable, chainId: number, vault: s
     choice: Number(r.fee_choice),
     stage: (String(r.graduation_stage || "trading") as PlatformCoin["stage"]),
     pool: r.graduated_pool ? lc(String(r.graduated_pool)) : null,
+    campaignGeneration: r.campaign_generation == null ? null : Number(r.campaign_generation),
   }));
 }
 
@@ -826,7 +831,12 @@ async function curveBuybackCandidate(input: {
   const estimate = async (amount: bigint) => {
     const q = await chain.quoteBuy(coin.campaign, amount);
     if (q.totalCost === 0n || q.fee * 10_000n > q.totalCost * 200n) return null; // anti-sniper window still on
-    return impactBps(curve.currentPrice, linearCurvePriceAfter(curve.currentPrice, q.totalCost - q.fee, q.tokensOut));
+    // Gen-7 coins sit on a constant-product curve; the linear midpoint estimate would understate the
+    // impact there (the vault's on-chain check still decides). Gen-6 keeps the linear estimate.
+    const after = isEvmGen7CampaignGeneration(coin.campaignGeneration)
+      ? gen7CurvePriceAfter(curve.currentPrice, q.totalCost - q.fee, q.tokensOut)
+      : linearCurvePriceAfter(curve.currentPrice, q.totalCost - q.fee, q.tokensOut);
+    return impactBps(curve.currentPrice, after);
   };
   let amount = await sizeWithinImpact(budget, input.cfg.minSpendWei, target, estimate);
   if (amount == null) return { report: { kind: "buyback", subject, decision: "skip", action: "buyback_curve", reason: `nothing to buy within the caps (budget ${budget}, curve room ${room})` } };

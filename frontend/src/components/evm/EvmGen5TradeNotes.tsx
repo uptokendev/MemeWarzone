@@ -7,6 +7,7 @@ import {
   evmFeeChoiceLine,
   evmGraduationStatus,
 } from "@/lib/evmGen6.mjs";
+import { GEN7_ANTI_SNIPER_WINDOW_SECONDS, gen7AntiSniperLine } from "@/lib/evmGen7.mjs";
 
 function useNowSeconds(active: boolean) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -37,7 +38,9 @@ export function EvmGen5TradeNotes({
   nativeSymbol: string;
   explorerBase: string;
 }) {
-  const windowOpen = !state.launched && Math.floor(Date.now() / 1000) < state.launchAt + EVM_ANTI_SNIPER_WINDOW_SECONDS + 1;
+  const gen7 = state.factoryGeneration === 7;
+  const windowSeconds = gen7 ? GEN7_ANTI_SNIPER_WINDOW_SECONDS : EVM_ANTI_SNIPER_WINDOW_SECONDS;
+  const windowOpen = !state.launched && Math.floor(Date.now() / 1000) < state.launchAt + windowSeconds + 1;
   const now = useNowSeconds(windowOpen);
   const graduation = evmGraduationStatus({
     launched: state.launched,
@@ -55,7 +58,9 @@ export function EvmGen5TradeNotes({
     <div className="mt-2 space-y-1 text-center text-xs" data-testid="evm-gen5-trade-notes">
       {graduation.phase === "trading" ? (
         <p className="text-muted-foreground">
-          {evmAntiSniperLine({ launchAt: state.launchAt, nowUnix: now })}
+          {gen7
+            ? gen7AntiSniperLine({ launchAt: state.launchAt, nowUnix: now, baseFeeBps: state.protocolFeeBps })
+            : evmAntiSniperLine({ launchAt: state.launchAt, nowUnix: now })}
         </p>
       ) : null}
       {graduation.phase === "trading" && viewerIsCreator && tradeTab === "buy" ? (
