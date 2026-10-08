@@ -61,6 +61,7 @@
     "cron:backfill-solana-reward-events": "node --enable-source-maps dist/jobs/backfillSolanaRewardEvents.js",
     "job:backfill-creator-fee-claims": "node --enable-source-maps dist/jobs/backfillCreatorFeeClaims.js",
     "test:creator-fee-claims": "tsx --test src/tests/solanaCreatorFeeClaims.test.ts",
+    "test:import-creator-fees": "tsx --test src/tests/importCreatorFees.test.ts",
     "cron:credit-recruiter-earnings": "node --enable-source-maps dist/jobs/creditRecruiterEarnings.js"
   },
   "dependencies": {

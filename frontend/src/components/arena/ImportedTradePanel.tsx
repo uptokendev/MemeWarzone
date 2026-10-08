@@ -28,6 +28,7 @@ import type { ArenaImportItem } from "@/lib/arenaImports";
 import { executeImportSwap4663, quoteImportSwap4663, resolveImportPool } from "@/lib/robinhoodImportSwap.mjs";
 import {
   IMPORT_SWAP_FEE_LABEL,
+  importSwapFeeLabel,
   executeBscImportSwap,
   executeSolanaImportSwap,
   quoteImportSwap,
@@ -368,7 +369,9 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         <span className="min-w-0 flex-1 truncate text-[13px] text-mw-muted">
           {aggregated && !noAggregatorRoute ? `Best price via ${solana ? "Jupiter" : "PancakeSwap"}` : `Pool ${poolLabel || "resolving…"}`}
         </span>
-        {(aggregated && !noAggregatorRoute) || robinhoodFee ? <span className={chip}>Fee {IMPORT_SWAP_FEE_LABEL}</span> : null}
+        {(aggregated && !noAggregatorRoute) || robinhoodFee ? (
+          preview ? <span className={chip}>Fee {importSwapFeeLabel(preview.feeBps)}</span> : robinhoodFee ? <span className={chip}>Fee {IMPORT_SWAP_FEE_LABEL}</span> : null
+        ) : null}
       </div>
       {(aggregated || robinhood) && preview ? (
         <div className="flex flex-col gap-1 font-mw-mono text-[13px]" data-import-swap-preview="true">
@@ -384,6 +387,12 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
             <div className="flex justify-between gap-2 text-mw-muted">
               <span>Platform fee</span>
               <span>{Number(ethers.formatUnits(preview.feeNativeRaw, solana ? 9 : 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} {native}</span>
+            </div>
+          ) : null}
+          {preview.feeNativeRaw && preview.creatorShareBps && preview.feeBps ? (
+            <div className="flex justify-between gap-2 text-mw-muted" data-import-swap-creator-share="true">
+              <span>Of which to the coin&apos;s creator</span>
+              <span>{Number(ethers.formatUnits((BigInt(preview.feeNativeRaw) * BigInt(preview.creatorShareBps)) / BigInt(preview.feeBps), solana ? 9 : 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} {native}</span>
             </div>
           ) : null}
           {preview.route.length ? (

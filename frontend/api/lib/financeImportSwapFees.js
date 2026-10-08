@@ -195,7 +195,9 @@ export async function scanEvmImportSwapFees({ source, rpc, fromBlock, maxBlocks 
   const blockTimes = new Map();
   for (let from = start; from <= end; from += source.maxRange) {
     const to = Math.min(end, from + source.maxRange - 1);
-    const logs = await rpc("eth_getLogs", [{ address: source.receiver, topics: [VAULT_DEPOSIT_TOPIC, padTopic(source.payer)], fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }]);
+    // A split receiver (ImportFeeVault) can be paid by several routers: topic OR-list.
+    const payerTopic = source.payers ? source.payers.map(padTopic) : padTopic(source.payer);
+    const logs = await rpc("eth_getLogs", [{ address: source.receiver, topics: [VAULT_DEPOSIT_TOPIC, payerTopic], fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }]);
     for (const log of logs || []) {
       if (log.removed) continue;
       const amount = hexToBig(String(log.data).slice(0, 66));
@@ -209,7 +211,7 @@ export async function scanEvmImportSwapFees({ source, rpc, fromBlock, maxBlocks 
         chainId: source.chainId, txHash: String(log.transactionHash).toLowerCase(), logIndex: Number(hexToBig(log.logIndex)), blockNumber,
         occurredAt: new Date(blockTimes.get(blockNumber) * 1000).toISOString(),
         wallet, tokenAddress: token, side, feeRaw: amount.toString(), feeAsset: source.asset,
-        feeReceiver: source.receiver, router: source.payer, source: "evm_vault_deposit",
+        feeReceiver: source.receiver, router: source.payers ? topicAddress(log.topics[1]) : source.payer, source: "evm_vault_deposit",
         internalWallet: Boolean(wallet && isOwnerWallet(wallet)),
       });
     }
@@ -281,5 +283,118 @@ export async function ingestImportSwapFees({ db, chainId, env = process.env, fet
   const feeRaw = scan.rows.reduce((sum, r) => sum + BigInt(r.feeRaw), 0n).toString();
   const summary = { chainId, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: scan.rows.length, inserted, feeRaw, asset: source.asset, complete: scan.complete };
   log?.(summary, scan.rows);
-  return { ...summary, rows: scan.rows };
+  const split = [];
+  for (const splitSource of importSwapFeeSplitSources(env).filter((s) => s.chainId === chainId)) {
+    split.push(await ingestSplitReceiver({ db, source: splitSource, env, fetchImpl, dryRun, fromScratch, rpc, log }));
+  }
+  return { ...summary, rows: scan.rows, ...(split.length ? { split } : {}) };
+}
+
+// ------------------------------------------------------------------ 1% split receivers (founder, 2026-10-08)
+//
+// From the switch to 1%, every import swap pays the whole fee to ONE receiver per chain and the
+// split happens afterwards: half is the protocol's, half the coin creator's. Each fee row stores
+// its creator half (creator_raw) and gets an import_creator_fees accrual that waits 90 days.
+//   Solana 101   the wrapped-SOL account of the import fee collector key (SOLANA_IMPORT_FEE_COLLECTOR,
+//                the key lives only in the indexer, which pays creators and sweeps the protocol half).
+//   BNB 56 /     an ImportFeeVault (RecruiterRewardsVault bytecode): IMPORT_FEE_VAULT_<chainId>, paid
+//   Robinhood    by the routers in IMPORT_FEE_VAULT_PAYERS_<chainId> (default: Kyber router on 56,
+//   4663         Universal Router on 4663), scanned from IMPORT_FEE_VAULT_START_BLOCK_<chainId>.
+// The old 0.5% receivers stay in importSwapFeeSources() for history; their rows are 100% protocol.
+
+export const IMPORT_CREATOR_FEE_WINDOW_DAYS = 90;
+
+/** The creator's half of a split fee (floor; the odd unit stays with the protocol). */
+export function creatorHalf(feeRaw) {
+  return (BigInt(feeRaw) / 2n).toString();
+}
+
+export function importSwapFeeSplitSources(env = process.env) {
+  const out = [];
+  const collector = String(env.SOLANA_IMPORT_FEE_COLLECTOR || "").trim();
+  if (collector) out.push({ chainId: 101, kind: "solana", asset: "SOL", decimals: 9, feeOwner: collector, split: true });
+  const legacy = importSwapFeeSources(env);
+  const defaults = { 56: [KYBER_ROUTER.toLowerCase()], 4663: [UNIVERSAL_ROUTER_4663] };
+  for (const chainId of [56, 4663]) {
+    const vault = String(env[`IMPORT_FEE_VAULT_${chainId}`] || "").trim().toLowerCase();
+    const startBlock = Number(env[`IMPORT_FEE_VAULT_START_BLOCK_${chainId}`] || 0);
+    if (!/^0x[0-9a-f]{40}$/.test(vault) || !Number.isInteger(startBlock) || startBlock <= 0) continue;
+    const listed = String(env[`IMPORT_FEE_VAULT_PAYERS_${chainId}`] || "").split(",").map((p) => p.trim().toLowerCase()).filter((p) => /^0x[0-9a-f]{40}$/.test(p));
+    const { payer: _payer, receiver: _receiver, startBlock: _start, ...rest } = legacy[chainId];
+    out.push({ ...rest, receiver: vault, payers: listed.length ? listed : defaults[chainId], startBlock, split: true });
+  }
+  return out;
+}
+
+const splitReceiverOf = (source) => (source.kind === "solana" ? solanaFeeAccount(source.feeOwner) : source.receiver);
+
+export async function readSplitReceiverCursor(db, chainId, receiver) {
+  const { rows } = await db.query("select cursor from public.finance_import_swap_fee_receiver_cursors where chain_id = $1 and receiver = $2", [chainId, receiver]);
+  return rows[0]?.cursor ?? null;
+}
+
+const INSERT_SPLIT_SQL = `
+  with ins as (
+    insert into public.finance_import_swap_fees
+      (chain_id, tx_hash, log_index, block_number, occurred_at, wallet, token_address, side, fee_raw, fee_asset, fee_receiver, router, source, internal_wallet, creator_raw)
+    select * from unnest($1::int[], $2::text[], $3::int[], $4::bigint[], $5::timestamptz[], $6::text[], $7::text[], $8::text[], $9::numeric[], $10::text[], $11::text[], $12::text[], $13::text[], $14::boolean[], $15::numeric[])
+    on conflict (chain_id, tx_hash, log_index) do nothing
+    returning id, chain_id, token_address, creator_raw, occurred_at
+  ), acc as (
+    insert into public.import_creator_fees (fee_id, chain_id, token_address, creator_raw, occurred_at, expires_at)
+    select id, chain_id, token_address, creator_raw, occurred_at, occurred_at + make_interval(days => $16::int)
+      from ins where creator_raw > 0
+    on conflict (fee_id) do nothing
+    returning fee_id
+  )
+  select (select count(*) from ins)::int as inserted, (select count(*) from acc)::int as accrued`;
+
+/** Stores split fee rows with their creator accruals and moves the receiver's cursor, in one transaction. */
+export async function storeSplitImportSwapFees(db, source, rows, cursor) {
+  const client = typeof db.connect === "function" ? await db.connect() : db;
+  try {
+    await client.query("begin");
+    let inserted = 0;
+    let accrued = 0;
+    if (rows.length) {
+      const col = (k) => rows.map((r) => r[k] ?? null);
+      const result = await client.query(INSERT_SPLIT_SQL, [col("chainId"), col("txHash"), col("logIndex"), col("blockNumber"), col("occurredAt"), col("wallet"), col("tokenAddress"), col("side"), col("feeRaw"), col("feeAsset"), col("feeReceiver"), col("router"), col("source"), col("internalWallet"), col("creatorRaw"), IMPORT_CREATOR_FEE_WINDOW_DAYS]);
+      inserted = Number(result.rows?.[0]?.inserted ?? 0);
+      accrued = Number(result.rows?.[0]?.accrued ?? 0);
+    }
+    if (cursor != null) {
+      await client.query(`insert into public.finance_import_swap_fee_receiver_cursors (chain_id, receiver, cursor, updated_at) values ($1, $2, $3, now())
+        on conflict (chain_id, receiver) do update set cursor = excluded.cursor, updated_at = now()`, [source.chainId, splitReceiverOf(source), String(cursor)]);
+    }
+    await client.query("commit");
+    return { inserted, accrued };
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    if (client !== db) client.release?.();
+  }
+}
+
+async function ingestSplitReceiver({ db, source, env, fetchImpl, dryRun, fromScratch, rpc, log }) {
+  const receiver = splitReceiverOf(source);
+  let cursor = null;
+  if (!fromScratch && db) {
+    try {
+      cursor = await readSplitReceiverCursor(db, source.chainId, receiver);
+    } catch (error) {
+      if (error?.code !== "42P01") throw error;
+      if (!dryRun) throw new Error("finance_import_swap_fee_receiver_cursors is missing: apply db/migrations/20261008_000020_import_creator_fees.sql first.");
+    }
+  }
+  const call = rpc || rpcClient(source.kind === "solana" ? solanaImportSwapRpcUrls(env) : getRpcUrls(source.chainId), { fetchImpl });
+  const scan = source.kind === "solana"
+    ? await scanSolanaImportSwapFees({ source, rpc: call, cursor })
+    : await scanEvmImportSwapFees({ source, rpc: call, fromBlock: cursor == null ? null : Number(cursor) });
+  const rows = scan.rows.map((row) => ({ ...row, creatorRaw: creatorHalf(row.feeRaw) }));
+  const nextCursor = source.kind === "solana" ? scan.cursor : String(scan.nextBlock);
+  const stored = dryRun ? { inserted: 0, accrued: 0 } : await storeSplitImportSwapFees(db, source, rows, nextCursor);
+  const summary = { chainId: source.chainId, receiver, split: true, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: rows.length, ...stored, complete: scan.complete };
+  log?.(summary, rows);
+  return summary;
 }

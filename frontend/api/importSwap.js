@@ -24,7 +24,23 @@ const WSOL = "So11111111111111111111111111111111111111112";
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ASSOCIATED_TOKEN_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 export const JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
-const SOLANA_FEE_OWNER = String(process.env.SOLANA_IMPORT_SWAP_FEE_OWNER || "2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB").trim();
+// From the 1% switch (founder, 2026-10-08) the whole fee goes to the import fee collector, whose
+// key only the indexer holds: it pays the coin creator's half and sweeps ours to the protocol
+// wallet (realtime-indexer/src/importCreatorFeeWorker.ts). Setting SOLANA_IMPORT_FEE_COLLECTOR is
+// the switch: it moves the fee account and the rate together, so 1% never lands in the old
+// protocol-only account and the collector never takes the old 0.5%.
+const SOLANA_IMPORT_FEE_COLLECTOR = String(process.env.SOLANA_IMPORT_FEE_COLLECTOR || "").trim();
+const SOLANA_FEE_OWNER = SOLANA_IMPORT_FEE_COLLECTOR || String(process.env.SOLANA_IMPORT_SWAP_FEE_OWNER || "2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB").trim();
+
+/** Fee in bps per chain: the collector's split rate on Solana once it is set, else the 0.5% rate. */
+export function importSwapFeeBps(chainId, env = process.env) {
+  const legacy = Math.max(0, Math.min(200, Number(env.IMPORT_SWAP_FEE_BPS || 50)));
+  if (Number(chainId) === 101 && String(env.SOLANA_IMPORT_FEE_COLLECTOR || "").trim()) {
+    return Math.max(0, Math.min(200, Number(env.IMPORT_SWAP_FEE_BPS_101 || 100)));
+  }
+  return legacy;
+}
+const SOLANA_FEE_BPS = importSwapFeeBps(101);
 const JUPITER_BASE = String(
   process.env.JUPITER_SWAP_API_BASE || (process.env.JUPITER_API_KEY ? "https://api.jup.ag/swap/v1" : "https://lite-api.jup.ag/swap/v1"),
 ).replace(/\/+$/, "");
@@ -118,7 +134,7 @@ function solanaMints(token, side) {
 }
 
 /** Throws unless the quote is exactly the swap we fee: SOL<->token, ExactIn, our fee bps. */
-export function assertSolanaQuoteTerms(quote, { token, side, feeBps = IMPORT_SWAP_FEE_BPS }) {
+export function assertSolanaQuoteTerms(quote, { token, side, feeBps = SOLANA_FEE_BPS }) {
   const expected = solanaMints(token, side);
   if (!quote || typeof quote !== "object") throw Object.assign(new Error("Missing Jupiter quote"), { status: 400 });
   if (quote.inputMint !== expected.inputMint || quote.outputMint !== expected.outputMint) throw Object.assign(new Error("Quote mints do not match this swap"), { status: 400 });
@@ -146,7 +162,7 @@ async function solanaQuote({ token, side, amountRaw, slippage }) {
     outputMint,
     amount: amountRaw.toString(),
     slippageBps: String(slippage),
-    platformFeeBps: String(IMPORT_SWAP_FEE_BPS),
+    platformFeeBps: String(SOLANA_FEE_BPS),
     swapMode: "ExactIn",
   });
   const quote = await fetchJson(`${JUPITER_BASE}/quote?${params}`, { headers: jupiterHeaders() }, "Jupiter quote");
@@ -159,9 +175,10 @@ async function solanaQuote({ token, side, amountRaw, slippage }) {
     amountOut: String(quote.outAmount),
     minAmountOut: String(quote.otherAmountThreshold),
     priceImpactPct: Number(quote.priceImpactPct || 0) * 100,
-    feeBps: IMPORT_SWAP_FEE_BPS,
-    // Buy: the fee is 0.5% of the SOL in; sell: of the SOL out (quote.platformFee.amount).
-    feeNativeRaw: side === "buy" ? ((BigInt(quote.inAmount) * BigInt(IMPORT_SWAP_FEE_BPS)) / 10_000n).toString() : String(quote.platformFee?.amount || "0"),
+    feeBps: SOLANA_FEE_BPS,
+    // Buy: the fee is taken from the SOL in; sell: from the SOL out (quote.platformFee.amount).
+    feeNativeRaw: side === "buy" ? ((BigInt(quote.inAmount) * BigInt(SOLANA_FEE_BPS)) / 10_000n).toString() : String(quote.platformFee?.amount || "0"),
+    creatorShareBps: SOLANA_IMPORT_FEE_COLLECTOR ? Math.floor(SOLANA_FEE_BPS / 2) : 0,
     route: (quote.routePlan || []).map((step) => step?.swapInfo?.label).filter(Boolean),
     quote,
   };

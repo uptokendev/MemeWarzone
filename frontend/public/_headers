@@ -16,6 +16,12 @@
   Cross-Origin-Opener-Policy: unsafe-none
   Cross-Origin-Resource-Policy: cross-origin
 
+# Embeddable swap widget: loaded by other websites (src/widget, api/importSwapWidget.js).
+/widget/*
+  Cross-Origin-Resource-Policy: cross-origin
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300
+
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
