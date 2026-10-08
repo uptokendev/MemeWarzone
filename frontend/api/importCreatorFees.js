@@ -12,7 +12,8 @@ import { badMethod, json } from "../server/http.js";
 
 export const CREATOR_FEE_WINDOW_DAYS = 90;
 export const CREATOR_PAYOUT_HOLD_DAYS = Math.max(0, Number(process.env.IMPORT_CREATOR_HOLD_DAYS ?? 7));
-const ASSET = { 101: { symbol: "SOL", decimals: 9 }, 56: { symbol: "BNB", decimals: 18 }, 4663: { symbol: "ETH", decimals: 18 } };
+// Testnets 97 / 46630 too, so the gen-7 testnet run shows the coin-page notice (CO-IMPORT-SWAP-FEE).
+const ASSET = { 101: { symbol: "SOL", decimals: 9 }, 56: { symbol: "BNB", decimals: 18 }, 4663: { symbol: "ETH", decimals: 18 }, 97: { symbol: "tBNB", decimals: 18 }, 46630: { symbol: "ETH", decimals: 18 } };
 
 function readInput(query) {
   const chainId = Number(query?.chainId);
@@ -51,7 +52,7 @@ export function summarizeCreatorFees({ chainId, token, totals, owner, now = new 
 export default async function importCreatorFees(req, res) {
   if (req.method !== "GET") return badMethod(res);
   const input = readInput(req.query || Object.fromEntries(new URL(String(req.url || ""), "http://x").searchParams));
-  if (!input) return json(res, 400, { ok: false, error: "chainId (101, 56, 4663) and a token address are required" });
+  if (!input) return json(res, 400, { ok: false, error: "chainId (101, 56, 4663, 97, 46630) and a token address are required" });
   if (!pool) return json(res, 503, { ok: false, error: "Database unavailable" });
   try {
     const [totals, owner] = await Promise.all([

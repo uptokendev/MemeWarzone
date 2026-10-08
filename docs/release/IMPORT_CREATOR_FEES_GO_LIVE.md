@@ -56,8 +56,9 @@ BNB and Robinhood: change order `docs/evm-launch/CO-IMPORT-SWAP-FEE.md` on `buil
 5. **API env, the switch**: `SOLANA_IMPORT_FEE_COLLECTOR=F12Pd3f67e1jFQ1Ny5pZNPkgPZWqbfPCsWUUy7dsXCAw`
    (`IMPORT_SWAP_FEE_BPS_101` defaults to 100). Check: a quote shows `feeBps: 100`, `creatorShareBps: 50`:
    ```bash
+   MINT=DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263   # any Solana coin with a Jupiter route
    curl -s -X POST https://api.memewar.zone/api/imports/swap/quote -H 'content-type: application/json' \
-     -d '{"chainId":101,"token":"DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263","side":"buy","amountRaw":"100000000"}' | jq '{feeBps,creatorShareBps,feeNativeRaw}'
+     -d "{\"chainId\":101,\"token\":\"$MINT\",\"side\":\"buy\",\"amountRaw\":\"100000000\"}" | jq '{feeBps,creatorShareBps,feeNativeRaw}'
    ```
 6. **First swap**: one small buy on an imported coin. Within 5 minutes a `finance_import_swap_fees` row with
    `fee_receiver = Di768Lkp…`, `creator_raw` = half, and an `import_creator_fees` row `waiting`.

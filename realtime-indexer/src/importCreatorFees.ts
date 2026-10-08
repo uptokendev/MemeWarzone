@@ -12,6 +12,8 @@
  *   pay       verified import owners (arena_token_imports ownership_verified, claim >= 7 days old)
  *             whose waiting accruals sum to at least the minimum, in native SOL, within a per-payout
  *             and a daily cap. Above the daily cap the rest waits for the next UTC day by itself.
+ *             Never to one of our own wallets (shared/ownerWallets) or a wallet under a moderation
+ *             hold: those accruals keep waiting (and expire to us after 90 days).
  *
  * Every movement: sign, store 'sending' + signature + lastValidBlockHeight (and mark the accruals
  * 'paying' in the same db transaction), send; the next pass resolves it. A send that may have
@@ -36,6 +38,8 @@ import {
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { bs58Encode, resolveSignature } from "./dbc/dbcFeePending.js";
+import { heldWalletKeys } from "./rewards/moderationHolds.js";
+import { isOwnerWallet } from "./rewards/ownerWallets.js";
 
 type Queryable = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }> };
 type Pool = Queryable & { connect?: () => Promise<Queryable & { release?: () => void }> };
@@ -301,11 +305,20 @@ export async function runImportCreatorFeePass(input: {
   // Creators first: their money is a liability; ours can wait for the next pass.
   let dailyLeft = settings.dailyPayoutCapLamports - (await readPaidToday(db, collectorAccount, now));
   const coins = await readPayableCoins(db, collectorAccount, settings.holdDays, now);
+  const held = coins.length ? await heldWalletKeys(db) : new Set<string>();
   for (const coin of coins) {
     if (result.payouts.length >= settings.payoutsPerPass) break;
     if (coin.total < settings.minPayoutLamports) continue;
     if (!isValidWallet(coin.owner)) {
       result.skipped.push(`${coin.token}: owner ${coin.owner} is not a wallet`);
+      continue;
+    }
+    if (isOwnerWallet(coin.owner)) {
+      result.skipped.push(`${coin.token}: owner ${coin.owner} is one of our own wallets`);
+      continue;
+    }
+    if (held.has(coin.owner.toLowerCase())) {
+      result.skipped.push(`${coin.token}: owner ${coin.owner} is held by moderation`);
       continue;
     }
     const limit = [settings.maxPayoutLamports, dailyLeft, balance].reduce((a, b) => (a < b ? a : b));
