@@ -69,6 +69,7 @@ import prepareShareCard from "./prepare-share-card.js";
 import tokenShareCard from "./token-share-card.js";
 import { importSwapBuild, importSwapQuote } from "./importSwap.js";
 import importCreatorFees from "./importCreatorFees.js";
+import { widgetBalances, widgetBuild, widgetCors, widgetQuote, widgetStatus, widgetToken } from "./importSwapWidget.js";
 import airdropPool from "./airdropPool.js";
 import battleShareCard from "./battle-share-card.js";
 import status from "./status.js";
@@ -284,6 +285,10 @@ function isDevAllowedIP(req) {
   const clean = ip.replace(/^::ffff:/, "");
   return DEV_ALLOWED_IPS.has(ip) || DEV_ALLOWED_IPS.has(clean);
 }
+
+// Embeddable swap widget: any website, no credentials, rate limited (api/importSwapWidget.js).
+// Before the allow-list CORS below, which would answer its preflight without CORS headers.
+app.use("/api/widget", widgetCors);
 
 app.use((req, res, next) => {
   const origin = String(req.headers.origin || "");
@@ -517,6 +522,11 @@ router.get("/solana/holders", wrap(solanaHolders));
 router.post("/imports/swap/quote", wrap(importSwapQuote));
 router.post("/imports/swap/build", wrap(importSwapBuild));
 router.get("/imports/creator-fees", wrap(importCreatorFees));
+router.get("/widget/swap/token", wrap(widgetToken));
+router.get("/widget/swap/balances", wrap(widgetBalances));
+router.post("/widget/swap/quote", wrap(widgetQuote));
+router.post("/widget/swap/build", wrap(widgetBuild));
+router.get("/widget/swap/status", wrap(widgetStatus));
 router.all("/solana/direct-create", wrap(solanaDirectCreateV4));
 router.all("/solana/trade-authorize", wrap(solanaTradeAuthorizationV1));
 router.all("/solana/graduation-authorize", wrap(solanaGraduationAuthorizationV1));
