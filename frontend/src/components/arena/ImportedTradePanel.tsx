@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { ethers } from "ethers";
+import { PublicKey } from "@solana/web3.js";
 import { toast } from "sonner";
 import { announceImportTrade } from "@/lib/importTradeEvents";
 
 import { Button } from "@/components/ui/button";
+import { cp } from "@/components/token/coinPageStyles";
+import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { getNativeSymbol, isRobinhoodChainId, isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
@@ -82,6 +85,48 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
       cancelled = true;
     };
   }, [item.chainId, item.tokenAddress, readProvider]);
+
+  // Wallet balances for the Balance row (reads only; the swap itself does not use them).
+  const account = solana ? (solanaAccount ? String(solanaAccount) : null) : wallet.account ? String(wallet.account) : null;
+  const [balances, setBalances] = useState<{ nativeRaw: bigint; tokenRaw: bigint } | null>(null);
+  useEffect(() => {
+    if (!account) {
+      setBalances(null);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        let nativeRaw: bigint;
+        let tokenRaw = 0n;
+        if (solana) {
+          const connection = getSolanaReadConnection();
+          const owner = new PublicKey(account);
+          const [lamports, accounts] = await Promise.all([
+            connection.getBalance(owner, "confirmed"),
+            connection.getParsedTokenAccountsByOwner(owner, { mint: new PublicKey(item.tokenAddress) }, "confirmed"),
+          ]);
+          nativeRaw = BigInt(lamports);
+          for (const entry of accounts.value) tokenRaw += BigInt((entry.account.data as { parsed?: { info?: { tokenAmount?: { amount?: string } } } }).parsed?.info?.tokenAmount?.amount || "0");
+        } else {
+          if (!readProvider) return;
+          const erc20 = new ethers.Contract(item.tokenAddress, ["function balanceOf(address) view returns (uint256)"], readProvider);
+          const [native, token] = await Promise.all([readProvider.getBalance(account), erc20.balanceOf(account) as Promise<bigint>]);
+          nativeRaw = BigInt(native);
+          tokenRaw = BigInt(token);
+        }
+        if (!cancelled) setBalances({ nativeRaw, tokenRaw });
+      } catch {
+        if (!cancelled) setBalances(null);
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [account, item.tokenAddress, readProvider, solana]);
 
   function amountRaw(): bigint | null {
     const text = String(amount || "").trim();
@@ -338,81 +383,98 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
   // UI redesign: the same panel look as a launched coin (founder: "we shouldn't see any difference");
   // the route underneath (Jupiter / PancakeSwap via KyberSwap / Uniswap V3) is unchanged.
   const dex = aggregated && !noAggregatorRoute ? (solana ? "Jupiter" : "PancakeSwap") : robinhood ? "Uniswap" : poolLabel || "the DEX";
-  const segTrigger = "mw-focus min-h-10 rounded-lg font-mw-body text-[15px] font-bold transition-colors";
-  const chip = "inline-flex min-h-[30px] items-center rounded-lg border border-[#2E353D] bg-[#171B20] px-2.5 font-mw-mono text-[13px] text-[#C9CED4]";
+  const unit = side === "buy" ? native : item.symbol || "token";
+  const nativeDecimals = solana ? 9 : 18;
+  const fmt = (raw: string | bigint, units: number, digits: number) => Number(ethers.formatUnits(raw, units)).toLocaleString(undefined, { maximumFractionDigits: digits });
+  const quoted = (aggregated && !noAggregatorRoute) || robinhoodFee;
+  const feeLabel = preview ? importSwapFeeLabel(preview.feeBps) : robinhoodFee ? IMPORT_SWAP_FEE_LABEL : null;
+  const row = "flex items-center justify-between gap-2";
   return (
-    <div className="flex flex-col gap-2.5 font-mw-body text-mw-text">
-      <div className="grid grid-cols-2 gap-1 rounded-[10px] border border-[#242A31] bg-[#13171C] p-1" role="tablist" aria-label="Buy or sell">
-        <button type="button" role="tab" aria-selected={side === "buy"} className={`${segTrigger} ${side === "buy" ? "bg-mw-buy text-[#04140A]" : "text-mw-muted hover:text-mw-text"}`} onClick={() => setSide("buy")}>
+    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
+      <div className={cp.segList} role="tablist" aria-label="Buy or sell">
+        <button type="button" role="tab" aria-selected={side === "buy"} data-state={side === "buy" ? "active" : "inactive"} className={cp.segBuy} onClick={() => setSide("buy")}>
           Buy
         </button>
-        <button type="button" role="tab" aria-selected={side === "sell"} className={`${segTrigger} ${side === "sell" ? "bg-mw-sell text-[#FFF1F3]" : "text-mw-muted hover:text-mw-text"}`} onClick={() => setSide("sell")}>
+        <button type="button" role="tab" aria-selected={side === "sell"} data-state={side === "sell" ? "active" : "inactive"} className={cp.segSell} onClick={() => setSide("sell")}>
           Sell
         </button>
       </div>
-      <div className="flex items-center justify-between gap-2 text-[13px]">
-        <span className="text-mw-muted">{side === "buy" ? "Pay in" : "Amount in"}</span>
-        <span className={`${chip} border-mw-accent bg-[#2A1609] text-mw-accent-soft`}>{side === "buy" ? native : item.symbol || "token"}</span>
-      </div>
-      <div className="relative">
-        <input
-          value={amount}
-          onChange={(event) => setAmount(event.target.value)}
-          inputMode="decimal"
-          aria-label={`Amount (${side === "buy" ? native : item.symbol || "token"})`}
-          className="mw-focus h-12 w-full rounded-[10px] border border-[#2E353D] bg-mw-input pl-3.5 pr-20 font-mw-mono text-lg text-mw-text placeholder:text-[#5C6670] focus:border-mw-accent focus:outline-none"
-          placeholder="0"
-        />
-        <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 font-mw-mono text-[13px] text-mw-muted">{side === "buy" ? native : item.symbol || "token"}</span>
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="min-w-0 flex-1 truncate text-[13px] text-mw-muted">
-          {aggregated && !noAggregatorRoute ? `Best price via ${solana ? "Jupiter" : "PancakeSwap"}` : `Pool ${poolLabel || "resolving…"}`}
-        </span>
-        {(aggregated && !noAggregatorRoute) || robinhoodFee ? (
-          preview ? <span className={chip}>Fee {importSwapFeeLabel(preview.feeBps)}</span> : robinhoodFee ? <span className={chip}>Fee {IMPORT_SWAP_FEE_LABEL}</span> : null
-        ) : null}
-      </div>
-      {(aggregated || robinhood) && preview ? (
-        <div className="flex flex-col gap-1 font-mw-mono text-[13px]" data-import-swap-preview="true">
-          <div className="flex justify-between gap-2">
-            <span className="text-mw-muted">You receive ≈</span>
-            <span>
-              {side === "buy"
-                ? `${Number(ethers.formatUnits(preview.amountOut, decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${item.symbol || "tokens"}`
-                : `${Number(ethers.formatUnits(preview.amountOut, solana ? 9 : 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${native}`}
+      <div>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="min-w-0 truncate text-xs text-mw-muted">
+            {aggregated && !noAggregatorRoute ? `Best price via ${solana ? "Jupiter" : "PancakeSwap"}` : `Pool ${poolLabel || "resolving…"}`}
+          </span>
+          {aggregated || robinhood ? <span className="whitespace-nowrap text-xs text-mw-muted">Slippage: 1%</span> : null}
+        </div>
+        <div className="relative">
+          <input
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            inputMode="decimal"
+            aria-label={`Amount (${unit})`}
+            className={cp.amountInput}
+            placeholder="0"
+          />
+          <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 font-mw-mono text-sm text-mw-muted">{unit}</span>
+        </div>
+        <div className={`${cp.inset} mt-3 flex flex-col gap-1.5 p-3 text-sm`} data-import-swap-preview={preview ? "true" : undefined}>
+          <div className={row}>
+            <span className="text-mw-muted">Balance</span>
+            <span className="font-mw-mono text-mw-text">
+              {balances ? (side === "buy" ? `${fmt(balances.nativeRaw, nativeDecimals, 4)} ${native}` : `${fmt(balances.tokenRaw, decimals, 2)} ${item.symbol || "tokens"}`) : "—"}
             </span>
           </div>
-          {preview.feeNativeRaw ? (
-            <div className="flex justify-between gap-2 text-mw-muted">
-              <span>Platform fee</span>
-              <span>{Number(ethers.formatUnits(preview.feeNativeRaw, solana ? 9 : 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} {native}</span>
+          <div className={row}>
+            <span className="text-mw-muted">Pay</span>
+            <span className="font-mw-mono text-mw-text">{amount && Number(amount) > 0 ? `${amount} ${unit}` : "—"}</span>
+          </div>
+          <div className={row}>
+            <span className="text-mw-muted">Receive</span>
+            <span className="font-mw-mono font-bold text-mw-text">
+              {(aggregated || robinhood) && preview
+                ? side === "buy"
+                  ? `${fmt(preview.amountOut, decimals, 2)} ${item.symbol || "tokens"} (est.)`
+                  : `${fmt(preview.amountOut, nativeDecimals, 6)} ${native} (est.)`
+                : "—"}
+            </span>
+          </div>
+          {quoted && feeLabel ? (
+            <div className={row}>
+              <span className="text-mw-muted">Fee {feeLabel}</span>
+              <span className="font-mw-mono text-mw-muted">{preview?.feeNativeRaw ? `${fmt(preview.feeNativeRaw, nativeDecimals, 6)} ${native}` : "—"}</span>
             </div>
           ) : null}
-          {preview.feeNativeRaw && preview.creatorShareBps && preview.feeBps ? (
-            <div className="flex justify-between gap-2 text-mw-muted" data-import-swap-creator-share="true">
-              <span>Of which to the coin&apos;s creator</span>
-              <span>{Number(ethers.formatUnits((BigInt(preview.feeNativeRaw) * BigInt(preview.creatorShareBps)) / BigInt(preview.feeBps), solana ? 9 : 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} {native}</span>
+          {preview?.feeNativeRaw && preview.creatorShareBps && preview.feeBps ? (
+            <div className={row} data-import-swap-creator-share="true">
+              <span className="text-mw-muted">Of which to the coin&apos;s creator</span>
+              <span className="font-mw-mono text-mw-muted">{fmt((BigInt(preview.feeNativeRaw) * BigInt(preview.creatorShareBps)) / BigInt(preview.feeBps), nativeDecimals, 6)} {native}</span>
             </div>
           ) : null}
-          {preview.route.length ? (
-            <div className="flex justify-between gap-2 text-mw-muted">
-              <span>Route</span>
-              <span className="truncate">{Array.from(new Set(preview.route)).join(" → ")}</span>
+          {preview?.route.length ? (
+            <div className={row}>
+              <span className="text-mw-muted">Route</span>
+              <span className="truncate font-mw-mono text-mw-muted">{Array.from(new Set(preview.route)).join(" → ")}</span>
             </div>
-          ) : null}
-          {preview.priceImpactPct != null && preview.priceImpactPct > 1 ? (
-            <div className={preview.priceImpactPct > 5 ? "text-mw-down" : "text-[#FF9A4D]"}>Price impact {preview.priceImpactPct.toFixed(2)}%</div>
           ) : null}
         </div>
-      ) : null}
-      {(aggregated || robinhood) && previewError && !preview ? <p className="m-0 text-xs text-[#FF9A4D]">{previewError}</p> : null}
+        {preview?.priceImpactPct != null && preview.priceImpactPct > 1 ? (
+          <p className={`mt-2 text-center text-xs ${preview.priceImpactPct > 5 ? "text-mw-down" : "text-[#FF9A4D]"}`}>Price impact {preview.priceImpactPct.toFixed(2)}%</p>
+        ) : null}
+        {(aggregated || robinhood) && previewError && !preview ? <p className="mt-2 text-center text-xs text-mw-down">{previewError}</p> : null}
+      </div>
       <Button
         className={`min-h-12 w-full rounded-[10px] font-mw-body text-base font-bold disabled:opacity-50 ${side === "buy" ? "border border-mw-buy bg-mw-buy text-[#04140A] hover:bg-[#15913F]" : "border border-mw-sell bg-mw-sell text-[#FFF1F3] hover:bg-[#C81A40]"}`}
-        disabled={busy || !amount}
-        onClick={() => void trade()}
+        disabled={account ? busy || !amount : false}
+        onClick={() => {
+          // No wallet yet: open the app's wallet window, as the launched-coin panel does.
+          if (!account) {
+            try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch { /* ignore */ }
+            return;
+          }
+          void trade();
+        }}
       >
-        {busy ? "Swapping..." : `${side === "buy" ? "Buy" : "Sell"} on ${dex}`}
+        {!account ? `Connect ${solana ? "SOL" : robinhood ? "Robinhood" : "BNB"} wallet` : busy ? "Swapping..." : `${side === "buy" ? "Buy" : "Sell"} on ${dex}`}
       </Button>
     </div>
   );
