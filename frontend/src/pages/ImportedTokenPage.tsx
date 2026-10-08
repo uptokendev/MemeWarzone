@@ -11,6 +11,7 @@ import { CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinP
 import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { ImportedTradesTable } from "@/components/arena/ImportedTradesTable";
+import { SwapWidgetEmbedLink } from "@/components/imports/SwapWidgetEmbedDialog";
 import { ImportCreatorEarnings } from "@/components/imports/ImportCreatorEarnings";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
 import { MobileTradeDock, useXlUp } from "@/components/token/MobileTradeSheet";
@@ -683,7 +684,10 @@ export default function ImportedTokenPage({
 
         <aside className="flex min-w-0 flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)]">
           <section aria-label="Trade" className={`hidden xl:block ${cp.card} p-4`} data-imported-trade-panel="true">
-            <div className={`${cp.title} mb-3.5`}>Trade</div>
+            <div className="mb-3.5 flex items-center justify-between gap-2">
+              <div className={cp.title}>Trade</div>
+              {isSolanaChainId(item.chainId) && !tradingBlocked ? <SwapWidgetEmbedLink mint={item.tokenAddress} symbol={item.symbol} /> : null}
+            </div>
             {isXlUp ? tradePanel : null}
           </section>
           {warRoomOpen ? (
