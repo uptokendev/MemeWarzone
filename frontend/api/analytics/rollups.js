@@ -540,3 +540,43 @@ export async function plannedRange(db, { nowMs = Date.now(), days = ROLLUP_TRAIL
   if (coverage && coverage.until < startMs) startMs = coverage.until;
   return { startMs, endMs };
 }
+
+export const WEB_VITAL_RETENTION_DAYS = 14;
+export const WEB_VITAL_RETENTION_BATCH = 50_000;
+
+/**
+ * Deletes raw $web_vital events older than WEB_VITAL_RETENTION_DAYS, only inside hours the rollup job
+ * has already built (analytics_rollup_state), in batches. Same rule as
+ * database/prod_analytics_web_vital_retention.sql step B; the hourly rollups keep the counts and values.
+ * No state row (backfill not run) deletes nothing. Each batch is its own statement, so ingest is never
+ * blocked for long. Returns the rows deleted per batch.
+ */
+export async function deleteOldWebVitals(db, {
+  retentionDays = WEB_VITAL_RETENTION_DAYS,
+  batchSize = WEB_VITAL_RETENTION_BATCH,
+  maxBatches = 40,
+} = {}) {
+  const days = Math.max(ROLLUP_TRAILING_DAYS + 1, Math.floor(Number(retentionDays)));
+  const batches = [];
+  for (let i = 0; i < maxBatches; i += 1) {
+    const { rowCount } = await db.query(
+      `with doomed as (
+         select e.event_id
+           from public.analytics_events e
+           join public.analytics_rollup_state s on s.name = $1
+          where e.name = '$web_vital'
+            and e.ts >= s.covered_from
+            and e.ts < least(s.covered_until, date_trunc('day', now()) - make_interval(days => $2::int))
+          limit $3
+       )
+       delete from public.analytics_events e
+        using doomed d
+        where e.event_id = d.event_id`,
+      [ROLLUP_STATE_NAME, days, batchSize],
+    );
+    const n = Number(rowCount || 0);
+    batches.push(n);
+    if (n < batchSize) break;
+  }
+  return { retentionDays: days, deleted: batches.reduce((a, b) => a + b, 0), batches };
+}
