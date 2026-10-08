@@ -15,6 +15,42 @@
 import { VersionedTransaction } from "@solana/web3.js";
 
 import { assertJupiterSwapForWallet } from "../lib/jupiterSwapGuard";
+import type { BondingKind, BondingQuote } from "./bonding";
+
+/** The bonding part (mwz-swap-bonding.js) sits next to this script and loads only for bonding coins. */
+type BondingApi = {
+  quoteBonding: (input: { kind: BondingKind; campaignAddress: string; side: Side; amountIn: bigint }) => Promise<BondingQuote>;
+  tradeBonding: (input: { kind: BondingKind; campaignAddress: string; creator: string | null; side: Side; amountIn: bigint; trader: string }) => Promise<string>;
+  setWidgetApiBase: (base: string) => void;
+  setWidgetSolanaProvider: (provider: never) => void;
+};
+const SCRIPT_DIR = (() => {
+  try {
+    const src = (document.currentScript as HTMLScriptElement | null)?.src || "";
+    return src ? src.slice(0, src.lastIndexOf("/")) : "https://app.memewar.zone/widget";
+  } catch {
+    return "https://app.memewar.zone/widget";
+  }
+})();
+let bondingPromise: Promise<BondingApi> | null = null;
+function loadBonding(apiBase: string): Promise<BondingApi> {
+  if (!bondingPromise) {
+    bondingPromise = new Promise<BondingApi>((resolve, reject) => {
+      const ready = () => {
+        const api = (globalThis as any).__MemeWarzoneSwapBonding as BondingApi | undefined;
+        if (api) { api.setWidgetApiBase(apiBase); resolve(api); } else reject(new Error("Could not load the trading module."));
+      };
+      if ((globalThis as any).__MemeWarzoneSwapBonding) return ready();
+      const script = document.createElement("script");
+      script.src = `${SCRIPT_DIR}/mwz-swap-bonding.js`;
+      script.async = true;
+      script.onload = ready;
+      script.onerror = () => { bondingPromise = null; reject(new Error("Could not load the trading module.")); };
+      document.head.appendChild(script);
+    });
+  }
+  return bondingPromise;
+}
 
 type Side = "buy" | "sell";
 
@@ -23,6 +59,8 @@ export type WidgetWallet = {
   publicKey?: { toString(): string } | null;
   connect?: () => Promise<unknown>;
   signAndSendTransaction: (tx: VersionedTransaction) => Promise<{ signature: string } | string>;
+  /** Needed for bonding coins (the app's launchpad and DBC trades sign, then send themselves). */
+  signTransaction?: (tx: never) => Promise<unknown>;
 };
 
 export type MountOptions = {
@@ -35,7 +73,22 @@ export type MountOptions = {
   onSwap?: (event: { signature: string; side: Side; mint: string }) => void;
 };
 
-type TokenInfo = { mint: string; decimals: number; name: string | null; symbol: string | null; imageUrl: string | null; feeBps: number; pageUrl: string };
+type TokenInfo = {
+  mint: string;
+  decimals: number;
+  name: string | null;
+  symbol: string | null;
+  imageUrl: string | null;
+  feeBps?: number;
+  pageUrl: string;
+  kind: "import" | BondingKind;
+  tradable: boolean;
+  reason?: string | null;
+  campaignAddress?: string;
+  creator?: string | null;
+};
+/** Bonding coins: a fee reserve stays in the wallet on buys, as on the token page. */
+const SOLANA_BUY_FEE_RESERVE_LAMPORTS = 5_000_000n;
 type Quote = { amountIn: string; amountOut: string; minAmountOut: string | null; feeBps: number; feeNativeRaw: string | null; creatorShareBps?: number; priceImpactPct: number | null; quote: unknown };
 
 const DEFAULT_API = "https://api.memewar.zone";
@@ -170,7 +223,7 @@ class SwapWidget {
         <div class="row" data-k="creatorRow" hidden><span>Of which to the coin's creator</span><b data-k="creator">-</b></div>
         <button type="button" class="go" data-k="go">CONNECT WALLET</button>
         <div class="msg" data-k="msg" role="status"></div>
-        <div class="foot">Swaps by <a data-k="link" href="https://app.memewar.zone" target="_blank" rel="noopener">MemeWarzone</a>, routed by Jupiter</div>
+        <div class="foot">Swaps by <a data-k="link" href="https://app.memewar.zone" target="_blank" rel="noopener">MemeWarzone</a><span data-k="via">, routed by Jupiter</span></div>
       </div>`;
     this.root.querySelectorAll<HTMLElement>("[data-k]").forEach((node) => { this.el[node.dataset.k as string] = node; });
     this.el.buy.addEventListener("click", () => this.setSide("buy"));
@@ -225,6 +278,7 @@ class SwapWidget {
   private paintButton() {
     const go = this.el.go as HTMLButtonElement;
     if (!this.token) { go.textContent = "LOADING..."; go.disabled = true; return; }
+    if (!this.token.tradable) { go.textContent = "NOT AVAILABLE HERE"; go.disabled = true; return; }
     if (!this.account) { go.textContent = this.wallet() ? "CONNECT WALLET" : "NO SOLANA WALLET FOUND"; go.disabled = this.busy || !this.wallet(); return; }
     go.textContent = this.busy ? "WORKING..." : `${this.side === "buy" ? "BUY" : "SELL"} ${this.symbol().toUpperCase()}`;
     go.disabled = this.busy || !this.quote;
@@ -234,9 +288,9 @@ class SwapWidget {
     const q = this.quote;
     const outDecimals = this.side === "buy" ? (this.token?.decimals ?? 6) : SOL_DECIMALS;
     this.el.out.textContent = q ? `${fromRaw(q.amountOut, outDecimals)} ${this.side === "buy" ? this.symbol() : "SOL"}` : "-";
-    const feeBps = q?.feeBps ?? this.token?.feeBps ?? 0;
-    this.el.feeLabel.textContent = `Fee ${Number((feeBps / 100).toFixed(2))}%`;
-    this.el.fee.textContent = q?.feeNativeRaw ? `${fromRaw(q.feeNativeRaw, SOL_DECIMALS)} SOL` : "-";
+    const feeBps = q?.feeBps ?? this.token?.feeBps ?? null;
+    this.el.feeLabel.textContent = feeBps ? `Fee ${Number((feeBps / 100).toFixed(2))}%` : "Fee";
+    this.el.fee.textContent = q?.feeNativeRaw ? `${fromRaw(q.feeNativeRaw, SOL_DECIMALS)} SOL` : feeBps ? "-" : this.token && this.token.kind !== "import" ? "as on MemeWarzone" : "-";
     const creatorRaw = q?.feeNativeRaw && q.creatorShareBps && q.feeBps ? (BigInt(q.feeNativeRaw) * BigInt(q.creatorShareBps)) / BigInt(q.feeBps) : 0n;
     this.el.creatorRow.hidden = creatorRaw === 0n;
     this.el.creator.textContent = `${fromRaw(creatorRaw, SOL_DECIMALS)} SOL`;
@@ -251,11 +305,19 @@ class SwapWidget {
       return;
     }
     try {
-      this.token = await this.call<TokenInfo>(`/api/widget/swap/token?mint=${encodeURIComponent(mint)}`);
+      const token = await this.call<TokenInfo>(`/api/widget/swap/token?mint=${encodeURIComponent(mint)}`);
+      // An API from before bonding support answers without kind / tradable: those coins are imports.
+      this.token = { ...token, kind: token.kind || "import", tradable: token.tradable !== false };
       this.el.title.textContent = this.token.symbol ? `Swap ${this.token.symbol}` : "Swap";
       this.el.sub.textContent = this.token.name || `${mint.slice(0, 4)}...${mint.slice(-4)}`;
       if (this.token.imageUrl) { (this.el.logo as HTMLImageElement).src = this.token.imageUrl; this.el.logo.hidden = false; }
       (this.el.link as HTMLAnchorElement).href = this.token.pageUrl;
+      this.el.via.textContent = this.token.kind === "import" ? ", routed by Jupiter" : ", on its bonding curve";
+      if (!this.token.tradable) {
+        this.say(this.token.reason === "quote"
+          ? "This coin's curve is not paired with SOL. Trade it on its MemeWarzone page."
+          : "This coin has left its bonding curve. Trade it on its MemeWarzone page.", "err");
+      }
       this.paintSide();
       this.paintQuote();
     } catch (error) {
@@ -295,6 +357,7 @@ class SwapWidget {
     const raw = this.amountRaw();
     if (!this.token || !raw) return null;
     const seq = ++this.quoteSeq;
+    if (this.token.kind !== "import") return this.fetchBondingQuote(raw, seq);
     try {
       const quote = await this.call<Quote>("/api/widget/swap/quote", {
         method: "POST",
@@ -303,6 +366,34 @@ class SwapWidget {
       if (seq !== this.quoteSeq) return null;
       this.quote = quote;
       this.say("");
+      this.paintQuote();
+      return quote;
+    } catch (error) {
+      if (seq === this.quoteSeq) this.say(error instanceof Error ? error.message : "No quote", "err");
+      return null;
+    }
+  }
+
+  /** Bonding coins: quoted from chain with the app's own curve maths (no API call). */
+  private async fetchBondingQuote(raw: bigint, seq: number): Promise<Quote | null> {
+    const token = this.token;
+    if (!token || token.kind === "import" || !token.campaignAddress || !token.tradable) return null;
+    try {
+      const bonding = await loadBonding(this.api);
+      const q = await bonding.quoteBonding({ kind: token.kind, campaignAddress: token.campaignAddress, side: this.side, amountIn: raw });
+      if (seq !== this.quoteSeq) return null;
+      const quote: Quote = {
+        amountIn: q.amountInUsed.toString(),
+        amountOut: q.amountOut.toString(),
+        minAmountOut: null,
+        feeBps: q.feeBps ?? 0,
+        feeNativeRaw: q.feeBps && this.side === "buy" ? ((q.amountInUsed * BigInt(q.feeBps)) / 10_000n).toString() : null,
+        creatorShareBps: 0,
+        priceImpactPct: null,
+        quote: null,
+      };
+      this.quote = quote;
+      this.say(q.note || "");
       this.paintQuote();
       return quote;
     } catch (error) {
@@ -337,6 +428,10 @@ class SwapWidget {
     if (!raw) { this.say("Enter an amount.", "err"); return; }
     const balance = this.side === "buy" ? this.balances?.lamports : this.balances?.tokenRaw;
     if (balance != null && raw > balance) { this.say("Amount is above your balance.", "err"); return; }
+    if (this.token.kind !== "import") {
+      await this.swapBonding(wallet, raw);
+      return;
+    }
     this.busy = true;
     this.paintButton();
     try {
@@ -361,6 +456,37 @@ class SwapWidget {
       void this.loadBalances();
     } catch (error) {
       this.say(error instanceof Error ? error.message : "Swap failed.", "err");
+    } finally {
+      this.busy = false;
+      this.paintButton();
+    }
+  }
+
+  /** Bonding coins: the app's own trade code builds, signs (signTransaction) and sends the transaction. */
+  private async swapBonding(wallet: WidgetWallet, raw: bigint) {
+    const token = this.token;
+    if (!token || token.kind === "import" || !token.campaignAddress || !this.account) return;
+    if (!token.tradable) return;
+    if (typeof wallet.signTransaction !== "function") { this.say("This wallet cannot sign this trade.", "err"); return; }
+    if (this.side === "buy" && this.balances && raw + SOLANA_BUY_FEE_RESERVE_LAMPORTS > this.balances.lamports) {
+      this.say("Keep about 0.005 SOL for network fees: lower the amount.", "err");
+      return;
+    }
+    this.busy = true;
+    this.paintButton();
+    try {
+      const bonding = await loadBonding(this.api);
+      bonding.setWidgetSolanaProvider(wallet as never);
+      this.say("Confirm the trade in your wallet...");
+      const signature = await bonding.tradeBonding({ kind: token.kind, campaignAddress: token.campaignAddress, creator: token.creator ?? null, side: this.side, amountIn: raw, trader: this.account });
+      this.say(`Trade confirmed (${signature.slice(0, 8)}...).`, "ok");
+      (this.el.amount as HTMLInputElement).value = "";
+      this.quote = null;
+      this.paintQuote();
+      this.options.onSwap?.({ signature, side: this.side, mint: token.mint });
+      void this.loadBalances();
+    } catch (error) {
+      this.say(error instanceof Error ? error.message : "Trade failed.", "err");
     } finally {
       this.busy = false;
       this.paintButton();

@@ -18,10 +18,10 @@ export function swapWidgetSnippet(mint: string) {
 }
 
 /**
- * "On your website" link next to the Trade title of an imported Solana coin: a dialog with the swap box
- * code for this coin (api/importSwapWidget.js, src/widget). Solana only, like the widget.
+ * "On your website?" link next to the Trade title of a Solana coin the widget can trade (imports, and our
+ * launchpad / DBC coins on their curve): a dialog with the swap box code for this coin (src/widget).
  */
-export function SwapWidgetEmbedLink({ mint, symbol }: { mint: string; symbol?: string | null }) {
+export function SwapWidgetEmbedLink({ mint, symbol, bonding = false }: { mint: string; symbol?: string | null; bonding?: boolean }) {
   const [open, setOpen] = useState(false);
   const snippet = swapWidgetSnippet(mint);
   const name = symbol ? `$${symbol}` : "this coin";
@@ -65,7 +65,9 @@ export function SwapWidgetEmbedLink({ mint, symbol }: { mint: string; symbol?: s
             COPY CODE
           </Button>
           <p className="m-0 text-sm text-mw-muted">
-            Every swap through the panel pays 1%. Half of it goes to the coin&apos;s creator, paid in SOL once the coin is claimed on MemeWarzone.
+            {bonding
+              ? "Trades through the panel pay the same fees as on MemeWarzone, and the creator gets the same creator share."
+              : "Every swap through the panel pays 1%. Half of it goes to the coin's creator, paid in SOL once the coin is claimed on MemeWarzone."}
           </p>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
             <a className="text-mw-accent underline-offset-2 hover:underline" href={`${WIDGET_EXAMPLE}?mint=${encodeURIComponent(mint)}`} target="_blank" rel="noopener noreferrer">

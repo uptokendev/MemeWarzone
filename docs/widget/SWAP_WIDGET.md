@@ -37,4 +37,7 @@ Try it first: `https://app.memewar.zone/widget/example.html?mint=YOUR_TOKEN_MINT
 - The box renders in its own shadow root, so your page's CSS does not change it and it does not change your page.
 - Size: about 70 KB gzipped. No cookies; the API calls send no credentials.
 
-Solana coins only for now.
+Solana coins only for now: imported coins (Jupiter, 1% fee, half to the creator) and coins launched on MemeWarzone
+while they are on their bonding curve (the app's own trade code, same fees and creator share). The bonding part is a
+second file, `mwz-swap-bonding.js`, loaded next to `mwz-swap.js` only for those coins. Bonding trades need a wallet with
+`signTransaction` (Phantom, Solflare and Backpack have it); a host-provided `wallet` must offer it too.
