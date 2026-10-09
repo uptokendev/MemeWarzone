@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Widget test bench</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; padding: 24px 16px 48px; background: #0b0d10; color: #f2f4f5; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    header, main, footer { max-width: 1340px; margin: 0 auto; }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    .warn { margin: 0 0 18px; color: #ff9a4d; font-size: 14px; }
+    #grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+    .card { background: #12161b; border: 1px solid #242a31; border-radius: 14px; padding: 14px; }
+    .card h2 { margin: 0 0 2px; font-size: 15px; }
+    .card .mint { margin: 0 0 12px; color: #8a949e; font: 12px ui-monospace, Menlo, monospace; word-break: break-all; }
+    form { display: flex; gap: 8px; margin: 18px 0; flex-wrap: wrap; }
+    input { flex: 1; min-width: 240px; height: 40px; border-radius: 10px; border: 1px solid #2e353d; background: #161b20; color: #f2f4f5; padding: 0 12px; font: 13px ui-monospace, Menlo, monospace; }
+    button { height: 40px; border-radius: 10px; border: 1px solid #ff7a1a; background: #ff7a1a; color: #140a02; font-weight: 800; padding: 0 16px; cursor: pointer; }
+    h3 { margin: 24px 0 8px; font-size: 15px; }
+    #log { margin: 0; padding: 0; list-style: none; font: 12px ui-monospace, Menlo, monospace; color: #c9ced4; }
+    #log li { padding: 4px 0; border-bottom: 1px solid #1c2127; }
+    #log a { color: #ff9a4d; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Widget test bench</h1>
+    <p class="warn">Real wallet, real transactions, real SOL. Use tiny amounts (0.001 to 0.01 SOL).</p>
+  </header>
+  <main>
+    <div id="grid"></div>
+    <form id="custom-form">
+      <input id="custom-mint" placeholder="Add a box for any Solana mint" autocomplete="off" />
+      <button type="submit">ADD BOX</button>
+    </form>
+    <h3>Log</h3>
+    <ul id="log"></ul>
+  </main>
+  <script src="https://app.memewar.zone/widget/mwz-swap.js"></script>
+  <script src="test.js"></script>
+</body>
+</html>
