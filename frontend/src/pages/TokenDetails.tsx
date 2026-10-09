@@ -44,6 +44,8 @@ import { GraduationExplosion } from "@/components/token/GraduationExplosion";
 import { useUnifiedMarket, type MarketResolution } from "@/hooks/useUnifiedMarket";
 import { useTopazMarket } from "@/hooks/useTopazMarket";
 import { RobinhoodWarRoomTradePanel } from "@/components/postgrad/RobinhoodWarRoomTradePanel";
+import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
+import { graduatedCampaignTradeItem, graduatedImportRouteEnabled } from "@/lib/graduatedEvmTradeRoute.mjs";
 import { useSolanaMeteoraMarket } from "@/hooks/useSolanaMeteoraMarket";
 import {
   ensureTopazSellAllowance,
@@ -3631,6 +3633,15 @@ const toSeconds = (ts: number): number => {
     }
   })();
   const rhGraduatedTrade = isRobinhoodPage && (contractGraduated || isUniswapTradingActive);
+  // A graduated BNB coin trades through the import route (same quote, build, 1% fee and panel as an imported coin)
+  // while the chain's import fee route is on; off, the Topaz trade below as before (graduatedEvmTradeRoute.mjs).
+  const bnbGraduatedImportTrade = !isSolanaPage && !isRobinhoodPage && isDexStage && graduatedImportRouteEnabled(chainIdForStorage);
+  const graduatedImportItem = graduatedCampaignTradeItem(campaign, chainIdForStorage);
+  // The indexer writes the trade from the pool's Swap log (trader = tx.from); refresh the market and pool reads now.
+  const refreshAfterGraduatedImportTrade = () => {
+    void unifiedMarket.refresh().catch(() => undefined);
+    void topazMarket.refresh().catch(() => undefined);
+  };
   const mobileTradeDisabled =
     tradePending ||
     approvePending ||
@@ -4647,6 +4658,8 @@ const toSeconds = (ts: number): number => {
     }
 
     if (isDexStage) {
+      // Never the fee-free Topaz trade while the import route is on (the import panel trades instead).
+      if (bnbGraduatedImportTrade) return;
       if (!isTopazTradingActive || !campaign?.token) {
         toast({
           title: "Topaz market is not ready",
@@ -5888,6 +5901,31 @@ const toSeconds = (ts: number): number => {
                 ) : null}
               </section>
             ) : null
+          ) : bnbGraduatedImportTrade ? (
+            isXlUp ? (
+              <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`} data-graduated-import-trade="true">
+                <ImportedTradePanel item={graduatedImportItem} graduated onTraded={refreshAfterGraduatedImportTrade} />
+                {gen5.state ? (
+                  <EvmGen5TradeNotes
+                    state={gen5.state}
+                    viewerIsCreator={gen5ViewerIsCreator}
+                    tradeTab={tradeTab}
+                    nativeSymbol={nativeUnit}
+                    explorerBase={getExplorerBase(chainIdForStorage)}
+                  />
+                ) : null}
+                {gen5.state && gen5.creator && gen5ViewerIsCreator ? (
+                  <EvmGen5CreatorPanel
+                    state={gen5.state}
+                    creator={gen5.creator}
+                    signer={(wallet.signer as any) || null}
+                    account={String(wallet.account || "")}
+                    nativeSymbol={nativeUnit}
+                    onClaimed={() => void gen5.refresh()}
+                  />
+                ) : null}
+              </section>
+            ) : null
           ) : (
           <section aria-label="Trade" className={`hidden xl:block ${cp.card} p-4`}>
             <div className="mb-3.5 flex items-center justify-between gap-2">
@@ -6351,9 +6389,19 @@ const toSeconds = (ts: number): number => {
             <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} />
           </div>
         </div>
+      ) : bnbGraduatedImportTrade && mobileTradeOpen && !isXlUp ? (
+        <div className="fixed inset-0 z-50 xl:hidden" data-mobile-trade-sheet="graduated-import">
+          <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close trade sheet" onClick={() => setMobileTradeOpen(false)} />
+          <div
+            className="absolute inset-x-0 bottom-0 max-h-[92dvh] overflow-y-auto rounded-t-2xl border border-border/70 bg-background p-4"
+            style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+          >
+            <ImportedTradePanel key={tradeTab} item={graduatedImportItem} initialSide={tradeTab} graduated onTraded={refreshAfterGraduatedImportTrade} />
+          </div>
+        </div>
       ) : (
         <MobileTradeSheet
-          open={mobileTradeOpen && !rhGraduatedTrade}
+          open={mobileTradeOpen && !rhGraduatedTrade && !bnbGraduatedImportTrade}
           onClose={() => setMobileTradeOpen(false)}
           connected={walletMatchesCampaign}
           connectLabel={connectTradeWalletLabel}

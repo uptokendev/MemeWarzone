@@ -101,7 +101,9 @@ export const KYBER_BSC_POOL_SOURCES = Object.freeze([
   "flap", "genius-fun", "loong-fun", "printr",
 ]);
 const KYBER_BSC_POOL_SOURCE_SET = new Set(KYBER_BSC_POOL_SOURCES);
-const KYBER_NO_ROUTE_CODES = new Set([4008, 40011]);
+// 4011 "token not found": Kyber has not indexed the token (read 2026-10-09 for a coin whose only pool is new, e.g. a
+// MemeWarzone coin right after graduation). It has no Kyber route, the same as 4008 / 40011.
+const KYBER_NO_ROUTE_CODES = new Set([4008, 4011, 40011]);
 const BSC_FEE_RECEIVER = String(process.env.IMPORT_SWAP_FEE_RECEIVER_56 || "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c").trim().toLowerCase();
 
 /** The BNB ImportFeeVault while the switch is on (IMPORT_FEE_VAULT_56 set and the Kyber fee receiver equal to it), else "". */
@@ -377,7 +379,7 @@ async function bscQuote({ token, side, amountRaw }) {
   try {
     body = await fetchJson(`${KYBER_BASE}/routes?${params}`, { headers: kyberHeaders() }, "Kyber route");
   } catch (error) {
-    // Kyber answers "no route" with HTTP 400 and code 4008 (route not found) or 40011 (no pool among the sources).
+    // Kyber answers "no route" with HTTP 400 and code 4008 (route not found), 40011 (no pool among the sources) or 4011 (token not indexed).
     // Tag it IMPORT_SWAP_NO_ROUTE so the app tries the coin's Topaz pool through the fee router (never fee-free).
     if (KYBER_NO_ROUTE_CODES.has(Number(error?.upstreamCode))) throw Object.assign(new Error("No DEX route for this token"), { status: 422, code: "IMPORT_SWAP_NO_ROUTE" });
     throw error;

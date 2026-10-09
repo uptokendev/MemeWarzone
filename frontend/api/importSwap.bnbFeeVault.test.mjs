@@ -144,7 +144,7 @@ test("Kyber is asked for every allowed pool source (not PancakeSwap only); a Top
   assert.equal(none.body.error, "No DEX route for this token");
 });
 
-test("Kyber's 'no route' answers (HTTP 400, code 4008 / 40011) reach the app as IMPORT_SWAP_NO_ROUTE; other errors do not", async () => {
+test("Kyber's 'no route' answers (HTTP 400, code 4008 / 40011 / 4011 token not found) reach the app as IMPORT_SWAP_NO_ROUTE; other errors do not", async () => {
   const api = await loadWith({ IMPORT_FEE_VAULT_56: VAULT, IMPORT_SWAP_FEE_RECEIVER_56: VAULT }, "noroute");
   const realFetch = globalThis.fetch;
   const call = async (status, body) => {
@@ -159,7 +159,7 @@ test("Kyber's 'no route' answers (HTTP 400, code 4008 / 40011) reach the app as 
       globalThis.fetch = realFetch;
     }
   };
-  for (const kyberCode of [4008, 40011]) {
+  for (const kyberCode of [4008, 40011, 4011]) {
     const out = await call(400, { code: kyberCode, message: "route not found" });
     assert.equal(out.status, 422);
     assert.equal(out.body.code, "IMPORT_SWAP_NO_ROUTE", String(kyberCode));

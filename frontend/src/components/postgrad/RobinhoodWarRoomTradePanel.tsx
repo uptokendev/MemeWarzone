@@ -17,9 +17,13 @@ import {
   type RobinhoodV3ResolvedRoute,
 } from "@/lib/robinhoodV3Trade";
 import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import type { SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
 import { ETH_BUY_GAS_RESERVE_WEI } from "@/lib/tradeBalanceReserve";
+import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
+import { graduatedCampaignTradeItem, graduatedImportRouteEnabled } from "@/lib/graduatedEvmTradeRoute.mjs";
+import { resolveImportPool } from "@/lib/robinhoodImportSwap.mjs";
 
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_DECIMALS = 18;
@@ -77,7 +81,43 @@ function campaignChainId(campaign: CampaignInfo): number {
   return id === ROBINHOOD_CHAIN_ID || id === ROBINHOOD_TESTNET_CHAIN_ID ? id : ROBINHOOD_TESTNET_CHAIN_ID;
 }
 
+/**
+ * A graduated Robinhood coin trades through the import route (Universal Router with the 1% import fee, the same panel
+ * as an imported coin) while the chain's import fee route is on (graduatedEvmTradeRoute.mjs). The import route swaps
+ * ETH against the coin's WETH pool only, so a coin graduated against a stock token (no WETH pool) keeps its stock
+ * route below. Switch off: the direct V3 trade below, unchanged.
+ */
 export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
+  const chainId = useMemo(() => campaignChainId(campaign), [campaign]);
+  const importOn = graduatedImportRouteEnabled(chainId);
+  const [route, setRoute] = useState<"pending" | "import" | "direct">(importOn ? "pending" : "direct");
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!importOn) {
+      setRoute("direct");
+      return;
+    }
+    let cancelled = false;
+    let timer: number | undefined;
+    void resolveImportPool(getReadProvider(chainId as SupportedChainId), campaign.token)
+      .then((pool: unknown) => {
+        if (!cancelled) setRoute(pool ? "import" : "direct");
+      })
+      .catch(() => {
+        // RPC hiccup: ask again shortly; never fall back to the fee-free trade on an error.
+        if (!cancelled) timer = window.setTimeout(() => setRetry((n) => n + 1), 5_000);
+      });
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [importOn, chainId, campaign.token, retry]);
+  if (route === "import") return <ImportedTradePanel item={graduatedCampaignTradeItem(campaign, chainId)} graduated />;
+  if (route === "pending") return <p className="m-0 text-sm text-mw-muted" data-graduated-import-route="pending">Loading the trade route…</p>;
+  return <RobinhoodWarRoomDirectTradePanel campaign={campaign} />;
+}
+
+function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo }) {
   const { toast } = useToast();
   const wallet = useWallet();
   const chainId = useMemo(() => campaignChainId(campaign), [campaign]);

@@ -22,6 +22,7 @@ import {
 } from "@/lib/arenaImportedRobinhood";
 import type { ArenaImportItem } from "@/lib/arenaImports";
 import { activeImportSwapFeeTerms4663, executeImportSwap4663, quoteImportSwap4663, resolveImportPool } from "@/lib/robinhoodImportSwap.mjs";
+import { assertGraduatedImportQuote, graduatedImportRouteEnabled } from "@/lib/graduatedEvmTradeRoute.mjs";
 import {
   importSwapFeeLabel,
   importSwapVenueLabel,
@@ -45,7 +46,23 @@ function importReadProvider(chainId: number): ethers.Provider | null {
   }
 }
 
-export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaImportItem; initialSide?: "buy" | "sell" }) {
+/**
+ * `graduated`: a graduated MemeWarzone coin traded through the import route (founder, 2026-10-09; see
+ * graduatedEvmTradeRoute.mjs). Same quotes, builds and fee checks as an import, plus: only while the chain's import
+ * fee route is on, and only on a quote that carries the creator's half of the fee. `onTraded` runs after a confirmed
+ * swap (the token page refreshes its market and balances).
+ */
+export function ImportedTradePanel({
+  item,
+  initialSide = "buy",
+  graduated = false,
+  onTraded,
+}: {
+  item: ArenaImportItem;
+  initialSide?: "buy" | "sell";
+  graduated?: boolean;
+  onTraded?: (trade: { side: "buy" | "sell"; txHash?: string | null; maker: string }) => void;
+}) {
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
   const solana = isSolanaChainId(item.chainId);
@@ -116,6 +133,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       (robinhood ? quoteRobinhoodPreview(raw) : bscTestnet ? quoteFeeRouterPreview(raw) : quoteBscOrFeeRouterPreview(raw, controller.signal))
+        .then(checkQuote)
         .then((next) => {
           if (controller.signal.aborted) return;
           setPreview(next);
@@ -134,6 +152,11 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aggregated, robinhood, bscTestnet, feeRouter, amount, side, decimals, item.chainId, item.tokenAddress, tokenMode, estNativeRaw]);
+
+  /** A graduated coin trades only on a quote with the creator's half of the fee; an import takes any quote the route priced. */
+  function checkQuote<Q extends { feeBps?: number; creatorShareBps?: number }>(quote: Q): Q {
+    return graduated ? (assertGraduatedImportQuote(quote) as Q) : quote;
+  }
 
   /** BNB: Kyber first; with no Kyber route, the fee router's Topaz quote when a router is configured. */
   async function quoteBscOrFeeRouterPreview(raw: bigint, signal: AbortSignal): Promise<ImportSwapQuote> {
@@ -323,7 +346,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
   if (!poolLabel) {
     return (
       <p className="text-sm text-muted-foreground">
-        In-app swaps for this imported token are not available on this chain yet.
+        In-app swaps for this {graduated ? "coin" : "imported token"} are not available on this chain yet.
       </p>
     );
   }
@@ -338,6 +361,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
     try {
       const amountInRaw = amountRaw();
       if (!amountInRaw) throw new Error("Enter an amount.");
+      if (graduated && !graduatedImportRouteEnabled(item.chainId)) throw new Error("Swaps for this coin are paused while the fee route is updated. Try again later.");
       if (solana) {
         if (!solanaAccount) throw new Error("Connect the Solana wallet first.");
         // Re-quote at submit so the signed route is current.
@@ -359,10 +383,11 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         tradeAccount = switched.account || wallet.account;
       }
       if (Number(item.chainId) === 56 && !noAggregatorRoute) {
-        const quote = await quoteImportSwap({ chainId: 56, token: item.tokenAddress, side, amountRaw: amountInRaw });
+        const quote = checkQuote(await quoteImportSwap({ chainId: 56, token: item.tokenAddress, side, amountRaw: amountInRaw }));
         const hash = await executeBscImportSwap({ token: item.tokenAddress, side, account: tradeAccount, signer: tradeSigner, quote, amountRaw: amountInRaw });
         toast.success(`Swap confirmed: ${hash.slice(0, 10)}…`);
         announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw, txHash: hash });
+        onTraded?.({ side, txHash: hash, maker: tradeAccount });
         setAmount("");
         return;
       }
@@ -370,14 +395,17 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
       if (robinhoodFee) {
         // Quote on the read RPC, then one Universal Router transaction (a sell adds a signed Permit2
         // permit and, the first time, an exact ERC20 approval to Permit2).
-        const quote = await quoteImportSwap4663({ provider: reads, token: item.tokenAddress, side, amountIn: amountInRaw, slippageBps: 100 });
-        await executeImportSwap4663({ signer: tradeSigner, quote, token: item.tokenAddress });
+        const quote = checkQuote(await quoteImportSwap4663({ provider: reads, token: item.tokenAddress, side, amountIn: amountInRaw, slippageBps: 100 }));
+        const receipt = await executeImportSwap4663({ signer: tradeSigner, quote, token: item.tokenAddress });
         toast.success("Swap confirmed.");
         announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw });
+        onTraded?.({ side, txHash: receipt?.hash ?? null, maker: tradeAccount });
         setAmount("");
         return;
       }
       if (robinhood) {
+        // The fee-less adapter route (testnet imports) is never a graduated coin's route.
+        if (graduated) throw new Error("Swaps for this coin are paused while the fee route is updated. Try again later.");
         const route = await resolveImportedRobinhoodV3Route({
           provider: reads,
           tokenAddress: item.tokenAddress,
@@ -409,10 +437,11 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
         chainId: item.chainId,
       });
       if (!route) throw new Error(NO_IMPORT_SWAP_ROUTE);
-      const quote = await quoteFeeRouterTrade({ provider: reads, routerAddress: feeRouter, resolved: route, side, amountIn: amountInRaw, slippageBps: 100 });
+      const quote = checkQuote(await quoteFeeRouterTrade({ provider: reads, routerAddress: feeRouter, resolved: route, side, amountIn: amountInRaw, slippageBps: 100 }));
       const hash = await executeFeeRouterTrade({ signer: tradeSigner, account: tradeAccount, quote });
       toast.success(`Swap confirmed: ${hash.slice(0, 10)}…`);
       announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw, txHash: hash });
+      onTraded?.({ side, txHash: hash, maker: tradeAccount });
       setAmount("");
       return;
     } catch (error) {

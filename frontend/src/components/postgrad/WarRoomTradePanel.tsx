@@ -30,6 +30,8 @@ import { recordTopazFill } from "@/lib/recordTopazFill";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
 import { SOLANA_BUY_FEE_RESERVE_LAMPORTS, evmBuyGasReserveWei } from "@/lib/tradeBalanceReserve";
+import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
+import { graduatedCampaignTradeItem, graduatedImportRouteEnabled } from "@/lib/graduatedEvmTradeRoute.mjs";
 
 const CAMPAIGN_ABI = [
   ...((LaunchCampaignArtifact.abi as any[]) ?? []),
@@ -298,6 +300,8 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
       : Boolean(metrics && metrics.curveSupply > 0n && metrics.sold >= metrics.curveSupply);
   }, [isSolanaCampaign, metrics, solanaDex]);
   const isTopazTradingActive = !isSolanaCampaign && isDexStage;
+  // Graduated BNB coin while the chain's import fee route is on: the import route and panel (graduatedEvmTradeRoute.mjs).
+  const graduatedImport = !isSolanaCampaign && isDexStage && graduatedImportRouteEnabled(chainId);
 
   const loadMetrics = useCallback(async () => {
     try {
@@ -888,6 +892,8 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
     }
 
     if (isDexStage) {
+      // Never the fee-free pool trade while the import route is on (the import panel trades instead).
+      if (graduatedImport) return;
       if (!isTopazTradingActive || !campaign.token) {
         toast({
           title: "Topaz market is not ready",
@@ -1212,6 +1218,8 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
     const spendable = bnbBalanceWei > reserve ? bnbBalanceWei - reserve : 0n;
     setTradeAmount(ethers.formatUnits((spendable * pct) / 100n, isSolanaCampaign ? 9 : 18));
   };
+
+  if (graduatedImport) return <ImportedTradePanel item={graduatedCampaignTradeItem(campaign, chainId)} graduated />;
 
   return (
     <div className="flex flex-col gap-2.5 rounded-[14px] border border-mw-border bg-mw-input p-3.5 font-mw-body text-mw-text">
