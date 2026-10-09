@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import { ethers } from "ethers";
 import { isSolanaChain, normalizeAddress, json } from "../../server/http.js";
 import { isAuthEnforceUserWrites } from "./apiAuth.js";
+import { SESSION_AUTH_ACTIONS, SESSION_SIGNATURE_PREFIX, sessionTokenFromSignature, sessionWalletForToken } from "./sessionActions.js";
 
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -76,6 +77,33 @@ async function consumeNonce({ pool, chainId, wallet, nonce }) {
   return result.rows[0] || null;
 }
 
+async function verifySessionCredential({ res, pool, auth, action, wallet, expectedChainId, routeLabel, enforce }) {
+  const reject = (status, code, error) => {
+    if (!enforce) {
+      console.warn(`[walletActionAuth] ${routeLabel}: ${code}; legacy open for ${wallet}`);
+      return { walletAddress: wallet, chainId: expectedChainId, legacy: true };
+    }
+    json(res, status, { error, code });
+    return null;
+  };
+  const credentialAction = String(auth?.action || action || "").trim();
+  if (credentialAction !== action) return reject(401, "ACTION_MISMATCH", "Wallet signature action does not match this request.");
+  if (!SESSION_AUTH_ACTIONS.has(action)) return reject(401, "SIGNATURE_REQUIRED", "This action needs its own wallet signature.");
+  const token = sessionTokenFromSignature(auth?.signature);
+  if (!token) return reject(401, "FEED_SESSION_REQUIRED", "Your sign-in expired. Sign in with your wallet again.");
+  if (!pool) return reject(503, "FEED_AUTH_UNAVAILABLE", "Sign-in check is unavailable.");
+  try {
+    const sessionWallet = await sessionWalletForToken(pool, token);
+    const owner = sessionWallet ? normalizeAddress(sessionWallet, expectedChainId) : "";
+    if (!sessionWallet) return reject(401, "FEED_SESSION_REQUIRED", "Your sign-in expired. Sign in with your wallet again.");
+    if (!owner || owner !== wallet) return reject(401, "WALLET_MISMATCH", "Your sign-in is for a different wallet.");
+    return { walletAddress: wallet, chainId: expectedChainId, legacy: false, session: true };
+  } catch (error) {
+    console.error(`[walletActionAuth] ${routeLabel} session lookup failed`, error?.message || error);
+    return reject(503, "FEED_AUTH_UNAVAILABLE", "Sign-in check is unavailable.");
+  }
+}
+
 /**
  * @param {object} opts
  * @param {import('express').Response} opts.res
@@ -122,6 +150,11 @@ export async function requireWalletActionAuth({
   if (wallet !== expected) {
     json(res, 401, { error: "Connected wallet does not match request.", code: "WALLET_MISMATCH" });
     return null;
+  }
+
+  // The 30-day sign-in in place of a signature, only for the non-money actions in sessionActions.js.
+  if (String(auth?.signature || "").trim().startsWith(SESSION_SIGNATURE_PREFIX)) {
+    return verifySessionCredential({ res, pool, auth, action, wallet, expectedChainId, routeLabel, enforce });
   }
 
   const hasSig = Boolean(String(auth?.signature || "").trim() && String(auth?.nonce || "").trim());

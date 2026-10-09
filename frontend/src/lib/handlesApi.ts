@@ -1,3 +1,4 @@
+import { sessionSignature, storedSessionToken } from "@/lib/sessionActions";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiBase";
 import { requestNonce } from "@/lib/profileApi";
@@ -83,10 +84,13 @@ export async function saveHandle(args: { wallet: string; handle: string; evmSign
   const sol = isSolanaWallet(args.wallet);
   const chainId = sol ? 101 : 56;
   const address = sol ? args.wallet : args.wallet.toLowerCase();
-  const nonce = await requestNonce(chainId, address);
+  // Signed in (30 days): no wallet prompt (founder, 2026-10-06). Otherwise the signed save below.
+  const sessionToken = storedSessionToken(address, chainId);
+  const nonce = sessionToken ? "session" : await requestNonce(chainId, address);
   const message = buildHandleMessage({ chainId, address, nonce, handle: args.handle });
   let signature: string;
-  if (sol) signature = (await signSolanaMessage(message, address)).signature;
+  if (sessionToken) signature = sessionSignature(sessionToken);
+  else if (sol) signature = (await signSolanaMessage(message, address)).signature;
   else {
     if (!args.evmSigner) throw new Error("Wallet signer is not available. Reconnect your wallet and try again.");
     signature = await args.evmSigner.signMessage(message);

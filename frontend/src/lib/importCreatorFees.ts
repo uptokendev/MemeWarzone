@@ -44,3 +44,27 @@ export function formatCreatorAmount(raw: string | undefined, decimals = 9, asset
 export function hasAmount(raw: string | undefined) {
   return BigInt(raw || "0") > 0n;
 }
+
+export type OwnerCreatorFeeItem = {
+  chainId: number;
+  token: string;
+  name: string | null;
+  symbol: string | null;
+  imageUrl: string | null;
+  asset: string | null;
+  decimals: number;
+  waitingRaw: string;
+  payingRaw: string;
+  paidRaw: string;
+  expiredRaw: string;
+  payoutsFrom: string | null;
+  payoutsOpen: boolean;
+};
+
+/** Creator earnings of every imported coin this wallet claimed (Command Center, Claims). */
+export async function fetchOwnerCreatorFees(wallet: string, signal?: AbortSignal): Promise<OwnerCreatorFeeItem[]> {
+  const response = await apiFetch(`/api/imports/creator-fees/owner?wallet=${encodeURIComponent(wallet)}`, { signal });
+  if (!response.ok) return [];
+  const body = await response.json().catch(() => null);
+  return body?.ok && Array.isArray(body.items) ? (body.items as OwnerCreatorFeeItem[]) : [];
+}

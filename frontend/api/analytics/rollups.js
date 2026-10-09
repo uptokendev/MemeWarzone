@@ -178,6 +178,58 @@ export async function hourlySeries(db, { from, to, app, coverage }) {
   }));
 }
 
+/**
+ * Daily series: one row per calendar day in `timeZone` that has any event, with $pageview count and
+ * distinct sessions. Same shape as hourlySeries; bucket is the instant the local day starts.
+ * Sessions stay exact: the session ids of the rollup hours (analytics_hourly_sessions) and of the
+ * raw edges go into one set per day and are counted distinct, never summed per hour.
+ * Pageviews are counted from raw $pageview rows over the whole window, as in hourlySeries.
+ * Rollup hours are assigned to the day their start hour falls in; for zones with whole-hour offsets
+ * (all of Europe and the Americas) that is exact.
+ */
+export async function dailySeries(db, { from, to, app, coverage, timeZone = "UTC" }) {
+  const plan = readPlan(from, to, coverage, app);
+  plan.params.push(timeZone);
+  const tz = `$${plan.params.length}::text`;
+  const day = (col) => `(date_trunc('day', ${col} at time zone ${tz}) at time zone ${tz})`;
+  const rolled = plan.useRollup
+    ? `select ${day("bucket")} as day, session_id
+           from public.analytics_hourly_sessions
+          where ${plan.rollupHours}
+         union all
+         `
+    : "";
+  const result = await db.query(
+    `with s as (
+       ${rolled}select ${day("ts")} as day, session_id
+         from (
+           ${plan.raw("ts, session_id")}
+         ) e
+     ),
+     sd as (
+       select day, count(distinct session_id)::int as sessions
+         from s
+        group by day
+     ),
+     pv as (
+       select ${day("ts")} as day, count(*)::int as pageviews
+         from public.analytics_events
+        where name = '$pageview' and ts >= $1 and ts < $2 ${plan.extra}
+        group by 1
+     )
+     select sd.day as bucket, coalesce(pv.pageviews, 0)::int as pageviews, sd.sessions
+       from sd
+       left join pv on pv.day = sd.day
+      order by 1`,
+    plan.params,
+  );
+  return result.rows.map((row) => ({
+    bucket: new Date(row.bucket).toISOString(),
+    pageviews: row.pageviews,
+    sessions: row.sessions,
+  }));
+}
+
 /** Event counts by name from analytics_hourly_events (whole hours) plus the raw partial hours. */
 export async function eventCounts(db, { from, to, app, limit, excludeNames = [] }) {
   const plan = readPlan(from, to, INGEST_COVERAGE, app);
@@ -487,4 +539,44 @@ export async function plannedRange(db, { nowMs = Date.now(), days = ROLLUP_TRAIL
   const coverage = await readRollupCoverage(db);
   if (coverage && coverage.until < startMs) startMs = coverage.until;
   return { startMs, endMs };
+}
+
+export const WEB_VITAL_RETENTION_DAYS = 14;
+export const WEB_VITAL_RETENTION_BATCH = 50_000;
+
+/**
+ * Deletes raw $web_vital events older than WEB_VITAL_RETENTION_DAYS, only inside hours the rollup job
+ * has already built (analytics_rollup_state), in batches. Same rule as
+ * database/prod_analytics_web_vital_retention.sql step B; the hourly rollups keep the counts and values.
+ * No state row (backfill not run) deletes nothing. Each batch is its own statement, so ingest is never
+ * blocked for long. Returns the rows deleted per batch.
+ */
+export async function deleteOldWebVitals(db, {
+  retentionDays = WEB_VITAL_RETENTION_DAYS,
+  batchSize = WEB_VITAL_RETENTION_BATCH,
+  maxBatches = 40,
+} = {}) {
+  const days = Math.max(ROLLUP_TRAILING_DAYS + 1, Math.floor(Number(retentionDays)));
+  const batches = [];
+  for (let i = 0; i < maxBatches; i += 1) {
+    const { rowCount } = await db.query(
+      `with doomed as (
+         select e.event_id
+           from public.analytics_events e
+           join public.analytics_rollup_state s on s.name = $1
+          where e.name = '$web_vital'
+            and e.ts >= s.covered_from
+            and e.ts < least(s.covered_until, date_trunc('day', now()) - make_interval(days => $2::int))
+          limit $3
+       )
+       delete from public.analytics_events e
+        using doomed d
+        where e.event_id = d.event_id`,
+      [ROLLUP_STATE_NAME, days, batchSize],
+    );
+    const n = Number(rowCount || 0);
+    batches.push(n);
+    if (n < batchSize) break;
+  }
+  return { retentionDays: days, deleted: batches.reduce((a, b) => a + b, 0), batches };
 }

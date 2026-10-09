@@ -6,6 +6,7 @@ import type { JsonRpcSigner } from "ethers";
 import { apiFetch } from "@/lib/apiBase";
 import { isSolanaAddress } from "@/lib/address";
 import { isSolanaChainId } from "@/lib/chainConfig";
+import { SESSION_AUTH_ACTIONS, sessionSignature, storedSessionToken } from "@/lib/sessionActions";
 
 export type WalletApiAction =
   | "claim_intent"
@@ -95,6 +96,20 @@ export async function signWalletAction(input: SignInput): Promise<WalletActionAu
 
   const isSolana =
     input.walletType === "solana" || isSolanaChainId(chainId) || isSolanaAddress(walletAddress);
+
+  // Signed in (30 days) and not a money or on-chain action: no wallet prompt (founder, 2026-10-06).
+  const sessionToken = SESSION_AUTH_ACTIONS.has(String(input.action)) ? storedSessionToken(walletAddress, chainId) : "";
+  if (sessionToken) {
+    return {
+      action: input.action,
+      walletAddress,
+      chainId,
+      nonce: "session",
+      message: "",
+      signature: sessionSignature(sessionToken),
+      walletType: isSolana ? "solana" : "evm",
+    };
+  }
 
   const extraLinesPromise = Promise.resolve(input.extraLines || []);
   const [nonce, extraLines] = await Promise.all([fetchNonce(chainId, walletAddress), extraLinesPromise]);

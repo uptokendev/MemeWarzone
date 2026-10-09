@@ -5,6 +5,7 @@
  */
 
 import { CookieConsentBanner } from "@/components/consent/CookieConsentBanner";
+import { WalletSignInGate } from "@/components/wallet/WalletSignInGate";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -185,6 +186,7 @@ function AppShellLayout({
       <ShellBackBar />
       <MobileTabBar />
       <UsernamePrompt />
+      <WalletSignInGate />
       <RankPromotionListener />
       <IncomingChallengeListener />
       <DbcScheduledLaunchListener />

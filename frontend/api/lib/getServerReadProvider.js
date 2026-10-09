@@ -134,6 +134,16 @@ function hostOf(url) {
   }
 }
 
+function pingTtlMs() {
+  const value = Number(process.env.SERVER_RPC_PING_TTL_MS ?? 30_000);
+  return Number.isFinite(value) && value >= 0 ? value : 30_000;
+}
+
+/** For tests: forget the cached providers. */
+export function resetServerReadProviders() {
+  providerCache.clear();
+}
+
 /** Returns a read-only provider for server-side on-chain reads. */
 export async function getServerReadProvider(chainId) {
   const numChainId = Number(chainId);
@@ -143,8 +153,13 @@ export async function getServerReadProvider(chainId) {
 
   const cached = providerCache.get(numChainId);
   if (cached) {
+    // The liveness ping (one eth_blockNumber) ran on every call; now at most once per
+    // SERVER_RPC_PING_TTL_MS (default 30 s). A provider that failed since is still
+    // replaced on the next ping, and a failing read surfaces its own error as before.
+    if (Date.now() - (cached.checkedAt || 0) < pingTtlMs()) return cached.provider;
     try {
       await cached.provider.getBlockNumber();
+      cached.checkedAt = Date.now();
       return cached.provider;
     } catch {
       providerCache.delete(numChainId);
@@ -167,7 +182,7 @@ export async function getServerReadProvider(chainId) {
         throw new Error(`RPC returned chainId=${network.chainId}; expected ${numChainId}`);
       }
       await provider.getBlockNumber();
-      providerCache.set(numChainId, { provider, url });
+      providerCache.set(numChainId, { provider, url, checkedAt: Date.now() });
       return provider;
     } catch (error) {
       errors.push(`${hostOf(url)}: ${String(error?.shortMessage || error?.message || error)}`);

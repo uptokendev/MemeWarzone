@@ -10,6 +10,8 @@ import {
   importSwapFeeSources,
   ingestImportSwapFees,
   rpcClient,
+  rpcHost,
+  isRangeLimitError,
   scanEvmImportSwapFees,
   scanSolanaImportSwapFees,
   solanaFeeRow,
@@ -293,4 +295,88 @@ test("revenue: creator halves nobody claimed in 90 days count when they expire, 
   assert.match(LANE_QUERIES.import_swaps_expired, /c\.status = 'expired'/);
   assert.match(LANE_QUERIES.import_swaps_expired, /sum\(c\.creator_raw\)/);
   assert.equal(vatLaneOf("import-swaps-expired:101"), "import_swaps");
+});
+
+test("rpc client: a refusal names the host only, never the key in the path; a getLogs range refusal is not retried", async () => {
+  const keyed = "https://bsc-mainnet.core.chainstack.com/0123456789abcdef0123456789abcdef";
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (url === keyed) return { ok: false, status: 429, json: async () => { throw new Error("not json"); } };
+    return { ok: true, json: async () => ({ error: { code: -32005, message: "limit exceeded" } }) };
+  };
+  const call = rpcClient([keyed, "https://bsc-dataseed.binance.org"], { fetchImpl, backoffMs: 1, retries: 3 });
+  const error = await call("eth_getLogs", [{}]).then(() => null, (e) => e);
+  assert.ok(error, "rejects");
+  assert.match(error.message, /bsc-mainnet\.core\.chainstack\.com refused: HTTP 429/);
+  assert.match(error.message, /bsc-dataseed\.binance\.org refused: limit exceeded/);
+  assert.ok(!error.message.includes("0123456789abcdef"), "no key in the message");
+  assert.deepEqual(error.hosts, ["bsc-mainnet.core.chainstack.com", "bsc-dataseed.binance.org"]);
+  assert.equal(error.rangeLimited, true);
+  assert.equal(isRangeLimitError(error), true);
+  assert.equal(calls.length, 2, "one round: a smaller range is the fix, not a retry");
+  assert.equal(rpcHost("not a url"), "rpc");
+  assert.equal(rpcHost("https://rpc.example.com:8545/key?x=1"), "rpc.example.com:8545");
+});
+
+test("EVM scan: a refused getLogs range is halved until the RPC answers, and the scan goes on at that size", async () => {
+  const source = { ...importSwapFeeSources({})[56], minRange: 50 };
+  const ranges = [];
+  const rpc = async (method, params) => {
+    if (method === "eth_blockNumber") return `0x${(source.startBlock + 2_000 - 1 + source.confirmations).toString(16)}`;
+    if (method === "eth_getLogs") {
+      const size = Number(params[0].toBlock) - Number(params[0].fromBlock) + 1;
+      ranges.push(size);
+      if (size > 700) throw new Error("eth_getLogs: bsc-dataseed.binance.org refused: limit exceeded");
+      return [];
+    }
+    throw new Error(method);
+  };
+  const out = await scanEvmImportSwapFees({ source, rpc, fromBlock: null });
+  assert.deepEqual(ranges, [2000, 2000, 1250, 625, 625, 625, 125], "5000 -> 2500 -> 1250 -> 625, then on at 625");
+  assert.equal(out.complete, true);
+  assert.equal(out.nextBlock, source.startBlock + 2_000);
+  assert.equal(out.range, 625);
+  assert.equal(out.error, undefined);
+});
+
+test("EVM scan: at the smallest range a refusal stops the scan; progress so far is kept, a refusal at the start throws with the host", async () => {
+  const source = { ...importSwapFeeSources({})[56], maxRange: 100, minRange: 25 };
+  const head = source.startBlock + 300 - 1 + source.confirmations;
+  let served = 0;
+  const rpc = async (method, params) => {
+    if (method === "eth_blockNumber") return `0x${head.toString(16)}`;
+    if (method === "eth_getLogs") {
+      if (served < 2) { served += 1; return []; }
+      throw new Error("eth_getLogs: bsc-dataseed.binance.org refused: limit exceeded");
+    }
+    throw new Error(method);
+  };
+  const out = await scanEvmImportSwapFees({ source, rpc, fromBlock: null });
+  assert.equal(out.nextBlock, source.startBlock + 200, "the two answered ranges count");
+  assert.equal(out.complete, false);
+  assert.match(out.error, /bsc-dataseed\.binance\.org refused: limit exceeded/);
+  assert.match(out.error, /\(25 blocks\)/, "shrunk to the floor before giving up");
+
+  served = 99;
+  await assert.rejects(scanEvmImportSwapFees({ source, rpc, fromBlock: null }), /eth_getLogs \d+-\d+ \(25 blocks\): .*bsc-dataseed\.binance\.org/);
+});
+
+test("ingest: a scan that stopped early stores its rows and cursor, then reports the refusal", async () => {
+  const writes = [];
+  const client = { query: async (sql, params) => { writes.push([sql.trim().split(/\s+/).slice(0, 3).join(" "), params]); return { rows: [], rowCount: 0 }; }, release() {} };
+  const db = { query: async () => ({ rows: [{ cursor: "125000755" }] }), connect: async () => client };
+  const source = importSwapFeeSources({})[56];
+  let served = 0;
+  const rpc = async (method) => {
+    if (method === "eth_blockNumber") return `0x${(source.startBlock + 20_000 + source.confirmations).toString(16)}`;
+    if (method === "eth_getLogs") {
+      if (served < 1) { served += 1; return []; }
+      throw new Error("eth_getLogs: rpc.example.org refused: socket hang up");
+    }
+    throw new Error(method);
+  };
+  await assert.rejects(ingestImportSwapFees({ db, chainId: 56, env: {}, rpc }), /stopped at block 125005755: .*rpc\.example\.org refused: socket hang up/);
+  const cursorWrite = writes.find(([s]) => s === "insert into public.finance_import_swap_fee_cursors");
+  assert.equal(cursorWrite[1][1], "125005755", "cursor moved past the range that was read");
 });

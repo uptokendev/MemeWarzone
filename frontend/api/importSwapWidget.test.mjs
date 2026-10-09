@@ -43,3 +43,18 @@ test("the widget only swaps Solana coins", async () => {
   assert.equal(res.statusCode, 400);
   assert.match(String(res.body), /Solana/);
 });
+
+test("coin kind: our launchpad / DBC coins are bonding while on the curve; graduated, migrated and non-SOL DBC are not tradable here", async () => {
+  const { bondingCoin } = await import("./importSwapWidget.js");
+  const row = (over) => ({ launch_type: "launchpad", campaign_address: "Camp", creator_address: "Cre", name: "K", symbol: "K", logo_uri: null, bonding_active: true, market_stage: "BONDING", graduated_at_chain: null, dbc_quote_mint: null, dbc_migration: null, ...over });
+  const db = (r) => ({ query: async () => ({ rows: r ? [r] : [] }) });
+  assert.equal(await bondingCoin("m", db(null)), null, "not ours: the import path");
+  const lp = await bondingCoin("m", db(row({})));
+  assert.deepEqual([lp.kind, lp.tradable, lp.campaignAddress, lp.creator], ["launchpad", true, "Camp", "Cre"]);
+  assert.match(lp.pageUrl, /\/token\/Camp\?chainId=101$/);
+  assert.equal((await bondingCoin("m", db(row({ market_stage: "GRADUATED", bonding_active: false })))).reason, "graduated");
+  const dbc = await bondingCoin("m", db(row({ launch_type: "dbc", dbc_quote_mint: "So11111111111111111111111111111111111111112" })));
+  assert.deepEqual([dbc.kind, dbc.tradable], ["dbc", true]);
+  assert.equal((await bondingCoin("m", db(row({ launch_type: "dbc", dbc_migration: { pool: "x" } })))).reason, "graduated");
+  assert.equal((await bondingCoin("m", db(row({ launch_type: "dbc", dbc_quote_mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" })))).reason, "quote");
+});

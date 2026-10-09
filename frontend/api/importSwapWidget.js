@@ -6,11 +6,14 @@
  *
  * Routes under /api/widget/swap/ answer every origin, without cookies or credentials (the widget
  * never sends any), and are rate limited per IP. The rest of the API keeps its origin allow-list.
- *   GET  token?mint=          name, symbol, image (imported coins), decimals from chain, fee
+ *   GET  token?mint=          what the coin is (import, or our launchpad / DBC bonding coin), name,
+ *                             symbol, image, decimals from chain, fee (imports)
  *   GET  balances?wallet&mint SOL and token balance (so the widget needs no RPC of its own)
  *   POST quote                = /api/imports/swap/quote, Solana only
  *   POST build                = /api/imports/swap/build, Solana only
  *   GET  status?signature=    confirmation of the wallet-sent swap
+ * Bonding coins (launchpad, DBC) trade with the app's own transaction code inside the widget; the
+ * widget reaches /api/widget/solana/{campaign-account,trade-authorize}, which are the app's handlers.
  */
 import { Connection, PublicKey } from "@solana/web3.js";
 import { pool } from "../server/db.js";
@@ -80,6 +83,11 @@ export async function widgetToken(req, res) {
     const info = await solanaConnection().getParsedAccountInfo(new PublicKey(mint));
     const decimals = info.value?.data?.parsed?.info?.decimals;
     if (!Number.isInteger(decimals) || !TOKEN_PROGRAMS.includes(info.value.owner.toBase58())) return json(res, 404, { ok: false, error: "Not a token mint" });
+    const bonding = await bondingCoin(mint);
+    if (bonding) {
+      res.setHeader("cache-control", "public, max-age=60");
+      return json(res, 200, { ok: true, chainId: 101, mint, decimals, ...bonding });
+    }
     let project = null;
     if (pool) {
       const { rows } = await pool.query(
@@ -98,6 +106,8 @@ export async function widgetToken(req, res) {
       name: project?.name || null,
       symbol: project?.symbol || null,
       imageUrl: project?.image_url || null,
+      kind: "import",
+      tradable: true,
       feeBps: importSwapFeeBps(101),
       pageUrl: `https://app.memewar.zone/token/${mint}?chainId=101`,
     });
@@ -105,6 +115,46 @@ export async function widgetToken(req, res) {
     console.error("[api/widget] token", error);
     return json(res, 502, { ok: false, error: "Token lookup failed" });
   }
+}
+
+const WSOL = "So11111111111111111111111111111111111111112";
+
+/**
+ * Our own Solana coin (launchpad or DBC) for this mint, or null for anything else. The widget trades
+ * a bonding coin only while it is on its curve and, for DBC, only when the curve is paired with SOL;
+ * graduated or migrated coins link to their page instead (tradable false + reason).
+ */
+export async function bondingCoin(mint, db = pool) {
+  if (!db) return null;
+  const { rows } = await db
+    .query(
+      `select launch_type, campaign_address, creator_address, name, symbol, logo_uri, bonding_active, market_stage, graduated_at_chain,
+              meta #>> '{dbc,quoteMint}' as dbc_quote_mint, meta #> '{dbc,migration}' as dbc_migration
+         from public.campaigns
+        where chain_id = 101 and token_address = $1 and coalesce(launch_type, 'launchpad') in ('launchpad', 'dbc')
+        order by created_at desc nulls last
+        limit 1`,
+      [mint],
+    )
+    .catch(() => ({ rows: [] }));
+  const row = rows[0];
+  if (!row) return null;
+  const kind = row.launch_type === "dbc" ? "dbc" : "launchpad";
+  let reason = null;
+  if (row.graduated_at_chain || row.bonding_active === false || (row.market_stage && String(row.market_stage).toUpperCase() !== "BONDING")) reason = "graduated";
+  if (kind === "dbc" && row.dbc_migration) reason = "graduated";
+  if (kind === "dbc" && row.dbc_quote_mint && row.dbc_quote_mint !== WSOL) reason = "quote";
+  return {
+    kind,
+    tradable: !reason,
+    reason,
+    campaignAddress: String(row.campaign_address),
+    creator: row.creator_address ? String(row.creator_address) : null,
+    name: row.name || null,
+    symbol: row.symbol || null,
+    imageUrl: row.logo_uri || null,
+    pageUrl: `https://app.memewar.zone/token/${row.campaign_address}?chainId=101`,
+  };
 }
 
 export async function widgetBalances(req, res) {

@@ -3,7 +3,9 @@
  * Displays comprehensive information about a specific token including
  * chart, trading interface, transactions, and holder distribution
  */
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
+import { CreatorStreakBadge } from "@/components/social/CreatorStreakBadge";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Copy, ExternalLink, Flag, Globe, Info, Share2, Star } from "lucide-react";
@@ -62,6 +64,7 @@ import { StoryEnterButton } from "@/components/story/StoryEnterButton";
 import { CoinTabs } from "@/components/token/CoinTabs";
 import { ChallengeCoinButton } from "@/components/arena/ChallengeCoinButton";
 import { cp } from "@/components/token/coinPageStyles";
+import { SwapWidgetEmbedLink } from "@/components/imports/SwapWidgetEmbedDialog";
 import { CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
 import { useStory } from "@/lib/story/storyApi";
@@ -2947,10 +2950,11 @@ const toSeconds = (ts: number): number => {
     };
 
     loadReserve();
-    const timer = isSolanaPage ? 0 : window.setInterval(() => void loadReserve(), 5_000);
+    // Paused while the tab is hidden; one catch-up read when it shows again.
+    const stopPolling = isSolanaPage ? null : setVisibleInterval(() => void loadReserve(), 5_000);
     return () => {
       cancelled = true;
-      if (timer) window.clearInterval(timer);
+      stopPolling?.();
     };
   }, [readProvider, campaign?.campaign, isSolanaPage]);
 
@@ -2967,10 +2971,11 @@ const toSeconds = (ts: number): number => {
       }
     };
     void loadMetrics();
-    const timer = window.setInterval(() => void loadMetrics(), 5_000);
+    // Paused while the tab is hidden; one catch-up read when it shows again.
+    const stopPolling = setVisibleInterval(() => void loadMetrics(), 5_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [campaign?.campaign, fetchCampaignMetrics, isSolanaPage]);
 
@@ -2994,10 +2999,11 @@ const toSeconds = (ts: number): number => {
     };
 
     loadActivity();
-    const t = setInterval(loadActivity, 60_000);
+    // Paused while the tab is hidden; one catch-up read when it shows again.
+    const stopPolling = setVisibleInterval(loadActivity, 60_000);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      stopPolling();
     };
   }, [campaign?.campaign, fetchCampaignActivity, isSolanaPage]);
 
@@ -3298,6 +3304,12 @@ const toSeconds = (ts: number): number => {
           metrics.curveSupply > 0n &&
           (metrics?.sold ?? 0n) >= metrics.curveSupply)),
   );
+  // The swap widget trades our Solana coins while they are on their curve (DBC: paired with SOL only).
+  const swapWidgetMint = !isSolanaPage || contractGraduated || solanaCurveClosed
+    ? ""
+    : isDbcPage
+      ? (!dbcMigrated && dbcQuoteMint === WSOL_MINT ? dbcMint : "")
+      : String(solanaCurve?.mint || campaign?.token || "");
   useEffect(() => {
     if (!isSolanaPage || isDbcPage || !solanaCurveClosed) return;
     const campaignPda = String(solanaCurve?.campaignAddress || campaign?.campaign || "").trim();
@@ -5122,6 +5134,7 @@ const toSeconds = (ts: number): number => {
                         </Avatar>
                         <WalletLabel className="truncate" wallet={creator} displayName={creatorProfile?.displayName} />
                       </Link>
+                      <CreatorStreakBadge wallet={creator} />
                     </span>
 
                     <span className="whitespace-nowrap">
@@ -5879,7 +5892,10 @@ const toSeconds = (ts: number): number => {
           <section aria-label="Trade" className={`hidden xl:block ${cp.card} p-4`}>
             <div className="mb-3.5 flex items-center justify-between gap-2">
               <span className={cp.title}>Trade</span>
-              <span className={`${cp.chip} font-mw-mono`}>{formatBnbFromWei(bnbBalanceWei)}</span>
+              <div className="flex items-center gap-2">
+                {swapWidgetMint ? <SwapWidgetEmbedLink mint={swapWidgetMint} symbol={tokenData.ticker} bonding /> : null}
+                <span className={`${cp.chip} font-mw-mono`}>{formatBnbFromWei(bnbBalanceWei)}</span>
+              </div>
             </div>
             <Tabs value={tradeTab} onValueChange={handleTradeTabChange} className="flex flex-col gap-3.5">
               <TabsList className={cp.segList}>

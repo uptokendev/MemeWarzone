@@ -1,4 +1,9 @@
 import express from "express";
+import { installRpcUsageCounters, rpcUsageSnapshot } from "./lib/rpcUsage.js";
+
+// Count every JSON-RPC request this process sends (by chain and method, never the URL):
+// GET /health rpcUsage, and one [rpc-usage] log line every RPC_USAGE_LOG_MINUTES (default 15).
+installRpcUsageCounters();
 
 // One stray promise rejection in any request or background task used to end the whole process
 // (Node 20 default), and every restart took the API down for ~45 s (2026-09-25). Log it loudly with
@@ -68,7 +73,7 @@ import shareCard from "./shareCard.js";
 import prepareShareCard from "./prepare-share-card.js";
 import tokenShareCard from "./token-share-card.js";
 import { importSwapBuild, importSwapQuote } from "./importSwap.js";
-import importCreatorFees from "./importCreatorFees.js";
+import importCreatorFees, { importCreatorFeesOwner } from "./importCreatorFees.js";
 import { widgetBalances, widgetBuild, widgetCors, widgetQuote, widgetStatus, widgetToken } from "./importSwapWidget.js";
 import airdropPool from "./airdropPool.js";
 import battleShareCard from "./battle-share-card.js";
@@ -78,6 +83,7 @@ import discordNotificationImage from "./discord-notification-image.js";
 import tokenMetadata from "./token-metadata.js";
 import topazTrades from "./topaz-trades.js";
 import votes from "./votes.js";
+import { creatorStreaksHandler, freeUpvoteHandler } from "./creatorStreaks.js";
 import votesIngest from "./votes-ingest.js";
 import voteCounts from "./vote_counts.js";
 import robinhoodStockTokens from "./robinhood/stock-tokens.js";
@@ -398,6 +404,8 @@ app.get("/health", async (_req, res) => {
           return "unset";
         }
       })(),
+      // JSON-RPC requests this process sent since it started, by chain and method (no URLs).
+      rpcUsage: rpcUsageSnapshot(),
     });
   } catch (err) {
     console.error("[api/server] health db check failed", err);
@@ -475,6 +483,8 @@ router.all("/token/:campaign/topaz-trades", wrap(topazTrades));
 router.all("/token-metadata", wrap(tokenMetadata));
 router.all("/vote-ingest", wrap(votesIngest));
 router.all("/votes/ingest", wrap(votesIngest));
+router.all("/votes/free", wrap(freeUpvoteHandler));
+router.all("/creator-streaks", wrap(creatorStreaksHandler));
 router.all("/votes", wrap(votes));
 router.all("/vote_counts", wrap(voteCounts));
 router.all("/robinhood/stock-tokens", wrap(robinhoodStockTokens));
@@ -521,12 +531,17 @@ router.get("/solana/holders", wrap(solanaHolders));
 // Imported memecoins: Jupiter (Solana) / KyberSwap on PancakeSwap pools (BNB), 0.5% platform fee.
 router.post("/imports/swap/quote", wrap(importSwapQuote));
 router.post("/imports/swap/build", wrap(importSwapBuild));
+router.get("/imports/creator-fees/owner", wrap(importCreatorFeesOwner));
 router.get("/imports/creator-fees", wrap(importCreatorFees));
 router.get("/widget/swap/token", wrap(widgetToken));
 router.get("/widget/swap/balances", wrap(widgetBalances));
 router.post("/widget/swap/quote", wrap(widgetQuote));
 router.post("/widget/swap/build", wrap(widgetBuild));
 router.get("/widget/swap/status", wrap(widgetStatus));
+// Bonding coins in the widget: the same handlers as the app's /solana/* routes, reached through the
+// widget's open CORS (no credentials, rate limited). The app's own routes and their CORS are unchanged.
+router.all("/widget/solana/campaign-account", wrap(solanaCampaignAccount));
+router.post("/widget/solana/trade-authorize", wrap(solanaTradeAuthorizationV1));
 router.all("/solana/direct-create", wrap(solanaDirectCreateV4));
 router.all("/solana/trade-authorize", wrap(solanaTradeAuthorizationV1));
 router.all("/solana/graduation-authorize", wrap(solanaGraduationAuthorizationV1));

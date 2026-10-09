@@ -1,4 +1,5 @@
 import { AthBar } from "@/components/token/AthBar";
+import { CreatorStreakBadge } from "@/components/social/CreatorStreakBadge";
 import { isSolanaChainId } from "@/lib/chainConfig";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
@@ -291,6 +292,7 @@ export function CampaignCard({
             >
               {vm.creator ? <WalletLabel wallet={vm.creator} /> : "—"}
             </span>
+            {vm.creator ? <CreatorStreakBadge wallet={vm.creator} compact className="ml-1.5" /> : null}
           </span>
         </div>
 

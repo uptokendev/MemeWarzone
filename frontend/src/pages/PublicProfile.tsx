@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { CreatorStreakBadge } from "@/components/social/CreatorStreakBadge";
 import { ItemMenu } from "@/components/moderation/ItemMenu";
 import { useModeration } from "@/hooks/useModeration";
 import { MentionText } from "@/components/feed/FeedCards";
@@ -973,6 +974,7 @@ export default function PublicProfile({
           )}
           <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-mw-muted">
             <span><b className="text-mw-text">{createdCoins.length}</b> coins created</span>
+            <CreatorStreakBadge wallet={profileWallet} />
             <span><b className="text-mw-text">{visibleDrafts.length}</b> {visibleDrafts.length === 1 ? "draft" : "drafts"}</span>
             {/* Founder 2026-10-05: tap to see the people, like on X. */}
             <button type="button" onClick={() => setFollowDialog("followers")} className="mw-focus text-mw-muted hover:text-mw-text hover:underline" data-open-followers="true"><b className="text-mw-text">{followCounts ? formatCompactNumber(followCounts.followers) : "—"}</b> followers</button>

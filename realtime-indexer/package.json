@@ -23,6 +23,7 @@
     "cron:process-reward-eligibility": "node --enable-source-maps dist/jobs/processRewardEligibility.js",
     "cron:process-reward-reminders": "node --enable-source-maps dist/jobs/processRewardReminders.js",
     "simulate:phase7": "node --enable-source-maps dist/jobs/runPhase7Simulation.js",
+    "test:rpc-usage": "tsx --test src/tests/rpcUsageReduction.test.ts",
     "test:phase4-7": "tsx --test src/tests/phase4-phase7.test.ts",
     "test:wtr": "tsx --test src/tests/marketContinuity.test.ts src/tests/topazPoolCore.test.ts src/tests/graduationSearch.test.ts",
     "test:market-normalization": "tsx --test src/tests/normalizedMarketAuthority.test.ts",

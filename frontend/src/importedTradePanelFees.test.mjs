@@ -11,12 +11,14 @@ test("no fee-free Topaz trade: the Topaz path goes through ImportSwapFeeRouter o
   assert.match(panel, /if \(!feeRouter\) throw new Error\(NO_IMPORT_SWAP_ROUTE\);/);
   assert.match(panel, /executeFeeRouterTrade\(\{ signer: tradeSigner, account: tradeAccount, quote \}\)/);
   assert.match(panel, /const feeRouter = importSwapFeeRouterAddress\(item\.chainId\)/);
-  assert.match(panel, /disabled=\{busy \|\| !amount \|\| noFeeRoute\}/);
+  // Live's card layout (merge 2026-10-09): a connected wallet is disabled with no fee route.
+  assert.match(panel, /disabled=\{account \? busy \|\| !amount \|\| noFeeRoute : false\}/);
   assert.match(panel, /data-import-no-fee-route="true"/);
 });
 
 test("fee chip and preview carry the quote's feeBps on every path", () => {
-  assert.match(panel, /Fee \{importSwapFeeLabel\(preview\.feeBps\)\}/);
+  assert.match(panel, /const feeLabel = preview \? importSwapFeeLabel\(preview\.feeBps\) : robinhoodFee \? importSwapFeeLabel\(activeImportSwapFeeTerms4663\(\)\.feeBps\) : null;/);
+  assert.match(panel, /const quoted = \(aggregated && !noAggregatorRoute\) \|\| robinhoodFee \|\| feeRouted;/);
   assert.doesNotMatch(panel, /feeBps: 50,/, "the Robinhood preview no longer hard-codes 0.5%");
   assert.match(panel, /provider: "uniswap-universal-router",[\s\S]*?feeBps: quote\.feeBps,\s*creatorShareBps: quote\.creatorShareBps,/);
   assert.match(panel, /provider: "import-swap-fee-router",[\s\S]*?feeBps: quote\.feeBps,\s*creatorShareBps: quote\.creatorShareBps,/);

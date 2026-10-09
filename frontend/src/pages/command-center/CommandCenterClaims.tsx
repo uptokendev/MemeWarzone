@@ -8,6 +8,7 @@ import { CommandCenterCard } from "@/components/command-center/CommandCenterCard
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { CreatorFeesPanel, EvmCreatorFeesPanel } from "@/components/command-center/CreatorFeesPanel";
 import { RecruiterNativePayoutsPanel } from "@/components/command-center/RecruiterNativePayoutsPanel";
+import { ImportCreatorFeesPanel } from "@/components/command-center/ImportCreatorFeesPanel";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
@@ -1107,6 +1108,7 @@ export default function CommandCenterClaims() {
       {showRecruiterRewards ? <RecruiterNativePayoutsPanel /> : null}
       <CreatorFeesPanel />
       <EvmCreatorFeesPanel />
+      <ImportCreatorFeesPanel />
     </div>
   );
 }

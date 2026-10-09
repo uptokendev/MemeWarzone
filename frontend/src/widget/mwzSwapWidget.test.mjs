@@ -52,3 +52,21 @@ test("wallet detection: Phantom first, only providers that can sign and send", (
   assert.equal(findInjectedWallet({ solflare: { signAndSendTransaction: send } }).name, "Solflare");
   assert.equal(findInjectedWallet({ solflare: { signAndSendTransaction: send }, phantom: { solana: { signAndSendTransaction: send } } }).name, "Phantom");
 });
+
+test("widget build: the app's two Solana API calls go to the widget routes, nothing else is reachable", async () => {
+  const shim = await build({ absWorkingDir: dir, entryPoints: [path.join(dir, "shims/apiBase.ts")], bundle: true, write: false, format: "esm", platform: "node" });
+  const file = path.join(dir, `.shim-${process.pid}.mjs`);
+  fs.writeFileSync(file, shim.outputFiles[0].text);
+  let mod;
+  try { mod = await import(file); } finally { fs.rmSync(file, { force: true }); }
+  const calls = [];
+  globalThis.fetch = async (url, init) => { calls.push([url, init?.credentials]); return new Response("{}"); };
+  mod.setWidgetApiBase("https://api.example/");
+  await mod.apiFetch("/api/solana/trade-authorize", { method: "POST" });
+  await mod.apiFetch("/api/solana/campaign-account?address=abc");
+  await assert.rejects(mod.apiFetch("/api/feed/posts"), /does not call/);
+  assert.deepEqual(calls, [
+    ["https://api.example/api/widget/solana/trade-authorize", "omit"],
+    ["https://api.example/api/widget/solana/campaign-account?address=abc", "omit"],
+  ]);
+});

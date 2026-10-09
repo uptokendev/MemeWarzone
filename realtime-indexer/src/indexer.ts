@@ -8,7 +8,7 @@ import { candleUpsertPayload } from "./candlePublish.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/attribution.js";
 import { upsertRewardEvent } from "./rewards/ingest.js";
-import { createStaticJsonRpcProvider, createWorkingProvider, parseRpcList } from "./rpcProvider.js";
+import { createStaticJsonRpcProvider, createWorkingProvider, maskRpcUrl, parseRpcList } from "./rpcProvider.js";
 import { bscRpcUrls } from "./canonicalCandleMaterializer.js";
 import { healRobinhoodGraduatedCms } from "./robinhoodCmsHeal.js";
 import {
@@ -19,6 +19,7 @@ import {
   type BnbCurveParams,
 } from "./bnbCurvePricing.js";
 import { campaignScanChunks } from "./campaignScanChunks.js";
+import { recordTipScan, tipScanStart, tipWindowOptionsFromEnv } from "./tipScanWindow.js";
 import { checkMilestones } from "./milestones.js";
 import { createEvmMilestoneProgress, type EvmMilestoneView } from "./evm/evmMilestoneProgress.js";
 import { notifyCampaignCreated, notifyCampaignGraduated } from "./campaignLifecycleNotifications.js";
@@ -207,6 +208,10 @@ async function insertActivityEvent(row: {
   }
 }
 
+// Chunks a soft-fail getLogsSafe skipped (returned [] for). A tip scan that saw one is not
+// complete, so its incremental window (tipScanWindow.ts) falls back to a full window.
+let getLogsSoftFails = 0;
+
 async function getLogsSafe(
   provider: ethers.JsonRpcProvider,
   filter: any,
@@ -222,14 +227,14 @@ async function getLogsSafe(
   } catch (e: any) {
     // Pruned history should not be retried on the SAME provider.
     if (isPrunedHistoryError(e)) {
-      if (opts.softFail) return [];
+      if (opts.softFail) { getLogsSoftFails += 1; return []; }
       throw e;
     }
 
     // Some public RPCs fail eth_getLogs with transport-layer issues.
     // Treat those as transient so we can split ranges / retry.
     if (!isRateLimitError(e) && !isRpcTransportError(e)) {
-      if (opts.softFail) return [];
+      if (opts.softFail) { getLogsSoftFails += 1; return []; }
       throw e;
     }
 
@@ -257,11 +262,11 @@ async function getLogsSafe(
         return await provider.getLogs(filter);
       } catch (e2: any) {
         if (isPrunedHistoryError(e2)) {
-          if (opts.softFail) return [];
+          if (opts.softFail) { getLogsSoftFails += 1; return []; }
           throw e2;
         }
         if (!isRateLimitError(e2) && !isRpcTransportError(e2)) {
-          if (opts.softFail) return [];
+          if (opts.softFail) { getLogsSoftFails += 1; return []; }
           throw e2;
         }
       }
@@ -274,6 +279,7 @@ async function getLogsSafe(
         to: filter?.toBlock,
         err: String(e?.shortMessage || e?.message || e),
       });
+      getLogsSoftFails += 1;
       return [];
     }
     throw e;
@@ -1544,6 +1550,8 @@ async function scanCampaignRange(
   const tokenAddr = campaignInfo?.tokenAddress ?? null;
   let insertedTotal = 0;
   const startedAt = Date.now();
+  const softFailsBefore = getLogsSoftFails;
+  let cutShort = false;
 
   // Launch generation (campaign 5) is selected per factory; the old generation keeps the path below
   // unchanged (E14). A failed resolution indexes the trades the old way and retries next pass.
@@ -1576,6 +1584,7 @@ async function scanCampaignRange(
     const start = chunk.start;
     const end = chunk.end;
     if (opts.deadlineMs && Date.now() >= opts.deadlineMs) {
+      cutShort = true;
       console.warn("[indexer] campaign scan hit pass deadline", {
         chainId,
         campaign: campaign.toLowerCase(),
@@ -1865,6 +1874,9 @@ async function scanCampaignRange(
       durationMs: Date.now() - startedAt,
     });
   }
+  // Complete = every chunk was read (no deadline cut, no soft-failed chunk anywhere in this
+  // process meanwhile; a concurrent scan's soft-fail only makes this conservative).
+  return { complete: !cutShort && getLogsSoftFails === softFailsBefore, inserted: insertedTotal };
 }
 
 function parseTradeLog(
@@ -2160,19 +2172,26 @@ export async function runTipScanOnce() {
       target,
     });
 
+    const tipWindow = tipWindowOptionsFromEnv(tipScanBlocks);
     for (const c of campaigns) {
       if (Date.now() >= deadlineMs) break;
       await snapStaleCampaignCursor(chain.chainId, c.campaign, head, tipScanBlocks);
+      // Only the blocks since the last complete tip scan (plus an overlap); the full window every
+      // INDEXER_TIP_FULL_SWEEP_MS. Shared with Phase A of the normal pass (tipScanWindow.ts).
+      const tipKey = `campaign:${c.campaign.toLowerCase()}`;
+      const start = tipScanStart(chain.chainId, tipKey, target, tipWindow);
+      if (start.skip) continue;
       const campaignDeadline = Math.min(deadlineMs, Date.now() + 7_000);
       for (const tipUrl of tipRpcList) {
         try {
           const tipProvider = createStaticJsonRpcProvider(tipUrl, chain.chainId, { timeoutMs: 8_000 });
-          await scanCampaignRange(tipProvider, chain.chainId, c.campaign, tipFrom, target, {
+          const result = await scanCampaignRange(tipProvider, chain.chainId, c.campaign, start.from, target, {
             advanceCursor: false,
             label: "tip-only",
             tradesOnly: true,
             deadlineMs: campaignDeadline,
           });
+          recordTipScan(chain.chainId, tipKey, target, { full: start.full, complete: result.complete });
           break;
         } catch (err) {
           console.warn("[indexer] tip-only endpoint failed", {
@@ -2281,7 +2300,7 @@ async function runIndexerCore(opts: {
           if (isRateLimitError(e) || isRpcTransportError(e) || isPrunedHistoryError(e)) {
             console.warn(rpcList.length > 1 ? "RPC error; rotating endpoint" : "RPC error; single endpoint exhausted", {
               chainId: chain.chainId,
-              rpc: url,
+              rpc: maskRpcUrl(url),
               err: e?.shortMessage || e?.message || e
             });
 
@@ -2364,10 +2383,17 @@ async function runIndexerCore(opts: {
         // still advances — without overlap rescan, upvotes never enter Featured
         // (WIC VoteCast at tip missed while only DDT stayed in vote_aggregates).
         if (opts.mode === "normal") {
-          const tipFrom = Math.max(0, target - tipBlocks);
+          // Incremental like the trade tip scans: the blocks since the last complete vote tip
+          // scan plus an overlap; the full window every INDEXER_TIP_FULL_SWEEP_MS (tipScanWindow.ts).
+          const voteStart = tipScanStart(chain.chainId, "votes-tip", target, tipWindowOptionsFromEnv(tipBlocks));
           try {
-            await withProviderRetry((p) => scanVoteTreasuryRange(p, chain, tipFrom, target));
+            if (!voteStart.skip) {
+              const softFailsBefore = getLogsSoftFails;
+              await withProviderRetry((p) => scanVoteTreasuryRange(p, chain, voteStart.from, target));
+              recordTipScan(chain.chainId, "votes-tip", target, { full: voteStart.full, complete: getLogsSoftFails === softFailsBefore });
+            }
           } catch (tipVoteErr) {
+            recordTipScan(chain.chainId, "votes-tip", target, { full: voteStart.full, complete: false });
             console.warn("[indexer] vote tip scan failed", {
               chainId: chain.chainId,
               err: String((tipVoteErr as any)?.message || tipVoteErr),
@@ -2473,7 +2499,7 @@ async function runIndexerCore(opts: {
     // Prefer a public recent-log RPC as first tip endpoint: BlockPI often rate-limits
     // eth_getLogs while publicnode still serves the last few thousand blocks.
     if (opts.mode === "normal" && tipScanBlocks > 0) {
-      const tipFrom = Math.max(0, target - tipScanBlocks);
+      const tipWindow = tipWindowOptionsFromEnv(tipScanBlocks);
       const tipRpcList = rpcList;
       for (const c of campaigns) {
         if (pastDeadline()) {
@@ -2482,6 +2508,10 @@ async function runIndexerCore(opts: {
         }
         const campaign = c.campaign;
         await snapStaleCampaignCursor(chain.chainId, campaign, target, tipScanBlocks);
+        // Same incremental window as runTipScanOnce: whichever runs first reads the new blocks.
+        const tipKey = `campaign:${campaign.toLowerCase()}`;
+        const start = tipScanStart(chain.chainId, tipKey, target, tipWindow);
+        if (start.skip) continue;
         const campaignDeadline = Math.min(deadlineMs || Date.now() + 7_000, Date.now() + 7_000);
         let tipOk = false;
         for (const tipUrl of tipRpcList) {
@@ -2489,19 +2519,20 @@ async function runIndexerCore(opts: {
             const tipProvider = createStaticJsonRpcProvider(tipUrl, chain.chainId, {
               timeoutMs: Math.min(ENV.RPC_REQUEST_TIMEOUT_MS, 15_000),
             });
-            await scanCampaignRange(tipProvider, chain.chainId, campaign, tipFrom, target, {
+            const result = await scanCampaignRange(tipProvider, chain.chainId, campaign, start.from, target, {
               advanceCursor: false,
               label: "tip",
               tradesOnly: true,
               deadlineMs: campaignDeadline,
             });
+            recordTipScan(chain.chainId, tipKey, target, { full: start.full, complete: result.complete });
             tipOk = true;
             break;
           } catch (tipErr) {
             console.warn("[indexer] tip scan endpoint failed", {
               chainId: chain.chainId,
               campaign: campaign.toLowerCase(),
-              rpc: tipUrl.replace(/\/v1\/rpc\/.*/, "/v1/rpc/…"),
+              rpc: maskRpcUrl(tipUrl),
               err: String((tipErr as any)?.message || tipErr),
             });
           }
