@@ -459,3 +459,13 @@ test("fingerprint attribution: a fee row whose landed swap matches a recorded pa
   assert.deepEqual(params[16], ["crypticpump", null]);
   assert.deepEqual(params[17], ["250", "0"]);
 });
+
+test("a switched-off partner earns nothing on swaps that land afterwards: its part stays ours, the creator half is unchanged", async () => {
+  const { partnerTermsById, splitFee } = await import("./financeImportSwapFees.js");
+  let sqlSeen = "";
+  const db = { query: async (sql) => { sqlSeen = sql; return { rows: [] }; } };
+  const terms = await partnerTermsById(db, 101);
+  assert.match(sqlSeen, /and active/);
+  assert.equal(terms.get("crypticpump"), undefined);
+  assert.deepEqual(splitFee("1000", terms.get("crypticpump") || null), { creatorRaw: "500", partnerRaw: "0", partnerId: null });
+});
