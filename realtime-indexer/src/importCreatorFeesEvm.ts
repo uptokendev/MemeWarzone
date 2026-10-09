@@ -466,12 +466,30 @@ export async function readEvmPayableCoins(db: Queryable, chainId: number, vault:
           and i.ownership_verified_at is not null
           and i.ownership_verified_at <= $3::timestamptz - make_interval(days => $4::int)
         order by lower(i.token_address), i.ownership_verified_at desc
+     ),
+     -- Graduated MemeWarzone coins (payee_kind 'campaign_creator', migration 20261009_000020): paid to the campaign's
+     -- creator at payout time, no claim, no hold, never expire. Imports keep the verified owner, the hold and the expiry.
+     creators as (
+       select distinct on (lower(m.token_address)) lower(m.token_address) as token_address, m.creator_address
+         from public.campaigns m
+        where m.chain_id = $1 and m.token_address is not null and m.creator_address is not null
+        order by lower(m.token_address), m.created_at
+     ),
+     payable as (
+       select o.token_address, o.project_owner_wallet as payee, c.fee_id, c.creator_raw, c.occurred_at
+         from owners o
+         join public.import_creator_fees c on c.chain_id = $1 and c.token_address = o.token_address and c.status = 'waiting'
+          and c.payee_kind = 'import_owner' and c.expires_at > $3
+       union all
+       select k.token_address, k.creator_address as payee, c.fee_id, c.creator_raw, c.occurred_at
+         from creators k
+         join public.import_creator_fees c on c.chain_id = $1 and c.token_address = k.token_address and c.status = 'waiting'
+          and c.payee_kind = 'campaign_creator'
      )
-     select o.token_address, o.project_owner_wallet, c.fee_id::text as fee_id, c.creator_raw::text as creator_raw
-       from owners o
-       join public.import_creator_fees c on c.chain_id = $1 and c.token_address = o.token_address and c.status = 'waiting' and c.expires_at > $3
-       join public.finance_import_swap_fees f on f.id = c.fee_id and f.fee_receiver = $2
-      order by o.token_address, c.occurred_at, c.fee_id`,
+     select p.token_address, p.payee as project_owner_wallet, p.fee_id::text as fee_id, p.creator_raw::text as creator_raw
+       from payable p
+       join public.finance_import_swap_fees f on f.id = p.fee_id and f.fee_receiver = $2
+      order by p.token_address, p.occurred_at, p.fee_id`,
     [chainId, vault, now.toISOString(), holdDays],
   );
   const byToken = new Map<string, PayableCoin>();

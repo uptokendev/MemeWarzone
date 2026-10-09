@@ -26,12 +26,12 @@ const TOKEN2 = "0x00000000000000000000000000000000000000c2";
 const NOW = new Date("2026-11-01T12:00:00Z");
 const DAY = 86_400;
 
-type Accrual = { fee_id: string; chain_id: number; token_address: string; creator_raw: bigint; status: string; transfer_id: number | null; expires_at: Date; occurred_at: Date };
+type Accrual = { fee_id: string; chain_id: number; token_address: string; creator_raw: bigint; status: string; transfer_id: number | null; expires_at: Date | null; occurred_at: Date; payee_kind?: string };
 type Transfer = { id: number; chain_id: number; kind: string; from_address: string; to_address: string; token_address: string | null; amount_raw: bigint; status: string; signature: string; last_valid_block_height: number; error: string | null; created_at: Date; updated_at: Date; partner_id?: string | null };
 type PartnerRow = Record<string, unknown> & { id: string };
 type Owner = { token: string; owner: string; verifiedAt: Date };
 
-function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; creator_raw: bigint }>; owners?: Owner[]; held?: string[]; halves?: bigint; now?: Date; partners?: PartnerRow[] | "missing"; partnerEarned?: Record<string, bigint> }) {
+function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; creator_raw: bigint }>; owners?: Owner[]; campaigns?: Array<{ token: string; creator: string }>; held?: string[]; halves?: bigint; now?: Date; partners?: PartnerRow[] | "missing"; partnerEarned?: Record<string, bigint> }) {
   const clock = { now: init.now || NOW };
   let state = {
     accruals: (init.accruals || []).map((a, i) => ({ chain_id: CHAIN, token_address: TOKEN, status: "waiting", transfer_id: null, expires_at: new Date(clock.now.getTime() + 30 * DAY * 1000), occurred_at: new Date(clock.now.getTime() - (100 - i) * 1000), ...a }) as Accrual),
@@ -87,7 +87,7 @@ function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; cr
       }
       if (s.startsWith("update public.import_creator_fees set status = 'expired'")) {
         const at = new Date(params[1]);
-        const hit = state.accruals.filter((a) => a.chain_id === params[0] && a.status === "waiting" && a.expires_at <= at);
+        const hit = state.accruals.filter((a) => a.chain_id === params[0] && a.status === "waiting" && a.expires_at != null && a.expires_at <= at);
         hit.forEach((a) => { a.status = "expired"; });
         return { rows: [], rowCount: hit.length };
       }
@@ -104,10 +104,18 @@ function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; cr
         const rows: any[] = [];
         for (const o of (init.owners || []).filter((x) => x.verifiedAt.getTime() <= now.getTime() - holdMs).sort((a, b) => a.token.localeCompare(b.token))) {
           state.accruals
-            .filter((a) => a.chain_id === params[0] && a.token_address === o.token.toLowerCase() && a.status === "waiting" && a.expires_at > now)
+            .filter((a) => a.chain_id === params[0] && a.token_address === o.token.toLowerCase() && a.status === "waiting" && (a.payee_kind ?? "import_owner") === "import_owner" && a.expires_at != null && a.expires_at > now)
             .sort((a, b) => a.occurred_at.getTime() - b.occurred_at.getTime())
             .forEach((a) => rows.push({ token_address: a.token_address, project_owner_wallet: o.owner, fee_id: a.fee_id, creator_raw: a.creator_raw.toString() }));
         }
+        // Graduated MemeWarzone coins: paid to the campaign creator, no hold, no expiry.
+        for (const m of (init.campaigns || []).slice().sort((a, b) => a.token.localeCompare(b.token))) {
+          state.accruals
+            .filter((a) => a.chain_id === params[0] && a.token_address === m.token.toLowerCase() && a.status === "waiting" && a.payee_kind === "campaign_creator")
+            .sort((a, b) => a.occurred_at.getTime() - b.occurred_at.getTime())
+            .forEach((a) => rows.push({ token_address: a.token_address, project_owner_wallet: m.creator.toLowerCase(), fee_id: a.fee_id, creator_raw: a.creator_raw.toString() }));
+        }
+        rows.sort((x, y) => x.token_address.localeCompare(y.token_address));
         return { rows };
       }
       if (s.startsWith("select * from public.import_fee_partners")) {
@@ -558,4 +566,25 @@ test("partners: creators first and payoutsPerPass counts both; dry run writes no
   const noTable = await pass(fakeDb({ accruals: accruals([500n]), owners: [verified()], partners: "missing" }), fakeChain({}));
   assert.equal(noTable.payouts.length, 1);
   assert.equal(noTable.partnerPayouts.length, 0);
+});
+
+test("graduated MemeWarzone coin: paid to the campaign creator at once (no claim, no hold), never expires; imports unchanged", async () => {
+  const far = new Date(NOW.getTime() + 400 * DAY * 1000);
+  const db = fakeDb({
+    accruals: [
+      { fee_id: "g1", creator_raw: 300n, token_address: TOKEN2.toLowerCase(), payee_kind: "campaign_creator", expires_at: null },
+      { fee_id: "g2", creator_raw: 400n, token_address: TOKEN2.toLowerCase(), payee_kind: "campaign_creator", expires_at: null },
+      { fee_id: "i1", creator_raw: 500n },
+    ],
+    owners: [],
+    campaigns: [{ token: TOKEN2, creator: OWNER2 }],
+  });
+  const out = await pass(db, fakeChain({}), false);
+  assert.deepEqual(out.payouts, [{ token: TOKEN2.toLowerCase(), owner: OWNER2, amount: "700", hash: null }], "graduated rows pay the creator; the unclaimed import row waits");
+  db.clock.now = far;
+  await pass(db, fakeChain({}), true);
+  const byId = Object.fromEntries(db.state.accruals.map((a: any) => [a.fee_id, a.status]));
+  assert.notEqual(byId.g1, "expired");
+  assert.notEqual(byId.g2, "expired");
+  assert.equal(byId.i1, "expired", "the unclaimed import row still expires after 90 days");
 });
