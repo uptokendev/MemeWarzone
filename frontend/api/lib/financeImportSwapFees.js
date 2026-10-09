@@ -457,11 +457,15 @@ export async function readActivePartners(db, chainId) {
   }
 }
 
-/** Split terms of every partner on a chain, inactive ones too (a swap built while active still counts). */
+/**
+ * Split terms of the active partners on a chain. A partner that is switched off earns nothing on swaps that
+ * land after that, even through its old widget code: its part stays ours, the creator's half is unchanged
+ * (founder, 2026-10-09). What it earned while active is still paid (the worker pays recorded partner_raw).
+ */
 export async function partnerTermsById(db, chainId) {
   if (!db) return new Map();
   try {
-    const { rows } = await db.query(`select id, creator_bps, partner_bps from public.import_fee_partners where chain_id = $1`, [chainId]);
+    const { rows } = await db.query(`select id, creator_bps, partner_bps from public.import_fee_partners where chain_id = $1 and active`, [chainId]);
     return new Map(rows.map((row) => [String(row.id), { id: String(row.id), creatorBps: Number(row.creator_bps), partnerBps: Number(row.partner_bps) }]));
   } catch (error) {
     if (error?.code === "42P01") return new Map();
