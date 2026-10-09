@@ -1,6 +1,13 @@
 import { apiFetch } from "@/lib/apiBase";
 import { getBnbCampaignFeedChainIds } from "@/lib/feedChainConfig";
-import { BNB_CHAIN_ID, isSolanaChainId } from "@/lib/chainConfig";
+import {
+  BNB_CHAIN_ID,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+  SOLANA_CHAIN_ID,
+  isAllowedChainId,
+  isSolanaChainId,
+} from "@/lib/chainConfig";
 import {
   isSolanaBase58Address,
   normalizeEvmAddress,
@@ -120,6 +127,47 @@ async function searchProfiles(
     .filter((row): row is TokenSearchResult => Boolean(row));
 }
 
+/**
+ * Every chain the app serves, so search does not depend on the chain the visitor has selected (founder,
+ * 2026-10-09: a Robinhood coin could not be found from the BNB feed). Same per-chain lists as the feeds.
+ */
+export function searchChainIds(): number[] {
+  const chains = [SOLANA_CHAIN_ID, BNB_CHAIN_ID, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID].flatMap((id) => getBnbCampaignFeedChainIds(id));
+  return [...new Set(chains.map(Number))];
+}
+
+/** A pasted contract address, looked up on every chain at once (api/searchAddress.js). */
+async function searchAddress(query: string, signal?: AbortSignal): Promise<TokenSearchResult[]> {
+  const raw = query.trim();
+  if (!normalizeEvmAddress(raw) && !isSolanaBase58Address(raw)) return [];
+  const res = await apiFetch(`/api/search/address?address=${encodeURIComponent(raw)}`, { method: "GET", signal });
+  if (!res.ok) return [];
+  const body = await res.json().catch(() => null);
+  const rows: Array<Record<string, unknown>> = Array.isArray(body?.items) ? body.items : [];
+  return rows
+    .filter((row) => isAllowedChainId(Number(row.chainId)))
+    .map((row): TokenSearchResult | null => {
+      const chainId = Number(row.chainId);
+      if (row.kind === "import") {
+        const token = String(row.tokenAddress || "");
+        return {
+          kind: "token",
+          campaignAddress: token,
+          tokenAddress: token,
+          name: String(row.name || row.symbol || "Imported coin"),
+          symbol: String(row.symbol || ""),
+          status: "graduated",
+          logoURI: row.logoURI ? String(row.logoURI) : undefined,
+          chainId,
+          marketcapBnb: null,
+          href: `/token/${encodeURIComponent(token)}?chainId=${chainId}`,
+        };
+      }
+      return mapCampaignRow({ ...row, isDexTrading: row.graduated }, chainId);
+    })
+    .filter((row): row is TokenSearchResult => Boolean(row));
+}
+
 function walletResult(query: string, chainId: number): TokenSearchResult | null {
   const raw = query.trim();
   const evm = normalizeEvmAddress(raw);
@@ -232,33 +280,44 @@ async function searchImports(chainId: number, q: string, limit: number, signal?:
 
 export async function searchTokensRemote(
   q: string,
-  opts?: { limit?: number; signal?: AbortSignal; chainId?: number },
+  opts?: { limit?: number; signal?: AbortSignal; chainId?: number; chainOnly?: boolean },
 ): Promise<TokenSearchResult[]> {
   const query = String(q || "").trim();
   if (query.length < 2) return [];
   const limit = opts?.limit ?? 12;
-  const chainIds = getBnbCampaignFeedChainIds(opts?.chainId);
-  const [tokenPages, profilePages, draftPages, importPages] = await Promise.all([
+  // Every chain, unless the caller picks a coin for one chain (the battle coin picker).
+  const chainIds = opts?.chainOnly ? getBnbCampaignFeedChainIds(opts?.chainId) : searchChainIds();
+  const profileChain = Number(opts?.chainId || chainIds[0] || BNB_CHAIN_ID);
+  const [tokenPages, profiles, draftPages, importPages, addressMatches] = await Promise.all([
     Promise.all(chainIds.map((id) => searchChain(id, query, limit, opts?.signal).catch(() => []))),
-    Promise.all(chainIds.map((id) => searchProfiles(id, query, 8, opts?.signal).catch(() => []))),
+    // Profiles are the same on every chain: one lookup.
+    opts?.chainOnly ? Promise.resolve([] as TokenSearchResult[]) : searchProfiles(profileChain, query, 8, opts?.signal).catch(() => []),
     // Drafts were never queried here, so a published promotion could not be
     // found by name or ticker even though its page was public.
     Promise.all(chainIds.map((id) => searchDrafts(id, query, 8, opts?.signal).catch(() => []))),
     Promise.all(chainIds.map((id) => searchImports(id, query, 8, opts?.signal).catch(() => []))),
+    searchAddress(query, opts?.signal)
+      .then((rows) => (opts?.chainOnly ? rows.filter((row) => chainIds.includes(row.chainId)) : rows))
+      .catch(() => [] as TokenSearchResult[]),
   ]);
   const merged = new Map<string, TokenSearchResult>();
-  for (const row of [...tokenPages.flat(), ...importPages.flat(), ...profilePages.flat(), ...draftPages.flat()]) {
-    // One result per person: profiles are the same on every chain.
-    const key = row.kind === "wallet" ? `wallet:${row.campaignAddress.toLowerCase()}` : `${row.kind}:${row.chainId}:${row.tokenAddress || row.campaignAddress}`;
-    if (!merged.has(key)) merged.set(key, row);
+  const key = (row: TokenSearchResult) =>
+    row.kind === "wallet"
+      ? `wallet:${row.campaignAddress.toLowerCase()}`
+      : `${row.kind}:${row.chainId}:${isSolanaChainId(row.chainId) ? row.tokenAddress || row.campaignAddress : String(row.tokenAddress || row.campaignAddress).toLowerCase()}`;
+  // An exact address match first, then the rest; one result per person (profiles are the same on every chain).
+  for (const row of [...addressMatches, ...tokenPages.flat(), ...importPages.flat(), ...profiles, ...draftPages.flat()]) {
+    if (!merged.has(key(row))) merged.set(key(row), row);
   }
+  const exact = new Set(addressMatches.map(key));
   const ranked = [...merged.values()]
-    .map((row) => ({ row, score: scoreRow(query, row) }))
+    .map((row) => ({ row, score: exact.has(key(row)) ? 2000 : scoreRow(query, row) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map((entry) => entry.row);
 
-  const wallet = walletResult(query, Number(opts?.chainId || chainIds[0] || BNB_CHAIN_ID));
+  // A pasted address that is a coin opens the coin, not a wallet profile.
+  const wallet = addressMatches.length ? null : walletResult(query, profileChain);
   if (wallet && !ranked.some((row) => row.kind === "wallet" && row.href === wallet.href)) {
     ranked.push(wallet);
   }
