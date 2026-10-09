@@ -23,6 +23,7 @@
 import { getRpcUrls } from "./getServerReadProvider.js";
 import { isOwnerWallet } from "../../shared/ownerWallets.mjs";
 import { solanaFeeAccount, JUPITER_PROGRAM, KYBER_ROUTER } from "../importSwap.js";
+import { evmFingerprint, partnersForFingerprints, solanaFingerprintFromLanded } from "./importSwapFingerprint.js";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 // keccak256("Deposit(address,uint256,uint256)"), NativeTreasuryVaultBase / ProtocolRevenueVault.
@@ -174,6 +175,8 @@ export function solanaFeeRow(tx, { signature, feeAccount, feeOwner }) {
     chainId: 101, txHash: signature, logIndex: 0, blockNumber: tx.slot ?? null,
     occurredAt: tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : null,
     wallet, tokenAddress: token, side, feeRaw: delta.toString(), feeAsset: "SOL",
+    // Swap-widget partner attribution (importSwapFingerprint.js); not stored, matched before the split.
+    fingerprint: solanaFingerprintFromLanded(tx, wallet),
     feeReceiver: feeAccount, router: JUPITER_PROGRAM, source: "solana_fee_account",
     internalWallet: Boolean(wallet && isOwnerWallet(wallet)), feeOwner,
   };
@@ -267,6 +270,7 @@ export async function scanEvmImportSwapFees({ source, rpc, fromBlock, maxBlocks 
         chainId: source.chainId, txHash: String(log.transactionHash).toLowerCase(), logIndex: Number(hexToBig(log.logIndex)), blockNumber,
         occurredAt: new Date(blockTimes.get(blockNumber) * 1000).toISOString(),
         wallet, tokenAddress: token, side, feeRaw: amount.toString(), feeAsset: source.asset,
+        fingerprint: evmFingerprint(tx?.to, tx?.input, tx?.value),
         feeReceiver: source.receiver, router: source.payers ? topicAddress(log.topics[1]) : source.payer, source: "evm_vault_deposit",
         internalWallet: Boolean(wallet && isOwnerWallet(wallet)),
       });
@@ -411,6 +415,7 @@ export function partnerSplitSources(partners, env = process.env) {
   for (const p of partners || []) {
     const chainId = Number(p.chain_id);
     const partner = { id: String(p.id), creatorBps: Number(p.creator_bps), partnerBps: Number(p.partner_bps) };
+    if (!p.fee_account) continue; // attributed by fingerprint, no receiver of its own
     if (chainId === 101) {
       out.push({ chainId, kind: "solana", asset: "SOL", decimals: 9, feeAccount: String(p.fee_account), split: true, partner });
       continue;
@@ -436,6 +441,18 @@ export async function readActivePartners(db, chainId) {
     return rows;
   } catch (error) {
     if (error?.code === "42P01") return [];
+    throw error;
+  }
+}
+
+/** Split terms of every partner on a chain, inactive ones too (a swap built while active still counts). */
+export async function partnerTermsById(db, chainId) {
+  if (!db) return new Map();
+  try {
+    const { rows } = await db.query(`select id, creator_bps, partner_bps from public.import_fee_partners where chain_id = $1`, [chainId]);
+    return new Map(rows.map((row) => [String(row.id), { id: String(row.id), creatorBps: Number(row.creator_bps), partnerBps: Number(row.partner_bps) }]));
+  } catch (error) {
+    if (error?.code === "42P01") return new Map();
     throw error;
   }
 }
@@ -514,7 +531,18 @@ async function ingestSplitReceiver({ db, source, env, fetchImpl, dryRun, fromScr
   const scan = source.kind === "solana"
     ? await scanSolanaImportSwapFees({ source, rpc: call, cursor })
     : await scanEvmImportSwapFees({ source, rpc: call, fromBlock: cursor == null ? null : Number(cursor) });
-  const rows = scan.rows.map((row) => ({ ...row, ...splitFee(row.feeRaw, source.partner || null) }));
+  // A partner's own receiver splits by that partner; elsewhere a recorded build fingerprint names the partner.
+  let byFingerprint = new Map();
+  let partnerTerms = new Map();
+  if (!source.partner && scan.rows.some((row) => row.fingerprint)) {
+    byFingerprint = await partnersForFingerprints(db, source.chainId, scan.rows.map((row) => row.fingerprint));
+    if (byFingerprint.size) partnerTerms = await partnerTermsById(db, source.chainId);
+  }
+  const rows = scan.rows.map((row) => {
+    const partnerId = source.partner ? null : byFingerprint.get(row.fingerprint);
+    const partner = source.partner || (partnerId ? partnerTerms.get(partnerId) || null : null);
+    return { ...row, ...splitFee(row.feeRaw, partner) };
+  });
   const nextCursor = source.kind === "solana" ? scan.cursor : String(scan.nextBlock);
   const stored = dryRun ? { inserted: 0, accrued: 0 } : await storeSplitImportSwapFees(db, source, rows, nextCursor);
   const summary = { chainId: source.chainId, receiver, split: true, ...(source.partner ? { partner: source.partner.id } : {}), dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: rows.length, ...stored, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };

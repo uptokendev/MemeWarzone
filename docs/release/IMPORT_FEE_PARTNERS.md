@@ -6,18 +6,28 @@ creator_bps 5000, partner_bps 2500, of the fee).
 
 ## How it works
 
-- The partner mounts the widget with `partner: "<id>"`. The API builds the same Jupiter swap with the same 1%,
-  only the fee account is the partner's: a wrapped-SOL account **owned by our collector** `F12Pd...`. The API
-  checks that on chain before using it; anything else falls back to the default fee account.
-- The trader's transaction does not change (instructions, accounts, signers). Proven 2026-10-09: a Jupiter swap
-  with a non-standard WSOL fee account simulates cleanly on mainnet.
-- The finance cron reads the partner account as its own receiver: fee rows get `partner_id` / `partner_raw`;
-  creator accruals as usual (90 days, paid to the verified owner).
-- The indexer worker moves the partner account's balance into the collector account (kind `consolidate`), then
-  pays creators, then the partner (kind `partner`, to `payout_wallet`, minimum `IMPORT_PARTNER_MIN_PAYOUT_LAMPORTS`,
-  default 0.05 SOL, same caps), then sweeps our part.
+- The partner mounts the widget with `partner: "<id>"`. The swap is the ordinary one: same route, same 1%, same
+  fee receiver (Solana collector account, EVM ImportFeeVault). Nothing in the trader's transaction changes.
+- When the API builds a swap for a partner it records a **fingerprint** of what it built
+  (`import_swap_fingerprints`, `api/lib/importSwapFingerprint.js`):
+  - EVM: `keccak256(to : data : value)` of the built transaction (wallets sign it as built).
+  - Solana: `sha256(wallet : Jupiter instruction data)`. Wallets add their own instructions (compute budget,
+    Lighthouse) and recompile the message, but leave the Jupiter instruction unchanged. Proven 2026-10-09 with a
+    real Phantom swap (5QZx9vUK...): the landed transaction's fingerprint equals the stored one.
+- The finance cron computes the same fingerprint from each landed fee transaction; on a match the fee row gets
+  `partner_id` / `partner_raw` and splits by the partner row (default 0.50 creator / 0.25 partner / 0.25 us).
+- Only the API builds the data, so no one can claim another swap for a partner.
+- Adding a partner is **one row per chain**: no account, no contract, no deploy.
+- Payouts: Solana worker pays the partner's share to `payout_wallet` (kind `partner`, minimum
+  `IMPORT_PARTNER_MIN_PAYOUT_LAMPORTS`, default 0.05 SOL, same caps), after creators, before our sweep. EVM payouts
+  from the default ImportFeeVault are in the EVM worker (gen-7).
 - Revenue counts `fee_raw - creator_raw - partner_raw`.
-- The partner can verify every fee from its site on Solscan: its fee account's inflows.
+- Fallback (Solana): a partner row with `fee_account` (a WSOL account owned by our collector, made with
+  `scripts/create-import-partner-fee-account.mjs`) uses that account instead of fingerprints; the worker gathers
+  it into the collector account (kind `consolidate`).
+- Partners check their swaps through the list we give them (each with its explorer link).
+- Robinhood: the API must build the swap to fingerprint it (today the browser builds Robinhood import swaps);
+  that comes with the widget's BNB / Robinhood support.
 
 ## Auto-import
 
@@ -29,18 +39,16 @@ turns it off.
 ## Add a partner (founder)
 
 1. Production SQL: `db/migrations/20261009_000010_import_fee_partners.sql` (before the merge).
-2. Create the partner's fee account (the collector pays ~0.002 SOL rent):
-   ```bash
-   cd ~/mwz-wt/import-creator-fees/frontend
-   node scripts/create-import-partner-fee-account.mjs --partner crypticpump --name CrypticPump --payout <their Solana wallet>
-   node scripts/create-import-partner-fee-account.mjs --partner crypticpump --name CrypticPump --payout <their Solana wallet> --send
+2. One row per chain the partner uses (Supabase SQL editor, production):
+   ```sql
+   insert into public.import_fee_partners (id, chain_id, name, payout_wallet, creator_bps, partner_bps)
+   values ('crypticpump', 101, 'CrypticPump', '<their Solana wallet>', 5000, 2500),
+          ('crypticpump', 56,  'CrypticPump', '<their BNB wallet>',    5000, 2500),
+          ('crypticpump', 4663,'CrypticPump', '<their Robinhood wallet>', 5000, 2500);
    ```
-   It prints the `insert into public.import_fee_partners ...` line: run it in the Supabase SQL editor.
-3. Give the partner their snippet: `MemeWarzoneSwap.mount("#mwz-swap", { mint: "<mint>", partner: "crypticpump" })`.
+3. Their snippet: `MemeWarzoneSwap.mount("#mwz-swap", { mint: "<mint>", partner: "crypticpump" })`.
 
-## BNB / Robinhood (no contract change)
+## BNB / Robinhood
 
-One more `ImportFeeVault` deployment per partner per chain (existing `RecruiterRewardsVault` bytecode), set as the
-Kyber fee receiver / Universal Router `PAY_PORTION` recipient for that partner's widget swaps. A partner row with
-`chain_id` 56 / 4663 (or testnets 97 / 46630), `fee_account` = that vault and `start_block` = its deploy block makes
-the finance cron read it. EVM payouts of the partner share belong to the EVM worker (gen-7, CO-IMPORT-SWAP-FEE).
+No contract change and no extra vault: the fee goes to the chain's ImportFeeVault as for every import swap; the
+fingerprint names the partner. The EVM worker (gen-7) pays the partner share from that vault with `payout(to, amount)`.

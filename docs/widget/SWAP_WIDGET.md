@@ -27,7 +27,7 @@ Try it first: `https://app.memewar.zone/widget/example.html?mint=YOUR_TOKEN_MINT
 | `slippageBps` | `100` | Allowed price movement, in basis points (100 = 1%, max 1500) |
 | `wallet` | the page's wallet | Your own wallet object, if your site already connects one. It needs `publicKey` and `signAndSendTransaction(tx)`; `connect()` is optional |
 | `onSwap` | none | Called after a confirmed swap with `{ signature, side, mint }` |
-| `partner` | none | Partner id from MemeWarzone (for example `"crypticpump"`). Imported-coin fees from your widget go to your own fee account and split 0.5% creator / 0.25% partner / 0.25% MemeWarzone; your share is paid to your wallet automatically |
+| `partner` | none | Partner id from MemeWarzone (for example `"crypticpump"`). Swaps from your widget are recorded as yours; on imported coins the 1% fee splits 0.5% creator / 0.25% partner / 0.25% MemeWarzone, and your share is paid to your wallet automatically. The swap your visitors sign does not change |
 
 ## How it works
 
