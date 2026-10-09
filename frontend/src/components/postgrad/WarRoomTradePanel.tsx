@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { assertWalletOnChain } from "@/lib/walletChainGuard.mjs";
+import { gasWithHeadroom } from "@/lib/evmGasHeadroom.mjs";
 import { Contract, ethers } from "ethers";
 import type { CampaignInfo, CampaignMetrics } from "@/lib/launchpadClient";
 import { isUnsupportedContractMethod } from "@/lib/launchpadClient";
@@ -1096,14 +1097,10 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
             limit: maxCostWei,
           });
           const auth = authResponse.authorization;
-          tx = await campaignWrite.buyExactTokensAuthorized(
-            amountWei,
-            maxCostWei,
-            auth.routeProfileId,
-            Math.floor(new Date(auth.validUntil).getTime() / 1000),
-            auth.signature,
-            overrides,
-          );
+          const buyArgs = [amountWei, maxCostWei, auth.routeProfileId, Math.floor(new Date(auth.validUntil).getTime() / 1000), auth.signature] as const;
+          // The fixed limit stays the floor; gen-7 sell-out buys and Robinhood's L1 data cost can need more.
+          const buyGas = await gasWithHeadroom(() => campaignWrite.buyExactTokensAuthorized.estimateGas(...buyArgs, { value: maxCostWei }), LEGACY_TRADE_GAS_LIMIT);
+          tx = await campaignWrite.buyExactTokensAuthorized(...buyArgs, { ...overrides, gasLimit: buyGas });
         } catch (error) {
           if (authLooksRequired(error)) throw error;
           tx = await campaignWrite.buyExactTokens(amountWei, maxCostWei, overrides);
@@ -1155,14 +1152,9 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
             limit: minPayoutWei,
           });
           const auth = authResponse.authorization;
-          tx = await campaignWrite.sellExactTokensAuthorized(
-            amountWei,
-            minPayoutWei,
-            auth.routeProfileId,
-            Math.floor(new Date(auth.validUntil).getTime() / 1000),
-            auth.signature,
-            overrides,
-          );
+          const sellArgs = [amountWei, minPayoutWei, auth.routeProfileId, Math.floor(new Date(auth.validUntil).getTime() / 1000), auth.signature] as const;
+          const sellGas = await gasWithHeadroom(() => campaignWrite.sellExactTokensAuthorized.estimateGas(...sellArgs, {}), LEGACY_TRADE_GAS_LIMIT);
+          tx = await campaignWrite.sellExactTokensAuthorized(...sellArgs, { ...overrides, gasLimit: sellGas });
         } catch (error) {
           if (authLooksRequired(error)) throw error;
           tx = await campaignWrite.sellExactTokens(amountWei, minPayoutWei, overrides);
