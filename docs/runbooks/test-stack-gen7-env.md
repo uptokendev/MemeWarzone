@@ -9,12 +9,11 @@ Start blocks: BNB gen-7 factory 135763617 (fees stack deployed just before it; n
 Robinhood gen-7 factory 131592000 (first factory setter at 131592712). Import vaults: 97 at 135763855,
 46630 at 131595355.
 
-## Database (staging, before the redeploy)
+## Database (staging)
 
-1. `bash database/staging_apply_2026_10_04_catchup.sh apply` (12 migrations, dry run was clean)
-2. `db/migrations/20261008_000040_evm_holder_batches_per_vault.sql` (holder batches keyed per vault)
-3. `db/migrations/20261008_000050_payout_watchdog_state.sql` (watchdog state; harmless while the watchdog is off)
-4. `20261008_000020_import_creator_fees.sql` is already on staging (applied by the import-fees session).
+Done 2026-10-09: `database/staging_apply_2026_10_04_catchup.sh apply` (15 files incl. analytics rollups,
+holder batches per vault, watchdog state); read-only check afterwards: nothing missing, `evm_holder_batches` keyed
+(chain_id, vault_address, week_id). `20261008_000020_import_creator_fees.sql` was already on staging.
 
 ## Indexer
 
