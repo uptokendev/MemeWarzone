@@ -1,0 +1,32 @@
+{
+  "kind": "import-fee-vault",
+  "changeOrder": "CO-IMP rev 2 CI1",
+  "network": "robinhoodMainnet",
+  "chainId": 4663,
+  "profile": "mainnet",
+  "contract": "RecruiterRewardsVault (unchanged bytecode, used as ImportFeeVault)",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "admin": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "protocolRevenueVault": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+  "startedAt": "2026-10-09T17:10:18.144Z",
+  "balanceBefore": "4227396526221084",
+  "operator": "0x03F9deC9961033c0CaA7a66373B004D36D375e83",
+  "caps": {
+    "perTx": "500000000000000000",
+    "daily": "3000000000000000000",
+    "perTxNative": "0.5",
+    "dailyNative": "3.0"
+  },
+  "vault": "0x41076e191509D4E307a8F8B40d432b9AaA36F953",
+  "deployTx": "0x45ea5763eaad6a594182bd578321b28e486f24ef3cf24c8caaf95494ea017e39",
+  "startBlock": 84322304,
+  "runtimeCodeEqualsLiveRecruiterVault": "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7",
+  "batchFile": "/home/patrick/mwz-wt/evm-gen7/deployments/robinhood/mainnet.IF1-import-fee-vault.safe-batch.json",
+  "status": "deployed-paused (Safe batch IF1 pending)",
+  "env": {
+    "IMPORT_FEE_VAULT_4663": "0x41076e191509D4E307a8F8B40d432b9AaA36F953",
+    "IMPORT_FEE_PAYOUT_OPERATOR_4663": "0x03F9deC9961033c0CaA7a66373B004D36D375e83"
+  },
+  "balanceAfter": "4213216594061084",
+  "finishedAt": "2026-10-09T17:10:22.716Z"
+}

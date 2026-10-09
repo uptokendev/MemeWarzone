@@ -2,7 +2,8 @@
  * Swaps for imported memecoins (founder, 2026-09-25). The API quotes and builds (it owns the fee
  * terms -- api/importSwap.js: 0.5%, 1% with half to the coin's creator once a chain switches); this
  * module checks what came back and has the wallet sign it.
- * Solana: Jupiter. BNB: KyberSwap restricted to PancakeSwap pools. Our launchpad CREATE/BUY/SELL
+ * Solana: Jupiter. BNB: KyberSwap over the coin's on-chain DEX pools (PancakeSwap, Topaz, Uniswap,
+ * THENA, Biswap, ...; api/importSwap.js KYBER_BSC_POOL_SOURCES). Our launchpad CREATE/BUY/SELL
  * never come through here.
  */
 import { Contract, ethers, type JsonRpcSigner } from "ethers";
@@ -21,6 +22,30 @@ export const IMPORT_SWAP_FEE_LABEL = "0.5%";
 export function importSwapFeeLabel(feeBps: number) {
   return `${Number((feeBps / 100).toFixed(2))}%`;
 }
+const KYBER_VENUE_NAMES: Array<[string, string]> = [
+  ["pancake", "PancakeSwap"],
+  ["topazdex", "Topaz"],
+  ["uniswap", "Uniswap"],
+  ["thena", "THENA"],
+  ["biswap", "Biswap"],
+  ["babydogeswap", "BabyDogeSwap"],
+  ["babyswap", "BabySwap"],
+  ["bakeryswap", "BakerySwap"],
+  ["apeswap", "ApeSwap"],
+  ["sushiswap", "SushiSwap"],
+  ["squadswap", "SquadSwap"],
+  ["mdex", "MDEX"],
+  ["flap", "Flap"],
+];
+
+/** "PancakeSwap", "Topaz", "THENA": the DEX name of a KyberSwap route hop (its exchange id); unknown ids title-cased. */
+export function importSwapVenueLabel(exchange: string) {
+  const id = String(exchange || "").trim().toLowerCase();
+  const known = KYBER_VENUE_NAMES.find(([prefix]) => id.startsWith(prefix));
+  if (known) return known[1];
+  return id.replace(/-v\d+$/, "").replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) || "DEX";
+}
+
 const KYBER_ROUTER = "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5";
 export { assertJupiterSwapForWallet };
 

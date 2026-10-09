@@ -41,7 +41,7 @@ test("the built transaction must be the wallet's alone, via Jupiter, paying our 
   assert.throws(() => assertSolanaSwapTransaction(jupiterLikeTx(payer, { feeAccount: Keypair.generate().publicKey.toBase58() }), { wallet, feeAccount }), /fee account/);
 });
 
-test("a Kyber route must be BNB<->token on PancakeSwap pools, 0.5% in BNB to the vault", () => {
+test("a Kyber route must be BNB<->token on allowed DEX pools, 0.5% in BNB to the vault", () => {
   const token = "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82";
   const buy = {
     tokenIn: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
@@ -55,7 +55,64 @@ test("a Kyber route must be BNB<->token on PancakeSwap pools, 0.5% in BNB to the
   assert.throws(() => assertBscRouteTerms({ ...buy, extraFee: { ...buy.extraFee, feeReceiver: "0x0000000000000000000000000000000000000001" } }, { token, side: "buy" }), /platform fee/);
   assert.throws(() => assertBscRouteTerms({ ...buy, extraFee: { ...buy.extraFee, feeAmount: "0" } }, { token, side: "buy" }), /platform fee/);
   assert.throws(() => assertBscRouteTerms({ ...sell, extraFee: buy.extraFee }, { token, side: "sell" }), /platform fee/);
-  assert.throws(() => assertBscRouteTerms({ ...buy, route: [[{ exchange: "biswap" }]] }, { token, side: "buy" }), /PancakeSwap/);
+  assert.doesNotThrow(() => assertBscRouteTerms({ ...buy, route: [[{ exchange: "biswap" }]] }, { token, side: "buy" }), "Biswap pools are allowed since 2026-10-08");
+  assert.throws(() => assertBscRouteTerms({ ...buy, route: [[{ exchange: "bebop" }]] }, { token, side: "buy" }), /on-chain DEX pools/);
+});
+
+// Founder 2026-10-08: an imported BNB coin trades wherever its pool is, always with the fee.
+// One case per venue family; every case must also pass the unchanged fee checks.
+test("Kyber BNB venues: every allowed pool family passes, each with the fee terms enforced", async () => {
+  const { KYBER_BSC_POOL_SOURCES } = await import("./importSwap.js");
+  const token = "0x019078cae01e065acb4189c0a82d0eadf6a1def1";
+  const BNB = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+  const route = (...ids) => ids.map((exchange) => [{ exchange }]);
+  const venues = {
+    pancakeV2: route("pancake"),
+    pancakeV3: route("pancake-v3"),
+    pancakeInfinity: route("pancake-infinity-cl", "pancake-infinity-bin"),
+    topazV2: route("topazdex-v2"),
+    topazV3: route("topazdex-v3"),
+    uniswapV2: route("uniswap"),
+    uniswapV3: route("uniswapv3"),
+    uniswapV4TwoHops: [[{ exchange: "uniswap-v4" }, { exchange: "uniswap-v4" }]],
+    thena: route("thena", "thena-fusion", "thena-fusion-v3"),
+    biswap: route("biswap"),
+    babyDogeSwap: route("babydogeswap"),
+    split: [[{ exchange: "pancake-v3" }], [{ exchange: "topazdex-v2" }]],
+  };
+  for (const [name, hops] of Object.entries(venues)) {
+    for (const exchange of hops.flat().map((hop) => hop.exchange)) assert.ok(KYBER_BSC_POOL_SOURCES.includes(exchange), `${name}: ${exchange} listed`);
+    const buy = { tokenIn: BNB, tokenOut: token, extraFee: { feeAmount: "50", chargeFeeBy: "currency_in", isInBps: true, feeReceiver: VAULT }, route: hops };
+    const sell = { ...buy, tokenIn: token, tokenOut: BNB, extraFee: { ...buy.extraFee, chargeFeeBy: "currency_out" } };
+    assert.doesNotThrow(() => assertBscRouteTerms(buy, { token, side: "buy" }), name);
+    assert.doesNotThrow(() => assertBscRouteTerms(sell, { token, side: "sell" }), name);
+    // The fee terms are the same on every venue.
+    assert.throws(() => assertBscRouteTerms({ ...buy, extraFee: { ...buy.extraFee, feeReceiver: "0x0000000000000000000000000000000000000001" } }, { token, side: "buy" }), /platform fee/, name);
+    assert.throws(() => assertBscRouteTerms({ ...buy, extraFee: { ...buy.extraFee, feeAmount: "0" } }, { token, side: "buy" }), /platform fee/, name);
+    assert.throws(() => assertBscRouteTerms({ ...buy, extraFee: { ...buy.extraFee, isInBps: false } }, { token, side: "buy" }), /platform fee/, name);
+    assert.throws(() => assertBscRouteTerms({ ...sell, extraFee: buy.extraFee }, { token, side: "sell" }), /platform fee/, name);
+    assert.throws(() => assertBscRouteTerms({ ...buy, tokenOut: "0x0000000000000000000000000000000000000002" }, { token, side: "buy" }), /tokens/, name);
+    assert.throws(() => assertBscRouteTerms({ ...buy, extraFee: { ...buy.extraFee, feeAmount: "100", feeReceiver: VAULT } }, { token, side: "buy" }), /platform fee/, `${name}: 1% only through the switch`);
+  }
+});
+
+test("Kyber BNB venues: RFQ / PMM / order-book / lending / wrapper sources and look-alike ids stay refused", async () => {
+  const { KYBER_BSC_POOL_SOURCES } = await import("./importSwap.js");
+  const token = "0x019078cae01e065acb4189c0a82d0eadf6a1def1";
+  const base = { tokenIn: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", tokenOut: token, extraFee: { feeAmount: "50", chargeFeeBy: "currency_in", isInBps: true, feeReceiver: VAULT } };
+  const refused = ["bebop", "hashflow-v3", "native-v1", "native-v2", "native-v3", "pmm-1", "dexalot", "kyberswap-limit-order-v2", "1010-prop", "metric-propamm",
+    "axima-v2", "obric", "tessera", "elfomofi", "swaap-v2", "woofi-v3", "dodo-dpp", "hanji", "euler-swap-v2", "uniswap-v4-euler", "fluid-dex-t1", "aave-v3",
+    "erc4626", "wbeth", "lista-stake", "curve-stable-ng", "ellipsis", "wombat", "synapse", "ktx", "pancake-stable", "", "PANCAKE", "pancake-v3-fake", "topaz"];
+  for (const exchange of refused) {
+    assert.ok(!KYBER_BSC_POOL_SOURCES.includes(exchange), `${exchange} not listed`);
+    assert.throws(() => assertBscRouteTerms({ ...base, route: [[{ exchange }]] }, { token, side: "buy" }), /on-chain DEX pools/, exchange || "(empty)");
+    // One refused hop anywhere in a split refuses the whole route.
+    assert.throws(() => assertBscRouteTerms({ ...base, route: [[{ exchange: "pancake" }], [{ exchange: "topazdex-v2" }, { exchange }]] }, { token, side: "buy" }), /on-chain DEX pools/, exchange || "(empty)");
+  }
+  assert.throws(() => assertBscRouteTerms({ ...base, route: [] }, { token, side: "buy" }), /on-chain DEX pools/, "no hops");
+  assert.throws(() => assertBscRouteTerms({ ...base, route: [[{}]] }, { token, side: "buy" }), /on-chain DEX pools/, "hop without exchange");
+  assert.equal(new Set(KYBER_BSC_POOL_SOURCES).size, KYBER_BSC_POOL_SOURCES.length, "no duplicates");
+  assert.ok(Object.isFrozen(KYBER_BSC_POOL_SOURCES));
 });
 
 test("1% switch (founder 2026-10-08): the Solana rate moves with the collector, never alone", async () => {

@@ -48,6 +48,11 @@ export function importSwapFeeSources(env = process.env) {
     101: { chainId: 101, kind: "solana", asset: "SOL", decimals: 9, feeOwner: String(env.SOLANA_IMPORT_SWAP_FEE_OWNER || "2AMfRaxS9182AESwWRz2TrvUxPqXaUot4wV1oAvjsTrB").trim() },
     56: { chainId: 56, kind: "evm", asset: "BNB", decimals: 18, receiver: String(env.IMPORT_SWAP_FEE_RECEIVER_56 || "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c").trim().toLowerCase(), payer: KYBER_ROUTER.toLowerCase(), startBlock: 125000755, maxRange: 5000, maxBlocksPerRun: 300000, confirmations: 15 },
     4663: { chainId: 4663, kind: "evm", asset: "ETH", decimals: 18, receiver: IMPORT_SWAP_FEE_RECEIVER_4663, payer: UNIVERSAL_ROUTER_4663, startBlock: 77787156, maxRange: 500000, maxBlocksPerRun: 5000000, confirmations: 20 },
+    // Testnets (CO-IMP rev 2 CI5): no old 0.5% receiver, only the ImportFeeVault split source (below);
+    // scan settings as their mainnets, RPC from getRpcUrls (BSC_RPC_HTTP_97 / ROBINHOOD_RPC_HTTP_46630, ...).
+    // Their rows never reach finance: the revenue lanes run per mainnet chain id only.
+    97: { chainId: 97, kind: "evm", asset: "BNB", decimals: 18, receiver: null, payer: null, testnet: true, maxRange: 5000, maxBlocksPerRun: 300000, confirmations: 15 },
+    46630: { chainId: 46630, kind: "evm", asset: "ETH", decimals: 18, receiver: null, payer: null, testnet: true, maxRange: 500000, maxBlocksPerRun: 5000000, confirmations: 20 },
   };
 }
 
@@ -264,8 +269,11 @@ export async function scanEvmImportSwapFees({ source, rpc, fromBlock, maxBlocks 
       const blockNumber = Number(hexToBig(log.blockNumber));
       const [tx, receipt] = await Promise.all([rpc("eth_getTransactionByHash", [log.transactionHash]), rpc("eth_getTransactionReceipt", [log.transactionHash])]);
       if (!blockTimes.has(blockNumber)) blockTimes.set(blockNumber, Number(hexToBig((await rpc("eth_getBlockByNumber", [log.blockNumber, false])).timestamp)));
-      const wallet = String(tx?.from || "").toLowerCase() || null;
-      const { token, side } = evmSwapTokenSide(receipt, wallet, WRAPPED[source.chainId]);
+      let wallet = String(tx?.from || "").toLowerCase() || null;
+      let { token, side } = evmSwapTokenSide(receipt, wallet, WRAPPED[source.chainId]);
+      // ImportSwapFeeRouter (CO-IMP CI4): token, side and trader from its own ImportSwap event, never guessed.
+      const payerAddress = source.payers ? topicAddress(log.topics[1]) : source.payer;
+      if ((source.feeRouters || []).includes(payerAddress)) ({ wallet, token, side } = importSwapRouterAttribution(receipt, payerAddress, log, amount));
       rows.push({
         chainId: source.chainId, txHash: String(log.transactionHash).toLowerCase(), logIndex: Number(hexToBig(log.logIndex)), blockNumber,
         occurredAt: new Date(blockTimes.get(blockNumber) * 1000).toISOString(),
@@ -326,6 +334,7 @@ export async function storeImportSwapFees(db, chainId, rows, cursor) {
 export async function ingestImportSwapFees({ db, chainId, env = process.env, fetchImpl = fetch, dryRun = false, fromScratch = false, fromBlock = null, rpc = null, log = null }) {
   const source = importSwapFeeSources(env)[chainId];
   if (!source) throw new Error(`No import swap fee source for chain ${chainId}.`);
+  if (source.kind === "evm" && !source.receiver) return ingestSplitOnly({ db, source, env, fetchImpl, dryRun, fromScratch, rpc, log });
   let cursor = null;
   if (!fromScratch && db) {
     try {
@@ -391,14 +400,17 @@ export function importSwapFeeSplitSources(env = process.env) {
   const collector = String(env.SOLANA_IMPORT_FEE_COLLECTOR || "").trim();
   if (collector) out.push({ chainId: 101, kind: "solana", asset: "SOL", decimals: 9, feeOwner: collector, split: true });
   const legacy = importSwapFeeSources(env);
-  const defaults = { 56: [KYBER_ROUTER.toLowerCase()], 4663: [UNIVERSAL_ROUTER_4663] };
-  for (const chainId of [56, 4663]) {
+  const defaults = { 56: [KYBER_ROUTER.toLowerCase()], 4663: [UNIVERSAL_ROUTER_4663], 97: [], 46630: [] };
+  for (const chainId of [56, 4663, 97, 46630]) {
     const vault = String(env[`IMPORT_FEE_VAULT_${chainId}`] || "").trim().toLowerCase();
     const startBlock = Number(env[`IMPORT_FEE_VAULT_START_BLOCK_${chainId}`] || 0);
     if (!/^0x[0-9a-f]{40}$/.test(vault) || !Number.isInteger(startBlock) || startBlock <= 0) continue;
     const listed = String(env[`IMPORT_FEE_VAULT_PAYERS_${chainId}`] || "").split(",").map((p) => p.trim().toLowerCase()).filter((p) => /^0x[0-9a-f]{40}$/.test(p));
     const { payer: _payer, receiver: _receiver, startBlock: _start, ...rest } = legacy[chainId];
-    out.push({ ...rest, receiver: vault, payers: listed.length ? listed : defaults[chainId], startBlock, split: true });
+    const feeRouters = importSwapFeeRouters(chainId, env);
+    const payers = listed.length ? listed : [...defaults[chainId], ...feeRouters];
+    if (!payers.length) continue; // e.g. testnet 46630 without a fee router: nothing pays this vault
+    out.push({ ...rest, receiver: vault, payers, startBlock, split: true, feeRouters: feeRouters.filter((r) => payers.includes(r)) });
   }
   return out;
 }
@@ -563,4 +575,57 @@ async function ingestSplitReceiver({ db, source, env, fetchImpl, dryRun, fromScr
   const summary = { chainId: source.chainId, receiver, split: true, ...(source.partner ? { partner: source.partner.id } : {}), dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: rows.length, ...stored, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };
   log?.(summary, rows);
   return summary;
+}
+
+// ------------------------------------------------------------------ ImportSwapFeeRouter (CO-IMP rev 2 CI4 / CI5)
+//
+// BNB coins without a PancakeSwap route trade their Topaz pool through ImportSwapFeeRouter, which pays
+// its fee to the ImportFeeVault (a Deposit with from = the router, like Kyber's). The router is a payer
+// of the split source: IMPORT_SWAP_FEE_ROUTER_<chainId>, added to the default payers (or named in
+// IMPORT_FEE_VAULT_PAYERS_<chainId> when that list is set). On testnet 97 it is the only payer (no Kyber
+// there). Testnet 46630 keeps the fee-less adapter route for imports, so it has no payer and no split
+// source unless a router is deployed there and named in IMPORT_SWAP_FEE_ROUTER_46630.
+// Attribution of a router row comes from the router's own ImportSwap event in the same transaction.
+
+// keccak256("ImportSwap(address,address,uint8,bool,uint256,uint256,uint256,uint256,address)")
+export const IMPORT_SWAP_EVENT_TOPIC = "0xb4f5e1e932a4f5eca5b210d658e3b7fd589d216300f43e4053ca3b770bce6028";
+
+/** Fee routers configured for a chain (IMPORT_SWAP_FEE_ROUTER_<chainId>), lower-cased. */
+export function importSwapFeeRouters(chainId, env = process.env) {
+  return String(env[`IMPORT_SWAP_FEE_ROUTER_${chainId}`] || "").split(",").map((p) => p.trim().toLowerCase()).filter((p) => /^0x[0-9a-f]{40}$/.test(p));
+}
+
+/**
+ * wallet / token / side of a vault Deposit paid by an ImportSwapFeeRouter: its ImportSwap event in the
+ * same receipt. The router pays its fees (Deposits) and then emits ImportSwap, so the event is the first
+ * one from that router after the Deposit whose feeProtocol or feeCreator equals the Deposit's amount.
+ * Nothing found: all null (the row is stored, unattributed, never guessed).
+ */
+export function importSwapRouterAttribution(receipt, router, depositLog, amount) {
+  const depositIndex = Number(hexToBig(depositLog.logIndex));
+  const logs = [...(receipt?.logs || [])].sort((a, b) => Number(hexToBig(a.logIndex)) - Number(hexToBig(b.logIndex)));
+  for (const log of logs) {
+    if (String(log.address || "").toLowerCase() !== router || log.topics?.[0] !== IMPORT_SWAP_EVENT_TOPIC || log.topics.length < 3) continue;
+    if (Number(hexToBig(log.logIndex)) <= depositIndex) continue;
+    const data = String(log.data || "").slice(2);
+    const wordAt = (i) => hexToBig(`0x${data.slice(i * 64, (i + 1) * 64)}`);
+    // data: venue, isBuy, nativeGross, feeProtocol, feeCreator, tokenAmount, recipient
+    if (data.length < 7 * 64) continue;
+    const isBuy = wordAt(1) === 1n;
+    const feeProtocol = wordAt(3);
+    const feeCreator = wordAt(4);
+    if (feeProtocol !== amount && feeCreator !== amount) continue;
+    return { wallet: topicAddress(log.topics[1]), token: topicAddress(log.topics[2]), side: isBuy ? "buy" : "sell" };
+  }
+  return { wallet: null, token: null, side: null };
+}
+
+/** A testnet (no old receiver): only its split receiver, in the same summary shape as ingestImportSwapFees. */
+async function ingestSplitOnly({ db, source, env, fetchImpl, dryRun, fromScratch, rpc, log }) {
+  const split = [];
+  for (const splitSource of importSwapFeeSplitSources(env).filter((s) => s.chainId === source.chainId)) {
+    split.push(await ingestSplitReceiver({ db, source: splitSource, env, fetchImpl, dryRun, fromScratch, rpc, log }));
+  }
+  const complete = split.every((s) => s.complete);
+  return { chainId: source.chainId, dryRun, cursorBefore: null, cursorAfter: null, scanned: 0, found: 0, inserted: 0, feeRaw: "0", asset: source.asset, complete, rows: [], ...(split.length ? { split } : {}) };
 }

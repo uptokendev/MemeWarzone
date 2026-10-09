@@ -1,0 +1,75 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1791565822585,
+  "meta": {
+    "name": "IF1 ImportFeeVault (ETH)",
+    "description": "CO-IMP CI1: ImportFeeVault 0x41076e191509D4E307a8F8B40d432b9AaA36F953 (RecruiterRewardsVault bytecode): setOperator (new import payout operator), setPayoutCaps, setPayoutsPaused(false).",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x41076e191509D4E307a8F8B40d432b9AaA36F953",
+      "value": "0",
+      "data": "0xb3ab15fb00000000000000000000000003f9dec9961033c0caa7a66373b004d36d375e83",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newOperator",
+            "type": "address"
+          }
+        ],
+        "name": "setOperator",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newOperator": "0x03F9deC9961033c0CaA7a66373B004D36D375e83"
+      }
+    },
+    {
+      "to": "0x41076e191509D4E307a8F8B40d432b9AaA36F953",
+      "value": "0",
+      "data": "0x1742e78f00000000000000000000000000000000000000000000000006f05b59d3b2000000000000000000000000000000000000000000000000000029a2241af62c0000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "newMaxPayoutPerTx",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "newDailyPayoutCap",
+            "type": "uint256"
+          }
+        ],
+        "name": "setPayoutCaps",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newMaxPayoutPerTx": "500000000000000000",
+        "newDailyPayoutCap": "3000000000000000000"
+      }
+    },
+    {
+      "to": "0x41076e191509D4E307a8F8B40d432b9AaA36F953",
+      "value": "0",
+      "data": "0x9e97defb0000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setPayoutsPaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "false"
+      }
+    }
+  ]
+}
