@@ -2,12 +2,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { cp } from "@/components/token/coinPageStyles";
 import { useWallet } from "@/contexts/WalletContext";
+import { useFeedSession } from "@/hooks/useFeedSession";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { getActiveWalletKind } from "@/lib/activeWalletChain";
+import { getActiveChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { openFeedSession, signFeedSession } from "@/lib/feedSession";
+import { signSolanaMessage } from "@/lib/solanaWallet";
 import {
   captureRecruiterReferral,
   fetchRecruiterReplacements,
   fetchWalletAttributionState,
+  WALLET_SIGNED_IN_EVENT,
   type RecruiterSummary,
   type WalletAttributionPublicState,
 } from "@/lib/recruiterApi";
@@ -56,6 +61,23 @@ export default function RecruiterReferral() {
   const [walletState, setWalletState] = useState<WalletAttributionPublicState | null>(null);
   const [replacementSuggestions, setReplacementSuggestions] = useState<RecruiterSummary[]>([]);
   const lastSyncedKey = useRef("");
+  const { account: feedAccount, ensureSession } = useFeedSession();
+  // The sign-in must be for the wallet that joins. useFeedSession prefers the Solana wallet, so with
+  // both connected and BNB active it would sign in the wrong one: sign the joining wallet directly.
+  const signInJoiningWallet = async (walletAddress: string, solana: boolean) => {
+    if (walletAddress === feedAccount) return ensureSession();
+    const chainId = solana ? SOLANA_CHAIN_ID : getActiveChainId((wallet as { chainId?: number })?.chainId) || 56;
+    const auth = await signFeedSession({
+      walletAddress,
+      chainId,
+      walletType: solana ? "solana" : "evm",
+      signMessage: solana ? async (message) => (await signSolanaMessage(message, walletAddress)).signature : undefined,
+      signer: solana ? undefined : (wallet as { signer?: Parameters<typeof signFeedSession>[0]["signer"] }).signer,
+    });
+    return openFeedSession({ walletAddress, chainId, auth });
+  };
+  const signInRef = useRef(signInJoiningWallet);
+  signInRef.current = signInJoiningWallet;
 
   useEffect(() => {
     const trimmed = String(code || "").trim();
@@ -144,6 +166,14 @@ export default function RecruiterReferral() {
         setWalletState(nextWalletState);
         if (result?.linked) setRoleMessage(`Wallet linked as ${memberRole}. Your squad connection is active.`);
         else if (result?.needsRoleSelection) setRoleMessage("Choose creator, trader, or both first, then connect again.");
+        else if (result?.needsSignIn) {
+          // Joining needs the 30-day sign-in (one signature, no fee); the join retries once it is stored.
+          lastSyncedKey.current = "";
+          setRoleMessage("Sign in with this wallet to join the squad: one signature, no transaction, no fee.");
+          void signInRef.current(connectedAccount, connectedIsSolana).catch(() => {
+            if (!cancelled) setRoleMessage("Not signed in. Sign in with this wallet to join the squad.");
+          });
+        }
         else if (result?.blocked) setRoleMessage(result.reason || "This wallet cannot be linked as a squad member.");
         else setRoleMessage(result?.reason || "Wallet connected. Recruiter attribution is being checked.");
       } catch (err: any) {
@@ -158,6 +188,20 @@ export default function RecruiterReferral() {
       cancelled = true;
     };
   }, [code, connectedAccount, connectedIsSolana, memberRole, syncRetry]);
+
+  // The sign-in landed: retry the join for this wallet.
+  useEffect(() => {
+    if (!connectedAccount) return;
+    const onSignedIn = (event: Event) => {
+      const signed = String((event as CustomEvent<{ walletAddress?: string }>).detail?.walletAddress || "");
+      const same = connectedIsSolana ? signed === connectedAccount : signed.toLowerCase() === connectedAccount.toLowerCase();
+      if (!same) return;
+      lastSyncedKey.current = "";
+      setSyncRetry((value) => value + 1);
+    };
+    window.addEventListener(WALLET_SIGNED_IN_EVENT, onSignedIn);
+    return () => window.removeEventListener(WALLET_SIGNED_IN_EVENT, onSignedIn);
+  }, [connectedAccount, connectedIsSolana]);
 
   const lockedToOtherRecruiter = useMemo(() => {
     const capturedCode = String(state?.recruiter?.code || code).trim().toLowerCase();

@@ -6,6 +6,8 @@ import { ArrowRight, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
+import { WalletLabel } from "@/components/ui-v2/WalletLabel";
+import { fetchSquadMembers, type SquadMemberItem } from "@/lib/rewardProgramsApi";
 import {
   fetchRecruiterReplacements,
   fetchRecruiterSummary,
@@ -47,6 +49,7 @@ export default function RecruiterProfile() {
   const [summary, setSummary] = useState<RecruiterSummary | null>(null);
   const [squad, setSquad] = useState<SquadSummary | null>(null);
   const [replacements, setReplacements] = useState<RecruiterSummary[]>([]);
+  const [members, setMembers] = useState<SquadMemberItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -65,15 +68,18 @@ export default function RecruiterProfile() {
     void (async () => {
       try {
         const recruiter = await fetchRecruiterSummary(recruiterCode);
-        const [squadSummary, replacementData] = await Promise.all([
+        const [squadSummary, replacementData, memberData] = await Promise.all([
           fetchSquadSummary(recruiterCode).catch(() => null),
           fetchRecruiterReplacements(recruiterCode, 4).catch(() => ({ replacements: [] })),
+          fetchSquadMembers({ recruiterCode, limit: 250 }).catch(() => null),
         ]);
 
         if (cancelled) return;
         setSummary(recruiter);
         setSquad(squadSummary);
         setReplacements(Array.isArray(replacementData?.replacements) ? replacementData.replacements : []);
+        const memberItems: SquadMemberItem[] = Array.isArray(memberData?.items) ? memberData.items : [];
+        setMembers(memberItems.filter((member) => member.linkStatus !== "inactive"));
       } catch (err: any) {
         if (!cancelled) setError(String(err?.message || err || "Failed to load recruiter profile"));
       } finally {
@@ -223,10 +229,43 @@ export default function RecruiterProfile() {
             {kv("Active members", squad.activeMemberCount ?? "—")}
             {kv("Eligible members", squad.eligibleMemberCount ?? "—")}
             {kv("Pending squad pool", `${formatBnb(squad.estimatedPendingPoolAmount)} BNB`)}
-            <Link to="/squads" className="mt-1.5 text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">Squad pool leaderboard</Link>
+            <Link to={`/squads?recruiter=${encodeURIComponent(summary.code)}`} className="mt-1.5 text-sm font-semibold text-mw-accent-soft hover:text-[#FFD0A8]">Squad pool leaderboard</Link>
           </section>
         ) : null}
       </div>
+
+      {/* Founder, 2026-10-09: the squad itself belongs on the recruiter page, every member visible. */}
+      <section className={`${card} mt-4`}>
+        <span className={title}>Squad members ({members.length})</span>
+        {members.length === 0 ? (
+          <p className="m-0 text-sm text-mw-muted">No active squad members.</p>
+        ) : (
+          <div className="max-h-[420px] overflow-y-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="text-left font-mw-cond text-xs uppercase tracking-[0.08em] text-mw-muted">
+                  <th className="py-2 pr-3 font-semibold">Wallet</th>
+                  <th className="py-2 pr-3 font-semibold">Role</th>
+                  <th className="py-2 text-right font-semibold">Joined</th>
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((member) => (
+                  <tr key={member.walletAddress} className="border-t border-mw-border">
+                    <td className="py-2 pr-3">
+                      <Link to={`/profile/${encodeURIComponent(member.walletAddress)}`} className="font-mw-mono text-mw-text hover:text-mw-accent-soft" title={member.walletAddress}>
+                        <WalletLabel wallet={member.walletAddress} />
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-3 capitalize text-mw-muted">{member.memberRole || "member"}</td>
+                    <td className="py-2 text-right text-mw-muted">{formatDate(member.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* CO-9 (founder, 2026-10-03): recruited creators, their top coins and the weekly league rank. */}
       <div className="mt-4">

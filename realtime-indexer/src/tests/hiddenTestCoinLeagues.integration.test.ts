@@ -158,3 +158,36 @@ test("recruiter league: a network that only traded hidden coins is not active; c
   assert.equal(standings[0].referredVolumeUsd, 600, "1 BNB of real volume; the 9 BNB on the test coin is left out");
   assert.equal(standings[0].epochEarnedUsd, 6, "0.01 BNB of real credit; the 1 BNB from the test coin is left out");
 });
+
+test("recruiter league: only squad wallets that traded in the epoch count toward the score", async () => {
+  // Founder, 2026-10-09: a recruiter padded its squad with 120 scripted wallets that never traded and
+  // led the league on counts alone. Idle wallets now add nothing; volume still decides the rest.
+  const COIN = "0x00000000000000000000000000000000000000a3";
+  await campaign(56, COIN, CREATOR_REAL, false);
+  const { rows: [padded] } = await db.query(`insert into public.recruiters (wallet_address, code) values ('0x00000000000000000000000000000000000000f3', 'padded') returning id`);
+  const { rows: [honest] } = await db.query(`insert into public.recruiters (wallet_address, code) values ('0x00000000000000000000000000000000000000f4', 'honest') returning id`);
+  const wallet = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
+  const traded = wallet(0xe100);
+  const idle = [1, 2, 3, 4, 5].map((n) => wallet(0xe200 + n));
+  const honestWallets = [wallet(0xe301), wallet(0xe302)];
+  const join = async (recruiterId: number, address: string) => {
+    await db.query(`insert into public.wallet_recruiter_links (wallet_address, recruiter_id, linked_at) values ($1, $2, $3)`, [address, recruiterId, at(-48)]);
+    await db.query(`insert into public.wallet_squad_memberships (recruiter_id, wallet_address, member_role, joined_at) values ($1, $2, 'trader', $3)`, [recruiterId, address, at(-48)]);
+  };
+  for (const address of [traded, ...idle]) await join(padded.id, address);
+  for (const address of honestWallets) await join(honest.id, address);
+  await trade(56, COIN, traded, "buy", BNB, 20);
+  await trade(56, COIN, honestWallets[0], "buy", BNB, 21);
+  await trade(56, COIN, honestWallets[1], "buy", BNB, 22);
+
+  const standings = await recruiterLeagueStandings(db, START, END, { bnbUsd: 600, ethUsd: 3000, solUsd: 150 });
+  const p = standings.find((s) => s.code === "padded");
+  const h = standings.find((s) => s.code === "honest");
+  assert.ok(p && h, "both recruiters have volume, so both are in the field");
+  assert.equal(p.linkedWalletCount, 1, "five idle links add nothing");
+  assert.equal(p.linkedTradersCount, 1, "five idle squad traders add nothing");
+  assert.equal(p.referredVolumeUsd, 600, "volume itself is unchanged");
+  assert.equal(h.linkedWalletCount, 2);
+  assert.equal(h.linkedTradersCount, 2);
+  assert.ok(standings.indexOf(h) < standings.indexOf(p), "two trading members beat one trading member plus five idle ones");
+});

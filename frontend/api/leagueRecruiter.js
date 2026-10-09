@@ -94,8 +94,28 @@ function preserveWallet(value) {
   return raw;
 }
 
+// A creator's own buys (gen-5 first buy and escrow buys, curve_trades.league_excluded) do not make a
+// wallet count as "traded", exactly as in the settlement job (realtime-indexer/src/evm/
+// curveTradeGen5Columns.ts). Empty until the gen-5 migration has added the column.
+let leagueExcludedColumn = { at: 0, present: false };
+async function countedTradeSql(alias) {
+  if (Date.now() - leagueExcludedColumn.at > 10 * 60 * 1000) {
+    try {
+      const { rows } = await pool.query(
+        `select 1 from information_schema.columns
+          where table_schema = 'public' and table_name = 'curve_trades' and column_name = 'league_excluded'`,
+      );
+      leagueExcludedColumn = { at: Date.now(), present: rows.length > 0 };
+    } catch {
+      leagueExcludedColumn = { at: Date.now(), present: false };
+    }
+  }
+  return leagueExcludedColumn.present ? `NOT coalesce(${alias}.league_excluded, false)` : "true";
+}
+
 async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
   const weights = getWeights();
+  const countedTrade = await countedTradeSql("t");
   const { rows } = await pool.query(
     `
     WITH active_links AS (
@@ -116,28 +136,14 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
       UNION
       SELECT recruiter_id, wallet_address FROM active_squad
     ),
-    link_stats AS (
-      SELECT el.recruiter_id,
-        count(DISTINCT el.wallet_address)::int AS linked_wallet_count,
-        max(el.linked_at) AS latest_linked_activity_at
-      FROM active_links el
-      GROUP BY el.recruiter_id
-    ),
-    squad_stats AS (
-      SELECT es.recruiter_id,
-        count(DISTINCT es.wallet_address)::int AS active_squad_member_count,
-        count(DISTINCT es.wallet_address) FILTER (WHERE es.member_role IN ('creator', 'both'))::int AS linked_creators_count,
-        count(DISTINCT es.wallet_address) FILTER (WHERE es.member_role IN ('trader', 'both'))::int AS linked_traders_count
-      FROM active_squad es
-      GROUP BY es.recruiter_id
-    ),
     -- Same basis as the settlement job (realtime-indexer/src/rewards/recruiterLeague.ts), including
     -- the hidden-test-coin rule: their trades are not volume, their recruiter slices not earnings.
     -- referred volume = traded amount on every chain; earnings = the chain's own recruiter slices
     -- (reward_events), trades by the trader's wallet and graduations by the creator's wallet.
-    volume_by_chain AS (
-      SELECT w.recruiter_id, t.chain_id,
+    wallet_volume AS (
+      SELECT w.recruiter_id, w.wallet_address, t.chain_id,
         sum(t.bnb_amount_raw::numeric) AS raw,
+        coalesce(sum(t.bnb_amount_raw::numeric) FILTER (WHERE ${countedTrade}), 0) AS counted_raw,
         max(t.block_time) AS last_at
       FROM public.curve_trades t
       JOIN volume_wallets w
@@ -147,7 +153,34 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
         AND t.block_time >= $1::timestamptz
         AND t.block_time < $2::timestamptz
         AND ${notPublicHiddenCampaignSql("t")}
+      GROUP BY 1, 2, 3
+    ),
+    volume_by_chain AS (
+      SELECT recruiter_id, chain_id, sum(raw) AS raw, max(last_at) AS last_at
+      FROM wallet_volume
       GROUP BY 1, 2
+    ),
+    -- Only wallets that traded in the epoch count toward the score (founder, 2026-10-09: a recruiter
+    -- filled a squad with 120 scripted wallets that never traded and led the league on counts alone).
+    traded_wallets AS (
+      SELECT DISTINCT recruiter_id, wallet_address FROM wallet_volume WHERE counted_raw > 0
+    ),
+    link_stats AS (
+      SELECT el.recruiter_id,
+        count(DISTINCT el.wallet_address) FILTER (WHERE tw.wallet_address IS NOT NULL)::int AS linked_wallet_count,
+        max(el.linked_at) AS latest_linked_activity_at
+      FROM active_links el
+      LEFT JOIN traded_wallets tw ON tw.recruiter_id = el.recruiter_id AND tw.wallet_address = el.wallet_address
+      GROUP BY el.recruiter_id
+    ),
+    squad_stats AS (
+      SELECT es.recruiter_id,
+        count(DISTINCT es.wallet_address)::int AS active_squad_member_count,
+        count(DISTINCT es.wallet_address) FILTER (WHERE tw.wallet_address IS NOT NULL AND es.member_role IN ('creator', 'both'))::int AS linked_creators_count,
+        count(DISTINCT es.wallet_address) FILTER (WHERE tw.wallet_address IS NOT NULL AND es.member_role IN ('trader', 'both'))::int AS linked_traders_count
+      FROM active_squad es
+      LEFT JOIN traded_wallets tw ON tw.recruiter_id = es.recruiter_id AND tw.wallet_address = es.wallet_address
+      GROUP BY es.recruiter_id
     ),
     earned_rows AS (
       SELECT w.recruiter_id, re.chain_id, re.recruiter_amount AS raw

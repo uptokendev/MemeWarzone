@@ -161,6 +161,7 @@ export type SquadMemberItem = {
   recruiterCode: string | null;
   recruiterDisplayName: string | null;
   memberRole?: string | null;
+  linkStatus?: string | null;
   isEligible: boolean;
   reasonCodes: string[];
   rawScore: string;
