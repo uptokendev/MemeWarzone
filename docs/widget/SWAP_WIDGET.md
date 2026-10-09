@@ -35,6 +35,7 @@ Try it first: `https://app.memewar.zone/widget/example.html?mint=YOUR_TOKEN_MINT
   creator's part before anyone signs.
 - Before the wallet opens, the widget checks the transaction: the visitor's wallet pays it, only their signature
   is needed, it goes through Jupiter, and it calls nothing else. Anything else is refused.
+- On an imported coin nobody has claimed yet, a line under the box links to the coin's MemeWarzone page with the claim dialog open ("Created this coin? Claim it on MemeWarzone"). It disappears once the coin is claimed.
 - The box renders in its own shadow root, so your page's CSS does not change it and it does not change your page.
 - Size: about 70 KB gzipped. No cookies; the API calls send no credentials.
 

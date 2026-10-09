@@ -91,18 +91,21 @@ export async function widgetToken(req, res) {
     let project = null;
     if (pool) {
       const { rows } = await pool.query(
-        `select name, symbol, image_url from public.arena_token_imports where chain_id = 101 and token_address = $1
+        `select name, symbol, image_url, ownership_status from public.arena_token_imports where chain_id = 101 and token_address = $1
           order by (ownership_status = 'ownership_verified') desc limit 1`,
         [mint],
       ).catch(() => ({ rows: [] }));
       project = rows[0] || null;
     }
-    res.setHeader("cache-control", "public, max-age=300");
+    res.setHeader("cache-control", "public, max-age=60");
     return json(res, 200, {
       ok: true,
       chainId: 101,
       mint,
       decimals,
+      // Unclaimed imported coin with a MemeWarzone page (also auto-imported ones): the widget shows one line
+      // linking to its claim dialog (founder, 2026-10-09). Gone once the coin is claimed.
+      claimUrl: project && project.ownership_status !== "ownership_verified" ? importClaimUrl(mint) : null,
       name: project?.name || null,
       symbol: project?.symbol || null,
       imageUrl: project?.image_url || null,
@@ -118,6 +121,11 @@ export async function widgetToken(req, res) {
 }
 
 const WSOL = "So11111111111111111111111111111111111111112";
+
+/** The imported coin's MemeWarzone page with its claim dialog open (TokenDetailsEntry ?claim=prompt). */
+export function importClaimUrl(mint) {
+  return `https://app.memewar.zone/token/${mint}?chainId=101&claim=prompt`;
+}
 
 /**
  * Our own Solana coin (launchpad or DBC) for this mint, or null for anything else. The widget trades
