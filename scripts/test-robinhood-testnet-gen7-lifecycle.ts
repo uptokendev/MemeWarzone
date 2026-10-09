@@ -47,6 +47,9 @@ const FEE_TIER = 3000;
 const ACT_BUY_TOKENS = 0;
 const ACT_BUY_NATIVE = 1;
 const ACT_SELL = 2;
+// Trades get a fixed limit: during the 60 s launch window the fee (and the router split's gas) moves every second,
+// so a raw estimate can be short by the time the tx lands (BSC testnet 2026-10-09, tx 0x6aa06536: out of gas by 772).
+const TRADE_GAS = 1_500_000n;
 const HARVEST_GAS = 2_000_000n;
 const TEST_TARGET = ethers.parseEther("150"); // LaunchFactoryGen7.TEST_GRADUATION_USD_THRESHOLD, allowed on 46630
 const ROOT = path.resolve(__dirname, "..");
@@ -339,7 +342,7 @@ async function main() {
     const noFee: bigint = ((await campaign.quoteBuyExactTokens(amount)) * BPS) / (BPS + (await campaign.currentTradeFeeBps()));
     const maxCost = noFee + (noFee * worstBps) / BPS + noFee / 100n + 1n; // stale-RPC headroom; the excess is refunded
     const a = await tradeAuth(campaign, who.address, ACT_BUY_TOKENS, amount, maxCost);
-    const r = await send(label, (campaign.connect(who) as any).buyExactTokensAuthorized(amount, maxCost, tradeProfile, a.deadline, a.sig, { value: maxCost }));
+    const r = await send(label, (campaign.connect(who) as any).buyExactTokensAuthorized(amount, maxCost, tradeProfile, a.deadline, a.sig, { value: maxCost, gasLimit: TRADE_GAS }));
     return { r, route: parseLogs(r.rc, router, A.router).find((e) => e.name === "RouteExecuted"), accrued: parseLogs(r.rc, vault, A.vault).find((e) => e.name === "TradeFeeAccrued"), cev: parseLogs(r.rc, campaign).find((e) => e.name === "TokensPurchased") };
   }
 
@@ -349,7 +352,7 @@ async function main() {
     const [q] = await campaign.quoteBuyExactBnb(value);
     const ca = await tradeAuth(campaign, buyer.address, ACT_BUY_NATIVE, value, q);
     const before = await ethers.provider.getBalance(buyer.address);
-    const r = await send(`${label} sell-out buy`, (campaign.connect(buyer) as any).buyExactBnbAuthorized(q, tradeProfile, ca.deadline, ca.sig, { value }));
+    const r = await send(`${label} sell-out buy`, (campaign.connect(buyer) as any).buyExactBnbAuthorized(q, tradeProfile, ca.deadline, ca.sig, { value, gasLimit: TRADE_GAS }));
     const pend = parseLogs(r.rc, campaign, c.campaignAddr).find((x) => x.name === "GraduationPending");
     const spent = before - (await balAt(buyer.address, r.block)) - r.gasCost;
     check(`${label} the buy that sells the last curve token enters Pending in that tx; partial fill refunded`,
@@ -429,7 +432,7 @@ async function main() {
     const quoted = await campaign.quoteSellExactTokens(sellAmt);
     const sa = await tradeAuth(campaign, buyer.address, ACT_SELL, sellAmt, quoted);
     const b0 = await ethers.provider.getBalance(buyer.address);
-    const s = await send("A sell", (campaign.connect(buyer) as any).sellExactTokensAuthorized(sellAmt, quoted, tradeProfile, sa.deadline, sa.sig));
+    const s = await send("A sell", (campaign.connect(buyer) as any).sellExactTokensAuthorized(sellAmt, quoted, tradeProfile, sa.deadline, sa.sig, { gasLimit: TRADE_GAS }));
     const sev = parseLogs(s.rc, campaign, c.campaignAddr).find((e) => e.name === "TokensSold");
     const sroute = parseLogs(s.rc, router, A.router).find((e) => e.name === "RouteExecuted");
     check("A sell: 2% fee, payout by balance delta", sev.args.payout === quoted && sroute.args.amountIn === ((sev.args.payout + sroute.args.amountIn) * 200n) / BPS && (await balAt(buyer.address, s.block)) - b0 + s.gasCost === quoted, { payout: quoted, fee: sroute.args.amountIn });

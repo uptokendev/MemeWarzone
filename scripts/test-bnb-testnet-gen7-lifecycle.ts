@@ -50,6 +50,10 @@ const HARVEST_GAS = 2_000_000n;
 const GRADUATE_GAS = 12_000_000n;
 // An estimate for swapExactTokensForETH ran WBNB.withdraw out of gas on the 97 fork (63/64 rule on the inner call).
 const SWAP_GAS = 800_000n;
+// Curve trades carry a fixed limit: eth_estimateGas ran at an earlier block than the one the buy landed in, and the
+// anti-sniper fee (time-dependent) moves the router split's gas by a few k (97, tx 0x6aa06536: estimate 454453 at
+// elapsed 1 s, needed 455225 at elapsed 3 s -> out of gas after the router call).
+const TRADE_GAS = 1_500_000n;
 const RECORD = gen7Path(path.join(__dirname, "..", "deployments", "bscTestnet", "testnet.gen7.json"));
 const REPORT = isGen7ForkNetwork() ? gen7Path(path.join(__dirname, "..", "deployments", "bnb-testnet-gen7-lifecycle.json")) : path.join(__dirname, "..", "reports", "bnb-testnet-gen7-lifecycle.json");
 
@@ -103,6 +107,15 @@ async function send(label: string, p: () => Promise<any>) {
   const tx = await p();
   const rc = await tx.wait(1);
   if (!rc || rc.status !== 1) throw new Error(`${label} reverted (${tx.hash})`);
+  // The 97 RPC is load-balanced: a read right after a receipt can land on a node a block or two behind and see the
+  // state before this tx (2026-10-09: two checks failed on stale reads while the chain was correct). Let the
+  // answering nodes reach rc.blockNumber + 2 before any check reads "latest".
+  for (let i = 0; i < 40; i += 1) {
+    const head = await ethers.provider.getBlockNumber().catch(() => 0);
+    if (head >= rc.blockNumber + 2) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await new Promise((r) => setTimeout(r, 1000));
   const block = await retry(() => ethers.provider.getBlock(rc.blockNumber).then((b) => { if (!b) throw new Error("no block"); return b; }), "block");
   report.txs.push({ label, hash: tx.hash, block: rc.blockNumber, gasUsed: rc.gasUsed.toString(), gasPrice: (rc.gasPrice ?? 0n).toString(), from: tx.from });
   console.log(`[bnb-gen7] tx ${label} ${tx.hash} block ${rc.blockNumber} gas ${rc.gasUsed}`);
@@ -314,7 +327,7 @@ async function main() {
   }
   async function buyNative(label: string, campaign: any, who: any, value: bigint, minOut = 1n) {
     const a = await tradeAuth(campaign, who.address, ACT_BUY_NATIVE, value, minOut);
-    return send(label, () => (campaign.connect(who) as any).buyExactBnbAuthorized(minOut, 1, a.deadline, a.sig, { value }));
+    return send(label, () => (campaign.connect(who) as any).buyExactBnbAuthorized(minOut, 1, a.deadline, a.sig, { value, gasLimit: TRADE_GAS }));
   }
   /** The buy that sells out: 10% more native than the rest costs; the campaign takes exactly what sells the last token. */
   async function sellOut(label: string, campaign: any) {
@@ -391,7 +404,7 @@ async function main() {
   await send("A approve", () => (tokenA.connect(buyer) as any).approve(campaignA.getAddress(), sellAmt));
   const quoted: bigint = await campaignA.quoteSellExactTokens(sellAmt);
   const sa = await tradeAuth(campaignA, buyer.address, ACT_SELL, sellAmt, quoted);
-  const s = await send("A sell", () => (campaignA.connect(buyer) as any).sellExactTokensAuthorized(sellAmt, quoted, 1, sa.deadline, sa.sig));
+  const s = await send("A sell", () => (campaignA.connect(buyer) as any).sellExactTokensAuthorized(sellAmt, quoted, 1, sa.deadline, sa.sig, { gasLimit: TRADE_GAS }));
   const sold = parseLogs(s.rc, campaignA).find((e) => e.name === "TokensSold");
   const buyerDelta = (await balAt(buyer.address, s.block)) - (await balAt(buyer.address, s.block - 1)) + s.gasCost;
   check("A sell: payout by balance delta == quote, tokens moved by Transfer log", !!sold && sold.args.payout === quoted && buyerDelta === quoted && transfers(s.rc, await tokenA.getAddress()).some((t: any) => same(t.from, buyer.address) && t.value === sellAmt), { payout: quoted, tx: s.rc.hash });
@@ -400,7 +413,7 @@ async function main() {
   const cbAmt = ethers.parseEther("1000000");
   const cbCost: bigint = await campaignA.quoteBuyExactTokens(cbAmt);
   const cba = await tradeAuth(campaignA, creatorA.address, ACT_BUY_TOKENS, cbAmt, cbCost);
-  const cb = await send("A creator buys again", () => (campaignA.connect(creatorA) as any).buyExactTokensAuthorized(cbAmt, cbCost, 1, cba.deadline, cba.sig, { value: cbCost }));
+  const cb = await send("A creator buys again", () => (campaignA.connect(creatorA) as any).buyExactTokensAuthorized(cbAmt, cbCost, 1, cba.deadline, cba.sig, { value: cbCost, gasLimit: TRADE_GAS }));
   check("A later creator buy: escrowed (no token Transfer to the creator), uncapped, claimable 0 now", (await campaignA.creatorEscrowTotal()) - escrowBefore === cbAmt && !transfers(cb.rc, await tokenA.getAddress()).some((t: any) => same(t.to, creatorA.address)) && (await campaignA.creatorEscrowClaimable()) === 0n, { escrowed: cbAmt, tx: cb.rc.hash });
 
   await sellOut("A", campaignA);

@@ -1,0 +1,35 @@
+{
+  "kind": "import-fee-vault",
+  "changeOrder": "CO-IMP rev 2 CI1",
+  "network": "robinhoodTestnet",
+  "chainId": 46630,
+  "profile": "testnet",
+  "contract": "RecruiterRewardsVault (unchanged bytecode, used as ImportFeeVault)",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "protocolRevenueVault": null,
+  "startedAt": "2026-10-09T10:17:47.103Z",
+  "balanceBefore": "989347784857038780",
+  "operator": "0x03F9deC9961033c0CaA7a66373B004D36D375e83",
+  "caps": {
+    "perTx": "500000000000000000",
+    "daily": "2000000000000000000",
+    "perTxNative": "0.5",
+    "dailyNative": "2.0"
+  },
+  "vault": "0x69aDe0154bF38b86F538d07046D131CC2A6150B6",
+  "deployTx": "0x8acb84ba6f556db6ca6ccf8821be740f914f6d1db6d33a13273b17aa9ec1db67",
+  "startBlock": 131595355,
+  "adminCallsSent": [
+    "setOperator(0x03F9deC9961033c0CaA7a66373B004D36D375e83)",
+    "setPayoutCaps(500000000000000000,2000000000000000000)",
+    "setPayoutsPaused(false)"
+  ],
+  "status": "deployed-open",
+  "env": {
+    "IMPORT_FEE_VAULT_46630": "0x69aDe0154bF38b86F538d07046D131CC2A6150B6",
+    "IMPORT_FEE_PAYOUT_OPERATOR_46630": "0x03F9deC9961033c0CaA7a66373B004D36D375e83"
+  },
+  "balanceAfter": "989340601577038780",
+  "finishedAt": "2026-10-09T10:18:00.969Z"
+}
