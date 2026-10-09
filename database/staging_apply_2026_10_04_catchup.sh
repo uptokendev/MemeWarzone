@@ -2,7 +2,7 @@
 # Bring the STAGING Supabase project (vrnsbguutnwgtekcexls) up to the live branch's schema (2026-10-08).
 #
 # The test stack (sslip API / indexer) was stopped on 2026-10-03, and staging never received the
-# migrations added from 2026-10-04 to 2026-10-07. Read-only probe 2026-10-08: every migration up to
+# migrations added from 2026-10-04 to 2026-10-08 (20261008_000020 excepted: already applied). Read-only probe 2026-10-08: every migration up to
 # 20261003_000007 is present; these 12 are missing (their tables / columns do not exist). The
 # build/evm-gen7 branch (gen-7 test run) is based on the live branch and expects them.
 #
@@ -38,6 +38,10 @@ FILES=(
   db/migrations/20261006_000010_arena_war_pool_chain_index.sql
   db/migrations/20261006_000020_moderation_holds.sql
   db/migrations/20261007_000010_dbc_referral_ours.sql
+  # Added 2026-10-09 (read-only probe the same day: missing on staging). 20261008_000020 is already there.
+  db/migrations/20261008_000010_analytics_rollups.sql
+  db/migrations/20261008_000040_evm_holder_batches_per_vault.sql
+  db/migrations/20261008_000050_payout_watchdog_state.sql
 )
 
 WORK="$(mktemp -d)"
