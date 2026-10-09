@@ -27,10 +27,11 @@ const NOW = new Date("2026-11-01T12:00:00Z");
 const DAY = 86_400;
 
 type Accrual = { fee_id: string; chain_id: number; token_address: string; creator_raw: bigint; status: string; transfer_id: number | null; expires_at: Date; occurred_at: Date };
-type Transfer = { id: number; chain_id: number; kind: string; from_address: string; to_address: string; token_address: string | null; amount_raw: bigint; status: string; signature: string; last_valid_block_height: number; error: string | null; created_at: Date; updated_at: Date };
+type Transfer = { id: number; chain_id: number; kind: string; from_address: string; to_address: string; token_address: string | null; amount_raw: bigint; status: string; signature: string; last_valid_block_height: number; error: string | null; created_at: Date; updated_at: Date; partner_id?: string | null };
+type PartnerRow = Record<string, unknown> & { id: string };
 type Owner = { token: string; owner: string; verifiedAt: Date };
 
-function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; creator_raw: bigint }>; owners?: Owner[]; held?: string[]; halves?: bigint; now?: Date }) {
+function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; creator_raw: bigint }>; owners?: Owner[]; held?: string[]; halves?: bigint; now?: Date; partners?: PartnerRow[] | "missing"; partnerEarned?: Record<string, bigint> }) {
   const clock = { now: init.now || NOW };
   let state = {
     accruals: (init.accruals || []).map((a, i) => ({ chain_id: CHAIN, token_address: TOKEN, status: "waiting", transfer_id: null, expires_at: new Date(clock.now.getTime() + 30 * DAY * 1000), occurred_at: new Date(clock.now.getTime() - (100 - i) * 1000), ...a }) as Accrual),
@@ -109,18 +110,30 @@ function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; cr
         }
         return { rows };
       }
+      if (s.startsWith("select * from public.import_fee_partners")) {
+        if (init.partners === "missing") throw Object.assign(new Error('relation "public.import_fee_partners" does not exist'), { code: "42P01" });
+        return { rows: (init.partners || []).filter((p) => p.chain_id == null || p.chain_id === params[0]) };
+      }
+      if (s.startsWith("select (select coalesce(sum(partner_raw), 0)")) {
+        assert.equal(params[1], VAULT, "a partner's due is read from the default vault's fee rows");
+        const earned = init.partnerEarned?.[params[2]] ?? 0n;
+        const paid = state.transfers.filter((t) => t.kind === "partner" && t.partner_id === params[2] && t.from_address === params[1] && ["sending", "landed"].includes(t.status)).reduce((n, t) => n + t.amount_raw, 0n);
+        return { rows: [{ earned: earned.toString(), paid: paid.toString() }] };
+      }
       if (s.startsWith("select count(*)::int as sweeps")) {
         const since = new Date(params[2]);
         return { rows: [{ sweeps: state.transfers.filter((t) => t.kind === "protocol" && ["sending", "landed"].includes(t.status) && t.created_at >= since).length }] };
       }
-      if (s.startsWith("select (select coalesce(sum(fee_raw - creator_raw)")) {
+      if (s.startsWith("select (select coalesce(sum(fee_raw - creator_raw - partner_raw), 0)")) {
+        assert.match(s, /\(creator_raw > 0 or partner_raw > 0\)/);
         const expired = state.accruals.filter((a) => a.status === "expired").reduce((n, a) => n + a.creator_raw, 0n);
         const swept = state.transfers.filter((t) => t.kind === "protocol" && ["sending", "landed"].includes(t.status)).reduce((n, t) => n + t.amount_raw, 0n);
         return { rows: [{ halves: String(init.halves ?? 0n), expired: expired.toString(), swept: swept.toString() }] };
       }
       if (s.startsWith("insert into public.import_fee_transfers")) {
         const id = state.transfers.length + 1;
-        state.transfers.push({ id, chain_id: params[0], kind: params[1], from_address: params[2], to_address: params[3], token_address: params[4], amount_raw: BigInt(params[5]), status: "sending", signature: params[6], last_valid_block_height: params[7], error: null, created_at: clock.now, updated_at: clock.now });
+        if (/partner_id\)/.test(s) !== (params.length === 9)) throw new Error("partner_id column and parameter must come together");
+        state.transfers.push({ id, chain_id: params[0], kind: params[1], from_address: params[2], to_address: params[3], token_address: params[4], amount_raw: BigInt(params[5]), status: "sending", signature: params[6], last_valid_block_height: params[7], error: null, created_at: clock.now, updated_at: clock.now, partner_id: params[8] ?? null });
         return { rows: [{ id }], rowCount: 1 };
       }
       throw new Error(`unexpected SQL: ${s.slice(0, 80)}`);
@@ -425,4 +438,124 @@ test("no sweep while a creator was paid in the pass; testnet without a ProtocolR
   const t = await pass(fakeDb({ halves: 900n }), fakeChain({}), true, { protocolVault: null, chainId: 97 });
   assert.equal(t.sweep, null);
   assert.ok(t.skipped.some((s) => /PROTOCOL_REVENUE_VAULT_ADDRESS_97/.test(s)));
+});
+
+// ---------------------------------------------------------------- swap-widget partners (2026-10-09)
+// Every fee (partner swap or not) lands in the ONE default vault; a fee row carries partner_id / partner_raw.
+// The partner's share goes from that vault to its payout_wallet, with the creators' rules.
+
+const PARTNER_WALLET = "0x4434567890123456789012345678901234567890";
+const cryptic = (extra: Record<string, unknown> = {}): PartnerRow => ({ id: "crypticpump", chain_id: CHAIN, payout_wallet: PARTNER_WALLET, active: true, name: "CrypticPump", ...extra });
+
+test("partners: settings minimum from env; the protocol due query subtracts partner_raw", async () => {
+  assert.equal(importFeeEvmSettings(56, { IMPORT_FEE_VAULT_56: VAULT })!.minPartnerPayoutWei, 8_000_000_000_000_000n, "default = the creator minimum");
+  assert.equal(importFeeEvmSettings(56, { IMPORT_FEE_VAULT_56: VAULT, IMPORT_PARTNER_MIN_PAYOUT_WEI_56: "77" })!.minPartnerPayoutWei, 77n);
+  const db = fakeDb({ halves: 600n });
+  const out = await pass(db, fakeChain({}), false);
+  assert.deepEqual(out.sweep, { amount: "600", hash: null });
+  assert.ok(db.calls.some((sql) => sql.includes("sum(fee_raw - creator_raw - partner_raw)") && sql.includes("fee_receiver = $2")), "only this vault's rows, minus the partner part");
+});
+
+test("partners: paid from the default vault to the payout wallet, kind 'partner' + partner_id, stored before send, once", async () => {
+  const db = fakeDb({ partners: [cryptic()], partnerEarned: { crypticpump: 450n } });
+  const chain = fakeChain({});
+  chain.atBroadcast.push(() => {
+    const t = db.state.transfers.at(-1)!;
+    assert.equal(t.status, "sending");
+    assert.equal(t.kind, "partner");
+    assert.equal(t.partner_id, "crypticpump");
+    assert.equal(t.from_address, VAULT, "the default vault pays");
+    assert.equal(t.to_address, PARTNER_WALLET.toLowerCase());
+    assert.equal(t.signature, [...chain.signed.keys()].at(-1));
+  });
+  const out = await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.deepEqual(out.partnerPayouts.map((p) => [p.partner, p.to.toLowerCase(), p.amount]), [["crypticpump", PARTNER_WALLET.toLowerCase(), "450"]]);
+  assert.equal(out.sweep, null, "no sweep in a pass that paid a partner");
+  chain.mine();
+  const next = await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.deepEqual(next.resolved, { landed: 1, reset: 0, pending: 0, resent: 0 });
+  assert.equal(next.partnerPayouts.length, 0, "due is 0 once the transfer is sending / landed");
+  assert.deepEqual(chain.paid.map((p: any) => [p.to, p.amount]), [[PARTNER_WALLET.toLowerCase(), 450n]]);
+});
+
+test("partners: a reverted payout is 'failed' and the due is paid again; a dropped send is re-sent at its nonce", async () => {
+  const db = fakeDb({ partners: [cryptic()], partnerEarned: { crypticpump: 300n } });
+  const chain = fakeChain({});
+  await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  chain.vault.paused = true;
+  chain.mine();
+  chain.vault.paused = false;
+  const retry = await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.equal(retry.resolved!.reset, 1);
+  assert.equal(db.state.transfers[0].status, "failed");
+  assert.equal(retry.partnerPayouts.length, 1, "paid again in the same pass");
+  chain.failBroadcast = true;
+  chain.mempool.length = 0; // the node lost it
+  chain.failBroadcast = false;
+  db.clock.now = new Date(db.clock.now.getTime() + 120_000);
+  const resent = await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.equal(resent.resolved!.resent, 1);
+  const versions = [...chain.signed.values()];
+  assert.equal(versions.at(-1)!.nonce, versions.at(-2)!.nonce);
+  chain.mine();
+  await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.equal(chain.paid.length, 1);
+  assert.equal(chain.paid[0].amount, 300n);
+});
+
+test("partners: never to our own wallets, held wallets, contracts or a non-EVM wallet; below the minimum waits", async () => {
+  const safe = "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7";
+  const contract = "0x3334567890123456789012345678901234567890";
+  const db = fakeDb({
+    partners: [cryptic({ id: "own", payout_wallet: safe }), cryptic({ id: "held", payout_wallet: OWNER }), cryptic({ id: "contract", payout_wallet: contract }), cryptic({ id: "solana", payout_wallet: "9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H" }), cryptic({ id: "small" })],
+    partnerEarned: { own: 500n, held: 500n, contract: 500n, solana: 500n, small: 99n },
+    held: [OWNER],
+  });
+  const chain = fakeChain({ contracts: [contract] });
+  const out = await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.equal(out.partnerPayouts.length, 0);
+  assert.equal(chain.signed.size, 0);
+  for (const why of ["one of our own wallets", "held by moderation", "is a contract", "is not an EVM wallet"]) assert.ok(out.skipped.some((s) => s.includes(why)), why);
+  assert.ok(!out.skipped.some((s) => s.startsWith("partner small")), "below the minimum: silently waits");
+});
+
+test("partners: within the vault's per-payout cap, daily room and balance; the rest next pass / day", async () => {
+  const db = fakeDb({ partners: [cryptic()], partnerEarned: { crypticpump: 2_500n } });
+  const chain = fakeChain({ maxPayoutPerTx: 1_000n, dailyPayoutCap: 1_600n });
+  const first = await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.deepEqual(first.partnerPayouts.map((p) => p.amount), ["1000"], "one payout per partner per pass, capped per tx");
+  chain.mine();
+  const second = await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.deepEqual(second.partnerPayouts.map((p) => p.amount), ["600"], "the daily room left");
+  chain.mine();
+  const third = await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.equal(third.partnerPayouts.length, 0);
+  assert.ok(third.skipped.some((s) => /daily payout cap reached/.test(s)));
+  chain.vault.chainTime += DAY;
+  db.clock.now = new Date(db.clock.now.getTime() + DAY * 1000);
+  const tomorrow = await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.deepEqual(tomorrow.partnerPayouts.map((p) => p.amount), ["900"]);
+  chain.mine();
+  await pass(db, chain, true, { minPartnerPayoutWei: 100n });
+  assert.equal(chain.paid.reduce((n: bigint, p: any) => n + p.amount, 0n), 2_500n, "exactly what was earned");
+  const poor = await pass(fakeDb({ partners: [cryptic()], partnerEarned: { crypticpump: 500n } }), fakeChain({ balance: 50n }), true, { minPartnerPayoutWei: 100n });
+  assert.equal(poor.partnerPayouts.length, 0);
+  assert.ok(poor.skipped.some((s) => /vault balance or per-payout cap below the minimum/.test(s)));
+});
+
+test("partners: creators first and payoutsPerPass counts both; dry run writes nothing; inactive still paid what it earned; no table -> none", async () => {
+  const db = fakeDb({ accruals: accruals([500n]), owners: [verified()], partners: [cryptic(), cryptic({ id: "old", payout_wallet: OWNER2, active: false })], partnerEarned: { crypticpump: 200n, old: 300n } });
+  const chain = fakeChain({});
+  const dry = await pass(db, chain, false, { minPartnerPayoutWei: 100n });
+  assert.equal(dry.payouts.length, 1);
+  assert.deepEqual(dry.partnerPayouts.map((p) => [p.partner, p.amount, p.hash]), [["crypticpump", "200", null], ["old", "300", null]]);
+  assert.ok(db.calls.every((sql) => !/^(insert|update|begin)/i.test(sql)), "read-only");
+  assert.equal(chain.signed.size, 0);
+  const capped = await pass(db, chain, true, { minPartnerPayoutWei: 100n, payoutsPerPass: 2 });
+  assert.equal(capped.payouts.length, 1);
+  assert.deepEqual(capped.partnerPayouts.map((p) => p.partner), ["crypticpump"]);
+  assert.deepEqual([...chain.signed.values()].map((s: any) => [s.to.toLowerCase(), s.nonce]), [[OWNER.toLowerCase(), 7], [PARTNER_WALLET.toLowerCase(), 8]]);
+  const noTable = await pass(fakeDb({ accruals: accruals([500n]), owners: [verified()], partners: "missing" }), fakeChain({}));
+  assert.equal(noTable.payouts.length, 1);
+  assert.equal(noTable.partnerPayouts.length, 0);
 });

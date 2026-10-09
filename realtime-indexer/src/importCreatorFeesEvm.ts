@@ -15,8 +15,20 @@
  *             waiting accruals sum to at least the minimum, in chunks <= the vault's maxPayoutPerTx, while
  *             the vault's dailyPayoutCap has room (dailySpent / lastDay read on chain); the rest waits for
  *             the next UTC day by itself
- *   sweep     the protocol's half of every fee plus the expired creator halves -> ProtocolRevenueVault with
- *             payout(vault, amount); at most once per UTC day, only in a pass that paid no creator
+ *   partners  swap-widget partners (import_fee_partners, founder 2026-10-09: 0.50% creator / 0.25% partner /
+ *             0.25% protocol of a partner swap): each partner's partner_raw of this vault's fee rows minus its
+ *             'partner' transfers -> its payout_wallet with payout(to, amount), same vault, same caps, same checks
+ *             as a creator, at least IMPORT_PARTNER_MIN_PAYOUT_WEI_<chainId>; one payout per partner per pass
+ *   sweep     the protocol's part of every fee (fee - creator - partner) plus the expired creator halves ->
+ *             ProtocolRevenueVault with payout(vault, amount); at most once per UTC day, only in a pass that
+ *             paid no creator and no partner
+ *
+ * Partners on EVM (2026-10-09): every fee, partner swap or not, lands in the chain's ONE default
+ * ImportFeeVault; the finance cron attributes a fee row to a partner (partner_id / partner_raw) from the
+ * build-time fingerprint of the swap. So there is nothing to consolidate (the Solana worker's 'consolidate'
+ * kind moves partner fee accounts into the collector; on EVM there is no second receiver) and the partner's
+ * money goes out of the same vault as the creators'. The Solana reference is importCreatorFees.ts
+ * (readPartners / readPartnerDue, partners after creators, sweep only in a pass that paid neither).
  *
  * Every movement: sign payout(to, amount) at the operator's next nonce, store 'sending' with the tx hash
  * (signature) and the nonce (last_valid_block_height; on EVM rows that column holds the nonce) and mark
@@ -75,6 +87,8 @@ export type ImportFeeEvmSettings = {
   protocolVault: string | null;
   minPayoutWei: bigint;
   minSweepWei: bigint;
+  /** Smallest partner payout (IMPORT_PARTNER_MIN_PAYOUT_WEI_<chainId>; default the creator minimum). */
+  minPartnerPayoutWei: bigint;
   holdDays: number;
   payoutsPerPass: number;
   resendAfterMs: number;
@@ -100,6 +114,7 @@ export function importFeeEvmSettings(chainId: number, env: Record<string, string
     protocolVault: envAddress(env[`PROTOCOL_REVENUE_VAULT_ADDRESS_${chainId}`]) || envAddress(PROTOCOL_REVENUE_VAULTS[chainId]),
     minPayoutWei: envBigint(env, `IMPORT_CREATOR_MIN_PAYOUT_WEI_${chainId}`, DEFAULT_MIN_PAYOUT_WEI[chainId] ?? 10n ** 16n),
     minSweepWei: envBigint(env, `IMPORT_FEE_MIN_SWEEP_WEI_${chainId}`, DEFAULT_MIN_SWEEP_WEI[chainId] ?? 10n ** 16n),
+    minPartnerPayoutWei: envBigint(env, `IMPORT_PARTNER_MIN_PAYOUT_WEI_${chainId}`, DEFAULT_MIN_PAYOUT_WEI[chainId] ?? 10n ** 16n),
     holdDays: Math.max(0, Number(env.IMPORT_CREATOR_HOLD_DAYS ?? 7)),
     payoutsPerPass: Math.max(1, Math.min(20, Number(env.IMPORT_CREATOR_PAYOUTS_PER_PASS ?? 5))),
     resendAfterMs: Math.max(60_000, Number(env.IMPORT_FEE_EVM_RESEND_AFTER_MS ?? 600_000)),
@@ -133,6 +148,7 @@ export function pickAccruals(waiting: WaitingAccrual[], limit: bigint): { picked
   return { picked, amount };
 }
 
+/** protocolHalves: sum of (fee - creator - partner) over this vault's split fee rows. */
 export function protocolDue(input: { protocolHalves: bigint; expiredCreator: bigint; swept: bigint }): bigint {
   const due = input.protocolHalves + input.expiredCreator - input.swept;
   return due > 0n ? due : 0n;
@@ -380,8 +396,8 @@ export async function expireEvmAccruals(db: Queryable, chainId: number, now: Dat
 export async function readEvmProtocolDue(db: Queryable, chainId: number, vault: string): Promise<bigint> {
   const { rows } = await db.query(
     `select
-       (select coalesce(sum(fee_raw - creator_raw), 0) from public.finance_import_swap_fees
-         where chain_id = $1 and fee_receiver = $2 and creator_raw > 0)::text as halves,
+       (select coalesce(sum(fee_raw - creator_raw - partner_raw), 0) from public.finance_import_swap_fees
+         where chain_id = $1 and fee_receiver = $2 and (creator_raw > 0 or partner_raw > 0))::text as halves,
        (select coalesce(sum(c.creator_raw), 0) from public.import_creator_fees c
           join public.finance_import_swap_fees f on f.id = c.fee_id
          where c.chain_id = $1 and c.status = 'expired' and f.fee_receiver = $2)::text as expired,
@@ -400,6 +416,40 @@ export async function readSweptToday(db: Queryable, chainId: number, vault: stri
     [chainId, vault, utcDayStart(now).toISOString()],
   );
   return Number(rows[0]?.sweeps || 0);
+}
+
+export type ImportFeePartnerEvm = { id: string; payoutWallet: string; active: boolean };
+
+/**
+ * Every partner row of this chain, read defensively (select *; only id, payout_wallet and active are used:
+ * EVM rows carry no fee_account / start_block, all fees are in the default vault). Inactive partners are
+ * still read, as on Solana: they are owed what they earned before they were switched off. No table yet
+ * (migration 20261009_000010 not applied): no partners.
+ */
+export async function readEvmPartners(db: Queryable, chainId: number): Promise<ImportFeePartnerEvm[]> {
+  try {
+    const { rows } = await db.query(`select * from public.import_fee_partners where chain_id = $1 order by id`, [chainId]);
+    return rows
+      .filter((row: any) => row && row.id != null && String(row.id).trim())
+      .map((row: any) => ({ id: String(row.id).trim(), payoutWallet: String(row.payout_wallet ?? "").trim(), active: row.active !== false }));
+  } catch (error: any) {
+    if (error?.code === "42P01") return [];
+    throw error;
+  }
+}
+
+/** A partner's share owed by this vault: partner_raw of this vault's fee rows minus its 'partner' transfers sent from it. */
+export async function readEvmPartnerDue(db: Queryable, chainId: number, vault: string, partnerId: string): Promise<bigint> {
+  const { rows } = await db.query(
+    `select
+       (select coalesce(sum(partner_raw), 0) from public.finance_import_swap_fees
+         where chain_id = $1 and fee_receiver = $2 and partner_id = $3)::text as earned,
+       (select coalesce(sum(amount_raw), 0) from public.import_fee_transfers
+         where chain_id = $1 and kind = 'partner' and from_address = $2 and partner_id = $3 and status in ('sending', 'landed'))::text as paid`,
+    [chainId, vault, partnerId],
+  );
+  const due = BigInt(rows[0]?.earned || "0") - BigInt(rows[0]?.paid || "0");
+  return due > 0n ? due : 0n;
 }
 
 export type PayableCoin = { token: string; owner: string; waiting: WaitingAccrual[]; total: bigint };
@@ -447,6 +497,7 @@ export type EvmPassResult = {
   expired: number;
   sweep: { amount: string; hash: string | null } | null;
   payouts: Array<{ token: string; owner: string; amount: string; hash: string | null }>;
+  partnerPayouts: Array<{ partner: string; to: string; amount: string; hash: string | null }>;
   skipped: string[];
 };
 
@@ -466,7 +517,7 @@ export async function runImportCreatorFeeEvmPass(input: {
   const { db, chain, send, settings } = input;
   const now = input.now || new Date();
   const chainId = settings.chainId;
-  const result: EvmPassResult = { chainId, resolved: null, expired: 0, sweep: null, payouts: [], skipped: [] };
+  const result: EvmPassResult = { chainId, resolved: null, expired: 0, sweep: null, payouts: [], partnerPayouts: [], skipped: [] };
 
   if (send) {
     result.resolved = await resolvePendingEvmTransfers(db, chain, { chainId, operator: input.operator, send, resendAfterMs: settings.resendAfterMs, now });
@@ -505,14 +556,21 @@ export async function runImportCreatorFeeEvmPass(input: {
   const held = await heldWalletKeys(db);
 
   /** Sign, store 'sending' (+ mark the accruals 'paying') in one db transaction, then broadcast. */
-  async function move(kind: "creator" | "protocol", to: string, amount: bigint, token: string | null, feeIds: string[]): Promise<string | null> {
+  async function move(kind: "creator" | "protocol" | "partner", to: string, amount: bigint, token: string | null, feeIds: string[], partnerId: string | null = null): Promise<string | null> {
     const signed = await chain.signPayout({ to, amount, nonce });
     const stored = await inTransaction(db, async (client) => {
-      const transfer = await client.query(
-        `insert into public.import_fee_transfers (chain_id, kind, from_address, to_address, token_address, amount_raw, status, signature, last_valid_block_height)
-         values ($1, $2, $3, $4, $5, $6, 'sending', $7, $8) returning id`,
-        [chainId, kind, settings.vault, to.toLowerCase(), token, amount.toString(), signed.hash, signed.nonce],
-      );
+      // A partner payout also stores partner_id (its due is counted from these rows); creator / protocol rows are unchanged.
+      const transfer = partnerId
+        ? await client.query(
+            `insert into public.import_fee_transfers (chain_id, kind, from_address, to_address, token_address, amount_raw, status, signature, last_valid_block_height, partner_id)
+             values ($1, $2, $3, $4, $5, $6, 'sending', $7, $8, $9) returning id`,
+            [chainId, kind, settings.vault, to.toLowerCase(), token, amount.toString(), signed.hash, signed.nonce, partnerId],
+          )
+        : await client.query(
+            `insert into public.import_fee_transfers (chain_id, kind, from_address, to_address, token_address, amount_raw, status, signature, last_valid_block_height)
+             values ($1, $2, $3, $4, $5, $6, 'sending', $7, $8) returning id`,
+            [chainId, kind, settings.vault, to.toLowerCase(), token, amount.toString(), signed.hash, signed.nonce],
+          );
       const id = transfer.rows[0].id;
       if (feeIds.length) {
         const marked = await client.query(
@@ -524,7 +582,7 @@ export async function runImportCreatorFeeEvmPass(input: {
       }
       return id;
     }).catch((error) => {
-      result.skipped.push(`${token || "protocol sweep"}: ${errorText(error)}`);
+      result.skipped.push(`${partnerId ? `partner ${partnerId}` : token || "protocol sweep"}: ${errorText(error)}`);
       return null;
     });
     if (stored == null) return null;
@@ -580,8 +638,44 @@ export async function runImportCreatorFeeEvmPass(input: {
     }
   }
 
-  // Our half (and expired creator halves): once per UTC day, only in a pass that paid no creator.
-  if (!result.payouts.length) {
+  // Partners: their share of this vault's fees, to their payout wallet, after the creators (Solana order).
+  const partners = await readEvmPartners(db, chainId);
+  for (const partner of partners) {
+    if (result.payouts.length + result.partnerPayouts.length >= settings.payoutsPerPass) break;
+    const due = await readEvmPartnerDue(db, chainId, settings.vault, partner.id);
+    if (due < settings.minPartnerPayoutWei) continue;
+    const wallet = partner.payoutWallet;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(wallet) || wallet.toLowerCase() === ethers.ZeroAddress) {
+      result.skipped.push(`partner ${partner.id}: payout wallet ${wallet} is not an EVM wallet`);
+      continue;
+    }
+    if (isOwnerWallet(wallet, ownerIndex)) {
+      result.skipped.push(`partner ${partner.id}: payout wallet ${wallet} is one of our own wallets`);
+      continue;
+    }
+    if (held.has(wallet.toLowerCase())) {
+      result.skipped.push(`partner ${partner.id}: payout wallet ${wallet} is held by moderation`);
+      continue;
+    }
+    if (!(await chain.isPlainWallet(wallet))) {
+      result.skipped.push(`partner ${partner.id}: payout wallet ${wallet} is a contract`);
+      continue;
+    }
+    const amount = min(due, state.maxPayoutPerTx, dailyLeft, balance);
+    if (amount < settings.minPartnerPayoutWei) {
+      result.skipped.push(dailyLeft < settings.minPartnerPayoutWei ? "daily payout cap reached; the rest pays tomorrow" : `partner ${partner.id}: vault balance or per-payout cap below the minimum`);
+      continue;
+    }
+    const to = ethers.getAddress(wallet.toLowerCase());
+    const hash = send ? await move("partner", to, amount, null, [], partner.id) : null;
+    if (send && hash == null) continue;
+    result.partnerPayouts.push({ partner: partner.id, to, amount: amount.toString(), hash });
+    dailyLeft -= amount;
+    balance -= amount;
+  }
+
+  // Our part (and expired creator halves): once per UTC day, only in a pass that paid no creator and no partner.
+  if (!result.payouts.length && !result.partnerPayouts.length) {
     if (!settings.protocolVault) {
       result.skipped.push(`no ProtocolRevenueVault for chain ${chainId} (PROTOCOL_REVENUE_VAULT_ADDRESS_${chainId}); protocol sweep off`);
     } else if ((await readSweptToday(db, chainId, settings.vault, now)) === 0) {

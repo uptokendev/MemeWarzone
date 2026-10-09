@@ -353,3 +353,31 @@ New dedicated keys, one per chain, set as `IMPORT_FEE_PAYOUT_OPERATOR_<chainId>`
 
 Their private keys go only into Coolify (indexer: `IMPORT_FEE_PAYOUT_OPERATOR_PK_56` / `_4663`). Caps: the defaults
 (BNB 2 per payout / 10 per day, ETH 0.5 / 3), founder-approved 2026-10-08.
+
+## Swap-widget partners on BNB / Robinhood (founder, 2026-10-09)
+
+Swaps through a partner's swap widget split the 1% as 0.50% creator / 0.25% partner / 0.25% protocol. No
+contract change and no second vault: every fee, partner swap or not, still lands in the chain's one
+`IMPORT_FEE_VAULT_<chainId>`. The finance cron attributes a fee row to a partner (`partner_id`, `partner_raw`
+on `finance_import_swap_fees`) from the build-time fingerprint of the swap transaction (other session).
+
+The EVM payout worker (`realtime-indexer/src/importCreatorFeesEvm.ts`), mirroring the Solana worker's order:
+
+1. resolve `sending` rows (all kinds, unchanged), expire, then creators (unchanged);
+2. partners: for every `import_fee_partners` row of the chain (read with `select *`, only `id`,
+   `payout_wallet`, `active` used; inactive partners are still paid what they earned, as on Solana; no
+   table yet means no partners), due = `sum(partner_raw)` of this vault's rows minus that partner's
+   `partner` transfers from this vault in `sending` / `landed`. One `payout(payout_wallet, amount)` per
+   partner per pass, amount = min(due, `maxPayoutPerTx`, the vault's daily room, balance), at least
+   `IMPORT_PARTNER_MIN_PAYOUT_WEI_<chainId>` (default = the creator minimum). Same checks as a creator:
+   EVM address, not our own wallet, not held by moderation, not a contract. Stored as `kind = 'partner'`,
+   `partner_id`, `from_address` = the vault, `sending` with the hash and nonce before the broadcast; the
+   resolver is the creator one (receipt, `Payout` events, same-nonce re-send). A failed transfer drops out
+   of the paid sum, so the due comes back by itself. `payoutsPerPass` counts creators and partners;
+3. protocol sweep: due = `sum(fee_raw - creator_raw - partner_raw)` of this vault's rows (rows with
+   `creator_raw > 0 or partner_raw > 0`) + expired creator halves - sweeps; only in a pass that paid no
+   creator and no partner.
+
+There is nothing to consolidate on EVM (the Solana `consolidate` kind moves partner WSOL accounts into the
+collector; EVM has one receiver). Nothing changes in the CREATE / BUY / SELL paths, the routers or the API
+build.

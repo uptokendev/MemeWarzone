@@ -95,7 +95,7 @@ export async function startImportCreatorFeeEvmWorker() {
     w.running = true;
     try {
       const result = await runImportCreatorFeeEvmPass({ db: pool, chain: w.chain, operator: w.operator, send: w.send, settings: w.settings });
-      if (result.payouts.length || result.sweep || result.expired || result.skipped.length || result.resolved?.landed || result.resolved?.reset || result.resolved?.resent) {
+      if (result.payouts.length || result.partnerPayouts.length || result.sweep || result.expired || result.skipped.length || result.resolved?.landed || result.resolved?.reset || result.resolved?.resent) {
         console.log("[import-fees-evm] pass", JSON.stringify(result));
       }
     } catch (error) {
