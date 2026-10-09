@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from "react";
+import { gasWithHeadroom } from "@/lib/evmGasHeadroom.mjs";
 import { Contract, ethers } from "ethers";
 import { useLocation } from "react-router-dom";
 import { useWallet } from "@/contexts/WalletContext";
@@ -1040,14 +1041,10 @@ export function useLaunchpad(): LaunchpadAdapter {
     const overrides = await legacyGasOverrides(tradeSigner, readProvider, { value: maxCostWei });
     let tx;
     try {
-      tx = await campaign.buyExactTokensAuthorized(
-        amountWei,
-        maxCostWei,
-        auth.routeProfileId,
-        Math.floor(new Date(auth.validUntil).getTime() / 1000),
-        auth.signature,
-        overrides,
-      );
+      const buyArgs = [amountWei, maxCostWei, auth.routeProfileId, Math.floor(new Date(auth.validUntil).getTime() / 1000), auth.signature] as const;
+      // Headroom over the estimate: the launch-window fee moves the router split's gas second by second.
+      const buyGas = await gasWithHeadroom(() => campaign.buyExactTokensAuthorized.estimateGas(...buyArgs, overrides));
+      tx = await campaign.buyExactTokensAuthorized(...buyArgs, buyGas ? { ...overrides, gasLimit: buyGas } : overrides);
     } catch (error) {
       if (!isUnsupportedContractMethod(error)) throw error;
       console.warn("[launchpadClient] Authorized buy selector unavailable; retrying legacy buyExactTokens", error);
@@ -1108,14 +1105,9 @@ export function useLaunchpad(): LaunchpadAdapter {
     const overrides = await legacyGasOverrides(signer, readProvider);
     let tx;
     try {
-      tx = await campaign.sellExactTokensAuthorized(
-        amountWei,
-        minAmountWei,
-        auth.routeProfileId,
-        Math.floor(new Date(auth.validUntil).getTime() / 1000),
-        auth.signature,
-        overrides,
-      );
+      const sellArgs = [amountWei, minAmountWei, auth.routeProfileId, Math.floor(new Date(auth.validUntil).getTime() / 1000), auth.signature] as const;
+      const sellGas = await gasWithHeadroom(() => campaign.sellExactTokensAuthorized.estimateGas(...sellArgs, overrides));
+      tx = await campaign.sellExactTokensAuthorized(...sellArgs, sellGas ? { ...overrides, gasLimit: sellGas } : overrides);
     } catch (error) {
       if (!isUnsupportedContractMethod(error)) throw error;
       console.warn("[launchpadClient] Authorized sell selector unavailable; retrying legacy sellExactTokens", error);

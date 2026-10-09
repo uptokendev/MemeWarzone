@@ -174,7 +174,7 @@ async function requestFundingExecution(payload) {
   return result;
 }
 
-export async function ensureOnChainBatch({ batchId, chainId, distributorAddress, vaultAddress, poolSource, batchMetadata }) {
+export async function ensureOnChainBatch({ batchId, chainId, distributorAddress, vaultAddress, poolSource, batchMetadata, verifyRetryMs = 1500 }) {
   const contractBatchId = String(batchMetadata?.contractBatchId || batchMetadata?.merkleBatchId || "");
   const merkleRoot = String(batchMetadata?.merkleRoot || "");
   const total = asBigInt(batchMetadata?.merkleTotalAmount, 0n);
@@ -221,7 +221,13 @@ export async function ensureOnChainBatch({ batchId, chainId, distributorAddress,
     claimDeadline: deadline,
   });
 
-  onChain = await readOnChainBatch({ chainId, distributorAddress, contractBatchId });
+  // Load-balanced RPCs can answer from a node a block or two behind the funding tx (BSC testnet 2026-10-09: the batch
+  // was funded and on chain, the immediate read-back missed it). Retry before calling it a failure.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    onChain = await readOnChainBatch({ chainId, distributorAddress, contractBatchId });
+    if (assertBatchMatches(onChain, { contractBatchId, merkleRoot, total, deadline })) break;
+    await new Promise((resolve) => setTimeout(resolve, verifyRetryMs));
+  }
   if (!assertBatchMatches(onChain, { contractBatchId, merkleRoot, total, deadline })) {
     throw new Error(`Funding executor returned before batch ${contractBatchId} was verifiable on-chain`);
   }
