@@ -29,6 +29,8 @@ import { recordTopazFill } from "@/lib/recordTopazFill";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
 import { SOLANA_BUY_FEE_RESERVE_LAMPORTS, evmBuyGasReserveWei } from "@/lib/tradeBalanceReserve";
+import { ImportedTradePanel as SolanaGraduatedImportPanel } from "@/components/arena/ImportedTradePanel";
+import { graduatedSolanaTradeItem, graduatedSolanaTradeRoute } from "@/lib/graduatedSolanaTradeRoute.mjs";
 
 const CAMPAIGN_ABI = [
   ...((LaunchCampaignArtifact.abi as any[]) ?? []),
@@ -265,6 +267,9 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
   };
   const tokenDecimals = isSolanaCampaign ? Number(solanaCurve?.tokenDecimals ?? 6) : TOKEN_DECIMALS;
   const solanaDex = Boolean(solanaCurve?.graduated || solanaCurve?.curveClosed);
+  // Graduated Solana coin while VITE_SOLANA_GRADUATED_IMPORT_ROUTE is on: the import route and panel (graduatedSolanaTradeRoute.mjs).
+  const solanaGraduatedImport =
+    isSolanaCampaign && graduatedSolanaTradeRoute({ isDbc: false, curveGraduated: Boolean(solanaCurve?.graduated) }) === "import";
 
   const chainId = useMemo(() => {
     if (isSolanaCampaign) return SOLANA_CHAIN_ID;
@@ -784,6 +789,8 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
   }, [wallet.provider, campaign.campaign, campaign.token, chainId, readProvider, metrics?.currentPrice, tradeTab, tradeAmount, tradeInputDenom, tokenBalanceWei, isDexStage, isTopazTradingActive, topazSlippageBps, isSolanaCampaign, solanaCurve, tokenDecimals]);
 
   const handlePlaceTrade = async () => {
+    // Never the fee-free Meteora trade while the import route is on (the import panel trades instead).
+    if (solanaGraduatedImport) return;
     if (!campaign.campaign) return;
     if (!walletMatchesCampaign) {
       toast({
@@ -1197,6 +1204,8 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
       </span>
     </div>
   );
+  if (solanaGraduatedImport) return <SolanaGraduatedImportPanel item={graduatedSolanaTradeItem(campaign, solanaCurve?.mint || campaign.token)} graduated />;
+
   const amountInput = (
     <div className="relative">
       <input
