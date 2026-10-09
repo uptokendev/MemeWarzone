@@ -8,6 +8,8 @@
  * first candle as one bar from $0.
  */
 
+import { spotPrice as gen7SpotPrice } from "../../shared/evmGen7Curve.mjs";
+
 const WAD = 10n ** 18n;
 
 /** Whole tokens from a raw totalSupply; null when unknown or not positive. */
@@ -31,6 +33,16 @@ export function evmCurveSpotWei(basePriceWei, priceSlopeWei, soldRaw) {
 }
 
 /**
+ * Constant-product curve spot (wei per whole token) at `soldRaw` for an EVM generation-7 coin:
+ * LaunchCampaignGen7._currentPrice. Null when `soldRaw` is outside the curve.
+ */
+export function evmGen7CurveSpotWei(virtualNativeWei, virtualTokenRaw, soldRaw) {
+  const sold = BigInt(soldRaw) > 0n ? BigInt(soldRaw) : 0n;
+  if (sold >= BigInt(virtualTokenRaw)) return null;
+  return gen7SpotPrice(BigInt(virtualNativeWei), BigInt(virtualTokenRaw), sold);
+}
+
+/**
  * Price change per window from the curve spot, for a bonding EVM generation-6 coin.
  *
  * Fills are not prices: a buy's fill is the average across the curve plus the fee, so the old
@@ -43,7 +55,17 @@ export function evmCurveSpotWei(basePriceWei, priceSlopeWei, soldRaw) {
  *   basePriceWei: bigint, priceSlopeWei: bigint, nowSec: number, windows: Record<string, number> }} input
  * @returns {Record<string, number | null>} percent change per window key
  */
-export function evmCurveSpotChanges({ trades, soldNowRaw, basePriceWei, priceSlopeWei, nowSec, windows }) {
+export function evmCurveSpotChanges({ trades, soldNowRaw, basePriceWei, priceSlopeWei, nowSec, windows, virtualNativeWei, virtualTokenRaw }) {
+  // Generation 7/6: same walk, constant-product spot instead of the linear one.
+  if (BigInt(virtualNativeWei ?? 0n) > 0n && BigInt(virtualTokenRaw ?? 0n) > 0n) {
+    return spotChangesWith(
+      (soldRaw) => {
+        const spot = evmGen7CurveSpotWei(virtualNativeWei, virtualTokenRaw, soldRaw);
+        return spot == null ? NaN : Number(spot);
+      },
+      { trades, soldNowRaw, nowSec, windows },
+    );
+  }
   const out = {};
   const base = BigInt(basePriceWei ?? 0n);
   if (base <= 0n) {
@@ -63,6 +85,31 @@ export function evmCurveSpotChanges({ trades, soldNowRaw, basePriceWei, priceSlo
   }
   const soldBeforeFirst = sold;
   const spot = (soldRaw) => Number(evmCurveSpotWei(base, priceSlopeWei ?? 0n, soldRaw));
+  const end = spot(soldNowRaw ?? 0n);
+  for (const [key, seconds] of Object.entries(windows)) {
+    const startTs = Number(nowSec) - Number(seconds);
+    let lastBefore = -1;
+    for (let i = 0; i < ordered.length; i += 1) if (Number(ordered[i].timestamp) <= startTs) lastBefore = i;
+    const start = lastBefore >= 0 ? spot(soldAfter[lastBefore]) : spot(soldBeforeFirst);
+    out[key] = start > 0 && Number.isFinite(end) ? ((end - start) / start) * 100 : null;
+  }
+  return out;
+}
+
+/** The walk of evmCurveSpotChanges with any spot function (used for the gen-7 curve). */
+function spotChangesWith(spot, { trades, soldNowRaw, nowSec, windows }) {
+  const out = {};
+  const ordered = [...(trades || [])]
+    .filter((t) => Number(t?.timestamp) > 0)
+    .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+  const soldAfter = new Array(ordered.length);
+  let sold = BigInt(soldNowRaw ?? 0n);
+  for (let i = ordered.length - 1; i >= 0; i -= 1) {
+    soldAfter[i] = sold;
+    const amount = BigInt(ordered[i].tokensWei ?? 0n);
+    sold = ordered[i].type === "sell" ? sold + amount : sold - amount;
+  }
+  const soldBeforeFirst = sold;
   const end = spot(soldNowRaw ?? 0n);
   for (const [key, seconds] of Object.entries(windows)) {
     const startTs = Number(nowSec) - Number(seconds);

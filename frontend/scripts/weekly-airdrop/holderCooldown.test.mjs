@@ -46,7 +46,7 @@ test("the cooldown SQL filters holder programs and code 2, and is parameterised 
   const client = fakeClient([]);
   await exclusionSets(client, { chainId: 56, start: START, end: new Date(START.getTime() + 7 * DAY) });
   const q = client.seen.find((s) => s.sql.includes("from public.reward_ledger"));
-  assert.deepEqual(q.params.slice(2), [["airdrop_holders", "dbc_holders"], "2"]);
+  assert.deepEqual(q.params.slice(2), [["airdrop_holders", "airdrop_holders_gen7", "dbc_holders"], "2"]);
   assert.equal(String(SOLANA_AIRDROP_PROGRAM_CODES.dbc_holders), q.params[3]);
 });
 
@@ -86,7 +86,7 @@ test("a wallet that was both a holder and a trader winner stays excluded", async
 });
 
 test("countsTowardAirdropCooldown mirrors the SQL", () => {
-  assert.deepEqual([...HOLDER_PAYOUT_PROGRAMS], ["airdrop_holders", "dbc_holders"]);
+  assert.deepEqual([...HOLDER_PAYOUT_PROGRAMS], ["airdrop_holders", "airdrop_holders_gen7", "dbc_holders"]);
   assert.equal(countsTowardAirdropCooldown({ program: "airdrop_holders" }), false);
   assert.equal(countsTowardAirdropCooldown({ program: "dbc_holders", programCode: 2 }), false);
   assert.equal(countsTowardAirdropCooldown({ programCode: 2 }), false);

@@ -8,6 +8,7 @@ import { recordGen5CampaignLog, refreshGen5CampaignState } from "./evm/evmGen5Ca
 import {
   annotateCurveTrade,
   forcedGen5Factories,
+  forcedGen7Factories,
   resolveCampaignGeneration,
   type CampaignGenerationInfo,
 } from "./evm/evmGen5Store.js";
@@ -129,6 +130,7 @@ export async function ensureCampaignRowFromChain(
         ...ENV.SUPPORTED_FACTORY_ADDRESSES_56,
         // Launch-generation factories named for this chain (same getCampaignPage tuple).
         ...forcedGen5Factories(chainId),
+        ...forcedGen7Factories(chainId),
       ]
         .map((value) => normalizeAddress(value))
         .filter((value, index, arr) => isAddress(value) && arr.indexOf(value) === index);

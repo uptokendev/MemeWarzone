@@ -10,13 +10,15 @@
 // credited (gen-6 BNB and Robinhood, 2026-10-04).
 
 import { publicHiddenWhere } from "./publicHiddenSql.js";
+import { evmGen7RouterScanEntry } from "./evmGen7Fees.js";
 
 /** A cursor that has not moved for this long counts as stuck. */
 export const ROUTER_SCAN_STALE_MS = 3 * 60 * 60 * 1000;
 
 // Mirrors configuredTreasuryRouters in realtime-indexer/src/indexer.ts: the
 // known routers (TREASURY_ROUTERS_<id> replaces them) plus the launch
-// generation's TreasuryRouterV4 from TREASURY_ROUTERS_EXTRA_<id> on the indexer.
+// generation's TreasuryRouterV4 from TREASURY_ROUTERS_EXTRA_<id> on the indexer,
+// plus generation 7's own TreasuryRouterV4 from EVM_GEN7_ROUTER_<id> (evmGen7Fees.js).
 // The gen-6 start blocks are later than the gen-6 deploys (BNB 125085243,
 // Robinhood 77307987) on purpose, so the founder's test-coin trades before
 // them are not credited.
@@ -47,6 +49,8 @@ export function routerRecordingStarts(chainId, env = {}) {
   const base = replace ? parseRouterEntries(replace) : (KNOWN_ROUTERS[id] || []).map((r) => ({ ...r }));
   const extra = extraEnv ? parseRouterEntries(extraEnv) : (EXTRA_ROUTERS[id] || []).map((r) => ({ ...r }));
   for (const router of extra) if (!base.some((r) => r.address === router.address)) base.push(router);
+  const gen7 = evmGen7RouterScanEntry(id, env);
+  if (gen7 && !base.some((r) => r.address === gen7.address)) base.push(gen7);
   return base;
 }
 

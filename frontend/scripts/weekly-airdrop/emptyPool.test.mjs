@@ -16,7 +16,8 @@ test("chain.mjs no longer throws on a zero warzoneAirdropBalance; the fixed env 
 });
 
 test("runner skips an empty week without creating a batch or an alert", () => {
-  const src = fs.readFileSync(new URL("./run-weekly-airdrop.mjs", import.meta.url), "utf8");
+  // The per-pot draw moved from run-weekly-airdrop.mjs to potRun.mjs (two pots, 2026-10-08).
+  const src = fs.readFileSync(new URL("./potRun.mjs", import.meta.url), "utf8");
   const skip = src.indexOf("nothing to distribute");
   assert.ok(skip > 0);
   assert.ok(skip < src.indexOf("traderCandidates(client"), "skip happens before candidates/batches are built");

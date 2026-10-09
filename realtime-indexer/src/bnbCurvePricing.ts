@@ -1,4 +1,10 @@
-/** Bonding-curve spot and mcap. Matches LaunchCampaign._currentPrice: basePrice + priceSlope * sold / WAD. */
+/**
+ * Bonding-curve spot and mcap. Linear (gen-6 and older): LaunchCampaign._currentPrice, basePrice +
+ * priceSlope * sold / WAD. Constant product (gen-7, LaunchCampaignGen7._currentPrice):
+ * floor(Y(s) * WAD / (virtualToken - s)) with Y(s) = ceil(virtualNative * virtualToken / (virtualToken - s)).
+ * Both report mcap as spot x sold (the same basis for every generation).
+ */
+import { gen7SpotPrice } from "./evm/evmGen7Curve.js";
 
 export const BNB_WAD = 1_000_000_000_000_000_000n;
 
@@ -71,4 +77,75 @@ export function bnbCurveState(
     soldWhole: Number.isFinite(soldWhole) ? soldWhole : 0,
     mcapNative: Number.isFinite(mcapNative) && mcapNative > 0 ? mcapNative : 0,
   };
+}
+
+/** The curve parameters a campaign answers: basePrice/priceSlope (linear) or virtualNative/virtualToken (gen-7). */
+export type BnbCurveParams =
+  | { kind: "linear"; base: bigint; slope: bigint }
+  | { kind: "cp"; virtualNative: bigint; virtualToken: bigint };
+
+/**
+ * Gen-7 constant-product state: exact bigint spot (LaunchCampaignGen7._currentPrice), mcap = spot x sold as
+ * bnbCurveState. Sold at or beyond virtualToken (never reachable on chain, sold <= curveSupply < vT) or
+ * non-positive reserves give a zero spot and mcap, so callers fall back as they do for a missing curve.
+ */
+export function bnbCpCurveState(
+  virtualNative: bigint,
+  virtualToken: bigint,
+  soldRaw: bigint,
+): BnbCurveState {
+  const safeSold = soldRaw > 0n ? soldRaw : 0n;
+  const soldWholeRaw = bigintRatio(safeSold, BNB_WAD);
+  const soldWhole = Number.isFinite(soldWholeRaw) ? soldWholeRaw : 0;
+  if (virtualNative <= 0n || virtualToken <= 0n || safeSold >= virtualToken) {
+    return { soldRaw: safeSold, spotNative: 0, soldWhole, mcapNative: 0 };
+  }
+  const spotRaw = gen7SpotPrice(virtualNative, virtualToken, safeSold);
+  const spotNative = bigintRatio(spotRaw, BNB_WAD);
+  const mcapNative = spotNative * soldWhole;
+  return {
+    soldRaw: safeSold,
+    spotNative: Number.isFinite(spotNative) ? spotNative : 0,
+    soldWhole,
+    mcapNative: Number.isFinite(mcapNative) && mcapNative > 0 ? mcapNative : 0,
+  };
+}
+
+/** bnbCurveState for linear params (unchanged), bnbCpCurveState for gen-7 params. */
+export function bnbCurveStateFor(params: BnbCurveParams, soldRaw: bigint): BnbCurveState {
+  return params.kind === "cp"
+    ? bnbCpCurveState(params.virtualNative, params.virtualToken, soldRaw)
+    : bnbCurveState(params.base, params.slope, soldRaw);
+}
+
+/** The campaign views readBnbCurveParams calls (an ethers Contract with BNB_CURVE_PARAM_FRAGMENTS). */
+export type BnbCurveParamReader = {
+  basePrice(): Promise<bigint>;
+  priceSlope(): Promise<bigint>;
+  virtualNative(): Promise<bigint>;
+  virtualToken(): Promise<bigint>;
+};
+
+/** View fragments for readBnbCurveParams: the linear pair (gen-6 and older) and the gen-7 virtual reserves. */
+export const BNB_CURVE_PARAM_FRAGMENTS = [
+  "function basePrice() view returns (uint256)",
+  "function priceSlope() view returns (uint256)",
+  "function virtualNative() view returns (uint256)",
+  "function virtualToken() view returns (uint256)",
+] as const;
+
+/**
+ * Reads a campaign's curve: basePrice()/priceSlope() first, exactly as before gen-7. Only when that fails
+ * are virtualNative()/virtualToken() tried (LaunchCampaignGen7 has no linear params). When both fail, the
+ * linear read's error is thrown, so callers report what they reported before.
+ */
+export async function readBnbCurveParams(contract: BnbCurveParamReader): Promise<BnbCurveParams> {
+  try {
+    const [base, slope] = await Promise.all([contract.basePrice(), contract.priceSlope()]);
+    return { kind: "linear", base: BigInt(base), slope: BigInt(slope) };
+  } catch (linearError) {
+    const cp = await Promise.all([contract.virtualNative(), contract.virtualToken()]).catch(() => null);
+    if (!cp || BigInt(cp[1]) <= 0n) throw linearError;
+    return { kind: "cp", virtualNative: BigInt(cp[0]), virtualToken: BigInt(cp[1]) };
+  }
 }

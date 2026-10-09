@@ -90,6 +90,11 @@ function normalizeDraftGraduationTarget(chainId, value, launchType = "launchpad"
   if (launchType === "dbc" && (cid === 101 || cid === 102) && target === DBC_TEST_GRADUATION_TARGET_WEI) {
     return target.toString();
   }
+  // $150 market-cap tier of EVM generation 7 (LaunchFactoryGen7) on BNB / Robinhood testnet. A draft does
+  // not know its factory yet: arming refuses it on any other generation (draft-deploy-base).
+  if ((cid === 97 || cid === 46630) && target === DBC_TEST_GRADUATION_TARGET_WEI) {
+    return target.toString();
+  }
   // $6 test threshold: BNB testnet (97) and Solana product chains (101/102).
   if ((cid === 97 || cid === 101 || cid === 102) && target === TEST_GRADUATION_TARGET_WEI) {
     return target.toString();

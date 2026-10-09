@@ -6,7 +6,8 @@
  * Reads only; sends nothing. Refuses on any mismatch.
  *
  *   node scripts/evm-holder-batch-verify.mjs --chain 56 \
- *     --file https://api.memewar.zone/api/evm/holder-batch?chainId=56&weekId=2026-09-21   (or a local .json)
+ *     --file https://api.memewar.zone/api/evm/holder-batch?chainId=56&weekId=2026-09-21   (or a local .json;
+ *            add &vault=<gen-7 vault> for gen-7's own vault, which publishes its own file per week)
  *     [--rpc <url>] [--vault <addr>] [--tx <propose tx hash>] [--from-block <n>]
  *     [--auth-max <wei>] [--out <safe-batch.json>]
  *
@@ -15,7 +16,8 @@
  *      leaf keccak256(bytes.concat(keccak256(abi.encode(account, amount)))), commutative pairs) gives its root, the
  *      leaves add up to its total, the campaign amounts add up to the same total, and the batch id is this chain
  *      and week's holder batch id.
- *   2. The chain: the RPC is the named chain; the vault is the file's (and EVM_CREATOR_VAULT_V2_<id> when set); the
+ *   2. The chain: the RPC is the named chain; the vault is the file's (and EVM_CREATOR_VAULT_V2_<id> when set, or
+ *      EVM_GEN7_CREATOR_VAULT_<id> for a gen-7 file, program "airdrop_holders_gen7"); the
  *      vault's holderDistributor is the file's; the vault's HolderBatchProposed for this batch id carries exactly
  *      this root, total and claim deadline; the proposing transaction called proposeHolderBatch on the vault with
  *      exactly the file's campaigns and amounts, in order; every campaign's choice in the vault is holders or split;
@@ -44,8 +46,18 @@ const VAULT_IFACE = new ethers.Interface(VAULT_ABI);
 
 // ------------------------------------------------------------------------------------ the leaf file (pure)
 
-export function holderBatchId(chainId, weekId) {
-  return ethers.keccak256(ethers.toUtf8Bytes(`mwz-weekly-airdrop:${chainId}:${weekId}:airdrop_holders`));
+/**
+ * program: "airdrop_holders" (gen-6 vault, the default; its files carry no program field) or "airdrop_holders_gen7"
+ * (gen-7's own vault, 2026-10-08). Same derivation as realtime-indexer/src/evm/evmCreatorChoice.ts holderBatchId.
+ */
+export function holderBatchId(chainId, weekId, program = "airdrop_holders") {
+  if (!/^[a-z0-9_]+$/.test(program)) throw new Error(`bad holder program ${program}`);
+  return ethers.keccak256(ethers.toUtf8Bytes(`mwz-weekly-airdrop:${chainId}:${weekId}:${program}`));
+}
+
+/** The env variable that names the vault of a file's program (gen-6 or gen-7's own vault). */
+export function vaultEnvName(chainId, program = "airdrop_holders") {
+  return program === "airdrop_holders" ? `EVM_CREATOR_VAULT_V2_${chainId}` : `EVM_GEN7_CREATOR_VAULT_${chainId}`;
 }
 
 export function merkleLeaf(account, amount) {
@@ -96,7 +108,7 @@ export function checkLeafFile(file) {
   if (byCampaign !== total) throw new Error(`campaign amounts (${byCampaign}) do not add up to the total (${total})`);
   const root = merkleRoot(entries);
   if (root.toLowerCase() !== String(file.root).toLowerCase()) throw new Error(`root ${file.root} does not match the leaves (${root})`);
-  if (holderBatchId(file.chainId, file.weekId).toLowerCase() !== String(file.batchId).toLowerCase()) {
+  if (holderBatchId(file.chainId, file.weekId, file.program ?? "airdrop_holders").toLowerCase() !== String(file.batchId).toLowerCase()) {
     throw new Error("batch id is not this chain and week's holder batch id");
   }
   checkLeafParts(file);
@@ -291,9 +303,10 @@ async function main() {
   const { root, total } = checkLeafFile(file);
   console.log(`[verify] leaf file OK: ${file.leaves.length} holders, ${file.campaigns.length} campaigns, total ${total} wei, root ${root}`);
 
-  const envVault = String(process.env[`EVM_CREATOR_VAULT_V2_${chainId}`] || "").split(",")[0].split("@")[0].trim();
+  const envName = vaultEnvName(chainId, file.program ?? "airdrop_holders");
+  const envVault = String(process.env[envName] || "").split(",")[0].split("@")[0].trim();
   const vault = ethers.getAddress(a.vault || envVault || file.vault);
-  if (envVault && !sameAddr(envVault, vault)) throw new Error(`--vault ${vault} differs from EVM_CREATOR_VAULT_V2_${chainId} ${envVault}`);
+  if (envVault && !sameAddr(envVault, vault)) throw new Error(`--vault ${vault} differs from ${envName} ${envVault}`);
   const rpc = a.rpc || rpcFor(chainId);
   if (!rpc) throw new Error(`no RPC: pass --rpc or set the chain's RPC env`);
   const provider = new ethers.JsonRpcProvider(rpc, undefined, { batchMaxCount: 1 });

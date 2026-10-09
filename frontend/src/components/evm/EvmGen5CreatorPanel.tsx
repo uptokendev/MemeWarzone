@@ -10,6 +10,7 @@ import {
   type Gen5CreatorState,
 } from "@/lib/evmGen6Client";
 import { evmFeeChoiceLine } from "@/lib/evmGen6.mjs";
+import { gen7ShowsGraduationRefund } from "@/lib/evmGen7.mjs";
 
 function tokens(raw: bigint): string {
   const whole = raw / 10n ** 18n;
@@ -87,6 +88,9 @@ export function EvmGen5CreatorPanel({
         ? `Held ${tokens(creator.escrowHeld)}, locked ${tokens(creator.escrowLocked)}. Next release ${when(creator.nextReleaseAt)}.`
         : `Held ${tokens(creator.escrowHeld)}, nothing locked.`;
 
+  // Generation 7 pays the creator nothing at graduation (EVM_GEN7_V2_PLAN.md G4): no 19.8% row. A refund
+  // the pool did not take still belongs to the coin owner and gets its own row only when there is one.
+  const noGraduationPayout = state.factoryGeneration === 7 || creator.graduationCreatorBps === 0;
   const graduationDetail = state.launched
     ? isBeneficiary
       ? "19.8% of what the curve raised, plus any refund from the pool."
@@ -102,21 +106,34 @@ export function EvmGen5CreatorPanel({
       disabled: noSigner || creator.escrowClaimable <= 0n,
       run: () => claimCreatorEscrow(signer!, state.campaign),
     },
+  ];
+  const showGraduationRow =
+    !noGraduationPayout ||
+    gen7ShowsGraduationRefund({
+      launched: state.launched,
+      pendingGraduation: creator.pendingGraduation,
+      pendingGraduationQuote: creator.pendingGraduationQuote,
+    });
+  if (showGraduationRow) rows.push(
     {
       key: "graduation",
-      title: "Graduation payout",
-      detail: graduationDetail,
+      title: noGraduationPayout ? "Graduation refund" : "Graduation payout",
+      detail: noGraduationPayout
+        ? isBeneficiary
+          ? "What the pool did not take at graduation."
+          : "Paid to the coin owner. Connect that wallet to claim."
+        : graduationDetail,
       amount: hasQuote
         ? `${native(creator.pendingGraduation, nativeSymbol)} + ${quoteAmount(creator.pendingGraduationQuote, state.quoteSymbol, state.quoteDecimals)}`
         : native(creator.pendingGraduation, nativeSymbol),
       disabled: noSigner || !state.launched || !isBeneficiary || (creator.pendingGraduation <= 0n && !hasQuote),
       run: () => claimCreatorGraduation(signer!, state.campaign, account, hasQuote),
     },
-  ];
+  );
   if (hasQuote && state.launched && isBeneficiary && creator.pendingGraduation > 0n) {
     rows.push({
       key: "graduation-native",
-      title: `Graduation payout, ${nativeSymbol} only`,
+      title: `${noGraduationPayout ? "Graduation refund" : "Graduation payout"}, ${nativeSymbol} only`,
       detail: `Use this if the ${state.quoteSymbol || "quote"} token refuses the transfer. Its part stays claimable.`,
       amount: native(creator.pendingGraduation, nativeSymbol),
       disabled: noSigner,

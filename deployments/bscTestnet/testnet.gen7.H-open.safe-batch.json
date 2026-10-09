@@ -1,0 +1,42 @@
+{
+  "version": "1.0",
+  "chainId": "97",
+  "createdAt": 1791540684058,
+  "meta": {
+    "name": "MWZ gen7 H: open",
+    "description": "gen-7 BNB factory 0xc82cE828F3e5C7B9D75CF27bcd6f2Dca067fa122: enableLive + setCreatePaused(false); C11 gen-6 factory 0xE700e2016B0D54517D6D1119BC7147F11A0beCA6 setCreatePaused(true)",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0xc82cE828F3e5C7B9D75CF27bcd6f2Dca067fa122",
+      "value": "0",
+      "data": "0x7815b4b4",
+      "contractMethod": {
+        "inputs": [],
+        "name": "enableLive",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    },
+    {
+      "to": "0xc82cE828F3e5C7B9D75CF27bcd6f2Dca067fa122",
+      "value": "0",
+      "data": "0x83bcec850000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setCreatePaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "false"
+      }
+    }
+  ]
+}

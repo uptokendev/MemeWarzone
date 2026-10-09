@@ -32,10 +32,19 @@ export const BNB_BASIC_CAMPAIGN_GENERATION = 4;
 export const EVM_GEN6_FACTORY_GENERATION = 6;
 export const EVM_GEN5_CAMPAIGN_GENERATION = 5;
 export const REQUEST_HASH_GEN6_MIN_FACTORY_GENERATION = EVM_GEN6_FACTORY_GENERATION;
+/**
+ * EVM launch generation 7 (docs/evm-launch/EVM_GEN7_V2_PLAN.md): LaunchFactoryGen7 FACTORY_GENERATION 7 /
+ * CAMPAIGN_GENERATION 6, BnbBasicLaunchFactoryGen7 BASIC_* 7/6. Same 11-field CampaignRequest and hash as
+ * generation 6 (usesGen6RequestHash(7) is true); only the curve and the economics differ. Accepted
+ * wherever 6/5 is; 6/5 stays for the existing coins (G9).
+ */
+export const EVM_GEN7_FACTORY_GENERATION = 7;
+export const EVM_GEN7_CAMPAIGN_GENERATION = 6;
 /** BNB BASIC quote factory generations, per factory kind: [factory, campaign]. */
 const BNB_BASIC_GENERATION_PAIRS = [
   [BNB_BASIC_FACTORY_GENERATION, BNB_BASIC_CAMPAIGN_GENERATION],
   [EVM_GEN6_FACTORY_GENERATION, EVM_GEN5_CAMPAIGN_GENERATION],
+  [EVM_GEN7_FACTORY_GENERATION, EVM_GEN7_CAMPAIGN_GENERATION],
 ];
 const ROBINHOOD_CHAIN_IDS = new Set([ROBINHOOD_MAINNET_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID]);
 
@@ -153,11 +162,11 @@ function assertCreationFactoryAllowed(chainId, factory) {
  * new mainnet factories with CREATE_FACTORY_GENERATION_MISMATCH.
  */
 const ALLOWED_GENERATION_PAIRS = new Map([
-  [56n, [[3, 2], [4, 2], [4, 3], [6, 5]]],
-  [97n, [[3, 2], [4, 2], [4, 3], [6, 5]]],
-  [ROBINHOOD_MAINNET_CHAIN_ID, [[4, 3], [6, 5]]],
-  [ROBINHOOD_TESTNET_CHAIN_ID, [[4, 3], [6, 5]]],
-  [LOCAL_HARDHAT_CHAIN_ID, [[4, 3], [6, 5]]],
+  [56n, [[3, 2], [4, 2], [4, 3], [6, 5], [7, 6]]],
+  [97n, [[3, 2], [4, 2], [4, 3], [6, 5], [7, 6]]],
+  [ROBINHOOD_MAINNET_CHAIN_ID, [[4, 3], [6, 5], [7, 6]]],
+  [ROBINHOOD_TESTNET_CHAIN_ID, [[4, 3], [6, 5], [7, 6]]],
+  [LOCAL_HARDHAT_CHAIN_ID, [[4, 3], [6, 5], [7, 6]]],
 ]);
 
 export function supportedGenerationPairs(chainId) {
@@ -174,7 +183,7 @@ export function isSupportedGenerationPair(chainId, factoryGeneration, campaignGe
   }
 }
 
-/** Campaign generation of the newest supported pair on this chain (5 everywhere since generation 6/5, 2026-09-30). */
+/** Campaign generation of the newest supported pair on this chain (6 everywhere since generation 7/6 was added, 2026-10-08). */
 export function expectedCampaignGeneration(chainId) {
   const pairs = supportedGenerationPairs(chainId);
   return pairs.length ? pairs[pairs.length - 1][1] : 3;

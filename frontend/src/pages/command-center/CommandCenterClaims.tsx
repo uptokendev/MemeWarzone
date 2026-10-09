@@ -13,6 +13,7 @@ import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimBut
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { addressesMatch } from "@/lib/address";
+import { airdropClaimLabel } from "@/lib/airdropProgramLabel.mjs";
 import { apiFetch } from "@/lib/apiBase";
 import { fetchRewardClaims, type RewardLedgerItem } from "@/lib/rewardProgramsApi";
 import {
@@ -1064,6 +1065,20 @@ export default function CommandCenterClaims() {
                     .map((item) => (
                       <li key={item.id} className="flex justify-between gap-3">
                         <span className="truncate">{item.sourceLabel || "League prize"}</span>
+                        <span className="shrink-0 font-mw-mono text-mw-text">{formatNativeAmount(item.amount, item.chainId, item.tokenSymbol)}</span>
+                      </li>
+                    ))}
+                </ul>
+              ) : null}
+              {card.rewardType === "airdrop" && card.items.filter((item) => item.status === "claimable" || item.status === "failed").length > 1 ? (
+                // Several airdrop rows (weeks, or the main and gen-7 pots): list each; Claim sends one
+                // transaction per row to that row's own RewardDistributor.
+                <ul className="m-0 w-full list-none space-y-1 p-0 text-xs text-mw-muted" data-airdrop-claim-list="true">
+                  {card.items
+                    .filter((item) => item.status === "claimable" || item.status === "failed")
+                    .map((item) => (
+                      <li key={item.id} className="flex justify-between gap-3">
+                        <span className="truncate">{airdropClaimLabel(item.metadata)}</span>
                         <span className="shrink-0 font-mw-mono text-mw-text">{formatNativeAmount(item.amount, item.chainId, item.tokenSymbol)}</span>
                       </li>
                     ))}

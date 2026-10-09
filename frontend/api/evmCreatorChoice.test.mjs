@@ -6,6 +6,7 @@ import {
   BUYBACK_ROUTE_PROFILE,
   TRADE_AUTH_BUY_EXACT_NATIVE,
   configuredCreatorVault,
+  configuredCreatorVaults,
   createEvmBuybackAuthorizationHandler,
   createEvmCreatorChoiceReadHandlers,
 } from "./evmCreatorChoice.js";
@@ -232,5 +233,43 @@ test("read routes: week commitments and published holder leaf files", async () =
   assert.equal(res.statusCode, 404);
   res = makeRes();
   await holderBatch({ method: "GET", url: "/api/evm/holder-batch?chainId=56" }, res);
+  assert.equal(res.statusCode, 400);
+});
+
+test("gen-7's own vault (EVM_GEN7_CREATOR_VAULT_<id>) is accepted beside the gen-6 one, for a generation 7 factory's campaign", async () => {
+  const GEN6 = ethers.getAddress("0x00000000000000000000000000000000000006aa");
+  const env = { [`EVM_CREATOR_VAULT_V2_${CHAIN}`]: `${GEN6}@1`, [`EVM_GEN7_CREATOR_VAULT_${CHAIN}`]: `${VAULT.toLowerCase()}@2` };
+  assert.deepEqual(configuredCreatorVaults(CHAIN, env), [GEN6, VAULT]);
+  assert.deepEqual(configuredCreatorVaults(CHAIN, { [`EVM_CREATOR_VAULT_V2_${CHAIN}`]: `${VAULT}@1` }), [VAULT], "gen-6 alone, as before");
+  const { h, logs } = handler({ generation: 7 }, { env });
+  const res = await call(h, good());
+  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+  assert.equal(res.body.actor, VAULT);
+  assert.equal(logs.length, 1);
+  // A vault that is neither is still refused.
+  const other = handler({ generation: 7 }, { env: { [`EVM_CREATOR_VAULT_V2_${CHAIN}`]: `${GEN6}@1`, [`EVM_GEN7_CREATOR_VAULT_${CHAIN}`]: "0x00000000000000000000000000000000000007aa" } }).h;
+  assert.equal((await call(other, good())).body.code, "VAULT_MISMATCH");
+});
+
+test("holder leaf file read: &vault= picks the creator vault; without it the gen-6 vault's file comes first", async () => {
+  const seen = [];
+  const db = {
+    async query(sql, params) {
+      seen.push({ sql, params });
+      return { rows: [{ week_id: "2026-09-28", batch_id: "0x01", status: "proposed", leaf_file: { vault: params[3] }, executable_at: null, last_reason: null }] };
+    },
+  };
+  const { holderBatch } = createEvmCreatorChoiceReadHandlers({ db, env: { EVM_CREATOR_VAULT_V2_56: `${VAULT}@1` } });
+  let res = makeRes();
+  await holderBatch({ method: "GET", url: "/api/evm/holder-batch?chainId=56&weekId=2026-09-28&vault=0x00000000000000000000000000000000000007AA" }, res);
+  assert.equal(res.statusCode, 200);
+  assert.match(seen[0].sql, /vault_address = \$4/);
+  assert.equal(seen[0].params[3], "0x00000000000000000000000000000000000007aa");
+  res = makeRes();
+  await holderBatch({ method: "GET", url: "/api/evm/holder-batch?chainId=56&weekId=2026-09-28" }, res);
+  assert.match(seen[1].sql, /order by \(vault_address = \$4\) desc/);
+  assert.equal(seen[1].params[3], VAULT.toLowerCase());
+  res = makeRes();
+  await holderBatch({ method: "GET", url: "/api/evm/holder-batch?chainId=56&weekId=2026-09-28&vault=nope" }, res);
   assert.equal(res.statusCode, 400);
 });

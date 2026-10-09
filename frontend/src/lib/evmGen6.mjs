@@ -433,5 +433,10 @@ export function creatorStateFromApi(payload, token) {
     pendingGraduationQuote: num(claims.graduationQuote),
     vaultCreatorBalance: num(vault?.creatorClaimableWei),
     vaultCreatorQuoteBalance: num(vault?.creatorClaimableQuote),
+    // Optional (added with generation 7): the creator's graduation share in bps, 0 on gen-7, null when absent.
+    graduationCreatorBps:
+      payload.economics && payload.economics.graduationCreatorBps != null && Number.isFinite(Number(payload.economics.graduationCreatorBps))
+        ? Number(payload.economics.graduationCreatorBps)
+        : null,
   };
 }

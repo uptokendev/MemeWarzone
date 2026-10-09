@@ -31,7 +31,7 @@ import path from "node:path";
 import { ethers } from "hardhat";
 import { buildBatch } from "./make-safe-batch";
 // Same leaf-file checks the Safe signers run for the weekly holder batch (tree, totals, batch id, E19 parts).
-import { checkLeafFile, checkLeafParts } from "./evm-holder-batch-verify.mjs";
+import { checkLeafFile, checkLeafParts, vaultEnvName } from "./evm-holder-batch-verify.mjs";
 
 const SAFE = "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7";
 const HOLDERS = 2;
@@ -54,6 +54,8 @@ export type HolderLeafFile = {
   holderDistributor: string;
   weekId: string;
   batchId: string;
+  /** "airdrop_holders_gen7" for gen-7's own vault; absent on gen-6 files. */
+  program?: string;
   claimDeadline: number;
   root: string;
   total: string;
@@ -137,8 +139,10 @@ async function main() {
   const file = await readLeafFile(source);
   if (Number(file.chainId) !== chainId) throw new Error(`the file is for chain ${file.chainId}, the network is ${chainId}`);
 
-  const envVault = String(process.env[`EVM_CREATOR_VAULT_V2_${chainId}`] || "").split(",")[0].split("@")[0].trim();
-  if (envVault && ethers.getAddress(envVault) !== ethers.getAddress(file.vault)) throw new Error(`the file's vault ${file.vault} is not EVM_CREATOR_VAULT_V2_${chainId} ${envVault}`);
+  // gen-6 files: EVM_CREATOR_VAULT_V2_<id>; gen-7's own vault (program "airdrop_holders_gen7"): EVM_GEN7_CREATOR_VAULT_<id>.
+  const envName = vaultEnvName(chainId, file.program ?? "airdrop_holders");
+  const envVault = String(process.env[envName] || "").split(",")[0].split("@")[0].trim();
+  if (envVault && ethers.getAddress(envVault) !== ethers.getAddress(file.vault)) throw new Error(`the file's vault ${file.vault} is not ${envName} ${envVault}`);
   const vault = new ethers.Contract(file.vault, [
     "function admin() view returns (address)",
     "function holderDistributor() view returns (address)",

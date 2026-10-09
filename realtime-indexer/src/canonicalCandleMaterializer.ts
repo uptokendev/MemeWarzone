@@ -3,7 +3,7 @@ import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createWorkingProvider, parseRpcList } from "./rpcProvider.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
-import { BNB_WAD, bnbCurveState } from "./bnbCurvePricing.js";
+import { BNB_WAD, bnbCurveStateFor, readBnbCurveParams } from "./bnbCurvePricing.js";
 import { bondingCandleConflictSetSql } from "./canonicalCandleRebuild.js";
 
 const LOOP_SYMBOL = Symbol.for("memewarzone.canonicalCandleMaterializerStarted");
@@ -18,6 +18,9 @@ const BNB_CURVE_ABI = [
   "function basePrice() view returns (uint256)",
   "function priceSlope() view returns (uint256)",
   "function sold() view returns (uint256)",
+  // Gen-7 (LaunchCampaignGen7): constant-product curve; basePrice()/priceSlope() do not exist there.
+  "function virtualNative() view returns (uint256)",
+  "function virtualToken() view returns (uint256)",
 ];
 
 type TradeRow = {
@@ -102,7 +105,8 @@ function bigintRatio(value: bigint, denominator: bigint): number {
   return Number(whole) + Number(remainder) / Number(denominator);
 }
 
-function bscRpcUrls(chainId: number): string[] {
+/** EVM curve-chain RPC list: Robinhood RPCs for 4663/46630, BNB RPCs otherwise. Shared with indexer.ts. */
+export function bscRpcUrls(chainId: number): string[] {
   if (chainId === 46630) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630);
   if (chainId === 4663) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663);
   return parseRpcList(chainId === 56 ? ENV.BSC_RPC_HTTP_56 : ENV.BSC_RPC_HTTP_97);
@@ -129,14 +133,14 @@ async function bscProvider(chainId: number): Promise<ethers.JsonRpcProvider> {
 async function bnbSpotCalculator(chainId: number, campaign: string): Promise<SpotModel> {
   const provider = await bscProvider(chainId);
   const contract = new ethers.Contract(campaign, BNB_CURVE_ABI, provider) as any;
-  const [basePriceRaw, priceSlopeRaw, currentSoldRaw] = await Promise.all([
-    contract.basePrice() as Promise<bigint>,
-    contract.priceSlope() as Promise<bigint>,
+  // Linear params first, exactly as before; gen-7 campaigns answer virtualNative/virtualToken instead.
+  const [params, currentSoldRaw] = await Promise.all([
+    readBnbCurveParams(contract),
     contract.sold() as Promise<bigint>,
   ]);
 
   const calculate: SpotCalculator = (soldRaw: bigint) => {
-    const state = bnbCurveState(basePriceRaw, priceSlopeRaw, soldRaw);
+    const state = bnbCurveStateFor(params, soldRaw);
     return {
       soldRaw: state.soldRaw,
       spotNative: state.spotNative,

@@ -7,6 +7,7 @@
 import { ethers } from "ethers";
 import { GEN5_CAMPAIGN_EVENTS } from "./evmGen5Abi.js";
 import { annotateGen5Trade, type Gen5TradeAnnotation } from "./evmGen5Trade.js";
+import { GEN7_ANTI_SNIPER_START_BPS, isEvmGen7CampaignGeneration } from "./evmGen7Curve.js";
 import {
   annotateCurveTrade,
   recordEvmEvent,
@@ -89,6 +90,8 @@ export function annotationForTrade(
     wallet: trade.wallet,
     creator: ctx.info.creator,
     firstBuy: isFirstBuy ? { costNoFee: fb!.costNoFee, fee: fb!.fee } : null,
+    // Gen-7 (campaign generation 6) starts its launch fee at 90%; gen-6 keeps the default 50%.
+    ...(isEvmGen7CampaignGeneration(ctx.info.campaignGeneration) ? { antiSniperStartBps: GEN7_ANTI_SNIPER_START_BPS } : {}),
   });
 }
 

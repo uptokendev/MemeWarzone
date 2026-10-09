@@ -1,80 +1,14 @@
 // First: the same env setup the API server boots with (Supabase pooler TLS), before server/db.js reads it.
 import "../../api/load-local-env.mjs";
 import { pool } from "../../server/db.js";
-import {
-  DAY_MS, asBigInt, envBool, envInt, envText, epochWindow, requireEnv,
-  seedCommitment, splitPool, weightedSample, winnerCount,
-} from "./config.mjs";
-import {
-  assertAirdropSchema, batchComplete, creatorCandidates, exclusionSets, findEpochBatch,
-  stageWinners, traderCandidates, writeRewardAlert,
-} from "./candidates.mjs";
-import {
-  configuredVaultAddress, ensureOnChainBatch, keepFundingCheck, markClaimOpen,
-  markFundingCheck, resolvePoolWei, emptyAirdropPoolReason,
-} from "./chain.mjs";
-import { materializeAirdropBatch } from "./materialize.mjs";
-import { nativeUsdFor, thresholdsFor } from "./usdRules.mjs";
-
-async function audit(client, { batchId, action, oldValue = null, newValue = null, reason, txHash = null, metadata = {} }) {
-  await client.query(
-    `insert into public.reward_audit_logs
-      (batch_id,actor_type,actor_id,action,old_value,new_value,reason,tx_hash,metadata)
-     values ($1,'scheduler','weekly_airdrop_runner',$2,$3,$4,$5,$6,$7::jsonb)`,
-    [batchId, action, oldValue, newValue, reason, txHash, JSON.stringify(metadata)],
-  );
-}
-
-async function resumeFunding(client, { batch, chainId, distributorAddress, program, epochId }) {
-  if (!batch || batchComplete(batch)) return batch;
-  const metadata = batch.metadata || {};
-  if (!metadata.contractBatchId || !metadata.merkleRoot || !metadata.merkleTotalAmount) {
-    throw new Error(`Existing ${program} batch ${batch.id} is missing Merkle metadata`);
-  }
-  await markFundingCheck(client, batch.id);
-  try {
-    const funding = await ensureOnChainBatch({
-      batchId: batch.id,
-      chainId,
-      distributorAddress,
-      vaultAddress: configuredVaultAddress(chainId),
-      poolSource: metadata.poolSource || "community_rewards_vault",
-      batchMetadata: metadata,
-    });
-    const opened = await markClaimOpen(client, batch.id, funding);
-    await audit(client, {
-      batchId: batch.id,
-      action: "automatic_airdrop_funding_resumed",
-      oldValue: batch.status,
-      newValue: "claim_open",
-      reason: `Automatic funding resumed for ${program}`,
-      txHash: funding.txHash,
-      metadata: { chainId, epochId, program, funding },
-    });
-    return opened;
-  } catch (error) {
-    await keepFundingCheck(client, batch.id, error);
-    await writeRewardAlert(client, {
-      severity: "critical",
-      title: "Airdrop batch funding remains incomplete",
-      message: error?.message || String(error),
-      metadata: { chainId, epochId, program, batchId: batch.id },
-      batchId: batch.id,
-    });
-    throw error;
-  }
-}
-
-async function batchWallets(client, batch) {
-  if (!batch?.id) return [];
-  const { rows } = await client.query(
-    `select distinct lower(wallet_address) as wallet_address
-       from public.reward_batch_items
-      where batch_id=$1::uuid`,
-    [batch.id],
-  );
-  return rows.map((row) => row.wallet_address).filter(Boolean);
-}
+import { DAY_MS, envBool, envInt, envText, epochWindow, requireEnv, seedCommitment } from "./config.mjs";
+import { assertAirdropSchema, writeRewardAlert } from "./candidates.mjs";
+import { providerFor } from "./chain.mjs";
+import { airdropPots, isMainPot } from "./pots.mjs";
+import { checkAirdropRunway } from "./authorizationHorizon.mjs";
+// The per-pot draw (resume, empty-pot skip -> "nothing to distribute", candidates, materialize, fund)
+// lives in potRun.mjs so it can be tested without a database.
+import { runAllPots } from "./potRun.mjs";
 
 async function main() {
   const chainId = envInt("AIRDROP_CHAIN_ID", 56, { min: 1, max: 1_000_000 });
@@ -85,6 +19,8 @@ async function main() {
   }
   const drawSecret = requireEnv("AIRDROP_DRAW_SEED_SECRET");
   const distributorAddress = requireEnv(`REWARD_DISTRIBUTOR_ADDRESS_${chainId}`);
+  // Main pot first (today's vault + distributor), then the gen-7 pot when both of its env vars are set.
+  const pots = airdropPots(chainId).map((potConfig) => (isMainPot(potConfig.pot) ? { ...potConfig, distributorAddress } : potConfig));
   const dryRun = envBool("AIRDROP_DRY_RUN", false);
   const enabled = envBool("AIRDROP_AUTOMATION_ENABLED", false);
   if (!dryRun && !enabled) {
@@ -111,186 +47,19 @@ async function main() {
     if (!locked) return console.log(`[weekly-airdrop] another runner owns ${lockKey}`);
     await assertAirdropSchema(client);
 
-    let traderBatch = await findEpochBatch(client, { chainId, epochId, program: "airdrop_trader" });
-    let creatorBatch = await findEpochBatch(client, { chainId, epochId, program: "airdrop_creator" });
-    if (!dryRun && traderBatch && !batchComplete(traderBatch)) {
-      await resumeFunding(client, { batch: traderBatch, chainId, distributorAddress, program: "airdrop_trader", epochId });
-      traderBatch = await findEpochBatch(client, { chainId, epochId, program: "airdrop_trader" });
-    }
-    if (!dryRun && creatorBatch && !batchComplete(creatorBatch)) {
-      await resumeFunding(client, { batch: creatorBatch, chainId, distributorAddress, program: "airdrop_creator", epochId });
-      creatorBatch = await findEpochBatch(client, { chainId, epochId, program: "airdrop_creator" });
-    }
-    if (batchComplete(traderBatch) && batchComplete(creatorBatch)) {
-      return console.log(`[weekly-airdrop] ${epochId} already claim-open`);
-    }
+    // Every run checks the Safe pre-authorization runway of every pot and alerts below
+    // AIRDROP_AUTH_ALERT_WEEKS (default 3); this week unauthorized is critical. Never blocks the draw.
+    await checkAirdropRunway(client, { chainId, pots, currentEnd: end, writeAlert: writeRewardAlert, providerFor, dryRun });
 
-    const anchor = traderBatch?.metadata || creatorBatch?.metadata || null;
-    const pool = anchor?.totalWeeklyPoolWei
-      ? {
-          availableWei: asBigInt(anchor.availablePoolWei || anchor.totalWeeklyPoolWei),
-          source: anchor.poolSource || "community_rewards_vault",
-          vaultAddress: configuredVaultAddress(chainId),
-        }
-      : await resolvePoolWei(chainId);
-    const totalPoolWei = anchor?.totalWeeklyPoolWei
-      ? asBigInt(anchor.totalWeeklyPoolWei)
-      : (pool.availableWei * BigInt(distributionBps)) / 10000n;
-    const emptyReason = anchor ? null : emptyAirdropPoolReason(pool, totalPoolWei);
-    if (emptyReason) {
-      // Nothing to share this week: no batch, no funding, no alert. The next run checks again.
-      return console.log(`[weekly-airdrop] chain ${chainId} ${epochId}: nothing to distribute, ${emptyReason}`);
-    }
-    if (totalPoolWei <= 0n) throw new Error("Calculated weekly airdrop pool is zero");
-
-    // One USD rule set for every chain, converted at this run's spot price (usdRules.mjs).
-    const thresholds = thresholdsFor(chainId, await nativeUsdFor(chainId));
-    const traderPoolWei = totalPoolWei / 2n;
-    const creatorPoolWei = totalPoolWei - traderPoolWei;
-    const exclusions = await exclusionSets(client, { chainId, start, end });
-    const [traders, creators] = await Promise.all([
-      batchComplete(traderBatch) ? [] : traderCandidates(client, { chainId, start, end, exclusions, thresholds }),
-      batchComplete(creatorBatch) ? [] : creatorCandidates(client, { chainId, start, end, exclusions, thresholds }),
-    ]);
-    const programs = [
-      { program: "airdrop_trader", poolWei: traderPoolWei, candidates: traders, existing: batchComplete(traderBatch), batch: traderBatch },
-      { program: "airdrop_creator", poolWei: creatorPoolWei, candidates: creators, existing: batchComplete(creatorBatch), batch: creatorBatch },
-    ];
-    const allowCrossProgramWinners = envBool("AIRDROP_ALLOW_CROSS_PROGRAM_WINNERS", false);
-    const reservedWallets = new Set();
-    if (!allowCrossProgramWinners) {
-      for (const item of programs) {
-        if (!item.existing) continue;
-        for (const wallet of await batchWallets(client, item.batch)) reservedWallets.add(wallet);
-      }
-    }
-
-    const selections = [];
-    for (const item of programs) {
-      if (item.existing) continue;
-      const eligibleCandidates = allowCrossProgramWinners
-        ? item.candidates
-        : item.candidates.filter((candidate) => !reservedWallets.has(candidate.walletAddress.toLowerCase()));
-      if (!eligibleCandidates.length) {
-        throw new Error(`No eligible candidates remain for ${item.program}; refusing to publish either program`);
-      }
-      const count = winnerCount(item.poolWei, eligibleCandidates.length, item.program, thresholds.targetPayoutRaw);
-      const winners = weightedSample(eligibleCandidates, count, drawSecret, `${chainId}:${epochId}:${item.program}`);
-      const payouts = splitPool(item.poolWei, winners.length);
-      if (!winners.length || payouts.some((value) => value <= 0n)) {
-        throw new Error(`Invalid winners or payouts for ${item.program}`);
-      }
-      if (!allowCrossProgramWinners) {
-        for (const winner of winners) reservedWallets.add(winner.walletAddress.toLowerCase());
-      }
-      selections.push({ ...item, candidates: eligibleCandidates, winners, payouts });
-    }
-
-    for (const item of selections) {
-      const { winners, payouts } = item;
-      console.log(`[weekly-airdrop] ${item.program}: ${item.candidates.length} candidates -> ${winners.length} winners`);
-      if (dryRun) {
-        console.log(JSON.stringify({
-          dryRun: true,
-          chainId,
-          epochId,
-          program: item.program,
-          candidateCount: item.candidates.length,
-          winnerCount: winners.length,
-          programPoolWei: item.poolWei.toString(),
-          allowCrossProgramWinners,
-          winners: winners.map((winner, index) => ({
-            walletAddress: winner.walletAddress,
-            winnerRank: winner.winnerRank,
-            finalWeight: winner.finalWeight,
-            payoutAmount: payouts[index].toString(),
-          })),
-        }, null, 2));
-        continue;
-      }
-
-      await client.query("begin");
-      try {
-        await stageWinners(client, {
-          chainId,
-          epochId,
-          program: item.program,
-          winners,
-          payouts,
-          start,
-          end,
-          poolWei: item.poolWei,
-          seedCommitment: commitment,
-        });
-        await client.query("commit");
-      } catch (error) {
-        await client.query("rollback");
-        throw error;
-      }
-
-      const payload = await materializeAirdropBatch(client, {
-        chainId,
-        epochId,
-        program: item.program,
-        winners,
-        payouts,
-        claimDeadline,
-        distributorAddress,
-        metadata: {
-          automated: true,
-          epochStart: start.toISOString(),
-          epochEnd: end.toISOString(),
-          candidateCount: item.candidates.length,
-          winnerCount: winners.length,
-          availablePoolWei: pool.availableWei.toString(),
-          totalWeeklyPoolWei: totalPoolWei.toString(),
-          programPoolWei: item.poolWei.toString(),
-          poolSource: pool.source,
-          distributionBps,
-          nativeUsdAtDraw: thresholds.nativeUsd,
-          drawSeedCommitment: commitment,
-          securityExclusionCount: exclusions.totalCount,
-          allowCrossProgramWinners,
-        },
-      });
-
-      try {
-        const funding = await ensureOnChainBatch({
-          batchId: payload.batch.id,
-          chainId,
-          distributorAddress,
-          vaultAddress: pool.vaultAddress,
-          poolSource: pool.source,
-          batchMetadata: payload.batch.metadata,
-        });
-        await markClaimOpen(client, payload.batch.id, funding);
-        await audit(client, {
-          batchId: payload.batch.id,
-          action: "automatic_airdrop_run_completed",
-          newValue: "claim_open",
-          reason: `Automatic weekly ${item.program} completed and funded`,
-          txHash: funding.txHash,
-          metadata: { chainId, epochId, program: item.program, commitment, funding, allowCrossProgramWinners },
-        });
-      } catch (error) {
-        await keepFundingCheck(client, payload.batch.id, error);
-        await writeRewardAlert(client, {
-          severity: "critical",
-          title: "Airdrop batch funding failed",
-          message: error?.message || String(error),
-          metadata: { chainId, epochId, program: item.program, batchId: payload.batch.id },
-          batchId: payload.batch.id,
-        });
-        throw error;
-      }
-    }
+    const ctx = { chainId, epochId, start, end, claimDeadline, commitment, drawSecret, dryRun, distributionBps };
+    await runAllPots(client, ctx, pots);
   } catch (error) {
     console.error("[weekly-airdrop] failed", error);
     await writeRewardAlert(client, {
       severity: "critical",
       title: "Weekly airdrop automation failed",
       message: error?.message || String(error),
-      metadata: { chainId, epochId, start: start.toISOString(), end: end.toISOString() },
+      metadata: { chainId, epochId, start: start.toISOString(), end: end.toISOString(), ...(error?.pots ? { pots: error.pots } : {}) },
       batchId: null,
     });
     process.exitCode = 1;

@@ -2,6 +2,7 @@ import { asBigInt, envInt } from "./config.mjs";
 import { scoreUnits } from "./usdRules.mjs";
 import { ownerWalletIndex } from "../../shared/ownerWallets.mjs";
 import { heldWalletKeys } from "../../shared/moderationHolds.mjs";
+import { MAIN_POT, POT_SQL, isMainPot, potMetadata, winnerSourceId } from "./pots.mjs";
 
 function isSolanaAirdropChain(chainId) {
   return Number(chainId) === 101 || Number(chainId) === 102;
@@ -46,16 +47,32 @@ export async function writeRewardAlert(client, { severity = "error", title, mess
   }
 }
 
-export async function findEpochBatch(client, { chainId, epochId, program }) {
+export async function findEpochBatch(client, { chainId, epochId, program, pot = MAIN_POT }) {
   const { rows } = await client.query(
     `select id,status,total_amount,metadata,published_at
        from public.reward_batches
       where reward_type='airdrop' and chain::text=$1 and metadata->>'epochId'=$2
-        and metadata->>'program'=$3 and status<>'archived'
+        and metadata->>'program'=$3 and ${POT_SQL()}=$4 and status<>'archived'
       order by created_at desc limit 1`,
-    [String(chainId), epochId, program],
+    [String(chainId), epochId, program, isMainPot(pot) ? MAIN_POT : pot],
   );
   return rows[0] || null;
+}
+
+/**
+ * Wallets already drawn this week in the OTHER pots of this chain (any status but archived), so a
+ * wallet wins from at most one pot per week -- the same "one airdrop win a week" a single pot gives.
+ */
+export async function otherPotWallets(client, { chainId, epochId, pot = MAIN_POT }) {
+  const { rows } = await client.query(
+    `select distinct lower(i.wallet_address) as wallet_address
+       from public.reward_batch_items i join public.reward_batches b on b.id=i.batch_id
+      where b.reward_type='airdrop' and b.chain::text=$1 and b.metadata->>'epochId'=$2
+        and b.metadata->>'program' in ('airdrop_trader','airdrop_creator')
+        and ${POT_SQL("b.metadata")}<>$3 and b.status<>'archived'`,
+    [String(chainId), epochId, isMainPot(pot) ? MAIN_POT : pot],
+  );
+  return rows.map((row) => row.wallet_address).filter(Boolean);
 }
 
 export function batchComplete(batch) {
@@ -81,7 +98,7 @@ export function isWalletExcluded(exclusions, wallet) {
 // starts the 14-day cooldown. EVM gen-5 holder batches carry program 'airdrop_holders'; Solana DBC holder
 // leaves carry program 'dbc_holders' / programCode 2. Trader (code 0) and creator (code 1) wins -- and any
 // legacy row without a program -- keep counting exactly as before.
-export const HOLDER_PAYOUT_PROGRAMS = Object.freeze(["airdrop_holders", "dbc_holders"]);
+export const HOLDER_PAYOUT_PROGRAMS = Object.freeze(["airdrop_holders", "airdrop_holders_gen7", "dbc_holders"]);
 export const HOLDER_PAYOUT_PROGRAM_CODE = 2;
 
 /** JS mirror of the cooldown SQL predicate below: does this reward_ledger airdrop row start the cooldown? */
@@ -245,8 +262,12 @@ export async function creatorCandidates(client, { chainId, start, end, exclusion
   });
 }
 
-export async function stageWinners(client, { chainId, epochId, program, winners, payouts, start, end, poolWei, seedCommitment, tokenSymbol = "BNB" }) {
-  await client.query(`delete from public.reward_calculation_inputs where reward_type='airdrop' and program=$1 and epoch_id=$2 and chain=$3`, [program, epochId, String(chainId)]);
+export async function stageWinners(client, { chainId, epochId, program, winners, payouts, start, end, poolWei, seedCommitment, tokenSymbol = "BNB", pot = MAIN_POT }) {
+  // Only this pot's staged rows: the main pot's delete matches every row without airdropPot, as before.
+  await client.query(
+    `delete from public.reward_calculation_inputs where reward_type='airdrop' and program=$1 and epoch_id=$2 and chain=$3 and ${POT_SQL()}=$4`,
+    [program, epochId, String(chainId), isMainPot(pot) ? MAIN_POT : pot],
+  );
   for (let i = 0; i < winners.length; i += 1) {
     const winner = winners[i];
     const metadata = {
@@ -259,12 +280,13 @@ export async function stageWinners(client, { chainId, epochId, program, winners,
       uniqueBuyers: winner.uniqueBuyers ?? null, eligibleCampaignCount: winner.eligibleCampaignCount ?? null,
       eligibleCampaigns: winner.eligibleCampaigns ?? null, drawDigest: winner.drawDigest,
       drawSeedCommitment: seedCommitment, programPoolWei: poolWei.toString(), automated: true,
+      ...potMetadata(pot),
     };
     await client.query(
       `insert into public.reward_calculation_inputs
         (reward_type,program,epoch_id,chain,token_symbol,wallet_address,amount,score,activity_score,source_id,source_label,status,metadata)
        values ('airdrop',$1,$2,$3,$10,$4,$5::numeric,$6::numeric,$7::numeric,$8,'weekly_airdrop_scheduler','approved',$9::jsonb)`,
-      [program, epochId, String(chainId), winner.walletAddress, payouts[i].toString(), String(winner.finalWeight), String(winner.activityScore), `${epochId}:${program}:${winner.winnerRank}`, JSON.stringify(metadata), tokenSymbol],
+      [program, epochId, String(chainId), winner.walletAddress, payouts[i].toString(), String(winner.finalWeight), String(winner.activityScore), winnerSourceId(epochId, program, winner.winnerRank, pot), JSON.stringify(metadata), tokenSymbol],
     );
   }
 }

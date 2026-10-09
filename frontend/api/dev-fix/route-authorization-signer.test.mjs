@@ -133,9 +133,9 @@ test("accepts BNB factory generation 4 without changing campaign generation", ()
   assert.match(digest, /^0x[0-9a-f]{64}$/i);
 });
 
-test("Robinhood testnet refuses factory generation 3 and requires 4/3 (or the new 6/5)", () => {
-  assert.equal(expectedCampaignGeneration(46630), 5);
-  assert.equal(generationRule(46630), "4/3-or-6/5");
+test("Robinhood testnet refuses factory generation 3 and requires 4/3 (or the new 6/5 or 7/6)", () => {
+  assert.equal(expectedCampaignGeneration(46630), 6);
+  assert.equal(generationRule(46630), "4/3-or-6/5-or-7/6");
   assert.throws(
     () => buildScheduledCreateAuthorizationDigest(scheduledInput({
       chainId: 46630,
@@ -209,12 +209,13 @@ test("Robinhood testnet refuses factory generation 3 and requires 4/3 (or the ne
 test("BNB and Robinhood production sign for the deployed 4/3 generation and the new 6/5; legacy BNB pairs stay; other pairs are refused", () => {
   // Read from chain 2026-09-24: 0x632061cA... (56) and 0x35E93D0b... (4663) report 4/3; the old BNB factory 0xc378221E... reports 3/2.
   // Generation 6/5 (docs/evm-launch) is added beside them; the live factories keep working (E14).
-  assert.equal(expectedCampaignGeneration(56), 5);
-  assert.equal(expectedCampaignGeneration(97), 5);
-  assert.equal(expectedCampaignGeneration(4663), 5);
-  assert.equal(generationRule(56), "3/2-or-4/2-or-4/3-or-6/5");
-  assert.equal(generationRule(97), "3/2-or-4/2-or-4/3-or-6/5");
-  assert.equal(generationRule(4663), "4/3-or-6/5");
+  // Generation 7/6 (docs/evm-launch/EVM_GEN7_V2_PLAN.md) is added after 6/5, so the newest campaign generation is 6.
+  assert.equal(expectedCampaignGeneration(56), 6);
+  assert.equal(expectedCampaignGeneration(97), 6);
+  assert.equal(expectedCampaignGeneration(4663), 6);
+  assert.equal(generationRule(56), "3/2-or-4/2-or-4/3-or-6/5-or-7/6");
+  assert.equal(generationRule(97), "3/2-or-4/2-or-4/3-or-6/5-or-7/6");
+  assert.equal(generationRule(4663), "4/3-or-6/5-or-7/6");
   for (const [chainId, factoryGeneration, campaignGeneration, ok] of [
     [56, 4, 3, true], [56, 3, 2, true], [56, 4, 2, true], [56, 3, 3, false], [56, 5, 4, false],
     [97, 4, 3, true], [4663, 4, 3, true], [4663, 4, 2, false], [4663, 3, 2, false], [1, 4, 3, false],

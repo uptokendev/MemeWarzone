@@ -30,6 +30,7 @@ import {
 } from "./ticker-reservation-service.js";
 import { upsertCampaignFromDraft } from "./campaign-registry.js";
 import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
+import { EVM_GEN7_FACTORY_GENERATION, GEN7_TARGET_TEST_USD, isGen7TargetAllowed } from "../../shared/evmGen7Curve.mjs";
 
 const MIN_SCHEDULE_SECONDS = 5 * 60;
 const MAX_SCHEDULE_SECONDS = 30 * 24 * 60 * 60;
@@ -40,6 +41,8 @@ const STANDARD_TARGETS = new Set([
   (50_000n * WAD).toString(),
 ]);
 const TEST_TARGET = (6n * WAD).toString();
+// Generation 7 market-cap test tier ($150, LaunchFactoryGen7 on 97 / 46630).
+const GEN7_TEST_TARGET = GEN7_TARGET_TEST_USD.toString();
 
 function methodAllowed(req, res, allowed) {
   if (allowed.includes(req.method)) return true;
@@ -65,12 +68,40 @@ function isTruthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
-function readVerifiedGenerations(chainId, body) {
-  const factoryGeneration = Number(body?.onChainPreflight?.factoryGeneration || 0);
-  const campaignGeneration = Number(body?.onChainPreflight?.campaignGeneration || 0);
+const FACTORY_GENERATION_ABI = [
+  "function FACTORY_GENERATION() view returns (uint32)",
+  "function CAMPAIGN_GENERATION() view returns (uint32)",
+];
+
+/** FACTORY_GENERATION() / CAMPAIGN_GENERATION() of `factoryAddress`, read with the API's provider for the chain. */
+export async function readFactoryGenerationsOnChain({ chainId, factoryAddress }) {
+  const provider = await getServerReadProvider(chainId);
+  const factory = new ethers.Contract(factoryAddress, FACTORY_GENERATION_ABI, provider);
+  const [factoryGeneration, campaignGeneration] = await Promise.all([factory.FACTORY_GENERATION(), factory.CAMPAIGN_GENERATION()]);
+  return { factoryGeneration: Number(factoryGeneration), campaignGeneration: Number(campaignGeneration) };
+}
+
+export class ScheduledGenerationMismatchError extends Error {}
+
+/**
+ * The generation pair the scheduled request is signed for: read from the factory on the draft's chain,
+ * never taken from the request. An onChainPreflight pair in the body (set by draft-deploy.js) must
+ * match the read. `deps.readGenerations` is injectable for tests.
+ */
+export async function readVerifiedGenerations(chainId, body, { factoryAddress, readGenerations = readFactoryGenerationsOnChain } = {}) {
+  let factoryGeneration = 0;
+  let campaignGeneration = 0;
+  try {
+    const onChain = await readGenerations({ chainId, factoryAddress });
+    factoryGeneration = Number(onChain?.factoryGeneration || 0);
+    campaignGeneration = Number(onChain?.campaignGeneration || 0);
+  } catch {
+    // An unreadable factory leaves 0/0 and is refused below.
+  }
+  let verified;
   try {
     const { factoryGen, campaignGen } = assertSupportedGenerations(chainId, factoryGeneration, campaignGeneration);
-    return { factoryGeneration: factoryGen, campaignGeneration: campaignGen };
+    verified = { factoryGeneration: factoryGen, campaignGeneration: campaignGen };
   } catch (error) {
     throw new Error(
       `Verified on-chain factory generation is required before scheduled authorization; ` +
@@ -78,6 +109,41 @@ function readVerifiedGenerations(chainId, body) {
         `got ${factoryGeneration}/${campaignGeneration}.`,
     );
   }
+  const preflight = body?.onChainPreflight;
+  if (preflight && (preflight.factoryGeneration != null || preflight.campaignGeneration != null)) {
+    const claimedFactory = Number(preflight.factoryGeneration || 0);
+    const claimedCampaign = Number(preflight.campaignGeneration || 0);
+    if (claimedFactory !== verified.factoryGeneration || claimedCampaign !== verified.campaignGeneration) {
+      throw new ScheduledGenerationMismatchError(
+        `Factory generation mismatch: the request says ${claimedFactory}/${claimedCampaign}, ` +
+          `the factory on chain ${chainId} reports ${verified.factoryGeneration}/${verified.campaignGeneration}.`,
+      );
+    }
+  }
+  return verified;
+}
+
+/**
+ * The scheduled create's target for the factory's generation. Generation 7 graduates at a USD market
+ * cap: $30K / $50K, $150 on the testnets (isGen7TargetAllowed, as LaunchFactoryGen7), so its $15K / $6
+ * are refused here instead of reverting on chain. Every other generation keeps normalizeTarget as it was.
+ */
+export function normalizeTargetForGeneration(chainId, value, factoryGeneration) {
+  if (Number(factoryGeneration) !== EVM_GEN7_FACTORY_GENERATION) return normalizeTarget(chainId, value);
+  let target;
+  try {
+    target = BigInt(String(value ?? 0)).toString();
+  } catch {
+    throw new Error("graduationTarget must be a uint-compatible value");
+  }
+  const testEnabled = isTruthy(
+    process.env.VITE_ENABLE_TEST_GRADUATION_THRESHOLD || process.env.ENABLE_TEST_GRADUATION_THRESHOLD || "true",
+  );
+  const cid = Number(chainId);
+  // 31337 (any target on chain) is held to the same tiers as the testnets here.
+  const tierChainId = cid === 31337 ? 97 : cid;
+  if (target !== "0" && isGen7TargetAllowed(tierChainId, target) && (target !== GEN7_TEST_TARGET || testEnabled)) return target;
+  throw new Error("Generation 7 coins graduate at a $30,000 or $50,000 market cap ($150 on testnets).");
 }
 
 function normalizeTarget(chainId, value) {
@@ -173,7 +239,7 @@ export async function resolveScheduledGen6Fields({ body, pool, draftId, chainId,
   const readContext =
     deps.readContext ||
     (async ({ graduationTarget: target }) =>
-      readGen6FactoryCreateContext({ provider: await getServerReadProvider(chainId), factoryAddress, graduationTarget: target }));
+      readGen6FactoryCreateContext({ provider: await getServerReadProvider(chainId), factoryAddress, graduationTarget: target, factoryGeneration }));
   let optionSource = source;
   let autoMaxCost = false;
   if (!hasGen6CreateFields(source)) {
@@ -206,15 +272,18 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
 
   let generations;
   try {
-    generations = readVerifiedGenerations(chainId, body);
+    generations = await readVerifiedGenerations(chainId, body, { factoryAddress });
   } catch (error) {
-    return json(res, 409, { error: error.message, code: "SCHEDULED_CREATE_GENERATION_NOT_VERIFIED" });
+    const code = error instanceof ScheduledGenerationMismatchError
+      ? "SCHEDULED_CREATE_GENERATION_MISMATCH"
+      : "SCHEDULED_CREATE_GENERATION_NOT_VERIFIED";
+    return json(res, 409, { error: error.message, code });
   }
   const { factoryGeneration, campaignGeneration } = generations;
 
   let graduationTarget;
   try {
-    graduationTarget = normalizeTarget(chainId, body.graduationTargetWei);
+    graduationTarget = normalizeTargetForGeneration(chainId, body.graduationTargetWei, factoryGeneration);
   } catch (error) {
     return json(res, 400, { error: error.message });
   }

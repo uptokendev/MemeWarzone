@@ -8,6 +8,11 @@
  * The old generation (the factories live on mainnet today) keeps using src/abis.ts unchanged
  * (founder decision E14). Only a campaign whose factory reports CAMPAIGN_GENERATION >= 5 is decoded
  * with these.
+ *
+ * Gen-7 (LaunchFactoryGen7 / LaunchCampaignGen7: factory 7 / campaign 6) emits the same campaign and
+ * factory events and answers every view and entry point below, so it is decoded with these too; its
+ * curve views differ (virtualNative/virtualToken instead of basePrice/priceSlope, see evmGen7Curve.ts).
+ * src/tests/evmGen7Curve.test.ts pins that against the gen-7 artifacts when they are compiled.
  */
 
 export const GEN5_CAMPAIGN_GENERATION = 5;

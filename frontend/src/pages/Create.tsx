@@ -50,13 +50,21 @@ import { submitDbcCreateTransaction } from "@/lib/dbcCreateSubmit";
 import { CreatorFeeChoicePicker, type CreatorFeeChoice } from "@/components/create/CreatorFeeChoicePicker";
 import {
   EvmGen6LaunchOptions,
+  assertEvmGen7LaunchBalance,
   freshEvmFirstBuyPlan,
+  freshEvmGen7FirstBuyPlan,
   parseNativeInput,
   type EvmFirstBuyPlan,
 } from "@/components/create/EvmGen6LaunchOptions";
 import { gen6CreateFields } from "@/lib/evmGen6.mjs";
+import {
+  EVM_GEN7_DEFAULT_GRADUATION_TARGET_WEI,
+  evmGen7DexName,
+  evmGen7GraduationTiers,
+  gen7CreateFields,
+} from "@/lib/evmGen7.mjs";
 import { DBC_LAUNCH_FEE_NOTE } from "../../shared/dbcAntiSniper.mjs";
-import { isGen6Factory } from "@/lib/evmGen6Client";
+import { readEvmLaunchGeneration, type EvmLaunchGeneration } from "@/lib/evmGen6Client";
 import { getReadProvider } from "@/lib/readProvider";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 import { apiFetch } from "@/lib/apiBase";
@@ -89,6 +97,7 @@ import {
   getDefaultGraduationTargetWei,
   getGraduationTiers,
   graduationTargetToUsdMicros,
+  isTestGraduationTierEnabled,
   type GraduationTier,
 } from "@/lib/graduationTiers";
 import { isCreatorArmCooldownActive } from "@/lib/creatorArmCooldown";
@@ -243,6 +252,9 @@ const Create = () => {
   const [evmFirstBuyInput, setEvmFirstBuyInput] = useState("");
   const [evmFirstBuyPlan, setEvmFirstBuyPlan] = useState<EvmFirstBuyPlan | null>(null);
   const [evmGen6FactoryAddress, setEvmGen6FactoryAddress] = useState("");
+  // Generation 7 (EVM_GEN7_V2_PLAN.md) takes the same create fields; it adds market-cap tiers and balance checks.
+  const [evmLaunchGeneration, setEvmLaunchGeneration] = useState<EvmLaunchGeneration | null>(null);
+  const [evmGen7FirstBuyBlocked, setEvmGen7FirstBuyBlocked] = useState(false);
   const [creatorEligibility, setCreatorEligibility] = useState<ScheduledCreatorLaunchEligibility | null>(null);
   const [creatorEligibilityError, setCreatorEligibilityError] = useState<string | null>(null);
   const armDialogShownForWallet = useRef<string | null>(null);
@@ -315,9 +327,15 @@ const Create = () => {
       setDbcMaxPending(false);
     }
   };
+  const evmGen7 = Boolean(evmGen6FactoryAddress) && evmLaunchGeneration === 7 && !isSolanaCreator;
   const graduationOptions: GraduationTier[] = useMemo(
-    () => (dbcLaunch ? getDbcGraduationTiers(String(import.meta.env.VITE_SOLANA_CLUSTER || "")) : getGraduationTiers(chainId)),
-    [chainId, dbcLaunch],
+    () =>
+      dbcLaunch
+        ? getDbcGraduationTiers(String(import.meta.env.VITE_SOLANA_CLUSTER || ""))
+        : evmGen7
+          ? evmGen7GraduationTiers(chainId, { testTierEnabled: isTestGraduationTierEnabled(chainId) })
+          : getGraduationTiers(chainId),
+    [chainId, dbcLaunch, evmGen7],
   );
   const configuredEvmChainId = useMemo(
     () => (isEvmChainId(chainId) ? chainId : BNB_CHAIN_ID),
@@ -408,8 +426,12 @@ const Create = () => {
 
   useEffect(() => {
     const selectedStillAvailable = graduationOptions.some((option) => option.targetWei === graduationTargetWei);
-    // DBC preselects its normal tier ($50K MC); the other launch types keep their own default.
-    const defaultTarget = dbcLaunch ? DBC_DEFAULT_GRADUATION_TARGET_WEI : getDefaultGraduationTargetWei(chainId);
+    // DBC and EVM gen-7 preselect their normal tier ($50K MC); the other launch types keep their own default.
+    const defaultTarget = dbcLaunch
+      ? DBC_DEFAULT_GRADUATION_TARGET_WEI
+      : evmGen7
+        ? EVM_GEN7_DEFAULT_GRADUATION_TARGET_WEI
+        : getDefaultGraduationTargetWei(chainId);
     if (!selectedStillAvailable) {
       setGraduationTargetWei(defaultTarget);
       return;
@@ -420,7 +442,7 @@ const Create = () => {
         setGraduationTargetWei(preferred);
       }
     }
-  }, [graduationOptions, graduationTargetWei, chainId, dbcLaunch]);
+  }, [graduationOptions, graduationTargetWei, chainId, dbcLaunch, evmGen7]);
 
   useEffect(() => {
     if (!dbcLaunch) {
@@ -527,15 +549,21 @@ const Create = () => {
     const factoryAddress = launchpad.factoryAddress || "";
     if (isSolanaCreator || !isEvmChainId(chainId) || !factoryAddress) {
       setEvmGen6FactoryAddress("");
+      setEvmLaunchGeneration(null);
       return;
     }
     let cancelled = false;
-    void isGen6Factory(getReadProvider(Number(chainId) as any), factoryAddress)
-      .then((yes) => {
-        if (!cancelled) setEvmGen6FactoryAddress(yes ? factoryAddress : "");
+    // Generation 6 or 7: both take the first buy and fee choice in the create request.
+    void readEvmLaunchGeneration(getReadProvider(Number(chainId) as any), factoryAddress)
+      .then((generation) => {
+        if (cancelled) return;
+        setEvmGen6FactoryAddress(generation ? factoryAddress : "");
+        setEvmLaunchGeneration(generation);
       })
       .catch(() => {
-        if (!cancelled) setEvmGen6FactoryAddress("");
+        if (cancelled) return;
+        setEvmGen6FactoryAddress("");
+        setEvmLaunchGeneration(null);
       });
     return () => {
       cancelled = true;
@@ -547,6 +575,18 @@ const Create = () => {
   const buildEvmGen6Fields = async () => {
     if (!evmGen6) return undefined;
     const budgetWei = parseNativeInput(evmFirstBuyInput);
+    if (evmGen7) {
+      const gen7Plan = budgetWei > 0n
+        ? await freshEvmGen7FirstBuyPlan({ chainId: Number(chainId), factoryAddress: evmGen6FactoryAddress, graduationTarget: graduationTargetWei, budgetWei })
+        : null;
+      if (gen7Plan?.exceedsCap) {
+        throw new Error("Your first buy is over the cap. Lower the amount.");
+      }
+      const fields = gen7CreateFields({ choice: evmFeeChoice, creatorSharePct: evmCreatorSharePct, firstBuy: gen7Plan });
+      // Before the wallet opens: the first buy's value plus gas must fit in the balance.
+      await assertEvmGen7LaunchBalance({ chainId: Number(chainId), account: wallet.account || "", valueWei: fields.value });
+      return fields;
+    }
     const plan = budgetWei > 0n
       ? await freshEvmFirstBuyPlan({ chainId: Number(chainId), factoryAddress: evmGen6FactoryAddress, graduationTarget: graduationTargetWei, budgetWei })
       : null;
@@ -1184,7 +1224,8 @@ const Create = () => {
     if (fromStep === 1) return mode === "draft" || mode === "deploy";
     if (fromStep === 2) return identityReady;
     if (fromStep === 3) return storyReady;
-    if (fromStep === 4) return true;
+    // EVM gen-7: a first buy over the 70% cap or above what the wallet can pay blocks Next.
+    if (fromStep === 4) return !(evmGen7 && evmGen7FirstBuyBlocked);
     // A DBC coin graduates into its own Meteora pool: no Graduation Market catalog choice.
     if (fromStep === 5) return dbcLaunch ? !dbcFirstBuyBlocked : graduationMarketReady;
     return false;
@@ -1201,6 +1242,7 @@ const Create = () => {
         else if (checkingTicker) toast.error("Wait for ticker availability check to finish.");
         else toast.error(tickerAvailability?.reason || "Ticker must be available before continuing.");
       } else if (step === 3) toast.error("Add a short description before continuing.");
+      else if (step === 4 && evmGen7 && evmGen7FirstBuyBlocked) toast.error("Lower your first buy or press MAX.");
       else if (step === 5 && dbcLaunch && dbcFirstBuyQuote?.exceedsCap) toast.error(`The first buy cannot be more than ${dbcFirstBuyQuote.capBps / 100}% of supply. Lower it or press MAX.`);
       else if (step === 5 && dbcLaunch && dbcFirstBuyOverBalance && dbcSolBalance != null) toast.error(dbcLaunchBalanceMessage(dbcLaunchMaxFirstBuyLamports(dbcSolBalance)));
       else if (step === 5) toast.error("Choose a Graduation Market first.");
@@ -1405,7 +1447,7 @@ const Create = () => {
                 left={<div className="flex w-full flex-col items-center gap-2">{preview}{selectedGraduation ? <p className="text-center text-xs text-mw-muted">Graduation: <span className="text-accent">{selectedGraduation.label}</span> · {selectedGraduation.title}</p> : null}</div>}
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1">
-                    <div><div className="text-sm font-semibold text-mw-text">{dbcLaunch ? "Graduation market cap" : "Graduation threshold"}</div><p className="mt-0.5 text-xs text-mw-muted">{dbcLaunch ? "The market cap at which the coin moves to a Meteora pool." : "Bonding volume before DEX graduation."}</p></div>
+                    <div><div className="text-sm font-semibold text-mw-text">{dbcLaunch || evmGen7 ? "Graduation market cap" : "Graduation threshold"}</div><p className="mt-0.5 text-xs text-mw-muted">{dbcLaunch ? "The market cap at which the coin moves to a Meteora pool." : evmGen7 ? `The market cap at which the coin moves to a ${evmGen7DexName(chainId)} pool.` : "Bonding volume before DEX graduation."}</p></div>
                     <div className="grid grid-cols-2 gap-1.5">
                       {graduationOptions.map((option) => {
                         const selected = graduationTargetWei === option.targetWei;
@@ -1436,6 +1478,9 @@ const Create = () => {
                         firstBuyInput={evmFirstBuyInput}
                         onFirstBuyInputChange={setEvmFirstBuyInput}
                         onPlanChange={setEvmFirstBuyPlan}
+                        generation={evmGen7 ? 7 : 6}
+                        account={wallet.account || ""}
+                        onBlockedChange={setEvmGen7FirstBuyBlocked}
                       />
                     ) : null}
                     <Collapsible open={safetyOpen} onOpenChange={setSafetyOpen} className="rounded-xl border border-border/50 bg-background/25">

@@ -1,0 +1,732 @@
+{
+  "chainId": 46630,
+  "dryRun": false,
+  "startedAt": "2026-10-09T10:19:21.002Z",
+  "txs": [
+    {
+      "label": "factory.enableLive",
+      "hash": "0xbe1659ca22446599b4e0d283fc84301a3cccf57a8a92253b758bcd63804860d6",
+      "block": 131596046,
+      "timestamp": 1791541165,
+      "gasUsed": "30508",
+      "from": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+    },
+    {
+      "label": "factory.setCreatePaused(false)",
+      "hash": "0xad4b246039b6f70e43bf2eb306e10e46849607447479f75f4969cba4f6c122e3",
+      "block": 131596075,
+      "timestamp": 1791541169,
+      "gasUsed": "30748",
+      "from": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+    },
+    {
+      "label": "refresh mock ETH/USD feed",
+      "hash": "0x009c6313ef4c449867e2b91d205e2fe081ff7eeab86228e9d82f267a4e8c9463"
+    },
+    {
+      "label": "fund 0x007Af718b572bda2ACcf46633931542011622163",
+      "hash": "0x8c98f0cc909021c5be61a61d758663c927d78b09192ea56aea120f9795cf30c8",
+      "block": 131596126,
+      "timestamp": 1791541176,
+      "gasUsed": "21000",
+      "from": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+    },
+    {
+      "label": "fund 0xAA1ABD58c14fae859F5C025625bfA3E5987380d3",
+      "hash": "0xc14ade8cdb04c6e3358cf4554bdf43d3a9af9a261c8b1cb67b6fb316306b24f7",
+      "block": 131596151,
+      "timestamp": 1791541179,
+      "gasUsed": "21000",
+      "from": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+    },
+    {
+      "label": "fund 0xDA92D3801e63BAdfdDA41aA4Cad854192938863e",
+      "hash": "0x297fdd4c845053bf4dd202be2b08c72429f8584e3a0b1033026e95cff0cc7fa9",
+      "block": 131596179,
+      "timestamp": 1791541183,
+      "gasUsed": "21000",
+      "from": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+    },
+    {
+      "label": "fund 0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5",
+      "hash": "0x0ed5fcc902c1007bbbd8d9d9e6bc58b367e37ab2f397a335795b451747d76d9e",
+      "block": 131596207,
+      "timestamp": 1791541187,
+      "gasUsed": "21000",
+      "from": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+    },
+    {
+      "label": "fund 0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3",
+      "hash": "0xb1501f25f7581e3d5be1cfdd6cd5d84952075a660b700a3b5b07522537dc9a29",
+      "block": 131596237,
+      "timestamp": 1791541191,
+      "gasUsed": "21000",
+      "from": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+    },
+    {
+      "label": "fund 0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De",
+      "hash": "0x43cc24d42b8100730084350f047da6173542686031bf0352222caf0530c90669",
+      "block": 131596264,
+      "timestamp": 1791541194,
+      "gasUsed": "21000",
+      "from": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+    },
+    {
+      "label": "create A",
+      "hash": "0xd8a2c302ebfb66861077aaa52fe995ebd098394c89d6a3388fe74a0c028e3373",
+      "block": 131596298,
+      "timestamp": 1791541200,
+      "gasUsed": "2042707",
+      "from": "0x007Af718b572bda2ACcf46633931542011622163"
+    },
+    {
+      "label": "A buy in the launch-fee window",
+      "hash": "0xbca080e589de2c52a46bb3dfe452b76fc0ed3dc47d5097e173f1ace72d3b3a71",
+      "block": 131596335,
+      "timestamp": 1791541204,
+      "gasUsed": "300452",
+      "from": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5"
+    },
+    {
+      "label": "A buy after window (2%)",
+      "hash": "0xd3d5eedbadf0476284446f5bbb7dd526ac95d068e6687a5c75be55a007b3417c",
+      "block": 131596757,
+      "timestamp": 1791541265,
+      "gasUsed": "257781",
+      "from": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5"
+    },
+    {
+      "label": "A approve sell",
+      "hash": "0xccf7bebb08d3597e3290006380f847e629707ae7a5edbff9626cbe87ed2d5756",
+      "block": 131596797,
+      "timestamp": 1791541271,
+      "gasUsed": "45999",
+      "from": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5"
+    },
+    {
+      "label": "A sell",
+      "hash": "0x5efb1cc167c9a2d345f3511953267519fdfe09f7af6281721315349bbdd77301",
+      "block": 131596818,
+      "timestamp": 1791541274,
+      "gasUsed": "269438",
+      "from": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5"
+    },
+    {
+      "label": "A creator buy (escrowed, no cap)",
+      "hash": "0x128adb5cec63346152a0e126a5322df947f0ea73dda024b0ffd48ad2f7628c89",
+      "block": 131596840,
+      "timestamp": 1791541277,
+      "gasUsed": "309001",
+      "from": "0x007Af718b572bda2ACcf46633931542011622163"
+    },
+    {
+      "label": "A sell-out buy",
+      "hash": "0x529ec651561d40a958289d3362b6151bd2dcc1ed37ab3aaadf2c5cd6ae944aca",
+      "block": 131596875,
+      "timestamp": 1791541282,
+      "gasUsed": "458212",
+      "from": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5"
+    },
+    {
+      "label": "A graduate() from third wallet",
+      "hash": "0xa03601011e1e797a980523b6f6cdd678320aea19f5c0c3be2a44c36f59f0ab61",
+      "block": 131596904,
+      "timestamp": 1791541286,
+      "gasUsed": "6097211",
+      "from": "0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3"
+    },
+    {
+      "label": "A pool buy (native adapter)",
+      "hash": "0xa124a87e34d08fe7bbaa10bbd8148c2d050920d59ce643342b01a420de6986be",
+      "block": 131596942,
+      "timestamp": 1791541291,
+      "gasUsed": "167695",
+      "from": "0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3"
+    },
+    {
+      "label": "A approve pool sell",
+      "hash": "0xe865411f20d0e9a3e5f044725ce37e7c8954636fbe520a53515317a991009bd1",
+      "block": 131596961,
+      "timestamp": 1791541294,
+      "gasUsed": "46035",
+      "from": "0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3"
+    },
+    {
+      "label": "A pool sell (native adapter)",
+      "hash": "0x58397f71d60e68a6e3e3dc6bc8f78aebc29c1c636cab3a0ebf9c701f71ef4714",
+      "block": 131596985,
+      "timestamp": 1791541297,
+      "gasUsed": "184606",
+      "from": "0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3"
+    },
+    {
+      "label": "A harvest",
+      "hash": "0x6bfa888b2d4f63960a4fe01e513914444989eedf3c8070d505c27a0b60c3ced5",
+      "block": 131597004,
+      "timestamp": 1791541300,
+      "gasUsed": "451652",
+      "from": "0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3"
+    },
+    {
+      "label": "create B",
+      "hash": "0xd0b6b3e060c42d5222230a9087da35f5aa75ebf0b32abc45548b5b99697cf0b4",
+      "block": 131597031,
+      "timestamp": 1791541304,
+      "gasUsed": "1680320",
+      "from": "0xAA1ABD58c14fae859F5C025625bfA3E5987380d3"
+    },
+    {
+      "label": "B sell-out buy",
+      "hash": "0xd79746a57f7552c9953f3f1bb0d5dcc4832529dcae6359da83779121b3acd9ad",
+      "block": 131597512,
+      "timestamp": 1791541369,
+      "gasUsed": "611095",
+      "from": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5"
+    },
+    {
+      "label": "B griefer createPool",
+      "hash": "0x6f2c57eeb0379975ac827a85a0e315242fd894f145a58523d5c4ec2d3eecab9e",
+      "block": 131597542,
+      "timestamp": 1791541373,
+      "gasUsed": "4558958",
+      "from": "0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De"
+    },
+    {
+      "label": "B griefer initialize at 1000x",
+      "hash": "0x8b4fc9ca1a10382092c4af4331b4afeb5b201c7a08bc3cfe847f7ed20afd081e",
+      "block": 131597568,
+      "timestamp": 1791541376,
+      "gasUsed": "70354",
+      "from": "0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De"
+    },
+    {
+      "label": "B griefer wrap WETH",
+      "hash": "0xc840b797261dadb41edc9d87054db1f6fa2b4c8a2bb7d7549454d20c50ebec38",
+      "block": 131597599,
+      "timestamp": 1791541382,
+      "gasUsed": "45156",
+      "from": "0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De"
+    },
+    {
+      "label": "B griefer fund contract",
+      "hash": "0xe12dfd1302a3095470c9068b96df1c5cb4d0809a1c251e34c6bdcaba541eb5e8",
+      "block": 131597622,
+      "timestamp": 1791541385,
+      "gasUsed": "46870",
+      "from": "0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De"
+    },
+    {
+      "label": "B griefer WETH bid ladder (5 x 600 ticks)",
+      "hash": "0x6661af45d0bf40462f7e5e0f6ff9028b025370cc97c890fca79bb6cb67d39d9b",
+      "block": 131597641,
+      "timestamp": 1791541388,
+      "gasUsed": "652634",
+      "from": "0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De"
+    },
+    {
+      "label": "B graduate() from third wallet",
+      "hash": "0xac3c38dbc61b7795ad89c4bebd38b86977efcbdde55142aadc75bdc6de1dee93",
+      "block": 131597661,
+      "timestamp": 1791541391,
+      "gasUsed": "1854502",
+      "from": "0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3"
+    },
+    {
+      "label": "B griefer withdraw WETH",
+      "hash": "0x3a276d67ba52eda8bb0a55e4b64e3bd1d594af8195468e1c36d58ceff615f913",
+      "block": 131597696,
+      "timestamp": 1791541396,
+      "gasUsed": "51301",
+      "from": "0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De"
+    },
+    {
+      "label": "create C",
+      "hash": "0x080cc8fa4410d32fc223e25dbccca5c5cb8ae5461f26e4d687c60fea9ff26e8c",
+      "block": 131597720,
+      "timestamp": 1791541399,
+      "gasUsed": "1680332",
+      "from": "0xDA92D3801e63BAdfdDA41aA4Cad854192938863e"
+    },
+    {
+      "label": "C buy 1",
+      "hash": "0xf469355e3d48bbe503da00c892be92f08a40db2fe7b3d826dc607adb8bb01119",
+      "block": 131598161,
+      "timestamp": 1791541464,
+      "gasUsed": "405730",
+      "from": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5"
+    },
+    {
+      "label": "C buy 2",
+      "hash": "0x565d80e5af6551538853863285d9f005b5d1ad4ca82e2b8c68de5bb704f01e54",
+      "block": 131598189,
+      "timestamp": 1791541467,
+      "gasUsed": "257905",
+      "from": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5"
+    },
+    {
+      "label": "factory.setCreatePaused(true)",
+      "hash": "0xb89720f73129920a03847f7580df3700682d9f393028b31ffa38dc505d8330d9",
+      "block": 131598215,
+      "timestamp": 1791541471,
+      "gasUsed": "30760",
+      "from": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+    },
+    {
+      "label": "unwrap 0x007Af718b572bda2ACcf46633931542011622163",
+      "hash": "0x2064c8475a727dc1027d6e411b11277300e63bcccb63347c7e07c36d196e5d56",
+      "block": 131598443,
+      "timestamp": 1791541502,
+      "gasUsed": "30336",
+      "from": "0x007Af718b572bda2ACcf46633931542011622163"
+    },
+    {
+      "label": "sweep 0x007Af718b572bda2ACcf46633931542011622163",
+      "hash": "0xce525a5f88b2b063ac9888a9e6d3141077bcedb220e4f319c80ae77ec0cd24d6",
+      "block": 131598466,
+      "timestamp": 1791541505,
+      "gasUsed": "21000",
+      "from": "0x007Af718b572bda2ACcf46633931542011622163"
+    },
+    {
+      "label": "sweep 0xAA1ABD58c14fae859F5C025625bfA3E5987380d3",
+      "hash": "0xe5b4c9fea40529dfb2b090af1081c4225402ae00d4c553ed2b07f668dc8aa8cb",
+      "block": 131598493,
+      "timestamp": 1791541510,
+      "gasUsed": "21000",
+      "from": "0xAA1ABD58c14fae859F5C025625bfA3E5987380d3"
+    },
+    {
+      "label": "sweep 0xDA92D3801e63BAdfdDA41aA4Cad854192938863e",
+      "hash": "0xae22dbd2380c03811a02eee28c830345d2361d567ed2c21b750cad8464bf1b19",
+      "block": 131598517,
+      "timestamp": 1791541514,
+      "gasUsed": "21000",
+      "from": "0xDA92D3801e63BAdfdDA41aA4Cad854192938863e"
+    },
+    {
+      "label": "sweep 0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5",
+      "hash": "0xbf829ec6d21d2a92a84c5e6f77f59f728a32d64375837bbd0f360bef988e384b",
+      "block": 131598539,
+      "timestamp": 1791541517,
+      "gasUsed": "21000",
+      "from": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5"
+    },
+    {
+      "label": "sweep 0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3",
+      "hash": "0x93125173f533be325b218d9a092bf5ba622587f4a7abf0d89830891dd3557786",
+      "block": 131598561,
+      "timestamp": 1791541521,
+      "gasUsed": "21000",
+      "from": "0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3"
+    },
+    {
+      "label": "unwrap 0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De",
+      "hash": "0x9a7b51e72a5c02786555b1cd3e8e5c1289aca487fd3d1e2b436199bc3914cebc",
+      "block": 131598584,
+      "timestamp": 1791541524,
+      "gasUsed": "30348",
+      "from": "0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De"
+    },
+    {
+      "label": "sweep 0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De",
+      "hash": "0x4293ef1c6ed9174c19667e17be19dd372f7863bdb34e9dd0d1bc9c0cc2c81221",
+      "block": 131598611,
+      "timestamp": 1791541527,
+      "gasUsed": "21000",
+      "from": "0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De"
+    }
+  ],
+  "checks": [
+    {
+      "name": "factory generation 7 / campaign 6, signer accepts the pair on 46630",
+      "pass": true,
+      "fGen": 7,
+      "cGen": 6
+    },
+    {
+      "name": "route authority on factory == the signing key",
+      "pass": true,
+      "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0"
+    },
+    {
+      "name": "gen-7 router V4: creator 5.6%, locker authorized + primary; vault pinned to gen-7; the $150 test target allowed on 46630",
+      "pass": true,
+      "locker": "0x1dbbb94F046e0A47c5499a781066E4b0c16486B5"
+    },
+    {
+      "name": "C11: gen-6b create paused, gen-7 live and open",
+      "pass": true
+    },
+    {
+      "name": "A 70% first buy: flat 2% (never the 90% launch fee), tokens unlocked in the creator wallet, the excess refunded",
+      "pass": true,
+      "tokens": "700000000000000000000000000",
+      "costNoFee": "2794517945981647",
+      "fee": "55890358919632",
+      "raise": "6631989795918364"
+    },
+    {
+      "name": "A launch fee: 2% < fee <= 90%, exactly 200 + 8800 * left/60 at the block",
+      "pass": true,
+      "secondsAfterLaunch": "4",
+      "expectedBps": "8413",
+      "fee": "11048541697288",
+      "costNoFee": "13132701411255"
+    },
+    {
+      "name": "A post-window buy: exactly 2%, split by balance deltas (league weekly/monthly, recruiter, community, protocol, creator vault 5.6%)",
+      "pass": true,
+      "fee": "264375419185",
+      "weekly": "29742234658",
+      "monthly": "69398547536",
+      "recruiter": "0",
+      "community": "39656312877",
+      "protocol": "110773300640",
+      "creatorVault": "14805023474"
+    },
+    {
+      "name": "A sell: 2% fee, payout by balance delta",
+      "pass": true,
+      "payout": "6487793030248",
+      "fee": "132403939392"
+    },
+    {
+      "name": "A creator buy escrowed: no Transfer to the creator, escrow == amount, claimable 0, 20% at 30 d, 100% at 58 d",
+      "pass": true,
+      "escrowed": "2000000000000000000000000"
+    },
+    {
+      "name": "A the buy that sells the last curve token enters Pending in that tx; partial fill refunded",
+      "pass": true,
+      "raise": "6631989795918364",
+      "lastPrice": "49999999",
+      "sent": "4738912225845371",
+      "spent": "3866951560289822"
+    },
+    {
+      "name": "A graduation: 2% via routeFinalize (vault deltas), 0 creator, 98% (+ repair proceeds) to the pool, budget used + burned == 13% allocation",
+      "pass": true,
+      "raise": "6631989795918364",
+      "protocol2": "132639795918367",
+      "poolNative": "6499349999999997",
+      "finalizeCommunity": "23211964285714",
+      "finalizeRecruiter": "0",
+      "poolTokens": "129987002599740991167597262",
+      "burned": "12997400259008832402738"
+    },
+    {
+      "name": "A pool start price == curve price (band 50 bps enforced on chain)",
+      "pass": true,
+      "curvePrice": "49999999",
+      "startPrice": "49999999",
+      "sqrtTargetX96": "11204554307002771614001824737925685",
+      "repaired": false
+    },
+    {
+      "name": "A position locked in the gen-7 V3 locker",
+      "pass": true,
+      "pool": "0x640B7C1Fce228d363e7BB1031894CF1E6D2b93E6",
+      "positionId": "12",
+      "lockedLiquidity": "919146900852433225979"
+    },
+    {
+      "name": "A post-graduation pool buy and sell",
+      "pass": true,
+      "memeBought": "9259775616220760557969667",
+      "ethIn": "500000000000000"
+    },
+    {
+      "name": "A harvest: WETH side paid exactly 80/20 (events and WETH Transfer to the creator)",
+      "pass": true,
+      "wethCollected": "2885096310389",
+      "creator80": "2308077048311"
+    },
+    {
+      "name": "A creator graduation payout is 0 (gen-7 C4): only adapter residuals, if any",
+      "pass": true,
+      "pendingCreatorGraduation": "0"
+    },
+    {
+      "name": "B the buy that sells the last curve token enters Pending in that tx; partial fill refunded",
+      "pass": true,
+      "raise": "6631989795918364",
+      "lastPrice": "49999999",
+      "sent": "8289988244897955",
+      "spent": "6764629591836731"
+    },
+    {
+      "name": "B griefer pool exists at 1000x with WETH bids",
+      "pass": true,
+      "pool": "0x7530748248D90aF600E0D73Ebd210b9e2975902f",
+      "wethBids": "199999999999772"
+    },
+    {
+      "name": "B graduation: 2% via routeFinalize (vault deltas), 0 creator, 98% (+ repair proceeds) to the pool, budget used + burned == 13% allocation",
+      "pass": true,
+      "raise": "6631989795918364",
+      "protocol2": "132639795918367",
+      "poolNative": "6499349999999997",
+      "finalizeCommunity": "23211964285714",
+      "finalizeRecruiter": "0",
+      "poolTokens": "130000000000000000000000000",
+      "burned": "0"
+    },
+    {
+      "name": "B pool start price == curve price (band 50 bps enforced on chain)",
+      "pass": true,
+      "curvePrice": "49999999",
+      "startPrice": "49999998",
+      "sqrtTargetX96": "560227704145584273697319",
+      "repaired": true
+    },
+    {
+      "name": "B position locked in the gen-7 V3 locker",
+      "pass": true,
+      "pool": "0x7530748248D90aF600E0D73Ebd210b9e2975902f",
+      "positionId": "13",
+      "lockedLiquidity": "907163422008489582534"
+    },
+    {
+      "name": "B graduation completed into the griefer's pool, repaired to the curve price",
+      "pass": true,
+      "pool": "0x7530748248D90aF600E0D73Ebd210b9e2975902f"
+    },
+    {
+      "name": "C fee choice registered on the gen-7 vault as holders (2)",
+      "pass": true,
+      "choice": "2"
+    },
+    {
+      "name": "C trade fees (5.6%) accrue to the holder balance, none to the creator",
+      "pass": true,
+      "accrued": "5476285870"
+    },
+    {
+      "name": "create paused again after the run (live latch stays); gen-6b create still paused",
+      "pass": true
+    },
+    {
+      "name": "gen-7 airdrop pot wired by the admin batch: community vault -> its own airdrop distributor, airdrop operator = the main pot's (testnet: main vault 0x26c6834beb7483c94cb45030B0Fe3a912dA4F96d has no airdropOperator; the admin (deployer)), distributor batchOperator = the gen-7 community vault, owner = admin",
+      "pass": true,
+      "wired": true,
+      "rewardDistributor": "0xD3237DA9014816c27dAc8bfFbF9f8b3a58588540",
+      "airdropOperator": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+      "batchOperator": "0x81e08aF4D18ca9338c53a2fE8bEf55E37ee5d750",
+      "owner": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+      "distributor": "0xD3237DA9014816c27dAc8bfFbF9f8b3a58588540",
+      "cap": "1500000000000000000",
+      "capSource": "deployments/robinhood/mainnet.P1-payouts.safe-batch.json (last main-pot authorizeBatch on chain 4663)",
+      "firstAuthorizedWeekEnd": "2026-10-12T00:00:00.000Z"
+    },
+    {
+      "name": "runner runway check (authorizationHorizon.mjs) on the first authorized Monday: the gen-7 pot has 12 weeks pre-authorized, verdict ok",
+      "pass": true,
+      "gen7": {
+        "coveredWeeks": 12,
+        "from": "2026-10-05",
+        "through": "2026-12-21",
+        "verdict": "ok"
+      },
+      "main": null
+    },
+    {
+      "name": "weekly gen-7 draw through the runner (potRun.runPot -> materialize -> chain.mjs ensureOnChainBatch): trader + creator batches funded from the gen-7 vault by its airdrop operator, ids = weeklyContractBatchId(.., \"gen7\"), funded = 50% of the vault, claim-open",
+      "pass": true,
+      "epochId": "2026-09-28",
+      "vaultBefore": "0.000087888140301978 ETH",
+      "funded": "0.000043944070150989 ETH",
+      "vaultAfter": "0.000043944070150989 ETH",
+      "fundedBy": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+      "batches": [
+        {
+          "program": "airdrop_trader",
+          "id": "0xd7521c03f75e64c21272398b63eec3a50a9cfc24ccbb0653bf63368bfef21079",
+          "total": "0.000021972035075494 ETH",
+          "winners": [
+            "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5=0.000021972035075494 ETH"
+          ]
+        },
+        {
+          "program": "airdrop_creator",
+          "id": "0x714d1dfa7379ad1dc9a77ff768d871f6bf94968fab53d03f1b65e0c3661604e1",
+          "total": "0.000021972035075495 ETH",
+          "winners": [
+            "0x007Af718b572bda2ACcf46633931542011622163=0.000021972035075495 ETH"
+          ]
+        }
+      ],
+      "fundTxs": [
+        "0x16681f651a534c3a21616b626a979b03281707c10bf6cb3ce0c7c86cee7424cb",
+        "0x6ce3fe2bd7e3d8213266e5e749aa00deabf4b0932b88ab413d3a76a0232e0950"
+      ],
+      "alerts": []
+    },
+    {
+      "name": "a gen-7 winner claims from the gen-7 distributor (exact amount, by balance delta); the main distributor does not know the batch; the main pot (vault balance, distributor balance, outstanding) untouched",
+      "pass": true,
+      "winner": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5",
+      "amount": "0.000021972035075494 ETH",
+      "received": "0.000021972035075494 ETH",
+      "tx": "0xd0c4585400b729c1e442d14c6a3f24c438dc8b8f87fde10079446e9e1b4bb0fe",
+      "mainDistributorClaim": null,
+      "main": {
+        "before": {
+          "vault": "0.000116701941049343 ETH",
+          "distributor": "0.0 ETH",
+          "outstanding": "0.0 ETH"
+        },
+        "after": {
+          "vault": "0.000116701941049343 ETH",
+          "distributor": "0.0 ETH",
+          "outstanding": "0.0 ETH"
+        }
+      }
+    }
+  ],
+  "coins": {
+    "A": {
+      "campaign": "0x9aE820bA651CF70Dc2C07820aE941fbE09498dB2",
+      "token": "0xE43c133A896a2efA8f61A05E714ab931a285C606",
+      "creator": "0x007Af718b572bda2ACcf46633931542011622163",
+      "feeChoice": "keep",
+      "marketCapNative": "50000000000000000",
+      "pool": "0x640B7C1Fce228d363e7BB1031894CF1E6D2b93E6"
+    },
+    "B": {
+      "campaign": "0xdA079d2B4ac7F88d08b1b1289BA8a1495528c282",
+      "token": "0x51030a0899640A9812F6B21D749Fd8098a10AD2B",
+      "creator": "0xAA1ABD58c14fae859F5C025625bfA3E5987380d3",
+      "pool": "0x7530748248D90aF600E0D73Ebd210b9e2975902f"
+    },
+    "C": {
+      "campaign": "0xe66BAc0338d73fD6F9176e53bB0f16F4E98824DE",
+      "token": "0xba959Fd21F861D9Cce7aDf518fF52Eb8B768444F",
+      "creator": "0xDA92D3801e63BAdfdDA41aA4Cad854192938863e",
+      "feeChoice": "holders"
+    }
+  },
+  "deployerBefore": "989329776577038780",
+  "wallets": {
+    "creatorA": "0x007Af718b572bda2ACcf46633931542011622163",
+    "creatorB": "0xAA1ABD58c14fae859F5C025625bfA3E5987380d3",
+    "creatorC": "0xDA92D3801e63BAdfdDA41aA4Cad854192938863e",
+    "buyer": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5",
+    "graduator": "0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3",
+    "griefer": "0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De"
+  },
+  "airdrop": {
+    "epochId": "2026-09-28",
+    "vaultBefore": "87888140301978",
+    "funded": "43944070150989",
+    "batches": [
+      {
+        "program": "airdrop_trader",
+        "contractBatchId": "0xd7521c03f75e64c21272398b63eec3a50a9cfc24ccbb0653bf63368bfef21079",
+        "expectedId": "0xd7521c03f75e64c21272398b63eec3a50a9cfc24ccbb0653bf63368bfef21079",
+        "merkleRoot": "0x240f6231d46f2f7c8590421a3ca3e83e24bf20150f10beb38f93014a8ea45785",
+        "total": "21972035075494",
+        "winners": [
+          {
+            "wallet": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5",
+            "amount": "21972035075494",
+            "proof": []
+          }
+        ],
+        "onChain": {
+          "totalFunded": "21972035075494",
+          "exists": true,
+          "claimDeadline": "1791763200"
+        },
+        "mainHasIt": false,
+        "status": "claim_open"
+      },
+      {
+        "program": "airdrop_creator",
+        "contractBatchId": "0x714d1dfa7379ad1dc9a77ff768d871f6bf94968fab53d03f1b65e0c3661604e1",
+        "expectedId": "0x714d1dfa7379ad1dc9a77ff768d871f6bf94968fab53d03f1b65e0c3661604e1",
+        "merkleRoot": "0x07703bf3238a22f0847b82050d323776cf48ede3be183f458d78c2a8a6fe1719",
+        "total": "21972035075495",
+        "winners": [
+          {
+            "wallet": "0x007Af718b572bda2ACcf46633931542011622163",
+            "amount": "21972035075495",
+            "proof": []
+          }
+        ],
+        "onChain": {
+          "totalFunded": "21972035075495",
+          "exists": true,
+          "claimDeadline": "1791763200"
+        },
+        "mainHasIt": false,
+        "status": "claim_open"
+      }
+    ],
+    "claim": {
+      "received": "21972035075494",
+      "gas": "93312",
+      "tx": "0xd0c4585400b729c1e442d14c6a3f24c438dc8b8f87fde10079446e9e1b4bb0fe",
+      "claimed": true,
+      "mainRefusal": null
+    },
+    "runway": {
+      "gen7": {
+        "chainId": 46630,
+        "pot": "gen7",
+        "currentEpochId": "2026-10-05",
+        "coveredWeeks": 12,
+        "weeksAhead": 11,
+        "lastCoveredEpochId": "2026-12-21",
+        "firstMissing": {
+          "epochId": "2026-12-28",
+          "weekEnd": "2027-01-04T00:00:00.000Z",
+          "missing": [
+            {
+              "program": "airdrop_trader",
+              "batchId": "0x2d4ca8c94cabfe5c792d9d8d22e7295f14847e19d49e1a57ee26fadda39070ae"
+            },
+            {
+              "program": "airdrop_creator",
+              "batchId": "0xe3d663d8f536ff423213d678fd3c6617e6503dac05c78bb6720ff41d23509d04"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "sweep": [
+    {
+      "wallet": "0x007Af718b572bda2ACcf46633931542011622163",
+      "swept": "3100095506410287",
+      "tx": "0xce525a5f88b2b063ac9888a9e6d3141077bcedb220e4f319c80ae77ec0cd24d6"
+    },
+    {
+      "wallet": "0xAA1ABD58c14fae859F5C025625bfA3E5987380d3",
+      "swept": "1982356800000000",
+      "tx": "0xe5b4c9fea40529dfb2b090af1081c4225402ae00d4c553ed2b07f668dc8aa8cb"
+    },
+    {
+      "wallet": "0xDA92D3801e63BAdfdDA41aA4Cad854192938863e",
+      "swept": "1982356680000000",
+      "tx": "0xae22dbd2380c03811a02eee28c830345d2361d567ed2c21b750cad8464bf1b19"
+    },
+    {
+      "wallet": "0x45D0D9e1849049b2612e162bA67Ba7Adb16d94C5",
+      "swept": "19326387714717181",
+      "tx": "0xbf829ec6d21d2a92a84c5e6f77f59f728a32d64375837bbd0f360bef988e384b"
+    },
+    {
+      "wallet": "0xA778fA9693c073BE11e9acDd8bFD89D2C9347EF3",
+      "swept": "2908253726787994",
+      "tx": "0x93125173f533be325b218d9a092bf5ba622587f4a7abf0d89830891dd3557786"
+    },
+    {
+      "wallet": "0x486203B5D0Cfe0E1d1937a4785FB7931ed99C9De",
+      "swept": "1739807640000228",
+      "tx": "0x4293ef1c6ed9174c19667e17be19dd372f7863bdb34e9dd0d1bc9c0cc2c81221"
+    }
+  ],
+  "deployerAfter": "975362139054954470",
+  "finishedAt": "2026-10-09T10:25:28.569Z",
+  "accepted": true
+}

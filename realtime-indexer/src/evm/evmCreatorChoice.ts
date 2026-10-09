@@ -190,12 +190,17 @@ export async function sizeWithinImpact(
 
 // ------------------------------------------------------------------------------------ holder batch
 
+/** The holder batch program of the gen-6 vault; gen-7's own vault uses "airdrop_holders_gen7" (evmGen7Fees.ts). */
+export const DEFAULT_HOLDER_PROGRAM = "airdrop_holders";
+
 /**
  * The holder distributor batch id: the same id scripts/deploy-evm-treasury-router-v4.ts holderBatchId()
- * and the weekly runner's weeklyContractBatchId(chain, epoch, "airdrop_holders") produce.
+ * and the weekly runner's weeklyContractBatchId(chain, epoch, program) produce. Each creator vault on a chain has
+ * its own program, so two vaults never share a batch id for the same week (gen-6 "airdrop_holders" unchanged).
  */
-export function holderBatchId(chainId: number, weekId: string): string {
-  return ethers.keccak256(ethers.toUtf8Bytes(`mwz-weekly-airdrop:${chainId}:${weekId}:airdrop_holders`));
+export function holderBatchId(chainId: number, weekId: string, program: string = DEFAULT_HOLDER_PROGRAM): string {
+  if (!/^[a-z0-9_]+$/.test(program)) throw new Error(`bad holder program ${program}`);
+  return ethers.keccak256(ethers.toUtf8Bytes(`mwz-weekly-airdrop:${chainId}:${weekId}:${program}`));
 }
 
 /** Pots above the week's room are scaled down pro rata (floor); what is not paid stays in the vault. */
@@ -263,6 +268,8 @@ export type LeafFile = {
   holderDistributor: string;
   weekId: string;
   batchId: string;
+  /** Holder program the batch id is derived from; absent = "airdrop_holders" (gen-6 files carry no field). */
+  program?: string;
   claimDeadline: number;
   leafEncoding: string;
   pairSorting: string;
@@ -293,6 +300,8 @@ export function buildLeafFile(input: {
   perCoin: Map<string, Map<string, bigint>>;
   minPayout: bigint;
   snapshots: Array<{ campaign: string; token: string; block: number; holders: number; pot: bigint }>;
+  /** Default "airdrop_holders" (gen-6); the file names it only when it is another program. */
+  program?: string;
 }): LeafFile | null {
   const { leaves, paidByPool } = holderLeaves(input.perCoin, input.minPayout);
   const entries = [...leaves.entries()]
@@ -314,7 +323,8 @@ export function buildLeafFile(input: {
     vault: ethers.getAddress(input.vault),
     holderDistributor: ethers.getAddress(input.holderDistributor),
     weekId: input.weekId,
-    batchId: holderBatchId(input.chainId, input.weekId),
+    batchId: holderBatchId(input.chainId, input.weekId, input.program ?? DEFAULT_HOLDER_PROGRAM),
+    ...(input.program && input.program !== DEFAULT_HOLDER_PROGRAM ? { program: input.program } : {}),
     claimDeadline: input.claimDeadline,
     leafEncoding: "keccak256(bytes.concat(keccak256(abi.encode(account, amount))))",
     pairSorting: "openzeppelins_commutative_hash",
@@ -386,7 +396,7 @@ export function checkLeafFile(file: LeafFile): { root: string; total: bigint } {
   if (byCampaign !== total) throw new Error(`campaign amounts (${byCampaign}) do not add up to the total (${total})`);
   const { root } = merklePlan(entries);
   if (root.toLowerCase() !== String(file.root).toLowerCase()) throw new Error(`root ${file.root} does not match the leaves (${root})`);
-  if (holderBatchId(file.chainId, file.weekId).toLowerCase() !== String(file.batchId).toLowerCase()) throw new Error("batch id is not this chain and week's holder batch id");
+  if (holderBatchId(file.chainId, file.weekId, file.program ?? DEFAULT_HOLDER_PROGRAM).toLowerCase() !== String(file.batchId).toLowerCase()) throw new Error("batch id is not this chain and week's holder batch id");
   checkLeafParts(file);
   return { root, total };
 }
