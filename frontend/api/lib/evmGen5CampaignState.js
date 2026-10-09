@@ -1,4 +1,5 @@
 import { ethers } from "ethers";
+import { GEN7_ANTI_SNIPER_START_BPS, gen7MarketCapNative, isEvmGen7Pair } from "../../shared/evmGen7Curve.mjs";
 
 /**
  * Chain reads for a generation 5 LaunchCampaign (factory generation 6), for the coin page:
@@ -8,10 +9,33 @@ import { ethers } from "ethers";
  *
  * Older campaigns are recognised through their factory's FACTORY_GENERATION and answered with
  * `supported: false`; the site keeps using its existing paths for them (E14).
+ *
+ * Generation 7 campaigns (factory 7 / campaign 6, LaunchCampaignGen7) answer through the same reads plus
+ * `curve` (constant product: virtualNative / virtualToken) and `economics` (90% launch fee, 70% first buy,
+ * graduation 2% protocol / 0% creator, USD market-cap target). For generation 6 the same two objects
+ * carry its linear curve and its own numbers; every field that existed before is unchanged.
  */
 
 export const GEN5_MIN_FACTORY_GENERATION = 6;
 export const ANTI_SNIPER_START_BPS = 5000;
+export { GEN7_ANTI_SNIPER_START_BPS };
+/** Graduation fee split and first-buy cap per generation (LaunchCampaign vs LaunchCampaignGen7 constants). */
+export const GEN6_ECONOMICS = Object.freeze({
+  antiSniperStartBps: ANTI_SNIPER_START_BPS,
+  firstBuyMaxSupplyBps: 1000,
+  firstBuyMaxTargetBps: 5000,
+  graduationProtocolBps: 220,
+  graduationCreatorBps: 1980,
+  graduationTargetKind: "raise_usd",
+});
+export const GEN7_ECONOMICS = Object.freeze({
+  antiSniperStartBps: GEN7_ANTI_SNIPER_START_BPS,
+  firstBuyMaxSupplyBps: 7000,
+  firstBuyMaxTargetBps: null,
+  graduationProtocolBps: 200,
+  graduationCreatorBps: 0,
+  graduationTargetKind: "market_cap_usd",
+});
 export const ANTI_SNIPER_WINDOW_SECONDS = 60;
 export const ESCROW_CLIFF_SECONDS = 30 * 86_400;
 export const ESCROW_STEP_SECONDS = 7 * 86_400;
@@ -29,6 +53,8 @@ const ERRORS = [
   "NotBeneficiary()", "NotCreator()", "NotFinalized()", "NothingToClaim()", "QuoteMismatch()",
   "ReentrancyGuardReentrantCall()", "SafeERC20FailedOperation(address)", "SellsPaused()", "Slippage()", "SoldOut()",
   "StartPriceOutOfBand()", "SupplyBound()", "TradingNotOpen()", "ZeroAmount()",
+  // generation 7 (LaunchCampaignGen7 init)
+  "VirtualNativeZero()", "VirtualTokenTooSmall()",
 ].map((sig) => `error ${sig}`);
 
 export const GEN5_CAMPAIGN_ABI = [
@@ -67,6 +93,16 @@ export const GEN5_CAMPAIGN_ABI = [
   ...ERRORS,
 ];
 
+/** Curve views: generation 6 linear (basePrice, priceSlope), generation 7 constant product (virtual reserves). */
+const CURVE_ABI = [
+  "function basePrice() view returns (uint256)",
+  "function priceSlope() view returns (uint256)",
+  "function virtualNative() view returns (uint256)",
+  "function virtualToken() view returns (uint256)",
+  "function totalSupply() view returns (uint256)",
+  "function currentPrice() view returns (uint256)",
+];
+
 const FACTORY_ABI = [
   "function FACTORY_GENERATION() view returns (uint32)",
   "function CAMPAIGN_GENERATION() view returns (uint32)",
@@ -88,13 +124,50 @@ const VAULT_ABI = [
 const campaignInterface = new ethers.Interface(GEN5_CAMPAIGN_ABI);
 const ZERO = ethers.ZeroAddress;
 
-/** C2, exactly as LaunchCampaign.currentTradeFeeBps, for a client that ticks the fee locally per second. */
-export function antiSniperFeeBpsAt({ launchAt, protocolFeeBps, now }) {
+/**
+ * C2, exactly as LaunchCampaign.currentTradeFeeBps, for a client that ticks the fee locally per second.
+ * `startBps` is 5000 on generation 6 (the default) and 9000 on generation 7 (G6).
+ */
+export function antiSniperFeeBpsAt({ launchAt, protocolFeeBps, now, startBps = ANTI_SNIPER_START_BPS }) {
   const base = Number(protocolFeeBps);
   const end = Number(launchAt) + ANTI_SNIPER_WINDOW_SECONDS;
   if (Number(now) >= end) return base;
   const left = Math.min(end - Number(now), ANTI_SNIPER_WINDOW_SECONDS);
-  return base + Math.floor(((ANTI_SNIPER_START_BPS - base) * left) / ANTI_SNIPER_WINDOW_SECONDS);
+  return base + Math.floor(((Number(startBps) - base) * left) / ANTI_SNIPER_WINDOW_SECONDS);
+}
+
+/**
+ * The campaign's curve. Generation 7: virtual reserves (both required), plus the spot price and market
+ * caps in native computed from them. Generation 6: basePrice / priceSlope, read tolerantly (null when a
+ * view is missing) so the rest of the page never depends on them.
+ */
+export async function readCampaignCurve(provider, campaignAddress, { gen7, sold, curveSupply }) {
+  const c = new ethers.Contract(campaignAddress, CURVE_ABI, provider);
+  if (gen7) {
+    const [virtualNative, virtualToken, totalSupply] = await Promise.all([c.virtualNative(), c.virtualToken(), c.totalSupply()]);
+    const vN = BigInt(virtualNative);
+    const vT = BigInt(virtualToken);
+    const supply = BigInt(totalSupply);
+    const s = BigInt(sold);
+    const cs = BigInt(curveSupply);
+    const marketCapAt = (at) => gen7MarketCapNative({ virtualNative: vN, virtualToken: vT, sold: at, totalSupply: supply });
+    return {
+      kind: "cp",
+      virtualNative: vN.toString(),
+      virtualToken: vT.toString(),
+      totalSupply: supply.toString(),
+      curveSupply: cs.toString(),
+      // price x total supply now, and at sell-out (the graduation market cap in native at create)
+      marketCapNativeWei: marketCapAt(s).toString(),
+      graduationMarketCapNativeWei: marketCapAt(cs).toString(),
+    };
+  }
+  const [basePrice, priceSlope] = await Promise.all([settle(c.basePrice()), settle(c.priceSlope())]);
+  return {
+    kind: "linear",
+    basePrice: basePrice.ok ? basePrice.value.toString() : null,
+    priceSlope: priceSlope.ok ? priceSlope.value.toString() : null,
+  };
 }
 
 /** Decode a revert from a campaign call into its error name (null when it is not one of ours). */
@@ -242,6 +315,8 @@ export async function readGen5CampaignState({ provider, campaignAddress, wallet 
     return { campaignAddress: address, supported: false, generation };
   }
 
+  const gen7 = isEvmGen7Pair(generation.factoryGeneration, generation.campaignGeneration);
+  const economics = gen7 ? GEN7_ECONOMICS : GEN6_ECONOMICS;
   const campaign = new ethers.Contract(address, GEN5_CAMPAIGN_ABI, provider);
   const block = await provider.getBlock("latest");
   const now = Number(block.timestamp);
@@ -264,6 +339,7 @@ export async function readGen5CampaignState({ provider, campaignAddress, wallet 
   const launchAtN = Number(launchAt);
   const antiSniperEndsAt = launchAtN + ANTI_SNIPER_WINDOW_SECONDS;
   const nativeTargetRead = launched ? null : await settle(campaign.graduationNativeTarget());
+  const curve = await readCampaignCurve(provider, address, { gen7, sold, curveSupply });
 
   const escrow = await readCreatorEscrow({
     vestedAt: (t) => campaign.creatorEscrowVested(t),
@@ -346,7 +422,7 @@ export async function readGen5CampaignState({ provider, campaignAddress, wallet 
     tradeFee: {
       currentBps: Number(currentTradeFeeBps),
       baseBps: Number(protocolFeeBps),
-      antiSniperStartBps: ANTI_SNIPER_START_BPS,
+      antiSniperStartBps: economics.antiSniperStartBps,
       antiSniperWindowSeconds: ANTI_SNIPER_WINDOW_SECONDS,
       launchAt: launchAtN,
       antiSniperEndsAt,
@@ -354,6 +430,8 @@ export async function readGen5CampaignState({ provider, campaignAddress, wallet 
       appliesTo: "buys and sells; the creator's first buy at create pays the base fee",
     },
     quotes,
+    curve,
+    economics: { ...economics, generationKind: gen7 ? "gen7" : "gen6" },
     creatorEscrow: escrow,
     graduation: {
       state: launched ? "graduated" : graduationPending ? "pending" : "trading",

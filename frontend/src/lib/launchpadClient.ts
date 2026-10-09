@@ -29,6 +29,8 @@ import {
   gen6FactoryWriter,
   gen6SignedRequest,
   isGen6Factory,
+  readEvmLaunchGeneration,
+  type EvmLaunchGeneration,
 } from "@/lib/evmGen6Client";
 import { assertWalletOnChain } from "@/lib/walletChainGuard.mjs";
 import { apiFetch } from "@/lib/apiBase";
@@ -97,6 +99,12 @@ const GRADUATION_WRITE_ABI = [
   "function graduateIfEligible(uint256 minTokens, uint256 minBnb) returns (uint256 usedTokens, uint256 usedBnb)",
 ] as ethers.InterfaceAbi;
 
+/** LaunchCampaignGen7 (generation 7/6): the constant-product curve's virtual reserves replace base/slope. */
+const GEN7_CURVE_READ_ABI = [
+  "function virtualNative() view returns (uint256)",
+  "function virtualToken() view returns (uint256)",
+] as const;
+
 const LEGACY_FACTORY_ABI = [
   "function campaignsCount() view returns (uint256)",
   "function getCampaignPage(uint256 offset, uint256 limit) view returns ((address campaign,address token,address creator,string name,string symbol,string logoURI,string xAccount,string website,string extraLink,uint64 createdAt)[] page)",
@@ -136,12 +144,12 @@ async function postApiJson(path: string, body: any) {
   }));
 }
 
-/** A generation-6 create that reverts with a first-buy or fee-choice error reads in plain words. */
-async function sendGen6Create<T>(send: () => Promise<T>): Promise<T> {
+/** A generation-6 (or 7) create that reverts with a first-buy or fee-choice error reads in plain words. */
+async function sendGen6Create<T>(send: () => Promise<T>, generation: EvmLaunchGeneration = 6): Promise<T> {
   try {
     return await send();
   } catch (error) {
-    const friendly = gen6CreateErrorMessage(error);
+    const friendly = gen6CreateErrorMessage(error, generation);
     if (friendly) throw new Error(friendly);
     throw error;
   }
@@ -732,8 +740,21 @@ export function useLaunchpad(): LaunchpadAdapter {
       ? 0n
       : await readBig("graduationNativeTarget", isRobinhoodRead ? 0n : graduationTarget);
 
+    // Generation 7/6 has no basePrice (read as 0 above); its curve is the virtual reserves. Every older
+    // campaign has a non-zero basePrice, so this read never runs for them.
+    if (basePrice === 0n && curveSupply > 0n) {
+      const gen7 = new Contract(normalizeAddress(campaignAddress) || campaignAddress, GEN7_CURVE_READ_ABI, readProvider) as any;
+      const [virtualNative, virtualToken] = await Promise.all([
+        gen7.virtualNative().then((v: bigint) => BigInt(v)).catch(() => 0n),
+        gen7.virtualToken().then((v: bigint) => BigInt(v)).catch(() => 0n),
+      ]);
+      if (virtualNative > 0n && virtualToken > 0n) {
+        return { sold, curveSupply, liquiditySupply, creatorReserve, basePrice, priceSlope, graduationTarget, graduationNativeTarget, liquidityBps, protocolFeeBps, currentPrice, launched, finalizedAt, virtualNative, virtualToken };
+      }
+    }
+
     return { sold, curveSupply, liquiditySupply, creatorReserve, basePrice, priceSlope, graduationTarget, graduationNativeTarget, liquidityBps, protocolFeeBps, currentPrice, launched, finalizedAt };
-  }, [evmReadChainId, getCampaignRead]);
+  }, [evmReadChainId, getCampaignRead, readProvider]);
 
   const fetchCampaignActivity = useCallback(async (campaignAddress: string): Promise<CampaignActivity | null> => {
     const campaign = getCampaignRead(campaignAddress);
@@ -863,9 +884,14 @@ export function useLaunchpad(): LaunchpadAdapter {
       graduationTarget: (params.graduationTargetWei ?? 0n).toString(),
     };
     const gen6 = params.gen6;
+    // Generation 7/6 takes the same request; only its error words and ABI file differ.
+    let launchGeneration: EvmLaunchGeneration = 6;
     if (gen6) {
       if (!(await isGen6Factory(readProvider, factoryAddress))) {
-        throw new Error("The configured factory is not generation 6, so it cannot take a first buy or fee choice.");
+        if ((await readEvmLaunchGeneration(readProvider, factoryAddress)) !== 7) {
+          throw new Error("The configured factory is not generation 6, so it cannot take a first buy or fee choice.");
+        }
+        launchGeneration = 7;
       }
       campaignRequest.firstBuyTokens = gen6.firstBuyTokens.toString();
       campaignRequest.firstBuyMaxCost = gen6.firstBuyMaxCost.toString();
@@ -909,6 +935,7 @@ export function useLaunchpad(): LaunchpadAdapter {
             routeAuthorization,
             { ...gasOverrides, value: signedGen6.value },
           ),
+          launchGeneration,
         );
       } else {
         const basicWriter = new Contract(factoryAddress, BNB_BASIC_FACTORY_WRITE_ABI, signer) as any;
@@ -921,9 +948,10 @@ export function useLaunchpad(): LaunchpadAdapter {
         );
       }
     } else if (signedGen6) {
-      const gen6Writer = gen6FactoryWriter(factoryAddress, signer as any);
-      tx = await sendGen6Create(() =>
-        gen6Writer.createCampaignAuthorized(signedGen6.request, routeAuthorization, { ...gasOverrides, value: signedGen6.value }),
+      const gen6Writer = gen6FactoryWriter(factoryAddress, signer as any, launchGeneration);
+      tx = await sendGen6Create(
+        () => gen6Writer.createCampaignAuthorized(signedGen6.request, routeAuthorization, { ...gasOverrides, value: signedGen6.value }),
+        launchGeneration,
       );
     } else {
       tx = await writer.createCampaignAuthorized(campaignRequest, routeAuthorization, gasOverrides);

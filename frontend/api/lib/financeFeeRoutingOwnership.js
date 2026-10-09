@@ -62,6 +62,11 @@ export const EVM_OWNERSHIP = Object.freeze({
   event_prize: owed("Per-event prize pools, 70% of sponsorships (contracts/WarzoneSponsorshipRouterV1.sol:23-24)."),
   lp_locker: owed("Locker balances mix creators' pendingToken / pendingNative with the protocol's pendingProtocolToken / pendingProtocolNative (contracts/PermanentLpLocker.sol:98-101,403-455).", { mixed: true }),
   router_v4: owed("Should hold nothing: receive() and forward() send any stray balance to the weekly league vault (contracts/TreasuryRouterV4.sol:145-151,456-459)."),
+  // Gen-7's own fees stack (founder decision 2026-10-08, evmGen7Fees.js): same contracts, same classification.
+  community_vault_gen7: owed("Airdrop and squad pools of gen-7 trades, funds its RewardDistributor batches (contracts/CommunityRewardsVault.sol:58-115)."),
+  creator_vault_v2_gen7: owed("Creator / holder / buyback balances per gen-7 campaign (contracts/CreatorRewardsVaultV2.sol:318-325)."),
+  holder_distributor_gen7: owed("Holder reward batches funded from gen-7 creator fees."),
+  router_v4_gen7: owed("Should hold nothing: receive() and forward() send any stray balance to the weekly league vault (contracts/TreasuryRouterV4.sol:145-151,456-459)."),
   deployer: watch("Deploy key: no fee path pays it and it must never hold user money."),
 });
 

@@ -6,7 +6,7 @@
 // pendingCreatorFees, all public getters. Its claims are not indexed, so they
 // have amounts but no transaction links.
 //
-// CreatorRewardsVaultV2 (gen-6, contracts/CreatorRewardsVaultV2.sol) keeps no
+// CreatorRewardsVaultV2 (gen-6, and gen-7's own vault; contracts/CreatorRewardsVaultV2.sol) keeps no
 // claimed total. Its events (TradeFeeAccrued, CreatorFeesClaimed,
 // CreatorQuoteClaimed) are indexed by the realtime indexer into
 // evm_campaign_events (contract_kind 'creator_vault', evm/evmGen5Aux.ts) with
@@ -208,8 +208,9 @@ async function rpcCall(fetchImpl, urls, method, params) {
  * chain head. Returns { rows, complete, scannedTo, head, error? }; complete
  * means every block from the deploy block to the head was read.
  */
-export async function readV2LogsFromChain({ chainId, vault, urls, fetchImpl = fetch, nowMs = Date.now() }) {
-  const deploy = CREATOR_VAULT_V2_DEPLOY_BLOCKS[Number(chainId)];
+export async function readV2LogsFromChain({ chainId, vault, urls, fetchImpl = fetch, nowMs = Date.now(), fromBlock = null }) {
+  // fromBlock: another vault's deploy block (gen-7's own vault, EVM_GEN7_CREATOR_VAULT_<id>@block); default the gen-6 one.
+  const deploy = Number(fromBlock) > 0 ? Number(fromBlock) : CREATOR_VAULT_V2_DEPLOY_BLOCKS[Number(chainId)];
   if (!deploy || !vault) return { rows: [], complete: false, scannedTo: null, head: null, error: "No deploy block known for this vault." };
   const key = `${chainId}:${String(vault).toLowerCase()}`;
   const state = logCache.get(key) || { rows: [], next: deploy, span: FIRST_SPAN, at: 0, head: null, error: null };

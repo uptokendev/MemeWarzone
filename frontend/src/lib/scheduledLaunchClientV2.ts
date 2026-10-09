@@ -3,8 +3,10 @@ import { apiFetch } from "@/lib/apiBase";
 import { normalizeCreatorArmCooldownEndsAt } from "@/lib/creatorArmCooldown";
 import type { DraftActionAuth } from "@/lib/draftAuth";
 import LaunchFactoryGen6 from "@/abi/LaunchFactoryGen6.json";
+import LaunchFactoryGen7 from "@/abi/LaunchFactoryGen7.json";
 import { gen6CreateErrorMessage } from "@/lib/evmGen6Client";
 import { isEvmGen6Pair } from "@/lib/evmGen6.mjs";
+import { isEvmGen7Pair } from "@/lib/evmGen7.mjs";
 
 const SCHEDULED_FACTORY_ABI = [
   "function live() view returns (bool)",
@@ -56,11 +58,11 @@ const ROBINHOOD_CHAIN_IDS = new Set([ROBINHOOD_MAINNET_CHAIN_ID, ROBINHOOD_TESTN
  * and the mainnet factory were 4/3, and every Robinhood create died on the last step).
  */
 const ALLOWED_GENERATION_PAIRS: Record<number, ReadonlyArray<readonly [number, number]>> = {
-  56: [[3, 2], [4, 2], [4, 3], [6, 5]],
-  97: [[3, 2], [4, 2], [4, 3], [6, 5]],
-  4663: [[4, 3], [6, 5]],
-  46630: [[4, 3], [6, 5]],
-  31337: [[4, 3], [6, 5]],
+  56: [[3, 2], [4, 2], [4, 3], [6, 5], [7, 6]],
+  97: [[3, 2], [4, 2], [4, 3], [6, 5], [7, 6]],
+  4663: [[4, 3], [6, 5], [7, 6]],
+  46630: [[4, 3], [6, 5], [7, 6]],
+  31337: [[4, 3], [6, 5], [7, 6]],
 };
 
 function supportedGenerationPairs(chainId: number): ReadonlyArray<readonly [number, number]> {
@@ -341,13 +343,15 @@ export async function deployScheduledDraftCampaignV2(input: {
   };
 }) {
   const { factory: legacyFactory, eligibility } = await assertScheduledFactoryReady(input);
-  const gen6Factory = isEvmGen6Pair(eligibility.factoryGeneration, eligibility.campaignGeneration);
+  // Generation 7/6 takes the same request (first buy, fee choice) as 6/5.
+  const gen7Factory = isEvmGen7Pair(eligibility.factoryGeneration, eligibility.campaignGeneration);
+  const gen6Factory = isEvmGen6Pair(eligibility.factoryGeneration, eligibility.campaignGeneration) || gen7Factory;
   if (input.gen6 && !gen6Factory) {
     throw new Error("The configured factory is not generation 6, so it cannot take a first buy or fee choice.");
   }
   const gen6 = gen6Factory ? input.gen6 ?? { firstBuyTokens: 0n, firstBuyMaxCost: 0n, feeChoice: 1, feeCreatorPct: 0, value: 0n } : null;
   const factory = gen6
-    ? (new Contract(input.factoryAddress, (LaunchFactoryGen6 as any).abi, input.signer) as any)
+    ? (new Contract(input.factoryAddress, ((gen7Factory ? LaunchFactoryGen7 : LaunchFactoryGen6) as any).abi, input.signer) as any)
     : legacyFactory;
   const response = await apiFetch(`/api/drafts/${encodeURIComponent(input.draftId)}/deploy`, {
     method: "POST",
@@ -422,7 +426,7 @@ export async function deployScheduledDraftCampaignV2(input: {
     const receipt = await tx.wait();
     return { receipt, txHash: String(receipt?.hash || tx.hash || ""), ...extractCreated(receipt) };
   } catch (error: any) {
-    throw new Error((gen6 && gen6CreateErrorMessage(error)) || friendlyFactoryError(error));
+    throw new Error((gen6 && gen6CreateErrorMessage(error, gen7Factory ? 7 : 6)) || friendlyFactoryError(error));
   }
 }
 

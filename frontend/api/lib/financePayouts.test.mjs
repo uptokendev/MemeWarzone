@@ -470,3 +470,21 @@ test("Solana recruiter: a voided payout list to HuKfoF is a note; only a prepare
   assert.equal(recruiter.warnings.length, 1);
   assert.match(recruiter.warnings[0].message, /A prepared recruiter payout list \(0\.000671407 SOL\) pays the devnet deployer key HuKfoF/);
 });
+
+test("EVM airdrop: the weekly runner's open runway / recovery alerts (both pots) show as airdrop warnings", async () => {
+  const db = fakeDb([[/from public\.reward_alerts/, (_sql, params) => {
+    assert.deepEqual(params, [["56"]]);
+    return [
+      { severity: "critical", title: "Airdrop gen-7 pot on chain 56: this week (2026-10-05) is NOT pre-authorized", message: "Renew from the Safe." },
+      { severity: "warning", title: "Airdrop main pot on chain 56: pre-authorization runs out after 2026-10-19", message: "2 authorized week(s) left." },
+    ];
+  }]]);
+  const out = await buildPayouts({ network: BNB, days: 30, db, env: {}, feeRouting: evmFeeRouting(), readers: EVM_READERS, prices: priceService(), now: () => NOW });
+  const airdrop = out.types.find((t) => t.id === "airdrop");
+  assert.ok(airdrop.warnings.some((w) => w.level === "critical" && /gen-7 pot on chain 56: this week \(2026-10-05\) is NOT pre-authorized\. Renew/.test(w.message)));
+  assert.ok(airdrop.warnings.some((w) => w.level === "warning" && /main pot on chain 56: pre-authorization runs out/.test(w.message)));
+  const sql = db.seen.find((q) => /from public\.reward_alerts/.test(q.sql)).sql;
+  assert.match(sql, /status = 'open'/);
+  assert.match(sql, /airdrop_authorization_runway/);
+  assert.match(sql, /or reward_type = 'payout_watchdog'/, "the payout watchdog's own alerts are listed too");
+});

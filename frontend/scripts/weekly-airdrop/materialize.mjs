@@ -1,9 +1,16 @@
 import { AbiCoder, concat, getAddress, keccak256, toUtf8Bytes } from "ethers";
+import { MAIN_POT, POT_SQL, isMainPot, potMetadata, winnerSourceId } from "./pots.mjs";
 
 const coder = AbiCoder.defaultAbiCoder();
 
-export function weeklyContractBatchId(chainId, epochId, program) {
-  return keccak256(toUtf8Bytes(`mwz-weekly-airdrop:${chainId}:${epochId}:${program}`));
+/**
+ * Deterministic per chain / week / program / pot. The main pot's id is the original string, so every
+ * id the Safe already pre-authorized stays valid; another pot appends ":<pot>" (gen-7: ":gen7"), which
+ * no main-pot id (ending in the program name) can equal.
+ */
+export function weeklyContractBatchId(chainId, epochId, program, pot = MAIN_POT) {
+  const base = `mwz-weekly-airdrop:${chainId}:${epochId}:${program}`;
+  return keccak256(toUtf8Bytes(isMainPot(pot) ? base : `${base}:${pot}`));
 }
 
 function nativeSymbol(chainId) {
@@ -54,6 +61,7 @@ export async function materializeAirdropBatch(client, {
   claimDeadline,
   distributorAddress,
   metadata = {},
+  pot = MAIN_POT,
 }) {
   if (winners.length !== payouts.length || !winners.length) throw new Error("Winner and payout counts must match");
   const entries = winners.map((winner, index) => {
@@ -69,22 +77,26 @@ export async function materializeAirdropBatch(client, {
     const duplicate = await client.query(
       `select id,status from public.reward_batches
         where reward_type='airdrop' and chain::text=$1 and metadata->>'epochId'=$2 and metadata->>'program'=$3
-          and status<>'archived' limit 1 for update`,
-      [String(chainId), epochId, program],
+          and ${POT_SQL()}=$4 and status<>'archived' limit 1 for update`,
+      [String(chainId), epochId, program, isMainPot(pot) ? MAIN_POT : pot],
     );
-    if (duplicate.rows[0]) throw new Error(`A ${program} batch already exists for epoch ${epochId}`);
+    if (duplicate.rows[0]) {
+      throw new Error(isMainPot(pot)
+        ? `A ${program} batch already exists for epoch ${epochId}`
+        : `A ${program} batch already exists for epoch ${epochId} in the ${pot} pot`);
+    }
 
     const { rows: batchRows } = await client.query(
       `insert into public.reward_batches
         (reward_type,chain,token_symbol,status,total_amount,recipient_count,claimable_count,claimed_count,failed_count,source,metadata)
        values ('airdrop',$1,$5,'funding_check',$2::numeric,$3,0,0,0,'weekly_airdrop_scheduler',$4::jsonb)
        returning *`,
-      [String(chainId), totalAmount, entries.length, JSON.stringify({ ...metadata, epochId, program, automated: true }), nativeSymbol(chainId)],
+      [String(chainId), totalAmount, entries.length, JSON.stringify({ ...metadata, epochId, program, automated: true, ...potMetadata(pot) }), nativeSymbol(chainId)],
     );
     let batch = batchRows[0];
     // Deterministic per chain / week / program, so the Safe can pre-authorize future weeks on the
     // RewardDistributor (authorizeBatch) and the Coolify operator key can only fund those.
-    const contractBatchId = weeklyContractBatchId(chainId, epochId, program);
+    const contractBatchId = weeklyContractBatchId(chainId, epochId, program, pot);
     const { root, leaves, proofs } = merklePlan(entries);
     const claimMetadata = {
       claimMode: "reward_distributor_merkle",
@@ -126,13 +138,14 @@ export async function materializeAirdropBatch(client, {
         merkleLeaf: leaves[index],
         claimAmount: entry.amount,
         claimDeadline,
+        ...potMetadata(pot),
       };
       const { rows } = await client.query(
         `insert into public.reward_ledger
           (reward_type,source_id,source_label,wallet_address,chain,token_symbol,amount,status,metadata)
          values ('airdrop',$1,'weekly_airdrop_scheduler',$2,$3,$6,$4::numeric,'approved',$5::jsonb)
          returning *`,
-        [`${epochId}:${program}:${entry.winner.winnerRank}`, entry.walletAddress.toLowerCase(), String(chainId), entry.amount, JSON.stringify(winnerMetadata), nativeSymbol(chainId)],
+        [winnerSourceId(epochId, program, entry.winner.winnerRank, pot), entry.walletAddress.toLowerCase(), String(chainId), entry.amount, JSON.stringify(winnerMetadata), nativeSymbol(chainId)],
       );
       const ledger = rows[0];
       await client.query(
@@ -148,7 +161,7 @@ export async function materializeAirdropBatch(client, {
       `insert into public.reward_audit_logs
         (batch_id,actor_type,actor_id,action,new_value,reason,metadata)
        values ($1,'scheduler','weekly_airdrop_runner','automatic_airdrop_batch_materialized',$2,$3,$4::jsonb)`,
-      [batch.id, JSON.stringify({ status: "funding_check", recipientCount: entries.length, totalAmount }), `Automatic ${program} batch materialized`, JSON.stringify({ chainId, epochId, program, merkleRoot: root })],
+      [batch.id, JSON.stringify({ status: "funding_check", recipientCount: entries.length, totalAmount }), `Automatic ${program} batch materialized`, JSON.stringify({ chainId, epochId, program, merkleRoot: root, ...potMetadata(pot) })],
     );
     await client.query("commit");
     return { batch, items: ledgerItems };

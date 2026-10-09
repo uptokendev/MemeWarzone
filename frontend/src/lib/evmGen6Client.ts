@@ -5,11 +5,18 @@
  * contracts). Nothing here is used for an older factory or campaign: callers
  * check `isGen6Factory` / `readGen5Campaign` first, and both answer "no" for
  * every older generation, so today's create and trade paths are untouched (E14).
+ *
+ * Generation 7/6 (docs/evm-launch/EVM_GEN7_V2_PLAN.md) takes the same create request,
+ * events and campaign views except the curve, so it shares this file: callers that
+ * should also take a gen-7 factory use `readEvmLaunchGeneration` / `readEvmCreateContext`,
+ * and `readGen5Campaign` reads a gen-7 campaign too (with `factoryGeneration: 7`).
  */
 import { Contract, ethers, type AbstractProvider, type Signer } from "ethers";
 import { apiFetch } from "@/lib/apiBase";
 import LaunchFactoryGen6 from "@/abi/LaunchFactoryGen6.json";
 import LaunchCampaignGen5 from "@/abi/LaunchCampaignGen5.json";
+import LaunchFactoryGen7 from "@/abi/LaunchFactoryGen7.json";
+import LaunchCampaignGen7 from "@/abi/LaunchCampaignGen7.json";
 import CreatorRewardsVaultV2 from "@/abi/CreatorRewardsVaultV2.json";
 import {
   EVM_ESCROW_FULLY_FREE_SECONDS,
@@ -20,10 +27,13 @@ import {
   findNextStepTime,
   isEvmGen6Pair,
 } from "@/lib/evmGen6.mjs";
+import { evmLaunchGeneration, isGen7TargetAllowed } from "@/lib/evmGen7.mjs";
 
 const FACTORY_ABI = (LaunchFactoryGen6 as any).abi as ethers.InterfaceAbi;
 const CAMPAIGN_ABI = (LaunchCampaignGen5 as any).abi as ethers.InterfaceAbi;
 const VAULT_ABI = (CreatorRewardsVaultV2 as any).abi as ethers.InterfaceAbi;
+const GEN7_FACTORY_ABI = (LaunchFactoryGen7 as any).abi as ethers.InterfaceAbi;
+const GEN7_CAMPAIGN_ABI = (LaunchCampaignGen7 as any).abi as ethers.InterfaceAbi;
 
 const GENERATION_ABI = [
   "function FACTORY_GENERATION() view returns (uint32)",
@@ -59,6 +69,21 @@ export const GEN6_CREATE_ERROR_MESSAGES: Record<string, string> = {
   TargetOutOfRangeAtPrice: "This graduation target is out of range at today's price. Pick another tier.",
 };
 
+/**
+ * The same errors for a generation-7 create: the first buy may be up to 70% of the supply and has
+ * no cost cap (FirstBuyTooExpensive does not exist on gen-7).
+ */
+export const GEN7_CREATE_ERROR_MESSAGES: Record<string, string> = {
+  FirstBuySlippage: "The first-buy price changed before the launch. Check the amount and try again.",
+  FirstBuyValueWithoutAmount: "Value was sent without a first buy. Try again.",
+  InsufficientValue: "The wallet sent less than the first-buy cost.",
+  RefundFailed: "The refund of the unused first-buy value failed.",
+  FirstBuyTooLarge: "The first buy is above 70% of the supply.",
+  InvalidFeeChoice: "The creator fee choice is not valid. Pick one again.",
+  OraclePriceUnavailable: "The price feed is not answering. Try again in a minute.",
+  TargetOutOfRangeAtPrice: "This graduation target is out of range at today's price. Pick another tier.",
+};
+
 export type Gen6FactoryContext = {
   factoryGeneration: number;
   campaignGeneration: number;
@@ -84,6 +109,20 @@ export async function readFactoryGenerations(
 export async function isGen6Factory(provider: AbstractProvider, factoryAddress: string): Promise<boolean> {
   const g = await readFactoryGenerations(provider, factoryAddress);
   return Boolean(g && isEvmGen6Pair(g.factoryGeneration, g.campaignGeneration));
+}
+
+export type EvmLaunchGeneration = 6 | 7;
+
+/**
+ * 6 for a generation-6 factory (6/5), 7 for a generation-7 factory (7/6), null for every older
+ * factory or a failed read. Both 6 and 7 take the 11-field create request (first buy, fee choice).
+ */
+export async function readEvmLaunchGeneration(
+  provider: AbstractProvider,
+  factoryAddress: string,
+): Promise<EvmLaunchGeneration | null> {
+  const g = await readFactoryGenerations(provider, factoryAddress);
+  return g ? (evmLaunchGeneration(g.factoryGeneration, g.campaignGeneration) as EvmLaunchGeneration | null) : null;
 }
 
 /** What the create page needs to price a first buy: the curve config, the fee, the live native target. */
@@ -116,6 +155,64 @@ export async function readGen6CreateContext(
     protocolFeeBps: BigInt(protocolFeeBps),
     nativeTargetWei,
   };
+}
+
+/**
+ * What the create page needs to price a gen-7 first buy: factory.config() (4 fields), the fee, and the
+ * graduation market cap in native now (oracle.nativeTargetForUsd(target), which the factory feeds to
+ * curveForMarketCap when the create mines).
+ */
+export type Gen7FactoryContext = {
+  generation: 7;
+  factoryGeneration: number;
+  campaignGeneration: number;
+  config: { totalSupply: bigint; curveBps: bigint; liquidityTokenBps: bigint; graduationTarget: bigint };
+  protocolFeeBps: bigint;
+  marketCapNativeWei: bigint;
+};
+
+export type EvmCreateContext = (Gen6FactoryContext & { generation: 6 }) | Gen7FactoryContext;
+
+/** The create context for a generation-6 or generation-7 factory; throws for any other factory. */
+export async function readEvmCreateContext(
+  provider: AbstractProvider,
+  factoryAddress: string,
+  graduationTarget: bigint,
+): Promise<EvmCreateContext> {
+  const generation = await readEvmLaunchGeneration(provider, factoryAddress);
+  if (generation === 6) {
+    return { ...(await readGen6CreateContext(provider, factoryAddress, graduationTarget)), generation: 6 };
+  }
+  if (generation !== 7) throw new Error("The factory is not generation 6 or 7.");
+  const factory = new Contract(factoryAddress, GEN7_FACTORY_ABI, provider) as any;
+  const [f, c, config, protocolFeeBps, oracleAddress] = await Promise.all([
+    factory.FACTORY_GENERATION(),
+    factory.CAMPAIGN_GENERATION(),
+    factory.config(),
+    factory.protocolFeeBps(),
+    factory.graduationOracle(),
+  ]);
+  if (evmLaunchGeneration(f, c) !== 7) throw new Error(`Factory is generation ${Number(f)}/${Number(c)}, not 7/6.`);
+  const oracle = new Contract(String(oracleAddress), ORACLE_ABI, provider) as any;
+  const marketCapNativeWei = BigInt(await oracle.nativeTargetForUsd(graduationTarget));
+  return {
+    generation: 7,
+    factoryGeneration: Number(f),
+    campaignGeneration: Number(c),
+    config: {
+      totalSupply: BigInt(config.totalSupply ?? config[0]),
+      curveBps: BigInt(config.curveBps ?? config[1]),
+      liquidityTokenBps: BigInt(config.liquidityTokenBps ?? config[2]),
+      graduationTarget: BigInt(config.graduationTarget ?? config[3]),
+    },
+    protocolFeeBps: BigInt(protocolFeeBps),
+    marketCapNativeWei,
+  };
+}
+
+/** True when a gen-7 factory on `chainId` accepts this graduation market cap (LaunchFactoryGen7 rule). */
+export function isGen7CreateTarget(chainId: number, graduationTarget: bigint): boolean {
+  return Boolean(isGen7TargetAllowed(chainId, graduationTarget));
 }
 
 export type Gen6CreateFields = {
@@ -197,20 +294,26 @@ export function gen6SignedRequest(
   return { request, value: request.firstBuyMaxCost };
 }
 
-export function gen6FactoryWriter(factoryAddress: string, signer: Signer) {
-  return new Contract(factoryAddress, FACTORY_ABI, signer) as any;
+export function gen6FactoryWriter(factoryAddress: string, signer: Signer, generation: EvmLaunchGeneration = 6) {
+  return new Contract(factoryAddress, generation === 7 ? GEN7_FACTORY_ABI : FACTORY_ABI, signer) as any;
 }
 
-export function gen6CreateErrorMessage(error: any): string | null {
-  const iface = new ethers.Interface(FACTORY_ABI);
+/** The factory ABI for a launch generation (the create selectors are the same on 6 and 7). */
+export function evmLaunchFactoryAbi(generation: EvmLaunchGeneration = 6): ethers.InterfaceAbi {
+  return generation === 7 ? GEN7_FACTORY_ABI : FACTORY_ABI;
+}
+
+export function gen6CreateErrorMessage(error: any, generation: EvmLaunchGeneration = 6): string | null {
+  const iface = new ethers.Interface(generation === 7 ? GEN7_FACTORY_ABI : FACTORY_ABI);
+  const messages = generation === 7 ? GEN7_CREATE_ERROR_MESSAGES : GEN6_CREATE_ERROR_MESSAGES;
   const candidates = [error?.data, error?.revert?.data, error?.info?.error?.data, error?.error?.data];
   const direct = String(error?.revert?.name || error?.errorName || "");
-  if (direct && GEN6_CREATE_ERROR_MESSAGES[direct]) return GEN6_CREATE_ERROR_MESSAGES[direct];
+  if (direct && messages[direct]) return messages[direct];
   for (const data of candidates) {
     if (typeof data !== "string" || !data.startsWith("0x")) continue;
     try {
       const name = iface.parseError(data)?.name || "";
-      if (GEN6_CREATE_ERROR_MESSAGES[name]) return GEN6_CREATE_ERROR_MESSAGES[name];
+      if (messages[name]) return messages[name];
     } catch {
       // not a factory error
     }
@@ -221,6 +324,8 @@ export function gen6CreateErrorMessage(error: any): string | null {
 // ---------------------------------------------------------------- campaign reads
 
 export type Gen5CampaignState = {
+  /** 6 for a gen-5 campaign on a gen-6 factory, 7 for a gen-6 campaign on a gen-7 factory. */
+  factoryGeneration: EvmLaunchGeneration;
   campaign: string;
   factory: string;
   token: string;
@@ -249,18 +354,22 @@ export type Gen5CampaignState = {
 
 const ZERO = ethers.ZeroAddress;
 
-/** Null for any campaign that is not generation 5 on a generation-6 factory. */
+/**
+ * Null for any campaign that is not generation 5 on a generation-6 factory or generation 6 on a
+ * generation-7 factory. Both read the same views; only the ABI file differs.
+ */
 export async function readGen5Campaign(provider: AbstractProvider, campaignAddress: string): Promise<Gen5CampaignState | null> {
   if (!ethers.isAddress(campaignAddress)) return null;
-  const campaign = new Contract(campaignAddress, CAMPAIGN_ABI, provider) as any;
   let factoryAddress = "";
   try {
-    factoryAddress = String(await campaign.factory());
+    factoryAddress = String(await (new Contract(campaignAddress, CAMPAIGN_ABI, provider) as any).factory());
   } catch {
     return null;
   }
-  if (!(await isGen6Factory(provider, factoryAddress))) return null;
-  const factory = new Contract(factoryAddress, FACTORY_ABI, provider) as any;
+  const generation = await readEvmLaunchGeneration(provider, factoryAddress);
+  if (!generation) return null;
+  const campaign = new Contract(campaignAddress, generation === 7 ? GEN7_CAMPAIGN_ABI : CAMPAIGN_ABI, provider) as any;
+  const factory = new Contract(factoryAddress, generation === 7 ? GEN7_FACTORY_ABI : FACTORY_ABI, provider) as any;
   const [token, creator, launchAt, protocolFeeBps, currentTradeFeeBps, launched, graduationPending, pendingSince, nativeFallback, quoteToken, feeChoice] =
     await Promise.all([
       campaign.token(),
@@ -302,6 +411,7 @@ export async function readGen5Campaign(provider: AbstractProvider, campaignAddre
     .catch(() => null);
   const decoded = feeChoice ? decodeEvmFeeChoice(Number(feeChoice.choice ?? feeChoice[1]), Number(feeChoice.creatorPct ?? feeChoice[2])) : { choice: null, creatorSharePct: null };
   return {
+    factoryGeneration: generation,
     campaign: campaignAddress,
     factory: factoryAddress,
     token: String(token),
@@ -339,6 +449,8 @@ export type Gen5CreatorState = {
   pendingGraduationQuote: bigint;
   vaultCreatorBalance: bigint;
   vaultCreatorQuoteBalance: bigint;
+  /** From the API's `economics` when present: 1980 on gen-6, 0 on gen-7. */
+  graduationCreatorBps?: number | null;
 };
 
 /** The creator's balances on a generation-5 coin: escrow, graduation pull payment, vault. */
@@ -347,7 +459,7 @@ export async function readGen5CreatorState(
   state: Gen5CampaignState,
   nowUnix = Math.floor(Date.now() / 1000),
 ): Promise<Gen5CreatorState> {
-  const campaign = new Contract(state.campaign, CAMPAIGN_ABI, provider) as any;
+  const campaign = new Contract(state.campaign, campaignAbiFor(state), provider) as any;
   const token = new Contract(state.token, ERC20_ABI, provider) as any;
   const vault = state.feeVault && state.feeVault !== ZERO ? (new Contract(state.feeVault, VAULT_ABI, provider) as any) : null;
   const [walletBalance, totalSupply, escrowTotal, escrowClaimed, vestedNow, beneficiary, pendingGraduation, pendingGraduationQuote, vaultCreator, vaultQuote] =
@@ -426,6 +538,10 @@ export async function readGen5CreatorStatePreferApi(
 }
 
 // ---------------------------------------------------------------- creator writes
+
+function campaignAbiFor(state: { factoryGeneration?: number } | null | undefined): ethers.InterfaceAbi {
+  return state?.factoryGeneration === 7 ? GEN7_CAMPAIGN_ABI : CAMPAIGN_ABI;
+}
 
 async function send(txPromise: Promise<any>) {
   const tx = await txPromise;

@@ -19,13 +19,16 @@ export const ESCROW_CLIFF_SECONDS = 30n * 86_400n;
 export const ESCROW_STEP_SECONDS = 7n * 86_400n;
 export const ESCROW_TRANCHES = 5n;
 
-/** LaunchCampaign.currentTradeFeeBps() at block time `t` (seconds). */
-export function gen5TradeFeeBps(baseBps: bigint, launchAt: bigint, t: bigint): bigint {
+/**
+ * LaunchCampaign.currentTradeFeeBps() at block time `t` (seconds). `startBps` is the anti-sniper start:
+ * 5000 on gen-6 (the default), 9000 on gen-7 (LaunchCampaignGen7, same formula).
+ */
+export function gen5TradeFeeBps(baseBps: bigint, launchAt: bigint, t: bigint, startBps: bigint = ANTI_SNIPER_START_BPS): bigint {
   const end = launchAt + ANTI_SNIPER_WINDOW_SECONDS;
   if (t >= end) return baseBps;
   let left = end - t;
   if (left > ANTI_SNIPER_WINDOW_SECONDS) left = ANTI_SNIPER_WINDOW_SECONDS;
-  return baseBps + ((ANTI_SNIPER_START_BPS - baseBps) * left) / ANTI_SNIPER_WINDOW_SECONDS;
+  return baseBps + ((startBps - baseBps) * left) / ANTI_SNIPER_WINDOW_SECONDS;
 }
 
 function feeOf(amount: bigint, bps: bigint): bigint {
@@ -87,6 +90,8 @@ export type Gen5TradeInput = {
   creator: string | null;
   /** Present when the same transaction emitted CreatorFirstBuy (C3): its exact fee. */
   firstBuy?: { costNoFee: bigint; fee: bigint } | null;
+  /** Anti-sniper start fee; absent = gen-6's 5000. Gen-7 campaigns pass 9000. */
+  antiSniperStartBps?: bigint;
 };
 
 function sameAddress(a: string | null | undefined, b: string | null | undefined): boolean {
@@ -109,7 +114,7 @@ export function annotateGen5Trade(input: Gen5TradeInput): Gen5TradeAnnotation {
   if (input.launchAt === null || input.baseFeeBps === null) {
     return { feeRaw: null, feeBps: null, grossRaw: null, creatorBuyKind, leagueExcluded };
   }
-  const bps = gen5TradeFeeBps(input.baseFeeBps, input.launchAt, input.blockTimeSec);
+  const bps = gen5TradeFeeBps(input.baseFeeBps, input.launchAt, input.blockTimeSec, input.antiSniperStartBps ?? ANTI_SNIPER_START_BPS);
   if (input.side === "buy") {
     const inv = invertBuyTotal(input.amountRaw, bps);
     return {

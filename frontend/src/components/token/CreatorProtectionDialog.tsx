@@ -58,6 +58,19 @@ function formatNativeAmount(raw?: string | null): string {
   }
 }
 
+/**
+ * True when the server sent creatorBuyCapWei as exactly 0: the campaign has no creator buy cap (EVM
+ * generation 7 passes 0, and LaunchCampaign treats 0 as no cap). A missing value keeps today's wording.
+ */
+export function creatorBuyCapIsNone(raw?: string | null): boolean {
+  if (raw == null || String(raw).trim() === "") return false;
+  try {
+    return BigInt(String(raw).trim()) === 0n;
+  } catch {
+    return false;
+  }
+}
+
 function formatUnlock(value?: string | null): string {
   if (!value) return "the end of the protection period";
   const date = new Date(value);
@@ -89,6 +102,7 @@ export function CreatorProtectionDialog() {
     const tierNumber = Number(detail?.tierNumber || 1);
     const tierLabel = detail?.tier || `Tier ${tierNumber}`;
     const cap = formatNativeAmount(detail?.creatorBuyCapWei);
+    const noCap = creatorBuyCapIsNone(detail?.creatorBuyCapWei);
     const unlock = formatUnlock(detail?.unlockAt);
 
     if (code === "CREATOR_CLUSTER_BUY_CAP_EXCEEDED") {
@@ -111,14 +125,18 @@ export function CreatorProtectionDialog() {
       return {
         title: "Creator-Linked Wallet",
         body: `This wallet is linked to the ${tierLabel} campaign creator. Creator-linked wallets cannot buy this campaign during the creator protection period.`,
-        note: `This campaign-specific restriction ends at ${unlock}. The combined creator-cluster allowance after that time is ${cap}.`,
+        note: noCap
+          ? `This campaign-specific restriction ends at ${unlock}. After that time there is no creator-cluster buy cap on this campaign.`
+          : `This campaign-specific restriction ends at ${unlock}. The combined creator-cluster allowance after that time is ${cap}.`,
       };
     }
 
     return {
       title: `Tier ${tierNumber} Creator Buy Protection`,
       body: `As a ${tierLabel} creator, you cannot buy your own token during the first ${tierNumber === 1 ? "24 hours" : tierNumber === 2 ? "6 hours" : "1 hour"}.`,
-      note: `You can participate after ${unlock}. Your creator wallet and confirmed linked wallets share a combined allowance of ${cap}.`,
+      note: noCap
+        ? `You can participate after ${unlock}. This campaign has no buy cap for your creator wallet and confirmed linked wallets.`
+        : `You can participate after ${unlock}. Your creator wallet and confirmed linked wallets share a combined allowance of ${cap}.`,
     };
   }, [detail]);
 
@@ -148,7 +166,11 @@ export function CreatorProtectionDialog() {
                       }`}
                     >
                       <span className="font-semibold">Tier {rule.tier}</span>
-                      <span>{rule.name}: {rule.lock} buy lock, then {rule.cap} shared creator-cluster cap.</span>
+                      <span>
+                        {creatorBuyCapIsNone(detail?.creatorBuyCapWei)
+                          ? `${rule.name}: ${rule.lock} buy lock, no buy cap on this campaign.`
+                          : `${rule.name}: ${rule.lock} buy lock, then ${rule.cap} shared creator-cluster cap.`}
+                      </span>
                     </span>
                   );
                 })}

@@ -1,0 +1,46 @@
+{
+  "kind": "import-fee-vault",
+  "changeOrder": "CO-IMP rev 2 CI1",
+  "network": "bscTestnet",
+  "chainId": 97,
+  "profile": "testnet",
+  "contract": "RecruiterRewardsVault (unchanged bytecode, used as ImportFeeVault)",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "protocolRevenueVault": null,
+  "startedAt": "2026-10-09T10:11:44.334Z",
+  "balanceBefore": "210526087283086283",
+  "operator": "0xCB83b1297E4198e37bBf050eE9Cb6E87E8252aD1",
+  "caps": {
+    "perTx": "500000000000000000",
+    "daily": "2000000000000000000",
+    "perTxNative": "0.5",
+    "dailyNative": "2.0"
+  },
+  "vault": "0x9BBacC8DefDc48ECE6254Eb110D7f1CC0ffCFC38",
+  "deployTx": "0x18d0f9681efae9121158bbbed5a8b17ec4fa2b5ce9c5ddb0df4171c9fc629b70",
+  "startBlock": 135763855,
+  "adminCallsSent": [
+    "setOperator(0xCB83b1297E4198e37bBf050eE9Cb6E87E8252aD1)",
+    "setPayoutCaps(500000000000000000,2000000000000000000)",
+    "setPayoutsPaused(false)"
+  ],
+  "status": "deployed-open",
+  "importSwapFeeRouter": {
+    "address": "0x6685726f147562de5815229Aa9f85F94cB903fa5",
+    "wrappedNative": "0xcd2c34926894616F6768F15F15614b1F7816bC2E",
+    "v2Router": "0xa241AEd1cfE4eC2892d6Cb2274B4BeB6EcD07EaF",
+    "v2Factory": "0xb9F2b64DE9f7850Dcc9C5fFed0ca33603250640e",
+    "protocolBps": 100,
+    "creatorBps": 0,
+    "protocolReceiver": "0x9BBacC8DefDc48ECE6254Eb110D7f1CC0ffCFC38",
+    "creatorReceiver": "0x9BBacC8DefDc48ECE6254Eb110D7f1CC0ffCFC38"
+  },
+  "env": {
+    "IMPORT_FEE_VAULT_97": "0x9BBacC8DefDc48ECE6254Eb110D7f1CC0ffCFC38",
+    "IMPORT_FEE_PAYOUT_OPERATOR_97": "0xCB83b1297E4198e37bBf050eE9Cb6E87E8252aD1",
+    "IMPORT_SWAP_FEE_ROUTER_97": "0x6685726f147562de5815229Aa9f85F94cB903fa5"
+  },
+  "balanceAfter": "210290395583086283",
+  "finishedAt": "2026-10-09T10:11:53.721Z"
+}

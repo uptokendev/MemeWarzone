@@ -31,6 +31,7 @@ import { prepareRobinhoodStockCreateAuthorization } from "./robinhoodStockCreate
 import { prepareBnbBasicQuoteCreateAuthorization, readBnbBasicCreationPreflight } from "./bnbBasicQuoteCreatePolicy.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
 import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
+import { EVM_GEN7_FACTORY_GENERATION, GEN7_TARGET_TEST_USD, isGen7TargetAllowed } from "../../shared/evmGen7Curve.mjs";
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 
 const VALID_PROFILES = new Set([
@@ -151,6 +152,8 @@ const STANDARD_GRADUATION_TARGETS = new Set([
   (50_000n * WAD).toString(),
 ]);
 const TEST_GRADUATION_TARGET = (6n * WAD).toString();
+// Generation 7 graduates at a USD market cap: $30K / $50K, and $150 on the testnets (LaunchFactoryGen7).
+const GEN7_TEST_GRADUATION_TARGET = GEN7_TARGET_TEST_USD.toString();
 
 function isTruthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -184,7 +187,31 @@ function validateGraduationTarget(chainId, graduationTarget) {
   ) {
     return;
   }
+  // The generation 7 test tier; which generation may use it is checked once the factory is read
+  // (validateGraduationTargetForGeneration).
+  if (
+    testThresholdEnabled &&
+    (cid === 97 || cid === 46630) &&
+    graduationTarget === GEN7_TEST_GRADUATION_TARGET
+  ) {
+    return;
+  }
   throw new Error("Unsupported graduation target");
+}
+
+/**
+ * After the factory's generation is known. Generation 7 accepts only its market-cap targets ($30K /
+ * $50K, $150 on testnets; 0 = the factory default), so a $15K or $6 request is refused before signing
+ * instead of reverting UnsupportedGraduationTarget on chain. Every other generation refuses the $150
+ * tier and is otherwise unchanged.
+ */
+export function validateGraduationTargetForGeneration(chainId, graduationTarget, factoryGeneration) {
+  if (graduationTarget === "0") return;
+  if (Number(factoryGeneration) === EVM_GEN7_FACTORY_GENERATION) {
+    if (isGen7TargetAllowed(chainId, graduationTarget)) return;
+    throw new Error("Generation 7 coins graduate at a $30,000 or $50,000 market cap ($150 on testnets).");
+  }
+  if (graduationTarget === GEN7_TEST_GRADUATION_TARGET) throw new Error("Unsupported graduation target");
 }
 
 function campaignRequestSource(body) {
@@ -428,6 +455,11 @@ export async function routingCreateAuthorization(req, res) {
   }
 
   const factoryGeneration = Number(onChainPreflight.onChain.factoryGeneration);
+  try {
+    validateGraduationTargetForGeneration(chainId, campaignRequest.graduationTarget, factoryGeneration);
+  } catch (error) {
+    return json(res, 400, { error: error.message });
+  }
   let gen6 = null;
   try {
     ({ campaignRequest, gen6 } = await applyGenerationCreateFields({
@@ -435,7 +467,7 @@ export async function routingCreateAuthorization(req, res) {
       campaignRequest,
       factoryGeneration,
       readContext: async ({ graduationTarget }) =>
-        readGen6FactoryCreateContext({ provider: await getServerReadProvider(chainId), factoryAddress, graduationTarget }),
+        readGen6FactoryCreateContext({ provider: await getServerReadProvider(chainId), factoryAddress, graduationTarget, factoryGeneration }),
     }));
   } catch (error) {
     if (error instanceof Gen6CreateOptionError) return gen6ErrorResponse(res, error);

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { ethers } from "ethers";
 import { badMethod, json, readJson } from "../server/http.js";
 import { signTradeAuthorization } from "./dev-fix/routeAuthorizationSigner.js";
+import { evmGen7FeesStack } from "./lib/evmGen7Fees.js";
 
 /**
  * EVM creator-choice operator (launch generation, CreatorRewardsVaultV2), API side.
@@ -12,8 +13,9 @@ import { signTradeAuthorization } from "./dev-fix/routeAuthorizationSigner.js";
  *   StandardUnlinked (1), action buy-exact-native (1). The route authority key stays on the API; the indexer's
  *   operator worker asks here. Signed only when every one of these holds, read from chain in this request:
  *   - header x-mwz-internal-secret equals EVM_CREATOR_CHOICE_API_SECRET (fail closed when unset);
- *   - the vault is the configured EVM_CREATOR_VAULT_V2_<chainId> and the actor is that vault;
- *   - the campaign is a generation 6 factory's campaign, the factory is the vault's factory, and both the factory
+ *   - the vault is the configured EVM_CREATOR_VAULT_V2_<chainId> or gen-7's own EVM_GEN7_CREATOR_VAULT_<chainId>, and the
+ *     actor is that vault;
+ *   - the campaign is a generation 6 (or later) factory's campaign, the factory is the vault's factory, and both the factory
  *     (campaignFeeChoice) and the vault (cfg) say its fee choice is buyback;
  *   - the operator is not paused, amountIn <= limits().buyPerTx and <= buybackBalance(campaign);
  *   - the curve is still trading (not launched, not pending), and minOut is within 5% under the campaign's own
@@ -24,7 +26,9 @@ import { signTradeAuthorization } from "./dev-fix/routeAuthorizationSigner.js";
  *   Response: { ok, signature, deadline, routeProfile: 1, action: 1, actor, campaign, amountIn, minOut, routeAuthority }
  *
  * GET /api/evm/creator-choice?chainId=           the buyback / snapshot week commitments (secret after the week)
- * GET /api/evm/holder-batch?chainId=&weekId=     a published holder leaf file (also &batchId=)
+ * GET /api/evm/holder-batch?chainId=&weekId=     a published holder leaf file (also &batchId=); &vault= picks the
+ *                                                 creator vault (gen-6 and gen-7 each publish one per week); without
+ *                                                 it the gen-6 vault's file comes first
  */
 
 export const BUYBACK_ROUTE_PROFILE = 1; // StandardUnlinked, CreatorRewardsVaultV2.BUYBACK_ROUTE_PROFILE
@@ -95,6 +99,16 @@ export function configuredCreatorVault(chainId, env = process.env) {
   return ethers.isAddress(addr) ? ethers.getAddress(addr) : "";
 }
 
+/** Every creator vault the operator may ask for: the gen-6 vault and gen-7's own vault (EVM_GEN7_CREATOR_VAULT_<id>). */
+export function configuredCreatorVaults(chainId, env = process.env) {
+  const out = [];
+  const gen6 = configuredCreatorVault(chainId, env);
+  if (gen6) out.push(gen6);
+  const gen7 = evmGen7FeesStack(chainId, env).creatorVault?.address || "";
+  if (gen7 && !out.includes(gen7)) out.push(gen7);
+  return out;
+}
+
 function routeAuthorityKey(env) {
   return (
     String(env.ROUTE_AUTHORITY_PRIVATE_KEY || "").trim() ||
@@ -151,9 +165,9 @@ export function createEvmBuybackAuthorizationHandler(deps = {}) {
       const amountIn = uint(body.amountIn, "amountIn");
       const minOut = uint(body.minOut, "minOut");
       if (amountIn <= 0n || minOut <= 0n) throw new Refusal(400, "BAD_REQUEST", "amountIn and minOut must be positive");
-      const configured = configuredCreatorVault(chainId, env);
-      if (!configured) throw new Refusal(503, "VAULT_NOT_CONFIGURED", `EVM_CREATOR_VAULT_V2_${chainId} is not set`);
-      if (configured !== vault) throw new Refusal(403, "VAULT_MISMATCH", "Not the configured creator vault.");
+      const configured = configuredCreatorVaults(chainId, env);
+      if (!configured.length) throw new Refusal(503, "VAULT_NOT_CONFIGURED", `EVM_CREATOR_VAULT_V2_${chainId} is not set`);
+      if (!configured.includes(vault)) throw new Refusal(403, "VAULT_MISMATCH", "Not the configured creator vault.");
       const ttlRaw = body.ttlSeconds == null ? MAX_TTL_SECONDS : Number(body.ttlSeconds);
       const ttl = Math.max(MIN_TTL_SECONDS, Math.min(MAX_TTL_SECONDS, Number.isFinite(ttlRaw) ? Math.floor(ttlRaw) : MAX_TTL_SECONDS));
 
@@ -270,15 +284,24 @@ export function createEvmCreatorChoiceReadHandlers(deps = {}) {
     const chainId = Number(q.get("chainId"));
     const weekId = String(q.get("weekId") || "").trim();
     const batchId = String(q.get("batchId") || "").trim().toLowerCase();
+    const vault = String(q.get("vault") || "").trim().toLowerCase();
+    if (vault && !/^0x[0-9a-f]{40}$/.test(vault)) return json(res, 400, { ok: false, code: "BAD_REQUEST", error: "vault must be an address" });
     if (!EVM_CHOICE_CHAINS.has(chainId)) return json(res, 400, { ok: false, code: "CHAIN_NOT_SUPPORTED", error: "chainId must be 56, 4663, 97 or 46630" });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(weekId) && !/^0x[0-9a-f]{64}$/.test(batchId)) return json(res, 400, { ok: false, code: "BAD_REQUEST", error: "weekId (YYYY-MM-DD) or batchId is required" });
     try {
+      const gen6 = (configuredCreatorVault(chainId, deps.env || process.env) || "").toLowerCase();
       const { rows } = await (await db()).query(
-        `select week_id, batch_id, status, leaf_file, executable_at, last_reason
-           from public.evm_holder_batches
-          where chain_id = $1 and (week_id = $2 or batch_id = $3) and leaf_file is not null
-          limit 1`,
-        [chainId, weekId, batchId],
+        vault
+          ? `select week_id, batch_id, status, leaf_file, executable_at, last_reason
+               from public.evm_holder_batches
+              where chain_id = $1 and (week_id = $2 or batch_id = $3) and leaf_file is not null and vault_address = $4
+              limit 1`
+          : `select week_id, batch_id, status, leaf_file, executable_at, last_reason
+               from public.evm_holder_batches
+              where chain_id = $1 and (week_id = $2 or batch_id = $3) and leaf_file is not null
+              order by (vault_address = $4) desc
+              limit 1`,
+        [chainId, weekId, batchId, vault || gen6],
       );
       if (!rows[0]) return json(res, 404, { ok: false, code: "NOT_FOUND", error: "No published holder batch." });
       const r = rows[0];

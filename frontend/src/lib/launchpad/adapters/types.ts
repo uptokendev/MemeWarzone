@@ -70,6 +70,12 @@ export type CampaignMetrics = {
   protocolFeeBps: bigint;
   launched?: boolean;
   finalizedAt?: bigint;
+  /**
+   * EVM generation 7/6 only (constant-product curve, basePrice/priceSlope read as 0): the campaign's
+   * virtual reserves. Absent for every older campaign.
+   */
+  virtualNative?: bigint;
+  virtualToken?: bigint;
 };
 
 export type CampaignActivity = {

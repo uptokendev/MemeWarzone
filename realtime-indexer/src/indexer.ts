@@ -9,14 +9,23 @@ import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/attribution.js";
 import { upsertRewardEvent } from "./rewards/ingest.js";
 import { createStaticJsonRpcProvider, createWorkingProvider, maskRpcUrl, parseRpcList } from "./rpcProvider.js";
+import { bscRpcUrls } from "./canonicalCandleMaterializer.js";
 import { healRobinhoodGraduatedCms } from "./robinhoodCmsHeal.js";
-import { bnbCurveState, parseRawTokenAmount } from "./bnbCurvePricing.js";
+import {
+  BNB_CURVE_PARAM_FRAGMENTS,
+  bnbCurveStateFor,
+  parseRawTokenAmount,
+  readBnbCurveParams,
+  type BnbCurveParams,
+} from "./bnbCurvePricing.js";
 import { campaignScanChunks } from "./campaignScanChunks.js";
 import { recordTipScan, tipScanStart, tipWindowOptionsFromEnv } from "./tipScanWindow.js";
 import { checkMilestones } from "./milestones.js";
+import { createEvmMilestoneProgress, type EvmMilestoneView } from "./evm/evmMilestoneProgress.js";
 import { notifyCampaignCreated, notifyCampaignGraduated } from "./campaignLifecycleNotifications.js";
 import { resolveCampaignGeneration, type CampaignGenerationInfo } from "./evm/evmGen5Store.js";
 import { auxTopics, configuredGen5AuxContracts, recordGen5AuxLog, type AuxContract } from "./evm/evmGen5Aux.js";
+import { withGen7Router } from "./evm/evmGen7Fees.js";
 import {
   GEN5_ALL_TOPICS,
   GEN5_CAMPAIGN_IFACE,
@@ -611,7 +620,7 @@ async function insertTrade(row: {
   }
 
   await touchCampaignActivity(row.chainId, row.campaign, row.blockTime);
-  await checkMilestones(pool, row.chainId, row.campaign);
+  await checkMilestones(pool, row.chainId, row.campaign, evmMilestoneProgress);
 
   return { inserted: isInsert, tokenAmount, bnbAmount, priceBnb };
 }
@@ -809,20 +818,40 @@ async function upsertCandle(
   await publishCandle(chainId, campaign, candleUpsertPayload(tf, bucketSec, row));
 }
 
-const BNB_CURVE_PARAM_ABI = [
-  "function basePrice() view returns (uint256)",
-  "function priceSlope() view returns (uint256)",
+// Near-graduation alerts: each campaign's own target (evm/evmMilestoneProgress.ts), read on the chain's RPC.
+const MILESTONE_VIEW_ABI = [
+  "function graduationNativeTarget() view returns (uint256)",
+  "function curveSupply() view returns (uint256)",
 ];
-const BNB_CURVE_PARAM_TTL_MS = 5 * 60 * 1000;
-const bnbCurveParamCache = new Map<string, { base: bigint; slope: bigint; at: number }>();
+const milestoneProviders = new Map<number, ethers.JsonRpcProvider>();
+const evmMilestoneProgress = createEvmMilestoneProgress({
+  db: pool,
+  read: async (chainId: number, campaign: string, view: EvmMilestoneView) => {
+    let provider = milestoneProviders.get(chainId);
+    if (!provider) {
+      const url = bscRpcUrls(chainId)[0];
+      if (!url) throw new Error(`no RPC for chain ${chainId}`);
+      provider = createStaticJsonRpcProvider(url, chainId, { timeoutMs: 8_000 });
+      milestoneProviders.set(chainId, provider);
+    }
+    const contract = new ethers.Contract(campaign, MILESTONE_VIEW_ABI, provider) as any;
+    return BigInt(await contract[view]());
+  },
+});
 
-async function loadBnbCurveParams(chainId: number, campaign: string): Promise<{ base: bigint; slope: bigint } | null> {
+// basePrice/priceSlope, plus virtualNative/virtualToken for gen-7 (LaunchCampaignGen7 has no linear params).
+const BNB_CURVE_PARAM_ABI = BNB_CURVE_PARAM_FRAGMENTS;
+const BNB_CURVE_PARAM_TTL_MS = 5 * 60 * 1000;
+const bnbCurveParamCache = new Map<string, { params: BnbCurveParams; at: number }>();
+
+async function loadBnbCurveParams(chainId: number, campaign: string): Promise<BnbCurveParams | null> {
   const key = `${chainId}:${campaign.toLowerCase()}`;
   const cached = bnbCurveParamCache.get(key);
   if (cached && Date.now() - cached.at < BNB_CURVE_PARAM_TTL_MS) {
-    return { base: cached.base, slope: cached.slope };
+    return cached.params;
   }
-  const urls = parseRpcList(chainId === 56 ? ENV.BSC_RPC_HTTP_56 : ENV.BSC_RPC_HTTP_97);
+  // Robinhood campaigns are read on the Robinhood RPCs (before this, 4663/46630 went to BSC_RPC_HTTP_97).
+  const urls = bscRpcUrls(chainId);
   if (!urls.length) return null;
   try {
     const { provider } = await createWorkingProvider(urls, chainId, {
@@ -830,13 +859,9 @@ async function loadBnbCurveParams(chainId: number, campaign: string): Promise<{ 
       label: `bnb-curve-params-${chainId}`,
     });
     const contract = new ethers.Contract(campaign, BNB_CURVE_PARAM_ABI, provider) as any;
-    const [basePriceRaw, priceSlopeRaw] = await Promise.all([
-      contract.basePrice() as Promise<bigint>,
-      contract.priceSlope() as Promise<bigint>,
-    ]);
-    const next = { base: BigInt(basePriceRaw), slope: BigInt(priceSlopeRaw), at: Date.now() };
-    bnbCurveParamCache.set(key, next);
-    return next;
+    const params = await readBnbCurveParams(contract);
+    bnbCurveParamCache.set(key, { params, at: Date.now() });
+    return params;
   } catch (error) {
     console.warn("[indexer] BNB curve params unavailable", {
       chainId,
@@ -885,7 +910,7 @@ async function patchStats(chainId: number, campaign: string) {
 
   const soldRaw = parseRawTokenAmount(soldRes.rows[0]?.sold_raw);
   const params = await loadBnbCurveParams(chainId, campaign);
-  const curve = params ? bnbCurveState(params.base, params.slope, soldRaw) : null;
+  const curve = params ? bnbCurveStateFor(params, soldRaw) : null;
   // Current token price is curve marginal spot. Fill VWAP stays on
   // curve_trades.price_bnb and is never used to derive marketcap_bnb.
   const lastPrice: number | null =
@@ -1203,16 +1228,18 @@ function parseRouterEntries(raw: string): Array<{ address: string; startBlock: n
 /**
  * TREASURY_ROUTERS_<id> replaces the known list (as before). TREASURY_ROUTERS_EXTRA_<id> is appended to
  * whichever list applies: the launch generation's TreasuryRouterV4 goes there, so the V3/V2 routers of
- * the old generation keep being scanned (E14). V4's RouteExecuted has the V3 topic.
+ * the old generation keep being scanned (E14). V4's RouteExecuted has the V3 topic. EVM_GEN7_ROUTER_<id>
+ * (gen-7's own TreasuryRouterV4) is appended last.
  */
-export function configuredTreasuryRouters(chainId: number): Array<{ address: string; startBlock: number }> {
-  const raw = String(process.env[`TREASURY_ROUTERS_${chainId}`] || "").trim();
+export function configuredTreasuryRouters(chainId: number, env: NodeJS.ProcessEnv = process.env): Array<{ address: string; startBlock: number }> {
+  const raw = String(env[`TREASURY_ROUTERS_${chainId}`] || "").trim();
   const base = raw ? parseRouterEntries(raw) : [...(KNOWN_TREASURY_ROUTERS[chainId] ?? [])];
-  const extra = parseRouterEntries(String(process.env[`TREASURY_ROUTERS_EXTRA_${chainId}`] || "").trim());
+  const extra = parseRouterEntries(String(env[`TREASURY_ROUTERS_EXTRA_${chainId}`] || "").trim());
   for (const router of extra) {
     if (!base.some((r) => r.address === router.address)) base.push(router);
   }
-  return base;
+  // Generation 7's own TreasuryRouterV4 (EVM_GEN7_ROUTER_<id>, evm/evmGen7Fees.ts): scanned beside the gen-6 one.
+  return withGen7Router(chainId, base, env);
 }
 
 async function resolveTreasuryRouters(
@@ -1799,7 +1826,8 @@ async function scanCampaignRange(
             actor: campaign,
             pair: recorded.graduatedPool || "",
             meta: {
-              generation: 5,
+              // Campaign generation: 5 (gen-6 contracts) or 6 (gen-7); 5 when unknown, as before.
+              generation: gen5Ctx.info.campaignGeneration ?? 5,
               raise: String(a.raise),
               protocolShare: String(a.protocolShare),
               creatorShare: String(a.creatorShare),

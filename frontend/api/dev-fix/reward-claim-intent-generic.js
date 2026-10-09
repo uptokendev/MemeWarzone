@@ -162,7 +162,7 @@ function distributorFromMetadata(metadata, chainId) {
   return cleanAddress(raw) || envDistributorAddress(chainId);
 }
 
-function claimCallForRow(row) {
+export function claimCallForRow(row) {
   const chainId = rowChainId(row);
   if (SOLANA_CHAINS.has(chainId)) return buildSolanaRewardCall(row);
 

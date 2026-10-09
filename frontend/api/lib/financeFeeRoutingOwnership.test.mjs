@@ -50,7 +50,14 @@ test("every EVM mainnet destination is classified, BNB and Robinhood alike", () 
 test("the tables hold no stale ids", () => {
   const solanaIds = new Set(solanaFeeRoutingRegistry(SOLANA_ENV).destinations.map((d) => d.id));
   for (const id of Object.keys(SOLANA_OWNERSHIP)) assert.ok(solanaIds.has(id), `solana ${id}`);
-  const evmIds = new Set([56, 4663].flatMap((c) => evmFeeRoutingRegistry(c).destinations.map((d) => d.id)));
+  // Gen-7's own fees stack only appears with its EVM_GEN7_*_<id> variables set.
+  const gen7Env = (c) => ({
+    [`EVM_GEN7_ROUTER_${c}`]: "0x1111111111111111111111111111111111111111",
+    [`EVM_GEN7_CREATOR_VAULT_${c}`]: "0x2222222222222222222222222222222222222222",
+    [`EVM_GEN7_HOLDER_DISTRIBUTOR_${c}`]: "0x3333333333333333333333333333333333333333",
+    [`EVM_GEN7_COMMUNITY_VAULT_${c}`]: "0x4444444444444444444444444444444444444444",
+  });
+  const evmIds = new Set([56, 4663].flatMap((c) => [...evmFeeRoutingRegistry(c).destinations, ...evmFeeRoutingRegistry(c, gen7Env(c)).destinations].map((d) => d.id)));
   for (const id of Object.keys(EVM_OWNERSHIP)) assert.ok(evmIds.has(id), `evm ${id}`);
 });
 

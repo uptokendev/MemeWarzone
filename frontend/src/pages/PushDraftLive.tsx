@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DBC_FIRST_BUY_MAX_BPS } from "../../shared/dbcEconomics.mjs";
 import { DBC_LAUNCH_RESERVE_LAMPORTS, DBC_LAUNCH_RESERVE_SOL, dbcLaunchBalanceMessage, dbcLaunchMaxFirstBuyLamports } from "@/lib/tradeBalanceReserve";
 import { readSolBalanceLamports } from "@/lib/solanaBalance";
@@ -24,6 +24,7 @@ import {
   graduationTargetToUsdMicros,
   graduationTierLabel,
   isSupportedGraduationTarget,
+  isTestGraduationTierEnabled,
 } from "@/lib/graduationTiers";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import { resolveImageUri } from "@/lib/media";
@@ -43,11 +44,19 @@ import { DBC_DEFAULT_GRADUATION_TARGET_WEI, getDbcGraduationTiers } from "@/lib/
 import type { CreatorFeeChoice } from "@/components/create/CreatorFeeChoicePicker";
 import {
   EvmGen6LaunchOptions,
+  assertEvmGen7LaunchBalance,
   freshEvmFirstBuyPlan,
+  freshEvmGen7FirstBuyPlan,
   parseNativeInput,
 } from "@/components/create/EvmGen6LaunchOptions";
 import { gen6CreateFields } from "@/lib/evmGen6.mjs";
-import { isGen6Factory } from "@/lib/evmGen6Client";
+import {
+  EVM_GEN7_DEFAULT_GRADUATION_TARGET_WEI,
+  evmGen7DexName,
+  evmGen7GraduationTiers,
+  gen7CreateFields,
+} from "@/lib/evmGen7.mjs";
+import { readEvmLaunchGeneration, type EvmLaunchGeneration } from "@/lib/evmGen6Client";
 import { getReadProvider } from "@/lib/readProvider";
 import {
   authorizeDbcCreate,
@@ -163,6 +172,12 @@ export default function PushDraftLive() {
   const [evmCreatorSharePct, setEvmCreatorSharePct] = useState("50");
   const [evmFirstBuyInput, setEvmFirstBuyInput] = useState("");
   const [evmGen6FactoryAddress, setEvmGen6FactoryAddress] = useState("");
+  // Generation 7 (EVM_GEN7_V2_PLAN.md): market-cap tiers, 70% first buy, balance checks.
+  const [evmLaunchGeneration, setEvmLaunchGeneration] = useState<EvmLaunchGeneration | null>(null);
+  const [evmGen7FirstBuyBlocked, setEvmGen7FirstBuyBlocked] = useState(false);
+  // The target saved on the draft, kept for a gen-7 factory whose tiers ($150 on testnets) the
+  // launchpad tier list does not have.
+  const savedDraftTargetRef = useRef<bigint | null>(null);
   const [evmSavedFirstBuyTokens, setEvmSavedFirstBuyTokens] = useState(0n);
   // DBC first buy on Push live (founder, 2026-10-06): filled with the amount saved on the draft, and
   // editable here. Stock quotes keep the saved amount (their wallet multiplier is read on Create).
@@ -184,6 +199,7 @@ export default function PushDraftLive() {
         setBundle(data);
         try {
           const persistedTarget = BigInt(String(data.draft.graduationTargetWei || DEFAULT_GRADUATION_TARGET_WEI));
+          savedDraftTargetRef.current = persistedTarget;
           const dbc = String((data.draft as { launchType?: string }).launchType || "") === "dbc";
           // A DBC draft keeps its own target ($30K/$50K market cap, or $150 on devnet). A draft saved
           // with the old $15K target is not supported any more and falls back to the page default.
@@ -241,26 +257,59 @@ export default function PushDraftLive() {
   useEffect(() => {
     if (!draft || draftIsSolana || !deployFactoryAddress) {
       setEvmGen6FactoryAddress("");
+      setEvmLaunchGeneration(null);
       return;
     }
     let cancelled = false;
-    void isGen6Factory(getReadProvider(Number(draft.chainId) as any), deployFactoryAddress)
-      .then((yes) => {
-        if (!cancelled) setEvmGen6FactoryAddress(yes ? deployFactoryAddress : "");
+    // Generation 6 or 7: both take the first buy and fee choice in the create request.
+    void readEvmLaunchGeneration(getReadProvider(Number(draft.chainId) as any), deployFactoryAddress)
+      .then((generation) => {
+        if (cancelled) return;
+        setEvmGen6FactoryAddress(generation ? deployFactoryAddress : "");
+        setEvmLaunchGeneration(generation);
       })
       .catch(() => {
-        if (!cancelled) setEvmGen6FactoryAddress("");
+        if (cancelled) return;
+        setEvmGen6FactoryAddress("");
+        setEvmLaunchGeneration(null);
       });
     return () => {
       cancelled = true;
     };
   }, [draft, draftIsSolana, deployFactoryAddress]);
   const evmGen6 = Boolean(evmGen6FactoryAddress) && !draftIsSolana;
+  const evmGen7 = evmGen6 && evmLaunchGeneration === 7;
+  const evmGen7Tiers = useMemo(
+    () => (evmGen7 && draft ? evmGen7GraduationTiers(Number(draft.chainId), { testTierEnabled: isTestGraduationTierEnabled(Number(draft.chainId)) }) : null),
+    [evmGen7, draft],
+  );
+  // A gen-7 factory takes only its market-cap tiers: keep the draft's target when it is one, else $50K MC.
+  useEffect(() => {
+    if (!evmGen7Tiers) return;
+    if (evmGen7Tiers.some((tier) => tier.targetWei === graduationTargetWei)) return;
+    const saved = savedDraftTargetRef.current;
+    setGraduationTargetWei(
+      saved != null && evmGen7Tiers.some((tier) => tier.targetWei === saved) ? saved : EVM_GEN7_DEFAULT_GRADUATION_TARGET_WEI,
+    );
+  }, [evmGen7Tiers, graduationTargetWei]);
+  const deployTierLabel = evmGen7Tiers
+    ? evmGen7Tiers.find((tier) => tier.targetWei === graduationTargetWei)?.label || selectedTier
+    : selectedTier;
 
   /** The four gen-6 create fields, priced again right before the wallet signs. */
   const buildEvmGen6Fields = async () => {
     if (!evmGen6 || !draft) return undefined;
     const budgetWei = parseNativeInput(evmFirstBuyInput);
+    if (evmGen7) {
+      const gen7Plan = budgetWei > 0n
+        ? await freshEvmGen7FirstBuyPlan({ chainId: Number(draft.chainId), factoryAddress: evmGen6FactoryAddress, graduationTarget: graduationTargetWei, budgetWei })
+        : null;
+      if (gen7Plan?.exceedsCap) throw new Error("Your first buy is over the cap. Lower the amount.");
+      const fields = gen7CreateFields({ choice: evmFeeChoice, creatorSharePct: evmCreatorSharePct, firstBuy: gen7Plan });
+      // Before the wallet opens: the first buy's value plus gas must fit in the balance.
+      await assertEvmGen7LaunchBalance({ chainId: Number(draft.chainId), account: wallet.account || "", valueWei: fields.value });
+      return fields;
+    }
     const plan = budgetWei > 0n
       ? await freshEvmFirstBuyPlan({ chainId: Number(draft.chainId), factoryAddress: evmGen6FactoryAddress, graduationTarget: graduationTargetWei, budgetWei })
       : null;
@@ -846,7 +895,7 @@ export default function PushDraftLive() {
           scheduledLaunchAt,
         });
 
-        toast.success(`${selectedTier} campaign deployed. Gas is paid now; trading opens at the selected time.`);
+        toast.success(`${deployTierLabel} campaign deployed. Gas is paid now; trading opens at the selected time.`);
         navigate(`/prepare/${draft.slug}`);
         return;
       }
@@ -874,7 +923,7 @@ export default function PushDraftLive() {
         deployTxHash: String((created as any)?.hash || ""),
       });
 
-      toast.success(`${selectedTier} campaign is live.`);
+      toast.success(`${deployTierLabel} campaign is live.`);
       navigate(`/token/${created.tokenAddress || created.campaignAddress}`);
     } catch (err: any) {
       const message = String(
@@ -903,7 +952,8 @@ export default function PushDraftLive() {
       } else if (
         message.startsWith("Choose a trading-open time") ||
         message.startsWith("Scheduled launches cannot") ||
-        (evmGen6 && /first buy|first-buy|fee choice|price feed|graduation target|signed launch/i.test(message))
+        (evmGen6 && /first buy|first-buy|fee choice|price feed|graduation target|signed launch/i.test(message)) ||
+        (evmGen7 && /^Not enough /.test(message))
       ) {
         toast.error(message);
       } else {
@@ -929,7 +979,7 @@ export default function PushDraftLive() {
   const dbcDue = dbcDraft && Boolean(draft.scheduledLaunchAt) && !dbcLocked;
   // A first buy the launch would refuse (over 70%) or could not pay for also blocks the button.
   const dbcFirstBuyBlocked = Boolean(dbcDraft && (dbcFirstBuyQuote?.exceedsCap || dbcFirstBuyOverBalance));
-  const blocked = submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: dbcDraft, due: dbcDue }) || (draftIsSolana ? !ownerConnected : false) || (dbcDraft && mode === "now" && dbcLocked) || dbcFirstBuyBlocked;
+  const blocked = submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: dbcDraft, due: dbcDue }) || (draftIsSolana ? !ownerConnected : false) || (dbcDraft && mode === "now" && dbcLocked) || dbcFirstBuyBlocked || (evmGen7 && !dbcDraft && evmGen7FirstBuyBlocked);
 
   return (
     <div className="mx-auto w-full max-w-[1480px] px-1 py-8 md:px-2">
@@ -967,7 +1017,13 @@ export default function PushDraftLive() {
           value={graduationTargetWei}
           onChange={setGraduationTargetWei}
           disabled={submitting}
-          tiers={dbcDraft ? getDbcGraduationTiers() : undefined}
+          tiers={dbcDraft ? getDbcGraduationTiers() : evmGen7Tiers ?? undefined}
+          {...(evmGen7Tiers && !dbcDraft
+            ? {
+                title: "Graduation market cap",
+                description: `The market cap at which the coin moves to a ${evmGen7DexName(Number(draft.chainId))} pool.`,
+              }
+            : {})}
         />
 
         {dbcDraft ? null : (
@@ -1087,6 +1143,9 @@ export default function PushDraftLive() {
               firstBuyInput={evmFirstBuyInput}
               onFirstBuyInputChange={setEvmFirstBuyInput}
               initialFirstBuyTokens={evmSavedFirstBuyTokens}
+              generation={evmGen7 ? 7 : 6}
+              account={wallet.account || ""}
+              onBlockedChange={setEvmGen7FirstBuyBlocked}
             />
           </div>
         ) : null}
@@ -1111,8 +1170,8 @@ export default function PushDraftLive() {
                 : dbcDraft
                   ? `Launch ${getDbcGraduationTiers().find((tier) => tier.targetWei === graduationTargetWei)?.label || ""} coin now`.replace("  ", " ")
                   : mode === "scheduled"
-                  ? `Deploy ${selectedTier} Countdown Campaign`
-                  : `Deploy ${selectedTier} Campaign Now`}
+                  ? `Deploy ${deployTierLabel} Countdown Campaign`
+                  : `Deploy ${deployTierLabel} Campaign Now`}
         </Button>
       </div>
     </div>

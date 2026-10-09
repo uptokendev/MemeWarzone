@@ -2425,11 +2425,12 @@ const toSeconds = (ts: number): number => {
     }
 
     // Generation 6/5 bonding: change of the curve spot, not of fills (see evmCurveSpotChanges).
+    // Generation 7/6 has no basePrice; its spot comes from the virtual reserves (same walk).
+    const evmGen7CurveKnown = (metrics?.virtualNative ?? 0n) > 0n && (metrics?.virtualToken ?? 0n) > 0n;
     if (
       evmFullyDilutedSupply != null &&
       !contractGraduatedEarly &&
-      metrics?.basePrice != null &&
-      metrics.basePrice > 0n &&
+      ((metrics?.basePrice != null && metrics.basePrice > 0n) || evmGen7CurveKnown) &&
       metrics.sold != null
     ) {
       const spotChanges = evmCurveSpotChanges({
@@ -2443,6 +2444,7 @@ const toSeconds = (ts: number): number => {
         priceSlopeWei: metrics.priceSlope ?? 0n,
         nowSec: now,
         windows,
+        ...(evmGen7CurveKnown ? { virtualNativeWei: metrics.virtualNative, virtualTokenRaw: metrics.virtualToken } : {}),
       });
       for (const k of Object.keys(windows) as TimeframeKey[]) {
         const pct = spotChanges[k];
@@ -3473,7 +3475,10 @@ const toSeconds = (ts: number): number => {
   }, [isDexStage, curveProgress.targetWei, curveProgress.reserveWei]);
 
   const remainingCurveLabel = useMemo(() => {
-    if (isRobinhoodPage && !isDexStage && (metrics?.graduationTarget ?? 0n) > 0n) {
+    // Generation 7/6: graduationTarget is the graduation MARKET CAP in USD, not a raise; what is left is
+    // graduationNativeTarget minus the raise (the native branch below), on every chain.
+    const evmGen7Coin = !isSolanaPage && (metrics?.virtualToken ?? 0n) > 0n;
+    if (isRobinhoodPage && !isDexStage && !evmGen7Coin && (metrics?.graduationTarget ?? 0n) > 0n) {
       const targetUsd = Number(ethers.formatEther(metrics.graduationTarget));
       let raisedUsd = 0;
       try {
@@ -3520,6 +3525,7 @@ const toSeconds = (ts: number): number => {
     isRobinhoodPage,
     isDexStage,
     metrics?.graduationTarget,
+    metrics?.virtualToken,
   ]);
 
   // "In curve" follows the same denomination as "to target" beside it; it read SOL next to a dollar

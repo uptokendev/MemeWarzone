@@ -5,7 +5,8 @@
  * (old mainnet factories answer 3/4, and a factory that does not answer is treated as old). The result is
  * written to campaigns.factory_generation / campaign_generation (migration 20260930_000001) so the
  * site and the keeper read it without RPC. EVM_GEN5_FACTORIES_<chainId> (comma list) forces the choice
- * for named factories without a call.
+ * for named factories without a call (gen-6: factory 6 / campaign 5); EVM_GEN7_FACTORIES_<chainId> does the
+ * same for gen-7 factories (factory 7 / campaign 6), which otherwise answer 7 / 6 from their constants.
  *
  * Every generation-5 campaign event lands once in evm_campaign_events (idempotent on
  * chain/tx/log). evm_campaign_gen5_state is recomputed from those rows, never incremented, so a
@@ -13,6 +14,7 @@
  */
 import { ethers } from "ethers";
 import { GEN5_CAMPAIGN_ABI, GEN5_CAMPAIGN_GENERATION, GEN6_FACTORY_ABI } from "./evmGen5Abi.js";
+import { EVM_GEN7_CAMPAIGN_GENERATION, EVM_GEN7_FACTORY_GENERATION } from "./evmGen7Curve.js";
 import type { Gen5TradeAnnotation } from "./evmGen5Trade.js";
 
 export type Queryable = {
@@ -45,6 +47,12 @@ function lower(value: unknown): string | null {
 
 export function forcedGen5Factories(chainId: number, env: NodeJS.ProcessEnv = process.env): Set<string> {
   const raw = String(env[`EVM_GEN5_FACTORIES_${chainId}`] || "");
+  return new Set(raw.split(",").map((a) => lower(a)).filter((a): a is string => Boolean(a)));
+}
+
+/** EVM_GEN7_FACTORIES_<chainId>: gen-7 factories named without a call (factory 7 / campaign 6). */
+export function forcedGen7Factories(chainId: number, env: NodeJS.ProcessEnv = process.env): Set<string> {
+  const raw = String(env[`EVM_GEN7_FACTORIES_${chainId}`] || "");
   return new Set(raw.split(",").map((a) => lower(a)).filter((a): a is string => Boolean(a)));
 }
 
@@ -101,7 +109,10 @@ export async function resolveCampaignGeneration(
 
   if (campaignGeneration === null) {
     if (!factory) factory = lower(await campaignContract.factory());
-    if (factory && forcedGen5Factories(chainId, env).has(factory)) {
+    if (factory && forcedGen7Factories(chainId, env).has(factory)) {
+      factoryGeneration = EVM_GEN7_FACTORY_GENERATION;
+      campaignGeneration = EVM_GEN7_CAMPAIGN_GENERATION;
+    } else if (factory && forcedGen5Factories(chainId, env).has(factory)) {
       factoryGeneration = 6;
       campaignGeneration = GEN5_CAMPAIGN_GENERATION;
     } else if (factory) {

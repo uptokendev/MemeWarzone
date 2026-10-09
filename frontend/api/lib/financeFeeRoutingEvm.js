@@ -9,6 +9,8 @@
 // are resolved from the live router getters and labelled as such.
 
 import { id as keccakId } from "ethers";
+import { evmGen7Lockers } from "./evmGen7Lockers.js";
+import { evmGen7FeesStack } from "./evmGen7Fees.js";
 
 export const EVM_FEE_ROUTING_CHAINS = Object.freeze({
   56: { chain: "bnb", environment: "mainnet", nativeSymbol: "BNB", nativeDecimals: 18, tokens: { WBNB: { address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", decimals: 18 } } },
@@ -162,6 +164,119 @@ function finalizeFlow(router) {
   };
 }
 
+// Generation 7 (contracts/gen7, docs/evm-launch/EVM_GEN7_V2_PLAN.md): same TreasuryRouterV4 and trade
+// split as gen-6 (G8); the launch fee starts at 90% (G6) and graduation pays 2% to the router and nothing
+// to the creator (G4). Shown beside the gen-6 flows, which stay for the coins created on gen-6 (G9).
+// Founder decision 2026-10-08: gen-7 has its own router, creator vault, holder distributor and community vault
+// (evmGen7Fees.js). With EVM_GEN7_ROUTER_<id> set the flows name gen-7's own contracts; unset, they keep the
+// "staged" text they had before.
+function tradeFlowV4Gen7(routerAddress, stack = null) {
+  return {
+    id: "evm_trade_v4_gen7",
+    label: "Bonding-curve buy / sell (gen-7)",
+    trigger: "Every buy and sell on a gen-7 campaign",
+    router: `TreasuryRouterV4 ${routerAddress}`,
+    totalFee: "2% (protocolFeeBps 200); 90% falling to 2% over the first 60 s (anti-sniper)",
+    status: stack ? "deployed (gen-7 fees stack)" : "staged, not deployed",
+    splits: [
+      { destinationId: "weekly_league", share: "11.25%", note: "Same split as gen-6" },
+      { destinationId: "monthly_league", share: "26.25%" },
+      { destinationId: stack?.creatorId || "creator_vault_v2", share: "5.6% (CREATOR_TRADE_BPS 560)", note: "Then by creator choice: keep / split / holders / buyback" },
+      { destinationId: "recruiter_vault", share: "12.5% linked / 15% OG / 0% unlinked" },
+      { destinationId: stack?.communityId || "community_vault", share: "2.5% squad (linked + OG); 15% airdrop (unlinked)" },
+      { destinationId: "protocol_vault", share: "41.9% (OG 39.4%), remainder" },
+    ],
+    citation: "contracts/gen7/LaunchCampaignGen7.sol:106 (ANTI_SNIPER_START_BPS 9000); contracts/TreasuryRouterV4.sol:186-210",
+    notes: ["The creator's first buy at create pays the flat 2%, not the launch fee."],
+  };
+}
+
+function finalizeFlowGen7(router, stack = null) {
+  return {
+    id: "evm_finalize_gen7",
+    label: "Graduation (finalize, gen-7)",
+    trigger: "graduate() once the gen-7 curve has sold out (85% of supply)",
+    router,
+    totalFee: "2% of the raise (GRAD_PROTOCOL_BPS 200) to the router; 0% to the creator (GRAD_CREATOR_BPS 0); about 98% to the pool",
+    status: stack ? "deployed (gen-7 fees stack)" : "staged, not deployed",
+    splits: [
+      { destinationId: "recruiter_vault", share: "15% linked / 17.5% OG" },
+      { destinationId: stack?.communityId || "community_vault", share: "2.5% squad (linked + OG); 17.5% airdrop (unlinked)" },
+      { destinationId: "protocol_vault", share: "82.5% (OG 80%), remainder" },
+    ],
+    citation: "contracts/gen7/LaunchCampaignGen7.sol:115-116; contracts/TreasuryRouterV4.sol:212-232",
+    notes: [
+      "No creator graduation payout: pendingCreatorGraduation only collects adapter refunds. If the router refuses, the 2% waits in pendingProtocolGraduationFee (permissionless flush).",
+    ],
+  };
+}
+
+/**
+ * Gen-7 lockers from EVM_GEN7_LOCKER_<chainId> (evmGen7Lockers.js): destinations appended after the
+ * pinned locker, one warning per entry that is not an address. Unset: nothing.
+ */
+function gen7LockerEntries(chainId, env) {
+  const { lockers, invalid } = evmGen7Lockers(chainId, env);
+  const name = chainId === 4663 || chainId === 46630 ? "PermanentV3PositionLocker" : "PermanentLpLocker";
+  const destinations = lockers.map((address, i) => ({
+    id: `lp_locker_gen7_${i + 1}`,
+    label: lockers.length > 1 ? `${name} (gen-7) ${i + 1}` : `${name} (gen-7)`,
+    kind: "contract",
+    address,
+    custody: "Permanently locked graduation liquidity of gen-7 coins; pendingProtocolToken holds refused shares",
+    role: "Harvests LP fees 80% creator / 20% protocol",
+    citation: `EVM_GEN7_LOCKER_${chainId}; contracts/PermanentLpLocker.sol:45-46,403-441; contracts/PermanentV3PositionLocker.sol:74-75`,
+  }));
+  const alerts = invalid.map((entry) => ({ level: "warning", message: `EVM_GEN7_LOCKER_${chainId} has an entry that is not an address and was ignored: ${entry}` }));
+  return { destinations, alerts };
+}
+
+/**
+ * Gen-7's own fees stack from EVM_GEN7_ROUTER / _CREATOR_VAULT / _HOLDER_DISTRIBUTOR / _COMMUNITY_VAULT_<chainId>
+ * (evmGen7Fees.js): destinations, the wiring that binds them to each other, and the holder lane the
+ * holder-batch alert watches. Unset: nothing, so the registry is exactly as before.
+ *   reused: { weekly, monthly, recruiter, protocol, protocolAlso } expected behind the gen-7 router (mainnet pins);
+ *   null on testnets, where only the stack's internal bindings are checked.
+ */
+function gen7StackEntries(chainId, env, reused, recordFile) {
+  const g = evmGen7FeesStack(chainId, env);
+  const alerts = g.invalid.map((entry) => ({ level: "warning", message: `${entry} is not an address and was ignored.` }));
+  if (!g.configured) return { configured: false, destinations: [], wiring: [], alerts, holderLane: null, router: null, ids: null };
+  const cite = (name) => `${name}_${chainId}; ${recordFile}`;
+  const destinations = [];
+  if (g.creatorVault) destinations.push({ id: "creator_vault_v2_gen7", label: "CreatorRewardsVaultV2 (gen-7)", kind: "vault", address: g.creatorVault.address, custody: "Creator / holder / buyback balances per gen-7 campaign", role: "5.6% creator slice of gen-7 trades", citation: `contracts/CreatorRewardsVaultV2.sol:318-325,663-674; ${cite("EVM_GEN7_CREATOR_VAULT")}` });
+  if (g.holderDistributor) destinations.push({ id: "holder_distributor_gen7", label: "Holder RewardDistributor (gen-7)", kind: "contract", address: g.holderDistributor.address, custody: "Holder reward batches from the gen-7 CreatorRewardsVaultV2", role: "Holder share of gen-7 creator fees", citation: cite("EVM_GEN7_HOLDER_DISTRIBUTOR") });
+  if (g.communityVault) destinations.push({ id: "community_vault_gen7", label: "CommunityRewardsVault (gen-7)", kind: "vault", address: g.communityVault.address, custody: "Airdrop + squad pools of gen-7 trades; funds its RewardDistributor batches", role: "Unlinked recruiter slice (airdrop) and squad slice of gen-7 trades", citation: `contracts/CommunityRewardsVault.sol:58-115; ${cite("EVM_GEN7_COMMUNITY_VAULT")}` });
+  if (g.router) destinations.push({ id: "router_v4_gen7", label: "TreasuryRouterV4 gen-7 (should hold nothing)", kind: "contract", address: g.router.address, custody: "Forwards in the same call", role: "Fee router of gen-7 coins", citation: cite("EVM_GEN7_ROUTER") });
+
+  const wiring = [];
+  const R = g.router?.address;
+  const V = g.creatorVault?.address;
+  const D = g.holderDistributor?.address;
+  const C = g.communityVault?.address;
+  if (R && V) wiring.push({ id: "v4g7_creatorRewardsVault", label: "TreasuryRouterV4 (gen-7).creatorRewardsVault", contract: R, getter: "creatorRewardsVault", expected: V });
+  if (R && C) wiring.push({ id: "v4g7_communityRewardsVault", label: "TreasuryRouterV4 (gen-7).communityRewardsVault", contract: R, getter: "communityRewardsVault", expected: C });
+  if (R && reused) {
+    wiring.push({ id: "v4g7_weeklyLeagueVault", label: "TreasuryRouterV4 (gen-7).weeklyLeagueVault", contract: R, getter: "weeklyLeagueVault", expected: reused.weekly });
+    wiring.push({ id: "v4g7_monthlyLeagueTreasury", label: "TreasuryRouterV4 (gen-7).monthlyLeagueTreasury", contract: R, getter: "monthlyLeagueTreasury", expected: reused.monthly });
+    wiring.push({ id: "v4g7_recruiterRewardsVault", label: "TreasuryRouterV4 (gen-7).recruiterRewardsVault", contract: R, getter: "recruiterRewardsVault", expected: reused.recruiter });
+    wiring.push({ id: "v4g7_protocolRevenueVault", label: "TreasuryRouterV4 (gen-7).protocolRevenueVault", contract: R, getter: "protocolRevenueVault", expected: reused.protocol, ...(reused.protocolAlso ? { alsoAccepted: [reused.protocolAlso] } : {}) });
+  }
+  if (V && R) wiring.push({ id: "g7vault_router", label: "CreatorRewardsVaultV2 (gen-7).router", contract: V, getter: "router", expected: R });
+  if (V && D) wiring.push({ id: "g7vault_holderDistributor", label: "CreatorRewardsVaultV2 (gen-7).holderDistributor", contract: V, getter: "holderDistributor", expected: D });
+  if (D && V) wiring.push({ id: "g7dist_batchOperator", label: "Holder RewardDistributor (gen-7).batchOperator", contract: D, getter: "batchOperator", expected: V });
+  if (C && R) wiring.push({ id: "g7community_router", label: "CommunityRewardsVault (gen-7).router", contract: C, getter: "router", expected: R });
+  return {
+    configured: true,
+    destinations,
+    wiring,
+    alerts,
+    router: R || null,
+    ids: { creatorId: V ? "creator_vault_v2_gen7" : "creator_vault_v2", communityId: C ? "community_vault_gen7" : "community_vault" },
+    holderLane: V && D ? { label: "gen-7", vault: V, distributor: D, program: "airdrop_holders_gen7", distributorFromBlock: g.holderDistributor.startBlock } : null,
+  };
+}
+
 /**
  * CO-IMP rev. 2 (docs/evm-launch/CO-IMPORT-SWAP-FEE.md): the import fee is 1% to the chain's ImportFeeVault only when
  * IMPORT_FEE_VAULT_<id> is set and IMPORT_SWAP_FEE_RECEIVER_<id> equals it (the same coupling as importSwap.js /
@@ -205,9 +320,12 @@ function importSplitFlow(chainId, vault, env) {
 
 function mainnetRegistry(chainId, env = process.env) {
   const a = MAINNET[chainId];
+  const gen7 = gen7LockerEntries(chainId, env);
   const network = EVM_FEE_ROUTING_CHAINS[chainId];
   const rec = a.record;
   const forwarder = EVM_PROTOCOL_REVENUE_FORWARDERS[chainId];
+  const g7 = gen7StackEntries(chainId, env, { weekly: a.weekly, monthly: a.monthly, recruiter: a.recruiter, protocol: a.protocol, protocolAlso: forwarder.address }, `${rec}/mainnet.gen7.json`);
+  const gen7Router = g7.router || a.routerV4;
   const native = ["native"];
   const withWrapped = ["native", a.wrapped];
 
@@ -231,6 +349,8 @@ function mainnetRegistry(chainId, env = process.env) {
     { id: "charity", label: "CharityTreasury", kind: "vault", address: a.charity, custody: "Immutable charity receiver of the monthly league", role: "Monthly league overflow above the USD cap", citation: "contracts/MonthlyLeagueTreasury.sol:189-211", assets: native },
     { id: "event_prize", label: "EventPrizeVaultV1", kind: "vault", address: a.eventPrize, custody: "Per-event prize pools", role: "70% of sponsorships", citation: "contracts/WarzoneSponsorshipRouterV1.sol:23-24,181-182", assets: native },
     { id: "lp_locker", label: a.lockerName, kind: "contract", address: a.locker, custody: "Permanently locked graduation liquidity; pendingProtocolToken holds refused shares", role: "Harvests LP fees 80% creator / 20% protocol", citation: "contracts/PermanentLpLocker.sol:45-46,403-441; contracts/PermanentV3PositionLocker.sol:74-75", assets: withWrapped },
+    ...gen7.destinations.map((d) => ({ ...d, assets: withWrapped })),
+    ...g7.destinations.map((d) => ({ ...d, assets: native })),
     { id: "protocol_forwarder", label: "ProtocolRevenueForwarder", kind: "contract", address: forwarder.address, custody: `Forwards native to ProtocolRevenueVault on receive(); flush() (anyone) unwraps ${a.wrapped} and forwards it. Admin = Safe.`, role: `Unwraps the LP protocol 20% once the router points at it (PF1, then PF2)`, citation: `contracts/ProtocolRevenueForwarder.sol; ${forwarder.record} (deploy tx ${forwarder.deployTx}, block ${forwarder.deployBlock})`, assets: withWrapped },
     { id: "router_v4", label: "TreasuryRouterV4 (should hold nothing)", kind: "contract", address: a.routerV4, custody: "Forwards in the same call", role: "Live fee router (gen-6)", citation: `${rec}/mainnet.evmgen-fees.json`, assets: native },
     { id: "deployer", label: "Deployer (watch only)", kind: "wallet", address: EVM_DEPLOYER, custody: "Deploy key; keeps only immutable adapter admin roles", role: "Must never hold user money. No fee path in contract code pays it.", citation: "docs/claude/evm-deployments.md (Mainnet inputs)", assets: native, flags: ["deployer", "watch"] },
@@ -257,6 +377,8 @@ function mainnetRegistry(chainId, env = process.env) {
       notes: [],
     },
     finalizeFlow(`TreasuryRouterV4 ${a.routerV4} (gen-4: V3, same split)`),
+    tradeFlowV4Gen7(gen7Router, g7.router ? g7.ids : null),
+    finalizeFlowGen7(`TreasuryRouterV4 ${gen7Router}`, g7.router ? g7.ids : null),
     {
       id: "evm_protocol_drain",
       label: "ProtocolRevenueVault forwarding",
@@ -383,6 +505,9 @@ function mainnetRegistry(chainId, env = process.env) {
     { id: "sponsor_protocol", label: "SponsorshipRouter.protocolReceiver", contract: a.sponsorship, getter: "protocolReceiver", expected: a.protocol },
     { id: "sponsor_marketing", label: "SponsorshipRouter.marketingReceiver", contract: a.sponsorship, getter: "marketingReceiver", expected: a.protocol },
     { id: "locker_router", label: `${a.lockerName}.treasuryRouter`, contract: a.locker, getter: "treasuryRouter", expected: a.routerV4 },
+    // Gen-7 lockers route through gen-7's own router once EVM_GEN7_ROUTER_<id> names it (before: the gen-6 router).
+    ...gen7.destinations.map((d) => ({ id: `${d.id}_router`, label: `${d.label}.treasuryRouter`, contract: d.address, getter: "treasuryRouter", expected: gen7Router })),
+    ...g7.wiring,
   ];
 
   return {
@@ -395,18 +520,26 @@ function mainnetRegistry(chainId, env = process.env) {
       weekly: "weekly_league", monthly: "monthly_league", recruiter: "recruiter_vault",
       airdrop: "community_vault", squad: "community_vault", protocol: "protocol_vault",
       creator: "creator_vault_v2", votes: "protocol_vault", mwl: "post_grad_league",
+      ...(g7.router ? { gen7: { router: g7.router, airdrop: g7.ids.communityId, squad: g7.ids.communityId, creator: g7.ids.creatorId } } : {}),
     },
+    // Creator vaults whose weekly holder batches need the Safe (financeFeeRouting.js holderBatchAlerts).
+    holderLanes: [{ label: "gen-6", vault: a.creatorV2, distributor: a.holderDistributor, program: "airdrop_holders" }, ...(g7.holderLane ? [g7.holderLane] : [])],
     // Read live by financeFeeRouting.js (lpForwarderAlerts): router pointer,
     // pending switch and the wrapped balance decide the LP alert.
     lpForwarder: { router: a.routerV4, vault: a.protocol, forwarder: forwarder.address, wrapped: a.wrapped, deployTx: forwarder.deployTx, record: forwarder.record },
     alerts: [
       { level: "info", message: "The first $10,000 of protocol revenue goes to operator EOA 0x4CB6…7810 (intended per Safe batch V3); everything after goes to the Safe." },
+      ...gen7.alerts,
+      ...g7.alerts,
     ],
   };
 }
 
-function testnetRegistry(chainId) {
+function testnetRegistry(chainId, env) {
   const t = TESTNET_ROUTERS[chainId];
+  const gen7 = gen7LockerEntries(chainId, env);
+  const g7 = gen7StackEntries(chainId, env, null, "the gen-7 testnet deployment record");
+  const gen7Router = g7.router || t.router;
   const network = EVM_FEE_ROUTING_CHAINS[chainId];
   const wrapped = Object.keys(network.tokens)[0];
   const labels = {
@@ -418,14 +551,20 @@ function testnetRegistry(chainId) {
     custody: "Resolved live from the router (no pinned record in this view)", role: "", citation: `${t.record}; TreasuryRouterV4.${getter}()`,
     assets: destId === "protocol_vault" ? ["native", wrapped] : ["native"],
   }));
+  destinations.push(...gen7.destinations.map((d) => ({ ...d, assets: ["native", wrapped] })));
+  destinations.push(...g7.destinations.map((d) => ({ ...d, assets: ["native"] })));
   return {
     network,
     deployer: EVM_DEPLOYER,
     destinations,
-    flows: [tradeFlowV4(t.router, wrapped), finalizeFlow(`TreasuryRouterV4 ${t.router}`)],
-    wiring: [],
-    inflowDestinations: { weekly: "weekly_league", monthly: "monthly_league", recruiter: "recruiter_vault", airdrop: "community_vault", squad: "community_vault", protocol: "protocol_vault", creator: "creator_vault_v2" },
-    alerts: [{ level: "info", message: "Testnet: destinations are read from the gen-6 router's getters at request time. The live API reads the production database, which holds no testnet routing events." }],
+    flows: [tradeFlowV4(t.router, wrapped), finalizeFlow(`TreasuryRouterV4 ${t.router}`), tradeFlowV4Gen7(gen7Router, g7.router ? g7.ids : null), finalizeFlowGen7(`TreasuryRouterV4 ${gen7Router}`, g7.router ? g7.ids : null)],
+    wiring: [...g7.wiring],
+    inflowDestinations: {
+      weekly: "weekly_league", monthly: "monthly_league", recruiter: "recruiter_vault", airdrop: "community_vault", squad: "community_vault", protocol: "protocol_vault", creator: "creator_vault_v2",
+      ...(g7.router ? { gen7: { router: g7.router, airdrop: g7.ids.communityId, squad: g7.ids.communityId, creator: g7.ids.creatorId } } : {}),
+    },
+    holderLanes: g7.holderLane ? [g7.holderLane] : [],
+    alerts: [{ level: "info", message: "Testnet: destinations are read from the gen-6 router's getters at request time. The live API reads the production database, which holds no testnet routing events." }, ...gen7.alerts, ...g7.alerts],
   };
 }
 
@@ -459,6 +598,6 @@ export function evmMainnetVoteAddresses(chainId) {
 
 export function evmFeeRoutingRegistry(chainId, env = process.env) {
   if (MAINNET[chainId]) return mainnetRegistry(chainId, env);
-  if (TESTNET_ROUTERS[chainId]) return testnetRegistry(chainId);
+  if (TESTNET_ROUTERS[chainId]) return testnetRegistry(chainId, env);
   throw new Error(`No EVM fee routing registry for chain ${chainId}.`);
 }

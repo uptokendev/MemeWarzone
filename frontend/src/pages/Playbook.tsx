@@ -255,6 +255,12 @@ const Playbook = () => {
               <span className={STRONG}>$50K</span> (normal). 85% of the supply is sold on the curve, so a creator can buy
               up to 70% at launch and 15% stays for everyone else.
             </p>
+            <p>
+              BNB and Robinhood coins created on the generation 7 launch contracts work the same way: a{" "}
+              <span className={STRONG}>$30K</span> (fast grad) or <span className={STRONG}>$50K</span> (normal) market cap,
+              85% of the supply on the curve, and the coin graduates when the curve sells out. Coins on the earlier BNB and
+              Robinhood contracts keep the raise targets above.
+            </p>
             <div className={INSET}>
               <div className={BOX_TITLE}>Creator fee</div>
               <p className="mt-1">
@@ -268,13 +274,16 @@ const Playbook = () => {
                 <Rule><span className={STRONG}>Buyback and burn.</span> Bought back at random times each week and burned.</Rule>
               </ul>
               <p className="mt-2">
-                The launch fee falls to 2% within 60 seconds, starting at 90% on the Meteora launch type and 50% on BNB
-                and Robinhood, so bots that buy at launch pay for it. Your own first buy does not.
+                The launch fee falls to 2% within 60 seconds, starting at 90% on the Meteora launch type and on generation 7
+                BNB and Robinhood coins, and at 50% on earlier BNB and Robinhood coins, so bots that buy at launch pay for
+                it. Your own first buy does not.
               </p>
               <p className="mt-2">
                 On BNB and Robinhood, the same panel has an optional first buy. It is made in the launch transaction at
                 the normal fee and the tokens go to your wallet unlocked. The most you can buy is 10% of the supply or
-                half of the graduation target at today&apos;s price, whichever Create shows as the limit.
+                half of the graduation target at today&apos;s price, whichever Create shows as the limit. On the
+                generation 7 contracts the limit is 70% of the supply, with no cost limit, and 15% stays for everyone
+                else.
               </p>
             </div>
             <p>
@@ -441,6 +450,10 @@ const Playbook = () => {
                   <span className={STRONG}>Meteora launch type</span>: a <span className={MONO}>$TICKER / quote</span>{" "}
                   pool on Meteora with the liquidity locked. Your 2% creator reserve (20M tokens) unlocks. The 2%
                   graduation fee goes to MemeWarzone&apos;s fee routing, not to the creator.
+                </Rule>
+                <Rule>
+                  <span className={STRONG}>Generation 7 coins on BNB and Robinhood</span>: the same 2% graduation fee to
+                  MemeWarzone&apos;s fee routing and nothing to the creator at graduation.
                 </Rule>
               </ul>
             </div>

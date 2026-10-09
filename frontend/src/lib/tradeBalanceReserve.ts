@@ -70,3 +70,26 @@ export function dbcLaunchBalanceMessage(maxFirstBuyLamports: bigint): string {
   if (max <= 0) return `Not enough SOL. A launch needs about ${DBC_LAUNCH_RESERVE_SOL} SOL for rent and network fees.`;
   return `Not enough SOL. A launch keeps about ${DBC_LAUNCH_RESERVE_SOL} SOL for rent and network fees. Your first buy can be up to ${max.toFixed(4).replace(/\.?0+$/, "")} SOL.`;
 }
+
+// EVM generation-7 launch (create page / push-live): the creator pays the first buy plus up to 2% slack
+// (refunded when unused, src/lib/evmGen7.mjs) and the create's gas in the same native coin. The create
+// deploys a token and a campaign clone, far more gas than a buy, so the reserve is ten times the buy's.
+export const BNB_LAUNCH_GAS_RESERVE_WEI = 5_000_000_000_000_000n; // 0.005 BNB
+export const ETH_LAUNCH_GAS_RESERVE_WEI = 2_000_000_000_000_000n; // 0.002 ETH (Robinhood chain)
+
+export function evmLaunchGasReserveWei(isRobinhood: boolean): bigint {
+  return isRobinhood ? ETH_LAUNCH_GAS_RESERVE_WEI : BNB_LAUNCH_GAS_RESERVE_WEI;
+}
+
+/** Rounded down to 4 decimals, so a "can be up to" amount never reads above what fits. */
+function formatEvmNative(wei: bigint): string {
+  const n = Math.floor((Number(wei) / 1e18) * 10_000) / 10_000;
+  return n.toFixed(4).replace(/\.?0+$/, "") || "0";
+}
+
+/** Same words as dbcLaunchBalanceMessage, for an EVM launch that pays gas in the native coin. */
+export function evmLaunchBalanceMessage(maxFirstBuyWei: bigint, symbol: string, isRobinhood: boolean): string {
+  const reserve = formatEvmNative(evmLaunchGasReserveWei(isRobinhood));
+  if (maxFirstBuyWei <= 0n) return `Not enough ${symbol}. A launch needs about ${reserve} ${symbol} for gas.`;
+  return `Not enough ${symbol}. A launch keeps about ${reserve} ${symbol} for gas. Your first buy can be up to ${formatEvmNative(maxFirstBuyWei)} ${symbol}.`;
+}
