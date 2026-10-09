@@ -84,6 +84,8 @@ type TokenInfo = {
   feeBps?: number;
   pageUrl: string;
   kind: "import" | BondingKind;
+  /** Unclaimed imported coin: its MemeWarzone page with the claim dialog open. */
+  claimUrl?: string | null;
   tradable: boolean;
   reason?: string | null;
   campaignAddress?: string;
@@ -155,6 +157,7 @@ const STYLE = `
   box-sizing:border-box; max-width:420px; width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:14px; padding:16px; }
 .box.light { --bg:#ffffff; --panel:#f4f5f7; --line:#dfe3e8; --text:#14181c; --muted:#5c6670; }
 .box * { box-sizing:border-box; }
+.box [hidden] { display:none !important; }
 .head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
 .head img { width:32px; height:32px; border-radius:50%; object-fit:cover; background:var(--panel); }
 .title { font-weight:700; font-size:15px; }
@@ -176,6 +179,8 @@ const STYLE = `
 .msg.err { color:var(--down); } .msg.ok { color:var(--up); }
 .foot { margin-top:12px; font-size:11px; color:var(--muted); text-align:center; }
 .foot a { color:var(--muted); }
+.claim { margin-top:8px; font-size:12px; text-align:center; color:var(--muted); }
+.claim a { color:var(--accent); font-weight:600; }
 `;
 
 // ---------------------------------------------------------------- widget
@@ -225,6 +230,7 @@ class SwapWidget {
         <div class="row" data-k="creatorRow" hidden><span>Of which to the coin's creator</span><b data-k="creator">-</b></div>
         <button type="button" class="go" data-k="go">CONNECT WALLET</button>
         <div class="msg" data-k="msg" role="status"></div>
+        <div class="claim" data-k="claim" hidden>Created this coin? <a data-k="claimLink" target="_blank" rel="noopener">Claim it on MemeWarzone</a></div>
         <div class="foot">Swaps by <a data-k="link" href="https://app.memewar.zone" target="_blank" rel="noopener">MemeWarzone</a><span data-k="via">, routed by Jupiter</span></div>
       </div>`;
     this.root.querySelectorAll<HTMLElement>("[data-k]").forEach((node) => { this.el[node.dataset.k as string] = node; });
@@ -315,6 +321,10 @@ class SwapWidget {
       if (this.token.imageUrl) { (this.el.logo as HTMLImageElement).src = this.token.imageUrl; this.el.logo.hidden = false; }
       (this.el.link as HTMLAnchorElement).href = this.token.pageUrl;
       this.el.via.textContent = this.token.kind === "import" ? ", routed by Jupiter" : ", on its bonding curve";
+      if (this.token.kind === "import" && this.token.claimUrl) {
+        (this.el.claimLink as HTMLAnchorElement).href = this.token.claimUrl;
+        this.el.claim.hidden = false;
+      }
       if (!this.token.tradable) {
         this.say(this.token.reason === "quote"
           ? "This coin's curve is not paired with SOL. Trade it on its MemeWarzone page."

@@ -58,3 +58,8 @@ test("coin kind: our launchpad / DBC coins are bonding while on the curve; gradu
   assert.equal((await bondingCoin("m", db(row({ launch_type: "dbc", dbc_migration: { pool: "x" } })))).reason, "graduated");
   assert.equal((await bondingCoin("m", db(row({ launch_type: "dbc", dbc_quote_mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" })))).reason, "quote");
 });
+
+test("claim link: the imported coin's page with its claim dialog open", async () => {
+  const { importClaimUrl } = await import("./importSwapWidget.js");
+  assert.equal(importClaimUrl("Mint111"), "https://app.memewar.zone/token/Mint111?chainId=101&claim=prompt");
+});
