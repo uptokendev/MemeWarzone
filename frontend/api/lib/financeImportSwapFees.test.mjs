@@ -423,3 +423,39 @@ test("split store passes partner id and partner part as their own columns", asyn
   assert.deepEqual([params[14], params[16], params[17]], [["500"], ["crypticpump"], ["250"]]);
   assert.deepEqual(seen.find((p) => Array.isArray(p) && p.length === 3 && p[0] === 101), [101, "PartnerWsol", "s"], "cursor per partner account");
 });
+
+test("fingerprint attribution: a fee row whose landed swap matches a recorded partner build splits by that partner; others stay 50/50", async () => {
+  const stored = [];
+  const db = {
+    query: async (sql, params) => {
+      if (/from public\.import_swap_fingerprints/.test(sql)) return { rows: [{ fingerprint: "evm:aa", partner_id: "crypticpump" }] };
+      if (/select id, creator_bps, partner_bps from public\.import_fee_partners/.test(sql)) return { rows: [{ id: "crypticpump", creator_bps: 5000, partner_bps: 2500 }] };
+      if (/select id, chain_id, fee_account/.test(sql)) return { rows: [] };
+      if (/^select cursor/.test(sql.trim())) return { rows: [] };
+      if (/^with ins/i.test(sql.trim())) { stored.push(params); return { rows: [{ inserted: params[0].length, accrued: params[0].length }] }; }
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const vault = "0x00000000000000000000000000000000000000aa";
+  const env = { IMPORT_FEE_VAULT_56: vault, IMPORT_FEE_VAULT_START_BLOCK_56: "100" };
+  // Two vault deposits; the tx of the first matches the recorded partner fingerprint.
+  const { evmFingerprint } = await import("./importSwapFingerprint.js");
+  const realFingerprint = evmFingerprint;
+  const txs = { "0xa1": { from: USER_EVM, to: "0xr", input: "0x01", value: "0x0" }, "0xa2": { from: USER_EVM, to: "0xr", input: "0x02", value: "0x0" } };
+  const rpc = async (method, params) => {
+    if (method === "eth_blockNumber") return "0x80";
+    if (method === "eth_getLogs") return Object.keys(txs).map((hash, i) => ({ removed: false, data: `0x${(1000n).toString(16).padStart(64, "0")}`, blockNumber: "0x64", logIndex: `0x${i}`, transactionHash: hash, topics: [VAULT_DEPOSIT_TOPIC, `0x${"0".repeat(24)}${KYBER_ROUTER.toLowerCase().slice(2)}`] }));
+    if (method === "eth_getTransactionByHash") return txs[params[0]];
+    if (method === "eth_getTransactionReceipt") return { logs: [] };
+    if (method === "eth_getBlockByNumber") return { timestamp: "0x6700" };
+    return null;
+  };
+  // Point the recorded fingerprint at the first tx's real fingerprint.
+  const first = realFingerprint("0xr", "0x01", "0x0");
+  db.query = ((orig) => async (sql, params) => (/from public\.import_swap_fingerprints/.test(sql) ? { rows: [{ fingerprint: first, partner_id: "crypticpump" }] } : orig(sql, params)))(db.query);
+  await ingestImportSwapFees({ db, chainId: 56, env, rpc });
+  const params = stored.at(-1);
+  assert.deepEqual(params[14], ["500", "500"], "creator half either way");
+  assert.deepEqual(params[16], ["crypticpump", null]);
+  assert.deepEqual(params[17], ["250", "0"]);
+});

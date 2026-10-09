@@ -270,13 +270,14 @@ export async function readPayableCoins(db: Queryable, receivers: string | string
   return [...byToken.values()];
 }
 
-export type ImportFeePartner = { id: string; feeAccount: string; payoutWallet: string };
+/** feeAccount null: the partner is attributed by fingerprint and has no account of its own to gather. */
+export type ImportFeePartner = { id: string; feeAccount: string | null; payoutWallet: string };
 
 /** Every Solana partner (inactive ones too: their account may still hold fees, and they are still owed). */
 export async function readPartners(db: Queryable): Promise<ImportFeePartner[]> {
   try {
     const { rows } = await db.query(`select id, fee_account, payout_wallet from public.import_fee_partners where chain_id = $1 order by id`, [CHAIN_ID]);
-    return rows.map((row: any) => ({ id: String(row.id), feeAccount: String(row.fee_account), payoutWallet: String(row.payout_wallet) }));
+    return rows.map((row: any) => ({ id: String(row.id), feeAccount: row.fee_account ? String(row.fee_account) : null, payoutWallet: String(row.payout_wallet) }));
   } catch (error: any) {
     if (error?.code === "42P01") return [];
     throw error;
@@ -334,8 +335,9 @@ export async function runImportCreatorFeePass(input: {
 
   // Partners' fee accounts first go into the collector's own account: one source for every payout.
   const partners = await readPartners(db);
-  const receivers = [collectorAccount, ...partners.map((p) => p.feeAccount)];
+  const receivers = [collectorAccount, ...partners.flatMap((p) => (p.feeAccount ? [p.feeAccount] : []))];
   for (const partner of partners) {
+    if (!partner.feeAccount) continue;
     let held = 0n;
     try {
       held = BigInt((await connection.getTokenAccountBalance(new PublicKey(partner.feeAccount), "confirmed")).value.amount);
