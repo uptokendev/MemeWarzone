@@ -18,6 +18,7 @@
  *          keep their direct pool trade.
  * Plain ESM so node tests and the fork proofs run the same decision as the app.
  */
+import { solanaGraduatedImportRouteEnabled } from "./graduatedSolanaTradeRoute.mjs";
 import { importSwapFeeRouterAddress } from "./importSwapFeeRouter.mjs";
 import { importSwapFeeTerms4663 } from "./robinhoodImportSwap.mjs";
 
@@ -42,6 +43,9 @@ const isVault = (value) => {
 /** True while `chainId` takes the import fee to its ImportFeeVault in the app (see the table above). */
 export function graduatedImportRouteEnabled(chainId, env = moduleEnv()) {
   const id = Number(chainId);
+  // Solana graduated coins have their own switch (graduatedSolanaTradeRoute.mjs); without this line the panel's
+  // graduated guard would refuse every Solana graduated trade.
+  if (id === 101) return solanaGraduatedImportRouteEnabled(env);
   if (id === 56) return isVault(env?.VITE_IMPORT_FEE_VAULT_56);
   if (id === 97) return Boolean(importSwapFeeRouterAddress(97, env));
   if (id === 4663) return importSwapFeeTerms4663(env).split === true;

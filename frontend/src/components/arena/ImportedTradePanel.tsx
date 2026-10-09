@@ -32,6 +32,7 @@ import {
   readImportTokenDecimals,
   type ImportSwapQuote,
 } from "@/lib/importSwap";
+import { assertGraduatedSolanaQuote, graduatedSolanaPausedError, solanaGraduatedImportRouteEnabled } from "@/lib/graduatedSolanaTradeRoute.mjs";
 
 /**
  * Reads for an EVM import go to the coin's own chain, never through the wallet: a wallet sitting on
@@ -364,11 +365,15 @@ export function ImportedTradePanel({
       if (graduated && !graduatedImportRouteEnabled(item.chainId)) throw new Error("Swaps for this coin are paused while the fee route is updated. Try again later.");
       if (solana) {
         if (!solanaAccount) throw new Error("Connect the Solana wallet first.");
+        // A graduated Solana coin (graduatedSolanaTradeRoute.mjs): only while its switch is on, only on a split quote.
+        if (graduated && !solanaGraduatedImportRouteEnabled()) throw graduatedSolanaPausedError();
         // Re-quote at submit so the signed route is current.
-        const quote = await quoteImportSwap({ chainId: item.chainId, token: item.tokenAddress, side, amountRaw: amountInRaw });
+        const solanaQuote = await quoteImportSwap({ chainId: item.chainId, token: item.tokenAddress, side, amountRaw: amountInRaw });
+        const quote = graduated ? assertGraduatedSolanaQuote(solanaQuote) : solanaQuote;
         const signature = await executeSolanaImportSwap({ token: item.tokenAddress, side, wallet: solanaAccount, quote });
         toast.success(`Swap confirmed: ${signature.slice(0, 10)}…`);
         announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: solanaAccount, amount: raw, txHash: signature });
+        onTraded?.({ side, txHash: signature, maker: solanaAccount });
         setAmount("");
         return;
       }

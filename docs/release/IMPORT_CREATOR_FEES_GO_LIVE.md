@@ -65,6 +65,22 @@ BNB and Robinhood: change order `docs/evm-launch/CO-IMPORT-SWAP-FEE.md` on `buil
 7. **Live payouts**: watch the dry-run log (`[import-fees] pass {"payouts":[…],"sweep":…}`) for a day, then
    `IMPORT_FEE_PAYOUT_SEND=true`.
 
+## Graduated MemeWarzone coins (Solana)
+
+Founder 2026-10-09: graduated coins get the same as imports. A launchpad coin whose curve graduated on chain, or a
+DBC coin whose pool migrated, trades through the import route in the app (token page, mobile sheet, war room rows)
+and in the widget: Jupiter, 1%, half to the coin's creator. Bonding coins and the CREATE / BUY / SELL transactions do
+not change.
+
+- Ledger: a fee on a token that has a `campaigns` row accrues as `payee_kind = 'campaign_creator'`, `expires_at` NULL
+  (migration `20261009_000020_graduated_creator_fees.sql`).
+- Worker: pays those to `campaigns.creator_address` at once (no claim, no hold, never expires), same minimum, caps,
+  own-wallet and moderation skips. Command Center (Claims) lists them for the creator.
+- Switches, both off by default, on only after `SOLANA_IMPORT_FEE_COLLECTOR` is set:
+  API `SOLANA_GRADUATED_IMPORT_ROUTE=true` (widget), app build `VITE_SOLANA_GRADUATED_IMPORT_ROUTE=true` (app).
+  The app also refuses a graduated coin's quote without the creator's half. Off: the direct Meteora trade as before.
+- BNB / Robinhood graduates: gen-7 (`graduatedEvmTradeRoute.mjs`).
+
 ## Safety rules in the worker
 
 - Sign, store `sending` with the signature and mark the accruals `paying` in one db transaction, then send. The

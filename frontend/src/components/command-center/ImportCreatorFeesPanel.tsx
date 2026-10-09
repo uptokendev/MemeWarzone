@@ -10,7 +10,8 @@ import { fetchOwnerCreatorFees, formatCreatorAmount, hasAmount, type OwnerCreato
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 
 /**
- * Creator earnings of the imported coins this wallet claimed: half of the 1% swap fee. Paid automatically
+ * Creator earnings of the imported coins this wallet claimed and the graduated coins it launched: half of the 1%
+ * swap fee. Paid automatically
  * (realtime-indexer importCreatorFees), so this panel only shows them; there is nothing to claim.
  */
 export function ImportCreatorFeesPanel() {
@@ -36,9 +37,9 @@ export function ImportCreatorFeesPanel() {
 
   return (
     <CommandCenterCard
-      eyebrow="Imported coins"
+      eyebrow="Imported and graduated coins"
       title="Creator earnings"
-      description="Half of the 1% fee on every swap of the coins you claimed. Paid automatically to the wallet that claimed the coin once it passes about $5. Nothing to claim here."
+      description="Half of the 1% fee on every swap of the coins you claimed, and of your coins that graduated. Paid automatically to your wallet once it passes about $5. Nothing to claim here."
     >
       <div className="space-y-2">
         {items.map((item) => {

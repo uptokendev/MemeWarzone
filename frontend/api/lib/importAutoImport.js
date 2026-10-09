@@ -26,6 +26,7 @@ export async function coinsToAutoImport(db, chainId, max) {
     `select distinct c.token_address
        from public.import_creator_fees c
       where c.chain_id = $1 and c.token_address is not null
+        and c.payee_kind = 'import_owner' -- a MemeWarzone coin pays its creator directly; never imported
         and not exists (select 1 from public.arena_token_imports i where i.chain_id = c.chain_id and i.token_address = c.token_address)
         and not exists (select 1 from public.import_auto_imports a where a.chain_id = c.chain_id and a.token_address = c.token_address
                           and (a.outcome in ('imported', 'exists') or a.last_attempt_at > now() - make_interval(hours => $3::int)))

@@ -60,7 +60,7 @@ export default async function importCreatorFees(req, res) {
         `select status, sum(creator_raw)::text as total,
                 min(expires_at) filter (where status = 'waiting') as oldest_expires_at
            from public.import_creator_fees
-          where chain_id = $1 and token_address = $2 and (status <> 'waiting' or expires_at > now())
+          where chain_id = $1 and token_address = $2 and payee_kind = 'import_owner' and (status <> 'waiting' or expires_at > now())
           group by status`,
         [input.chainId, input.token],
       ),
@@ -89,7 +89,9 @@ export function summarizeOwnerCreatorFees(rows, now = new Date()) {
     const chainId = Number(row.chain_id);
     const verifiedAt = row.ownership_verified_at ? new Date(row.ownership_verified_at) : null;
     const payoutsFrom = verifiedAt ? new Date(verifiedAt.getTime() + CREATOR_PAYOUT_HOLD_DAYS * 86_400_000) : null;
+    const graduated = row.kind === "graduated";
     return {
+      kind: graduated ? "graduated" : "import",
       chainId,
       token: String(row.token_address),
       name: row.name || null,
@@ -101,13 +103,17 @@ export function summarizeOwnerCreatorFees(rows, now = new Date()) {
       payingRaw: String(row.paying ?? "0"),
       paidRaw: String(row.paid ?? "0"),
       expiredRaw: String(row.expired ?? "0"),
-      payoutsFrom: payoutsFrom ? payoutsFrom.toISOString() : null,
-      payoutsOpen: Boolean(payoutsFrom && payoutsFrom.getTime() <= now.getTime()),
+      payoutsFrom: !graduated && payoutsFrom ? payoutsFrom.toISOString() : null,
+      // A graduated coin's creator is paid with no claim and no hold.
+      payoutsOpen: graduated || Boolean(payoutsFrom && payoutsFrom.getTime() <= now.getTime()),
     };
   });
 }
 
-/** GET /api/imports/creator-fees/owner?wallet=<address>: the creator earnings of the imports this wallet claimed. */
+/**
+ * GET /api/imports/creator-fees/owner?wallet=<address>: the creator earnings of the imports this wallet claimed,
+ * and of the graduated MemeWarzone coins it launched (they trade through the import route, founder 2026-10-09).
+ */
 export async function importCreatorFeesOwner(req, res) {
   if (req.method !== "GET") return badMethod(res);
   const query = req.query || Object.fromEntries(new URL(String(req.url || ""), "http://x").searchParams);
@@ -122,7 +128,7 @@ export async function importCreatorFeesOwner(req, res) {
               coalesce(sum(c.creator_raw) filter (where c.status = 'paid'), 0)::text as paid,
               coalesce(sum(c.creator_raw) filter (where c.status = 'expired'), 0)::text as expired
          from public.arena_token_imports i
-         left join public.import_creator_fees c on c.chain_id = i.chain_id and c.token_address = i.token_address
+         left join public.import_creator_fees c on c.chain_id = i.chain_id and c.token_address = i.token_address and c.payee_kind = 'import_owner'
         where i.ownership_status = 'ownership_verified'
           and (i.project_owner_wallet = $1 or (i.chain_id <> 101 and lower(i.project_owner_wallet) = lower($1)))
         group by i.chain_id, i.token_address, i.name, i.symbol, i.image_url, i.ownership_verified_at
@@ -130,8 +136,22 @@ export async function importCreatorFeesOwner(req, res) {
         limit 100`,
       [wallet],
     );
+    // Graduated MemeWarzone coins this wallet launched: their half of the fee goes to the creator directly.
+    const graduated = await pool.query(
+      `select 'graduated' as kind, m.chain_id, m.token_address, m.name, m.symbol, m.logo_uri as image_url, null as ownership_verified_at,
+              coalesce(sum(c.creator_raw) filter (where c.status = 'waiting'), 0)::text as waiting,
+              coalesce(sum(c.creator_raw) filter (where c.status = 'paying'), 0)::text as paying,
+              coalesce(sum(c.creator_raw) filter (where c.status = 'paid'), 0)::text as paid,
+              '0' as expired
+         from public.campaigns m
+         join public.import_creator_fees c on c.chain_id = m.chain_id and c.token_address = m.token_address and c.payee_kind = 'campaign_creator'
+        where m.creator_address = $1 or (m.chain_id <> 101 and lower(m.creator_address) = lower($1))
+        group by m.chain_id, m.token_address, m.name, m.symbol, m.logo_uri
+        limit 100`,
+      [wallet],
+    );
     res.setHeader("cache-control", "private, max-age=30");
-    return json(res, 200, { ok: true, available: true, wallet, items: summarizeOwnerCreatorFees(rows) });
+    return json(res, 200, { ok: true, available: true, wallet, items: summarizeOwnerCreatorFees([...rows, ...graduated.rows]) });
   } catch (error) {
     if (error?.code === "42P01" || error?.code === "42703") return json(res, 200, { ok: true, available: false, wallet, items: [] });
     console.error("[api/importCreatorFees owner]", error);

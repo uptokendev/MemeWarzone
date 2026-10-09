@@ -132,7 +132,7 @@ test("every graduated EVM trade surface takes the routing decision", () => {
   assert.match(page, /const bnbGraduatedImportTrade = !isSolanaPage && !isRobinhoodPage && isDexStage && graduatedImportRouteEnabled\(chainIdForStorage\);/);
   assert.match(page, /if \(isDexStage\) \{\n\s+\/\/ Never the fee-free Topaz trade[^\n]*\n\s+if \(bnbGraduatedImportTrade\) return;/);
   assert.match(page, /\) : bnbGraduatedImportTrade \? \(\n\s+isXlUp \? \(\n\s+<section aria-label="Trade"[^\n]*data-graduated-import-trade="true">\n\s+<ImportedTradePanel item=\{graduatedImportItem\} graduated/);
-  assert.match(page, /open=\{mobileTradeOpen && !rhGraduatedTrade && !bnbGraduatedImportTrade\}/);
+  assert.match(page, /open=\{mobileTradeOpen && !rhGraduatedTrade && !bnbGraduatedImportTrade( && !solanaGraduatedImportTrade)?\}/);
   assert.equal((page.match(/<RobinhoodWarRoomTradePanel campaign=\{campaign as CampaignInfo\} \/>/g) || []).length, 2);
 
   // War room rows: BNB rows render WarRoomTradePanel, Robinhood graduated rows RobinhoodWarRoomTradePanel (both routed above).
@@ -175,7 +175,13 @@ test("bonding and direct-pool code is the starting commit's, untouched", (t) => 
   assert.deepEqual(onlyAdded(baseFile("components/postgrad/WarRoomTradePanel.tsx"), src("components/postgrad/WarRoomTradePanel.tsx")), []);
   assert.deepEqual(onlyAdded(baseFile("components/postgrad/RobinhoodWarRoomTradePanel.tsx"), src("components/postgrad/RobinhoodWarRoomTradePanel.tsx")), []);
   assert.deepEqual(
-    onlyAdded(baseFile("pages/TokenDetails.tsx"), src("pages/TokenDetails.tsx"), ["          open={mobileTradeOpen && !rhGraduatedTrade}"]),
+    // Also allowed: the Solana graduated branch (feat/import-partners) is chained in front of the Robinhood branches,
+    // so their opening "{cond ? (" lines became ") : cond ? (" with the same condition.
+    onlyAdded(baseFile("pages/TokenDetails.tsx"), src("pages/TokenDetails.tsx"), [
+      "          open={mobileTradeOpen && !rhGraduatedTrade}",
+      "          {isRobinhoodPage && (contractGraduated || isUniswapTradingActive) ? (",
+      "      {rhGraduatedTrade && mobileTradeOpen && !isXlUp ? (",
+    ]),
     [],
   );
   // The curve calls with their gas headroom, verbatim.
