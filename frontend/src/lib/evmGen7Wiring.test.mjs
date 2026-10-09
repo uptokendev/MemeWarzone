@@ -93,7 +93,10 @@ test("coin page: gen-7 spot from the virtual reserves; the Robinhood USD raise l
 test("creator panel and trade notes: no 19.8% row and the 90% launch fee on gen-7", () => {
   assert.match(panel, /const noGraduationPayout = state\.factoryGeneration === 7 \|\| creator\.graduationCreatorBps === 0;/);
   assert.match(panel, /if \(showGraduationRow\) rows\.push\(/);
-  assert.match(notes, /gen7\s*\? gen7AntiSniperLine\(/);
+  // Live (founder 2026-10-08, PR #547): no launch-fee line on the coin page for any generation; gen-7 keeps its
+  // own anti-sniper window for the clock only.
+  assert.doesNotMatch(notes, /AntiSniperLine\(/);
+  assert.match(notes, /gen7 \? GEN7_ANTI_SNIPER_WINDOW_SECONDS : EVM_ANTI_SNIPER_WINDOW_SECONDS/);
 });
 
 test("creator protection: a cap of 0 reads as no cap", () => {

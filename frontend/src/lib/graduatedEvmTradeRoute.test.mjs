@@ -171,8 +171,13 @@ test("bonding and direct-pool code is the starting commit's, untouched", (t) => 
   if (!baseFile("lib/topazV2Trade.ts") || !baseFile("lib/topazV2Trade.ts", LIVE_BASE)) return t.skip("no git history");
   // The direct pool trade libraries and the curve trade code are not edited at all.
   // On the live branch (feat/evm-import-fee-split) the curve and pool libraries are the live head's, unchanged.
-  for (const rel of ["lib/topazV2Trade.ts", "lib/robinhoodV3Trade.ts", "lib/arenaImportedTopaz.ts", "lib/arenaImportedRobinhood.ts", "lib/evmGasHeadroom.mjs", "lib/tradeBalanceReserve.ts"]) {
+  for (const rel of ["lib/topazV2Trade.ts", "lib/arenaImportedTopaz.ts", "lib/evmGasHeadroom.mjs"]) {
     assert.equal(src(rel), baseFile(rel, LIVE_BASE), rel);
+  }
+  // Merged with build/evm-gen7 (release/evm-gen7-live): these three carry gen-7's own edits (the env-selected
+  // RobinhoodV3NativeSwapAdapterV2, the gen-7 launch gas reserve) and are exactly gen-7's at the starting commit.
+  for (const rel of ["lib/robinhoodV3Trade.ts", "lib/arenaImportedRobinhood.ts", "lib/tradeBalanceReserve.ts"]) {
+    assert.equal(src(rel), baseFile(rel), rel);
   }
   // The import route libraries are the import fee change's (CI2-CI4), not edited by the graduated route.
   for (const rel of ["lib/importSwapFeeRouter.mjs", "lib/robinhoodImportSwap.mjs", "lib/importSwap.ts"]) {
@@ -186,6 +191,10 @@ test("bonding and direct-pool code is the starting commit's, untouched", (t) => 
     // sheet's open flag, which gained !bnbGraduatedImportTrade.
     onlyAdded(baseFile("pages/TokenDetails.tsx", LIVE_BASE), src("pages/TokenDetails.tsx"), [
       "          open={mobileTradeOpen && !rhGraduatedTrade && !solanaGraduatedImportTrade}",
+      // build/evm-gen7 (8672c416): the gen-7 curve spot (virtual reserves) and the gen-7 "to target" branch.
+      "      metrics?.basePrice != null &&",
+      "      metrics.basePrice > 0n &&",
+      "    if (isRobinhoodPage && !isDexStage && (metrics?.graduationTarget ?? 0n) > 0n) {",
     ]),
     [],
   );
