@@ -27,6 +27,7 @@ Try it first: `https://app.memewar.zone/widget/example.html?mint=YOUR_TOKEN_MINT
 | `slippageBps` | `100` | Allowed price movement, in basis points (100 = 1%, max 1500) |
 | `wallet` | the page's wallet | Your own wallet object, if your site already connects one. It needs `publicKey` and `signAndSendTransaction(tx)`; `connect()` is optional |
 | `onSwap` | none | Called after a confirmed swap with `{ signature, side, mint }` |
+| `partner` | none | Partner id from MemeWarzone (for example `"crypticpump"`). Swaps from your widget are recorded as yours; on imported coins the 1% fee splits 0.5% creator / 0.25% partner / 0.25% MemeWarzone, and your share is paid to your wallet automatically. The swap your visitors sign does not change |
 
 ## How it works
 
@@ -34,6 +35,7 @@ Try it first: `https://app.memewar.zone/widget/example.html?mint=YOUR_TOKEN_MINT
   creator's part before anyone signs.
 - Before the wallet opens, the widget checks the transaction: the visitor's wallet pays it, only their signature
   is needed, it goes through Jupiter, and it calls nothing else. Anything else is refused.
+- On an imported coin nobody has claimed yet, a line under the box links to the coin's MemeWarzone page with the claim dialog open ("Created this coin? Claim it on MemeWarzone"). It disappears once the coin is claimed.
 - The box renders in its own shadow root, so your page's CSS does not change it and it does not change your page.
 - Size: about 70 KB gzipped. No cookies; the API calls send no credentials.
 

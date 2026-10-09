@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 process.env.DATABASE_URL ||= "postgres://test:test@127.0.0.1:5432/test";
-const { summarizeCreatorFees } = await import("./importCreatorFees.js");
+const { summarizeCreatorFees, summarizeOwnerCreatorFees } = await import("./importCreatorFees.js");
 
 const MINT = "2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS";
 const now = new Date("2026-10-20T00:00:00Z");
@@ -43,4 +43,12 @@ test("owner view: per-coin totals, payouts start 7 days after verification", asy
   const { summarizeOwnerCreatorFees } = await import("./importCreatorFees.js");
   const [item] = summarizeOwnerCreatorFees([{ chain_id: 101, token_address: "Mint", name: "N", symbol: "S", image_url: null, ownership_verified_at: "2026-10-15T00:00:00Z", waiting: "550000", paying: "0", paid: "10", expired: "0" }], new Date("2026-10-20T00:00:00Z"));
   assert.deepEqual([item.asset, item.waitingRaw, item.paidRaw, item.payoutsOpen, item.payoutsFrom], ["SOL", "550000", "10", false, "2026-10-22T00:00:00.000Z"]);
+});
+
+test("owner earnings: a graduated coin the wallet launched pays out with no claim and no hold", () => {
+  const [item] = summarizeOwnerCreatorFees([{ kind: "graduated", chain_id: 101, token_address: "Mint1111111111111111111111111111111", name: "K", symbol: "K", waiting: "5", paying: "0", paid: "7", expired: "0", ownership_verified_at: null }]);
+  assert.equal(item.kind, "graduated");
+  assert.equal(item.payoutsOpen, true);
+  assert.equal(item.payoutsFrom, null);
+  assert.equal(item.paidRaw, "7");
 });

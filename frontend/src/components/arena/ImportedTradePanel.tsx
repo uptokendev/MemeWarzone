@@ -37,6 +37,7 @@ import {
   readImportTokenDecimals,
   type ImportSwapQuote,
 } from "@/lib/importSwap";
+import { assertGraduatedSolanaQuote, graduatedSolanaPausedError, solanaGraduatedImportRouteEnabled } from "@/lib/graduatedSolanaTradeRoute.mjs";
 
 /**
  * Reads for an EVM import go to the coin's own chain, never through the wallet: a wallet sitting on
@@ -51,7 +52,23 @@ function importReadProvider(chainId: number): ethers.Provider | null {
   }
 }
 
-export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaImportItem; initialSide?: "buy" | "sell" }) {
+/**
+ * `graduated`: a graduated MemeWarzone coin traded through the import route (founder, 2026-10-09; see
+ * graduatedEvmTradeRoute.mjs). Same quotes, builds and fee checks as an import, plus: only while the chain's import
+ * fee route is on, and only on a quote that carries the creator's half of the fee. `onTraded` runs after a confirmed
+ * swap (the token page refreshes its market and balances).
+ */
+export function ImportedTradePanel({
+  item,
+  initialSide = "buy",
+  graduated = false,
+  onTraded,
+}: {
+  item: ArenaImportItem;
+  initialSide?: "buy" | "sell";
+  graduated?: boolean;
+  onTraded?: (trade: { side: "buy" | "sell"; txHash?: string | null; maker: string }) => void;
+}) {
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
   const solana = isSolanaChainId(item.chainId);
@@ -284,7 +301,7 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
   if (!poolLabel) {
     return (
       <p className="text-sm text-muted-foreground">
-        In-app swaps for this imported token are not available on this chain yet.
+        In-app swaps for this {graduated ? "coin" : "imported token"} are not available on this chain yet.
       </p>
     );
   }
@@ -301,11 +318,15 @@ export function ImportedTradePanel({ item, initialSide = "buy" }: { item: ArenaI
       if (!amountInRaw) throw new Error("Enter an amount.");
       if (solana) {
         if (!solanaAccount) throw new Error("Connect the Solana wallet first.");
+        // A graduated Solana coin (graduatedSolanaTradeRoute.mjs): only while its switch is on, only on a split quote.
+        if (graduated && !solanaGraduatedImportRouteEnabled()) throw graduatedSolanaPausedError();
         // Re-quote at submit so the signed route is current.
-        const quote = await quoteImportSwap({ chainId: item.chainId, token: item.tokenAddress, side, amountRaw: amountInRaw });
+        const solanaQuote = await quoteImportSwap({ chainId: item.chainId, token: item.tokenAddress, side, amountRaw: amountInRaw });
+        const quote = graduated ? assertGraduatedSolanaQuote(solanaQuote) : solanaQuote;
         const signature = await executeSolanaImportSwap({ token: item.tokenAddress, side, wallet: solanaAccount, quote });
         toast.success(`Swap confirmed: ${signature.slice(0, 10)}…`);
         announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: solanaAccount, amount: raw, txHash: signature });
+        onTraded?.({ side, txHash: signature, maker: solanaAccount });
         setAmount("");
         return;
       }

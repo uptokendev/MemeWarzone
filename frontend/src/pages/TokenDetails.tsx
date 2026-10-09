@@ -44,6 +44,8 @@ import { GraduationExplosion } from "@/components/token/GraduationExplosion";
 import { useUnifiedMarket, type MarketResolution } from "@/hooks/useUnifiedMarket";
 import { useTopazMarket } from "@/hooks/useTopazMarket";
 import { RobinhoodWarRoomTradePanel } from "@/components/postgrad/RobinhoodWarRoomTradePanel";
+import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
+import { graduatedSolanaTradeItem, graduatedSolanaTradeRoute } from "@/lib/graduatedSolanaTradeRoute.mjs";
 import { useSolanaMeteoraMarket } from "@/hooks/useSolanaMeteoraMarket";
 import {
   ensureTopazSellAllowance,
@@ -3625,6 +3627,14 @@ const toSeconds = (ts: number): number => {
     }
   })();
   const rhGraduatedTrade = isRobinhoodPage && (contractGraduated || isUniswapTradingActive);
+  // A graduated Solana coin (launchpad curve graduated on chain, or a migrated DBC pool) trades through the import
+  // route (Jupiter, 1%, half to the creator) while VITE_SOLANA_GRADUATED_IMPORT_ROUTE is on; off, the Meteora trade
+  // below as before (graduatedSolanaTradeRoute.mjs). Coins on their curve are never routed here.
+  const solanaGraduatedImportTrade =
+    isSolanaPage &&
+    graduatedSolanaTradeRoute({ isDbc: isDbcPage, dbcMigrated, curveGraduated: contractGraduated }) === "import";
+  const solanaGraduatedImportItem = graduatedSolanaTradeItem(campaign, dbcMint || solanaCurve?.mint || campaign?.token);
+  const refreshAfterSolanaGraduatedImportTrade = () => setSolanaBalanceTick((n) => n + 1);
   const mobileTradeDisabled =
     tradePending ||
     approvePending ||
@@ -4277,6 +4287,8 @@ const toSeconds = (ts: number): number => {
 
     // ── Solana: bonding until close, then same click becomes a Meteora fill ─
     if (isSolanaPage) {
+      // Never the fee-free Meteora trade while the import route is on (the import panel trades instead).
+      if (solanaGraduatedImportTrade) return;
       try {
         setTradePending(true);
         const { getSolanaProvider } = await import("@/lib/solanaWallet");
@@ -5855,7 +5867,25 @@ const toSeconds = (ts: number): number => {
         </div>
 
         <aside className="flex flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)]">
-          {isRobinhoodPage && (contractGraduated || isUniswapTradingActive) ? (
+          {solanaGraduatedImportTrade ? (
+            isXlUp ? (
+              <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`} data-graduated-import-trade="solana">
+                <ImportedTradePanel item={solanaGraduatedImportItem} graduated onTraded={refreshAfterSolanaGraduatedImportTrade} />
+                {/* A migrated DBC coin keeps its fee line and the creator's rewards panel next to the trade box. */}
+                {isDbcPage && dbcPool ? <DbcFeeChoiceLine pool={dbcPool} /> : null}
+                {isDbcPage && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (
+                  <DbcCreatorRewardsPanel
+                    pool={dbcPool}
+                    creator={dbcCreator}
+                    mint={dbcMint}
+                    quoteSymbol={dbcQuoteSymbol}
+                    quoteDecimals={dbcQuoteDecimals}
+                    quoteMultiplier={dbcQuoteMultiplier}
+                  />
+                ) : null}
+              </section>
+            ) : null
+          ) : isRobinhoodPage && (contractGraduated || isUniswapTradingActive) ? (
             isXlUp ? (
               <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`}>
                 <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} />
@@ -6335,7 +6365,17 @@ const toSeconds = (ts: number): number => {
           setMobileTradeOpen(true);
         }}
       />
-      {rhGraduatedTrade && mobileTradeOpen && !isXlUp ? (
+      {solanaGraduatedImportTrade && mobileTradeOpen && !isXlUp ? (
+        <div className="fixed inset-0 z-50 xl:hidden" data-mobile-trade-sheet="graduated-import-solana">
+          <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close trade sheet" onClick={() => setMobileTradeOpen(false)} />
+          <div
+            className="absolute inset-x-0 bottom-0 max-h-[92dvh] overflow-y-auto rounded-t-2xl border border-border/70 bg-background p-4"
+            style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+          >
+            <ImportedTradePanel key={tradeTab} item={solanaGraduatedImportItem} initialSide={tradeTab} graduated onTraded={refreshAfterSolanaGraduatedImportTrade} />
+          </div>
+        </div>
+      ) : rhGraduatedTrade && mobileTradeOpen && !isXlUp ? (
         <div className="fixed inset-0 z-50 xl:hidden" data-mobile-trade-sheet="rh">
           <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close trade sheet" onClick={() => setMobileTradeOpen(false)} />
           <div
@@ -6347,7 +6387,7 @@ const toSeconds = (ts: number): number => {
         </div>
       ) : (
         <MobileTradeSheet
-          open={mobileTradeOpen && !rhGraduatedTrade}
+          open={mobileTradeOpen && !rhGraduatedTrade && !solanaGraduatedImportTrade}
           onClose={() => setMobileTradeOpen(false)}
           connected={walletMatchesCampaign}
           connectLabel={connectTradeWalletLabel}

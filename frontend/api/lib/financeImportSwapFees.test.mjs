@@ -20,6 +20,9 @@ import {
   importSwapFeeSplitSources,
   storeSplitImportSwapFees,
   IMPORT_CREATOR_FEE_WINDOW_DAYS,
+  splitFee,
+  partnerSplitSources,
+  readActivePartners,
 } from "./financeImportSwapFees.js";
 import { EVENT_QUERIES, LANE_QUERIES } from "./financeRevenueLanes.js";
 import { vatLaneOf } from "./financeTaxRules.js";
@@ -196,7 +199,7 @@ test("revenue lane: import swaps read the fee table per chain, CSV events from t
   assert.match(LANE_QUERIES.import_swaps, /from public\.finance_import_swap_fees f/);
   assert.match(LANE_QUERIES.import_swaps, /f\.chain_id = \$1/);
   // From the 1% switch half of a fee row is the creator's: revenue is fee_raw - creator_raw.
-  assert.match(LANE_QUERIES.import_swaps, /sum\(\(f\.fee_raw - f\.creator_raw\)\)/);
+  assert.match(LANE_QUERIES.import_swaps, /sum\(\(f\.fee_raw - f\.creator_raw - f\.partner_raw\)\)/);
   assert.match(EVENT_QUERIES.import_swaps, /f\.tx_hash as tx_hash/);
   assert.equal(vatLaneOf("import-swaps:56"), "import_swaps");
 });
@@ -379,4 +382,90 @@ test("ingest: a scan that stopped early stores its rows and cursor, then reports
   await assert.rejects(ingestImportSwapFees({ db, chainId: 56, env: {}, rpc }), /stopped at block 125005755: .*rpc\.example\.org refused: socket hang up/);
   const cursorWrite = writes.find(([s]) => s === "insert into public.finance_import_swap_fee_cursors");
   assert.equal(cursorWrite[1][1], "125005755", "cursor moved past the range that was read");
+});
+
+
+// ------------------------------------------------------------------ swap-widget partners (2026-10-09)
+
+test("partner split: creator / partner by the row's bps of the fee, floors; no partner = half to the creator", () => {
+  assert.deepEqual(splitFee("1000"), { creatorRaw: "500", partnerRaw: "0", partnerId: null });
+  assert.deepEqual(splitFee("1001", { id: "crypticpump", creatorBps: 5000, partnerBps: 2500 }), { creatorRaw: "500", partnerRaw: "250", partnerId: "crypticpump" });
+});
+
+test("partner sources: Solana uses the partner's own fee account; EVM needs a vault and its start block", () => {
+  const rows = [
+    { id: "crypticpump", chain_id: 101, fee_account: "PartnerWsol111111111111111111111111111111111", creator_bps: 5000, partner_bps: 2500, start_block: null },
+    { id: "crypticpump", chain_id: 56, fee_account: "0x00000000000000000000000000000000000000Cc", creator_bps: 5000, partner_bps: 2500, start_block: "130000000" },
+    { id: "nostart", chain_id: 4663, fee_account: "0x00000000000000000000000000000000000000Dd", creator_bps: 5000, partner_bps: 2500, start_block: null },
+  ];
+  const [sol, bnb, ...rest] = partnerSplitSources(rows, {});
+  assert.equal(rest.length, 0, "an EVM vault without a start block is not scanned");
+  assert.equal(sol.feeAccount, "PartnerWsol111111111111111111111111111111111");
+  assert.deepEqual(sol.partner, { id: "crypticpump", creatorBps: 5000, partnerBps: 2500 });
+  assert.equal(bnb.receiver, "0x00000000000000000000000000000000000000cc");
+  assert.deepEqual(bnb.payers, [KYBER_ROUTER.toLowerCase()]);
+  assert.equal(bnb.startBlock, 130000000);
+});
+
+test("partner table missing: no partner sources, nothing breaks", async () => {
+  const db = { query: async () => { throw Object.assign(new Error("relation does not exist"), { code: "42P01" }); } };
+  assert.deepEqual(await readActivePartners(db, 101), []);
+});
+
+test("split store passes partner id and partner part as their own columns", async () => {
+  const seen = [];
+  const client = { query: async (sql, params) => { seen.push(params); return /^with ins/i.test(sql.trim()) ? { rows: [{ inserted: 1, accrued: 1 }] } : { rowCount: 1 }; }, release() {} };
+  const db = { connect: async () => client };
+  const source = { chainId: 101, kind: "solana", feeAccount: "PartnerWsol", split: true };
+  const row = { chainId: 101, txHash: "s", logIndex: 0, blockNumber: 1, occurredAt: "2026-10-09T00:00:00.000Z", wallet: "w", tokenAddress: "m", side: "buy", feeRaw: "1000", feeAsset: "SOL", feeReceiver: "PartnerWsol", router: "JUP", source: "solana_fee_account", internalWallet: false, ...splitFee("1000", { id: "crypticpump", creatorBps: 5000, partnerBps: 2500 }) };
+  await storeSplitImportSwapFees(db, source, [row], "s");
+  const params = seen.find((p) => Array.isArray(p) && p.length === 18);
+  assert.deepEqual([params[14], params[16], params[17]], [["500"], ["crypticpump"], ["250"]]);
+  assert.deepEqual(seen.find((p) => Array.isArray(p) && p.length === 3 && p[0] === 101), [101, "PartnerWsol", "s"], "cursor per partner account");
+});
+
+test("fingerprint attribution: a fee row whose landed swap matches a recorded partner build splits by that partner; others stay 50/50", async () => {
+  const stored = [];
+  const db = {
+    query: async (sql, params) => {
+      if (/from public\.import_swap_fingerprints/.test(sql)) return { rows: [{ fingerprint: "evm:aa", partner_id: "crypticpump" }] };
+      if (/select id, creator_bps, partner_bps from public\.import_fee_partners/.test(sql)) return { rows: [{ id: "crypticpump", creator_bps: 5000, partner_bps: 2500 }] };
+      if (/select id, chain_id, fee_account/.test(sql)) return { rows: [] };
+      if (/^select cursor/.test(sql.trim())) return { rows: [] };
+      if (/^with ins/i.test(sql.trim())) { stored.push(params); return { rows: [{ inserted: params[0].length, accrued: params[0].length }] }; }
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const vault = "0x00000000000000000000000000000000000000aa";
+  const env = { IMPORT_FEE_VAULT_56: vault, IMPORT_FEE_VAULT_START_BLOCK_56: "100" };
+  // Two vault deposits; the tx of the first matches the recorded partner fingerprint.
+  const { evmFingerprint } = await import("./importSwapFingerprint.js");
+  const realFingerprint = evmFingerprint;
+  const txs = { "0xa1": { from: USER_EVM, to: "0xr", input: "0x01", value: "0x0" }, "0xa2": { from: USER_EVM, to: "0xr", input: "0x02", value: "0x0" } };
+  const rpc = async (method, params) => {
+    if (method === "eth_blockNumber") return "0x80";
+    if (method === "eth_getLogs") return Object.keys(txs).map((hash, i) => ({ removed: false, data: `0x${(1000n).toString(16).padStart(64, "0")}`, blockNumber: "0x64", logIndex: `0x${i}`, transactionHash: hash, topics: [VAULT_DEPOSIT_TOPIC, `0x${"0".repeat(24)}${KYBER_ROUTER.toLowerCase().slice(2)}`] }));
+    if (method === "eth_getTransactionByHash") return txs[params[0]];
+    if (method === "eth_getTransactionReceipt") return { logs: [] };
+    if (method === "eth_getBlockByNumber") return { timestamp: "0x6700" };
+    return null;
+  };
+  // Point the recorded fingerprint at the first tx's real fingerprint.
+  const first = realFingerprint("0xr", "0x01", "0x0");
+  db.query = ((orig) => async (sql, params) => (/from public\.import_swap_fingerprints/.test(sql) ? { rows: [{ fingerprint: first, partner_id: "crypticpump" }] } : orig(sql, params)))(db.query);
+  await ingestImportSwapFees({ db, chainId: 56, env, rpc });
+  const params = stored.at(-1);
+  assert.deepEqual(params[14], ["500", "500"], "creator half either way");
+  assert.deepEqual(params[16], ["crypticpump", null]);
+  assert.deepEqual(params[17], ["250", "0"]);
+});
+
+test("a switched-off partner earns nothing on swaps that land afterwards: its part stays ours, the creator half is unchanged", async () => {
+  const { partnerTermsById, splitFee } = await import("./financeImportSwapFees.js");
+  let sqlSeen = "";
+  const db = { query: async (sql) => { sqlSeen = sql; return { rows: [] }; } };
+  const terms = await partnerTermsById(db, 101);
+  assert.match(sqlSeen, /and active/);
+  assert.equal(terms.get("crypticpump"), undefined);
+  assert.deepEqual(splitFee("1000", terms.get("crypticpump") || null), { creatorRaw: "500", partnerRaw: "0", partnerId: null });
 });

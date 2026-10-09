@@ -61,7 +61,7 @@ export function startImportCreatorFeeWorker() {
     running = true;
     try {
       const result = await runImportCreatorFeePass({ db: pool, connection, collector, send, settings });
-      if (result.payouts.length || result.sweep || result.expired || result.skipped.length || result.resolved?.landed || result.resolved?.reset) {
+      if (result.payouts.length || result.partnerPayouts.length || result.consolidated.length || result.sweep || result.expired || result.skipped.length || result.resolved?.landed || result.resolved?.reset) {
         console.log("[import-fees] pass", JSON.stringify(result));
       }
     } catch (error) {

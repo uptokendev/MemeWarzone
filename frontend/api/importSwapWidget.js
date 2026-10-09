@@ -84,6 +84,26 @@ export async function widgetToken(req, res) {
     const decimals = info.value?.data?.parsed?.info?.decimals;
     if (!Number.isInteger(decimals) || !TOKEN_PROGRAMS.includes(info.value.owner.toBase58())) return json(res, 404, { ok: false, error: "Not a token mint" });
     const bonding = await bondingCoin(mint);
+    if (bonding?.reason === "graduated" && graduatedImportRouteOn()) {
+      // A graduated MemeWarzone coin trades like an import (Jupiter, 1%, half to its creator, founder 2026-10-09).
+      // Same answer shape as an import, so widgets already embedded on other sites trade it without an update.
+      res.setHeader("cache-control", "public, max-age=60");
+      return json(res, 200, {
+        ok: true,
+        chainId: 101,
+        mint,
+        decimals,
+        claimUrl: null,
+        name: bonding.name,
+        symbol: bonding.symbol,
+        imageUrl: bonding.imageUrl,
+        kind: "import",
+        graduated: true,
+        tradable: true,
+        feeBps: importSwapFeeBps(101),
+        pageUrl: bonding.pageUrl,
+      });
+    }
     if (bonding) {
       res.setHeader("cache-control", "public, max-age=60");
       return json(res, 200, { ok: true, chainId: 101, mint, decimals, ...bonding });
@@ -91,18 +111,21 @@ export async function widgetToken(req, res) {
     let project = null;
     if (pool) {
       const { rows } = await pool.query(
-        `select name, symbol, image_url from public.arena_token_imports where chain_id = 101 and token_address = $1
+        `select name, symbol, image_url, ownership_status from public.arena_token_imports where chain_id = 101 and token_address = $1
           order by (ownership_status = 'ownership_verified') desc limit 1`,
         [mint],
       ).catch(() => ({ rows: [] }));
       project = rows[0] || null;
     }
-    res.setHeader("cache-control", "public, max-age=300");
+    res.setHeader("cache-control", "public, max-age=60");
     return json(res, 200, {
       ok: true,
       chainId: 101,
       mint,
       decimals,
+      // Unclaimed imported coin with a MemeWarzone page (also auto-imported ones): the widget shows one line
+      // linking to its claim dialog (founder, 2026-10-09). Gone once the coin is claimed.
+      claimUrl: project && project.ownership_status !== "ownership_verified" ? importClaimUrl(mint) : null,
       name: project?.name || null,
       symbol: project?.symbol || null,
       imageUrl: project?.image_url || null,
@@ -118,6 +141,21 @@ export async function widgetToken(req, res) {
 }
 
 const WSOL = "So11111111111111111111111111111111111111112";
+
+/**
+ * Graduated coins go through the import route only while SOLANA_GRADUATED_IMPORT_ROUTE is on (the API twin of the
+ * app's VITE_SOLANA_GRADUATED_IMPORT_ROUTE) and the API runs the split (SOLANA_IMPORT_FEE_COLLECTOR), so the
+ * creator's half exists. Off: "left its bonding curve" with a link to the coin's page, as before.
+ */
+export function graduatedImportRouteOn(env = process.env) {
+  const on = ["1", "true", "yes", "on"].includes(String(env.SOLANA_GRADUATED_IMPORT_ROUTE || "").trim().toLowerCase());
+  return on && Boolean(String(env.SOLANA_IMPORT_FEE_COLLECTOR || "").trim());
+}
+
+/** The imported coin's MemeWarzone page with its claim dialog open (TokenDetailsEntry ?claim=prompt). */
+export function importClaimUrl(mint) {
+  return `https://app.memewar.zone/token/${mint}?chainId=101&claim=prompt`;
+}
 
 /**
  * Our own Solana coin (launchpad or DBC) for this mint, or null for anything else. The widget trades
@@ -143,7 +181,8 @@ export async function bondingCoin(mint, db = pool) {
   let reason = null;
   if (row.graduated_at_chain || row.bonding_active === false || (row.market_stage && String(row.market_stage).toUpperCase() !== "BONDING")) reason = "graduated";
   if (kind === "dbc" && row.dbc_migration) reason = "graduated";
-  if (kind === "dbc" && row.dbc_quote_mint && row.dbc_quote_mint !== WSOL) reason = "quote";
+  // A migrated coin is graduated whatever its quote; the SOL-only rule is for the curve.
+  if (!reason && kind === "dbc" && row.dbc_quote_mint && row.dbc_quote_mint !== WSOL) reason = "quote";
   return {
     kind,
     tradable: !reason,

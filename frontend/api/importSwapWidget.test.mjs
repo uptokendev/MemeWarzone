@@ -58,3 +58,20 @@ test("coin kind: our launchpad / DBC coins are bonding while on the curve; gradu
   assert.equal((await bondingCoin("m", db(row({ launch_type: "dbc", dbc_migration: { pool: "x" } })))).reason, "graduated");
   assert.equal((await bondingCoin("m", db(row({ launch_type: "dbc", dbc_quote_mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" })))).reason, "quote");
 });
+
+test("claim link: the imported coin's page with its claim dialog open", async () => {
+  const { importClaimUrl } = await import("./importSwapWidget.js");
+  assert.equal(importClaimUrl("Mint111"), "https://app.memewar.zone/token/Mint111?chainId=101&claim=prompt");
+});
+
+test("graduated coins: the widget trades them as imports only with the switch on and the split running", async () => {
+  const { graduatedImportRouteOn, bondingCoin } = await import("./importSwapWidget.js");
+  assert.equal(graduatedImportRouteOn({}), false);
+  assert.equal(graduatedImportRouteOn({ SOLANA_GRADUATED_IMPORT_ROUTE: "1" }), false, "no split: no creator half");
+  assert.equal(graduatedImportRouteOn({ SOLANA_IMPORT_FEE_COLLECTOR: "Col" }), false);
+  assert.equal(graduatedImportRouteOn({ SOLANA_GRADUATED_IMPORT_ROUTE: "true", SOLANA_IMPORT_FEE_COLLECTOR: "Col" }), true);
+  const db = { query: async () => ({ rows: [{ launch_type: "dbc", campaign_address: "Camp", creator_address: "Cre", name: "K", symbol: "K", logo_uri: null, bonding_active: false, market_stage: "BONDING", graduated_at_chain: null, dbc_quote_mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", dbc_migration: { pool: "x" } }] }) };
+  assert.equal((await bondingCoin("m", db)).reason, "graduated", "a migrated DBC coin is graduated whatever its quote");
+  const src = (await import("node:fs")).readFileSync(new URL("./importSwapWidget.js", import.meta.url), "utf8");
+  assert.match(src, /bonding\?\.reason === "graduated" && graduatedImportRouteOn\(\)\) \{[\s\S]{0,900}kind: "import",[\s\S]{0,60}tradable: true/);
+});

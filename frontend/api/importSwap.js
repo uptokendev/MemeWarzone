@@ -17,6 +17,7 @@
  */
 import { Connection, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { badMethod, json, readJson } from "../server/http.js";
+import { evmFingerprint, recordFingerprint, solanaFingerprintFromBuilt } from "./lib/importSwapFingerprint.js";
 
 export const IMPORT_SWAP_FEE_BPS = Math.max(0, Math.min(200, Number(process.env.IMPORT_SWAP_FEE_BPS || 50)));
 
@@ -184,10 +185,70 @@ async function solanaQuote({ token, side, amountRaw, slippage }) {
   };
 }
 
-async function solanaBuild({ token, side, wallet, quote }) {
+/**
+ * Swap-widget partners (2026-10-09). A build for a widget with `partner` is attributed to that partner:
+ * normally by a fingerprint of what we built (lib/importSwapFingerprint.js), recorded here and matched by
+ * the fee ledger; the swap itself is the ordinary one. Fallback on Solana: a partner row with fee_account
+ * uses that WSOL account (it must be owned by our collector, checked on chain). Unknown partner, split mode
+ * off or any lookup error: an ordinary swap; a partner never blocks a swap.
+ */
+const partnerCache = new Map();
+export function isCollectorWsolAccount(info, collector) {
+  return Boolean(info) && info.owner.toBase58() === TOKEN_PROGRAM && info.data.length >= 72
+    && new PublicKey(info.data.subarray(0, 32)).toBase58() === WSOL
+    && new PublicKey(info.data.subarray(32, 64)).toBase58() === collector;
+}
+
+async function dbPool() {
+  const { pool } = await import("./../server/db.js");
+  return pool;
+}
+
+/** { id, feeAccount } for an active partner on this chain (feeAccount only when it checks out), else null. */
+async function readPartner(partnerId, chainId) {
+  const id = String(partnerId || "").trim().toLowerCase();
+  if (!id || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(id)) return null;
+  if (chainId === 101 && !SOLANA_IMPORT_FEE_COLLECTOR) return null; // no split on Solana: nothing to share
+  const key = `${chainId}:${id}`;
+  const cached = partnerCache.get(key);
+  if (cached && Date.now() - cached.at < 60_000) return cached.partner;
+  let partner = null;
+  try {
+    const pool = await dbPool();
+    const { rows } = pool
+      ? await pool.query("select id, fee_account from public.import_fee_partners where id = $1 and chain_id = $2 and active limit 1", [id, chainId])
+      : { rows: [] };
+    if (rows[0]) {
+      partner = { id, feeAccount: null };
+      const candidate = chainId === 101 && rows[0].fee_account ? String(rows[0].fee_account) : null;
+      if (candidate) {
+        const info = await solanaConnection().getAccountInfo(new PublicKey(candidate));
+        if (isCollectorWsolAccount(info, SOLANA_IMPORT_FEE_COLLECTOR)) partner.feeAccount = candidate;
+        else console.warn("[api/importSwap] partner fee account is not a collector WSOL account; attributing by fingerprint", { partner: id, candidate });
+      }
+    }
+  } catch (error) {
+    console.warn("[api/importSwap] partner lookup failed; ordinary swap", { partner: id, error: String(error?.message || error) });
+  }
+  partnerCache.set(key, { at: Date.now(), partner });
+  return partner;
+}
+
+/** Best effort: a failed write only means the swap is not attributed to the partner. */
+async function rememberPartnerSwap(input) {
+  try {
+    await recordFingerprint(await dbPool(), input);
+  } catch (error) {
+    console.warn("[api/importSwap] partner fingerprint not stored", { partner: input.partnerId, error: String(error?.message || error) });
+  }
+}
+
+async function solanaBuild({ token, side, wallet, quote, partner = null }) {
   assertSolanaQuoteTerms(quote, { token, side });
-  await assertSolanaFeeAccountReady();
-  const feeAccount = solanaFeeAccount();
+  const partnerRow = await readPartner(partner, 101);
+  const partnerAccount = partnerRow?.feeAccount || null;
+  if (!partnerAccount) await assertSolanaFeeAccountReady();
+  const feeAccount = partnerAccount || solanaFeeAccount();
   const built = await fetchJson(
     `${JUPITER_BASE}/swap`,
     {
@@ -206,6 +267,9 @@ async function solanaBuild({ token, side, wallet, quote }) {
   );
   if (!built?.swapTransaction) throw Object.assign(new Error("Jupiter returned no transaction"), { status: 502 });
   assertSolanaSwapTransaction(built.swapTransaction, { wallet, feeAccount });
+  if (partnerRow && !partnerAccount) {
+    await rememberPartnerSwap({ fingerprint: solanaFingerprintFromBuilt(built.swapTransaction, wallet), chainId: 101, partnerId: partnerRow.id, wallet, token });
+  }
   return { chainId: 101, provider: "jupiter", transactionBase64: built.swapTransaction, lastValidBlockHeight: Number(built.lastValidBlockHeight || 0), feeAccount };
 }
 
@@ -267,7 +331,7 @@ async function bscQuote({ token, side, amountRaw }) {
   };
 }
 
-async function bscBuild({ token, side, wallet, quote, slippage }) {
+async function bscBuild({ token, side, wallet, quote, slippage, partner = null }) {
   assertBscRouteTerms(quote, { token, side });
   const body = await fetchJson(
     `${KYBER_BASE}/route/build`,
@@ -280,6 +344,8 @@ async function bscBuild({ token, side, wallet, quote, slippage }) {
   }
   const value = side === "buy" ? String(data.transactionValue ?? data.amountIn ?? "0") : "0";
   if (side === "buy" && String(value) !== String(quote.amountIn)) throw Object.assign(new Error("Kyber changed the swap amount"), { status: 502 });
+  const partnerRow = await readPartner(partner, 56);
+  if (partnerRow) await rememberPartnerSwap({ fingerprint: evmFingerprint(KYBER_ROUTER, data.data, value), chainId: 56, partnerId: partnerRow.id, wallet, token });
   return { chainId: 56, provider: "kyberswap-pancakeswap", to: KYBER_ROUTER, data: data.data, value, amountOut: data.amountOut, spender: KYBER_ROUTER };
 }
 
@@ -323,8 +389,8 @@ export async function importSwapBuild(req, res) {
     const wallet = String(body.wallet || "").trim();
     if (input.chainId === 101 ? !isSolanaAddress(wallet) : !isEvmAddress(wallet)) return json(res, 400, { ok: false, error: "Invalid wallet" });
     const built = input.chainId === 101
-      ? await solanaBuild({ ...input, wallet, quote: body.quote })
-      : await bscBuild({ ...input, wallet, quote: body.quote, slippage: slippageBps(body.slippageBps) });
+      ? await solanaBuild({ ...input, wallet, quote: body.quote, partner: body.partner })
+      : await bscBuild({ ...input, wallet, quote: body.quote, slippage: slippageBps(body.slippageBps), partner: body.partner });
     res.setHeader("cache-control", "no-store");
     return json(res, 200, { ok: true, ...built });
   } catch (error) {
