@@ -12,8 +12,9 @@
  *   gather    swap-widget partners' fee accounts (WSOL accounts owned by the collector) -> the collector's
  *             own WSOL account, so every payout below has one source (kind 'consolidate')
  *   partners  each partner's share of the fees from its account -> its payout wallet, in native SOL
- *   pay       verified import owners (arena_token_imports ownership_verified, claim >= 7 days old)
- *             whose waiting accruals sum to at least the minimum, in native SOL, within a per-payout
+ *   pay       verified import owners (arena_token_imports ownership_verified, claim >= 7 days old), and
+ *             the creators of graduated MemeWarzone coins (campaigns.creator_address, no claim, no hold,
+ *             no expiry), whose waiting accruals sum to at least the minimum, in native SOL, within a per-payout
  *             and a daily cap. Above the daily cap the rest waits for the next UTC day by itself.
  *             Never to one of our own wallets (shared/ownerWallets) or a wallet under a moderation
  *             hold: those accruals keep waiting (and expire to us after 90 days).
@@ -201,7 +202,7 @@ export async function resolvePendingTransfers(db: Pool, connection: Connection):
 export async function expireAccruals(db: Queryable, now: Date): Promise<number> {
   const result = await db.query(
     `update public.import_creator_fees set status = 'expired', expired_at = $2, updated_at = now()
-      where chain_id = $1 and status = 'waiting' and expires_at <= $2`,
+      where chain_id = $1 and status = 'waiting' and payee_kind = 'import_owner' and expires_at <= $2`,
     [CHAIN_ID, now.toISOString()],
   );
   return result.rowCount ?? 0;
@@ -235,7 +236,12 @@ export async function readPaidToday(db: Queryable, collectorAccount: string, now
 
 export type PayableCoin = { token: string; owner: string; waiting: WaitingAccrual[]; total: bigint };
 
-/** Verified imports whose claim is at least `holdDays` old and that have waiting accruals on this collector. */
+/**
+ * Who gets paid now, per coin:
+ *   import_owner      verified imports whose claim is at least `holdDays` old (waiting accruals inside 90 days)
+ *   campaign_creator  graduated MemeWarzone coins: campaigns.creator_address, no claim and no hold
+ * Only accruals whose fee landed in one of `receivers`.
+ */
 export async function readPayableCoins(db: Queryable, receivers: string | string[], holdDays: number, now: Date): Promise<PayableCoin[]> {
   const { rows } = await db.query(
     `with owners as (
@@ -247,12 +253,26 @@ export async function readPayableCoins(db: Queryable, receivers: string | string
           and i.ownership_verified_at is not null
           and i.ownership_verified_at <= $3::timestamptz - make_interval(days => $4::int)
         order by i.token_address, i.ownership_verified_at desc
+     ), creators as (
+       select distinct on (m.token_address) m.token_address, m.creator_address
+         from public.campaigns m
+        where m.chain_id = $1 and m.token_address is not null and m.creator_address is not null
+        order by m.token_address, m.created_at_chain desc nulls last
+     ), payable as (
+       select o.token_address, o.project_owner_wallet as payee, c.fee_id, c.creator_raw, c.occurred_at
+         from owners o
+         join public.import_creator_fees c on c.chain_id = $1 and c.token_address = o.token_address and c.payee_kind = 'import_owner'
+                                          and c.status = 'waiting' and c.expires_at > $3
+       union all
+       select m.token_address, m.creator_address, c.fee_id, c.creator_raw, c.occurred_at
+         from creators m
+         join public.import_creator_fees c on c.chain_id = $1 and c.token_address = m.token_address and c.payee_kind = 'campaign_creator'
+                                          and c.status = 'waiting'
      )
-     select o.token_address, o.project_owner_wallet, c.fee_id::text as fee_id, c.creator_raw::text as creator_raw
-       from owners o
-       join public.import_creator_fees c on c.chain_id = $1 and c.token_address = o.token_address and c.status = 'waiting' and c.expires_at > $3
-       join public.finance_import_swap_fees f on f.id = c.fee_id and f.fee_receiver = any($2::text[])
-      order by o.token_address, c.occurred_at, c.fee_id`,
+     select p.token_address, p.payee as project_owner_wallet, p.fee_id::text as fee_id, p.creator_raw::text as creator_raw
+       from payable p
+       join public.finance_import_swap_fees f on f.id = p.fee_id and f.fee_receiver = any($2::text[])
+      order by p.token_address, p.occurred_at, p.fee_id`,
     [CHAIN_ID, Array.isArray(receivers) ? receivers : [receivers], now.toISOString(), holdDays],
   );
   const byToken = new Map<string, PayableCoin>();

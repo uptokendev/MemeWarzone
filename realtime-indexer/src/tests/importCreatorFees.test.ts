@@ -190,3 +190,17 @@ test("partners: below the partner minimum nothing is paid; our sweep can go", as
   assert.equal(out.partnerPayouts.length, 0);
   assert.equal(out.sweep?.amount, "400");
 });
+
+test("graduated MemeWarzone coins: paid to campaigns.creator_address without claim or hold, and never expire", async () => {
+  const db = fakeDb({});
+  await fees.readPayableCoins(db as any, ["R"], 7, NOW);
+  const sql = db.calls[0].sql.replace(/\s+/g, " ");
+  assert.match(sql, /from public\.campaigns m/);
+  assert.match(sql, /c\.payee_kind = 'campaign_creator' and c\.status = 'waiting' \)/);
+  assert.match(sql, /c\.payee_kind = 'import_owner' and c\.status = 'waiting' and c\.expires_at > \$3/);
+  // the hold applies to import owners only
+  assert.equal((sql.match(/make_interval\(days => \$4::int\)/g) || []).length, 1);
+  const expire = fakeDb({});
+  await fees.expireAccruals(expire as any, NOW);
+  assert.match(expire.calls[0].sql, /payee_kind = 'import_owner' and expires_at <= \$2/);
+});

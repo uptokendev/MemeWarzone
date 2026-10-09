@@ -370,6 +370,8 @@ export async function ingestImportSwapFees({ db, chainId, env = process.env, fet
 // From the switch to 1%, every import swap pays the whole fee to ONE receiver per chain and the
 // split happens afterwards: half is the protocol's, half the coin creator's. Each fee row stores
 // its creator half (creator_raw) and gets an import_creator_fees accrual that waits 90 days.
+// A MemeWarzone coin (a campaigns row: graduated, it trades through this route) is a 'campaign_creator'
+// accrual instead: paid to campaigns.creator_address straight away, never expires (founder, 2026-10-09).
 //   Solana 101   the wrapped-SOL account of the import fee collector key (SOLANA_IMPORT_FEE_COLLECTOR,
 //                the key lives only in the indexer, which pays creators and sweeps the protocol half).
 //   BNB 56 /     an ImportFeeVault (RecruiterRewardsVault bytecode): IMPORT_FEE_VAULT_<chainId>, paid
@@ -485,9 +487,18 @@ const INSERT_SPLIT_SQL = `
     on conflict (chain_id, tx_hash, log_index) do nothing
     returning id, chain_id, token_address, creator_raw, occurred_at
   ), acc as (
-    insert into public.import_creator_fees (fee_id, chain_id, token_address, creator_raw, occurred_at, expires_at)
-    select id, chain_id, token_address, creator_raw, occurred_at, occurred_at + make_interval(days => $16::int)
-      from ins where creator_raw > 0
+    insert into public.import_creator_fees (fee_id, chain_id, token_address, creator_raw, occurred_at, expires_at, payee_kind)
+    select k.id, k.chain_id, k.token_address, k.creator_raw, k.occurred_at,
+           case when k.campaign then null else k.occurred_at + make_interval(days => $16::int) end,
+           case when k.campaign then 'campaign_creator' else 'import_owner' end
+      from (
+        select ins.*, exists (
+          select 1 from public.campaigns c
+           where c.chain_id = ins.chain_id
+             and (case when ins.chain_id = 101 then c.token_address = ins.token_address else lower(c.token_address) = lower(ins.token_address) end)
+        ) as campaign
+          from ins where ins.creator_raw > 0
+      ) k
     on conflict (fee_id) do nothing
     returning fee_id
   )

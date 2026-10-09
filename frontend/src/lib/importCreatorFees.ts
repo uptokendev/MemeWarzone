@@ -46,6 +46,8 @@ export function hasAmount(raw: string | undefined) {
 }
 
 export type OwnerCreatorFeeItem = {
+  /** import: a coin this wallet claimed. graduated: a MemeWarzone coin it launched that left the curve. */
+  kind?: "import" | "graduated";
   chainId: number;
   token: string;
   name: string | null;
@@ -61,7 +63,7 @@ export type OwnerCreatorFeeItem = {
   payoutsOpen: boolean;
 };
 
-/** Creator earnings of every imported coin this wallet claimed (Command Center, Claims). */
+/** Creator earnings of every imported coin this wallet claimed and every graduated coin it launched (Command Center, Claims). */
 export async function fetchOwnerCreatorFees(wallet: string, signal?: AbortSignal): Promise<OwnerCreatorFeeItem[]> {
   const response = await apiFetch(`/api/imports/creator-fees/owner?wallet=${encodeURIComponent(wallet)}`, { signal });
   if (!response.ok) return [];
