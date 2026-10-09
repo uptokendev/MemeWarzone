@@ -565,7 +565,7 @@ function readStoredStringArray(key: string, fallback: string[]): string[] {
   }
 }
 
-import { antiSniperFeeLine, shouldUseLaunchpadBondingQuote } from "../../shared/dbcAntiSniper.mjs";
+import { shouldUseLaunchpadBondingQuote } from "../../shared/dbcAntiSniper.mjs";
 import { DBC_CREATOR_LOCK_COPY } from "../../shared/dbcEconomics.mjs";
 import { creatorLockBadge, lockAmountDivisible } from "../../shared/dbcLockSchedule.mjs";
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
@@ -5986,14 +5986,12 @@ const toSeconds = (ts: number): number => {
                   {quoteError ? (
                     <p className="mt-2 text-center text-xs text-mw-down">{quoteError}</p>
                   ) : null}
-                  {isDbcPage && !dbcMigrated ? (
+                  {/* The launch-fee line is not shown on the coin page (founder, 2026-10-08); it is explained in the docs. */}
+                  {isDbcPage && !dbcMigrated && dbcCompletingBuyUsed != null && tradeTab === "buy" ? (
                     <p className="mt-2 text-center text-xs text-mw-muted">
-                      {antiSniperFeeLine({ activationUnix: dbcActivationUnix })}
-                      {dbcCompletingBuyUsed != null && tradeTab === "buy" ? (
-                        <span className="block text-mw-up">
-                          This buy completes the curve: {formatBnbFromWei(dbcCompletingBuyUsed)} is used and the rest stays in your wallet. The coin then moves to its Meteora pool.
-                        </span>
-                      ) : null}
+                      <span className="block text-mw-up">
+                        This buy completes the curve: {formatBnbFromWei(dbcCompletingBuyUsed)} is used and the rest stays in your wallet. The coin then moves to its Meteora pool.
+                      </span>
                     </p>
                   ) : null}
                   {isDbcPage && !dbcMigrated && dbcCreator && solanaAccount && String(solanaAccount) === dbcCreator ? (
