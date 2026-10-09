@@ -36,6 +36,8 @@ export const SESSION_AUTH_ACTIONS = new Set([
   "arena_tournament_vote",
   "arena_tournament_opt_in",
   "arena_league_checkin",
+  // Joining a recruiter squad (proves the wallet is yours; no money moves)
+  "squad_join",
 ]);
 
 export function sessionTokenFromSignature(signature) {

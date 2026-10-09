@@ -32,6 +32,8 @@ export const SESSION_AUTH_ACTIONS = new Set<string>([
   "arena_tournament_vote",
   "arena_tournament_opt_in",
   "arena_league_checkin",
+  // Joining a recruiter squad (proves the wallet is yours; no money moves)
+  "squad_join",
 ]);
 
 export const SESSION_DRAFT_ACTIONS = new Set<string>(["follow_draft", "comment_draft", "arm_draft_notifications", "react_draft_comment"]);

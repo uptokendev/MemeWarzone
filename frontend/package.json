@@ -29,6 +29,7 @@
     "test:rpc-usage": "node --test api/lib/rpcUsage.test.mjs api/lib/getServerReadProviderPing.test.mjs api/lib/financeImportSwapFees.test.mjs",
     "test:draft-auth": "node --test api/dev-fix/draft-auth.test.mjs",
     "test:session-actions": "node --test api/lib/sessionActions.test.mjs",
+    "test:squad-join": "node --test api/dev-fix/squadJoinOwnership.db.test.mjs api/dev-fix/attributionTransaction.test.mjs",
     "test:campaigns-upsert": "node --import ./api/campaigns/upsert.test.register.mjs --test api/campaigns/upsert.test.mjs",
     "test:abuse-rbac": "node --test api/lib/abuseAuth.test.mjs api/admin/abuse/abuse-rbac.test.mjs api/admin/abuse/abuse-cases.test.mjs api/lib/abuseEvidence.test.mjs api/abuse/abuse-reporter.test.mjs api/lib/abuseNotify.test.mjs api/lib/notify.test.mjs",
     "fix:draft-owner-auth": "node scripts/apply-draft-owner-auth-fix.mjs",

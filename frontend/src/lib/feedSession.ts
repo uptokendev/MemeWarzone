@@ -32,6 +32,10 @@ export function storeFeedSession(walletAddress: string, chainId: number, token: 
       sessionStorage.setItem(sessionKey(walletAddress, chainId), token);
     } catch {}
   }
+  // A pending squad join waits for this (recruiterApi.ts WALLET_SIGNED_IN_EVENT).
+  try {
+    window.dispatchEvent(new CustomEvent("mwz:wallet-signed-in", { detail: { walletAddress } }));
+  } catch {}
 }
 
 export function clearFeedSession(walletAddress: string, chainId: number) {

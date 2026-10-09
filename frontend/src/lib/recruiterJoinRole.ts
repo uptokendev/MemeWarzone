@@ -1,5 +1,6 @@
 import { apiFetch } from "@/lib/apiBase";
-import { getRecruiterSession } from "@/lib/recruiterApi";
+import { getRecruiterSession, squadJoinAuth } from "@/lib/recruiterApi";
+import { forgetSessionToken, storedSessionToken } from "@/lib/sessionActions";
 
 const MEMBER_ROLE_KEY = "mwz:recruiter:memberRole";
 
@@ -44,9 +45,15 @@ export async function syncRecruiterJoinRole(walletAddress: string, role: Recruit
       sessionToken: session.sessionToken,
       clientFingerprint: session.clientFingerprint,
       memberRole: role,
+      auth: squadJoinAuth(walletAddress),
     }),
   });
   const json = await response.json().catch(() => ({}));
+  // A stored sign-in the server turns down (expired, revoked, other wallet): drop it and ask again.
+  if (response.status === 401 && (json?.code === "FEED_SESSION_REQUIRED" || json?.code === "WALLET_MISMATCH")) {
+    forgetSessionToken(storedSessionToken(walletAddress));
+    return { linked: false, needsSignIn: true, code: json.code, reason: json.error };
+  }
   if (!response.ok) {
     throw new Error(String(json?.error || json?.message || `Request failed (${response.status})`));
   }

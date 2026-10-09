@@ -1,5 +1,6 @@
 import { getActiveChainId, getFactoryAddress } from "@/lib/chainConfig";
 import { apiFetch } from "@/lib/apiBase";
+import { sessionSignature, storedSessionToken } from "@/lib/sessionActions";
 
 const SESSION_KEY = "mwz:recruiter:session";
 const FINGERPRINT_KEY = "mwz:recruiter:fingerprint";
@@ -260,6 +261,28 @@ export async function captureRecruiterReferral(recruiterCode: string, walletAddr
   });
 }
 
+/** Fired by storeFeedSession when a wallet finishes the 30-day sign-in. */
+export const WALLET_SIGNED_IN_EVENT = "mwz:wallet-signed-in";
+
+/**
+ * Proof of wallet ownership for a squad join: the stored 30-day sign-in, never a prompt. Without
+ * one the API answers `needsSignIn` and the join is retried after sign-in (WALLET_SIGNED_IN_EVENT).
+ */
+export function squadJoinAuth(walletAddress: string) {
+  const token = storedSessionToken(walletAddress);
+  if (!token) return undefined;
+  const solana = !String(walletAddress || "").startsWith("0x");
+  return {
+    action: "squad_join",
+    walletAddress,
+    chainId: solana ? 101 : 56,
+    nonce: "session",
+    message: "",
+    signature: sessionSignature(token),
+    walletType: solana ? "solana" : "evm",
+  };
+}
+
 export async function syncWalletRecruiterAttribution(walletAddress: string, memberRole?: RecruiterMemberRole | null) {
   const session = getRecruiterSession();
   const role = normalizeMemberRole(memberRole) || getRecruiterReferralMemberRole();
@@ -268,6 +291,7 @@ export async function syncWalletRecruiterAttribution(walletAddress: string, memb
     sessionToken: session.sessionToken,
     clientFingerprint: session.clientFingerprint,
     memberRole: role,
+    auth: squadJoinAuth(walletAddress),
   });
   if (result?.linked && role) clearRecruiterReferralMemberRole();
   return result;

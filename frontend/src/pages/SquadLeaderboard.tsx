@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { WalletLabel } from "@/components/ui-v2/WalletLabel";
 import { formatEther } from "ethers";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ArrowRight, Users } from "lucide-react";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { fetchSquadLeaderboard, fetchSquadMembers, type SquadLeaderboardItem, type SquadMemberItem } from "@/lib/rewardProgramsApi";
@@ -17,6 +17,9 @@ function formatBnb(raw: string): string {
 
 export default function SquadLeaderboard() {
   const [epochLabel, setEpochLabel] = useState<string>("");
+  // `/squads?recruiter=<code>` (profile "Squad Pool" links) opens that squad instead of the top one.
+  const [searchParams] = useSearchParams();
+  const requestedRecruiter = String(searchParams.get("recruiter") || "").trim().toLowerCase();
   const [globalPoolAmount, setGlobalPoolAmount] = useState("0");
   const [carryoverAmount, setCarryoverAmount] = useState("0");
   const [squads, setSquads] = useState<SquadLeaderboardItem[]>([]);
@@ -43,7 +46,10 @@ export default function SquadLeaderboard() {
             ? `${new Date(leaderboard.epoch.startAt).toLocaleDateString()} - ${new Date(leaderboard.epoch.endAt).toLocaleDateString()}`
             : "",
         );
-        const initialCode = items[0]?.recruiterCode ?? null;
+        const requested = requestedRecruiter
+          ? items.find((item) => String(item.recruiterCode || "").toLowerCase() === requestedRecruiter)?.recruiterCode || requestedRecruiter
+          : null;
+        const initialCode = requested ?? items[0]?.recruiterCode ?? null;
         setSelectedRecruiterCode(initialCode);
         if (initialCode) {
           const ranking = await fetchSquadMembers({ recruiterCode: initialCode, limit: 50 });
@@ -61,7 +67,7 @@ export default function SquadLeaderboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [requestedRecruiter]);
 
   useEffect(() => {
     if (!selectedRecruiterCode) return;
@@ -90,7 +96,7 @@ export default function SquadLeaderboard() {
   const shortWallet = (value: string) => (value.length > 12 ? `${value.slice(0, 4)}…${value.slice(-4)}` : value);
   const memberCap = members.find((member) => member.memberCapAmount && member.memberCapAmount !== "0")?.memberCapAmount;
   const selected = squads.find((squad) => squad.recruiterCode === selectedRecruiterCode);
-  const selectedName = selected ? selected.recruiterDisplayName || selected.recruiterCode || `Recruiter ${selected.recruiterId}` : "";
+  const selectedName = selected ? selected.recruiterDisplayName || selected.recruiterCode || `Recruiter ${selected.recruiterId}` : selectedRecruiterCode || "";
 
   return (
     <ContentContainer className="flex flex-col gap-4 px-1 pb-16 font-mw-body text-mw-text md:px-2">

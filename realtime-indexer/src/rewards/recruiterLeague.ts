@@ -66,21 +66,32 @@ export async function recruiterLeagueStandings(db: Db, startIso: string, endIso:
         WHERE s.is_active AND s.joined_at <= $2::timestamptz
      ), volume_wallets AS (
        SELECT recruiter_id, wallet_address FROM active_links UNION SELECT recruiter_id, wallet_address FROM active_squad
-     ), link_stats AS (
-       SELECT recruiter_id, count(DISTINCT wallet_address)::int AS n FROM active_links GROUP BY 1
-     ), squad_stats AS (
-       SELECT recruiter_id,
-              count(DISTINCT wallet_address) FILTER (WHERE role IN ('creator','both'))::int AS creators,
-              count(DISTINCT wallet_address) FILTER (WHERE role IN ('trader','both'))::int AS traders
-         FROM active_squad GROUP BY 1
-     ), volume AS (
-       SELECT w.recruiter_id, t.chain_id, sum(t.bnb_amount_raw::numeric) AS raw
+     ), wallet_volume AS (
+       SELECT w.recruiter_id, w.wallet_address, t.chain_id, sum(t.bnb_amount_raw::numeric) AS raw
          FROM public.curve_trades t
          JOIN volume_wallets w
            ON (t.chain_id = $3 AND w.wallet_address = t.wallet) OR (t.chain_id <> $3 AND lower(w.wallet_address) = lower(t.wallet))
         WHERE t.chain_id = ANY($4::int[]) AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz${creatorBuys}
           AND ${notPublicHiddenCampaignSql("t")}
-        GROUP BY 1, 2
+        GROUP BY 1, 2, 3
+     ), volume AS (
+       SELECT recruiter_id, chain_id, sum(raw) AS raw FROM wallet_volume GROUP BY 1, 2
+     ), traded_wallets AS (
+       -- Only wallets that traded in the epoch count (founder, 2026-10-09: 120 scripted wallets that
+       -- never traded led the league on counts alone). Mirrors frontend/api/leagueRecruiter.js.
+       SELECT DISTINCT recruiter_id, wallet_address FROM wallet_volume WHERE raw > 0
+     ), link_stats AS (
+       SELECT l.recruiter_id, count(DISTINCT l.wallet_address)::int AS n
+         FROM active_links l
+         JOIN traded_wallets tw ON tw.recruiter_id = l.recruiter_id AND tw.wallet_address = l.wallet_address
+        GROUP BY 1
+     ), squad_stats AS (
+       SELECT s.recruiter_id,
+              count(DISTINCT s.wallet_address) FILTER (WHERE s.role IN ('creator','both'))::int AS creators,
+              count(DISTINCT s.wallet_address) FILTER (WHERE s.role IN ('trader','both'))::int AS traders
+         FROM active_squad s
+         JOIN traded_wallets tw ON tw.recruiter_id = s.recruiter_id AND tw.wallet_address = s.wallet_address
+        GROUP BY 1
      ), earned AS (
        SELECT w.recruiter_id, re.chain_id, sum(re.recruiter_amount) AS raw
          FROM public.reward_events re

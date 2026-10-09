@@ -6,6 +6,7 @@ import { isSolanaAddress } from "@/lib/address";
 import { readStoredFeedSession } from "@/lib/feedSession";
 import { FEED_SESSION_INVALID_EVENT } from "@/lib/apiBase";
 import { forgetSessionToken, storedSessionToken } from "@/lib/sessionActions";
+import { syncWalletRecruiterAttribution, WALLET_SIGNED_IN_EVENT } from "@/lib/recruiterApi";
 
 const DECLINED_PREFIX = "mwz:sign-in-declined:";
 
@@ -72,6 +73,18 @@ export function WalletSignInGate() {
     window.addEventListener(FEED_SESSION_INVALID_EVENT, onInvalid);
     return () => window.removeEventListener(FEED_SESSION_INVALID_EVENT, onInvalid);
   }, [account, chainId]);
+
+  // A squad join needs the sign-in (founder, 2026-10-09): the connect-time sync ran before it, so
+  // retry once the wallet is signed in. The invite page (/r/:code) retries on its own.
+  useEffect(() => {
+    const onSignedIn = (event: Event) => {
+      const walletAddress = String((event as CustomEvent<{ walletAddress?: string }>).detail?.walletAddress || "");
+      if (!walletAddress || window.location.pathname.startsWith("/r/")) return;
+      void syncWalletRecruiterAttribution(walletAddress).catch(() => {});
+    };
+    window.addEventListener(WALLET_SIGNED_IN_EVENT, onSignedIn);
+    return () => window.removeEventListener(WALLET_SIGNED_IN_EVENT, onSignedIn);
+  }, []);
 
   return null;
 }

@@ -1,8 +1,9 @@
 import crypto from "crypto";
 import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
-import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../../server/http.js";
+import { badMethod, getQuery, isAddress, isSolanaAddress, isSolanaChain, json, readJson } from "../../server/http.js";
 import { internalRecruiterLabel, isOwnerWallet } from "../../shared/ownerWallets.mjs";
+import { requireWalletActionAuth } from "../lib/walletActionAuth.js";
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const BASE58_MAP = new Map([...BASE58_ALPHABET].map((char, index) => [char, index]));
@@ -434,6 +435,74 @@ export async function recruiterReferralCapture(req, res) {
   }
 }
 
+// Squad joins need proof the caller controls the wallet (founder, 2026-10-09): recruiter 128 got 120
+// wallets in 6 minutes, one every ~2.5 s, including 0x...0001 and lowercased Solana keys, because this
+// route took any walletAddress from the body. The 30-day sign-in covers it (no extra prompt); without
+// one, a fresh "squad_join" signature does.
+export const SQUAD_JOIN_ACTION = "squad_join";
+
+function positiveIntEnv(name, fallback) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
+}
+
+/**
+ * Squad joins one client IP may make per rolling window; above it a join waits and retries. Keyed on
+ * the IP, not the recruiter: a per-recruiter cap would let anyone with throwaway keys fill a rival's
+ * slots and lock its real joiners out. Wallets that never trade add nothing to the league anyway.
+ */
+export function squadJoinLimit() {
+  return {
+    max: positiveIntEnv("SQUAD_JOIN_LIMIT_PER_IP", 3),
+    minutes: positiveIntEnv("SQUAD_JOIN_LIMIT_WINDOW_MINUTES", 60),
+  };
+}
+
+// Same source as the feed's unique views (api/feed/posts.js): the proxy's X-Real-IP first. Stored only
+// as a salted hash on the consumed referral window.
+function squadJoinIpHash(req) {
+  const real = String(req.headers?.["x-real-ip"] || "").trim();
+  const forwarded = String(req.headers?.["x-forwarded-for"] || "").split(",")[0].trim();
+  const ip = real || forwarded || req.ip || req.socket?.remoteAddress || "";
+  if (!ip) return "";
+  const salt = String(process.env.VIEW_HASH_SALT || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.DATABASE_URL || "mwz-views");
+  return crypto.createHash("sha256").update(`squad-join|${salt}|${ip}`).digest("hex").slice(0, 32);
+}
+
+function squadJoinChainId(walletAddress, auth) {
+  const requested = Number(auth?.chainId);
+  if (isSolanaWallet(walletAddress)) return isSolanaChain(requested) ? requested : 101;
+  return Number.isFinite(requested) && requested > 0 && !isSolanaChain(requested) ? requested : 56;
+}
+
+/** True when the request proves control of walletAddress; otherwise the response is sent and false returned. */
+async function requireSquadJoinOwner(res, body, walletAddress) {
+  const auth = body?.auth && typeof body.auth === "object" ? body.auth : null;
+  if (!String(auth?.signature || "").trim()) {
+    // 200, not 401: the connect flow calls this before the sign-in prompt; the window stays open and
+    // the client retries once the wallet is signed in.
+    json(res, 200, {
+      linked: false,
+      needsSignIn: true,
+      code: "SIGN_IN_REQUIRED",
+      state: publicState({ walletAddress }),
+      reason: "Sign in with this wallet to join the squad.",
+    });
+    return false;
+  }
+  const verified = await requireWalletActionAuth({
+    res,
+    pool,
+    auth,
+    expectedWallet: walletAddress,
+    chainId: squadJoinChainId(walletAddress, auth),
+    action: SQUAD_JOIN_ACTION,
+    routeLabel: "attribution wallet-connect",
+    strict: true,
+  });
+  return Boolean(verified);
+}
+
 export async function attributionWalletConnect(req, res) {
   if (!methodAllowed(req, res, ["POST"])) return;
   try {
@@ -472,6 +541,7 @@ export async function attributionWalletConnect(req, res) {
         mergedRole = mergeMemberRole(existingMembership.member_role, memberRole);
         const currentRole = String(existingMembership.member_role || "member").trim().toLowerCase();
         if (mergedRole && mergedRole !== currentRole) {
+          if (!(await requireSquadJoinOwner(res, body, walletAddress))) return;
           const solana = isSolanaWallet(walletAddress);
           await pool.query(
             `update public.wallet_squad_memberships
@@ -526,11 +596,39 @@ export async function attributionWalletConnect(req, res) {
       });
     }
 
+    if (!(await requireSquadJoinOwner(res, body, walletAddress))) return;
+
     // One connection for the whole link: BEGIN on the pool would land on an arbitrary
     // connection, so the three writes were never really one transaction.
+    const limit = squadJoinLimit();
+    const ipHash = squadJoinIpHash(req);
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      if (ipHash) {
+        // Per-IP join rate, serialized so parallel requests cannot all pass the count.
+        await client.query("select pg_advisory_xact_lock(hashtext($1))", [`squad-join:${ipHash}`]);
+        const { rows: [recent] } = await client.query(
+          `select count(*)::int as n
+             from public.wallet_referral_attribution_windows
+            where consumed_at > now() - make_interval(mins => $2::int)
+              and metadata->>'joinIpHash' = $1`,
+          [ipHash, limit.minutes],
+        );
+        if (Number(recent?.n || 0) >= limit.max) {
+          await client.query("ROLLBACK");
+          console.warn("[api/attribution wallet-connect] squad join rate limit", { recruiterId: recruiter.id, walletAddress, recent: recent?.n, ...limit });
+          const message = `Too many squad joins from this connection in the last ${limit.minutes} minutes. Try again later.`;
+          return json(res, 429, {
+            linked: false,
+            code: "SQUAD_JOIN_RATE_LIMITED",
+            retryAfterMinutes: limit.minutes,
+            state: publicState({ walletAddress }),
+            error: message,
+            reason: message,
+          });
+        }
+      }
       await client.query(
         `insert into public.wallet_recruiter_links (wallet_address, recruiter_id, link_source)
          values ($1, $2, 'referral_cookie')
@@ -554,7 +652,15 @@ export async function attributionWalletConnect(req, res) {
            updated_at = now()`,
         [walletAddress, recruiter.id, memberRole],
       );
-      await client.query(`update public.wallet_referral_attribution_windows set wallet_address = coalesce(wallet_address, $1), consumed_at = now(), updated_at = now() where id = $2`, [walletAddress, window.id]);
+      await client.query(
+        `update public.wallet_referral_attribution_windows
+            set wallet_address = coalesce(wallet_address, $1),
+                consumed_at = now(),
+                metadata = case when $3::text is null then metadata else coalesce(metadata, '{}'::jsonb) || jsonb_build_object('joinIpHash', $3::text) end,
+                updated_at = now()
+          where id = $2`,
+        [walletAddress, window.id, ipHash || null],
+      );
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
