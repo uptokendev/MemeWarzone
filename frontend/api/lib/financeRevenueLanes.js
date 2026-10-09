@@ -59,7 +59,8 @@
 //                     left out of revenue (founder 2026-10-06); they stay in
 //                     the table. From the 1% switch (2026-10-08) half of a fee
 //                     row is the coin creator's (creator_raw): the lane counts
-//                     fee_raw - creator_raw.
+//                     fee_raw - creator_raw - partner_raw (a swap-widget
+//                     partner's share, 2026-10-09).
 //   import_swaps_expired  creator halves nobody claimed within 90 days
 //                     (import_creator_fees status 'expired'), counted on the day
 //                     they expire.
@@ -290,7 +291,7 @@ export const LANE_SPECS = Object.freeze({
     where: `f.chain_id = $1
        and f.fee_raw > 0
        and not f.internal_wallet`,
-    time: "f.occurred_at", amount: "(f.fee_raw - f.creator_raw)",
+    time: "f.occurred_at", amount: "(f.fee_raw - f.creator_raw - f.partner_raw)",
     tx: "f.tx_hash", logIndex: "f.log_index", campaign: "f.token_address", ref: "f.side", eventId: "f.id::text",
   },
   // A creator half that nobody claimed within 90 days is ours from the day it expires.

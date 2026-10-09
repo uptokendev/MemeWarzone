@@ -209,6 +209,31 @@ async function buildImportChecks(identity, signer, authPayload, fallback = false
   return { resolved, security, assessment };
 }
 
+/**
+ * Import created by MemeWarzone itself, without a user (import swap fees, 2026-10-09): a coin that earned
+ * creator fees through the swap widget gets its page so the creator can claim it. The same steps as a
+ * user's POST / in the same order (lookup + scan, still-bonding refusal, security gate, insert + evidence
+ * + admission scan in one transaction), minus the signature: `importerWallet` is ours and is recorded as
+ * imported_by_wallet; the coin starts ownership_pending like any non-owner import. Throws like POST /.
+ */
+export async function systemImportProject({ chainId, tokenAddress, importerWallet }) {
+  if (!enabled()) throw Object.assign(new Error("Project imports are disabled."), { code: "PROJECT_IMPORTS_DISABLED" });
+  if (!pool) throw Object.assign(new Error("Project imports require DATABASE_URL."), { code: "PROJECT_IMPORT_DB_UNAVAILABLE" });
+  const identity = normalizeProjectIdentity(chainId, tokenAddress);
+  const { resolved, security, assessment } = await buildImportChecks(identity, importerWallet, null, false, { registrationOnly: true });
+  assertNewImportMarket(resolved);
+  requireSecurityPass(security);
+  const result = await withImportTransaction(pool, async (client) => {
+    const created = await createProjectImport(client, { resolverResult: { ...resolved, signedWalletMatchesAuthority: false }, signedWallet: importerWallet });
+    if (created.created) await appendImportEvidence(client, { project: created.project, assessment, source: "automatic_import" });
+    if (created.project && (created.created || created.project.status === "scanning")) {
+      created.project = await runAdmissionScanForProject((text, params) => client.query(text, params), created.project);
+    }
+    return created;
+  });
+  return { created: result.created, project: publicProject(result.project) };
+}
+
 async function handleOwnershipAdmin(req, res, path) {
   const admin = await requireDashboardAdmin(req, res);
   if (!admin) return true;

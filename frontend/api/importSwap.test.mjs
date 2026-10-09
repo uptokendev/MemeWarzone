@@ -123,3 +123,15 @@ test("1% switch (founder 2026-10-08): the Solana rate moves with the collector, 
   assert.equal(importSwapFeeBps(101, { SOLANA_IMPORT_FEE_COLLECTOR: "x", IMPORT_SWAP_FEE_BPS_101: "999" }), 200, "capped at 2%");
   assert.equal(importSwapFeeBps(56, { SOLANA_IMPORT_FEE_COLLECTOR: "x" }), 50, "BNB untouched (change order CO-IMP CI2)");
 });
+
+test("partner fee account must be a wrapped-SOL account owned by our collector", async () => {
+  const { isCollectorWsolAccount } = await import("./importSwap.js");
+  const collector = Keypair.generate().publicKey;
+  const data = (mint, owner) => Buffer.concat([new PublicKey(mint).toBuffer(), owner.toBuffer(), Buffer.alloc(101)]);
+  const token = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+  assert.equal(isCollectorWsolAccount({ owner: token, data: data(WSOL, collector) }, collector.toBase58()), true);
+  assert.equal(isCollectorWsolAccount({ owner: token, data: data(WSOL, Keypair.generate().publicKey) }, collector.toBase58()), false, "someone else's account");
+  assert.equal(isCollectorWsolAccount({ owner: token, data: data(TOKEN, collector) }, collector.toBase58()), false, "not wrapped SOL");
+  assert.equal(isCollectorWsolAccount({ owner: Keypair.generate().publicKey, data: data(WSOL, collector) }, collector.toBase58()), false, "not a token account");
+  assert.equal(isCollectorWsolAccount(null, collector.toBase58()), false);
+});

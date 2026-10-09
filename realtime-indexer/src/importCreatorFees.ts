@@ -9,6 +9,9 @@
  *   expire    accruals past 90 days that were not paid -> 'expired' (they become the protocol's)
  *   sweep     the protocol's half of every fee plus the expired creator halves -> the protocol
  *             wallet's WSOL account (the old import fee account of operator 2AMfRaxS...)
+ *   gather    swap-widget partners' fee accounts (WSOL accounts owned by the collector) -> the collector's
+ *             own WSOL account, so every payout below has one source (kind 'consolidate')
+ *   partners  each partner's share of the fees from its account -> its payout wallet, in native SOL
  *   pay       verified import owners (arena_token_imports ownership_verified, claim >= 7 days old)
  *             whose waiting accruals sum to at least the minimum, in native SOL, within a per-payout
  *             and a daily cap. Above the daily cap the rest waits for the next UTC day by itself.
@@ -55,6 +58,7 @@ export type ImportFeeSettings = {
   maxPayoutLamports: bigint;
   dailyPayoutCapLamports: bigint;
   minSweepLamports: bigint;
+  minPartnerPayoutLamports: bigint;
   holdDays: number;
   payoutsPerPass: number;
 };
@@ -72,6 +76,7 @@ export function importFeeSettings(env: Record<string, string | undefined> = proc
     maxPayoutLamports: envBigint(env, "IMPORT_CREATOR_MAX_PAYOUT_LAMPORTS", 50_000_000_000n),
     dailyPayoutCapLamports: envBigint(env, "IMPORT_CREATOR_DAILY_CAP_LAMPORTS", 200_000_000_000n),
     minSweepLamports: envBigint(env, "IMPORT_FEE_MIN_SWEEP_LAMPORTS", 50_000_000n),
+    minPartnerPayoutLamports: envBigint(env, "IMPORT_PARTNER_MIN_PAYOUT_LAMPORTS", 50_000_000n),
     holdDays: Math.max(0, Number(env.IMPORT_CREATOR_HOLD_DAYS ?? 7)),
     payoutsPerPass: Math.max(1, Math.min(20, Number(env.IMPORT_CREATOR_PAYOUTS_PER_PASS ?? 5))),
   };
@@ -202,17 +207,18 @@ export async function expireAccruals(db: Queryable, now: Date): Promise<number> 
   return result.rowCount ?? 0;
 }
 
-export async function readProtocolDue(db: Queryable, collectorAccount: string): Promise<bigint> {
+/** receivers: the collector's WSOL account first, then partner fee accounts (all hold split fees). */
+export async function readProtocolDue(db: Queryable, collectorAccount: string, receivers: string[] = [collectorAccount]): Promise<bigint> {
   const { rows } = await db.query(
     `select
-       (select coalesce(sum(fee_raw - creator_raw), 0) from public.finance_import_swap_fees
-         where chain_id = $1 and fee_receiver = $2 and creator_raw > 0)::text as halves,
+       (select coalesce(sum(fee_raw - creator_raw - partner_raw), 0) from public.finance_import_swap_fees
+         where chain_id = $1 and fee_receiver = any($3::text[]))::text as halves,
        (select coalesce(sum(c.creator_raw), 0) from public.import_creator_fees c
           join public.finance_import_swap_fees f on f.id = c.fee_id
-         where c.chain_id = $1 and c.status = 'expired' and f.fee_receiver = $2)::text as expired,
+         where c.chain_id = $1 and c.status = 'expired' and f.fee_receiver = any($3::text[]))::text as expired,
        (select coalesce(sum(amount_raw), 0) from public.import_fee_transfers
          where chain_id = $1 and kind = 'protocol' and from_address = $2 and status in ('sending', 'landed'))::text as swept`,
-    [CHAIN_ID, collectorAccount],
+    [CHAIN_ID, collectorAccount, receivers],
   );
   const row = rows[0] || {};
   return protocolDue({ protocolHalves: BigInt(row.halves || "0"), expiredCreator: BigInt(row.expired || "0"), swept: BigInt(row.swept || "0") });
@@ -221,7 +227,7 @@ export async function readProtocolDue(db: Queryable, collectorAccount: string): 
 export async function readPaidToday(db: Queryable, collectorAccount: string, now: Date): Promise<bigint> {
   const { rows } = await db.query(
     `select coalesce(sum(amount_raw), 0)::text as paid from public.import_fee_transfers
-      where chain_id = $1 and kind = 'creator' and from_address = $2 and status in ('sending', 'landed') and created_at >= $3`,
+      where chain_id = $1 and kind in ('creator', 'partner') and from_address = $2 and status in ('sending', 'landed') and created_at >= $3`,
     [CHAIN_ID, collectorAccount, utcDayStart(now).toISOString()],
   );
   return BigInt(rows[0]?.paid || "0");
@@ -230,7 +236,7 @@ export async function readPaidToday(db: Queryable, collectorAccount: string, now
 export type PayableCoin = { token: string; owner: string; waiting: WaitingAccrual[]; total: bigint };
 
 /** Verified imports whose claim is at least `holdDays` old and that have waiting accruals on this collector. */
-export async function readPayableCoins(db: Queryable, collectorAccount: string, holdDays: number, now: Date): Promise<PayableCoin[]> {
+export async function readPayableCoins(db: Queryable, receivers: string | string[], holdDays: number, now: Date): Promise<PayableCoin[]> {
   const { rows } = await db.query(
     `with owners as (
        select distinct on (i.token_address) i.token_address, i.project_owner_wallet
@@ -245,9 +251,9 @@ export async function readPayableCoins(db: Queryable, collectorAccount: string, 
      select o.token_address, o.project_owner_wallet, c.fee_id::text as fee_id, c.creator_raw::text as creator_raw
        from owners o
        join public.import_creator_fees c on c.chain_id = $1 and c.token_address = o.token_address and c.status = 'waiting' and c.expires_at > $3
-       join public.finance_import_swap_fees f on f.id = c.fee_id and f.fee_receiver = $2
+       join public.finance_import_swap_fees f on f.id = c.fee_id and f.fee_receiver = any($2::text[])
       order by o.token_address, c.occurred_at, c.fee_id`,
-    [CHAIN_ID, collectorAccount, now.toISOString(), holdDays],
+    [CHAIN_ID, Array.isArray(receivers) ? receivers : [receivers], now.toISOString(), holdDays],
   );
   const byToken = new Map<string, PayableCoin>();
   for (const row of rows) {
@@ -264,6 +270,36 @@ export async function readPayableCoins(db: Queryable, collectorAccount: string, 
   return [...byToken.values()];
 }
 
+export type ImportFeePartner = { id: string; feeAccount: string; payoutWallet: string };
+
+/** Every Solana partner (inactive ones too: their account may still hold fees, and they are still owed). */
+export async function readPartners(db: Queryable): Promise<ImportFeePartner[]> {
+  try {
+    const { rows } = await db.query(`select id, fee_account, payout_wallet from public.import_fee_partners where chain_id = $1 order by id`, [CHAIN_ID]);
+    return rows.map((row: any) => ({ id: String(row.id), feeAccount: String(row.fee_account), payoutWallet: String(row.payout_wallet) }));
+  } catch (error: any) {
+    if (error?.code === "42P01") return [];
+    throw error;
+  }
+}
+
+/** Partner share owed: its part of every fee row minus partner payouts that were sent. */
+export async function readPartnerDue(db: Queryable, partnerId: string): Promise<bigint> {
+  const { rows } = await db.query(
+    `select
+       (select coalesce(sum(partner_raw), 0) from public.finance_import_swap_fees where chain_id = $1 and partner_id = $2)::text as earned,
+       (select coalesce(sum(amount_raw), 0) from public.import_fee_transfers where chain_id = $1 and kind = 'partner' and partner_id = $2 and status in ('sending', 'landed'))::text as paid`,
+    [CHAIN_ID, partnerId],
+  );
+  const due = BigInt(rows[0]?.earned || "0") - BigInt(rows[0]?.paid || "0");
+  return due > 0n ? due : 0n;
+}
+
+/** Moves a partner account's whole WSOL balance into the collector's own WSOL account (both owned by the collector). */
+export function consolidateInstructions(input: { collector: PublicKey; from: PublicKey; amount: bigint }): TransactionInstruction[] {
+  return [createTransferCheckedInstruction(input.from, NATIVE_MINT, wsolAccount(input.collector), input.collector, input.amount, 9, [], TOKEN_PROGRAM_ID)];
+}
+
 // ---------------------------------------------------------------- one pass
 
 export type PassResult = {
@@ -271,6 +307,8 @@ export type PassResult = {
   expired: number;
   sweep: { amount: string; signature: string | null } | null;
   payouts: Array<{ token: string; owner: string; amount: string; signature: string | null }>;
+  consolidated: Array<{ partner: string; amount: string; signature: string | null }>;
+  partnerPayouts: Array<{ partner: string; to: string; amount: string; signature: string | null }>;
   skipped: string[];
 };
 
@@ -286,13 +324,44 @@ export async function runImportCreatorFeePass(input: {
   const settings = input.settings || importFeeSettings();
   const now = input.now || new Date();
   const collectorAccount = wsolAccount(collector.publicKey).toBase58();
-  const result: PassResult = { resolved: null, expired: 0, sweep: null, payouts: [], skipped: [] };
+  const result: PassResult = { resolved: null, expired: 0, sweep: null, payouts: [], consolidated: [], partnerPayouts: [], skipped: [] };
 
   if (send) {
     result.resolved = await resolvePendingTransfers(db, connection);
     if (result.resolved.pending > 0) return result; // never start a movement while one may still land
     result.expired = await expireAccruals(db, now);
   }
+
+  // Partners' fee accounts first go into the collector's own account: one source for every payout.
+  const partners = await readPartners(db);
+  const receivers = [collectorAccount, ...partners.map((p) => p.feeAccount)];
+  for (const partner of partners) {
+    let held = 0n;
+    try {
+      held = BigInt((await connection.getTokenAccountBalance(new PublicKey(partner.feeAccount), "confirmed")).value.amount);
+    } catch {
+      result.skipped.push(`partner ${partner.id} fee account ${partner.feeAccount} unreadable`);
+      continue;
+    }
+    if (held < settings.minSweepLamports) continue;
+    if (!send) {
+      result.consolidated.push({ partner: partner.id, amount: held.toString(), signature: null });
+      continue;
+    }
+    const { tx, signature, lastValidBlockHeight } = await signedTx(connection, collector, consolidateInstructions({ collector: collector.publicKey, from: new PublicKey(partner.feeAccount), amount: held }));
+    const stored = await db.query(
+      `insert into public.import_fee_transfers (chain_id, kind, from_address, to_address, amount_raw, status, signature, last_valid_block_height, partner_id)
+       values ($1, 'consolidate', $2, $3, $4, 'sending', $5, $6, $7) returning id`,
+      [CHAIN_ID, partner.feeAccount, collectorAccount, held.toString(), signature, lastValidBlockHeight, partner.id],
+    );
+    try {
+      await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
+    } catch (error) {
+      await db.query(`update public.import_fee_transfers set error = $2, updated_at = now() where id = $1`, [stored.rows[0].id, String(error instanceof Error ? error.message : error).slice(0, 500)]);
+    }
+    result.consolidated.push({ partner: partner.id, amount: held.toString(), signature });
+  }
+  if (send && result.consolidated.length) return result; // pay out once the balances are in one account
 
   let balance = 0n;
   try {
@@ -304,7 +373,7 @@ export async function runImportCreatorFeePass(input: {
 
   // Creators first: their money is a liability; ours can wait for the next pass.
   let dailyLeft = settings.dailyPayoutCapLamports - (await readPaidToday(db, collectorAccount, now));
-  const coins = await readPayableCoins(db, collectorAccount, settings.holdDays, now);
+  const coins = await readPayableCoins(db, receivers, settings.holdDays, now);
   const held = coins.length ? await heldWalletKeys(db) : new Set<string>();
   for (const coin of coins) {
     if (result.payouts.length >= settings.payoutsPerPass) break;
@@ -372,9 +441,48 @@ export async function runImportCreatorFeePass(input: {
     balance -= amount;
   }
 
-  // Our half (and expired creator halves), only when no creator payout went out this pass.
-  if (!result.payouts.length) {
-    const due = await readProtocolDue(db, collectorAccount);
+  // Partners: their share of the fees from their accounts, to their payout wallet.
+  for (const partner of partners) {
+    if (result.payouts.length + result.partnerPayouts.length >= settings.payoutsPerPass) break;
+    const due = await readPartnerDue(db, partner.id);
+    const amount = [due, settings.maxPayoutLamports, dailyLeft, balance].reduce((a, b) => (a < b ? a : b));
+    if (amount < settings.minPartnerPayoutLamports) continue;
+    if (!isValidWallet(partner.payoutWallet)) {
+      result.skipped.push(`partner ${partner.id}: payout wallet ${partner.payoutWallet} is not a wallet`);
+      continue;
+    }
+    if (!send) {
+      result.partnerPayouts.push({ partner: partner.id, to: partner.payoutWallet, amount: amount.toString(), signature: null });
+      dailyLeft -= amount;
+      balance -= amount;
+      continue;
+    }
+    const temp = Keypair.generate();
+    const rentLamports = await connection.getMinimumBalanceForRentExemption(TOKEN_ACCOUNT_SIZE);
+    const { tx, signature, lastValidBlockHeight } = await signedTx(
+      connection,
+      collector,
+      creatorPayoutInstructions({ collector: collector.publicKey, temp: temp.publicKey, to: new PublicKey(partner.payoutWallet), amount, rentLamports }),
+      [temp],
+    );
+    const stored = await db.query(
+      `insert into public.import_fee_transfers (chain_id, kind, from_address, to_address, amount_raw, status, signature, last_valid_block_height, partner_id)
+       values ($1, 'partner', $2, $3, $4, 'sending', $5, $6, $7) returning id`,
+      [CHAIN_ID, collectorAccount, partner.payoutWallet, amount.toString(), signature, lastValidBlockHeight, partner.id],
+    );
+    try {
+      await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
+    } catch (error) {
+      await db.query(`update public.import_fee_transfers set error = $2, updated_at = now() where id = $1`, [stored.rows[0].id, String(error instanceof Error ? error.message : error).slice(0, 500)]);
+    }
+    result.partnerPayouts.push({ partner: partner.id, to: partner.payoutWallet, amount: amount.toString(), signature });
+    dailyLeft -= amount;
+    balance -= amount;
+  }
+
+  // Our part (and expired creator halves), only when no creator or partner payout went out this pass.
+  if (!result.payouts.length && !result.partnerPayouts.length) {
+    const due = await readProtocolDue(db, collectorAccount, receivers);
     const amount = due < balance ? due : balance;
     if (amount >= settings.minSweepLamports) {
       if (!send) {

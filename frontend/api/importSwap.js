@@ -246,10 +246,46 @@ async function solanaQuote({ token, side, amountRaw, slippage }) {
   };
 }
 
-async function solanaBuild({ token, side, wallet, quote }) {
+/**
+ * Swap-widget partners (2026-10-09): a partner's own fee account, used only in the 1% split mode and only
+ * when it is a wrapped-SOL account owned by our collector (so the fee is ours to split). Anything else
+ * falls back to the default account: a bad or unknown partner never blocks a swap.
+ */
+const partnerCache = new Map();
+export function isCollectorWsolAccount(info, collector) {
+  return Boolean(info) && info.owner.toBase58() === TOKEN_PROGRAM && info.data.length >= 72
+    && new PublicKey(info.data.subarray(0, 32)).toBase58() === WSOL
+    && new PublicKey(info.data.subarray(32, 64)).toBase58() === collector;
+}
+async function partnerFeeAccount(partnerId) {
+  const id = String(partnerId || "").trim().toLowerCase();
+  if (!id || !SOLANA_IMPORT_FEE_COLLECTOR || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(id)) return null;
+  const cached = partnerCache.get(id);
+  if (cached && Date.now() - cached.at < 60_000) return cached.account;
+  let account = null;
+  try {
+    const { pool } = await import("../server/db.js");
+    const { rows } = pool
+      ? await pool.query("select fee_account from public.import_fee_partners where id = $1 and chain_id = 101 and active limit 1", [id])
+      : { rows: [] };
+    const candidate = rows[0]?.fee_account ? String(rows[0].fee_account) : null;
+    if (candidate) {
+      const info = await solanaConnection().getAccountInfo(new PublicKey(candidate));
+      if (isCollectorWsolAccount(info, SOLANA_IMPORT_FEE_COLLECTOR)) account = candidate;
+      else console.warn("[api/importSwap] partner fee account is not a collector WSOL account; using the default", { partner: id, candidate });
+    }
+  } catch (error) {
+    console.warn("[api/importSwap] partner lookup failed; using the default fee account", { partner: id, error: String(error?.message || error) });
+  }
+  partnerCache.set(id, { at: Date.now(), account });
+  return account;
+}
+
+async function solanaBuild({ token, side, wallet, quote, partner = null }) {
   assertSolanaQuoteTerms(quote, { token, side });
-  await assertSolanaFeeAccountReady();
-  const feeAccount = solanaFeeAccount();
+  const partnerAccount = await partnerFeeAccount(partner);
+  if (!partnerAccount) await assertSolanaFeeAccountReady();
+  const feeAccount = partnerAccount || solanaFeeAccount();
   const built = await fetchJson(
     `${JUPITER_BASE}/swap`,
     {
@@ -394,7 +430,7 @@ export async function importSwapBuild(req, res) {
     const wallet = String(body.wallet || "").trim();
     if (input.chainId === 101 ? !isSolanaAddress(wallet) : !isEvmAddress(wallet)) return json(res, 400, { ok: false, error: "Invalid wallet" });
     const built = input.chainId === 101
-      ? await solanaBuild({ ...input, wallet, quote: body.quote })
+      ? await solanaBuild({ ...input, wallet, quote: body.quote, partner: body.partner })
       : await bscBuild({ ...input, wallet, quote: body.quote, slippage: slippageBps(body.slippageBps) });
     res.setHeader("cache-control", "no-store");
     return json(res, 200, { ok: true, ...built });
