@@ -39,7 +39,7 @@ export function SearchPopup({
   const searching = query.trim().length >= 2;
   const { sponsor, featured, trending } = useSearchDiscovery(open, chainId);
   const { searched, viewed, remember, clearSearched } = useSearchHistory(open);
-  const { results, loading, error } = useTokenSearch(query, undefined, { limit: 12, debounceMs: 200, chainId });
+  const { results, loading, error } = useTokenSearch(query, undefined, { limit: 12, debounceMs: 200, chainId, chainOnly: Boolean(onSelectToken) });
   const solana = isSolanaChainId(chainId);
   const { price: bnbUsd } = useBnbUsdPrice(!solana);
   const { price: solUsd } = useSolUsdPrice(solana);
