@@ -70,6 +70,8 @@ export type MountOptions = {
   slippageBps?: number;
   theme?: "dark" | "light";
   wallet?: WidgetWallet;
+  /** Swap-widget partner id (for example "crypticpump"): imported-coin fees go to that partner's fee account and split creator / partner / MemeWarzone. */
+  partner?: string;
   onSwap?: (event: { signature: string; side: Side; mint: string }) => void;
 };
 
@@ -440,7 +442,7 @@ class SwapWidget {
       if (!quote) throw new Error("No quote for this amount.");
       const built = await this.call<{ transactionBase64: string; feeAccount: string }>("/api/widget/swap/build", {
         method: "POST",
-        body: JSON.stringify({ chainId: 101, token: this.token.mint, side: this.side, wallet: this.account, quote: quote.quote, slippageBps: this.options.slippageBps ?? 100 }),
+        body: JSON.stringify({ chainId: 101, token: this.token.mint, side: this.side, wallet: this.account, quote: quote.quote, slippageBps: this.options.slippageBps ?? 100, ...(this.options.partner ? { partner: this.options.partner } : {}) }),
       });
       const tx = VersionedTransaction.deserialize(decodeBase64(built.transactionBase64));
       assertJupiterSwapForWallet(tx, this.account, built.feeAccount);

@@ -181,7 +181,7 @@ export function solanaFeeRow(tx, { signature, feeAccount, feeOwner }) {
 
 /** New fee rows on Solana since `cursor` (newest signature already stored), oldest first. */
 export async function scanSolanaImportSwapFees({ source, rpc, cursor = null, maxSignatures = 5000 }) {
-  const feeAccount = solanaFeeAccount(source.feeOwner);
+  const feeAccount = source.feeAccount || solanaFeeAccount(source.feeOwner);
   const signatures = [];
   let before;
   for (;;) {
@@ -341,13 +341,24 @@ export async function ingestImportSwapFees({ db, chainId, env = process.env, fet
   const summary = { chainId, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: scan.rows.length, inserted, feeRaw, asset: source.asset, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };
   log?.(summary, scan.rows);
   const split = [];
-  for (const splitSource of importSwapFeeSplitSources(env).filter((s) => s.chainId === chainId)) {
+  const splitSources = [...importSwapFeeSplitSources(env).filter((s) => s.chainId === chainId), ...partnerSplitSources(await readActivePartners(db, chainId), env)];
+  for (const splitSource of splitSources) {
     split.push(await ingestSplitReceiver({ db, source: splitSource, env, fetchImpl, dryRun, fromScratch, rpc, log }));
+  }
+  // Coins that earned creator fees without a MemeWarzone page get one (importAutoImport.js); best effort.
+  let autoImport = null;
+  if (!dryRun && split.length) {
+    try {
+      const { autoImportMissing } = await import("./importAutoImport.js");
+      autoImport = await autoImportMissing({ db, chainId, env });
+    } catch (error) {
+      autoImport = { chainId, error: String(error?.message || error).slice(0, 200) };
+    }
   }
   // A scan that stopped early stored what it read; the step still reports the refusal.
   const stopped = [scan.error && `stopped at block ${nextCursor}: ${scan.error}`, ...split.filter((s) => s.error).map((s) => `${s.receiver} stopped at block ${s.cursorAfter}: ${s.error}`)].filter(Boolean);
   if (stopped.length) throw Object.assign(new Error(stopped.join(" || ")), { summary: { ...summary, ...(split.length ? { split } : {}) } });
-  return { ...summary, rows: scan.rows, ...(split.length ? { split } : {}) };
+  return { ...summary, rows: scan.rows, ...(split.length ? { split } : {}), ...(autoImport ? { autoImport } : {}) };
 }
 
 // ------------------------------------------------------------------ 1% split receivers (founder, 2026-10-08)
@@ -386,7 +397,59 @@ export function importSwapFeeSplitSources(env = process.env) {
   return out;
 }
 
-const splitReceiverOf = (source) => (source.kind === "solana" ? solanaFeeAccount(source.feeOwner) : source.receiver);
+const splitReceiverOf = (source) => (source.kind === "solana" ? source.feeAccount || solanaFeeAccount(source.feeOwner) : source.receiver);
+
+/**
+ * Swap-widget partners (founder 2026-10-09): each active partner row is one more split receiver on its
+ * chain (Solana: a WSOL account owned by the collector; EVM: its own ImportFeeVault, scanned from
+ * start_block). Its fees split by the row's creator_bps / partner_bps of the fee; the rest is ours.
+ */
+export function partnerSplitSources(partners, env = process.env) {
+  const legacy = importSwapFeeSources(env);
+  const defaults = { 56: [KYBER_ROUTER.toLowerCase()], 4663: [UNIVERSAL_ROUTER_4663] };
+  const out = [];
+  for (const p of partners || []) {
+    const chainId = Number(p.chain_id);
+    const partner = { id: String(p.id), creatorBps: Number(p.creator_bps), partnerBps: Number(p.partner_bps) };
+    if (chainId === 101) {
+      out.push({ chainId, kind: "solana", asset: "SOL", decimals: 9, feeAccount: String(p.fee_account), split: true, partner });
+      continue;
+    }
+    const base = legacy[chainId];
+    const receiver = String(p.fee_account || "").toLowerCase();
+    const startBlock = Number(p.start_block || 0);
+    if (!base || !/^0x[0-9a-f]{40}$/.test(receiver) || !Number.isInteger(startBlock) || startBlock <= 0) continue;
+    const listed = String(env[`IMPORT_FEE_VAULT_PAYERS_${chainId}`] || "").split(",").map((x) => x.trim().toLowerCase()).filter((x) => /^0x[0-9a-f]{40}$/.test(x));
+    const { payer: _payer, receiver: _receiver, startBlock: _start, ...rest } = base;
+    out.push({ ...rest, receiver, payers: listed.length ? listed : defaults[chainId], startBlock, split: true, partner });
+  }
+  return out;
+}
+
+export async function readActivePartners(db, chainId) {
+  if (!db) return [];
+  try {
+    const { rows } = await db.query(
+      `select id, chain_id, fee_account, payout_wallet, creator_bps, partner_bps, start_block from public.import_fee_partners where active and chain_id = $1 order by id`,
+      [chainId],
+    );
+    return rows;
+  } catch (error) {
+    if (error?.code === "42P01") return [];
+    throw error;
+  }
+}
+
+/** Creator / partner parts of one split fee: a partner row's bps, else half to the creator. Floors; the rest is ours. */
+export function splitFee(feeRaw, partner = null) {
+  const fee = BigInt(feeRaw);
+  if (!partner) return { creatorRaw: creatorHalf(fee), partnerRaw: "0", partnerId: null };
+  return {
+    creatorRaw: ((fee * BigInt(partner.creatorBps)) / 10_000n).toString(),
+    partnerRaw: ((fee * BigInt(partner.partnerBps)) / 10_000n).toString(),
+    partnerId: partner.id,
+  };
+}
 
 export async function readSplitReceiverCursor(db, chainId, receiver) {
   const { rows } = await db.query("select cursor from public.finance_import_swap_fee_receiver_cursors where chain_id = $1 and receiver = $2", [chainId, receiver]);
@@ -396,8 +459,8 @@ export async function readSplitReceiverCursor(db, chainId, receiver) {
 const INSERT_SPLIT_SQL = `
   with ins as (
     insert into public.finance_import_swap_fees
-      (chain_id, tx_hash, log_index, block_number, occurred_at, wallet, token_address, side, fee_raw, fee_asset, fee_receiver, router, source, internal_wallet, creator_raw)
-    select * from unnest($1::int[], $2::text[], $3::int[], $4::bigint[], $5::timestamptz[], $6::text[], $7::text[], $8::text[], $9::numeric[], $10::text[], $11::text[], $12::text[], $13::text[], $14::boolean[], $15::numeric[])
+      (chain_id, tx_hash, log_index, block_number, occurred_at, wallet, token_address, side, fee_raw, fee_asset, fee_receiver, router, source, internal_wallet, creator_raw, partner_id, partner_raw)
+    select * from unnest($1::int[], $2::text[], $3::int[], $4::bigint[], $5::timestamptz[], $6::text[], $7::text[], $8::text[], $9::numeric[], $10::text[], $11::text[], $12::text[], $13::text[], $14::boolean[], $15::numeric[], $17::text[], $18::numeric[])
     on conflict (chain_id, tx_hash, log_index) do nothing
     returning id, chain_id, token_address, creator_raw, occurred_at
   ), acc as (
@@ -418,7 +481,7 @@ export async function storeSplitImportSwapFees(db, source, rows, cursor) {
     let accrued = 0;
     if (rows.length) {
       const col = (k) => rows.map((r) => r[k] ?? null);
-      const result = await client.query(INSERT_SPLIT_SQL, [col("chainId"), col("txHash"), col("logIndex"), col("blockNumber"), col("occurredAt"), col("wallet"), col("tokenAddress"), col("side"), col("feeRaw"), col("feeAsset"), col("feeReceiver"), col("router"), col("source"), col("internalWallet"), col("creatorRaw"), IMPORT_CREATOR_FEE_WINDOW_DAYS]);
+      const result = await client.query(INSERT_SPLIT_SQL, [col("chainId"), col("txHash"), col("logIndex"), col("blockNumber"), col("occurredAt"), col("wallet"), col("tokenAddress"), col("side"), col("feeRaw"), col("feeAsset"), col("feeReceiver"), col("router"), col("source"), col("internalWallet"), col("creatorRaw"), IMPORT_CREATOR_FEE_WINDOW_DAYS, col("partnerId"), rows.map((r) => r.partnerRaw ?? "0")]);
       inserted = Number(result.rows?.[0]?.inserted ?? 0);
       accrued = Number(result.rows?.[0]?.accrued ?? 0);
     }
@@ -451,10 +514,10 @@ async function ingestSplitReceiver({ db, source, env, fetchImpl, dryRun, fromScr
   const scan = source.kind === "solana"
     ? await scanSolanaImportSwapFees({ source, rpc: call, cursor })
     : await scanEvmImportSwapFees({ source, rpc: call, fromBlock: cursor == null ? null : Number(cursor) });
-  const rows = scan.rows.map((row) => ({ ...row, creatorRaw: creatorHalf(row.feeRaw) }));
+  const rows = scan.rows.map((row) => ({ ...row, ...splitFee(row.feeRaw, source.partner || null) }));
   const nextCursor = source.kind === "solana" ? scan.cursor : String(scan.nextBlock);
   const stored = dryRun ? { inserted: 0, accrued: 0 } : await storeSplitImportSwapFees(db, source, rows, nextCursor);
-  const summary = { chainId: source.chainId, receiver, split: true, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: rows.length, ...stored, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };
+  const summary = { chainId: source.chainId, receiver, split: true, ...(source.partner ? { partner: source.partner.id } : {}), dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: rows.length, ...stored, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };
   log?.(summary, rows);
   return summary;
 }

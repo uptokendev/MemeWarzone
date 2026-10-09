@@ -49,7 +49,7 @@ test("owner must be a wallet on the curve, not a program account", () => {
 
 type Call = { sql: string; params: unknown[] };
 
-function fakeDb(state: { sending?: any[]; payable?: any[]; paidToday?: string; due?: { halves: string; expired: string; swept: string }; markCount?: number; held?: string[] }) {
+function fakeDb(state: { sending?: any[]; payable?: any[]; paidToday?: string; due?: { halves: string; expired: string; swept: string }; markCount?: number; held?: string[]; partners?: any[]; partnerDue?: { earned: string; paid: string } }) {
   const calls: Call[] = [];
   const db = {
     calls,
@@ -62,6 +62,8 @@ function fakeDb(state: { sending?: any[]; payable?: any[]; paidToday?: string; d
       if (s.startsWith("update public.import_creator_fees set status = 'expired'")) return { rows: [], rowCount: 0 };
       if (s.includes("as paid from public.import_fee_transfers")) return { rows: [{ paid: state.paidToday || "0" }] };
       if (s.startsWith("with owners as")) return { rows: state.payable || [] };
+      if (s.startsWith("select id, fee_account, payout_wallet from public.import_fee_partners")) return { rows: state.partners || [] };
+      if (s.includes("as earned")) return { rows: [state.partnerDue || { earned: "0", paid: "0" }] };
       if (s.includes("as halves")) return { rows: [state.due || { halves: "0", expired: "0", swept: "0" }] };
       if (s.startsWith("insert into public.import_fee_transfers")) return { rows: [{ id: 7 }], rowCount: 1 };
       if (s.startsWith("update public.import_creator_fees set status = 'paying'")) return { rows: [], rowCount: state.markCount ?? (params[1] as unknown[]).length };
@@ -71,11 +73,11 @@ function fakeDb(state: { sending?: any[]; payable?: any[]; paidToday?: string; d
   return db;
 }
 
-function fakeConnection(opts: { balance?: bigint; status?: any } = {}) {
+function fakeConnection(opts: { balance?: bigint; status?: any; balances?: Record<string, bigint> } = {}) {
   const sent: Buffer[] = [];
   return {
     sent,
-    async getTokenAccountBalance() { return { value: { amount: String(opts.balance ?? 10_000_000_000n) } }; },
+    async getTokenAccountBalance(account: PublicKey) { const b = opts.balances?.[account.toBase58()]; return { value: { amount: String(b ?? opts.balance ?? 10_000_000_000n) } }; },
     async getMinimumBalanceForRentExemption() { return 2039280; },
     async getLatestBlockhash() { return { blockhash: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG", lastValidBlockHeight: 100 }; },
     async sendRawTransaction(raw: Buffer) { sent.push(raw); return "sig"; },
@@ -153,4 +155,38 @@ test("never pays one of our own wallets or a wallet held by moderation; their ac
   assert.equal(held.payouts.length, 0);
   assert.ok(held.skipped.some((s) => /held by moderation/.test(s)));
   assert.equal(connection.sent.length, 0);
+});
+
+const PARTNER_ACCOUNT = Keypair.generate().publicKey.toBase58();
+const PARTNER_WALLET = Keypair.generate().publicKey.toBase58();
+const partnerRow = { id: "crypticpump", fee_account: PARTNER_ACCOUNT, payout_wallet: PARTNER_WALLET };
+
+test("partners: a partner account's balance first moves into the collector account, and nothing else goes out that pass", async () => {
+  const db = fakeDb({ partners: [partnerRow], payable: payable([["1", "300"]]) });
+  const connection = fakeConnection({ balances: { [PARTNER_ACCOUNT]: 900n } });
+  const out = await runImportCreatorFeePass({ db, connection, collector: Keypair.generate(), send: true, settings, now: NOW });
+  assert.deepEqual(out.consolidated.map((c) => [c.partner, c.amount]), [["crypticpump", "900"]]);
+  assert.equal(out.payouts.length, 0);
+  assert.equal(connection.sent.length, 1);
+  assert.ok(db.calls.some((c) => /insert into public.import_fee_transfers/.test(c.sql) && c.params[1] === PARTNER_ACCOUNT && c.params.includes("crypticpump")));
+});
+
+test("partners: once gathered, the partner is paid its due to its payout wallet (within caps), before our sweep", async () => {
+  const collectorKey = Keypair.generate();
+  const collectorAccount = wsolAccount(collectorKey.publicKey).toBase58();
+  const db = fakeDb({ partners: [partnerRow], partnerDue: { earned: "700", paid: "200" }, due: { halves: "1000", expired: "0", swept: "0" } });
+  const connection = fakeConnection({ balances: { [PARTNER_ACCOUNT]: 0n, [collectorAccount]: 5_000n } });
+  const out = await runImportCreatorFeePass({ db, connection, collector: collectorKey, send: true, settings: { ...settings, minPartnerPayoutLamports: 100n }, now: NOW });
+  assert.deepEqual(out.partnerPayouts.map((p) => [p.partner, p.to, p.amount]), [["crypticpump", PARTNER_WALLET, "500"]]);
+  assert.equal(out.sweep, null, "our sweep waits for a pass without payouts");
+});
+
+test("partners: below the partner minimum nothing is paid; our sweep can go", async () => {
+  const collectorKey = Keypair.generate();
+  const collectorAccount = wsolAccount(collectorKey.publicKey).toBase58();
+  const db = fakeDb({ partners: [partnerRow], partnerDue: { earned: "50", paid: "0" }, due: { halves: "400", expired: "0", swept: "0" } });
+  const connection = fakeConnection({ balances: { [PARTNER_ACCOUNT]: 0n, [collectorAccount]: 5_000n } });
+  const out = await runImportCreatorFeePass({ db, connection, collector: collectorKey, send: true, settings: { ...settings, minPartnerPayoutLamports: 100n }, now: NOW });
+  assert.equal(out.partnerPayouts.length, 0);
+  assert.equal(out.sweep?.amount, "400");
 });
