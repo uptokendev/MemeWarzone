@@ -310,7 +310,8 @@ export default function ImportedTokenPage({
   const marketDexUrl = dexLink(item.chainId, item.tokenAddress);
   const ownerDisplay = (ownerProfile?.displayName && ownerProfile.displayName.trim()) || (ownerWallet ? `${ownerWallet.slice(0, 4)}…${ownerWallet.slice(-4)}` : "");
   // Founder 2026-10-02: an imported coin's page looks like a launched coin's; only the DEX underneath differs.
-  const dexVenue = solana ? "Jupiter" : item.chainId === 4663 ? "Uniswap" : "PancakeSwap";
+  // BNB: KyberSwap over the coin's own DEX pools (api/importSwap.js); testnet 97: Topaz through the fee router.
+  const dexVenue = solana ? "Jupiter" : item.chainId === 4663 ? "Uniswap" : Number(item.chainId) === 97 ? "Topaz" : "KyberSwap";
   const holdersLabel = profile?.holders != null ? Number(profile.holders).toLocaleString() : "—";
   const shortAddress = item.tokenAddress.length > 12 ? `${item.tokenAddress.slice(0, 4)}…${item.tokenAddress.slice(-4)}` : item.tokenAddress;
   const openWalletModal = () => {

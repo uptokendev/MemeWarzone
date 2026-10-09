@@ -7,9 +7,13 @@
  *   operator (route_state.operator 2AMfRaxS..., read from chain 2026-09-25). Buy: SOL is the input
  *   mint, sell: SOL is the output mint, so one WSOL account collects both. Proven by simulation on
  *   mainnet: 0.01 SOL buy -> 50000 lamports to the fee account; a sell -> exactly quote.platformFee.
- * BNB (56): KyberSwap aggregator restricted to PancakeSwap pools (v2, v3, Infinity, legacy). The
- *   0.5% is charged in BNB inside the swap (buy: from the input, sell: from the output) and paid to
- *   the BNB ProtocolRevenueVault, which enforces the $10k operator cap and overflows to the Safe.
+ * BNB (56): KyberSwap aggregator over the on-chain AMM pools of BNB Chain (PancakeSwap, Topaz,
+ *   Uniswap, THENA, Biswap, BabyDogeSwap, ... see KYBER_BSC_POOL_SOURCES; founder 2026-10-08: an
+ *   imported coin trades wherever its pool is). Until then it was PancakeSwap pools only. The
+ *   fee is charged in BNB inside the swap (buy: from the input, sell: from the output). Until the
+ *   ImportFeeVault switch it is 0.5% to the BNB ProtocolRevenueVault (the $10k operator cap,
+ *   overflow to the Safe); from the switch (IMPORT_FEE_VAULT_56 set and IMPORT_SWAP_FEE_RECEIVER_56
+ *   equal to it) it is 1% to the ImportFeeVault, half of it the coin creator's (CO-IMP CI2).
  *
  * The API owns the fee terms: build re-checks every fee field of the quote it is handed, so the
  * app cannot be talked into a fee-free or re-routed fee swap. (A user can still call Jupiter or
@@ -39,6 +43,11 @@ export function importSwapFeeBps(chainId, env = process.env) {
   if (Number(chainId) === 101 && String(env.SOLANA_IMPORT_FEE_COLLECTOR || "").trim()) {
     return Math.max(0, Math.min(200, Number(env.IMPORT_SWAP_FEE_BPS_101 || 100)));
   }
+  // BNB: same coupling as Solana. 1% only while the Kyber fee receiver IS the ImportFeeVault, so 1%
+  // never goes to the old protocol-only vault and the ImportFeeVault never takes the old 0.5%.
+  if (Number(chainId) === 56 && bscImportFeeVault(env)) {
+    return Math.max(0, Math.min(200, Number(env.IMPORT_SWAP_FEE_BPS_56 || 100)));
+  }
   return legacy;
 }
 const SOLANA_FEE_BPS = importSwapFeeBps(101);
@@ -49,8 +58,62 @@ const JUPITER_BASE = String(
 export const BSC_NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 export const KYBER_ROUTER = "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5";
 const KYBER_BASE = "https://aggregator-api.kyberswap.com/bsc/api/v1";
-const KYBER_PANCAKE_SOURCES = "pancake,pancake-v3,pancake-infinity-cl,pancake-infinity-bin,pancake-legacy";
+/**
+ * KyberSwap liquidity sources an import swap may route through on BNB (Kyber dex ids, read from
+ * ks-setting.kyberswap.com/api/v1/dexes?chain=bsc on 2026-10-08). Until 2026-10-08 this was the five
+ * PancakeSwap ids only, so a coin whose only pool sat on Topaz, THENA, Biswap or Uniswap had no route.
+ * The restriction's intent is kept: every hop is a public on-chain AMM pool (constant product,
+ * concentrated liquidity, Solidly, Uniswap V4 / Pancake Infinity hook pools) whose price comes from
+ * the pool's own reserves. Left out on purpose: RFQ and PMM market makers (bebop, hashflow, native,
+ * pmm-*, dexalot, *-prop, metric/axima, obric, tessera, elfomofi, swaap, woofi, dodo), order books
+ * and limit orders (hanji, kyberswap-limit-order-v2), lending-backed AMMs (euler, fluid), stable,
+ * wrapper, staking and bridge sources (curve, ellipsis, wombat, nerve, synapse, aave, erc4626, wbeth,
+ * lista-stake, ...), perps (ktx) and ids we could not identify. The fee does not depend on the
+ * source (Kyber's router takes extraFee on the BNB side of the whole swap); assertBscRouteTerms
+ * checks every hop against this list by exact id.
+ */
+export const KYBER_BSC_POOL_SOURCES = Object.freeze([
+  // PancakeSwap
+  "pancake", "pancake-v3", "pancake-legacy", "pancake-infinity-cl", "pancake-infinity-bin",
+  "pancake-infinity-cl-alpha", "pancake-infinity-cl-brevis", "pancake-infinity-cl-dynamic", "pancake-infinity-cl-fairflow",
+  "pancake-infinity-cl-geniusmeme", "pancake-infinity-cl-lo", "pancake-infinity-cl-tax", "pancake-infinity-bin-brevis",
+  // Topaz (V2 Solidly + V3)
+  "topazdex-v2", "topazdex-v3",
+  // Uniswap on BNB
+  "uniswap", "uniswapv3", "uniswap-v4", "uniswap-v4-alpha", "uniswap-v4-arrakis", "uniswap-v4-clanker", "uniswap-v4-doppler",
+  "uniswap-v4-fairflow", "uniswap-v4-fee", "uniswap-v4-gluehook", "uniswap-v4-onetoken", "uniswap-v4-passthru",
+  // THENA (V1 Solidly, Fusion, Integral)
+  "thena", "thena-fusion", "thena-fusion-v3",
+  // Other AMMs with their own pools
+  "biswap", "babydogeswap", "babyswap", "bakeryswap", "apeswap", "mdex", "sushiswap", "sushiswap-v3", "squadswap", "squadswap-v2",
+  "squadswap-v3", "nomiswap", "iziswap", "9mm-pro-v2", "9mm-pro-v3", "traderjoe-v21", "maverick-v1", "maverick-v2", "owlswap-v3",
+  "sheepdex-v3", "lista-v3", "cone-v2", "dddxswap-v2", "veplus-v2", "fraxswap", "smardex", "kyberswap", "kyberswap-static", "jetswap",
+  "pantherswap", "wault", "fstsswap", "oneswap",
+  // Uniswap V2 forks
+  "alitaswap-v2", "autoshark-v2", "boxswap-v2", "bscswap-v2", "busta-v2", "butterswap-v2", "cafeswap-v2", "cheeseswap-v2",
+  "cobraswap-v2", "coinswap-v2", "daomakerswap-v2", "definix-v2", "digiswap-v2", "dooarswap-v2", "empiredex-v2", "fastswap-v2",
+  "foodcourt-v2", "gibxswap-v2", "gravis-v2", "jswap-v2", "julswap-v2", "justmoney-v2", "knightswap-v2", "kokomoswap-v2",
+  "kyotoswap-v2", "latte-v2", "marsswap-v2", "mochiswap-v2", "narwhalswap-v2", "ninjaswap-v2", "nyanswop-v2", "orbitalswap-v2",
+  "padswap-v2", "pandaswap-v2", "paraluni-v2", "pinkswap-v2", "planetfinance-v2", "pls2e-v2", "pureswap-v2", "radioshack-v2",
+  "safeswap-v2", "saitaswap-v2", "sakeswap-v2", "shibance-v2", "shibanova-v2", "swych-v2", "thugswap-v2", "twindex-v2",
+  "w3swap-v2", "wardenswap-v2", "wineryswap-v2", "youswap-v2",
+  // Launchpad bonding curves Kyber executes on chain
+  "flap", "genius-fun", "loong-fun", "printr",
+]);
+const KYBER_BSC_POOL_SOURCE_SET = new Set(KYBER_BSC_POOL_SOURCES);
+// 4011 "token not found": Kyber has not indexed the token (read 2026-10-09 for a coin whose only pool is new, e.g. a
+// MemeWarzone coin right after graduation). It has no Kyber route, the same as 4008 / 40011.
+const KYBER_NO_ROUTE_CODES = new Set([4008, 4011, 40011]);
 const BSC_FEE_RECEIVER = String(process.env.IMPORT_SWAP_FEE_RECEIVER_56 || "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c").trim().toLowerCase();
+
+/** The BNB ImportFeeVault while the switch is on (IMPORT_FEE_VAULT_56 set and the Kyber fee receiver equal to it), else "". */
+export function bscImportFeeVault(env = process.env) {
+  const vault = String(env.IMPORT_FEE_VAULT_56 || "").trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(vault)) return "";
+  return String(env.IMPORT_SWAP_FEE_RECEIVER_56 || "").trim().toLowerCase() === vault ? vault : "";
+}
+const BSC_FEE_BPS = importSwapFeeBps(56);
+const BSC_IMPORT_FEE_VAULT = bscImportFeeVault();
 
 const MAX_SLIPPAGE_BPS = 1500;
 
@@ -122,6 +185,7 @@ async function fetchJson(url, init = {}, label = "request") {
     if (!response.ok) {
       const error = new Error(`${label} failed (${response.status}): ${String(body?.error || body?.message || "").slice(0, 200)}`);
       error.status = response.status === 400 || response.status === 404 ? 422 : 502;
+      error.upstreamCode = body?.code ?? null;
       throw error;
     }
     return body;
@@ -281,8 +345,8 @@ function bscPair(token, side) {
   return side === "buy" ? { tokenIn: BSC_NATIVE, tokenOut: token } : { tokenIn: token, tokenOut: BSC_NATIVE };
 }
 
-/** Throws unless the route is exactly the swap we fee: BNB<->token, our fee in BNB to the vault. */
-export function assertBscRouteTerms(summary, { token, side, feeBps = IMPORT_SWAP_FEE_BPS, feeReceiver = BSC_FEE_RECEIVER }) {
+/** Throws unless the route is exactly the swap we fee: BNB<->token, our fee in BNB to the vault, every hop a pool source we allow. */
+export function assertBscRouteTerms(summary, { token, side, feeBps = BSC_FEE_BPS, feeReceiver = BSC_FEE_RECEIVER }) {
   const expected = bscPair(token, side);
   if (!summary || typeof summary !== "object") throw Object.assign(new Error("Missing Kyber route"), { status: 400 });
   if (String(summary.tokenIn || "").toLowerCase() !== expected.tokenIn.toLowerCase() || String(summary.tokenOut || "").toLowerCase() !== expected.tokenOut.toLowerCase()) {
@@ -294,8 +358,8 @@ export function assertBscRouteTerms(summary, { token, side, feeBps = IMPORT_SWAP
     throw Object.assign(new Error("Route does not carry the platform fee"), { status: 400 });
   }
   const exchanges = (summary.route || []).flat().map((hop) => String(hop?.exchange || ""));
-  if (!exchanges.length || exchanges.some((exchange) => !exchange.startsWith("pancake"))) {
-    throw Object.assign(new Error("Route leaves PancakeSwap pools"), { status: 400 });
+  if (!exchanges.length || exchanges.some((exchange) => !KYBER_BSC_POOL_SOURCE_SET.has(exchange))) {
+    throw Object.assign(new Error("Route leaves the on-chain DEX pools"), { status: 400 });
   }
 }
 
@@ -305,27 +369,36 @@ async function bscQuote({ token, side, amountRaw }) {
     tokenIn,
     tokenOut,
     amountIn: amountRaw.toString(),
-    includedSources: KYBER_PANCAKE_SOURCES,
-    feeAmount: String(IMPORT_SWAP_FEE_BPS),
+    includedSources: KYBER_BSC_POOL_SOURCES.join(","),
+    feeAmount: String(BSC_FEE_BPS),
     chargeFeeBy: side === "buy" ? "currency_in" : "currency_out",
     isInBps: "true",
     feeReceiver: BSC_FEE_RECEIVER,
   });
-  const body = await fetchJson(`${KYBER_BASE}/routes?${params}`, { headers: kyberHeaders() }, "Kyber route");
+  let body;
+  try {
+    body = await fetchJson(`${KYBER_BASE}/routes?${params}`, { headers: kyberHeaders() }, "Kyber route");
+  } catch (error) {
+    // Kyber answers "no route" with HTTP 400 and code 4008 (route not found), 40011 (no pool among the sources) or 4011 (token not indexed).
+    // Tag it IMPORT_SWAP_NO_ROUTE so the app tries the coin's Topaz pool through the fee router (never fee-free).
+    if (KYBER_NO_ROUTE_CODES.has(Number(error?.upstreamCode))) throw Object.assign(new Error("No DEX route for this token"), { status: 422, code: "IMPORT_SWAP_NO_ROUTE" });
+    throw error;
+  }
   const summary = body?.data?.routeSummary;
-  if (!summary?.amountOut) throw Object.assign(new Error("No PancakeSwap route for this token"), { status: 422, code: "IMPORT_SWAP_NO_ROUTE" });
+  if (!summary?.amountOut) throw Object.assign(new Error("No DEX route for this token"), { status: 422, code: "IMPORT_SWAP_NO_ROUTE" });
   assertBscRouteTerms(summary, { token, side });
   const amountIn = BigInt(summary.amountIn);
   return {
     chainId: 56,
-    provider: "kyberswap-pancakeswap",
+    provider: "kyberswap",
     side,
     amountIn: summary.amountIn,
     amountOut: summary.amountOut,
     minAmountOut: null,
     priceImpactPct: null,
-    feeBps: IMPORT_SWAP_FEE_BPS,
-    feeNativeRaw: side === "buy" ? ((amountIn * BigInt(IMPORT_SWAP_FEE_BPS)) / 10_000n).toString() : null,
+    feeBps: BSC_FEE_BPS,
+    feeNativeRaw: side === "buy" ? ((amountIn * BigInt(BSC_FEE_BPS)) / 10_000n).toString() : null,
+    creatorShareBps: BSC_IMPORT_FEE_VAULT ? Math.floor(BSC_FEE_BPS / 2) : 0,
     route: (summary.route || []).flat().map((hop) => hop?.exchange).filter(Boolean),
     quote: summary,
   };
@@ -346,7 +419,7 @@ async function bscBuild({ token, side, wallet, quote, slippage, partner = null }
   if (side === "buy" && String(value) !== String(quote.amountIn)) throw Object.assign(new Error("Kyber changed the swap amount"), { status: 502 });
   const partnerRow = await readPartner(partner, 56);
   if (partnerRow) await rememberPartnerSwap({ fingerprint: evmFingerprint(KYBER_ROUTER, data.data, value), chainId: 56, partnerId: partnerRow.id, wallet, token });
-  return { chainId: 56, provider: "kyberswap-pancakeswap", to: KYBER_ROUTER, data: data.data, value, amountOut: data.amountOut, spender: KYBER_ROUTER };
+  return { chainId: 56, provider: "kyberswap", to: KYBER_ROUTER, data: data.data, value, amountOut: data.amountOut, spender: KYBER_ROUTER };
 }
 
 function readSwapInput(body) {

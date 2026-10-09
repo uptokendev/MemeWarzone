@@ -162,7 +162,48 @@ function finalizeFlow(router) {
   };
 }
 
-function mainnetRegistry(chainId) {
+/**
+ * CO-IMP rev. 2 (docs/evm-launch/CO-IMPORT-SWAP-FEE.md): the import fee is 1% to the chain's ImportFeeVault only when
+ * IMPORT_FEE_VAULT_<id> is set and IMPORT_SWAP_FEE_RECEIVER_<id> equals it (the same coupling as importSwap.js /
+ * robinhoodImportSwap.mjs). Returns the vault, or "" when the switch is off (the entries below stay as they were).
+ */
+function importSplitVault(chainId, env) {
+  const vault = String(env?.[`IMPORT_FEE_VAULT_${chainId}`] || "").trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(vault)) return "";
+  return String(env?.[`IMPORT_SWAP_FEE_RECEIVER_${chainId}`] || "").trim().toLowerCase() === vault ? vault : "";
+}
+
+function importSplitFlow(chainId, vault, env) {
+  const bnb = chainId === 56;
+  const raw = Number(env?.[`IMPORT_SWAP_FEE_BPS_${chainId}`] || 100);
+  const bps = Math.max(1, Math.min(200, Number.isFinite(raw) ? Math.floor(raw) : 100));
+  const pct = `${bps / 100}%`;
+  const half = `${bps / 200}%`;
+  return {
+    id: "evm_import_swaps",
+    label: "Imported-coin swaps",
+    trigger: bnb
+      ? "Swap from an imported coin page (KyberSwap on PancakeSwap pools; Topaz-only coins through ImportSwapFeeRouter)"
+      : "Swap from an imported coin page (Uniswap V3 pools)",
+    router: bnb
+      ? "KyberSwap aggregator fee (feeReceiver checked by the API); ImportSwapFeeRouter for Topaz-only coins"
+      : "Universal Router 0x8876…0904 PAY_PORTION",
+    totalFee: `${pct} (IMPORT_SWAP_FEE_BPS_${chainId} ${bps}) to the ImportFeeVault ${vault}, always in ${bnb ? "BNB" : "ETH"}`,
+    status: "live, recorded",
+    splits: [
+      { destinationId: "protocol_vault", share: `${half} of the swap (half of the fee), paid from the ImportFeeVault by the import payout operator` },
+    ],
+    citation: bnb
+      ? "frontend/api/importSwap.js (importSwapFeeBps 56, bscImportFeeVault); frontend/api/lib/financeImportSwapFees.js; docs/evm-launch/CO-IMPORT-SWAP-FEE.md"
+      : "frontend/src/lib/robinhoodImportSwap.mjs (importSwapFeeTerms4663); frontend/api/lib/financeImportSwapFees.js; docs/evm-launch/CO-IMPORT-SWAP-FEE.md",
+    notes: [
+      `The other ${half} is the coin creator's: it waits in the vault (import_creator_fees, 90 days per trade) and is paid automatically to the verified owner 7 days after the claim; unclaimed halves expire to the protocol wallet.`,
+      `Recorded from the vault's Deposit events (finance_import_swap_fees with creator_raw); revenue lane Import swaps counts fee minus the creator half.`,
+    ],
+  };
+}
+
+function mainnetRegistry(chainId, env = process.env) {
   const a = MAINNET[chainId];
   const network = EVM_FEE_ROUTING_CHAINS[chainId];
   const rec = a.record;
@@ -304,7 +345,7 @@ function mainnetRegistry(chainId) {
       citation: `contracts/WarzoneSponsorshipRouterV1.sol:23-24,181-182; ${rec}/mainnet.sponsorship-v1.json`,
       notes: ["Revenue lane: sponsorships (marketing 20% + protocol 10% of confirmed sponsorship_payments). No refund path in the router."],
     },
-    chainId === 56 ? {
+    importSplitVault(chainId, env) ? importSplitFlow(chainId, importSplitVault(chainId, env), env) : chainId === 56 ? {
       id: "evm_import_swaps",
       label: "Imported-coin swaps",
       trigger: "Swap from an imported coin page (KyberSwap, PancakeSwap pools only)",
@@ -416,8 +457,8 @@ export function evmMainnetVoteAddresses(chainId) {
   return a ? { voteTreasury: a.upvote, protocolRevenueVault: a.protocol } : null;
 }
 
-export function evmFeeRoutingRegistry(chainId) {
-  if (MAINNET[chainId]) return mainnetRegistry(chainId);
+export function evmFeeRoutingRegistry(chainId, env = process.env) {
+  if (MAINNET[chainId]) return mainnetRegistry(chainId, env);
   if (TESTNET_ROUTERS[chainId]) return testnetRegistry(chainId);
   throw new Error(`No EVM fee routing registry for chain ${chainId}.`);
 }

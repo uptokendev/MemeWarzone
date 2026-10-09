@@ -14,6 +14,7 @@ import { startSolanaIndexerLoop } from "./solanaIndexer.js";
 import { startSolanaLpHarvestLoop } from "./solanaLpHarvestLoop.js";
 import { startProtocolForwarderKeeper } from "./protocolForwarderKeeper.js";
 import { startImportCreatorFeeWorker } from "./importCreatorFeeWorker.js";
+import { startImportCreatorFeeEvmWorker } from "./importCreatorFeeEvmWorker.js";
 import { startRpcUsageLog } from "./rpcUsage.js";
 
 // One [rpc-usage] line per RPC_USAGE_LOG_MINUTES (default 15) with the requests per chain and method.
@@ -29,6 +30,8 @@ startEvmGraduationKeeperWorker();
 startEvmCreatorChoiceWorker();
 // Off unless IMPORT_FEE_WORKER_ENABLED; dry run unless IMPORT_FEE_PAYOUT_SEND.
 startImportCreatorFeeWorker();
+// EVM side (56 / 4663 / 97 / 46630): off unless IMPORT_FEE_EVM_WORKER_ENABLED; dry run unless IMPORT_FEE_PAYOUT_SEND.
+void startImportCreatorFeeEvmWorker().catch((error) => console.error("[import-fees-evm] start failed", error));
 // Off unless PROTOCOL_FORWARDER_KEEPER=dry|send; never blocks startup (own timers, errors stay in its status).
 void startProtocolForwarderKeeper().catch((error) => console.error("[forwarder-keeper] start failed", error));
 startMeteoraSwapIndexerLoop();

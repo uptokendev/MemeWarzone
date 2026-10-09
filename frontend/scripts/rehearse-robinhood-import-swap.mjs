@@ -1,17 +1,24 @@
 /**
- * Rehearses the Robinhood import swap (Universal Router + 0.5% fee) on an anvil fork of Robinhood
+ * Rehearses the Robinhood import swap (Universal Router + platform fee) on an anvil fork of Robinhood
  * mainnet with a local test wallet: a real buy and a real sell through src/lib/robinhoodImportSwap.mjs,
  * checked against the balances that moved. Never sends to mainnet.
+ * Fee terms come from the module (importSwapFeeTerms4663): 0.5% to the ProtocolRevenueVault, or 1% to
+ * the ImportFeeVault when IMPORT_FEE_VAULT_4663 is set and IMPORT_SWAP_FEE_RECEIVER_4663 equals it
+ * (the vault must exist on the fork: deploy it there first with scripts/deploy-import-fee-vault.ts).
  *   anvil --fork-url https://rpc.mainnet.chain.robinhood.com --port 8547 &
  *   FORK_RPC=http://127.0.0.1:8547 node scripts/rehearse-robinhood-import-swap.mjs [token]
  */
 import { Contract, JsonRpcProvider, Wallet, formatEther, parseEther } from "ethers";
 import {
-  IMPORT_SWAP_FEE_RECEIVER_4663,
+  activeImportSwapFeeTerms4663,
   executeImportSwap4663,
   importSwapFee,
   quoteImportSwap4663,
 } from "../src/lib/robinhoodImportSwap.mjs";
+
+const terms = activeImportSwapFeeTerms4663();
+const feeLabel = `${terms.feeBps / 100}%`;
+console.log(`fee terms: ${feeLabel} to ${terms.feeReceiver}${terms.split ? " (ImportFeeVault, half to the creator)" : " (ProtocolRevenueVault)"}`);
 
 const rpc = process.env.FORK_RPC || "http://127.0.0.1:8547";
 const token = process.argv[2] || "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C"; // stand-in with a WETH V3 pool
@@ -27,12 +34,14 @@ console.log(`fork of 4663 at block ${head} (live ${live})`);
 const wallet = Wallet.createRandom().connect(provider);
 await provider.send("anvil_setBalance", [wallet.address, "0x" + parseEther("1").toString(16)]);
 const erc20 = new Contract(token, ["function balanceOf(address) view returns (uint256)"], provider);
-// The vault forwards ETH on receive(), so its balance never moves: read the fee off the trace.
+// Read the fee off the trace: every ETH call into the fee receiver. (The ProtocolRevenueVault forwards
+// part of what it receives, so its balance is not a measure; the ImportFeeVault keeps it. The trace
+// works for both.)
 async function feePaid(hash) {
   const trace = await provider.send("debug_traceTransaction", [hash, { tracer: "callTracer" }]);
   let total = 0n;
   const walk = (call) => {
-    if (String(call.to || "").toLowerCase() === IMPORT_SWAP_FEE_RECEIVER_4663.toLowerCase() && call.value) total += BigInt(call.value);
+    if (String(call.to || "").toLowerCase() === terms.feeReceiver.toLowerCase() && call.value) total += BigInt(call.value);
     for (const child of call.calls || []) walk(child);
   };
   walk(trace);
@@ -54,7 +63,7 @@ const t1 = await erc20.balanceOf(wallet.address);
 const e1 = await provider.getBalance(wallet.address);
 const gasB = rb.gasUsed * rb.gasPrice;
 const feeB = await feePaid(rb.hash);
-check("buy: vault received exactly 0.5% of the ETH in", feeB === importSwapFee(buyIn), `${formatEther(feeB)} ETH`);
+check(`buy: fee receiver got exactly ${feeLabel} of the ETH in`, feeB === importSwapFee(buyIn, terms.feeBps), `${formatEther(feeB)} ETH`);
 check("buy: wallet paid the amount in plus gas, nothing else", e0 - e1 === buyIn + gasB);
 check("buy: tokens received >= quoted minimum", t1 - t0 >= qb.minOut, `${t1 - t0} vs min ${qb.minOut} (quoted ${qb.amountOut})`);
 console.log(`buy gas ${rb.gasUsed}`);
@@ -78,8 +87,8 @@ const gasS = blockTxs.reduce((sum, r) => sum + r.gasUsed * r.gasPrice, 0n);
 const received = e3 - e2 + gasS;
 const gross = received + fee;
 check("sell: tokens left the wallet, exactly the amount sold", t2 - t3 === sellIn);
-check("sell: vault received 0.5% of the gross ETH out", fee === importSwapFee(gross), `${formatEther(fee)} ETH of ${formatEther(gross)}`);
-check("sell: wallet received >= quoted minimum after fee", received >= qs.minOut - importSwapFee(qs.minOut), `${formatEther(received)} ETH`);
+check(`sell: fee receiver got ${feeLabel} of the gross ETH out`, fee === importSwapFee(gross, terms.feeBps), `${formatEther(fee)} ETH of ${formatEther(gross)}`);
+check("sell: wallet received >= quoted minimum after fee", received >= qs.minOut - importSwapFee(qs.minOut, terms.feeBps), `${formatEther(received)} ETH`);
 check("sell: approvals + swap took 2 transactions (approve to Permit2, swap)", blockTxs.length === 2, `${blockTxs.length}`);
 
 console.log(failed ? `REHEARSAL FAILED (${failed})` : "REHEARSAL PASS");

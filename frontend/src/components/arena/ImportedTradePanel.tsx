@@ -10,14 +10,8 @@ import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { getNativeSymbol, isRobinhoodChainId, isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
-import {
-  executeTopazBuy,
-  executeTopazSell,
-  ensureTopazSellAllowance,
-  quoteTopazBuy,
-  quoteTopazSell,
-  resolveImportedTopazRoute,
-} from "@/lib/arenaImportedTopaz";
+import { resolveImportedTopazRoute } from "@/lib/arenaImportedTopaz";
+import { NO_IMPORT_SWAP_ROUTE, executeFeeRouterTrade, importSwapFeeRouterAddress, quoteFeeRouterTrade } from "@/lib/importSwapFeeRouter.mjs";
 import {
   executeRobinhoodV3Buy,
   executeRobinhoodV3Sell,
@@ -27,10 +21,11 @@ import {
   resolveImportedRobinhoodV3Route,
 } from "@/lib/arenaImportedRobinhood";
 import type { ArenaImportItem } from "@/lib/arenaImports";
-import { executeImportSwap4663, quoteImportSwap4663, resolveImportPool } from "@/lib/robinhoodImportSwap.mjs";
+import { activeImportSwapFeeTerms4663, executeImportSwap4663, quoteImportSwap4663, resolveImportPool } from "@/lib/robinhoodImportSwap.mjs";
+import { assertGraduatedImportQuote, graduatedImportRouteEnabled } from "@/lib/graduatedEvmTradeRoute.mjs";
 import {
-  IMPORT_SWAP_FEE_LABEL,
   importSwapFeeLabel,
+  importSwapVenueLabel,
   executeBscImportSwap,
   executeSolanaImportSwap,
   quoteImportSwap,
@@ -74,13 +69,18 @@ export function ImportedTradePanel({
   const solana = isSolanaChainId(item.chainId);
   const robinhood = isRobinhoodChainId(item.chainId);
   const native = getNativeSymbol(item.chainId);
-  // Imports on Solana (Jupiter) and BNB mainnet (PancakeSwap via KyberSwap) swap through the
-  // aggregator path with the 0.5% platform fee; Robinhood keeps its Uniswap V3 route.
+  // Imports on Solana (Jupiter) and BNB mainnet (KyberSwap over the coin's DEX pools: PancakeSwap,
+  // Topaz, Uniswap, THENA, Biswap, ...) swap through the aggregator path with the platform fee the API quotes; Robinhood keeps its Uniswap V3 route.
   const aggregated = solana || Number(item.chainId) === 56;
   const readProvider = importReadProvider(item.chainId);
-  // Robinhood mainnet imports swap through Uniswap's Universal Router with the same 0.5% platform
-  // fee as BNB and Solana (founder, 2026-10-03); the testnet keeps the fee-less adapter route.
+  // Robinhood mainnet imports swap through Uniswap's Universal Router with the platform fee of
+  // robinhoodImportSwap.mjs (founder, 2026-10-03); the testnet keeps the fee-less adapter route.
   const robinhoodFee = Number(item.chainId) === 4663;
+  // BNB coins with no Kyber route (IMPORT_SWAP_NO_ROUTE on 56; always on testnet 97, where
+  // Kyber does not exist) trade their Topaz pool through ImportSwapFeeRouter, with the fee. Without a
+  // configured router there is no trade: never the fee-free Topaz swap (CO-IMP rev 2 CI4).
+  const bscTestnet = Number(item.chainId) === 97;
+  const feeRouter = importSwapFeeRouterAddress(item.chainId) as string | null;
   const scanDecimals = (item.scan as { decimals?: number } | undefined)?.decimals;
   const [chainDecimals, setChainDecimals] = useState<number | null>(null);
   const decimals = Number(chainDecimals ?? scanDecimals ?? (solana ? 9 : 18));
@@ -124,7 +124,7 @@ export function ImportedTradePanel({
 
   // Live quote: what you receive, the route and the fee, before you sign.
   useEffect(() => {
-    if (!aggregated && !robinhood) return;
+    if (!aggregated && !robinhood && !bscTestnet) return;
     const raw = amountRaw();
     setPreviewError(null);
     if (!raw) {
@@ -133,11 +133,12 @@ export function ImportedTradePanel({
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      (robinhood ? quoteRobinhoodPreview(raw) : quoteImportSwap({ chainId: item.chainId, token: item.tokenAddress, side, amountRaw: raw, signal: controller.signal }))
+      (robinhood ? quoteRobinhoodPreview(raw) : bscTestnet ? quoteFeeRouterPreview(raw) : quoteBscOrFeeRouterPreview(raw, controller.signal))
+        .then(checkQuote)
         .then((next) => {
           if (controller.signal.aborted) return;
           setPreview(next);
-          setNoAggregatorRoute(false);
+          setNoAggregatorRoute(next.provider === "import-swap-fee-router");
         })
         .catch((error: Error & { code?: string }) => {
           if (controller.signal.aborted) return;
@@ -151,7 +152,44 @@ export function ImportedTradePanel({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aggregated, robinhood, amount, side, decimals, item.chainId, item.tokenAddress, tokenMode, estNativeRaw]);
+  }, [aggregated, robinhood, bscTestnet, feeRouter, amount, side, decimals, item.chainId, item.tokenAddress, tokenMode, estNativeRaw]);
+
+  /** A graduated coin trades only on a quote with the creator's half of the fee; an import takes any quote the route priced. */
+  function checkQuote<Q extends { feeBps?: number; creatorShareBps?: number }>(quote: Q): Q {
+    return graduated ? (assertGraduatedImportQuote(quote) as Q) : quote;
+  }
+
+  /** BNB: Kyber first; with no Kyber route, the fee router's Topaz quote when a router is configured. */
+  async function quoteBscOrFeeRouterPreview(raw: bigint, signal: AbortSignal): Promise<ImportSwapQuote> {
+    try {
+      return await quoteImportSwap({ chainId: item.chainId, token: item.tokenAddress, side, amountRaw: raw, signal });
+    } catch (error) {
+      if ((error as { code?: string })?.code === "IMPORT_SWAP_NO_ROUTE" && Number(item.chainId) === 56 && feeRouter) return quoteFeeRouterPreview(raw);
+      throw error;
+    }
+  }
+
+  /** Topaz through ImportSwapFeeRouter, same preview shape; amountOut is after the fee. */
+  async function quoteFeeRouterPreview(raw: bigint): Promise<ImportSwapQuote> {
+    if (!feeRouter || !readProvider) throw Object.assign(new Error(NO_IMPORT_SWAP_ROUTE), { code: "IMPORT_SWAP_NO_ROUTE" });
+    const resolved = await resolveImportedTopazRoute({ provider: readProvider, tokenAddress: item.tokenAddress, chainId: item.chainId });
+    if (!resolved) throw Object.assign(new Error(NO_IMPORT_SWAP_ROUTE), { code: "IMPORT_SWAP_NO_ROUTE" });
+    const quote = await quoteFeeRouterTrade({ provider: readProvider, routerAddress: feeRouter, resolved, side, amountIn: raw, slippageBps: 100 });
+    return {
+      chainId: item.chainId,
+      provider: "import-swap-fee-router",
+      side,
+      amountIn: quote.amountIn.toString(),
+      amountOut: quote.amountOut.toString(),
+      minAmountOut: quote.minOut.toString(),
+      priceImpactPct: null,
+      feeBps: quote.feeBps,
+      creatorShareBps: quote.creatorShareBps,
+      feeNativeRaw: quote.feeWei.toString(),
+      route: [`Topaz ${resolved.pairAddress.slice(0, 10)}…`],
+      quote: null,
+    };
+  }
 
   // Token-amount buys: native amount for about `amount` tokens. A small probe quote gives the rate, two more
   // quotes correct for price impact and the fee. Only routes whose buy reads amountRaw() offer the switch.
@@ -222,7 +260,8 @@ export function ImportedTradePanel({
         amountOut: quote.amountOut.toString(),
         minAmountOut: quote.minOut.toString(),
         priceImpactPct: null,
-        feeBps: 50,
+        feeBps: quote.feeBps,
+        creatorShareBps: quote.creatorShareBps,
         feeNativeRaw: quote.feeWei.toString(),
         route: [`Uniswap V3 ${(quote.route.fee / 10000).toFixed(2)}%`],
         quote: null,
@@ -255,7 +294,7 @@ export function ImportedTradePanel({
           return;
         }
         if (Number(item.chainId) === 56) {
-          if (!cancelled) setPoolLabel("PancakeSwap");
+          if (!cancelled) setPoolLabel("KyberSwap");
           return;
         }
         if (!readProvider) {
@@ -298,6 +337,13 @@ export function ImportedTradePanel({
       </p>
     );
   }
+  if (bscTestnet && !feeRouter) {
+    return (
+      <p className="text-sm text-muted-foreground" data-import-no-fee-route="true">
+        {NO_IMPORT_SWAP_ROUTE}
+      </p>
+    );
+  }
   if (!poolLabel) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -316,6 +362,7 @@ export function ImportedTradePanel({
     try {
       const amountInRaw = amountRaw();
       if (!amountInRaw) throw new Error("Enter an amount.");
+      if (graduated && !graduatedImportRouteEnabled(item.chainId)) throw new Error("Swaps for this coin are paused while the fee route is updated. Try again later.");
       if (solana) {
         if (!solanaAccount) throw new Error("Connect the Solana wallet first.");
         // A graduated Solana coin (graduatedSolanaTradeRoute.mjs): only while its switch is on, only on a split quote.
@@ -341,10 +388,11 @@ export function ImportedTradePanel({
         tradeAccount = switched.account || wallet.account;
       }
       if (Number(item.chainId) === 56 && !noAggregatorRoute) {
-        const quote = await quoteImportSwap({ chainId: 56, token: item.tokenAddress, side, amountRaw: amountInRaw });
+        const quote = checkQuote(await quoteImportSwap({ chainId: 56, token: item.tokenAddress, side, amountRaw: amountInRaw }));
         const hash = await executeBscImportSwap({ token: item.tokenAddress, side, account: tradeAccount, signer: tradeSigner, quote, amountRaw: amountInRaw });
         toast.success(`Swap confirmed: ${hash.slice(0, 10)}…`);
         announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw, txHash: hash });
+        onTraded?.({ side, txHash: hash, maker: tradeAccount });
         setAmount("");
         return;
       }
@@ -352,14 +400,17 @@ export function ImportedTradePanel({
       if (robinhoodFee) {
         // Quote on the read RPC, then one Universal Router transaction (a sell adds a signed Permit2
         // permit and, the first time, an exact ERC20 approval to Permit2).
-        const quote = await quoteImportSwap4663({ provider: reads, token: item.tokenAddress, side, amountIn: amountInRaw, slippageBps: 100 });
-        await executeImportSwap4663({ signer: tradeSigner, quote, token: item.tokenAddress });
+        const quote = checkQuote(await quoteImportSwap4663({ provider: reads, token: item.tokenAddress, side, amountIn: amountInRaw, slippageBps: 100 }));
+        const receipt = await executeImportSwap4663({ signer: tradeSigner, quote, token: item.tokenAddress });
         toast.success("Swap confirmed.");
         announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw });
+        onTraded?.({ side, txHash: receipt?.hash ?? null, maker: tradeAccount });
         setAmount("");
         return;
       }
       if (robinhood) {
+        // The fee-less adapter route (testnet imports) is never a graduated coin's route.
+        if (graduated) throw new Error("Swaps for this coin are paused while the fee route is updated. Try again later.");
         const route = await resolveImportedRobinhoodV3Route({
           provider: reads,
           tokenAddress: item.tokenAddress,
@@ -383,40 +434,21 @@ export function ImportedTradePanel({
         setAmount("");
         return;
       }
+      // BNB with no Kyber route: the coin's Topaz pool through ImportSwapFeeRouter, never fee-free.
+      if (!feeRouter) throw new Error(NO_IMPORT_SWAP_ROUTE);
       const route = await resolveImportedTopazRoute({
         provider: reads,
         tokenAddress: item.tokenAddress,
         chainId: item.chainId,
       });
-      if (!route) throw new Error("Topaz pool is not available.");
-      if (side === "buy") {
-        const quote = await quoteTopazBuy({
-          provider: reads,
-          resolved: route,
-          nativeAmountInRaw: ethers.parseEther(String(raw)),
-          slippageBps: 100,
-        });
-        const tx = await executeTopazBuy({ signer: tradeSigner, recipient: tradeAccount, quote });
-        await tx.wait();
-      } else {
-        const tokenAmount = ethers.parseUnits(String(raw), decimals);
-        await ensureTopazSellAllowance({
-          signer: tradeSigner,
-          owner: tradeAccount,
-          resolved: route,
-          tokenAmountRaw: tokenAmount,
-        });
-        const quote = await quoteTopazSell({
-          provider: reads,
-          resolved: route,
-          tokenAmountInRaw: tokenAmount,
-          slippageBps: 100,
-        });
-        const tx = await executeTopazSell({ signer: tradeSigner, recipient: tradeAccount, quote });
-        await tx.wait();
-      }
-      toast.success("Swap confirmed.");
-      announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw });
+      if (!route) throw new Error(NO_IMPORT_SWAP_ROUTE);
+      const quote = checkQuote(await quoteFeeRouterTrade({ provider: reads, routerAddress: feeRouter, resolved: route, side, amountIn: amountInRaw, slippageBps: 100 }));
+      const hash = await executeFeeRouterTrade({ signer: tradeSigner, account: tradeAccount, quote });
+      toast.success(`Swap confirmed: ${hash.slice(0, 10)}…`);
+      announceImportTrade({ chainId: item.chainId, tokenAddress: item.tokenAddress, side, maker: tradeAccount, amount: raw, txHash: hash });
+      onTraded?.({ side, txHash: hash, maker: tradeAccount });
+      setAmount("");
+      return;
     } catch (error) {
       toast.error(String((error as Error)?.message || "Swap failed."));
     } finally {
@@ -425,13 +457,21 @@ export function ImportedTradePanel({
   }
 
   // UI redesign: the same panel look as a launched coin (founder: "we shouldn't see any difference");
-  // the route underneath (Jupiter / PancakeSwap via KyberSwap / Uniswap V3) is unchanged.
-  const dex = aggregated && !noAggregatorRoute ? (solana ? "Jupiter" : "PancakeSwap") : robinhood ? "Uniswap" : poolLabel || "the DEX";
+  // the route underneath (Jupiter / KyberSwap over the coin's DEX pools / Uniswap V3) is unchanged.
+  // BNB without a Kyber route and without the fee router: no trade at all.
+  const noFeeRoute = !feeRouter && Number(item.chainId) === 56 && noAggregatorRoute;
+  const feeRouted = Boolean(feeRouter) && (bscTestnet || (Number(item.chainId) === 56 && noAggregatorRoute));
+  // BNB via Kyber: the DEX names of the quoted route (the coin's own pool), KyberSwap until a quote is in.
+  const kyberRoute = !solana && preview?.provider === "kyberswap";
+  const bscVenues = kyberRoute && preview ? Array.from(new Set(preview.route.map(importSwapVenueLabel))) : [];
+  const routeLabels = preview ? (kyberRoute ? bscVenues : Array.from(new Set(preview.route))) : [];
+  const dex = aggregated && !noAggregatorRoute ? (solana ? "Jupiter" : bscVenues.length ? bscVenues.join(" + ") : "KyberSwap") : feeRouted ? "Topaz" : robinhood ? "Uniswap" : poolLabel || "the DEX";
   const unit = side === "buy" && !tokenMode ? native : item.symbol || "token";
   const nativeDecimals = solana ? 9 : 18;
   const fmt = (raw: string | bigint, units: number, digits: number) => Number(ethers.formatUnits(raw, units)).toLocaleString(undefined, { maximumFractionDigits: digits });
-  const quoted = (aggregated && !noAggregatorRoute) || robinhoodFee;
-  const feeLabel = preview ? importSwapFeeLabel(preview.feeBps) : robinhoodFee ? IMPORT_SWAP_FEE_LABEL : null;
+  const quoted = (aggregated && !noAggregatorRoute) || robinhoodFee || feeRouted;
+  // The fee chip reads the quote's feeBps; before a quote, Robinhood shows its configured terms.
+  const feeLabel = preview ? importSwapFeeLabel(preview.feeBps) : robinhoodFee ? importSwapFeeLabel(activeImportSwapFeeTerms4663().feeBps) : null;
   const row = "flex items-center justify-between gap-2";
   return (
     <div className="flex flex-col gap-3.5 font-mw-body text-mw-text">
@@ -463,10 +503,10 @@ export function ImportedTradePanel({
             </Button>
           ) : (
             <span className="min-w-0 truncate text-xs text-mw-muted">
-              {aggregated && !noAggregatorRoute ? `Best price via ${solana ? "Jupiter" : "PancakeSwap"}` : `Pool ${poolLabel || "resolving…"}`}
+              {aggregated && !noAggregatorRoute ? `Best price via ${solana ? "Jupiter" : "KyberSwap"}` : `Pool ${feeRouted && poolLabel === "KyberSwap" ? "Topaz" : poolLabel || "resolving…"}`}
             </span>
           )}
-          {aggregated || robinhood ? <span className="whitespace-nowrap text-xs text-mw-muted">Slippage: 1%</span> : null}
+          {aggregated || robinhood || bscTestnet ? <span className="whitespace-nowrap text-xs text-mw-muted">Slippage: 1%</span> : null}
         </div>
         <div className="relative">
           <input
@@ -503,7 +543,7 @@ export function ImportedTradePanel({
           <div className={row}>
             <span className="text-mw-muted">Receive</span>
             <span className="font-mw-mono font-bold text-mw-text">
-              {(aggregated || robinhood) && preview
+              {(aggregated || robinhood || bscTestnet) && preview
                 ? side === "buy"
                   ? `${fmt(preview.amountOut, decimals, 2)} ${item.symbol || "tokens"} (est.)`
                   : `${fmt(preview.amountOut, nativeDecimals, 6)} ${native} (est.)`
@@ -525,18 +565,23 @@ export function ImportedTradePanel({
           {preview?.route.length ? (
             <div className={row}>
               <span className="text-mw-muted">Route</span>
-              <span className="truncate font-mw-mono text-mw-muted">{Array.from(new Set(preview.route)).join(" → ")}</span>
+              <span className="truncate font-mw-mono text-mw-muted">{routeLabels.join(" → ")}</span>
             </div>
           ) : null}
         </div>
         {preview?.priceImpactPct != null && preview.priceImpactPct > 1 ? (
           <p className={`mt-2 text-center text-xs ${preview.priceImpactPct > 5 ? "text-mw-down" : "text-[#FF9A4D]"}`}>Price impact {preview.priceImpactPct.toFixed(2)}%</p>
         ) : null}
-        {(aggregated || robinhood) && previewError && !preview ? <p className="mt-2 text-center text-xs text-mw-down">{previewError}</p> : null}
+        {(aggregated || robinhood || bscTestnet) && previewError && !preview ? <p className="mt-2 text-center text-xs text-mw-down">{previewError}</p> : null}
       </div>
+      {noFeeRoute ? (
+        <p className="m-0 text-sm text-muted-foreground" data-import-no-fee-route="true">
+          {NO_IMPORT_SWAP_ROUTE}
+        </p>
+      ) : null}
       <Button
         className={`min-h-12 w-full rounded-[10px] font-mw-body text-base font-bold disabled:opacity-50 ${side === "buy" ? "border border-mw-buy bg-mw-buy text-[#04140A] hover:bg-[#15913F]" : "border border-mw-sell bg-mw-sell text-[#FFF1F3] hover:bg-[#C81A40]"}`}
-        disabled={account ? busy || !amount : false}
+        disabled={account ? busy || !amount || noFeeRoute : false}
         onClick={() => {
           // No wallet yet: open the app's wallet window, as the launched-coin panel does.
           if (!account) {
