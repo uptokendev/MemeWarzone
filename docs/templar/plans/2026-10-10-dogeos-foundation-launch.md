@@ -254,7 +254,7 @@
 - `deploy-dogeos-testnet.ts`:
   - refuses unless chainId is 6281971 and the network is `dogeosTestnet`, or the Hardhat fork of Chikyū (`hardhat.dogeos-testnet-fork.config.ts`, which reports 6281971). There is no 31337 path: the t6 library and the oracle are 6281971-only.
   - refuses unless `DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO`, following the broadcast-token pattern in `scripts/robinhood-testnet-infrastructure-authority.test.mjs`
-  - refuses unless the signer address equals `0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8`
+  - on Chikyū, refuses unless the signer address equals `0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8` (on the in-process fork the fork's first signer is the deployer/admin; the broadcast token is still required)
   - takes the route authority from public `DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS` and refuses if it is missing, the zero address, or equal to the deployer, updater or keeper address
   - takes the initial DOGE/USD answer from Binance `DOGEUSDT` at run time, converted to 8 decimals, and refuses if ≤ 0
   - calls `deployDogeosGen7Stack`, then writes the manifest and the verification JSON (`chains["6281971"]`, the `verificationEntries` shape from `scripts/deploy-robinhood-gen7-generation.ts:561-581`)
