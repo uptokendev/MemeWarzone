@@ -101,7 +101,7 @@ everything is deployed fresh:
   an explicit testnet cap set in the deploy config. The 46630 helper derives the cap from a gen-6
   main pot, which DogeOS doesn't have.
   `RewardDistributor`, and the creator vault as its **MuchFi variant** (below).
-- **Registries and price:** `CreatorRegistry`, `RiskRegistry`, the generic `GraduationOracle`.
+- **Registries and price:** `RiskRegistry` and the generic `GraduationOracle`. **No CreatorRegistry on the factory** (`setRegistries(0x0, RiskRegistry)`): founder decision 2026-10-10, one creator rule set on every launch chain, no launch cooldown, live-coin limit or cluster-size check, the same as BNB 56/97 and Robinhood 4663/46630 (upstream commit `dea912b0c`). The API's `OPEN_CREATOR_CHAIN_IDS` includes 6281971. Restricted wallets and clusters and manual review still apply.
 - **Graduation and trading:** the graduation adapter as its **MuchFi variant** (below), and
   `RobinhoodV3NativeSwapAdapterV2` unchanged (no chain checks), pointed at MuchFi's SmartRouter.
 - **Lockers:** the position locker as its **MuchFi variant** (below).

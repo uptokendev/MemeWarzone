@@ -264,8 +264,20 @@
 - Node tests cover every refusal path for deploy and activate: wrong network, missing token, wrong signer, missing/zero/colliding route-authority address, bad price, activate with a mismatched route authority.
 **Verify:** `node --test scripts/dogeos-testnet-deploy-guards.test.mjs` → all pass; `npx hardhat test test/PackageScripts.spec.ts` → passing
 
+### Task 36: Upstream merge + DogeOS on the open creator rules            [id: t36]
+**Depends-on:** [t7, t8]
+**TDD:** required
+**Files:** merge of `origin/build/cross-chain-stabilization-rh-base` into `feat/dogeos-testnet` (controller), then `frontend/api/dev-fix/security.js`, `scripts/lib/dogeosGen7Stack.ts`, `test/DogeosGen7Stack.fork.spec.ts`, `test/DogeosGen7Lifecycle.fork.spec.ts`, `scripts/dogeos-chain-list-exceptions.json`, related tests
+- Spec §1 Registries (founder decision 2026-10-10, upstream `dea912b0c`).
+- The controller merges the 9 upstream commits first (expected small conflicts in `route-auth.js`, `UpvoteDialog.tsx`, `launchpadClient.ts`) and resolves them keeping both sides.
+- `OPEN_CREATOR_CHAIN_IDS` (`frontend/api/dev-fix/security.js`) gains 6281971; test that the DogeOS preflight skips cooldown/live-limit/cluster-size but keeps restricted/manual-review.
+- `deployDogeosGen7Stack`: no CreatorRegistry. `G4.setRegistries(address(0), R2)`; no `setLaunchRecorder`; the manifest records `registries.creator: null`; read-back asserts `creatorRegistry() == 0x0`. Update the t6/t7 fork specs (tx count changes).
+- `BASE_FEE_PRICED_CHAIN_IDS` (`frontend/src/lib/evmGasHeadroom.mjs`, upstream): 6281971 is a named guard-test exception with reason (DogeOS legacy txs pay the full gas price; headroom would overpay; base fee was flat on Chikyū). Revisit if the canary sees base-fee refusals.
+- Re-run the t23 guard test and the touched suites.
+**Verify:** `node --test scripts/dogeos-chain-list-guard.test.mjs` → pass; the DogeOS security preflight test → pass; `npx hardhat --config hardhat.dogeos-testnet-fork.config.ts test test/DogeosGen7Stack.fork.spec.ts` → pass, then `test/DogeosGen7Lifecycle.fork.spec.ts` → pass (run separately)
+
 ### Task 9: Chikyū fork rehearsal + DOGE budget (gate 3)            [id: t9]
-**Depends-on:** [t4, t7, t8, t26, t27, t34]
+**Depends-on:** [t4, t7, t8, t26, t27, t34, t36]
 **TDD:** waived (rehearsal run against a read-only fork; behaviour already covered by t6/t7)
 **Files:** `scripts/rehearse-dogeos-fork.ts` (new), `reports/dogeos/fork-rehearsal.json` (new), `package.json` (add `rehearse:dogeos-fork` only)
 - Spec gate 3.
@@ -582,7 +594,7 @@ Changes:
 **Verify:** `grep -c "dogeos.md" CLAUDE.md` → `1`; after the task's commit, `git diff HEAD~1 --stat -- CLAUDE.md` → `1 file changed, 1 insertion(+)`
 
 ### Task 26: Gate 1, full test suites            [id: t26]
-**Depends-on:** [t2, t3, t5, t6, t7, t8, t30, t31, t32, t33, t34, t35, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24]
+**Depends-on:** [t2, t3, t5, t6, t7, t8, t30, t31, t32, t33, t34, t35, t36, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24]
 **TDD:** waived (verification-only gate; no code)
 **Files:** none
 - Spec gate 1.
