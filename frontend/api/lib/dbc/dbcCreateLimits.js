@@ -30,8 +30,10 @@ export async function loadDbcCreatorLimits(db, { creatorWallet, chainId = 101, n
     ? Math.floor(lastLaunchAt.getTime() / 1000) + cooldownSeconds
     : 0;
   const chainNow = Math.floor(nowDate.getTime() / 1000);
-  const cooldownActive = Boolean(lastLaunchAt) && chainNow < nextAllowedAt;
-  const liveLimitReached = liveBondingCount >= DBC_MAX_LIVE_BONDING;
+  // Founder 2026-10-10: one rule set on every chain, as on BNB and Robinhood gen-7. No launch cooldown and
+  // no live-coin limit; the counts stay in the preflight for display only. assertDbcCreatorLimits never refuses.
+  const cooldownActive = false;
+  const liveLimitReached = false;
   return {
     liveBondingCount,
     maxLiveBondingCount: DBC_MAX_LIVE_BONDING,
