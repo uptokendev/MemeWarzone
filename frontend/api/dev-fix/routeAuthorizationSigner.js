@@ -19,6 +19,8 @@ const OBSOLETE_BSC_TESTNET_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6
 export const ROBINHOOD_TESTNET_CHAIN_ID = 46630n;
 export const ROBINHOOD_MAINNET_CHAIN_ID = 4663n;
 export const LOCAL_HARDHAT_CHAIN_ID = 31337n;
+// DogeOS Chikyu testnet. Not a Robinhood chain: it stays out of ROBINHOOD_CHAIN_IDS below.
+const DOGEOS_TESTNET_CHAIN_ID = 6281971n;
 export const BNB_BASIC_FACTORY_GENERATION = 5;
 export const BNB_BASIC_CAMPAIGN_GENERATION = 4;
 /**
@@ -167,6 +169,8 @@ const ALLOWED_GENERATION_PAIRS = new Map([
   [ROBINHOOD_MAINNET_CHAIN_ID, [[4, 3], [6, 5], [7, 6]]],
   [ROBINHOOD_TESTNET_CHAIN_ID, [[4, 3], [6, 5], [7, 6]]],
   [LOCAL_HARDHAT_CHAIN_ID, [[4, 3], [6, 5], [7, 6]]],
+  // DogeOS has only ever had generation 7: a fresh LaunchFactoryGen7 set reports 7/6.
+  [DOGEOS_TESTNET_CHAIN_ID, [[7, 6]]],
 ]);
 
 export function supportedGenerationPairs(chainId) {

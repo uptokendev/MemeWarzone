@@ -182,7 +182,7 @@ function validateGraduationTarget(chainId, graduationTarget) {
   // the dedicated Solana authorization surface and can never unlock this tier.
   if (
     testThresholdEnabled &&
-    (cid === 97 || cid === 46630) &&
+    (cid === 97 || cid === 46630 || cid === 6281971) &&
     graduationTarget === TEST_GRADUATION_TARGET
   ) {
     return;
@@ -191,7 +191,7 @@ function validateGraduationTarget(chainId, graduationTarget) {
   // (validateGraduationTargetForGeneration).
   if (
     testThresholdEnabled &&
-    (cid === 97 || cid === 46630) &&
+    (cid === 97 || cid === 46630 || cid === 6281971) &&
     graduationTarget === GEN7_TEST_GRADUATION_TARGET
   ) {
     return;

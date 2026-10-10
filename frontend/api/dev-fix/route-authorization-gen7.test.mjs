@@ -59,7 +59,11 @@ test("7/6 is signed wherever 6/5 is (56, 97, 4663, 46630, 31337); other 7/x pair
     assert.deepEqual(assertSupportedGenerations(chainId, 7, 6), { factoryGen: 7, campaignGen: 6 });
   }
   assert.equal(isSupportedGenerationPair(1, 7, 6), false);
-  assert.equal(isSupportedGenerationPair(6281971, 7, 6), false, "DogeOS is not a route-authority chain yet");
+  // DogeOS (6281971) is gen-7 only: a fresh LaunchFactoryGen7 set reports 7/6, and nothing older was ever deployed there.
+  assert.equal(isSupportedGenerationPair(6281971, 7, 6), true, "DogeOS signs its gen-7 pair");
+  assert.equal(isSupportedGenerationPair(6281971, 6, 5), false, "DogeOS never had a gen-6 factory");
+  assert.equal(isSupportedGenerationPair(6281971, 7, 5), false);
+  assert.equal(isSupportedGenerationPair(6281971, 6, 6), false);
 });
 
 test("7/6 signs the same 11-field request hash as 6/5 (identical CampaignRequest and _hashCampaignRequest)", () => {
