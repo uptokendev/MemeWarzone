@@ -2280,6 +2280,10 @@ function serializeCurveTradeRow(row: Record<string, unknown>) {
     token_amount_raw: rawIntString(row.token_amount_raw) ?? row.token_amount_raw,
     bnb_amount_raw: rawIntString(row.bnb_amount_raw) ?? row.bnb_amount_raw,
     sold_tokens_after_raw: rawIntString(row.sold_tokens_after_raw) ?? row.sold_tokens_after_raw,
+    // EVM gen-6/7: price_bnb is the fill (buy cost with fee, sell payout net of fee); gross_raw is the
+    // native amount without the fee, so gross_raw / tokens is the fee-free price the chart draws.
+    gross_raw: rawIntString(row.gross_raw) ?? row.gross_raw ?? null,
+    fee_raw: rawIntString(row.fee_raw) ?? row.fee_raw ?? null,
   };
 }
 
@@ -2338,7 +2342,8 @@ async function handleTokenTrades(req: any, res: any) {
        side, wallet,
        token_amount_raw, bnb_amount_raw,
        token_amount, bnb_amount, price_bnb,
-       sold_tokens_after_raw
+       sold_tokens_after_raw,
+       gross_raw, fee_raw
      from public.curve_trades
      where chain_id=$1 and campaign_address=$2
      order by block_number desc, log_index desc
@@ -2414,7 +2419,8 @@ async function handleTokenTrades(req: any, res: any) {
        side, wallet,
        token_amount_raw, bnb_amount_raw,
        token_amount, bnb_amount, price_bnb,
-       sold_tokens_after_raw
+       sold_tokens_after_raw,
+       gross_raw, fee_raw
      from public.curve_trades
      where chain_id=$1 and campaign_address=$2
      order by block_number desc, log_index desc

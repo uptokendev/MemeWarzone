@@ -14,6 +14,10 @@ export function candleUpsertPayload(
     mcap_h?: unknown;
     mcap_l?: unknown;
     mcap_c?: unknown;
+    price_o?: unknown;
+    price_h?: unknown;
+    price_l?: unknown;
+    price_c?: unknown;
   },
 ) {
   const o = String(row.o ?? row.c ?? "");
@@ -26,6 +30,10 @@ export function candleUpsertPayload(
   // market-cap view had nothing to draw for the live bucket and dropped the candle until a reload.
   const mcap = [row.mcap_o, row.mcap_h, row.mcap_l, row.mcap_c];
   const hasMcap = mcap.every((value) => value != null && value !== "" && Number.isFinite(Number(value)));
+  // Fee-free curve price (EVM bonding). The chart prefers price_* over o/h/l/c, and a live row without
+  // it replaced the materialized bucket's price_* with the fee-inclusive fill.
+  const price = [row.price_o, row.price_h, row.price_l, row.price_c];
+  const hasPrice = price.every((value) => value != null && value !== "" && Number.isFinite(Number(value)));
   return {
     type: "candle_upsert" as const,
     tf,
@@ -43,6 +51,9 @@ export function candleUpsertPayload(
     close: c,
     ...(hasMcap
       ? { mcap_o: String(mcap[0]), mcap_h: String(mcap[1]), mcap_l: String(mcap[2]), mcap_c: String(mcap[3]) }
+      : {}),
+    ...(hasPrice
+      ? { price_o: String(price[0]), price_h: String(price[1]), price_l: String(price[2]), price_c: String(price[3]) }
       : {}),
   };
 }

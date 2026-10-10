@@ -5,6 +5,13 @@ import { LAUNCH_FACTORY_ABI, LAUNCH_CAMPAIGN_ABI, TREASURY_ROUTER_ABI, TREASURY_
 import { TIMEFRAMES, bucketStart, TF } from "./timeframes.js";
 import { publishTrade, publishCandle, publishStats, publishLeague } from "./ably.js";
 import { candleUpsertPayload } from "./candlePublish.js";
+import {
+  EVM_LIVE_CANDLE_READ_SQL,
+  EVM_LIVE_CANDLE_UPSERT_SQL,
+  EVM_TRADE_CURVE_POSITION_SQL,
+  evmCurveCandlePrice,
+  type EvmCandlePrice,
+} from "./evm/evmCandlePrice.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/attribution.js";
 import { upsertRewardEvent } from "./rewards/ingest.js";
@@ -771,51 +778,72 @@ async function upsertCandle(
   campaign: string,
   tf: TF,
   bucketSec: number,
-  price: number,
+  candle: EvmCandlePrice,
   volBnb: number,
   blockNumber = 0,
   logIndex = 0,
 ) {
   const bucketTs = new Date(bucketSec * 1000);
+  const params = [
+    chainId,
+    campaign.toLowerCase(),
+    tf,
+    bucketTs,
+    candle.open,
+    candle.close,
+    volBnb,
+    blockNumber,
+    logIndex,
+    candle.mcapOpen,
+    candle.mcapClose,
+  ];
 
-  const written = await pool.query(
-    `insert into public.token_candles(
-        chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
-        last_block_number,last_log_index
-     ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1,$7,$8)
-     on conflict (chain_id,campaign_address,timeframe,bucket_start) do update set
-       h = greatest(public.token_candles.h, excluded.h),
-       l = least(public.token_candles.l, excluded.l),
-       c = case
-             when excluded.last_block_number > coalesce(public.token_candles.last_block_number, 0)
-               or (
-                 excluded.last_block_number = coalesce(public.token_candles.last_block_number, 0)
-                 and excluded.last_log_index > coalesce(public.token_candles.last_log_index, 0)
-               )
-             then excluded.c
-             else public.token_candles.c
-           end,
-       last_block_number = greatest(coalesce(public.token_candles.last_block_number, 0), excluded.last_block_number),
-       last_log_index = case
-             when excluded.last_block_number > coalesce(public.token_candles.last_block_number, 0)
-             then excluded.last_log_index
-             when excluded.last_block_number = coalesce(public.token_candles.last_block_number, 0)
-              and excluded.last_log_index > coalesce(public.token_candles.last_log_index, 0)
-             then excluded.last_log_index
-             else public.token_candles.last_log_index
-           end,
-       volume_bnb = public.token_candles.volume_bnb + excluded.volume_bnb,
-       trades_count = public.token_candles.trades_count + 1,
-       updated_at = now()
-     returning o,h,l,c,volume_bnb,trades_count`,
-    [chainId, campaign.toLowerCase(), tf, bucketTs, price, volBnb, blockNumber, logIndex]
-  );
+  const written = await pool.query(EVM_LIVE_CANDLE_UPSERT_SQL, params);
+  // Race guard skipped the write: the materializer already folded this trade into the bucket, so the
+  // stored row is the one to publish.
+  const row = written.rows[0] ?? (await pool.query(EVM_LIVE_CANDLE_READ_SQL, params.slice(0, 4))).rows[0];
+  if (!row) return;
 
   // Full OHLCV patch: the chart applies it directly, so every viewer's chart
   // moves on the trade, not only the wallet that traded. (A close-only
   // `{c, v}` patch is rejected by the frontend and only triggers a refetch.)
-  const row = written.rows[0] || { o: price, h: price, l: price, c: price, volume_bnb: volBnb, trades_count: 1 };
   await publishCandle(chainId, campaign, candleUpsertPayload(tf, bucketSec, row));
+}
+
+/**
+ * Fee-free candle price for an indexed EVM curve trade: curve spot before/after it (net sold through
+ * this trade, curve params cached per campaign), else gross_raw/tokens, else the stored fill.
+ */
+async function evmTradeCandlePrice(
+  chainId: number,
+  campaign: string,
+  trade: { side: "buy" | "sell"; tokenRaw: bigint; txHash: string; blockNumber: number; logIndex: number; fillPrice: number | null },
+): Promise<EvmCandlePrice | null> {
+  let postSoldRaw: bigint | null = null;
+  let grossRaw: bigint | null = null;
+  try {
+    const r = await pool.query(EVM_TRADE_CURVE_POSITION_SQL, [
+      chainId,
+      campaign.toLowerCase(),
+      trade.blockNumber,
+      trade.logIndex,
+      trade.txHash.toLowerCase(),
+    ]);
+    postSoldRaw = parseRawTokenAmount(r.rows[0]?.sold_raw);
+    const gross = parseRawTokenAmount(r.rows[0]?.gross_raw);
+    grossRaw = gross > 0n ? gross : null;
+  } catch (e) {
+    console.warn("[indexer] candle curve position unavailable", { chainId, campaign, error: String((e as any)?.message || e) });
+  }
+  const params = postSoldRaw != null ? await loadBnbCurveParams(chainId, campaign) : null;
+  return evmCurveCandlePrice({
+    side: trade.side,
+    tokenRaw: trade.tokenRaw,
+    postSoldRaw,
+    params,
+    grossRaw,
+    fillPrice: trade.fillPrice,
+  });
 }
 
 // Near-graduation alerts: each campaign's own target (evm/evmMilestoneProgress.ts), read on the chain's RPC.
@@ -1712,10 +1740,13 @@ async function scanCampaignRange(
             meta: { priceBnb },
           }).catch(() => undefined);
 
-          if (priceBnb !== null) {
+          const candle = priceBnb !== null
+            ? await evmTradeCandlePrice(chainId, campaign, { side: "buy", tokenRaw: amountOut, txHash, blockNumber: log.blockNumber, logIndex, fillPrice: priceBnb })
+            : null;
+          if (candle) {
             for (const tf of TIMEFRAMES) {
               const b = bucketStart(tsSec, tf);
-              await upsertCandle(chainId, campaign, tf, b, priceBnb, bnbAmount, log.blockNumber, logIndex);
+              await upsertCandle(chainId, campaign, tf, b, candle, bnbAmount, log.blockNumber, logIndex);
             }
           }
         }
@@ -1778,10 +1809,13 @@ async function scanCampaignRange(
             meta: { priceBnb },
           }).catch(() => undefined);
 
-          if (priceBnb !== null) {
+          const candle = priceBnb !== null
+            ? await evmTradeCandlePrice(chainId, campaign, { side: "sell", tokenRaw: amountIn, txHash, blockNumber: log.blockNumber, logIndex, fillPrice: priceBnb })
+            : null;
+          if (candle) {
             for (const tf of TIMEFRAMES) {
               const b = bucketStart(tsSec, tf);
-              await upsertCandle(chainId, campaign, tf, b, priceBnb, bnbAmount, log.blockNumber, logIndex);
+              await upsertCandle(chainId, campaign, tf, b, candle, bnbAmount, log.blockNumber, logIndex);
             }
           }
         }
@@ -2052,10 +2086,20 @@ export async function ingestCampaignTransaction(input: {
         meta: { priceBnb },
       });
 
-      if (priceBnb !== null) {
+      const candle = priceBnb !== null
+        ? await evmTradeCandlePrice(chain.chainId, campaign, {
+            side: trade.side,
+            tokenRaw: trade.tokenRaw,
+            txHash,
+            blockNumber: Number(receipt.blockNumber),
+            logIndex,
+            fillPrice: priceBnb,
+          })
+        : null;
+      if (candle) {
         for (const tf of TIMEFRAMES) {
           const b = bucketStart(tsSec, tf);
-          await upsertCandle(chain.chainId, campaign, tf, b, priceBnb, bnbAmount, Number(receipt.blockNumber), logIndex);
+          await upsertCandle(chain.chainId, campaign, tf, b, candle, bnbAmount, Number(receipt.blockNumber), logIndex);
         }
       }
     }

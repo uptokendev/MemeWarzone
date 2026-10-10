@@ -30,6 +30,7 @@ import {
   shouldEstablishChartRange,
 } from "@/lib/chart/canonicalChartCandles";
 import { layoutCreatorPins } from "@/lib/chart/creatorTradePins";
+import { chartTradePrice } from "@/lib/chart/evmFeeFreePrice";
 
 export type UnifiedChartResolution = "1s" | "5s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 export type UnifiedChartMetric = "marketcap" | "price";
@@ -248,7 +249,7 @@ function tradeSeriesPoints(
     const reportedTimeSec = timestampSec(trade.timestamp);
     const dexPrint = solana && isSolanaDexPrint(trade, Boolean(solanaGraduated), graduationTimeSec);
     const authoritative = solana && !dexPrint ? authoritativeSolanaTradeState(trade, solanaCurvePricing) : null;
-    const priceNative = authoritative?.priceNative ?? finite(trade.pricePerToken);
+    const priceNative = authoritative?.priceNative ?? chartTradePrice(trade, solana);
     if (!priceNative || reportedTimeSec <= 0) continue;
 
     const tokenAmount = formatUnitsNumber(trade.tokensWei, tokenDecimals);
@@ -673,7 +674,7 @@ export function UnifiedMarketChart({
     for (const trade of sorted) {
       const dexPrint = solana && isSolanaDexPrint(trade, solanaGraduated, graduationTimeSec);
       const authoritative = solana && !dexPrint ? authoritativeSolanaTradeState(trade, solanaCurvePricing) : null;
-      const priceNative = authoritative?.priceNative ?? finite(trade.pricePerToken);
+      const priceNative = authoritative?.priceNative ?? chartTradePrice(trade, solana);
       const ts = timestampSec(trade.timestamp);
       if (!priceNative || ts <= 0) continue;
       const tokenAmount = formatUnitsNumber(trade.tokensWei, tokenDecimals);

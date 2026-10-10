@@ -12,6 +12,7 @@ import {
 import { buildFactoryInventory, type SupportedFactory } from "./factoryInventory.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
+import { ROBINHOOD_LOCAL_CANDLE_UPSERT_SQL } from "./evm/evmCandlePrice.js";
 import { notifyCampaignCreated, notifyCampaignGraduated } from "./campaignLifecycleNotifications.js";
 import { GEN5_CAMPAIGN_ABI } from "./evm/evmGen5Abi.js";
 import {
@@ -275,27 +276,27 @@ async function scanFactoryEvents(provider: ethers.JsonRpcProvider, factory: Supp
   }
 }
 
-async function writeCandle(campaign: string, blockDate: Date, price: number, nativeAmount: number): Promise<void> {
+async function writeCandle(
+  campaign: string,
+  blockDate: Date,
+  price: number,
+  nativeAmount: number,
+  blockNumber: number,
+  logIndex: number,
+): Promise<void> {
   const timestamp = Math.floor(blockDate.getTime() / 1_000);
   for (const tf of TIMEFRAMES as TF[]) {
     const bucket = new Date(bucketStart(timestamp, tf) * 1_000);
-    await pool.query(
-      `insert into public.token_candles(
-         chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
-         source_mask,bonding_trade_count,bonding_volume_bnb,last_block_number,last_log_index
-       ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1,1,1,$6,null,null)
-       on conflict(chain_id,campaign_address,timeframe,bucket_start) do update set
-         h=greatest(public.token_candles.h, excluded.h),
-         l=least(public.token_candles.l, excluded.l),
-         c=excluded.c,
-         volume_bnb=public.token_candles.volume_bnb + excluded.volume_bnb,
-         trades_count=public.token_candles.trades_count + 1,
-         source_mask=(public.token_candles.source_mask | 1),
-         bonding_trade_count=public.token_candles.bonding_trade_count + 1,
-         bonding_volume_bnb=public.token_candles.bonding_volume_bnb + excluded.bonding_volume_bnb,
-         updated_at=now()`,
-      [CHAIN_ID, campaign, tf, bucket, price, nativeAmount],
-    );
+    await pool.query(ROBINHOOD_LOCAL_CANDLE_UPSERT_SQL, [
+      CHAIN_ID,
+      campaign,
+      tf,
+      bucket,
+      price,
+      nativeAmount,
+      blockNumber,
+      logIndex,
+    ]);
   }
 }
 
@@ -340,7 +341,7 @@ async function recordTrade(input: {
   );
 
   if (price > 0) {
-    await writeCandle(campaign, input.blockDate, price, nativeAmount);
+    await writeCandle(campaign, input.blockDate, price, nativeAmount, input.blockNumber, input.logIndex);
     await pool.query(
       `insert into public.token_stats(chain_id,campaign_address,last_price_bnb,vol_24h_bnb,updated_at)
        values($1,$2,$3,$4,now())

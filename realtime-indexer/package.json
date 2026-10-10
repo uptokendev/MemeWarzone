@@ -41,6 +41,7 @@
     "test:evm-creator-choice": "tsx --test src/evm/evmCreatorChoice.test.ts src/evm/evmCreatorChoicePass.integration.test.ts src/evm/evmCreatorChoiceTwoVaults.integration.test.ts",
     "test:evm-gen5": "tsx --test src/tests/evmGen5.test.ts src/tests/evmGraduationKeeper.test.ts src/tests/evmGraduationKeeperDue.test.ts src/tests/evmGraduationKeeperObservations.test.ts src/tests/evmGraduationKeeperHarvest.test.ts src/tests/evmGen5Handoff.test.ts",
     "test:payout-watchdog": "tsx --test src/evm/payoutWatchdog.test.ts",
+    "test:evm-candles": "tsx --test src/tests/evmCandlePrice.test.ts src/tests/evmCandleRaceGuard.integration.test.ts src/tests/candlePublish.test.ts src/tests/canonicalCandleRebuild.test.ts",
     "test:evm-gen7": "tsx --test src/tests/evmGen7Curve.test.ts src/tests/bnbCurvePricing.test.ts src/tests/evmMilestoneProgress.test.ts src/tests/evmGen7Fees.test.ts",
     "job:refresh-solana-market-stats": "node --enable-source-maps dist/jobs/refreshSolanaMarketStats.js",
     "job:refresh-solana-market-stats:dev": "tsx src/jobs/refreshSolanaMarketStats.ts",

@@ -8,7 +8,16 @@ import { bondingCandleConflictSetSql } from "./canonicalCandleRebuild.js";
 
 const LOOP_SYMBOL = Symbol.for("memewarzone.canonicalCandleMaterializerStarted");
 const globalState = globalThis as any;
-const VERSION = 4;
+// 5: EVM bonding candles rebuilt once from curve spot, after the live writer had folded fee-inclusive
+// fills (and trades the materializer had already counted) into some buckets. Solana launchpad candles
+// stay at 4, so this rebuild never touches chain 101.
+const VERSION = 5;
+const SOLANA_VERSION = 4;
+
+/** The canonical_version a chain's bonding candles are written and compared at. */
+export function canonicalCandleVersionFor(chainId: number): number {
+  return chainId === 101 ? SOLANA_VERSION : VERSION;
+}
 const WAD = BNB_WAD;
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
@@ -421,7 +430,7 @@ async function writeBucket(chainId: number, campaign: string, candle: CanonicalB
       candle.mcapHigh,
       candle.mcapLow,
       candle.mcapClose,
-      VERSION,
+      canonicalCandleVersionFor(chainId),
     ],
   );
 }
@@ -460,7 +469,7 @@ async function staleCampaigns() {
           or max(tc.canonical_updated_at) < max(t.block_time)
           or bool_or(
             coalesce(tc.dex_trade_count,0)=0
-            and coalesce(tc.canonical_version,0) < $2
+            and coalesce(tc.canonical_version,0) < case when t.chain_id = 101 then $3::int else $2::int end
           )
           -- Curve trades with no bonding candle anywhere. A graduated campaign
           -- gets canonical_updated_at stamped by the post-grad indexer, which
@@ -468,7 +477,7 @@ async function staleCampaigns() {
           or coalesce(max(tc.bonding_trade_count),0)=0
       order by max(t.block_time) asc
       limit $1`,
-    [campaignBatchSize(), VERSION],
+    [campaignBatchSize(), VERSION, SOLANA_VERSION],
   );
 }
 

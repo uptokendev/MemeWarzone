@@ -551,7 +551,7 @@ export default async function handler(req, res) {
         select
           b.chain_id,
           b.campaign_address,
-          max(tc.h) as ath_price_bnb,
+          max(coalesce(tc.price_h, tc.h)) as ath_price_bnb,
           max(tc.mcap_h) as ath_marketcap_bnb
         from base b
         left join public.token_candles tc
