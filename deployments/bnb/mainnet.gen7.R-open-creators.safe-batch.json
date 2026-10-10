@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1791584367618,
+  "meta": {
+    "name": "MWZ gen7 R: open creators",
+    "description": "gen-7 factory 0x948463E91d63a7A51cEeC0342735D1B738044aea: setRegistries(0x0, 0x92b1494CF7b80dA379EB96F59EeE4Ae7F8970597) (was creatorRegistry 0x8194FB3745d027102ce7Da562c7045f28B2f42fD). Removes the 24h creator cooldown, the live-coin limit and the cluster-size check; restricted wallets stay blocked by the RiskRegistry.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+      "value": "0",
+      "data": "0x399bdf2a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000092b1494cf7b80da379eb96f59eee4ae7f8970597",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newCreatorRegistry",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "newRiskRegistry",
+            "type": "address"
+          }
+        ],
+        "name": "setRegistries",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newCreatorRegistry": "0x0000000000000000000000000000000000000000",
+        "newRiskRegistry": "0x92b1494CF7b80dA379EB96F59EeE4Ae7F8970597"
+      }
+    }
+  ]
+}

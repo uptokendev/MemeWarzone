@@ -1,0 +1,61 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1791633416613,
+  "meta": {
+    "name": "MWZ gen7 H7: open gen-7, close gen-6 create (C11)",
+    "description": "LaunchFactoryGen7.enableLive + setCreatePaused(false); gen-6 LaunchFactory.setCreatePaused(true). Execute only after B7, ownership, Q7 and the founder's go.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x399E529c0C6888543E6501FD137ac49CA3E1Df58",
+      "value": "0",
+      "data": "0x7815b4b4",
+      "contractMethod": {
+        "inputs": [],
+        "name": "enableLive",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    },
+    {
+      "to": "0x399E529c0C6888543E6501FD137ac49CA3E1Df58",
+      "value": "0",
+      "data": "0x83bcec850000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setCreatePaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "false"
+      }
+    },
+    {
+      "to": "0xc673B116b4eA8E8923Aad1fa60F0452966F2437F",
+      "value": "0",
+      "data": "0x83bcec850000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "setCreatePaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "true"
+      }
+    }
+  ]
+}

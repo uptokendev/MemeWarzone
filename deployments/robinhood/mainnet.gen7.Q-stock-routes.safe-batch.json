@@ -1,0 +1,748 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1791633416484,
+  "meta": {
+    "name": "MWZ gen7 Q7: Robinhood stock routes",
+    "description": "16 call(s): SPY, NVDA, META, COIN, SPCX, TSLA, AAPL, USDG",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x290fD8eCA353637Be4a0cbC335095e5E6F5F16e2",
+      "value": "0",
+      "data": "0x84729a41000000000000000000000000117cc2133c37b721f49de2a7a74833232b3b4c0c000000000000000000000000319724394d3a0e3669269846abe664cd621f9f6a000000000000000000000000ddcbba3666f578e3f09516f21ff85bfee859ab5e00000000000000000000000000000000000000000000000000000000000001f4000000000000000000000000000000000000000000000a968163f0a57b4000000000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "stockToken",
+            "type": "address"
+          },
+          {
+            "internalType": "struct RobinhoodStockGraduationAdapterV2.StockRoute",
+            "name": "route",
+            "type": "tuple",
+            "components": [
+              {
+                "internalType": "address",
+                "name": "oracleFeed",
+                "type": "address"
+              },
+              {
+                "internalType": "address",
+                "name": "acquisitionPool",
+                "type": "address"
+              },
+              {
+                "internalType": "uint24",
+                "name": "acquisitionFeeTier",
+                "type": "uint24"
+              },
+              {
+                "internalType": "uint256",
+                "name": "minimumRouteLiquidityUsdWad",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxSwapSlippageBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxOracleDeviationBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxPriceImpactBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "bool",
+                "name": "enabled",
+                "type": "bool"
+              }
+            ]
+          }
+        ],
+        "name": "configureStockRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "stockToken": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+        "route": "[\"0x319724394D3A0e3669269846abE664Cd621f9f6A\",\"0xDDCBBa3666f578E3F09516f21Ff85BFee859AB5e\",500,\"50000000000000000000000\",100,0,0,true]"
+      }
+    },
+    {
+      "to": "0x0bB4afbCb13489FD178EBb4DCF7CFA060be0A81a",
+      "value": "0",
+      "data": "0xdd781a05000000000000000000000000117cc2133c37b721f49de2a7a74833232b3b4c0c00000000000000000000000000000000000000000000000000000000000001f4",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "quote",
+            "type": "address"
+          },
+          {
+            "internalType": "uint24",
+            "name": "feeTier",
+            "type": "uint24"
+          }
+        ],
+        "name": "setQuoteRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "quote": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+        "feeTier": "500"
+      }
+    },
+    {
+      "to": "0x290fD8eCA353637Be4a0cbC335095e5E6F5F16e2",
+      "value": "0",
+      "data": "0x84729a41000000000000000000000000d0601ce157db5bdc3162bbac2a2c8af5320d9eec000000000000000000000000379ec4f7c378f34a1b47e4f3cbebcbac3e8e9f1500000000000000000000000062ab521f71431f78ac374cdbadc6cda3c8916b6c00000000000000000000000000000000000000000000000000000000000001f4000000000000000000000000000000000000000000000a968163f0a57b4000000000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "stockToken",
+            "type": "address"
+          },
+          {
+            "internalType": "struct RobinhoodStockGraduationAdapterV2.StockRoute",
+            "name": "route",
+            "type": "tuple",
+            "components": [
+              {
+                "internalType": "address",
+                "name": "oracleFeed",
+                "type": "address"
+              },
+              {
+                "internalType": "address",
+                "name": "acquisitionPool",
+                "type": "address"
+              },
+              {
+                "internalType": "uint24",
+                "name": "acquisitionFeeTier",
+                "type": "uint24"
+              },
+              {
+                "internalType": "uint256",
+                "name": "minimumRouteLiquidityUsdWad",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxSwapSlippageBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxOracleDeviationBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxPriceImpactBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "bool",
+                "name": "enabled",
+                "type": "bool"
+              }
+            ]
+          }
+        ],
+        "name": "configureStockRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "stockToken": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+        "route": "[\"0x379EC4f7C378F34a1B47E4F3cbeBCbAC3E8E9F15\",\"0x62AB521f71431f78ac374CdbadC6cda3c8916b6C\",500,\"50000000000000000000000\",100,0,0,true]"
+      }
+    },
+    {
+      "to": "0x0bB4afbCb13489FD178EBb4DCF7CFA060be0A81a",
+      "value": "0",
+      "data": "0xdd781a05000000000000000000000000d0601ce157db5bdc3162bbac2a2c8af5320d9eec00000000000000000000000000000000000000000000000000000000000001f4",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "quote",
+            "type": "address"
+          },
+          {
+            "internalType": "uint24",
+            "name": "feeTier",
+            "type": "uint24"
+          }
+        ],
+        "name": "setQuoteRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "quote": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+        "feeTier": "500"
+      }
+    },
+    {
+      "to": "0x290fD8eCA353637Be4a0cbC335095e5E6F5F16e2",
+      "value": "0",
+      "data": "0x84729a41000000000000000000000000c0d6457c16cc70d6790dd43521c899c87ce02f350000000000000000000000007c38c00c30bee9378381e7b6135d7283356d71b1000000000000000000000000a4bdb396a69617eb7f70e2cc1ef526f7340b1b0d0000000000000000000000000000000000000000000000000000000000000bb8000000000000000000000000000000000000000000000a968163f0a57b4000000000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "stockToken",
+            "type": "address"
+          },
+          {
+            "internalType": "struct RobinhoodStockGraduationAdapterV2.StockRoute",
+            "name": "route",
+            "type": "tuple",
+            "components": [
+              {
+                "internalType": "address",
+                "name": "oracleFeed",
+                "type": "address"
+              },
+              {
+                "internalType": "address",
+                "name": "acquisitionPool",
+                "type": "address"
+              },
+              {
+                "internalType": "uint24",
+                "name": "acquisitionFeeTier",
+                "type": "uint24"
+              },
+              {
+                "internalType": "uint256",
+                "name": "minimumRouteLiquidityUsdWad",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxSwapSlippageBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxOracleDeviationBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxPriceImpactBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "bool",
+                "name": "enabled",
+                "type": "bool"
+              }
+            ]
+          }
+        ],
+        "name": "configureStockRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "stockToken": "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35",
+        "route": "[\"0x7C38C00C30BEe9378381E7B6135d7283356D71b1\",\"0xa4BdB396a69617eb7F70E2cc1EF526f7340b1B0d\",3000,\"50000000000000000000000\",100,0,0,true]"
+      }
+    },
+    {
+      "to": "0x0bB4afbCb13489FD178EBb4DCF7CFA060be0A81a",
+      "value": "0",
+      "data": "0xdd781a05000000000000000000000000c0d6457c16cc70d6790dd43521c899c87ce02f350000000000000000000000000000000000000000000000000000000000000bb8",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "quote",
+            "type": "address"
+          },
+          {
+            "internalType": "uint24",
+            "name": "feeTier",
+            "type": "uint24"
+          }
+        ],
+        "name": "setQuoteRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "quote": "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35",
+        "feeTier": "3000"
+      }
+    },
+    {
+      "to": "0x290fD8eCA353637Be4a0cbC335095e5E6F5F16e2",
+      "value": "0",
+      "data": "0x84729a410000000000000000000000006330d8c3178a418788df01a47479c0ce7ccf450b000000000000000000000000a3a468a452940b7d6b69991207b508c609a98ef20000000000000000000000006707aeac7d0e519b083219d27bb427364363183a0000000000000000000000000000000000000000000000000000000000000bb8000000000000000000000000000000000000000000000a968163f0a57b4000000000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "stockToken",
+            "type": "address"
+          },
+          {
+            "internalType": "struct RobinhoodStockGraduationAdapterV2.StockRoute",
+            "name": "route",
+            "type": "tuple",
+            "components": [
+              {
+                "internalType": "address",
+                "name": "oracleFeed",
+                "type": "address"
+              },
+              {
+                "internalType": "address",
+                "name": "acquisitionPool",
+                "type": "address"
+              },
+              {
+                "internalType": "uint24",
+                "name": "acquisitionFeeTier",
+                "type": "uint24"
+              },
+              {
+                "internalType": "uint256",
+                "name": "minimumRouteLiquidityUsdWad",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxSwapSlippageBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxOracleDeviationBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxPriceImpactBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "bool",
+                "name": "enabled",
+                "type": "bool"
+              }
+            ]
+          }
+        ],
+        "name": "configureStockRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "stockToken": "0x6330D8C3178a418788dF01a47479c0ce7CCF450b",
+        "route": "[\"0xA3a468A452940B7D6b69991207B508c609a98Ef2\",\"0x6707aeAc7D0e519B083219d27BB427364363183A\",3000,\"50000000000000000000000\",100,0,0,true]"
+      }
+    },
+    {
+      "to": "0x0bB4afbCb13489FD178EBb4DCF7CFA060be0A81a",
+      "value": "0",
+      "data": "0xdd781a050000000000000000000000006330d8c3178a418788df01a47479c0ce7ccf450b0000000000000000000000000000000000000000000000000000000000000bb8",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "quote",
+            "type": "address"
+          },
+          {
+            "internalType": "uint24",
+            "name": "feeTier",
+            "type": "uint24"
+          }
+        ],
+        "name": "setQuoteRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "quote": "0x6330D8C3178a418788dF01a47479c0ce7CCF450b",
+        "feeTier": "3000"
+      }
+    },
+    {
+      "to": "0x290fD8eCA353637Be4a0cbC335095e5E6F5F16e2",
+      "value": "0",
+      "data": "0x84729a410000000000000000000000004a0e65a3eccec6dbe60ae065f2e7bb85fae35eea000000000000000000000000b265810950ba6c5c0ff821c9963014a56fd8bffb000000000000000000000000c3c9f0171490ef0f4536fe493f3b0ebb5ee0cb5e00000000000000000000000000000000000000000000000000000000000001f4000000000000000000000000000000000000000000000a968163f0a57b4000000000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "stockToken",
+            "type": "address"
+          },
+          {
+            "internalType": "struct RobinhoodStockGraduationAdapterV2.StockRoute",
+            "name": "route",
+            "type": "tuple",
+            "components": [
+              {
+                "internalType": "address",
+                "name": "oracleFeed",
+                "type": "address"
+              },
+              {
+                "internalType": "address",
+                "name": "acquisitionPool",
+                "type": "address"
+              },
+              {
+                "internalType": "uint24",
+                "name": "acquisitionFeeTier",
+                "type": "uint24"
+              },
+              {
+                "internalType": "uint256",
+                "name": "minimumRouteLiquidityUsdWad",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxSwapSlippageBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxOracleDeviationBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxPriceImpactBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "bool",
+                "name": "enabled",
+                "type": "bool"
+              }
+            ]
+          }
+        ],
+        "name": "configureStockRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "stockToken": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+        "route": "[\"0xB265810950ba6c5C0Ff821c9963014a56fD8Bffb\",\"0xC3c9F0171490Ef0F4536fe493F3b0EbB5ee0CB5e\",500,\"50000000000000000000000\",100,0,0,true]"
+      }
+    },
+    {
+      "to": "0x0bB4afbCb13489FD178EBb4DCF7CFA060be0A81a",
+      "value": "0",
+      "data": "0xdd781a050000000000000000000000004a0e65a3eccec6dbe60ae065f2e7bb85fae35eea00000000000000000000000000000000000000000000000000000000000001f4",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "quote",
+            "type": "address"
+          },
+          {
+            "internalType": "uint24",
+            "name": "feeTier",
+            "type": "uint24"
+          }
+        ],
+        "name": "setQuoteRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "quote": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+        "feeTier": "500"
+      }
+    },
+    {
+      "to": "0x290fD8eCA353637Be4a0cbC335095e5E6F5F16e2",
+      "value": "0",
+      "data": "0x84729a41000000000000000000000000322f0929c4625ed5bad873c95208d54e1c003b2d0000000000000000000000004a1166a659a55625345e9515b32adecea5547c38000000000000000000000000a953ca88ff430e9487c60ca34d757414f4efda070000000000000000000000000000000000000000000000000000000000000bb8000000000000000000000000000000000000000000000a968163f0a57b4000000000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "stockToken",
+            "type": "address"
+          },
+          {
+            "internalType": "struct RobinhoodStockGraduationAdapterV2.StockRoute",
+            "name": "route",
+            "type": "tuple",
+            "components": [
+              {
+                "internalType": "address",
+                "name": "oracleFeed",
+                "type": "address"
+              },
+              {
+                "internalType": "address",
+                "name": "acquisitionPool",
+                "type": "address"
+              },
+              {
+                "internalType": "uint24",
+                "name": "acquisitionFeeTier",
+                "type": "uint24"
+              },
+              {
+                "internalType": "uint256",
+                "name": "minimumRouteLiquidityUsdWad",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxSwapSlippageBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxOracleDeviationBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxPriceImpactBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "bool",
+                "name": "enabled",
+                "type": "bool"
+              }
+            ]
+          }
+        ],
+        "name": "configureStockRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "stockToken": "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+        "route": "[\"0x4A1166a659A55625345e9515b32adECea5547C38\",\"0xA953CA88ff430e9487c60cA34d757414f4efdA07\",3000,\"50000000000000000000000\",100,0,0,true]"
+      }
+    },
+    {
+      "to": "0x0bB4afbCb13489FD178EBb4DCF7CFA060be0A81a",
+      "value": "0",
+      "data": "0xdd781a05000000000000000000000000322f0929c4625ed5bad873c95208d54e1c003b2d0000000000000000000000000000000000000000000000000000000000000bb8",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "quote",
+            "type": "address"
+          },
+          {
+            "internalType": "uint24",
+            "name": "feeTier",
+            "type": "uint24"
+          }
+        ],
+        "name": "setQuoteRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "quote": "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+        "feeTier": "3000"
+      }
+    },
+    {
+      "to": "0x290fD8eCA353637Be4a0cbC335095e5E6F5F16e2",
+      "value": "0",
+      "data": "0x84729a41000000000000000000000000af3d76f1834a1d425780943c99ea8a608f8a93f90000000000000000000000006b22a786baa607d76728168703a39ea9c99f2cd00000000000000000000000008bb3514e2204e1cdf3ac149efee7ff04d91b719f00000000000000000000000000000000000000000000000000000000000001f4000000000000000000000000000000000000000000000a968163f0a57b4000000000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "stockToken",
+            "type": "address"
+          },
+          {
+            "internalType": "struct RobinhoodStockGraduationAdapterV2.StockRoute",
+            "name": "route",
+            "type": "tuple",
+            "components": [
+              {
+                "internalType": "address",
+                "name": "oracleFeed",
+                "type": "address"
+              },
+              {
+                "internalType": "address",
+                "name": "acquisitionPool",
+                "type": "address"
+              },
+              {
+                "internalType": "uint24",
+                "name": "acquisitionFeeTier",
+                "type": "uint24"
+              },
+              {
+                "internalType": "uint256",
+                "name": "minimumRouteLiquidityUsdWad",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxSwapSlippageBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxOracleDeviationBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxPriceImpactBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "bool",
+                "name": "enabled",
+                "type": "bool"
+              }
+            ]
+          }
+        ],
+        "name": "configureStockRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "stockToken": "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+        "route": "[\"0x6B22A786bAa607d76728168703a39Ea9C99f2cD0\",\"0x8bb3514e2204E1cDF3Ac149EFEe7Ff04D91B719f\",500,\"50000000000000000000000\",100,0,0,true]"
+      }
+    },
+    {
+      "to": "0x0bB4afbCb13489FD178EBb4DCF7CFA060be0A81a",
+      "value": "0",
+      "data": "0xdd781a05000000000000000000000000af3d76f1834a1d425780943c99ea8a608f8a93f900000000000000000000000000000000000000000000000000000000000001f4",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "quote",
+            "type": "address"
+          },
+          {
+            "internalType": "uint24",
+            "name": "feeTier",
+            "type": "uint24"
+          }
+        ],
+        "name": "setQuoteRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "quote": "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+        "feeTier": "500"
+      }
+    },
+    {
+      "to": "0x290fD8eCA353637Be4a0cbC335095e5E6F5F16e2",
+      "value": "0",
+      "data": "0x84729a410000000000000000000000005fc5360d0400a0fd4f2af552add042d716f1d16800000000000000000000000061b7e5650328764b076a108eff5fa7282a1b9ad200000000000000000000000052e65b17fb6e5ba00ed806f37afcd2daa50271ca0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000a968163f0a57b4000000000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "stockToken",
+            "type": "address"
+          },
+          {
+            "internalType": "struct RobinhoodStockGraduationAdapterV2.StockRoute",
+            "name": "route",
+            "type": "tuple",
+            "components": [
+              {
+                "internalType": "address",
+                "name": "oracleFeed",
+                "type": "address"
+              },
+              {
+                "internalType": "address",
+                "name": "acquisitionPool",
+                "type": "address"
+              },
+              {
+                "internalType": "uint24",
+                "name": "acquisitionFeeTier",
+                "type": "uint24"
+              },
+              {
+                "internalType": "uint256",
+                "name": "minimumRouteLiquidityUsdWad",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxSwapSlippageBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxOracleDeviationBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "maxPriceImpactBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "bool",
+                "name": "enabled",
+                "type": "bool"
+              }
+            ]
+          }
+        ],
+        "name": "configureStockRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "stockToken": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+        "route": "[\"0x61B7e5650328764B076A108EFF5fa7282a1B9aD2\",\"0x52e65B17fB6E5BA00Ed806f37Afcd2DaA50271Ca\",100,\"50000000000000000000000\",100,0,0,true]"
+      }
+    },
+    {
+      "to": "0x0bB4afbCb13489FD178EBb4DCF7CFA060be0A81a",
+      "value": "0",
+      "data": "0xdd781a050000000000000000000000005fc5360d0400a0fd4f2af552add042d716f1d1680000000000000000000000000000000000000000000000000000000000000064",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "quote",
+            "type": "address"
+          },
+          {
+            "internalType": "uint24",
+            "name": "feeTier",
+            "type": "uint24"
+          }
+        ],
+        "name": "setQuoteRoute",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "quote": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+        "feeTier": "100"
+      }
+    }
+  ]
+}

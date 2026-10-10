@@ -635,6 +635,118 @@
             "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
             "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
           ]
+        },
+        {
+          "name": "TreasuryRouterV4 (gen-7)",
+          "address": "0x63032E36A17f0fEf974517D5F85Da18b6732b95E",
+          "contract": "contracts/TreasuryRouterV4.sol:TreasuryRouterV4",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e",
+            "0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A",
+            "3600"
+          ]
+        },
+        {
+          "name": "CreatorRewardsVaultV2 (gen-7)",
+          "address": "0x0bB4afbCb13489FD178EBb4DCF7CFA060be0A81a",
+          "contract": "contracts/CreatorRewardsVaultV2.sol:CreatorRewardsVaultV2",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x63032E36A17f0fEf974517D5F85Da18b6732b95E",
+            "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+            "2",
+            "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+            "86400"
+          ]
+        },
+        {
+          "name": "RewardDistributor (gen-7 holders)",
+          "address": "0xF43d4F4B1c8513AECC20025cE26Ce4888b344b3c",
+          "contract": "contracts/RewardDistributor.sol:RewardDistributor",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "CommunityRewardsVault (gen-7)",
+          "address": "0xA2481CA9E6E267Af4E3712d9136c856C691cD203",
+          "contract": "contracts/CommunityRewardsVault.sol:CommunityRewardsVault",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x63032E36A17f0fEf974517D5F85Da18b6732b95E"
+          ]
+        },
+        {
+          "name": "RewardDistributor (gen-7 airdrop)",
+          "address": "0x8ea4407ac044F8A8f5A8850b19f01B8d22188b91",
+          "contract": "contracts/RewardDistributor.sol:RewardDistributor",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "LaunchCampaignGen7",
+          "address": "0x2bB9FF8EC31A497612B28cB41164299D0eF22BE7",
+          "contract": "contracts/gen7/LaunchCampaignGen7.sol:LaunchCampaignGen7",
+          "args": []
+        },
+        {
+          "name": "RobinhoodStockLaunchCampaignGen7",
+          "address": "0x8F545A1a86f2B96b1C4c5244D30EEE22456808bB",
+          "contract": "contracts/gen7/RobinhoodStockLaunchCampaignGen7.sol:RobinhoodStockLaunchCampaignGen7",
+          "args": []
+        },
+        {
+          "name": "PermanentV3PositionLocker (gen-7)",
+          "address": "0xEFeB7E0cE5c7f41fD092137D467613A867d3B74C",
+          "contract": "contracts/PermanentV3PositionLocker.sol:PermanentV3PositionLocker",
+          "args": [
+            "0x399E529c0C6888543E6501FD137ac49CA3E1Df58"
+          ]
+        },
+        {
+          "name": "LaunchFactoryGen7",
+          "address": "0x399E529c0C6888543E6501FD137ac49CA3E1Df58",
+          "contract": "contracts/gen7/LaunchFactoryGen7.sol:LaunchFactoryGen7",
+          "args": [
+            "0xbb5265125A6eE4F340AeCa518C8ae7CDD5efBE65",
+            "0x63032E36A17f0fEf974517D5F85Da18b6732b95E",
+            "0x2bB9FF8EC31A497612B28cB41164299D0eF22BE7",
+            "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+            "0xEFeB7E0cE5c7f41fD092137D467613A867d3B74C"
+          ]
+        },
+        {
+          "name": "RobinhoodV3NativeGraduationAdapterV2 (gen-7)",
+          "address": "0xbb5265125A6eE4F340AeCa518C8ae7CDD5efBE65",
+          "contract": "contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol:RobinhoodV3NativeGraduationAdapterV2",
+          "args": [
+            "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+            "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3",
+            "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "RobinhoodStockGraduationAdapterV2 (gen-7)",
+          "address": "0x290fD8eCA353637Be4a0cbC335095e5E6F5F16e2",
+          "contract": "contracts/integrations/RobinhoodStockGraduationAdapterV2.sol:RobinhoodStockGraduationAdapterV2",
+          "args": [
+            "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+            "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3",
+            "0xCaf681a66D020601342297493863E78C959E5cb2",
+            "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+            "0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9",
+            "90000",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "LaunchTokenDeployer (gen-7)",
+          "address": "0x144170c53ADBc5cF7Ec454612C948B931e231C9e",
+          "contract": "contracts/token/LaunchTokenDeployer.sol:LaunchTokenDeployer",
+          "args": []
         }
       ]
     }

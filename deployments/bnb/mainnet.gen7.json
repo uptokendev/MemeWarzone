@@ -1,0 +1,87 @@
+{
+  "kind": "bnb-gen7",
+  "network": "bscMainnet",
+  "profile": "bscMainnet",
+  "chainId": 56,
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "admin": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "startedAt": "2026-10-09T20:32:21.030Z",
+  "balanceBefore": "5651939634870263",
+  "gen6": {
+    "factory": "0x1948411B84424f6f67fDf83ce4A9b8ED49c8bF4F",
+    "router": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+    "vault": "0x6Cb44e3dB907801a04FA7A056Fbe79799298AF66",
+    "community": "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e"
+  },
+  "inputs": {
+    "topazAdapter": "0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a",
+    "topazRouter": "0x1E98c8226e7d452e1888e3d3d2F929346321c6c3",
+    "topazPoolFactory": "0x65E6cD0eF5D3467030103cf3d433034E570b5784",
+    "wbnb": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    "graduationOracle": "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B",
+    "nativeUsdFeed": "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE",
+    "creatorRegistry": "0x8194FB3745d027102ce7Da562c7045f28B2f42fD",
+    "riskRegistry": "0x92b1494CF7b80dA379EB96F59EeE4Ae7F8970597",
+    "routeAuthority": "0xb989A99823eA96552c3E3198A40CdBF682EDf1aA",
+    "weekly": "0xC9286EE3390A4dC642340bd703396E6B7b2521d5",
+    "monthly": "0x42D254A7451808Bb01df879d71BcAfDC5D605A38",
+    "recruiter": "0x40ac5cD71bdB42cCF542b7f96C2083cDABa41e78",
+    "protocol": "0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D",
+    "operator": "0x20652bdb1d986220fEc30f4733587F279403E773",
+    "caps": {
+      "maxBuyPerTx": "650000000000000000",
+      "maxBuybackPerCampaignWeek": "6500000000000000000",
+      "minBuyInterval": "21600",
+      "maxImpactBps": "50",
+      "maxHolderBatchPerWeek": "32000000000000000000",
+      "holderBatchAuthorizationMax": "32000000000000000000"
+    }
+  },
+  "batchFiles": {
+    "B": "/home/patrick/mwz-wt/evm-gen7/deployments/bnb/mainnet.gen7.B.safe-batch.json",
+    "H": "/home/patrick/mwz-wt/evm-gen7/deployments/bnb/mainnet.gen7.H-open.safe-batch.json"
+  },
+  "fees": {
+    "router": "0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A",
+    "vault": "0xaD9e687D0a83eb1a49A7C6419c8d44aad34fabE9",
+    "holderDistributor": "0xe30E6874C4E633d2d6aa1c217EcA47C7a6e557b8",
+    "deployBlocks": {
+      "router": 126700348,
+      "vault": 126700351,
+      "holderDistributor": 126700354
+    },
+    "community": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d",
+    "airdropDistributor": "0xEDCC2667365F116b9971Cc02f198470BE23a5651"
+  },
+  "airdrop": {
+    "distributor": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+    "mainVault": "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e",
+    "mainDistributor": "0xF170a2C97953754c2C1105E2AcC522Bc8e764D75",
+    "operator": "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50",
+    "operatorSource": "main vault 0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e.airdropOperator()",
+    "cap": "5000000000000000000",
+    "capSource": "main distributor 0xF170a2C97953754c2C1105E2AcC522Bc8e764D75 batchAuthorization(2026-12-07).maxAmount on chain 56",
+    "weeks": 12
+  },
+  "contracts": {
+    "BnbBasicLaunchFactoryGen7": "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+    "PermanentLpLocker": "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+    "LaunchCampaignGen7Implementation": "0x0Bf17e4bF2Ef1f4737d1e8cF95170D814e36A023",
+    "BnbQuoteLaunchCampaignGen7": "0xEE3460D30bC526eF688738bE9be890F133ebd8Ff",
+    "BnbNativeGraduationAdapter": "0x615b1AbE348edA2e5a44eCe32fb50fbC45d2AF07",
+    "BnbQuoteGraduationAdapter": "0xc673B116b4eA8E8923Aad1fa60F0452966F2437F",
+    "LaunchTokenDeployer": "0x9cC6729F18EF06d824593416958626822586994b"
+  },
+  "pendingOwnerActions": [
+    {
+      "to": "0xaD9e687D0a83eb1a49A7C6419c8d44aad34fabE9",
+      "data": "0xd45f23f3000000000000000000000000948463e91d63a7a51ceec0342735d1b738044aea",
+      "why": "setFactoryOnce(factory); create reverts OnlyFactory at setCampaignChoice without it; can be set once"
+    }
+  ],
+  "factoryStartBlock": 126700402,
+  "status": "deployed-create-paused",
+  "balanceAfter": "3967593881814104",
+  "spent": "0.001684345753056159",
+  "finishedAt": "2026-10-09T20:32:49.338Z"
+}

@@ -140,7 +140,14 @@ export async function planRoutes({ adapter, vault, routes, policy, nowSeconds }:
   const adapterAddress = await adapter.getAddress();
   const calls: PlannedCall[] = [];
   const results: any[] = [];
+  // ROUTES_SKIP_SYMBOLS: leave named routes out of this batch entirely (a weekend-stale feed makes
+  // configureStockRoute revert OracleStale on chain); a later run adds them once the feed is fresh.
+  const skip = String(process.env.ROUTES_SKIP_SYMBOLS || "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
   for (const r of routes) {
+    if (skip.includes(r.symbol.toUpperCase())) {
+      console.log(`  skipped    ${r.symbol} (ROUTES_SKIP_SYMBOLS): not in this batch, add it in a later run`);
+      continue;
+    }
     const facts = await verifyRouteFacts(provider, adapter, r, policy, nowSeconds);
     const want = routeStruct(r, policy);
     const have = await adapter.stockRoutes(facts.token);

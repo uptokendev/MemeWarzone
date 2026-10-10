@@ -1,0 +1,1246 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1791577969173,
+  "meta": {
+    "name": "MWZ gen7 B: bind",
+    "description": "gen-7 BNB: router 0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A vaults + creator vault + locker, holder distributor, operator, caps, vault factory pin, launch recorder, quote adapter -> factory 0x948463E91d63a7A51cEeC0342735D1B738044aea; gen-7 airdrop pot: community vault 0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d -> airdrop distributor 0xEDCC2667365F116b9971Cc02f198470BE23a5651, operator 0xdcf07EB07e6D6722c246161e7530dc905F9eaA50, 24 weekly authorizations at 5.0 BNB each",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A",
+      "value": "0",
+      "data": "0x4d6a75af00000000000000000000000040ac5cd71bdb42ccf542b7f96c2083cdaba41e78",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setRecruiterRewardsVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0x40ac5cD71bdB42cCF542b7f96C2083cDABa41e78"
+      }
+    },
+    {
+      "to": "0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A",
+      "value": "0",
+      "data": "0x1ab904b200000000000000000000000049ae38b19664d90b410ae860b9604e1bc5f7ab5d",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setCommunityRewardsVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d"
+      }
+    },
+    {
+      "to": "0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A",
+      "value": "0",
+      "data": "0x33485e220000000000000000000000002abd8970680d806e46ded9aeddaa6e12d866641d",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setProtocolRevenueVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D"
+      }
+    },
+    {
+      "to": "0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A",
+      "value": "0",
+      "data": "0xc5a2064b000000000000000000000000ad9e687d0a83eb1a49a7c6419c8d44aad34fabe9",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setCreatorRewardsVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0xaD9e687D0a83eb1a49A7C6419c8d44aad34fabE9"
+      }
+    },
+    {
+      "to": "0xe30E6874C4E633d2d6aa1c217EcA47C7a6e557b8",
+      "value": "0",
+      "data": "0xe5d7cd8b000000000000000000000000ad9e687d0a83eb1a49a7c6419c8d44aad34fabe9",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newOperator",
+            "type": "address"
+          }
+        ],
+        "name": "setBatchOperator",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newOperator": "0xaD9e687D0a83eb1a49A7C6419c8d44aad34fabE9"
+      }
+    },
+    {
+      "to": "0xaD9e687D0a83eb1a49A7C6419c8d44aad34fabE9",
+      "value": "0",
+      "data": "0x107caa51000000000000000000000000e30e6874c4e633d2d6aa1c217eca47c7a6e557b8",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "distributor",
+            "type": "address"
+          }
+        ],
+        "name": "setHolderDistributorOnce",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "distributor": "0xe30E6874C4E633d2d6aa1c217EcA47C7a6e557b8"
+      }
+    },
+    {
+      "to": "0xaD9e687D0a83eb1a49A7C6419c8d44aad34fabE9",
+      "value": "0",
+      "data": "0x558a729700000000000000000000000020652bdb1d986220fec30f4733587f279403e7730000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "operator_",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "paused_",
+            "type": "bool"
+          }
+        ],
+        "name": "setOperator",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "operator_": "0x20652bdb1d986220fEc30f4733587F279403E773",
+        "paused_": "false"
+      }
+    },
+    {
+      "to": "0xaD9e687D0a83eb1a49A7C6419c8d44aad34fabE9",
+      "value": "0",
+      "data": "0xca35bff20000000000000000000000000000000000000000000000000905438e600100000000000000000000000000000000000000000000000000005a34a38fc00a000000000000000000000000000000000000000000000000000000000000000054600000000000000000000000000000000000000000000000000000000000000032000000000000000000000000000000000000000000000001bc16d674ec800000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "maxBuyPerTx_",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxBuybackPerCampaignWeek_",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "minBuyInterval_",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxImpactBps_",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxHolderBatchPerWeek_",
+            "type": "uint256"
+          }
+        ],
+        "name": "setCaps",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "maxBuyPerTx_": "650000000000000000",
+        "maxBuybackPerCampaignWeek_": "6500000000000000000",
+        "minBuyInterval_": "21600",
+        "maxImpactBps_": "50",
+        "maxHolderBatchPerWeek_": "32000000000000000000"
+      }
+    },
+    {
+      "to": "0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A",
+      "value": "0",
+      "data": "0xacb9fef600000000000000000000000052a47a33930b8a90a2000b1ba3cb96e8795696700000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "locker",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setAuthorizedLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "locker": "0x52A47A33930B8a90a2000b1bA3CB96e879569670",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A",
+      "value": "0",
+      "data": "0x86afb2f600000000000000000000000052a47a33930b8a90a2000b1ba3cb96e879569670",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newLocker",
+            "type": "address"
+          }
+        ],
+        "name": "setPrimaryLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newLocker": "0x52A47A33930B8a90a2000b1bA3CB96e879569670"
+      }
+    },
+    {
+      "to": "0xaD9e687D0a83eb1a49A7C6419c8d44aad34fabE9",
+      "value": "0",
+      "data": "0xd45f23f3000000000000000000000000948463e91d63a7a51ceec0342735d1b738044aea",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "factory_",
+            "type": "address"
+          }
+        ],
+        "name": "setFactoryOnce",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "factory_": "0x948463E91d63a7A51cEeC0342735D1B738044aea"
+      }
+    },
+    {
+      "to": "0x8194FB3745d027102ce7Da562c7045f28B2f42fD",
+      "value": "0",
+      "data": "0x422b76f5000000000000000000000000948463e91d63a7a51ceec0342735d1b738044aea0000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "recorder",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setLaunchRecorder",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "recorder": "0x948463E91d63a7A51cEeC0342735D1B738044aea",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0xc673B116b4eA8E8923Aad1fa60F0452966F2437F",
+      "value": "0",
+      "data": "0xcdaf2507000000000000000000000000948463e91d63a7a51ceec0342735d1b738044aea",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "campaignFactory_",
+            "type": "address"
+          }
+        ],
+        "name": "setCampaignFactoryOnce",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "campaignFactory_": "0x948463E91d63a7A51cEeC0342735D1B738044aea"
+      }
+    },
+    {
+      "to": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d",
+      "value": "0",
+      "data": "0xa1809b95000000000000000000000000edcc2667365f116b9971cc02f198470be23a5651",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newDistributor",
+            "type": "address"
+          }
+        ],
+        "name": "setRewardDistributor",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newDistributor": "0xEDCC2667365F116b9971Cc02f198470BE23a5651"
+      }
+    },
+    {
+      "to": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d",
+      "value": "0",
+      "data": "0x18798425000000000000000000000000dcf07eb07e6d6722c246161e7530dc905f9eaa50",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newOperator",
+            "type": "address"
+          }
+        ],
+        "name": "setAirdropOperator",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newOperator": "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xe5d7cd8b00000000000000000000000049ae38b19664d90b410ae860b9604e1bc5f7ab5d",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newOperator",
+            "type": "address"
+          }
+        ],
+        "name": "setBatchOperator",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newOperator": "0x49Ae38B19664d90b410AE860B9604e1Bc5f7Ab5d"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55ad2cd520c03372bb1599d8e0229e50302def082f3702cde5995f6911b40d81260000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006acc2300000000000000000000000000000000000000000000000000000000006ad40c00",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0xad2cd520c03372bb1599d8e0229e50302def082f3702cde5995f6911b40d8126",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1791763200",
+        "publishDeadline": "1792281600"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55087492d4d7e4fd952f1c91ea266b556ceca77dd594f074dcbc0b8f4a5ca8d7490000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006acc2300000000000000000000000000000000000000000000000000000000006ad40c00",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x087492d4d7e4fd952f1c91ea266b556ceca77dd594f074dcbc0b8f4a5ca8d749",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1791763200",
+        "publishDeadline": "1792281600"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55d6d91fae9225ccb9ab6fbbc8f3e33d191c8be74d05e40eb45cd1ccb8fc0160010000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006ad55d80000000000000000000000000000000000000000000000000000000006add4680",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0xd6d91fae9225ccb9ab6fbbc8f3e33d191c8be74d05e40eb45cd1ccb8fc016001",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1792368000",
+        "publishDeadline": "1792886400"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b5561f5dfce8c5e0fbce87e7bfbafe7f7f72137bbcdff73228f70eca9688164d1dc0000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006ad55d80000000000000000000000000000000000000000000000000000000006add4680",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x61f5dfce8c5e0fbce87e7bfbafe7f7f72137bbcdff73228f70eca9688164d1dc",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1792368000",
+        "publishDeadline": "1792886400"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55b9fac3e2e108dcce4108d31b7a13179098872dc90252b140adf86d820e5b18720000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006ade9800000000000000000000000000000000000000000000000000000000006ae68100",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0xb9fac3e2e108dcce4108d31b7a13179098872dc90252b140adf86d820e5b1872",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1792972800",
+        "publishDeadline": "1793491200"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b550b7ca1e1310071d91531e7f34ed270f5b8071803f50853201f8469dab62486140000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006ade9800000000000000000000000000000000000000000000000000000000006ae68100",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x0b7ca1e1310071d91531e7f34ed270f5b8071803f50853201f8469dab6248614",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1792972800",
+        "publishDeadline": "1793491200"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55bae70b78ffde381c506208e6f0f95fd5d31a7419fedc539c40d318b7da3032530000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006ae7d280000000000000000000000000000000000000000000000000000000006aefbb80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0xbae70b78ffde381c506208e6f0f95fd5d31a7419fedc539c40d318b7da303253",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1793577600",
+        "publishDeadline": "1794096000"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b555623bc29c7effbdc6cebf7e835fdaa9bbdf8ce28d8314fc16976d6e453b4454b0000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006ae7d280000000000000000000000000000000000000000000000000000000006aefbb80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x5623bc29c7effbdc6cebf7e835fdaa9bbdf8ce28d8314fc16976d6e453b4454b",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1793577600",
+        "publishDeadline": "1794096000"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b553c888b62cb8697c6f7347647dd953a2a7006941bbdb58fccef7a61062afb43630000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006af10d00000000000000000000000000000000000000000000000000000000006af8f600",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x3c888b62cb8697c6f7347647dd953a2a7006941bbdb58fccef7a61062afb4363",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1794182400",
+        "publishDeadline": "1794700800"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b554cd27a7e6a458b7e1303f8a270dca91417f5ff95828f71bc36d28dc2c0efe6ab0000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006af10d00000000000000000000000000000000000000000000000000000000006af8f600",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x4cd27a7e6a458b7e1303f8a270dca91417f5ff95828f71bc36d28dc2c0efe6ab",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1794182400",
+        "publishDeadline": "1794700800"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55ecbd31b963ae6f028c2027fe0298cfbfd6e0dba70c6af6d9ff849e9b8649cc690000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006afa4780000000000000000000000000000000000000000000000000000000006b023080",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0xecbd31b963ae6f028c2027fe0298cfbfd6e0dba70c6af6d9ff849e9b8649cc69",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1794787200",
+        "publishDeadline": "1795305600"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55bb0f25fa9f573901b4cd7698cd160bc074800fbb621ad7ed56474b3bc38eee6f0000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006afa4780000000000000000000000000000000000000000000000000000000006b023080",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0xbb0f25fa9f573901b4cd7698cd160bc074800fbb621ad7ed56474b3bc38eee6f",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1794787200",
+        "publishDeadline": "1795305600"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b559eff1700e42f40060f7f99dbd920ebeea0069d9b1cf9858143632314c3966cd50000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b038200000000000000000000000000000000000000000000000000000000006b0b6b00",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x9eff1700e42f40060f7f99dbd920ebeea0069d9b1cf9858143632314c3966cd5",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1795392000",
+        "publishDeadline": "1795910400"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55238965af1c72cc7a17f63db8694c9195cf4a58fc71a7941632012d6c5a47cdb70000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b038200000000000000000000000000000000000000000000000000000000006b0b6b00",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x238965af1c72cc7a17f63db8694c9195cf4a58fc71a7941632012d6c5a47cdb7",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1795392000",
+        "publishDeadline": "1795910400"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b553dcd2f17c73a1475031885685b7c17ce9a723634a0a8887d6a3c70e71c8c8e030000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b0cbc80000000000000000000000000000000000000000000000000000000006b14a580",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x3dcd2f17c73a1475031885685b7c17ce9a723634a0a8887d6a3c70e71c8c8e03",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1795996800",
+        "publishDeadline": "1796515200"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55db7e98d077a921773c0c469d5a70e35441c3d3be4f017e6217174288aaa773590000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b0cbc80000000000000000000000000000000000000000000000000000000006b14a580",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0xdb7e98d077a921773c0c469d5a70e35441c3d3be4f017e6217174288aaa77359",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1795996800",
+        "publishDeadline": "1796515200"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b5560fc607790b2f3bbb3eee22164ec8d6927e79a43a1d702afac28dd6ef70373680000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b15f700000000000000000000000000000000000000000000000000000000006b1de000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x60fc607790b2f3bbb3eee22164ec8d6927e79a43a1d702afac28dd6ef7037368",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1796601600",
+        "publishDeadline": "1797120000"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b5590517063d3f749ddcdc447d94308168db1bfb2583e3cd22a157ae33c32fa84570000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b15f700000000000000000000000000000000000000000000000000000000006b1de000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x90517063d3f749ddcdc447d94308168db1bfb2583e3cd22a157ae33c32fa8457",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1796601600",
+        "publishDeadline": "1797120000"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b5568990a51c05ddce488e0cbdbc64a14e0950b5dfb68eefe7f2c17d5b7645b54490000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b1f3180000000000000000000000000000000000000000000000000000000006b271a80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x68990a51c05ddce488e0cbdbc64a14e0950b5dfb68eefe7f2c17d5b7645b5449",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1797206400",
+        "publishDeadline": "1797724800"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55bce8a91db44bddc98c7e785989859ece8c6931e021231df572119ea706e153f30000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b1f3180000000000000000000000000000000000000000000000000000000006b271a80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0xbce8a91db44bddc98c7e785989859ece8c6931e021231df572119ea706e153f3",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1797206400",
+        "publishDeadline": "1797724800"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55f7ef625ca010f57ceb3721efa6b5af5f56bac4c598507692a9078b0fd53948200000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b286c00000000000000000000000000000000000000000000000000000000006b305500",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0xf7ef625ca010f57ceb3721efa6b5af5f56bac4c598507692a9078b0fd5394820",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1797811200",
+        "publishDeadline": "1798329600"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b55986301a9f0c4710d8621c91edae13837ff024625cc79ebaeefbc9fd82a1ddffd0000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b286c00000000000000000000000000000000000000000000000000000000006b305500",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x986301a9f0c4710d8621c91edae13837ff024625cc79ebaeefbc9fd82a1ddffd",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1797811200",
+        "publishDeadline": "1798329600"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b554fbcbb7c7d40358d3c2907d2af808579be3a624ecc16acbd8896d653368cac740000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b31a680000000000000000000000000000000000000000000000000000000006b398f80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x4fbcbb7c7d40358d3c2907d2af808579be3a624ecc16acbd8896d653368cac74",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1798416000",
+        "publishDeadline": "1798934400"
+      }
+    },
+    {
+      "to": "0xEDCC2667365F116b9971Cc02f198470BE23a5651",
+      "value": "0",
+      "data": "0xa2885b559deef22b8c925c69acf73f03d1f5b2ac97a822c5f09b3f08ba376cccf7c409c80000000000000000000000000000000000000000000000004563918244f40000000000000000000000000000000000000000000000000000000000006b31a680000000000000000000000000000000000000000000000000000000006b398f80",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "batchId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "publishDeadline",
+            "type": "uint64"
+          }
+        ],
+        "name": "authorizeBatch",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "batchId": "0x9deef22b8c925c69acf73f03d1f5b2ac97a822c5f09b3f08ba376cccf7c409c8",
+        "maxAmount": "5000000000000000000",
+        "publishAfter": "1798416000",
+        "publishDeadline": "1798934400"
+      }
+    }
+  ]
+}
