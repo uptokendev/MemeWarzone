@@ -38,7 +38,7 @@
 **Depends-on:** none
 **TDD:** waived (dependency install, no behaviour)
 **Files:** none committed (`frontend/node_modules`, `realtime-indexer/node_modules`, `tools/robinhood-testnet-infra/node_modules`)
-- Run `npm ci --prefix frontend`, `npm ci --prefix realtime-indexer` and `npm ci --prefix tools/robinhood-testnet-infra`.
+- Run `npm ci --prefix frontend` and `npm ci --prefix realtime-indexer`. `tools/robinhood-testnet-infra` has no lockfile (its versions are pinned exactly in package.json), so use `npm install --prefix tools/robinhood-testnet-infra --no-package-lock`.
 - Do not commit lockfile changes. If `npm ci` rewrites a lockfile, stop and report.
 - Root `node_modules` already exists.
 **Verify:** `ls frontend/node_modules/esbuild realtime-indexer/node_modules/tsx tools/robinhood-testnet-infra/node_modules/@uniswap/v3-core >/dev/null && git status --short -- '*package-lock.json'` → listings succeed and git prints no `package-lock.json` changes caused by this task (the pre-existing root `package-lock.json` drift is not ours; leave it untouched).
@@ -84,7 +84,7 @@
   - `latestRoundData` and `getRoundData`, `RoundUnavailable`
   - `decimals() == 8`
   - `GraduationOracle(feed, 3600).nativeUsdPrice()` reads it, and reverts `StalePrice` after `evm_increaseTime(3601)`
-**Verify:** `npx hardhat test test/DogeosTestnetDogeUsdOracle.spec.ts` → all passing; `git diff --stat $(git merge-base main HEAD) -- contracts/gen7 contracts/integrations contracts/robinhood` → empty
+**Verify:** `npx hardhat test test/DogeosTestnetDogeUsdOracle.spec.ts` → all passing; `git diff --stat 6c5ca159a -- contracts/gen7 contracts/integrations contracts/robinhood` → empty
 
 ### Task 4: Oracle audit diff (gate 2)            [id: t4]
 **Depends-on:** [t3]
@@ -514,8 +514,8 @@ Changes:
   - `npx --prefix frontend tsc -p frontend --noEmit`
 - Compare against a baseline run of the same commands on the merge base (`git stash`-free: use `git worktree add` on `main` in the scratchpad) and list any failure that is new.
 - Any new failure blocks t9: report it, don't fix it here.
-- Also run the unchanged-live check: `git diff $(git merge-base main HEAD) --stat -- deployments/ ':!deployments/dogeos'` → empty.
-**Verify:** all suites report 0 new failures versus baseline; `git diff $(git merge-base main HEAD) --stat -- deployments/ ':!deployments/dogeos'` → empty output
+- Also run the unchanged-live check: `git diff 6c5ca159a --stat -- deployments/ ':!deployments/dogeos'` → empty.
+**Verify:** all suites report 0 new failures versus baseline; `git diff 6c5ca159a --stat -- deployments/ ':!deployments/dogeos'` → empty output
 
 ### Task 27: Whole-branch review            [id: t27]
 **Depends-on:** [t26]
