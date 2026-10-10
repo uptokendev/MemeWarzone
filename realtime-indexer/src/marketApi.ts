@@ -108,7 +108,13 @@ async function maybeRewindEmptyTradeCursor(chainId: number, campaign: string): P
   await rewindEmptyCampaignTradeCursor(chainId, campaign);
 }
 
-function rpcUrlForChain(chainId: number): string {
+/**
+ * RPC for the Topaz (BNB) market-state and dex_pools repair below. DogeOS graduates to a
+ * V3 pool, not Topaz, and must never be read through a BSC RPC, so it gets no RPC here
+ * and both repairs return early for it.
+ */
+export function rpcUrlForChain(chainId: number): string {
+  if (chainId === 6281971) return "";
   if (chainId === 56) return parseRpcList(ENV.BSC_RPC_HTTP_56)[0] || "";
   return parseRpcList(ENV.BSC_RPC_HTTP_97)[0] || "";
 }
@@ -869,7 +875,7 @@ async function readMarketState(chainId: number, campaign: string) {
     // Diagnostics: shows whether this request attempted a dex_pools repair.
     dexPoolRepair,
     poolIndexerEnvEnabled:
-      chainId === 4663 || chainId === 46630
+      chainId === 4663 || chainId === 46630 || chainId === 6281971
         ? ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER
         : ENV.ENABLE_TOPAZ_POOL_INDEXER,
     unifiedMarketApiEnvEnabled: ENV.ENABLE_UNIFIED_MARKET_API,

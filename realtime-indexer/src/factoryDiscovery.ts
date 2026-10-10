@@ -93,6 +93,16 @@ function inventories(): SupportedFactory[] {
           supportedFactoryStartBlocks: ENV.SUPPORTED_FACTORY_START_BLOCKS_4663,
         })
       : []),
+    ...(ENV.DOGEOS_RPC_HTTP_6281971
+      ? buildFactoryInventory({
+          chainId: 6281971,
+          rpcHttp: ENV.DOGEOS_RPC_HTTP_6281971,
+          activeFactoryAddress: ENV.FACTORY_ADDRESS_6281971,
+          activeFactoryStartBlock: ENV.FACTORY_START_BLOCK_6281971,
+          supportedFactoryAddresses: ENV.SUPPORTED_FACTORY_ADDRESSES_6281971,
+          supportedFactoryStartBlocks: ENV.SUPPORTED_FACTORY_START_BLOCKS_6281971,
+        })
+      : []),
   ];
 }
 

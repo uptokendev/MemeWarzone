@@ -34,11 +34,37 @@ function isAddress(value: string): boolean {
   return /^0x[a-f0-9]{40}$/.test(value);
 }
 
-function rpcUrlsFor(chainId: number): string[] {
+export function rpcUrlsFor(chainId: number): string[] {
   if (chainId === 56) return parseRpcList(ENV.BSC_RPC_HTTP_56);
   if (chainId === 46630) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630);
   if (chainId === 4663) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663);
+  // Never fall through to a BSC RPC for DogeOS: unset means no RPC.
+  if (chainId === 6281971) return parseRpcList(ENV.DOGEOS_RPC_HTTP_6281971);
   return parseRpcList(ENV.BSC_RPC_HTTP_97);
+}
+
+/** Factory start block for the backfill floor. DogeOS reads only its own (0 when unset), never BSC 97's. */
+export function historyFactoryStartBlock(chainId: number): number {
+  if (chainId === 6281971) return Number(ENV.FACTORY_START_BLOCK_6281971 || 0);
+  return chainId === 56 ? Number(ENV.FACTORY_START_BLOCK_56 || 0) : Number(ENV.FACTORY_START_BLOCK_97 || 0);
+}
+
+/**
+ * Tip window for one API-triggered backfill. Never try to walk 1M blocks in one
+ * API-triggered backfill (hangs /trades).
+ * Robinhood staging advances far faster than BSC; a 5k-block tip window can
+ * miss a perfectly valid trade from the same 24h period. Cover ~200k recent
+ * blocks there, using the same 2,500-block RPC chunks as browser recovery.
+ * DogeOS takes the same explicit window: its 2,500-block chunks stay under the
+ * 10,000-block eth_getLogs cap, and it never takes the BSC default.
+ */
+export function historyTipWindow(chainId: number): { tipBlocks: number; logChunkSize: number | undefined } {
+  const fastChain = chainId === 46630 || chainId === 4663 || chainId === 6281971;
+  const tipBlocks = fastChain
+    ? Math.max(200_000, Number(ENV.INDEXER_TIP_SCAN_BLOCKS || 0))
+    : Math.max(3_000, Number(ENV.INDEXER_TIP_SCAN_BLOCKS || 5_000));
+  const logChunkSize = fastChain ? 2_500 : undefined;
+  return { tipBlocks, logChunkSize };
 }
 
 function rpcUrlFor(chainId: number): string {
@@ -361,8 +387,7 @@ export async function backfillEmptyCampaignTrades(
       [chainId, campaign],
     );
     const createdBlock = Number(campRow.rows[0]?.created_block || 0);
-    const factoryStart =
-      chainId === 56 ? Number(ENV.FACTORY_START_BLOCK_56 || 0) : Number(ENV.FACTORY_START_BLOCK_97 || 0);
+    const factoryStart = historyFactoryStartBlock(chainId);
     // Dual-test A2B19f start when env missing — WIC lives on this factory.
     const knownFactoryFloor = chainId === 97 ? 122_024_169 : 0;
     const floor =
@@ -374,15 +399,7 @@ export async function backfillEmptyCampaignTrades(
             ? knownFactoryFloor
             : Math.max(0, latest - 50_000);
 
-    // Never try to walk 1M blocks in one API-triggered backfill (hangs /trades).
-    // Robinhood staging advances far faster than BSC; a 5k-block tip window can
-    // miss a perfectly valid trade from the same 24h period. Cover ~200k recent
-    // blocks there, using the same 2,500-block RPC chunks as browser recovery.
-    const isRobinhood = chainId === 46630 || chainId === 4663;
-    const tipBlocks = isRobinhood
-      ? Math.max(200_000, Number(ENV.INDEXER_TIP_SCAN_BLOCKS || 0))
-      : Math.max(3_000, Number(ENV.INDEXER_TIP_SCAN_BLOCKS || 5_000));
-    const logChunkSize = isRobinhood ? 2_500 : undefined;
+    const { tipBlocks, logChunkSize } = historyTipWindow(chainId);
     const histBlocks = Math.max(
       8_000,
       Math.min(60_000, Number(ENV.REPAIR_LOOKBACK_BLOCKS || 20_000) * 3),

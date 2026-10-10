@@ -11,7 +11,8 @@ import {
 } from "../evmIndexerChains.js";
 
 test("Robinhood EVM indexer chains are known but inactive during RH-3", () => {
-  assert.deepEqual(KNOWN_EVM_INDEXER_CHAIN_IDS, [56, 97, 4663, 46630]);
+  // DogeOS testnet (6281971) is known too (spec §4) and, like Robinhood, not ACTIVE.
+  assert.deepEqual(KNOWN_EVM_INDEXER_CHAIN_IDS, [56, 97, 4663, 46630, 6281971]);
   assert.deepEqual(ACTIVE_EVM_INDEXER_CHAIN_IDS, [56, 97]);
   assert.equal(isKnownEvmIndexerChainId(4663), true);
   assert.equal(isKnownEvmIndexerChainId(46630), true);

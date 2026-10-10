@@ -397,6 +397,9 @@ app.get("/health", async (_req, res) => {
         evmChainIds: ENV.EVM_INDEXER_CHAIN_IDS,
         v3: (await import("./robinhoodV3PoolIndexer.js")).robinhoodV3PublicHealth(),
       },
+      dogeos: {
+        rpc6281971Configured: Boolean(ENV.DOGEOS_RPC_HTTP_6281971),
+      },
       solana: solanaIndexerPublicHealth(),
       protocolForwarderKeeper: (await import("./protocolForwarderKeeper.js")).protocolForwarderKeeperHealth(),
       // JSON-RPC requests this process sent since it started, by chain and method (no URLs).

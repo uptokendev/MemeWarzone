@@ -105,16 +105,21 @@ function bigintRatio(value: bigint, denominator: bigint): number {
   return Number(whole) + Number(remainder) / Number(denominator);
 }
 
-/** EVM curve-chain RPC list: Robinhood RPCs for 4663/46630, BNB RPCs otherwise. Shared with indexer.ts. */
+/**
+ * EVM curve-chain RPC list: Robinhood RPCs for 4663/46630, the DogeOS RPC (or none) for
+ * 6281971, BNB RPCs otherwise. Shared with indexer.ts.
+ */
 export function bscRpcUrls(chainId: number): string[] {
   if (chainId === 46630) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630);
   if (chainId === 4663) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663);
+  // Never fall through to a BSC RPC for DogeOS: unset means no RPC.
+  if (chainId === 6281971) return parseRpcList(ENV.DOGEOS_RPC_HTTP_6281971);
   return parseRpcList(chainId === 56 ? ENV.BSC_RPC_HTTP_56 : ENV.BSC_RPC_HTTP_97);
 }
 
-/** Robinhood campaigns are the same LaunchCampaign shape as BNB, so the curve reads match. */
-function isEvmCurveChain(chainId: number): boolean {
-  return chainId === 56 || chainId === 97 || chainId === 46630 || chainId === 4663;
+/** Robinhood and DogeOS campaigns are the same LaunchCampaign shape as BNB, so the curve reads match. */
+export function isEvmCurveChain(chainId: number): boolean {
+  return chainId === 56 || chainId === 97 || chainId === 46630 || chainId === 4663 || chainId === 6281971;
 }
 
 const bscProviders = new Map<number, ethers.JsonRpcProvider>();
@@ -452,7 +457,7 @@ async function staleCampaigns() {
        from public.curve_trades t
        left join public.token_candles tc
          on tc.chain_id=t.chain_id and tc.campaign_address=t.campaign_address
-      where t.chain_id in (56,97,101,46630,4663)
+      where t.chain_id in (56,97,101,46630,4663,6281971)
         and coalesce(t.venue,'') <> 'dbc'
         and (t.chain_id <> 101 or t.sold_tokens_after_raw is not null)
       group by t.chain_id,t.campaign_address

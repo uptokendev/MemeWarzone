@@ -12,6 +12,12 @@ import { createStaticJsonRpcProvider, createWorkingProvider, maskRpcUrl, parseRp
 import { bscRpcUrls } from "./canonicalCandleMaterializer.js";
 import { healRobinhoodGraduatedCms } from "./robinhoodCmsHeal.js";
 import {
+  buildIndexerChainList,
+  graduatedMarketFor,
+  isV3GraduationIndexerChainId,
+  type IndexerChainCfg,
+} from "./evmIndexerChains.js";
+import {
   BNB_CURVE_PARAM_FRAGMENTS,
   bnbCurveStateFor,
   parseRawTokenAmount,
@@ -290,51 +296,11 @@ async function getLogsSafe(
 // Chain config
 // ---------------------------------------------------------------------------
 
-type ChainCfg = {
-  chainId: number;
-  rpcHttp: string; // comma-separated list
-  factoryAddress?: string;
-  factoryStartBlock?: number;
-  voteTreasuryAddress?: string;
-  voteTreasuryStartBlock?: number;
-};
+type ChainCfg = IndexerChainCfg;
 
-const CHAINS: ChainCfg[] = [
-  {
-    chainId: 56,
-    rpcHttp: ENV.BSC_RPC_HTTP_56,
-    factoryAddress: ENV.FACTORY_ADDRESS_56 || undefined,
-    factoryStartBlock: ENV.FACTORY_START_BLOCK_56 || undefined,
-    voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_56 || undefined,
-    voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_56 || undefined
-  },
-  {
-    chainId: 97,
-    rpcHttp: ENV.BSC_RPC_HTTP_97,
-    factoryAddress: ENV.FACTORY_ADDRESS_97 || undefined,
-    factoryStartBlock: ENV.FACTORY_START_BLOCK_97 || undefined,
-    voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_97 || undefined,
-    voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_97 || undefined
-  },
-  {
-    chainId: 46630,
-    rpcHttp: ENV.ROBINHOOD_RPC_HTTP_46630,
-    factoryAddress: ENV.FACTORY_ADDRESS_46630 || undefined,
-    factoryStartBlock: ENV.FACTORY_START_BLOCK_46630 || undefined,
-    voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_46630 || undefined,
-    voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_46630 || undefined
-  },
-  {
-    // Robinhood mainnet (factory 0x35E93D0b..., deployed 2026-09-24). Same shape
-    // as 46630 and gated the same way: present only when its RPC is configured.
-    chainId: 4663,
-    rpcHttp: ENV.ROBINHOOD_RPC_HTTP_4663,
-    factoryAddress: ENV.FACTORY_ADDRESS_4663 || undefined,
-    factoryStartBlock: ENV.FACTORY_START_BLOCK_4663 || undefined,
-    voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_4663 || undefined,
-    voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_4663 || undefined
-  }
-].filter((chain) => Boolean(chain.rpcHttp && /^https?:\/\//i.test(String(chain.rpcHttp)) && !/[<>]|YOUR_/i.test(String(chain.rpcHttp))));
+// The list (56, 97, 46630, 4663, 6281971, each gated on a usable RPC) is built in
+// evmIndexerChains.ts so it can be tested without importing this module.
+const CHAINS: ChainCfg[] = buildIndexerChainList(ENV);
 
 // ---------------------------------------------------------------------------
 // DB state
@@ -485,13 +451,11 @@ async function setCampaignGraduated(
      where chain_id=$1 and campaign_address=$2`,
     [chainId, campaign.toLowerCase(), graduatedBlock, graduatedAt, txHash.toLowerCase()]
   );
-  const robinhood = chainId === 46630 || chainId === 4663;
   await notifyCampaignGraduated(pool, {
     chainId,
     campaignAddress: campaign,
-    market: robinhood
-      ? { venue: "v3", quoteAsset: "WETH" }
-      : { venue: "topaz", quoteAsset: "WBNB" },
+    // Robinhood: v3/WETH; DogeOS: v3/WDOGE; BNB: topaz/WBNB.
+    market: graduatedMarketFor(chainId),
     graduatedAt,
   });
 }
@@ -1455,7 +1419,7 @@ async function markEvmCampaignGraduated(input: {
 
   // Graduation marker for league categories
   await setCampaignGraduated(chainId, campaign, input.blockNumber, new Date(tsSec * 1000), txHash);
-  if ((chainId === 46630 || chainId === 4663) && tokenAddr) {
+  if (isV3GraduationIndexerChainId(chainId) && tokenAddr) {
     const pair = input.pair;
     try {
       await pool.query(
@@ -2458,7 +2422,7 @@ async function runIndexerCore(opts: {
     // Cheap on-chain CMS heal before log scans. RH5661 is launched with a V3 pair
     // but campaign_market_state stayed BONDING because heal only ran at the end of
     // scanCampaignRange, which 200k empty-history / 7s tip deadlines often skip.
-    if (chain.chainId === 46630 || chain.chainId === 4663) {
+    if (isV3GraduationIndexerChainId(chain.chainId)) {
       const healProvider = createStaticJsonRpcProvider(rpcList[0], chain.chainId, {
         timeoutMs: Math.min(ENV.RPC_REQUEST_TIMEOUT_MS, 15_000),
       });

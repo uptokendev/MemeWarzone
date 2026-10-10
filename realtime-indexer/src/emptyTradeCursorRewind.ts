@@ -1,6 +1,19 @@
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 
+/** Factory start block used as the rewind floor. DogeOS reads only its own (0 when unset), never BSC 97's. */
+export function factoryStartBlockForChain(chainId: number): number {
+  return chainId === 56
+    ? Number(ENV.FACTORY_START_BLOCK_56 || 0)
+    : chainId === 46630
+      ? Number(ENV.FACTORY_START_BLOCK_46630 || 0)
+      : chainId === 4663
+        ? Number(ENV.FACTORY_START_BLOCK_4663 || 0)
+        : chainId === 6281971
+          ? Number(ENV.FACTORY_START_BLOCK_6281971 || 0)
+          : Number(ENV.FACTORY_START_BLOCK_97 || 0);
+}
+
 /**
  * Campaigns that advanced their indexer cursor while eth_getLogs was broken
  * end up with last_indexed_block >> created_block and zero curve_trades.
@@ -36,14 +49,7 @@ export async function rewindEmptyCampaignTradeCursor(
     if (tradeCount > 0) return { rewound: false, reason: "has_trades" };
 
     const createdBlock = Number(row.created_block || 0);
-    const factoryStart =
-      chainId === 56
-        ? Number(ENV.FACTORY_START_BLOCK_56 || 0)
-        : chainId === 46630
-          ? Number(ENV.FACTORY_START_BLOCK_46630 || 0)
-          : chainId === 4663
-            ? Number(ENV.FACTORY_START_BLOCK_4663 || 0)
-            : Number(ENV.FACTORY_START_BLOCK_97 || 0);
+    const factoryStart = factoryStartBlockForChain(chainId);
 
     const cursor = `campaign:${campaign}`;
     const state = await pool.query(
