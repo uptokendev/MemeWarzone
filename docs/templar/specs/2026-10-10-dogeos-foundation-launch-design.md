@@ -10,7 +10,7 @@ No mainnet chain ID or date has been announced. This spec is the first of four D
 | # | Sub-project | Depends on |
 |---|---|---|
 | 1 | **Foundation + Launch** (this spec): chain identity, gen-7 contracts, create/buy/sell/graduate on testnet | — |
-| 2 | Adapter for an official DogeOS DEX (BarkSwap or similar), once one is named | 1 |
+| 2 | ~~Official DEX adapter~~: folded into sub-project 1 (MuchFi graduation, 2026-10-10) | — |
 | 3 | Arena on 6281971: battles, leagues, vote treasury, war pools | 1 |
 | 4 | DogeOS SDK / MyDoge wallet (needs a partner `clientId`) | — (parallel) |
 
@@ -51,16 +51,17 @@ pages and terminology. Only the chain-specific parts differ (native asset, RPC, 
 ## Scope
 
 **In scope**
-- The gen-7 contract set on 6281971 with unchanged bytecode, a staging V3 DEX on the real WDOGE, and
-  one new contract: a DOGE/USD testnet oracle.
+- The gen-7 contract set on 6281971 with unchanged bytecode, graduating into **MuchFi** (1% tier),
+  plus the new contracts: a DOGE/USD testnet oracle and three MuchFi variants (graduation adapter,
+  position locker, creator vault).
 - 6281971 in every hand-kept chain list across app, API, indexer and staging DB, plus a guard test.
 - Chain identity: native DOGE, RPC, explorer, add/switch chain for injected wallets (MetaMask, Rabby).
-- Indexing, including graduated V3 trades, and a DOGE/USD price for display.
+- Indexing, including graduated MuchFi trades, and a DOGE/USD price for display.
 - Exposure on TEST only (test frontend, TEST API, TEST indexer, staging Supabase), plus the local
   hybrid dev setup pointed at the same.
 
 **Out of scope**
-- Sub-projects 2–4 above.
+- Sub-projects 3–4 above.
 - Quote coins against the faucet mock tokens. Native DOGE is the only quote.
 - Showing the L1 data & finality fee in our UI. Wallets show what they show.
 - Any change to live (`build/cross-chain-stabilization-rh-base`), mainnet, Solana, or BNB/Robinhood
@@ -70,7 +71,8 @@ pages and terminology. Only the chain-specific parts differ (native asset, RPC, 
 - Reorg rollback or reconciliation in the indexer (see Indexer).
 
 **Hard constraints**
-- Bytecode identical to the audited gen-7 build: solc 0.8.24, the existing `hardhat.config.ts`
+- Factory, campaign and every other reused contract: bytecode identical to the audited gen-7 build
+  (the only new bytecode is the oracle and the three MuchFi variants, each with an audit diff): solc 0.8.24, the existing `hardhat.config.ts`
   compiler settings, no DogeOS compiler profile.
 - CREATE/BUY/SELL transaction flow and shape unchanged. The pins in the existing tests stay green and
   are never re-pinned.
@@ -98,11 +100,11 @@ everything is deployed fresh:
   community rewards, the holder distributor, the airdrop distributor and a **fresh** main vault with
   an explicit testnet cap set in the deploy config. The 46630 helper derives the cap from a gen-6
   main pot, which DogeOS doesn't have.
-  `RewardDistributor`, and `CreatorRewardsVaultV2`.
+  `RewardDistributor`, and the creator vault as its **MuchFi variant** (below).
 - **Registries and price:** `CreatorRegistry`, `RiskRegistry`, the generic `GraduationOracle`.
-- **Graduation and trading:** `RobinhoodV3NativeGraduationAdapterV2` and
-  `RobinhoodV3NativeSwapAdapterV2` (no chain checks), pointed at the staging DEX.
-- **Lockers:** `PermanentV3PositionLocker`.
+- **Graduation and trading:** the graduation adapter as its **MuchFi variant** (below), and
+  `RobinhoodV3NativeSwapAdapterV2` unchanged (no chain checks), pointed at MuchFi's SmartRouter.
+- **Lockers:** the position locker as its **MuchFi variant** (below).
 - **Not deployed:** `RobinhoodStockLaunchCampaignGen7` and every stock/quote adapter
   (`RobinhoodStockGraduationAdapterV2`, etc.). The factory's stock slots stay empty.
 
@@ -132,15 +134,53 @@ Why graduation ships in this sub-project: a gen-7 campaign fixes its `graduation
 `graduationOracle` at create time (`LaunchCampaignGen7.sol:322-339`). Coins created before a working
 adapter exists would be bound to whatever adapter was set at that moment.
 
-**Staging DEX**
-- **Canonical Uniswap V3**, deployed from the same pinned npm artifacts as the real 46630 V3 stack
-  (`tools/robinhood-testnet-infra`: `@uniswap/v3-core@1.0.1`, `@uniswap/v3-periphery@1.4.4`,
-  `@uniswap/swap-router-contracts@1.3.1`; deploy shape `scripts/deploy-robinhood-testnet-infrastructure.ts`).
-  It includes the factory, the position manager, the swap router and the quoter, and uses the
-  **official WDOGE** as the wrapped native. No mock WETH.
-- **Not** the mock set from `scripts/deploy-robinhood-v3-mock.ts`. Its pool has no `slot0()`/`swap()`,
-  and the gen-7 graduation path (`RobinhoodV3PoolRepair.sol`) calls both.
-- The deploy refuses any chain except 6281971, or 31337 with an explicit rehearsal flag.
+**Graduation venue: MuchFi CLMM** (founder decision 2026-10-10, replaces the own staging V3)
+
+MuchFi is the DEX DogeOS coins graduate into. Facts verified read-only on Chikyū (2026-10-10) and from
+MuchFi's docs (https://docsv2.muchfi.xyz/docs/home/contracts/clmm) and the founder's chat with MuchFi:
+- A **PancakeSwap V3 fork**. Factory `0x7d175e06570CaFA1cfDF060850b84E0Ca23EfF0B`, PoolDeployer
+  `0x6c04e808d5FfFb597cb6a5b539f2a1dDF3529348`, NonfungiblePositionManager
+  `0x7932C91f3BAD326ecd6C2bE81697D732714B9eC5`, SmartRouter (SwapRouter02 shape, no deadline)
+  `0x54f7D7f6FeDf4E930eFd6b4742Ba0B9E8a6dC1CB`, SwapRouter (with deadline)
+  `0xd34FE9553CE3012F81c8a7D86F3063AcADb8201c`, QuoterV2 `0x5DE1Ea595653419f295511DEb781b98387a77cc2`.
+  All use the official WDOGE `0xF6BD…78aE`.
+- Graduated coins use the **1% tier: fee 10000, tick spacing 200** (agreed with MuchFi; 3000 is not
+  enabled). Pool creation is permissionless on every enabled tier.
+- The LP position is an ERC-721 NFT, locked permanently in our locker as on Robinhood.
+- MuchFi takes **32% of LP fees** at the pool (`feeProtocol` 3200 per side). Our locker receives the
+  rest and splits it through the existing router/locker revenue mechanism, unchanged from Robinhood.
+- **Trust caveats:** no MuchFi source is verified on any explorer, and one EOA
+  (`0xDa4dD661…0056`) owns the factory and can change the protocol fee per pool. Accepted for testnet;
+  a mainnet precondition is re-checking both.
+
+**MuchFi variant contracts.** Three of our contracts swap directly on a pool and receive the pool's
+callback, and MuchFi pools call `muchfiV3SwapCallback` instead of `uniswapV3SwapCallback`. MuchFi
+`slot0()` also returns `feeProtocol` as `uint32` (value 209718400), which our `uint8` decode
+rejects. So each of these gets a DogeOS-only **MuchFi variant**, a minimal diff from the audited
+original:
+1. **Graduation adapter**: from `RobinhoodV3NativeGraduationAdapterV2` + `RobinhoodV3PoolRepair`.
+   Changes: callback name, `slot0` `uint32` decode, `POOL_FEE` 10000 / `TICK_SPACING` 200 (and
+   full-range ticks), and the factory/NPM addresses it is constructed with.
+2. **Position locker**: from `PermanentV3PositionLocker`. Change: callback name (plus `slot0` if it
+   reads it).
+3. **Creator vault**: from `CreatorRewardsVaultV2`. Change: callback name (plus `slot0` if it reads
+   it).
+
+Rules for the variants:
+- No other logic change: the callback body, checks and accounting stay byte-for-byte the original's
+  logic. The originals and every BNB/Robinhood deployment stay untouched.
+- Each variant gets a written **audit diff** against its original (gate 2), covering the CLAUDE.md
+  audit points, before it is used in any rehearsal.
+- Each variant is tested on a **Hardhat fork of Chikyū against the real MuchFi contracts** (MuchFi
+  bytecode cannot be built locally: no source). The fork tests cover graduation into a fresh 1% pool,
+  graduation into a pool someone pre-created at a wrong price (the repair path), a swap after
+  graduation through the SmartRouter, LP-fee collection through the locker, and a creator-vault
+  buyback.
+- If the fork test shows the unchanged `RobinhoodV3NativeSwapAdapterV2` cannot trade through the
+  SmartRouter, stop and bring it back as a decision.
+
+The canonical Uniswap V3 stack library (`scripts/lib/dogeosV3Stack.ts`) stays for local tests only.
+Nothing Uniswap is deployed on Chikyū.
 
 **New contract: DOGE/USD testnet oracle**
 - A copy of `contracts/robinhood/testnet/RobinhoodTestnetEthUsdOracle.sol`, locked to 6281971:
@@ -221,8 +261,10 @@ adapter exists would be bound to whatever adapter was set at that moment.
   `src/env.ts`. The vote-treasury entries stay empty until sub-project 3.
 - **`getLogs` limits.** The main campaign indexer needs no change: its default chunk
   (`LOG_CHUNK_SIZE` = 500) and adaptive splitting stay inside the 10k-block and 10k-result caps.
-- **Graduated trades.** Trades on the staging V3 DEX are indexed and charted by reusing the V3 pool
-  indexer. That indexer currently scans in chunks of `Math.max(500, ROBINHOOD_V3_LOG_CHUNK_SIZE ||
+- **Graduated trades.** Trades in the MuchFi pools are indexed and charted by reusing the V3 pool
+  indexer. MuchFi is a PancakeSwap V3 fork, whose pool `Swap` event carries extra protocol-fee fields
+  and so has a different signature from Uniswap's; the indexer must decode MuchFi's actual event for
+  6281971 (verified on-chain from a real MuchFi swap log), with Robinhood's decoding untouched. That indexer currently scans in chunks of `Math.max(500, ROBINHOOD_V3_LOG_CHUNK_SIZE ||
   50_000)` blocks (`realtime-indexer/src/robinhoodV3PoolIndexer.ts:1435`), 5× the DogeOS cap. For
   6281971 the **starting** chunk is capped at ≤ 10,000 blocks per chain. The existing narrowing on a
   rejected call (chunk/4 down to `minChunk`, ~lines 1445-1455) already covers the 10k-result cap. A
@@ -311,11 +353,12 @@ adapter exists would be bound to whatever adapter was set at that moment.
      - `FORBIDDEN_KEEPER_ADDRESSES` refuses the DogeOS deployer, the updater and the route authority; the keeper is enabled
        for 6281971
      - registry, native-symbol and feed-isolation pins for 6281971
-2. **Oracle audit diff.** A written diff review of the DogeOS oracle against
-   `RobinhoodTestnetEthUsdOracle`, done before gate 3.
+2. **Audit diffs.** Written diff reviews of the DogeOS oracle against
+   `RobinhoodTestnetEthUsdOracle`, and of each MuchFi variant against its original, all PASS before
+   gate 3.
 3. **Fork rehearsal.**
    - Run the full deploy against a Hardhat fork of Chikyū.
-   - Then: create → buy → sell → reach the `$150` target → graduate into the staging V3 → a swap after graduation
+   - Then: create → buy → sell → reach the `$150` target → graduate into a MuchFi 1% pool → a swap after graduation
      → creator claim.
    - The fork config sets `blockGasLimit` to Chikyū's 10M, so any transaction over the real limit
      fails in rehearsal. The fork can't model the L1 data & finality fee, so the budget adds
@@ -361,5 +404,5 @@ roll back there.
 - The L1 data & finality fee is not shown in our UI.
 - Docs recommend 0.8.30/prague. Re-check if a Chikyū upgrade (the build-plan mentions `osaka`) drops
   cancun support.
-- The official DEX adapter is sub-project 2. Coins created before it stay bound to the staging-DEX
-  adapter.
+- MuchFi trust: unverified source and an owner EOA that can change the per-pool protocol fee
+  (re-check before mainnet). The factory's oracle and adapter pointers lock at the first campaign.
