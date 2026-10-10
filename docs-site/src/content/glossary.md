@@ -43,6 +43,10 @@ The page of one coin: chart, metrics, Buy/Sell panel, Posts, Trades, Holders, Ab
 
 Your private tools: coins, battles, recruiter, squad, airdrops, rewards and claims, notifications, edit profile and settings.
 
+## Creator escrow
+
+Where a creator's buys on their own coin go after launch. 20% is released after 30 days, then 20% every 7 days.
+
 ## Creator update
 
 A post a coin's owner writes as the coin. It shows on the coin page and can be shared to the home feed.
@@ -55,9 +59,17 @@ A coin that has a public page but no trading yet.
 
 A fixed window for a league: weekly or monthly. Results are fixed when it closes.
 
+## First buy
+
+The creator's optional buy in the launch transaction. Up to 70% of the supply, unlocked.
+
 ## Graduated
 
 A coin whose bonding curve completed. It now trades in a DEX pool. Older pages called this POST.
+
+## Graduation market cap
+
+The market cap at which a coin moves to its DEX pool: $30K (Fast grad) or $50K (Normal). Picked at launch.
 
 ## Hide
 
@@ -70,6 +82,10 @@ The social feed on Home: posts, reposts, creator updates, launches, battles and 
 ## Imported coin
 
 A coin launched elsewhere and brought to MemeWarzone. It has the same coin page and trades on its own DEX.
+
+## Launch fee
+
+The trade fee in the first 60 seconds: it starts at 90% and falls to the normal 2%.
 
 ## Live
 

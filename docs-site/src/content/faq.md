@@ -85,6 +85,18 @@ The stage where a draft coin has a public page but no trading yet. Read **[Prepa
 
 **Live** means the coin trades on its bonding curve. **Graduated** means the curve completed and the coin trades in a DEX pool. Older pages called these PRE and POST.
 
+### How much of my own coin can I buy at launch?
+
+Up to 70% of the supply, in the launch transaction, at the normal 2% fee. The tokens are unlocked. Buys you make later from the creator wallet go into escrow: 20% after 30 days, then 20% every 7 days. Read **[Launch Rules](/creators/launch-rules)**.
+
+### Is there a wait between launches?
+
+No. There is no cooldown between launches and no limit on how many live coins one wallet can have.
+
+### Why is the fee so high in the first minute?
+
+The trade fee starts at 90% when trading opens and falls to 2% within 60 seconds. Bots that buy in the first seconds pay for it. The creator's first buy pays 2%.
+
 ### What is an imported coin?
 
 A coin launched somewhere else and brought to MemeWarzone. It gets the same coin page and Buy/Sell panel, but trades on its own DEX: Jupiter on Solana, PancakeSwap on BNB Chain, Uniswap on Robinhood Chain. Read **[Import and claim a coin](/creators/imported-coins)**.
