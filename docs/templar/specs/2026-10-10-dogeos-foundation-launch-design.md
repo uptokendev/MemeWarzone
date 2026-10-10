@@ -30,7 +30,7 @@ with read-only RPC calls, explorer API calls and docs.dogeos.com.
 | Fees | EIP-1559 (flat base fee ~0.0157 gwei, tip 100 wei) **plus** an L1 "data & finality" fee charged by size | `eth_feeHistory`; `L1GasPriceOracle` `0x5300…0002` `getL1Fee` |
 | `eth_getLogs` | at most 10,000 blocks **and** at most 10,000 results per call | RPC error texts |
 | Reorgs / finality | max reorg depth 17 blocks; `safe` lags ~1059 blocks, `finalized` ~1217 (about 1 h) | docs; tag queries |
-| EVM | solc 0.8.24 / cancun bytecode runs: PUSH0, TSTORE/TLOAD, MCOPY, BASEFEE, CHAINID all work. Disabled: SELFDESTRUCT, BLOBHASH, BLOBBASEFEE. PREVRANDAO = 0. COINBASE = fee vault. Precompiles RIPEMD-160, blake2f and point-eval revert; modexp only for inputs ≤ 32 bytes | `eth_call` probes; docs |
+| EVM | solc 0.8.24 bytecode (our build targets paris; cancun also probed) runs: PUSH0, TSTORE/TLOAD, MCOPY, BASEFEE, CHAINID all work. Disabled: SELFDESTRUCT, BLOBHASH, BLOBBASEFEE. PREVRANDAO = 0. COINBASE = fee vault. Precompiles RIPEMD-160, blake2f and point-eval revert; modexp only for inputs ≤ 32 bytes | `eth_call` probes; docs |
 | Docs recommendation | prague, solc ≥ 0.8.30 (advice; not enforced) | developer quickstart |
 | Wrapped native | WDOGE `0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE`: WETH9-style `deposit`/`withdraw`/`receive` + permit, verified source `src/dogeos/WrappedDoge.sol` | explorer source, selectors in bytecode |
 | Faucet mock tokens | LBTC, WETH, USD1, USDC, USDT: owner-mintable, **all 18 decimals** (including USDC/USDT) | `eth_call` |
@@ -91,11 +91,13 @@ weekly/monthly/recruiter/protocol vaults (`deployments/robinhood/testnet.gen7.js
 everything is deployed fresh:
 - **Launch:** `LaunchFactoryGen7`, the `LaunchCampaignGen7` implementation, and `LaunchTokenDeployer`.
   The factory reverts `NativeGraduationAdapterUnavailable` without the token deployer
-  (`LaunchFactoryGen7.sol:505`). The `$6` test graduation target is already allowed for 6281971
+  (`LaunchFactoryGen7.sol:505`). The `$150` test graduation target (`TEST_GRADUATION_USD_THRESHOLD = 150 ether`, line 190) is already allowed for 6281971
   (`isGraduationTargetAllowedForChain`, `LaunchFactoryGen7.sol:367-371`), so the factory needs no
   change.
 - **Fees:** `TreasuryRouterV4` and its full vault set: weekly, monthly, recruiter, protocol and
-  community rewards, the holder distributor, the airdrop distributor and main vault,
+  community rewards, the holder distributor, the airdrop distributor and a **fresh** main vault with
+  an explicit testnet cap set in the deploy config. The 46630 helper derives the cap from a gen-6
+  main pot, which DogeOS doesn't have.
   `RewardDistributor`, and `CreatorRewardsVaultV2`.
 - **Registries and price:** `CreatorRegistry`, `RiskRegistry`, the generic `GraduationOracle`.
 - **Graduation and trading:** `RobinhoodV3NativeGraduationAdapterV2` and
@@ -121,9 +123,13 @@ Why graduation ships in this sub-project: a gen-7 campaign fixes its `graduation
 adapter exists would be bound to whatever adapter was set at that moment.
 
 **Staging DEX**
-- The same mock Uniswap-V3 set the 46630 stack uses (`scripts/deploy-robinhood-v3-mock.ts`: factory,
-  position manager, swap router, quoter), with the **official WDOGE** as the wrapped native. No mock
-  WETH.
+- **Canonical Uniswap V3**, deployed from the same pinned npm artifacts as the real 46630 V3 stack
+  (`tools/robinhood-testnet-infra`: `@uniswap/v3-core@1.0.1`, `@uniswap/v3-periphery@1.4.4`,
+  `@uniswap/swap-router-contracts@1.3.1`; deploy shape `scripts/deploy-robinhood-testnet-infrastructure.ts`).
+  It includes the factory, the position manager, the swap router and the quoter, and uses the
+  **official WDOGE** as the wrapped native. No mock WETH.
+- **Not** the mock set from `scripts/deploy-robinhood-v3-mock.ts`. Its pool has no `slot0()`/`swap()`,
+  and the gen-7 graduation path (`RobinhoodV3PoolRepair.sol`) calls both.
 - The deploy refuses any chain except 6281971, or 31337 with an explicit rehearsal flag.
 
 **New contract: DOGE/USD testnet oracle**
@@ -187,7 +193,7 @@ adapter exists would be bound to whatever adapter was set at that moment.
   `dev-fix/route-authorization-gen7.test.mjs:62` currently asserts 6281971 is *not* supported. It is
   flipped on purpose.
 - The test-graduation-target gates in `dev-fix/route-auth.js` (the two `cid === 97 || cid === 46630`
-  checks, ~lines 185 and 194) include 6281971, so the `$6` test tier is reachable.
+  checks, ~lines 185 and 194) include 6281971, so the `$150` test tier is reachable.
 - DOGE/USD for display: Binance spot `DOGEUSDT`, the same reader shape as `lib/bnbUsdPrice.js` and
   `lib/ethUsdPrice.js`, wired into the native-USD feed.
 - Quote catalog (`api/data/approved-quote-catalog.v1.json`): **no change.** It is a mainnet-only
@@ -214,7 +220,12 @@ adapter exists would be bound to whatever adapter was set at that moment.
   behaviour stay exactly as they are.
 - In `realtime-indexer/src/evm/evmGraduationKeeperConfig.ts`, both `V3_GRADUATION_CHAINS` (line 25)
   and the hard-coded keeper enable list in `enabledKeeperChains` (`[56, 4663, 97, 46630]`, line 38)
-  include 6281971. Without the second one the keeper silently stays off.
+  include 6281971. Without the second one the keeper silently stays off. The keeper's default
+  `DEFAULT_MAX_GAS` (15M) is above Chikyū's 10M block gas limit, so 6281971 gets an explicit max gas
+  of ≤ 10M.
+- Every lookup that silently falls back to BSC/BNB/ETH for an unknown chain (RPC, start block,
+  native symbol, native USD price) gets an explicit 6281971 branch. A DogeOS coin must never be read
+  through a BSC RPC or priced in BNB.
 - **Jobs that send transactions, one decision per job:**
 
   | Job | 6281971 in this sub-project |
@@ -282,7 +293,7 @@ adapter exists would be bound to whatever adapter was set at that moment.
      - the testnet-only guards in the deploy scripts
      - the no-fallback deployer key
      - the chain-list guard test
-     - the flipped gen-7 route-authorization test and the `$6` test-tier gates for 6281971
+     - the flipped gen-7 route-authorization test and the `$150` test-tier gates for 6281971
      - the oracle push: chain and updater refusal, no push on source failure, never ≤ 0, cadence and
        deviation
      - the V3 pool indexer: starting chunk ≤ 10k for 6281971, existing narrowing pinned, Robinhood's
@@ -294,8 +305,12 @@ adapter exists would be bound to whatever adapter was set at that moment.
    `RobinhoodTestnetEthUsdOracle`, done before gate 3.
 3. **Fork rehearsal.**
    - Run the full deploy against a Hardhat fork of Chikyū.
-   - Then: create → buy → sell → reach `$6` → graduate into the staging V3 → a swap after graduation
+   - Then: create → buy → sell → reach the `$150` target → graduate into the staging V3 → a swap after graduation
      → creator claim.
+   - The fork config sets `blockGasLimit` to Chikyū's 10M, so any transaction over the real limit
+     fails in rehearsal. The fork can't model the L1 data & finality fee, so the budget adds
+     `getL1Fee` (`0x5300…0002`) for each transaction's calldata.
+   - A `$150` graduation needs real DOGE in buys on top of gas. The canary budget counts those buys.
    - Measures the DOGE budget, which must fit the deployer balance or say how many faucet claims are
      needed.
 4. **Chikyū deploy (explicit founder go).**
