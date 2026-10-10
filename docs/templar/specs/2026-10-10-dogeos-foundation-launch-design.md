@@ -132,7 +132,10 @@ adapter exists would be bound to whatever adapter was set at that moment.
   Local 31337 only with an explicit rehearsal flag.
 - It holds and moves no funds. Per the audit rule it still gets a written diff review against the
   Robinhood original before it is tested (gate 2).
-- `maxOracleAgeSeconds` = 3600, the same as 46630.
+- Staleness bound: `GraduationOracle.maxPriceAge` = 3600 s, a constructor argument
+  (`contracts/GraduationOracle.sol`). The 46630 manifest's `maxOracleAgeSeconds` feeds the stock
+  adapter, which DogeOS doesn't deploy. 46630's GraduationOracle is a reused gen-6 instance, so read its
+  on-chain `maxPriceAge` to compare; don't assume it.
 
 **Keys and ownership**
 - Deployer/owner/admin: EOA `0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8`, used only for deploys and
@@ -140,8 +143,11 @@ adapter exists would be bound to whatever adapter was set at that moment.
 - Oracle updater: EOA `0x7dBDFe829309B4170346CF7e4496094CD126E9c1`. It is the oracle's `updater` and
   holds no other role.
 - Graduation keeper: a fresh EOA (`DOGEOS_TESTNET_GRADUATION_KEEPER_PRIVATE_KEY`). It holds no
-  contract role, only gas DOGE, and calls the permissionless graduation path. The keeper worker
-  already refuses deployer keys.
+  contract role, only gas DOGE, and calls the permissionless graduation path.
+- The keeper and payout watchdog refuse only the addresses hard-coded in `FORBIDDEN_KEEPER_ADDRESSES`
+  (`realtime-indexer/src/evm/evmGraduationKeeper.ts`, ~lines 1087-1091). That list does not yet include
+  our keys. The DogeOS deployer `0x6c5C…82f8` and the oracle updater `0x7dBD…E9c1` are added to it,
+  with a test, so neither can ever run as keeper.
 - All keys live only in `config/dogeos.local` (gitignored by `config/*.local`). `hardhat.config.ts`
   loads that file.
 - The Hardhat `dogeosTestnet` network reads **only** `DOGEOS_TESTNET_DEPLOYER_PRIVATE_KEY`. Unlike
@@ -183,7 +189,12 @@ adapter exists would be bound to whatever adapter was set at that moment.
   checks, ~lines 185 and 194) include 6281971, so the `$6` test tier is reachable.
 - DOGE/USD for display: Binance spot `DOGEUSDT`, the same reader shape as `lib/bnbUsdPrice.js` and
   `lib/ethUsdPrice.js`, wired into the native-USD feed.
-- Quote catalog (`api/data/approved-quote-catalog.v1.json`): one native-DOGE entry for 6281971.
+- Quote catalog (`api/data/approved-quote-catalog.v1.json`): **no change.** It is a mainnet-only
+  snapshot (chains 56/101/4663); 97 and 46630 have no entry. 6281971 follows that pattern, and the
+  catalog is a named mainnet-only exception in the guard test.
+- Generation pair: `lib/routeAuthorizationSigner.js` (~lines 166-170) is an explicit per-chain map. A
+  fresh gen-7 set reports factory/campaign generation `[7, 6]`, so 6281971 gets exactly that pair, and
+  the flipped test asserts it.
 
 ### 4. Indexer (`realtime-indexer`)
 - 6281971 joins `KNOWN_EVM_INDEXER_CHAIN_IDS`. It does **not** join the hard-coded `ACTIVE` list; it
@@ -195,13 +206,13 @@ adapter exists would be bound to whatever adapter was set at that moment.
 - **Graduated trades.** Trades on the staging V3 DEX are indexed and charted by reusing the V3 pool
   indexer. That indexer currently scans in chunks of `Math.max(500, ROBINHOOD_V3_LOG_CHUNK_SIZE ||
   50_000)` blocks (`realtime-indexer/src/robinhoodV3PoolIndexer.ts:1435`), 5× the DogeOS cap. For
-  6281971 it must:
-  - use a per-chain chunk of ≤ 10,000 blocks
-  - shrink and retry when a call hits the 10k-result cap
-
-  Robinhood's chunk value and behaviour stay exactly as they are. `V3_GRADUATION_CHAINS`
-  (`realtime-indexer/src/evm/evmGraduationKeeperConfig.ts:25`) includes 6281971, because it graduates
-  into V3.
+  6281971 the **starting** chunk is capped at ≤ 10,000 blocks per chain. The existing narrowing on a
+  rejected call (chunk/4 down to `minChunk`, ~lines 1445-1455) already covers the 10k-result cap. A
+  test pins that it does, and no second retry mechanism is added. Robinhood's chunk value and
+  behaviour stay exactly as they are.
+- In `realtime-indexer/src/evm/evmGraduationKeeperConfig.ts`, both `V3_GRADUATION_CHAINS` (line 25)
+  and the hard-coded keeper enable list in `enabledKeeperChains` (`[56, 4663, 97, 46630]`, line 38)
+  include 6281971. Without the second one the keeper silently stays off.
 - **Jobs that send transactions, one decision per job:**
 
   | Job | 6281971 in this sub-project |
@@ -254,7 +265,7 @@ adapter exists would be bound to whatever adapter was set at that moment.
   - `DATABASE_URL` = staging
   - `VITE_REALTIME_API_BASE` = TEST indexer
   - `VITE_ALLOWED_CHAIN_IDS` includes 6281971
-- `scripts/dev-vite.mjs:86` already keeps configured chain IDs and adds 56, 101 and 46630, so it needs
+- `frontend/scripts/dev-vite.mjs:86` already keeps configured chain IDs and adds 56, 101 and 46630, so it needs
   no change.
 - `.env.example` gets the DogeOS placeholders, with empty addresses until the deploy.
 
@@ -270,8 +281,10 @@ adapter exists would be bound to whatever adapter was set at that moment.
      - the flipped gen-7 route-authorization test and the `$6` test-tier gates for 6281971
      - the oracle push: chain and updater refusal, no push on source failure, never ≤ 0, cadence and
        deviation
-     - the V3 pool indexer: chunk ≤ 10k for 6281971, retry on the result cap, Robinhood's chunk
-       unchanged
+     - the V3 pool indexer: starting chunk ≤ 10k for 6281971, existing narrowing pinned, Robinhood's
+       chunk unchanged
+     - `FORBIDDEN_KEEPER_ADDRESSES` refuses the DogeOS deployer and the updater; the keeper is enabled
+       for 6281971
      - registry, native-symbol and feed-isolation pins for 6281971
 2. **Oracle audit diff.** A written diff review of the DogeOS oracle against
    `RobinhoodTestnetEthUsdOracle`, done before gate 3.
