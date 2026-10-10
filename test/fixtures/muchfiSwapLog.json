@@ -1,0 +1,39 @@
+{
+  "_comment": "MuchFi V3 (PancakeV3 fork) pool Swap event, recorded read-only from DogeOS Chikyu testnet (6281971) for t19. Source: eth_getTransactionReceipt on the tx below; pool.factory() checked against the MuchFi factory. Re-checked on a fork swap by test/MuchfiFork.facts.spec.ts.",
+  "chainId": 6281971,
+  "eventSignature": "Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)",
+  "eventAbi": "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint128 protocolFeesToken0, uint128 protocolFeesToken1)",
+  "topic0": "0x19b47279256b2a23a1665c810c8d55a1758940ee09377d4f8d26497a3577dc83",
+  "uniswapV3SwapTopic0NotUsed": "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67",
+  "pool": {
+    "address": "0xBeD5EE59C0b913468253f3bb1021f2DeE5426ecC",
+    "factory": "0x7d175e06570CaFA1cfDF060850b84E0Ca23EfF0B",
+    "token0": "0xD19d2Ffb1c284668b7AFe72cddae1BAF3Bc03925",
+    "token1": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+    "fee": 2500
+  },
+  "log": {
+    "blockNumber": 8454857,
+    "blockTimestamp": 1791619061,
+    "transactionHash": "0xac286aee8a265845e71e792dee124194466e35c148bc067a23dd556ed130762e",
+    "logIndex": 13,
+    "address": "0xBeD5EE59C0b913468253f3bb1021f2DeE5426ecC",
+    "topics": [
+      "0x19b47279256b2a23a1665c810c8d55a1758940ee09377d4f8d26497a3577dc83",
+      "0x00000000000000000000000054f7d7f6fedf4e930efd6b4742ba0b9e8a6dc1cb",
+      "0x000000000000000000000000ca958b6b1d617017e65e0e9da8453db9f1a500ca"
+    ],
+    "data": "0xfffffffffffffffffffffffffffffffffffffffffffffffffbae16bf50d9092c000000000000000000000000000000000000000000000000024d7c51527264000000000000000000000000000000000000000000e51bdd1e250c9ea0dc03809900000000000000000000000000000000000000000000000007a27fedcd318b00fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7540000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000078ba06015200"
+  },
+  "decoded": {
+    "sender": "0x54f7D7f6FeDf4E930eFd6b4742Ba0B9E8a6dC1CB",
+    "recipient": "0xca958b6B1d617017E65E0E9Da8453Db9F1A500Ca",
+    "amount0": "-311286313291019988",
+    "amount1": "165925450000000000",
+    "sqrtPriceX96": "70905752445282335221417738393",
+    "liquidity": "550142763819174656",
+    "tick": -2220,
+    "protocolFeesToken0": "0",
+    "protocolFeesToken1": "132740360000000"
+  }
+}

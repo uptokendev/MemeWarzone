@@ -1,0 +1,31 @@
+{
+  "_comment": "Raw slot0() eth_call return of a real MuchFi 1% pool (a launchpad graduation pool, WDOGE pair) on DogeOS Chikyu testnet (6281971), recorded read-only for the indexer/keeper off-chain uint32 feeProtocol decoding. Word 5 (feeProtocol) is 3200|3200<<16 = 209718400 and does not fit a uint8.",
+  "chainId": 6281971,
+  "pool": {
+    "address": "0x9d0833f03F1934f665358b23165E395224F7ad34",
+    "factory": "0x7d175e06570CaFA1cfDF060850b84E0Ca23EfF0B",
+    "token0": "0x459713c4762E51efbb07a037846f87EfF56e45Ca",
+    "token1": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+    "fee": 10000,
+    "tickSpacing": 200
+  },
+  "blockNumber": 8460946,
+  "call": {
+    "to": "0x9d0833f03F1934f665358b23165E395224F7ad34",
+    "data": "0x3850c7bd",
+    "blockTag": "0x811a92"
+  },
+  "slot0Abi": "function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint32 feeProtocol, bool unlocked)",
+  "rawReturn": "0x0000000000000000000000000000000000000000008aa6fa933df3c2aa135dddfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe1eda000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000c800c800000000000000000000000000000000000000000000000000000000000000001",
+  "decoded": {
+    "sqrtPriceX96": "167620298238897929160187357",
+    "tick": -123174,
+    "observationIndex": 0,
+    "observationCardinality": 1,
+    "observationCardinalityNext": 1,
+    "feeProtocol": 209718400,
+    "feeProtocolToken0": 3200,
+    "feeProtocolToken1": 3200,
+    "unlocked": true
+  }
+}
