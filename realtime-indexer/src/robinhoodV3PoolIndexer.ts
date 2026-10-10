@@ -23,6 +23,7 @@ import {
   rawToDecimal,
 } from "./evmQuoteNativeValuation.js";
 import { createWorkingProvider, maskRpcUrl, parseRpcList } from "./rpcProvider.js";
+import { DOGEOS_TESTNET_CHAIN_ID } from "./evmIndexerChains.js";
 
 const MOCK_POOL_ABI = [
   "function token0() view returns (address)",
@@ -38,6 +39,23 @@ const CANONICAL_V3_SWAP_ABI = [
   "event Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick)",
 ] as const;
 
+/**
+ * DogeOS 6281971 graduates into MuchFi, a PancakeSwap V3 fork. Its pool Swap event carries two
+ * protocol-fee fields after tick, so its topic differs from Uniswap's (recorded on Chikyu, fixture
+ * test/fixtures/muchfiSwapLog.json). It is decoded for 6281971 only; Robinhood keeps Uniswap's.
+ */
+const MUCHFI_V3_SWAP_ABI = [
+  "event Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick,uint128 protocolFeesToken0,uint128 protocolFeesToken1)",
+] as const;
+
+const V3_SLOT0_ABI = ["function slot0() view returns (uint160 sqrtPriceX96,int24,uint16,uint16,uint16,uint8,bool)"] as const;
+/** MuchFi's slot0().feeProtocol is uint32 (token0 | token1 << 16), e.g. 209718400 on a 1% pool. */
+const MUCHFI_SLOT0_ABI = ["function slot0() view returns (uint160 sqrtPriceX96,int24,uint16,uint16,uint16,uint32,bool)"] as const;
+
+const DOGEOS_CHAIN_ID = DOGEOS_TESTNET_CHAIN_ID;
+/** The DogeOS RPC caps eth_getLogs at 10,000 blocks per call. */
+const DOGEOS_MAX_LOG_CHUNK = 10_000;
+
 const ERC20_METADATA_ABI = [
   "function decimals() view returns (uint8)",
   "function balanceOf(address account) view returns (uint256)",
@@ -46,13 +64,15 @@ const V3_FACTORY_ABI = ["function getPool(address tokenA,address tokenB,uint24 f
 
 const mockIface = new ethers.Interface(MOCK_POOL_ABI);
 const canonicalIface = new ethers.Interface(CANONICAL_V3_SWAP_ABI);
+const muchfiIface = new ethers.Interface(MUCHFI_V3_SWAP_ABI);
 const MOCK_SWAP_TOPIC = mockIface.getEvent("Swap")!.topicHash;
 const CANONICAL_SWAP_TOPIC = canonicalIface.getEvent("Swap")!.topicHash;
+const MUCHFI_SWAP_TOPIC = muchfiIface.getEvent("Swap")!.topicHash;
 const LOOP_SYMBOL = Symbol.for("memewarzone.robinhoodV3PoolIndexerStarted");
 const globalState = globalThis as any;
 
 type ChainConfig = {
-  chainId: 4663 | 46630;
+  chainId: 4663 | 46630 | 6281971;
   rpcUrls: string[];
   swapRouterAddress: string;
 };
@@ -132,7 +152,33 @@ function chainConfigs(): ChainConfig[] {
       swapRouterAddress: String(ENV.ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_4663 || "").toLowerCase(),
     });
   }
+  // DogeOS Chikyu testnet: MuchFi pools on the DogeOS RPC only (never a BSC or Robinhood one); the
+  // existing per-chain router env name carries the MuchFi SmartRouter.
+  const dogeos = parseRpcList(ENV.DOGEOS_RPC_HTTP_6281971);
+  if (active.has(DOGEOS_CHAIN_ID) && dogeos.length) {
+    result.push({
+      chainId: DOGEOS_CHAIN_ID,
+      rpcUrls: dogeos,
+      swapRouterAddress: String(ENV.ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_6281971 || "").toLowerCase(),
+    });
+  }
   return result;
+}
+
+/** First getLogs window per pool: Robinhood keeps its configured value, DogeOS is capped at 10,000. */
+function startingLogChunk(chainId: number): number {
+  const configured = Math.max(500, Number(ENV.ROBINHOOD_V3_LOG_CHUNK_SIZE || 50_000));
+  return chainId === DOGEOS_CHAIN_ID ? Math.min(configured, DOGEOS_MAX_LOG_CHUNK) : configured;
+}
+
+function swapTopicsFor(chainId: number): string[] {
+  return chainId === DOGEOS_CHAIN_ID
+    ? [MOCK_SWAP_TOPIC, CANONICAL_SWAP_TOPIC, MUCHFI_SWAP_TOPIC]
+    : [MOCK_SWAP_TOPIC, CANONICAL_SWAP_TOPIC];
+}
+
+function slot0AbiFor(chainId: number): readonly string[] {
+  return chainId === DOGEOS_CHAIN_ID ? MUCHFI_SLOT0_ABI : V3_SLOT0_ABI;
 }
 
 function bucketStart(blockTime: Date, resolution: CandleResolution): Date {
@@ -876,7 +922,7 @@ async function refreshRobinhoodMarketStats(
   try {
     const slot0 = await new ethers.Contract(
       indexedPool.pairAddress,
-      ["function slot0() view returns (uint160 sqrtPriceX96,int24,uint16,uint16,uint16,uint8,bool)"],
+      slot0AbiFor(indexedPool.chainId),
       provider,
     ).slot0();
     lastPrice = spotQuotePerBase(
@@ -1432,7 +1478,7 @@ async function scanPool(provider: ethers.JsonRpcProvider, indexedPool: IndexedPo
     return 0;
   }
   let inserted = 0;
-  const maxChunk = Math.max(500, Number(ENV.ROBINHOOD_V3_LOG_CHUNK_SIZE || 50_000));
+  const maxChunk = startingLogChunk(indexedPool.chainId);
   const minChunk = Math.max(50, Number(ENV.LOG_CHUNK_SIZE || 500));
   let chunk = maxChunk;
   let cursor = from;
@@ -1444,7 +1490,7 @@ async function scanPool(provider: ethers.JsonRpcProvider, indexedPool: IndexedPo
     // than crawling every pool at the smallest window that any provider needs.
     for (;;) {
       try {
-        logs = await provider.getLogs({ address: indexedPool.pairAddress, topics: [[MOCK_SWAP_TOPIC, CANONICAL_SWAP_TOPIC]], fromBlock: cursor, toBlock: to });
+        logs = await provider.getLogs({ address: indexedPool.pairAddress, topics: [swapTopicsFor(indexedPool.chainId)], fromBlock: cursor, toBlock: to });
         break;
       } catch (error: any) {
         if (chunk <= minChunk) throw error;
@@ -1459,6 +1505,7 @@ async function scanPool(provider: ethers.JsonRpcProvider, indexedPool: IndexedPo
       let normalized: NormalizedSwap | null = null;
       if (topic === MOCK_SWAP_TOPIC.toLowerCase()) { parsed = mockIface.parseLog(log); if (parsed) normalized = normalizeMockSwap(indexedPool, parsed); }
       else if (topic === CANONICAL_SWAP_TOPIC.toLowerCase()) { parsed = canonicalIface.parseLog(log); if (parsed) normalized = normalizeCanonicalSwap(indexedPool, parsed); }
+      else if (indexedPool.chainId === DOGEOS_CHAIN_ID && topic === MUCHFI_SWAP_TOPIC.toLowerCase()) { parsed = muchfiIface.parseLog(log); if (parsed) normalized = normalizeCanonicalSwap(indexedPool, parsed); }
       if (!parsed || !normalized) continue;
       if (await insertSwap(provider, indexedPool, log, parsed, normalized)) {
         inserted += 1;
@@ -1678,6 +1725,12 @@ export const robinhoodV3Internals = {
   normalizeCanonicalSwap,
   MOCK_SWAP_TOPIC,
   CANONICAL_SWAP_TOPIC,
+  MUCHFI_SWAP_TOPIC,
+  chainConfigs,
+  startingLogChunk,
+  slot0AbiFor,
+  scanPool,
+  spotQuotePerBase,
   storedDecimals,
   rawBigInt,
   readPairBalances,

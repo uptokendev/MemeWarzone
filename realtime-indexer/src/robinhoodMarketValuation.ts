@@ -1,3 +1,5 @@
+import { getDogeosNativeUsdReference } from "./dogeosNativeUsdOracle.js";
+import { DOGEOS_TESTNET_CHAIN_ID } from "./evmIndexerChains.js";
 import { getRobinhoodNativeUsdReference } from "./robinhoodNativeUsdOracle.js";
 import { getRobinhoodQuoteAssetPrice } from "./robinhoodStockTokenRegistry.js";
 
@@ -151,7 +153,10 @@ export async function resolveRobinhoodQuoteUsdReference(input: {
       error: stock.error,
     };
   } else if (input.quoteAssetType === "WRAPPED_NATIVE") {
-    const native = await getRobinhoodNativeUsdReference(input.chainId);
+    // DogeOS prices WDOGE from its own DOGE/USD oracle; the Robinhood reader is ETH/USD on 4663/46630.
+    const native = input.chainId === DOGEOS_TESTNET_CHAIN_ID
+      ? await getDogeosNativeUsdReference(input.chainId)
+      : await getRobinhoodNativeUsdReference(input.chainId);
     value = {
       chainId: input.chainId,
       quoteTokenAddress: input.quoteTokenAddress,
