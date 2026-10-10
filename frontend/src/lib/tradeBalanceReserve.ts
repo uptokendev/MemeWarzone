@@ -1,3 +1,5 @@
+import { isDogeosChainId, isRobinhoodChainId } from "@/lib/chainConfig";
+
 // What a buy must leave in the wallet, used by MAX / % presets and the check
 // before signing.
 //
@@ -14,8 +16,19 @@ export const SOLANA_BUY_FEE_RESERVE_SOL = 0.005;
 export const BNB_BUY_GAS_RESERVE_WEI = 500_000_000_000_000n; // 0.0005 BNB
 export const ETH_BUY_GAS_RESERVE_WEI = 200_000_000_000_000n; // 0.0002 ETH (Robinhood chain)
 
+// DogeOS Chikyu (6281971): L2 gas is cheap, but every tx also pays an L1 data fee that is material in DOGE
+// (getL1Fee read ~0.00028 DOGE for a 4-byte payload; a buy is hundreds of bytes), so the Robinhood ETH amount
+// is far too small as a DOGE amount.
+export const DOGE_BUY_GAS_RESERVE_WEI = 10_000_000_000_000_000n; // 0.01 DOGE (DogeOS)
+
 export function evmBuyGasReserveWei(isRobinhood: boolean): bigint {
   return isRobinhood ? ETH_BUY_GAS_RESERVE_WEI : BNB_BUY_GAS_RESERVE_WEI;
+}
+
+/** Chain-aware buy gas reserve: DOGE on DogeOS, else exactly evmBuyGasReserveWei(isRobinhood). */
+export function evmBuyGasReserveWeiForChain(chainId?: number | null): bigint {
+  if (isDogeosChainId(chainId)) return DOGE_BUY_GAS_RESERVE_WEI;
+  return evmBuyGasReserveWei(isRobinhoodChainId(chainId));
 }
 
 export function solanaBuyFeeMessage(maxSpendLamports: bigint): string {

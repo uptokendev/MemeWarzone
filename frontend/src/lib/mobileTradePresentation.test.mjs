@@ -104,7 +104,9 @@ test("buy MAX / % and the check before signing keep fees and gas back", () => {
   assert.match(page, /maxCostWei \+ gasReserveWei > bnbBalanceWei/);
   assert.match(page, /nativeAmountInRaw \+ topazGasReserve > bnbBalanceWei/);
   assert.match(warRoom, /nativeAmountInRaw \+ gasReserveWei > bnbBalanceWei/);
-  assert.match(rhWarRoom, /amountIn \+ ETH_BUY_GAS_RESERVE_WEI > nativeBalance/);
+  // buyGasReserveWei = evmBuyGasReserveWeiForChain(chainId): ETH_BUY_GAS_RESERVE_WEI on Robinhood, DOGE on DogeOS.
+  assert.match(rhWarRoom, /const buyGasReserveWei = evmBuyGasReserveWeiForChain\(chainId\);/);
+  assert.match(rhWarRoom, /amountIn \+ buyGasReserveWei > nativeBalance/);
   // Raw simulation text for System Program error 1 is replaced with a plain message.
   assert.match(trade, /insufficient lamports\|Program 1\{32\} failed: custom program error: 0x1/);
   // 100% of 0.128754 SOL with the reserve leaves 0.005 SOL in the wallet.

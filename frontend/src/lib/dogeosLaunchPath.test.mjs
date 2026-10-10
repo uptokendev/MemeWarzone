@@ -95,7 +95,8 @@ import * as v3Trade from "./robinhoodV3Trade.ts";
 import * as lpFeeHarvest from "./lpFeeHarvest.ts";
 import * as launchpadAdapter from "../features/launchpad/useLaunchpadAdapter.ts";
 import * as robinhoodAdapter from "../features/launchpad/robinhoodAdapter.ts";
-export { graduationTiers, v3Trade, lpFeeHarvest, launchpadAdapter, robinhoodAdapter };
+import * as tradeBalanceReserve from "./tradeBalanceReserve.ts";
+export { graduationTiers, v3Trade, lpFeeHarvest, launchpadAdapter, robinhoodAdapter, tradeBalanceReserve };
 `,
       resolveDir: dir,
       sourcefile: `${name}.ts`,
@@ -303,7 +304,7 @@ test("token page entry, war-room row and trade panel keep 6281971 instead of def
   assert.match(row, /const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID \|\| rowChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosRow;/);
   assert.match(row, /rowChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\|\s*rowChainId === DOGEOS_TESTNET_CHAIN_ID \|\|\s*rowChainId === 101\s*\) \{\s*setSelectedFeedChainId\(rowChainId\);/);
   // Token page: a graduated DogeOS coin gets the V3 (MuchFi) panel, never the Topaz/BNB V2 box or the BNB
-  // import route, and DogeOS buys keep the Robinhood (L2) gas reserve instead of the BNB one.
+  // import route; its header price and liquidity read the V3 market like Robinhood's; buys keep the DOGE reserve.
   const page = read("pages/TokenDetails.tsx");
   assert.match(page, /const isV3GraduatedTradePage = isRobinhoodPage \|\| isDogeosPage;/);
   assert.match(page, /const isTopazTradingActive = isSolanaPage \|\| isV3GraduatedTradePage\s*\? false/);
@@ -311,14 +312,39 @@ test("token page entry, war-room row and trade panel keep 6281971 instead of def
   assert.match(page, /const rhGraduatedTrade = isV3GraduatedTradePage && \(contractGraduated \|\| isUniswapTradingActive\);/);
   assert.match(page, /const bnbGraduatedImportTrade = !isSolanaPage && !isV3GraduatedTradePage && isDexStage/);
   assert.match(page, /\) : isV3GraduatedTradePage && \(contractGraduated \|\| isUniswapTradingActive\) \? \(/);
-  assert.equal((page.match(/evmBuyGasReserveWei\(isRobinhoodPage \|\| isDogeosPage\)/g) || []).length, 3);
-  assert.doesNotMatch(page, /evmBuyGasReserveWei\(isRobinhoodPage\)/);
+  assert.match(page, /enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage && !isV3GraduatedTradePage,/);
+  assert.match(page, /if \(isV3GraduatedTradePage && contractGraduatedEarly\) \{\s*const indexed = Number\(unifiedMarket\.summary\?\.last_price_bnb\);/);
+  assert.match(page, /contractGraduatedEarly,\s*isSolanaPage,\s*isV3GraduatedTradePage,\s*metrics\?\.currentPrice,/);
+  assert.match(page, /if \(isV3GraduatedTradePage && unifiedNative\) \{/);
+  assert.match(page, /if \(isV3GraduatedTradePage && isDexStage\) return "—";/);
+  assert.equal((page.match(/evmBuyGasReserveWeiForChain\(chainIdForStorage\)/g) || []).length, 3);
+  assert.doesNotMatch(page, /evmBuyGasReserveWei\(/);
   // the Robinhood USD-raise line is untouched (evmGen7Wiring pin)
   assert.match(page, /isRobinhoodPage && !isDexStage && !evmGen7Coin && \(metrics\?\.graduationTarget \?\? 0n\) > 0n/);
   assert.match(panel, /return id === ROBINHOOD_CHAIN_ID \|\| id === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosChainId\(id\) \? id : ROBINHOOD_TESTNET_CHAIN_ID;/);
+  assert.match(panel, /const buyGasReserveWei = evmBuyGasReserveWeiForChain\(chainId\);/);
+  assert.match(panel, /amountIn \+ buyGasReserveWei > nativeBalance/);
+  assert.match(panel, /Keep about \$\{ethers\.formatEther\(buyGasReserveWei\)\} \$\{nativeSymbol\}/);
+  assert.doesNotMatch(panel, /ETH_BUY_GAS_RESERVE_WEI/);
   // the direct panel names the chain's own coin, never a hard-coded ETH, on screen
   assert.doesNotMatch(panel, /formatAmount\([^)]*"ETH"\)/);
   assert.doesNotMatch(panel, />ETH</);
+});
+
+test("buy gas reserve: 0.01 DOGE on 6281971 (L2 gas + L1 data fee); Robinhood and BNB unchanged", async () => {
+  const { tradeBalanceReserve: r } = await fullHarness();
+  assert.equal(r.DOGE_BUY_GAS_RESERVE_WEI, 10n ** 16n);
+  assert.equal(r.evmBuyGasReserveWeiForChain(DOGEOS), 10n ** 16n);
+  assert.equal(r.evmBuyGasReserveWeiForChain(46630), 200_000_000_000_000n);
+  assert.equal(r.evmBuyGasReserveWeiForChain(4663), 200_000_000_000_000n);
+  assert.equal(r.evmBuyGasReserveWeiForChain(97), 500_000_000_000_000n);
+  assert.equal(r.evmBuyGasReserveWeiForChain(56), 500_000_000_000_000n);
+  // identical to the boolean selector every existing caller used (isRobinhoodPage) on every other chain
+  for (const id of [4663, 46630, 56, 97, 101]) {
+    assert.equal(r.evmBuyGasReserveWeiForChain(id), r.evmBuyGasReserveWei(id === 4663 || id === 46630), String(id));
+  }
+  assert.equal(r.evmBuyGasReserveWei(true), r.ETH_BUY_GAS_RESERVE_WEI);
+  assert.equal(r.evmBuyGasReserveWei(false), r.BNB_BUY_GAS_RESERVE_WEI);
 });
 
 // ---------------------------------------------------------------- MuchFi post-graduation trade

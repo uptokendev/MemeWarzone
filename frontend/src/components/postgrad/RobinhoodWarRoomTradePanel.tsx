@@ -21,7 +21,7 @@ import { DOGEOS_DEX_LABEL } from "@/lib/dogeosPresentation.mjs";
 import type { SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
-import { ETH_BUY_GAS_RESERVE_WEI } from "@/lib/tradeBalanceReserve";
+import { evmBuyGasReserveWeiForChain } from "@/lib/tradeBalanceReserve";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { graduatedCampaignTradeItem, graduatedImportRouteEnabled } from "@/lib/graduatedEvmTradeRoute.mjs";
 import { resolveImportPool } from "@/lib/robinhoodImportSwap.mjs";
@@ -127,6 +127,8 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
   const nativeSymbol = getNativeSymbol(chainId);
   const networkName = isDogeosChainId(chainId) ? "DogeOS" : "Robinhood";
   const venueLabel = isDogeosChainId(chainId) ? DOGEOS_DEX_LABEL : "Robinhood V3";
+  // ETH 0.0002 on Robinhood (unchanged); 0.01 DOGE on DogeOS (L1 data fee included).
+  const buyGasReserveWei = evmBuyGasReserveWeiForChain(chainId);
   const [tab, setTab] = useState<"buy" | "sell">("buy");
   const [amount, setAmount] = useState("0");
   const [tradeInputDenom, setTradeInputDenom] = useState<"ETH" | "TOKEN">("ETH");
@@ -286,7 +288,7 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
   const amountIn = parseAmount(amount, TOKEN_DECIMALS);
   // Buys pay gas in the native coin (ETH / DOGE) on top of the amount entered.
   const insufficient = tab === "buy"
-    ? nativeBalance != null && amountIn + ETH_BUY_GAS_RESERVE_WEI > nativeBalance
+    ? nativeBalance != null && amountIn + buyGasReserveWei > nativeBalance
     : tokenBalance != null && amountIn > tokenBalance;
   const quoteOut = quoteDetails?.amountOutRaw ?? null;
   const minimumOut = quoteDetails?.minimumOutRaw ?? null;
@@ -452,7 +454,7 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
       {insufficient ? (
         <div className="text-xs text-[#FFB4C0]">
           {tab === "buy"
-            ? `Not enough ${nativeSymbol}. Keep about ${ethers.formatEther(ETH_BUY_GAS_RESERVE_WEI)} ${nativeSymbol} in your wallet for gas.`
+            ? `Not enough ${nativeSymbol}. Keep about ${ethers.formatEther(buyGasReserveWei)} ${nativeSymbol} in your wallet for gas.`
             : `Insufficient ${campaign.symbol || "token"} balance.`}
         </div>
       ) : null}

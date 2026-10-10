@@ -122,7 +122,7 @@ import {
   dbcCreatorBuyMessage,
   dbcCreatorBuyNeedLamports,
   dbcCreatorMaxSpendLamports,
-  evmBuyGasReserveWei,
+  evmBuyGasReserveWeiForChain,
   solanaBuyFeeMessage,
 } from "@/lib/tradeBalanceReserve";
 
@@ -1965,7 +1965,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     campaignAddress: hasValidCampaignAddress && !isSolanaPage ? resolvedCampaignAddress : undefined,
     tokenAddress: campaign?.token,
     chainId: chainIdForStorage,
-    enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage && !isRobinhoodPage,
+    enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage && !isV3GraduatedTradePage,
     pollMs: 8_000,
   });
 
@@ -2257,8 +2257,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     // the campaign's currentPrice(), which the bonding curve freezes at the final
     // curve price on graduation. The header then showed the graduation price while
     // the chart used pool spot: 2.3195e-9 against 1.3981e-8 on RH5661. Prefer the
-    // indexed DEX price, which is the post-swap pool spot.
-    if (isRobinhoodPage && contractGraduatedEarly) {
+    // indexed DEX price, which is the post-swap pool spot. DogeOS (MuchFi V3) graduates the same way.
+    if (isV3GraduatedTradePage && contractGraduatedEarly) {
       const indexed = Number(unifiedMarket.summary?.last_price_bnb);
       if (Number.isFinite(indexed) && indexed > 0) return indexed;
     }
@@ -2272,8 +2272,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     return null;
   }, [
     contractGraduatedEarly,
-    isRobinhoodPage,
     isSolanaPage,
+    isV3GraduatedTradePage,
     metrics?.currentPrice,
     rtStats?.lastPriceBnb,
     solanaLivePrice,
@@ -3560,7 +3560,7 @@ const toSeconds = (ts: number): number => {
     // DexScreener and GeckoTerminal report the sum of both sides, so match them.
     const unifiedNative = unifiedMarket.state?.reserves?.nativeRaw;
     const unifiedToken = unifiedMarket.state?.reserves?.tokenRaw;
-    if (isRobinhoodPage && unifiedNative) {
+    if (isV3GraduatedTradePage && unifiedNative) {
       try {
         const nativeWei = BigInt(unifiedNative);
         if (nativeWei > 0n) {
@@ -3580,7 +3580,7 @@ const toSeconds = (ts: number): number => {
       }
     }
     // Graduated RH must not fall back to bonding-era $0.000000 / leftover reserve.
-    if (isRobinhoodPage && isDexStage) return "—";
+    if (isV3GraduatedTradePage && isDexStage) return "—";
     if (tokenData.liquidity && tokenData.liquidity !== "—") return tokenData.liquidity;
     return "—";
   })();
@@ -4705,7 +4705,7 @@ const toSeconds = (ts: number): number => {
           const nativeAmountInRaw = tradeInputDenom === "BNB" ? parseBnbAmountWei(tradeAmount) : effectiveBnbWei;
           if (nativeAmountInRaw <= 0n) throw new Error(`Enter a valid ${nativeUnit} or token amount.`);
           if (bnbBalanceWei != null && nativeAmountInRaw > bnbBalanceWei) throw new Error(`Insufficient ${nativeUnit} balance.`);
-          const topazGasReserve = evmBuyGasReserveWei(isRobinhoodPage || isDogeosPage);
+          const topazGasReserve = evmBuyGasReserveWeiForChain(chainIdForStorage);
           if (bnbBalanceWei != null && nativeAmountInRaw + topazGasReserve > bnbBalanceWei) {
             throw new Error(`Not enough ${nativeUnit}. Keep about ${ethers.formatEther(topazGasReserve)} ${nativeUnit} in your wallet for gas.`);
           }
@@ -4873,7 +4873,7 @@ const toSeconds = (ts: number): number => {
         const baseCostWei = quoteWei && quoteWei > 0n ? quoteWei : tradeInputDenom === "BNB" ? inputBnbWei : 0n;
         if (baseCostWei > 0n) {
           const maxCostWei = (baseCostWei * BigInt(100 + SLIPPAGE_PCT)) / 100n;
-          const gasReserveWei = evmBuyGasReserveWei(isRobinhoodPage || isDogeosPage);
+          const gasReserveWei = evmBuyGasReserveWeiForChain(chainIdForStorage);
           if (maxCostWei + gasReserveWei > bnbBalanceWei) {
             toast({
               title: `Insufficient ${nativeUnit}`,
@@ -6470,7 +6470,7 @@ const toSeconds = (ts: number): number => {
               }
               return SOLANA_BUY_FEE_RESERVE_SOL;
             }
-            const gas = Number(ethers.formatEther(evmBuyGasReserveWei(isRobinhoodPage || isDogeosPage)));
+            const gas = Number(ethers.formatEther(evmBuyGasReserveWeiForChain(chainIdForStorage)));
             if (isDexStage) return gas;
             // Bonding buys send cost + SLIPPAGE_PCT headroom, so the spendable part is (balance - gas) / (1 + slippage).
             const bal = Number.isFinite(nativeBalanceNum) ? nativeBalanceNum : 0;
