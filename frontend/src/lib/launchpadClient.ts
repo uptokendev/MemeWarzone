@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { gasWithHeadroom } from "@/lib/evmGasHeadroom.mjs";
+import { gasWithHeadroom, legacyGasPriceFor } from "@/lib/evmGasHeadroom.mjs";
 import { Contract, ethers } from "ethers";
 import { useLocation } from "react-router-dom";
 import { useWallet } from "@/contexts/WalletContext";
@@ -461,7 +461,8 @@ async function legacyGasOverrides(signer: any, readProvider: ethers.AbstractProv
     const p: any = signer?.provider ?? readProvider;
     if (!p || typeof p.send !== "function") return extra;
     const gpHex = await p.send("eth_gasPrice", []);
-    const gasPrice = gpHex ? BigInt(gpHex) : 0n;
+    const chainHex = await p.send("eth_chainId", []).catch(() => null);
+    const gasPrice = gpHex ? legacyGasPriceFor(chainHex ? Number(BigInt(chainHex)) : 0, BigInt(gpHex)) : 0n;
     return gasPrice > 0n ? { ...extra, gasPrice, type: 0 } : extra;
   } catch {
     return extra;
