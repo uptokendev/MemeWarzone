@@ -1088,6 +1088,9 @@ export const FORBIDDEN_KEEPER_ADDRESSES = [
   "0x77f96a7d3bea7a090aacbd00a50002d2b9ae0714", // EVM mainnet deployer (deployments/*.json)
   "0x13ad79765e14927df2c554d9662bbe539e89c8e8", // testnet deployer
   "0x1a367016f10b230e28cf1abda2594c47bf60fe34", // testnet deployer
+  "0x6c5c684d8ddf1d4338dbed21beb7d342dc8382f8", // DogeOS testnet deployer / owner (6281971)
+  "0x7dbdfe829309b4170346cf7e4496094cd126e9c1", // DogeOS testnet DOGE/USD oracle updater (6281971)
+  "0x4fcd24d620f8ecd298bf4d43cb1ca2f4d23876ff", // DogeOS testnet route authority (6281971)
 ];
 
 export function assertKeeperKeyAllowed(address: string, env: NodeJS.ProcessEnv = process.env): void {

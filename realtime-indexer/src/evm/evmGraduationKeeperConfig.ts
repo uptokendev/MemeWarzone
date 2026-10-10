@@ -6,11 +6,15 @@ export function truthy(value: unknown): boolean {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
-const DEFAULT_MAX_GAS: Record<number, bigint> = { 56: 15_000_000n, 97: 15_000_000n, 4663: 30_000_000n, 46630: 30_000_000n };
+const DEFAULT_MAX_GAS: Record<number, bigint> = { 56: 15_000_000n, 97: 15_000_000n, 4663: 30_000_000n, 46630: 30_000_000n, 6281971: 10_000_000n };
+/** Ceilings env can lower but never raise: DogeOS Chikyu (6281971) has a 10M block gas limit. */
+const MAX_GAS_CEILING: Record<number, bigint> = { 6281971: 10_000_000n };
 
 export function keeperConfig(chainId: number, env: NodeJS.ProcessEnv = process.env): KeeperConfig {
   const gasRaw = String(env[`EVM_GRADUATION_KEEPER_MAX_GAS_${chainId}`] || env.EVM_GRADUATION_KEEPER_MAX_GAS || "").trim();
-  const maxGas = /^\d+$/.test(gasRaw) ? BigInt(gasRaw) : DEFAULT_MAX_GAS[chainId] ?? 15_000_000n;
+  const requestedMaxGas = /^\d+$/.test(gasRaw) ? BigInt(gasRaw) : DEFAULT_MAX_GAS[chainId] ?? 15_000_000n;
+  const ceiling = MAX_GAS_CEILING[chainId];
+  const maxGas = ceiling !== undefined && requestedMaxGas > ceiling ? ceiling : requestedMaxGas;
   const flushRaw = String(env.EVM_GRADUATION_KEEPER_MIN_FLUSH_WEI || "1").trim();
   const minFlushWei = /^\d+$/.test(flushRaw) ? BigInt(flushRaw) : 1n;
   const halvings = Math.max(0, Math.min(32, Number(env.EVM_GRADUATION_KEEPER_REPAIR_HALVINGS || 8) || 0));
@@ -21,8 +25,11 @@ export function keeperConfig(chainId: number, env: NodeJS.ProcessEnv = process.e
   return { maxGas, minFlushWei, maxRepairHalvings: halvings, dueSlackBps, maxDueCandidates, v3ObservationSlots: v3ObservationSlots(chainId, env) };
 }
 
-/** Chains whose graduated pools are Uniswap V3 (Robinhood). BNB graduates into Topaz: no oracle slots. */
-export const V3_GRADUATION_CHAINS = new Set([4663, 46630]);
+/**
+ * Chains whose graduated pools are V3-style: Robinhood (Uniswap V3) and DogeOS 6281971 (MuchFi, a
+ * PancakeSwap-V3 fork with the same observation slots). BNB graduates into Topaz: no oracle slots.
+ */
+export const V3_GRADUATION_CHAINS = new Set([4663, 46630, 6281971]);
 export const DEFAULT_V3_OBSERVATION_SLOTS = 180;
 
 /** EVM_KEEPER_V3_OBSERVATION_SLOTS[_<chainId>], default 180 on V3 chains, 0 (off) elsewhere; uint16. */
@@ -35,7 +42,7 @@ export function v3ObservationSlots(chainId: number, env: NodeJS.ProcessEnv = pro
 }
 
 export function enabledKeeperChains(env: NodeJS.ProcessEnv = process.env): number[] {
-  return [56, 4663, 97, 46630].filter((id) => truthy(env[`EVM_GRADUATION_KEEPER_ENABLED_${id}`]));
+  return [56, 4663, 97, 46630, 6281971].filter((id) => truthy(env[`EVM_GRADUATION_KEEPER_ENABLED_${id}`]));
 }
 
 export function keeperWallet(chainId: number, env: NodeJS.ProcessEnv = process.env): ethers.Wallet | null {
