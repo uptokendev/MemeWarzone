@@ -12,13 +12,13 @@ Create walks you through six steps. **Next** stays locked until a step is comple
 1. **Path**: choose **Draft** (a public page first, launch later) or **Direct** (launch now).
 2. **Identity**: image, name and ticker. The card preview next to the form updates as you type, and Create tells you if the ticker is available.
 3. **Story**: a short description and your socials. Socials are optional.
-4. **Bond**: how much the bonding curve must raise before the coin graduates. A smaller target graduates sooner; a deeper one seeds a larger DEX pool. Where the chain supports it, you also choose what happens to your share of the trade fee.
-5. **Market**: what your coin is paired with after graduation. Only approved markets appear.
+4. **Bond**: the market cap at which the coin graduates, $30K (Fast grad) or $50K (Normal), and what happens to your share of the trade fee. On BNB Chain and Robinhood Chain this step also has your optional first buy.
+5. **Market**: what your coin is paired with after graduation. Only approved markets appear. On Solana this step also has your optional first buy.
 6. **Review**: a last check of everything, then save the draft or deploy.
 
 ## The Market step
 
-The coin you pay with on the curve is the chain's own coin: BNB, SOL or ETH. The Market step sets the token your coin pairs with in its DEX pool after graduation.
+The Market step sets the token your coin pairs with in its DEX pool after graduation. On BNB Chain and Robinhood Chain the curve trades in the chain's own coin, BNB or ETH. On Solana the curve trades in the token you pick here, SOL by default.
 
 - On BNB Chain and Solana you choose from an approved list. SOL or USDC are examples on Solana.
 - On Robinhood Chain you can pair with ETH or an approved stock token.
@@ -56,5 +56,9 @@ Use one official link per channel. Conflicting links destroy trust fast.
 - the timing is clear
 
 After launch your coin appears in **Command Center**, **My coins**, where you also find **Edit page**.
+
+## Launch rules
+
+You can buy up to 70% of the supply in the launch transaction. There is no wait between launches and no limit on live coins. Read **[Launch Rules](/creators/launch-rules)** for the market caps, the launch fee, the first buy and the escrow on later creator buys.
 
 Read **[Promotion and Push Live](/creators/promotion-and-push-live)** and **[Prepare Mode](/prepare-mode)**.

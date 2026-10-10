@@ -252,8 +252,8 @@ function normalizeCurrentTimeCopy(preflight) {
   };
 }
 
-export async function evaluateCreatePreflight({ walletAddress }) {
-  const preflight = await legacySecurity.evaluateCreatePreflight({ walletAddress });
+export async function evaluateCreatePreflight({ walletAddress, chainId = null }) {
+  const preflight = await legacySecurity.evaluateCreatePreflight({ walletAddress, chainId });
   return normalizeCurrentTimeCopy(preflight);
 }
 
@@ -657,7 +657,7 @@ export async function launchpadPreflightCreate(req, res) {
       preflight: { allowed: false, reasons: [CREATE_CANARY_MESSAGE], code: CREATE_CANARY_CODE },
     });
   }
-  const preflight = await evaluateCreatePreflight({ walletAddress });
+  const preflight = await evaluateCreatePreflight({ walletAddress, chainId: body.chainId ?? null });
   return json(res, preflight.allowed ? 200 : 403, { preflight });
 }
 
@@ -681,6 +681,6 @@ export async function securityCreatorLaunchEligibility(req, res) {
   if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
   const query = getQuery(req);
   const walletAddress = req.params?.wallet || query.walletAddress;
-  const preflight = await evaluateCreatePreflight({ walletAddress });
+  const preflight = await evaluateCreatePreflight({ walletAddress, chainId: query.chainId ?? null });
   return json(res, preflight.allowed ? 200 : 403, { preflight });
 }

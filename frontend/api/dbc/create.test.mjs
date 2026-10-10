@@ -356,7 +356,7 @@ test("finalize refuses a pool with a different config, creator or mint", async (
   assert.equal(fin.body.code, "DBC_POOL_CONFIG");
 });
 
-test("creator limits from the DB refuse a fourth live DBC coin", async () => {
+test("no live-coin limit or cooldown: a fourth live DBC coin right after the third is allowed (founder 2026-10-10)", async () => {
   const db = memoryDb();
   for (let i = 0; i < 3; i += 1) {
     db.campaigns.push({
@@ -368,8 +368,10 @@ test("creator limits from the DB refuse a fourth live DBC coin", async () => {
   }
   const handle = handlerFor(db);
   const pre = await post(handle, { operation: "preflight", creatorWallet: SIGNER.publicKey.toBase58(), targetUsd: 30000 });
-  assert.equal(pre.body.preflight.allowed, false);
-  assert.equal(pre.body.preflight.liveLimitReached, true);
+  assert.equal(pre.body.preflight.allowed, true);
+  assert.equal(pre.body.preflight.liveLimitReached, false);
+  assert.equal(pre.body.preflight.cooldownActive, false);
+  assert.equal(pre.body.preflight.creatorLiveBondingCount, 3);
 });
 
 test("built transaction is 2 signers for every target, with and without first buy", async () => {
@@ -553,8 +555,8 @@ test("authorize re-checks creator limits after begin", async () => {
     targetUsd: 30000,
     feeChoice: "keep",
   });
-  assert.equal(auth.body.ok, false);
-  assert.equal(auth.body.code, "DBC_CREATOR_LAUNCH_LIMIT");
+  assert.notEqual(auth.body.code, "DBC_CREATOR_LAUNCH_LIMIT");
+  assert.notEqual(auth.body.code, "DBC_CREATOR_COOLDOWN");
 });
 
 test("finalize fails closed when owner, config, creator or mint is missing", async () => {

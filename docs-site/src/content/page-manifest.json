@@ -302,6 +302,16 @@
       "aliases": []
     },
     {
+      "route": "/creators/launch-rules",
+      "title": "Launch Rules",
+      "group": "For creators",
+      "groupOrder": 50,
+      "pageOrder": 22,
+      "status": "live",
+      "source": "creators/launch-rules.md",
+      "aliases": []
+    },
+    {
       "route": "/creators/direct-and-draft",
       "title": "Direct and Draft Launches",
       "group": "For creators",

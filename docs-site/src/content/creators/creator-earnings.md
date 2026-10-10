@@ -6,7 +6,7 @@ description: How creators earn from their coin and where to claim it.
 Creator earnings come from two places.
 
 First, a share of the trading fees while your coin trades.
-Second, what the fee model gives the creator when the coin graduates.
+Second, the 2% creator reserve (20M tokens), released to you when the coin graduates. The 2% graduation fee goes to MemeWarzone's fee routing, not to the creator.
 
 On chains and launch types that offer it, you choose in the **Bond** step of Create what happens to your share of the trade fee: keep it, give it to holders, split it, or use it for buyback and burn.
 
@@ -31,4 +31,4 @@ It is a clean launch, real attention, steady activity, and a coin that strengthe
 
 ## Best next pages
 
-Read **[Economic Model](/economics)**, **[Fee Model](/fees)**, and **[Campaign System](/platform/campaign-lifecycle)**.
+Read **[Launch Rules](/creators/launch-rules)**, **[Economic Model](/economics)**, **[Fee Model](/fees)**, and **[Campaign System](/platform/campaign-lifecycle)**.

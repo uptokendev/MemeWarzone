@@ -32,6 +32,7 @@ import { apiFetch } from "@/lib/apiBase";
 import { isSolanaAddress } from "@/lib/address";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 import { submitSolanaUpvoteV0 } from "@/lib/solanaUpvoteV0";
+import { legacyGasPriceFor } from "@/lib/evmGasHeadroom.mjs";
 
 /** Fixed UP Vote price in USD on every supported chain. */
 const UPVOTE_USD_TARGET = 3;
@@ -544,7 +545,8 @@ export function UpvoteDialog({
 
     const overrides: { value: bigint; gasPrice?: bigint; type?: number } = { value: voteWei };
     if (gasPrice && gasPrice > 0n) {
-      overrides.gasPrice = gasPrice;
+      const chainHex = await wallet.provider!.send("eth_chainId", []).catch(() => null);
+      overrides.gasPrice = legacyGasPriceFor(chainHex ? Number(BigInt(chainHex)) : 0, gasPrice);
       overrides.type = 0;
     }
 
