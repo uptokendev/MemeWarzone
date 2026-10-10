@@ -20,6 +20,7 @@
 import { resolveBnbUsdPrice } from "./bnbUsdPrice.js";
 import { resolveEthUsdPrice } from "./ethUsdPrice.js";
 import { resolveSolUsdPrice } from "./solUsdPrice.js";
+import { resolveDogeUsdPrice } from "./dogeUsdPrice.js";
 import { createHourlyPriceStore, createSpotStore } from "./financePriceStore.js";
 
 const HOUR_MS = 3_600_000;
@@ -32,14 +33,16 @@ export const PRICE_FEEDS = Object.freeze({
   SOL: { symbol: "SOLUSDT", envName: "SOL_USD_PRICE", fetchFlag: "SOL_USD_PRICE_FETCH", read: resolveSolUsdPrice },
   BNB: { symbol: "BNBUSDT", envName: "BNB_USD_PRICE", fetchFlag: "BNB_USD_PRICE_FETCH", read: resolveBnbUsdPrice },
   ETH: { symbol: "ETHUSDT", envName: "ETH_USD_PRICE", fetchFlag: "ETH_USD_PRICE_FETCH", read: resolveEthUsdPrice },
+  DOGE: { symbol: "DOGEUSDT", envName: "DOGE_USD_PRICE", fetchFlag: "DOGE_USD_PRICE_FETCH", read: resolveDogeUsdPrice },
 });
 
-/** Which price an asset symbol is valued at: SOL, BNB, ETH, USD (stable) or null (no price). */
+/** Which price an asset symbol is valued at: SOL, BNB, ETH, DOGE, USD (stable) or null (no price). */
 export function priceAssetFor(symbol) {
   const s = String(symbol || "").trim().toUpperCase();
   if (s === "SOL" || s === "WSOL") return "SOL";
   if (s === "BNB" || s === "WBNB") return "BNB";
   if (s === "ETH" || s === "WETH") return "ETH";
+  if (s === "DOGE" || s === "WDOGE") return "DOGE";
   if (STABLES.has(s)) return "USD";
   return null;
 }

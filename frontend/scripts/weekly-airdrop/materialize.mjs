@@ -14,6 +14,7 @@ export function weeklyContractBatchId(chainId, epochId, program, pot = MAIN_POT)
 }
 
 function nativeSymbol(chainId) {
+  if (Number(chainId) === 6281971) return "DOGE";
   return Number(chainId) === 4663 || Number(chainId) === 46630 ? "ETH" : "BNB";
 }
 

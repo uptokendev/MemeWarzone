@@ -4,6 +4,7 @@
  */
 import { pool } from "../../server/db.js";
 import { badMethod, getQuery, json } from "../../server/http.js";
+import { isDogeosChainId } from "../lib/chainNative.js";
 import { epochWindow } from "../../scripts/weekly-airdrop/config.mjs";
 import {
   creatorCandidates,
@@ -51,7 +52,7 @@ export async function airdropPreview(req, res) {
 
   const solana = isSolana(chainId);
   const robinhood = isRobinhood(chainId);
-  const tokenSymbol = solana ? "SOL" : robinhood ? "ETH" : "BNB";
+  const tokenSymbol = solana ? "SOL" : robinhood ? "ETH" : isDogeosChainId(chainId) ? "DOGE" : "BNB";
   // ?window=current: the week running now (Home Weekly Airdrop card). Default: the last completed week.
   const last = epochWindow();
   const window = String(q.window || "") === "current"

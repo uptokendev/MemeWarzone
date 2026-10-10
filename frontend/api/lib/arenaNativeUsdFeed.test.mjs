@@ -4,7 +4,7 @@ import test from "node:test";
 import { NATIVE_ASSET_BY_CHAIN, hasPinnedNativeUsd, nativeUsdMicrosFromPrice, readLiveNativeUsd, withLiveSnapshot } from "./arenaNativeUsdFeed.mjs";
 
 test("every launch chain maps to its native asset and nothing else does", () => {
-  assert.deepEqual({ ...NATIVE_ASSET_BY_CHAIN }, { 56: "BNB", 97: "BNB", 4663: "ETH", 46630: "ETH", 101: "SOL" });
+  assert.deepEqual({ ...NATIVE_ASSET_BY_CHAIN }, { 56: "BNB", 97: "BNB", 4663: "ETH", 46630: "ETH", 101: "SOL", 6281971: "DOGE" });
 });
 
 test("price to micros is exact, ceiling-free, and refuses nonsense", () => {
