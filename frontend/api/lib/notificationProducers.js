@@ -20,7 +20,7 @@ export const DEFAULT_TRADE_LOOKBACK_MINUTES = 30;
 /** Founder 2026-10-03: $500 per buy; overridable with NOTIFY_LARGE_BUY_USD. */
 export const DEFAULT_LARGE_BUY_USD = 500;
 
-const CHAIN_NAMES = { 56: "BNB", 97: "BNB testnet", 101: "Solana", 4663: "Robinhood", 46630: "Robinhood testnet" };
+const CHAIN_NAMES = { 56: "BNB", 97: "BNB testnet", 101: "Solana", 4663: "Robinhood", 46630: "Robinhood testnet", 6281971: "DogeOS testnet" };
 
 export function shortWallet(value) {
   const w = String(value || "");

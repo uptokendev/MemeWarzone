@@ -11,8 +11,9 @@ import {
   verifySolanaRewardClaim,
 } from "../lib/solanaRewardClaim.js";
 
-const EVM_CHAINS = new Set([56, 97, 4663, 46630]);
+const EVM_CHAINS = new Set([56, 97, 4663, 46630, 6281971]);
 const ROBINHOOD_CHAINS = new Set([4663, 46630]);
+const DOGEOS_CHAIN_ID = 6281971;
 const SOLANA_CHAINS = new Set([101, 102]);
 const BYTES32_RE = /^0x[a-fA-F0-9]{64}$/;
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -109,7 +110,7 @@ function chainClaimConfig(chainId) {
   const distributorAddress = EVM_CHAINS.has(chain) ? envDistributorAddress(chain) : "";
   return {
     chainId: chain,
-    tokenSymbol: ROBINHOOD_CHAINS.has(chain) ? "ETH" : "BNB",
+    tokenSymbol: ROBINHOOD_CHAINS.has(chain) ? "ETH" : chain === DOGEOS_CHAIN_ID ? "DOGE" : "BNB",
     enabled: Boolean(distributorAddress),
     mode: distributorAddress ? "reward_distributor_merkle" : "disabled",
     reason: distributorAddress ? null : "MISSING_DISTRIBUTOR_ADDRESS",
@@ -118,12 +119,13 @@ function chainClaimConfig(chainId) {
   };
 }
 
-function explorerTxBase(chainId) {
+export function explorerTxBase(chainId) {
   const chain = Number(chainId);
   if (chain === 97) return "https://testnet.bscscan.com/tx/";
   if (chain === 56) return "https://bscscan.com/tx/";
   if (chain === 46630) return "https://explorer.testnet.chain.robinhood.com/tx/";
   if (chain === 4663) return "https://robinhoodchain.blockscout.com/tx/";
+  if (chain === DOGEOS_CHAIN_ID) return "https://dogeos-testnet.l2scan.co/tx/";
   return "";
 }
 
@@ -353,7 +355,7 @@ export async function rewardClaimConfig(req, res) {
   const config = chainClaimConfig(chainId);
   return json(res, 200, {
     config,
-    supportedChains: [56, 97, 4663, 46630, 101, 102],
+    supportedChains: [56, 97, 4663, 46630, 6281971, 101, 102],
     disabledChains: [],
     contract: SOLANA_CHAINS.has(chainId)
       ? {

@@ -13,6 +13,7 @@ import { ethers } from "ethers";
  *   BSC_RPC_HTTP_${chainId} / ROBINHOOD_RPC_HTTP_${chainId} (CSV allowed)
  *   VITE_PUBLIC_RPC_${chainId}
  *   ROBINHOOD_TESTNET_RPC_URL / ROBINHOOD_MAINNET_RPC_URL
+ *   DOGEOS_RPC_HTTP_6281971 / EVM_RPC_HTTP_6281971 (DogeOS only; never a BSC env)
  *   BSC_RPC_HTTP / VITE_BSC_MAINNET_RPC / VITE_BSC_TESTNET_RPC
  */
 
@@ -33,7 +34,19 @@ const PUBLIC_FALLBACKS = {
   // managed endpoints through ROBINHOOD_RPC_HTTP_* instead of relying on these.
   4663: ["https://rpc.mainnet.chain.robinhood.com"],
   46630: ["https://rpc.testnet.chain.robinhood.com"],
+  // DogeOS Chikyu testnet public RPC.
+  6281971: ["https://rpc.testnet.dogeos.com"],
 };
+
+export const DOGEOS_TESTNET_PUBLIC_RPC = PUBLIC_FALLBACKS[6281971][0];
+
+/** DogeOS RPC env, in priority order. DogeOS never reads a BSC or Robinhood RPC env. */
+export const DOGEOS_RPC_ENV_KEYS = ["DOGEOS_RPC_HTTP_6281971", "EVM_RPC_HTTP_6281971", "VITE_PUBLIC_RPC_6281971"];
+
+/** Configured DogeOS RPC URLs (CSV allowed in each env), without the public fallback. */
+export function dogeosConfiguredRpcUrls() {
+  return DOGEOS_RPC_ENV_KEYS.flatMap((key) => csvValues(process.env[key]));
+}
 
 function networkName(chainId) {
   const id = Number(chainId);
@@ -41,6 +54,7 @@ function networkName(chainId) {
   if (id === 97) return "bsc-testnet";
   if (id === 4663) return "robinhood";
   if (id === 46630) return "robinhood-testnet";
+  if (id === 6281971) return "dogeos-testnet";
   return `chain-${id}`;
 }
 
@@ -71,6 +85,8 @@ function uniqueUrls(urls) {
 export function getRpcUrls(chainId) {
   const id = Number(chainId);
   const configured = [
+    // DogeOS-named env comes first for 6281971; empty for every other chain.
+    ...(id === 6281971 ? dogeosConfiguredRpcUrls() : []),
     ...csvValues(process.env[`ROBINHOOD_RPC_HTTP_${id}`]),
     ...csvValues(process.env[`BSC_RPC_HTTP_${id}`]),
     ...csvValues(process.env[`VITE_PUBLIC_RPC_${id}`]),
@@ -104,6 +120,8 @@ export function getRpcUrls(chainId) {
       ...csvValues(process.env.ROBINHOOD_TESTNET_RPC_URL),
       ...csvValues(process.env.ROBINHOOD_TESTNET_RPC),
     );
+  } else if (id === 6281971) {
+    // DogeOS: its own env (added above) and its public RPC only. Never the generic BSC_RPC_HTTP.
   } else {
     configured.push(...csvValues(process.env.BSC_RPC_HTTP));
   }

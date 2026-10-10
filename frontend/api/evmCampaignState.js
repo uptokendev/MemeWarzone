@@ -16,7 +16,7 @@ import { parseGen5QuoteParams, readGen5CampaignState } from "./lib/evmGen5Campai
  * changes every second only during the first minute, and graduation state changes with trades.
  */
 
-const EVM_CHAIN_IDS = new Set([56, 97, 4663, 46630, 31337]);
+const EVM_CHAIN_IDS = new Set([56, 97, 4663, 46630, 31337, 6281971]);
 const cache = new Map();
 const MAX_CACHE_ENTRIES = 2000;
 
@@ -35,7 +35,7 @@ export async function evmCampaignStateHandler(req, res, deps = {}) {
   const chainId = Number(q.chainId);
   const campaign = String(q.campaign || q.campaignAddress || "").trim();
   const wallet = String(q.wallet || "").trim();
-  if (!EVM_CHAIN_IDS.has(chainId)) return json(res, 400, { error: "chainId must be an EVM launch chain (56, 97, 4663, 46630)." });
+  if (!EVM_CHAIN_IDS.has(chainId)) return json(res, 400, { error: "chainId must be an EVM launch chain (56, 97, 4663, 46630, 6281971)." });
   if (!ethers.isAddress(campaign)) return json(res, 400, { error: "Invalid campaign address." });
   if (wallet && !ethers.isAddress(wallet)) return json(res, 400, { error: "Invalid wallet address." });
 

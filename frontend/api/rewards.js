@@ -15,7 +15,7 @@ import { discoverSolanaRewardClaim } from "./lib/solanaRewardReconciliation.js";
 import { canonicalSolanaClaimIdentity, solanaClaimIdentityFromMetadata } from "./lib/solanaClaimEnvironment.js";
 
 const SOLANA_CHAINS = new Set([101]);
-const EVM_CHAINS = new Set([56, 97, 4663, 46630]);
+const EVM_CHAINS = new Set([56, 97, 4663, 46630, 6281971]);
 const RECOVERABLE_REWARD_TYPES = new Set(["airdrop", "squad"]);
 const RECOVERABLE_STATUSES = new Set(["claim_pending", "failed"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

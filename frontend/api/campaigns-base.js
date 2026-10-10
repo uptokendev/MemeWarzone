@@ -14,11 +14,11 @@ import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
  */
 export const EVM_GEN6_TOTAL_SUPPLY_WHOLE = 1_000_000_000;
 const EVM_TRADE_FEE_NATIVE_SQL = `(case
-  when t.chain_id in (56, 97, 4663, 46630) and t.fee_raw is not null then t.fee_raw::numeric / 1e18
+  when t.chain_id in (56, 97, 4663, 46630, 6281971) and t.fee_raw is not null then t.fee_raw::numeric / 1e18
   else 0
 end)`;
 const EVM_FULLY_DILUTED_SUPPLY_SQL = `(case
-  when c.chain_id in (56, 97, 4663, 46630) and coalesce(c.factory_generation, 0) >= 6
+  when c.chain_id in (56, 97, 4663, 46630, 6281971) and coalesce(c.factory_generation, 0) >= 6
     then ${EVM_GEN6_TOTAL_SUPPLY_WHOLE}::numeric
   end)`;
 

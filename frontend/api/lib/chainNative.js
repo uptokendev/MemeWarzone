@@ -9,6 +9,13 @@ export function isRobinhoodChainId(chainId) {
   return id === 4663 || id === 46630;
 }
 
+/** DogeOS Chikyu testnet. Its own branch: never part of isRobinhoodChainId (ETH symbol, stock logic). */
+export const DOGEOS_TESTNET_CHAIN_ID = 6281971;
+
+export function isDogeosChainId(chainId) {
+  return Number(chainId) === DOGEOS_TESTNET_CHAIN_ID;
+}
+
 export function isBnbChainId(chainId) {
   const id = Number(chainId);
   return id === 56 || id === 97;
@@ -22,6 +29,7 @@ export function nativeSymbolFor(chainId) {
   }
   if (isSolanaChainId(id)) return "SOL";
   if (isRobinhoodChainId(id)) return "ETH";
+  if (isDogeosChainId(id)) return "DOGE";
   if (isBnbChainId(id)) return "BNB";
   throw new Error(`Unsupported current application chain: ${String(chainId)}`);
 }

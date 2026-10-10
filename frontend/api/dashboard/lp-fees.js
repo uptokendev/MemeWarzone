@@ -47,6 +47,15 @@ function isRobinhoodChain(chainId) {
   return Number(chainId) === 4663 || Number(chainId) === 46630;
 }
 
+function isDogeosChain(chainId) {
+  return Number(chainId) === 6281971;
+}
+
+/** Chains whose graduation liquidity is a PermanentV3PositionLocker NFT (Robinhood and DogeOS). */
+function isV3LockerChain(chainId) {
+  return isRobinhoodChain(chainId) || isDogeosChain(chainId);
+}
+
 function isAddress(value) {
   return ethers.isAddress(String(value || "").trim());
 }
@@ -135,7 +144,7 @@ export async function authorize(req, res) {
 
   const q = getQuery(req);
   const chainId = Number(q.chainId ?? 97);
-  if (chainId === 97 || chainId === 46630) return { mode: "testnet-open" };
+  if (chainId === 97 || chainId === 46630 || chainId === 6281971) return { mode: "testnet-open" };
 
   const creator = toAddr(q.creator);
   if (creator) return { mode: "creator-self", creator };
@@ -215,8 +224,8 @@ function resolveLockerAddress(chainId) {
   ).trim();
   if (isAddress(per)) return ethers.getAddress(per);
 
-  // Unsuffixed legacy fallback is BNB-only. Robinhood must never borrow it.
-  if (!isRobinhoodChain(chainId)) {
+  // Unsuffixed legacy fallback is BNB-only. Robinhood and DogeOS must never borrow it.
+  if (!isV3LockerChain(chainId)) {
     const generic = String(process.env.LP_LOCKER_ADDRESS || process.env.VITE_LP_LOCKER_ADDRESS || "").trim();
     if (isAddress(generic)) return ethers.getAddress(generic);
   }
@@ -492,7 +501,8 @@ export async function lpFeesPayload(q, auth) {
     if (!lockerAddress) return json(res, 200, { lockerAddress: null, items: [], warning: "LP locker is not configured for this chain." });
 
     const provider = await getServerReadProvider(chainId);
-    const robinhood = isRobinhoodChain(chainId);
+    // "robinhood" here means the V3 locker path, which DogeOS shares; only the symbol differs.
+    const robinhood = isV3LockerChain(chainId);
     const locker = new ethers.Contract(lockerAddress, robinhood ? V3_LOCKER_ABI : BNB_LOCKER_ABI, provider);
     const [dexFactory, treasuryRouter] = await Promise.all([
       robinhood ? locker.v3Factory().catch(() => null) : locker.topazFactory().catch(() => null),
@@ -540,7 +550,7 @@ export async function lpFeesPayload(q, auth) {
       ok: true,
       chainId,
       dex: robinhood ? "robinhood_v3" : "topaz_v2",
-      nativeSymbol: robinhood ? "ETH" : "BNB",
+      nativeSymbol: isDogeosChain(chainId) ? "DOGE" : robinhood ? "ETH" : "BNB",
       lockerAddress: lockerAddress.toLowerCase(),
       topazFactory: robinhood ? null : dexFactory ? String(dexFactory).toLowerCase() : null,
       v3Factory: robinhood && dexFactory ? String(dexFactory).toLowerCase() : null,

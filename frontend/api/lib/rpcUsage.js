@@ -182,7 +182,7 @@ export function logRpcUsageOnExit({ log = console.log, label = "rpc-usage" } = {
   process.once("exit", write);
 }
 
-const EVM_CHAINS = [56, 97, 4663, 46630];
+const EVM_CHAINS = [56, 97, 4663, 46630, 6281971];
 
 /** Chain of a configured RPC URL (getRpcUrls lists, matched exactly, then by host), or null. */
 export function chainOfRpcUrl(url, rpcUrlsFor = getRpcUrls) {

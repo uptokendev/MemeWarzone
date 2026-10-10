@@ -1,4 +1,4 @@
-const SUPPORTED_EVM_CHAIN_IDS = new Set([56, 97, 4663, 46630]);
+const SUPPORTED_EVM_CHAIN_IDS = new Set([56, 97, 4663, 46630, 6281971]);
 
 export function defaultEvmChainId() {
   const n = Number(process.env.DEFAULT_EVM_CHAIN_ID || process.env.VITE_DEFAULT_CHAIN_ID || 56);

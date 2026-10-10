@@ -9,7 +9,7 @@ import {
 import { canonicalSolanaClaimIdentity } from "../lib/solanaClaimEnvironment.js";
 import { moderationClaimRefusal, rewardLedgerHolds } from "../../shared/moderationHolds.mjs";
 
-const EVM_CHAINS = new Set([56, 97, 4663, 46630]);
+const EVM_CHAINS = new Set([56, 97, 4663, 46630, 6281971]);
 const EVM_TX_RE = /^0x[a-fA-F0-9]{64}$/;
 
 function send(res, status, payload) {
@@ -181,7 +181,7 @@ export async function rewardClaimConfig(req, res) {
       ok: false,
       error: "Solana claim chain 102 is retired.",
       code: "LEGACY_SOLANA_CLAIM_CHAIN_RETIRED",
-      supportedChains: [56, 97, 4663, 46630, 101],
+      supportedChains: [56, 97, 4663, 46630, 6281971, 101],
     });
   }
 
@@ -204,7 +204,7 @@ export async function rewardClaimConfig(req, res) {
   const enabled = Boolean(programId);
   return send(res, 200, {
     ...captured.state.body,
-    supportedChains: [56, 97, 4663, 46630, 101],
+    supportedChains: [56, 97, 4663, 46630, 6281971, 101],
     disabledChains: enabled ? [] : [101],
     config: {
       ...(captured.state.body?.config || {}),
