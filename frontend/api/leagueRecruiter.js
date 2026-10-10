@@ -5,7 +5,7 @@ import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
 import { resolveEthUsdPrice } from "./lib/ethUsdPrice.js";
 import { scoreUniversalRecruiter, toNumber, weiToNative } from "./leagueRecruiterScore.js";
 import { internalRecruiterLabel } from "../shared/ownerWallets.mjs";
-import { notPublicHiddenCampaignSql, publicHiddenWhere } from "./lib/publicHiddenSql.js";
+import { notPublicHiddenOrBlockedCampaignSql, publicHiddenOrBlockedWhere } from "./lib/publicHiddenSql.js";
 
 /**
  * Recruiter League is ONE universal All-Chains weekly/monthly board.
@@ -152,7 +152,7 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
       WHERE t.chain_id IN (56, 4663, 101)
         AND t.block_time >= $1::timestamptz
         AND t.block_time < $2::timestamptz
-        AND ${notPublicHiddenCampaignSql("t")}
+        AND ${notPublicHiddenOrBlockedCampaignSql("t")}
       GROUP BY 1, 2, 3
     ),
     volume_by_chain AS (
@@ -192,7 +192,7 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
       WHERE re.chain_id IN (56, 4663, 101)
         AND re.occurred_at >= $1::timestamptz
         AND re.occurred_at < $2::timestamptz
-        AND ${notPublicHiddenCampaignSql("re")}
+        AND ${notPublicHiddenOrBlockedCampaignSql("re")}
       UNION ALL
       SELECT w.recruiter_id, re.chain_id, re.recruiter_amount
       FROM public.reward_events re
@@ -204,7 +204,7 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
       WHERE re.chain_id IN (56, 4663, 101)
         AND re.occurred_at >= $1::timestamptz
         AND re.occurred_at < $2::timestamptz
-        AND NOT ${publicHiddenWhere("c")}
+        AND NOT ${publicHiddenOrBlockedWhere("c")}
     ),
     earned_by_chain AS (
       SELECT recruiter_id, chain_id, sum(raw) AS raw FROM earned_rows GROUP BY 1, 2

@@ -3,7 +3,7 @@
  * auto updates (N4). Additive: new routes, new columns on token_story_profiles that the Story save
  * never writes, and the new coin_posts table. Spec: docs/build_plans/ui-redesign/CHANGELOG.md.
  *
- *   GET  /api/coin-page?chainId=&token=
+ *   GET  /api/coin-page?chainId=&token=       (&blockOnly=1: only the block check, for the coin page)
  *   POST /api/coin-page/profile            signed coin_page_profile_update
  *   POST /api/coin-page/posts              signed coin_post_create, or the owner's feed session
  *   POST /api/coin-page/posts/:id/delete   signed coin_post_delete, or the owner's feed session
@@ -16,6 +16,7 @@ import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
 import { hasCoinPostLink, linkCoinPost, unlinkCoinPost } from "./lib/coinPostLink.js";
 import { hasMediaUrls, mediaUrlsSelect, refreshMediaUrlColumns } from "./lib/postMediaUrls.js";
 import { coinIdent, coinPageOwner, isSolanaChain } from "./lib/coinPageOwner.js";
+import { activeBlockForPublic } from "./lib/blockedCoins.js";
 import {
   COIN_POST_RATE,
   buildAutoUpdates,
@@ -142,6 +143,15 @@ async function handleGet(req, res) {
   const chainId = Number(q.chainId || 0);
   const token = coinIdent(chainId, q.token);
   if (!chainId || !token) return json(res, 400, { error: "chainId and token are required", code: "COIN_IDENTITY_REQUIRED" });
+  // Blocked coins (Command Center -> Abuse): remove answers 410 and nothing else; hide is told to the
+  // page, which shows a "not listed" banner and keeps trading.
+  const blocked = await activeBlockForPublic(pool, chainId, token);
+  if (blocked?.mode === "remove") {
+    res.setHeader("cache-control", "no-store");
+    return json(res, 410, { removed: true, block: { mode: "remove" }, code: "COIN_REMOVED" });
+  }
+  const block = blocked ? { mode: String(blocked.mode) } : null;
+  if (["1", "true", "yes"].includes(String(q.blockOnly || "").toLowerCase())) return json(res, 200, { block });
   const owner = await coinPageOwner(pool, chainId, token);
   const key = owner?.token || token;
   const [row, posts, facts] = await Promise.all([readProfile(chainId, key), readPosts(chainId, key), readAutoFacts(chainId, [token, key])]);
@@ -154,6 +164,7 @@ async function handleGet(req, res) {
     storyText: { shortStory: row?.short_story || null, sections: row?.sections && typeof row.sections === "object" ? row.sections : {} },
     posts,
     autoUpdates: profile.showAutoUpdates ? buildAutoUpdates(facts) : [],
+    block,
   });
 }
 

@@ -1,5 +1,6 @@
 import { pool } from "../../server/db.js";
-import { publicHiddenWhere } from "./publicHiddenSql.js";
+import { probeBlockedCoinsTable, publicHiddenWhere } from "./publicHiddenSql.js";
+import { loadActiveBlocks } from "./blockedCoins.js";
 
 // campaigns.meta->>'publicHidden' = true takes a campaign out of every public
 // listing: the feed, trending, and the league standings. Direct token links
@@ -10,7 +11,17 @@ import { publicHiddenWhere } from "./publicHiddenSql.js";
 
 // The SQL lives in publicHiddenSql.js (no database import) so injected-db read
 // models share this exact definition.
-export { notPublicHiddenCampaignSql, publicHiddenWhere } from "./publicHiddenSql.js";
+export {
+  notBlockedCoinSql,
+  notPublicHiddenCampaignSql,
+  notPublicHiddenOrBlockedCampaignSql,
+  publicHiddenOrBlockedWhere,
+  publicHiddenWhere,
+} from "./publicHiddenSql.js";
+
+// Blocked coins (lib/blockedCoins.js): look for the table as soon as the API loads, so the listing
+// SQL includes blocks from the first requests on.
+void probeBlockedCoinsTable(pool);
 
 // Same key the feed uses: Solana base58 keeps its case, EVM is case-insensitive.
 export function publicCampaignKey(chainId, campaignAddress) {
@@ -20,7 +31,12 @@ export function publicCampaignKey(chainId, campaignAddress) {
   return `${chain}:${addr.toLowerCase()}`;
 }
 
-export async function loadPublicHiddenCampaignKeys(chainId) {
+/**
+ * Keys of every campaign kept out of public lists on a chain: meta.publicHidden test coins and, unless
+ * includeBlocked is false, coins with an active block (both their campaign and token keys).
+ * includeBlocked: false is the plain test-coin set (finance labels).
+ */
+export async function loadPublicHiddenCampaignKeys(chainId, { includeBlocked = true } = {}) {
   const result = await pool.query(
     `select campaign_address
        from public.campaigns
@@ -29,7 +45,14 @@ export async function loadPublicHiddenCampaignKeys(chainId) {
         and ${publicHiddenWhere()}`,
     [Number(chainId)],
   );
-  return new Set((result.rows || []).map((row) => publicCampaignKey(chainId, row.campaign_address)));
+  const keys = new Set((result.rows || []).map((row) => publicCampaignKey(chainId, row.campaign_address)));
+  if (includeBlocked) {
+    for (const block of await loadActiveBlocks(pool, chainId)) {
+      if (block.campaign_address) keys.add(publicCampaignKey(chainId, block.campaign_address));
+      if (block.token_address) keys.add(publicCampaignKey(chainId, block.token_address));
+    }
+  }
+  return keys;
 }
 
 // Drops rows whose campaign is hidden. Rows without a campaign (wallet

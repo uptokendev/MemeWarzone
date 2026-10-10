@@ -69,6 +69,7 @@ import { ChallengeCoinButton } from "@/components/arena/ChallengeCoinButton";
 import { cp } from "@/components/token/coinPageStyles";
 import { SwapWidgetEmbedLink } from "@/components/imports/SwapWidgetEmbedDialog";
 import { CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
+import { checkCoinBlock, type CoinBlockState } from "@/lib/coinPageApi";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
 import { useStory } from "@/lib/story/storyApi";
 import { MobileTradeDock, MobileTradeSheet, useXlUp } from "@/components/token/MobileTradeSheet";
@@ -672,6 +673,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   const [followBusy, setFollowBusy] = useState(false);
 
   const [campaign, setCampaign] = useState<CampaignInfo | null>(null);
+  // Blocked coins (Command Center -> Abuse): hide shows a banner, remove replaces the whole page.
+  const [coinBlock, setCoinBlock] = useState<CoinBlockState>(null);
   const isDbcPage = Boolean(dbcLive);
   const dbcPool = String(dbcLive?.pool || "");
   const dbcMint = String(dbcLive?.mint || "");
@@ -773,6 +776,22 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     });
     if (next !== pageChainId) setPageChainId(next);
   }, [campaignAddress, location.pathname, location.search, pageChainId]);
+  // Second block check once the coin is known: the chain or the address can change while loading
+  // (campaign vs token address, BNB vs Robinhood). Only ever adds a block; the load sets the first answer.
+  useEffect(() => {
+    const chain = Number(chainIdForStorage);
+    const ids = [campaign?.campaign, campaign?.token].map((v) => String(v || "").trim()).filter(Boolean);
+    if (!chain || !ids.length) return;
+    let alive = true;
+    void Promise.all(ids.map((id) => checkCoinBlock(chain, id))).then((results) => {
+      if (!alive) return;
+      const found = results.find((r) => r?.mode === "remove") || results.find(Boolean) || null;
+      if (found) setCoinBlock(found);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [chainIdForStorage, campaign?.campaign, campaign?.token]);
   const isSolanaPage =
     isSolanaChainId(chainIdForStorage) &&
     !/^0x[a-fA-F0-9]{40}$/i.test(String(campaignAddress || campaignAddr || ""));
@@ -1137,6 +1156,13 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
           param.length >= 32 &&
           param.length <= 48 &&
           /^[0-9A-Za-z]+$/.test(param);
+
+        // Blocked coins: ask the API before anything is built from the contract. A removed coin stops
+        // here; a failed check reads as not blocked.
+        const blockChainId = isSolanaAddressParam || isDamagedSolanaParam ? SOLANA_CHAIN_ID : pageChainId;
+        const block = await checkCoinBlock(blockChainId, param);
+        setCoinBlock(block);
+        if (block?.mode === "remove") return;
 
         // ── Fast path for /token/0x… ─────────────────────────────────────────
         // Avoid: full campaign feed, lifecycle×500, dual-chain resolve before paint,
@@ -5037,6 +5063,28 @@ const toSeconds = (ts: number): number => {
     });
   };
 
+  if (coinBlock?.mode === "remove") {
+    const removedAddress = String(campaignAddress || "").trim();
+    const removedChainId = /^0x[a-fA-F0-9]{40}$/.test(removedAddress) ? Number(chainIdForStorage) : SOLANA_CHAIN_ID;
+    const explorerUrl = `${getExplorerBase(removedChainId)}/address/${removedAddress}`;
+    return (
+      <div className="h-full w-full flex items-center justify-center px-4">
+        <Card className="p-4 md:p-6 bg-card/40 border border-border/40 max-w-md w-full text-center">
+          <h2 className="text-sm md:text-base font-semibold mb-2">This coin was removed for breaking our rules.</h2>
+          <p className="text-xs md:text-sm text-muted-foreground break-all">{removedAddress}</p>
+          <a
+            href={explorerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 inline-block text-xs md:text-sm text-orange-300 underline"
+          >
+            View the contract on the explorer
+          </a>
+        </Card>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className="h-full w-full flex items-center justify-center px-4">
@@ -5062,6 +5110,11 @@ const toSeconds = (ts: number): number => {
 
   return (
     <div className="mx-auto w-full max-w-[1480px] flex flex-col gap-4 px-3 md:px-2 pb-24 xl:pb-0 font-mw-body text-mw-text">
+      {coinBlock?.mode === "hide" ? (
+        <div role="status" className="rounded-xl border border-orange-400/40 bg-orange-500/10 px-4 py-2 text-xs md:text-sm text-orange-200">
+          This coin is not listed on MemeWarzone.
+        </div>
+      ) : null}
       <GraduationExplosion
         campaignAddress={campaign?.campaign}
         active={isSolanaPage ? false : isTopazTradingActive || isUniswapTradingActive}

@@ -2,6 +2,7 @@ import { pool } from "../../server/db.js";
 import { isSolanaAddress } from "../../server/http.js";
 import { mergeTimelineItems } from "./socialTimelineMerge.js";
 import { notCoinPostSql } from "./coinPostLink.js";
+import { notBlockedCoinSql, probeBlockedCoinsTable } from "./publicHiddenSql.js";
 
 export { mergeTimelineItems };
 
@@ -200,6 +201,10 @@ export async function loadTradeEvents(wallets, { limit = 50 } = {}) {
 export async function loadPostEvents(wallets, { limit = 50, all = false } = {}) {
   // Linked rows of creator updates are not regular posts (founder, 2026-10-03).
   const shadow = await notCoinPostSql();
+  // A post whose coin card is a blocked coin (Command Center -> Abuse) is not shown.
+  await probeBlockedCoinsTable(pool);
+  const blockedSql = notBlockedCoinSql({ chain: "p.mentioned_chain_id", campaign: "p.mentioned_campaign", token: "p.mentioned_token" });
+  const notBlocked = blockedSql === "true" ? "" : ` and ${blockedSql}`;
   const list = (wallets || []).map((w) => String(w || "").trim()).filter(Boolean);
   if (!all && !list.length) return [];
   const params = all ? [limit] : [list, list.map((w) => w.toLowerCase()), limit];
@@ -258,7 +263,7 @@ export async function loadPostEvents(wallets, { limit = 50, all = false } = {}) 
           limit 1
        ) ai on true
       where p.status = 0
-        ${topLevelOnly ? "and p.parent_id is null" : ""}${shadow}
+        ${topLevelOnly ? "and p.parent_id is null" : ""}${shadow}${notBlocked}
         ${authorFilter}
       order by p.created_at desc, p.id desc
       limit ${limitPlaceholder}`;
