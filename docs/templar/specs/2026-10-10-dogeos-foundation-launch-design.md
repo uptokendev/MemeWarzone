@@ -307,7 +307,7 @@ adapter exists would be bound to whatever adapter was set at that moment.
        deviation
      - the V3 pool indexer: starting chunk ≤ 10k for 6281971, existing narrowing pinned, Robinhood's
        chunk unchanged
-     - `FORBIDDEN_KEEPER_ADDRESSES` refuses the DogeOS deployer and the updater; the keeper is enabled
+     - `FORBIDDEN_KEEPER_ADDRESSES` refuses the DogeOS deployer, the updater and the route authority; the keeper is enabled
        for 6281971
      - registry, native-symbol and feed-isolation pins for 6281971
 2. **Oracle audit diff.** A written diff review of the DogeOS oracle against
@@ -344,7 +344,8 @@ adapter exists would be bound to whatever adapter was set at that moment.
   - `git diff` of the branch shows no change to any existing file under `deployments/` (except new
     files under `deployments/dogeos/`)
   - no change to any LIVE env entry. On TEST, the only entries touched that are not suffixed
-    `_6281971` or named `DOGEOS_*` are `VITE_ALLOWED_CHAIN_IDS` and the indexer active-chain list
+    `_6281971` or named `DOGEOS_*` are `VITE_ALLOWED_CHAIN_IDS`, the indexer active-chain list,
+    and `ROUTE_AUTHORITY_PRIVATE_KEY` on the TEST API (§1 Route authority)
   - for every hand-kept chain list, the only change is the added 6281971
 - A new `docs/claude/dogeos.md` topic file holds the verified facts, quirks and addresses, and is
   added to the CLAUDE.md topic index.

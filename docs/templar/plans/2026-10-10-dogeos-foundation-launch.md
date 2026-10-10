@@ -209,8 +209,8 @@
   - **`blockGasLimit: 10_000_000`**
 - The rehearsal:
   1. impersonate the deployer on the fork with `hardhat_setBalance` (no real key needed)
-  2. run `deploy-dogeos-testnet` logic with the real WDOGE and the real route-authority address
-  3. on the fork, deploy with a throwaway local route-authority signer, since signing needs a private key and impersonation can't sign typed data. The real address is only checked in t8's guard tests and t28.
+  2. run the `deploy-dogeos-testnet` logic with the real WDOGE. The route authority is a **throwaway local signer**, because signing authorizations needs a private key and impersonation can't sign typed data. The real route-authority address is only checked in t8's guard tests and t28.
+  3. that throwaway signer signs the `createCampaignAuthorized` request in step 4
   4. run the t7 lifecycle with 5 buyer accounts and a keeper account
 - It records per transaction the gas used and the calldata/raw-tx size. For each transaction it calls the **live** RPC `L1GasPriceOracle(0x5300000000000000000000000000000000000002).getL1Fee(bytes)` (read-only `eth_call`) on the signed-equivalent serialized transaction.
 - It writes `reports/dogeos/fork-rehearsal.json` with: total deploy DOGE (L2 + L1), per-step canary DOGE including the buys needed for $150 at the rehearsal's oracle price, the max single-transaction gas (must be < 10M), and the required balances for deployer, updater and keeper.
@@ -350,7 +350,7 @@ Changes:
 - `routeAuthorizationSigner.js`: `ALLOWED_GENERATION_PAIRS` (:164-170) gains `[6281971n, [[7, 6]]]`.
 - Both `ROBINHOOD_CHAIN_IDS` sets stay unchanged: `routeAuthorizationSigner.js:49` and `draft-deploy.js:21`.
 - Flip `route-authorization-gen7.test.mjs:62` to assert true for `[7,6]` and false for `[6,5]`, `[7,5]`, `[6,6]` on 6281971.
-- `drafts-base.js:95` (the $150 gen-7 tier) includes 6281971. Leave `draft-deploy-base.js:162` (the $6 tier) alone: gen-7 arming rejects $6, so adding it would let DogeOS drafts be saved that can never be armed.
+- `drafts-base.js:95` (the $150 gen-7 tier) includes 6281971. `dev-fix/drafts.js:29` `ROBINHOOD_CHAIN_IDS` (used at :90 and :212) is the Graduation Market stock/quote policy. It is a stock exception: leave it alone and list it in t23's exceptions file. Leave `draft-deploy-base.js:162` (the $6 tier) alone: gen-7 arming rejects $6, so adding it would let DogeOS drafts be saved that can never be armed.
 - `dev-fix/draft-deploy.js:21` RH route-authority key lookup: **no change**. DogeOS uses the global `ROUTE_AUTHORITY_PRIVATE_KEY`. Add a test that `draft-deploy.js` resolves the global key for 6281971.
 - Find out how a 46630 `$150` gen-7 draft passes the DB `campaign_drafts_graduation_target_check` (`db/migrations/20260929_000011_campaign_drafts_dbc_quote.sql:11-22`, which allows $150 only on 101/102). Record the finding in the task report: either the drafts path doesn't store the target for gen-7, or 46630 also fails today. If 6281971 needs the CHECK extended, hand that requirement to t22. Do not change behaviour for 46630.
 **Verify:** `cd frontend && node --test api/dev-fix/route-authorization-gen7.test.mjs api/dev-fix/dogeosRouteAuth.test.mjs && npm run test:evm-gen6` → all pass
@@ -415,7 +415,7 @@ Changes:
 - Tests:
   - enabled only with `EVM_GRADUATION_KEEPER_ENABLED_6281971`
   - max gas ≤ 10M, including when env tries 15M
-  - `assertKeeperKeyAllowed` refuses both DogeOS addresses (use throwaway test keys whose addresses you inject via `EVM_KEEPER_FORBIDDEN_ADDRESSES` for the positive path; never use the real keys)
+  - `assertKeeperKeyAllowed` refuses all three DogeOS addresses (deployer, updater, route authority) (use throwaway test keys whose addresses you inject via `EVM_KEEPER_FORBIDDEN_ADDRESSES` for the positive path; never use the real keys)
   - observation slots 180 for 6281971
 **Verify:** `npx --prefix realtime-indexer tsx --test realtime-indexer/src/tests/dogeosGraduationKeeper.test.ts && npm --prefix realtime-indexer run test:evm-gen5` → all pass
 
