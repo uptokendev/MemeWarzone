@@ -234,7 +234,18 @@ async function readCluster(clusterId) {
   }
 }
 
-function buildCreateEligibility({ creator, walletRisk, cluster, launchAt = null }) {
+// Founder 2026-10-10: BNB and Robinhood launch like Solana DBC. On these chains the creator tier limits
+// (live bonding count, launch cooldown, cluster size) do not apply; the gen-7 factories run without a
+// CreatorRegistry (setRegistries(0x0, RiskRegistry)). Restrictions, manual review and risk warnings stay.
+export const EVM_OPEN_CREATOR_CHAIN_IDS = Object.freeze([56, 97, 4663, 46630]);
+
+export function creatorTierLimitsApply(chainId) {
+  const id = Number(chainId);
+  return !(Number.isFinite(id) && EVM_OPEN_CREATOR_CHAIN_IDS.includes(id));
+}
+
+export function buildCreateEligibility({ creator, walletRisk, cluster, launchAt = null, chainId = null }) {
+  const tierLimits = creatorTierLimitsApply(chainId);
   const rules = TIER_RULES[creator.tier] || TIER_RULES.New;
   const reasons = [];
   const warnings = [];
@@ -246,13 +257,13 @@ function buildCreateEligibility({ creator, walletRisk, cluster, launchAt = null 
 
   if (creator.restricted) reasons.push("Creator is restricted.");
   if (creator.manualReviewRequired) reasons.push("Creator requires manual review.");
-  if (creator.liveBondingCount >= rules.maxLiveBonding) reasons.push(`Creator has reached ${rules.maxLiveBonding} live bonding tokens for ${creator.tier}.`);
-  if (Number.isFinite(cooldownEndsMs) && cooldownEndsMs > evaluationAtMs) {
+  if (tierLimits && creator.liveBondingCount >= rules.maxLiveBonding) reasons.push(`Creator has reached ${rules.maxLiveBonding} live bonding tokens for ${creator.tier}.`);
+  if (tierLimits && Number.isFinite(cooldownEndsMs) && cooldownEndsMs > evaluationAtMs) {
     reasons.push(`Creator launch cooldown remains active at the selected launch time (${new Date(cooldownEndsMs).toISOString()}).`);
   }
   if (walletRisk?.restricted) reasons.push("Creator wallet is restricted.");
   if (cluster?.restricted) reasons.push("Creator wallet cluster is restricted.");
-  if (cluster?.wallets > rules.maxClusterWallets) reasons.push(`Creator cluster has ${cluster.wallets} wallets; ${creator.tier} limit is ${rules.maxClusterWallets}.`);
+  if (tierLimits && cluster?.wallets > rules.maxClusterWallets) reasons.push(`Creator cluster has ${cluster.wallets} wallets; ${creator.tier} limit is ${rules.maxClusterWallets}.`);
   if (walletRisk?.riskLevel === "high") warnings.push("Creator wallet has high risk level.");
   if (cluster?.riskLevel === "high") warnings.push("Creator cluster has high risk level.");
 
@@ -448,7 +459,7 @@ async function securityContractSyncJobs(req, res) {
   }
 }
 
-export async function evaluateCreatePreflight({ walletAddress, launchAt = null }) {
+export async function evaluateCreatePreflight({ walletAddress, launchAt = null, chainId = null }) {
   const wallet = normalizeWallet(walletAddress);
   if (!wallet) return { allowed: false, reasons: ["Invalid or missing wallet address."], warnings: [], schemaReady: true };
 
@@ -457,7 +468,7 @@ export async function evaluateCreatePreflight({ walletAddress, launchAt = null }
   const clusterId = creatorResult.profile?.clusterId || riskResult.risk?.clusterId || null;
   const clusterResult = await readCluster(clusterId);
   const creator = { ...creatorResult.profile, clusterWallets: clusterResult.cluster?.wallets || 0 };
-  const eligibility = buildCreateEligibility({ creator, walletRisk: riskResult.risk, cluster: clusterResult.cluster, launchAt });
+  const eligibility = buildCreateEligibility({ creator, walletRisk: riskResult.risk, cluster: clusterResult.cluster, launchAt, chainId });
 
   return {
     ...eligibility,
@@ -486,7 +497,7 @@ export async function launchpadPreflightCreate(req, res) {
   if (!methodAllowed(req, res, ["POST"])) return;
   const body = await readJson(req);
   const walletAddress = normalizeWallet(body.walletAddress || body.creatorWallet || body.creator);
-  const preflight = await evaluateCreatePreflight({ walletAddress, launchAt: body.launchAt || body.scheduledLaunchAt || null });
+  const preflight = await evaluateCreatePreflight({ walletAddress, launchAt: body.launchAt || body.scheduledLaunchAt || null, chainId: body.chainId ?? null });
   return json(res, preflight.allowed ? 200 : 403, { preflight });
 }
 
@@ -523,7 +534,7 @@ export async function securityCreatorLaunchEligibility(req, res) {
   if (!methodAllowed(req, res, ["GET"])) return;
   const walletAddress = normalizeWallet(req.params?.wallet || getQuery(req).walletAddress);
   const query = getQuery(req);
-  const preflight = await evaluateCreatePreflight({ walletAddress, launchAt: query.launchAt || null });
+  const preflight = await evaluateCreatePreflight({ walletAddress, launchAt: query.launchAt || null, chainId: query.chainId ?? null });
   return json(res, preflight.allowed ? 200 : 403, { preflight });
 }
 

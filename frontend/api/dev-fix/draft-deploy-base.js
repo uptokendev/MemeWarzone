@@ -320,7 +320,7 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
   // The creator cooldown applies to this irreversible arm/deploy action now.
   // launchAt remains an immutable signed trading-open timestamp, but it must
   // never be used to evaluate or bypass the current creator cooldown.
-  const preflight = await evaluateCreatePreflight({ walletAddress });
+  const preflight = await evaluateCreatePreflight({ walletAddress, chainId });
   if (!preflight.allowed) {
     return json(res, 403, {
       error: preflight.reasons?.[0] || "This creator wallet cannot arm another campaign yet.",

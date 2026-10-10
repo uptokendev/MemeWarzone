@@ -373,7 +373,7 @@ export async function routingStatus(req, res) {
   if (routeAuthority && onchain.routeAuthority && !matchesOnchain) warnings.push("Configured route signer does not match the factory routeAuthority().");
   const walletAddress = normalizeAddress(q.walletAddress);
   const routeDecision = walletAddress ? await getRouteDecision(walletAddress) : null;
-  const createPreflight = walletAddress ? await evaluateCreatePreflight({ walletAddress }) : null;
+  const createPreflight = walletAddress ? await evaluateCreatePreflight({ walletAddress, chainId }) : null;
   const onChainCreationPreflight = walletAddress && factoryAddress ? await readOnchainCreationPreflight({ chainId, factoryAddress, walletAddress }) : null;
 
   return json(res, 200, {
@@ -474,7 +474,7 @@ export async function routingCreateAuthorization(req, res) {
     throw error;
   }
 
-  const createPreflight = await evaluateCreatePreflight({ walletAddress });
+  const createPreflight = await evaluateCreatePreflight({ walletAddress, chainId });
   if (!createPreflight.allowed) {
     return json(res, 403, {
       error: createPreflight.reasons?.[0] || "Wallet is not eligible to launch.",
