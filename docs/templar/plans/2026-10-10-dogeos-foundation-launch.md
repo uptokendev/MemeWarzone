@@ -494,7 +494,7 @@ Changes:
 **Depends-on:** [t20, t30]
 **TDD:** required
 **Files:** `realtime-indexer/src/evm/evmGraduationKeeper.ts`, `realtime-indexer/src/tests/dogeosKeeperSlot0.test.ts` (new)
-- Spec §4 "Off-chain `slot0` reads". The keeper decodes `slot0` with `uint8 feeProtocol` at `evmGraduationKeeper.ts:94`, `:808` and `:1015-1021` (V3_POOL_OBSERVATIONS_IFACE); ethers rejects MuchFi's 209718400. For 6281971 use a `uint32 feeProtocol` ABI in the observation-cardinality step and the partial-repair price read; Robinhood/BNB ABIs and behaviour unchanged.
+- Spec §4 "Off-chain `slot0` reads". The keeper decodes `slot0` with `uint8 feeProtocol` at `evmGraduationKeeper.ts:94`, `:808` and `:1015-1021` (V3_POOL_OBSERVATIONS_IFACE); ethers masks MuchFi's 209718400 to 128 (it does not throw); the uint32 ABI makes feeProtocol correct and guards against a stricter decoder. For 6281971 use a `uint32 feeProtocol` ABI in the observation-cardinality step and the partial-repair price read; Robinhood/BNB ABIs and behaviour unchanged.
 - Tests: decode t30's recorded MuchFi `slot0` fixture via the DogeOS path (succeeds, correct sqrtPrice/tick), the same bytes via the Robinhood path still behave as before, and the observation/repair helpers select the DogeOS ABI only for 6281971.
 **Verify:** `npx --prefix realtime-indexer tsx --test realtime-indexer/src/tests/dogeosKeeperSlot0.test.ts && npm --prefix realtime-indexer run test:evm-gen5` → all pass
 

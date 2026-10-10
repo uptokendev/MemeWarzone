@@ -266,8 +266,8 @@ Nothing Uniswap is deployed on Chikyū.
 - **`getLogs` limits.** The main campaign indexer needs no change: its default chunk
   (`LOG_CHUNK_SIZE` = 500) and adaptive splitting stay inside the 10k-block and 10k-result caps.
 - **Off-chain `slot0` reads.** The keeper (`evmGraduationKeeper.ts`, observation and partial-repair
-  reads) and the V3 pool indexer (spot price) decode `slot0` with `uint8 feeProtocol`, which rejects
-  MuchFi's `uint32` value. For 6281971 they use a `uint32` `slot0` ABI; Robinhood's ABIs stay untouched.
+  reads) and the V3 pool indexer (spot price) decode `slot0` with `uint8 feeProtocol`. ethers does not reject MuchFi's `uint32` value; it masks `feeProtocol` to 128 (verified in t35); sqrtPrice and tick still decode. The `uint32` ABI is
+  correctness hardening. For 6281971 they use a `uint32` `slot0` ABI; Robinhood's ABIs stay untouched.
 - **Graduated trades.** Trades in the MuchFi pools are indexed and charted by reusing the V3 pool
   indexer. MuchFi is a PancakeSwap V3 fork, whose pool `Swap` event carries extra protocol-fee fields
   and so has a different signature from Uniswap's; the indexer must decode MuchFi's actual event for
