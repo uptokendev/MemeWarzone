@@ -84,12 +84,7 @@ const harnessDirs = [];
 after(async () => {
   await Promise.all(harnessDirs.map((tmp) => rm(tmp, { recursive: true, force: true })));
 });
-async function loadHarness(name, env) {
-  if (harnessCache.has(name)) return harnessCache.get(name);
-  const compiled = await build({
-    absWorkingDir: dir,
-    stdin: {
-      contents: `
+const LAUNCH_PATH_ENTRY = `
 import * as graduationTiers from "./graduationTiers.ts";
 import * as v3Trade from "./robinhoodV3Trade.ts";
 import * as lpFeeHarvest from "./lpFeeHarvest.ts";
@@ -97,7 +92,13 @@ import * as launchpadAdapter from "../features/launchpad/useLaunchpadAdapter.ts"
 import * as robinhoodAdapter from "../features/launchpad/robinhoodAdapter.ts";
 import * as tradeBalanceReserve from "./tradeBalanceReserve.ts";
 export { graduationTiers, v3Trade, lpFeeHarvest, launchpadAdapter, robinhoodAdapter, tradeBalanceReserve };
-`,
+`;
+async function loadHarness(name, env, contents = LAUNCH_PATH_ENTRY) {
+  if (harnessCache.has(name)) return harnessCache.get(name);
+  const compiled = await build({
+    absWorkingDir: dir,
+    stdin: {
+      contents,
       resolveDir: dir,
       sourcefile: `${name}.ts`,
       loader: "ts",
@@ -472,4 +473,112 @@ test("LP fee harvest on 6281971 uses the V3 position-locker path with MuchFi wor
     lpFeeHarvest.harvestLpFeesWithWallet({ chainId: RH_TESTNET, pairAddress: "0x1234", signer: {}, lockerAddress: LOCKER }),
     /Invalid Robinhood V3 pool address\./,
   );
+});
+
+// ---------------------------------------------------------------- create readiness (t37)
+
+// Spec section 1: no CreatorRegistry on DogeOS (founder decision 2026-10-10) and no vote treasury until
+// sub-project 3. For 6281971 neither is required; every other contract still is, and every other chain's
+// required set stays exactly as before.
+const READINESS_ENTRY = `export * from "./bnbContracts.ts";`;
+const READINESS_ENV_NAMES = [
+  "VITE_FACTORY_ADDRESS",
+  "VITE_CAMPAIGN_IMPLEMENTATION_ADDRESS",
+  "VITE_TREASURY_ROUTER_ADDRESS",
+  "VITE_TREASURY_VAULT_ADDRESS",
+  "VITE_RECRUITER_REWARDS_VAULT_ADDRESS",
+  "VITE_COMMUNITY_REWARDS_VAULT_ADDRESS",
+  "VITE_PROTOCOL_REVENUE_VAULT_ADDRESS",
+  "VITE_RISK_REGISTRY_ADDRESS",
+  "VITE_GRADUATION_ORACLE_ADDRESS",
+  "VITE_PERMANENT_LP_LOCKER_ADDRESS",
+  "VITE_TOPAZ_ROUTER_ADDRESS",
+  "VITE_TOPAZ_FACTORY_ADDRESS",
+  "VITE_TOPAZ_WBNB_ADDRESS",
+];
+const READINESS_CHAINS = [56, 97, 4663, 46630, DOGEOS];
+// Every contract except the creator registry and vote treasury, suffixed per chain (the names the t24 DogeOS block emits).
+function readinessEnv() {
+  const env = { DEV: false, PROD: true };
+  for (const chainId of READINESS_CHAINS) {
+    READINESS_ENV_NAMES.forEach((name, i) => {
+      env[`${name}_${chainId}`] = addr(0x9000 + chainId * 0x100 + i);
+    });
+  }
+  return env;
+}
+const readinessHarness = () => loadHarness("dogeos-readiness", readinessEnv(), READINESS_ENTRY);
+const readinessHarnessWithoutDogeosFactory = () => {
+  const env = readinessEnv();
+  delete env[`VITE_FACTORY_ADDRESS_${DOGEOS}`];
+  return loadHarness("dogeos-readiness-no-factory", env, READINESS_ENTRY);
+};
+
+// The required set every EVM chain had before t37, in item order.
+const COMMON_REQUIRED = [
+  "launchFactory",
+  "launchCampaignImplementation",
+  "treasuryRouter",
+  "treasuryVault",
+  "recruiterRewardsVault",
+  "communityRewardsVault",
+  "protocolRevenueVault",
+  "creatorRegistry",
+  "riskRegistry",
+  "graduationOracle",
+  "permanentLpLocker",
+  "voteTreasury",
+];
+const TOPAZ_REQUIRED = ["topazRouter", "topazFactory", "topazWbnb"];
+const DOGEOS_REQUIRED = COMMON_REQUIRED.filter((key) => key !== "creatorRegistry" && key !== "voteTreasury");
+const requiredKeys = (readiness) => readiness.items.filter((item) => item.required).map((item) => item.key);
+// The contract half of Create.tsx's direct-deploy gate (evmContractsConfigured), pinned against its source below.
+const directDeployContractsConfigured = (m, chainId) =>
+  m.getBnbContractReadiness(chainId).ready && Boolean(m.getBnbContractAddresses(chainId).launchFactory);
+
+test("create readiness on 6281971: ready without a creator registry or vote treasury", async () => {
+  const m = await readinessHarness();
+  const readiness = m.getBnbContractReadiness(DOGEOS);
+  assert.deepEqual(readiness.missingRequired, []);
+  assert.equal(readiness.ready, true);
+  assert.deepEqual(requiredKeys(readiness), DOGEOS_REQUIRED);
+  const byKey = Object.fromEntries(readiness.items.map((item) => [item.key, item]));
+  assert.equal(byKey.creatorRegistry.required, false);
+  assert.equal(byKey.voteTreasury.required, false);
+  assert.equal(byKey.creatorRegistry.address, "");
+  assert.equal(byKey.voteTreasury.address, "");
+  assert.equal(m.summarizeMissingBnbContracts(readiness), `All required EVM launchpad contracts are configured for chain ${DOGEOS}.`);
+  assert.equal(directDeployContractsConfigured(m, DOGEOS), true);
+});
+
+test("create readiness on 6281971 still requires every other contract", async () => {
+  const m = await readinessHarnessWithoutDogeosFactory();
+  const readiness = m.getBnbContractReadiness(DOGEOS);
+  assert.equal(readiness.ready, false);
+  assert.deepEqual(readiness.missingRequired.map((item) => item.key), ["launchFactory"]);
+  assert.equal(directDeployContractsConfigured(m, DOGEOS), false);
+});
+
+test("create readiness on 56/97/4663/46630 still requires the creator registry and vote treasury", async () => {
+  const m = await readinessHarness();
+  for (const chainId of [56, 97, 4663, 46630]) {
+    const readiness = m.getBnbContractReadiness(chainId);
+    const bnb = chainId === 56 || chainId === 97;
+    assert.deepEqual(requiredKeys(readiness), bnb ? [...COMMON_REQUIRED, ...TOPAZ_REQUIRED] : COMMON_REQUIRED, String(chainId));
+    assert.equal(readiness.ready, false, String(chainId));
+    assert.deepEqual(readiness.missingRequired.map((item) => item.key), ["creatorRegistry", "voteTreasury"], String(chainId));
+    assert.equal(directDeployContractsConfigured(m, chainId), false, String(chainId));
+  }
+});
+
+test("Create's direct-deploy gate follows the bnbContracts readiness of the configured EVM chain", () => {
+  const create = read("pages/Create.tsx");
+  assert.match(create, /const evmContractReadiness = useMemo\(\s*\(\) => getBnbContractReadiness\(configuredEvmChainId\),/);
+  assert.match(create, /const evmAddresses = useMemo\(\s*\(\) => getBnbContractAddresses\(configuredEvmChainId\),/);
+  assert.match(create, /const evmContractsConfigured = evmContractReadiness\.ready && Boolean\(evmAddresses\.launchFactory\);/);
+  assert.match(create, /!isSolanaCreator && evmDirectDeployEnabled && evmContractsConfigured && walletOkForEvmDeploy;/);
+  // the exemption lives in the lib and is keyed on isDogeosChainId, never on the Robinhood sets
+  const lib = read("lib/bnbContracts.ts");
+  assert.match(lib, /isDogeosChainId\(chainId\)/);
+  assert.doesNotMatch(lib, /isRobinhoodChainId/);
 });

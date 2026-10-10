@@ -13,7 +13,7 @@ import TreasuryVaultV2Artifact from "@/abi/TreasuryVaultV2.json";
 import UPVoteTreasuryArtifact from "@/abi/UPVoteTreasury.json";
 import PermanentLpLockerArtifact from "@/abi/PermanentLpLocker.json";
 import type { SupportedChainId } from "@/lib/chainConfig";
-import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, isEvmChainId } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, isDogeosChainId, isEvmChainId } from "@/lib/chainConfig";
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 export const OBSOLETE_BSC_TESTNET_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6";
@@ -162,6 +162,13 @@ const bnbOnlyRequiredContracts = new Set<BnbContractKey>([
   "topazWbnb",
 ]);
 
+// DogeOS (6281971) has no CreatorRegistry (founder decision 2026-10-10: open creator rules) and no vote
+// treasury until sub-project 3. Neither is required there; every other chain keeps the common set.
+const dogeosNotRequiredContracts = new Set<BnbContractKey>([
+  "creatorRegistry",
+  "voteTreasury",
+]);
+
 export function getBnbContractAddresses(chainId: SupportedChainId): BnbContractAddresses {
   return {
     launchFactory: readCreationFactory(chainId),
@@ -185,7 +192,9 @@ export function getBnbContractAddresses(chainId: SupportedChainId): BnbContractA
 export function getBnbContractReadiness(chainId: SupportedChainId): BnbContractReadiness {
   const addresses = getBnbContractAddresses(chainId);
   const items = (Object.keys(addresses) as BnbContractKey[]).map((key) => {
-    const required = commonRequiredContracts.has(key) || (isBnbChain(chainId) && bnbOnlyRequiredContracts.has(key));
+    const commonRequired =
+      commonRequiredContracts.has(key) && !(isDogeosChainId(chainId) && dogeosNotRequiredContracts.has(key));
+    const required = commonRequired || (isBnbChain(chainId) && bnbOnlyRequiredContracts.has(key));
     const address = addresses[key];
     return {
       key,
