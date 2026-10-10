@@ -36,7 +36,7 @@ import { weeklyContractBatchId } from "../frontend/scripts/weekly-airdrop/materi
 import { epochWindow } from "../frontend/scripts/weekly-airdrop/config.mjs";
 
 const DAY = 86_400;
-const CHAINS = [56, 97, 4663, 46630];
+const CHAINS = [56, 97, 4663, 46630, 6281971];
 const PROGRAMS = ["airdrop_trader", "airdrop_creator"];
 
 function wiringCalls({ vault, distributor, operator }) {
@@ -64,7 +64,7 @@ export function firstWeekEnd({ now = new Date(), from = null } = {}) {
  * pots: [{ pot: "main" | "gen7", vault, distributor, cap (wei), operator, wire }]
  */
 export function airdropSetupCalls({ chainId, pots, weeks = 12, now = new Date(), from = null }) {
-  if (!CHAINS.includes(Number(chainId))) throw new Error("--chain must be 56, 97, 4663 or 46630");
+  if (!CHAINS.includes(Number(chainId))) throw new Error("--chain must be 56, 97, 4663, 46630 or 6281971");
   const count = Math.max(1, Math.min(26, Number(weeks) || 12));
   const seen = new Set();
   for (const p of pots) {
@@ -100,7 +100,7 @@ export function airdropSetupCalls({ chainId, pots, weeks = 12, now = new Date(),
 export function parseSetupArgs(argv) {
   const flag = (name) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : undefined; };
   const chainId = Number(flag("chain"));
-  if (!CHAINS.includes(chainId)) throw new Error("--chain must be 56, 97, 4663 or 46630");
+  if (!CHAINS.includes(chainId)) throw new Error("--chain must be 56, 97, 4663, 46630 or 6281971");
   const vault = getAddress(flag("vault"));
   const distributor = getAddress(flag("distributor"));
   const operator = flag("operator") ? getAddress(flag("operator")) : null;

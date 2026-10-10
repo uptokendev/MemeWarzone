@@ -28,18 +28,34 @@ export async function detectLockerKind(router: string): Promise<LockerKind> {
   return "v2";
 }
 
+/**
+ * The locker contract a generation deploys: the kind's default, unless the caller names a variant with the same
+ * constructor (admin) and the same factory-facing surface (DogeOS: MuchfiV3PositionLocker). Without `override`
+ * this is exactly the name the helper always used, so existing callers deploy the same contract.
+ */
+export function lockerContractName(kind: LockerKind, override?: string): string {
+  if (override !== undefined) {
+    const name = override.trim();
+    if (!name) throw new Error("locker contract name override is empty");
+    return name;
+  }
+  return kind === "v3" ? "PermanentV3PositionLocker" : "PermanentLpLocker";
+}
+
 export async function deployFactoryWithLocker(opts: {
   factoryName: "LaunchFactory" | "BnbBasicLaunchFactory" | string;
   /** Constructor arguments without the trailing locker; args[0] is the router the factory reads. */
   args: unknown[];
   signer?: Signer;
   lockerKind?: LockerKind;
+  /** Optional locker contract name; unset = PermanentV3PositionLocker (v3) / PermanentLpLocker (v2). */
+  lockerName?: string;
   log?: (line: string) => void;
 }) {
   const signer = opts.signer ?? (await ethers.getSigners())[0];
   const from = await signer.getAddress();
   const kind = opts.lockerKind ?? (await detectLockerKind(String(opts.args[0])));
-  const lockerName = kind === "v3" ? "PermanentV3PositionLocker" : "PermanentLpLocker";
+  const lockerName = lockerContractName(kind, opts.lockerName);
 
   const nonce = await ethers.provider.getTransactionCount(from, "pending");
   const predictedFactory = ethers.getCreateAddress({ from, nonce: nonce + 1 });
