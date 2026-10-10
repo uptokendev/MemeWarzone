@@ -256,7 +256,7 @@ const Playbook = () => {
               up to 70% at launch and 15% stays for everyone else.
             </p>
             <p>
-              BNB and Robinhood coins created on the generation 7 launch contracts work the same way: a{" "}
+              New BNB and Robinhood coins are created on the generation 7 launch contracts and work the same way: a{" "}
               <span className={STRONG}>$30K</span> (fast grad) or <span className={STRONG}>$50K</span> (normal) market cap,
               85% of the supply on the curve, and the coin graduates when the curve sells out. Coins on the earlier BNB and
               Robinhood contracts keep the raise targets above.
@@ -280,10 +280,9 @@ const Playbook = () => {
               </p>
               <p className="mt-2">
                 On BNB and Robinhood, the same panel has an optional first buy. It is made in the launch transaction at
-                the normal fee and the tokens go to your wallet unlocked. The most you can buy is 10% of the supply or
-                half of the graduation target at today&apos;s price, whichever Create shows as the limit. On the
-                generation 7 contracts the limit is 70% of the supply, with no cost limit, and 15% stays for everyone
-                else.
+                the normal fee and the tokens go to your wallet unlocked. You can buy up to 70% of the supply, with no
+                cost limit, and 15% stays for everyone else. Later buys from the creator wallet on your own coin go into
+                escrow: 20% is released after 30 days, then 20% every 7 days.
               </p>
             </div>
             <p>
@@ -355,8 +354,9 @@ const Playbook = () => {
               </div>
             </div>
             <p>
-              Problems show here before you sign: no wallet connected, wrong network, Direct deploy not ready, or a
-              creator cooldown or live coin limit.
+              Problems show here before you sign: no wallet connected, wrong network, Direct deploy not ready, or on
+              Solana a creator cooldown or live coin limit. BNB and Robinhood have no cooldown between launches and no
+              limit on live coins.
             </p>
           </Section>
 
