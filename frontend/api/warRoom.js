@@ -270,13 +270,17 @@ async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, 
       select
         b.chain_id,
         b.campaign_address,
-        latest.price_bnb as latest_price_bnb,
+        -- EVM on the curve: token_stats.last_price_bnb is curve spot; the last fill carries the trade fee.
+        case when latest.price_bnb is not null and b.chain_id <> 101 and b.graduated_at_chain is null and b.last_price_bnb is not null
+          then b.last_price_bnb else latest.price_bnb end as latest_price_bnb,
         coalesce(latest.sold_after, stats.sold_tokens) as indexed_sold_tokens,
         stats.vol_24h_bnb as indexed_vol_24h_bnb,
         case
           -- Solana: last fill price is VWAP, not spot. Keep token_stats mcap
           -- (indexer writes spot × sold). Only fall back to VWAP × sold on EVM.
           when b.chain_id = 101 then null
+          when latest.price_bnb is not null and b.graduated_at_chain is null and b.last_price_bnb is not null
+            then b.last_price_bnb * coalesce(latest.sold_after, stats.sold_tokens)
           when latest.price_bnb is not null then latest.price_bnb * coalesce(latest.sold_after, stats.sold_tokens)
           else null
         end as indexed_marketcap_bnb
@@ -306,7 +310,7 @@ async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, 
       select
         b.chain_id,
         b.campaign_address,
-        max(tc.h) as ath_price_bnb
+        max(coalesce(tc.price_h, tc.h)) as ath_price_bnb
       from base b
       left join public.token_candles tc
         on tc.chain_id = b.chain_id

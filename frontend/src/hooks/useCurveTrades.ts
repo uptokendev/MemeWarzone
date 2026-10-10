@@ -11,6 +11,14 @@ import {
 import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
 import { getBlockTimestamps, scanContractLogs } from "@/lib/rpcLogScan";
 import { indexerRowToCurvePoint } from "@/lib/chart/normalizeTrade";
+import {
+  EVM_GEN6_LAUNCH_FEE_START_BPS,
+  EVM_GEN7_LAUNCH_FEE_START_BPS,
+  evmFeeFreeTradePrice,
+  evmGrossFromEventAmount,
+  evmTradeFeeBpsAt,
+} from "@/lib/chart/evmFeeFreePrice";
+import { getReadProvider } from "@/lib/readProvider";
 import { notifyIndexerFills } from "@/lib/indexerTradeIngest";
 import { fetchSolanaOnChainTrades } from "@/lib/solanaOnChainTrades";
 import {
@@ -51,6 +59,11 @@ export type CurveTradePoint = {
    * Solana bonding charts must prefer soldTokensAfterRaw + curve pricing.
    */
   pricePerToken: number; // native coin per whole token
+  /**
+   * EVM gen-6/7: the fill without the trade fee (curve_trades.gross_raw / tokens). The chart and creator
+   * pins draw this; pricePerToken stays the fill (buy cost with fee, sell payout net of fee).
+   */
+  feeFreePricePerToken?: number | null;
   /** Authoritative post-trade curve sold supply, in raw token units. */
   soldTokensAfterRaw?: bigint | null;
   /** Solana prints: curve fill vs DAMM v2 swap. Omitted on EVM. */
@@ -227,6 +240,47 @@ function parseEvmTradeLog(log: ethers.Log, campaignAddress: string): Omit<CurveT
   return null;
 }
 
+const EVM_LAUNCH_FEE_VIEW_ABI = [
+  "function launchAt() view returns (uint256)",
+  "function protocolFeeBps() view returns (uint256)",
+  // Gen-7 (LaunchCampaignGen7) only: tells its 90% launch fee apart from gen-6's 50%.
+  "function virtualToken() view returns (uint256)",
+];
+
+type EvmLaunchFeeSchedule = { launchAt: number; baseFeeBps: number; startBps: number };
+
+/** Gen-6/7 fee schedule for the on-chain fallback; null on older campaigns (no launchAt) or a failed read. */
+async function evmLaunchFeeSchedule(chainId: SupportedChainId, address: string): Promise<EvmLaunchFeeSchedule | null> {
+  try {
+    const contract = new ethers.Contract(address, EVM_LAUNCH_FEE_VIEW_ABI, getReadProvider(chainId)) as any;
+    const [launchAt, baseFeeBps] = await Promise.all([contract.launchAt(), contract.protocolFeeBps()]);
+    const gen7 = await contract.virtualToken().then((value: bigint) => BigInt(value) > 0n).catch(() => false);
+    const schedule = {
+      launchAt: Number(launchAt),
+      baseFeeBps: Number(baseFeeBps),
+      startBps: gen7 ? EVM_GEN7_LAUNCH_FEE_START_BPS : EVM_GEN6_LAUNCH_FEE_START_BPS,
+    };
+    return schedule.launchAt > 0 && Number.isFinite(schedule.baseFeeBps) ? schedule : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fee-free price of an on-chain fallback trade. Trades at or before launchAt are left to the fill: the
+ * creator's first buy happens then and pays the flat base fee, not the launch fee.
+ */
+function onChainFeeFreePrice(
+  trade: Pick<CurveTradePoint, "type" | "tokensWei" | "nativeWei">,
+  timestamp: number,
+  schedule: EvmLaunchFeeSchedule | null,
+): number | null {
+  if (!schedule || timestamp <= schedule.launchAt) return null;
+  const bps = evmTradeFeeBpsAt({ launchAt: schedule.launchAt, t: timestamp, baseFeeBps: schedule.baseFeeBps, startBps: schedule.startBps });
+  const gross = evmGrossFromEventAmount(trade.type, trade.nativeWei, bps);
+  return gross == null ? null : evmFeeFreeTradePrice(gross, trade.tokensWei);
+}
+
 async function fetchOnChainTradeSnapshot(
   campaignAddress: string,
   chainId: SupportedChainId,
@@ -268,6 +322,7 @@ async function fetchOnChainTradeSnapshot(
     .slice(-limit);
 
   const timestamps = await getBlockTimestamps(chainId, allLogs.map((log) => Number(log.blockNumber || 0)), signal);
+  const feeSchedule = allLogs.length ? await evmLaunchFeeSchedule(chainId, address) : null;
   const out: CurveTradePoint[] = [];
   for (const log of allLogs) {
     if (signal?.aborted) break;
@@ -275,7 +330,7 @@ async function fetchOnChainTradeSnapshot(
     if (!parsed || parsed.blockNumber <= 0) continue;
     const timestamp = timestamps.get(parsed.blockNumber) || 0;
     if (!timestamp) continue;
-    out.push({ ...parsed, timestamp });
+    out.push({ ...parsed, timestamp, feeFreePricePerToken: onChainFeeFreePrice(parsed, timestamp, feeSchedule) });
   }
   return out.filter((t) => isValidTradeTxHash(t.txHash) && t.blockNumber > 0 && t.timestamp > 0);
 }
