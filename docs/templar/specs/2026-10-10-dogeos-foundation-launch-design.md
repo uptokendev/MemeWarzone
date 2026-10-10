@@ -320,6 +320,9 @@ adapter exists would be bound to whatever adapter was set at that moment.
    - Wire the env on the TEST API, indexer and test frontend, then call `enableLive`.
    - Through the app with MetaMask: create → buy → sell → graduate → trade after graduation → creator
      claim.
+   - The `$150` graduation is reached by **at least 5 separate buyer wallets**, like a real launch. They
+     are ordinary test wallets, never the deployer, updater or keeper, funded from the founder's
+     testnet DOGE (~40k available on 2026-10-10). The deployer never creates or trades.
    - Check each step on-chain and against the indexer and DB, using the same proofs as the 46630
      canary.
 
