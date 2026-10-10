@@ -226,47 +226,33 @@ const Playbook = () => {
           <Section
             id="bond"
             step="04"
-            title="Bond: graduation threshold and fees"
-            subtitle="How much the bonding curve must raise before the coin graduates to a DEX pool."
+            title="Bond: graduation market cap, fees and first buy"
+            subtitle="The market cap at which your coin moves to its DEX pool, what happens to your fee share, and your own first buy."
           >
-            <div className="grid gap-2 sm:grid-cols-3">
+            <div className="grid gap-2 sm:grid-cols-2">
               <div className={INSET}>
-                <div className="font-mw-mono text-base font-bold text-mw-text">$15K</div>
+                <div className="font-mw-mono text-base font-bold text-mw-text">$30K MC</div>
                 <div className={cp.label}>Fast grad</div>
-                <p className="mt-1 text-[13px]">Shorter bonding phase, faster route to DEX liquidity.</p>
+                <p className="mt-1 text-[13px]">The coin moves to its DEX pool when its market cap reaches $30K.</p>
               </div>
               <div className={INSET_ACCENT}>
-                <div className="font-mw-mono text-base font-bold text-mw-text">$30K</div>
-                <div className={cp.label}>Normal bond</div>
-                <p className="mt-1 text-[13px]">The default. Room for discovery and community growth.</p>
-              </div>
-              <div className={INSET}>
-                <div className="font-mw-mono text-base font-bold text-mw-text">$50K</div>
-                <div className={cp.label}>Deep liquidity</div>
-                <p className="mt-1 text-[13px]">Longer bonding phase that seeds a deeper DEX pool.</p>
+                <div className="font-mw-mono text-base font-bold text-mw-text">$50K MC</div>
+                <div className={cp.label}>Normal</div>
+                <p className="mt-1 text-[13px]">The default. The coin moves to its DEX pool at a $50K market cap.</p>
               </div>
             </div>
             <p>
-              The target is part of the launch and does not change afterwards. Test networks also show a small rehearsal
-              target. It never appears on mainnet.
+              The same two choices apply on Solana, BNB and Robinhood. The pool is on Meteora on Solana, on Topaz on BNB
+              and on Uniswap on Robinhood. The market cap is part of the launch and does not change afterwards. Test
+              networks also show a small rehearsal target. It never appears on mainnet.
             </p>
             <p>
-              The Meteora launch type uses market caps instead: <span className={STRONG}>$30K</span> (fast grad) or{" "}
-              <span className={STRONG}>$50K</span> (normal). 85% of the supply is sold on the curve, so a creator can buy
-              up to 70% at launch and 15% stays for everyone else.
-            </p>
-            <p>
-              New BNB and Robinhood coins are created on the generation 7 launch contracts and work the same way: a{" "}
-              <span className={STRONG}>$30K</span> (fast grad) or <span className={STRONG}>$50K</span> (normal) market cap,
-              85% of the supply on the curve, and the coin graduates when the curve sells out. Coins on the earlier BNB and
-              Robinhood contracts keep the raise targets above.
+              Every coin has 1 billion tokens. 85% is sold on the bonding curve, 13% goes into the DEX pool at graduation
+              and 2% is the creator reserve, released at graduation. The coin graduates when the curve sells out.
             </p>
             <div className={INSET}>
               <div className={BOX_TITLE}>Creator fee</div>
-              <p className="mt-1">
-                Solana coins on the Meteora launch type pick what happens to the creator share of the trade fee. BNB and
-                Robinhood show the same choice when the chain&apos;s launch contracts support it. The four options:
-              </p>
+              <p className="mt-1">Pick what happens to your share of the trade fee. The four options:</p>
               <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
                 <Rule><span className={STRONG}>Keep it.</span> Your share of every trade fee is yours to claim.</Rule>
                 <Rule><span className={STRONG}>Give it to holders.</span> Your share is paid out to the coin&apos;s holders every week.</Rule>
@@ -274,17 +260,31 @@ const Playbook = () => {
                 <Rule><span className={STRONG}>Buyback and burn.</span> Bought back at random times each week and burned.</Rule>
               </ul>
               <p className="mt-2">
-                The launch fee falls to 2% within 60 seconds, starting at 90% on the Meteora launch type and on generation 7
-                BNB and Robinhood coins, and at 50% on earlier BNB and Robinhood coins, so bots that buy at launch pay for
-                it. Your own first buy does not.
-              </p>
-              <p className="mt-2">
-                On BNB and Robinhood, the same panel has an optional first buy. It is made in the launch transaction at
-                the normal fee and the tokens go to your wallet unlocked. You can buy up to 70% of the supply, with no
-                cost limit, and 15% stays for everyone else. Later buys from the creator wallet on your own coin go into
-                escrow: 20% is released after 30 days, then 20% every 7 days.
+                The launch fee starts at 90% and falls to 2% within 60 seconds, so bots that buy at launch pay for it.
+                Your own first buy does not.
               </p>
             </div>
+            <div className={INSET}>
+              <div className={BOX_TITLE}>Your first buy (optional)</div>
+              <p className="mt-1">
+                You can buy your own coin in the launch transaction, before anyone else, at the normal 2% fee. Type an
+                amount or press <span className={STRONG}>MAX</span>. You can buy up to 70% of the supply, with no cost
+                limit, so at least 15% stays for everyone else. MAX takes the most your wallet can pay after gas and
+                launch fees.
+              </p>
+              <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
+                <Rule>On BNB and Robinhood the first buy is in this step, under the creator fee.</Rule>
+                <Rule>On Solana it is in the Market step, because you pay in the token you pick there.</Rule>
+                <Rule>The first-buy tokens go to your wallet unlocked.</Rule>
+                <Rule>
+                  Later buys from the creator wallet on your own coin go into escrow: 20% is released after 30 days, then
+                  20% every 7 days.
+                </Rule>
+              </ul>
+            </div>
+            <p>
+              There is no wait between launches and no limit on how many live coins one wallet can have.
+            </p>
             <p>
               <span className={STRONG}>Launch Safety</span> is a collapsible status of the launchpad on your chain. If it
               is not ready, Direct deploy will refuse.
@@ -312,8 +312,8 @@ const Playbook = () => {
                 <span className={STRONG}>I understand, use</span> followed by the symbol, or pick another asset.
               </Rule>
               <Rule>
-                On the Solana Meteora launch type this step shows its own short list and an optional first buy. The first
-                buy is made in the launch transaction at the normal 2% fee and is capped at 10% of the supply.
+                On Solana this step shows its own short list: SOL, a stablecoin or a stock token. You pay on the curve in
+                the token you pick, and your optional first buy (up to 70% of the supply) is set here.
               </Rule>
             </ul>
             <p>Next stays locked until a market is selected.</p>
@@ -326,9 +326,9 @@ const Playbook = () => {
             subtitle="Last check. Then save the draft or deploy."
           >
             <p>
-              The summary lists mode, name, ticker, graduation threshold and the market. On a catalog launch that means
-              the Graduation Market pair, quote asset, provider and bonding currency. On the Meteora launch type it shows
-              the Meteora pool the coin graduates into. A creator fee or first buy is listed when it applies. Use Back to
+              The summary lists mode, name, ticker, graduation market cap and the market. On BNB and Robinhood that means
+              the Graduation Market pair, quote asset, provider and bonding currency. On Solana it shows the Meteora pool
+              the coin graduates into. A creator fee or first buy is listed when it applies. Use Back to
               fix anything.
             </p>
             <div className="grid gap-3 md:grid-cols-2">
@@ -354,9 +354,8 @@ const Playbook = () => {
               </div>
             </div>
             <p>
-              Problems show here before you sign: no wallet connected, wrong network, Direct deploy not ready, or on
-              Solana a creator cooldown or live coin limit. BNB and Robinhood have no cooldown between launches and no
-              limit on live coins.
+              Problems show here before you sign: no wallet connected, wrong network, Direct deploy not ready, or a first
+              buy your wallet cannot pay for.
             </p>
           </Section>
 
@@ -386,21 +385,14 @@ const Playbook = () => {
             <div className="grid gap-3 lg:grid-cols-2">
               <div className={INSET}>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={BOX_TITLE}>Solana, Meteora launch type</span>
+                  <span className={BOX_TITLE}>Solana</span>
                   <span className={cp.chipAccent}>Fixed list</span>
                 </div>
                 <p className="mt-1">
-                  When this launch type is on, the Market step shows its own list. Mainnet: SOL, USDC, USDT and four
+                  Every Solana coin launches on Meteora, and the Market step shows its own list. Mainnet: SOL, USDC, USDT and four
                   xStocks (NVDAx, TSLAx, SPYx, QQQx). Devnet: SOL and USDC. SOL is the default. Picking a stock opens a
                   risk screen you have to confirm.
                 </p>
-              </div>
-              <div className={INSET}>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={BOX_TITLE}>Solana, launchpad</span>
-                  <span className={cp.chip}>Catalog</span>
-                </div>
-                <p className="mt-1">The approved list shown in Create for Solana.</p>
               </div>
               <div className={INSET}>
                 <div className="flex flex-wrap items-center gap-2">
@@ -428,8 +420,8 @@ const Playbook = () => {
             <div className={INSET}>
               <div className={BOX_TITLE}>What your choice changes</div>
               <dl className="m-0 mt-2 text-[14px]">
-                <Row label="Bonding currency, catalog launch">Stays in the chain&apos;s coin: SOL, BNB or ETH</Row>
-                <Row label="Bonding currency, Meteora launch type">The quote you picked, from the first trade</Row>
+                <Row label="Bonding currency, BNB and Robinhood">Stays in the chain&apos;s coin: BNB or ETH</Row>
+                <Row label="Bonding currency, Solana">The quote you picked, from the first trade</Row>
                 <Row label="Pool after graduation">Your coin paired with the quote</Row>
                 <Row label="Price after graduation">Moves with your coin and with the quote</Row>
               </dl>
@@ -443,17 +435,14 @@ const Playbook = () => {
               <div className={BOX_TITLE}>What you get at graduation</div>
               <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
                 <Rule>
-                  <span className={STRONG}>Catalog launches</span> on the Solana launchpad, BNB and Robinhood: the coin
-                  moves into the pool Create shows as Post-graduation market, paired with the quote you picked.
+                  <span className={STRONG}>BNB and Robinhood</span>: the coin moves into the pool Create shows as
+                  Post-graduation market, paired with the quote you picked, with the liquidity locked. Your 2% creator
+                  reserve is released. The 2% graduation fee goes to MemeWarzone&apos;s fee routing, not to the creator.
                 </Rule>
                 <Rule>
-                  <span className={STRONG}>Meteora launch type</span>: a <span className={MONO}>$TICKER / quote</span>{" "}
+                  <span className={STRONG}>Solana</span>: a <span className={MONO}>$TICKER / quote</span>{" "}
                   pool on Meteora with the liquidity locked. Your 2% creator reserve (20M tokens) unlocks. The 2%
                   graduation fee goes to MemeWarzone&apos;s fee routing, not to the creator.
-                </Rule>
-                <Rule>
-                  <span className={STRONG}>Generation 7 coins on BNB and Robinhood</span>: the same 2% graduation fee to
-                  MemeWarzone&apos;s fee routing and nothing to the creator at graduation.
                 </Rule>
               </ul>
             </div>

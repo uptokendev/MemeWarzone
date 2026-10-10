@@ -234,14 +234,15 @@ async function readCluster(clusterId) {
   }
 }
 
-// Founder 2026-10-10: BNB and Robinhood launch like Solana DBC. On these chains the creator tier limits
-// (live bonding count, launch cooldown, cluster size) do not apply; the gen-7 factories run without a
-// CreatorRegistry (setRegistries(0x0, RiskRegistry)). Restrictions, manual review and risk warnings stay.
-export const EVM_OPEN_CREATOR_CHAIN_IDS = Object.freeze([56, 97, 4663, 46630]);
+// Founder 2026-10-10: one creator rule set on every launch chain. The creator tier limits (live bonding
+// count, launch cooldown, cluster size) do not apply on BNB, Robinhood (gen-7 factories run without a
+// CreatorRegistry: setRegistries(0x0, RiskRegistry)) or Solana (DBC). Restrictions, manual review and risk
+// warnings stay. A chain not listed here keeps the tier limits.
+export const OPEN_CREATOR_CHAIN_IDS = Object.freeze([56, 97, 4663, 46630, 101, 102]);
 
 export function creatorTierLimitsApply(chainId) {
   const id = Number(chainId);
-  return !(Number.isFinite(id) && EVM_OPEN_CREATOR_CHAIN_IDS.includes(id));
+  return !(Number.isFinite(id) && OPEN_CREATOR_CHAIN_IDS.includes(id));
 }
 
 export function buildCreateEligibility({ creator, walletRisk, cluster, launchAt = null, chainId = null }) {
