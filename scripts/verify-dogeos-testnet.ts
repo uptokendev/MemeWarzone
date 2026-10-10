@@ -7,7 +7,8 @@
  * Reads config/verification/dogeos-testnet-contracts.json (chains["6281971"], written by deploy-dogeos-testnet.ts)
  * and verifies each entry with its recorded constructor arguments. "Already verified" counts as done; any other
  * failure is collected and the run exits non-zero after trying every entry. MuchFi and WDOGE are external and never
- * listed. Sends no transaction: verification is an HTTP submission to L2Scan.
+ * listed. Before submitting, the JSON's LaunchFactoryGen7 must be deployments/dogeos/testnet.json's factory. Sends no
+ * transaction: verification is an HTTP submission to L2Scan.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -28,6 +29,10 @@ async function main() {
   const entries: Array<{ name: string; address: string; contract: string; args: unknown[] }> = guards.readVerificationList(
     JSON.parse(fs.readFileSync(file, "utf8")),
   );
+  // The JSON must describe the stack the manifest records before anything is submitted.
+  const manifestFile = path.join(ROOT, ...String(guards.DOGEOS_MANIFEST_PATH).split("/"));
+  if (!fs.existsSync(manifestFile)) throw new Error(`${manifestFile} not found; the verification JSON cannot be cross-checked`);
+  guards.assertVerificationMatchesManifest(entries, JSON.parse(fs.readFileSync(manifestFile, "utf8")));
 
   const failures: string[] = [];
   for (const e of entries) {

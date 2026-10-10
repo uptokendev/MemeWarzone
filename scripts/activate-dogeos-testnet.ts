@@ -2,16 +2,20 @@
  * DogeOS Chikyū testnet (6281971): open the gen-7 factory for creates (plan t8; used only in t29, gate 5, with the
  * founder's explicit go).
  *
- *   DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO \
+ *   DOGEOS_TESTNET_ACTIVATE_BROADCAST=I_HAVE_FOUNDER_GO \
  *   DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS=0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF \
  *     npx hardhat run scripts/activate-dogeos-testnet.ts --network dogeosTestnet
  *
- * Same network, broadcast-token, signer and route-authority guards as deploy-dogeos-testnet.ts. Reads the factory
- * from deployments/dogeos/testnet.json (a fork run may point DOGEOS_TESTNET_MANIFEST elsewhere; Chikyū may not) and
- * refuses unless factory.routeAuthority() == DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS, the signer owns the factory,
- * the factory's graduationOracle() is the manifest's, and GraduationOracle.nativeUsdPrice() does not revert (the
- * DOGE/USD answer is fresh). Then enableLive() (when not live yet) and setCreatePaused(false), and asserts
- * live() && !createPaused(). Never locks security defaults.
+ * Its own broadcast variable (DOGEOS_TESTNET_ACTIVATE_BROADCAST, not the deploy one), and the same network, signer and
+ * route-authority guards as deploy-dogeos-testnet.ts:
+ *   Chikyū: the signer is the DogeOS deployer 0x6c5C…82f8, and both the env route authority and
+ *     factory.routeAuthority() must be the DogeOS route authority 0x4fcD…76FF.
+ *   Chikyū fork (in-process, cannot broadcast to Chikyū): the signer must be the manifest's admin and owner (the fork
+ *     deploy's own signer), and factory.routeAuthority() must equal the fork-local env route authority.
+ * Reads the factory from deployments/dogeos/testnet.json (a fork run may point DOGEOS_TESTNET_MANIFEST elsewhere; Chikyū
+ * may not) and refuses unless the signer owns the factory, the factory's graduationOracle() is the manifest's, and
+ * GraduationOracle.nativeUsdPrice() does not revert (the DOGE/USD answer is fresh). Then enableLive() (when not live
+ * yet) and setCreatePaused(false), and asserts live() && !createPaused(). Never locks security defaults.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -20,7 +24,8 @@ import { hardhatForkUrl, loadDogeosDeployGuards } from "./deploy-dogeos-testnet"
 
 const ROOT = path.join(__dirname, "..");
 
-async function main() {
+/** The whole activation, guards first. Reads its inputs from process.env; exported so a fork run can chain it. */
+export async function runDogeosTestnetActivate(): Promise<{ mode: string; factory: string; calls: string[] }> {
   const guards = await loadDogeosDeployGuards();
   const log = (line: string) => console.log(`[activate-dogeos] ${line}`);
 
@@ -29,11 +34,11 @@ async function main() {
   const forkUrl = hardhatForkUrl();
   const [signer] = await ethers.getSigners();
   if (!signer) throw new Error(`no signer on ${network.name}`);
-  const { mode, signer: deployer, routeAuthority } = guards.assertActivateGuards({
+  const { mode, signer: sender, routeAuthority } = guards.assertActivateGuards({
     chainId,
     networkName: network.name,
     forkUrl,
-    broadcastToken: process.env[guards.DOGEOS_DEPLOY_BROADCAST_ENV],
+    broadcastToken: process.env[guards.DOGEOS_ACTIVATE_BROADCAST_ENV],
     signer: await signer.getAddress(),
     routeAuthority: process.env[guards.DOGEOS_ROUTE_AUTHORITY_ENV],
   });
@@ -66,7 +71,7 @@ async function main() {
       oracleProbe = { ok: false, error: (error as any)?.shortMessage || (error as Error)?.message || String(error) };
     }
   }
-  const plan = guards.planActivation({ manifest, expectedRouteAuthority: routeAuthority, signer: deployer, onchain, oracleProbe });
+  const plan = guards.planActivation({ mode, manifest, expectedRouteAuthority: routeAuthority, signer: sender, onchain, oracleProbe });
   log(`mode ${mode}, factory ${plan.factory}, route authority ${routeAuthority}, nativeUsdPrice ${(oracleProbe as any).price}`);
   log(`calls: ${plan.calls.join(", ")}`);
 
@@ -81,12 +86,15 @@ async function main() {
   if (plan.calls.includes("setCreatePaused(false)")) await send(factory.setCreatePaused(false), "LaunchFactoryGen7.setCreatePaused(false)");
 
   // ---------------------------------------------------------------- read-back
-  guards.assertActivated({ live: await factory.live(), createPaused: await factory.createPaused() });
-  log(`factory ${plan.factory} is live and create is unpaused`);
+  const live = await factory.live();
+  const createPaused = await factory.createPaused();
+  guards.assertActivated({ live, createPaused });
+  log(`factory ${plan.factory} is live and create is unpaused (live=${live}, createPaused=${createPaused})`);
+  return { mode, factory: plan.factory, calls: plan.calls };
 }
 
 if (require.main === module) {
-  main().catch((error) => {
+  runDogeosTestnetActivate().catch((error) => {
     console.error(error);
     process.exitCode = 1;
   });

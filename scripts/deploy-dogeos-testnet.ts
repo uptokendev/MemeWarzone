@@ -5,15 +5,18 @@
  *   DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS=0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF \
  *     npx hardhat run scripts/deploy-dogeos-testnet.ts --network dogeosTestnet          (gate 4, founder go only)
  *
- * Also runs on the in-process Chikyū fork (--config hardhat.dogeos-testnet-fork.config.ts); a fork run writes its
- * manifest and verification JSON to a temp directory (or DOGEOS_TESTNET_MANIFEST), never into the repo.
- *
- * Refuses (before any price fetch or send) unless: the network is dogeosTestnet on 6281971 or the Chikyū fork;
- * DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO; the signer is the DogeOS deployer 0x6c5C…82f8; the public
- * DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS is set, non-zero and none of deployer / oracle updater / keeper; and no
- * manifest exists yet. Then the initial DOGE/USD answer is Binance DOGEUSDT at run time (8 dp, refused if <= 0).
- * Creator-vault caps are TESTNET_CAPS and the airdrop-pot cap is the 46630 gen-7 pot's, both re-priced ETH -> DOGE
- * at the run's Binance ETHUSDT / DOGEUSDT. Lands createPaused and not live: activation is activate-dogeos-testnet.ts only.
+ * Two modes (guards: scripts/lib/dogeosTestnetDeployGuards.mjs), both refused before any price fetch or send:
+ *   Chikyū (network dogeosTestnet, chain 6281971): needs DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO, the signer
+ *     must be the DogeOS deployer 0x6c5C…82f8, the public DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS must be the DogeOS
+ *     route authority 0x4fcD…76FF, and neither deployments/dogeos/testnet.json nor
+ *     config/verification/dogeos-testnet-contracts.json may exist yet.
+ *   Chikyū fork (--config hardhat.dogeos-testnet-fork.config.ts, the in-process hardhat network, which cannot
+ *     broadcast to Chikyū): still needs the broadcast token; the fork's own first signer is the deployer and admin;
+ *     the route authority is any valid fork-local address that is none of the DogeOS keys and not the signer. Its
+ *     outputs go to a temp dir (or DOGEOS_TESTNET_MANIFEST), never into the repo.
+ * Then the initial DOGE/USD answer is Binance DOGEUSDT at run time (8 dp, refused if <= 0). Creator-vault caps are
+ * TESTNET_CAPS and the airdrop-pot cap is the 46630 gen-7 pot's, both re-priced ETH -> DOGE at the run's Binance
+ * ETHUSDT / DOGEUSDT. Lands createPaused and not live: activation is activate-dogeos-testnet.ts only.
  * No key is read here: the signer comes from the hardhat network (dogeosTestnet signs only with the DogeOS
  * deployer key that hardhat.config.ts loads; there is no fallback key).
  */
@@ -39,7 +42,10 @@ export function hardhatForkUrl(): string {
   return forking && forking.enabled !== false && forking.url ? String(forking.url) : "";
 }
 
-async function main() {
+export type DogeosDeployResult = { mode: string; manifestPath: string; verificationPath: string; record: any };
+
+/** The whole deploy, guards first. Reads its inputs from process.env; exported so a fork run can chain activation. */
+export async function runDogeosTestnetDeploy(): Promise<DogeosDeployResult> {
   const guards = await loadDogeosDeployGuards();
   const log = (line: string) => console.log(`[deploy-dogeos] ${line}`);
 
@@ -59,9 +65,9 @@ async function main() {
     broadcastToken: process.env[guards.DOGEOS_DEPLOY_BROADCAST_ENV],
     signer: await signer.getAddress(),
     routeAuthority: process.env[guards.DOGEOS_ROUTE_AUTHORITY_ENV],
-    manifestExists: fs.existsSync(out.manifest),
+    existingOutputs: [out.manifest, out.verification].filter((f: string) => fs.existsSync(f)),
   });
-  log(`mode ${mode}, chain ${chainId}, network ${network.name}, deployer ${deployer}, route authority ${routeAuthority}`);
+  log(`mode ${mode}, chain ${chainId}, network ${network.name}, deployer/admin ${deployer}, route authority ${routeAuthority}`);
   log(`outputs: ${out.manifest}, ${out.verification}`);
 
   // ---------------------------------------------------------------- run-time prices (Binance spot, 8 dp)
@@ -89,6 +95,7 @@ async function main() {
   const record = {
     ...dogeosManifestRecord(stack, { network: network.name, deployedAt: new Date().toISOString() }),
     deployInputs: {
+      mode,
       dogeUsdSource: `Binance DOGEUSDT at run time: ${dogeUsd8} (8 dp)`,
       capsSource: `TESTNET_CAPS (scripts/deploy-robinhood-testnet-gen6-fees.ts) re-priced ETH->DOGE at ETHUSDT ${ethUsd8} / DOGEUSDT ${dogeUsd8} (8 dp)`,
       airdropCapSource: airdrop.source,
@@ -104,10 +111,11 @@ async function main() {
   log(`manifest -> ${out.manifest}`);
   log(`verification (${entries.length} contracts) -> ${out.verification}`);
   log(`factory ${stack.generation.factory}: createPaused, not live. STOP. Next: verify-dogeos-testnet.ts; activation only with the founder's go.`);
+  return { mode, manifestPath: out.manifest, verificationPath: out.verification, record };
 }
 
 if (require.main === module) {
-  main().catch((error) => {
+  runDogeosTestnetDeploy().catch((error) => {
     console.error(error);
     process.exitCode = 1;
   });

@@ -6,6 +6,14 @@
 // scripts/dogeos-testnet-deploy-guards.test.mjs. The TypeScript entrypoints do the chain reads and the sends and
 // pass plain values in here. Broadcast-token pattern: scripts/robinhoodTestnetInfrastructureAuthority.mjs.
 //
+// Two modes:
+//   "chikyu"       network dogeosTestnet, chain 6281971. Strict: the signer must be the DogeOS deployer 0x6c5C…82f8 and
+//                  the route authority the pinned DogeOS route authority 0x4fcD…76FF.
+//   "chikyu-fork"  the in-process hardhat network forking Chikyū (hardhat.dogeos-testnet-fork.config.ts, chain 6281971),
+//                  which cannot broadcast to Chikyū. The fork's own first signer is the deployer (admin), and the route
+//                  authority is any valid address that collides with none of the DogeOS keys or the signer.
+// Both modes need the broadcast token (deploy: DOGEOS_TESTNET_DEPLOY_BROADCAST, activate: DOGEOS_TESTNET_ACTIVATE_BROADCAST).
+//
 // Keys: nothing here reads a key or config/*.local. The route authority is a public address parameter
 // (DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS), never derived from a key.
 import fs from "node:fs";
@@ -15,8 +23,11 @@ import { getAddress } from "ethers";
 export const DOGEOS_TESTNET_CHAIN_ID = 6281971;
 export const DOGEOS_TESTNET_NETWORK_NAME = "dogeosTestnet";
 export const DOGEOS_DEPLOY_BROADCAST_ENV = "DOGEOS_TESTNET_DEPLOY_BROADCAST";
+export const DOGEOS_ACTIVATE_BROADCAST_ENV = "DOGEOS_TESTNET_ACTIVATE_BROADCAST";
 export const DOGEOS_DEPLOY_BROADCAST_TOKEN = "I_HAVE_FOUNDER_GO";
 export const DOGEOS_ROUTE_AUTHORITY_ENV = "DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS";
+/** The DogeOS route authority (spec §1 Route authority): the only one accepted on Chikyū itself. */
+export const DOGEOS_TESTNET_ROUTE_AUTHORITY = "0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF";
 /** Fork-only: where a fork deploy writes / a fork activate reads its manifest. Refused on Chikyū itself. */
 export const DOGEOS_MANIFEST_OVERRIDE_ENV = "DOGEOS_TESTNET_MANIFEST";
 export const DOGEOS_MANIFEST_PATH = "deployments/dogeos/testnet.json";
@@ -33,7 +44,10 @@ export const DOGEOS_TESTNET_ROLES = Object.freeze({
   graduationKeeper: "0xb07B9E70D1759Fc42103458039AaE2413026B078",
 });
 
-/** MuchFi and WDOGE on Chikyū: external, used by our contracts, never verified by us. */
+/**
+ * MuchFi and WDOGE on Chikyū: external, used by our contracts, never verified by us. Must equal MUCHFI_ADDRESSES in
+ * scripts/lib/dogeosGen7Stack.ts (a test reads both).
+ */
 export const MUCHFI_EXTERNAL_ADDRESSES = Object.freeze({
   factory: "0x7d175e06570CaFA1cfDF060850b84E0Ca23EfF0B",
   poolDeployer: "0x6c04e808d5FfFb597cb6a5b539f2a1dDF3529348",
@@ -46,6 +60,7 @@ export const MUCHFI_EXTERNAL_ADDRESSES = Object.freeze({
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const MODES = new Set(["chikyu", "chikyu-fork"]);
 
 function checksum(value) {
   const text = String(value ?? "").trim();
@@ -61,6 +76,11 @@ function requireRecordAddress(label, value) {
   const a = checksum(value);
   if (!a || a === ZERO) throw new Error(`${label} is missing or not a non-zero address (${value})`);
   return a;
+}
+
+function requireMode(mode) {
+  if (!MODES.has(mode)) throw new Error(`unknown deploy mode ${mode} (expected chikyu or chikyu-fork)`);
+  return mode;
 }
 
 // ---------------------------------------------------------------------------------------------------- guards
@@ -80,11 +100,13 @@ export function assertDogeosTarget({ chainId, networkName, forkUrl }) {
   );
 }
 
-export function assertBroadcastToken(value) {
+/** The exact founder-go token under the deploy or the activate variable (each script reads only its own). */
+export function assertBroadcastToken(value, envName = DOGEOS_DEPLOY_BROADCAST_ENV) {
+  if (envName !== DOGEOS_DEPLOY_BROADCAST_ENV && envName !== DOGEOS_ACTIVATE_BROADCAST_ENV) {
+    throw new Error(`unknown broadcast variable ${envName}`);
+  }
   if (value !== DOGEOS_DEPLOY_BROADCAST_TOKEN) {
-    throw new Error(
-      `refusing to send: set ${DOGEOS_DEPLOY_BROADCAST_ENV}=${DOGEOS_DEPLOY_BROADCAST_TOKEN} (only with the founder's explicit go)`,
-    );
+    throw new Error(`refusing to send: set ${envName}=${DOGEOS_DEPLOY_BROADCAST_TOKEN} (only with the founder's explicit go)`);
   }
   return true;
 }
@@ -97,8 +119,20 @@ export function assertDeployerSigner(signer) {
   return a;
 }
 
-/** The public route-authority address: present, valid, non-zero, and none of the three DogeOS keys. */
-export function resolveRouteAuthority(value) {
+/** Chikyū: the pinned DogeOS deployer. Fork: the fork's own first signer, any non-zero address. */
+function assertModeSigner(mode, signer) {
+  if (requireMode(mode) === "chikyu") return assertDeployerSigner(signer);
+  const a = checksum(signer);
+  if (!a || a === ZERO) throw new Error(`refusing: fork signer ${signer} is not a non-zero address`);
+  return a;
+}
+
+/**
+ * The public route-authority address: present, valid, non-zero, none of the three DogeOS keys and not the signer.
+ * On Chikyū it must also be the pinned DOGEOS_TESTNET_ROUTE_AUTHORITY; the fork keeps the looser rule.
+ */
+export function resolveRouteAuthority(value, { mode, signer } = {}) {
+  requireMode(mode);
   const text = String(value ?? "").trim();
   if (!text) throw new Error(`refusing: ${DOGEOS_ROUTE_AUTHORITY_ENV} is missing`);
   const a = checksum(text);
@@ -109,28 +143,38 @@ export function resolveRouteAuthority(value) {
     [DOGEOS_TESTNET_ROLES.oracleUpdater, "the oracle updater"],
     [DOGEOS_TESTNET_ROLES.graduationKeeper, "the graduation keeper"],
   ];
+  if (signer) roles.push([checksum(signer), "the signer"]);
   for (const [role, label] of roles) {
     if (a === role) throw new Error(`refusing: ${DOGEOS_ROUTE_AUTHORITY_ENV} ${a} is ${label}; the route authority must be its own key`);
+  }
+  if (mode === "chikyu" && a !== DOGEOS_TESTNET_ROUTE_AUTHORITY) {
+    throw new Error(`refusing: ${DOGEOS_ROUTE_AUTHORITY_ENV} ${a} is not the DogeOS route authority ${DOGEOS_TESTNET_ROUTE_AUTHORITY}`);
   }
   return a;
 }
 
-/** Order: network, broadcast token, signer, route authority, no earlier manifest. */
-export function assertDeployGuards({ chainId, networkName, forkUrl, broadcastToken, signer, routeAuthority, manifestExists }) {
+/**
+ * Order: network, broadcast token, signer, route authority, no earlier output. existingOutputs lists the output files
+ * (manifest, verification JSON) that already exist; any one of them refuses the run.
+ */
+export function assertDeployGuards({ chainId, networkName, forkUrl, broadcastToken, signer, routeAuthority, existingOutputs }) {
   const { mode } = assertDogeosTarget({ chainId, networkName, forkUrl });
-  assertBroadcastToken(broadcastToken);
-  const s = assertDeployerSigner(signer);
-  const ra = resolveRouteAuthority(routeAuthority);
-  if (manifestExists) throw new Error("refusing: the DogeOS manifest already exists; refusing to deploy a second stack over it");
+  assertBroadcastToken(broadcastToken, DOGEOS_DEPLOY_BROADCAST_ENV);
+  const s = assertModeSigner(mode, signer);
+  const ra = resolveRouteAuthority(routeAuthority, { mode, signer: s });
+  if (!Array.isArray(existingOutputs)) throw new Error("existingOutputs must list the output files that already exist");
+  if (existingOutputs.length) {
+    throw new Error(`refusing: output(s) already exist: ${existingOutputs.join(", ")}; refusing to deploy a second stack over them`);
+  }
   return { mode, signer: s, routeAuthority: ra };
 }
 
-/** Activate: the same network, broadcast-token, signer and route-authority guards as deploy. */
+/** Activate: the same network, signer and route-authority guards as deploy, under DOGEOS_TESTNET_ACTIVATE_BROADCAST. */
 export function assertActivateGuards({ chainId, networkName, forkUrl, broadcastToken, signer, routeAuthority }) {
   const { mode } = assertDogeosTarget({ chainId, networkName, forkUrl });
-  assertBroadcastToken(broadcastToken);
-  const s = assertDeployerSigner(signer);
-  const ra = resolveRouteAuthority(routeAuthority);
+  assertBroadcastToken(broadcastToken, DOGEOS_ACTIVATE_BROADCAST_ENV);
+  const s = assertModeSigner(mode, signer);
+  const ra = resolveRouteAuthority(routeAuthority, { mode, signer: s });
   return { mode, signer: s, routeAuthority: ra };
 }
 
@@ -325,6 +369,18 @@ export function assertVerifyTarget({ chainId, networkName, explorerApiUrl }) {
   return true;
 }
 
+/** The verification JSON must describe the stack the manifest records: its LaunchFactoryGen7 is the manifest's. */
+export function assertVerificationMatchesManifest(list, manifest) {
+  if (Number(manifest?.chainId) !== DOGEOS_TESTNET_CHAIN_ID) throw new Error(`manifest chainId ${manifest?.chainId} is not ${DOGEOS_TESTNET_CHAIN_ID}`);
+  const factory = requireRecordAddress("manifest deployed.LaunchFactoryGen7", manifest?.deployed?.LaunchFactoryGen7);
+  const hits = (list || []).filter((e) => String(e.contract).endsWith(":LaunchFactoryGen7"));
+  if (hits.length !== 1) throw new Error(`verification JSON must list exactly one LaunchFactoryGen7 (found ${hits.length})`);
+  if (checksum(hits[0].address) !== factory) {
+    throw new Error(`refusing: verification JSON LaunchFactoryGen7 ${hits[0].address} is not the manifest's ${factory}`);
+  }
+  return true;
+}
+
 export function isAlreadyVerified(error) {
   const message = typeof error === "string" ? error : String(error?.message || "");
   return /already (been )?verified/i.test(message);
@@ -337,18 +393,29 @@ export function isAlreadyVerified(error) {
  *   onchain = { hasCode, routeAuthority, owner, graduationOracle, live, createPaused } read from deployed.LaunchFactoryGen7
  *   oracleProbe = { ok: true, price } | { ok: false, error } from GraduationOracle.nativeUsdPrice()
  * Returns the factory and the calls still needed (enableLive only when not live yet).
+ * Chikyū: the signer is the pinned deployer, and both the env route authority and factory.routeAuthority() must be the
+ * pinned DOGEOS_TESTNET_ROUTE_AUTHORITY. Fork: the signer must be the manifest's admin and owner (the fork deploy's
+ * own signer), and factory.routeAuthority() must equal the (fork-local) env route authority.
  */
-export function planActivation({ manifest, expectedRouteAuthority, signer, onchain, oracleProbe }) {
+export function planActivation({ mode, manifest, expectedRouteAuthority, signer, onchain, oracleProbe }) {
+  requireMode(mode);
   if (Number(manifest?.chainId) !== DOGEOS_TESTNET_CHAIN_ID) throw new Error(`manifest chainId ${manifest?.chainId} is not ${DOGEOS_TESTNET_CHAIN_ID}`);
   const factory = requireRecordAddress("manifest deployed.LaunchFactoryGen7", manifest?.deployed?.LaunchFactoryGen7);
   if (checksum(manifest.deployed.LaunchFactory) !== factory) throw new Error("manifest deployed.LaunchFactory alias is not deployed.LaunchFactoryGen7");
   const manifestOracle = requireRecordAddress("manifest oracle.graduationOracle", manifest?.oracle?.graduationOracle);
-  const expected = resolveRouteAuthority(expectedRouteAuthority);
-  const s = assertDeployerSigner(signer);
+  const s = assertModeSigner(mode, signer);
+  if (mode === "chikyu-fork") {
+    if (checksum(manifest.admin) !== s) throw new Error(`refusing: fork signer ${s} is not the manifest's admin ${manifest.admin}`);
+    if (checksum(manifest.owner) !== s) throw new Error(`refusing: fork signer ${s} is not the manifest's owner ${manifest.owner}`);
+  }
+  const expected = resolveRouteAuthority(expectedRouteAuthority, { mode, signer: s });
   if (!onchain?.hasCode) throw new Error(`factory ${factory} has no code on chain ${DOGEOS_TESTNET_CHAIN_ID}`);
   const onchainRa = checksum(onchain.routeAuthority);
   if (onchainRa !== expected) {
     throw new Error(`refusing: factory routeAuthority() ${onchain.routeAuthority} is not ${DOGEOS_ROUTE_AUTHORITY_ENV} ${expected}`);
+  }
+  if (mode === "chikyu" && onchainRa !== DOGEOS_TESTNET_ROUTE_AUTHORITY) {
+    throw new Error(`refusing: factory routeAuthority() ${onchain.routeAuthority} is not the DogeOS route authority ${DOGEOS_TESTNET_ROUTE_AUTHORITY}`);
   }
   if (checksum(onchain.owner) !== s) throw new Error(`refusing: factory owner() ${onchain.owner} is not the signer ${s}`);
   if (checksum(onchain.graduationOracle) !== manifestOracle) {

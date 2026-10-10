@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { getAddress } from "ethers";
 import {
   BINANCE_TICKER_URL,
+  DOGEOS_ACTIVATE_BROADCAST_ENV,
   DOGEOS_DEPLOY_BROADCAST_ENV,
   DOGEOS_DEPLOY_BROADCAST_TOKEN,
   DOGEOS_L2SCAN_API_URL,
@@ -22,6 +23,7 @@ import {
   DOGEOS_TESTNET_CHAIN_ID,
   DOGEOS_TESTNET_NETWORK_NAME,
   DOGEOS_TESTNET_ROLES,
+  DOGEOS_TESTNET_ROUTE_AUTHORITY,
   DOGEOS_VERIFICATION_PATH,
   MUCHFI_EXTERNAL_ADDRESSES,
   assertActivated,
@@ -30,6 +32,7 @@ import {
   assertDeployGuards,
   assertDeployerSigner,
   assertDogeosTarget,
+  assertVerificationMatchesManifest,
   assertVerifyTarget,
   dogeosAirdropCapFromReference,
   dogeosOutputPaths,
@@ -50,9 +53,15 @@ const DEPLOYER = "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8";
 const UPDATER = "0x7dBDFe829309B4170346CF7e4496094CD126E9c1";
 const KEEPER = "0xb07B9E70D1759Fc42103458039AaE2413026B078";
 const ROUTE_AUTHORITY = "0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF";
+/** The old shared route authority the TEST API holds no key for (plan global constraints): never the DogeOS one. */
+const OLD_ROUTE_AUTHORITY = "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0";
 const ZERO = "0x0000000000000000000000000000000000000000";
 const OTHER = "0x1111111111111111111111111111111111111111";
+/** Hardhat's local accounts #0 / #1: the fork's own signer and a fork-local route authority. */
+const FORK_SIGNER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+const FORK_RA = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const FORK_URL = "https://rpc.testnet.dogeos.com";
+const MODES = ["chikyu", "chikyu-fork"];
 const addr = (n) => getAddress(`0x${n.toString(16).padStart(40, "0")}`);
 
 const tmpDirs = [];
@@ -67,16 +76,27 @@ after(() => {
 
 // ---------------------------------------------------------------------------------------------------- constants
 
-test("pins the Chikyū chain, the network name, the broadcast token and the three DogeOS role addresses", () => {
+test("pins the Chikyū chain, the network name, both broadcast tokens, the route authority and the three DogeOS role addresses", () => {
   assert.equal(DOGEOS_TESTNET_CHAIN_ID, 6281971);
   assert.equal(DOGEOS_TESTNET_NETWORK_NAME, "dogeosTestnet");
   assert.equal(DOGEOS_DEPLOY_BROADCAST_ENV, "DOGEOS_TESTNET_DEPLOY_BROADCAST");
+  assert.equal(DOGEOS_ACTIVATE_BROADCAST_ENV, "DOGEOS_TESTNET_ACTIVATE_BROADCAST");
   assert.equal(DOGEOS_DEPLOY_BROADCAST_TOKEN, "I_HAVE_FOUNDER_GO");
   assert.equal(DOGEOS_ROUTE_AUTHORITY_ENV, "DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS");
+  assert.equal(DOGEOS_TESTNET_ROUTE_AUTHORITY, ROUTE_AUTHORITY);
   assert.deepEqual({ ...DOGEOS_TESTNET_ROLES }, { deployer: DEPLOYER, oracleUpdater: UPDATER, graduationKeeper: KEEPER });
   assert.equal(DOGEOS_MANIFEST_PATH, "deployments/dogeos/testnet.json");
   assert.equal(DOGEOS_VERIFICATION_PATH, "config/verification/dogeos-testnet-contracts.json");
   assert.equal(DOGEOS_L2SCAN_API_URL, "https://dogeos-testnet.l2scan.co/api");
+});
+
+test("the .mjs MuchFi/WDOGE address set is the t6 library's MUCHFI_ADDRESSES (scripts/lib/dogeosGen7Stack.ts)", () => {
+  const ts = fs.readFileSync(path.join(ROOT, "scripts", "lib", "dogeosGen7Stack.ts"), "utf8");
+  const block = ts.match(/export const MUCHFI_ADDRESSES = \{([\s\S]*?)\} as const;/);
+  assert.ok(block, "MUCHFI_ADDRESSES block found");
+  const fromTs = Object.fromEntries([...block[1].matchAll(/(\w+):\s*"(0x[0-9a-fA-F]{40})"/g)].map((m) => [m[1], m[2]]));
+  assert.equal(Object.keys(fromTs).length, 7);
+  assert.deepEqual({ ...MUCHFI_EXTERNAL_ADDRESSES }, fromTs);
 });
 
 // ---------------------------------------------------------------------------------------------------- network
@@ -102,13 +122,16 @@ test("target: refuses every other network / chain combination (there is no 31337
   for (const c of cases) assert.throws(() => assertDogeosTarget(c), /refusing: .*6281971/, JSON.stringify(c));
 });
 
-// ---------------------------------------------------------------------------------------------------- broadcast token
+// ---------------------------------------------------------------------------------------------------- broadcast tokens
 
-test("broadcast token: only the exact I_HAVE_FOUNDER_GO passes", () => {
+test("broadcast token: only the exact I_HAVE_FOUNDER_GO passes; the refusal names the deploy or the activate variable", () => {
   assert.equal(assertBroadcastToken("I_HAVE_FOUNDER_GO"), true);
+  assert.equal(assertBroadcastToken("I_HAVE_FOUNDER_GO", DOGEOS_ACTIVATE_BROADCAST_ENV), true);
   for (const v of [undefined, null, "", "1", "yes", "true", "i_have_founder_go", " I_HAVE_FOUNDER_GO", "I_HAVE_FOUNDER_GO ", "DEPLOY_CHAIN_46630_TESTNET_INFRA"]) {
     assert.throws(() => assertBroadcastToken(v), /DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO/, String(v));
+    assert.throws(() => assertBroadcastToken(v, DOGEOS_ACTIVATE_BROADCAST_ENV), /DOGEOS_TESTNET_ACTIVATE_BROADCAST=I_HAVE_FOUNDER_GO/, String(v));
   }
+  assert.throws(() => assertBroadcastToken("I_HAVE_FOUNDER_GO", "SOME_OTHER_ENV"), /unknown broadcast variable/);
 });
 
 // ---------------------------------------------------------------------------------------------------- signer
@@ -116,7 +139,7 @@ test("broadcast token: only the exact I_HAVE_FOUNDER_GO passes", () => {
 test("signer: only the DogeOS deployer 0x6c5C…82f8 passes (any case), returned checksummed", () => {
   assert.equal(assertDeployerSigner(DEPLOYER), DEPLOYER);
   assert.equal(assertDeployerSigner(DEPLOYER.toLowerCase()), DEPLOYER);
-  for (const v of [undefined, "", "0x123", OTHER, UPDATER, KEEPER, ROUTE_AUTHORITY, ZERO]) {
+  for (const v of [undefined, "", "0x123", OTHER, UPDATER, KEEPER, ROUTE_AUTHORITY, ZERO, FORK_SIGNER]) {
     assert.throws(() => assertDeployerSigner(v), /signer .* is not the DogeOS deployer 0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8/, String(v));
   }
 });
@@ -124,23 +147,39 @@ test("signer: only the DogeOS deployer 0x6c5C…82f8 passes (any case), returned
 // ---------------------------------------------------------------------------------------------------- route authority
 
 test("route authority: taken from the public address env, returned checksummed", () => {
-  assert.equal(resolveRouteAuthority(ROUTE_AUTHORITY), ROUTE_AUTHORITY);
-  assert.equal(resolveRouteAuthority(` ${ROUTE_AUTHORITY.toLowerCase()} `), ROUTE_AUTHORITY);
+  assert.equal(resolveRouteAuthority(ROUTE_AUTHORITY, { mode: "chikyu" }), ROUTE_AUTHORITY);
+  assert.equal(resolveRouteAuthority(` ${ROUTE_AUTHORITY.toLowerCase()} `, { mode: "chikyu" }), ROUTE_AUTHORITY);
+  assert.equal(resolveRouteAuthority(FORK_RA.toLowerCase(), { mode: "chikyu-fork", signer: FORK_SIGNER }), FORK_RA);
 });
 
-test("route authority: refuses missing, malformed and zero", () => {
-  for (const v of [undefined, null, "", "   "]) assert.throws(() => resolveRouteAuthority(v), /DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS is missing/);
-  for (const v of ["0x123", "not-an-address", `${ROUTE_AUTHORITY}00`, "0x4FCD24d620f8eCd298bF4d43CB1cA2F4D23876FF"]) {
-    assert.throws(() => resolveRouteAuthority(v), /DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS .* is not a valid address/, v);
+test("route authority: on Chikyū it must be the pinned DogeOS route authority 0x4fcD…76FF", () => {
+  for (const v of [OTHER, OLD_ROUTE_AUTHORITY, FORK_RA]) {
+    assert.throws(() => resolveRouteAuthority(v, { mode: "chikyu" }), /is not the DogeOS route authority 0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF/, v);
   }
-  assert.throws(() => resolveRouteAuthority(ZERO), /DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS is the zero address/);
+  // The fork keeps the looser rule: any valid, non-colliding address (it signs nothing real).
+  assert.equal(resolveRouteAuthority(OLD_ROUTE_AUTHORITY, { mode: "chikyu-fork", signer: FORK_SIGNER }), OLD_ROUTE_AUTHORITY);
+  assert.throws(() => resolveRouteAuthority(ROUTE_AUTHORITY), /mode/);
+  assert.throws(() => resolveRouteAuthority(ROUTE_AUTHORITY, { mode: "hardhat" }), /mode/);
 });
 
-test("route authority: refuses the deployer, the oracle updater and the graduation keeper (any case)", () => {
-  assert.throws(() => resolveRouteAuthority(DEPLOYER), /is the deployer/);
-  assert.throws(() => resolveRouteAuthority(DEPLOYER.toLowerCase()), /is the deployer/);
-  assert.throws(() => resolveRouteAuthority(UPDATER), /is the oracle updater/);
-  assert.throws(() => resolveRouteAuthority(KEEPER.toLowerCase()), /is the graduation keeper/);
+test("route authority: refuses missing, malformed and zero in both modes", () => {
+  for (const mode of MODES) {
+    for (const v of [undefined, null, "", "   "]) assert.throws(() => resolveRouteAuthority(v, { mode }), /DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS is missing/);
+    for (const v of ["0x123", "not-an-address", `${ROUTE_AUTHORITY}00`, "0x4FCD24d620f8eCd298bF4d43CB1cA2F4D23876FF"]) {
+      assert.throws(() => resolveRouteAuthority(v, { mode }), /DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS .* is not a valid address/, v);
+    }
+    assert.throws(() => resolveRouteAuthority(ZERO, { mode }), /DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS is the zero address/);
+  }
+});
+
+test("route authority: refuses the deployer, the oracle updater, the graduation keeper and the signer (any case, both modes)", () => {
+  for (const mode of MODES) {
+    assert.throws(() => resolveRouteAuthority(DEPLOYER, { mode }), /is the deployer/);
+    assert.throws(() => resolveRouteAuthority(DEPLOYER.toLowerCase(), { mode }), /is the deployer/);
+    assert.throws(() => resolveRouteAuthority(UPDATER, { mode }), /is the oracle updater/);
+    assert.throws(() => resolveRouteAuthority(KEEPER.toLowerCase(), { mode }), /is the graduation keeper/);
+  }
+  assert.throws(() => resolveRouteAuthority(FORK_SIGNER.toLowerCase(), { mode: "chikyu-fork", signer: FORK_SIGNER }), /is the signer/);
 });
 
 // ---------------------------------------------------------------------------------------------------- deploy composite
@@ -151,15 +190,21 @@ const goodDeploy = () => ({
   broadcastToken: "I_HAVE_FOUNDER_GO",
   signer: DEPLOYER,
   routeAuthority: ROUTE_AUTHORITY,
-  manifestExists: false,
+  existingOutputs: [],
 });
+const goodForkDeploy = () => ({ ...goodDeploy(), networkName: "hardhat", forkUrl: FORK_URL, signer: FORK_SIGNER, routeAuthority: FORK_RA });
 
-test("deploy guards: all pass -> mode, signer and route authority", () => {
+test("deploy guards: Chikyū passes only with the pinned deployer and route authority", () => {
   assert.deepEqual(assertDeployGuards(goodDeploy()), { mode: "chikyu", signer: DEPLOYER, routeAuthority: ROUTE_AUTHORITY });
-  assert.deepEqual(assertDeployGuards({ ...goodDeploy(), networkName: "hardhat", forkUrl: FORK_URL }).mode, "chikyu-fork");
 });
 
-test("deploy guards: each refusal path refuses on its own", () => {
+test("deploy guards: the fork accepts its own first signer as the deployer (admin) and a fork-local route authority", () => {
+  assert.deepEqual(assertDeployGuards(goodForkDeploy()), { mode: "chikyu-fork", signer: FORK_SIGNER, routeAuthority: FORK_RA });
+  // The real deployer may also run a fork (impersonation), with any non-colliding route authority.
+  assert.equal(assertDeployGuards({ ...goodForkDeploy(), signer: DEPLOYER }).signer, DEPLOYER);
+});
+
+test("deploy guards: each Chikyū refusal path refuses on its own", () => {
   const refusals = [
     [{ chainId: 31337, networkName: "hardhat" }, /6281971/],
     [{ chainId: 46630 }, /6281971/],
@@ -168,14 +213,35 @@ test("deploy guards: each refusal path refuses on its own", () => {
     [{ broadcastToken: "yes" }, /DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO/],
     [{ signer: OTHER }, /is not the DogeOS deployer/],
     [{ signer: KEEPER }, /is not the DogeOS deployer/],
+    [{ signer: FORK_SIGNER }, /is not the DogeOS deployer/],
     [{ routeAuthority: undefined }, /is missing/],
     [{ routeAuthority: ZERO }, /zero address/],
     [{ routeAuthority: DEPLOYER }, /is the deployer/],
     [{ routeAuthority: UPDATER }, /is the oracle updater/],
     [{ routeAuthority: KEEPER }, /is the graduation keeper/],
-    [{ manifestExists: true }, /already exists; refusing to deploy a second stack/],
+    [{ routeAuthority: OTHER }, /is not the DogeOS route authority/],
+    [{ routeAuthority: OLD_ROUTE_AUTHORITY }, /is not the DogeOS route authority/],
+    [{ existingOutputs: ["deployments/dogeos/testnet.json"] }, /already exist.*deployments\/dogeos\/testnet\.json.*refusing to deploy a second stack/],
+    [{ existingOutputs: ["config/verification/dogeos-testnet-contracts.json"] }, /already exist.*dogeos-testnet-contracts\.json/],
+    [{ existingOutputs: undefined }, /existingOutputs/],
   ];
   for (const [patch, re] of refusals) assert.throws(() => assertDeployGuards({ ...goodDeploy(), ...patch }), re, JSON.stringify(patch));
+});
+
+test("deploy guards: each fork refusal path refuses on its own (the token stays required)", () => {
+  const refusals = [
+    [{ forkUrl: "" }, /6281971/],
+    [{ broadcastToken: undefined }, /DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO/],
+    [{ signer: undefined }, /fork signer .* is not a non-zero address/],
+    [{ signer: ZERO }, /fork signer .* is not a non-zero address/],
+    [{ signer: "0x12" }, /fork signer .* is not a non-zero address/],
+    [{ routeAuthority: "" }, /is missing/],
+    [{ routeAuthority: ZERO }, /zero address/],
+    [{ routeAuthority: FORK_SIGNER }, /is the signer/],
+    [{ routeAuthority: UPDATER }, /is the oracle updater/],
+    [{ existingOutputs: ["/tmp/x/testnet.json"] }, /already exist/],
+  ];
+  for (const [patch, re] of refusals) assert.throws(() => assertDeployGuards({ ...goodForkDeploy(), ...patch }), re, JSON.stringify(patch));
 });
 
 test("deploy guards: the network is checked before the token, the token before the signer", () => {
@@ -434,6 +500,17 @@ test("verify: 'already verified' answers are tolerated, every other error is not
   assert.equal(isAlreadyVerified(undefined), false);
 });
 
+test("verify: the verification JSON's LaunchFactoryGen7 must be the deployments/dogeos/testnet.json factory", () => {
+  const r = sampleRecord();
+  const list = readVerificationList(dogeosVerificationManifest(r, dogeosVerificationEntries(r, DELAYS)));
+  assert.equal(assertVerificationMatchesManifest(list, r), true);
+  const otherFactory = { ...r, deployed: { ...r.deployed, LaunchFactoryGen7: OTHER, LaunchFactory: OTHER } };
+  assert.throws(() => assertVerificationMatchesManifest(list, otherFactory), /LaunchFactoryGen7 .* is not the manifest's/);
+  assert.throws(() => assertVerificationMatchesManifest(list, { ...r, chainId: 46630 }), /6281971/);
+  assert.throws(() => assertVerificationMatchesManifest(list.filter((e) => !e.contract.endsWith(":LaunchFactoryGen7")), r), /exactly one LaunchFactoryGen7/);
+  assert.throws(() => assertVerificationMatchesManifest(list, { ...r, deployed: {} }), /LaunchFactoryGen7/);
+});
+
 // ---------------------------------------------------------------------------------------------------- activate
 
 const goodActivate = () => ({
@@ -443,22 +520,35 @@ const goodActivate = () => ({
   signer: DEPLOYER,
   routeAuthority: ROUTE_AUTHORITY,
 });
+const goodForkActivate = () => ({ ...goodActivate(), networkName: "hardhat", forkUrl: FORK_URL, signer: FORK_SIGNER, routeAuthority: FORK_RA });
 
-test("activate guards: same network, broadcast-token, signer and route-authority refusals as deploy", () => {
+test("activate guards: the same network, signer and route-authority refusals as deploy, under its own broadcast variable", () => {
   assert.deepEqual(assertActivateGuards(goodActivate()), { mode: "chikyu", signer: DEPLOYER, routeAuthority: ROUTE_AUTHORITY });
+  assert.deepEqual(assertActivateGuards(goodForkActivate()), { mode: "chikyu-fork", signer: FORK_SIGNER, routeAuthority: FORK_RA });
   const refusals = [
     [{ chainId: 31337, networkName: "hardhat" }, /6281971/],
     [{ networkName: "localhost" }, /6281971/],
     [{ chainId: 46630 }, /6281971/],
-    [{ broadcastToken: undefined }, /DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO/],
+    [{ broadcastToken: undefined }, /DOGEOS_TESTNET_ACTIVATE_BROADCAST=I_HAVE_FOUNDER_GO/],
+    [{ broadcastToken: "yes" }, /DOGEOS_TESTNET_ACTIVATE_BROADCAST=I_HAVE_FOUNDER_GO/],
     [{ signer: OTHER }, /is not the DogeOS deployer/],
+    [{ signer: FORK_SIGNER }, /is not the DogeOS deployer/],
     [{ routeAuthority: "" }, /is missing/],
     [{ routeAuthority: ZERO }, /zero address/],
     [{ routeAuthority: DEPLOYER }, /is the deployer/],
     [{ routeAuthority: UPDATER }, /is the oracle updater/],
     [{ routeAuthority: KEEPER }, /is the graduation keeper/],
+    [{ routeAuthority: OTHER }, /is not the DogeOS route authority/],
+    [{ routeAuthority: OLD_ROUTE_AUTHORITY }, /is not the DogeOS route authority/],
   ];
   for (const [patch, re] of refusals) assert.throws(() => assertActivateGuards({ ...goodActivate(), ...patch }), re, JSON.stringify(patch));
+  const forkRefusals = [
+    [{ broadcastToken: undefined }, /DOGEOS_TESTNET_ACTIVATE_BROADCAST=I_HAVE_FOUNDER_GO/],
+    [{ signer: ZERO }, /fork signer/],
+    [{ routeAuthority: FORK_SIGNER }, /is the signer/],
+    [{ routeAuthority: KEEPER }, /is the graduation keeper/],
+  ];
+  for (const [patch, re] of forkRefusals) assert.throws(() => assertActivateGuards({ ...goodForkActivate(), ...patch }), re, JSON.stringify(patch));
 });
 
 function activation(patch = {}) {
@@ -472,6 +562,7 @@ function activation(patch = {}) {
     hasCode: true,
   };
   return {
+    mode: "chikyu",
     manifest,
     expectedRouteAuthority: ROUTE_AUTHORITY,
     signer: DEPLOYER,
@@ -480,17 +571,61 @@ function activation(patch = {}) {
   };
 }
 
+/** A fork activation: the manifest's admin/owner is the fork's own signer, the route authority fork-local. */
+function forkActivation(patch = {}) {
+  const base = activation(patch);
+  base.mode = "chikyu-fork";
+  base.manifest.admin = FORK_SIGNER;
+  base.manifest.owner = FORK_SIGNER;
+  base.manifest.deployer = FORK_SIGNER;
+  base.signer = FORK_SIGNER;
+  base.expectedRouteAuthority = FORK_RA;
+  base.onchain = { ...base.onchain, routeAuthority: FORK_RA, owner: FORK_SIGNER, ...(patch.onchain || {}) };
+  return base;
+}
+
 test("activate plan: a paused, not-live factory with a matching route authority and a fresh oracle -> enableLive, unpause", () => {
   const plan = planActivation(activation());
   assert.equal(plan.factory, sampleRecord().deployed.LaunchFactoryGen7);
   assert.deepEqual(plan.calls, ["enableLive", "setCreatePaused(false)"]);
   assert.deepEqual(planActivation(activation({ onchain: { live: true } })).calls, ["setCreatePaused(false)"]);
+  assert.deepEqual(planActivation(forkActivation()).calls, ["enableLive", "setCreatePaused(false)"]);
 });
 
-test("activate plan: refuses a factory whose routeAuthority() is not DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS", () => {
+test("activate plan: refuses a factory whose routeAuthority() is not the route authority", () => {
   assert.throws(() => planActivation(activation({ onchain: { routeAuthority: OTHER } })), /routeAuthority\(\) .* is not DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS/);
   assert.throws(() => planActivation(activation({ onchain: { routeAuthority: DEPLOYER } })), /routeAuthority\(\)/);
   assert.throws(() => planActivation(activation({ onchain: { routeAuthority: ZERO } })), /routeAuthority\(\)/);
+  assert.throws(() => planActivation(forkActivation({ onchain: { routeAuthority: OTHER } })), /routeAuthority\(\)/);
+});
+
+test("activate plan: on Chikyū the factory and the env must both be the pinned 0x4fcD…76FF", () => {
+  // env and factory agree on another address: still refused, the pin wins.
+  const agreeOnOther = activation({ onchain: { routeAuthority: OLD_ROUTE_AUTHORITY } });
+  agreeOnOther.expectedRouteAuthority = OLD_ROUTE_AUTHORITY;
+  assert.throws(() => planActivation(agreeOnOther), /is not the DogeOS route authority 0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF/);
+  const agreeOnOther2 = activation({ onchain: { routeAuthority: OTHER } });
+  agreeOnOther2.expectedRouteAuthority = OTHER;
+  assert.throws(() => planActivation(agreeOnOther2), /is not the DogeOS route authority/);
+  // The fork accepts its own fork-local route authority.
+  assert.equal(planActivation(forkActivation()).calls.length, 2);
+  assert.throws(() => planActivation({ ...activation(), mode: undefined }), /mode/);
+});
+
+test("activate plan: on the fork the signer must be the manifest's admin and owner", () => {
+  const notAdmin = forkActivation();
+  notAdmin.manifest.admin = OTHER;
+  assert.throws(() => planActivation(notAdmin), /signer .* is not the manifest's admin/);
+  const notOwner = forkActivation();
+  notOwner.manifest.owner = OTHER;
+  assert.throws(() => planActivation(notOwner), /signer .* is not the manifest's owner/);
+  const wrongSigner = forkActivation({ onchain: { owner: OTHER } });
+  wrongSigner.signer = OTHER;
+  assert.throws(() => planActivation(wrongSigner), /not the manifest's admin/);
+  // On Chikyū the signer is the pinned deployer, whatever the manifest says.
+  const chikyuForkSigner = activation();
+  chikyuForkSigner.signer = FORK_SIGNER;
+  assert.throws(() => planActivation(chikyuForkSigner), /is not the DogeOS deployer/);
 });
 
 test("activate plan: refuses a stale or reverting oracle and a zero price", () => {
@@ -498,6 +633,7 @@ test("activate plan: refuses a stale or reverting oracle and a zero price", () =
   assert.throws(() => planActivation(activation({ oracleProbe: { ok: false, error: "InvalidPrice()" } })), /nativeUsdPrice\(\) reverted/);
   assert.throws(() => planActivation(activation({ oracleProbe: { ok: true, price: 0n } })), /nativeUsdPrice\(\)/);
   assert.throws(() => planActivation({ ...activation(), oracleProbe: undefined }), /nativeUsdPrice\(\)/);
+  assert.throws(() => planActivation(forkActivation({ oracleProbe: { ok: false, error: "StalePrice()" } })), /nativeUsdPrice\(\) reverted/);
 });
 
 test("activate plan: refuses a wrong owner, oracle, manifest chain, alias, a codeless factory and an already-active factory", () => {
@@ -531,15 +667,19 @@ test("entrypoints run every guard before the first price fetch, deploy or send",
   for (const later of ["fetchBinanceUsd8(", "deployDogeosGen7Stack({", "writeDogeosManifest("]) {
     assert.ok(deploy.indexOf(later) > g, `deploy: ${later} comes after the guards`);
   }
+  assert.ok(deploy.includes("DOGEOS_DEPLOY_BROADCAST_ENV") && !deploy.includes("DOGEOS_ACTIVATE_BROADCAST_ENV"), "deploy reads the deploy token only");
   assert.ok(!/enableLive|lockSecurityDefaults/.test(deploy), "deploy never sends enableLive / lockSecurityDefaults");
   const activate = fs.readFileSync(path.join(ROOT, "scripts", "activate-dogeos-testnet.ts"), "utf8");
   const ga = activate.indexOf("assertActivateGuards(");
   const pa = activate.indexOf("planActivation(");
   assert.ok(ga > 0 && pa > ga, "activate: guards, then the on-chain plan");
+  assert.ok(activate.includes("DOGEOS_ACTIVATE_BROADCAST_ENV") && !activate.includes("DOGEOS_DEPLOY_BROADCAST_ENV"), "activate reads the activate token only");
   assert.ok(activate.indexOf(".enableLive(") > pa && activate.indexOf("assertActivated(") > activate.indexOf(".enableLive("), "activate: send after plan, assert after send");
   assert.ok(!/lockSecurityDefaults/.test(activate), "activate never locks security defaults");
   const verify = fs.readFileSync(path.join(ROOT, "scripts", "verify-dogeos-testnet.ts"), "utf8");
-  assert.ok(verify.indexOf("assertVerifyTarget(") > 0 && verify.indexOf("verify:verify") > verify.indexOf("assertVerifyTarget("), "verify: target guard first");
+  const gv = verify.indexOf("assertVerifyTarget(");
+  const mv = verify.indexOf("assertVerificationMatchesManifest(");
+  assert.ok(gv > 0 && mv > gv && verify.indexOf("verify:verify") > mv, "verify: target guard, manifest cross-check, then submit");
   for (const src of [deploy, activate, verify]) assert.ok(!/PRIVATE_KEY|dogeos\.local/.test(src), "no script reads a key or config/*.local");
 });
 
