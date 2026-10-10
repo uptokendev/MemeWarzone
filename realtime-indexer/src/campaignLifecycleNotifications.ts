@@ -85,4 +85,5 @@ export const NOTIFICATION_CHAIN_GROUPS = [
   { label: "bnb" as const, ids: [56, 97] },
   { label: "solana" as const, ids: [101, 102] },
   { label: "robinhood" as const, ids: [4663, 46630] },
+  { label: "dogeos" as const, ids: [6281971] },
 ];

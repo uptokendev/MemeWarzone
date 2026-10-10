@@ -70,6 +70,7 @@ const BINANCE_SYMBOL: Record<number, string> = {
   102: "SOLUSDT",
   4663: "ETHUSDT",
   46630: "ETHUSDT",
+  6281971: "DOGEUSDT",
 };
 
 /** Spot native/USD for eligibility. AIRDROP_NATIVE_USD_<chainId> pins a price. Throws when unknown. */
