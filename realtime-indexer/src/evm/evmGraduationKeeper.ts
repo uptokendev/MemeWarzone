@@ -95,6 +95,20 @@ export const V3_POOL_OBSERVATIONS_IFACE = new ethers.Interface([
   "function increaseObservationCardinalityNext(uint16 observationCardinalityNext)",
 ]);
 
+/** DogeOS Chikyu (6281971): graduated pools are MuchFi V3 forks whose slot0().feeProtocol is a uint32. */
+const DOGEOS_CHAIN_ID = 6281971;
+
+/** V3_POOL_OBSERVATIONS_IFACE with MuchFi's uint32 feeProtocol (same selectors, same calldata). */
+export const MUCHFI_V3_POOL_OBSERVATIONS_IFACE = new ethers.Interface([
+  "function slot0() view returns (uint160 sqrtPriceX96,int24 tick,uint16 observationIndex,uint16 observationCardinality,uint16 observationCardinalityNext,uint32 feeProtocol,bool unlocked)",
+  "function increaseObservationCardinalityNext(uint16 observationCardinalityNext)",
+]);
+
+/** The pool interface the observation step decodes slot0 with: MuchFi's on 6281971, Uniswap V3's elsewhere. */
+export function v3PoolObservationsIface(chainId: number): ethers.Interface {
+  return chainId === DOGEOS_CHAIN_ID ? MUCHFI_V3_POOL_OBSERVATIONS_IFACE : V3_POOL_OBSERVATIONS_IFACE;
+}
+
 /** Where a keeper call goes and its calldata: the campaign, except the observation growth (the pool). */
 export function encodeKeeperCall(campaign: string, call: KeeperCall): { to: string; data: string } {
   if (call.action === "observations") {
@@ -806,6 +820,12 @@ export function revertName(error: unknown): string {
 
 const V3_FACTORY_ABI = ["function getPool(address,address,uint24) view returns (address)"];
 const V3_POOL_ABI = ["function slot0() view returns (uint160 sqrtPriceX96,int24 tick,uint16,uint16,uint16,uint8,bool)", "function token0() view returns (address)"];
+const MUCHFI_V3_POOL_ABI = ["function slot0() view returns (uint160 sqrtPriceX96,int24 tick,uint16,uint16,uint16,uint32,bool)", "function token0() view returns (address)"];
+
+/** The pool ABI the partial-repair price read uses: MuchFi's uint32 feeProtocol slot0 on 6281971 only. */
+export function v3PoolPriceAbi(chainId: number): readonly string[] {
+  return chainId === DOGEOS_CHAIN_ID ? MUCHFI_V3_POOL_ABI : V3_POOL_ABI;
+}
 
 /** Known Uniswap V3 deployments for the partial-repair price read (C7 section 2). Env overrides. */
 const KNOWN_V3: Record<number, { factory: string; weth: string; fee: number }> = {
@@ -963,7 +983,7 @@ export function createEthersKeeperReader(provider: ethers.Provider, chainId: num
         const factory = new ethers.Contract(factoryAddr, V3_FACTORY_ABI, provider) as any;
         const poolAddr = String(await factory.getPool(meme, paired, fee));
         if (poolAddr === ethers.ZeroAddress) return null;
-        const pool = new ethers.Contract(poolAddr, V3_POOL_ABI, provider) as any;
+        const pool = new ethers.Contract(poolAddr, v3PoolPriceAbi(chainId), provider) as any;
         const [slot0, token0] = await Promise.all([pool.slot0(), pool.token0()]);
         const memeIsToken0 = String(token0).toLowerCase() === String(meme).toLowerCase();
         const currentSqrtX96 = BigInt(slot0.sqrtPriceX96 ?? slot0[0]);
@@ -1012,8 +1032,9 @@ export function createEthersKeeperReader(provider: ethers.Provider, chainId: num
         const state = await c.getGraduationState();
         const pool = String(state.dexPair ?? state[0]);
         if (!ethers.isAddress(pool) || pool.toLowerCase() === ethers.ZeroAddress.toLowerCase()) return null;
-        const raw = await provider.call({ to: pool, data: V3_POOL_OBSERVATIONS_IFACE.encodeFunctionData("slot0", []) });
-        const slot0 = V3_POOL_OBSERVATIONS_IFACE.decodeFunctionResult("slot0", raw);
+        const poolIface = v3PoolObservationsIface(chainId);
+        const raw = await provider.call({ to: pool, data: poolIface.encodeFunctionData("slot0", []) });
+        const slot0 = poolIface.decodeFunctionResult("slot0", raw);
         const out = { pool: ethers.getAddress(pool), cardinalityNext: Number(slot0.observationCardinalityNext ?? slot0[4]) };
         if (out.cardinalityNext >= minSlots) observationDone.set(campaign, out);
         return out;
