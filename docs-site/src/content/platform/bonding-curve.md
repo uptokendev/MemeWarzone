@@ -27,10 +27,10 @@ This is where demand shows. Keep the links official, post updates as the coin, a
 
 ## What the coin is priced in
 
-On BNB Chain the curve trades in BNB, on Solana in SOL, and on Robinhood Chain in ETH. The token a coin pairs with after graduation is chosen at launch and can be different. Read **[Create a Campaign](/creators/create-a-campaign)**.
+On BNB Chain the curve trades in BNB and on Robinhood Chain in ETH. The token a coin pairs with after graduation is chosen at launch and can be different. On Solana the curve trades in the token the coin pairs with, SOL by default. Read **[Create a Campaign](/creators/create-a-campaign)**.
 
 ## Fees
 
-Trades on the curve pay the trading fee from the current fee model.
+Trades on the curve pay a 2% trading fee. In the first 60 seconds after launch the fee starts at 90% and falls to 2%, so bots that buy at launch pay for it. The creator's first buy in the launch transaction pays 2%. Read **[Launch Rules](/creators/launch-rules)**.
 
 Read **[Fee Model](/fees)** and **[Fee Routing](/fees/fee-routing)**.
