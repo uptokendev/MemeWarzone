@@ -142,7 +142,8 @@ adapter exists would be bound to whatever adapter was set at that moment.
   admin calls. Funded with 42.069 DOGE (faucet tx `0x2eb60ae1595a026cfae0b954bc8bd3b72a1bae304957f5d6ba41c85de44ff919`).
 - Oracle updater: EOA `0x7dBDFe829309B4170346CF7e4496094CD126E9c1`. It is the oracle's `updater` and
   holds no other role.
-- Graduation keeper: a fresh EOA (`DOGEOS_TESTNET_GRADUATION_KEEPER_PRIVATE_KEY`). It holds no
+- Graduation keeper: EOA `0xb07B9E70D1759Fc42103458039AaE2413026B078`
+  (`DOGEOS_TESTNET_GRADUATION_KEEPER_PRIVATE_KEY`). It holds no
   contract role, only gas DOGE, and calls the permissionless graduation path.
 - The keeper and payout watchdog refuse only the addresses hard-coded in `FORBIDDEN_KEEPER_ADDRESSES`
   (`realtime-indexer/src/evm/evmGraduationKeeper.ts`, ~lines 1087-1091). That list does not yet include
