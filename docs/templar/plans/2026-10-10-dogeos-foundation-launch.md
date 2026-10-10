@@ -147,9 +147,9 @@
 **TDD:** required
 **Files:** `contracts/dogeos/muchfi/MuchfiV3NativeGraduationAdapter.sol` and its pool-repair base (new), `test/MuchfiGraduationAdapter.fork.spec.ts` (new)
 - Spec §1 "MuchFi variant contracts" item 1.
-- Derive from `contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol` + `RobinhoodV3PoolRepair.sol`. Prefer inheritance/override where the originals allow it without editing them; otherwise copy into `contracts/dogeos/muchfi/`. Changes only: `muchfiV3SwapCallback` instead of `uniswapV3SwapCallback` (same body), a `slot0` interface with `uint32 feeProtocol`, `POOL_FEE = 10000`, `TICK_SPACING = 200`, and every full-range bound for spacing 200: `FULL_RANGE_LOWER/UPPER` (±887200) **and** the matching `MIN/MAX_FULL_RANGE_SQRT` bounds (`RobinhoodV3PoolRepair.sol:82-84`, derived via `RobinhoodV3PriceMath`). It still exposes `v3Factory()`, `WETH()`, `POOL_FEE()` and `liquidityKind() == 2` (the keeper and factory read them).
+- Derive from `contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol` + `RobinhoodV3PoolRepair.sol`. Prefer inheritance/override where the originals allow it without editing them; otherwise copy into `contracts/dogeos/muchfi/`. Changes only: `muchfiV3SwapCallback` instead of `uniswapV3SwapCallback` (same body), a `slot0` interface with `uint32 feeProtocol`, `POOL_FEE = 10000`, `TICK_SPACING = 200`, and every full-range bound for spacing 200: `FULL_RANGE_LOWER/UPPER` (±887200) **and** the matching `MIN/MAX_FULL_RANGE_SQRT` bounds (`RobinhoodV3PoolRepair.sol:82-84`), computed with `@uniswap/v3-core` `TickMath.getSqrtRatioAtTick(±887200)` and pinned by a test. It still exposes `v3Factory()`, `WETH()`, `POOL_FEE()` and `liquidityKind() == 2` (the keeper and factory read them).
 - Fork tests (t30 helpers; test factory/campaign stand-ins as the existing adapter specs use): graduation into a fresh 1% MuchFi pool; graduation into a pool pre-created at a wrong price (the repair path ends at the target price); the position NFT ends in the locker; no residual native/WDOGE/MEME in the adapter.
-**Verify:** `npx hardhat --config hardhat.dogeos-testnet-fork.config.ts test test/MuchfiGraduationAdapter.fork.spec.ts` → all passing; `git diff --stat 6c5ca159a -- contracts/gen7 contracts/integrations contracts/PermanentV3PositionLocker.sol contracts/CreatorRewardsVaultV2.sol` → empty
+**Verify:** `npx hardhat --config hardhat.dogeos-testnet-fork.config.ts test test/MuchfiGraduationAdapter.fork.spec.ts` → all passing; `git diff --stat 6c5ca159a -- contracts/gen7 contracts/integrations contracts/PermanentV3PositionLocker.sol contracts/CreatorRewardsVaultV2.sol contracts/EvmGenPoolSwap.sol` → empty
 
 ### Task 32: MuchFi position locker variant            [id: t32]
 **Depends-on:** [t30]
@@ -159,7 +159,7 @@
 - `MuchfiPoolSwap.sol`: a copy of `contracts/EvmGenPoolSwap.sol` (which declares and decodes `uint8 feeProtocol` at :36 and :130) whose only change is the `uint32 feeProtocol` slot0 interface. `EvmGenPoolSwap.sol` itself is not edited.
 - From `contracts/PermanentV3PositionLocker.sol`: `muchfiV3SwapCallback` instead of `uniswapV3SwapCallback` (same body), and `MuchfiPoolSwap` instead of `EvmGenPoolSwap` (`:408-422`). Nothing else. Same inheritance-first rule as t31.
 - Fork tests: lock a MuchFi 1% position; collect LP fees after swaps (MuchFi's 32% protocol cut taken at the pool, the remainder reaching the locker); the `sellMemeForPaired` swap path works via `muchfiV3SwapCallback`; the revenue split to the router matches the original; the NFT can never leave.
-**Verify:** `npx hardhat --config hardhat.dogeos-testnet-fork.config.ts test test/MuchfiPositionLocker.fork.spec.ts` → all passing
+**Verify:** `npx hardhat --config hardhat.dogeos-testnet-fork.config.ts test test/MuchfiPositionLocker.fork.spec.ts` → all passing; `git diff --stat 6c5ca159a -- contracts/EvmGenPoolSwap.sol contracts/PermanentV3PositionLocker.sol` → empty
 
 ### Task 33: MuchFi creator vault variant            [id: t33]
 **Depends-on:** [t30, t32]
@@ -191,7 +191,7 @@
   - G2 = `MuchfiV3NativeGraduationAdapter` (t31).
   - G3 = `MuchfiV3PositionLocker` (t32), via `deployFactoryWithLocker`. Extend that helper only if it hard-codes the locker contract name, without changing its behaviour for existing callers.
   - F2 = `MuchfiCreatorRewardsVault` (t33), with dexFactory = MuchFi factory.
-  - `assertFeeTierSpacing` checks 10000 → 200.
+  - a DogeOS-local fee-tier check (10000 → 200) replaces `assertFeeTierSpacing`, whose RH helper hard-codes 3000/60 (`scripts/deploy-robinhood-quote-generation.ts:72-79`).
   - The table below otherwise applies.
 - Spec §1 "complete fresh set", "Route authority", "Deploy outputs".
 - `deployDogeosGen7Stack(params)` implements this ordered table:
@@ -361,7 +361,7 @@ Changes:
 - **MuchFi post-graduation trade** for 6281971 (spec §1):
   - quotes come from MuchFi QuoterV2 and swaps go through the MuchFi SmartRouter, using the per-chain env `_6281971` names `robinhoodV3Trade.ts` already reads
   - the pool fee is **10000**: any hard-coded 3000 in that trade path gets an explicit DogeOS branch, with Robinhood unchanged
-  - verify the calldata shape against t30's SmartRouter fact
+  - the frontend calls S1 (`RobinhoodV3NativeSwapAdapterV2`), which does `exactInputSingle` into the SmartRouter; check that path against t30's SmartRouter fact
 - Stock UI stays off for DogeOS.
 - Tests:
   - the DogeOS adapter is selected
