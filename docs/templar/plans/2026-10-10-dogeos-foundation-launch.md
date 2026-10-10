@@ -22,7 +22,7 @@
 - **Keys:** `config/dogeos.local` only (gitignored), with `DOGEOS_TESTNET_DEPLOYER_PRIVATE_KEY`, `DOGEOS_TESTNET_ORACLE_UPDATER_PRIVATE_KEY` and `DOGEOS_TESTNET_GRADUATION_KEEPER_PRIVATE_KEY`.
   - Addresses: deployer `0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8`, updater `0x7dBDFe829309B4170346CF7e4496094CD126E9c1`, keeper `0xb07B9E70D1759Fc42103458039AaE2413026B078`.
   - Never read, print, log or commit a private key. No fallback to `DEPLOYER_PK` / `PRIVATE_KEY_DEPLOY`.
-  - Route authority = a **new DogeOS key**, `DOGEOS_TESTNET_ROUTE_AUTHORITY_PRIVATE_KEY` in `config/dogeos.local`, address `ROUTE_AUTHORITY_ADDRESS` (filled in once generated; spec §1 Route authority). Not `0x2501…Bde0`: the TEST API holds no key for it. The route-authority address is a deploy parameter, passed as public `DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS`, never derived by reading the key in scripts.
+  - Route authority = a **new DogeOS key**, `DOGEOS_TESTNET_ROUTE_AUTHORITY_PRIVATE_KEY` in `config/dogeos.local`, address `0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF` (spec §1 Route authority). Not `0x2501…Bde0`: the TEST API holds no key for it. The route-authority address is a deploy parameter, passed as public `DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS`, never derived by reading the key in scripts.
 - **No transaction on Chikyū** and no staging DB write without the founder's explicit go (t28, t29). No production DB writes ever. Local Hardhat (31337) and read-only fork runs are fine.
 - **Indexer:** `CONFIRMATIONS` stays global 1. `getLogs` ≤ 10,000 blocks per call for 6281971.
 - **Commits:** conventional commits `type(scope): description`, scope `dogeos`, on branch `feat/dogeos-testnet`. End every commit message with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never commit `package-lock.json` drift unrelated to the task, `HybridSetup.txt`, `build-plan.md` or `config/*.local`.
@@ -411,7 +411,7 @@ Changes:
 - `V3_GRADUATION_CHAINS` (:25) and `enabledKeeperChains` (:38) gain 6281971.
 - The max gas for 6281971 defaults to ≤ 10,000,000 (`EVM_GRADUATION_KEEPER_MAX_GAS_6281971` may lower it, never raise it above 10M). `DEFAULT_MAX_GAS` for other chains is unchanged.
 - `keeperRpc` (`evmGraduationKeeperWorker.ts:36`): a DogeOS branch.
-- `FORBIDDEN_KEEPER_ADDRESSES` (`evmGraduationKeeper.ts:1087-1091`) gains lowercase `0x6c5c684d8ddf1d4338dbed21beb7d342dc8382f8` (deployer), `0x7dbdfe829309b4170346cf7e4496094cd126e9c1` (updater) and the route-authority address from the global constraints.
+- `FORBIDDEN_KEEPER_ADDRESSES` (`evmGraduationKeeper.ts:1087-1091`) gains lowercase `0x6c5c684d8ddf1d4338dbed21beb7d342dc8382f8` (deployer), `0x7dbdfe829309b4170346cf7e4496094cd126e9c1` (updater) and `0x4fcd24d620f8ecd298bf4d43cb1ca2f4d23876ff` (route authority).
 - Tests:
   - enabled only with `EVM_GRADUATION_KEEPER_ENABLED_6281971`
   - max gas ≤ 10M, including when env tries 15M

@@ -118,7 +118,8 @@ authorization with `ROUTE_AUTHORITY_MISMATCH` unless it matches `factory.routeAu
 Verified 2026-10-10: the TEST API has **no** route-authority key configured.
 `/api/routing/status` reports `route_signer_missing` for 97 and 46630, whose factories expect
 `0x2501cdC1…Bde0`. Founder decision: **a new DogeOS route-authority key**
-(`DOGEOS_TESTNET_ROUTE_AUTHORITY_PRIVATE_KEY` in `config/dogeos.local`).
+(`DOGEOS_TESTNET_ROUTE_AUTHORITY_PRIVATE_KEY` in `config/dogeos.local`), address
+`0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF`.
 - The DogeOS factory's `routeAuthority` is set to its address at deploy.
 - At gate 5 the founder sets it as the TEST API's global `ROUTE_AUTHORITY_PRIVATE_KEY`. Creates on 97
   and 46630 on TEST stay blocked, as they are today (a known item, out of scope).
