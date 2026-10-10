@@ -182,7 +182,7 @@ adapter exists would be bound to whatever adapter was set at that moment.
   read provider) and any other hand-kept set the guard test finds.
 - Per-chain env vars follow the existing `<NAME>_<chainId>` convention (`FACTORY_ADDRESS_6281971`,
   RPC, adapter and vault addresses).
-- Gen-7 route authorization gets 6281971's generation pair (whatever the deployed factory reports).
+- Gen-7 route authorization gets 6281971's generation pair (below).
   `dev-fix/route-authorization-gen7.test.mjs:62` currently asserts 6281971 is *not* supported. It is
   flipped on purpose.
 - The test-graduation-target gates in `dev-fix/route-auth.js` (the two `cid === 97 || cid === 46630`
@@ -192,7 +192,8 @@ adapter exists would be bound to whatever adapter was set at that moment.
 - Quote catalog (`api/data/approved-quote-catalog.v1.json`): **no change.** It is a mainnet-only
   snapshot (chains 56/101/4663); 97 and 46630 have no entry. 6281971 follows that pattern, and the
   catalog is a named mainnet-only exception in the guard test.
-- Generation pair: `lib/routeAuthorizationSigner.js` (~lines 166-170) is an explicit per-chain map. A
+- Generation pair: `dev-fix/routeAuthorizationSigner.js` (`ALLOWED_GENERATION_PAIRS`, ~lines 164-170)
+  is an explicit per-chain map. A
   fresh gen-7 set reports factory/campaign generation `[7, 6]`, so 6281971 gets exactly that pair, and
   the flipped test asserts it.
 
@@ -256,7 +257,9 @@ adapter exists would be bound to whatever adapter was set at that moment.
   46630. It fails if 6281971 is missing from any list it is expected in. Lists that intentionally
   exclude it are named exceptions in the test, each with a one-line reason: the hard-coded indexer
   `ACTIVE`, mainnet-only sets, stock/quote paths, and the creator-choice, payout-watchdog and
-  import-fee job lists.
+  import-fee job lists. An exception means "may exclude", not "must exclude". For example,
+  `frontend/api/lib/importFeePartnersAdmin.js` `PARTNER_CHAINS` already contains 6281971 from an
+  earlier commit; it stays as is.
 
 ### 7. Local hybrid development
 - `npm run dev` (frontend) runs the app and local API from the checkout. Per the founder's
@@ -312,7 +315,8 @@ adapter exists would be bound to whatever adapter was set at that moment.
   - all pre-existing test suites pass, with no re-pinned assertion
   - `git diff` of the branch shows no change to any existing file under `deployments/` (except new
     files under `deployments/dogeos/`)
-  - no change to any live/Coolify env entry not suffixed `_6281971` or named `DOGEOS_*`
+  - no change to any LIVE env entry. On TEST, the only entries touched that are not suffixed
+    `_6281971` or named `DOGEOS_*` are `VITE_ALLOWED_CHAIN_IDS` and the indexer active-chain list
   - for every hand-kept chain list, the only change is the added 6281971
 - A new `docs/claude/dogeos.md` topic file holds the verified facts, quirks and addresses, and is
   added to the CLAUDE.md topic index.
