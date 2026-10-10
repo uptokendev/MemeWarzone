@@ -9,7 +9,8 @@ import { readFileSync } from "node:fs";
 import { ethers } from "ethers";
 
 process.env.DATABASE_URL ||= "postgres://user:pass@127.0.0.1:1/none";
-// server/db.js reuses this global pool, so route modules import without a database.
+// server/db.js reuses globalThis.__memewarzone_pool when it is already set (its "Reuse pool across
+// invocations" hook), so route modules import with this stub and never open a database connection.
 globalThis.__memewarzone_pool ||= { query: async () => ({ rows: [], rowCount: 0 }) };
 
 const DOGEOS = 6281971;
@@ -473,6 +474,29 @@ test("reward claim config (generic): 6281971 claims in DOGE with its own distrib
   assert.equal(generic.explorerTxBase(DOGEOS), "https://dogeos-testnet.l2scan.co/tx/");
   assert.equal(generic.explorerTxBase(46630), "https://explorer.testnet.chain.robinhood.com/tx/");
   assert.equal(generic.explorerTxBase(97), "https://testnet.bscscan.com/tx/");
+});
+
+test("reward claim config (generic): 6281971 never borrows the unsuffixed (BNB) distributor; others unchanged", async () => {
+  const globalDistributor = "0x" + "9".repeat(40);
+  const viteDistributor = "0x" + "8".repeat(40);
+  for (const vars of [{ REWARD_DISTRIBUTOR_ADDRESS: globalDistributor }, { VITE_REWARD_DISTRIBUTOR_ADDRESS: viteDistributor }]) {
+    await withEnv(vars, async () => {
+      const res = expressRes();
+      await generic.rewardClaimConfig({ method: "GET", query: { chainId: String(DOGEOS) } }, res);
+      assert.equal(res.body.config.enabled, false);
+      assert.equal(res.body.config.reason, "MISSING_DISTRIBUTOR_ADDRESS");
+      assert.equal(res.body.config.distributorAddress, "");
+      assert.equal(res.body.config.mode, "disabled");
+      // Before/after: the unsuffixed global still applies to 56, 97 and 46630 exactly as today.
+      const expected = vars.REWARD_DISTRIBUTOR_ADDRESS || vars.VITE_REWARD_DISTRIBUTOR_ADDRESS;
+      for (const id of [56, 97, 46630]) {
+        const r = expressRes();
+        await generic.rewardClaimConfig({ method: "GET", query: { chainId: String(id) } }, r);
+        assert.equal(r.body.config.enabled, true, `enabled ${id}`);
+        assert.equal(r.body.config.distributorAddress, expected, `distributor ${id}`);
+      }
+    });
+  }
 });
 
 test("reward claim config (closeout router): 6281971 passes through and is listed", async () => {

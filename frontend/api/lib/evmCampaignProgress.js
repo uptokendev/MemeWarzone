@@ -3,11 +3,11 @@ import { DOGEOS_TESTNET_CHAIN_ID } from "./chainNative.js";
 import { DOGEOS_TESTNET_PUBLIC_RPC, dogeosConfiguredRpcUrls } from "./getServerReadProvider.js";
 
 /**
- * BNB / Robinhood bonding progress for the campaign list, exactly as Token Details computes it
+ * BNB / Robinhood / DogeOS bonding progress for the campaign list, exactly as Token Details computes it
  * (src/pages/TokenDetails.tsx curveProgress): the larger of tokens sold / curve supply and the
  * campaign's native balance / graduationNativeTarget() -- each campaign's own USD target through the
- * graduation oracle. Robinhood's graduationTarget is USD, so like Token Details it is not read as a
- * native target there. Replaces the fixed 50 BNB default. Batched per page, cached briefly.
+ * graduation oracle. Robinhood's and DogeOS's graduationTarget is USD, so like Token Details it is not
+ * read as a native target there. Replaces the fixed 50 BNB default. Batched per page, cached briefly.
  */
 const CACHE_MS = 15_000;
 const cache = new Map(); // `${chainId}:${address}` -> { at, pct }
@@ -18,6 +18,7 @@ const CAMPAIGN_ABI = [
   "function graduationTarget() view returns (uint256)",
 ];
 
+// Exported for tests (dogeosApiIdentity.test.mjs); the module itself only uses it internally.
 export function rpcUrl(chainId) {
   // DogeOS: its own env, then its public RPC. Never a BSC or Robinhood env.
   if (chainId === DOGEOS_TESTNET_CHAIN_ID) return dogeosConfiguredRpcUrls()[0] || DOGEOS_TESTNET_PUBLIC_RPC;
@@ -57,7 +58,7 @@ async function progressFor(chainId, address) {
   return Math.max(0, Math.min(100, Math.max(pctOf(sold, curveSupply), pctOf(balance, nativeTarget))));
 }
 
-/** Sets progressPct on BNB / Robinhood items from their own contracts (never throws). */
+/** Sets progressPct on BNB / Robinhood / DogeOS items from their own contracts (never throws). */
 export async function withEvmBondingProgress(items) {
   const now = Date.now();
   const evm = items.filter((item) => [56, 97, 4663, 46630, 6281971].includes(Number(item.chainId)) && !item.isDexTrading && rpcUrl(Number(item.chainId)));

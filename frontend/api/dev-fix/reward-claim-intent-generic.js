@@ -87,8 +87,9 @@ function envDistributorAddress(chainId) {
     chain === 97 ? process.env.BNB_TESTNET_REWARD_DISTRIBUTOR_ADDRESS : null,
     chain === 56 ? process.env.BNB_REWARD_DISTRIBUTOR_ADDRESS : null,
     chain === 56 ? process.env.REWARD_DISTRIBUTOR_ADDRESS_BNB : null,
-    process.env.REWARD_DISTRIBUTOR_ADDRESS,
-    process.env.VITE_REWARD_DISTRIBUTOR_ADDRESS,
+    // The unsuffixed globals are the legacy (BNB) distributor: DogeOS only ever uses its own suffixed env.
+    chain === DOGEOS_CHAIN_ID ? null : process.env.REWARD_DISTRIBUTOR_ADDRESS,
+    chain === DOGEOS_CHAIN_ID ? null : process.env.VITE_REWARD_DISTRIBUTOR_ADDRESS,
   ];
   return cleanAddress(candidates.find(Boolean));
 }
