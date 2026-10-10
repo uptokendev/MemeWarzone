@@ -276,8 +276,17 @@
 - Re-run the t23 guard test and the touched suites.
 **Verify:** `node --test scripts/dogeos-chain-list-guard.test.mjs` → pass; the DogeOS security preflight test → pass; `npx hardhat --config hardhat.dogeos-testnet-fork.config.ts test test/DogeosGen7Stack.fork.spec.ts` → pass, then `test/DogeosGen7Lifecycle.fork.spec.ts` → pass (run separately)
 
+### Task 37: Create readiness without CreatorRegistry / vote treasury on DogeOS            [id: t37]
+**Depends-on:** [t13, t24]
+**TDD:** required
+**Files:** `frontend/src/lib/bnbContracts.ts`, a DogeOS readiness test (new or extend `frontend/src/lib/dogeosLaunchPath.test.mjs`)
+- Spec §1 Registries (no CreatorRegistry, founder decision 2026-10-10) and scope (vote treasury is sub-project 3).
+- `commonRequiredContracts` (`bnbContracts.ts:144-156`) treats `creatorRegistry` and `voteTreasury` as required for every EVM chain, and `Create.tsx:382` gates direct deploy on that readiness. For 6281971 only (via `isDogeosChainId`), neither is required; every other chain's required set stays byte-for-byte. The readiness still requires every other contract.
+- Tests: with the DogeOS env set and no creator registry / vote treasury, readiness is `ready` for 6281971; 56/97/4663/46630 still require both; Create's direct-deploy gate follows.
+**Verify:** `cd frontend && node --test src/lib/dogeosLaunchPath.test.mjs src/lib/evmGen7Wiring.test.mjs` → pass; tsc error count ≤ 88
+
 ### Task 9: Chikyū fork rehearsal + DOGE budget (gate 3)            [id: t9]
-**Depends-on:** [t4, t7, t8, t26, t27, t34, t36]
+**Depends-on:** [t4, t7, t8, t26, t27, t34, t36, t37]
 **TDD:** waived (rehearsal run against a read-only fork; behaviour already covered by t6/t7)
 **Files:** `scripts/rehearse-dogeos-fork.ts` (new), `reports/dogeos/fork-rehearsal.json` (new), `package.json` (add `rehearse:dogeos-fork` only)
 - Spec gate 3.
@@ -594,7 +603,7 @@ Changes:
 **Verify:** `grep -c "dogeos.md" CLAUDE.md` → `1`; after the task's commit, `git diff HEAD~1 --stat -- CLAUDE.md` → `1 file changed, 1 insertion(+)`
 
 ### Task 26: Gate 1, full test suites            [id: t26]
-**Depends-on:** [t2, t3, t5, t6, t7, t8, t30, t31, t32, t33, t34, t35, t36, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24]
+**Depends-on:** [t2, t3, t5, t6, t7, t8, t30, t31, t32, t33, t34, t35, t36, t37, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24]
 **TDD:** waived (verification-only gate; no code)
 **Files:** none
 - Spec gate 1.
