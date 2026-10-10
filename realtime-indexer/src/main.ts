@@ -8,6 +8,7 @@ import { startDbcFeeRoutingWorker } from "./dbcFeeRoutingWorker.js";
 import { startDbcCreatorChoiceWorker } from "./dbcCreatorChoiceWorker.js";
 import { startDbcGraduationWorker } from "./dbcGraduationWorker.js";
 import { startEvmGraduationKeeperWorker } from "./evm/evmGraduationKeeperWorker.js";
+import { startDogeosOraclePushWorker } from "./evm/dogeosOraclePushWorker.js";
 import { startEvmCreatorChoiceWorker } from "./evm/evmCreatorChoiceWorker.js";
 import { startPayoutWatchdogWorker } from "./evm/payoutWatchdogWorker.js";
 import { startSolanaFeeEscrowWorker } from "./solanaFeeEscrowWorker.js";
@@ -28,6 +29,8 @@ startDbcFeeRoutingWorker();
 startDbcCreatorChoiceWorker();
 startDbcGraduationWorker();
 startEvmGraduationKeeperWorker();
+// DogeOS 6281971 DOGE/USD oracle push: off unless DOGEOS_ORACLE_PUSH_ENABLED; signs only with the updater key.
+startDogeosOraclePushWorker();
 startEvmCreatorChoiceWorker();
 void startPayoutWatchdogWorker().catch((error) => console.error("[payout-watchdog] start failed", error));
 // Off unless IMPORT_FEE_WORKER_ENABLED; dry run unless IMPORT_FEE_PAYOUT_SEND.
