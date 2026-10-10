@@ -13,6 +13,28 @@ function asPair(value: unknown): string {
 /** Why a heal attempt did or did not write CMS. Surfaced by /health diagnostics. */
 export type RobinhoodCmsHealResult = { healed: boolean; reason: string; pair?: string };
 
+/** The DogeOS RPC caps eth_getLogs at 10,000 blocks per call. */
+const DOGEOS_MAX_LOG_WINDOW = 10_000;
+
+/**
+ * DogeOS only: the graduation log lookup in windows of at most 10,000 blocks from created_block to
+ * the head, stopping at the first window that holds a graduation log. Robinhood keeps its single call.
+ */
+async function dogeosGraduationLogs(
+  provider: ethers.Provider,
+  address: string,
+  topics: string[],
+  fromBlock: number,
+): Promise<ethers.Log[]> {
+  const head = await provider.getBlockNumber();
+  for (let start = Math.max(0, fromBlock); start <= head; start += DOGEOS_MAX_LOG_WINDOW) {
+    const end = Math.min(head, start + DOGEOS_MAX_LOG_WINDOW - 1);
+    const logs = await provider.getLogs({ address, topics: [topics], fromBlock: start, toBlock: end });
+    if (logs.length) return logs;
+  }
+  return [];
+}
+
 /**
  * campaign_market_state_graduation_order rejects a graduated row whose
  * graduation_block/tx are null, so the pair alone is not writable. Recover the
@@ -44,12 +66,14 @@ async function findGraduationAnchor(
     const topic = iface.getEvent("CampaignFinalized")?.topicHash;
     if (!topic) return null;
     // Launch generation (campaign 5) anchors on Graduated; one filter covers both generations.
-    const logs = await provider.getLogs({
-      address: camp,
-      topics: [[topic, GEN5_GRADUATED_TOPIC]],
-      fromBlock: Number(known?.created_block || 0),
-      toBlock: "latest",
-    });
+    const logs = chainId === DOGEOS_TESTNET_CHAIN_ID
+      ? await dogeosGraduationLogs(provider, camp, [topic, GEN5_GRADUATED_TOPIC], Number(known?.created_block || 0))
+      : await provider.getLogs({
+          address: camp,
+          topics: [[topic, GEN5_GRADUATED_TOPIC]],
+          fromBlock: Number(known?.created_block || 0),
+          toBlock: "latest",
+        });
     const finalized = logs[logs.length - 1];
     if (!finalized) return null;
     const block = await provider.getBlock(finalized.blockNumber);
@@ -338,3 +362,7 @@ export async function healRobinhoodGraduatedCms(
   console.log("[indexer] RH CMS heal seeded GRADUATING", { chainId, campaign: camp, pair, venue });
   return { healed: true, reason: "seeded_graduating", pair };
 }
+
+export const robinhoodCmsHealInternals = {
+  findGraduationAnchor,
+};

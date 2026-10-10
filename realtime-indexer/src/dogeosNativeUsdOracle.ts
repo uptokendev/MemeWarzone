@@ -92,10 +92,10 @@ export function evaluateDogeosNativeUsdRound(input: {
 }
 
 export async function getDogeosNativeUsdReference(chainId: number): Promise<DogeosNativeUsdReference> {
-  const oracleFeedAddress = chainId === DOGEOS_CHAIN_ID ? feedAddress() : null;
   if (chainId !== DOGEOS_CHAIN_ID) {
     return { chainId, priceUsd: null, updatedAt: null, roundId: null, oracleFeedAddress: null, source: null, healthy: false, rpc: null, error: "Unsupported DogeOS chain." };
   }
+  const oracleFeedAddress = feedAddress();
   if (!oracleFeedAddress) {
     return { chainId, priceUsd: null, updatedAt: null, roundId: null, oracleFeedAddress: null, source: null, healthy: false, rpc: null, error: "DogeOS native USD oracle is not configured." };
   }

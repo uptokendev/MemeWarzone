@@ -37,7 +37,7 @@ const { resolveRobinhoodQuoteUsdReference } = await import("../robinhoodMarketVa
 const { getDogeosNativeUsdReference, evaluateDogeosNativeUsdRound, dogeosNativeUsdOracleInternals } = await import(
   "../dogeosNativeUsdOracle.js"
 );
-const { healRobinhoodGraduatedCms } = await import("../robinhoodCmsHeal.js");
+const { healRobinhoodGraduatedCms, robinhoodCmsHealInternals } = await import("../robinhoodCmsHeal.js");
 const { registerRobinhoodMarketContinuityRoutes, robinhoodMarketApiInternals } = await import("../robinhoodMarketApi.js");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -560,4 +560,71 @@ test("the stock-token registry route stays Robinhood-only (named exception)", as
   const res = fakeResponse();
   await routes.get("/api/robinhood/stock-tokens")!({ query: { chainId: String(DOGEOS) }, params: {} }, res, () => {});
   assert.equal(res.statusCode, 400);
+});
+
+// ---------------------------------------------------------------------------------------------
+// CMS heal graduation anchor: getLogs <= 10,000 blocks per call on 6281971
+
+function anchorProvider(input: { head: number; maxRange?: number; graduationBlock: number }) {
+  const calls: Array<{ fromBlock: unknown; toBlock: unknown; topics: unknown }> = [];
+  const gradTx = `0x${"9a".repeat(32)}`;
+  return {
+    calls,
+    gradTx,
+    async getBlockNumber() { return input.head; },
+    async getLogs(filter: any) {
+      calls.push({ fromBlock: filter.fromBlock, toBlock: filter.toBlock, topics: filter.topics });
+      const from = Number(filter.fromBlock);
+      const to = filter.toBlock === "latest" ? input.head : Number(filter.toBlock);
+      if (input.maxRange != null && to - from + 1 > input.maxRange) throw new Error(`query exceeds max block range ${input.maxRange}`);
+      return input.graduationBlock >= from && input.graduationBlock <= to
+        ? [{ blockNumber: input.graduationBlock, transactionHash: gradTx, topics: [], data: "0x", index: 0 }]
+        : [];
+    },
+    async getBlock(_n: number) { return { hash: `0x${"cd".repeat(32)}`, timestamp: 1_791_600_000 }; },
+  };
+}
+
+async function withCampaignRow<T>(row: Record<string, unknown>, run: () => Promise<T>): Promise<T> {
+  (pool as any).query = async (sql: unknown, params: unknown[] = []) => {
+    queries.push({ sql: String(sql), params });
+    return /from public\.campaigns/.test(String(sql)) ? { rows: [row], rowCount: 1 } : { rows: [], rowCount: 0 };
+  };
+  try {
+    return await run();
+  } finally {
+    (pool as any).query = stubQuery;
+  }
+}
+
+test("6281971 heal finds a graduation anchor beyond 10,000 blocks with getLogs windows <= 10,000", async () => {
+  const provider = anchorProvider({ head: 45_000, maxRange: 10_000, graduationBlock: 25_123 });
+  const anchor = await withCampaignRow({ created_block: 100 }, () =>
+    robinhoodCmsHealInternals.findGraduationAnchor(provider as any, DOGEOS, "0x00000000000000000000000000000000000000c1"),
+  );
+  assert.ok(anchor, "anchor found");
+  assert.equal(anchor.block, 25_123);
+  assert.equal(anchor.txHash, provider.gradTx);
+  assert.ok(provider.calls.length > 1);
+  let expectedFrom = 100;
+  for (const call of provider.calls) {
+    assert.equal(call.fromBlock, expectedFrom, "windows are contiguous from created_block");
+    assert.notEqual(call.toBlock, "latest");
+    assert.ok(Number(call.toBlock) - Number(call.fromBlock) + 1 <= 10_000);
+    expectedFrom = Number(call.toBlock) + 1;
+  }
+  assert.ok(Number(provider.calls[provider.calls.length - 1].toBlock) >= 25_123, "stops at the window holding the log");
+  assert.ok(Number(provider.calls[provider.calls.length - 1].toBlock) < 45_000, "does not scan past the first match");
+});
+
+test("46630 heal keeps its single created_block -> latest getLogs call", async () => {
+  const provider = anchorProvider({ head: 45_000, graduationBlock: 25_123 });
+  const anchor = await withCampaignRow({ created_block: 100 }, () =>
+    robinhoodCmsHealInternals.findGraduationAnchor(provider as any, 46630, "0x0000000000000000000000000000000000000044"),
+  );
+  assert.ok(anchor);
+  assert.equal(anchor.block, 25_123);
+  assert.equal(provider.calls.length, 1);
+  assert.equal(provider.calls[0].fromBlock, 100);
+  assert.equal(provider.calls[0].toBlock, "latest");
 });
