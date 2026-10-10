@@ -1,4 +1,4 @@
-import { DOGEOS_CHAIN_LABEL, isDogeosTestnetChain } from "./dogeosPresentation.mjs";
+import { DOGEOS_SHORT_LABEL, isDogeosTestnetChain } from "./dogeosPresentation.mjs";
 
 export function isAnimatedTokenImage(src) {
   const raw = String(src || "").trim().toLowerCase();
@@ -12,7 +12,7 @@ export function tokenShareChainLabel(chainId) {
   const id = Number(chainId);
   if (id === 101 || id === 102) return "SOLANA";
   if (id === 4663 || id === 46630) return "ROBINHOOD";
-  if (isDogeosTestnetChain(id)) return DOGEOS_CHAIN_LABEL.toUpperCase();
+  if (isDogeosTestnetChain(id)) return DOGEOS_SHORT_LABEL.toUpperCase();
   return "BNB CHAIN";
 }
 

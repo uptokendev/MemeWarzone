@@ -16,7 +16,6 @@ import {
   BNB_CHAIN_ID,
   BNB_TESTNET_CHAIN_ID,
   getActiveChainId,
-  isDogeosChainId,
   isEvmChainId,
   SOLANA_CHAIN_ID,
 } from "@/lib/chainConfig";
@@ -50,7 +49,7 @@ import { cp } from "@/components/token/coinPageStyles";
 import { toast } from "sonner";
 import { useProfileStream } from "@/hooks/useProfileStream";
 import { LiveTabLabel, ProfileLiveStream } from "@/components/profile/ProfileLiveStream";
-import { DOGEOS_EXPLORER_BASE } from "@/lib/dogeosPresentation.mjs";
+import { publicProfileExplorerBase as getExplorerBase } from "@/lib/chainPresentation";
 
 type PublicCoin = {
   id: number;
@@ -70,16 +69,6 @@ function shorten(addr?: string | null) {
   if (!addr) return "";
   if (addr.length <= 10) return addr;
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
-
-export function getExplorerBase(chainId?: number): string {
-  if (chainId === 101 || chainId === 102) return "https://explorer.solana.com";
-  if (chainId === 46630) return "https://explorer.testnet.chain.robinhood.com";
-  if (chainId === 4663) return "https://explorer.chain.robinhood.com";
-  if (chainId === 97) return "https://testnet.bscscan.com";
-  if (chainId === 56) return "https://bscscan.com";
-  if (isDogeosChainId(chainId)) return DOGEOS_EXPLORER_BASE;
-  return "https://bscscan.com";
 }
 
 function formatTimeAgo(createdAt?: number | string | null): string {

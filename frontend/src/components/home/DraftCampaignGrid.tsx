@@ -17,6 +17,7 @@ import {
   ROBINHOOD_TESTNET_CHAIN_ID,
   SOLANA_CHAIN_ID,
 } from "@/lib/chainConfig";
+import { draftChainLabel } from "@/lib/chainPresentation";
 import { resolveImageUri } from "@/lib/media";
 import { timestampSeconds, type CampaignDraftLifecycle } from "@/lib/scheduledLaunchApi";
 import { cn } from "@/lib/utils";
@@ -168,22 +169,6 @@ function isDiscoverableDraft(draft: CampaignDraftLifecycle, nowMs = Date.now()) 
   if (status === "scheduled") return isDiscoverableScheduledDraft(draft, nowMs);
   // Un-deployed prepare pages only (armed timed launches use status=scheduled).
   return !draft.campaignAddress;
-}
-
-export function draftChainLabel(chainId: number) {
-  if (chainId === SOLANA_CHAIN_ID) return "Solana";
-  if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "Robinhood";
-  if (isDogeosChainId(chainId)) return "DogeOS";
-  return "BNB";
-}
-
-export function draftChainBadgeClass(chainId: number) {
-  if (chainId === SOLANA_CHAIN_ID) return "border-violet-400/60 bg-violet-400/10 text-violet-300";
-  if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) {
-    return "border-sky-400/60 bg-sky-400/10 text-sky-300";
-  }
-  if (isDogeosChainId(chainId)) return "border-yellow-300/60 bg-yellow-300/10 text-yellow-200";
-  return "border-amber-400/60 bg-amber-400/10 text-amber-300";
 }
 
 export function DraftCampaignGrid({ className, query }: { className?: string; query: HomeQuery & { tab?: string } }) {

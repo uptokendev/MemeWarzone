@@ -12,13 +12,10 @@ import {
 import { getReadProvider } from "@/lib/readProvider";
 import {
   getActiveChainId,
-  getNativeSymbol,
-  isDogeosChainId,
   isEvmChainId,
-  ROBINHOOD_CHAIN_ID,
-  ROBINHOOD_TESTNET_CHAIN_ID,
 } from "@/lib/chainConfig";
 import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
+import { profileNativeSymbol } from "@/lib/chainPresentation";
 import { isSolanaAddress } from "@/lib/address";
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import { fetchPublicPortfolio } from "@/lib/profileApi";
@@ -143,13 +140,6 @@ function enrichBalanceRow(row: TokenBalanceRow, campaign?: any, summary?: Campai
     name: firstText(summaryMeta.name, campaignMeta.name, row.name, "Unknown token"),
     ticker: firstText(summaryMeta.ticker, campaignMeta.ticker, row.ticker, tokenFallback.slice(0, 4)),
   };
-}
-
-/** Native unit of the profile's EVM chain: ETH on Robinhood, DOGE on DogeOS, else BNB. */
-export function profileNativeSymbol(chainId: number): string {
-  if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "ETH";
-  if (isDogeosChainId(chainId)) return getNativeSymbol(chainId);
-  return "BNB";
 }
 
 export function useProfileBalances({

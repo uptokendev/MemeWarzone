@@ -29,11 +29,10 @@ import {
   SOLANA_CHAIN_ID,
   isRobinhoodChainId,
   isDogeosChainId,
-  getChainLabel,
-  getNativeSymbol,
   type SupportedChainId,
 } from "@/lib/chainConfig";
-import { DOGEOS_DEX_LABEL, DOGEOS_EXPLORER_BASE } from "@/lib/dogeosPresentation.mjs";
+import { DOGEOS_DEX_LABEL, DOGEOS_SHORT_LABEL } from "@/lib/dogeosPresentation.mjs";
+import { evmPageDexVenueLabel, evmPageNativeUnit, tokenDetailsExplorerBase as getExplorerBase } from "@/lib/chainPresentation";
 import { resolveMarketIdentity, resolveMarketIdentityAcrossEvm } from "@/lib/marketIdentity";
 import { recordRecentlyViewed } from "@/lib/searchHistory";
 import { getReadProvider } from "@/lib/readProvider";
@@ -457,31 +456,6 @@ function confirmedRowsToCurvePoints(
       } satisfies CurveTradePoint;
     })
     .filter((point) => Boolean(point.txHash) && point.tokensWei > 0n && point.nativeWei >= 0n);
-}
-
-export function getExplorerBase(chainId?: number): string {
-  const id = Number(chainId ?? 0);
-  if (id === 101) return "https://explorer.solana.com";
-  if (id === 46630) return "https://explorer.testnet.chain.robinhood.com";
-  if (id === 4663) return "https://explorer.chain.robinhood.com";
-  if (id === 56) return "https://bscscan.com";
-  if (id === 97) return "https://testnet.bscscan.com";
-  if (isDogeosChainId(id)) return DOGEOS_EXPLORER_BASE;
-  return "https://bscscan.com";
-}
-
-/** Native unit on an EVM token page: ETH on Robinhood, DOGE on DogeOS, else BNB. */
-export function evmPageNativeUnit(chainId?: number | null): string {
-  if (isRobinhoodChainId(chainId)) return "ETH";
-  if (isDogeosChainId(chainId)) return getNativeSymbol(chainId);
-  return "BNB";
-}
-
-/** DEX the EVM coin trades on after graduation: Uniswap on Robinhood, MuchFi on DogeOS, else Topaz. */
-export function evmPageDexVenueLabel(chainId?: number | null): string {
-  if (isRobinhoodChainId(chainId)) return "Uniswap";
-  if (isDogeosChainId(chainId)) return DOGEOS_DEX_LABEL;
-  return "Topaz";
 }
 
 function formatTinyUsdPrice(value: number): string {
@@ -4325,7 +4299,7 @@ const toSeconds = (ts: number): number => {
           : isRobinhoodPage
             ? "This campaign is on Robinhood. Connect a Robinhood wallet to buy or sell."
             : isDogeosPage
-              ? `This campaign is on ${getChainLabel(chainIdForStorage)}. Connect a DogeOS wallet to buy or sell.`
+              ? `This campaign is on ${DOGEOS_SHORT_LABEL}. Connect a DogeOS wallet to buy or sell.`
               : "This campaign is on BNB. Connect a BNB wallet to buy or sell.",
       });
       openWalletModal();
@@ -5127,7 +5101,7 @@ const toSeconds = (ts: number): number => {
                 {tokenData.name}
               </h1>
               <span className={`${cp.chip} font-mw-mono`}>{tokenData.ticker}</span>
-              <span className={cp.chip}>{isSolanaPage ? "Solana" : isRobinhoodPage ? "Robinhood" : isDogeosPage ? getChainLabel(chainIdForStorage) : "BNB Chain"}</span>
+              <span className={cp.chip}>{isSolanaPage ? "Solana" : isRobinhoodPage ? "Robinhood" : isDogeosPage ? DOGEOS_SHORT_LABEL : "BNB Chain"}</span>
               <span className={isDexStage ? cp.chipGood : cp.chipAccent}>{stagePill}</span>
               {isDbcPage ? (
                 <span className={cp.chipAccent}>

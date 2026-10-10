@@ -22,15 +22,11 @@ import {
   getArenaVoteTreasuryAddress,
   getPublicRpcUrl,
   getVoteTreasuryAddress,
-  getChainLabel,
-  getNativeSymbol,
-  isDogeosChainId,
   isSolanaChainId,
-  ROBINHOOD_CHAIN_ID,
-  ROBINHOOD_TESTNET_CHAIN_ID,
   SOLANA_CHAIN_ID,
 } from "@/lib/chainConfig";
 import { getBnbContractAddresses } from "@/lib/bnbContracts";
+import { upvoteNativeUnit, upvoteNetworkLabel } from "@/lib/chainPresentation";
 import { getReadProvider } from "@/lib/readProvider";
 import { apiFetch } from "@/lib/apiBase";
 import { isSolanaAddress } from "@/lib/address";
@@ -64,25 +60,6 @@ function formatNativeAmount(weiOrLamports: bigint, decimals: number): string {
   } catch {
     return "—";
   }
-}
-
-function isRobinhood(chainId: number) {
-  return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
-}
-
-/** Native unit the vote is paid in: SOL, ETH on Robinhood, DOGE on DogeOS, else BNB. */
-export function upvoteNativeUnit(chainId: number, isSolanaCampaign: boolean): string {
-  if (isSolanaCampaign) return "SOL";
-  if (isRobinhood(chainId)) return "ETH";
-  if (isDogeosChainId(chainId)) return getNativeSymbol(chainId);
-  return "BNB";
-}
-
-/** Network name in the switch-wallet copy. */
-export function upvoteNetworkLabel(chainId: number): string {
-  if (isRobinhood(chainId)) return "Robinhood";
-  if (isDogeosChainId(chainId)) return getChainLabel(chainId);
-  return "BNB";
 }
 
 type Props = {

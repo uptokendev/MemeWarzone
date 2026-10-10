@@ -6,7 +6,10 @@
 
 export const DOGEOS_TESTNET_CHAIN_ID = 6281971;
 export const DOGEOS_NATIVE_SYMBOL = "DOGE";
+/** Network / wallet name, where other chains show their long name too ("Robinhood Chain Testnet"). */
 export const DOGEOS_CHAIN_LABEL = "DogeOS Chikyū Testnet";
+/** Short name for chips, cards and badges, where other chains show "BNB", "Solana", "Robinhood". */
+export const DOGEOS_SHORT_LABEL = "DogeOS";
 export const DOGEOS_EXPLORER_BASE = "https://dogeos-testnet.l2scan.co";
 export const DOGEOS_DEX_LABEL = "MuchFi";
 

@@ -1,8 +1,8 @@
 /** Home (UI redesign phase 2): coin lists for the story row, Launches, Graduations and Trending. Read-only, existing /api/campaigns. */
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/apiBase";
-import { getChainLabel, getNativeSymbol, isDogeosChainId } from "@/lib/chainConfig";
-import { DOGEOS_DEX_LABEL } from "@/lib/dogeosPresentation.mjs";
+import { getNativeSymbol, isDogeosChainId } from "@/lib/chainConfig";
+import { DOGEOS_DEX_LABEL, DOGEOS_SHORT_LABEL } from "@/lib/dogeosPresentation.mjs";
 
 export type HomeCoin = {
   chainId: number;
@@ -76,7 +76,7 @@ export function chainNameFor(chainId?: number | null) {
   const id = Number(chainId);
   if (id === 101 || id === 102) return "Solana";
   if (id === 4663 || id === 46630) return "Robinhood";
-  if (isDogeosChainId(id)) return getChainLabel(id);
+  if (isDogeosChainId(id)) return DOGEOS_SHORT_LABEL;
   return "BNB";
 }
 

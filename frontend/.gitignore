@@ -41,3 +41,5 @@ AGENTS.md
 
 # feedChainIsolation.test.mjs mkdtemps here and does not clean up
 .mwz-feed-isolation-*/
+# dogeosPresentation.test.mjs bundles its harness here (removed after import)
+.mwz-dogeos-presentation-*/

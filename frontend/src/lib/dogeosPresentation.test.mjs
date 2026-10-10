@@ -2,7 +2,7 @@
 // DOGE/USD price source. Every helper gets an explicit 6281971 branch (never the BNB/ETH fallthrough),
 // and the existing chains (56, 97, 101, 4663, 46630) keep exactly the values they had before.
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -11,6 +11,7 @@ import { build } from "esbuild";
 
 import {
   DOGEOS_CHAIN_LABEL,
+  DOGEOS_SHORT_LABEL,
   DOGEOS_DEX_LABEL,
   DOGEOS_EXPLORER_BASE,
   DOGEOS_NATIVE_SYMBOL,
@@ -57,18 +58,24 @@ export { getNativeSymbol, getChainLabel, getExplorerTxBase, DOGEOS_TESTNET_CHAIN
 export { nativeSymbolFor, chainNameFor, dexNameFor, formatNative } from "./homeFeedData.ts";
 export { nativeSymbolForChain } from "./rewardProgramsApi.ts";
 export { getExplorerBase as profileExplorerBase } from "./profile/profileFormatters.ts";
-export { chainLabel as feedChainLabel, nativeSymbol as feedNativeSymbol } from "../components/feed/FeedCards.tsx";
-export { explorerTxUrl as chartExplorerTxUrl } from "../components/token/UnifiedMarketChart.tsx";
-export { nativeTickerSymbol } from "../components/home/CampaignTickerBar.tsx";
-export { draftChainLabel, draftChainBadgeClass } from "../components/home/DraftCampaignGrid.tsx";
-export { getExplorerBase as publicProfileExplorerBase } from "../pages/PublicProfile.tsx";
-export { getExplorerBase as tokenDetailsExplorerBase, evmPageNativeUnit, evmPageDexVenueLabel } from "../pages/TokenDetails.tsx";
-export { rewardNativeSymbol, rewardChainLabel } from "../pages/command-center/CommandCenterClaims.tsx";
+export {
+  feedChainLabel,
+  feedNativeSymbol,
+  chartExplorerTxUrl,
+  draftChainLabel,
+  draftChainBadgeClass,
+  publicProfileExplorerBase,
+  tokenDetailsExplorerBase,
+  evmPageNativeUnit,
+  evmPageDexVenueLabel,
+  rewardNativeSymbol,
+  rewardChainLabel,
+  profileNativeSymbol,
+  upvoteNativeUnit,
+  upvoteNetworkLabel,
+} from "./chainPresentation.ts";
 export { nativeUsdPriceSource } from "../hooks/useNativeUsdPrice.ts";
 export { fetchDogeUsdFromSources } from "../hooks/useDogeUsdPrice.ts";
-export { profileNativeSymbol } from "../hooks/profile/useProfileBalances.ts";
-export { upvoteNativeUnit, upvoteNetworkLabel } from "../components/token/UpvoteDialog.tsx";
-export { creatorProtectionNativeSymbol } from "../components/token/CreatorProtectionDialog.tsx";
 `,
         resolveDir: dir,
         sourcefile: "dogeosPresentationHarness.ts",
@@ -80,8 +87,6 @@ export { creatorProtectionNativeSymbol } from "../components/token/CreatorProtec
       platform: "node",
       packages: "external",
       alias: { "@": srcRoot },
-      jsx: "automatic",
-      loader: { ".png": "dataurl", ".jpg": "dataurl", ".svg": "dataurl", ".webp": "dataurl", ".css": "empty" },
       define: {
         "import.meta.env": JSON.stringify({
           DEV: false,
@@ -112,6 +117,7 @@ test("the DogeOS display constants match chainConfig", async () => {
   assert.equal(h.getNativeSymbol(DOGE), DOGEOS_NATIVE_SYMBOL);
   assert.equal(DOGEOS_CHAIN_LABEL, "DogeOS Chikyū Testnet");
   assert.equal(h.getChainLabel(DOGE), DOGEOS_CHAIN_LABEL);
+  assert.equal(DOGEOS_SHORT_LABEL, "DogeOS");
   assert.equal(DOGEOS_EXPLORER_BASE, "https://dogeos-testnet.l2scan.co");
   assert.equal(h.getExplorerTxBase(DOGE), `${DOGEOS_EXPLORER_BASE}/tx/`);
   assert.equal(DOGEOS_DEX_LABEL, "MuchFi");
@@ -160,7 +166,7 @@ test("graduation market: existing chains unchanged", () => {
 test("wallet chain guard and share card label DogeOS, existing chains unchanged", () => {
   assert.equal(walletGuardChainLabel(DOGE), "DogeOS Chikyū Testnet");
   assert.deepEqual(EXISTING.map(walletGuardChainLabel), ["BNB Chain", "BNB testnet", "chain 101", "Robinhood Chain", "Robinhood testnet"]);
-  assert.equal(tokenShareChainLabel(DOGE), "DOGEOS CHIKYŪ TESTNET");
+  assert.equal(tokenShareChainLabel(DOGE), "DOGEOS");
   assert.deepEqual(EXISTING.map(tokenShareChainLabel), ["BNB CHAIN", "BNB CHAIN", "SOLANA", "ROBINHOOD", "ROBINHOOD"]);
 });
 
@@ -208,7 +214,7 @@ test("EVM launchpad safety presentation: existing chains unchanged", () => {
 test("home feed: DOGE, DogeOS label and MuchFi; existing chains unchanged", async () => {
   const h = await loadHarness();
   assert.equal(h.nativeSymbolFor(DOGE), "DOGE");
-  assert.equal(h.chainNameFor(DOGE), "DogeOS Chikyū Testnet");
+  assert.equal(h.chainNameFor(DOGE), "DogeOS");
   assert.equal(h.dexNameFor(DOGE), "MuchFi");
   assert.equal(h.formatNative(2.5, DOGE), "2.5 DOGE");
   const all = [...EXISTING, 102];
@@ -225,7 +231,7 @@ test("reward and claim symbols: DOGE for DogeOS, never the BNB fallback; existin
   assert.equal(h.nativeSymbolForChain(1, "X"), "X");
   assert.equal(h.nativeSymbolForChain(1, null), "BNB");
   assert.equal(h.rewardNativeSymbol(DOGE), "DOGE");
-  assert.equal(h.rewardChainLabel(DOGE), "DogeOS Chikyū Testnet");
+  assert.equal(h.rewardChainLabel(DOGE), "DogeOS");
   assert.deepEqual(EXISTING.map(h.rewardNativeSymbol), ["BNB", "BNB", "SOL", "ETH", "ETH"]);
   assert.deepEqual(EXISTING.map(h.rewardChainLabel), ["BNB", "BNB", "Solana", "Robinhood", "Robinhood"]);
 });
@@ -259,13 +265,14 @@ test("explorers point DogeOS at L2Scan; existing chains unchanged", async () => 
 
 test("feed cards, ticker, drafts, profile, upvote and creator protection: DogeOS branches; existing chains unchanged", async () => {
   const h = await loadHarness();
-  assert.equal(h.feedChainLabel(DOGE), "DogeOS Chikyū Testnet");
+  assert.equal(h.feedChainLabel(DOGE), "DogeOS");
   assert.equal(h.feedNativeSymbol(DOGE), "DOGE");
   assert.deepEqual([...EXISTING, 102, 1].map(h.feedChainLabel), ["BNB", "BNB", "Solana", "Robinhood", "Robinhood", "Solana", null]);
   assert.deepEqual([...EXISTING, 102, 1].map(h.feedNativeSymbol), ["BNB", "BNB", "SOL", "ETH", "ETH", "SOL", "BNB"]);
 
-  assert.equal(h.nativeTickerSymbol(DOGE), "DOGE");
-  assert.deepEqual(EXISTING.map(h.nativeTickerSymbol), ["BNB", "BNB", "SOL", "ETH", "ETH"]);
+  // The ticker bar and the creator-protection dialog price in getNativeSymbol directly.
+  assert.equal(h.getNativeSymbol(DOGE), "DOGE");
+  assert.deepEqual(EXISTING.map(h.getNativeSymbol), ["BNB", "BNB", "SOL", "ETH", "ETH"]);
 
   assert.equal(h.draftChainLabel(DOGE), "DogeOS");
   assert.deepEqual(EXISTING.map(h.draftChainLabel), ["BNB", "BNB", "Solana", "Robinhood", "Robinhood"]);
@@ -282,13 +289,37 @@ test("feed cards, ticker, drafts, profile, upvote and creator protection: DogeOS
   assert.deepEqual([56, 97, 4663, 46630].map(h.profileNativeSymbol), ["BNB", "BNB", "ETH", "ETH"]);
 
   assert.equal(h.upvoteNativeUnit(DOGE, false), "DOGE");
-  assert.equal(h.upvoteNetworkLabel(DOGE), "DogeOS Chikyū Testnet");
+  assert.equal(h.upvoteNetworkLabel(DOGE), "DogeOS");
   assert.deepEqual([56, 97, 4663, 46630].map((id) => h.upvoteNativeUnit(id, false)), ["BNB", "BNB", "ETH", "ETH"]);
   assert.equal(h.upvoteNativeUnit(101, true), "SOL");
+  assert.equal(h.upvoteNativeUnit(101, false), "BNB", "an EVM vote on a Solana-routed chain id keeps its old BNB unit");
   assert.deepEqual([56, 97, 4663, 46630].map(h.upvoteNetworkLabel), ["BNB", "BNB", "Robinhood", "Robinhood"]);
+});
 
-  assert.equal(h.creatorProtectionNativeSymbol(DOGE), "DOGE");
-  assert.deepEqual(EXISTING.map(h.creatorProtectionNativeSymbol), ["BNB", "BNB", "SOL", "ETH", "ETH"]);
+test("pages and components import the chain helpers instead of exporting their own (Fast Refresh)", async () => {
+  const files = {
+    "components/feed/FeedCards.tsx": ["chainLabel", "nativeSymbol"],
+    "components/home/CampaignTickerBar.tsx": ["nativeTickerSymbol"],
+    "components/home/DraftCampaignGrid.tsx": ["draftChainLabel", "draftChainBadgeClass"],
+    "components/token/CreatorProtectionDialog.tsx": ["creatorProtectionNativeSymbol"],
+    "components/token/UnifiedMarketChart.tsx": ["explorerTxUrl"],
+    "components/token/UpvoteDialog.tsx": ["upvoteNativeUnit", "upvoteNetworkLabel"],
+    "pages/PublicProfile.tsx": ["getExplorerBase"],
+    "pages/TokenDetails.tsx": ["getExplorerBase", "evmPageNativeUnit", "evmPageDexVenueLabel"],
+    "pages/command-center/CommandCenterClaims.tsx": ["rewardNativeSymbol", "rewardChainLabel"],
+  };
+  for (const [file, names] of Object.entries(files)) {
+    const source = await readFile(path.join(srcRoot, file), "utf8");
+    for (const name of names) {
+      assert.doesNotMatch(source, new RegExp(`^(export )?function ${name}\\(`, "m"), `${file} defines ${name}`);
+    }
+  }
+  assert.ok(
+    (await readFile(path.join(srcRoot, "components/home/CampaignTickerBar.tsx"), "utf8")).includes("const symbol = getNativeSymbol(chainId);"),
+  );
+  assert.ok(
+    (await readFile(path.join(srcRoot, "components/token/CreatorProtectionDialog.tsx"), "utf8")).includes("return getNativeSymbol(Number(getActiveChainId()));"),
+  );
 });
 
 test("token page: DOGE native unit and MuchFi venue for DogeOS; existing chains unchanged", async () => {

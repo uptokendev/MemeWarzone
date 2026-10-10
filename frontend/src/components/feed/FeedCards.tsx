@@ -24,7 +24,7 @@ import {
 import { useFeedSession } from "@/hooks/useFeedSession";
 import { readStoredFeedSession } from "@/lib/feedSession";
 import { usePostComposer } from "@/components/feed/usePostComposer";
-import { getChainLabel, getNativeSymbol, isDogeosChainId } from "@/lib/chainConfig";
+import { feedChainLabel as chainLabel, feedNativeSymbol as nativeSymbol } from "@/lib/chainPresentation";
 
 /* UI redesign phase 2: cards in the artboard style. Fire / repost / session behaviour is unchanged;
    the reply button opens the thread page (/post/:id), where replies are written. */
@@ -65,15 +65,6 @@ function tokenHref(item: FeedItem) {
     campaignAddress: item.campaignAddress || item.mentionedCampaign,
     chainId: item.chainId || item.mentionedChainId,
   });
-}
-
-export function chainLabel(chainId?: number | null) {
-  const id = Number(chainId);
-  if (id === 101 || id === 102) return "Solana";
-  if (id === 4663 || id === 46630) return "Robinhood";
-  if (id === 56 || id === 97) return "BNB";
-  if (isDogeosChainId(id)) return getChainLabel(id);
-  return null;
 }
 
 const card = "rounded-[14px] border border-mw-border bg-mw-surface font-mw-body text-mw-text";
@@ -686,13 +677,6 @@ export function FeedBattleCard({ item }: { item: FeedItem }) {
       {item.postId ? <FeedPostActions item={item} /> : null}
     </article>
   );
-}
-
-export function nativeSymbol(chainId?: number | null) {
-  if (Number(chainId) === 101 || Number(chainId) === 102) return "SOL";
-  if (Number(chainId) === 4663 || Number(chainId) === 46630) return "ETH";
-  if (isDogeosChainId(Number(chainId))) return getNativeSymbol(Number(chainId));
-  return "BNB";
 }
 
 export function FeedTradeCard({ item }: { item: FeedItem }) {
