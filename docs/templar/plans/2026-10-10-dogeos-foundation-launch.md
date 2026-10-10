@@ -55,6 +55,7 @@
 - `hardhat.config.ts` changes:
   - add `dotenv.config({ path: path.resolve(__dirname, "config/dogeos.local") })` after the `config/bnb.local` line (`:11`)
   - add the network `dogeosTestnet: { url, accounts: key ? [key] : [], chainId: 6281971 }`
+  - the import of the resolvers and a config-load call `assertDogeosKeyPresentWhenSelected(process.argv, key)` (spec §1: a missing key fails the run)
   - nothing else
 - `hardhat.dogeos-verify.config.ts` extends the base config. It adds `etherscan.customChains` (`network: "dogeosTestnet"`, chainId 6281971, `apiURL: https://dogeos-testnet.l2scan.co/api`, `browserURL: https://dogeos-testnet.l2scan.co`) and an object-form `apiKey` for `dogeosTestnet` only. The shared config's `etherscan` stays unchanged, so BSC verify is not touched.
 - Tests:
