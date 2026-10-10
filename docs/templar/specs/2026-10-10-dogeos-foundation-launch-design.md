@@ -82,16 +82,39 @@ pages and terminology. Only the chain-specific parts differ (native asset, RPC, 
 
 ### 1. Contracts and on-chain
 
-**Deployed unchanged (gen-7 bytecode)**
-- `LaunchFactoryGen7` and the `LaunchCampaignGen7` implementation. The `$6` test graduation target is
-  already allowed for 6281971 (`contracts/gen7/LaunchFactoryGen7.sol:369`), so the factory needs no
+**Deployed unchanged (gen-7 bytecode): a complete fresh set**
+
+The 46630 gen-7 deploy is **not** a template to copy. It reuses gen-6 infrastructure: WETH, the V3 set,
+the USD feed, the graduation oracle, both registries, the swap adapter, the gen-6 factory, and the
+weekly/monthly/recruiter/protocol vaults (`deployments/robinhood/testnet.gen7.json` `reused`,
+`reusedVaults`). Its vault logic exists to supersede a gen-6 factory. DogeOS has none of that, so
+everything is deployed fresh:
+- **Launch:** `LaunchFactoryGen7`, the `LaunchCampaignGen7` implementation, and `LaunchTokenDeployer`.
+  The factory reverts `NativeGraduationAdapterUnavailable` without the token deployer
+  (`LaunchFactoryGen7.sol:505`). The `$6` test graduation target is already allowed for 6281971
+  (`isGraduationTargetAllowedForChain`, `LaunchFactoryGen7.sol:367-371`), so the factory needs no
   change.
-- The fee stack: `TreasuryRouterV4`, its vaults, the holder distributor, and the community/airdrop
-  vaults, wired as the 46630 gen-7 deploy wires them (`deployments/robinhood/testnet.gen7.json`).
-- `CreatorRegistry`, `RiskRegistry`, and the generic `GraduationOracle`.
-- `RobinhoodV3NativeGraduationAdapterV2` and `RobinhoodV3NativeSwapAdapterV2` (no chain checks),
-  pointed at the staging DEX.
-- `PermanentV3PositionLocker`.
+- **Fees:** `TreasuryRouterV4` and its full vault set: weekly, monthly, recruiter, protocol and
+  community rewards, the holder distributor, the airdrop distributor and main vault,
+  `RewardDistributor`, and `CreatorRewardsVaultV2`.
+- **Registries and price:** `CreatorRegistry`, `RiskRegistry`, the generic `GraduationOracle`.
+- **Graduation and trading:** `RobinhoodV3NativeGraduationAdapterV2` and
+  `RobinhoodV3NativeSwapAdapterV2` (no chain checks), pointed at the staging DEX.
+- **Lockers:** `PermanentV3PositionLocker`.
+- **Not deployed:** `RobinhoodStockLaunchCampaignGen7` and every stock/quote adapter
+  (`RobinhoodStockGraduationAdapterV2`, etc.). The factory's stock slots stay empty.
+
+The plan derives the exact constructor and wiring order from the from-scratch shapes:
+`scripts/local-gen7-stack.ts`, `test/fixtures/evmgen7Core.ts` and
+`scripts/deploy-robinhood-gen7-generation.ts`. It must not inherit any reuse or supersede step.
+The fork rehearsal (gate 3) proves the set is complete.
+
+**Route authority:** the API holds one global `ROUTE_AUTHORITY_PRIVATE_KEY` and refuses create
+authorization with `ROUTE_AUTHORITY_MISMATCH` unless it matches `factory.routeAuthority()`
+(`frontend/api/dev-fix/route-auth.js`). The DogeOS factory's route authority is therefore set at
+deploy to the address of the **TEST API's existing route-authority key** (on 46630:
+`0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0`). Before deploying, re-read it from the 46630 factory
+and confirm it matches the TEST API. No new key.
 
 Why graduation ships in this sub-project: a gen-7 campaign fixes its `graduationAdapter` and
 `graduationOracle` at create time (`LaunchCampaignGen7.sol:322-339`). Coins created before a working
@@ -116,12 +139,15 @@ adapter exists would be bound to whatever adapter was set at that moment.
   admin calls. Funded with 42.069 DOGE (faucet tx `0x2eb60ae1595a026cfae0b954bc8bd3b72a1bae304957f5d6ba41c85de44ff919`).
 - Oracle updater: EOA `0x7dBDFe829309B4170346CF7e4496094CD126E9c1`. It is the oracle's `updater` and
   holds no other role.
-- Both keys live only in `config/dogeos.local` (gitignored by `config/*.local`), as
-  `DOGEOS_TESTNET_DEPLOYER_PRIVATE_KEY` and `DOGEOS_TESTNET_ORACLE_UPDATER_PRIVATE_KEY`.
-  `hardhat.config.ts` loads that file.
+- Graduation keeper: a fresh EOA (`DOGEOS_TESTNET_GRADUATION_KEEPER_PRIVATE_KEY`). It holds no
+  contract role, only gas DOGE, and calls the permissionless graduation path. The keeper worker
+  already refuses deployer keys.
+- All keys live only in `config/dogeos.local` (gitignored by `config/*.local`). `hardhat.config.ts`
+  loads that file.
 - The Hardhat `dogeosTestnet` network reads **only** `DOGEOS_TESTNET_DEPLOYER_PRIVATE_KEY`. Unlike
   Robinhood, it has no fallback to `DEPLOYER_PK` / `PRIVATE_KEY_DEPLOY`: a missing key fails the run.
-- The deployer key never goes into Coolify. Only the updater key goes there, for the price-push job.
+- The deployer key never goes into Coolify. Only the updater key (price push) and the keeper key
+  (graduation) go there, on the TEST indexer.
 - No Safe exists on Chikyū. Owner = the deployer EOA (testnet only).
 
 **Deploy outputs**
@@ -132,13 +158,15 @@ adapter exists would be bound to whatever adapter was set at that moment.
 - All contracts are verified on L2Scan via its Etherscan-style `/api`.
 
 ### 2. Frontend (`frontend/src`)
-- `chainRegistry.ts`: entry `dogeos-testnet`.
+- `lib/chainRegistry.ts`: entry `dogeos-testnet`.
   - family `evm`, network class testnet, staging runtime
   - RPC env `VITE_PUBLIC_RPC_6281971`, explorer L2Scan, native DOGE / 18
   - deployment manifest `deployments/dogeos/testnet.json`
-- `chainConfig.ts`: 6281971 in `SupportedChainId` and the supported-chain checks; a new
+- `lib/chainConfig.ts`: 6281971 in `SupportedChainId` and the supported-chain checks; a new
   `isDogeosChainId`.
-- Native-symbol helpers return `DOGE` for 6281971.
+- Native-symbol helpers return `DOGE` for 6281971 in the app, the API and the indexer. The indexer
+  hard-codes `"ETH"`/`"BNB"` (e.g. `realtime-indexer/src/evm/evmCreatorChoicePass.ts:355`); the guard
+  test covers these too.
 - Wallet add/switch-chain parameters: name "DogeOS Chikyū Testnet", the RPC, DOGE/18, L2Scan.
 - Feed isolation classifies 6281971 as a testnet, so it never appears in mainnet feeds.
 - Shown only when `VITE_ALLOWED_CHAIN_IDS` includes it. Live leaves it out.
@@ -151,8 +179,10 @@ adapter exists would be bound to whatever adapter was set at that moment.
 - Gen-7 route authorization gets 6281971's generation pair (whatever the deployed factory reports).
   `dev-fix/route-authorization-gen7.test.mjs:62` currently asserts 6281971 is *not* supported. It is
   flipped on purpose.
-- DOGE/USD for display uses the same off-chain reader shape as BNB/ETH/SOL, wired into the native-USD
-  feed.
+- The test-graduation-target gates in `dev-fix/route-auth.js` (the two `cid === 97 || cid === 46630`
+  checks, ~lines 185 and 194) include 6281971, so the `$6` test tier is reachable.
+- DOGE/USD for display: Binance spot `DOGEUSDT`, the same reader shape as `lib/bnbUsdPrice.js` and
+  `lib/ethUsdPrice.js`, wired into the native-USD feed.
 - Quote catalog (`api/data/approved-quote-catalog.v1.json`): one native-DOGE entry for 6281971.
 
 ### 4. Indexer (`realtime-indexer`)
@@ -160,15 +190,49 @@ adapter exists would be bound to whatever adapter was set at that moment.
   is switched on through env on the TEST indexer only, the same way Robinhood is.
 - A per-chain env block (RPC, factory addresses, start blocks), following the 46630 block in
   `src/env.ts`. The vote-treasury entries stay empty until sub-project 3.
-- `getLogs` limits need no new code: the default chunk (`LOG_CHUNK_SIZE` = 500) and adaptive splitting
-  are well inside the 10k-block and 10k-result caps.
-- Graduated trades on the staging V3 DEX are indexed and charted by reusing the V3 pool indexer the
-  way 46630 does. Robinhood's behaviour must not change; the plan decides how to parametrize it.
+- **`getLogs` limits.** The main campaign indexer needs no change: its default chunk
+  (`LOG_CHUNK_SIZE` = 500) and adaptive splitting stay inside the 10k-block and 10k-result caps.
+- **Graduated trades.** Trades on the staging V3 DEX are indexed and charted by reusing the V3 pool
+  indexer. That indexer currently scans in chunks of `Math.max(500, ROBINHOOD_V3_LOG_CHUNK_SIZE ||
+  50_000)` blocks (`realtime-indexer/src/robinhoodV3PoolIndexer.ts:1435`), 5× the DogeOS cap. For
+  6281971 it must:
+  - use a per-chain chunk of ≤ 10,000 blocks
+  - shrink and retry when a call hits the 10k-result cap
+
+  Robinhood's chunk value and behaviour stay exactly as they are. `V3_GRADUATION_CHAINS`
+  (`realtime-indexer/src/evm/evmGraduationKeeperConfig.ts:25`) includes 6281971, because it graduates
+  into V3.
+- **Jobs that send transactions, one decision per job:**
+
+  | Job | 6281971 in this sub-project |
+  |---|---|
+  | Graduation keeper (`evmGraduationKeeperWorker`) | **On**, with the keeper key, via `EVM_GRADUATION_KEEPER_ENABLED_6281971` + `EVM_GRADUATION_KEEPER_PRIVATE_KEY_6281971` |
+  | DOGE/USD oracle push (new, below) | **On**, with the updater key |
+  | Creator-choice operator (`evmCreatorChoiceWorker`) | Off. A named exception in the guard test |
+  | Payout watchdog | Off. A named exception |
+  | Import-fee workers | Off. Imports are out of scope. A named exception |
+
+  Gate 3 must show that create → graduate → creator claim works with only the keeper and the oracle
+  push running. If creator claim turns out to need the creator-choice operator, stop and bring it back
+  as a decision. Don't quietly turn it on.
 - **Reorgs: index at the tip.** `CONFIRMATIONS` stays the global value 1, the same as every chain, for
   a realtime UI (~3 s). Accepted risk: a reorg deeper than 1 block (up to 17 on DogeOS) can leave a
   phantom trade. That is cosmetic on testnet, and it is recorded as a known item for DogeOS mainnet.
-- **Oracle updater job:** a DogeOS price push modelled on `src/evm/robinhoodNativeUsdOracle.ts`. It
-  signs only with the updater key and keeps the oracle inside its 3600 s freshness window.
+- **DOGE/USD oracle push (new; no precedent).** On 46630 the testnet oracle is refreshed by hand: a
+  `workflow_dispatch` GitHub workflow (`.github/workflows/agent4-robinhood-oracle-refresh.yml` →
+  `scripts/rh46630-oracle-refresh-transport.ts`) takes a typed-in price. DogeOS needs it automatic,
+  because a stale oracle (older than 3600 s) blocks graduation pricing. The push:
+  - runs as a worker in the TEST indexer
+  - reads Binance spot `DOGEUSDT` (the same source as the API display price)
+  - converts it to 8 decimals and calls `updateAnswer` on the DogeOS oracle, signing only with the
+    updater key
+  - refuses any chain but 6281971, and refuses a key whose address is not the oracle's `updater`
+  - pushes at least every 30 minutes, more often when the price moves more than a set deviation
+  - skips the push and logs when Binance fails, and never writes a zero or negative value
+
+  Reading the on-chain oracle for health checks reuses the shape of
+  `realtime-indexer/src/robinhoodNativeUsdOracle.ts`. That module is gated to 4663/46630 (line 96), so
+  DogeOS gets a parametrized sibling and the Robinhood one stays untouched.
 
 ### 5. Database
 - One staging migration adds 6281971 to every chain `CHECK` constraint or enum that the launch path
@@ -179,11 +243,14 @@ adapter exists would be bound to whatever adapter was set at that moment.
 ### 6. Guard test
 - A new test reads every hand-kept chain list (app, API, indexer, migration CHECKs) that contains
   46630. It fails if 6281971 is missing from any list it is expected in. Lists that intentionally
-  exclude it (the hard-coded indexer `ACTIVE`, mainnet-only sets) are named exceptions in the test.
+  exclude it are named exceptions in the test, each with a one-line reason: the hard-coded indexer
+  `ACTIVE`, mainnet-only sets, stock/quote paths, and the creator-choice, payout-watchdog and
+  import-fee job lists.
 
 ### 7. Local hybrid development
-- `npm run dev` (frontend) runs the app and local API from the checkout. Per the hybrid-setup doc
-  (8 Oct 2026), DogeOS work points it at staging and the TEST indexer:
+- `npm run dev` (frontend) runs the app and local API from the checkout. Per the founder's
+  hybrid-setup doc (8 Oct 2026, a local untracked file, not in the repo), DogeOS work points it at
+  staging and the TEST indexer:
   - `DATABASE_URL` = staging
   - `VITE_REALTIME_API_BASE` = TEST indexer
   - `VITE_ALLOWED_CHAIN_IDS` includes 6281971
@@ -200,7 +267,11 @@ adapter exists would be bound to whatever adapter was set at that moment.
      - the testnet-only guards in the deploy scripts
      - the no-fallback deployer key
      - the chain-list guard test
-     - the flipped gen-7 route-authorization test
+     - the flipped gen-7 route-authorization test and the `$6` test-tier gates for 6281971
+     - the oracle push: chain and updater refusal, no push on source failure, never ≤ 0, cadence and
+       deviation
+     - the V3 pool indexer: chunk ≤ 10k for 6281971, retry on the result cap, Robinhood's chunk
+       unchanged
      - registry, native-symbol and feed-isolation pins for 6281971
 2. **Oracle audit diff.** A written diff review of the DogeOS oracle against
    `RobinhoodTestnetEthUsdOracle`, done before gate 3.
@@ -224,8 +295,12 @@ adapter exists would be bound to whatever adapter was set at that moment.
 - All five gates pass. The canary tx hashes and all addresses are recorded in
   `deployments/dogeos/testnet.json` and in `docs/claude/evm-deployments.md`.
 - The oracle stays fresh for 24 h with nobody touching it.
-- Live, BNB, Robinhood and Solana behave exactly as before. The test suites and an unchanged-config
-  diff prove it.
+- Live, BNB, Robinhood and Solana behave exactly as before. Proof:
+  - all pre-existing test suites pass, with no re-pinned assertion
+  - `git diff` of the branch shows no change to any existing file under `deployments/` (except new
+    files under `deployments/dogeos/`)
+  - no change to any live/Coolify env entry not suffixed `_6281971` or named `DOGEOS_*`
+  - for every hand-kept chain list, the only change is the added 6281971
 - A new `docs/claude/dogeos.md` topic file holds the verified facts, quirks and addresses, and is
   added to the CLAUDE.md topic index.
 
