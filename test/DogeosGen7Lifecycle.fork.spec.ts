@@ -267,6 +267,10 @@ describe("DogeOS gen-7 full lifecycle on a Chikyū fork (t7)", function () {
     expect(new Set(buyers.map((b) => b.address)).size).to.equal(5);
     expect(signer.isSupportedGenerationPair(6281971, Number(await factory.FACTORY_GENERATION()), Number(await factory.CAMPAIGN_GENERATION()))).to.equal(true);
     expect(await factory.isGraduationTargetAllowedForChain(CHAIN_ID, TEST_TARGET)).to.equal(true);
+    // No CreatorRegistry on DogeOS (spec section 1, founder 2026-10-10); the RiskRegistry stays.
+    expect(await factory.creatorRegistry()).to.equal(ethers.ZeroAddress);
+    expect(stack.registries.creatorRegistry).to.equal(null);
+    expect(same(await factory.riskRegistry(), stack.registries.riskRegistry)).to.equal(true);
   });
 
   it("step 1: the owner enables live and unpauses create (fork only)", async function () {
@@ -312,7 +316,7 @@ describe("DogeOS gen-7 full lifecycle on a Chikyū fork (t7)", function () {
     // A signature for another creator is refused: the authorization binds the sender.
     await expect(
       (factory.connect(keeper) as any).createCampaignAuthorized(req, { tradeRouteProfile: tradeProfile, finalizeRouteProfile: finalizeProfile, deadline, signature }),
-    ).to.be.reverted;
+    ).to.be.revertedWithCustomError(factory, "InvalidRouteAuthorization");
 
     const before = await nativeBal(C);
     const r = await send(
@@ -337,6 +341,11 @@ describe("DogeOS gen-7 full lifecycle on a Chikyū fork (t7)", function () {
     campaign = (await ethers.getContractAt("LaunchCampaignGen7", campaignAddr)) as unknown as Contract;
     token = (await ethers.getContractAt("LaunchToken", tokenAddr)) as unknown as Contract;
     expect(await factory.campaignsCount()).to.equal(1n);
+    // No CreatorRegistry: the launch records nothing, so the creator has no cooldown and no live-coin limit after it.
+    const [allowed, , liveCount, maxLive] = await factory.creatorLaunchEligibility(C);
+    expect(allowed).to.equal(true);
+    expect(liveCount).to.equal(0n);
+    expect(maxLive).to.equal(ethers.MaxUint256);
     expect(await vault.isKeep(campaignAddr)).to.equal(true);
     expect(same((await vault.cfg(campaignAddr)).creator, C)).to.equal(true);
     // The $150 target at $0.25 is a 600 DOGE market cap; the curve raises less than that when it sells out.

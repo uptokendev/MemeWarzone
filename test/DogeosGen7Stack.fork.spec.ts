@@ -155,6 +155,9 @@ describe("DogeOS gen-7 stack helpers (t6, any network)", function () {
     expect(rec.dex).to.not.have.property("swapRouter02");
     expect(rec.vaults.monthlyCapUsd).to.equal("1500000000000000000000000");
     expect(Object.keys(rec.curvesAtDeploy)).to.deep.equal(["150", "30000", "50000"]);
+    // No CreatorRegistry on DogeOS (spec section 1, founder 2026-10-10): the key stays, explicitly null.
+    expect(rec.registries).to.have.property("creatorRegistry", null);
+    expect(rec.registries.riskRegistry).to.equal(stack.registries.riskRegistry);
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dogeos-manifest-"));
     try {
@@ -447,7 +450,8 @@ describe("deployDogeosGen7Stack on a Chikyū fork (t6)", function () {
     expect(same(await f.graduationOracle(), stack.oracle.graduationOracle)).to.equal(true);
     expect(same(await f.permanentLpLocker(), stack.generation.positionLocker)).to.equal(true);
     expect(same(await f.routeAuthority(), await routeAuthority.getAddress())).to.equal(true);
-    expect(same(await f.creatorRegistry(), stack.registries.creatorRegistry)).to.equal(true);
+    expect(await f.creatorRegistry()).to.equal(ethers.ZeroAddress);
+    expect(stack.registries.creatorRegistry).to.equal(null);
     expect(same(await f.riskRegistry(), stack.registries.riskRegistry)).to.equal(true);
     expect(same(await f.nativeGraduationAdapter(), stack.generation.nativeGraduationAdapter)).to.equal(true);
     expect(same(await f.launchTokenDeployer(), stack.generation.tokenDeployer)).to.equal(true);
@@ -460,10 +464,14 @@ describe("deployDogeosGen7Stack on a Chikyū fork (t6)", function () {
     expect((await ethers.provider.getCode(stack.generation.tokenDeployer)).length).to.be.greaterThan(2);
   });
 
-  it("step 8: CreatorRegistry records the factory; RiskRegistry has no recorder role (owner-only setters, views)", async function () {
-    const r1 = at(["function owner() view returns (address)", "function launchRecorder(address) view returns (bool)"], stack.registries.creatorRegistry);
-    expect(await r1.launchRecorder(stack.generation.factory)).to.equal(true);
-    expect(same(await r1.owner(), A)).to.equal(true);
+  it("step 8: no CreatorRegistry (no launch recorder, no tier limits on chain); RiskRegistry has no recorder role", async function () {
+    const f = await ethers.getContractAt("LaunchFactoryGen7", stack.generation.factory);
+    expect(await f.creatorRegistry()).to.equal(ethers.ZeroAddress);
+    // With no CreatorRegistry the factory reports every creator open: no cooldown, no live-coin limit.
+    const [allowed, , liveCount, maxLive] = await f.creatorLaunchEligibility(await operator.getAddress());
+    expect(allowed).to.equal(true);
+    expect(liveCount).to.equal(0n);
+    expect(maxLive).to.equal(ethers.MaxUint256);
     expect(same(await at(["function owner() view returns (address)"], stack.registries.riskRegistry).owner(), A)).to.equal(true);
     const risk = await ethers.getContractFactory("RiskRegistry");
     expect(risk.interface.fragments.some((fr: any) => fr.type === "function" && /recorder/i.test(fr.name))).to.equal(false);
@@ -520,15 +528,14 @@ describe("deployDogeosGen7Stack on a Chikyū fork (t6)", function () {
         expect(receipt!.status, `tx ${tx.hash}`).to.equal(1);
       }
     }
-    // 20 deploys (O1-O2, V1-V5, F1-F5, R1-R2, G1-G5, S1) + 8 fee calls + 27 airdrop calls (3 wiring + 24
-    // authorizations) + 10 wiring calls (route authority, registries, adapter bind, recorder, 2 factory setters,
-    // vault pin, 2 router locker calls, createPaused).
-    expect(count).to.equal(65);
+    // 19 deploys (O1-O2, V1-V5, F1-F5, R2, G1-G5, S1; no CreatorRegistry) + 8 fee calls + 27 airdrop calls (3 wiring
+    // + 24 authorizations) + 9 wiring calls (route authority, registries, adapter bind, 2 factory setters, vault pin,
+    // 2 router locker calls, createPaused; no launch recorder).
+    expect(count).to.equal(63);
   });
 
   it("reused contracts carry the default-build bytecode (exact where there are no immutables, same size otherwise)", async function () {
     const exact: Array<[string, string]> = [
-      ["CreatorRegistry", stack.registries.creatorRegistry],
       ["RiskRegistry", stack.registries.riskRegistry],
       ["LaunchTokenDeployer", stack.generation.tokenDeployer],
       ["LaunchCampaignGen7", stack.generation.campaignImplementation],
@@ -606,7 +613,7 @@ function syntheticStack(a: (n: number) => string): DogeosGen7Stack {
     },
     oracle: { dogeUsd: a(3), graduationOracle: a(4), maxPriceAge: 3600, updater: a(5), initialAnswer: "25000000" },
     vaults: { weekly: a(6), charity: a(7), monthly: a(8), recruiter: a(9), protocol: a(10), monthlyCapUsd: "1500000000000000000000000" },
-    registries: { creatorRegistry: a(11), riskRegistry: a(12) },
+    registries: { creatorRegistry: null, riskRegistry: a(12) },
     fees: {
       router: a(13),
       vault: a(14),

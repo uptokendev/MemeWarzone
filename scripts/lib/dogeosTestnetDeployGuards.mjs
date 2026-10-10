@@ -283,6 +283,8 @@ export function dogeosVerificationEntries(record, { upgradeDelaySeconds, holderB
   const d = record.deployed || {};
   const x = record.dex || {};
   const reg = record.registries || {};
+  // No CreatorRegistry on DogeOS (spec §1, founder 2026-10-10): deployDogeosGen7Stack records the key as null.
+  if (reg.creatorRegistry !== null) throw new Error(`registries.creatorRegistry must be null (no CreatorRegistry on DogeOS), got ${reg.creatorRegistry}`);
   const G4 = r("deployed.LaunchFactoryGen7", d.LaunchFactoryGen7);
   if (r("deployed.LaunchFactory", d.LaunchFactory) !== G4) throw new Error("deployed.LaunchFactory alias is not deployed.LaunchFactoryGen7");
   const G3 = r("deployed.MuchfiV3PositionLocker", d.MuchfiV3PositionLocker);
@@ -315,7 +317,6 @@ export function dogeosVerificationEntries(record, { upgradeDelaySeconds, holderB
     { name: "RewardDistributor (holders)", address: r("fees.holderDistributor", f.holderDistributor), contract: sol("RewardDistributor", "RewardDistributor"), args: [A] },
     { name: "CommunityRewardsVault", address: r("fees.communityRewardsVault", f.communityRewardsVault), contract: sol("CommunityRewardsVault", "CommunityRewardsVault"), args: [A, F1] },
     { name: "RewardDistributor (airdrop)", address: r("fees.airdropDistributor", f.airdropDistributor), contract: sol("RewardDistributor", "RewardDistributor"), args: [A] },
-    { name: "CreatorRegistry", address: r("registries.creatorRegistry", reg.creatorRegistry), contract: sol("CreatorRegistry", "CreatorRegistry"), args: [] },
     { name: "RiskRegistry", address: r("registries.riskRegistry", reg.riskRegistry), contract: sol("RiskRegistry", "RiskRegistry"), args: [] },
     { name: "LaunchCampaignGen7", address: G1, contract: sol("gen7/LaunchCampaignGen7", "LaunchCampaignGen7"), args: [] },
     { name: "MuchfiV3NativeGraduationAdapter", address: G2, contract: sol("dogeos/muchfi/MuchfiV3NativeGraduationAdapter", "MuchfiV3NativeGraduationAdapter"), args: [D1, D4, W, adapterAdmin] },

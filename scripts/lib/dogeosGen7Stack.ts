@@ -16,11 +16,13 @@
  *   V4 RecruiterRewardsVault(A)  V5 ProtocolRevenueVault(A)
  *   F1 TreasuryRouterV4(A, V1, V3, 3600)  F2 MuchfiCreatorRewardsVault(A, F1, W, 2, D1, 86400)
  *   F3 RewardDistributor(A) holders  F4 CommunityRewardsVault(A, F1)  F5 RewardDistributor(A) airdrop
- *   R1 CreatorRegistry  R2 RiskRegistry  G1 LaunchCampaignGen7  G2 MuchfiV3NativeGraduationAdapter(D1, D4, W, A)
+ *   R2 RiskRegistry  G1 LaunchCampaignGen7  G2 MuchfiV3NativeGraduationAdapter(D1, D4, W, A)
+ *   (no R1 CreatorRegistry: spec §1, founder 2026-10-10, the factory runs with setRegistries(0x0, R2) like BNB and
+ *   Robinhood: no on-chain launch cooldown, live-coin limit or cluster-size check; RiskRegistry restrictions stay)
  *   G3/G4 MuchfiV3PositionLocker(G4) + LaunchFactoryGen7(G2, F1, G1, O2, G3)   S1 RobinhoodV3NativeSwapAdapterV2(D5, W)
  * then wiring 1-12: fee batch (batchACalls minus old-factory pause and CommunityRewardsVault.setRouter), airdrop pot
- * (F4 + F5, explicit cap; no gen-6 lookup), pre-asserts, factory read-backs, route authority, registries, adapter
- * bind, launch recorder, create path (G5 LaunchTokenDeployer), router lockers, createPaused, curvesAtDeploy.
+ * (F4 + F5, explicit cap; no gen-6 lookup), pre-asserts, factory read-backs, route authority, registries (0x0, R2),
+ * adapter bind, no launch recorder, create path (G5 LaunchTokenDeployer), router lockers, createPaused, curvesAtDeploy.
  *
  * Never sends enableLive or lockSecurityDefaults. Lands createPaused and not live.
  * Runs only on chain 6281971 (Chikyū or a fork of it), and only when ethers' first signer is params.admin:
@@ -113,7 +115,8 @@ export type DogeosGen7Stack = {
   oracle: { dogeUsd: string; graduationOracle: string; maxPriceAge: number; updater: string; initialAnswer: string };
   /** monthlyCapUsd is V3's MonthlyLeagueTreasury constructor argument (USD, 18 decimals), not an address. */
   vaults: { weekly: string; charity: string; monthly: string; recruiter: string; protocol: string; monthlyCapUsd: string };
-  registries: { creatorRegistry: string; riskRegistry: string };
+  /** creatorRegistry is always null: no CreatorRegistry on DogeOS (spec §1). The key stays so readers see it. */
+  registries: { creatorRegistry: null; riskRegistry: string };
   fees: {
     router: string;
     vault: string;
@@ -282,7 +285,6 @@ export async function deployDogeosGen7Stack(params: DogeosGen7StackParams): Prom
   log(`RewardDistributor (airdrop) ${F5.address}`);
 
   // ---------------------------------------------------------------- R: registries
-  const R1 = await deploy("CreatorRegistry", []);
   const R2 = await deploy("RiskRegistry", []);
 
   // ---------------------------------------------------------------- G: generation
@@ -410,18 +412,17 @@ export async function deployDogeosGen7Stack(params: DogeosGen7StackParams): Prom
   await send(f.setRouteAuthority(routeAuthority), "LaunchFactoryGen7.setRouteAuthority");
   check(same(await f.routeAuthority(), routeAuthority), "G4.routeAuthority == routeAuthority");
 
-  // ---------------------------------------------------------------- 6. registries
-  await send(f.setRegistries(R1.address, R2.address), "LaunchFactoryGen7.setRegistries");
-  check(same(await f.creatorRegistry(), R1.address) && same(await f.riskRegistry(), R2.address), "G4 registries == R1/R2");
+  // ---------------------------------------------------------------- 6. registries (no CreatorRegistry, spec §1)
+  await send(f.setRegistries(ethers.ZeroAddress, R2.address), "LaunchFactoryGen7.setRegistries");
+  check((await f.creatorRegistry()) === ethers.ZeroAddress && same(await f.riskRegistry(), R2.address), "G4 registries == 0x0/R2");
 
   // ---------------------------------------------------------------- 7. adapter -> factory (reads back factory, locker, lock)
   await bindAdapterToFactory(g2.connect(signer), G4, "MuchfiV3NativeGraduationAdapter");
 
-  // ---------------------------------------------------------------- 8. launch recorder
-  // CreatorRegistry.recordLaunch/recordGraduation are onlyLaunchRecorder. RiskRegistry has no recorder role: the
-  // factory only calls its views (canWalletTrade / assertCreatorCanLaunch); its setters are onlyOwner (= admin).
-  await send(R1.contract.setLaunchRecorder(G4, true), "CreatorRegistry.setLaunchRecorder");
-  check((await R1.contract.launchRecorder(G4)) === true, "R1.launchRecorder(G4)");
+  // ---------------------------------------------------------------- 8. launch recorder: none
+  // No CreatorRegistry, so no setLaunchRecorder (the factory skips recordLaunch/recordGraduation at 0x0). RiskRegistry
+  // has no recorder role: the factory only calls its views (canWalletTrade / assertCreatorCanLaunch); its setters are
+  // onlyOwner (= admin).
   const riskRegistryRecorder = "none: RiskRegistry has no recorder role (owner-only setters, view-only reads by the factory)";
 
   // ---------------------------------------------------------------- 9. create path: G5, adapter, token deployer, vault pin
@@ -493,7 +494,7 @@ export async function deployDogeosGen7Stack(params: DogeosGen7StackParams): Prom
       protocol: V5.address,
       monthlyCapUsd: monthlyCapUsd.toString(),
     },
-    registries: { creatorRegistry: R1.address, riskRegistry: R2.address },
+    registries: { creatorRegistry: null, riskRegistry: R2.address },
     fees: {
       router: F1.address,
       vault: F2.address,

@@ -370,7 +370,7 @@ function sampleRecord() {
       tickSpacing: 200,
     },
     oracle: { dogeUsd: a(), graduationOracle: a(), maxPriceAge: 3600, updater: UPDATER, initialAnswer: "24150000" },
-    registries: { creatorRegistry: a(), riskRegistry: a() },
+    registries: { creatorRegistry: null, riskRegistry: a() },
     vaults: { weekly: a(), charity: a(), monthly: a(), recruiter: a(), protocol: a(), monthlyCapUsd: "1500000000000000000000000" },
     nativeSwapAdapter: a(),
     fees: { admin, router: a(), vault: a(), holderDistributor: a(), communityRewardsVault: a(), airdropDistributor: a() },
@@ -390,9 +390,9 @@ test("verification entries: every contract we deploy, with the exact constructor
   const r = sampleRecord();
   const entries = dogeosVerificationEntries(r, DELAYS);
   const by = Object.fromEntries(entries.map((e) => [e.contract.split(":")[1] + (e.name.includes("airdrop") ? "#airdrop" : ""), e]));
-  assert.equal(entries.length, 20);
-  assert.equal(new Set(entries.map((e) => e.name)).size, 20, "names are unique");
-  assert.equal(new Set(entries.map((e) => e.address.toLowerCase())).size, 20, "addresses are unique");
+  assert.equal(entries.length, 19);
+  assert.equal(new Set(entries.map((e) => e.name)).size, 19, "names are unique");
+  assert.equal(new Set(entries.map((e) => e.address.toLowerCase())).size, 19, "addresses are unique");
   const W = MUCHFI_EXTERNAL_ADDRESSES.wdoge;
   const D1 = MUCHFI_EXTERNAL_ADDRESSES.factory;
   assert.deepEqual(by.DogeosTestnetDogeUsdOracle.args, [UPDATER, "24150000", false]);
@@ -410,7 +410,7 @@ test("verification entries: every contract we deploy, with the exact constructor
   assert.deepEqual(by["RewardDistributor#airdrop"].args, [DEPLOYER]);
   assert.equal(by["RewardDistributor#airdrop"].address, r.fees.airdropDistributor);
   assert.deepEqual(by.CommunityRewardsVault.args, [DEPLOYER, r.fees.router]);
-  assert.deepEqual(by.CreatorRegistry.args, []);
+  assert.equal(by.CreatorRegistry, undefined, "no CreatorRegistry on DogeOS (spec section 1, founder 2026-10-10)");
   assert.deepEqual(by.RiskRegistry.args, []);
   assert.deepEqual(by.LaunchCampaignGen7.args, []);
   assert.deepEqual(by.MuchfiV3NativeGraduationAdapter.args, [D1, MUCHFI_EXTERNAL_ADDRESSES.positionManager, W, DEPLOYER]);
@@ -447,6 +447,13 @@ test("verification entries: refuse a record from another chain or with a missing
   const r2 = sampleRecord();
   r2.deployed.LaunchFactory = OTHER;
   assert.throws(() => dogeosVerificationEntries(r2, DELAYS), /LaunchFactory alias/);
+  // The stack never deploys a CreatorRegistry: a record naming one is not from deployDogeosGen7Stack.
+  const r3 = sampleRecord();
+  r3.registries.creatorRegistry = OTHER;
+  assert.throws(() => dogeosVerificationEntries(r3, DELAYS), /registries\.creatorRegistry must be null/);
+  const r4 = sampleRecord();
+  delete r4.registries.creatorRegistry;
+  assert.throws(() => dogeosVerificationEntries(r4, DELAYS), /registries\.creatorRegistry must be null/);
 });
 
 test("verification JSON: chains[\"6281971\"] on L2Scan, written to (and read back from) a temp path", () => {
@@ -458,12 +465,12 @@ test("verification JSON: chains[\"6281971\"] on L2Scan, written to (and read bac
   assert.equal(chain.network, "dogeosTestnet");
   assert.equal(chain.provider, "l2scan");
   assert.equal(chain.apiUrl, "https://dogeos-testnet.l2scan.co/api");
-  assert.equal(chain.contracts.length, 20);
+  assert.equal(chain.contracts.length, 19);
   const file = path.join(tmpDir(), "nested", "dogeos-testnet-contracts.json");
   writeJsonFile(file, manifest);
   const back = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.deepEqual(back, manifest);
-  assert.equal(readVerificationList(back).length, 20);
+  assert.equal(readVerificationList(back).length, 19);
 });
 
 test("verification JSON reader: refuses a missing chain, a malformed entry and an external MuchFi address", () => {
