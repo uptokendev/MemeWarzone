@@ -636,7 +636,7 @@ Changes:
    - TEST indexer reports `rpc6281971Configured: true`
    - the oracle push makes its first update (`latestRoundData` fresh)
    - If the routing status fails, stop. Don't activate.
-4. `DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO npx hardhat run scripts/activate-dogeos-testnet.ts --network dogeosTestnet` (`enableLive` + unpause create, from the deployer).
+4. `DOGEOS_TESTNET_ACTIVATE_BROADCAST=I_HAVE_FOUNDER_GO npx hardhat run scripts/activate-dogeos-testnet.ts --network dogeosTestnet` (`enableLive` + unpause create, from the deployer).
 5. Canary through the TEST app with MetaMask:
    - create (creator wallet)
    - buys from ≥ 5 buyer wallets funded from the founder's account
