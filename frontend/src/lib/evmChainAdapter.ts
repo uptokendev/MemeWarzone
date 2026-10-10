@@ -1,6 +1,6 @@
 import { CHAIN_REGISTRY, type ChainDefinition } from "@/lib/chainRegistry";
 
-export type EvmChainId = 56 | 97 | 4663 | 46630;
+export type EvmChainId = 56 | 97 | 4663 | 46630 | 6281971;
 export type ActiveEvmChainId = 56 | 97;
 
 export interface EvmWalletChainParams {
@@ -20,7 +20,7 @@ export interface EvmWalletChainParams {
  * activated as a MemeWarzone product chain. Keeping discovery separate from
  * activation prevents "add chain ID everywhere" rollouts.
  */
-export const KNOWN_EVM_CHAIN_IDS: readonly EvmChainId[] = [56, 97, 4663, 46630] as const;
+export const KNOWN_EVM_CHAIN_IDS: readonly EvmChainId[] = [56, 97, 4663, 46630, 6281971] as const;
 
 /**
  * Runtime activation remains exactly equal to main while RH-3 is underway.
@@ -62,6 +62,8 @@ function walletChainName(chainId: EvmChainId): string {
       return "Robinhood Chain";
     case 46630:
       return "Robinhood Chain Testnet";
+    case 6281971:
+      return "DogeOS Chikyū Testnet";
   }
 }
 
@@ -74,6 +76,8 @@ function nativeCurrencyName(chainId: EvmChainId): string {
     case 4663:
     case 46630:
       return "ETH";
+    case 6281971:
+      return "DOGE";
   }
 }
 
@@ -106,5 +110,7 @@ export function getEvmChainLabel(chainId: EvmChainId): string {
       return "Robinhood";
     case 46630:
       return "Robinhood Testnet";
+    case 6281971:
+      return "DogeOS Chikyū Testnet";
   }
 }

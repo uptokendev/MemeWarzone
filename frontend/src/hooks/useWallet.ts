@@ -398,7 +398,7 @@ async function ensureSupportedEvmChain(provider: Eip1193Provider, preferredChain
       const { getPublicRpcUrls } = await import("@/lib/chainConfig");
       await provider.request({
         method: "wallet_addEthereumChain",
-        params: [buildEvmWalletChainParams(target as 56 | 97 | 4663 | 46630, getPublicRpcUrls(target as any))],
+        params: [buildEvmWalletChainParams(target as 56 | 97 | 4663 | 46630 | 6281971, getPublicRpcUrls(target as any))],
       });
       // EIP-3085 does not require wallets to stay on the newly added network.
       // Switch again so a 4902 recovery cannot resolve while MetaMask is still on BNB.

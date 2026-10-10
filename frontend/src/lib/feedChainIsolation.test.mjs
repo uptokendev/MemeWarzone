@@ -119,7 +119,7 @@ test("launchpad adapter preserves Robinhood as a first-class product identity", 
 });
 
 test("Robinhood is known to the generic EVM layer but remains inactive until protocol activation", () => {
-  assert.deepEqual(KNOWN_EVM_CHAIN_IDS, [56, 97, 4663, 46630]);
+  assert.deepEqual(KNOWN_EVM_CHAIN_IDS, [56, 97, 4663, 46630, 6281971]);
   assert.deepEqual(ACTIVE_EVM_CHAIN_IDS, [56, 97]);
   assert.equal(isKnownEvmChainId(4663), true);
   assert.equal(isKnownEvmChainId(46630), true);

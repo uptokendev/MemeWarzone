@@ -86,3 +86,30 @@ test("Robinhood 4663/46630 cannot receive unsuffixed BNB vote treasury values", 
   assert.doesNotMatch(arena, /(?:4663|46630)[\s\S]*?VITE_ARENA_VOTE_TREASURY_ADDRESS as string/);
   assert.doesNotMatch(vote, /(?:4663|46630)[\s\S]*?VITE_VOTE_TREASURY_ADDRESS as string/);
 });
+
+test("DogeOS 6281971 has its own id and guard, and never joins the Robinhood check", () => {
+  assert.match(source, /export const DOGEOS_TESTNET_CHAIN_ID: SupportedChainId = 6281971;/);
+  assert.match(exportedFn("isDogeosChainId"), /chainId === DOGEOS_TESTNET_CHAIN_ID/);
+  const robinhood = exportedFn("isRobinhoodChainId");
+  assert.doesNotMatch(robinhood, /DOGEOS|6281971/, "DogeOS must never be a Robinhood chain (ETH symbols, stock logic)");
+});
+
+test("getNativeSymbol returns DOGE for DogeOS before the BNB default", () => {
+  const fn = exportedFn("getNativeSymbol");
+  const doge = fn.indexOf('isDogeosChainId(chainId)) return "DOGE"');
+  const bnb = fn.indexOf('return "BNB"');
+  assert.ok(doge >= 0, "missing DogeOS DOGE branch");
+  assert.ok(bnb > doge, "DogeOS must be decided before the BNB fallthrough");
+});
+
+test("public RPC helpers give DogeOS its own default before the BSC branches", () => {
+  for (const name of ["getPublicRpcUrl", "getPublicRpcUrls"]) {
+    const fn = exportedFn(name);
+    const doge = fn.indexOf("chainId === DOGEOS_TESTNET_CHAIN_ID");
+    const bscMainnet = fn.indexOf("chainId === 56");
+    const bscTestnet = fn.indexOf("VITE_BSC_TESTNET_RPC");
+    assert.ok(doge >= 0, `${name} is missing its DogeOS branch`);
+    assert.ok(bscMainnet > doge && bscTestnet > doge, `${name} must return for DogeOS before any BSC fallback`);
+  }
+  assert.match(source, /DOGEOS_TESTNET_DEFAULT_RPC = "https:\/\/rpc\.testnet\.dogeos\.com"/);
+});

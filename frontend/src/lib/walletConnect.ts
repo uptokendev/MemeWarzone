@@ -61,6 +61,7 @@ function rpcMapFor(chains: number[]) {
     97: "https://data-seed-prebsc-1-s1.binance.org:8545/",
     4663: "https://rpc.mainnet.chain.robinhood.com",
     46630: "https://rpc.testnet.chain.robinhood.com",
+    6281971: "https://rpc.testnet.dogeos.com",
   };
   return Object.fromEntries(
     chains.map((chainId) => [
