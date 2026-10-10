@@ -27,6 +27,7 @@ import {
   assertDogeosStackChain,
   assertMuchfiFeeTierSpacing,
   deployDogeosGen7Stack,
+  dogeosFeeBatchCalls,
   dogeosManifestRecord,
   rescaleNativeCaps,
   writeDogeosManifest,
@@ -72,6 +73,31 @@ describe("DogeOS gen-7 stack helpers (t6, any network)", function () {
     for (const other of [31337n, 46630n, 4663n, 97n, 56n]) {
       expect(() => assertDogeosStackChain(other)).to.throw(/6281971/);
     }
+  });
+
+  it("the step-1 fee batch is batchACalls minus the old-factory pause and community setRouter, nothing aimed at a factory", function () {
+    const a = (n: number) => ethers.getAddress(`0x${n.toString(16).padStart(40, "0")}`);
+    const pins = {
+      chainId: 6281971, safe: a(1), oldRouter: ethers.ZeroAddress, oldFactory: ethers.ZeroAddress, weekly: a(2), monthly: a(3),
+      recruiter: a(4), community: a(5), protocol: a(6), wrappedNative: MUCHFI.WDOGE, dexKind: 2 as const, dexFactory: MUCHFI.FACTORY,
+      payoutOperator: a(7),
+    };
+    const calls = dogeosFeeBatchCalls(pins, { router: a(8), vault: a(9), holderDistributor: a(10) }, TESTNET_CAPS);
+    expect(calls.map((c) => `${c.contract}.${c.fn}`)).to.deep.equal([
+      "TreasuryRouterV4.setRecruiterRewardsVault",
+      "TreasuryRouterV4.setCommunityRewardsVault",
+      "TreasuryRouterV4.setProtocolRevenueVault",
+      "TreasuryRouterV4.setCreatorRewardsVault",
+      "RewardDistributor.setBatchOperator",
+      "CreatorRewardsVaultV2.setHolderDistributorOnce",
+      "CreatorRewardsVaultV2.setOperator",
+      "CreatorRewardsVaultV2.setCaps",
+    ]);
+    expect(calls.some((c) => c.to === ethers.ZeroAddress)).to.equal(false);
+    // The pause is only dropped when it targets the (absent) old factory; any other target is refused.
+    expect(() => dogeosFeeBatchCalls({ ...pins, oldFactory: a(11) }, { router: a(8), vault: a(9), holderDistributor: a(10) }, TESTNET_CAPS)).to.throw(
+      /setCreatePaused/,
+    );
   });
 
   it("forbidden selectors are enableLive() and lockSecurityDefaults()", function () {
@@ -122,6 +148,12 @@ describe("DogeOS gen-7 stack helpers (t6, any network)", function () {
     expect(rec.nativeSwapAdapter).to.equal(stack.nativeSwapAdapter);
     expect(rec.dex.v3Factory).to.equal(MUCHFI.FACTORY);
     expect(rec.dex.weth).to.equal(MUCHFI.WDOGE);
+    // No RH-ambiguous router keys: in testnet.gen7.json `swapRouter` is the no-deadline router S1 is built on.
+    expect(rec.dex.smartRouter).to.equal(MUCHFI.SMART_ROUTER);
+    expect(rec.dex.swapRouterWithDeadline).to.equal(MUCHFI.SWAP_ROUTER);
+    expect(rec.dex).to.not.have.property("swapRouter");
+    expect(rec.dex).to.not.have.property("swapRouter02");
+    expect(rec.vaults.monthlyCapUsd).to.equal("1500000000000000000000000");
     expect(Object.keys(rec.curvesAtDeploy)).to.deep.equal(["150", "30000", "50000"]);
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dogeos-manifest-"));
@@ -188,6 +220,21 @@ describe("deployDogeosGen7Stack on a Chikyū fork (t6)", function () {
     expect(await ethers.provider.getTransactionCount(A)).to.equal(nonce);
   });
 
+  it("refuses before sending anything when routeAuthority is the admin or the zero address", async function () {
+    const nonce = await ethers.provider.getTransactionCount(A);
+    const base = {
+      admin: A,
+      oracleUpdater: await updater.getAddress(),
+      initialDogeUsdAnswer: DOGE_USD_8,
+      caps: dogeCaps,
+      airdropCap: AIRDROP_CAP,
+      log: quiet,
+    };
+    await expectReject(deployDogeosGen7Stack({ ...base, routeAuthority: A }), /routeAuthority .* is the admin/);
+    await expectReject(deployDogeosGen7Stack({ ...base, routeAuthority: ethers.ZeroAddress }), /routeAuthority is the zero address/);
+    expect(await ethers.provider.getTransactionCount(A)).to.equal(nonce);
+  });
+
   it("the MuchFi 1% tier is fee 10000 -> spacing 200; the RH 3000/60 check would refuse MuchFi", async function () {
     expect(MUCHFI_GRADUATION_FEE).to.equal(10000);
     expect(MUCHFI_GRADUATION_TICK_SPACING).to.equal(200n);
@@ -200,7 +247,10 @@ describe("deployDogeosGen7Stack on a Chikyū fork (t6)", function () {
   it("D1/D4/D5 are the MuchFi addresses (nothing DEX is deployed)", function () {
     expect(stack.dex.v3Factory).to.equal(MUCHFI.FACTORY);
     expect(stack.dex.positionManager).to.equal(MUCHFI.NPM);
-    expect(stack.dex.swapRouter02).to.equal(MUCHFI.SMART_ROUTER);
+    expect(stack.dex.smartRouter).to.equal(MUCHFI.SMART_ROUTER);
+    expect(stack.dex.swapRouterWithDeadline).to.equal(MUCHFI.SWAP_ROUTER);
+    expect(stack.dex).to.not.have.property("swapRouter");
+    expect(stack.dex).to.not.have.property("swapRouter02");
     expect(stack.dex.weth).to.equal(MUCHFI.WDOGE);
   });
 
@@ -251,6 +301,7 @@ describe("deployDogeosGen7Stack on a Chikyū fork (t6)", function () {
     expect(same(await v3.oracle(), stack.oracle.graduationOracle)).to.equal(true);
     expect(same(await v3.charityTreasury(), stack.vaults.charity)).to.equal(true);
     expect(await v3.monthlyCapUsd()).to.equal(MONTHLY_CAP_USD);
+    expect(stack.vaults.monthlyCapUsd).to.equal(MONTHLY_CAP_USD.toString());
     for (const v of [stack.vaults.recruiter, stack.vaults.protocol]) {
       expect(same(await at(["function admin() view returns (address)"], v).admin(), A)).to.equal(true);
     }
@@ -546,15 +597,15 @@ function syntheticStack(a: (n: number) => string): DogeosGen7Stack {
       v3Factory: MUCHFI.FACTORY,
       poolDeployer: MUCHFI.POOL_DEPLOYER,
       positionManager: MUCHFI.NPM,
-      swapRouter02: MUCHFI.SMART_ROUTER,
-      swapRouter: MUCHFI.SWAP_ROUTER,
+      smartRouter: MUCHFI.SMART_ROUTER,
+      swapRouterWithDeadline: MUCHFI.SWAP_ROUTER,
       quoterV2: MUCHFI.QUOTER_V2,
       weth: MUCHFI.WDOGE,
       feeTier: 10000,
       tickSpacing: 200,
     },
     oracle: { dogeUsd: a(3), graduationOracle: a(4), maxPriceAge: 3600, updater: a(5), initialAnswer: "25000000" },
-    vaults: { weekly: a(6), charity: a(7), monthly: a(8), recruiter: a(9), protocol: a(10) },
+    vaults: { weekly: a(6), charity: a(7), monthly: a(8), recruiter: a(9), protocol: a(10), monthlyCapUsd: "1500000000000000000000000" },
     registries: { creatorRegistry: a(11), riskRegistry: a(12) },
     fees: {
       router: a(13),

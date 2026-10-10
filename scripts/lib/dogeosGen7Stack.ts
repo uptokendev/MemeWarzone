@@ -43,7 +43,7 @@ export const MUCHFI_ADDRESSES = {
   poolDeployer: "0x6c04e808d5FfFb597cb6a5b539f2a1dDF3529348",
   positionManager: "0x7932C91f3BAD326ecd6C2bE81697D732714B9eC5",
   smartRouter: "0x54f7D7f6FeDf4E930eFd6b4742Ba0B9E8a6dC1CB",
-  swapRouter: "0xd34FE9553CE3012F81c8a7D86F3063AcADb8201c",
+  swapRouterWithDeadline: "0xd34FE9553CE3012F81c8a7D86F3063AcADb8201c",
   quoterV2: "0x5DE1Ea595653419f295511DEb781b98387a77cc2",
   wdoge: "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
 } as const;
@@ -101,15 +101,18 @@ export type DogeosGen7Stack = {
     v3Factory: string;
     poolDeployer: string;
     positionManager: string;
-    swapRouter02: string;
-    swapRouter: string;
+    /** D5: MuchFi SmartRouter, SwapRouter02 shape (exactInputSingle, no deadline); S1 is built on it. */
+    smartRouter: string;
+    /** MuchFi SwapRouter with a deadline field; not used by our contracts (S1 needs the no-deadline shape). */
+    swapRouterWithDeadline: string;
     quoterV2: string;
     weth: string;
     feeTier: number;
     tickSpacing: number;
   };
   oracle: { dogeUsd: string; graduationOracle: string; maxPriceAge: number; updater: string; initialAnswer: string };
-  vaults: { weekly: string; charity: string; monthly: string; recruiter: string; protocol: string };
+  /** monthlyCapUsd is V3's MonthlyLeagueTreasury constructor argument (USD, 18 decimals), not an address. */
+  vaults: { weekly: string; charity: string; monthly: string; recruiter: string; protocol: string; monthlyCapUsd: string };
   registries: { creatorRegistry: string; riskRegistry: string };
   fees: {
     router: string;
@@ -178,6 +181,23 @@ export async function assertMuchfiFeeTierSpacing(v3Factory: string): Promise<voi
   }
 }
 
+/**
+ * Step 1, the fee batch: deploy-evm-treasury-router-v4.ts batchACalls minus the two calls that do not apply to a
+ * fresh chain. The old-factory pause is dropped by its target (pins.oldFactory, the zero address here: DogeOS has
+ * no older factory), and CommunityRewardsVault.setRouter by name (F4 is constructed with F1). Any setCreatePaused
+ * left after that (aimed at a real factory) is refused rather than sent.
+ */
+export function dogeosFeeBatchCalls(pins: ChainPins, d: { router: string; vault: string; holderDistributor: string }, caps: Caps) {
+  const calls = batchACalls(pins, d, caps).filter(
+    (c) =>
+      !(c.fn === "setCreatePaused" && c.to === ethers.ZeroAddress && pins.oldFactory === ethers.ZeroAddress) &&
+      !(c.contract === "CommunityRewardsVault" && c.fn === "setRouter"),
+  );
+  const pause = calls.find((c) => c.fn === "setCreatePaused");
+  if (pause) throw new Error(`fee batch would send setCreatePaused to ${pause.to}; the DogeOS stack has no older factory to pause`);
+  return calls;
+}
+
 function requireAddress(label: string, value: string | undefined): string {
   if (!value) throw new Error(`${label} is required`);
   const address = ethers.getAddress(value);
@@ -200,6 +220,7 @@ export async function deployDogeosGen7Stack(params: DogeosGen7StackParams): Prom
   const deployer = ethers.getAddress(await signer.getAddress());
   if (deployer !== admin) throw new Error(`deployer ${deployer} is not params.admin ${admin}`);
   const routeAuthority = requireAddress("params.routeAuthority", params.routeAuthority);
+  if (routeAuthority === admin) throw new Error(`params.routeAuthority ${routeAuthority} is the admin; it must be its own key`);
   const oracleUpdater = requireAddress("params.oracleUpdater", params.oracleUpdater);
   if (params.initialDogeUsdAnswer <= 0n) throw new Error("params.initialDogeUsdAnswer must be positive (8 decimals)");
   if (params.airdropCap <= 0n) throw new Error("params.airdropCap must be positive");
@@ -248,6 +269,13 @@ export async function deployDogeosGen7Stack(params: DogeosGen7StackParams): Prom
   // ---------------------------------------------------------------- F: fees stack
   const F1 = await deploy("TreasuryRouterV4", [admin, V1.address, V3.address, UPGRADE_DELAY_SECONDS]);
   const F2 = await deploy("MuchfiCreatorRewardsVault", [admin, F1.address, W, DOGEOS_VAULT_DEX_KIND, D1, HOLDER_BATCH_DELAY_SECONDS]);
+  const f2: any = F2.contract;
+  // The constructor accepts dexKind 1 and only checks dexFactory != 0, so the immutables are read back before wiring.
+  check(Number(await f2.dexKind()) === DOGEOS_VAULT_DEX_KIND, "F2.dexKind == 2");
+  check(same(await f2.dexFactory(), D1), "F2.dexFactory == MuchFi factory");
+  check(same(await f2.wrappedNative(), W), "F2.wrappedNative == WDOGE");
+  check(same(await f2.router(), F1.address), "F2.router == F1");
+  check(same(await f2.admin(), admin), "F2.admin == admin");
   const F3 = await deploy("RewardDistributor", [admin]);
   const F4 = await deploy("CommunityRewardsVault", [admin, F1.address]);
   const F5 = await deployGen7AirdropDistributor(signer, admin);
@@ -309,11 +337,8 @@ export async function deployDogeosGen7Stack(params: DogeosGen7StackParams): Prom
     dexFactory: D1,
     payoutOperator,
   };
-  // batchACalls minus the old-factory pause (no old factory) and CommunityRewardsVault.setRouter (F4 is built on F1).
   // The planner names the vault CreatorRewardsVaultV2; F2 is its MuchFi variant, so the call goes through F2's ABI.
-  const feeCalls = batchACalls(pins, { router: F1.address, vault: F2.address, holderDistributor: F3.address }, caps).filter(
-    (c) => c.fn !== "setCreatePaused" && !(c.contract === "CommunityRewardsVault" && c.fn === "setRouter"),
-  );
+  const feeCalls = dogeosFeeBatchCalls(pins, { router: F1.address, vault: F2.address, holderDistributor: F3.address }, caps);
   const feeBatchSent: string[] = [];
   for (const c of feeCalls) {
     const name = c.contract === "CreatorRewardsVaultV2" ? "MuchfiCreatorRewardsVault" : c.contract;
@@ -322,7 +347,6 @@ export async function deployDogeosGen7Stack(params: DogeosGen7StackParams): Prom
     feeBatchSent.push(`${name}.${c.fn}`);
   }
   const f1: any = await ethers.getContractAt("TreasuryRouterV4", F1.address, signer);
-  const f2: any = F2.contract;
   check(same(await f1.recruiterRewardsVault(), V4.address), "F1.recruiterRewardsVault == V4");
   check(same(await f1.communityRewardsVault(), F4.address), "F1.communityRewardsVault == F4");
   check(same(await f1.protocolRevenueVault(), V5.address), "F1.protocolRevenueVault == V5");
@@ -340,8 +364,6 @@ export async function deployDogeosGen7Stack(params: DogeosGen7StackParams): Prom
       BigInt(lim[5]) === caps.maxHolderBatchPerWeek,
     "F2.limits == caps, operator not paused",
   );
-  check(Number(await f2.dexKind()) === DOGEOS_VAULT_DEX_KIND, "F2.dexKind == 2");
-  check(same(await f2.dexFactory(), D1), "F2.dexFactory == MuchFi factory");
 
   // ---------------------------------------------------------------- 2. airdrop pot (F4 main vault, F5 distributor)
   const airdrop: Gen7AirdropSetup = {
@@ -449,8 +471,8 @@ export async function deployDogeosGen7Stack(params: DogeosGen7StackParams): Prom
       v3Factory: D1,
       poolDeployer: ethers.getAddress(MUCHFI_ADDRESSES.poolDeployer),
       positionManager: D4,
-      swapRouter02: D5,
-      swapRouter: ethers.getAddress(MUCHFI_ADDRESSES.swapRouter),
+      smartRouter: D5,
+      swapRouterWithDeadline: ethers.getAddress(MUCHFI_ADDRESSES.swapRouterWithDeadline),
       quoterV2: ethers.getAddress(MUCHFI_ADDRESSES.quoterV2),
       weth: W,
       feeTier: MUCHFI_GRADUATION_FEE,
@@ -463,7 +485,14 @@ export async function deployDogeosGen7Stack(params: DogeosGen7StackParams): Prom
       updater: oracleUpdater,
       initialAnswer: params.initialDogeUsdAnswer.toString(),
     },
-    vaults: { weekly: V1.address, charity: V2.address, monthly: V3.address, recruiter: V4.address, protocol: V5.address },
+    vaults: {
+      weekly: V1.address,
+      charity: V2.address,
+      monthly: V3.address,
+      recruiter: V4.address,
+      protocol: V5.address,
+      monthlyCapUsd: monthlyCapUsd.toString(),
+    },
     registries: { creatorRegistry: R1.address, riskRegistry: R2.address },
     fees: {
       router: F1.address,
