@@ -16,7 +16,7 @@ import type { MarketCandle, MarketState } from "@/lib/marketContinuityApi";
 import { buildCandles, type CurveTradePoint as ChartPoint } from "@/lib/chart/buildCandles";
 import { fetchUserProfile } from "@/lib/profileApi";
 import { resolveImageUri } from "@/lib/media";
-import { getDefaultChainId, getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
+import { DOGEOS_TESTNET_CHAIN_ID, getDefaultChainId, getExplorerTxBase, getNativeSymbol, isDogeosChainId, isSolanaChainId } from "@/lib/chainConfig";
 import {
   solanaMarginalSpotSol,
   type SolanaCurvePricingState,
@@ -427,13 +427,14 @@ function formatNativeAmt(raw: bigint, decimals: number, symbol: string): string 
   return `${trimFixed(n, symbol === "SOL" ? 9 : 8)} ${symbol}`;
 }
 
-function explorerTxUrl(chainId: number, txHash: string): string {
+export function explorerTxUrl(chainId: number, txHash: string): string {
   if (isSolanaChainId(chainId)) {
     const cluster = Number(chainId) === 102 ? "?cluster=devnet" : "";
     return `https://explorer.solana.com/tx/${encodeURIComponent(txHash)}${cluster}`;
   }
   if (Number(chainId) === 46630) return `https://explorer.testnet.chain.robinhood.com/tx/${txHash}`;
   if (Number(chainId) === 4663) return `https://explorer.chain.robinhood.com/tx/${txHash}`;
+  if (isDogeosChainId(Number(chainId))) return `${getExplorerTxBase(DOGEOS_TESTNET_CHAIN_ID)}${txHash}`;
   const base = Number(chainId) === 56 ? "https://bscscan.com" : "https://testnet.bscscan.com";
   return `${base}/tx/${txHash}`;
 }

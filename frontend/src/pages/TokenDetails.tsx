@@ -28,13 +28,18 @@ import {
   resolveTokenPageChainId,
   SOLANA_CHAIN_ID,
   isRobinhoodChainId,
+  isDogeosChainId,
+  getChainLabel,
+  getNativeSymbol,
   type SupportedChainId,
 } from "@/lib/chainConfig";
+import { DOGEOS_DEX_LABEL, DOGEOS_EXPLORER_BASE } from "@/lib/dogeosPresentation.mjs";
 import { resolveMarketIdentity, resolveMarketIdentityAcrossEvm } from "@/lib/marketIdentity";
 import { recordRecentlyViewed } from "@/lib/searchHistory";
 import { getReadProvider } from "@/lib/readProvider";
 
 import { useBnbUsdPrice } from "@/hooks/useBnbUsdPrice";
+import { useDogeUsdPrice } from "@/hooks/useDogeUsdPrice";
 import { useEthUsdPrice } from "@/hooks/useEthUsdPrice";
 import { useSolUsdPrice } from "@/hooks/useSolUsdPrice";
 import { useTokenStatsRealtime } from "@/hooks/useTokenStatsRealtime";
@@ -454,14 +459,29 @@ function confirmedRowsToCurvePoints(
     .filter((point) => Boolean(point.txHash) && point.tokensWei > 0n && point.nativeWei >= 0n);
 }
 
-function getExplorerBase(chainId?: number): string {
+export function getExplorerBase(chainId?: number): string {
   const id = Number(chainId ?? 0);
   if (id === 101) return "https://explorer.solana.com";
   if (id === 46630) return "https://explorer.testnet.chain.robinhood.com";
   if (id === 4663) return "https://explorer.chain.robinhood.com";
   if (id === 56) return "https://bscscan.com";
   if (id === 97) return "https://testnet.bscscan.com";
+  if (isDogeosChainId(id)) return DOGEOS_EXPLORER_BASE;
   return "https://bscscan.com";
+}
+
+/** Native unit on an EVM token page: ETH on Robinhood, DOGE on DogeOS, else BNB. */
+export function evmPageNativeUnit(chainId?: number | null): string {
+  if (isRobinhoodChainId(chainId)) return "ETH";
+  if (isDogeosChainId(chainId)) return getNativeSymbol(chainId);
+  return "BNB";
+}
+
+/** DEX the EVM coin trades on after graduation: Uniswap on Robinhood, MuchFi on DogeOS, else Topaz. */
+export function evmPageDexVenueLabel(chainId?: number | null): string {
+  if (isRobinhoodChainId(chainId)) return "Uniswap";
+  if (isDogeosChainId(chainId)) return DOGEOS_DEX_LABEL;
+  return "Topaz";
 }
 
 function formatTinyUsdPrice(value: number): string {
@@ -777,6 +797,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     isSolanaChainId(chainIdForStorage) &&
     !/^0x[a-fA-F0-9]{40}$/i.test(String(campaignAddress || campaignAddr || ""));
   const isRobinhoodPage = isRobinhoodChainId(chainIdForStorage);
+  // Presentation only (labels, DOGE/USD). DogeOS trade/graduation routing is not wired here.
+  const isDogeosPage = isDogeosChainId(chainIdForStorage);
 
   useEffect(() => {
     const campaignPda = String(campaign?.campaign || campaignAddr || "").trim();
@@ -827,9 +849,9 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [isDbcPage, dbcQuoteMint, dbcQuoteSymbol, dbcQuoteDecimals, rtStats?.dexQuoteMint, rtStats?.dexQuoteSymbol, rtStats?.dexQuoteDecimals, rtStats?.dexQuoteReferenceUsd],
   );
-  /** Native unit for quotes/UI: SOL on Solana (the pool quote once graduated), ETH on Robinhood, BNB on BNB. */
-  const nativeUnit = isSolanaPage ? solanaQuote.symbol : isRobinhoodPage ? "ETH" : "BNB";
-  const dexVenueLabel = isSolanaPage ? "Meteora" : isRobinhoodPage ? "Uniswap" : "Topaz";
+  /** Native unit for quotes/UI: SOL on Solana (the pool quote once graduated), ETH on Robinhood, DOGE on DogeOS, BNB on BNB. */
+  const nativeUnit = isSolanaPage ? solanaQuote.symbol : evmPageNativeUnit(chainIdForStorage);
+  const dexVenueLabel = isSolanaPage ? "Meteora" : evmPageDexVenueLabel(chainIdForStorage);
   const walletMatchesCampaign = campaignWalletMatches({
     isSolanaCampaign: isSolanaPage,
     storedKind: activeWalletKind,
@@ -843,7 +865,9 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     ? "Connect SOL wallet"
     : isRobinhoodPage
       ? "Connect Robinhood wallet"
-      : "Connect BNB wallet";
+      : isDogeosPage
+        ? "Connect DogeOS wallet"
+        : "Connect BNB wallet";
   const openWalletModal = useCallback(() => {
     try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch { /* ignore */ }
   }, []);
@@ -2602,11 +2626,12 @@ const toSeconds = (ts: number): number => {
   // Native/USD reference for TokenDetails conversions: BNB on BNB Chain, SOL on
   // Solana, ETH on Robinhood. Treating every non-Solana chain as BNB priced a
   // Robinhood page in BNB/USD, so the header read about six times lower than the
-  // chart, which converts with ETH/USD.
-  const { price: bnbUsdPrice, loading: bnbUsdLoading } = useBnbUsdPrice(!isSolanaPage && !isRobinhoodPage);
+  // chart, which converts with ETH/USD. DogeOS reads DOGE/USD, never BNB/USD.
+  const { price: bnbUsdPrice, loading: bnbUsdLoading } = useBnbUsdPrice(!isSolanaPage && !isRobinhoodPage && !isDogeosPage);
   const { price: ethUsdPrice, loading: ethUsdLoading } = useEthUsdPrice(isRobinhoodPage);
-  const nativeUsdPrice = isSolanaPage ? liveSolUsdPrice : isRobinhoodPage ? ethUsdPrice : bnbUsdPrice;
-  const nativeUsdLoading = isSolanaPage ? solUsdLoading : isRobinhoodPage ? ethUsdLoading : bnbUsdLoading;
+  const { price: dogeUsdPrice, loading: dogeUsdLoading } = useDogeUsdPrice(!isSolanaPage && isDogeosPage);
+  const nativeUsdPrice = isSolanaPage ? liveSolUsdPrice : isRobinhoodPage ? ethUsdPrice : isDogeosPage ? dogeUsdPrice : bnbUsdPrice;
+  const nativeUsdLoading = isSolanaPage ? solUsdLoading : isRobinhoodPage ? ethUsdLoading : isDogeosPage ? dogeUsdLoading : bnbUsdLoading;
 
   const nativeUsd = useMemo(() => {
     if (nativeUsdPrice == null) return null;
@@ -3610,6 +3635,10 @@ const toSeconds = (ts: number): number => {
       ? onChainLaunched || contractGraduated
         ? "Graduated · Uniswap"
         : "Bonding · Robinhood"
+      : isDogeosPage
+        ? onChainLaunched || contractGraduated
+          ? `Graduated · ${DOGEOS_DEX_LABEL}`
+          : "Bonding · DogeOS"
       : isTopazTradingActive
         ? "Graduated · Topaz"
         : isDexStage
@@ -4295,7 +4324,9 @@ const toSeconds = (ts: number): number => {
           ? "This campaign is on Solana. Connect Phantom / Solflare to buy or sell."
           : isRobinhoodPage
             ? "This campaign is on Robinhood. Connect a Robinhood wallet to buy or sell."
-            : "This campaign is on BNB. Connect a BNB wallet to buy or sell.",
+            : isDogeosPage
+              ? `This campaign is on ${getChainLabel(chainIdForStorage)}. Connect a DogeOS wallet to buy or sell.`
+              : "This campaign is on BNB. Connect a BNB wallet to buy or sell.",
       });
       openWalletModal();
       return;
@@ -5072,7 +5103,7 @@ const toSeconds = (ts: number): number => {
               ? unifiedMarket.stageTransition.at
               : null
         }
-        venueLabel={isSolanaPage ? "Meteora DAMM v2" : isRobinhoodPage ? "Uniswap" : "Topaz"}
+        venueLabel={isSolanaPage ? "Meteora DAMM v2" : isRobinhoodPage ? "Uniswap" : isDogeosPage ? DOGEOS_DEX_LABEL : "Topaz"}
       />
 
       {/* Header: logo, name, chips, creator line, actions (UI redesign phase 1). Founder 2026-10-02: no banner on the coin page. */}
@@ -5096,7 +5127,7 @@ const toSeconds = (ts: number): number => {
                 {tokenData.name}
               </h1>
               <span className={`${cp.chip} font-mw-mono`}>{tokenData.ticker}</span>
-              <span className={cp.chip}>{isSolanaPage ? "Solana" : isRobinhoodPage ? "Robinhood" : "BNB Chain"}</span>
+              <span className={cp.chip}>{isSolanaPage ? "Solana" : isRobinhoodPage ? "Robinhood" : isDogeosPage ? getChainLabel(chainIdForStorage) : "BNB Chain"}</span>
               <span className={isDexStage ? cp.chipGood : cp.chipAccent}>{stagePill}</span>
               {isDbcPage ? (
                 <span className={cp.chipAccent}>
@@ -5439,10 +5470,10 @@ const toSeconds = (ts: number): number => {
                 <h3 className="m-0 text-sm font-normal text-mw-muted">{contractGraduated ? "Graduated" : "Bonding curve"}</h3>
                 <span className="font-mw-mono text-mw-text">
                   {contractGraduated
-                    ? `Trading ${isSolanaPage ? "on Meteora" : isRobinhoodPage ? "on Uniswap" : "on Topaz"}`
+                    ? `Trading ${isSolanaPage ? "on Meteora" : isRobinhoodPage ? "on Uniswap" : isDogeosPage ? `on ${DOGEOS_DEX_LABEL}` : "on Topaz"}`
                     : solanaCurveClosed || curveProgress.matured
                       ? "Eligible to graduate"
-                    : `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : "to Topaz"} at 100%`}
+                    : `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : isDogeosPage ? `to ${DOGEOS_DEX_LABEL}` : "to Topaz"} at 100%`}
                 </span>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-mw-border">
@@ -6350,7 +6381,9 @@ const toSeconds = (ts: number): number => {
                     ? "Wrong wallet. Connect a SOL wallet to trade this campaign."
                     : isRobinhoodPage
                       ? "Wrong wallet. Connect a Robinhood wallet to trade this campaign."
-                      : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
+                      : isDogeosPage
+                        ? "Wrong wallet. Connect a DogeOS wallet to trade this campaign."
+                        : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
               </p>
             )}
           </section>

@@ -170,17 +170,19 @@ function isDiscoverableDraft(draft: CampaignDraftLifecycle, nowMs = Date.now()) 
   return !draft.campaignAddress;
 }
 
-function draftChainLabel(chainId: number) {
+export function draftChainLabel(chainId: number) {
   if (chainId === SOLANA_CHAIN_ID) return "Solana";
   if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "Robinhood";
+  if (isDogeosChainId(chainId)) return "DogeOS";
   return "BNB";
 }
 
-function draftChainBadgeClass(chainId: number) {
+export function draftChainBadgeClass(chainId: number) {
   if (chainId === SOLANA_CHAIN_ID) return "border-violet-400/60 bg-violet-400/10 text-violet-300";
   if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) {
     return "border-sky-400/60 bg-sky-400/10 text-sky-300";
   }
+  if (isDogeosChainId(chainId)) return "border-yellow-300/60 bg-yellow-300/10 text-yellow-200";
   return "border-amber-400/60 bg-amber-400/10 text-amber-300";
 }
 

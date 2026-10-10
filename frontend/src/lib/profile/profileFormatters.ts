@@ -1,4 +1,6 @@
 import type { CampaignSummary } from "@/lib/launchpadClient";
+import { isDogeosChainId } from "@/lib/chainConfig";
+import { DOGEOS_EXPLORER_BASE } from "@/lib/dogeosPresentation.mjs";
 
 export function getExplorerBase(chainId?: number): string {
   // Solana
@@ -9,6 +11,8 @@ export function getExplorerBase(chainId?: number): string {
   // BSC
   if (chainId === 97) return "https://testnet.bscscan.com";
   if (chainId === 56) return "https://bscscan.com";
+  // DogeOS Chikyū testnet: L2Scan
+  if (isDogeosChainId(chainId)) return DOGEOS_EXPLORER_BASE;
 
   // Unknown chain: do not silently send users to BscScan.
   return "";

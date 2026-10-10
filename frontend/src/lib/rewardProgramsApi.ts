@@ -1,5 +1,6 @@
 import { buildRealtimeApiUrl } from "@/lib/realtimeApi";
 import { apiFetch } from "@/lib/apiBase";
+import { getNativeSymbol, isDogeosChainId } from "@/lib/chainConfig";
 
 async function parseJson(res: Response) {
   const json = await res.json().catch(() => ({}));
@@ -19,11 +20,12 @@ function buildQuery(params: Record<string, string | number | null | undefined>) 
   return query ? `?${query}` : "";
 }
 
-function nativeSymbolForChain(chainId?: number | null, fallback?: string | null): string {
+export function nativeSymbolForChain(chainId?: number | null, fallback?: string | null): string {
   const chain = Number(chainId || 0);
   if (chain === 101) return "SOL";
   if (chain === 4663 || chain === 46630) return "ETH";
   if (chain === 56 || chain === 97) return "BNB";
+  if (isDogeosChainId(chain)) return getNativeSymbol(chain);
   return String(fallback || "").trim() || "BNB";
 }
 

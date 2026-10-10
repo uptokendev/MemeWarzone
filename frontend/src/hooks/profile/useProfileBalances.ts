@@ -12,6 +12,8 @@ import {
 import { getReadProvider } from "@/lib/readProvider";
 import {
   getActiveChainId,
+  getNativeSymbol,
+  isDogeosChainId,
   isEvmChainId,
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
@@ -143,6 +145,13 @@ function enrichBalanceRow(row: TokenBalanceRow, campaign?: any, summary?: Campai
   };
 }
 
+/** Native unit of the profile's EVM chain: ETH on Robinhood, DOGE on DogeOS, else BNB. */
+export function profileNativeSymbol(chainId: number): string {
+  if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "ETH";
+  if (isDogeosChainId(chainId)) return getNativeSymbol(chainId);
+  return "BNB";
+}
+
 export function useProfileBalances({
   viewedAddress,
   account,
@@ -162,8 +171,7 @@ export function useProfileBalances({
   const effectiveEvmChainId = isEvmChainId(requestedChainId)
     ? requestedChainId
     : getActiveChainId(walletChainId);
-  const robinhood = effectiveEvmChainId === ROBINHOOD_CHAIN_ID || effectiveEvmChainId === ROBINHOOD_TESTNET_CHAIN_ID;
-  const nativeSymbol = robinhood ? "ETH" : "BNB";
+  const nativeSymbol = profileNativeSymbol(effectiveEvmChainId);
   const { price: nativeUsdPrice } = useNativeUsdPrice(effectiveEvmChainId);
 
   useEffect(() => {
