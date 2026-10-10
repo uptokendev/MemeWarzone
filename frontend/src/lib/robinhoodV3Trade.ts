@@ -5,7 +5,7 @@ import {
   type RobinhoodQuoteAssetType,
   type RobinhoodRouteKind,
 } from "@/lib/marketContinuityApi";
-import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID, isDogeosChainId } from "@/lib/chainConfig";
 import { robinhoodNativeSwapAdapterAddress } from "@/lib/robinhoodNativeSwapAdapterEnv.mjs";
 
 const V3_QUOTER_ABI = [
@@ -100,6 +100,17 @@ function isRobinhoodChainId(chainId: number): boolean {
   return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
 }
 
+/**
+ * DogeOS graduates into MuchFi (PancakeSwap V3 fork): direct-native V3 trade through the same
+ * RobinhoodV3NativeSwapAdapterV2 into MuchFi's SmartRouter, quoted by MuchFi's QuoterV2.
+ */
+function isV3TradeChainId(chainId: number): boolean {
+  return isRobinhoodChainId(chainId) || isDogeosChainId(chainId);
+}
+
+/** MuchFi's graduation tier: every graduated DogeOS pool is fee 10000 / tick spacing 200 (3000 is not enabled). */
+const DOGEOS_MUCHFI_POOL_FEE = 10_000;
+
 function normalizeAddress(value: unknown, label: string): string {
   const raw = String(value || "").trim();
   if (!ethers.isAddress(raw) || raw === ethers.ZeroAddress) throw new Error(`Invalid ${label}.`);
@@ -122,6 +133,8 @@ function sameAddress(a: unknown, b: unknown): boolean {
 
 function envValue(name: string, chainId: number): string {
   const viteEnv = import.meta.env as Record<string, unknown>;
+  // The unsuffixed names carry Robinhood addresses and flags; DogeOS reads only its own _6281971 names.
+  if (isDogeosChainId(chainId)) return String(viteEnv[`${name}_${chainId}`] ?? "").trim();
   return String(viteEnv[`${name}_${chainId}`] ?? viteEnv[name] ?? "").trim();
 }
 
@@ -182,7 +195,10 @@ async function requireCode(provider: ethers.Provider, address: string, label: st
   if (!code || code === "0x") throw new Error(`${label} is not deployed.`);
 }
 
-function normalizeV3Fee(route: MarketRoute): number {
+function normalizeV3Fee(route: MarketRoute, chainId: number): number {
+  // Explicit DogeOS branch: the pool indexer stores a 1% pool as fee_bps 100, which the generic reading
+  // below would take as fee 100 (0.01%), and the fallback below is Robinhood's 3000.
+  if (isDogeosChainId(chainId)) return DOGEOS_MUCHFI_POOL_FEE;
   const raw = Number(route.feeBps);
   if (Number.isInteger(raw) && raw > 0) {
     if (raw >= 100 && raw <= 1_000_000) return raw;
@@ -245,11 +261,11 @@ export async function resolveRobinhoodV3Route(input: {
   expectedTokenAddress?: string;
   signal?: AbortSignal;
 }): Promise<RobinhoodV3ResolvedRoute> {
-  if (!isRobinhoodChainId(input.chainId)) throw new Error("Robinhood V3 route requested for a non-Robinhood chain.");
+  if (!isV3TradeChainId(input.chainId)) throw new Error("Robinhood V3 route requested for a non-Robinhood chain.");
 
   const network = await input.provider.getNetwork();
   if (Number(network.chainId) !== Number(input.chainId)) {
-    throw new Error(`Wrong network. Connect Robinhood chain ${input.chainId}.`);
+    throw new Error(`Wrong network. Connect ${isDogeosChainId(input.chainId) ? "DogeOS" : "Robinhood"} chain ${input.chainId}.`);
   }
 
   const market = await fetchMarketRoute(input.campaignAddress, input.chainId, input.signal, { includeQuotePrice: true });
@@ -305,7 +321,7 @@ export async function resolveRobinhoodV3Route(input: {
       nativeSwapAdapterAddress,
       executionAdapterAddress: nativeSwapAdapterAddress,
       multiHopSwapAdapterAddress: null,
-      fee: normalizeV3Fee(market),
+      fee: normalizeV3Fee(market, input.chainId),
       stockRoute: null,
     };
   }
@@ -356,7 +372,7 @@ export async function resolveRobinhoodV3Route(input: {
   if (!sameAddress(configuredStock, routeDescriptor.quoteTokenAddress)) {
     throw new Error("Robinhood Stock adapter quote asset mismatch.");
   }
-  if (stockMemeFee !== normalizeV3Fee(market)) {
+  if (stockMemeFee !== normalizeV3Fee(market, input.chainId)) {
     throw new Error("Robinhood Stock adapter market fee tier mismatch.");
   }
 

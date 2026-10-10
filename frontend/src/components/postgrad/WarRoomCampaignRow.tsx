@@ -10,7 +10,8 @@ import { setSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { getWarRoomCampaignMetrics } from "@/features/postgrad/warRoomMetrics";
 import { isSolanaAddress } from "@/lib/address";
-import { getChainLabel, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import { DOGEOS_TESTNET_CHAIN_ID, getChainLabel, isDogeosChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import { DOGEOS_DEX_LABEL } from "@/lib/dogeosPresentation.mjs";
 
 function shortenAddress(value?: string | null) {
   const input = String(value ?? "").trim();
@@ -126,10 +127,12 @@ export function WarRoomCampaignRow({
   const inferredChainId = Number(rich.chainId);
   const rowChainId = isSolanaAddress(campaign.campaign)
     ? 101
-    : inferredChainId === 56 || inferredChainId === 97 || inferredChainId === ROBINHOOD_CHAIN_ID || inferredChainId === ROBINHOOD_TESTNET_CHAIN_ID
+    : inferredChainId === 56 || inferredChainId === 97 || inferredChainId === ROBINHOOD_CHAIN_ID || inferredChainId === ROBINHOOD_TESTNET_CHAIN_ID || inferredChainId === DOGEOS_TESTNET_CHAIN_ID
       ? inferredChainId
       : 56;
-  const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID || rowChainId === ROBINHOOD_TESTNET_CHAIN_ID;
+  // A DogeOS row takes the Robinhood V3-family surfaces (MuchFi trade panel, token-page bonding note).
+  const isDogeosRow = isDogeosChainId(rowChainId);
+  const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID || rowChainId === ROBINHOOD_TESTNET_CHAIN_ID || isDogeosRow;
   const tokenRoute = tokenDetailsPath(
     { tokenAddress: campaign.token, campaignAddress: campaign.campaign, chainId: rowChainId },
     { chainId: rowChainId },
@@ -148,7 +151,7 @@ export function WarRoomCampaignRow({
     metrics.status === "graduated" ? "success" : metrics.status === "bonding" ? "hot" : isScheduledDraft ? "sponsored" : "default";
   const chartSourceLabel =
     metrics.status === "graduated"
-      ? isRobinhoodRow ? "ROBINHOOD V3" : "TOPAZ"
+      ? isDogeosRow ? DOGEOS_DEX_LABEL.toUpperCase() : isRobinhoodRow ? "ROBINHOOD V3" : "TOPAZ"
       : metrics.status === "bonding"
         ? "BONDING"
         : "CHART";
@@ -172,6 +175,7 @@ export function WarRoomCampaignRow({
       rowChainId === 97 ||
       rowChainId === ROBINHOOD_CHAIN_ID ||
       rowChainId === ROBINHOOD_TESTNET_CHAIN_ID ||
+      rowChainId === DOGEOS_TESTNET_CHAIN_ID ||
       rowChainId === 101
     ) {
       setSelectedFeedChainId(rowChainId);
@@ -385,7 +389,9 @@ export function WarRoomCampaignRow({
                 <div className={`${card} p-3.5`} data-testid="war-room-robinhood-bonding-trade">
                   <span className={cardTitle}>Trade</span>
                   <p className="m-0 mt-1.5 text-sm text-mw-muted">
-                    This coin trades in ETH on Robinhood Chain. Buy and sell it on its token page.
+                    {isDogeosRow
+                      ? "This coin trades in DOGE on DogeOS. Buy and sell it on its token page."
+                      : "This coin trades in ETH on Robinhood Chain. Buy and sell it on its token page."}
                   </p>
                   {hasTokenRoute ? (
                     <Link

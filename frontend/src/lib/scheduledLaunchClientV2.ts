@@ -63,6 +63,7 @@ const ALLOWED_GENERATION_PAIRS: Record<number, ReadonlyArray<readonly [number, n
   4663: [[4, 3], [6, 5], [7, 6]],
   46630: [[4, 3], [6, 5], [7, 6]],
   31337: [[4, 3], [6, 5], [7, 6]],
+  6281971: [[7, 6]],
 };
 
 function supportedGenerationPairs(chainId: number): ReadonlyArray<readonly [number, number]> {

@@ -36,7 +36,9 @@ test("connected BNB EVM wallet switches in place and continues RH quote/execute 
 
 test("wallet modal remains the one-time path only when no EVM wallet is connected", () => {
   assert.match(panelSource, /if \(!wallet\.account \|\| !wallet\.signer \|\| !wallet\.provider\) \{\s*openWalletModal\(\);\s*return;/);
-  assert.match(panelSource, /!wallet\.isConnected \|\| !wallet\.account\s*\? `Connect Robinhood wallet`/);
+  // networkName is "Robinhood" on 4663/46630 and "DogeOS" on 6281971 (dogeosLaunchPath.test.mjs).
+  assert.match(panelSource, /!wallet\.isConnected \|\| !wallet\.account\s*\? `Connect \$\{networkName\} wallet`/);
+  assert.match(panelSource, /const networkName = isDogeosChainId\(chainId\) \? "DogeOS" : "Robinhood";/);
 });
 
 test("TokenDetails RH graduated buy is delegated to the corrected Robinhood trade panel", () => {

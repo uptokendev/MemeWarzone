@@ -2,6 +2,7 @@ import { apiFetch } from "@/lib/apiBase";
 import {
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
+  isDogeosChainId,
 } from "@/lib/chainConfig";
 import type {
   LaunchpadAdapter,
@@ -53,9 +54,11 @@ function normalizePreflight(payload: any, side: TradeSide): LaunchpadTradePrefli
   };
 }
 
-function resolveRobinhoodChainId(value?: number | string | null): number {
+export function resolveRobinhoodChainId(value?: number | string | null): number {
   const chainId = Number(value);
   if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return chainId;
+  // DogeOS shares this adapter family and keeps its own chain: never the 46630 default below.
+  if (isDogeosChainId(chainId)) return chainId;
   // Fail closed to the currently staged product chain; never borrow 56/97.
   return ROBINHOOD_TESTNET_CHAIN_ID;
 }

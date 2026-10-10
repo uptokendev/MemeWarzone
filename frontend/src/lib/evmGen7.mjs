@@ -17,6 +17,7 @@ import {
   isEvmGen7Pair,
 } from "../../shared/evmGen7Curve.mjs";
 import { encodeEvmFeeChoice, isEvmGen6Pair } from "./evmGen6.mjs";
+import { DOGEOS_DEX_LABEL, DOGEOS_TESTNET_CHAIN_ID } from "./dogeosPresentation.mjs";
 
 export * from "../../shared/evmGen7Curve.mjs";
 
@@ -91,10 +92,14 @@ export function gen7FirstBuyOverBalance({ totalWei, balanceWei, gasReserveWei, s
 
 // ---------------------------------------------------------------- graduation tiers (G3, C8)
 
-/** Where a gen-7 coin's pool opens: Uniswap on Robinhood (V3 fee 3000), Topaz on BNB (V2, 30 bps). */
+/**
+ * Where a gen-7 coin's pool opens: Uniswap on Robinhood (V3 fee 3000), MuchFi on DogeOS (V3 fee 10000),
+ * Topaz on BNB (V2, 30 bps).
+ */
 export function evmGen7DexName(chainId) {
   const id = Number(chainId);
   if (id === 4663 || id === 46630) return "Uniswap";
+  if (id === DOGEOS_TESTNET_CHAIN_ID) return DOGEOS_DEX_LABEL;
   if (id === 56 || id === 97) return "Topaz";
   return "DEX";
 }

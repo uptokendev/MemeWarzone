@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { getNativeSymbol, isRobinhoodChainId } from "@/lib/chainConfig";
+import { getNativeSymbol, isDogeosChainId, isRobinhoodChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { readEvmCreateContext, readGen6CreateContext, type Gen6FactoryContext, type Gen7FactoryContext } from "@/lib/evmGen6Client";
 import { LAUNCH_FEE_NOTE, campaignFromFactoryConfig, planFirstBuy, quoteFirstBuy } from "@/lib/evmGen6.mjs";
@@ -90,7 +90,8 @@ export async function assertEvmGen7LaunchBalance(input: { chainId: number; accou
   if (input.valueWei <= 0n) return;
   const balance = await readEvmNativeBalance(input.chainId, input.account);
   if (balance == null) return;
-  const isRobinhood = isRobinhoodChainId(input.chainId);
+  // DogeOS takes the Robinhood (cheap L2 gas) launch reserve, in DOGE; never the BNB one.
+  const isRobinhood = isRobinhoodChainId(input.chainId) || isDogeosChainId(input.chainId);
   const reserve = evmLaunchGasReserveWei(isRobinhood);
   if (input.valueWei + reserve > balance) {
     throw new Error(
@@ -305,7 +306,7 @@ function EvmGen7LaunchOptions({
   onBlockedChange,
 }: LaunchOptionsProps & { account?: string; onBlockedChange?: (blocked: boolean) => void }) {
   const symbol = getNativeSymbol(chainId);
-  const isRobinhood = isRobinhoodChainId(chainId);
+  const isRobinhood = isRobinhoodChainId(chainId) || isDogeosChainId(chainId);
   const gasReserveWei = evmLaunchGasReserveWei(isRobinhood);
   const [ctx, setCtx] = useState<Gen7FactoryContext | null>(null);
   const [ctxError, setCtxError] = useState<string | null>(null);

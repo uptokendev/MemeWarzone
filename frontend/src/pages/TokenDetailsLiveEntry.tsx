@@ -10,6 +10,7 @@ import {
   ROBINHOOD_TESTNET_CHAIN_ID,
   SOLANA_CHAIN_ID,
   getDefaultChainId,
+  isDogeosChainId,
 } from "@/lib/chainConfig";
 import { apiFetch } from "@/lib/apiBase";
 import { useLaunchpad, type CampaignInfo } from "@/lib/launchpadClient";
@@ -43,6 +44,11 @@ function tokenIdMatches(candidate?: string | null, routeId?: string | null): boo
 
 function isRobinhoodChainId(chainId: number): boolean {
   return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
+}
+
+/** Robinhood or DogeOS: an EVM product chain of its own, never folded into the BNB default. */
+function isV3FamilyChainId(chainId: number): boolean {
+  return isRobinhoodChainId(chainId) || isDogeosChainId(chainId);
 }
 
 function isBnbChainId(chainId: number): boolean {
@@ -87,15 +93,15 @@ const TokenDetailsEntry = () => {
 
   const routeId = String(campaignAddress || "").trim();
   const forcedChainId = Number(searchParams.get("chainId") || "");
-  const selectedEvmChainId = isRobinhoodChainId(Number(selectedFeedChainId)) || isBnbChainId(Number(selectedFeedChainId))
+  const selectedEvmChainId = isV3FamilyChainId(Number(selectedFeedChainId)) || isBnbChainId(Number(selectedFeedChainId))
     ? Number(selectedFeedChainId)
     : 0;
   // Explicit URL identity wins. Legacy /token/0x... links inherit the currently
   // selected EVM product chain instead of silently becoming BNB testnet.
-  const effectiveEvmChainId = isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+  const effectiveEvmChainId = isV3FamilyChainId(forcedChainId) || isBnbChainId(forcedChainId)
     ? forcedChainId
     : selectedEvmChainId || getDefaultChainId();
-  const robinhoodRoute = isRobinhoodChainId(effectiveEvmChainId);
+  const robinhoodRoute = isV3FamilyChainId(effectiveEvmChainId);
   const isSolanaRoute = useMemo(() => {
     // A 0x BNB/Robinhood token is never a Solana route, even if the wallet latch
     // or a stale ?chainId=101 is present. That was collapsing EVM trades/holders.
@@ -294,7 +300,7 @@ const TokenDetailsEntry = () => {
     const campaignChainId = Number((campaign as { chainId?: number } | null)?.chainId || 0);
     const chainId = isSolanaRoute
       ? SOLANA_CHAIN_ID
-      : isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+      : isV3FamilyChainId(forcedChainId) || isBnbChainId(forcedChainId)
         ? forcedChainId
         : campaignChainId || effectiveEvmChainId;
 

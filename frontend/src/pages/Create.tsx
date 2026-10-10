@@ -86,6 +86,7 @@ import {
   getActiveChainId,
   getChainLabel,
   getNativeSymbol,
+  isDogeosChainId,
   isEvmChainId,
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
@@ -370,7 +371,8 @@ const Create = () => {
     wallet.signer,
   ]);
   const isSolanaProtocolPending = launchpadSafetyStatus.protocolStatus === "protocol_pending";
-  const robinhoodSelected = isRobinhoodChain(Number(configuredEvmChainId));
+  // DogeOS shares the Robinhood gen-7 V3 launch family, and so its direct-deploy flag; never the BNB one.
+  const robinhoodSelected = isRobinhoodChain(Number(configuredEvmChainId)) || isDogeosChainId(Number(configuredEvmChainId));
   const graduationMarketReady = Boolean(
     graduationQuoteAsset?.id && graduationQuoteAsset.newGraduationEligible === true,
   );

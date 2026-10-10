@@ -137,7 +137,8 @@ export const CHAIN_REGISTRY: Readonly<Record<ChainKey, ChainDefinition>> = Objec
     explorerBaseUrl: "https://dogeos-testnet.l2scan.co",
     publicRpcEnvKey: "VITE_PUBLIC_RPC_6281971",
     deploymentManifest: "deployments/dogeos/testnet.json",
-    // Same gen-7 + Uniswap V3 graduation/swap adapters as Robinhood testnet.
+    // Graduates into MuchFi (a PancakeSwap V3 fork, fee tier 10000). Same gen-7 V3 adapter family as
+    // Robinhood testnet, hence the shared keys; DogeOS deploys MuchFi variants of them.
     graduationAdapter: "robinhood-dex-testnet",
     swapAdapter: "robinhood-dex-testnet",
     oracleAdapter: "doge-usd-test",

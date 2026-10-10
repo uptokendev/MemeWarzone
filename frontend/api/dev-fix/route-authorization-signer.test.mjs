@@ -259,7 +259,7 @@ test("the client mirror in scheduledLaunchClientV2.ts carries exactly the API's 
     if (!row) continue;
     mirrored.set(Number(row[1]), [...row[2].matchAll(/\[(\d+),\s*(\d+)\]/g)].map((m) => [Number(m[1]), Number(m[2])]));
   }
-  assert.deepEqual([...mirrored.keys()].sort((a, b) => a - b), [56, 97, 4663, 31337, 46630].sort((a, b) => a - b), "same chains on both sides");
+  assert.deepEqual([...mirrored.keys()].sort((a, b) => a - b), [56, 97, 4663, 31337, 46630, 6281971].sort((a, b) => a - b), "same chains on both sides");
   for (const [chainId, pairs] of mirrored) {
     assert.deepEqual(pairs, supportedGenerationPairs(chainId), `chain ${chainId}: client pairs must equal the API's`);
   }

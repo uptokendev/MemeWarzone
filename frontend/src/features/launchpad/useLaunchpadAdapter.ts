@@ -4,6 +4,7 @@ import type { LaunchpadAdapter, LaunchpadChain } from "@/features/launchpad/adap
 import { createBnbLaunchpadAdapter } from "@/features/launchpad/bnbAdapter";
 import { createRobinhoodLaunchpadAdapter } from "@/features/launchpad/robinhoodAdapter";
 import { createSolanaLaunchpadAdapter } from "@/features/launchpad/solanaAdapter";
+import { isDogeosChainId } from "@/lib/chainConfig";
 
 function resolveLaunchpadChain(input?: { chain?: LaunchpadChain | string | null; chainId?: number | string | null }): LaunchpadChain {
   const chainId = Number(input?.chainId ?? 0);
@@ -18,6 +19,8 @@ function resolveLaunchpadChain(input?: { chain?: LaunchpadChain | string | null;
 
   if (chainId === 101) return "solana";
   if (chainId === 4663 || chainId === 46630) return "robinhood";
+  // DogeOS runs the same gen-7 + V3 launch family; the adapter keeps 6281971 as its own chain id.
+  if (isDogeosChainId(chainId)) return "robinhood";
   return "bnb";
 }
 
