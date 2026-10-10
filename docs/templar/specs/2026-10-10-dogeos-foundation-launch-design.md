@@ -113,10 +113,19 @@ The fork rehearsal (gate 3) proves the set is complete.
 
 **Route authority:** the API holds one global `ROUTE_AUTHORITY_PRIVATE_KEY` and refuses create
 authorization with `ROUTE_AUTHORITY_MISMATCH` unless it matches `factory.routeAuthority()`
-(`frontend/api/dev-fix/route-auth.js`). The DogeOS factory's route authority is therefore set at
-deploy to the address of the **TEST API's existing route-authority key** (on 46630:
-`0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0`). Before deploying, re-read it from the 46630 factory
-and confirm it matches the TEST API. No new key.
+(`frontend/api/dev-fix/route-auth.js:95`, global only).
+
+Verified 2026-10-10: the TEST API has **no** route-authority key configured.
+`/api/routing/status` reports `route_signer_missing` for 97 and 46630, whose factories expect
+`0x2501cdC1…Bde0`. Founder decision: **a new DogeOS route-authority key**
+(`DOGEOS_TESTNET_ROUTE_AUTHORITY_PRIVATE_KEY` in `config/dogeos.local`).
+- The DogeOS factory's `routeAuthority` is set to its address at deploy.
+- At gate 5 the founder sets it as the TEST API's global `ROUTE_AUTHORITY_PRIVATE_KEY`. Creates on 97
+  and 46630 on TEST stay blocked, as they are today (a known item, out of scope).
+- Before enabling live, `/api/routing/status?chainId=6281971` must report `signerConfigured: true`
+  and `matchesOnchain: true`.
+- The key never signs a transaction; it only signs authorizations. It is added to the keeper's and
+  oracle push's forbidden-key lists.
 
 Why graduation ships in this sub-project: a gen-7 campaign fixes its `graduationAdapter` and
 `graduationOracle` at create time (`LaunchCampaignGen7.sol:322-339`). Coins created before a working
