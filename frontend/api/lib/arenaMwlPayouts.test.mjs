@@ -82,11 +82,11 @@ test("payMwlPeriod reads publicHidden per coin and leaves the hidden coin out", 
   assert.deepEqual(inserts.map((p) => [p[5], p[6], p[7]]), [[1, "0x2222222222222222222222222222222222222222", "1000"]], "the real coin's owner takes place 1 and the whole pot");
 });
 
-test("the MWL live board leaves hidden test coins out, like the payout", async () => {
+test("the MWL live board leaves hidden test coins and blocked coins out, like the payout", async () => {
   const fs = await import("node:fs");
   const src = fs.readFileSync(new URL("../arenaLeague.js", import.meta.url), "utf8");
   const season = src.slice(src.indexOf("async function activeSeason("), src.indexOf("async function seasonRowForChain("));
   assert.match(season, /from public\.arena_league_entries e/);
-  assert.match(season, /and not exists \([\s\S]*from public\.campaigns hc[\s\S]*\$\{publicHiddenWhere\("hc"\)\}/);
+  assert.match(season, /and not exists \([\s\S]*from public\.campaigns hc[\s\S]*\$\{publicHiddenOrBlockedWhere\("hc"\)\}/);
   assert.match(season, /\[row\.id, id\]/, "scoped to the season's chain");
 });

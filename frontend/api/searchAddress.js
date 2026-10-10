@@ -12,7 +12,7 @@
  */
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json } from "../server/http.js";
-import { publicHiddenWhere } from "./lib/publicHiddenSql.js";
+import { publicHiddenOrBlockedWhere } from "./lib/publicHiddenSql.js";
 
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
 const SOLANA_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -31,7 +31,7 @@ export const SEARCH_ADDRESS_SQL = {
      where (case when $2::boolean
                  then (lower(c.token_address) = $1 or lower(c.campaign_address) = $1) and c.chain_id not in (101, 102)
                  else (c.token_address = $1 or c.campaign_address = $1) and c.chain_id in (101, 102) end)
-       and not (${publicHiddenWhere("c")})
+       and not (${publicHiddenOrBlockedWhere("c")})
      order by c.created_at desc nulls last
      limit 10`,
   imports: `

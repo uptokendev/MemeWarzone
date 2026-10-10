@@ -9,7 +9,7 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, readJson } from "../server/http.js";
 import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
-import { publicHiddenWhere } from "./lib/publicHiddenCampaigns.js";
+import { publicHiddenOrBlockedWhere } from "./lib/publicHiddenCampaigns.js";
 import { creatorStreakStatus, liveStreaks, spendUpvoteCredit, streakWalletKey } from "./lib/creatorStreak.js";
 import { patchVoteAggregates } from "./dev-fix/solana-vote-ingest.js";
 
@@ -46,7 +46,7 @@ export async function freeUpvoteHandler(req, res) {
       `select c.campaign_address from public.campaigns c
         where c.chain_id = $1
           and (c.campaign_address = $2 or lower(c.campaign_address) = lower($2))
-          and not (${publicHiddenWhere("c")})
+          and not (${publicHiddenOrBlockedWhere("c")})
         limit 1`,
       [chainId, campaign],
     );

@@ -6,7 +6,7 @@
  * api/feed/posts.js next to the post SELECT.
  */
 import { pool } from "../../server/db.js";
-import { publicHiddenWhere } from "./publicHiddenCampaigns.js";
+import { notBlockedCoinSql, publicHiddenOrBlockedWhere } from "./publicHiddenCampaigns.js";
 
 export const FEED_PAGE_SIZE = 30;
 
@@ -122,7 +122,7 @@ export function loadDeployEvents({ before, limit, authors }) {
       select c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol, c.logo_uri,
              coalesce(c.created_at_chain, c.created_at) as at
         from public.campaigns c
-       where c.campaign_address is not null and not (${publicHiddenWhere("c")})
+       where c.campaign_address is not null and not (${publicHiddenOrBlockedWhere("c")})
          ${beforeFilter("coalesce(c.created_at_chain, c.created_at)", before, params)}
          ${authorFilter("c.creator_address", authors, params)}
        order by at desc
@@ -150,7 +150,7 @@ export function loadGraduationEvents({ before, limit, authors }) {
       select c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol, c.logo_uri,
              c.graduated_at_chain as at
         from public.campaigns c
-       where c.graduated_at_chain is not null and c.campaign_address is not null and not (${publicHiddenWhere("c")})
+       where c.graduated_at_chain is not null and c.campaign_address is not null and not (${publicHiddenOrBlockedWhere("c")})
          ${beforeFilter("c.graduated_at_chain", before, params)}
          ${authorFilter("c.creator_address", authors, params)}
        order by at desc
@@ -178,6 +178,7 @@ export function loadDraftEvents({ before, limit, authors }) {
       select d.id, d.chain_id, d.creator_wallet, d.name, d.ticker, d.logo_url, d.slug, d.campaign_address, d.token_address, d.created_at as at
         from public.campaign_drafts d
        where d.visibility = 'public' and d.status <> 'archived'
+         and ${notBlockedCoinSql({ chain: "d.chain_id", campaign: "d.campaign_address", token: "d.token_address" })}
          ${beforeFilter("d.created_at", before, params)}
          ${authorFilter("d.creator_wallet", authors, params)}
        order by at desc

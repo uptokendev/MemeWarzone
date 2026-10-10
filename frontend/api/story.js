@@ -18,6 +18,7 @@ import { buildStory } from "./lib/storyBuilder.mjs";
 import { storyFacts } from "./lib/storyFacts.js";
 import { logoAssets } from "./lib/storyImages.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
+import { activeBlockForPublic } from "./lib/blockedCoins.js";
 
 const TTL_MS = 5 * 60_000;
 const cache = new Map();
@@ -34,6 +35,8 @@ const ident = (chainId, token) => {
 const appBase = () => String(process.env.PUBLIC_APP_URL || "https://app.memewar.zone").replace(/\/+$/, "");
 
 export async function loadStory(chainId, token, { fresh = false } = {}) {
+  // A blocked coin (Command Center -> Abuse, hide or remove) has no story, no card and no share preview.
+  if (await activeBlockForPublic(pool, chainId, token)) return null;
   const key = `${chainId}:${token}`;
   const hit = cache.get(key);
   if (!fresh && hit && Date.now() - hit.at < TTL_MS) return hit.story;
@@ -128,8 +131,10 @@ async function handleCard(req, res, chainId, file) {
 export async function handleSharePage(req, res) {
   const chainId = Number(req.params?.chainId || 0);
   const token = ident(chainId, req.params?.token);
-  const target = token ? `${appBase()}/story/${chainId}/${token}` : appBase();
-  const story = token ? await loadStory(chainId, token).catch(() => null) : null;
+  // Blocked coin: 404 with the plain MemeWarzone preview, no coin card, and no link to its story.
+  const blocked = token ? await activeBlockForPublic(pool, chainId, token) : null;
+  const target = token && !blocked ? `${appBase()}/story/${chainId}/${token}` : appBase();
+  const story = token && !blocked ? await loadStory(chainId, token).catch(() => null) : null;
   const title = story ? `${story.coin.name} ($${story.coin.ticker}) · MemeWarzone story` : "MemeWarzone";
   const description = story ? story.share.text : "Launch. Trade. Compete. Earn.";
   const image = story ? story.share.imageUrl : `${appBase()}/og-image.png`;
@@ -151,7 +156,7 @@ export async function handleSharePage(req, res) {
 <p><a href="${esc(target)}" style="color:#ffb27a">Open the story</a></p>
 <script>location.replace(${JSON.stringify(target)});</script>
 </body></html>`;
-  res.statusCode = 200;
+  res.statusCode = blocked ? 404 : 200;
   res.setHeader("content-type", "text/html; charset=utf-8");
   res.setHeader("cache-control", "public, max-age=120, s-maxage=300");
   res.end(req.method === "HEAD" ? undefined : html);

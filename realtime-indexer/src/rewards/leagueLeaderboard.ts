@@ -5,7 +5,7 @@
 // (founder, 2026-10-05): a per-coin category skips the coin, a wallet category does not count its
 // trades. The rows below a skipped one move up a place; the paid-place count is taken over what is
 // left (finalizeEpochWinners.ts).
-import { publicHiddenWhere } from "./publicHiddenSql.js";
+import { probeBlockedCoinsTable, publicHiddenOrBlockedWhere } from "./publicHiddenSql.js";
 
 type Db = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -31,6 +31,8 @@ export async function leagueLeaderboard(
   category: string,
   limit: number
 ): Promise<Array<{ recipient: string; score: bigint; meta: any }>> {
+  // Blocked coins leave the leagues like hidden test coins; the fragment needs the table to exist.
+  await probeBlockedCoinsTable(db);
   if (category === "fastest_finish") {
     const { rows } = await db.query(
       `
@@ -55,7 +57,7 @@ export async function leagueLeaderboard(
           ) AS unique_buyers
         FROM campaigns c
         WHERE c.chain_id=$1
-          AND NOT ${publicHiddenWhere("c")}
+          AND NOT ${publicHiddenOrBlockedWhere("c")}
           AND c.created_at_chain IS NOT NULL
           AND c.graduated_at_chain IS NOT NULL
           AND c.graduated_block IS NOT NULL AND c.graduated_block > 0
@@ -103,7 +105,7 @@ export async function leagueLeaderboard(
           ) AS sells_count
         FROM campaigns c
         WHERE c.chain_id=$1
-          AND NOT ${publicHiddenWhere("c")}
+          AND NOT ${publicHiddenOrBlockedWhere("c")}
           AND c.created_at_chain IS NOT NULL
           AND c.graduated_at_chain IS NOT NULL
           AND c.graduated_at_chain >= $2::timestamptz
@@ -152,7 +154,7 @@ export async function leagueLeaderboard(
           ON c.chain_id = t.chain_id
          AND c.campaign_address = t.campaign_address
         WHERE t.chain_id=$1
-          AND NOT ${publicHiddenWhere("c")}
+          AND NOT ${publicHiddenOrBlockedWhere("c")}
           AND t.side='buy'
           AND t.block_time >= $2::timestamptz
           AND t.block_time <  $3::timestamptz
@@ -218,7 +220,7 @@ export async function leagueLeaderboard(
       JOIN public.campaigns c
         ON c.chain_id=v.chain_id AND c.campaign_address=v.campaign_address
       WHERE c.creator_address IS NOT NULL
-        AND NOT ${publicHiddenWhere("c")}
+        AND NOT ${publicHiddenOrBlockedWhere("c")}
       ORDER BY
         v.votes_count DESC,
         v.unique_voters DESC,
@@ -260,7 +262,7 @@ export async function leagueLeaderboard(
           AND t.block_time >= $2::timestamptz
           AND t.block_time <  $3::timestamptz
           -- Trades on a hidden test coin are not counted (no profit, no loss).
-          AND NOT ${publicHiddenWhere("c")}
+          AND NOT ${publicHiddenOrBlockedWhere("c")}
           -- Same exclusions as the live board (league.js) and biggest_hit: a creator does not
           -- earn a prize from trading their own coin.
           AND t.wallet IS DISTINCT FROM c.campaign_address

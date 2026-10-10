@@ -1,7 +1,7 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json } from "../server/http.js";
 import { reconcileScheduledDraftLifecycle } from "./dev-fix/scheduled-lifecycle.js";
-import { publicHiddenWhere } from "./lib/publicHiddenCampaigns.js";
+import { publicHiddenOrBlockedWhere } from "./lib/publicHiddenCampaigns.js";
 import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
 import { withSolanaLaunchpadMarketCap } from "./lib/solanaCampaignProgress.js";
@@ -166,7 +166,7 @@ ${LIFECYCLE_JOIN}
        AND c.graduated_at_chain IS NULL
        AND COALESCE(c.is_active, true) = true
        -- Hidden test campaigns stay out of Featured like every other public listing.
-       AND NOT ${publicHiddenWhere("c")}
+       AND NOT ${publicHiddenOrBlockedWhere("c")}
        AND (dl.scheduled_launch_at IS NULL OR dl.scheduled_launch_at <= now())
      ORDER BY ${orderByExpr} DESC NULLS LAST,
        COALESCE(vw.votes_24h, 0) DESC,
@@ -221,7 +221,7 @@ ${LIFECYCLE_JOIN}
        AND c.graduated_at_chain IS NULL
        AND COALESCE(c.is_active, true) = true
        -- Hidden test campaigns stay out of Featured like every other public listing.
-       AND NOT ${publicHiddenWhere("c")}
+       AND NOT ${publicHiddenOrBlockedWhere("c")}
        AND (dl.scheduled_launch_at IS NULL OR dl.scheduled_launch_at <= now())
      ORDER BY
        COALESCE(cc.mcap_c, ts.marketcap_bnb, 0) DESC,
