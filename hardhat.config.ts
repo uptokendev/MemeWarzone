@@ -5,10 +5,17 @@ import "@nomicfoundation/hardhat-toolbox";
 import "hardhat-gas-reporter";
 import "solidity-coverage";
 import * as dotenv from "dotenv";
+import {
+  DOGEOS_TESTNET_CHAIN_ID,
+  assertDogeosKeyPresentWhenSelected,
+  resolveDogeosTestnetDeployerKey,
+  resolveDogeosTestnetRpcUrl,
+} from "./scripts/lib/dogeosNetwork";
 
 dotenv.config({ path: path.resolve(__dirname, ".env") });
 dotenv.config({ path: path.resolve(__dirname, "config/robinhood.local") });
 dotenv.config({ path: path.resolve(__dirname, "config/bnb.local") });
+dotenv.config({ path: path.resolve(__dirname, "config/dogeos.local") });
 
 function argvSelectsNetwork(name: string): boolean {
   return process.argv.some((arg, index, args) => arg === name || (arg === "--network" && args[index + 1] === name));
@@ -49,6 +56,10 @@ const robinhoodTestnetPrivateKey = normalizePrivateKey(
 const robinhoodMainnetPrivateKey = normalizePrivateKey(
   process.env.ROBINHOOD_MAINNET_DEPLOYER_PRIVATE_KEY || process.env.PRIVATE_KEY_DEPLOY || process.env.DEPLOYER_PK || "",
 );
+// DogeOS reads only DOGEOS_TESTNET_DEPLOYER_PRIVATE_KEY (no DEPLOYER_PK fallback); a missing key fails --network dogeosTestnet.
+const dogeosTestnetRpcUrl = resolveDogeosTestnetRpcUrl(process.env);
+const dogeosTestnetPrivateKey = resolveDogeosTestnetDeployerKey(process.env);
+assertDogeosKeyPresentWhenSelected(process.argv, dogeosTestnetPrivateKey);
 const explorerApiKey = process.env.ETHERSCAN_API_KEY || "";
 const forkMainnet = ["1", "true", "yes", "on"].includes(String(process.env.BNB_FORK || "").trim().toLowerCase());
 
@@ -150,6 +161,11 @@ const config: HardhatUserConfig = {
       url: robinhoodMainnetRpcUrl,
       accounts: robinhoodMainnetPrivateKey ? [robinhoodMainnetPrivateKey] : [],
       chainId: 4663,
+    },
+    dogeosTestnet: {
+      url: dogeosTestnetRpcUrl,
+      accounts: dogeosTestnetPrivateKey ? [dogeosTestnetPrivateKey] : [],
+      chainId: DOGEOS_TESTNET_CHAIN_ID,
     },
   },
 
