@@ -538,7 +538,14 @@ Changes:
 **Files:** `docs/claude/dogeos.md`, `docs/claude/evm-deployments.md`, `deployments/dogeos/testnet.json` (canary section)
 - Spec gate 5, Definition of done. **Each sub-step below needs the founder's explicit go.**
 1. Staging DB: `database/staging_apply_dogeos_launch_path.sh dryrun`, then `apply`.
-2. Print env blocks: `node scripts/dogeos-env-blocks.mjs deployments/dogeos/testnet.json`. The founder pastes them into the TEST frontend, API and indexer in Coolify, adds the updater and keeper keys, and redeploys. If the Coolify MCP is connected (read-only), check every key name exists on the right TEST service.
+2. Print env blocks: `node scripts/dogeos-env-blocks.mjs deployments/dogeos/testnet.json`. The founder pastes them into the TEST services in Coolify, adds the updater and keeper keys, and redeploys. TEST services (Coolify project MemeWarzone, environment `testnet-devnet`):
+   - API "Backend API Dev" `jkq5rjveklrueuuuputnpj6o`
+   - indexer "realtime-indexer Dev" `s75mnp6dfpjtv8m8fcefxlay`
+   - frontend "Frontend Dev" `4kdlgixhrtsorbqn6wi7kmr0`
+
+   With the Coolify MCP, check that every key name exists on the right service (`list_env_keys`; names only).
+   - Never touch any resource in environment `production`, which shares the project.
+   - Never call MCP `deploy`/`control` without the founder's go for that specific call.
 3. Health: TEST API `/health` and TEST indexer `rpc6281971Configured: true`; the oracle push makes its first update (`latestRoundData` fresh).
 4. `enableLive` + unpause create on the DogeOS factory, sent from the deployer.
 5. Canary through the TEST app with MetaMask:
