@@ -13,6 +13,8 @@
     "test:bnb-testnet-lifecycle:local": "cross-env ALLOW_LOCAL_BNB_PROTOCOL_STAGE=true BNB_6C_ACCEPTANCE_ENABLE_LIVE=true BNB_6C_ACCEPTANCE_SIGNER=true BNB_6C_STAGE_DEPLOYMENT_FILE=.tmp/bnb-testnet-stage.local.json BNB_6C_ACCEPTANCE_RESULT_FILE=.tmp/bnb-testnet-lifecycle.local.json hardhat run scripts/test-bnb-testnet-lifecycle.ts",
     "rehearse:bnb-6c": "node scripts/rehearse-bnb-6c.mjs",
     "verify:robinhood-5c-freeze": "hardhat run scripts/verify-robinhood-testnet-acceptance-freeze.ts --network robinhoodTestnet",
+    "deploy:dogeos-testnet": "hardhat run scripts/deploy-dogeos-testnet.ts --network dogeosTestnet",
+    "verify:dogeos-testnet": "hardhat --config hardhat.dogeos-verify.config.ts run scripts/verify-dogeos-testnet.ts --network dogeosTestnet",
     "report:robinhood-5c": "node scripts/report-robinhood-testnet-acceptance-5c.mjs",
     "sync:frontend-abis": "node scripts/sync-frontend-abis.cjs",
     "compile:frontend-abis": "hardhat compile && node scripts/sync-frontend-abis.cjs",
