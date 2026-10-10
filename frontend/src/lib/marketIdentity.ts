@@ -1,5 +1,12 @@
 import { apiFetch } from "@/lib/apiBase";
-import { getDefaultChainId, getEvmReadChainIdForTokenPage, pinTokenDetailsChainId, type SupportedChainId } from "@/lib/chainConfig";
+import {
+  DOGEOS_TESTNET_CHAIN_ID,
+  getDefaultChainId,
+  getEvmReadChainIdForTokenPage,
+  isAllowedChainId,
+  pinTokenDetailsChainId,
+  type SupportedChainId,
+} from "@/lib/chainConfig";
 import { normalizeEvmAddress } from "@/lib/tokenDetailsPath";
 
 export type MarketIdentity = {
@@ -68,9 +75,11 @@ export async function resolveMarketIdentityAcrossEvm(input: {
   if (!address) return null;
 
   const preferred = getEvmReadChainIdForTokenPage();
+  // DogeOS is probed last and only where VITE_ALLOWED_CHAIN_IDS serves it, so live probes are unchanged.
+  const dogeos = isAllowedChainId(DOGEOS_TESTNET_CHAIN_ID) ? [DOGEOS_TESTNET_CHAIN_ID] : [];
   const order = Array.from(
     new Set(
-      [preferred, 56, 97, 46630, 4663].filter((id) => Number.isInteger(id) && id > 0),
+      [preferred, 56, 97, 46630, 4663, ...dogeos].filter((id) => Number.isInteger(id) && id > 0),
     ),
   ) as SupportedChainId[];
 

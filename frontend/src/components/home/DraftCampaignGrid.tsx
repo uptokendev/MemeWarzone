@@ -11,6 +11,8 @@ import {
 import {
   BNB_CHAIN_ID,
   BNB_TESTNET_CHAIN_ID,
+  DOGEOS_TESTNET_CHAIN_ID,
+  isDogeosChainId,
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
   SOLANA_CHAIN_ID,
@@ -21,10 +23,11 @@ import { cn } from "@/lib/utils";
 import type { HomeQuery } from "./CampaignGrid";
 
 /** Keep draft discovery isolated by product chain. BNB alone retains its legacy 56+97 merge. */
-function draftFeedChainIds(selectedChainId: number): number[] {
+export function draftFeedChainIds(selectedChainId: number): number[] {
   if (selectedChainId === SOLANA_CHAIN_ID) return [SOLANA_CHAIN_ID];
   if (selectedChainId === ROBINHOOD_CHAIN_ID) return [ROBINHOOD_CHAIN_ID];
   if (selectedChainId === ROBINHOOD_TESTNET_CHAIN_ID) return [ROBINHOOD_TESTNET_CHAIN_ID];
+  if (isDogeosChainId(selectedChainId)) return [DOGEOS_TESTNET_CHAIN_ID];
   if (selectedChainId === BNB_CHAIN_ID || selectedChainId === BNB_TESTNET_CHAIN_ID) {
     return [BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID];
   }

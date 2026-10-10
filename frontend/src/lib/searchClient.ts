@@ -2,6 +2,7 @@ import { apiFetch } from "@/lib/apiBase";
 import { getBnbCampaignFeedChainIds } from "@/lib/feedChainConfig";
 import {
   BNB_CHAIN_ID,
+  DOGEOS_TESTNET_CHAIN_ID,
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
   SOLANA_CHAIN_ID,
@@ -132,7 +133,8 @@ async function searchProfiles(
  * 2026-10-09: a Robinhood coin could not be found from the BNB feed). Same per-chain lists as the feeds.
  */
 export function searchChainIds(): number[] {
-  const chains = [SOLANA_CHAIN_ID, BNB_CHAIN_ID, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID].flatMap((id) => getBnbCampaignFeedChainIds(id));
+  // DogeOS maps to [6281971] only when allowed; otherwise it resolves to the BNB list, which the Set dedupes.
+  const chains = [SOLANA_CHAIN_ID, BNB_CHAIN_ID, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID, DOGEOS_TESTNET_CHAIN_ID].flatMap((id) => getBnbCampaignFeedChainIds(id));
   return [...new Set(chains.map(Number))];
 }
 

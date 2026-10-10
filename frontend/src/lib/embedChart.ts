@@ -17,7 +17,7 @@ export const EMBED_CHART_FRAME_ANCESTORS = [
 
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const EVM_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const SUPPORTED_CHAIN_IDS = new Set([56, 97, 101, 4663, 46630]);
+const SUPPORTED_CHAIN_IDS = new Set([56, 97, 101, 4663, 46630, 6281971]);
 
 export type EmbedChartIdentity = {
   chainId: number;
@@ -52,7 +52,7 @@ export function parseEmbedChartPath(pathname: string): EmbedChartIdentity | null
     // keep raw
   }
   token = token.trim();
-  if (chainId === 56 || chainId === 97 || chainId === 4663 || chainId === 46630) {
+  if (chainId === 56 || chainId === 97 || chainId === 4663 || chainId === 46630 || chainId === 6281971) {
     token = token.toLowerCase();
   }
   if (!isEmbedChartToken(token)) return null;
