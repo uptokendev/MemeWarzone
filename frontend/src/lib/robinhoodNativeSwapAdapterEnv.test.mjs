@@ -32,3 +32,24 @@ test("empty V2 value and a bare V2 name are ignored", () => {
   };
   assert.equal(robinhoodNativeSwapAdapterAddress(env, 4663), OLD_4663);
 });
+
+test("DogeOS 6281971 reads only its own suffixed names, never Robinhood's unsuffixed adapter", () => {
+  const DOGEOS_V2 = "0x00000000000000000000000000000000000000D2";
+  const DOGEOS_OLD = "0x00000000000000000000000000000000000000D1";
+  const robinhoodOnly = { VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS: OLD_46630 };
+  assert.equal(robinhoodNativeSwapAdapterAddress(robinhoodOnly, 6281971), "");
+  assert.equal(robinhoodNativeSwapAdapterAddress(robinhoodOnly, "6281971"), "");
+  assert.equal(
+    robinhoodNativeSwapAdapterAddress({ ...robinhoodOnly, VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS_6281971: DOGEOS_OLD }, 6281971),
+    DOGEOS_OLD,
+  );
+  assert.equal(
+    robinhoodNativeSwapAdapterAddress(
+      { ...robinhoodOnly, VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS_6281971: DOGEOS_OLD, VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_V2_ADDRESS_6281971: DOGEOS_V2 },
+      6281971,
+    ),
+    DOGEOS_V2,
+  );
+  // Robinhood keeps the bare-name fallback.
+  assert.equal(robinhoodNativeSwapAdapterAddress(robinhoodOnly, 46630), OLD_46630);
+});

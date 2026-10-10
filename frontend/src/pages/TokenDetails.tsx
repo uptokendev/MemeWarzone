@@ -773,6 +773,9 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   const isRobinhoodPage = isRobinhoodChainId(chainIdForStorage);
   // Presentation only (labels, DOGE/USD). DogeOS trade/graduation routing is not wired here.
   const isDogeosPage = isDogeosChainId(chainIdForStorage);
+  // Graduated-trade surfaces only: DogeOS graduates into MuchFi (V3) and trades through the Robinhood V3 panel,
+  // never the Topaz/BNB V2 box. Text and price branches keep isRobinhoodPage / isDogeosPage.
+  const isV3GraduatedTradePage = isRobinhoodPage || isDogeosPage;
 
   useEffect(() => {
     const campaignPda = String(campaign?.campaign || campaignAddr || "").trim();
@@ -3329,14 +3332,14 @@ const toSeconds = (ts: number): number => {
       (verifiedMarketStage === "TOPAZ_DEGRADED" && contractGraduated);
   // Allow Topaz when on-chain graduated even if market-state is a soft BONDING skeleton
   // (common after cleanup / CMS lag). Soft BONDING must not block WIC-style trades.
-  const isTopazTradingActive = isSolanaPage || isRobinhoodPage
+  const isTopazTradingActive = isSolanaPage || isV3GraduatedTradePage
     ? false
     : onChainLaunched ||
       contractGraduated ||
       (verifiedMarketStage === "TOPAZ_ACTIVE" &&
         (Boolean(unifiedMarket.state?.tradingEnabled) || Boolean(unifiedMarket.state?.pairAddress || onChainPair)));
   const isUniswapTradingActive =
-    isRobinhoodPage &&
+    isV3GraduatedTradePage &&
     (contractGraduated ||
       verifiedMarketStage === "DEX_ACTIVE" ||
       verifiedMarketStage === "DEX_PENDING" ||
@@ -3636,10 +3639,10 @@ const toSeconds = (ts: number): number => {
       return 0;
     }
   })();
-  const rhGraduatedTrade = isRobinhoodPage && (contractGraduated || isUniswapTradingActive);
+  const rhGraduatedTrade = isV3GraduatedTradePage && (contractGraduated || isUniswapTradingActive);
   // A graduated BNB coin trades through the import route (same quote, build, 1% fee and panel as an imported coin)
   // while the chain's import fee route is on; off, the Topaz trade below as before (graduatedEvmTradeRoute.mjs).
-  const bnbGraduatedImportTrade = !isSolanaPage && !isRobinhoodPage && isDexStage && graduatedImportRouteEnabled(chainIdForStorage);
+  const bnbGraduatedImportTrade = !isSolanaPage && !isV3GraduatedTradePage && isDexStage && graduatedImportRouteEnabled(chainIdForStorage);
   const graduatedImportItem = graduatedCampaignTradeItem(campaign, chainIdForStorage);
   // The indexer writes the trade from the pool's Swap log (trader = tx.from); refresh the market and pool reads now.
   const refreshAfterGraduatedImportTrade = () => {
@@ -4702,7 +4705,7 @@ const toSeconds = (ts: number): number => {
           const nativeAmountInRaw = tradeInputDenom === "BNB" ? parseBnbAmountWei(tradeAmount) : effectiveBnbWei;
           if (nativeAmountInRaw <= 0n) throw new Error(`Enter a valid ${nativeUnit} or token amount.`);
           if (bnbBalanceWei != null && nativeAmountInRaw > bnbBalanceWei) throw new Error(`Insufficient ${nativeUnit} balance.`);
-          const topazGasReserve = evmBuyGasReserveWei(isRobinhoodPage);
+          const topazGasReserve = evmBuyGasReserveWei(isRobinhoodPage || isDogeosPage);
           if (bnbBalanceWei != null && nativeAmountInRaw + topazGasReserve > bnbBalanceWei) {
             throw new Error(`Not enough ${nativeUnit}. Keep about ${ethers.formatEther(topazGasReserve)} ${nativeUnit} in your wallet for gas.`);
           }
@@ -4870,7 +4873,7 @@ const toSeconds = (ts: number): number => {
         const baseCostWei = quoteWei && quoteWei > 0n ? quoteWei : tradeInputDenom === "BNB" ? inputBnbWei : 0n;
         if (baseCostWei > 0n) {
           const maxCostWei = (baseCostWei * BigInt(100 + SLIPPAGE_PCT)) / 100n;
-          const gasReserveWei = evmBuyGasReserveWei(isRobinhoodPage);
+          const gasReserveWei = evmBuyGasReserveWei(isRobinhoodPage || isDogeosPage);
           if (maxCostWei + gasReserveWei > bnbBalanceWei) {
             toast({
               title: `Insufficient ${nativeUnit}`,
@@ -5908,7 +5911,7 @@ const toSeconds = (ts: number): number => {
                 ) : null}
               </section>
             ) : null
-          ) : isRobinhoodPage && (contractGraduated || isUniswapTradingActive) ? (
+          ) : isV3GraduatedTradePage && (contractGraduated || isUniswapTradingActive) ? (
             isXlUp ? (
               <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`}>
                 <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} />
@@ -6467,7 +6470,7 @@ const toSeconds = (ts: number): number => {
               }
               return SOLANA_BUY_FEE_RESERVE_SOL;
             }
-            const gas = Number(ethers.formatEther(evmBuyGasReserveWei(isRobinhoodPage)));
+            const gas = Number(ethers.formatEther(evmBuyGasReserveWei(isRobinhoodPage || isDogeosPage)));
             if (isDexStage) return gas;
             // Bonding buys send cost + SLIPPAGE_PCT headroom, so the spendable part is (balance - gas) / (1 + slippage).
             const bal = Number.isFinite(nativeBalanceNum) ? nativeBalanceNum : 0;

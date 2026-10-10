@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { build } from "esbuild";
@@ -80,6 +80,10 @@ const marketStubPlugin = {
 };
 
 const harnessCache = new Map();
+const harnessDirs = [];
+after(async () => {
+  await Promise.all(harnessDirs.map((tmp) => rm(tmp, { recursive: true, force: true })));
+});
 async function loadHarness(name, env) {
   if (harnessCache.has(name)) return harnessCache.get(name);
   const compiled = await build({
@@ -106,8 +110,9 @@ export { graduationTiers, v3Trade, lpFeeHarvest, launchpadAdapter, robinhoodAdap
     plugins: [marketStubPlugin],
     define: { "import.meta.env": JSON.stringify(env) },
   });
-  // Inside the frontend package tree so Node resolves frontend/node_modules (gitignored dir).
-  const tmpDir = await mkdtemp(path.join(frontendRoot, ".mwz-feed-isolation-"));
+  // Inside the frontend package tree so Node resolves frontend/node_modules (gitignored dir, removed after()).
+  const tmpDir = await mkdtemp(path.join(frontendRoot, ".mwz-dogeos-launch-path-"));
+  harnessDirs.push(tmpDir);
   const outfile = path.join(tmpDir, `${name}.mjs`);
   await writeFile(outfile, compiled.outputFiles[0].text);
   const loaded = await import(pathToFileURL(outfile).href);
@@ -297,6 +302,19 @@ test("token page entry, war-room row and trade panel keep 6281971 instead of def
   assert.match(row, /inferredChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| inferredChainId === DOGEOS_TESTNET_CHAIN_ID\s*\? inferredChainId/);
   assert.match(row, /const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID \|\| rowChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosRow;/);
   assert.match(row, /rowChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\|\s*rowChainId === DOGEOS_TESTNET_CHAIN_ID \|\|\s*rowChainId === 101\s*\) \{\s*setSelectedFeedChainId\(rowChainId\);/);
+  // Token page: a graduated DogeOS coin gets the V3 (MuchFi) panel, never the Topaz/BNB V2 box or the BNB
+  // import route, and DogeOS buys keep the Robinhood (L2) gas reserve instead of the BNB one.
+  const page = read("pages/TokenDetails.tsx");
+  assert.match(page, /const isV3GraduatedTradePage = isRobinhoodPage \|\| isDogeosPage;/);
+  assert.match(page, /const isTopazTradingActive = isSolanaPage \|\| isV3GraduatedTradePage\s*\? false/);
+  assert.match(page, /const isUniswapTradingActive =\s*isV3GraduatedTradePage &&/);
+  assert.match(page, /const rhGraduatedTrade = isV3GraduatedTradePage && \(contractGraduated \|\| isUniswapTradingActive\);/);
+  assert.match(page, /const bnbGraduatedImportTrade = !isSolanaPage && !isV3GraduatedTradePage && isDexStage/);
+  assert.match(page, /\) : isV3GraduatedTradePage && \(contractGraduated \|\| isUniswapTradingActive\) \? \(/);
+  assert.equal((page.match(/evmBuyGasReserveWei\(isRobinhoodPage \|\| isDogeosPage\)/g) || []).length, 3);
+  assert.doesNotMatch(page, /evmBuyGasReserveWei\(isRobinhoodPage\)/);
+  // the Robinhood USD-raise line is untouched (evmGen7Wiring pin)
+  assert.match(page, /isRobinhoodPage && !isDexStage && !evmGen7Coin && \(metrics\?\.graduationTarget \?\? 0n\) > 0n/);
   assert.match(panel, /return id === ROBINHOOD_CHAIN_ID \|\| id === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosChainId\(id\) \? id : ROBINHOOD_TESTNET_CHAIN_ID;/);
   // the direct panel names the chain's own coin, never a hard-coded ETH, on screen
   assert.doesNotMatch(panel, /formatAmount\([^)]*"ETH"\)/);

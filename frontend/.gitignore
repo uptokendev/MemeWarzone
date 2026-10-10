@@ -43,3 +43,5 @@ AGENTS.md
 .mwz-feed-isolation-*/
 # dogeosPresentation.test.mjs bundles its harness here (removed after import)
 .mwz-dogeos-presentation-*/
+# dogeosLaunchPath.test.mjs bundles its harnesses here (removed in an after() hook)
+.mwz-dogeos-launch-path-*/

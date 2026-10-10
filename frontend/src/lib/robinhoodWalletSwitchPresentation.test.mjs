@@ -44,6 +44,8 @@ test("wallet modal remains the one-time path only when no EVM wallet is connecte
 test("TokenDetails RH graduated buy is delegated to the corrected Robinhood trade panel", () => {
   assert.match(
     tokenDetailsSource,
-    /isRobinhoodPage && \(contractGraduated \|\| isUniswapTradingActive\)[\s\S]*?<RobinhoodWarRoomTradePanel campaign=\{campaign as CampaignInfo\} \/>/,
+    /isV3GraduatedTradePage && \(contractGraduated \|\| isUniswapTradingActive\)[\s\S]*?<RobinhoodWarRoomTradePanel campaign=\{campaign as CampaignInfo\} \/>/,
   );
+  // The gate is Robinhood plus DogeOS (MuchFi), nothing else (dogeosLaunchPath.test.mjs).
+  assert.match(tokenDetailsSource, /const isV3GraduatedTradePage = isRobinhoodPage \|\| isDogeosPage;/);
 });

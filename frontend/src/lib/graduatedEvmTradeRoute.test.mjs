@@ -129,7 +129,8 @@ test("every graduated EVM trade surface takes the routing decision", () => {
   assert.match(rh, /function RobinhoodWarRoomDirectTradePanel\(\{ campaign \}: \{ campaign: CampaignInfo \}\) \{\n  const \{ toast \} = useToast\(\);/);
 
   const page = src("pages/TokenDetails.tsx");
-  assert.match(page, /const bnbGraduatedImportTrade = !isSolanaPage && !isRobinhoodPage && isDexStage && graduatedImportRouteEnabled\(chainIdForStorage\);/);
+  // isV3GraduatedTradePage = Robinhood or DogeOS (MuchFi): neither takes the BNB import route.
+  assert.match(page, /const bnbGraduatedImportTrade = !isSolanaPage && !isV3GraduatedTradePage && isDexStage && graduatedImportRouteEnabled\(chainIdForStorage\);/);
   assert.match(page, /if \(isDexStage\) \{\n\s+\/\/ Never the fee-free Topaz trade[^\n]*\n\s+if \(bnbGraduatedImportTrade\) return;/);
   assert.match(page, /\) : bnbGraduatedImportTrade \? \(\n\s+isXlUp \? \(\n\s+<section aria-label="Trade"[^\n]*data-graduated-import-trade="true">\n\s+<ImportedTradePanel item=\{graduatedImportItem\} graduated/);
   assert.match(page, /open=\{mobileTradeOpen && !rhGraduatedTrade && !bnbGraduatedImportTrade( && !solanaGraduatedImportTrade)?\}/);
