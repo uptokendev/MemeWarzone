@@ -161,14 +161,18 @@ original:
 1. **Graduation adapter**: from `RobinhoodV3NativeGraduationAdapterV2` + `RobinhoodV3PoolRepair`.
    Changes: callback name, `slot0` `uint32` decode, `POOL_FEE` 10000 / `TICK_SPACING` 200 (and
    full-range ticks), and the factory/NPM addresses it is constructed with.
-2. **Position locker**: from `PermanentV3PositionLocker`. Change: callback name (plus `slot0` if it
-   reads it).
-3. **Creator vault**: from `CreatorRewardsVaultV2`. Change: callback name (plus `slot0` if it reads
-   it).
+2. **Position locker**: from `PermanentV3PositionLocker`. Changes: callback name, and its pool-swap
+   library (below).
+3. **Creator vault**: from `CreatorRewardsVaultV2`. Changes: callback name, and its pool-swap library
+   (below).
+4. **Pool-swap library**: the locker and the vault swap through the shared `EvmGenPoolSwap` library
+   (`contracts/EvmGenPoolSwap.sol`), which decodes `slot0` with `uint8 feeProtocol`. It is an existing
+   contract and stays frozen, so the variants use a **MuchFi copy** of it whose only change is the
+   `uint32` `slot0` interface.
 
 Rules for the variants:
 - No other logic change: the callback body, checks and accounting stay byte-for-byte the original's
-  logic. The originals and every BNB/Robinhood deployment stay untouched.
+  logic; the only substitution inside them is the MuchFi pool-swap library for `EvmGenPoolSwap`. The originals and every BNB/Robinhood deployment stay untouched.
 - Each variant gets a written **audit diff** against its original (gate 2), covering the CLAUDE.md
   audit points, before it is used in any rehearsal.
 - Each variant is tested on a **Hardhat fork of Chikyū against the real MuchFi contracts** (MuchFi
@@ -261,6 +265,9 @@ Nothing Uniswap is deployed on Chikyū.
   `src/env.ts`. The vote-treasury entries stay empty until sub-project 3.
 - **`getLogs` limits.** The main campaign indexer needs no change: its default chunk
   (`LOG_CHUNK_SIZE` = 500) and adaptive splitting stay inside the 10k-block and 10k-result caps.
+- **Off-chain `slot0` reads.** The keeper (`evmGraduationKeeper.ts`, observation and partial-repair
+  reads) and the V3 pool indexer (spot price) decode `slot0` with `uint8 feeProtocol`, which rejects
+  MuchFi's `uint32` value. For 6281971 they use a `uint32` `slot0` ABI; Robinhood's ABIs stay untouched.
 - **Graduated trades.** Trades in the MuchFi pools are indexed and charted by reusing the V3 pool
   indexer. MuchFi is a PancakeSwap V3 fork, whose pool `Swap` event carries extra protocol-fee fields
   and so has a different signature from Uniswap's; the indexer must decode MuchFi's actual event for

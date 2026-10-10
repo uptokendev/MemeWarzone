@@ -1,12 +1,12 @@
 # DogeOS Foundation + Launch Implementation Plan
 **Spec:** docs/templar/specs/2026-10-10-dogeos-foundation-launch-design.md
-**Profile note:** All code tasks are implementation-tier (opus). They touch money-adjacent launch paths and many hand-kept lists, where a missed branch silently reads the wrong chain, so none qualify for the mechanical-edit tier. t4 (oracle audit diff) and the final branch review are review-tier. t28 and t29 are founder-gated: the controller stops and asks for an explicit go before running them, and never runs them on its own. Tasks t10–t22 are independent of the contract tasks and may run in parallel batches.
+**Profile note:** All code tasks are implementation-tier (opus). They touch money-adjacent launch paths and many hand-kept lists, where a missed branch silently reads the wrong chain, so none qualify for the mechanical-edit tier. t4 and t34 (audit diffs) and the final branch review are review-tier. t28 and t29 are founder-gated: the controller stops and asks for an explicit go before running them, and never runs them on its own. Tasks t10–t22 are independent of the contract tasks and may run in parallel batches, except t13, t19 and t35, which need t30's MuchFi facts.
 
 ## Global constraints
 
 - **Chain:** DogeOS Chikyū testnet, chain id `6281971`, native DOGE (18 decimals), RPC `https://rpc.testnet.dogeos.com`, explorer `https://dogeos-testnet.l2scan.co` (Etherscan-style `/api`), WDOGE `0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE`. Spec "Verified chain facts".
 - **MuchFi (graduation venue, spec §1):** Factory `0x7d175e06570CaFA1cfDF060850b84E0Ca23EfF0B`, PoolDeployer `0x6c04e808d5FfFb597cb6a5b539f2a1dDF3529348`, NPM `0x7932C91f3BAD326ecd6C2bE81697D732714B9eC5`, SmartRouter `0x54f7D7f6FeDf4E930eFd6b4742Ba0B9E8a6dC1CB`, SwapRouter `0xd34FE9553CE3012F81c8a7D86F3063AcADb8201c`, QuoterV2 `0x5DE1Ea595653419f295511DEb781b98387a77cc2`. Fee tier 10000 / tick spacing 200. Pool callbacks `muchfiV3SwapCallback` / `muchfiV3MintCallback`; `slot0().feeProtocol` is `uint32`. Nothing Uniswap is deployed on Chikyū; `scripts/lib/dogeosV3Stack.ts` is local-test only.
-- **Bytecode:** solc 0.8.24, the existing `hardhat.config.ts` compiler settings (optimizer runs 1, viaIR, `bytecodeHash: none`, default evm target paris). Never add a DogeOS compiler profile. Never edit any `contracts/gen7/*`, `contracts/integrations/*`, or any existing contract. The only new Solidity is the DOGE/USD testnet oracle (t3) and the three MuchFi variants under `contracts/dogeos/muchfi/` (t31–t33), each a minimal diff from its original (callback name, `slot0` uint32, fee 10000/200 where the original hard-codes 3000/60) with no other logic change.
+- **Bytecode:** solc 0.8.24, the existing `hardhat.config.ts` compiler settings (optimizer runs 1, viaIR, `bytecodeHash: none`, default evm target paris). Never add a DogeOS compiler profile. Never edit any `contracts/gen7/*`, `contracts/integrations/*`, or any existing contract. The only new Solidity is the DOGE/USD testnet oracle (t3) and the MuchFi variants under `contracts/dogeos/muchfi/` (t31–t33: graduation adapter, position locker, creator vault, and `MuchfiPoolSwap`, a copy of `contracts/EvmGenPoolSwap.sol` with only the `uint32` slot0 interface changed), each a minimal diff from its original (callback name, `slot0` uint32, fee 10000/200 where the original hard-codes 3000/60) with no other logic change.
 - **CREATE/BUY/SELL:** transaction flow and shape stay unchanged. `frontend/src/lib/evmGen7Wiring.test.mjs`, `frontend/src/lib/evmGen6Wiring.test.mjs` and `test/evmgen7-core*.spec.ts` stay green and are never re-pinned.
 - **Do not change unrelated logic.** Every change on an existing chain list or branch only *adds* 6281971 (or a DogeOS branch). Behaviour for 56, 97, 101, 4663 and 46630 stays byte-for-byte the same. Never add 6281971 to `isRobinhoodChainId` / `ROBINHOOD_CHAIN_IDS` sets, because they also drive ETH symbols and stock logic. Use `isDogeosChainId` plus explicit branches.
 - **Never fall back to BSC/BNB/ETH for 6281971.** RPC, start block, symbol and USD price each get an explicit DogeOS branch. Spec §4.
@@ -108,7 +108,7 @@
 **Depends-on:** [t1]
 **TDD:** required
 **Files:** `scripts/lib/dogeosV3Stack.ts` (new), `test/DogeosV3Stack.spec.ts` (new)
-- Spec §1 "Staging DEX".
+- Spec §1, the "local tests only" paragraph under "MuchFi variant contracts".
 - `deployDogeosV3Stack({ signer, wrappedNative, chainId, allowLocalRehearsal })` deploys, from the pinned `tools/robinhood-testnet-infra` artifacts, the same shape as `scripts/deploy-robinhood-testnet-infrastructure.ts:122-150`:
   - UniswapV3Factory
   - NFTDescriptor (library)
@@ -147,25 +147,26 @@
 **TDD:** required
 **Files:** `contracts/dogeos/muchfi/MuchfiV3NativeGraduationAdapter.sol` and its pool-repair base (new), `test/MuchfiGraduationAdapter.fork.spec.ts` (new)
 - Spec §1 "MuchFi variant contracts" item 1.
-- Derive from `contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol` + `RobinhoodV3PoolRepair.sol`. Prefer inheritance/override where the originals allow it without editing them; otherwise copy into `contracts/dogeos/muchfi/`. Changes only: `muchfiV3SwapCallback` instead of `uniswapV3SwapCallback` (same body), a `slot0` interface with `uint32 feeProtocol`, `POOL_FEE = 10000`, `TICK_SPACING = 200` and full-range ticks for spacing 200. It still exposes `v3Factory()`, `WETH()`, `POOL_FEE()` and `liquidityKind() == 2` (the keeper and factory read them).
+- Derive from `contracts/integrations/RobinhoodV3NativeGraduationAdapterV2.sol` + `RobinhoodV3PoolRepair.sol`. Prefer inheritance/override where the originals allow it without editing them; otherwise copy into `contracts/dogeos/muchfi/`. Changes only: `muchfiV3SwapCallback` instead of `uniswapV3SwapCallback` (same body), a `slot0` interface with `uint32 feeProtocol`, `POOL_FEE = 10000`, `TICK_SPACING = 200`, and every full-range bound for spacing 200: `FULL_RANGE_LOWER/UPPER` (±887200) **and** the matching `MIN/MAX_FULL_RANGE_SQRT` bounds (`RobinhoodV3PoolRepair.sol:82-84`, derived via `RobinhoodV3PriceMath`). It still exposes `v3Factory()`, `WETH()`, `POOL_FEE()` and `liquidityKind() == 2` (the keeper and factory read them).
 - Fork tests (t30 helpers; test factory/campaign stand-ins as the existing adapter specs use): graduation into a fresh 1% MuchFi pool; graduation into a pool pre-created at a wrong price (the repair path ends at the target price); the position NFT ends in the locker; no residual native/WDOGE/MEME in the adapter.
 **Verify:** `npx hardhat --config hardhat.dogeos-testnet-fork.config.ts test test/MuchfiGraduationAdapter.fork.spec.ts` → all passing; `git diff --stat 6c5ca159a -- contracts/gen7 contracts/integrations contracts/PermanentV3PositionLocker.sol contracts/CreatorRewardsVaultV2.sol` → empty
 
 ### Task 32: MuchFi position locker variant            [id: t32]
 **Depends-on:** [t30]
 **TDD:** required
-**Files:** `contracts/dogeos/muchfi/MuchfiV3PositionLocker.sol` (new), `test/MuchfiPositionLocker.fork.spec.ts` (new)
+**Files:** `contracts/dogeos/muchfi/MuchfiPoolSwap.sol` (new), `contracts/dogeos/muchfi/MuchfiV3PositionLocker.sol` (new), `test/MuchfiPositionLocker.fork.spec.ts` (new)
 - Spec §1 "MuchFi variant contracts" item 2.
-- From `contracts/PermanentV3PositionLocker.sol`: `muchfiV3SwapCallback` instead of `uniswapV3SwapCallback` (same body), and `slot0` uint32 only if the locker reads it. Nothing else. Same inheritance-first rule as t31.
+- `MuchfiPoolSwap.sol`: a copy of `contracts/EvmGenPoolSwap.sol` (which declares and decodes `uint8 feeProtocol` at :36 and :130) whose only change is the `uint32 feeProtocol` slot0 interface. `EvmGenPoolSwap.sol` itself is not edited.
+- From `contracts/PermanentV3PositionLocker.sol`: `muchfiV3SwapCallback` instead of `uniswapV3SwapCallback` (same body), and `MuchfiPoolSwap` instead of `EvmGenPoolSwap` (`:408-422`). Nothing else. Same inheritance-first rule as t31.
 - Fork tests: lock a MuchFi 1% position; collect LP fees after swaps (MuchFi's 32% protocol cut taken at the pool, the remainder reaching the locker); the `sellMemeForPaired` swap path works via `muchfiV3SwapCallback`; the revenue split to the router matches the original; the NFT can never leave.
 **Verify:** `npx hardhat --config hardhat.dogeos-testnet-fork.config.ts test test/MuchfiPositionLocker.fork.spec.ts` → all passing
 
 ### Task 33: MuchFi creator vault variant            [id: t33]
-**Depends-on:** [t30]
+**Depends-on:** [t30, t32]
 **TDD:** required
 **Files:** `contracts/dogeos/muchfi/MuchfiCreatorRewardsVault.sol` (new), `test/MuchfiCreatorRewardsVault.fork.spec.ts` (new)
 - Spec §1 "MuchFi variant contracts" item 3.
-- From `contracts/CreatorRewardsVaultV2.sol`: `muchfiV3SwapCallback` instead of `uniswapV3SwapCallback` (same body), and `slot0` uint32 only if read. Nothing else. Same inheritance-first rule.
+- From `contracts/CreatorRewardsVaultV2.sol`: `muchfiV3SwapCallback` instead of `uniswapV3SwapCallback` (same body), and `MuchfiPoolSwap` (from t32) instead of `EvmGenPoolSwap` (`:645-711`). Nothing else. Same inheritance-first rule.
 - Fork tests: `dexKind` V3 with the MuchFi factory and fee 10000; a buyback swap through a MuchFi 1% pool; the existing caps/impact checks still bind; creator claim is unaffected.
 **Verify:** `npx hardhat --config hardhat.dogeos-testnet-fork.config.ts test test/MuchfiCreatorRewardsVault.fork.spec.ts` → all passing
 
@@ -179,7 +180,7 @@
   - Trust model: MuchFi's unverified source, the owner-settable protocol fee, and callback-caller validation against the MuchFi factory/PoolDeployer
   - a per-variant `Verdict: PASS|FAIL`
 - Any FAIL blocks t6.
-**Verify:** `grep -cE "^Verdict: PASS" docs/dogeos/muchfi-variants-audit-diff.md` → `3`; `grep -c "^Verdict: FAIL" docs/dogeos/muchfi-variants-audit-diff.md` → `0`
+**Verify:** `grep -cE "^Verdict: PASS" docs/dogeos/muchfi-variants-audit-diff.md` → `4` (adapter, locker, vault, `MuchfiPoolSwap`); `grep -c "^Verdict: FAIL" docs/dogeos/muchfi-variants-audit-diff.md` → `0`
 
 ### Task 6: Fresh gen-7 stack deploy + wiring library            [id: t6]
 **Depends-on:** [t3, t34]
@@ -257,7 +258,7 @@
   - takes the route authority from public `DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS` and refuses if it is missing, the zero address, or equal to the deployer, updater or keeper address
   - takes the initial DOGE/USD answer from Binance `DOGEUSDT` at run time, converted to 8 decimals, and refuses if ≤ 0
   - calls `deployDogeosGen7Stack`, then writes the manifest and the verification JSON (`chains["6281971"]`, the `verificationEntries` shape from `scripts/deploy-robinhood-gen7-generation.ts:561-581`)
-- `verify-dogeos-testnet.ts` runs with `--config hardhat.dogeos-verify.config.ts`. It verifies our contracts and tolerates "already verified". Uniswap artifacts are verified via the standard-JSON route only if L2Scan accepts it; otherwise they are listed as unverified in the manifest.
+- `verify-dogeos-testnet.ts` runs with `--config hardhat.dogeos-verify.config.ts`. It verifies our contracts and tolerates "already verified". MuchFi contracts are external and are not verified by us.
 - `package.json`: add `deploy:dogeos-testnet` and `verify:dogeos-testnet`. Do not rename existing scripts (`test/PackageScripts.spec.ts`).
 - `activate-dogeos-testnet.ts` (used only in t29) has the same network, broadcast-token and signer guards. It reads the factory from `deployments/dogeos/testnet.json`, refuses unless `factory.routeAuthority()` equals `DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS` and the oracle is fresh (`GraduationOracle.nativeUsdPrice()` does not revert), then calls `enableLive()` and `setCreatePaused(false)`, and asserts `live()==true && createPaused()==false`.
 - Node tests cover every refusal path for deploy and activate: wrong network, missing token, wrong signer, missing/zero/colliding route-authority address, bad price, activate with a mismatched route authority.
@@ -268,10 +269,7 @@
 **TDD:** waived (rehearsal run against a read-only fork; behaviour already covered by t6/t7)
 **Files:** `scripts/rehearse-dogeos-fork.ts` (new), `reports/dogeos/fork-rehearsal.json` (new), `package.json` (add `rehearse:dogeos-fork` only)
 - Spec gate 3.
-- Fork config: a copy of `hardhat.rh-gen7-testnet-fork.config.ts` with
-  - chainId 6281971, `chains: { 6281971: { hardforkHistory: {...} } }`
-  - url `DOGEOS_TESTNET_FORK_RPC || https://rpc.testnet.dogeos.com`, `DOGEOS_FORK_BLOCK` (default: head − 16)
-  - **`blockGasLimit: 10_000_000`**
+- Uses the t30 fork config (`hardhat.dogeos-testnet-fork.config.ts`).
 - The rehearsal:
   1. impersonate the deployer on the fork with `hardhat_setBalance` (no real key needed)
   2. run the `deploy-dogeos-testnet` logic with the real WDOGE. The route authority is a **throwaway local signer**, because signing authorizations needs a private key and impersonation can't sign typed data. The real route-authority address is only checked in t8's guard tests and t28.
@@ -331,7 +329,7 @@
 
 Changes:
 - Spec §2 native symbol.
-- Every chainId → symbol, label, DEX name or explorer branch in the files above gets an explicit 6281971 branch: DOGE, "DogeOS Chikyū Testnet", L2Scan, and the DEX label "Uniswap V3 (DogeOS staging)".
+- Every chainId → symbol, label, DEX name or explorer branch in the files above gets an explicit 6281971 branch: DOGE, "DogeOS Chikyū Testnet", L2Scan, and the DEX label "MuchFi" (controller change; DogeOS graduates into MuchFi).
 - `graduationMarketPresentation.mjs`: `nativeSymbol` (:45-52) DOGE; `EVM_NATIVE_LAUNCH_CHAIN_IDS` (:243) gets 6281971.
 - `useDogeUsdPrice.ts`: Binance `DOGEUSDT`, the same shape as `useEthUsdPrice.ts`. `useNativeUsdPrice` dispatches 6281971 to it, with no BNB fallthrough.
 - Arena/league/airdrop pages are out of scope (SP3 exception).
@@ -359,7 +357,7 @@ Changes:
   - `TokenDetailsLiveEntry.tsx:44-45,90-98,297`; RobinhoodWarRoomTradePanel :81 never defaults 6281971 to 46630
 - `graduationTiers.ts:74` `isTestGraduationChain` gets 6281971.
 - `scheduledLaunchClientV2.ts:64` gets `6281971: [[7, 6]]`.
-- `evmGen7.mjs:97` DEX label: "MuchFi".
+- `evmGen7.mjs:97` DEX label: "MuchFi". Fix the `chainRegistry.ts:140-142` comment for `dogeos-testnet` to say MuchFi (the adapter keys stay `robinhood-dex-testnet`: same adapter family).
 - **MuchFi post-graduation trade** for 6281971 (spec §1):
   - quotes come from MuchFi QuoterV2 and swaps go through the MuchFi SmartRouter, using the per-chain env `_6281971` names `robinhoodV3Trade.ts` already reads
   - the pool fee is **10000**: any hard-coded 3000 in that trade path gets an explicit DogeOS branch, with Robinhood unchanged
@@ -465,6 +463,7 @@ Changes:
   - the `ChainConfig.chainId` type (:55) and a `chainConfigs()` block (:116-136) for 6281971
   - `maxChunk` (:1435) becomes `Math.min(existing, 10_000)` **only** for 6281971
   - the narrowing (:1449-1454) stays as is
+  - the spot-price `slot0` read (~:877-893) uses a `uint32 feeProtocol` ABI for 6281971 (tested against t30's recorded `slot0` fixture); Robinhood's ABI unchanged
   - **MuchFi pools** (spec §4): for 6281971, decode MuchFi's pool `Swap` event (PancakeV3 shape with protocol-fee fields; topic0 as recorded by t30) and treat fee 10000. Robinhood's Uniswap decoding stays byte-for-byte. The router env is the existing per-chain name, set to the MuchFi SmartRouter.
 - `robinhoodCmsHeal.ts:127` guard and `robinhoodMarketApi.ts:14` include 6281971 only if the token page's post-grad panel reads those routes. Check `TokenDetailsLiveEntry.tsx` and report; otherwise mark it as an exception.
 - Tests:
@@ -490,6 +489,14 @@ Changes:
   - `assertKeeperKeyAllowed` refuses all three DogeOS addresses (deployer, updater, route authority) (use throwaway test keys whose addresses you inject via `EVM_KEEPER_FORBIDDEN_ADDRESSES` for the positive path; never use the real keys)
   - observation slots 180 for 6281971
 **Verify:** `npx --prefix realtime-indexer tsx --test realtime-indexer/src/tests/dogeosGraduationKeeper.test.ts && npm --prefix realtime-indexer run test:evm-gen5` → all pass
+
+### Task 35: Keeper slot0 decoding for MuchFi pools            [id: t35]
+**Depends-on:** [t20, t30]
+**TDD:** required
+**Files:** `realtime-indexer/src/evm/evmGraduationKeeper.ts`, `realtime-indexer/src/tests/dogeosKeeperSlot0.test.ts` (new)
+- Spec §4 "Off-chain `slot0` reads". The keeper decodes `slot0` with `uint8 feeProtocol` at `evmGraduationKeeper.ts:94`, `:808` and `:1015-1021` (V3_POOL_OBSERVATIONS_IFACE); ethers rejects MuchFi's 209718400. For 6281971 use a `uint32 feeProtocol` ABI in the observation-cardinality step and the partial-repair price read; Robinhood/BNB ABIs and behaviour unchanged.
+- Tests: decode t30's recorded MuchFi `slot0` fixture via the DogeOS path (succeeds, correct sqrtPrice/tick), the same bytes via the Robinhood path still behave as before, and the observation/repair helpers select the DogeOS ABI only for 6281971.
+**Verify:** `npx --prefix realtime-indexer tsx --test realtime-indexer/src/tests/dogeosKeeperSlot0.test.ts && npm --prefix realtime-indexer run test:evm-gen5` → all pass
 
 ### Task 21: DOGE/USD oracle push worker            [id: t21]
 **Depends-on:** [t19]
@@ -534,7 +541,7 @@ Changes:
 **Verify:** `node --test db/migrations/dogeosLaunchPathMigration.test.mjs` → all pass; `bash -n database/staging_apply_dogeos_launch_path.sh` → exit 0
 
 ### Task 23: Chain-list guard test            [id: t23]
-**Depends-on:** [t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t22]
+**Depends-on:** [t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t22, t35]
 **TDD:** required
 **Files:** `scripts/dogeos-chain-list-guard.test.mjs` (new), `scripts/dogeos-chain-list-exceptions.json` (new)
 - Spec §6.
@@ -575,7 +582,7 @@ Changes:
 **Verify:** `grep -c "dogeos.md" CLAUDE.md` → `1`; after the task's commit, `git diff HEAD~1 --stat -- CLAUDE.md` → `1 file changed, 1 insertion(+)`
 
 ### Task 26: Gate 1, full test suites            [id: t26]
-**Depends-on:** [t2, t3, t5, t6, t7, t8, t30, t31, t32, t33, t34, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24]
+**Depends-on:** [t2, t3, t5, t6, t7, t8, t30, t31, t32, t33, t34, t35, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24]
 **TDD:** waived (verification-only gate; no code)
 **Files:** none
 - Spec gate 1.
@@ -602,7 +609,7 @@ Changes:
 **Depends-on:** [t9, t25, t27]
 **TDD:** waived (on-chain deployment, founder-gated)
 **Files:** `deployments/dogeos/testnet.json` (new), `config/verification/dogeos-testnet-contracts.json` (new), `docs/claude/dogeos.md`, `docs/claude/evm-deployments.md`
-- Before asking: a fresh `templar-powers:task-reviewer` reviews the files t9 added after the t27 branch review (`hardhat.dogeos-testnet-fork.config.ts`, `scripts/rehearse-dogeos-fork.ts`).
+- Before asking: a fresh `templar-powers:task-reviewer` reviews the file t9 added after the t27 branch review (`scripts/rehearse-dogeos-fork.ts`).
 - Spec gate 4. **The controller stops and asks the founder for an explicit go**, naming the key (`0x6c5C…82f8`), the network (6281971), the budget from `reports/dogeos/fork-rehearsal.json` and the deployer's current balance (read-only `eth_getBalance`).
 - On go, the founder runs (or approves the controller running) `DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO npx hardhat run scripts/deploy-dogeos-testnet.ts --network dogeosTestnet`, then `npx hardhat --config hardhat.dogeos-verify.config.ts run scripts/verify-dogeos-testnet.ts --network dogeosTestnet`.
 - Fund the updater and the keeper from the deployer with the amounts from the rehearsal report. That is also a transaction, covered by the same go.
