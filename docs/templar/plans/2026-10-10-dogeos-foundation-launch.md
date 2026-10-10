@@ -61,7 +61,7 @@
   - the resolvers ignore `DEPLOYER_PK`
   - the missing-key throw
   - the network entry's chainId
-  - `hardhat.config.ts` `etherscan` is deep-equal before and after (import the config, snapshot the field)
+  - `hre.config.etherscan` is deep-equal to a literal snapshot of the current block (`hardhat.config.ts:156-158`). Don't re-import the config inside the test.
 **Verify:** `npx hardhat test test/DogeosNetworkConfig.spec.ts` → all passing; `npx hardhat --config hardhat.dogeos-verify.config.ts verify --list-networks | grep -i dogeosTestnet` → one line with 6281971
 
 ### Task 3: DOGE/USD testnet oracle contract            [id: t3]
@@ -84,7 +84,7 @@
   - `latestRoundData` and `getRoundData`, `RoundUnavailable`
   - `decimals() == 8`
   - `GraduationOracle(feed, 3600).nativeUsdPrice()` reads it, and reverts `StalePrice` after `evm_increaseTime(3601)`
-**Verify:** `npx hardhat test test/DogeosTestnetDogeUsdOracle.spec.ts` → all passing; `git diff --stat main -- contracts/gen7 contracts/integrations contracts/robinhood` → empty
+**Verify:** `npx hardhat test test/DogeosTestnetDogeUsdOracle.spec.ts` → all passing; `git diff --stat $(git merge-base main HEAD) -- contracts/gen7 contracts/integrations contracts/robinhood` → empty
 
 ### Task 4: Oracle audit diff (gate 2)            [id: t4]
 **Depends-on:** [t3]
@@ -113,9 +113,9 @@
   - NonfungibleTokenPositionDescriptor(W, bytes32 "DOGE"), linked
   - NonfungiblePositionManager(factory, W, descriptor)
   - SwapRouter02(0x0, factory, npm, W)
-- It returns the addresses. It throws unless `chainId === 6281971`, or `31337 && allowLocalRehearsal`.
+  - QuoterV2(factory, W) from v3-periphery, always deployed (spec §1 includes the quoter)
+- It returns the addresses, including the quoter. The quoter goes into the manifest (t6) and the env blocks (t24, `VITE_ROBINHOOD_V3_QUOTER_ADDRESS_6281971`). It throws unless `chainId === 6281971`, or `31337 && allowLocalRehearsal`.
 - It asserts that fee 3000 has spacing 60, as `assertFeeTierSpacing` does.
-- No QuoterV2 is needed unless `lib/robinhoodV3Trade.ts` requires a quoter address. If it does, deploy QuoterV2(factory, W) from v3-periphery and include it.
 - Tests on 31337 with a local WETH9-style stand-in for WDOGE (`MockWETH9`):
   - chain refusal on 31337 without the flag
   - deploy succeeds
@@ -193,14 +193,14 @@
   - takes the initial DOGE/USD answer from Binance `DOGEUSDT` at run time, converted to 8 decimals, and refuses if ≤ 0
   - calls `deployDogeosGen7Stack`, then writes the manifest and the verification JSON (`chains["6281971"]`, the `verificationEntries` shape from `scripts/deploy-robinhood-gen7-generation.ts:561-581`)
 - `verify-dogeos-testnet.ts` runs with `--config hardhat.dogeos-verify.config.ts`. It verifies our contracts and tolerates "already verified". Uniswap artifacts are verified via the standard-JSON route only if L2Scan accepts it; otherwise they are listed as unverified in the manifest.
-- `package.json`: add `deploy:dogeos-testnet`, `verify:dogeos-testnet` and `rehearse:dogeos-fork` (t9). Do not rename existing scripts (`test/PackageScripts.spec.ts`).
+- `package.json`: add `deploy:dogeos-testnet` and `verify:dogeos-testnet`. Do not rename existing scripts (`test/PackageScripts.spec.ts`).
 - Node tests cover every refusal path: wrong network, missing token, wrong signer, route-authority mismatch, bad price.
 **Verify:** `node --test scripts/dogeos-testnet-deploy-guards.test.mjs` → all pass; `npx hardhat test test/PackageScripts.spec.ts` → passing
 
 ### Task 9: Chikyū fork rehearsal + DOGE budget (gate 3)            [id: t9]
-**Depends-on:** [t4, t7, t8, t26]
+**Depends-on:** [t4, t7, t8, t26, t27]
 **TDD:** waived (rehearsal run against a read-only fork; behaviour already covered by t6/t7)
-**Files:** `hardhat.dogeos-testnet-fork.config.ts` (new), `scripts/rehearse-dogeos-fork.ts` (new), `reports/dogeos/fork-rehearsal.json` (new)
+**Files:** `hardhat.dogeos-testnet-fork.config.ts` (new), `scripts/rehearse-dogeos-fork.ts` (new), `reports/dogeos/fork-rehearsal.json` (new), `package.json` (add `rehearse:dogeos-fork` only)
 - Spec gate 3.
 - Fork config: a copy of `hardhat.rh-gen7-testnet-fork.config.ts` with
   - chainId 6281971, `chains: { 6281971: { hardforkHistory: {...} } }`
@@ -270,7 +270,7 @@ Changes:
 - `useDogeUsdPrice.ts`: Binance `DOGEUSDT`, the same shape as `useEthUsdPrice.ts`. `useNativeUsdPrice` dispatches 6281971 to it, with no BNB fallthrough.
 - Arena/league/airdrop pages are out of scope (SP3 exception).
 - Tests run the pure `.mjs` and `.ts`-extractable helpers for 6281971 and snapshot existing chains as unchanged.
-**Verify:** `cd frontend && node --test src/lib/dogeosPresentation.test.mjs && npm run test:graduation-market` → all pass; `npx --prefix frontend tsc -p frontend --noEmit` → exit 0
+**Verify:** `cd frontend && node --test src/lib/dogeosPresentation.test.mjs && npm run test:graduation-market` → all pass; `cd frontend && npx tsc --noEmit 2>&1 | grep -c "error TS"` → no more errors than the same command at the task's starting commit (record both counts)
 
 ### Task 13: Frontend launch path: V3 family branches, generation pairs, post-grad trade            [id: t13]
 **Depends-on:** [t10]
@@ -345,7 +345,9 @@ Changes:
 **TDD:** required
 **Files:** `frontend/api/dev-fix/route-auth.js`, `dev-fix/routeAuthorizationSigner.js`, `dev-fix/route-authorization-gen7.test.mjs`, `dev-fix/draft-deploy-base.js`, `dev-fix/drafts-base.js`, `frontend/api/dev-fix/dogeosRouteAuth.test.mjs` (new)
 - Spec §3 route authorization, generation pair.
-- `route-auth.js:185,194` gates gain `|| cid === 6281971`. `ALLOWED_GENERATION_PAIRS` (:164-170) gains `[6281971n, [[7, 6]]]`; `ROBINHOOD_CHAIN_IDS` (:49) is unchanged.
+- `route-auth.js:185,194` gates gain `|| cid === 6281971`.
+- `routeAuthorizationSigner.js`: `ALLOWED_GENERATION_PAIRS` (:164-170) gains `[6281971n, [[7, 6]]]`.
+- Both `ROBINHOOD_CHAIN_IDS` sets stay unchanged: `routeAuthorizationSigner.js:49` and `draft-deploy.js:21`.
 - Flip `route-authorization-gen7.test.mjs:62` to assert true for `[7,6]` and false for `[6,5]`, `[7,5]`, `[6,6]` on 6281971.
 - `draft-deploy-base.js:162`, `drafts-base.js:95`: the test-target gates include 6281971.
 - `dev-fix/draft-deploy.js:21` RH route-authority key lookup: **no change**. DogeOS uses the global `ROUTE_AUTHORITY_PRIVATE_KEY`. Add a test that `draft-deploy.js` resolves the global key for 6281971.
@@ -496,7 +498,7 @@ Changes:
 - `dogeos.md`: the verified chain facts table (from the spec), quirks (getLogs caps, reorg depth vs `CONFIRMATIONS=1`, L1 fee, 10M gas, disabled opcodes, 18-decimal faucet stables), the key roles and addresses (public only), the fork rehearsal budget from `reports/dogeos/fork-rehearsal.json`, and the four sub-projects.
 - Addresses and canary hashes are filled in by t28/t29.
 - `CLAUDE.md`: one new row in §3 topic index. Nothing else in CLAUDE.md changes.
-**Verify:** `grep -c "dogeos.md" CLAUDE.md` → `1`; `git diff --stat -- CLAUDE.md` → `1 file changed, 1 insertion(+)`
+**Verify:** `grep -c "dogeos.md" CLAUDE.md` → `1`; after the task's commit, `git diff HEAD~1 --stat -- CLAUDE.md` → `1 file changed, 1 insertion(+)`
 
 ### Task 26: Gate 1, full test suites            [id: t26]
 **Depends-on:** [t2, t3, t5, t6, t7, t8, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24]
@@ -511,8 +513,8 @@ Changes:
   - `npx --prefix frontend tsc -p frontend --noEmit`
 - Compare against a baseline run of the same commands on the merge base (`git stash`-free: use `git worktree add` on `main` in the scratchpad) and list any failure that is new.
 - Any new failure blocks t9: report it, don't fix it here.
-- Also run the unchanged-live check: `git diff main --stat -- deployments/ ':!deployments/dogeos'` → empty.
-**Verify:** all suites report 0 new failures versus baseline; `git diff main --stat -- deployments/ ':!deployments/dogeos'` → empty output
+- Also run the unchanged-live check: `git diff $(git merge-base main HEAD) --stat -- deployments/ ':!deployments/dogeos'` → empty.
+**Verify:** all suites report 0 new failures versus baseline; `git diff $(git merge-base main HEAD) --stat -- deployments/ ':!deployments/dogeos'` → empty output
 
 ### Task 27: Whole-branch review            [id: t27]
 **Depends-on:** [t26]
