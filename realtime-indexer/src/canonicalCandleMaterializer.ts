@@ -454,6 +454,8 @@ async function staleCampaigns() {
          on tc.chain_id=t.chain_id and tc.campaign_address=t.campaign_address
       where t.chain_id in (56,97,101,46630,4663)
         and coalesce(t.venue,'') <> 'dbc'
+        -- Gen-8 candles are written from the pool price by evm/evmGen8Pool.ts (no curve contract to read).
+        and coalesce(t.venue,'') <> 'gen8'
         and (t.chain_id <> 101 or t.sold_tokens_after_raw is not null)
       group by t.chain_id,t.campaign_address
       having max(tc.canonical_updated_at) is null

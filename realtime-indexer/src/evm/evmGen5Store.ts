@@ -56,8 +56,10 @@ export function forcedGen7Factories(chainId: number, env: NodeJS.ProcessEnv = pr
   return new Set(raw.split(",").map((a) => lower(a)).filter((a): a is string => Boolean(a)));
 }
 
+/** Campaign generations 5 and 6 (gen-6 / gen-7 contracts). Generation 8 (Uniswap V4 hook, no campaign contract) is not. */
 export function isGen5Generation(campaignGeneration: number | null | undefined): boolean {
-  return Number(campaignGeneration || 0) >= GEN5_CAMPAIGN_GENERATION;
+  const g = Number(campaignGeneration || 0);
+  return g >= GEN5_CAMPAIGN_GENERATION && g < 8;
 }
 
 async function readFactoryGeneration(

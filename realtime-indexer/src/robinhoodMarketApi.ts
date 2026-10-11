@@ -3,6 +3,7 @@ import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
 import { healRobinhoodGraduatedCms } from "./robinhoodCmsHeal.js";
+import { isGen8Campaign } from "./evm/evmGen8Guard.js";
 import { isEvmAddress, resolveMarketIdentityOrPassthrough } from "./marketIdentity.js";
 import { readCanonicalRobinhoodMarketRoute, type RobinhoodTradeSide } from "./robinhoodMarketRoutes.js";
 import {
@@ -321,7 +322,8 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
       // A pair alone does not verify: V3 discovery rejects a wrapped-native
       // market whose CMS row has no canonical wrapped native, so keep healing
       // until the venue is populated too.
-      if (!state.pairAddress || !state.wrappedNativeAddress) {
+      // Gen-8 coins (Uniswap V4 hook pool, no campaign contract) are never healed from a campaign contract.
+      if ((!state.pairAddress || !state.wrappedNativeAddress) && !(await isGen8Campaign(pool, chainId, campaign))) {
         const rpcUrl =
           chainId === 4663
             ? parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663)[0]

@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { LAUNCH_CAMPAIGN_ABI } from "./abis.js";
 import { pool } from "./db.js";
+import { isGen8Campaign } from "./evm/evmGen8Guard.js";
 import { ENV } from "./env.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
 import { GEN5_NON_TRADE_TOPICS, planGen5Backfill } from "./evm/evmGen5Backfill.js";
@@ -325,6 +326,7 @@ export async function backfillEmptyCampaignTrades(
   );
   const existing = Number(countRes.rows[0]?.n || 0);
   if (existing > 0) return { inserted: 0, scanned: 0, reason: "has_trades" };
+  if (await isGen8Campaign(pool, chainId, campaign)) return { inserted: 0, scanned: 0, reason: "gen8" };
 
   const rpcUrls = rpcUrlsFor(chainId);
   if (!rpcUrls.length) return { inserted: 0, scanned: 0, reason: "no_rpc" };
