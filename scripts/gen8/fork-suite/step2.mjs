@@ -469,6 +469,7 @@ async function areaSplitter(env, H, S, P, out) {
   rows = await indexRows(env, S, fromRun2);
   {
     const snap = await H.snapshot(env);
+    const paid = await claimForPlan(env);
     const agg = aggregateRun(rows);
     const b = await sp.bands(agg.B, agg.G);
     const [weekly, monthly, rsaMin, rsaMax, squadMax] = b;
@@ -482,14 +483,37 @@ async function areaSplitter(env, H, S, P, out) {
       ["a skipped run id (3)", [3n, rsaMin, 0n, 0n], "BadRunId"],
     ];
     for (const [lbl, [rid, rec, sq, air], want] of tries) {
-      const why = await revertOf(() => op.route.staticCall(rid, rec, sq, air, root), env.ifaces);
+      const why = await revertOf(() => op.route.staticCall(rid, paid, rec, sq, air, root), env.ifaces);
       check(`bands enforced on a real run: ${lbl} reverts ${want}`, why?.includes(want), why);
     }
-    const whyAtt = await revertOf(() => sp.connect(env.W.attacker).route.staticCall(2n, rsaMin, 0n, 0n, root), env.ifaces);
+    const whyStale = await revertOf(() => op.route.staticCall(2n, paid - 1n, rsaMin, 0n, 0n, root), env.ifaces);
+    check("a plan made against another paid total reverts PaidMismatch (the run is pinned to the plan)", whyStale?.includes("PaidMismatch"), whyStale);
+    // a fee landing after the plan is not swept in: route still sees the planned total, the late fee waits in the hook
+    {
+      const s2 = await H.snapshot(env);
+      const [tot] = await sp.pending();
+      await H.trade(env, P, { via: "direct", wallet: env.W.unl1, buy: true, exactIn: true, amount: S.R / 50n, limit: 0n });
+      const late = await env.hook.routerOwed();
+      const rcL = await (await op.route(2n, paid, rsaMin, 0n, 0n, root, { gasLimit: 2_000_000n })).wait();
+      const evL = rcL.logs.map((l) => { try { return sp.interface.parseLog(l); } catch { return null; } }).find((e) => e?.name === "Routed");
+      check("a fee landing between the operator's claim and route stays in the hook for the next run (not swept into protocol)", evL.args.run.total === tot && late > 0n && (await env.hook.routerOwed()) >= late, `planned ${fmt(tot, 9)} routed ${fmt(evL.args.run.total, 9)}, late fee ${fmt(late, 9)} left in the hook`);
+      // a third party claims between plan and route: the stale plan reverts, the re-plan routes
+      const paidB = await claimForPlan(env);
+      await H.trade(env, P, { via: "direct", wallet: env.W.unl1, buy: true, exactIn: true, amount: S.R / 50n, limit: 0n });
+      await (await env.hook.connect(env.W.attacker).claimRouter()).wait();
+      const why3 = await revertOf(() => op.route.staticCall(3n, paidB, 0n, 0n, 0n, root), env.ifaces);
+      const paidC = await claimForPlan(env);
+      const [, B3, G3] = await sp.pending();
+      const b3 = await sp.bands(B3, G3);
+      const ok3 = await revertOf(() => op.route.staticCall(3n, paidC, b3[2], 0n, 0n, root), env.ifaces);
+      check("a third-party claim between plan and route reverts PaidMismatch; the re-plan routes", why3?.includes("PaidMismatch") && ok3 === null, `${why3} / re-plan ${ok3 ?? "ok"}`);
+      await H.revert(env, s2);
+    }
+    const whyAtt = await revertOf(() => sp.connect(env.W.attacker).route.staticCall(2n, paid, rsaMin, 0n, 0n, root), env.ifaces);
     check("a stranger cannot route (NotOperator)", whyAtt?.includes("NotOperator"), whyAtt);
-    const lo = await revertOf(() => op.route.staticCall(2n, rsaMin, 0n, 0n, root), env.ifaces);
-    const hi = await revertOf(() => op.route.staticCall(2n, rsaMax - squadMax, squadMax, 0n, root), env.ifaces);
-    const adm = await revertOf(() => sp.connect(env.W.safe).route.staticCall(2n, 0n, 0n, rsaMin, root), env.ifaces);
+    const lo = await revertOf(() => op.route.staticCall(2n, paid, rsaMin, 0n, 0n, root), env.ifaces);
+    const hi = await revertOf(() => op.route.staticCall(2n, paid, rsaMax - squadMax, squadMax, 0n, root), env.ifaces);
+    const adm = await revertOf(() => sp.connect(env.W.safe).route.staticCall(2n, paid, 0n, 0n, rsaMin, root), env.ifaces);
     check("exactly at the band edges the run goes through (operator at rsaMin and at rsaMax with the full squad cap; the Safe can run the same bounded route)", lo === null && hi === null && adm === null, `rsaMin ${rsaMin} rsaMax ${rsaMax} squadMax ${squadMax} weekly ${weekly} monthly ${monthly}`);
     await H.revert(env, snap);
   }
@@ -500,12 +524,14 @@ async function areaSplitter(env, H, S, P, out) {
   for (const [via, urName] of S.vias.slice(0, 2)) await H.trade(env, P, { via, urName, wallet: env.W.bot, buy: true, exactIn: true, amount: S.R / 10n, limit: 0n });
   rows = await indexRows(env, S, r2.block);
   {
-    const why = await revertOf(() => sp.connect(env.W.operator).route.staticCall(3n, 1n, 0n, 0n, accrualTree(rows).root), env.ifaces);
+    const paid3 = await claimForPlan(env);
+    const why = await revertOf(() => sp.connect(env.W.operator).route.staticCall(3n, paid3, 1n, 0n, 0n, accrualTree(rows).root), env.ifaces);
     check("post-graduation-only run: any recruiter / squad / airdrop amount is out of band (B = G = 0)", why?.includes("OutOfBand"), why);
   }
   const r3 = await runSplit(env, H, S, out, { runId: 3n, rows, label: "run 3 (post-graduation only)" });
   N.runs.push(r3);
-  const whyEmpty = await revertOf(() => sp.connect(env.W.operator).route.staticCall(4n, 0n, 0n, 0n, ethers.ZeroHash), env.ifaces);
+  const paid4 = await claimForPlan(env);
+  const whyEmpty = await revertOf(() => sp.connect(env.W.operator).route.staticCall(4n, paid4, 0n, 0n, 0n, ethers.ZeroHash), env.ifaces);
   check("a run with nothing received reverts NothingToRoute (no empty runs)", whyEmpty?.includes("NothingToRoute"), whyEmpty);
 
   // ---- the aggregate rule always lands in the band; the per-trade floor sum often does not (JS, exact mirror)
@@ -569,7 +595,8 @@ async function areaSplitter(env, H, S, P, out) {
     const av = aggregateRun(rowsV, { weekly: bv[0], monthly: bv[1], rsaMin: bv[2], rsaMax: bv[3], squadMax: bv[4] });
     const a0 = await g7c.warzoneAirdropBalance();
     const q0 = await g7c.squadPoolBalance();
-    const rc = await (await sp2.connect(env.W.operator).route(1n, av.recruiter, av.squad, av.airdrop, accrualTree(rowsV).root, { gasLimit: 2_000_000n })).wait();
+    const paidV = await claimForPlan(env, sp2);
+    const rc = await (await sp2.connect(env.W.operator).route(1n, paidV, av.recruiter, av.squad, av.airdrop, accrualTree(rowsV).root, { gasLimit: 2_000_000n })).wait();
     check("D8 variant (fork only, not the plan): once the Safe has set its router, a splitter routes airdrop / squad into the gen-7 community vault", rc.status === 1 && (await g7c.warzoneAirdropBalance()) - a0 === av.airdrop && (await g7c.squadPoolBalance()) - q0 === av.squad && av.airdrop > 0n, `airdrop +${fmt(av.airdrop, 9)} squad +${fmt(av.squad, 9)}`);
     await H.revert(env, snap);
   }
@@ -580,10 +607,18 @@ function g7cWith(env, addr) {
   return new ethers.Contract(addr, ABI.community, env.provider);
 }
 
+/** Claim-first ordering (route never claims): the operator claims the hook bucket if anything is owed, then plans
+ *  against the cumulative paid ledger, which route() must see unchanged (expectedPaid). */
+async function claimForPlan(env, splitter = env.splitter) {
+  if ((await env.hook.treasuryRouter()) === splitter.target && (await env.hook.routerOwed()) > 0n) await (await env.hook.connect(env.W.operator).claimRouter()).wait();
+  return (await env.hook.routerPaid(splitter.target)).amount;
+}
+
 /** Computes a run the way the indexer will, checks it against the hook, routes it, and proves where every wei went. */
 async function runSplit(env, H, S, out, { runId, rows, label, expectPerTradeOut = false }) {
   const { check, note } = H;
   const sp = env.splitter;
+  const paid = await claimForPlan(env);
   const [pTot, pB, pG] = await sp.pending();
   const owed = await env.hook.routerOwed();
   const hookB = await env.hook.pendingBondingFees();
@@ -596,7 +631,7 @@ async function runSplit(env, H, S, out, { runId, rows, label, expectPerTradeOut 
   const pt = perTradeRun(rows);
   const tree = accrualTree(rows);
   const op = sp.connect(env.W.operator);
-  const ptWhy = await revertOf(() => op.route.staticCall(runId, pt.recruiter, pt.squad, pt.airdrop, tree.root), env.ifaces);
+  const ptWhy = await revertOf(() => op.route.staticCall(runId, paid, pt.recruiter, pt.squad, pt.airdrop, tree.root), env.ifaces);
   const ptIn = pt.rsa >= bands.rsaMin && pt.rsa <= bands.rsaMax && pt.squad <= bands.squadMax;
   if (expectPerTradeOut) {
     check(`${label}: audit risk 2 reproduced: summing per-trade floors lands ${bands.rsaMin - pt.rsa} wei under the band and the run reverts OutOfBand`, !ptIn && pt.rsa < bands.rsaMin && ptWhy?.includes("OutOfBand"), `per-trade rsa ${pt.rsa} vs rsaMin ${bands.rsaMin} (${rows.length} rows): ${ptWhy}`);
@@ -612,7 +647,7 @@ async function runSplit(env, H, S, out, { runId, rows, label, expectPerTradeOut 
   const cv = new ethers.Contract(env.community.target, ABI.community, env.provider);
   const air0 = await cv.warzoneAirdropBalance();
   const sq0 = await cv.squadPoolBalance();
-  const tx = await op.route(runId, a.recruiter, a.squad, a.airdrop, tree.root, { gasLimit: 2_000_000n });
+  const tx = await op.route(runId, paid, a.recruiter, a.squad, a.airdrop, tree.root, { gasLimit: 2_000_000n });
   const rc = await tx.wait();
   const ev = rc.logs.map((l) => { try { return sp.interface.parseLog(l); } catch { return null; } }).find((e) => e?.name === "Routed");
   const run = ev.args.run;
@@ -649,7 +684,7 @@ async function runSplit(env, H, S, out, { runId, rows, label, expectPerTradeOut 
   const [qT, qB, qG] = await sp.pending();
   const claims = await env.pm.balanceOf(env.hook.target, 0n);
   check(`${label}: nothing stuck: splitter balance 0, hook router bucket 0, pending() == 0, hook claims == creator ledgers`, bal1.splitter === 0n && (await env.hook.routerOwed()) === 0n && qT === 0n && qB === 0n && qG === 0n && claims === (await sumOtherCreatorOwed(env, S)), `claims ${fmt(claims, 9)}`);
-  const whyAgain = await revertOf(() => op.route.staticCall(runId, a.recruiter, a.squad, a.airdrop, tree.root), env.ifaces);
+  const whyAgain = await revertOf(() => op.route.staticCall(runId, paid, a.recruiter, a.squad, a.airdrop, tree.root), env.ifaces);
   check(`${label}: replaying the same run id reverts BadRunId`, whyAgain?.includes("BadRunId"), whyAgain);
   return {
     runId: Number(runId), label, rows: rows.length, gas: Number(rc.gasUsed), block: rc.blockNumber,

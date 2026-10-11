@@ -154,7 +154,7 @@ describe("gen8 MwzV4Launcher", function () {
       const t = await now();
       const go = (who: any, rr: any, deadline: bigint, sig: string, value = 0n) => L.connect(who).launch(reqTuple(rr), { deadline, signature: sig }, { value });
       await expect(go(env.creator, r, t - 1n, await signCreate(env, env.creator.address, r, t - 1n))).to.be.revertedWithCustomError(L, "AuthorizationExpired");
-      const far = t + 86400n + 100n;
+      const far = t + 2n * 86400n; // margin: after a fixture revert hardhat moves time on by the wall-clock time elapsed
       await expect(go(env.creator, r, far, await signCreate(env, env.creator.address, r, far))).to.be.revertedWithCustomError(L, "AuthorizationTooLong");
       const d = t + 600n;
       await expect(go(env.creator, r, d, await signCreate(env, env.creator.address, r, d, env.attacker))).to.be.revertedWithCustomError(L, "InvalidAuthorization");

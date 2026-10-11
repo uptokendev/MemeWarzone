@@ -24,6 +24,10 @@ interface IMwzCommunityRewardsVault {
 /// - accrualRoot (Merkle root of the per-trade slice rows) is emitted so anyone can recompute the run.
 /// B and G are not operator inputs: the hook records, per payee, the cumulative amount paid and the bonding and
 /// graduation fees inside it (MwzLaunchHook.routerPaid), and this contract routes the difference since its last run.
+/// The run is pinned to the operator's plan: route() never claims; the caller passes the cumulative amount the hook
+/// has paid this contract (`expectedPaid`), and the run reverts unless the hook's record equals it. The hook moves its
+/// whole bucket with its bonding / graduation counters in one step (claimRouter or the router-change flush), so an
+/// equal cumulative amount means equal B, G and total. Fees that land after the plan stay for the next run.
 /// Destinations are fixed at deploy. There is no withdraw, no rescue and no other way for value to leave.
 /// A stolen operator key can only move value between airdrop and recruiter / squad inside the band, and only to
 /// these vaults. If the operator never runs, the funds wait here; the admin (Safe) can run the same bounded route.
@@ -37,6 +41,7 @@ contract MwzFeeSplitter is ReentrancyGuard {
     error OutOfBand();
     error Underfunded();
     error SendFailed();
+    error PaidMismatch(uint256 expected, uint256 actual);
 
     uint256 public constant BPS = 10_000;
     uint256 public constant LEAGUE_BPS = 3_750; // of bonding fees, profile-independent
@@ -116,7 +121,8 @@ contract MwzFeeSplitter is ReentrancyGuard {
     }
 
     /// @notice What the next run must route: received from the hook since the last run, and the bonding and
-    /// graduation fees inside it. Includes nothing still owed in the hook (route() claims that first).
+    /// graduation fees inside it. Includes nothing still owed in the hook: call hook.claimRouter() first, then plan
+    /// the run against hook.routerPaid(this).amount and pass that value to route() as `expectedPaid`.
     function pending() public view returns (uint256 total, uint256 bondingFees, uint256 gradFees) {
         (uint256 paid, uint256 paidBonding, uint256 paidGrad) = hook.routerPaid(address(this));
         return (paid - routedAmount, paidBonding - routedBondingFees, paidGrad - routedGradFees);
@@ -137,19 +143,21 @@ contract MwzFeeSplitter is ReentrancyGuard {
     }
 
     /// @notice One bounded run. Operator or admin. `runId` must be the next number (a resubmitted run reverts).
-    /// @dev nonReentrant. Checks, then effects (run counter and routed totals), then the payouts; any failed payout
-    /// reverts the whole run (nothing is half-routed). The hook claim at the start is the permissionless
-    /// claimRouter (pays this contract only while it is the hook's current router).
-    function route(uint256 runId, uint256 recruiter, uint256 squad, uint256 airdrop, bytes32 accrualRoot)
+    /// `expectedPaid` is the cumulative hook.routerPaid(this).amount the run was planned against; any other value
+    /// (a claim or flush landed after the plan) reverts PaidMismatch and the operator re-plans.
+    /// @dev nonReentrant. Checks (caller, run id, paid == plan, bands, funds), then effects (run counter and routed
+    /// totals), then the payouts; any failed payout reverts the whole run (nothing is half-routed). The only external
+    /// call before the effects is the view hook.routerPaid.
+    function route(uint256 runId, uint256 expectedPaid, uint256 recruiter, uint256 squad, uint256 airdrop, bytes32 accrualRoot)
         external
         nonReentrant
         returns (Run memory r)
     {
         if (msg.sender != operator && msg.sender != admin) revert NotOperator();
         if (runId != runs + 1) revert BadRunId();
-        if (hook.treasuryRouter() == address(this) && hook.routerOwed() != 0) hook.claimRouter();
 
         (uint256 paid, uint256 paidBonding, uint256 paidGrad) = hook.routerPaid(address(this));
+        if (paid != expectedPaid) revert PaidMismatch(expectedPaid, paid);
         r.total = paid - routedAmount;
         r.bondingFees = paidBonding - routedBondingFees;
         r.gradFees = paidGrad - routedGradFees;

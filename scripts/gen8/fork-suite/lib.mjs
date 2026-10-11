@@ -69,6 +69,14 @@ async function seedHistoryStorage(port) {
   }
 }
 
+/** Kills an anvil child and waits until it has exited (the next fork reuses its port). */
+export async function stopAnvil(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const done = new Promise((r) => child.once("exit", r));
+  child.kill();
+  await Promise.race([done, new Promise((r) => setTimeout(r, 15_000))]);
+}
+
 export const fmt = (wei, dp = 6) => {
   const neg = wei < 0n;
   const s = ethers.formatUnits(neg ? -wei : wei, 18);

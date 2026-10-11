@@ -47,7 +47,7 @@ describe("gen8 invariants (seeded property runs)", function () {
       const latched: Record<string, boolean> = {};
       let splitterRouted = 0n;
       let runs = 0n;
-      const stats = { trades: 0, partial: 0, grads: 0, claims: 0, routes: 0, pulls: 0, escrow: 0, transfers: 0, skipped: 0 };
+      const stats: Record<string, number> = { trades: 0, partial: 0, grads: 0, claims: 0, routes: 0, pulls: 0, escrow: 0, transfers: 0, skipped: 0, lateFees: 0, replans: 0 };
 
       const checkAll = async (label: string) => {
         // I4: ERC6909 native claims held by the hook == router bucket + creator ledgers
@@ -140,6 +140,10 @@ describe("gen8 invariants (seeded property runs)", function () {
             if (amount > cap) amount = cap;
             const user = pick(users);
             action = `buy exactOut ${amount} grad=${wasGrad} poolCoins ${poolCoins}`;
+            // the generator's spend limit is 10,000 native: deep in B's tail 90% of the remaining coins costs more (the
+            // trader cannot pay; found when the V13 generator change shifted the action stream, seed 113)
+            const qOut = await quote(quoter, P, true, false, amount);
+            if (qOut > 10_000n * WAD) { if (process.env.GEN8_FUZZ_LOG_SKIPS) console.log(`      ${label}: skip exact-out buy, cost ${qOut} > limit`); stats.skipped++; continue; }
             const t = await trade(env, P, { wallet: user, buy: true, exactIn: false, amount, limit: 10_000n * WAD });
             await checkTrade(P, t, true, false, amount, wasGrad, false, label);
             stats.trades++;
@@ -176,7 +180,16 @@ describe("gen8 invariants (seeded property runs)", function () {
             const spec = buy ? -((amount * BPS) / (BPS + r)) : await env.lens.grossForNet(amount, r);
             action = `limited ${buy ? "buy" : "sell"} ${amount} limit ${limit} spec ${spec} grad=${wasGrad}`;
             const preview = await env.lens.previewFill(P.id, buy, spec, limit);
-            const t = await trade(env, P, { wallet: user, buy, exactIn: buy, amount, limit: buy ? 0n : 10n ** 30n, sqrtLimit: limit });
+            let t: TradeResult;
+            try {
+              t = await trade(env, P, { wallet: user, buy, exactIn: buy, amount, limit: buy ? 0n : 10n ** 30n, sqrtLimit: limit });
+            } catch (e: any) {
+              // a seller with fewer coins than the fill to the limit needs (deep B liquidity, seed 122): the coin's own
+              // ERC20InsufficientBalance(seller, ...) and nothing else counts as a skipped action
+              const data: string = e?.data ?? e?.info?.error?.data ?? "";
+              if (!buy && typeof data === "string" && data.startsWith("0xe450d38c") && data.toLowerCase().includes(user.address.slice(2).toLowerCase())) { if (process.env.GEN8_FUZZ_LOG_SKIPS) console.log(`      ${label}: skip limited sell, seller short of coins`); stats.skipped++; continue; }
+              throw e;
+            }
             const fill = buy ? -t.raw0 : t.raw0;
             expect(fill, `${label}: I2 preview`).to.eq(preview);
             await checkTrade(P, t, buy, buy, amount, wasGrad, true, label);
@@ -207,9 +220,33 @@ describe("gen8 invariants (seeded property runs)", function () {
             }
           } else if (roll < 0.88) {
             // splitter run with a random split inside the band
-            if ((await env.hook.treasuryRouter()) === (await env.splitter.getAddress()) && (await env.hook.routerOwed()) > 0n) await (await env.hook.claimRouter()).wait();
-            const [total, B, G] = await env.splitter.pending();
+            // V13 operator flow: claim, plan against the cumulative paid ledger, route with expectedPaid
+            const splitterAddr = await env.splitter.getAddress();
+            if ((await env.hook.treasuryRouter()) === splitterAddr && (await env.hook.routerOwed()) > 0n) await (await env.hook.claimRouter()).wait();
+            let [total, B, G] = await env.splitter.pending();
             if (total === 0n) { stats.skipped++; continue; }
+            let paidPlan = (await env.hook.routerPaid(splitterAddr)).amount;
+            const between = R();
+            if (between < 0.3) {
+              // a fee lands between the plan and the route: it must stay in the hook for the next run
+              const o0 = await env.hook.routerOwed();
+              const Pl = pick(coins);
+              await trade(env, Pl, { wallet: env.bot, buy: true, exactIn: true, amount: WAD / 100n + big(WAD / 100n) });
+              const late = (await env.hook.routerOwed()) - o0;
+              if (between < 0.15 && (await env.hook.treasuryRouter()) === splitterAddr && (await env.hook.routerOwed()) > 0n) {
+                // a third party claims in between: the stale plan reverts, the operator re-plans
+                await (await env.hook.connect(pick(users)).claimRouter()).wait();
+                const actual = (await env.hook.routerPaid(splitterAddr)).amount;
+                await expect(env.splitter.connect(env.operator).route(runs + 1n, paidPlan, 0n, 0n, 0n, ethers.ZeroHash), `${label}: stale plan`).to.be.revertedWithCustomError(env.splitter, "PaidMismatch");
+                [total, B, G] = await env.splitter.pending();
+                paidPlan = actual;
+                stats.replans = (stats.replans ?? 0) + 1;
+              } else {
+                expect(late >= 0n).to.eq(true);
+                stats.lateFees = (stats.lateFees ?? 0) + 1;
+              }
+            }
+            const owedBeforeRoute = await env.hook.routerOwed();
             const [weekly, monthly, rsaMin, rsaMax, squadMax] = await env.splitter.bands(B, G);
             const rsa = rsaMin + big(rsaMax - rsaMin);
             const squad = big(squadMax < rsa ? squadMax : rsa);
@@ -218,7 +255,9 @@ describe("gen8 invariants (seeded property runs)", function () {
             const before = await Promise.all([env.weekly, env.monthly, env.recruiter, env.protocol].map((c: any) => c.received()));
             const cb = [await env.community.warzoneAirdropBalance(), await env.community.squadPoolBalance()];
             runs++;
-            await (await env.splitter.connect(env.operator).route(runs, recruiter, squad, airdrop, ethers.id(`run-${runs}`))).wait();
+            await (await env.splitter.connect(env.operator).route(runs, paidPlan, recruiter, squad, airdrop, ethers.id(`run-${runs}`))).wait();
+            // route never claims: whatever was owed in the hook before the route is still owed after it
+            expect(await env.hook.routerOwed(), `${label}: route swept the hook bucket`).to.eq(owedBeforeRoute);
             const after = await Promise.all([env.weekly, env.monthly, env.recruiter, env.protocol].map((c: any) => c.received()));
             const ca = [await env.community.warzoneAirdropBalance(), await env.community.squadPoolBalance()];
             expect(after[0] - before[0]).to.eq(weekly);

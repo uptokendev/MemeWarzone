@@ -75,7 +75,7 @@ describe("gen8 sizes and gas", function () {
       if (display) {
         const [, B, G] = await env.splitter.pending();
         const [, , rsaMin, , squadMax] = await env.splitter.bands(B, G);
-        rec("splitter route (all six destinations)", await (await env.splitter.connect(env.operator).route(1, rsaMin - squadMax - 1n, squadMax, 1n, ethers.id("r"))).wait());
+        rec("splitter route (all six destinations)", await (await env.splitter.connect(env.operator).route(1, (await env.hook.routerPaid(await env.splitter.getAddress())).amount, rsaMin - squadMax - 1n, squadMax, 1n, ethers.id("r"))).wait());
         await trade(env, c.P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
         rec("choice vault pull", await (await env.vault.pull(c.P.id)).wait());
         rec("escrow buy", await (await env.escrow.connect(env.creator).buy(P.token, 0n, { value: WAD })).wait());

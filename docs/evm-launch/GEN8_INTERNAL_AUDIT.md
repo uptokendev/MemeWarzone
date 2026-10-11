@@ -44,8 +44,8 @@ none changed behaviour between the two).
 
 | Suite | Command | Result |
 |---|---|---|
-| Local unit + property + gas/size (hardhat, v4-core 1.0.2 PoolManager built locally) | `npx hardhat --config hardhat.gen8.config.ts test` | 77 tests passing in about 4 minutes, including 10 seeded property runs of 220 actions (see 2.1) |
-| Property runs, larger campaign | `GEN8_FUZZ_SEEDS=101..140 GEN8_FUZZ_STEPS=300` | 40 seeds x 300 random actions, all invariants checked after every action: 40 / 40 passing (12,000 actions, about 8 minutes) |
+| Local unit + property + gas/size (hardhat, v4-core 1.0.2 PoolManager built locally) | `npx hardhat --config hardhat.gen8.config.ts test` | 80 tests passing (77 before V13; +3 splitter plan tests) in about 5 minutes, including 10 seeded property runs of 220 actions (see 2.1) |
+| Property runs, larger campaign | `GEN8_FUZZ_SEEDS=101..140 GEN8_FUZZ_STEPS=300` | 40 seeds x 300 random actions, all invariants checked after every action: 40 / 40 passing (after V13 the splitter step also lands fees and third-party claims between plan and route: 74 late fees, 79 re-plans) (12,000 actions, about 8 minutes) |
 | Fork suite, production contracts, BSC 56 + Robinhood 4663, $30K + $50K | `node scripts/gen8/fork-suite/run-fork-suite.mjs` | 746 / 746 PASS (134 s) |
 | Research equivalence | `node scripts/gen8/fork-suite/compare-with-research.mjs` | all 702 research checks present and passing (one renamed on purpose, D6) |
 
@@ -217,8 +217,9 @@ unlockCallback`. There is no rate setter, no withdraw, no pause, no liquidity fu
 
 ### 4.5 MwzFeeSplitter
 
-- `route(runId, recruiter, squad, airdrop, accrualRoot)`: operator or admin, `nonReentrant`, `runId == runs + 1`.
-  It first calls the permissionless `hook.claimRouter()` when it is the current router. It reads
+- `route(runId, expectedPaid, recruiter, squad, airdrop, accrualRoot)` (V13): operator or admin, `nonReentrant`,
+  `runId == runs + 1`, and `hook.routerPaid(this).amount == expectedPaid` or `PaidMismatch(expected, actual)`. It never
+  claims: the operator claims (`hook.claimRouter()`, permissionless) and plans first. It reads
   `hook.routerPaid(this)` and routes exactly the difference since its last run: league = floor(3750 x B / 10000), weekly
   30% of that, monthly the rest; `recruiter + squad + airdrop` in [1500 B + 1750 G, 1750 B + 2000 G] / 10000 and
   `squad <= 250 (B + G) / 10000`; protocol = total minus the rest. Effects (run counter, routed totals) before the
@@ -340,7 +341,39 @@ clamped to `uint112` for display. The lens and `MwzSwapSim` are views.
 | V9 | L3 "staleness and band check as gen-7 C8" | Gen-7 C8 bounds kept; plus an immutable USD band on the oracle price and the oracle's own age window <= 2 days checked at deploy | The task asked for a band; gen-7 had only the market-cap bounds. 2 days because the Robinhood oracle allows 90,000 s (Chainlink ETH/USD 24 h heartbeat); 1 day refused it on the fork. |
 | V10 | D3 "keeps bans (RiskRegistry)" | Bans stay in the API signer; no on-chain RiskRegistry / CreatorRegistry call at launch | The signature is the gate; fewer moving parts in the launcher. Say if on-chain bans are wanted. |
 | V11 | D5 E1 "creator buys made in our app" | The escrow accepts anyone's buys, always for `msg.sender` | No harm (you can only lock your own coins); simpler than resolving the creator through the hook or the vault. |
+| V13 | 3.4 / V2: the run routes "what was received" and `route()` claimed the bucket itself | `route(runId, expectedPaid, recruiter, squad, airdrop, accrualRoot)`: no claim inside `route`; reverts `PaidMismatch(expected, actual)` unless `hook.routerPaid(this).amount == expectedPaid` (cumulative) | Found by the step-3 indexer work, founder go 2026-10-11. With the auto-claim (and `claimRouter` being permissionless) fees that landed after the off-chain plan were swept into the run while recruiter / squad / airdrop were fixed, so their shares fell into protocol. Pinning the run to the planned cumulative paid amount makes B, G and total equal the plan (see the diff audit below). |
 | V12 | Gas | +6.5k gas per bonding swap vs the proof (creator ledger write, D2) and +130k on launch (reserve lock, signature, registration, metadata event) | Measured on forks, see section 13. |
+
+**V13 diff audit (MwzFeeSplitter.route, 2026-10-11).**
+- Change: the line `if (hook.treasuryRouter() == address(this) && hook.routerOwed() != 0) hook.claimRouter();` is
+  removed; a new input `expectedPaid` and a new check `if (paid != expectedPaid) revert PaidMismatch(expectedPaid, paid)`
+  right after the `routerPaid` read. Nothing else changed (bands, run id sequencing, operator / admin, effects order,
+  destinations, no withdraw). No hook change.
+- Why equal cumulative paid means the plan: `_payRouter` (used by `claimRouter` and by the A4 flush in
+  `executeTreasuryRouter`) moves the whole bucket together with `pendingBondingFees` / `pendingGradFees` into
+  `routerPaid[r]` in one step, and nothing else writes `routerPaid`. The three cumulative counters only grow and only
+  together, so `amount` equal to the planned value implies `bondingFees` and `gradFees` equal too, hence the same B,
+  G and total. A tolerant flush that fails restores all three together.
+- Reentrancy: `nonReentrant` unchanged. The function now makes no state-changing external call before its effects:
+  the only call before them is the view `hook.routerPaid`. The removed `claimRouter()` was the one external
+  state-changing call before the effects (it re-entered this contract's `receive()` through the PoolManager); its
+  removal shrinks the surface.
+- Checks-effects-interactions: checks (caller, run id, paid == plan, nothing to route, bands, committed <= total,
+  balance >= total), then effects (`runs`, `routedAmount`, `routedBondingFees`, `routedGradFees`), then the payouts.
+  Unchanged order; one more check.
+- Reachable states: any time the caller is operator or admin. `expectedPaid` below or above the record reverts.
+  A splitter that is no longer the hook's router still routes what it was paid (claim or flush). Fees still owed in
+  the hook wait for a claim; they are never part of a run until claimed. `Underfunded` still guards the balance.
+- Over/underflow: no new arithmetic; `paid - routedAmount` as before (paid only grows).
+- Griefing: a third party calling `claimRouter` (or the Safe's router change flushing) between the operator's plan
+  and its `route` makes `route` revert `PaidMismatch`; the operator re-plans against the new record and routes. No
+  funds move, nothing is lost or misrouted; the cost is one wasted transaction per interleaving, and an attacker pays
+  a `claimRouter` each time (which only pays our splitter). Fees that land after the operator's claim stay in the
+  hook and go to the next run with their full league and band shares.
+- Operator flow (step 3): `claimRouter()` if `routerOwed() > 0`; read `routerPaid(splitter).amount` = P; the run's rows
+  are the `HookFee` / `Graduated` logs up to the `RouterClaimed` event whose cumulative paid reaches P (from the last
+  run's P); compute amounts with `bands(B, G)`; `route(runId, P, recruiter, squad, airdrop, accrualRoot)`; on
+  `PaidMismatch` re-plan.
 
 Nothing in the doc turned out to be unsound. V1 is the one place where the doc did not say how a stated rule could be
 enforced on chain; it is resolved inside the stated design, not by a different one.
@@ -388,7 +421,8 @@ can hold several swaps of one pool through a router.
 - D1 accruals: for each `HookFee` with `graduated == false`, the router part is `fee - creatorShare`; league 37.5% of
   `fee`; recruiter / squad / airdrop by the trader's profile at trade time; for `Graduated`, the creator's profile
   (store it at launch). Run amounts must be computed from the run's totals with `MwzFeeSplitter.bands(B, G)` where
-  B and G come from `pending()`; per-trade slice rows go into the Merkle tree whose root is `accrualRoot`.
+  B and G come from `pending()` after the operator's `claimRouter()`, and the run is submitted with
+  `expectedPaid = routerPaid(splitter).amount` (V13); per-trade slice rows go into the Merkle tree whose root is `accrualRoot`.
 - Post-graduation router part goes to protocol in full; the widget partner's 0.25% (D9) is paid off chain from it.
 - Creator owner: `PoolLaunched.creator` / `Launched.creator`, then `CreatorTransferred` (hook) and, for choice coins,
   the vault's `CreatorTransferred`. `Launched.hookCreator == choiceVault` marks a choice coin.
@@ -408,7 +442,9 @@ generator against the canonical PoolManager.
 ### 10.4 Step 2 results (2026-10-11): what step 3 and step 9 inherit
 
 Fork suite `run-fork-suite.mjs` + `step2.mjs`: 2,104 / 2,104 on BSC 56 and Robinhood 4663, targets $30K and $50K
-(base 746 unchanged; step-2 areas split, choice, escrow, side, grad each on a fresh fork). No contract change.
+(base 746 unchanged; step-2 areas split, choice, escrow, side, grad each on a fresh fork). No contract change in step 2.
+After V13 (splitter runs pinned to `expectedPaid`, claim-first operator flow): 2,116 / 2,116 (12 new splitter checks:
+stale plan, late fee left for the next run, third-party claim then re-plan).
 Results: `scripts/gen8/fork-suite/results/gen8-fork-suite-bsc-rh.json` (`safeCalls`, `watcher`, `nums` per area).
 
 - Splitter destinations: the four gen-7 vaults read from the gen-7 TreasuryRouterV4 accept plain native from any
@@ -478,7 +514,7 @@ gen-8, the vault caps, and everything on the testnets (Uniswap V4 availability o
 ## 13. Gas and sizes
 
 Sizes (runtime / initcode bytes): hook 16,708 / 17,715; MwzSwapSim 5,558; lens 3,682; launcher 14,363 / 15,935
-(includes the token's creation code); token 1,502; reserve lock 2,081; escrow 5,022; splitter 3,868; choice vault
+(includes the token's creation code); token 1,502; reserve lock 2,081; escrow 5,022; splitter 3,567 (3,868 before V13); choice vault
 12,842; display pair 1,924; display factory 3,496. All under EIP-170; hook under the 21,500 target.
 
 Fork measurements (canonical PoolManager, warm pool, direct unlock callback unless noted):
@@ -497,7 +533,7 @@ Fork measurements (canonical PoolManager, warm pool, direct unlock callback unle
 The BNB overhead includes the display pair (about 9.6k). The +6.5k per bonding swap versus the proof is the D2 creator
 ledger write. Local hardhat table (`test/gen8/gas-and-sizes.spec.ts`, written to `reports/gen8/local-gas.json`):
 claimCreator 58k, claimRouter 125k (first payout to a router writes three new slots), splitter run to six
-destinations 332k, choice-vault pull 133k, escrow buy 241k, escrow claim 90k, reserve release 60k, vault buyback 285k,
+destinations 327k (332k before V13; the claim is now a separate transaction, claimRouter 125k), choice-vault pull 133k, escrow buy 241k, escrow claim 90k, reserve release 60k, vault buyback 285k,
 price-limited buy (library replay) +14k over an unlimited one.
 
 ## 14. Verification manifest

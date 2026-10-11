@@ -116,7 +116,7 @@ describe("gen8 periphery", function () {
       return b;
     }
 
-    it("route claims the bucket and splits it: league exact 37.5% of bonding fees (30/70), band for recruiter+squad+airdrop, protocol the rest", async () => {
+    it("claim, then route against the paid ledger: league exact 37.5% of bonding fees (30/70), band for recruiter+squad+airdrop, protocol the rest", async () => {
       const { env } = await loadFixture(withFees);
       const s = env.splitter;
       const owed = await env.hook.routerOwed();
@@ -131,14 +131,20 @@ describe("gen8 periphery", function () {
       const recruiter = (B * 1250n) / BPS + (G * 1500n) / BPS;
       const squad = (B * 250n) / BPS + (G * 250n) / BPS;
       const airdrop = rsaMin - recruiter - squad > 0n ? rsaMin - recruiter - squad : 0n;
-      await expect(s.connect(env.attacker).route(1, recruiter, squad, airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NotOperator");
-      await expect(s.connect(env.operator).route(2, recruiter, squad, airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "BadRunId");
-      await expect(s.connect(env.operator).route(1, rsaMin - 1n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "OutOfBand");
-      await expect(s.connect(env.operator).route(1, rsaMax + 1n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "OutOfBand");
-      await expect(s.connect(env.operator).route(1, rsaMin - squadMax - 1n, squadMax + 1n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "OutOfBand");
+      // route never claims: before the claim the paid ledger is 0, so a plan of 0 has nothing to route
+      await expect(s.connect(env.operator).route(1, 0n, recruiter, squad, airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NothingToRoute");
+      await (await env.hook.claimRouter()).wait();
+      const paid = (await env.hook.routerPaid(await s.getAddress())).amount;
+      expect(paid).to.eq(owed);
+      await expect(s.connect(env.attacker).route(1, paid, recruiter, squad, airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NotOperator");
+      await expect(s.connect(env.operator).route(2, paid, recruiter, squad, airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "BadRunId");
+      await expect(s.connect(env.operator).route(1, paid - 1n, recruiter, squad, airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "PaidMismatch").withArgs(paid - 1n, paid);
+      await expect(s.connect(env.operator).route(1, paid, rsaMin - 1n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "OutOfBand");
+      await expect(s.connect(env.operator).route(1, paid, rsaMax + 1n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "OutOfBand");
+      await expect(s.connect(env.operator).route(1, paid, rsaMin - squadMax - 1n, squadMax + 1n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "OutOfBand");
       const root = ethers.id("accruals-run-1");
       const before = await Promise.all([env.weekly, env.monthly, env.recruiter, env.protocol].map((c: any) => c.received()));
-      const tx = await s.connect(env.operator).route(1, recruiter, squad, airdrop, root);
+      const tx = await s.connect(env.operator).route(1, paid, recruiter, squad, airdrop, root);
       const rc = await tx.wait();
       const ev = rc!.logs.map((l: any) => { try { return s.interface.parseLog(l); } catch { return null; } }).find((x: any) => x?.name === "Routed");
       const run = ev.args.run;
@@ -158,7 +164,7 @@ describe("gen8 periphery", function () {
       // nothing left, nothing invented
       expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(0n);
       expect(await s.routedAmount()).to.eq((await env.hook.routerPaid(await s.getAddress())).amount);
-      await expect(s.connect(env.operator).route(2, 0n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NothingToRoute");
+      await expect(s.connect(env.operator).route(2, paid, 0n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NothingToRoute");
       // protocol share stays inside the doc's bound: <= 4190 bps of bonding fees + 8250 of graduation fees + post-grad router part
       const postRouter = owed - (B - (B * 560n) / BPS) - G; // approx (creator share floors per trade)
       expect(protocol <= (B * 4190n) / BPS + (G * 8250n) / BPS + postRouter + 10n).to.eq(true);
@@ -173,8 +179,9 @@ describe("gen8 periphery", function () {
       await (await env.hook.claimRouter()).wait(); // anyone may claim first; route still sees the paid ledger
       const [B, G] = [(await s.pending())[1], (await s.pending())[2]];
       const [, , rsaMin] = await s.bands(B, G);
-      await expect(s.connect(env.operator).route(1, 0n, 0n, rsaMin, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NotOperator");
-      await (await s.connect(env.safe).route(1, 0n, 0n, rsaMin, ethers.ZeroHash)).wait();
+      const paid = (await env.hook.routerPaid(await s.getAddress())).amount;
+      await expect(s.connect(env.operator).route(1, paid, 0n, 0n, rsaMin, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NotOperator");
+      await (await s.connect(env.safe).route(1, paid, 0n, 0n, rsaMin, ethers.ZeroHash)).wait();
       expect(await env.community.warzoneAirdropBalance()).to.eq(rsaMin);
       expect(await s.runs()).to.eq(1n);
     });
@@ -187,13 +194,14 @@ describe("gen8 periphery", function () {
       const [, B, G] = await s.pending();
       const [, , rsaMin] = await s.bands(B, G);
       const bal = await ethers.provider.getBalance(await s.getAddress());
-      await expect(s.connect(env.operator).route(1, 0n, 0n, rsaMin, ethers.ZeroHash)).to.be.reverted;
+      const paid = (await env.hook.routerPaid(await s.getAddress())).amount;
+      await expect(s.connect(env.operator).route(1, paid, 0n, 0n, rsaMin, ethers.ZeroHash)).to.be.reverted;
       expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(bal);
-      await (await s.connect(env.operator).route(1, rsaMin, 0n, 0n, ethers.ZeroHash)).wait();
+      await (await s.connect(env.operator).route(1, paid, rsaMin, 0n, 0n, ethers.ZeroHash)).wait();
       expect(await env.recruiter.received()).to.eq(rsaMin);
     });
 
-    it("after a router change the old splitter still routes what was flushed to it (routerPaid per payee)", async () => {
+    it("after a router change the old splitter routes what the A4 flush paid it: the flush counts as a claim (routerPaid per payee)", async () => {
       const { env, P } = await loadFixture(withFees);
       const s = env.splitter;
       const owed = await env.hook.routerOwed();
@@ -204,8 +212,10 @@ describe("gen8 periphery", function () {
       await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD }); // accrues for the new router
       const [total, B, G] = await s.pending();
       expect(total).to.eq(owed);
+      const paid = (await env.hook.routerPaid(await s.getAddress())).amount;
+      expect(paid).to.eq(owed); // the flush recorded the bucket for the old router exactly like a claim
       const [, , rsaMin] = await s.bands(B, G);
-      await (await s.connect(env.operator).route(1, rsaMin, 0n, 0n, ethers.ZeroHash)).wait(); // does not claim (not the router)
+      await (await s.connect(env.operator).route(1, paid, rsaMin, 0n, 0n, ethers.ZeroHash)).wait();
       expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(0n);
       expect(await env.hook.routerOwed()).to.be.gt(0n);
     });
@@ -213,13 +223,109 @@ describe("gen8 periphery", function () {
     it("a post-graduation-only run must route nothing to the band and everything outside the league to protocol", async () => {
       const { env, P } = await loadFixture(withFees);
       const s = env.splitter;
-      await (await s.connect(env.operator).route(1, ...(await (async () => { const [, B, G] = await s.pending(); await env.hook.claimRouter(); const p = await s.pending(); const [, , m] = await s.bands(p[1], p[2]); void B; void G; return [m, 0n, 0n]; })()), ethers.ZeroHash)).wait();
+      await (await env.hook.claimRouter()).wait();
+      const p1 = await s.pending();
+      const [, , m] = await s.bands(p1[1], p1[2]);
+      await (await s.connect(env.operator).route(1, (await env.hook.routerPaid(await s.getAddress())).amount, m, 0n, 0n, ethers.ZeroHash)).wait();
       await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
-      await expect(s.connect(env.operator).route(2, 1n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "OutOfBand");
+      await (await env.hook.claimRouter()).wait();
+      const paid2 = (await env.hook.routerPaid(await s.getAddress())).amount;
+      await expect(s.connect(env.operator).route(2, paid2, 1n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "OutOfBand");
       const pb = await env.protocol.received();
-      await (await s.connect(env.operator).route(2, 0n, 0n, 0n, ethers.ZeroHash)).wait();
+      await (await s.connect(env.operator).route(2, paid2, 0n, 0n, 0n, ethers.ZeroHash)).wait();
       expect((await env.protocol.received()) - pb).to.be.gt(0n);
       expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(0n);
+    });
+  });
+
+  describe("MwzFeeSplitter: runs pinned to the plan (expectedPaid)", () => {
+    async function claimed() {
+      const b = await keepCoin();
+      const { env, P } = b;
+      for (let i = 0; i < 4; i++) await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD / 2n + BigInt(i) });
+      await (await env.hook.claimRouter()).wait();
+      return b;
+    }
+    // the operator's plan: claim done, B / G / total read from the paid ledger, standard_linked-shaped split
+    async function plan(env: any) {
+      const s = env.splitter;
+      const paid = (await env.hook.routerPaid(await s.getAddress())).amount;
+      const [total, B, G] = await s.pending();
+      const [, , rsaMin, , squadMax] = await s.bands(B, G);
+      const squad = (B * 250n) / BPS + (G * 250n) / BPS;
+      const recruiter = rsaMin - squad;
+      return { paid, total, B, G, recruiter, squad: squad > squadMax ? squadMax : squad, airdrop: 0n };
+    }
+
+    it("a fee landing between the claim and the route stays in the hook and goes to the next run with its full shares", async () => {
+      const { env, P } = await loadFixture(claimed);
+      const s = env.splitter;
+      const p = await plan(env);
+      // a trade lands after the plan; nobody claims it
+      const o0 = await env.hook.routerOwed();
+      await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
+      const late = (await env.hook.routerOwed()) - o0;
+      const lateB = await env.hook.pendingBondingFees();
+      expect(late).to.be.gt(0n);
+      const pb = await env.protocol.received();
+      const rc = await (await s.connect(env.operator).route(1, p.paid, p.recruiter, p.squad, p.airdrop, ethers.id("run-1"))).wait();
+      const run = rc!.logs.map((l: any) => { try { return s.interface.parseLog(l); } catch { return null; } }).find((x: any) => x?.name === "Routed").args.run;
+      expect(run.total).to.eq(p.total);
+      expect(run.bondingFees).to.eq(p.B);
+      expect(run.recruiter).to.eq(p.recruiter);
+      expect((await env.protocol.received()) - pb).to.eq(p.total - run.weeklyLeague - run.monthlyLeague - p.recruiter - p.squad - p.airdrop); // nothing extra fell into protocol
+      expect(await env.hook.routerOwed()).to.eq(late); // the late fee is still in the hook bucket
+      // next run: claim, re-plan, full league + band on the late fee
+      await (await env.hook.claimRouter()).wait();
+      const q = await plan(env);
+      expect(q.total).to.eq(late);
+      expect(q.B).to.eq(lateB);
+      const [w, m, rsaMin] = await s.bands(q.B, q.G);
+      const rc2 = await (await s.connect(env.operator).route(2, q.paid, q.recruiter, q.squad, q.airdrop, ethers.id("run-2"))).wait();
+      const run2 = rc2!.logs.map((l: any) => { try { return s.interface.parseLog(l); } catch { return null; } }).find((x: any) => x?.name === "Routed").args.run;
+      expect(run2.weeklyLeague + run2.monthlyLeague).to.eq(w + m);
+      expect(run2.recruiter + run2.squad + run2.airdrop).to.eq(rsaMin);
+      expect(w + m).to.eq((lateB * 3750n) / BPS);
+      expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(0n);
+    });
+
+    it("a third-party claim between the plan and the route makes the route revert PaidMismatch; the re-plan succeeds", async () => {
+      const { env, P } = await loadFixture(claimed);
+      const s = env.splitter;
+      const p = await plan(env);
+      await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
+      await (await env.hook.connect(env.attacker).claimRouter()).wait(); // anyone may claim
+      const actual = (await env.hook.routerPaid(await s.getAddress())).amount;
+      expect(actual).to.be.gt(p.paid);
+      await expect(s.connect(env.operator).route(1, p.paid, p.recruiter, p.squad, p.airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "PaidMismatch").withArgs(p.paid, actual);
+      expect(await s.runs()).to.eq(0n);
+      const q = await plan(env);
+      expect(q.paid).to.eq(actual);
+      await (await s.connect(env.operator).route(1, q.paid, q.recruiter, q.squad, q.airdrop, ethers.ZeroHash)).wait();
+      expect(await s.runs()).to.eq(1n);
+      expect(await s.routedAmount()).to.eq(actual);
+      expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(0n);
+    });
+
+    it("the A4 router-change flush into the splitter counts as a claim: a plan made before it reverts, the re-plan routes the flushed bucket", async () => {
+      const { env, P } = await loadFixture(claimed);
+      const s = env.splitter;
+      const p = await plan(env);
+      await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
+      const owed = await env.hook.routerOwed();
+      const sink = await (await ethers.getContractFactory("NativeSink")).deploy();
+      await (await env.hook.connect(env.safe).proposeTreasuryRouter(await sink.getAddress())).wait();
+      await mineAt((await env.hook.routerEta()) + 1n);
+      await (await env.hook.connect(env.safe).executeTreasuryRouter()).wait(); // flushes `owed` to the splitter
+      const actual = (await env.hook.routerPaid(await s.getAddress())).amount;
+      expect(actual).to.eq(p.paid + owed);
+      await expect(s.connect(env.operator).route(1, p.paid, p.recruiter, p.squad, p.airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "PaidMismatch");
+      const q = await plan(env);
+      await (await s.connect(env.operator).route(1, q.paid, q.recruiter, q.squad, q.airdrop, ethers.ZeroHash)).wait();
+      expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(0n);
+      // later fees go to the new router; the old splitter has nothing more to route
+      await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
+      await expect(s.connect(env.operator).route(2, q.paid, 0n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NothingToRoute");
     });
   });
 

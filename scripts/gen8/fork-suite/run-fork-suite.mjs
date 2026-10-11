@@ -17,7 +17,7 @@ import * as gen7 from "../../../frontend/shared/evmGen7Curve.mjs";
 import { loadArtifacts } from "./artifacts.mjs";
 import { runStep2, STEP2_AREAS } from "./step2.mjs";
 import * as TM from "./tickmath.mjs";
-import { WAD, Q96, BPS, readEnvFile, startAnvil, fmt, absDiff, ppm, ceilDiv, amount0Delta, amount1Delta, mcFromSqrt, revertOf } from "./lib.mjs";
+import { WAD, Q96, BPS, readEnvFile, startAnvil, stopAnvil, fmt, absDiff, ppm, ceilDiv, amount0Delta, amount1Delta, mcFromSqrt, revertOf } from "./lib.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -1171,10 +1171,10 @@ async function main() {
             } finally {
               clearTimeout(timer);
             }
-            env.child.kill();
+            await stopAnvil(env.child);
             break;
           } catch (e) {
-            env?.child.kill();
+            await stopAnvil(env?.child);
             const msg = (e?.stack || String(e)).replace(/https?:\/\/\S+/g, "<rpc>");
             const transient = /historical state|header not found|not available|missing trie node|failed to get account|failed to get storage|timeout/i.test(msg);
             if (transient && attempt < 3) {
