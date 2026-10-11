@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ethers } from "ethers";
-import { createEvmImportTrades, decodeSwap, evmImportRpcUrl } from "./evmImportTrades.js";
+import { createEvmImportTrades, createQuotePriceSource, decodeSwap, evmImportRpcUrl, SWAP_V4_TOPIC } from "./evmImportTrades.js";
 
 const WETH = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
 const WBNB = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c";
@@ -189,4 +189,120 @@ test("rpc urls come from the same env names as the import scanner", () => {
   assert.equal(evmImportRpcUrl(56, { BSC_RPC_URL: "https://x" }), "https://x");
   assert.equal(evmImportRpcUrl(4663, {}), "https://rpc.mainnet.chain.robinhood.com");
   assert.equal(evmImportRpcUrl(1, {}), "");
+});
+
+// ---- Uniswap V4 ----
+const PFE = "0x7066A64c24e4206CD62E83bf198c1E7EB361F51e";
+const MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951";
+const HOOK = "0x00000000000000000000000000000000000000e5";
+const v4abi = new ethers.Interface([
+  "function poolKeys(bytes25) view returns (address,address,uint24,int24,address)",
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)",
+  "event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)",
+]);
+function v4Pool(c0, c1) {
+  const key = [c0, c1, 10000, 200, HOOK];
+  const id = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address", "address", "uint24", "int24", "address"], key));
+  return { key, id };
+}
+function v4Log(id, a0, a1, { block = 100, hash = "0x" + "66".repeat(32), index = 0 } = {}) {
+  const { topics, data } = v4abi.encodeEventLog("Swap", [id, ROUTER, a0, a1, 1n, 1n, 1, 10000]);
+  return { topics, data, blockNumber: block, index, transactionHash: hash, address: MANAGER };
+}
+function v4Provider({ key, id, logs, quoteDecimals = 18, keyOverride }) {
+  const p = fakeProvider({ logs: [] });
+  p.getLogs = async (f) => {
+    p.seen.logs.push(f);
+    return logs.filter((l) => l.blockNumber >= f.fromBlock && l.blockNumber <= f.toBlock);
+  };
+  p.call = async ({ to, data }) => {
+    const name = v4abi.getFunction(data.slice(0, 10)).name;
+    if (name === "poolKeys") return v4abi.encodeFunctionResult("poolKeys", keyOverride || key);
+    if (name === "decimals") return v4abi.encodeFunctionResult("decimals", [lowerEq(to, COIN) ? 18 : quoteDecimals]);
+    return v4abi.encodeFunctionResult("symbol", ["PFE"]);
+  };
+  return p;
+}
+const lowerEq = (a, b) => a.toLowerCase() === b.toLowerCase();
+
+test("V4: swapper deltas, positive coin amount is a buy, negative a sell, both token orders", async () => {
+  const { key, id } = v4Pool(ethers.ZeroAddress, COIN); // native ETH quote, coin is currency1
+  const logs = [
+    v4Log(id, -e18("0.5"), e18("1000"), { block: 150 }), // swapper paid ETH, received coin
+    v4Log(id, e18("0.2"), -e18("400"), { block: 160, hash: "0x" + "77".repeat(32) }),
+  ];
+  const p = v4Provider({ key, id, logs });
+  const items = await ask(make(p), 4663, id);
+  assert.deepEqual(items.map((i) => [i.side, i.tokenAmount, i.nativeAmount, i.quoteSymbol]), [["sell", 400, 0.2, "ETH"], ["buy", 1000, 0.5, "ETH"]]);
+  assert.equal(items[1].volumeUsd, 1500);
+  assert.equal(p.seen.logs[0].address, MANAGER);
+  assert.deepEqual(p.seen.logs[0].topics, [SWAP_V4_TOPIC, id]);
+  // coin is currency0
+  const flipped = v4Pool(COIN, WETH);
+  const q = v4Provider({ ...flipped, logs: [v4Log(flipped.id, e18("30"), -e18("0.1"))] });
+  const [item] = await ask(make(q), 4663, flipped.id);
+  assert.deepEqual([item.side, item.tokenAmount, item.nativeAmount], ["buy", 30, 0.1]);
+});
+
+test("V4: the pool key must hash to the pool id", async () => {
+  const { key, id } = v4Pool(ethers.ZeroAddress, COIN);
+  const other = v4Pool(ethers.ZeroAddress, OTHER);
+  const p = v4Provider({ key, id, logs: [], keyOverride: other.key });
+  await assert.rejects(ask(make(p), 4663, id), /does not match/);
+  await assert.rejects(ask(make(v4Provider({ ...other, logs: [] })), 4663, other.id), /not in this pool/);
+});
+
+test("V4: a token quote is priced in USD, native amount follows, quote fields are set", async () => {
+  const { key, id } = v4Pool(PFE, COIN);
+  const p = v4Provider({ key, id, logs: [v4Log(id, -e18("2"), e18("5000"))] });
+  const quoteUsdPrice = async (chainId, token) => {
+    assert.equal(chainId, 4663);
+    assert.ok(lowerEq(token, PFE));
+    return { priceUsd: 150, symbol: "PFE" };
+  };
+  const [item] = await ask(make(p, { quoteUsdPrice }), 4663, id);
+  assert.equal(item.side, "buy");
+  assert.equal(item.quoteAmount, 2);
+  assert.equal(item.quoteSymbol, "PFE");
+  assert.equal(item.volumeUsd, 300);
+  assert.equal(item.nativeAmount, 0.1); // 300 / 3000
+});
+
+test("V4: a token quote without a USD price throws", async () => {
+  const { key, id } = v4Pool(PFE, COIN);
+  const p = v4Provider({ key, id, logs: [v4Log(id, -e18("2"), e18("5000"))] });
+  await assert.rejects(ask(make(p, { quoteUsdPrice: async () => { throw new Error("No USD price for the quote token"); } }), 4663, id), /No USD price/);
+  await assert.rejects(ask(make(p, { quoteUsdPrice: async () => ({ priceUsd: 0 }) }), 4663, id), /No USD price/);
+});
+
+test("decodeSwap reads the V4 event with the swapper sign convention", () => {
+  const { id } = v4Pool(ethers.ZeroAddress, COIN);
+  const log = v4Log(id, -e18("1"), e18("9"));
+  assert.deepEqual(decodeSwap(log, { coinIs0: false }), { coinDelta: -e18("9"), nativeRaw: e18("1") });
+});
+
+test("quote price source: DexScreener deepest pair where the token is the base, GeckoTerminal fallback, 60 s cache", async () => {
+  let clock = 0;
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    if (url.includes("dexscreener")) {
+      return { ok: true, json: async () => [
+        { baseToken: { address: PFE, symbol: "PFE" }, priceUsd: "100", liquidity: { usd: 10 } },
+        { baseToken: { address: PFE, symbol: "PFE" }, priceUsd: "150", liquidity: { usd: 900 } },
+        { baseToken: { address: COIN, symbol: "X" }, priceUsd: "1", liquidity: { usd: 99999 } },
+      ] };
+    }
+    return { ok: true, json: async () => ({ data: { attributes: { price_usd: "7", symbol: "G" } } }) };
+  };
+  const price = createQuotePriceSource({ fetchImpl, now: () => clock });
+  assert.deepEqual(await price(4663, PFE), { priceUsd: 150, symbol: "PFE" });
+  clock = 30_000;
+  await price(4663, PFE);
+  assert.equal(urls.length, 1);
+  const gecko = createQuotePriceSource({ fetchImpl: async (u) => (u.includes("dexscreener") ? { ok: true, json: async () => [] } : fetchImpl(u)), now: () => clock });
+  assert.equal((await gecko(4663, OTHER)).priceUsd, 7);
+  const none = createQuotePriceSource({ fetchImpl: async () => ({ ok: false }) });
+  await assert.rejects(none(4663, PFE), /No USD price/);
 });
