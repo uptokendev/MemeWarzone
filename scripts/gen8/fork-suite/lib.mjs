@@ -30,7 +30,7 @@ export async function startAnvil(rpc, port, label, chainId, forkBlock) {
   } catch (e) {
     if (String(e.message).includes("stale anvil")) throw e;
   }
-  const child = spawn("anvil", ["--fork-url", rpc, "--fork-block-number", String(forkBlock), "--port", String(port), "--silent", "--accounts", "10", "--balance", "100000000", "--no-rate-limit"], {
+  const child = spawn("anvil", ["--fork-url", rpc, "--fork-block-number", String(forkBlock), "--port", String(port), "--silent", "--accounts", "10", "--balance", "100000000", "--no-rate-limit", "--timeout", "45000", "--retries", "8"], {
     stdio: ["ignore", "ignore", "pipe"],
   });
   let stderr = "";
@@ -42,6 +42,7 @@ export async function startAnvil(rpc, port, label, chainId, forkBlock) {
   for (let i = 0; i < 240 && !exited; i++) {
     try {
       await provider.send("eth_chainId", []);
+      await seedHistoryStorage(port);
       return { child, provider, forkBlock };
     } catch {
       await new Promise((r) => setTimeout(r, 500));
@@ -49,6 +50,23 @@ export async function startAnvil(rpc, port, label, chainId, forkBlock) {
   }
   child.kill();
   throw new Error(`anvil did not start for ${label}: ${stderr.replace(/https?:\/\/\S+/g, "<rpc>").slice(0, 300)}`);
+}
+
+// EIP-2935 block-hash history contract. Every block anvil mines writes the parent hash into slot (n - 1) % 8191, which
+// first reads that slot from the remote node at the fork block. BSC full nodes drop that state after about a minute,
+// and from then on anvil cannot mine at all ("historical state ... is not available"; the transaction stays pending).
+// Seeding all 8191 slots locally removes the remote read. The values are irrelevant to the suite (nothing reads them).
+const HISTORY = "0x0000F90827F1C53a10cb7A02335B175320002935";
+async function seedHistoryStorage(port) {
+  const url = `http://127.0.0.1:${port}`;
+  const rpc = async (body) => (await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+  const code = (await rpc({ jsonrpc: "2.0", id: 1, method: "eth_getCode", params: [HISTORY, "latest"] })).result;
+  if (!code || code === "0x") return;
+  for (let start = 0; start < 8191; start += 512) {
+    const batch = [];
+    for (let i = start; i < Math.min(start + 512, 8191); i++) batch.push({ jsonrpc: "2.0", id: i, method: "anvil_setStorageAt", params: [HISTORY, "0x" + i.toString(16), "0x" + "0".repeat(63) + "1"] });
+    await rpc(batch);
+  }
 }
 
 export const fmt = (wei, dp = 6) => {

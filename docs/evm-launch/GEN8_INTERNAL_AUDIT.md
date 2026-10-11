@@ -405,6 +405,41 @@ every UniversalRouter version for the choice-vault and escrow paths, side-pool s
 of our coin), a Robinhood 4663 display-off check against the canonical UR 2.1.2, and long runs of the property
 generator against the canonical PoolManager.
 
+### 10.4 Step 2 results (2026-10-11): what step 3 and step 9 inherit
+
+Fork suite `run-fork-suite.mjs` + `step2.mjs`: 2,104 / 2,104 on BSC 56 and Robinhood 4663, targets $30K and $50K
+(base 746 unchanged; step-2 areas split, choice, escrow, side, grad each on a fresh fork). No contract change.
+Results: `scripts/gen8/fork-suite/results/gen8-fork-suite-bsc-rh.json` (`safeCalls`, `watcher`, `nums` per area).
+
+- Splitter destinations: the four gen-7 vaults read from the gen-7 TreasuryRouterV4 accept plain native from any
+  sender, so the splitter needs no Safe call to pay them. The gen-7 community vault does not (`onlyRouter`); pointing it
+  at a gen-8 splitter (`setRouter`) makes every gen-7 route with an airdrop or squad part revert ("airdrop route
+  failed"), proven on both forks. D8 stands: a new community vault with router = splitter at deploy.
+- Downstream of the splitter: the BNB protocol destination is the ProtocolRevenueForwarder (forwards each payment to
+  its sink `0xc2d4E6f8...`); the Robinhood one is the ProtocolRevenueVault (fills its operator up to $10K, overflow
+  to the Safe).
+- Run amounts (audit risk 2, reproduced): summing per-trade floors lands under the band (8 to 12 wei on run 1 of each
+  fork) and the run reverts `OutOfBand`. The rule that always lands in band (2,000 random runs, 0 out of band; the
+  per-trade method failed 53): B, G and the router-part total from `HookFee` (`graduated == false`) and `Graduated`
+  since the last `Routed`; recruiter = floor(sum(bps x amount) / 10000), squad likewise (capped at `squadMax`);
+  rsa = floor(sum of all three numerators / 10000) clamped into [`rsaMin`, `rsaMax`] of `bands(B, G)`;
+  airdrop = rsa - recruiter - squad (if negative, take it from recruiter). Graduation rows use the creator's profile.
+  The indexer's B, G and total equal the hook's own ledger (`pending()` + `pendingBondingFees` / `pendingGradFees` /
+  `routerOwed`) on every run.
+- UniversalRouter 2.1.x V2 / V3 swap commands take a sixth field (`uint256[]` per-hop slippage) that the v2.0 layout
+  has not: five-field input reverts `SliceOutOfBounds` on 2.1.x. Encoders must follow the router version (as V4_SWAP).
+- Holder distributor (D8): the gen-7 one has a single batch operator (the gen-7 vault), so gen-8 needs its own. The
+  stand-in (gen-7 RewardDistributor code) works end to end: Safe `setBatchOperator(choiceVault)` once, then per batch
+  `authorizeBatch` + `approveHolderBatch`, operator execute after 24 h, claims, `recoverUnclaimed` + 
+  `creditUnclaimedHolders` (E19).
+- Side pools: hookless V4, Uniswap V2 / V3, PancakeSwap V2 / V3, Topaz (Solidly-style) and PancakeSwap Infinity CL
+  pools of a gen-8 coin can be created by anyone; trades there leave our pool, ledgers and positions untouched; an
+  arbitrageur closes the gap to within the two fees. Watcher events: section 6.8 plus the topic list in the results
+  file. Holder censuses must exclude side-pool contracts (pairs, pools, Pancake's Infinity vault).
+- Fork mechanics: BSC full nodes drop fork-block state after about a minute and anvil then cannot mine (EIP-2935
+  history slot read). `lib.mjs` seeds the history contract's 8,191 slots locally; each step-2 area runs on its own
+  fork. After 48 h of fork time the Chainlink feeds are stale and launches revert, as on mainnet.
+
 ## 11. External audit scope (proposal)
 
 - Commit: the head of `build/evm-gen8` when the audit starts (step 1 ends at the commit that adds this file).

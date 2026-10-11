@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
 import * as gen7 from "../../../frontend/shared/evmGen7Curve.mjs";
 import { loadArtifacts } from "./artifacts.mjs";
+import { runStep2, STEP2_AREAS } from "./step2.mjs";
 import * as TM from "./tickmath.mjs";
 import { WAD, Q96, BPS, readEnvFile, startAnvil, fmt, absDiff, ppm, ceilDiv, amount0Delta, amount1Delta, mcFromSqrt, revertOf } from "./lib.mjs";
 
@@ -23,6 +24,11 @@ const args = process.argv.slice(2);
 const argVal = (n, d) => (args.indexOf(n) >= 0 ? args[args.indexOf(n) + 1] : d);
 const CHAINS = argVal("--chains", "bsc,rh").split(",");
 const TARGETS = argVal("--targets", "30000,50000").split(",").map((x) => BigInt(x));
+// "step2" expands to one phase per step-2 area: each area runs on its own fresh fork (BSC nodes keep fork-block state
+// for about a minute; a short fork per area keeps every remote read inside that window)
+const ONLY_AREAS = process.env.STEP2_AREAS ? process.env.STEP2_AREAS.split(",") : STEP2_AREAS;
+const PHASE_TIMEOUT_MS = Number(process.env.PHASE_TIMEOUT_MS || 480_000);
+const PHASES = argVal("--phases", "base,step2").split(",").flatMap((p) => (p === "step2" ? ONLY_AREAS.map((a) => "step2:" + a) : [p]));
 const ENV = readEnvFile(process.env.MWZ_ENV_FILE || "/mnt/e/network/Zakelijk/MemeWarzone/.env");
 
 const SUPPLY = 1_000_000_000n * WAD;
@@ -49,6 +55,22 @@ const CHAIN_CFG = {
     urs: { "UR (docs main)": "0x1906c1d672b88cd1b9ac7593301ca990f94eae07", "UR 2.1.1": "0x8b844f885672f333bc0042cb669255f93a4c1e6b", "UR 2.1.2": "0xDc264714F68d84CF29BC605589405E78bDBE7C9f" },
     quoter: "0x9f75dd27d6664c475b90e105573e550ff69437b0",
     stateView: "0xd13dd3d6e93f276fafc9db9e6bb47c1180aee0c4",
+    // gen-7 fees stack (~/mwz-wt/evm-gen7/deployments/bnb/mainnet.gen7.json); league / recruiter / protocol
+    // destinations are read from the gen-7 TreasuryRouterV4 on the fork (step 2)
+    gen7: { safe: "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", router: "0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A", vault: "0xaD9e687D0a83eb1a49A7C6419c8d44aad34fabE9", holderDistributor: "0xe30E6874C4E633d2d6aa1c217EcA47C7a6e557b8" },
+    wrapped: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    // side-pool factories (step 2 area 5). The Uniswap V2 / V3 factories are the ones the three URs carry as immutables.
+    sideV2: [
+      { name: "Uniswap V2", factory: "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6", ur: true, feeBps: 30n },
+      { name: "PancakeSwap V2", factory: "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73", feeBps: 25n },
+    ],
+    sideV3: [
+      { name: "Uniswap V3", factory: "0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7", npm: "0x7b8A01B39D58278b5DE7e48c8449c9f4F5170613", ur: true },
+      { name: "PancakeSwap V3", factory: "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865" },
+    ],
+    // Topaz (gen-7 BNB graduation DEX, Solidly-style volatile / stable pools) and PancakeSwap Infinity CL
+    sideSolidly: [{ name: "Topaz", factory: "0x65E6cD0eF5D3467030103cf3d433034E570b5784" }],
+    sideInfinity: { name: "PancakeSwap Infinity CL", pm: "0xa0FfB9c1CE1Fe56963B0321B32E7A0302114058b" },
   },
   rh: {
     label: "Robinhood Chain mainnet fork (4663)",
@@ -63,6 +85,11 @@ const CHAIN_CFG = {
     urs: { "UR (docs main)": "0x8876789976decbfcbbbe364623c63652db8c0904", "UR 2.1.2": "0x204FAca1764B154221e35c0d20aBb3c525710498" },
     quoter: "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
     stateView: "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b",
+    // gen-7 fees stack (~/mwz-wt/evm-gen7/deployments/robinhood/mainnet.gen7.json)
+    gen7: { safe: "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", router: "0x63032E36A17f0fEf974517D5F85Da18b6732b95E", vault: "0x0bB4afbCb13489FD178EBb4DCF7CFA060be0A81a", holderDistributor: "0xF43d4F4B1c8513AECC20025cE26Ce4888b344b3c" },
+    wrapped: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    sideV2: [{ name: "Uniswap V2", factory: "0x8bceaa40b9acdfaedf85adf4ff01f5ad6517937f", ur: true, feeBps: 30n }],
+    sideV3: [{ name: "Uniswap V3", factory: "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA", npm: "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3", ur: true }],
   },
 };
 
@@ -96,6 +123,7 @@ const UR_ABI = ["function execute(bytes commands, bytes[] inputs, uint256 deadli
 const POSM_ABI = ["function modifyLiquidities(bytes unlockData, uint256 deadline) payable"];
 const ERC20_ABI = ["function allowance(address,address) view returns (uint256)", "function approve(address,uint256) returns (bool)", "function balanceOf(address) view returns (uint256)", "function transfer(address,uint256) returns (bool)"];
 const PERMIT2_ABI = ["function approve(address token, address spender, uint160 amount, uint48 expiration)"];
+const GEN7_ROUTER_ABI = ["function admin() view returns (address)", "function weeklyLeagueVault() view returns (address)", "function monthlyLeagueTreasury() view returns (address)", "function recruiterRewardsVault() view returns (address)", "function communityRewardsVault() view returns (address)", "function protocolRevenueVault() view returns (address)", "function routeFinalize(uint8 profile) payable", "function forwardingPaused() view returns (bool)"];
 const ORACLE_ABI = ["function nativeTargetForUsd(uint256) view returns (uint256)", "function nativeUsdPrice() view returns (uint256)"];
 
 const coder = ethers.AbiCoder.defaultAbiCoder();
@@ -105,8 +133,9 @@ const KEY_T = "tuple(address,address,uint24,int24,address)";
 // ------------------------------------------------------------------ results
 const RESULTS = [];
 let CTX = "";
+let AREA = "base";
 function check(name, pass, detail = "") {
-  RESULTS.push({ ctx: CTX, name, pass: !!pass, detail });
+  RESULTS.push({ ctx: CTX, area: AREA, name, pass: !!pass, detail });
   console.log(`${pass ? "PASS" : "FAIL"} [${CTX}] ${name}${detail ? "  " + detail : ""}`);
   return !!pass;
 }
@@ -228,8 +257,12 @@ async function setupChain(name, C) {
     await (await displayFactory.connect(deployer).setHook(hookAddr)).wait();
     check("display factory wired to the hook (one-time)", (await displayFactory.hook()) === hookAddr);
   }
-  const dest = (k) => new ethers.Wallet(ethers.id("mwz-gen8-fork-suite/dest/" + k)).address; // unfunded, distinct
-  const splitter = await deployRaw("MwzFeeSplitter", [hookAddr, A.safe, dest("weekly"), dest("monthly"), dest("recruiter"), community.target, dest("protocol"), A.operator]);
+  // step 2: the splitter's destinations are the REAL gen-7 vaults, read from the gen-7 TreasuryRouterV4 on the fork
+  // (weekly league, monthly league, recruiter, protocol). The airdrop / squad pot is the new community vault (D8: the
+  // gen-7 community vault serves one router only; see the step-2 splitter checks).
+  const g7r = new ethers.Contract(cfg.gen7.router, GEN7_ROUTER_ABI, provider);
+  const gen7Dest = { weekly: await g7r.weeklyLeagueVault(), monthly: await g7r.monthlyLeagueTreasury(), recruiter: await g7r.recruiterRewardsVault(), protocol: await g7r.protocolRevenueVault(), community: await g7r.communityRewardsVault(), admin: await g7r.admin() };
+  const splitter = await deployRaw("MwzFeeSplitter", [hookAddr, A.safe, gen7Dest.weekly, gen7Dest.monthly, gen7Dest.recruiter, community.target, gen7Dest.protocol, A.operator]);
   const vault = await deployRaw("MwzCreatorChoiceVault", [A.safe, hookAddr, launcherAddr, 86400]);
   const reserveLock = await deployRaw("MwzReserveLock", [hookAddr, launcherAddr, vault.target]);
   const launcherC = await deployRaw("MwzV4Launcher", [cfg.pm, hookAddr, cfg.oracle, reserveLock.target, vault.target, A.safe, A.apiSigner, cfg.minNativeUsd, cfg.maxNativeUsd]);
@@ -252,7 +285,7 @@ async function setupChain(name, C) {
 
   // ---- UR encoding style per router (v2.0 params vs 2.1.x params with minHopPriceX36)
   const urStyles = {};
-  return { name, cfg, provider, child, A, W, pm, sv, quoter, oracle, nativeUsd, hook, launcher, lens, escrow, splitter, vault, reserveLock, community, trader, seeder, attackerC, rejecter, displayFactory, ifaces, urStyles, forkBlock, C };
+  return { name, cfg, provider, child, A, W, pm, sv, quoter, oracle, nativeUsd, hook, launcher, lens, escrow, splitter, vault, reserveLock, community, trader, seeder, attackerC, rejecter, displayFactory, ifaces, urStyles, forkBlock, C, gen7Dest, deployRaw };
 }
 
 // ------------------------------------------------------------------ per-pool helpers
@@ -1080,6 +1113,20 @@ async function gasCompare(env, P, tickStart, tickGrad, R) {
   return rows;
 }
 
+// ------------------------------------------------------------------ helpers handed to step2.mjs
+function helpers() {
+  return {
+    check, note,
+    setArea: (a) => (AREA = a),
+    setCtx: (c) => (CTX = c),
+    getCtx: () => CTX,
+    trade, quote, quotedSide, feeExact, slot0, snapshot, revert, setNextTs, owedAll, launchCoin, checkDisplay, displayLogs, detectUrStyles, partialFill, soldFromPrice, urCalldata, grossForNet,
+    consts: { SUPPLY, COINS_A, COINS_B, SPACING, PERMIT2, MAX_U160, REF, KEY_T, FEES, TOPIC, MIN_USABLE, ACT },
+    abis: { PM_ABI, SV_ABI, QUOTER_ABI, UR_ABI, POSM_ABI, ERC20_ABI, PERMIT2_ABI, GEN7_ROUTER_ABI, V2_IFACE },
+    gen7,
+  };
+}
+
 // ------------------------------------------------------------------ main
 async function main() {
   const t0 = Date.now();
@@ -1090,37 +1137,69 @@ async function main() {
   // One fresh fork per (chain, target): BSC full nodes keep only ~1 minute of state history, so each
   // run is kept short and pinned 2 blocks behind the tip.
   for (const name of CHAINS) {
-    report.chains[name] = { targets: [] };
+    report.chains[name] = { targets: [], step2: [] };
     for (const t of TARGETS) {
-      let env;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        const mark = RESULTS.length;
-        try {
-          env = await setupChain(name, C);
-          Object.assign(report.chains[name], { blockGasLimit: env.forkBlock.gasLimit.toString(), hook: env.hook.target, launcher: env.launcher.target });
-          const r = await runTarget(env, t);
-          r.forkBlock = env.forkBlock.number;
-          r.nativeUsd = env.nativeUsd.toString();
-          r.urStyles = env.urStyles;
-          report.chains[name].targets.push(r);
-          env.child.kill();
-          break;
-        } catch (e) {
-          env?.child.kill();
-          const msg = (e?.stack || String(e)).replace(/https?:\/\/\S+/g, "<rpc>");
-          const transient = /historical state|header not found|not available|missing trie node|failed to get account|failed to get storage|timeout/i.test(msg);
-          if (transient && attempt < 3) {
-            console.log(`transient fork error, retrying ${name} $${t} (attempt ${attempt}): ${msg.slice(0, 160)}`);
-            RESULTS.splice(mark);
-            continue;
+      for (const phase of PHASES) {
+        let env;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const mark = RESULTS.length;
+          try {
+            AREA = phase === "base" ? "base" : "step2-setup";
+            env = await setupChain(name, C);
+            Object.assign(report.chains[name], { blockGasLimit: env.forkBlock.gasLimit.toString(), hook: env.hook.target, launcher: env.launcher.target });
+            // watchdog: a fork that can no longer read its remote state leaves transactions pending forever
+            let timer;
+            const watchdog = new Promise((_, rej) => (timer = setTimeout(() => rej(new Error("timeout: phase watchdog (fork stalled)")), PHASE_TIMEOUT_MS)));
+            const work = async () => {
+            if (phase === "base") {
+              const r = await runTarget(env, t);
+              r.forkBlock = env.forkBlock.number;
+              r.nativeUsd = env.nativeUsd.toString();
+              r.urStyles = env.urStyles;
+              report.chains[name].targets.push(r);
+            } else {
+              // step 2 runs on its own fresh fork per (chain, target), so each fork stays short
+              const r = await runStep2(env, t, helpers(), [phase.split(":")[1]]);
+              r.area = phase.split(":")[1];
+              r.forkBlock = env.forkBlock.number;
+              r.nativeUsd = env.nativeUsd.toString();
+              report.chains[name].step2.push(r);
+            }
+            };
+            try {
+              await Promise.race([work(), watchdog]);
+            } finally {
+              clearTimeout(timer);
+            }
+            env.child.kill();
+            break;
+          } catch (e) {
+            env?.child.kill();
+            const msg = (e?.stack || String(e)).replace(/https?:\/\/\S+/g, "<rpc>");
+            const transient = /historical state|header not found|not available|missing trie node|failed to get account|failed to get storage|timeout/i.test(msg);
+            if (transient && attempt < 3) {
+              console.log(`transient fork error, retrying ${name} $${t} ${phase} (attempt ${attempt}): ${msg.slice(0, 160)}`);
+              RESULTS.splice(mark);
+              continue;
+            }
+            CTX = `${name} $${t / 1000n}K`;
+            check(`${phase} run completed`, false, msg.slice(0, 1500));
+            break;
           }
-          CTX = name;
-          check("chain run completed", false, msg.slice(0, 1500));
-          break;
         }
       }
     }
   }
+  // counts per area and chain
+  const byArea = {};
+  for (const r of RESULTS) {
+    const k = `${r.area}|${r.ctx.split(" ")[0]}`;
+    byArea[k] ??= { pass: 0, fail: 0 };
+    byArea[k][r.pass ? "pass" : "fail"]++;
+  }
+  report.byArea = byArea;
+  console.log("\nPER AREA (area | chain: pass / fail)");
+  for (const [k, v] of Object.entries(byArea).sort()) console.log(`  ${k}: ${v.pass} / ${v.fail}`);
   report.results = RESULTS;
   const pass = RESULTS.filter((r) => r.pass).length;
   const fail = RESULTS.length - pass;
