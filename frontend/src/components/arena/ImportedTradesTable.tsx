@@ -58,7 +58,7 @@ export function ImportedTradesTable({ chainId, tokenAddress, emptyState }: { cha
           if (controller.signal.aborted) return;
           if (payload?.items?.length || !payload?.rateLimited) setTrades(Array.isArray(payload?.items) ? payload.items : []);
           setLoaded(true);
-          // Solana imports read the chain (fresh every ~10 s on the server); others use GeckoTerminal.
+          // Solana, Robinhood and BNB imports read the chain (fresh every ~5-10 s on the server); others use GeckoTerminal.
           timer = window.setTimeout(load, payload?.rateLimited ? 20_000 : payload?.source === "onchain" ? 12_000 : 30_000);
         })
         .catch(() => {
