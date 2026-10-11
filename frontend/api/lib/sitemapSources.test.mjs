@@ -87,6 +87,21 @@ test("recruiter and post SQL filters", async () => {
   assert.match(d.calls[0].sql, /campaign_address is not null and d\.scheduled_launch_at <= now\(\)/);
 });
 
+test("recruiter SQL mirrors the public leaderboard joins and cluster exclusions", async () => {
+  const r = fakeDb(); await recruiterEntries(r);
+  const sql = r.calls[0].sql;
+  assert.match(sql, /left join public\.wallet_recruiter_links l on l\.recruiter_id = r\.id and l\.is_active = true and lower\(l\.wallet_address\) <> lower\(r\.wallet_address\)/);
+  assert.match(sql, /left join public\.wallet_squad_memberships s on s\.recruiter_id = r\.id and s\.is_active = true and lower\(s\.wallet_address\) <> lower\(r\.wallet_address\)/);
+  assert.match(sql, /left join public\.wallet_risk_profiles lwr on lower\(lwr\.wallet_address\) = lower\(l\.wallet_address\)/);
+  assert.match(sql, /left join public\.wallet_risk_profiles swr on lower\(swr\.wallet_address\) = lower\(s\.wallet_address\)/);
+  assert.match(sql, /left join public\.wallet_risk_profiles rwr on lower\(rwr\.wallet_address\) = lower\(r\.wallet_address\)/);
+  assert.match(sql, /not \(lwr\.cluster_id is not null and rwr\.cluster_id is not null and lwr\.cluster_id = rwr\.cluster_id\)/);
+  assert.match(sql, /not \(swr\.cluster_id is not null and rwr\.cluster_id is not null and swr\.cluster_id = rwr\.cluster_id\)/);
+  assert.match(sql, /group by r\.id/);
+  assert.match(sql, /order by r\.created_at asc, r\.code/);
+  assert.doesNotMatch(sql, /limit 250\b/);
+});
+
 test("handlers: throwing source gives 200 valid empty urlset", async () => {
   const db = fakeDb(() => { throw new Error("boom"); });
   const h = createSitemapHandlers({ db, log: () => {} });

@@ -107,14 +107,22 @@ export async function tournamentEntries(db) {
   return rowsOf(r).filter((x) => ident(x.id)).map((x) => ({ loc: absoluteLoc(`/warzone/tournaments/${encodeURIComponent(ident(x.id))}`), lastmod: x.lastmod || undefined }));
 }
 
-// dev-fix/attribution.js:739 `recruiters` (status = 'active'), without the 250 cap. The wallet-risk
-// cluster exclusions there depend on link tables and are not repeated; only active recruiters list.
+// Mirrors the public leaderboard in dev-fix/attribution.js:739 `recruiters` (status 'active'): same
+// joins, same cluster exclusions, group by r.id, so recruiters the leaderboard hides stay out of the
+// sitemap. No 250 cap here; ROW_LIMIT applies.
 export async function recruiterEntries(db) {
   const r = await db.query(
     `select r.code, r.updated_at as lastmod
        from public.recruiters r
+       left join public.wallet_recruiter_links l on l.recruiter_id = r.id and l.is_active = true and lower(l.wallet_address) <> lower(r.wallet_address)
+       left join public.wallet_squad_memberships s on s.recruiter_id = r.id and s.is_active = true and lower(s.wallet_address) <> lower(r.wallet_address)
+       left join public.wallet_risk_profiles lwr on lower(lwr.wallet_address) = lower(l.wallet_address)
+       left join public.wallet_risk_profiles swr on lower(swr.wallet_address) = lower(s.wallet_address)
+       left join public.wallet_risk_profiles rwr on lower(rwr.wallet_address) = lower(r.wallet_address)
       where r.status = 'active'
-        and r.code is not null
+        and not (lwr.cluster_id is not null and rwr.cluster_id is not null and lwr.cluster_id = rwr.cluster_id)
+        and not (swr.cluster_id is not null and rwr.cluster_id is not null and swr.cluster_id = rwr.cluster_id)
+      group by r.id
       order by r.created_at asc, r.code
       limit ${ROW_LIMIT}`,
     [],
