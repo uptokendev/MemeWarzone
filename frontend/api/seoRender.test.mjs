@@ -302,3 +302,18 @@ test("malformed id: 410 without any loader call", async () => {
   assert.equal(g.stats().loaderCalls, 0);
   assert.equal(g.stats().shellCalls, 1);
 });
+
+test("a synchronously throwing loader is not stuck in the coalescing map", async () => {
+  let calls = 0;
+  let mode = "throw";
+  const entities = {};
+  for (const n of ["coin", "battle", "tournament", "prepare", "post", "recruiter", "profile"]) {
+    entities[n] = (id) => { calls += 1; if (mode === "throw") throw new Error("sync boom"); return Promise.resolve(found()); };
+  }
+  const r = createSeoRenderer({ shell: { get: async () => SHELL }, entities, now: () => 1000 });
+  const run = async () => { const res = fakeRes(); const u = battleUrl(1); await r({ path: u, url: u, originalUrl: u, query: {}, headers: {} }, res); return res; };
+  assert.equal((await run()).statusCode, 500);
+  mode = "ok";
+  assert.equal((await run()).statusCode, 200);
+  assert.equal(calls, 2);
+});

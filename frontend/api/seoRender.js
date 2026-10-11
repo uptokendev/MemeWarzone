@@ -124,23 +124,23 @@ export function createSeoRenderer({
       if (t < openUntil || active >= maxConcurrent) return UNAVAILABLE;
       active += 1;
       pending = (async () => {
+        await null; // yield so `inflight.set` below always runs before this body can settle
         try {
           const d = spec.kind === "coin" ? await entities.coin(id, chainId) : await entities[spec.kind](id);
           if (!d || typeof d !== "object" || d.error) { noteError(now()); return { error: true }; }
+          cache.set(key, d, now() + (d.found ? TTL_FOUND_MS : TTL_MISS_MS));
           return d;
         } catch (err) {
           noteError(now());
           throw err;
         } finally {
           active -= 1;
-          inflight.delete(key);
+          if (inflight.get(key) === pending) inflight.delete(key);
         }
       })();
       inflight.set(key, pending);
     }
     const data = await pending;
-    if (data.error) return data;
-    cache.set(key, data, now() + (data.found ? TTL_FOUND_MS : TTL_MISS_MS));
     return data;
   }
 
