@@ -43,7 +43,7 @@ function fakes({ pools = {}, depth = {}, buyOut = 10n ** 20n, sellOut = 10n ** 1
           staticCall: async (params) => {
             quotes.push(params);
             const out = params.tokenIn === ADDRS.weth ? buyOut : sellOut;
-            if (out instanceof Error) throw out;
+            if (out instanceof Error) throw Object.assign(out, { code: out.code || "CALL_EXCEPTION" });
             return [out, 0n, 0, 0n];
           },
         },
@@ -110,7 +110,7 @@ test("PancakeSwap V2: pair lookup, round-trip quotes, honeypot signal", async ()
   const paths = [];
   const contract = (sellFails) => (address) => address === V2.factory
     ? { getPair: async () => PAIR }
-    : { getAmountsOut: async (amountIn, p) => { paths.push([amountIn, p]); if (sellFails && p[0] === TOKEN) throw new Error("revert"); return [amountIn, 5n * 10n ** 18n]; } };
+    : { getAmountsOut: async (amountIn, p) => { paths.push([amountIn, p]); if (sellFails && p[0] === TOKEN) throw Object.assign(new Error("revert"), { code: "CALL_EXCEPTION" }); return [amountIn, 5n * 10n ** 18n]; } };
   const simulate = async () => ({ ran: true, buyOk: true, sellOk: true });
   const ok = await probeV2Pool(null, TOKEN, V2, { contract: contract(false), simulate });
   assert.deepEqual([ok.pair, ok.buyQuoteOk, ok.sellQuoteOk], [PAIR, true, true]);
@@ -125,7 +125,7 @@ test("scanEvm: Robinhood uses Uniswap; BNB keeps Topaz first and falls through t
   const source = fs.readFileSync(path.resolve(here, "./arenaImportScan.js"), "utf8");
   assert.match(source, /isRobinhoodChain\(chainId\) \? await probeRobinhood\(provider, chainId, token\) : await probeBnb\(provider, chainId, token\)/);
   assert.match(source, /const topaz = await probeTopaz\(provider, chainId, token\);\n  if \(topaz\.pair \|\| Number\(chainId\) !== 56\) return topaz;/);
-  assert.match(source, /if \(pool\.buyQuoteOk && !pool\.sellQuoteOk\) reasons\.push\("honeypot_sell_failed"\)/);
+  assert.match(source, /pool\.buyQuoteOk === true && pool\.sellQuoteOk === false && !soldInSimulation\) reasons\.push\("honeypot_sell_failed"\)/);
 });
 
 test("the hourly rescan picks up Robinhood imports declined before the scanner supported the chain", () => {
@@ -169,4 +169,15 @@ test("probe result decodes into taxes, loss and a readable revert", () => {
 test("the committed probe bytecode is compiled from the committed source", () => {
   const out = spawnSync(process.execPath, [path.resolve(here, "../../scripts/build-import-swap-probe.mjs"), "--check"], { encoding: "utf8" });
   assert.equal(out.status, 0, out.stderr || out.stdout);
+});
+
+test("an RPC error on a quote is unknown, never a honeypot; a simulated sell beats a reverted sell quote", async () => {
+  const timeout = Object.assign(new Error("timeout"), { code: "TIMEOUT" });
+  const flaky = await probeV3Pool(null, TOKEN, ADDRS, fakes({ pools: { 10000: POOL_1PCT }, depth: { [POOL_1PCT]: 1n }, sellOut: timeout }).deps);
+  assert.equal(flaky.buyQuoteOk, true);
+  assert.equal(flaky.sellQuoteOk, null);
+  const source = fs.readFileSync(path.resolve(here, "./arenaImportScan.js"), "utf8");
+  assert.match(source, /pool\.buyQuoteOk === true && pool\.sellQuoteOk === false && !soldInSimulation\) reasons\.push\("honeypot_sell_failed"\)/);
+  assert.match(source, /pool\.sellQuoteOk === null && !soldInSimulation\) warnings\.push\("sell_quote_unavailable"\)/);
+  assert.equal(classifyScan({ reasons: [], warnings: ["sell_quote_unavailable"] }).status, "needs_review");
 });
