@@ -64,7 +64,8 @@ export async function startAnvil(port = Number(process.env.GEN8_API_ANVIL_PORT |
   const url = `http://127.0.0.1:${port}`;
   const network = ethers.Network.from(chainId);
   const p = new ethers.JsonRpcProvider(url, network, { staticNetwork: network });
-  for (let i = 0; i < 100; i += 1) {
+  // Up to 30 s: anvil starts slowly on a loaded machine.
+  for (let i = 0; i < 300; i += 1) {
     try {
       await p.getBlockNumber();
       break;

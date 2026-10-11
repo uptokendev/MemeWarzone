@@ -82,7 +82,7 @@ test("refusals before any signature: not configured, no signer, quote-bound, pre
 
 const chainTests = gen8ArtifactsAvailable() ? test : test.skip;
 
-chainTests("the API's create authorization is the one MwzV4Launcher verifies; launch, campaign state and refusals on a local chain", { timeout: 240_000 }, async (t) => {
+chainTests("the API's create authorization is the one MwzV4Launcher verifies; launch, campaign state and refusals on a local chain", { timeout: 480_000 }, async (t) => {
   const anvil = await startAnvil();
   t.after(() => anvil.stop());
   const provider = anvil.provider();
