@@ -1,0 +1,603 @@
+compiled with solc 0.8.26+commit.8a97fa7a.Emscripten.clang; hook runtime 11016 bytes, launcher 9046 bytes
+PASS [bsc] fork chainId  chainId 56 block 127009709
+PASS [bsc] test account deployer has no code on the fork  0x57c4651D72670cEaD600df37dE922C193B5f504E
+PASS [bsc] test account creator has no code on the fork  0xFf60BEd9f41B71d661287cC6a1FeB20749C37E5B
+PASS [bsc] test account buyer has no code on the fork  0x6938a07074Ed8e3b8D6d67Db4082a6aD759Db0C9
+PASS [bsc] test account bot has no code on the fork  0x95B83Ae40AC38Cd6E5c24c4eb0FD81BFa036Ea9f
+PASS [bsc] test account attacker has no code on the fork  0xec516Cb91beCa7B3DB829ED71ac2A2d87Cb78382
+PASS [bsc] test account routerEoa has no code on the fork  0x8232D4572bE1d214cFe3dEb038d93523274092Da
+PASS [bsc] test account protocolEoa has no code on the fork  0xAcECf5AC1a8E62858d2352bae2EB3b7fF2136AdE
+PASS [bsc] code at PoolManager  0x28e2ea090877bf75740558f6bfb36a5ffee9e9df 24009 bytes
+PASS [bsc] code at PositionManager  0x7a4a5c919ae2541aed11041a1aeee68f1287f95b 23877 bytes
+PASS [bsc] code at V4Quoter  0x9f75dd27d6664c475b90e105573e550ff69437b0 5820 bytes
+PASS [bsc] code at StateView  0xd13dd3d6e93f276fafc9db9e6bb47c1180aee0c4 3531 bytes
+PASS [bsc] code at Permit2  0x000000000022D473030F116dDEE9F6B43aC78BA3 9152 bytes
+PASS [bsc] code at CREATE2 proxy  0x4e59b44847b379578588920ca78fbf26c0b4956c 69 bytes
+PASS [bsc] code at gen-7 GraduationOracle  0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B 1553 bytes
+PASS [bsc] code at UR (docs main)  0x1906c1d672b88cd1b9ac7593301ca990f94eae07 19499 bytes
+PASS [bsc] code at UR 2.1.1  0x8b844f885672f333bc0042cb669255f93a4c1e6b 24546 bytes
+PASS [bsc] code at UR 2.1.2  0xDc264714F68d84CF29BC605589405E78bDBE7C9f 24380 bytes
+     [bsc] oracle native/USD at fork block: $746.73  block gas limit 70000000
+PASS [bsc] hook salt mined for flags 0x28EC  0xA2FaBDA8F3F9c4A74009D8b7ae0972d0D7BbE8eC after 63360 tries, 4000 ms
+PASS [bsc] hook deployed at mined address  gas 2470093
+PASS [bsc] launcher at predicted address (hook immutable points at it)  0x93Bf015A7d652FBf43be3b9E0Cb9Aa22b31C0ca4
+PASS [bsc $30K] on-chain curve sizing == gen-7 curveForMarketCap (vN, vT)  vN 0.985290 vT 1007164874
+     [bsc $30K] target MC 40.174823 native; gen-7 start MC 0.978281 end MC 40.174823 raise R 5.328780; ticks start 207460 grad 170310
+PASS [bsc $30K] outside PoolManager.initialize with our hook reverts (launch front-run impossible)  WrappedError(0xA2FaBD..,0xdc98354e) <- OnlyThisHookMayInitialize
+PASS [bsc $30K] hook.createPool from a non-launcher reverts  NotLauncher
+PASS [bsc $30K] atomic launch: token + init + A/B mint + first buy in one tx  gas 1071997 (block gas limit 70000000; 1.53%)
+PASS [bsc $30K] launch gas fits an Arbitrum-style 32M per-tx cap and the BSC block  1071997
+PASS [bsc $30K] pool initialized in the launch tx: native/coin, dynamic fee, our hook  poolId 0xaad5d09d95c793a23705ddf2ccc6376e94d2daaf9323d7fca6940d79b0139893
+PASS [bsc $30K] LP fee is 0 (dynamic pool, never set)  lpFee 0 protocolFee 0
+PASS [bsc $30K] creator first buy pays exactly 2% (not the 90% launch fee)  first buy 0.266439 fee 0.005328780 expected 0.005328780; got 210950397 coins
+PASS [bsc $30K] creator holds 20M reserve + first-buy coins; hook holds 0 coins  creator 230950397
+PASS [bsc $30K] minted A = 850M and B = 130M within rounding (dust burned)  A 849999999999999999999990821 B 129999999999999999999996492
+PASS [bsc $30K] positions A and B are owned by the hook-locker in the PoolManager  liqA 31506819648298405978079 liqB 26055150798794965991454
+PASS [bsc $30K] re-initialize of the live pool reverts  WrappedError(0xA2FaBD..,0xdc98354e) <- OnlyThisHookMayInitialize
+PASS [bsc $30K] start MC == gen-7 start MC within tick rounding (spacing 10 => <= ~500 ppm)  v4 0.978536 gen-7 0.978281 diff 260.969985 ppm
+PASS [bsc $30K] anti-sniper t+1s buy rate 8853 bps and exact  in 0.053287 fee 0.047175693 = 88.529999% (rate 8853 bps)
+PASS [bsc $30K] anti-sniper t+2s sell rate 8706 bps and exact  curve out 0.001563 fee 0.001361393 = 87.059999% (rate 8706 bps)
+PASS [bsc $30K] anti-sniper t+2s buy rate 8706 bps and exact  in 0.053287 fee 0.046392362 = 87.059999% (rate 8706 bps)
+PASS [bsc $30K] anti-sniper t+3s sell rate 8560 bps and exact  curve out 0.001563 fee 0.001338562 = 85.599999% (rate 8560 bps)
+PASS [bsc $30K] anti-sniper t+10s buy rate 7533 bps and exact  in 0.053287 fee 0.040141702 = 75.329999% (rate 7533 bps)
+PASS [bsc $30K] anti-sniper t+10s sell rate 7533 bps and exact  curve out 0.001563 fee 0.001177966 = 75.329999% (rate 7533 bps)
+PASS [bsc $30K] anti-sniper t+30s buy rate 4600 bps and exact  in 0.053287 fee 0.024512389 = 45.999999% (rate 4600 bps)
+PASS [bsc $30K] anti-sniper t+30s sell rate 4600 bps and exact  curve out 0.001563 fee 0.000719320 = 45.999999% (rate 4600 bps)
+PASS [bsc $30K] anti-sniper t+45s buy rate 2400 bps and exact  in 0.053287 fee 0.012789073 = 23.999999% (rate 2400 bps)
+PASS [bsc $30K] anti-sniper t+45s sell rate 2400 bps and exact  curve out 0.001563 fee 0.000375297 = 23.999999% (rate 2400 bps)
+PASS [bsc $30K] anti-sniper t+59s buy rate 346 bps and exact  in 0.053287 fee 0.001843758 = 3.459999% (rate 346 bps)
+PASS [bsc $30K] anti-sniper t+59s sell rate 346 bps and exact  curve out 0.001563 fee 0.000054105 = 3.459999% (rate 346 bps)
+PASS [bsc $30K] anti-sniper t+60s buy rate 200 bps and exact  in 0.053287 fee 0.001065756 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] anti-sniper t+60s sell rate 200 bps and exact  curve out 0.001563 fee 0.000031274 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] anti-sniper t+61s buy rate 200 bps and exact  in 0.053287 fee 0.001065756 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] anti-sniper t+61s sell rate 200 bps and exact  curve out 0.001563 fee 0.000031274 = 1.999999% (rate 200 bps)
+     [bsc $30K] UR (docs main) 0x1906c1d672b88cd1b9ac7593301ca990f94eae07: V4_SWAP ExactInputSingleParams layout v2.0 (v2.0:ok)
+     [bsc $30K] UR 2.1.1 0x8b844f885672f333bc0042cb669255f93a4c1e6b: V4_SWAP ExactInputSingleParams layout v2.1 (v2.0:revert, v2.1:ok)
+     [bsc $30K] UR 2.1.2 0xDc264714F68d84CF29BC605589405E78bDBE7C9f: V4_SWAP ExactInputSingleParams layout v2.1 (v2.0:revert, v2.1:ok)
+PASS [bsc $30K] anti-sniper applies through the UniversalRouter too (t+5s)  rate 8266 bps
+PASS [bsc $30K] direct unlock callback BUY exactIn: fee in native exactly 2% of the native leg  in 0.106575 fee 0.002131512 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] direct unlock callback BUY exactIn: V4Quoter == executed  quote 61550846577253279509059356 actual 61550846577253279509059356
+PASS [bsc $30K] direct unlock callback BUY exactOut: fee in native exactly 2% of the native leg  paid 0.009447 fee 0.000188942 vs 200bps of paid 0.000188942 (diff 1 wei)
+PASS [bsc $30K] direct unlock callback BUY exactOut: V4Quoter == executed  quote 9447118991869155 actual 9447118991869155
+PASS [bsc $30K] direct unlock callback SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.003718 fee 0.000074369 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] direct unlock callback SELL exactIn: V4Quoter == executed  quote 3644085134322029 actual 3644085134322029
+PASS [bsc $30K] direct unlock callback SELL exactOut: fee in native exactly 2% of the native leg  got 0.026643 fee 0.000543753 vs 200bps of gross 0.000543753 (diff 1 wei)
+PASS [bsc $30K] direct unlock callback SELL exactOut: V4Quoter == executed  quote 14963032623551344992528301 actual 14963032623551344992528301
+PASS [bsc $30K] UR (docs main) BUY exactIn: fee in native exactly 2% of the native leg  in 0.106575 fee 0.002131512 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] UR (docs main) BUY exactIn: V4Quoter == executed  quote 54385012564701379378797854 actual 54385012564701379378797854
+PASS [bsc $30K] UR (docs main) BUY exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR (docs main) BUY exactOut: fee in native exactly 2% of the native leg  paid 0.010644 fee 0.000212897 vs 200bps of paid 0.000212897 (diff 1 wei)
+PASS [bsc $30K] UR (docs main) BUY exactOut: V4Quoter == executed  quote 10644881164109948 actual 10644881164109948
+PASS [bsc $30K] UR (docs main) BUY exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR (docs main) SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.004190 fee 0.000083819 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] UR (docs main) SELL exactIn: V4Quoter == executed  quote 4107135915174052 actual 4107135915174052
+PASS [bsc $30K] UR (docs main) SELL exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR (docs main) SELL exactOut: fee in native exactly 2% of the native leg  got 0.026643 fee 0.000543753 vs 200bps of gross 0.000543753 (diff 1 wei)
+PASS [bsc $30K] UR (docs main) SELL exactOut: V4Quoter == executed  quote 13262571121289114088830370 actual 13262571121289114088830370
+PASS [bsc $30K] UR (docs main) SELL exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR 2.1.1 BUY exactIn: fee in native exactly 2% of the native leg  in 0.106575 fee 0.002131512 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] UR 2.1.1 BUY exactIn: V4Quoter == executed  quote 48355518937305712999320511 actual 48355518937305712999320511
+PASS [bsc $30K] UR 2.1.1 BUY exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR 2.1.1 BUY exactOut: fee in native exactly 2% of the native leg  paid 0.011925 fee 0.000238514 vs 200bps of paid 0.000238514 (diff 1 wei)
+PASS [bsc $30K] UR 2.1.1 BUY exactOut: V4Quoter == executed  quote 11925722641031686 actual 11925722641031686
+PASS [bsc $30K] UR 2.1.1 BUY exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR 2.1.1 SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.004696 fee 0.000093928 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] UR 2.1.1 SELL exactIn: V4Quoter == executed  quote 4602492004921163 actual 4602492004921163
+PASS [bsc $30K] UR 2.1.1 SELL exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR 2.1.1 SELL exactOut: fee in native exactly 2% of the native leg  got 0.026643 fee 0.000543753 vs 200bps of gross 0.000543753 (diff 1 wei)
+PASS [bsc $30K] UR 2.1.1 SELL exactOut: V4Quoter == executed  quote 11824590909189126543740823 actual 11824590909189126543740823
+PASS [bsc $30K] UR 2.1.1 SELL exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR 2.1.2 BUY exactIn: fee in native exactly 2% of the native leg  in 0.106575 fee 0.002131512 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] UR 2.1.2 BUY exactIn: V4Quoter == executed  quote 43234270923649247535296073 actual 43234270923649247535296073
+PASS [bsc $30K] UR 2.1.2 BUY exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR 2.1.2 BUY exactOut: fee in native exactly 2% of the native leg  paid 0.013292 fee 0.000265847 vs 200bps of paid 0.000265847 (diff 1 wei)
+PASS [bsc $30K] UR 2.1.2 BUY exactOut: V4Quoter == executed  quote 13292390741726858 actual 13292390741726858
+PASS [bsc $30K] UR 2.1.2 BUY exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR 2.1.2 SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.005235 fee 0.000104719 = 1.999999% (rate 200 bps)
+PASS [bsc $30K] UR 2.1.2 SELL exactIn: V4Quoter == executed  quote 5131242441685116 actual 5131242441685116
+PASS [bsc $30K] UR 2.1.2 SELL exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] UR 2.1.2 SELL exactOut: fee in native exactly 2% of the native leg  got 0.026643 fee 0.000543753 vs 200bps of gross 0.000543753 (diff 1 wei)
+PASS [bsc $30K] UR 2.1.2 SELL exactOut: V4Quoter == executed  quote 10597776711865478547973630 actual 10597776711865478547973630
+PASS [bsc $30K] UR 2.1.2 SELL exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $30K] exact-in buy that would only partly fill (price limit) reverts PartialFill  WrappedError(0xA2FaBD..,0xb47b2fb1) <- PartialFill
+PASS [bsc $30K] selling 100% of a wallet balance via UR works  sold 168877677 got 0.328876
+PASS [bsc $30K] wallet-to-wallet transfer is untaxed  1234567 sent and received
+PASS [bsc $30K] outside addLiquidity via own unlock callback reverts  WrappedError(0xA2FaBD..,0x259982e5) <- LiquidityIsLocked
+PASS [bsc $30K] outside native-side addLiquidity (range above price) reverts  WrappedError(0xA2FaBD..,0x259982e5) <- LiquidityIsLocked
+PASS [bsc $30K] outside addLiquidity via canonical PositionManager reverts  WrappedError(0xA2FaBD..,0x259982e5) <- LiquidityIsLocked
+PASS [bsc $30K] nobody can remove A (positions are keyed by owner = hook)  selector 0x93dafdf1
+PASS [bsc $30K] nobody can remove B  selector 0x93dafdf1
+PASS [bsc $30K] donate reverts (keeps graduation accounting exact)  WrappedError(0xA2FaBD..,0xb6a8b0fa) <- DonateDisabled
+PASS [bsc $30K] hook callbacks callable only by the PoolManager  NotPoolManager
+PASS [bsc $30K] launcher callback not callable from outside  NotPoolManager
+PASS [bsc $30K] hook has no liquidity-removal entry point (state-changing fns)  afterSwap,beforeSwap,claim,createPool,unlockCallback
+     [bsc $30K] gas direct: buy hooked 122101 vs hookless 87495 (+34606); sell hooked 127337 vs hookless 93541 (+33796)
+     [bsc $30K] gas UR (docs main): buy hooked 129264 vs hookless 94850 (+34414); sell hooked 139059 vs hookless 105387 (+33672)
+PASS [bsc $30K] gas measured for hooked vs hookless pool (direct + UR)
+PASS [bsc $30K] MC at 10% of A == gen-7 MC at the same sold amount (tick rounding)  v4 1.565705 gen-7 1.565326 diff 242.145824 ppm
+PASS [bsc $30K] MC at 25% of A == gen-7 MC at the same sold amount (tick rounding)  v4 1.571817 gen-7 1.571436 diff 241.970734 ppm
+PASS [bsc $30K] MC at 50% of A == gen-7 MC at the same sold amount (tick rounding)  v4 2.928625 gen-7 2.928012 diff 209.102151 ppm
+PASS [bsc $30K] MC at 75% of A == gen-7 MC at the same sold amount (tick rounding)  v4 7.262877 gen-7 7.261871 diff 138.450741 ppm
+PASS [bsc $30K] MC at 90% of A == gen-7 MC at the same sold amount (tick rounding)  v4 16.922266 gen-7 16.921648 diff 36.556491 ppm
+PASS [bsc $30K] MC at 99% of A == gen-7 MC at the same sold amount (tick rounding)  v4 36.154364 gen-7 36.157974 diff 99.839277 ppm
+PASS [bsc $30K] no graduation with 1 coin of A left (latch only at the threshold)  price 40.169874 MC
+PASS [bsc $30K] crossing with exact-out buy: graduates in the same swap, swap fee at 2% (pre-grad rate)  rate 200
+PASS [bsc $30K] graduation latched in the crossing swap  crossing swap gas 209902
+PASS [bsc $30K] graduation fee == native of exactly 2% of A's liquidity (exact V4 math)  0.106582948
+PASS [bsc $30K] graduation fee == 2% of A's native raise (within 2 wei)  fee 106582948701939042 vs 2% of 5329147435096952103 = 106582948701939042 (diff 0 wei)
+PASS [bsc $30K] graduation fee + crossing swap fee credited to the fee router  0.108714460
+PASS [bsc $30K] native raise in A vs gen-7 R (tick rounding)  A raise 5.329147 gen-7 R 5.328780 diff 68.872361 ppm
+PASS [bsc $30K] A keeps exactly 98% of its liquidity; B untouched  A 30876683255332437858518
+PASS [bsc $30K] top-of-A MC == gen-7 graduation MC within tick rounding  v4 40.169874 gen-7 40.174823 diff 123.187933 ppm; vs USD target 40.174823 native: 123.187942 ppm
+PASS [bsc $30K] claims held by hook == sum owed  0.217472
+PASS [bsc $30K] post-grad direct BUY exactIn: fee exactly 1% of native leg  in 0.266439 fee 0.002664390 = 0.999999% (rate 100 bps)
+PASS [bsc $30K] post-grad direct BUY exactIn: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.266439 creator 0.001332195 protocol 0.001332195
+PASS [bsc $30K] post-grad direct BUY exactIn: V4Quoter == executed  quote 6013685466899779622689909
+PASS [bsc $30K] post-grad direct BUY exactIn: no second graduation
+PASS [bsc $30K] post-grad ur BUY exactOut: fee exactly 1% of native leg  paid 0.143031 fee 0.001430319 vs 100bps of paid 0.001430319 (diff 1 wei)
+PASS [bsc $30K] post-grad ur BUY exactOut: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.143031 creator 0.000715159 protocol 0.000715159
+PASS [bsc $30K] post-grad ur BUY exactOut: V4Quoter == executed  quote 143031960311242368
+PASS [bsc $30K] post-grad ur BUY exactOut: no second graduation
+PASS [bsc $30K] post-grad ur SELL exactIn: fee exactly 1% of native leg  curve out 0.232178 fee 0.002321788 = 0.999999% (rate 100 bps)
+PASS [bsc $30K] post-grad ur SELL exactIn: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.232178 creator 0.001160894 protocol 0.001160894
+PASS [bsc $30K] post-grad ur SELL exactIn: V4Quoter == executed  quote 229857095774588336
+PASS [bsc $30K] post-grad ur SELL exactIn: no second graduation
+PASS [bsc $30K] post-grad direct SELL exactOut: fee exactly 1% of native leg  got 0.053287 fee 0.000538260 vs 100bps of gross 0.000538260 (diff 1 wei)
+PASS [bsc $30K] post-grad direct SELL exactOut: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.053826 creator 0.000269130 protocol 0.000269130
+PASS [bsc $30K] post-grad direct SELL exactOut: V4Quoter == executed  quote 1220026421579006106324861
+PASS [bsc $30K] post-grad direct SELL exactOut: no second graduation
+PASS [bsc $30K] price fell back below the graduation threshold  MC now 4.322543 vs top 40.169874
+PASS [bsc $30K] after falling back: still graduated, still 1%
+PASS [bsc $30K] re-crossing the threshold does not graduate again or take another 2%  crossed again: true
+PASS [bsc $30K] claim(fee router) pays exactly what is owed, in native (anyone can trigger)  0.217472 gas 54628
+PASS [bsc $30K] claim(protocol) pays exactly what is owed, in native (anyone can trigger)  0.052032 gas 54628
+PASS [bsc $30K] claim(creator) pays exactly what is owed, in native (anyone can trigger)  0.052032 gas 49828
+PASS [bsc $30K] hook claims fully paid out
+PASS [bsc $30K] hook never received coins
+PASS [bsc $30K] with a 0.1% Uniswap protocol fee forced on (fork only): hook fee still exact, quoter still exact  protocolFee 4097000
+     [bsc $30K] the Uniswap protocol fee (max 0.1%/direction, set by the fee controller) would come out of the curve, not out of our fee
+PASS [bsc] fork chainId  chainId 56 block 127009773
+PASS [bsc] test account deployer has no code on the fork  0x57c4651D72670cEaD600df37dE922C193B5f504E
+PASS [bsc] test account creator has no code on the fork  0xFf60BEd9f41B71d661287cC6a1FeB20749C37E5B
+PASS [bsc] test account buyer has no code on the fork  0x6938a07074Ed8e3b8D6d67Db4082a6aD759Db0C9
+PASS [bsc] test account bot has no code on the fork  0x95B83Ae40AC38Cd6E5c24c4eb0FD81BFa036Ea9f
+PASS [bsc] test account attacker has no code on the fork  0xec516Cb91beCa7B3DB829ED71ac2A2d87Cb78382
+PASS [bsc] test account routerEoa has no code on the fork  0x8232D4572bE1d214cFe3dEb038d93523274092Da
+PASS [bsc] test account protocolEoa has no code on the fork  0xAcECf5AC1a8E62858d2352bae2EB3b7fF2136AdE
+PASS [bsc] code at PoolManager  0x28e2ea090877bf75740558f6bfb36a5ffee9e9df 24009 bytes
+PASS [bsc] code at PositionManager  0x7a4a5c919ae2541aed11041a1aeee68f1287f95b 23877 bytes
+PASS [bsc] code at V4Quoter  0x9f75dd27d6664c475b90e105573e550ff69437b0 5820 bytes
+PASS [bsc] code at StateView  0xd13dd3d6e93f276fafc9db9e6bb47c1180aee0c4 3531 bytes
+PASS [bsc] code at Permit2  0x000000000022D473030F116dDEE9F6B43aC78BA3 9152 bytes
+PASS [bsc] code at CREATE2 proxy  0x4e59b44847b379578588920ca78fbf26c0b4956c 69 bytes
+PASS [bsc] code at gen-7 GraduationOracle  0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B 1553 bytes
+PASS [bsc] code at UR (docs main)  0x1906c1d672b88cd1b9ac7593301ca990f94eae07 19499 bytes
+PASS [bsc] code at UR 2.1.1  0x8b844f885672f333bc0042cb669255f93a4c1e6b 24546 bytes
+PASS [bsc] code at UR 2.1.2  0xDc264714F68d84CF29BC605589405E78bDBE7C9f 24380 bytes
+     [bsc] oracle native/USD at fork block: $746.73  block gas limit 70000000
+PASS [bsc] hook salt mined for flags 0x28EC  0xA2FaBDA8F3F9c4A74009D8b7ae0972d0D7BbE8eC after 63360 tries, 3923 ms
+PASS [bsc] hook deployed at mined address  gas 2470093
+PASS [bsc] launcher at predicted address (hook immutable points at it)  0x93Bf015A7d652FBf43be3b9E0Cb9Aa22b31C0ca4
+PASS [bsc $50K] on-chain curve sizing == gen-7 curveForMarketCap (vN, vT)  vN 1.642151 vT 1007164874
+     [bsc $50K] target MC 66.958039 native; gen-7 start MC 1.630469 end MC 66.958039 raise R 8.881300; ticks start 202350 grad 165200
+PASS [bsc $50K] outside PoolManager.initialize with our hook reverts (launch front-run impossible)  WrappedError(0xA2FaBD..,0xdc98354e) <- OnlyThisHookMayInitialize
+PASS [bsc $50K] hook.createPool from a non-launcher reverts  NotLauncher
+PASS [bsc $50K] atomic launch: token + init + A/B mint + first buy in one tx  gas 1073690 (block gas limit 70000000; 1.53%)
+PASS [bsc $50K] launch gas fits an Arbitrum-style 32M per-tx cap and the BSC block  1073690
+PASS [bsc $50K] pool initialized in the launch tx: native/coin, dynamic fee, our hook  poolId 0xaad5d09d95c793a23705ddf2ccc6376e94d2daaf9323d7fca6940d79b0139893
+PASS [bsc $50K] LP fee is 0 (dynamic pool, never set)  lpFee 0 protocolFee 0
+PASS [bsc $50K] creator first buy pays exactly 2% (not the 90% launch fee)  first buy 0.444065 fee 0.008881300 expected 0.008881300; got 210925579 coins
+PASS [bsc $50K] creator holds 20M reserve + first-buy coins; hook holds 0 coins  creator 230925579
+PASS [bsc $50K] minted A = 850M and B = 130M within rounding (dust burned)  A 849999999999999999999997327 B 129999999999999999999999071
+PASS [bsc $50K] positions A and B are owned by the hook-locker in the PoolManager  liqA 40678156173686362851181 liqB 33639558202110427401821
+PASS [bsc $50K] re-initialize of the live pool reverts  WrappedError(0xA2FaBD..,0xdc98354e) <- OnlyThisHookMayInitialize
+PASS [bsc $50K] start MC == gen-7 start MC within tick rounding (spacing 10 => <= ~500 ppm)  v4 1.631137 gen-7 1.630469 diff 409.84784 ppm
+PASS [bsc $50K] anti-sniper t+1s buy rate 8853 bps and exact  in 0.088813 fee 0.078626155 = 88.529999% (rate 8853 bps)
+PASS [bsc $50K] anti-sniper t+2s sell rate 8706 bps and exact  curve out 0.002606 fee 0.002269184 = 87.059999% (rate 8706 bps)
+PASS [bsc $50K] anti-sniper t+2s buy rate 8706 bps and exact  in 0.088813 fee 0.077320604 = 87.059999% (rate 8706 bps)
+PASS [bsc $50K] anti-sniper t+6s sell rate 8120 bps and exact  curve out 0.002606 fee 0.002116446 = 81.199999% (rate 8120 bps)
+PASS [bsc $50K] anti-sniper t+10s buy rate 7533 bps and exact  in 0.088813 fee 0.066902838 = 75.329999% (rate 7533 bps)
+PASS [bsc $50K] anti-sniper t+10s sell rate 7533 bps and exact  curve out 0.002606 fee 0.001963447 = 75.329999% (rate 7533 bps)
+PASS [bsc $50K] anti-sniper t+30s buy rate 4600 bps and exact  in 0.088813 fee 0.040853983 = 45.999999% (rate 4600 bps)
+PASS [bsc $50K] anti-sniper t+30s sell rate 4600 bps and exact  curve out 0.002606 fee 0.001198972 = 45.999999% (rate 4600 bps)
+PASS [bsc $50K] anti-sniper t+45s buy rate 2400 bps and exact  in 0.088813 fee 0.021315121 = 23.999999% (rate 2400 bps)
+PASS [bsc $50K] anti-sniper t+45s sell rate 2400 bps and exact  curve out 0.002606 fee 0.000625550 = 23.999999% (rate 2400 bps)
+PASS [bsc $50K] anti-sniper t+59s buy rate 346 bps and exact  in 0.088813 fee 0.003072930 = 3.459999% (rate 346 bps)
+PASS [bsc $50K] anti-sniper t+59s sell rate 346 bps and exact  curve out 0.002606 fee 0.000090183 = 3.459999% (rate 346 bps)
+PASS [bsc $50K] anti-sniper t+60s buy rate 200 bps and exact  in 0.088813 fee 0.001776260 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] anti-sniper t+60s sell rate 200 bps and exact  curve out 0.002606 fee 0.000052129 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] anti-sniper t+61s buy rate 200 bps and exact  in 0.088813 fee 0.001776260 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] anti-sniper t+61s sell rate 200 bps and exact  curve out 0.002606 fee 0.000052129 = 1.999999% (rate 200 bps)
+     [bsc $50K] UR (docs main) 0x1906c1d672b88cd1b9ac7593301ca990f94eae07: V4_SWAP ExactInputSingleParams layout v2.0 (v2.0:ok)
+     [bsc $50K] UR 2.1.1 0x8b844f885672f333bc0042cb669255f93a4c1e6b: V4_SWAP ExactInputSingleParams layout v2.1 (v2.0:revert, v2.1:ok)
+     [bsc $50K] UR 2.1.2 0xDc264714F68d84CF29BC605589405E78bDBE7C9f: V4_SWAP ExactInputSingleParams layout v2.1 (v2.0:revert, v2.1:ok)
+PASS [bsc $50K] anti-sniper applies through the UniversalRouter too (t+5s)  rate 8266 bps
+PASS [bsc $50K] direct unlock callback BUY exactIn: fee in native exactly 2% of the native leg  in 0.177626 fee 0.003552520 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] direct unlock callback BUY exactIn: V4Quoter == executed  quote 61546083019269776915654317 actual 61546083019269776915654317
+PASS [bsc $50K] direct unlock callback BUY exactOut: fee in native exactly 2% of the native leg  paid 0.015746 fee 0.000314925 vs 200bps of paid 0.000314925 (diff 1 wei)
+PASS [bsc $50K] direct unlock callback BUY exactOut: V4Quoter == executed  quote 15746269418700507 actual 15746269418700507
+PASS [bsc $50K] direct unlock callback SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.006197 fee 0.000123956 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] direct unlock callback SELL exactIn: V4Quoter == executed  quote 6073887381615232 actual 6073887381615232
+PASS [bsc $50K] direct unlock callback SELL exactOut: fee in native exactly 2% of the native leg  got 0.044406 fee 0.000906255 vs 200bps of gross 0.000906255 (diff 1 wei)
+PASS [bsc $50K] direct unlock callback SELL exactOut: V4Quoter == executed  quote 14961982449409518902756786 actual 14961982449409518902756786
+PASS [bsc $50K] UR (docs main) BUY exactIn: fee in native exactly 2% of the native leg  in 0.177626 fee 0.003552520 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] UR (docs main) BUY exactIn: V4Quoter == executed  quote 54381513160150974142165592 actual 54381513160150974142165592
+PASS [bsc $50K] UR (docs main) BUY exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR (docs main) BUY exactOut: fee in native exactly 2% of the native leg  paid 0.017742 fee 0.000354849 vs 200bps of paid 0.000354849 (diff 1 wei)
+PASS [bsc $50K] UR (docs main) BUY exactOut: V4Quoter == executed  quote 17742461339398878 actual 17742461339398878
+PASS [bsc $50K] UR (docs main) BUY exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR (docs main) SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.006985 fee 0.000139706 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] UR (docs main) SELL exactIn: V4Quoter == executed  quote 6845608174755614 actual 6845608174755614
+PASS [bsc $50K] UR (docs main) SELL exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR (docs main) SELL exactOut: fee in native exactly 2% of the native leg  got 0.044406 fee 0.000906255 vs 200bps of gross 0.000906255 (diff 1 wei)
+PASS [bsc $50K] UR (docs main) SELL exactOut: V4Quoter == executed  quote 13261803808689481736478672 actual 13261803808689481736478672
+PASS [bsc $50K] UR (docs main) SELL exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR 2.1.1 BUY exactIn: fee in native exactly 2% of the native leg  in 0.177626 fee 0.003552520 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] UR 2.1.1 BUY exactIn: V4Quoter == executed  quote 48352973274363973397138513 actual 48352973274363973397138513
+PASS [bsc $50K] UR 2.1.1 BUY exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR 2.1.1 BUY exactOut: fee in native exactly 2% of the native leg  paid 0.019877 fee 0.000397542 vs 200bps of paid 0.000397542 (diff 1 wei)
+PASS [bsc $50K] UR 2.1.1 BUY exactOut: V4Quoter == executed  quote 19877100195201879 actual 19877100195201879
+PASS [bsc $50K] UR 2.1.1 BUY exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR 2.1.1 SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.007827 fee 0.000156554 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] UR 2.1.1 SELL exactIn: V4Quoter == executed  quote 7671163895205880 actual 7671163895205880
+PASS [bsc $50K] UR 2.1.1 SELL exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR 2.1.1 SELL exactOut: fee in native exactly 2% of the native leg  got 0.044406 fee 0.000906255 vs 200bps of gross 0.000906255 (diff 1 wei)
+PASS [bsc $50K] UR 2.1.1 SELL exactOut: V4Quoter == executed  quote 11824038132869445489787499 actual 11824038132869445489787499
+PASS [bsc $50K] UR 2.1.1 SELL exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR 2.1.2 BUY exactIn: fee in native exactly 2% of the native leg  in 0.177626 fee 0.003552520 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] UR 2.1.2 BUY exactIn: V4Quoter == executed  quote 43232451881008068493458080 actual 43232451881008068493458080
+PASS [bsc $50K] UR 2.1.2 BUY exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR 2.1.2 BUY exactOut: fee in native exactly 2% of the native leg  paid 0.022154 fee 0.000443095 vs 200bps of paid 0.000443095 (diff 1 wei)
+PASS [bsc $50K] UR 2.1.2 BUY exactOut: V4Quoter == executed  quote 22154763980977368 actual 22154763980977368
+PASS [bsc $50K] UR 2.1.2 BUY exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR 2.1.2 SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.008726 fee 0.000174538 = 1.999999% (rate 200 bps)
+PASS [bsc $50K] UR 2.1.2 SELL exactIn: V4Quoter == executed  quote 8552369257062645 actual 8552369257062645
+PASS [bsc $50K] UR 2.1.2 SELL exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] UR 2.1.2 SELL exactOut: fee in native exactly 2% of the native leg  got 0.044406 fee 0.000906255 vs 200bps of gross 0.000906255 (diff 1 wei)
+PASS [bsc $50K] UR 2.1.2 SELL exactOut: V4Quoter == executed  quote 10597388091219020983345523 actual 10597388091219020983345523
+PASS [bsc $50K] UR 2.1.2 SELL exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [bsc $50K] exact-in buy that would only partly fill (price limit) reverts PartialFill  WrappedError(0xA2FaBD..,0xb47b2fb1) <- PartialFill
+PASS [bsc $50K] selling 100% of a wallet balance via UR works  sold 168867808 got 0.548129
+PASS [bsc $50K] wallet-to-wallet transfer is untaxed  1234567 sent and received
+PASS [bsc $50K] outside addLiquidity via own unlock callback reverts  WrappedError(0xA2FaBD..,0x259982e5) <- LiquidityIsLocked
+PASS [bsc $50K] outside native-side addLiquidity (range above price) reverts  WrappedError(0xA2FaBD..,0x259982e5) <- LiquidityIsLocked
+PASS [bsc $50K] outside addLiquidity via canonical PositionManager reverts  WrappedError(0xA2FaBD..,0x259982e5) <- LiquidityIsLocked
+PASS [bsc $50K] nobody can remove A (positions are keyed by owner = hook)  selector 0x93dafdf1
+PASS [bsc $50K] nobody can remove B  selector 0x93dafdf1
+PASS [bsc $50K] donate reverts (keeps graduation accounting exact)  WrappedError(0xA2FaBD..,0xb6a8b0fa) <- DonateDisabled
+PASS [bsc $50K] hook callbacks callable only by the PoolManager  NotPoolManager
+PASS [bsc $50K] launcher callback not callable from outside  NotPoolManager
+PASS [bsc $50K] hook has no liquidity-removal entry point (state-changing fns)  afterSwap,beforeSwap,claim,createPool,unlockCallback
+     [bsc $50K] gas direct: buy hooked 122197 vs hookless 87495 (+34702); sell hooked 127401 vs hookless 93637 (+33764)
+     [bsc $50K] gas UR (docs main): buy hooked 129384 vs hookless 94814 (+34570); sell hooked 139123 vs hookless 105359 (+33764)
+PASS [bsc $50K] gas measured for hooked vs hookless pool (direct + UR)
+PASS [bsc $50K] MC at 10% of A == gen-7 MC at the same sold amount (tick rounding)  v4 2.609734 gen-7 2.608714 diff 391.023469 ppm
+PASS [bsc $50K] MC at 25% of A == gen-7 MC at the same sold amount (tick rounding)  v4 2.620085 gen-7 2.619061 diff 390.845252 ppm
+PASS [bsc $50K] MC at 50% of A == gen-7 MC at the same sold amount (tick rounding)  v4 4.881768 gen-7 4.880021 diff 357.972013 ppm
+PASS [bsc $50K] MC at 75% of A == gen-7 MC at the same sold amount (tick rounding)  v4 12.106597 gen-7 12.103119 diff 287.310278 ppm
+PASS [bsc $50K] MC at 90% of A == gen-7 MC at the same sold amount (tick rounding)  v4 28.207975 gen-7 28.202746 diff 185.400933 ppm
+PASS [bsc $50K] MC at 99% of A == gen-7 MC at the same sold amount (tick rounding)  v4 60.266242 gen-7 60.263290 diff 48.984875 ppm
+PASS [bsc $50K] no graduation with 1 coin of A left (latch only at the threshold)  price 66.959755 MC
+PASS [bsc $50K] crossing with exact-out buy: graduates in the same swap, swap fee at 2% (pre-grad rate)  rate 200
+PASS [bsc $50K] graduation latched in the crossing swap  crossing swap gas 209710
+PASS [bsc $50K] graduation fee == native of exactly 2% of A's liquidity (exact V4 math)  0.177664687
+PASS [bsc $50K] graduation fee == 2% of A's native raise (within 2 wei)  fee 177664687337980483 vs 2% of 8883234366899024152 = 177664687337980483 (diff 0 wei)
+PASS [bsc $50K] graduation fee + crossing swap fee credited to the fee router  0.181217207
+PASS [bsc $50K] native raise in A vs gen-7 R (tick rounding)  A raise 8.883234 gen-7 R 8.881300 diff 217.721624 ppm
+PASS [bsc $50K] A keeps exactly 98% of its liquidity; B untouched  A 39864593050212635594158
+PASS [bsc $50K] top-of-A MC == gen-7 graduation MC within tick rounding  v4 66.959755 gen-7 66.958039 diff 25.632744 ppm; vs USD target 66.958039 native: 25.632735 ppm
+PASS [bsc $50K] claims held by hook == sum owed  0.362507
+PASS [bsc $50K] post-grad direct BUY exactIn: fee exactly 1% of native leg  in 0.444065 fee 0.004440650 = 0.999999% (rate 100 bps)
+PASS [bsc $50K] post-grad direct BUY exactIn: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.444065 creator 0.002220325 protocol 0.002220325
+PASS [bsc $50K] post-grad direct BUY exactIn: V4Quoter == executed  quote 6012867013943839194335707
+PASS [bsc $50K] post-grad direct BUY exactIn: no second graduation
+PASS [bsc $50K] post-grad ur BUY exactOut: fee exactly 1% of native leg  paid 0.238417 fee 0.002384173 vs 100bps of paid 0.002384173 (diff 1 wei)
+PASS [bsc $50K] post-grad ur BUY exactOut: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.238417 creator 0.001192086 protocol 0.001192086
+PASS [bsc $50K] post-grad ur BUY exactOut: V4Quoter == executed  quote 238417348458940419
+PASS [bsc $50K] post-grad ur BUY exactOut: no second graduation
+PASS [bsc $50K] post-grad ur SELL exactIn: fee exactly 1% of native leg  curve out 0.387014 fee 0.003870147 = 0.999999% (rate 100 bps)
+PASS [bsc $50K] post-grad ur SELL exactIn: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.387014 creator 0.001935073 protocol 0.001935073
+PASS [bsc $50K] post-grad ur SELL exactIn: V4Quoter == executed  quote 383144633433450791
+PASS [bsc $50K] post-grad ur SELL exactIn: no second graduation
+PASS [bsc $50K] post-grad direct SELL exactOut: fee exactly 1% of native leg  got 0.088813 fee 0.000897101 vs 100bps of gross 0.000897101 (diff 1 wei)
+PASS [bsc $50K] post-grad direct SELL exactOut: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.089710 creator 0.000448550 protocol 0.000448550
+PASS [bsc $50K] post-grad direct SELL exactOut: V4Quoter == executed  quote 1219866710209613682833292
+PASS [bsc $50K] post-grad direct SELL exactOut: no second graduation
+PASS [bsc $50K] price fell back below the graduation threshold  MC now 7.204909 vs top 66.959755
+PASS [bsc $50K] after falling back: still graduated, still 1%
+PASS [bsc $50K] re-crossing the threshold does not graduate again or take another 2%  crossed again: true
+PASS [bsc $50K] claim(fee router) pays exactly what is owed, in native (anyone can trigger)  0.362507 gas 54628
+PASS [bsc $50K] claim(protocol) pays exactly what is owed, in native (anyone can trigger)  0.086726 gas 54628
+PASS [bsc $50K] claim(creator) pays exactly what is owed, in native (anyone can trigger)  0.086726 gas 49828
+PASS [bsc $50K] hook claims fully paid out
+PASS [bsc $50K] hook never received coins
+PASS [bsc $50K] with a 0.1% Uniswap protocol fee forced on (fork only): hook fee still exact, quoter still exact  protocolFee 4097000
+     [bsc $50K] the Uniswap protocol fee (max 0.1%/direction, set by the fee controller) would come out of the curve, not out of our fee
+PASS [rh] fork chainId  chainId 4663 block 85789953
+PASS [rh] test account deployer has no code on the fork  0x57c4651D72670cEaD600df37dE922C193B5f504E
+PASS [rh] test account creator has no code on the fork  0xFf60BEd9f41B71d661287cC6a1FeB20749C37E5B
+PASS [rh] test account buyer has no code on the fork  0x6938a07074Ed8e3b8D6d67Db4082a6aD759Db0C9
+PASS [rh] test account bot has no code on the fork  0x95B83Ae40AC38Cd6E5c24c4eb0FD81BFa036Ea9f
+PASS [rh] test account attacker has no code on the fork  0xec516Cb91beCa7B3DB829ED71ac2A2d87Cb78382
+PASS [rh] test account routerEoa has no code on the fork  0x8232D4572bE1d214cFe3dEb038d93523274092Da
+PASS [rh] test account protocolEoa has no code on the fork  0xAcECf5AC1a8E62858d2352bae2EB3b7fF2136AdE
+PASS [rh] code at PoolManager  0x8366a39cc670b4001a1121b8f6a443a643e40951 24009 bytes
+PASS [rh] code at PositionManager  0x58daec3116aae6d93017baaea7749052e8a04fa7 23877 bytes
+PASS [rh] code at V4Quoter  0x8dc178efb8111bb0973dd9d722ebeff267c98f94 6118 bytes
+PASS [rh] code at StateView  0xf3334192d15450cdd385c8b70e03f9a6bd9e673b 3531 bytes
+PASS [rh] code at Permit2  0x000000000022D473030F116dDEE9F6B43aC78BA3 9152 bytes
+PASS [rh] code at CREATE2 proxy  0x4e59b44847b379578588920ca78fbf26c0b4956c 69 bytes
+PASS [rh] code at gen-7 GraduationOracle  0xe635AA43fE5707561c8c3C655225da5C3e4C2239 1553 bytes
+PASS [rh] code at UR (docs main)  0x8876789976decbfcbbbe364623c63652db8c0904 24546 bytes
+PASS [rh] code at UR 2.1.2  0x204FAca1764B154221e35c0d20aBb3c525710498 24380 bytes
+     [rh] oracle native/USD at fork block: $2501.69  block gas limit 1125899906842624
+PASS [rh] hook salt mined for flags 0x28EC  0x282385196bdb26b519404306ff3d38691D3068ec after 517 tries, 34 ms
+PASS [rh] hook deployed at mined address  gas 2470081
+PASS [rh] launcher at predicted address (hook immutable points at it)  0x93Bf015A7d652FBf43be3b9E0Cb9Aa22b31C0ca4
+PASS [rh $30K] on-chain curve sizing == gen-7 curveForMarketCap (vN, vT)  vN 0.294102 vT 1007164874
+     [rh $30K] target MC 11.991893 native; gen-7 start MC 0.292009 end MC 11.991893 raise R 1.590602; ticks start 219550 grad 182400
+PASS [rh $30K] outside PoolManager.initialize with our hook reverts (launch front-run impossible)  WrappedError(0x282385..,0xdc98354e) <- OnlyThisHookMayInitialize
+PASS [rh $30K] hook.createPool from a non-launcher reverts  NotLauncher
+PASS [rh $30K] atomic launch: token + init + A/B mint + first buy in one tx  gas 1070702 (block gas limit 1125899906842624; 0.00%)
+PASS [rh $30K] launch gas fits an Arbitrum-style 32M per-tx cap and the BSC block  1070702
+PASS [rh $30K] pool initialized in the launch tx: native/coin, dynamic fee, our hook  poolId 0xd8cf037189ee7291d96e2757f7e16ce4bb2aa84d07dee4cb402eb4d30bb8859b
+PASS [rh $30K] LP fee is 0 (dynamic pool, never set)  lpFee 0 protocolFee 0
+PASS [rh $30K] creator first buy pays exactly 2% (not the 90% launch fee)  first buy 0.079530 fee 0.001590602 expected 0.001590602; got 210938708 coins
+PASS [rh $30K] creator holds 20M reserve + first-buy coins; hook holds 0 coins  creator 230938708
+PASS [rh $30K] minted A = 850M and B = 130M within rounding (dust burned)  A 849999999999999999999976707 B 129999999999999999999999294
+PASS [rh $30K] positions A and B are owned by the hook-locker in the PoolManager  liqA 17214193416364788845268 liqB 14235597573785308426306
+PASS [rh $30K] re-initialize of the live pool reverts  WrappedError(0x282385..,0xdc98354e) <- OnlyThisHookMayInitialize
+PASS [rh $30K] start MC == gen-7 start MC within tick rounding (spacing 10 => <= ~500 ppm)  v4 0.292106 gen-7 0.292009 diff 331.086952 ppm
+PASS [rh $30K] anti-sniper t+1s buy rate 8853 bps and exact  in 0.015906 fee 0.014081602 = 88.529999% (rate 8853 bps)
+PASS [rh $30K] anti-sniper t+2s sell rate 8706 bps and exact  curve out 0.000466 fee 0.000406382 = 87.059999% (rate 8706 bps)
+PASS [rh $30K] anti-sniper t+2s buy rate 8706 bps and exact  in 0.015906 fee 0.013847783 = 87.059999% (rate 8706 bps)
+PASS [rh $30K] anti-sniper t+2s sell rate 8706 bps and exact  curve out 0.000466 fee 0.000406382 = 87.059999% (rate 8706 bps)
+PASS [rh $30K] anti-sniper t+10s buy rate 7533 bps and exact  in 0.015906 fee 0.011982007 = 75.329999% (rate 7533 bps)
+PASS [rh $30K] anti-sniper t+10s sell rate 7533 bps and exact  curve out 0.000466 fee 0.000351628 = 75.329999% (rate 7533 bps)
+PASS [rh $30K] anti-sniper t+30s buy rate 4600 bps and exact  in 0.015906 fee 0.007316770 = 45.999999% (rate 4600 bps)
+PASS [rh $30K] anti-sniper t+30s sell rate 4600 bps and exact  curve out 0.000466 fee 0.000214720 = 45.999999% (rate 4600 bps)
+PASS [rh $30K] anti-sniper t+45s buy rate 2400 bps and exact  in 0.015906 fee 0.003817445 = 23.999999% (rate 2400 bps)
+PASS [rh $30K] anti-sniper t+45s sell rate 2400 bps and exact  curve out 0.000466 fee 0.000112028 = 23.999999% (rate 2400 bps)
+PASS [rh $30K] anti-sniper t+59s buy rate 346 bps and exact  in 0.015906 fee 0.000550348 = 3.459999% (rate 346 bps)
+PASS [rh $30K] anti-sniper t+59s sell rate 346 bps and exact  curve out 0.000466 fee 0.000016150 = 3.459999% (rate 346 bps)
+PASS [rh $30K] anti-sniper t+60s buy rate 200 bps and exact  in 0.015906 fee 0.000318120 = 1.999999% (rate 200 bps)
+PASS [rh $30K] anti-sniper t+60s sell rate 200 bps and exact  curve out 0.000466 fee 0.000009335 = 1.999999% (rate 200 bps)
+PASS [rh $30K] anti-sniper t+61s buy rate 200 bps and exact  in 0.015906 fee 0.000318120 = 1.999999% (rate 200 bps)
+PASS [rh $30K] anti-sniper t+61s sell rate 200 bps and exact  curve out 0.000466 fee 0.000009335 = 1.999999% (rate 200 bps)
+     [rh $30K] UR (docs main) 0x8876789976decbfcbbbe364623c63652db8c0904: V4_SWAP ExactInputSingleParams layout v2.1 (v2.0:revert, v2.1:ok)
+     [rh $30K] UR 2.1.2 0x204FAca1764B154221e35c0d20aBb3c525710498: V4_SWAP ExactInputSingleParams layout v2.1 (v2.0:revert, v2.1:ok)
+PASS [rh $30K] anti-sniper applies through the UniversalRouter too (t+5s)  rate 8266 bps
+PASS [rh $30K] direct unlock callback BUY exactIn: fee in native exactly 2% of the native leg  in 0.031812 fee 0.000636240 = 1.999999% (rate 200 bps)
+PASS [rh $30K] direct unlock callback BUY exactIn: V4Quoter == executed  quote 61548603099581098188614314 actual 61548603099581098188614314
+PASS [rh $30K] direct unlock callback BUY exactOut: fee in native exactly 2% of the native leg  paid 0.002819 fee 0.000056399 vs 200bps of paid 0.000056399 (diff 1 wei)
+PASS [rh $30K] direct unlock callback BUY exactOut: V4Quoter == executed  quote 2819986831924329 actual 2819986831924329
+PASS [rh $30K] direct unlock callback SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.001109 fee 0.000022199 = 1.999999% (rate 200 bps)
+PASS [rh $30K] direct unlock callback SELL exactIn: V4Quoter == executed  quote 1087767742002377 actual 1087767742002377
+PASS [rh $30K] direct unlock callback SELL exactOut: fee in native exactly 2% of the native leg  got 0.007953 fee 0.000162306 vs 200bps of gross 0.000162306 (diff 1 wei)
+PASS [rh $30K] direct unlock callback SELL exactOut: V4Quoter == executed  quote 14962538029846476618741657 actual 14962538029846476618741657
+PASS [rh $30K] UR (docs main) BUY exactIn: fee in native exactly 2% of the native leg  in 0.031812 fee 0.000636240 = 1.999999% (rate 200 bps)
+PASS [rh $30K] UR (docs main) BUY exactIn: V4Quoter == executed  quote 54383364482702733821435293 actual 54383364482702733821435293
+PASS [rh $30K] UR (docs main) BUY exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $30K] UR (docs main) BUY exactOut: fee in native exactly 2% of the native leg  paid 0.003177 fee 0.000063550 vs 200bps of paid 0.000063550 (diff 1 wei)
+PASS [rh $30K] UR (docs main) BUY exactOut: V4Quoter == executed  quote 3177503541503761 actual 3177503541503761
+PASS [rh $30K] UR (docs main) BUY exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $30K] UR (docs main) SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.001251 fee 0.000025020 = 1.999999% (rate 200 bps)
+PASS [rh $30K] UR (docs main) SELL exactIn: V4Quoter == executed  quote 1225982467717265 actual 1225982467717265
+PASS [rh $30K] UR (docs main) SELL exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $30K] UR (docs main) SELL exactOut: fee in native exactly 2% of the native leg  got 0.007953 fee 0.000162306 vs 200bps of gross 0.000162306 (diff 1 wei)
+PASS [rh $30K] UR (docs main) SELL exactOut: V4Quoter == executed  quote 13262209750100826437903405 actual 13262209750100826437903405
+PASS [rh $30K] UR (docs main) SELL exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $30K] UR 2.1.2 BUY exactIn: fee in native exactly 2% of the native leg  in 0.031812 fee 0.000636240 = 1.999999% (rate 200 bps)
+PASS [rh $30K] UR 2.1.2 BUY exactIn: V4Quoter == executed  quote 48354320048062976065095690 actual 48354320048062976065095690
+PASS [rh $30K] UR 2.1.2 BUY exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $30K] UR 2.1.2 BUY exactOut: fee in native exactly 2% of the native leg  paid 0.003559 fee 0.000071196 vs 200bps of paid 0.000071196 (diff 1 wei)
+PASS [rh $30K] UR 2.1.2 BUY exactOut: V4Quoter == executed  quote 3559817254234769 actual 3559817254234769
+PASS [rh $30K] UR 2.1.2 BUY exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $30K] UR 2.1.2 SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.001401 fee 0.000028037 = 1.999999% (rate 200 bps)
+PASS [rh $30K] UR 2.1.2 SELL exactIn: V4Quoter == executed  quote 1373839481891916 actual 1373839481891916
+PASS [rh $30K] UR 2.1.2 SELL exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $30K] UR 2.1.2 SELL exactOut: fee in native exactly 2% of the native leg  got 0.007953 fee 0.000162306 vs 200bps of gross 0.000162306 (diff 1 wei)
+PASS [rh $30K] UR 2.1.2 SELL exactOut: V4Quoter == executed  quote 11824330579715788681683157 actual 11824330579715788681683157
+PASS [rh $30K] UR 2.1.2 SELL exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $30K] exact-in buy that would only partly fill (price limit) reverts PartialFill  WrappedError(0x282385..,0xb47b2fb1) <- PartialFill
+PASS [rh $30K] selling 100% of a wallet balance via UR works  sold 133237209 got 0.073289
+PASS [rh $30K] wallet-to-wallet transfer is untaxed  1234567 sent and received
+PASS [rh $30K] outside addLiquidity via own unlock callback reverts  WrappedError(0x282385..,0x259982e5) <- LiquidityIsLocked
+PASS [rh $30K] outside native-side addLiquidity (range above price) reverts  WrappedError(0x282385..,0x259982e5) <- LiquidityIsLocked
+PASS [rh $30K] outside addLiquidity via canonical PositionManager reverts  WrappedError(0x282385..,0x259982e5) <- LiquidityIsLocked
+PASS [rh $30K] nobody can remove A (positions are keyed by owner = hook)  selector 0x93dafdf1
+PASS [rh $30K] nobody can remove B  selector 0x93dafdf1
+PASS [rh $30K] donate reverts (keeps graduation accounting exact)  WrappedError(0x282385..,0xb6a8b0fa) <- DonateDisabled
+PASS [rh $30K] hook callbacks callable only by the PoolManager  NotPoolManager
+PASS [rh $30K] launcher callback not callable from outside  NotPoolManager
+PASS [rh $30K] hook has no liquidity-removal entry point (state-changing fns)  afterSwap,beforeSwap,claim,createPool,unlockCallback
+     [rh $30K] gas direct: buy hooked 122137 vs hookless 93172 (+28965); sell hooked 127309 vs hookless 93605 (+33704)
+     [rh $30K] gas UR (docs main): buy hooked 135940 vs hookless 95653 (+40287); sell hooked 140293 vs hookless 106405 (+33888)
+PASS [rh $30K] gas measured for hooked vs hookless pool (direct + UR)
+PASS [rh $30K] MC at 10% of A == gen-7 MC at the same sold amount (tick rounding)  v4 0.467370 gen-7 0.467224 diff 312.261 ppm
+PASS [rh $30K] MC at 25% of A == gen-7 MC at the same sold amount (tick rounding)  v4 0.469208 gen-7 0.469062 diff 312.084616 ppm
+PASS [rh $30K] MC at 50% of A == gen-7 MC at the same sold amount (tick rounding)  v4 0.874234 gen-7 0.873990 diff 279.213371 ppm
+PASS [rh $30K] MC at 75% of A == gen-7 MC at the same sold amount (tick rounding)  v4 2.168068 gen-7 2.167616 diff 208.556635 ppm
+PASS [rh $30K] MC at 90% of A == gen-7 MC at the same sold amount (tick rounding)  v4 5.051527 gen-7 5.050989 diff 106.655076 ppm
+PASS [rh $30K] MC at 99% of A == gen-7 MC at the same sold amount (tick rounding)  v4 10.792571 gen-7 10.792892 diff 29.750264 ppm
+PASS [rh $30K] no graduation with 1 coin of A left (latch only at the threshold)  price 11.991256 MC
+PASS [rh $30K] crossing with exact-out buy: graduates in the same swap, swap fee at 2% (pre-grad rate)  rate 200
+PASS [rh $30K] graduation latched in the crossing swap  crossing swap gas 210713
+PASS [rh $30K] graduation fee == native of exactly 2% of A's liquidity (exact V4 math)  0.031816467
+PASS [rh $30K] graduation fee == 2% of A's native raise (within 2 wei)  fee 31816467097643439 vs 2% of 1590823354882171975 = 31816467097643439 (diff 0 wei)
+PASS [rh $30K] graduation fee + crossing swap fee credited to the fee router  0.032452708
+PASS [rh $30K] native raise in A vs gen-7 R (tick rounding)  A raise 1.590823 gen-7 R 1.590602 diff 138.973154 ppm
+PASS [rh $30K] A keeps exactly 98% of its liquidity; B untouched  A 16869909548037493068363
+PASS [rh $30K] top-of-A MC == gen-7 graduation MC within tick rounding  v4 11.991256 gen-7 11.991893 diff 53.100611 ppm; vs USD target 11.991893 native: 53.100612 ppm
+PASS [rh $30K] claims held by hook == sum owed  0.064918
+PASS [rh $30K] post-grad direct BUY exactIn: fee exactly 1% of native leg  in 0.079530 fee 0.000795301 = 0.999999% (rate 100 bps)
+PASS [rh $30K] post-grad direct BUY exactIn: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.079530 creator 0.000397650 protocol 0.000397650
+PASS [rh $30K] post-grad direct BUY exactIn: V4Quoter == executed  quote 6013299987491408721258702
+PASS [rh $30K] post-grad direct BUY exactIn: no second graduation
+PASS [rh $30K] post-grad ur BUY exactOut: fee exactly 1% of native leg  paid 0.042696 fee 0.000426965 vs 100bps of paid 0.000426965 (diff 1 wei)
+PASS [rh $30K] post-grad ur BUY exactOut: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.042696 creator 0.000213482 protocol 0.000213482
+PASS [rh $30K] post-grad ur BUY exactOut: V4Quoter == executed  quote 42696596062204612
+PASS [rh $30K] post-grad ur BUY exactOut: no second graduation
+PASS [rh $30K] post-grad ur SELL exactIn: fee exactly 1% of native leg  curve out 0.069307 fee 0.000693079 = 0.999999% (rate 100 bps)
+PASS [rh $30K] post-grad ur SELL exactIn: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.069307 creator 0.000346539 protocol 0.000346539
+PASS [rh $30K] post-grad ur SELL exactIn: V4Quoter == executed  quote 68614848619043456
+PASS [rh $30K] post-grad ur SELL exactIn: no second graduation
+PASS [rh $30K] post-grad direct SELL exactOut: fee exactly 1% of native leg  got 0.015906 fee 0.000160666 vs 100bps of gross 0.000160666 (diff 1 wei)
+PASS [rh $30K] post-grad direct SELL exactOut: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.016066 creator 0.000080333 protocol 0.000080333
+PASS [rh $30K] post-grad direct SELL exactOut: V4Quoter == executed  quote 1219951200074279164402901
+PASS [rh $30K] post-grad direct SELL exactOut: no second graduation
+PASS [rh $30K] price fell back below the graduation threshold  MC now 1.290304 vs top 11.991256
+PASS [rh $30K] after falling back: still graduated, still 1%
+PASS [rh $30K] re-crossing the threshold does not graduate again or take another 2%  crossed again: true
+PASS [rh $30K] claim(fee router) pays exactly what is owed, in native (anyone can trigger)  0.064918 gas 54628
+PASS [rh $30K] claim(protocol) pays exactly what is owed, in native (anyone can trigger)  0.015531 gas 54628
+PASS [rh $30K] claim(creator) pays exactly what is owed, in native (anyone can trigger)  0.015531 gas 49828
+PASS [rh $30K] hook claims fully paid out
+PASS [rh $30K] hook never received coins
+PASS [rh $30K] with a 0.1% Uniswap protocol fee forced on (fork only): hook fee still exact, quoter still exact  protocolFee 4097000
+     [rh $30K] the Uniswap protocol fee (max 0.1%/direction, set by the fee controller) would come out of the curve, not out of our fee
+PASS [rh] fork chainId  chainId 4663 block 85790158
+PASS [rh] test account deployer has no code on the fork  0x57c4651D72670cEaD600df37dE922C193B5f504E
+PASS [rh] test account creator has no code on the fork  0xFf60BEd9f41B71d661287cC6a1FeB20749C37E5B
+PASS [rh] test account buyer has no code on the fork  0x6938a07074Ed8e3b8D6d67Db4082a6aD759Db0C9
+PASS [rh] test account bot has no code on the fork  0x95B83Ae40AC38Cd6E5c24c4eb0FD81BFa036Ea9f
+PASS [rh] test account attacker has no code on the fork  0xec516Cb91beCa7B3DB829ED71ac2A2d87Cb78382
+PASS [rh] test account routerEoa has no code on the fork  0x8232D4572bE1d214cFe3dEb038d93523274092Da
+PASS [rh] test account protocolEoa has no code on the fork  0xAcECf5AC1a8E62858d2352bae2EB3b7fF2136AdE
+PASS [rh] code at PoolManager  0x8366a39cc670b4001a1121b8f6a443a643e40951 24009 bytes
+PASS [rh] code at PositionManager  0x58daec3116aae6d93017baaea7749052e8a04fa7 23877 bytes
+PASS [rh] code at V4Quoter  0x8dc178efb8111bb0973dd9d722ebeff267c98f94 6118 bytes
+PASS [rh] code at StateView  0xf3334192d15450cdd385c8b70e03f9a6bd9e673b 3531 bytes
+PASS [rh] code at Permit2  0x000000000022D473030F116dDEE9F6B43aC78BA3 9152 bytes
+PASS [rh] code at CREATE2 proxy  0x4e59b44847b379578588920ca78fbf26c0b4956c 69 bytes
+PASS [rh] code at gen-7 GraduationOracle  0xe635AA43fE5707561c8c3C655225da5C3e4C2239 1553 bytes
+PASS [rh] code at UR (docs main)  0x8876789976decbfcbbbe364623c63652db8c0904 24546 bytes
+PASS [rh] code at UR 2.1.2  0x204FAca1764B154221e35c0d20aBb3c525710498 24380 bytes
+     [rh] oracle native/USD at fork block: $2501.69  block gas limit 1125899906842624
+PASS [rh] hook salt mined for flags 0x28EC  0x282385196bdb26b519404306ff3d38691D3068ec after 517 tries, 33 ms
+PASS [rh] hook deployed at mined address  gas 2470081
+PASS [rh] launcher at predicted address (hook immutable points at it)  0x93Bf015A7d652FBf43be3b9E0Cb9Aa22b31C0ca4
+PASS [rh $50K] on-chain curve sizing == gen-7 curveForMarketCap (vN, vT)  vN 0.490170 vT 1007164874
+     [rh $50K] target MC 19.986489 native; gen-7 start MC 0.486683 end MC 19.986489 raise R 2.651003; ticks start 214440 grad 177290
+PASS [rh $50K] outside PoolManager.initialize with our hook reverts (launch front-run impossible)  WrappedError(0x282385..,0xdc98354e) <- OnlyThisHookMayInitialize
+PASS [rh $50K] hook.createPool from a non-launcher reverts  NotLauncher
+PASS [rh $50K] atomic launch: token + init + A/B mint + first buy in one tx  gas 1071659 (block gas limit 1125899906842624; 0.00%)
+PASS [rh $50K] launch gas fits an Arbitrum-style 32M per-tx cap and the BSC block  1071659
+PASS [rh $50K] pool initialized in the launch tx: native/coin, dynamic fee, our hook  poolId 0xd8cf037189ee7291d96e2757f7e16ce4bb2aa84d07dee4cb402eb4d30bb8859b
+PASS [rh $50K] LP fee is 0 (dynamic pool, never set)  lpFee 0 protocolFee 0
+PASS [rh $50K] creator first buy pays exactly 2% (not the 90% launch fee)  first buy 0.132550 fee 0.002651003 expected 0.002651003; got 210913890 coins
+PASS [rh $50K] creator holds 20M reserve + first-buy coins; hook holds 0 coins  creator 230913890
+PASS [rh $50K] minted A = 850M and B = 130M within rounding (dust burned)  A 849999999999999999999997098 B 129999999999999999999996559
+PASS [rh $50K] positions A and B are owned by the hook-locker in the PoolManager  liqA 22225081935007316551461 liqB 18379445078756586152277
+PASS [rh $50K] re-initialize of the live pool reverts  WrappedError(0x282385..,0xdc98354e) <- OnlyThisHookMayInitialize
+PASS [rh $50K] start MC == gen-7 start MC within tick rounding (spacing 10 => <= ~500 ppm)  v4 0.486916 gen-7 0.486683 diff 479.973872 ppm
+PASS [rh $50K] anti-sniper t+1s buy rate 8853 bps and exact  in 0.026510 fee 0.023469336 = 88.529999% (rate 8853 bps)
+PASS [rh $50K] anti-sniper t+2s sell rate 8706 bps and exact  curve out 0.000778 fee 0.000677362 = 87.059999% (rate 8706 bps)
+PASS [rh $50K] anti-sniper t+2s buy rate 8706 bps and exact  in 0.026510 fee 0.023079639 = 87.059999% (rate 8706 bps)
+PASS [rh $50K] anti-sniper t+2s sell rate 8706 bps and exact  curve out 0.000778 fee 0.000677362 = 87.059999% (rate 8706 bps)
+PASS [rh $50K] anti-sniper t+10s buy rate 7533 bps and exact  in 0.026510 fee 0.019970011 = 75.329999% (rate 7533 bps)
+PASS [rh $50K] anti-sniper t+10s sell rate 7533 bps and exact  curve out 0.000778 fee 0.000586098 = 75.329999% (rate 7533 bps)
+PASS [rh $50K] anti-sniper t+30s buy rate 4600 bps and exact  in 0.026510 fee 0.012194617 = 45.999999% (rate 4600 bps)
+PASS [rh $50K] anti-sniper t+30s sell rate 4600 bps and exact  curve out 0.000778 fee 0.000357899 = 45.999999% (rate 4600 bps)
+PASS [rh $50K] anti-sniper t+45s buy rate 2400 bps and exact  in 0.026510 fee 0.006362409 = 23.999999% (rate 2400 bps)
+PASS [rh $50K] anti-sniper t+45s sell rate 2400 bps and exact  curve out 0.000778 fee 0.000186729 = 23.999999% (rate 2400 bps)
+PASS [rh $50K] anti-sniper t+59s buy rate 346 bps and exact  in 0.026510 fee 0.000917247 = 3.459999% (rate 346 bps)
+PASS [rh $50K] anti-sniper t+59s sell rate 346 bps and exact  curve out 0.000778 fee 0.000026920 = 3.459999% (rate 346 bps)
+PASS [rh $50K] anti-sniper t+60s buy rate 200 bps and exact  in 0.026510 fee 0.000530200 = 1.999999% (rate 200 bps)
+PASS [rh $50K] anti-sniper t+60s sell rate 200 bps and exact  curve out 0.000778 fee 0.000015560 = 1.999999% (rate 200 bps)
+PASS [rh $50K] anti-sniper t+61s buy rate 200 bps and exact  in 0.026510 fee 0.000530200 = 1.999999% (rate 200 bps)
+PASS [rh $50K] anti-sniper t+61s sell rate 200 bps and exact  curve out 0.000778 fee 0.000015560 = 1.999999% (rate 200 bps)
+     [rh $50K] UR (docs main) 0x8876789976decbfcbbbe364623c63652db8c0904: V4_SWAP ExactInputSingleParams layout v2.1 (v2.0:revert, v2.1:ok)
+     [rh $50K] UR 2.1.2 0x204FAca1764B154221e35c0d20aBb3c525710498: V4_SWAP ExactInputSingleParams layout v2.1 (v2.0:revert, v2.1:ok)
+PASS [rh $50K] anti-sniper applies through the UniversalRouter too (t+5s)  rate 8266 bps
+PASS [rh $50K] direct unlock callback BUY exactIn: fee in native exactly 2% of the native leg  in 0.053020 fee 0.001060401 = 1.999999% (rate 200 bps)
+PASS [rh $50K] direct unlock callback BUY exactIn: V4Quoter == executed  quote 61543839482230877148709245 actual 61543839482230877148709245
+PASS [rh $50K] direct unlock callback BUY exactOut: fee in native exactly 2% of the native leg  paid 0.004700 fee 0.000094005 vs 200bps of paid 0.000094005 (diff 1 wei)
+PASS [rh $50K] direct unlock callback BUY exactOut: V4Quoter == executed  quote 4700297798151294 actual 4700297798151294
+PASS [rh $50K] direct unlock callback SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.001850 fee 0.000037001 = 1.999999% (rate 200 bps)
+PASS [rh $50K] direct unlock callback SELL exactIn: V4Quoter == executed  quote 1813069274220796 actual 1813069274220796
+PASS [rh $50K] direct unlock callback SELL exactOut: fee in native exactly 2% of the native leg  got 0.013255 fee 0.000270510 vs 200bps of gross 0.000270510 (diff 1 wei)
+PASS [rh $50K] direct unlock callback SELL exactOut: V4Quoter == executed  quote 14961487829563725871556290 actual 14961487829563725871556290
+PASS [rh $50K] UR (docs main) BUY exactIn: fee in native exactly 2% of the native leg  in 0.053020 fee 0.001060401 = 1.999999% (rate 200 bps)
+PASS [rh $50K] UR (docs main) BUY exactIn: V4Quoter == executed  quote 54379864953741083844948449 actual 54379864953741083844948449
+PASS [rh $50K] UR (docs main) BUY exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $50K] UR (docs main) BUY exactOut: fee in native exactly 2% of the native leg  paid 0.005296 fee 0.000105922 vs 200bps of paid 0.000105922 (diff 1 wei)
+PASS [rh $50K] UR (docs main) BUY exactOut: V4Quoter == executed  quote 5296135590973624 actual 5296135590973624
+PASS [rh $50K] UR (docs main) BUY exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $50K] UR (docs main) SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.002085 fee 0.000041702 = 1.999999% (rate 200 bps)
+PASS [rh $50K] UR (docs main) SELL exactIn: V4Quoter == executed  quote 2043418044685449 actual 2043418044685449
+PASS [rh $50K] UR (docs main) SELL exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $50K] UR (docs main) SELL exactOut: fee in native exactly 2% of the native leg  got 0.013255 fee 0.000270510 vs 200bps of gross 0.000270510 (diff 1 wei)
+PASS [rh $50K] UR (docs main) SELL exactOut: V4Quoter == executed  quote 13261442399308268659724736 actual 13261442399308268659724736
+PASS [rh $50K] UR (docs main) SELL exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $50K] UR 2.1.2 BUY exactIn: fee in native exactly 2% of the native leg  in 0.053020 fee 0.001060401 = 1.999999% (rate 200 bps)
+PASS [rh $50K] UR 2.1.2 BUY exactIn: V4Quoter == executed  quote 48351774226777017864925829 actual 48351774226777017864925829
+PASS [rh $50K] UR 2.1.2 BUY exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $50K] UR 2.1.2 BUY exactOut: fee in native exactly 2% of the native leg  paid 0.005933 fee 0.000118665 vs 200bps of paid 0.000118665 (diff 1 wei)
+PASS [rh $50K] UR 2.1.2 BUY exactOut: V4Quoter == executed  quote 5933296178981988 actual 5933296178981988
+PASS [rh $50K] UR 2.1.2 BUY exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $50K] UR 2.1.2 SELL exactIn: fee in native exactly 2% of the native leg  curve out 0.002336 fee 0.000046731 = 1.999999% (rate 200 bps)
+PASS [rh $50K] UR 2.1.2 SELL exactIn: V4Quoter == executed  quote 2289835130759029 actual 2289835130759029
+PASS [rh $50K] UR 2.1.2 SELL exactIn: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $50K] UR 2.1.2 SELL exactOut: fee in native exactly 2% of the native leg  got 0.013255 fee 0.000270510 vs 200bps of gross 0.000270510 (diff 1 wei)
+PASS [rh $50K] UR 2.1.2 SELL exactOut: V4Quoter == executed  quote 11823777759373984599324516 actual 11823777759373984599324516
+PASS [rh $50K] UR 2.1.2 SELL exactOut: referrer from hookData emitted  0x00000000000000000000000000000000000AE1e7
+PASS [rh $50K] exact-in buy that would only partly fill (price limit) reverts PartialFill  WrappedError(0x282385..,0xb47b2fb1) <- PartialFill
+PASS [rh $50K] selling 100% of a wallet balance via UR works  sold 133228770 got 0.122148
+PASS [rh $50K] wallet-to-wallet transfer is untaxed  1234567 sent and received
+PASS [rh $50K] outside addLiquidity via own unlock callback reverts  WrappedError(0x282385..,0x259982e5) <- LiquidityIsLocked
+PASS [rh $50K] outside native-side addLiquidity (range above price) reverts  WrappedError(0x282385..,0x259982e5) <- LiquidityIsLocked
+PASS [rh $50K] outside addLiquidity via canonical PositionManager reverts  WrappedError(0x282385..,0x259982e5) <- LiquidityIsLocked
+PASS [rh $50K] nobody can remove A (positions are keyed by owner = hook)  selector 0x93dafdf1
+PASS [rh $50K] nobody can remove B  selector 0x93dafdf1
+PASS [rh $50K] donate reverts (keeps graduation accounting exact)  WrappedError(0x282385..,0xb6a8b0fa) <- DonateDisabled
+PASS [rh $50K] hook callbacks callable only by the PoolManager  NotPoolManager
+PASS [rh $50K] launcher callback not callable from outside  NotPoolManager
+PASS [rh $50K] hook has no liquidity-removal entry point (state-changing fns)  afterSwap,beforeSwap,claim,createPool,unlockCallback
+     [rh $50K] gas direct: buy hooked 122041 vs hookless 93332 (+28709); sell hooked 127437 vs hookless 93701 (+33736)
+     [rh $50K] gas UR (docs main): buy hooked 135844 vs hookless 95689 (+40155); sell hooked 140137 vs hookless 106373 (+33764)
+PASS [rh $50K] gas measured for hooked vs hookless pool (direct + UR)
+PASS [rh $50K] MC at 10% of A == gen-7 MC at the same sold amount (tick rounding)  v4 0.779018 gen-7 0.778659 diff 461.148711 ppm
+PASS [rh $50K] MC at 25% of A == gen-7 MC at the same sold amount (tick rounding)  v4 0.782131 gen-7 0.781770 diff 460.969226 ppm
+PASS [rh $50K] MC at 50% of A == gen-7 MC at the same sold amount (tick rounding)  v4 1.457274 gen-7 1.456650 diff 428.093712 ppm
+PASS [rh $50K] MC at 75% of A == gen-7 MC at the same sold amount (tick rounding)  v4 3.613984 gen-7 3.612693 diff 357.426597 ppm
+PASS [rh $50K] MC at 90% of A == gen-7 MC at the same sold amount (tick rounding)  v4 8.420466 gen-7 8.418315 diff 255.509884 ppm
+PASS [rh $50K] MC at 99% of A == gen-7 MC at the same sold amount (tick rounding)  v4 17.990297 gen-7 17.988154 diff 119.084319 ppm
+PASS [rh $50K] no graduation with 1 coin of A left (latch only at the threshold)  price 19.988402 MC
+PASS [rh $50K] crossing with exact-out buy: graduates in the same swap, swap fee at 2% (pre-grad rate)  rate 200
+PASS [rh $50K] graduation latched in the crossing swap  crossing swap gas 210773
+PASS [rh $50K] graduation fee == native of exactly 2% of A's liquidity (exact V4 math)  0.053035337
+PASS [rh $50K] graduation fee == 2% of A's native raise (within 2 wei)  fee 53035337715320004 vs 2% of 2651766885766000244 = 53035337715320004 (diff 0 wei)
+PASS [rh $50K] graduation fee + crossing swap fee credited to the fee router  0.054095739
+PASS [rh $50K] native raise in A vs gen-7 R (tick rounding)  A raise 2.651766 gen-7 R 2.651003 diff 287.832851 ppm
+PASS [rh $50K] A keeps exactly 98% of its liquidity; B untouched  A 21780580296307170220432
+PASS [rh $50K] top-of-A MC == gen-7 graduation MC within tick rounding  v4 19.988402 gen-7 19.986489 diff 95.730514 ppm; vs USD target 19.986489 native: 95.730496 ppm
+PASS [rh $50K] claims held by hook == sum owed  0.108213
+PASS [rh $50K] post-grad direct BUY exactIn: fee exactly 1% of native leg  in 0.132550 fee 0.001325501 = 0.999999% (rate 100 bps)
+PASS [rh $50K] post-grad direct BUY exactIn: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.132550 creator 0.000662750 protocol 0.000662750
+PASS [rh $50K] post-grad direct BUY exactIn: V4Quoter == executed  quote 6012481581934166277622247
+PASS [rh $50K] post-grad direct BUY exactIn: no second graduation
+PASS [rh $50K] post-grad ur BUY exactOut: fee exactly 1% of native leg  paid 0.071170 fee 0.000711701 vs 100bps of paid 0.000711701 (diff 1 wei)
+PASS [rh $50K] post-grad ur BUY exactOut: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.071170 creator 0.000355850 protocol 0.000355850
+PASS [rh $50K] post-grad ur BUY exactOut: V4Quoter == executed  quote 71170172124230791
+PASS [rh $50K] post-grad ur BUY exactOut: no second graduation
+PASS [rh $50K] post-grad ur SELL exactIn: fee exactly 1% of native leg  curve out 0.115528 fee 0.001155281 = 0.999999% (rate 100 bps)
+PASS [rh $50K] post-grad ur SELL exactIn: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.115528 creator 0.000577640 protocol 0.000577640
+PASS [rh $50K] post-grad ur SELL exactIn: V4Quoter == executed  quote 114372849650580924
+PASS [rh $50K] post-grad ur SELL exactIn: no second graduation
+PASS [rh $50K] post-grad direct SELL exactOut: fee exactly 1% of native leg  got 0.026510 fee 0.000267778 vs 100bps of gross 0.000267778 (diff 1 wei)
+PASS [rh $50K] post-grad direct SELL exactOut: creator gets exactly 0.5% of native volume, protocol the rest, router 0  volume 0.026777 creator 0.000133889 protocol 0.000133889
+PASS [rh $50K] post-grad direct SELL exactOut: V4Quoter == executed  quote 1219791497116866375776230
+PASS [rh $50K] post-grad direct SELL exactOut: no second graduation
+PASS [rh $50K] price fell back below the graduation threshold  MC now 2.150707 vs top 19.988402
+PASS [rh $50K] after falling back: still graduated, still 1%
+PASS [rh $50K] re-crossing the threshold does not graduate again or take another 2%  crossed again: true
+PASS [rh $50K] claim(fee router) pays exactly what is owed, in native (anyone can trigger)  0.108213 gas 54628
+PASS [rh $50K] claim(protocol) pays exactly what is owed, in native (anyone can trigger)  0.025888 gas 54628
+PASS [rh $50K] claim(creator) pays exactly what is owed, in native (anyone can trigger)  0.025888 gas 49828
+PASS [rh $50K] hook claims fully paid out
+PASS [rh $50K] hook never received coins
+PASS [rh $50K] with a 0.1% Uniswap protocol fee forced on (fork only): hook fee still exact, quoter still exact  protocolFee 4097000
+     [rh $50K] the Uniswap protocol fee (max 0.1%/direction, set by the fee controller) would come out of the curve, not out of our fee
+
+SUMMARY: 570 PASS, 0 FAIL in 116s

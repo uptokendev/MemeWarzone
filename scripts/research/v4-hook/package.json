@@ -1,0 +1,16 @@
+{
+  "name": "mwz-research-v4-hook-fork-proof",
+  "private": true,
+  "type": "module",
+  "description": "Research only: local anvil fork proof for launching straight into a canonical Uniswap V4 pool with our hook.",
+  "scripts": {
+    "proof": "node run-proof.mjs"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.1.0",
+    "@uniswap/v4-core": "1.0.2",
+    "@uniswap/v4-periphery": "1.0.3",
+    "ethers": "6.16.0",
+    "solc": "0.8.26"
+  }
+}
