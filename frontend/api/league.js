@@ -14,7 +14,7 @@ import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayou
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import { withoutOwnerWallets } from "../shared/ownerWallets.mjs";
 import { gen8ConfigFor } from "./lib/evmGen8Config.js";
-import { gen8LeagueRowKeepSql, gen8PotFeeRawSql, gen8TraderNativeRawSql } from "./lib/evmGen8LeagueSql.js";
+import { gen8LeagueRowKeepSql, gen8NettedCurveTradesSql, gen8PotFeeRawSql, gen8TraderNativeRawSql } from "./lib/evmGen8LeagueSql.js";
 import { MODERATION_CARRY_CATEGORY, leagueExclusionRefusal, leagueRootExclusion, leagueWinnerHold, moderationClaimRefusal, rootLeafRows } from "../shared/moderationHolds.mjs";
 import {
   buildMerkleProof as buildSolanaMerkleProof,
@@ -1287,6 +1287,9 @@ export default async function handler(req, res) {
     const gen8League = Boolean(gen8ConfigFor(chainId));
     const g8Keep = (alias) => (gen8League ? `\n                AND ${gen8LeagueRowKeepSql(alias)}` : "");
     const g8Amount = (alias) => (gen8League ? gen8TraderNativeRawSql(alias) : `${alias}.bnb_amount_raw::numeric`);
+    // Wash netting (audit D-L2): gen-8 swaps of one coin by one wallet in one transaction count as one net row. Same
+    // FROM item as settlement (leagueLeaderboard.ts). `plain` is the exact pre-gen-8 text for every other chain.
+    const g8Trades = (plain) => (gen8League ? gen8NettedCurveTradesSql("t") : plain);
 
     if (category === "fastest_finish") {
       const params = [chainId, epochStartIso, rangeEndIso, limit];
@@ -1312,7 +1315,7 @@ export default async function handler(req, res) {
             EXTRACT(EPOCH FROM (c.graduated_at_chain - c.created_at_chain))::bigint AS duration_seconds,
             (
               SELECT ${sqlDistinctWallet("t.wallet", isSolanaLeagueChain(chainId))}
-              FROM curve_trades t
+              FROM ${g8Trades("curve_trades t")}
               WHERE t.chain_id = c.chain_id
                 AND t.campaign_address = c.campaign_address
                 AND t.side = 'buy'
@@ -1373,7 +1376,7 @@ export default async function handler(req, res) {
             0::int AS sells_count,
             (
               SELECT COUNT(DISTINCT t.wallet)
-              FROM curve_trades t
+              FROM ${g8Trades("curve_trades t")}
               WHERE t.chain_id = c.chain_id
                 AND t.campaign_address = c.campaign_address
                 AND t.side = 'buy'
@@ -1383,7 +1386,7 @@ export default async function handler(req, res) {
             ) AS unique_buyers,
             (
               SELECT COALESCE(SUM(${g8Amount("t")}), 0)::numeric(78,0)
-              FROM curve_trades t
+              FROM ${g8Trades("curve_trades t")}
               WHERE t.chain_id = c.chain_id
                 AND t.campaign_address = c.campaign_address
                 AND t.side = 'buy'
@@ -1400,7 +1403,7 @@ export default async function handler(req, res) {
             AND ($3::timestamptz IS NULL OR c.graduated_at_chain < $3::timestamptz)
             AND NOT EXISTS (
               SELECT 1
-              FROM curve_trades t
+              FROM ${g8Trades("curve_trades t")}
               WHERE t.chain_id = c.chain_id
                 AND t.campaign_address = c.campaign_address
                 AND t.side = 'sell'
@@ -1451,7 +1454,7 @@ export default async function handler(req, res) {
               PARTITION BY t.campaign_address
               ORDER BY ${g8Amount("t")} DESC NULLS LAST, t.block_number DESC, t.log_index DESC
             ) AS rn
-          FROM curve_trades t
+          FROM ${g8Trades("curve_trades t")}
           JOIN campaigns c
             ON c.chain_id = t.chain_id
            AND c.campaign_address = t.campaign_address
@@ -1582,7 +1585,7 @@ export default async function handler(req, res) {
             ${sqlWalletGroup("t.wallet", isSolanaLeagueChain(chainId))} AS wallet,
             t.side,
             ${g8Amount("t")} AS bnb_raw
-          FROM public.curve_trades t
+          FROM ${g8Trades("public.curve_trades t")}
           JOIN public.campaigns c
             ON c.chain_id = t.chain_id
            AND c.campaign_address = t.campaign_address

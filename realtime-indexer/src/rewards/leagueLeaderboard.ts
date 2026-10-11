@@ -24,6 +24,36 @@ export function gen8TraderNativeRawSql(a = "t") {
 export function gen8LeagueRowKeepSql(a = "t") {
   return `NOT (${GEN8_ROW(a)} AND coalesce(${a}.league_excluded, false))`;
 }
+/**
+ * Wash netting (audit D-L2): the FROM item that replaces `curve_trades <alias>`. Non-gen-8 rows pass through as they
+ * are; the gen-8 swaps of one coin by one wallet (tx.from) in one transaction become one row of the net trader-side
+ * amount (side by sign, a net of 0 leaves no row), league_excluded rows netted only among themselves and kept marked,
+ * block of the transaction and log_index of the last leg. The same text as frontend/api/lib/evmGen8LeagueSql.js
+ * gen8NettedCurveTradesSql, so the board shows what settlement pays.
+ */
+export function gen8NettedCurveTradesSql(alias = "t") {
+  return `(
+        SELECT x.chain_id, x.campaign_address, x.tx_hash, x.log_index, x.block_number, x.block_time, x.side, x.wallet,
+               x.bnb_amount_raw::numeric AS bnb_amount_raw, x.venue, x.fee_raw::numeric AS fee_raw, x.league_excluded
+        FROM public.curve_trades x
+        WHERE NOT ${GEN8_ROW("x")}
+        UNION ALL
+        SELECT n.chain_id, n.campaign_address, n.tx_hash, n.log_index, n.block_number, n.block_time,
+               CASE WHEN n.net_raw > 0 THEN 'buy' ELSE 'sell' END AS side, n.wallet,
+               abs(n.net_raw) AS bnb_amount_raw, 'gen8' AS venue, NULL::numeric AS fee_raw, n.league_excluded
+        FROM (
+          SELECT g.chain_id, g.campaign_address, g.tx_hash, g.wallet, g.block_number, g.block_time,
+                 coalesce(g.league_excluded, false) AS league_excluded,
+                 max(g.log_index) AS log_index,
+                 sum(CASE WHEN g.side = 'buy' THEN ${gen8TraderNativeRawSql("g")} ELSE -${gen8TraderNativeRawSql("g")} END) AS net_raw
+          FROM public.curve_trades g
+          WHERE ${GEN8_ROW("g")}
+          GROUP BY g.chain_id, g.campaign_address, g.tx_hash, g.wallet, g.block_number, g.block_time, coalesce(g.league_excluded, false)
+        ) n
+        WHERE n.net_raw <> 0
+      ) ${alias}`;
+}
+
 /** The gen-8 fragments once curve_trades has fee_raw and league_excluded (gen-8 rows need both); else the old SQL. */
 async function gen8LeagueSql(db: Db) {
   const cols = await curveTradeGen5Columns(db);
@@ -31,6 +61,8 @@ async function gen8LeagueSql(db: Db) {
   return {
     amount: (a = "t") => (on ? gen8TraderNativeRawSql(a) : `${a}.bnb_amount_raw::numeric`),
     keep: (a = "t") => (on ? `AND ${gen8LeagueRowKeepSql(a)}` : ""),
+    // `plain` is the exact pre-gen-8 FROM text, used while the columns are missing.
+    trades: (plain: string) => (on ? gen8NettedCurveTradesSql("t") : plain),
   };
 }
 
@@ -71,7 +103,7 @@ export async function leagueLeaderboard(
           EXTRACT(EPOCH FROM (c.graduated_at_chain - c.created_at_chain))::bigint AS duration_seconds,
           (
             SELECT COUNT(DISTINCT t.wallet)
-            FROM curve_trades t
+            FROM ${g8.trades("curve_trades t")}
             WHERE t.chain_id=c.chain_id
               AND t.campaign_address=c.campaign_address
               AND t.side='buy'
@@ -108,6 +140,7 @@ export async function leagueLeaderboard(
   }
 
   if (category === "perfect_run") {
+    const g8 = await gen8LeagueSql(db);
     const { rows } = await db.query(
       `
       WITH grads AS (
@@ -121,7 +154,7 @@ export async function leagueLeaderboard(
           EXTRACT(EPOCH FROM (c.graduated_at_chain - c.created_at_chain))::bigint AS duration_seconds,
           (
             SELECT COUNT(*)
-            FROM curve_trades t
+            FROM ${g8.trades("curve_trades t")}
             WHERE t.chain_id=c.chain_id
               AND t.campaign_address=c.campaign_address
               AND t.side='sell'
@@ -175,7 +208,7 @@ export async function leagueLeaderboard(
             PARTITION BY t.campaign_address
             ORDER BY ${g8.amount("t")} DESC NULLS LAST, t.block_number DESC, t.log_index DESC
           ) AS rn
-        FROM public.curve_trades t
+        FROM ${g8.trades("public.curve_trades t")}
         JOIN public.campaigns c
           ON c.chain_id = t.chain_id
          AND c.campaign_address = t.campaign_address
@@ -282,7 +315,7 @@ export async function leagueLeaderboard(
         SELECT
           ${sqlWallet("t.wallet", chainId)} as wallet,
           sum(case when t.side='sell' then (${g8.amount("t")}) else -(${g8.amount("t")}) end)::numeric(78,0) as pnl_raw
-        FROM public.curve_trades t
+        FROM ${g8.trades("public.curve_trades t")}
         JOIN public.campaigns c
           ON c.chain_id = t.chain_id
          AND c.campaign_address = t.campaign_address

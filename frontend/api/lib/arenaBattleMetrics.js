@@ -15,6 +15,9 @@ import {
   clusterIdFor,
   volumeAuditRows,
 } from "./arenaBattleVolume.js";
+import { gen8ConfigFor } from "./evmGen8Config.js";
+import { findGen8Coin } from "./evmGen8Coins.js";
+import { netGen8BattleTrades } from "./evmGen8BattleNetting.js";
 
 const BASELINE_INSERT_SQL = `
 INSERT INTO public.arena_battle_metrics (
@@ -415,7 +418,7 @@ export async function loadBattleWindowTrades({ chainId, campaignAddress, tokenAd
   });
   const nativeUsd = deps.nativeUsd || (needsNativeFx ? await resolveNativeUsdPrice(chainId, deps.resolveNativeUsd) : null);
 
-  return rows.map((row) => {
+  const trades = rows.map((row) => {
     const valuation = normalizeTradeUsd(row, chainId, nativeUsd);
     return {
       wallet: row.wallet,
@@ -434,6 +437,13 @@ export async function loadBattleWindowTrades({ chainId, campaignAddress, tokenAd
       source: row.source,
     };
   });
+  // Generation 8 coins only (chains with gen-8 configured): one transaction's legs by one wallet count as one net
+  // trade (audit D-L2, evmGen8BattleNetting.js). Every other coin's trades are returned exactly as before.
+  if (gen8ConfigFor(chainId)) {
+    const coin = await findGen8Coin({ chainId, address: campaignAddress || tokenAddress, db: { query } });
+    if (coin) return netGen8BattleTrades(trades);
+  }
+  return trades;
 }
 
 export async function refreshCombatantVolumeAndPoints({

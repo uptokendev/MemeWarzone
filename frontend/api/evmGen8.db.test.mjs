@@ -330,3 +330,96 @@ test("finance: post-graduation lane and the gen-8 block; no lane and no query wi
   setGen8(false);
   assert.deepEqual(await buildGen8Finance({ db, chainId: CHAIN }), { chainId: CHAIN, configured: false });
 });
+
+// Audit D-L2 (wash netting). Same fixtures and figures as realtime-indexer/src/tests/evmGen8LeagueSettlement
+// .integration.test.ts. GW: a graduated gen-8 coin. W4 buys (trader-side 1.000) and sells (trader-side 0.980) in ONE
+// transaction: one net buy of 0.020. W5 buys 0.050 in its own transaction. On G8, W6 buys 0.040 and, in the same
+// transaction, a row the indexer marked league_excluded sells 0.029: the excluded row is never netted in.
+test("wash netting: one transaction's gen-8 legs by one wallet count as one net row; board SQL == settlement SQL", async () => {
+  const GW = "0x00000000000000000000000000000000000000a9";
+  const CREATORW = "0x00000000000000000000000000000000000000d9";
+  const W4 = "0x0000000000000000000000000000000000000004";
+  const W5 = "0x0000000000000000000000000000000000000005";
+  const W6 = "0x0000000000000000000000000000000000000006";
+  await db.query(
+    `insert into public.campaigns (chain_id, campaign_address, token_address, creator_address, name, symbol, meta, created_block, created_at_chain,
+       graduated_block, graduated_at_chain, factory_generation, campaign_generation, is_active)
+     values ($1, $2, $2, $3, 'Wash', 'WSH', '{}'::jsonb, 2, $4, 10000, $5, 8, 8, true)`,
+    [CHAIN, GW, CREATORW, at(0), at(18)],
+  );
+  const t17 = at(17); // one block time for every leg (legs of one transaction share their block)
+  const leg = (campaign, tx, logIndex, block, hour, side, wallet, curve, fee, excluded = false) => db.query(
+    `insert into public.curve_trades (chain_id, campaign_address, tx_hash, log_index, block_number, block_time, side, wallet,
+       token_amount_raw, bnb_amount_raw, token_amount, bnb_amount, venue, fee_raw, league_excluded)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, 1, $9::numeric / 1e18, 'gen8', $10, $11)`,
+    [CHAIN, campaign, tx, logIndex, block, hour === 17 ? t17 : at(hour), side, wallet, curve.toString(), fee.toString(), excluded],
+  );
+  const WASH_TX = `0x${"ab".repeat(32)}`;
+  await leg(GW, WASH_TX, 7, 5000, 17, "buy", W4, milli(980), milli(20)); // pays 1.000
+  await leg(GW, WASH_TX, 9, 5000, 17, "sell", W4, milli(1000), milli(20)); // receives 0.980
+  await leg(GW, `0x${"cd".repeat(32)}`, 1, 5001, 17, "buy", W5, milli(49), milli(1)); // pays 0.050
+  const MIXED_TX = `0x${"ef".repeat(32)}`;
+  await leg(G8, MIXED_TX, 1, 5002, 17, "buy", W6, milli(39), milli(1)); // pays 0.040
+  await leg(G8, MIXED_TX, 2, 5002, 17, "sell", W6, milli(30), milli(1), true); // excluded, receives 0.029
+
+  setGen8(true);
+  try {
+    // biggest_hit: the net buy (0.020), not the 1.000 leg; W5's 0.050 is the coin's biggest hit.
+    const hits = await board("biggest_hit");
+    const byCoin = Object.fromEntries(hits.map((r) => [r.campaign_address, r]));
+    assert.equal(byCoin[GW].buyer_address, W5);
+    assert.equal(String(byCoin[GW].bnb_amount_raw), milli(50).toString());
+    assert.equal(byCoin[G8].buyer_address, W1, "G8 unchanged");
+    assert.equal(String(byCoin[G7].bnb_amount_raw), milli(1020).toString(), "gen-7 unchanged");
+
+    // top_earner: W4 made no sell once netted (one net buy, -0.020), so it is not in the realized field; W6's
+    // excluded sell is not netted into its buy. Everyone else as before.
+    const top = await board("top_earner");
+    const byWallet = Object.fromEntries(top.map((r) => [r.wallet, r]));
+    assert.equal(byWallet[W4], undefined, "a wash pair is not a realized sell");
+    assert.equal(byWallet[W6], undefined);
+    assert.equal(String(byWallet[W3].profit_raw), (milli(196) - milli(102)).toString());
+    assert.equal(String(byWallet[W1].profit_raw), (milli(490) - milli(1020) + milli(294) - milli(1224)).toString());
+
+    // perfect_run (monthly): GW has no sell once netted, so it qualifies; its buy total is 0.020 + 0.050.
+    const res = await call(league, `/api/league?${new URLSearchParams({ chainId: String(CHAIN), category: "perfect_run", period: "monthly" })}`);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    const run = res.body.items.find((r) => r.campaign_address === GW);
+    assert.ok(run, "GW qualifies for perfect_run");
+    assert.equal(String(run.buy_total_raw), milli(70).toString());
+    assert.equal(Number(run.unique_buyers), 2);
+
+    // The netted SQL directly: one row for the wash transaction (side buy, 0.020, last leg's log index 9).
+    const { gen8NettedCurveTradesSql } = await import("./lib/evmGen8LeagueSql.js");
+    const { rows } = await db.query(`select side, bnb_amount_raw::text as amt, log_index, block_number, wallet, league_excluded from ${gen8NettedCurveTradesSql("t")} where t.tx_hash = $1`, [WASH_TX]);
+    assert.deepEqual(rows, [{ side: "buy", amt: milli(20).toString(), log_index: 9, block_number: "5000", wallet: W4, league_excluded: false }]);
+    const mixed = await db.query(`select side, bnb_amount_raw::text as amt, league_excluded from ${gen8NettedCurveTradesSql("t")} where t.tx_hash = $1 order by league_excluded`, [MIXED_TX]);
+    assert.deepEqual(mixed.rows, [{ side: "buy", amt: milli(40).toString(), league_excluded: false }, { side: "sell", amt: milli(29).toString(), league_excluded: true }]);
+    // Every non-gen-8 row passes through unchanged.
+    const g7 = await db.query(`select count(*)::int as n from ${gen8NettedCurveTradesSql("t")} where t.campaign_address = $1`, [G7]);
+    assert.equal(g7.rows[0].n, 2);
+
+    // Settlement renders the exact same FROM item (leagueLeaderboard.ts gen8NettedCurveTradesSql).
+    const ts = fs.readFileSync(path.join(ROOT, "realtime-indexer/src/rewards/leagueLeaderboard.ts"), "utf8");
+    const fn = (name) => {
+      const i = ts.indexOf(`export function ${name}(`);
+      return ts.slice(i, ts.indexOf("\n}\n", i) + 2).replace(/^export /, "");
+    };
+    const settlementNetted = new Function(
+      `const GEN8_ROW = (a) => \`coalesce(\${a}.venue, '') = 'gen8'\`;\n${fn("gen8TraderNativeRawSql")}\n${fn("gen8NettedCurveTradesSql")}\nreturn gen8NettedCurveTradesSql;`,
+    )();
+    assert.equal(settlementNetted("t"), gen8NettedCurveTradesSql("t"), "board == settlement");
+  } finally {
+    setGen8(false);
+  }
+});
+
+test("wash netting is gen-8 only: without gen-8 config the boards read curve_trades exactly as before", async () => {
+  setGen8(false);
+  // GW's wash legs are gen-8 rows on a chain without gen-8 config: the plain SQL counts both legs (the pre-gen-8
+  // behaviour), which shows the netted FROM item is not used there.
+  const hits = await board("biggest_hit");
+  const byCoin = Object.fromEntries(hits.map((r) => [r.campaign_address, r]));
+  assert.equal(byCoin["0x00000000000000000000000000000000000000a9"].buyer_address, "0x0000000000000000000000000000000000000004");
+  assert.equal(String(byCoin["0x00000000000000000000000000000000000000a9"].bnb_amount_raw), milli(980).toString(), "raw curve amount, as before gen-8");
+});
