@@ -48,8 +48,8 @@ test("static: fixed index routes only", () => {
 
 test("coins: canonical urls, hidden filter and chain whitelist in SQL", async () => {
   const db = fakeDb((sql) => sql.includes("arena_token_imports") ? [{ chain_id: 101, token_address: "So1anaMint111", lastmod: null }] : [
-    { chain_id: 56, campaign_address: "0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD", lastmod: "2026-10-01T00:00:00Z" },
-    { chain_id: 4663, campaign_address: "0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD", lastmod: null },
+    { chain_id: 56, coin_address: "0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD", lastmod: "2026-10-01T00:00:00Z" },
+    { chain_id: 4663, coin_address: "0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD", lastmod: null },
   ]);
   const out = await coinEntries(db);
   const locs = out.map((e) => e.loc);
@@ -57,6 +57,7 @@ test("coins: canonical urls, hidden filter and chain whitelist in SQL", async ()
   assert.ok(locs.includes(`${O}/token/0xabcdefabcdefabcdefabcdefabcdefabcdefabcd?chainId=4663`));
   assert.ok(locs.includes(`${O}/token/So1anaMint111`));
   const sql = db.calls.map((c) => c.sql).join("\n");
+  assert.match(sql, /coalesce\(nullif\(c\.token_address, ''\), c\.campaign_address\) as coin_address/);
   assert.match(sql, /publicHidden/);
   assert.match(sql, /\(56,\s*101,\s*4663\)/);
   assert.doesNotMatch(sql, /\b(insert|update|delete)\b/i);

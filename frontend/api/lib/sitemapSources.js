@@ -34,12 +34,13 @@ function dedupe(entries) {
   return entries.filter((e) => e.loc && !seen.has(e.loc) && seen.add(e.loc));
 }
 
-// Campaigns: public hidden filter copied from api/lib/publicHiddenSql.js (used by campaigns.js:164
+// Campaigns: the app's canonical coin URL uses the token address (TokenDetails.tsx:1277, 1494), so the
+// token address is listed and the campaign address is only a fallback when it is empty. Public hidden filter copied from api/lib/publicHiddenSql.js (used by campaigns.js:164
 // via loadPublicHiddenCampaignKeys); future-scheduled drafts excluded as in campaigns.js:183-184.
 // Imports: api/arenaImports.js handleRecent (public list) takes status = 'passed'.
 export async function coinEntries(db) {
   const campaigns = await db.query(
-    `select c.chain_id, c.campaign_address, coalesce(c.created_at_chain, c.created_at) as lastmod
+    `select c.chain_id, coalesce(nullif(c.token_address, ''), c.campaign_address) as coin_address, coalesce(c.created_at_chain, c.created_at) as lastmod
        from public.campaigns c
       where c.chain_id in ${PUBLIC_CHAINS_SQL}
         and c.campaign_address is not null
@@ -51,7 +52,7 @@ export async function coinEntries(db) {
              and lower(d.campaign_address) = lower(c.campaign_address)
              and d.scheduled_launch_at > now()
         )
-      order by c.chain_id, c.campaign_address
+      order by c.chain_id, coin_address
       limit ${ROW_LIMIT}`,
     [],
   );
@@ -67,7 +68,7 @@ export async function coinEntries(db) {
   );
   const out = [];
   for (const r of rowsOf(campaigns)) {
-    const loc = canonicalForToken(r.campaign_address, r.chain_id);
+    const loc = canonicalForToken(r.coin_address, r.chain_id);
     if (loc) out.push({ loc, lastmod: r.lastmod || undefined });
   }
   for (const r of rowsOf(imports)) {
