@@ -84,7 +84,7 @@ export function createSeoRenderer({ shell, entities, now = Date.now, cacheCap = 
   };
 
   const notFound = (res, html) =>
-    send(res, 404, injectSeo(html, {
+    send(res, 410, injectSeo(html, {
       title: titleOf("Page not found"),
       description: DEFAULT_DESCRIPTION,
       canonical: null,

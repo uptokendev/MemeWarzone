@@ -25,8 +25,10 @@ function setup({ shell = SHELL, data = {}, cap } = {}) {
   const r = createSeoRenderer({ shell: { get: async () => cur.html }, entities, now: () => 1000, cacheCap: cap });
   const run = async (url) => {
     const res = fakeRes();
+    
     const [path, qs] = url.split("?");
     await r({ path, url, originalUrl: url, query: Object.fromEntries(new URLSearchParams(qs || "")), headers: {} }, res);
+    assert.notEqual(res.statusCode, 404, "renderer must never answer 404");
     return res;
   };
   return { run, calls, cur };
@@ -88,10 +90,10 @@ test("private prepare is noindex without canonical", async () => {
   assert.equal(res.headers["x-robots-tag"], "noindex,follow");
 });
 
-test("not found is 404 noindex with shell", async () => {
+test("not found is 410 noindex with shell", async () => {
   const { run } = setup({ data: { battle: { found: false } } });
   const res = await run("/__render/warzone/battles/abc");
-  assert.equal(res.statusCode, 404);
+  assert.equal(res.statusCode, 410);
   assert.match(res.body, /<title>Page not found · MemeWarzone<\/title>/);
   assert.match(res.body, /noindex/);
   assert.doesNotMatch(res.body, /rel="canonical"/);
@@ -112,11 +114,11 @@ test("shell null is 503", async () => {
   assert.equal((await run("/__render/coins")).statusCode, 503);
 });
 
-test("invalid ids are 404 with no loader call", async () => {
+test("invalid ids are 410 with no loader call", async () => {
   const { run, calls } = setup({ data: { coin: found(), battle: found(), post: found(), prepare: found(), recruiter: found(), tournament: found(), profile: found() } });
   for (const u of ["/token/0x12", "/token/not$valid", "/warzone/battles/a%20b", "/post/0", "/post/abc", "/prepare/-x", "/recruiters/UP!", "/warzone/tournaments/a.b"]) {
     const res = await run("/__render" + u);
-    assert.equal(res.statusCode, 404, u);
+    assert.equal(res.statusCode, 410, u);
     assert.match(res.body, /Page not found/);
   }
   assert.equal(calls.length, 0);
@@ -147,10 +149,10 @@ test("LRU respects cap", async () => {
   assert.equal(calls.length, 11);
 });
 
-test("unknown path 404", async () => {
+test("unknown path 410", async () => {
   const { run } = setup();
   const res = await run("/__render/nope/nothing");
-  assert.equal(res.statusCode, 404);
+  assert.equal(res.statusCode, 410);
   assert.match(res.body, /noindex/);
 });
 
