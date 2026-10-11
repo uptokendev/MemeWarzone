@@ -1046,10 +1046,11 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
       }
     };
     void load();
-    const timer = window.setInterval(() => void load(), 60_000);
+    // 5 minutes, matching the API cache; paused while the tab is hidden.
+    const stopPolling = setVisibleInterval(() => void load(), 300_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [solanaHolderMint, solanaHolderCampaign]);
   const transferHolders = useTokenTransferHolders({

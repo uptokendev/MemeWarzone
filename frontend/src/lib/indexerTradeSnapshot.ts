@@ -53,3 +53,16 @@ export function shouldRunSolanaTipReconcile(input: {
   if (!input.indexerOk) return false;
   return Number(input.indexerRows || 0) > 0;
 }
+
+/**
+ * Whether the browser checks the campaign PDA on chain for fills the indexer book may lack.
+ * Only when the indexer is down or returned no rows: a healthy book is not re-verified per viewer.
+ */
+export function shouldRunSolanaOnChainCheck(input: {
+  fullRefresh: boolean;
+  indexerOk: boolean;
+  indexerRows?: number;
+}): boolean {
+  if (!input.fullRefresh && input.indexerOk) return false;
+  return !input.indexerOk || Number(input.indexerRows || 0) === 0;
+}

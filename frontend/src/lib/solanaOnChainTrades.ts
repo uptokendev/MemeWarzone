@@ -177,6 +177,32 @@ async function mapPool<T, R>(
   return out;
 }
 
+// Signatures that were fetched and held no trade event (vote, claim and other PDA txs). They never
+// become known through the indexer book, so without this every pass fetched them again. Bounded,
+// oldest dropped first; lives for the page session.
+const MAX_NON_TRADE_SIGNATURES = 2000;
+const nonTradeSignatures = new Set<string>();
+
+export function rememberNonTradeSignature(signature: string): void {
+  const key = String(signature || "");
+  if (!key) return;
+  nonTradeSignatures.delete(key);
+  nonTradeSignatures.add(key);
+  while (nonTradeSignatures.size > MAX_NON_TRADE_SIGNATURES) {
+    const oldest = nonTradeSignatures.values().next().value;
+    if (oldest === undefined) break;
+    nonTradeSignatures.delete(oldest);
+  }
+}
+
+export function isRememberedNonTradeSignature(signature: string): boolean {
+  return nonTradeSignatures.has(String(signature || ""));
+}
+
+export function resetNonTradeSignatures(): void {
+  nonTradeSignatures.clear();
+}
+
 export function selectSolanaSignaturesToFetch(input: {
   signatures: Array<{ signature?: string | null; slot?: number | null; err?: unknown | null }>;
   knownTxHashes: Iterable<string>;
@@ -233,7 +259,7 @@ export async function fetchSolanaOnChainTrades(
   const pubkey = new web3.PublicKey(campaign);
   const signatures = await connection.getSignaturesForAddress(pubkey, { limit });
   const missing = selectSolanaSignaturesToFetch({
-    signatures,
+    signatures: (signatures || []).filter((item) => !isRememberedNonTradeSignature(String(item?.signature || ""))),
     knownTxHashes: known,
     minSlot,
     maxFetch: opts?.maxFetch ?? 8,
@@ -251,7 +277,12 @@ export async function fetchSolanaOnChainTrades(
           maxSupportedTransactionVersion: 0,
         });
         const events = decodeSolanaTradeEvents(tx?.meta?.logMessages, campaign);
-        if (!events.length) return [];
+        if (!events.length) {
+          // Only a transaction that came back with its logs is remembered; null or log-less
+          // results may be a node that has not indexed it yet.
+          if (Array.isArray(tx?.meta?.logMessages)) rememberNonTradeSignature(item.signature);
+          return [];
+        }
         const blockTime = Number(tx?.blockTime || item.blockTime || 0);
         const slot = Number(tx?.slot || item.slot || 0);
         return events

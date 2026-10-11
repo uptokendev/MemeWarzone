@@ -16,6 +16,7 @@ import { fetchSolanaOnChainTrades } from "@/lib/solanaOnChainTrades";
 import {
   parseIndexerTradeBody,
   shouldRunSolanaHistoryFallback,
+  shouldRunSolanaOnChainCheck,
   shouldRunSolanaTipReconcile,
 } from "@/lib/indexerTradeSnapshot";
 import {
@@ -466,7 +467,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         !indexerBackoffActive &&
         isSolanaChainId(chainId) &&
         Boolean(campaignAddress) &&
-        (mode === "full" || !indexerOk) &&
+        shouldRunSolanaOnChainCheck({ fullRefresh: mode === "full", indexerOk, indexerRows }) &&
         (fullHistoryFallback || tipReconcile || indexerOk);
       const verifySolana = async () => {
         if (!runSolanaCheck || !campaignAddress) return 0;

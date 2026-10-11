@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseIndexerTradeBody, shouldRunSolanaHistoryFallback, shouldRunSolanaTipReconcile } from "./indexerTradeSnapshot.ts";
+import { parseIndexerTradeBody, shouldRunSolanaHistoryFallback, shouldRunSolanaOnChainCheck, shouldRunSolanaTipReconcile } from "./indexerTradeSnapshot.ts";
 
 test("legacy array response is not treated as Solana durable-complete", () => {
   const parsed = parseIndexerTradeBody([{ tx_hash: "sig" }], 101);
@@ -78,4 +78,16 @@ test("disabled fallback never runs", () => {
     indexerOk: false,
     historyComplete: false,
   }), false);
+});
+
+test("on-chain check runs only when the indexer is down or returned no rows", () => {
+  // healthy indexer with rows: neither a full refresh nor a poll verifies on chain
+  assert.equal(shouldRunSolanaOnChainCheck({ fullRefresh: true, indexerOk: true, indexerRows: 5 }), false);
+  assert.equal(shouldRunSolanaOnChainCheck({ fullRefresh: false, indexerOk: true, indexerRows: 5 }), false);
+  // healthy indexer, empty book: full refresh checks, a light poll does not
+  assert.equal(shouldRunSolanaOnChainCheck({ fullRefresh: true, indexerOk: true, indexerRows: 0 }), true);
+  assert.equal(shouldRunSolanaOnChainCheck({ fullRefresh: false, indexerOk: true, indexerRows: 0 }), false);
+  // indexer down: always checks
+  assert.equal(shouldRunSolanaOnChainCheck({ fullRefresh: true, indexerOk: false, indexerRows: 0 }), true);
+  assert.equal(shouldRunSolanaOnChainCheck({ fullRefresh: false, indexerOk: false }), true);
 });

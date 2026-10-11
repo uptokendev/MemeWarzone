@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodeSolanaTradeEvents, decodedTradeToPoint, selectSolanaSignaturesToFetch } from "./solanaOnChainTrades.ts";
+import {
+  decodeSolanaTradeEvents,
+  decodedTradeToPoint,
+  isRememberedNonTradeSignature,
+  rememberNonTradeSignature,
+  resetNonTradeSignatures,
+  selectSolanaSignaturesToFetch,
+} from "./solanaOnChainTrades.ts";
 
 const BUY_DISC = Buffer.from("9794ade2801ef9be", "hex");
 const SELL_DISC = Buffer.from("d953448986e15e2d", "hex");
@@ -122,4 +129,15 @@ test("TokensSold uses net lamports out and sold_tokens_after", () => {
   assert.equal(point?.type, "sell");
   assert.equal(point?.logIndex, 0);
   assert.equal(point?.soldTokensAfterRaw, 500_000n);
+});
+
+test("remembered non-trade signatures are bounded and drop the oldest", () => {
+  resetNonTradeSignatures();
+  rememberNonTradeSignature("sig-0");
+  for (let i = 1; i <= 2000; i += 1) rememberNonTradeSignature(`sig-${i}`);
+  assert.equal(isRememberedNonTradeSignature("sig-0"), false);
+  assert.equal(isRememberedNonTradeSignature("sig-1"), true);
+  assert.equal(isRememberedNonTradeSignature("sig-2000"), true);
+  resetNonTradeSignatures();
+  assert.equal(isRememberedNonTradeSignature("sig-2000"), false);
 });
