@@ -855,6 +855,14 @@ turnaround.
 
 ## 10. Open decisions
 
+**Founder decisions 2026-10-11:** D1 to D13 accepted as recommended, with this condition on D9: after
+graduation the hook fee is 1% (D13), of which the creator gets exactly 0.5% of volume and MemeWarzone 0.5%. When a
+widget partner is involved (today CrypticPump), MemeWarzone's 0.5% is split in half with the partner: partner 0.25%,
+MemeWarzone 0.25%. The partner share is paid off chain from MemeWarzone's share (the hook stays partner-agnostic;
+attribution as today, by the widget build fingerprint). The creator's 0.5% is never reduced. Confirmed: the Major
+War League scores battles and check-ins, not trade volume. Still open: D14.
+
+
 | # | Decision | Options | Recommendation |
 |---|---|---|---|
 | D1 | How the router bucket is split per trade (3.4) | A off-chain attribution + bounded splitter; B signed profile in hookData; C no linked routing | **A**: same income, recruiters intact, hook stays signature-free, it is the Solana DBC pipeline |
