@@ -157,7 +157,7 @@ export const ROUTE_RULES = [
   {
     pattern: "/post/:id", kind: "index",
     title: "Post",
-    description: "A post from the MemeWarzone community feed. Read the post with its replies and see which memecoins and traders it mentions, plus when it was posted and how many people reacted.",
+    description: "A post from the MemeWarzone community feed. Read the post with its replies and see which memecoins and traders it mentions, and when it was posted.",
   },
   {
     pattern: "/recruiters/:code", kind: "index",
