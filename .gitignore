@@ -122,3 +122,8 @@ env.zip
 **/env.zip
 *.env.zip
 deployments/fork-rehearsal/
+
+# gen-8 hardhat build outputs (hardhat.gen8.config.ts)
+cache-gen8
+artifacts-gen8
+typechain-types-gen8
