@@ -36,6 +36,7 @@ const KNOWN_SCAN_REASONS = Object.freeze({
   swap_tax_high: "The simulated buy and sell lost more than the review threshold to token taxes.",
   swap_simulation_unavailable: "The simulated buy and sell could not run on this network.",
   sell_quote_unavailable: "The automatic sell quote could not be read because the network check failed.",
+  v4_pool_key_unknown: "A Uniswap V4 pool is listed for this token, but its pool key could not be verified on chain.",
 });
 
 const AUTHORITY_OUTCOMES = new Set([

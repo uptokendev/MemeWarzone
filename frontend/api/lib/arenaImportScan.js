@@ -1,7 +1,8 @@
 import { ethers } from "ethers";
 import { Connection, PublicKey } from "@solana/web3.js";
 
-import { PROBE_KIND, simulateRoundTrip } from "./importSwapProbe/simulateRoundTrip.js";
+import { dexScreenerChainSlug, fetchDexScreenerPairs, geckoTerminalNetwork } from "./arenaImportMarketFeed.js";
+import { PROBE_KIND, simulateRoundTrip, simulateRoundTripV4 } from "./importSwapProbe/simulateRoundTrip.js";
 
 const ERC20_ABI = [
   "function name() view returns (string)",
@@ -25,6 +26,9 @@ const BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
 const V2_FACTORY_ABI = ["function getPair(address tokenA,address tokenB) view returns (address pair)"];
 const V2_ROUTER_ABI = ["function getAmountsOut(uint256 amountIn,address[] path) view returns (uint256[] amounts)"];
 const PROBE_AMOUNT_IN = 10n ** 15n; // 0.001 wrapped native: quotes and the simulated round trip
+// A V2/V3 pool holding less wrapped native than this is a leftover, not the coin's market: skipped, so a coin is
+// judged on the pool people trade (WORM, 2026-10-12: 0.0000117 WETH in V3, $133K in its V4 pool).
+export const MIN_POOL_NATIVE = 10n ** 16n;
 
 const ZERO = ethers.ZeroAddress;
 
@@ -201,6 +205,8 @@ export function classifyScan({ reasons = [], warnings = [] } = {}) {
     "no_pancake_pool",
     "pancake_getPool_failed",
     "pancakeswap_buy_quote_failed",
+    // A V4 pool was listed but its key could not be proven from the PositionManager.
+    "v4_pool_key_unknown",
     // The simulated buy reverted: sellability could not be shown, a reviewer decides.
     "buy_simulation_failed",
     // The sell quote could not be read (RPC error, not a revert): unknown, a reviewer decides.
@@ -299,7 +305,7 @@ export async function probeV3Pool(provider, token, addrs, deps = {}) {
   } catch {
     return { pair: null, buyQuoteOk: false, sellQuoteOk: false, skipped: "getPool_failed" };
   }
-  if (!best) return { pair: null, buyQuoteOk: false, sellQuoteOk: false };
+  if (!best || best.depth < (addrs.minDepth ?? MIN_POOL_NATIVE)) return { pair: null, buyQuoteOk: false, sellQuoteOk: false };
   const quoter = makeContract(addrs.quoter, V3_QUOTER_ABI);
   const quote = (tokenIn, tokenOut, amountIn) => quoteOrUnknown(async () => {
     const [amountOut] = await quoter.quoteExactInputSingle.staticCall({ tokenIn, tokenOut, amountIn, fee: best.fee, sqrtPriceLimitX96: 0n });
@@ -335,6 +341,12 @@ export async function probeV2Pool(provider, token, addrs, deps = {}) {
     return { pair: null, buyQuoteOk: false, sellQuoteOk: false, skipped: "getPool_failed" };
   }
   if (!pair || pair === ZERO) return { pair: null, buyQuoteOk: false, sellQuoteOk: false };
+  try {
+    const depth = BigInt(await makeContract(addrs.weth, BALANCE_ABI).balanceOf(pair));
+    if (depth < (addrs.minDepth ?? MIN_POOL_NATIVE)) return { pair: null, buyQuoteOk: false, sellQuoteOk: false };
+  } catch {
+    return { pair: null, buyQuoteOk: false, sellQuoteOk: false, skipped: "getPool_failed" };
+  }
   const router = makeContract(addrs.router, V2_ROUTER_ABI);
   const quote = (path, amountIn) => quoteOrUnknown(async () => {
     const amounts = await router.getAmountsOut(amountIn, path);
@@ -376,9 +388,140 @@ export function simulationFindings(simulation) {
   return { reasons, warnings };
 }
 
-/** Robinhood: Uniswap V3. Probe skips are prefixed so the review reasons name the venue. */
+/**
+ * Uniswap V4 (founder 2026-10-12: our gen-8 coins and Pons coins trade there, so V4 is a normal venue, not a review
+ * case). Verified in the gen-8 design (docs/evm-launch/EVM_GEN8_V4_DESIGN.md 2.1, fork-proven on both chains); the
+ * UniversalRouter entries are the layout-v2.1 routers gen-8 pins (frontend/shared/evmGen8Swap.mjs).
+ */
+const UNISWAP_V4 = {
+  4663: {
+    poolManager: "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+    positionManager: "0x58daec3116aae6d93017baaea7749052e8a04fa7",
+    quoter: "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
+    router: "0x8876789976decbfcbbbe364623c63652db8c0904",
+  },
+  56: {
+    poolManager: "0x28e2ea090877bf75740558f6bfb36a5ffee9e9df",
+    positionManager: "0x7a4a5c919ae2541aed11041a1aeee68f1287f95b",
+    quoter: "0x9f75dd27d6664c475b90e105573e550ff69437b0",
+    router: "0xDc264714F68d84CF29BC605589405E78bDBE7C9f",
+  },
+};
+const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+const POSITION_MANAGER_ABI = ["function poolKeys(bytes25) view returns (address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks)"];
+const V4_QUOTER_ABI = [
+  "function quoteExactInputSingle(((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) poolKey,bool zeroForOne,uint128 exactAmount,bytes hookData) params) returns (uint256 amountOut,uint256 gasEstimate)",
+];
+const ERC20_DECIMALS_ABI = ["function decimals() view returns (uint8)"];
+// What one probe trade is worth when the pool is quoted in a token (stock token, PONS, USDG) instead of the native coin.
+const V4_PROBE_USD = 3;
+
+/**
+ * The token's V4 pools: DexScreener (Robinhood V4 is indexed there), else GeckoTerminal (indexes V4 on both chains;
+ * DexScreener has no V4 on BSC). Each candidate: { poolId, liquidityUsd, quoteUsd }, deepest first.
+ */
+export async function findV4Pools(chainId, token, fetchImpl = fetch) {
+  const out = [];
+  const slug = dexScreenerChainSlug(chainId);
+  if (slug) {
+    const pairs = await fetchDexScreenerPairs(slug, [token], fetchImpl).catch(() => []);
+    for (const pair of pairs) {
+      const id = String(pair?.pairAddress || "");
+      const v4 = (pair?.labels || []).some((label) => String(label).toLowerCase() === "v4");
+      if (!v4 || !/^0x[0-9a-fA-F]{64}$/.test(id)) continue;
+      if (String(pair?.baseToken?.address || "").toLowerCase() !== String(token).toLowerCase()) continue;
+      const priceUsd = Number(pair?.priceUsd);
+      const priceNative = Number(pair?.priceNative); // the coin's price in quote units
+      out.push({ poolId: id.toLowerCase(), liquidityUsd: Number(pair?.liquidity?.usd) || 0, quoteUsd: priceUsd > 0 && priceNative > 0 ? priceUsd / priceNative : null });
+    }
+  }
+  const network = geckoTerminalNetwork(chainId);
+  if (!out.length && network) {
+    const url = `https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(token)}/pools?page=1`;
+    const get = () => fetchImpl(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) }).catch(() => null);
+    let res = await get();
+    // The free tier allows ~30 calls a minute; one retry keeps a busy minute from reading as "no V4 pool".
+    if (res?.status === 429) res = await new Promise((resolve) => setTimeout(resolve, 2_000)).then(get);
+    const json = res?.ok ? await res.json().catch(() => null) : null;
+    for (const pool of json?.data || []) {
+      const dex = String(pool?.relationships?.dex?.data?.id || "");
+      const id = String(pool?.attributes?.address || "");
+      if (!dex.includes("v4") || !/^0x[0-9a-fA-F]{64}$/.test(id)) continue;
+      const base = String(pool?.relationships?.base_token?.data?.id || "");
+      const coinIsBase = base.toLowerCase().endsWith(String(token).toLowerCase());
+      const quoteUsd = Number(coinIsBase ? pool?.attributes?.quote_token_price_usd : pool?.attributes?.base_token_price_usd);
+      out.push({ poolId: id.toLowerCase(), liquidityUsd: Number(pool?.attributes?.reserve_in_usd) || 0, quoteUsd: quoteUsd > 0 ? quoteUsd : null });
+    }
+  }
+  return out.sort((a, b) => b.liquidityUsd - a.liquidityUsd);
+}
+
+/**
+ * The deepest V4 pool whose key the PositionManager knows (checked against the pool id), quoted with V4Quoter and
+ * round-tripped through the UniversalRouter. A coin in the pool against the native coin trades 0.001 native; against
+ * a token, about $3 of that token.
+ */
+export async function probeV4Pool(provider, chainId, token, deps = {}) {
+  const addrs = deps.addresses || UNISWAP_V4[Number(chainId)];
+  if (!addrs) return { pair: null, buyQuoteOk: false, sellQuoteOk: false, skipped: "env_missing" };
+  const makeContract = deps.contract || ((address, abi) => new ethers.Contract(address, abi, provider));
+  const candidates = await (deps.findPools || findV4Pools)(chainId, token);
+  if (!candidates.length) return { pair: null, buyQuoteOk: false, sellQuoteOk: false };
+  const positions = makeContract(addrs.positionManager, POSITION_MANAGER_ABI);
+  let chosen = null;
+  for (const candidate of candidates.slice(0, 3)) {
+    try {
+      const k = await positions.poolKeys(candidate.poolId.slice(0, 52));
+      const key = { currency0: String(k[0]), currency1: String(k[1]), fee: Number(k[2]), tickSpacing: Number(k[3]), hooks: String(k[4]) };
+      const id = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address", "address", "uint24", "int24", "address"], [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]));
+      const lowerToken = String(token).toLowerCase();
+      if (id.toLowerCase() !== candidate.poolId) continue; // PositionManager never saw this pool
+      if (key.currency0.toLowerCase() !== lowerToken && key.currency1.toLowerCase() !== lowerToken) continue;
+      chosen = { ...candidate, key, coinIs0: key.currency0.toLowerCase() === lowerToken };
+      break;
+    } catch {
+      // next candidate
+    }
+  }
+  if (!chosen) return { pair: null, buyQuoteOk: false, sellQuoteOk: false, skipped: "v4_pool_key_unknown" };
+  const quote = chosen.coinIs0 ? chosen.key.currency1 : chosen.key.currency0;
+  let quoteIn = PROBE_AMOUNT_IN;
+  if (quote !== ZERO) {
+    const decimals = Number(await makeContract(quote, ERC20_DECIMALS_ABI).decimals().catch(() => 18));
+    // Without a price, one whole quote token (a stock share or a PONS) is the trade size.
+    quoteIn = chosen.quoteUsd ? ethers.parseUnits((V4_PROBE_USD / chosen.quoteUsd).toFixed(Math.min(decimals, 12)), decimals) : 10n ** BigInt(decimals);
+  }
+  const quoter = makeContract(addrs.quoter, V4_QUOTER_ABI);
+  const keyTuple = [chosen.key.currency0, chosen.key.currency1, chosen.key.fee, chosen.key.tickSpacing, chosen.key.hooks];
+  const quoteV4 = (zeroForOne, amount) => quoteOrUnknown(async () => {
+    const [out] = await quoter.quoteExactInputSingle.staticCall([keyTuple, zeroForOne, amount, "0x"]);
+    return out;
+  });
+  const bought = await quoteV4(!chosen.coinIs0, quoteIn);
+  const sold = await quoteV4(chosen.coinIs0, bought > 0n ? bought : 10n ** 15n);
+  const simulation = bought > 0n
+    ? await (deps.simulateV4 || simulateRoundTripV4)(provider, {
+      router: addrs.router, permit2: PERMIT2, poolManager: addrs.poolManager, key: chosen.key, coinIs0: chosen.coinIs0, quoteIn,
+    })
+    : null;
+  return {
+    pair: chosen.poolId,
+    fee: chosen.key.fee,
+    hooks: chosen.key.hooks,
+    quoteToken: quote === ZERO ? "native" : quote,
+    buyQuoteOk: quoteOk(bought),
+    sellQuoteOk: quoteOk(sold),
+    simulation,
+  };
+}
+
+/** Robinhood: Uniswap V3, else Uniswap V4. Probe skips are prefixed so the review reasons name the venue. */
 async function probeRobinhood(provider, chainId, token) {
   const pool = await probeV3Pool(provider, token, uniswapV3Addresses(chainId));
+  if (pool.pair) return { ...pool, venue: "uniswap_v3" };
+  const v4 = await probeV4Pool(provider, chainId, token);
+  if (v4.pair) return { ...v4, venue: "uniswap_v4" };
+  if (v4.skipped === "v4_pool_key_unknown") return { ...v4, venue: "uniswap_v4" };
   return {
     ...pool,
     venue: "uniswap_v3",
@@ -400,6 +543,8 @@ async function probeBnb(provider, chainId, token) {
   if (v3.pair) return { ...v3, venue: "pancakeswap_v3" };
   const v2 = await probeV2Pool(provider, token, PANCAKE_BSC.v2);
   if (v2.pair) return { ...v2, venue: "pancakeswap_v2" };
+  const v4 = await probeV4Pool(provider, chainId, token);
+  if (v4.pair) return { ...v4, venue: "uniswap_v4" };
   const pancakeWarning = v3.skipped || v2.skipped ? "pancake_getPool_failed" : "no_pancake_pool";
   return { pair: null, buyQuoteOk: false, sellQuoteOk: false, warnings: [topazWarning, pancakeWarning] };
 }
@@ -465,6 +610,7 @@ export async function scanEvm(chainId, token) {
         owner,
         pool: pool.pair || null,
         ...(pool.venue ? { venue: pool.venue, poolFee: pool.fee ?? null } : {}),
+        ...(pool.hooks ? { hooks: pool.hooks, quoteToken: pool.quoteToken } : {}),
         ...(pool.simulation ? { swapSimulation: pool.simulation } : {}),
         buyQuoteOk: Boolean(pool.buyQuoteOk),
         sellQuoteOk: Boolean(pool.sellQuoteOk),
