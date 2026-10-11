@@ -5,6 +5,9 @@ import { withSolanaBondingProgress, withSolanaLaunchpadMarketCap } from "./lib/s
 import { withEvmBondingProgress } from "./lib/evmCampaignProgress.js";
 import { creatorMatchSql, normalizeCreatorQuery } from "./lib/campaignCreatorFilter.js";
 import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
+import { gen8ConfigFor } from "./lib/evmGen8Config.js";
+import { gen8Tables } from "./lib/evmGen8Schema.js";
+import { GEN8_CURVE_VENUE, GEN8_TRADE_PATH } from "../shared/evmGen8.mjs";
 
 /**
  * Market cap of EVM generation 6/5 coins is fully diluted (founder decision 2026-10-01): price x total
@@ -13,8 +16,15 @@ import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
  * 0x3765d716, 2026-10-01). Older EVM generations keep the canonical price x curve sold.
  */
 export const EVM_GEN6_TOTAL_SUPPLY_WHOLE = 1_000_000_000;
-const EVM_TRADE_FEE_NATIVE_SQL = `(case
+const EVM_TRADE_FEE_NATIVE_SQL_PRE_GEN8 = `(case
   when t.chain_id in (56, 97, 4663, 46630) and t.fee_raw is not null then t.fee_raw::numeric / 1e18
+  else 0
+end)`;
+// Generation 8 (only where EVM_GEN8_LAUNCHER_<id> / EVM_GEN8_HOOK_<id> are set): its curve_trades rows carry the
+// curve amount itself in bnb_amount (HookFee.curveAmount, fee excluded; the trader-side figure is in
+// activity_events.meta), so the raise is buys minus sells with no fee correction. Every other row: as above.
+const EVM_TRADE_FEE_NATIVE_SQL_GEN8 = `(case
+  when t.chain_id in (56, 97, 4663, 46630) and t.fee_raw is not null and coalesce(t.venue, '') <> '${GEN8_CURVE_VENUE}' then t.fee_raw::numeric / 1e18
   else 0
 end)`;
 const EVM_FULLY_DILUTED_SUPPLY_SQL = `(case
@@ -127,12 +137,48 @@ function solanaFieldsFromMeta(meta, chainId) {
   };
 }
 
-function mapCampaignRow(row, gradTargetBnb) {
+/**
+ * Generation 8 fields of a campaigns row (only where gen-8 is configured for the chain): the pool id and hook from
+ * campaigns.meta.gen8 (the indexer's markGen8Campaign), and the pool state from evm_gen8_pools when that table is
+ * joined. A gen-8 coin has no pair address (cms.dex_pair_address stays empty); it trades in its own V4 pool before
+ * and after graduation, never through the import route (D9).
+ */
+export function gen8FieldsFromRow(row, isDexTrading) {
+  const meta = row?.meta && typeof row.meta === "object" ? row.meta.gen8 : null;
+  const poolId = String(row?.gen8_pool_id || meta?.poolId || "").toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(poolId)) return null;
+  const hook = String(row?.gen8_hook || meta?.hook || "").toLowerCase() || null;
+  const pool = row?.gen8_tick_start != null && row?.gen8_liq_a != null
+    ? {
+        liqA: String(row.gen8_liq_a),
+        tickStart: Number(row.gen8_tick_start),
+        tickGrad: Number(row.gen8_tick_grad),
+        sqrtPriceX96: row.gen8_sqrt_price != null ? String(row.gen8_sqrt_price) : null,
+        graduatedBlock: row.gen8_graduated_block != null ? Number(row.gen8_graduated_block) : null,
+        holderCount: row.gen8_holder_count != null ? Number(row.gen8_holder_count) : null,
+      }
+    : null;
+  return {
+    generation: 8,
+    gen8: {
+      poolId,
+      hook,
+      poolManager: meta?.poolManager ? String(meta.poolManager).toLowerCase() : null,
+      displayPair: row?.gen8_display_pair || meta?.display || null,
+      tradePath: GEN8_TRADE_PATH,
+      phase: isDexTrading || pool?.graduatedBlock != null ? "graduated" : "bonding",
+      pool,
+    },
+  };
+}
+
+function mapCampaignRow(row, gradTargetBnb, { gen8 = false } = {}) {
   const chainId = Number(row.chain_id);
   const campaignAddress = normalizeOutputAddress(row.campaign_address, chainId);
   const graduatedAt = row.graduated_at_chain ? String(row.graduated_at_chain) : null;
   const solana = solanaFieldsFromMeta(row.meta, chainId);
   const { marketStage, dexPool, dexPosition, isDexTrading } = deriveDexTradingState(row, chainId);
+  const gen8Fields = gen8 ? gen8FieldsFromRow(row, isDexTrading) : null;
 
   return {
     chainId,
@@ -192,11 +238,12 @@ function mapCampaignRow(row, gradTargetBnb) {
           solanaProgramId: solana.programId,
         }
       : {}),
+    ...(gen8Fields || {}),
   };
 }
 
-function campaignPayload(rows, { limit, cursor, gradTargetBnb, warning = null }) {
-  const items = (rows || []).map((row) => mapCampaignRow(row, gradTargetBnb));
+function campaignPayload(rows, { limit, cursor, gradTargetBnb, warning = null, gen8 = false }) {
+  const items = (rows || []).map((row) => mapCampaignRow(row, gradTargetBnb, { gen8 }));
   return {
     items,
     nextCursor: items.length === limit ? cursor + limit : null,
@@ -349,6 +396,13 @@ export default async function handler(req, res) {
   if (SOLANA_CHAIN_IDS.has(chainId)) gradTargetBnb = null;
   solUsd = (await resolveSolUsdPrice().catch(() => null))?.price ?? null;
 
+  // Generation 8 (inert unless EVM_GEN8_LAUNCHER_<id> / EVM_GEN8_HOOK_<id> are set for this chain): the raise without
+  // a fee correction for gen-8 rows, and holders / pool state from evm_gen8_pools once its migration is applied.
+  // Without the config the SQL below is exactly the pre-gen-8 text.
+  const gen8Enabled = Boolean(gen8ConfigFor(chainId));
+  const gen8Pools = gen8Enabled ? (await gen8Tables(pool)).pools : false;
+  const EVM_TRADE_FEE_NATIVE_SQL = gen8Enabled ? EVM_TRADE_FEE_NATIVE_SQL_GEN8 : EVM_TRADE_FEE_NATIVE_SQL_PRE_GEN8;
+
   try {
     // Deterministic ordering per tab/sort.
     // IMPORTANT: the outer query selects from the CTE `calc`.
@@ -409,7 +463,16 @@ export default async function handler(req, res) {
           end as marketcap_bnb,
           ts.vol_24h_bnb,
           -- Holders right now, from the indexer (2026-10-08); the buyer count below only fills in when absent.
-          ms.holders as indexed_holders,
+          ${gen8Pools ? "coalesce(ms.holders, g8.holder_count)" : "ms.holders"} as indexed_holders,${gen8Pools ? `
+          g8.pool_id as gen8_pool_id,
+          g8.hook_address as gen8_hook,
+          g8.liq_a::text as gen8_liq_a,
+          g8.tick_start as gen8_tick_start,
+          g8.tick_grad as gen8_tick_grad,
+          g8.last_sqrt_price_x96::text as gen8_sqrt_price,
+          g8.graduated_block as gen8_graduated_block,
+          g8.holder_count as gen8_holder_count,
+          g8.display_pair as gen8_display_pair,` : ""}
           -- Last price 24 hours ago (or the first price of a younger coin), for the ticker's 24h change.
           p24.price_24h_ago,
           vw.votes_24h,
@@ -420,7 +483,9 @@ export default async function handler(req, res) {
         left join public.token_stats ts
           on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address
         left join public.market_stats ms
-          on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
+          on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address${gen8Pools ? `
+        left join public.evm_gen8_pools g8
+          on g8.chain_id = c.chain_id and g8.token_address = c.campaign_address` : ""}
         left join lateral (
           select coalesce(
             -- The last price at or before 24 hours ago. Canonical (v2) candles first; DBC coins write v0 with the legacy c/o columns.
@@ -641,7 +706,7 @@ export default async function handler(req, res) {
       creator,
     ]);
 
-    const payload = campaignPayload(r.rows, { limit, cursor, gradTargetBnb });
+    const payload = campaignPayload(r.rows, { limit, cursor, gradTargetBnb, gen8: gen8Enabled });
     // Each campaign's own graduation target (the creator's $15k / $30k / $50k choice), read from
     // chain the way Token Details reads it -- never a single default.
     await withSolanaBondingProgress(payload.items, solUsd);
@@ -670,6 +735,7 @@ export default async function handler(req, res) {
           limit,
           cursor,
           gradTargetBnb,
+          gen8: gen8Enabled,
           warning: "Campaign feed returned basic data because rich stats are temporarily unavailable.",
         }),
       );
