@@ -480,7 +480,7 @@ async function setCampaignGraduated(
        set is_active=false,
            graduated_block=$3,
            graduated_at_chain=$4,
-           meta = coalesce(meta,'{}'::jsonb) || jsonb_build_object('graduatedTx', $5),
+           meta = coalesce(meta,'{}'::jsonb) || jsonb_build_object('graduatedTx', $5::text),
            updated_at=now()
      where chain_id=$1 and campaign_address=$2`,
     [chainId, campaign.toLowerCase(), graduatedBlock, graduatedAt, txHash.toLowerCase()]
