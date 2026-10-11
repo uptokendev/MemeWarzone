@@ -31,7 +31,7 @@ import {
 import { upsertCampaignFromDraft } from "./campaign-registry.js";
 import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
 import { EVM_GEN7_FACTORY_GENERATION, GEN7_TARGET_TEST_USD, isGen7TargetAllowed } from "../../shared/evmGen7Curve.mjs";
-import { Gen8ScheduleError, scheduleGen8Draft } from "./draftGen8Schedule.js";
+import { Gen8ScheduleError, refuseGen8ScheduleForCanary, scheduleGen8Draft } from "./draftGen8Schedule.js";
 
 const MIN_SCHEDULE_SECONDS = 5 * 60;
 const MAX_SCHEDULE_SECONDS = 30 * 24 * 60 * 60;
@@ -492,6 +492,9 @@ export async function draftDeploy(req, res) {
   if (body.operation === "schedule_gen8") {
     // Generation 8 timed launch: the draft keeps the time, the creator launches at or after it (draftGen8Schedule.js).
     // No signature is issued here; the launch itself goes through the create authorization, which applies the canary.
+    // Audit B-02 / F7: the canary also refuses the schedule itself, on the strict 0x form of the stored creator
+    // wallet (a loose form never matches the canary list), so a non-canary creator cannot arm a gen-8 launch time.
+    if (refuseGen8ScheduleForCanary(res, row.creator_wallet)) return;
     try {
       const out = await scheduleGen8Draft({
         body,

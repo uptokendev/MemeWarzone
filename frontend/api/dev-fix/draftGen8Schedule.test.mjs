@@ -38,3 +38,23 @@ test("refusals", async () => {
   await code({ body: { scheduledLaunchAt: NOW + 3600, graduationTargetWei: (15_000n * 10n ** 18n).toString() } }, "GEN8_TARGET_UNSUPPORTED");
   await code({ db: fakeDb(false) }, "DRAFT_ALREADY_DEPLOYED");
 });
+
+test("audit B-02 / F7: the gen-8 schedule refuses loose wallet forms and non-canary creators", async () => {
+  const { refuseGen8ScheduleForCanary } = await import("./draftGen8Schedule.js");
+  const CANARY = "0x9999999999999999999999999999999999999999";
+  const OUTSIDER = "0x1234567890123456789012345678901234567890";
+  const env = { CREATE_CANARY_WALLETS: CANARY };
+  const res = () => ({ statusCode: 0, body: null, setHeader() {}, end(s) { this.body = JSON.parse(s); } });
+  for (const loose of [OUTSIDER.slice(2), ` ${OUTSIDER}`, "XE7338O073KYGTWWZN0F2WZ0R8PX5ZPPZS", "", null]) {
+    const r = res();
+    assert.equal(refuseGen8ScheduleForCanary(r, loose, env), true, String(loose));
+    assert.equal(r.statusCode, 400);
+    assert.equal(r.body.code, "GEN8_WALLET_INVALID");
+  }
+  const outsider = res();
+  assert.equal(refuseGen8ScheduleForCanary(outsider, OUTSIDER, env), true);
+  assert.equal(outsider.statusCode, 403);
+  assert.equal(outsider.body.code, "CREATE_CANARY_ONLY");
+  assert.equal(refuseGen8ScheduleForCanary(res(), CANARY, env), false, "the canary wallet may schedule");
+  assert.equal(refuseGen8ScheduleForCanary(res(), OUTSIDER, {}), false, "canary off: everyone may schedule");
+});

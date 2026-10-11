@@ -12,6 +12,23 @@
 import { assertScheduleWindow, parseUnixSeconds } from "../../shared/dbcSchedule.mjs";
 import { GEN8_TARGET_DEFAULT_USD, isGen8TargetAllowed } from "../../shared/evmGen8.mjs";
 import { gen8ConfigFor } from "../lib/evmGen8Config.js";
+import { strictEvmWallet } from "../lib/evmGen8StrictWallet.js";
+import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
+import { json } from "../../server/http.js";
+
+/**
+ * Audit B-02 / F7: the go-live canary refuses the gen-8 schedule itself, on the strict 0x form of the draft's stored
+ * creator wallet (400 GEN8_WALLET_INVALID for any other form, 403 CREATE_CANARY_ONLY for a wallet not on the list).
+ * Writes the response and returns true when refused.
+ */
+export function refuseGen8ScheduleForCanary(res, creatorWallet, env = process.env) {
+  const strict = strictEvmWallet(creatorWallet);
+  if (!strict.ok) {
+    json(res, 400, { error: "The draft's creator wallet is not a valid EVM address.", code: "GEN8_WALLET_INVALID" });
+    return true;
+  }
+  return refuseCreateIfCanaryBlocked(res, strict.address, env);
+}
 
 export class Gen8ScheduleError extends Error {
   constructor(status, code, message) {
