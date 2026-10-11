@@ -12,7 +12,7 @@ import {
   parseGen8CreateRequest,
   strictEvmWallet,
 } from "./evmGen8CreateAuthorization.js";
-import { GEN8_TARGET_DEFAULT_USD, GEN8_TARGET_TEST_USD, gen8AuthorizationPayload, gen8HashRequest, gen8PoolId, gen8PoolKey, gen8Progress } from "../../shared/evmGen8.mjs";
+import { GEN8_TARGET_DEFAULT_USD, GEN8_TARGET_TEST_USD, gen8AuthorizationPayload, gen8MetadataHash, gen8HashRequest, gen8PoolId, gen8PoolKey, gen8Progress } from "../../shared/evmGen8.mjs";
 import { deployGen8Local, directSwap, gen8ArtifactsAvailable, gen8EnvFor, startAnvil } from "../lib/evmGen8LocalChain.testkit.mjs";
 
 const LAUNCHER = "0x1111111111111111111111111111111111111111";
@@ -50,6 +50,60 @@ test("request parsing: targets, fee choice, first buy, metadata hash", () => {
   err(() => parseGen8CreateRequest({ campaignRequest: request({ firstBuyValue: "-1" }) }, 97, baseEnv), "GEN8_CREATE_FIELD_INVALID");
   err(() => parseGen8CreateRequest({ campaignRequest: request({ metadataHash: "0x12" }) }, 97, baseEnv), "GEN8_CREATE_FIELD_INVALID");
   err(() => parseGen8CreateRequest({ campaignRequest: request({ logoURI: "" }) }, 97, baseEnv), "GEN8_CREATE_FIELD_INVALID");
+});
+
+test("B-03: the server computes metadataHash from the record it logs; a different client hash is refused", () => {
+  const fields = { name: "N", symbol: "S", logoURI: "ipfs://x", xAccount: "https://x.com/n", website: "https://n.xyz", extraLink: "", description: "the description shown in the app" };
+  const expected = gen8MetadataHash(fields);
+  const p = parseGen8CreateRequest({ campaignRequest: fields }, 97, baseEnv);
+  assert.equal(p.fields.metadataHash, expected, "absent: server hash");
+  assert.equal(p.description, fields.description);
+  assert.equal(parseGen8CreateRequest({ campaignRequest: { ...fields, metadataHash: expected.toUpperCase().replace("0X", "0x") } }, 97, baseEnv).fields.metadataHash, expected, "equal (any case): accepted");
+  assert.throws(
+    () => parseGen8CreateRequest({ campaignRequest: { ...fields, metadataHash: ethers.id("anything at all") } }, 97, baseEnv),
+    (e) => e instanceof Gen8CreateError && e.httpStatus === 400 && e.code === "GEN8_METADATA_HASH_MISMATCH" && e.details.expected === expected,
+  );
+  // A hash made for another description does not pass either.
+  assert.throws(() => parseGen8CreateRequest({ campaignRequest: { ...fields, metadataHash: gen8MetadataHash({ ...fields, description: "other" }) } }, 97, baseEnv), (e) => e.code === "GEN8_METADATA_HASH_MISMATCH");
+});
+
+test("B-04: byte limits and forbidden characters on name, symbol, links and description", () => {
+  const ok = (over) => parseGen8CreateRequest({ campaignRequest: request(over) }, 97, baseEnv);
+  const bad = (over, label) => assert.throws(() => ok(over), (e) => e instanceof Gen8CreateError && e.httpStatus === 400 && e.code === "GEN8_CREATE_FIELD_INVALID", label);
+  // at the limits
+  ok({ name: "N".repeat(32), symbol: "S".repeat(10), logoURI: `https://a.b/${"x".repeat(500)}`, website: "w".repeat(512), xAccount: "x".repeat(512), extraLink: "e".repeat(512), description: "d".repeat(1000) });
+  ok({ name: "\u{1F600}".repeat(8), symbol: "\u00e9".repeat(5) }); // 32 and 10 UTF-8 bytes
+  ok({ description: "line one\nline two\r\n\tindented" });
+  // over the limits (bytes, not characters)
+  bad({ name: "N".repeat(33) }, "name 33 bytes");
+  bad({ name: "\u{1F600}".repeat(8) + "a" }, "name 33 bytes of emoji");
+  bad({ symbol: "S".repeat(11) }, "symbol 11 bytes");
+  bad({ symbol: "\u00e9".repeat(6) }, "symbol 12 bytes in 6 characters");
+  bad({ symbol: "X".repeat(65536) }, "64 KB symbol");
+  bad({ logoURI: `https://a.b/${"x".repeat(501)}` }, "logoURI 513 bytes");
+  for (const k of ["xAccount", "website", "extraLink"]) bad({ [k]: "u".repeat(513) }, `${k} 513 bytes`);
+  bad({ description: "d".repeat(1001) }, "description 1001");
+  // empty after trim
+  bad({ name: "   " }, "blank name");
+  bad({ symbol: "\t" }, "blank symbol");
+  // control, zero-width, bidi, BOM
+  const forbidden = ["\u0000", "\u0007", "\u001b", "\u007f", "\u0085", "\u009f", "\u200b", "\u200d", "\u200f", "\u202a", "\u202e", "\u2060", "\u2064", "\u2066", "\u2069", "\ufeff"];
+  for (const ch of forbidden) {
+    bad({ name: `a${ch}b` }, `name ${escape(ch)}`);
+    bad({ symbol: `A${ch}` }, `symbol ${escape(ch)}`);
+    bad({ logoURI: `https://a.b/${ch}` }, `logoURI ${escape(ch)}`);
+    bad({ website: `https://a.b/${ch}` }, `website ${escape(ch)}`);
+    bad({ description: `x${ch}y` }, `description ${escape(ch)}`);
+  }
+  bad({ name: "\u200b" }, "zero-width name");
+  bad({ name: "a\nb" }, "newline in name");
+  bad({ website: "https://a.b/\n" }, "newline in a link");
+  // logo scheme: what the app uploads (https) or ipfs; never data:
+  ok({ logoURI: "https://cdn.example/logo.png" });
+  ok({ logoURI: "ipfs://bafy" });
+  bad({ logoURI: "data:image/png;base64,AAAA" }, "data: logo");
+  bad({ logoURI: "javascript:alert(1)" }, "javascript: logo");
+  bad({ logoURI: "ftp://a.b/x" }, "ftp logo");
 });
 
 test("signer: dedicated gen-8 key first, else the route authority key, else none", () => {

@@ -120,6 +120,38 @@ function parseFeeChoice(source) {
   return { id, pct };
 }
 
+// Text limits (audit B-04). Name and symbol match the create page (src/constants/validation.ts NAME_MAX_LENGTH 32,
+// TICKER_MAX_LENGTH 10), counted in UTF-8 bytes as the chain stores them. URIs match the app's on-chain logo limit
+// (src/lib/onchainLogoUri.ts, 512). The description matches the create page's textarea maxLength (DESCRIPTION_MAX_LENGTH
+// 1000, UTF-16 code units, which is what String.length counts).
+export const GEN8_NAME_MAX_BYTES = 32;
+export const GEN8_SYMBOL_MAX_BYTES = 10;
+export const GEN8_URI_MAX_BYTES = 512;
+export const GEN8_DESCRIPTION_MAX_LENGTH = 1000;
+// C0 controls, DEL, C1 controls, zero-width and bidi controls, BOM.
+const GEN8_FORBIDDEN_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/u;
+// The description is a multi-line textarea: newline, carriage return and tab are allowed there, nothing else above.
+const GEN8_FORBIDDEN_DESCRIPTION_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/u;
+// The app uploads the logo and sends an https URL (src/lib/onchainLogoUri.ts refuses data: URLs); ipfs:// is the
+// other form a hosted logo takes. data: and anything else are refused.
+const GEN8_LOGO_URI_SCHEME = /^(https?|ipfs):\/\//i;
+
+function utf8Bytes(value) {
+  return Buffer.byteLength(value, "utf8");
+}
+
+function checkGen8Text(value, label, { maxBytes = null, maxLength = null, forbidden = GEN8_FORBIDDEN_CHARS } = {}) {
+  if (forbidden.test(value)) {
+    throw new Gen8CreateError(400, "GEN8_CREATE_FIELD_INVALID", `${label} contains control, zero-width or bidi characters`);
+  }
+  if (maxBytes !== null && utf8Bytes(value) > maxBytes) {
+    throw new Gen8CreateError(400, "GEN8_CREATE_FIELD_INVALID", `${label} is longer than ${maxBytes} bytes`);
+  }
+  if (maxLength !== null && value.length > maxLength) {
+    throw new Gen8CreateError(400, "GEN8_CREATE_FIELD_INVALID", `${label} is longer than ${maxLength} characters`);
+  }
+}
+
 /**
  * Normalises the request body into the launch request (without salt / minFirstBuyOut, which are chosen once the
  * launcher's plan is known). Throws Gen8CreateError (400) on a bad field.
@@ -136,6 +168,14 @@ export function parseGen8CreateRequest(body, chainId, env = process.env) {
   const website = String(source.website || "");
   const extraLink = String(source.extraLink || "");
   const description = String(source.description || "");
+  checkGen8Text(name, "name", { maxBytes: GEN8_NAME_MAX_BYTES });
+  checkGen8Text(symbol, "symbol", { maxBytes: GEN8_SYMBOL_MAX_BYTES });
+  checkGen8Text(logoURI, "logoURI", { maxBytes: GEN8_URI_MAX_BYTES });
+  if (!GEN8_LOGO_URI_SCHEME.test(logoURI)) throw new Gen8CreateError(400, "GEN8_CREATE_FIELD_INVALID", "logoURI must be an https:// or ipfs:// URL");
+  checkGen8Text(xAccount, "xAccount", { maxBytes: GEN8_URI_MAX_BYTES });
+  checkGen8Text(website, "website", { maxBytes: GEN8_URI_MAX_BYTES });
+  checkGen8Text(extraLink, "extraLink", { maxBytes: GEN8_URI_MAX_BYTES });
+  checkGen8Text(description, "description", { maxLength: GEN8_DESCRIPTION_MAX_LENGTH, forbidden: GEN8_FORBIDDEN_DESCRIPTION_CHARS });
 
   let targetUsd = parseUintField(source.targetUsd ?? source.graduationTarget ?? source.graduationTargetWei, "graduationTarget", 0n);
   if (targetUsd === 0n) targetUsd = GEN8_TARGET_DEFAULT_USD; // no default on the launcher: $50K, its DEFAULT_GRADUATION_USD
@@ -154,11 +194,16 @@ export function parseGen8CreateRequest(body, chainId, env = process.env) {
   if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > MAX_FIRST_BUY_SLIPPAGE_BPS) {
     throw new Gen8CreateError(400, "GEN8_CREATE_FIELD_INVALID", `firstBuySlippageBps must be an integer from 0 to ${MAX_FIRST_BUY_SLIPPAGE_BPS}`);
   }
-  let metadataHash = String(source.metadataHash || "").trim();
-  if (metadataHash && !BYTES32.test(metadataHash)) throw new Gen8CreateError(400, "GEN8_CREATE_FIELD_INVALID", "metadataHash must be a 0x-prefixed bytes32");
-  if (!metadataHash) metadataHash = gen8MetadataHash({ name, symbol, logoURI, xAccount, website, extraLink, description });
+  // The server always commits to the record it logs (audit B-03): the hash is computed here from the same fields. A
+  // client hash is optional; when sent it must equal ours, so the on-chain LaunchMetadata hash always matches the log.
+  const metadataHash = gen8MetadataHash({ name, symbol, logoURI, xAccount, website, extraLink, description });
+  const clientHash = String(source.metadataHash || "").trim();
+  if (clientHash && !BYTES32.test(clientHash)) throw new Gen8CreateError(400, "GEN8_CREATE_FIELD_INVALID", "metadataHash must be a 0x-prefixed bytes32");
+  if (clientHash && clientHash.toLowerCase() !== metadataHash) {
+    throw new Gen8CreateError(400, "GEN8_METADATA_HASH_MISMATCH", "metadataHash does not match the name, symbol, links and description sent; leave it out and the server computes it.", { expected: metadataHash });
+  }
   return {
-    fields: { name, symbol, logoURI, xAccount, website, extraLink, metadataHash: metadataHash.toLowerCase(), targetUsd, feeChoice: feeChoice.id, feeCreatorPct: feeChoice.pct, firstBuyValue },
+    fields: { name, symbol, logoURI, xAccount, website, extraLink, metadataHash, targetUsd, feeChoice: feeChoice.id, feeCreatorPct: feeChoice.pct, firstBuyValue },
     minFirstBuyOut,
     slippageBps,
     description,
