@@ -186,3 +186,16 @@ test("GeckoTerminal fallback keeps the top pool and its DEX (Capybara on PumpSwa
   assert.equal(m.dexId, "pumpswap");
   assert.equal(geckoMarket({ market_cap_usd: "1" }).pairAddress, null, "without pools: no pair, as before");
 });
+
+test("every import gets market data for its coin page, battle (passed) imports first", async () => {
+  let listQuery = "";
+  const pool = {
+    query: async (text) => {
+      if (/arena_token_imports i/.test(text)) listQuery = text;
+      return { rows: [] };
+    },
+  };
+  await refreshImportMarketStats({ pool, env: {}, fetchImpl: async () => ({ ok: true, json: async () => [] }), nowMs: NOW });
+  assert.doesNotMatch(listQuery, /where i\.status = 'passed'/);
+  assert.match(listQuery, /order by \(i\.status = 'passed'\) desc, s\.holders_updated_at asc nulls first/);
+});
