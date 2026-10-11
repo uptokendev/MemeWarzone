@@ -58,8 +58,9 @@ const V3_TOPICS = SWAP_EVENTS.filter((f) => f.inputs.length > 6).map((f) => f.to
 export function evmImportRpcUrl(chainId, env = process.env) {
   const id = Number(chainId);
   const pick = (...keys) => keys.map((k) => String(env[k] || "").trim()).find(Boolean) || "";
-  if (id === 4663) return pick("ROBINHOOD_MAINNET_RPC_URL", "ROBINHOOD_RPC_URL", "VITE_PUBLIC_RPC_4663") || "https://rpc.mainnet.chain.robinhood.com";
-  if (id === 56) return pick("BSC_RPC_URL", "VITE_PUBLIC_RPC_56") || "https://bsc-dataseed.binance.org";
+  // Server env only: the app's VITE_ RPCs are browser settings.
+  if (id === 4663) return pick("ROBINHOOD_MAINNET_RPC_URL", "ROBINHOOD_RPC_URL") || "https://rpc.mainnet.chain.robinhood.com";
+  if (id === 56) return pick("BSC_RPC_URL", "BSC_RPC_HTTP") || "https://bsc-dataseed.binance.org";
   return "";
 }
 
