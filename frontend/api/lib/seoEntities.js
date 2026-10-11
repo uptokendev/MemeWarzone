@@ -184,7 +184,8 @@ export function createSeoEntities({ db, loadBattle, appOrigin = APP_ORIGIN, apiO
 
   // ---- battles ----
   // Data: loadPublicBattleSharePayload (api/lib/publicBattleSharePayload.mjs). Image: the battle share card
-  // URL that api/battle-og.js builds (`/api/battle-share-card?battleId=..&v=1` on the app origin).
+  // URL that api/battle-og.js builds (`/api/battle-share-card?battleId=..&v=1`), on the API origin: on the app
+  // host /api/* returns the app shell, not the image.
   let battleLoader = loadBattle;
   async function battle(id) {
     if (!battleLoader) battleLoader = (await import("./publicBattleSharePayload.mjs")).loadPublicBattleSharePayload;
